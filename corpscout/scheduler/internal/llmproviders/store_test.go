@@ -77,6 +77,47 @@ func TestProviderConfigFromRowIncludesEncryptedSecret(t *testing.T) {
 	require.Equal(t, "ciphertext", config.APIKey.Ciphertext)
 }
 
+func TestRuntimeConfigBySlugDecryptsEnabledProvider(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	require.NoError(t, err)
+	defer mock.Close()
+	cipher, err := NewCipher(testBase64Key)
+	require.NoError(t, err)
+	secret, err := cipher.Encrypt("secret-value")
+	require.NoError(t, err)
+	id := uuid.MustParse("1a6531c9-6ea9-4e74-b292-8f8cefe8b4de")
+	now := time.Now().UTC()
+	mock.ExpectQuery(`FROM llm_providers`).
+		WithArgs("deepseek").
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "slug", "display_name", "provider_type", "base_url", "model",
+			"api_key_ciphertext", "api_key_nonce", "api_key_key_version", "api_key_algorithm",
+			"is_default", "enabled", "capabilities", "metadata", "created_at", "updated_at",
+		}).AddRow(
+			id, "deepseek", "DeepSeek", ProviderTypeOpenAICompatible, "https://api.deepseek.com", "deepseek-chat",
+			&secret.Ciphertext, &secret.Nonce, DefaultKeyVersion, EncryptionAlgorithmAES256GCM,
+			false, true, []byte(`{}`), []byte(`{}`), now, now,
+		))
+
+	config, err := NewStore(db.New(mock), cipher).RuntimeConfigBySlug(t.Context(), " deepseek ")
+
+	require.NoError(t, err)
+	require.Equal(t, RuntimeProviderConfig{
+		Slug:    "deepseek",
+		BaseURL: "https://api.deepseek.com",
+		Model:   "deepseek-chat",
+		APIKey:  "secret-value",
+	}, config)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRuntimeConfigBySlugReturnsDefaultWithoutQuery(t *testing.T) {
+	config, err := NewStore(nil, nil).RuntimeConfigBySlug(t.Context(), " default ")
+
+	require.NoError(t, err)
+	require.Equal(t, RuntimeProviderConfig{Slug: "default"}, config)
+}
+
 func validProviderCommand(slug string, apiKey string, enabled bool) UpsertProviderCommand {
 	return UpsertProviderCommand{
 		Slug:         slug,

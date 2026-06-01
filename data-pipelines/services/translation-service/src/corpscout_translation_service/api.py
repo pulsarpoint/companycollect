@@ -40,7 +40,12 @@ def create_app(*, translation_service: TranslationService | None = None) -> Fast
     ):
         llm = request.llm
         if provider is not None or model is not None:
-            llm = LLMSelection(provider=provider or request.llm.provider, model=model or request.llm.model)
+            llm = request.llm.model_copy(
+                update={
+                    "provider": provider or request.llm.provider,
+                    "model": model or request.llm.model,
+                }
+            )
         if prompt_version is not None:
             request = request.model_copy(update={"llm": llm, "prompt_version": prompt_version})
         else:

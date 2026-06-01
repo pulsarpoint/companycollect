@@ -28,12 +28,24 @@ async def test_nats_handler_replies_with_brreg_domain_response() -> None:
             "country": "NO",
             "search_provider": "duckduckgo",
             "prompt_version": "v1",
+            "llm": {
+                "provider": "deepseek-v4-flash",
+                "model": "deepseek-v4-flash",
+                "base_url": "https://api.deepseek.com",
+                "api_key": "secret-key",
+            },
         }
     )
 
     await handle_brreg_domain_discovery_message(message, service)
 
     assert service.requests[0]["organization_number"] == "810202572"
+    assert service.requests[0]["llm"] == {
+        "provider": "deepseek-v4-flash",
+        "model": "deepseek-v4-flash",
+        "base_url": "https://api.deepseek.com",
+        "api_key": "secret-key",
+    }
     assert len(message.replies) == 1
     body = json.loads(message.replies[0].decode("utf-8"))
     assert body["status"] == "succeeded"

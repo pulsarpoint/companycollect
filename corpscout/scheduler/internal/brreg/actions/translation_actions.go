@@ -10,6 +10,7 @@ import (
 
 	brregdb "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/db"
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/llmproviders"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/translationclient"
 )
 
@@ -23,12 +24,13 @@ const (
 )
 
 type TranslationActions struct {
-	gateway    *brregdb.Gateway
-	translator *translationclient.Client
+	gateway      *brregdb.Gateway
+	translator   *translationclient.Client
+	llmProviders *llmproviders.Store
 }
 
-func NewTranslationActions(gateway *brregdb.Gateway, translator *translationclient.Client) *TranslationActions {
-	return &TranslationActions{gateway: gateway, translator: translator}
+func NewTranslationActions(gateway *brregdb.Gateway, translator *translationclient.Client, llmProviders *llmproviders.Store) *TranslationActions {
+	return &TranslationActions{gateway: gateway, translator: translator, llmProviders: llmProviders}
 }
 
 type PrepareBrregTranslationWorkflowInput struct {
@@ -345,7 +347,10 @@ func (a *TranslationActions) TranslateBrregBatch(ctx context.Context, input Tran
 		"target_lang", input.TargetLang,
 		"max_retries", input.MaxRetries,
 	)
-	request := translateRequestFromInput(input)
+	request, err := a.translateRequestFromInput(ctx, input)
+	if err != nil {
+		return TranslateBrregBatchResult{}, err
+	}
 	response, err := a.translator.TranslateBrregRecords(ctx, request)
 	if err != nil {
 		return TranslateBrregBatchResult{}, errors.Wrap(err, "translate brreg batch")
@@ -364,6 +369,34 @@ func (a *TranslationActions) TranslateBrregBatch(ctx context.Context, input Tran
 		"prompt_version", result.PromptVersion,
 	)
 	return result, nil
+}
+
+func (a *TranslationActions) translateRequestFromInput(ctx context.Context, input TranslateBrregBatchInput) (translationclient.BrregTranslateRequest, error) {
+	request := translateRequestFromInput(input)
+	provider := request.LLM.Provider
+	if provider == "" || provider == "default" {
+		return request, nil
+	}
+	if a.llmProviders == nil {
+		return translationclient.BrregTranslateRequest{}, errors.New("llm provider store not available")
+	}
+	config, err := a.llmProviders.RuntimeConfigBySlug(ctx, provider)
+	if err != nil {
+		return translationclient.BrregTranslateRequest{}, errors.Wrap(err, "load llm provider runtime config")
+	}
+	request.LLM.Provider = config.Slug
+	request.LLM.BaseURL = config.BaseURL
+	request.LLM.APIKey = config.APIKey
+	if request.LLM.Model == "" {
+		request.LLM.Model = config.Model
+	}
+	slog.DebugContext(ctx, "loaded brreg translation llm provider runtime config",
+		"provider", request.LLM.Provider,
+		"model", request.LLM.Model,
+		"has_inline_base_url", request.LLM.BaseURL != "",
+		"has_inline_api_key", request.LLM.APIKey != "",
+	)
+	return request, nil
 }
 
 func translateRequestFromInput(input TranslateBrregBatchInput) translationclient.BrregTranslateRequest {

@@ -28,8 +28,8 @@ class OpenAICompatibleLLMClient:
         return cls(timeout_seconds=float(os.environ.get("TRANSLATION_LLM_TIMEOUT_SECONDS", "120")))
 
     async def translate_terms(self, request: LLMTranslationRequest) -> dict[str, str]:
-        base_url = _provider_base_url(request.provider)
-        api_key = _provider_api_key(request.provider)
+        base_url = normalize_openai_api_base(request.base_url) if request.base_url else _provider_base_url(request.provider)
+        api_key = request.api_key if request.api_key is not None else _provider_api_key(request.provider)
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
             response = await client.post(
@@ -58,6 +58,11 @@ def default_provider() -> str:
 
 def default_model() -> str:
     return os.environ.get("TRANSLATION_DEFAULT_MODEL") or os.environ.get("BRREG_TRANSLATION_MODEL") or DEFAULT_LLM_MODEL
+
+
+def provider_model(provider: str) -> str:
+    key = _provider_env_key(provider)
+    return os.environ.get(f"TRANSLATION_PROVIDER_{key}_MODEL") or default_model()
 
 
 def build_translation_messages(request: LLMTranslationRequest) -> list[dict[str, str]]:

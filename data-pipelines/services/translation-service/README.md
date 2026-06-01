@@ -42,11 +42,28 @@ curl -X POST 'http://localhost:8095/v1/translate/terms?provider=default&model=qw
 
 ## LLM Configuration
 
-The service supports multiple OpenAI-compatible providers selected per request with query parameters:
+The service supports multiple OpenAI-compatible providers selected per request with query parameters or the JSON `llm` object:
 
 - `provider`
 - `model`
 - `prompt_version`
+
+BRREG requests may also send:
+
+```json
+{
+  "llm": {
+    "provider": "deepseek-v4-flash",
+    "model": "deepseek-v4-flash",
+    "base_url": "https://api.deepseek.com",
+    "api_key": "..."
+  }
+}
+```
+
+When `llm.provider=default`, the service uses its env default. When
+`llm.base_url` or `llm.api_key` is present, those request values override the
+provider env values for that one request.
 
 Provider env vars:
 
@@ -54,10 +71,12 @@ Provider env vars:
 TRANSLATION_DEFAULT_PROVIDER=local
 TRANSLATION_DEFAULT_MODEL=qwen3:6b
 TRANSLATION_PROVIDER_LOCAL_BASE_URL=http://100.77.62.33:8888
+TRANSLATION_PROVIDER_LOCAL_MODEL=qwen3:6b
 # Local LLM does not require a password/API key.
 # TRANSLATION_PROVIDER_LOCAL_API_KEY=
-TRANSLATION_PROVIDER_DEEPSEEK_BASE_URL=https://api.deepseek.com
-TRANSLATION_PROVIDER_DEEPSEEK_API_KEY=...
+TRANSLATION_PROVIDER_DEEPSEEK_V4_FLASH_BASE_URL=https://api.deepseek.com
+TRANSLATION_PROVIDER_DEEPSEEK_V4_FLASH_MODEL=deepseek-v4-flash
+TRANSLATION_PROVIDER_DEEPSEEK_V4_FLASH_API_KEY=...
 ```
 
 Never pass API keys in query parameters.
@@ -71,6 +90,22 @@ Normal test suite uses fake LLMs:
 
 ```bash
 make test
+```
+
+Direct service smoke tests:
+
+```bash
+LLM_API_KEY=... uv run python scripts/smoke_translation_http.py \
+  --url http://companycollect:8095 \
+  --provider deepseek-v4-flash \
+  --model deepseek-v4-flash \
+  --base-url https://api.deepseek.com
+
+LLM_API_KEY=... uv run python scripts/smoke_translation_nats.py \
+  --nats-url nats://companycollect:4222 \
+  --provider deepseek-v4-flash \
+  --model deepseek-v4-flash \
+  --base-url https://api.deepseek.com
 ```
 
 The repository includes `tests/data/brreg_raw_records_300.json`, exported from `brreg_workflow.raw_records`, so the real LLM test uses actual BRREG payloads rather than synthetic records.

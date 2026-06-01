@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import re
 import time
 import urllib.parse
 from collections.abc import Awaitable, Callable
@@ -31,6 +32,7 @@ class LlmConfig:
     model: str
     base_url: str
     api_key: str = ""
+    provider: str = "default"
 
 
 class Crawl4AiService:
@@ -122,14 +124,15 @@ class Crawl4AiService:
             return _normalize_llm_output(await self._llm_extractor(request, response))
         if not request.llm_query:
             return None
+        llm_config = llm_config_from_selection(request.llm, default_config=self._llm_config)
 
         from crawl4ai import LLMConfig, LLMExtractionStrategy
 
         strategy = LLMExtractionStrategy(
             llm_config=LLMConfig(
-                provider=f"openai/{self._llm_config.model}",
-                api_token=self._llm_config.api_key,
-                base_url=self._llm_config.base_url,
+                provider=f"openai/{llm_config.model}",
+                api_token=llm_config.api_key,
+                base_url=llm_config.base_url,
             ),
             instruction=request.llm_query,
             schema=request.llm_schema,
@@ -267,6 +270,44 @@ def llm_config_from_env() -> LlmConfig:
     return LlmConfig(model=model, base_url=normalize_openai_api_base(base_url), api_key=api_key)
 
 
+def llm_config_from_selection(selection: Any, *, default_config: LlmConfig | None = None) -> LlmConfig:
+    default = default_config or llm_config_from_env()
+    provider = _selection_value(selection, "provider") or "default"
+    model = _selection_value(selection, "model")
+    base_url = _selection_value(selection, "base_url")
+    api_key = _selection_value(selection, "api_key")
+    if provider == "default" and not base_url and api_key is None:
+        return LlmConfig(
+            provider=provider,
+            model=model or default.model,
+            base_url=default.base_url,
+            api_key=default.api_key,
+        )
+    env_key = _provider_env_key(provider)
+    selected_base_url = (
+        base_url
+        or os.environ.get(f"CRAWL_SERVICE_PROVIDER_{env_key}_BASE_URL")
+        or default.base_url
+    )
+    selected_api_key = (
+        api_key
+        if api_key is not None
+        else os.environ.get(f"CRAWL_SERVICE_PROVIDER_{env_key}_API_KEY")
+        or default.api_key
+    )
+    selected_model = (
+        model
+        or os.environ.get(f"CRAWL_SERVICE_PROVIDER_{env_key}_MODEL")
+        or default.model
+    )
+    return LlmConfig(
+        provider=provider,
+        model=selected_model,
+        base_url=normalize_openai_api_base(selected_base_url),
+        api_key=selected_api_key,
+    )
+
+
 def normalize_openai_api_base(base_url: str) -> str:
     trimmed = base_url.strip().rstrip("/")
     if trimmed.endswith("/v1/chat/completions"):
@@ -311,3 +352,18 @@ def _optional_secret(name: str) -> str:
             return file.read().strip()
     except OSError as exc:
         raise LlmConfigError(f"{name}_FILE could not be read") from exc
+
+
+def _selection_value(selection: Any, field: str) -> str | None:
+    value = getattr(selection, field, None)
+    if value is None and isinstance(selection, dict):
+        value = selection.get(field)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None
+
+
+def _provider_env_key(provider: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", provider).strip("_")
+    return normalized.upper() or "DEFAULT"

@@ -9,6 +9,7 @@ from corpscout_crawl_service.crawl4ai_service import (
     Crawl4AiResponse,
     LlmConfig,
     llm_config_from_env,
+    llm_config_from_selection,
     search_url_for_engine,
 )
 
@@ -63,6 +64,32 @@ def test_llm_config_reads_api_key_from_file(monkeypatch, tmp_path) -> None:
     assert config.model == "deepseek-v4-flash"
     assert config.base_url == "https://api.deepseek.com/v1"
     assert config.api_key == "secret-key"
+
+
+def test_llm_config_from_selection_accepts_inline_provider() -> None:
+    config = llm_config_from_selection(
+        {
+            "provider": "deepseek-v4-flash",
+            "model": "deepseek-v4-flash",
+            "base_url": "https://api.deepseek.com",
+            "api_key": "secret-key",
+        },
+        default_config=_llm_config(),
+    )
+
+    assert config.provider == "deepseek-v4-flash"
+    assert config.model == "deepseek-v4-flash"
+    assert config.base_url == "https://api.deepseek.com/v1"
+    assert config.api_key == "secret-key"
+
+
+def test_llm_config_from_selection_uses_default_for_default_provider() -> None:
+    config = llm_config_from_selection({"provider": "default"}, default_config=_llm_config())
+
+    assert config.provider == "default"
+    assert config.model == "qwen3:6b"
+    assert config.base_url == "http://100.77.62.33:8888/v1"
+    assert config.api_key == ""
 
 
 @pytest.mark.asyncio

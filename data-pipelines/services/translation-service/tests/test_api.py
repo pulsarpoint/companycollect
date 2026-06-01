@@ -104,6 +104,34 @@ def test_api_translates_brreg_records_and_accepts_llm_query_selection() -> None:
     assert body["results"][0]["translated_payload"]["terms"]
 
 
+def test_api_translates_brreg_records_with_inline_llm_config() -> None:
+    fake_llm = FakeLLMClient()
+    app = create_app(translation_service=TranslationService(llm_client=fake_llm))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/translate/brreg-records",
+        json={
+            "records": [brreg_record_payload(1)],
+            "llm": {
+                "provider": "deepseek-v4-flash",
+                "model": "deepseek-v4-flash",
+                "base_url": "https://api.deepseek.com",
+                "api_key": "secret-key",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "deepseek-v4-flash"
+    assert body["model"] == "deepseek-v4-flash"
+    assert fake_llm.calls[0].provider == "deepseek-v4-flash"
+    assert fake_llm.calls[0].model == "deepseek-v4-flash"
+    assert fake_llm.calls[0].base_url == "https://api.deepseek.com"
+    assert fake_llm.calls[0].api_key == "secret-key"
+
+
 def test_api_translates_term_batch_and_accepts_llm_query_selection() -> None:
     app = create_app(translation_service=TranslationService(llm_client=FakeLLMClient()))
     client = TestClient(app)

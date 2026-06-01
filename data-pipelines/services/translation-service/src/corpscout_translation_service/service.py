@@ -12,13 +12,20 @@ from corpscout_translation_service.brreg import (
     to_llm_item,
     translation_item_id,
 )
-from corpscout_translation_service.llm import LLMClient, OpenAICompatibleLLMClient, default_model, default_provider
+from corpscout_translation_service.llm import (
+    LLMClient,
+    OpenAICompatibleLLMClient,
+    default_model,
+    default_provider,
+    provider_model,
+)
 from corpscout_translation_service.mocking import MockTranslationController, mock_enabled_from_env
 from corpscout_translation_service.models import (
     BrregRecord,
     BrregRecordTranslationResult,
     BrregTranslateRequest,
     BrregTranslateResponse,
+    LLMSelection,
     LLMTranslationItem,
     LLMTranslationRequest,
     LLMTermTranslation,
@@ -53,8 +60,7 @@ class TranslationService:
 
     async def translate_brreg_records(self, request: BrregTranslateRequest) -> BrregTranslateResponse:
         started = time.monotonic()
-        provider = request.llm.provider if request.llm.provider != "default" else default_provider()
-        model = request.llm.model or default_model()
+        llm = _effective_llm_selection(request.llm)
         items_by_record_id = {
             record.record_id: extract_translation_items(record.raw_payload)
             for record in request.records
@@ -63,8 +69,7 @@ class TranslationService:
         try:
             translated_by_id = await self._translate_unique_items(
                 items_by_record_id.values(),
-                provider=provider,
-                model=model,
+                llm=llm,
                 prompt_version=request.prompt_version,
                 source_lang=request.source_lang,
                 target_lang=request.target_lang,
@@ -75,7 +80,7 @@ class TranslationService:
                     record=record,
                     items=items_by_record_id[record.record_id],
                     translated_by_id=translated_by_id,
-                    model=model,
+                    model=llm.model or default_model(),
                     prompt_version=request.prompt_version,
                     source_lang=request.source_lang,
                     target_lang=request.target_lang,
@@ -97,8 +102,8 @@ class TranslationService:
             ]
 
         return _response(
-            provider=provider,
-            model=model,
+            provider=llm.provider,
+            model=llm.model or default_model(),
             prompt_version=request.prompt_version,
             records_seen=len(request.records),
             results=results,
@@ -108,7 +113,7 @@ class TranslationService:
     async def translate_terms(self, request: LLMTranslationRequest) -> LLMTranslateResponse:
         started = time.monotonic()
         provider = request.provider if request.provider != "default" else default_provider()
-        model = request.model if request.model != "default" else default_model()
+        model = request.model if request.model and request.model != "default" else provider_model(provider)
         llm_request = request.model_copy(update={"provider": provider, "model": model})
 
         if provider == "mock":
@@ -175,8 +180,7 @@ class TranslationService:
         self,
         item_groups: Iterable[list[TranslationItem]],
         *,
-        provider: str,
-        model: str,
+        llm: LLMSelection,
         prompt_version: str,
         source_lang: str,
         target_lang: str,
@@ -198,13 +202,15 @@ class TranslationService:
                         "chunk_count": len(chunks),
                         "chunk_items": len(chunk),
                         "pending_items": len(pending),
-                        "model": model,
-                        "provider": provider,
+                        "model": llm.model,
+                        "provider": llm.provider,
                     },
                 )
                 request = LLMTranslationRequest(
-                    provider=provider,
-                    model=model,
+                    provider=llm.provider,
+                    model=llm.model or default_model(),
+                    base_url=llm.base_url,
+                    api_key=llm.api_key,
                     prompt_version=prompt_version,
                     source_lang=source_lang,
                     target_lang=target_lang,
@@ -401,6 +407,12 @@ def _response(
         duration_ms=_elapsed_ms(started),
         results=results,
     )
+
+
+def _effective_llm_selection(selection: LLMSelection) -> LLMSelection:
+    provider = selection.provider if selection.provider != "default" else default_provider()
+    model = selection.model or provider_model(provider)
+    return selection.model_copy(update={"provider": provider, "model": model})
 
 
 def _elapsed_ms(started: float) -> int:

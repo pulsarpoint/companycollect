@@ -40,7 +40,7 @@ func TestTranslateBrregRecordsRequestsSubjectAndDecodesResponse(t *testing.T) {
 			OrganizationNumber: "810202572",
 			RawPayload:         json.RawMessage(`{"navn":"BORTIGARD AS"}`),
 		}},
-		LLM:           LLMSelection{Provider: "mock", Model: "mock-fast"},
+		LLM:           LLMSelection{Provider: "mock", Model: "mock-fast", BaseURL: "https://llm.example/v1", APIKey: "secret-key"},
 		PromptVersion: "v1",
 		SourceLang:    "no",
 		TargetLang:    "en",
@@ -55,7 +55,7 @@ func TestTranslateBrregRecordsRequestsSubjectAndDecodesResponse(t *testing.T) {
 			"organization_number":"810202572",
 			"raw_payload":{"navn":"BORTIGARD AS"}
 		}],
-		"llm":{"provider":"mock","model":"mock-fast"},
+		"llm":{"provider":"mock","model":"mock-fast","base_url":"https://llm.example/v1","api_key":"secret-key"},
 		"prompt_version":"v1",
 		"source_lang":"no",
 		"target_lang":"en",

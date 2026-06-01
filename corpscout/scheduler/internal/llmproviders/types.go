@@ -29,6 +29,13 @@ type ProviderConfig struct {
 	APIKey       *EncryptedSecret `json:"api_key,omitempty"`
 }
 
+type RuntimeProviderConfig struct {
+	Slug    string
+	BaseURL string
+	Model   string
+	APIKey  string
+}
+
 type ProviderPublic struct {
 	ID           uuid.UUID       `json:"id"`
 	Slug         string          `json:"slug"`

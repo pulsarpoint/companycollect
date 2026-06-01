@@ -34,7 +34,12 @@ async def test_nats_handler_replies_with_brreg_translation_response() -> None:
                     "raw_payload": {"navn": "BORTIGARD AS"},
                 }
             ],
-            "llm": {"provider": "mock", "model": "mock-fast"},
+            "llm": {
+                "provider": "mock",
+                "model": "mock-fast",
+                "base_url": "https://llm.example",
+                "api_key": "secret-key",
+            },
             "prompt_version": "v1",
             "source_lang": "no",
             "target_lang": "en",
@@ -45,6 +50,12 @@ async def test_nats_handler_replies_with_brreg_translation_response() -> None:
     await handle_brreg_translation_message(message, service)
 
     assert service.requests[0]["records"][0]["organization_number"] == "810202572"
+    assert service.requests[0]["llm"] == {
+        "provider": "mock",
+        "model": "mock-fast",
+        "base_url": "https://llm.example",
+        "api_key": "secret-key",
+    }
     assert len(message.replies) == 1
     body = json.loads(message.replies[0].decode("utf-8"))
     assert body["status"] == "succeeded"

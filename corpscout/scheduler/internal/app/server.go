@@ -43,6 +43,13 @@ func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
 	slog.Debug("scheduler database connection ready")
 
 	queries := db.New(pool)
+	llmCipher, err := llmProviderCipher(cfg)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	llmStore := llmproviders.NewStore(queries, llmCipher)
+
 	s3, err := s3client.New(cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3Bucket)
 	if err != nil {
 		pool.Close()
@@ -65,7 +72,7 @@ func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
 	}
 	slog.Debug("scheduler river client started")
 
-	temporalDeps, err := newTemporalWorkerResources(cfg, pool)
+	temporalDeps, err := newTemporalWorkerResources(cfg, pool, llmStore)
 	if err != nil {
 		_ = riverClient.Stop(ctx)
 		pool.Close()
@@ -98,17 +105,8 @@ func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
 
 	router := chi.NewRouter()
 	api := httpapi.NewHandlers(queries, riverClient, pool, s3, cfg.PostgRESTURL, temporalClient, cfg.TemporalUIURL)
-	llmCipher, err := llmProviderCipher(cfg)
-	if err != nil {
-		stopTemporalWorkers(temporalWorkers)
-		temporalClient.Close()
-		temporalDeps.Close()
-		_ = riverClient.Stop(ctx)
-		pool.Close()
-		return nil, err
-	}
 	api.ConfigureLLMProviders(
-		llmproviders.NewStore(queries, llmCipher),
+		llmStore,
 		llmproviders.NewProbeClient(http.DefaultClient, llmCipher),
 	)
 	api.RegisterRoutes(router)

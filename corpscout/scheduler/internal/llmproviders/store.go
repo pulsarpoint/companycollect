@@ -64,6 +64,34 @@ func (s *Store) ProviderConfigForTest(ctx context.Context, id uuid.UUID) (Provid
 	return providerConfigFromRow(row), nil
 }
 
+func (s *Store) RuntimeConfigBySlug(ctx context.Context, slug string) (RuntimeProviderConfig, error) {
+	slug = strings.ToLower(strings.TrimSpace(slug))
+	if slug == "" || slug == "default" {
+		return RuntimeProviderConfig{Slug: "default"}, nil
+	}
+	row, err := s.q.GetLLMProviderBySlugForUse(ctx, slug)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RuntimeProviderConfig{}, errors.New("llm provider not found")
+		}
+		return RuntimeProviderConfig{}, errors.Wrap(err, "get llm provider by slug")
+	}
+	if !row.Enabled {
+		return RuntimeProviderConfig{}, errors.New("llm provider is disabled")
+	}
+	config := providerConfigFromRow(row)
+	apiKey, err := s.apiKey(config)
+	if err != nil {
+		return RuntimeProviderConfig{}, err
+	}
+	return RuntimeProviderConfig{
+		Slug:    config.Slug,
+		BaseURL: config.BaseURL,
+		Model:   config.Model,
+		APIKey:  apiKey,
+	}, nil
+}
+
 func (s *Store) Create(ctx context.Context, command UpsertProviderCommand) (ProviderPublic, error) {
 	command = normalizeCommand(command)
 	if err := validateCommand(command); err != nil {
@@ -177,6 +205,20 @@ func (s *Store) encryptSecretForWrite(apiKey string) (EncryptedSecret, error) {
 		return EncryptedSecret{Algorithm: EncryptionAlgorithmAES256GCM, KeyVersion: DefaultKeyVersion}, nil
 	}
 	return s.cipher.Encrypt(apiKey)
+}
+
+func (s *Store) apiKey(config ProviderConfig) (string, error) {
+	if config.APIKey == nil {
+		return "", nil
+	}
+	if s.cipher == nil {
+		return "", errors.New("llm provider encryption key is required before using stored api keys")
+	}
+	apiKey, err := s.cipher.Decrypt(*config.APIKey)
+	if err != nil {
+		return "", errors.Wrap(err, "decrypt llm provider api key")
+	}
+	return apiKey, nil
 }
 
 func providerConfigFromRow(row db.LlmProvider) ProviderConfig {

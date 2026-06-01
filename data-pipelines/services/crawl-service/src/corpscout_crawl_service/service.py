@@ -80,6 +80,7 @@ class CrawlService:
                     "links": request.links[:30],
                     "compact_markdown": _compact_markdown(request.markdown),
                     "timeout_seconds": request.timeout_seconds,
+                    "llm": request.llm.model_dump(mode="json"),
                 }
             )
         except Exception as exc:
@@ -133,6 +134,7 @@ class CrawlService:
                     "candidate_reason": request.candidate_reason,
                     "compact_markdown": _compact_markdown(request.markdown),
                     "timeout_seconds": request.timeout_seconds,
+                    "llm": request.llm.model_dump(mode="json"),
                 }
             )
         except Exception as exc:
@@ -169,6 +171,7 @@ class CrawlService:
                 existing_website=brreg_request.existing_website or _raw_website(brreg_request.raw_payload),
                 search_engine=brreg_request.search_provider or "duckduckgo",
                 prompt_version=brreg_request.prompt_version,
+                llm=brreg_request.llm,
                 limits=brreg_request.limits,
             )
         )
@@ -770,6 +773,7 @@ def _search_analysis_payload(
         "links": response.links[:30],
         "compact_markdown": _compact_markdown(response.markdown or ""),
         "timeout_seconds": request.limits.timeout_seconds,
+        "llm": request.llm.model_dump(mode="json"),
     }
 
 
@@ -800,6 +804,7 @@ def _site_analysis_payload(
         "relationship_hint": classification.get("relationship"),
         "compact_markdown": _compact_markdown(response.markdown or ""),
         "timeout_seconds": request.limits.timeout_seconds,
+        "llm": request.llm.model_dump(mode="json"),
     }
 
 

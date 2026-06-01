@@ -143,6 +143,44 @@ CRAWL_SERVICE_LLM_API_KEY=
 service fails startup if either is missing. `CRAWL_SERVICE_LLM_API_KEY` may be
 empty for local LLM endpoints that do not require authentication.
 
+Domain discovery requests may override the default provider for one request:
+
+```json
+{
+  "llm": {
+    "provider": "deepseek-v4-flash",
+    "model": "deepseek-v4-flash",
+    "base_url": "https://api.deepseek.com",
+    "api_key": "..."
+  }
+}
+```
+
+Provider-specific env fallback is also supported when a request only passes
+`llm.provider`:
+
+```bash
+CRAWL_SERVICE_PROVIDER_DEEPSEEK_V4_FLASH_BASE_URL=https://api.deepseek.com
+CRAWL_SERVICE_PROVIDER_DEEPSEEK_V4_FLASH_MODEL=deepseek-v4-flash
+CRAWL_SERVICE_PROVIDER_DEEPSEEK_V4_FLASH_API_KEY=...
+```
+
+Direct service smoke tests:
+
+```bash
+LLM_API_KEY=... uv run python scripts/smoke_crawl_http.py \
+  --url http://companycollect:8096 \
+  --provider deepseek-v4-flash \
+  --model deepseek-v4-flash \
+  --base-url https://api.deepseek.com
+
+LLM_API_KEY=... uv run python scripts/smoke_crawl_nats.py \
+  --nats-url nats://companycollect:4222 \
+  --provider deepseek-v4-flash \
+  --model deepseek-v4-flash \
+  --base-url https://api.deepseek.com
+```
+
 ## Crawler Configuration
 
 The Docker image installs crawl4ai and Playwright Chromium in cached layers.

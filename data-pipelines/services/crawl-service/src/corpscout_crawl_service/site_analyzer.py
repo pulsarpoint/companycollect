@@ -6,7 +6,7 @@ from typing import Any, Protocol
 import httpx
 from json_repair import repair_json
 
-from corpscout_crawl_service.crawl4ai_service import LlmConfig, llm_config_from_env
+from corpscout_crawl_service.crawl4ai_service import LlmConfig, llm_config_from_env, llm_config_from_selection
 
 
 class SiteAnalyzer(Protocol):
@@ -28,6 +28,7 @@ class DirectLlmAnalyzer:
             _search_analysis_prompt(payload),
             timeout_seconds=payload.get("timeout_seconds", 60),
             list_key="candidates",
+            llm=payload.get("llm"),
         )
 
     async def analyze_site(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -35,18 +36,27 @@ class DirectLlmAnalyzer:
             _site_analysis_prompt(payload),
             timeout_seconds=payload.get("timeout_seconds", 60),
             list_key=None,
+            llm=payload.get("llm"),
         )
 
-    async def _completion_json(self, prompt: str, *, timeout_seconds: int, list_key: str | None) -> dict[str, Any]:
+    async def _completion_json(
+        self,
+        prompt: str,
+        *,
+        timeout_seconds: int,
+        list_key: str | None,
+        llm: Any | None,
+    ) -> dict[str, Any]:
+        llm_config = llm_config_from_selection(llm, default_config=self._llm_config)
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             response = await client.post(
-                f"{self._llm_config.base_url}/chat/completions",
+                f"{llm_config.base_url}/chat/completions",
                 headers={
-                    "authorization": f"Bearer {self._llm_config.api_key or 'local-no-key-required'}",
+                    "authorization": f"Bearer {llm_config.api_key or 'local-no-key-required'}",
                     "content-type": "application/json",
                 },
                 json={
-                    "model": self._llm_config.model,
+                    "model": llm_config.model,
                     "messages": [
                         {
                             "role": "system",

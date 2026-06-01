@@ -12,6 +12,8 @@ BatchStatus = Literal["succeeded", "partial", "failed"]
 class LLMSelection(BaseModel):
     provider: str = Field(default="default", min_length=1)
     model: str | None = Field(default=None, min_length=1)
+    base_url: str | None = Field(default=None, min_length=1)
+    api_key: str | None = Field(default=None)
 
 
 class BrregRecord(BaseModel):
@@ -38,6 +40,8 @@ class LLMTranslationItem(BaseModel):
 class LLMTranslationRequest(BaseModel):
     provider: str
     model: str
+    base_url: str | None = Field(default=None, min_length=1)
+    api_key: str | None = Field(default=None)
     prompt_version: str
     source_lang: str
     target_lang: str

@@ -15,6 +15,8 @@ const DefaultBrregTranslationSubject = "brreg.translation.translate"
 type LLMSelection struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model,omitempty"`
+	BaseURL  string `json:"base_url,omitempty"`
+	APIKey   string `json:"api_key,omitempty"`
 }
 
 type BrregRecord struct {
@@ -120,6 +122,8 @@ func (c *Client) TranslateBrregRecords(ctx context.Context, request BrregTransla
 		"records_count", len(request.Records),
 		"provider", request.LLM.Provider,
 		"model", request.LLM.Model,
+		"has_inline_base_url", request.LLM.BaseURL != "",
+		"has_inline_api_key", request.LLM.APIKey != "",
 		"prompt_version", request.PromptVersion,
 		"payload_bytes", len(payload),
 	)

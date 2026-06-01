@@ -10,6 +10,7 @@ import (
 	brregactions "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/actions"
 	brregdb "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/db"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/config"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/llmproviders"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/translationclient"
 )
 
@@ -18,7 +19,7 @@ type temporalWorkerResources struct {
 	translationActions *brregactions.TranslationActions
 }
 
-func newTemporalWorkerResources(cfg config.Config, pool brregdb.TxPool) (*temporalWorkerResources, error) {
+func newTemporalWorkerResources(cfg config.Config, pool brregdb.TxPool, llmStore *llmproviders.Store) (*temporalWorkerResources, error) {
 	slog.Debug("creating temporal worker resources")
 	if cfg.NATSURL == "" {
 		return nil, errors.New("CORPSCOUT_NATS_URL is required for temporal translation actions")
@@ -31,7 +32,7 @@ func newTemporalWorkerResources(cfg config.Config, pool brregdb.TxPool) (*tempor
 	gateway := brregdb.New(pool)
 	return &temporalWorkerResources{
 		translationClient:  translator,
-		translationActions: brregactions.NewTranslationActions(gateway, translator),
+		translationActions: brregactions.NewTranslationActions(gateway, translator, llmStore),
 	}, nil
 }
 

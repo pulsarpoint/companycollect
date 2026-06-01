@@ -21,8 +21,16 @@ SiteType = Literal[
 SiteRelationship = Literal["primary_web_presence", "evidence_profile", "supporting_reference", "unrelated"]
 
 
+class LLMSelection(BaseModel):
+    provider: str = Field(default="default", min_length=1)
+    model: str | None = Field(default=None, min_length=1)
+    base_url: str | None = Field(default=None, min_length=1)
+    api_key: str | None = Field(default=None)
+
+
 class Crawl4AiRequest(BaseModel):
     url: str = Field(min_length=1)
+    llm: LLMSelection = Field(default_factory=LLMSelection)
     llm_enabled: bool = False
     llm_query: str | None = Field(default=None, min_length=1)
     llm_schema: dict[str, Any] | None = None
@@ -61,6 +69,7 @@ class BrregDomainDiscoveryRequest(BaseModel):
     country: str = Field(default="NO", min_length=2)
     search_provider: str | None = Field(default=None, min_length=1)
     prompt_version: str = Field(default="v1", min_length=1)
+    llm: LLMSelection = Field(default_factory=LLMSelection)
     limits: DomainDiscoverLimits = Field(default_factory=DomainDiscoverLimits)
 
 
@@ -78,6 +87,7 @@ class DomainDiscoverRequest(BaseModel):
     search_engine: str = Field(default="duckduckgo", min_length=1)
     search_term: str | None = Field(default=None, min_length=1)
     prompt_version: str = Field(default="v1", min_length=1)
+    llm: LLMSelection = Field(default_factory=LLMSelection)
     limits: DomainDiscoverLimits = Field(default_factory=DomainDiscoverLimits)
 
     @field_validator("search_engine")
@@ -120,6 +130,7 @@ class SearchAnalyzeRequest(BaseModel):
     candidate_threshold: int = Field(default=50, ge=0, le=100)
     max_candidates: int = Field(default=20, ge=1, le=50)
     timeout_seconds: int = Field(default=60, ge=1, le=300)
+    llm: LLMSelection = Field(default_factory=LLMSelection)
 
     @field_validator("search_engine")
     @classmethod
@@ -153,6 +164,7 @@ class PageAnalyzeRequest(BaseModel):
     candidate_score: int = Field(default=0, ge=0, le=100)
     candidate_reason: str = ""
     timeout_seconds: int = Field(default=60, ge=1, le=300)
+    llm: LLMSelection = Field(default_factory=LLMSelection)
 
 
 class ScoredLink(BaseModel):
