@@ -72,6 +72,12 @@ selected_raw_records AS (
   SELECT
     rr.id,
     rr.last_seen_at,
+    COALESCE(jsonb_array_length(
+      CASE
+        WHEN jsonb_typeof(s.selection_definition->'ids') = 'array' THEN s.selection_definition->'ids'
+        ELSE '[]'::jsonb
+      END
+    ), 0) > 0 AS selected_by_id,
     (
       ($1::text = 'translate' AND ri.translation_status IN ('not_started', 'failed'))
       OR ($1::text = 'discover_domains' AND ri.domain_status IN ('not_started', 'failed'))
@@ -114,9 +120,18 @@ failed_task_ids AS (
   JOIN brreg_workflow.raw_record_task_states ts
     ON ts.raw_record_id = srr.id
    AND ts.task_type = $1::text
-  WHERE ts.status = 'failed_retryable'
-    AND ts.attempt_count < $5::integer
-    AND (ts.next_retry_at IS NULL OR ts.next_retry_at <= now())
+  WHERE srr.needs_artifact
+    AND (
+      (
+        srr.selected_by_id
+        AND ts.status IN ('failed_retryable', 'failed_terminal')
+      )
+      OR (
+        ts.status = 'failed_retryable'
+        AND ts.attempt_count < $5::integer
+        AND (ts.next_retry_at IS NULL OR ts.next_retry_at <= now())
+      )
+    )
   ORDER BY ts.next_retry_at ASC NULLS FIRST, ts.raw_record_id ASC
   LIMIT $4::integer
 ),
@@ -226,14 +241,7 @@ claimed_task_ids AS (
   WHERE brreg_workflow.raw_record_task_states.task_type = $1::text
     AND (
       brreg_workflow.raw_record_task_states.status = 'pending'
-      OR (
-        brreg_workflow.raw_record_task_states.status = 'failed_retryable'
-        AND brreg_workflow.raw_record_task_states.attempt_count < $5::integer
-        AND (
-          brreg_workflow.raw_record_task_states.next_retry_at IS NULL
-          OR brreg_workflow.raw_record_task_states.next_retry_at <= now()
-        )
-      )
+      OR brreg_workflow.raw_record_task_states.status IN ('failed_retryable', 'failed_terminal')
       OR (
         brreg_workflow.raw_record_task_states.status = 'running'
         AND brreg_workflow.raw_record_task_states.attempt_count < $5::integer
@@ -454,20 +462,21 @@ WITH filtered_records AS (
     ts.next_retry_at,
     ts.lease_until,
     ts.last_started_at,
+    COALESCE(cardinality($1::text[]), 0) > 0 AS selected_by_id,
     (
-      ($1::text = 'translate' AND ri.translation_status IN ('not_started', 'failed'))
-      OR ($1::text = 'discover_domains' AND ri.domain_status IN ('not_started', 'failed'))
-      OR ($1::text = 'convert_financials' AND ri.financial_status IN ('not_started', 'failed'))
+      ($2::text = 'translate' AND ri.translation_status IN ('not_started', 'failed'))
+      OR ($2::text = 'discover_domains' AND ri.domain_status IN ('not_started', 'failed'))
+      OR ($2::text = 'convert_financials' AND ri.financial_status IN ('not_started', 'failed'))
     ) AS artifact_needed
   FROM brreg_workflow.v_raw_record_list ri
   JOIN brreg_workflow.raw_records rr ON rr.id = ri.id
   LEFT JOIN brreg_workflow.raw_record_task_states ts
     ON ts.raw_record_id = rr.id
-   AND ts.task_type = $1::text
+   AND ts.task_type = $2::text
   WHERE rr.is_current = true
     AND (
-      COALESCE(cardinality($2::text[]), 0) = 0
-      OR rr.id::text = ANY($2::text[])
+      COALESCE(cardinality($1::text[]), 0) = 0
+      OR rr.id::text = ANY($1::text[])
     )
     AND (
       $3::text IS NULL
@@ -502,6 +511,11 @@ eligible_records AS (
     (task_state_raw_record_id IS NULL AND artifact_needed)
     OR task_status = 'pending'
     OR (
+      selected_by_id
+      AND artifact_needed
+      AND task_status IN ('failed_retryable', 'failed_terminal')
+    )
+    OR (
       task_status = 'failed_retryable'
       AND attempt_count < $9::integer
       AND (next_retry_at IS NULL OR next_retry_at <= now())
@@ -524,7 +538,7 @@ selection AS (
     records_selected
   ) VALUES (
     $11::uuid,
-    $1::text,
+    $2::text,
     $12::text,
     COALESCE($13::jsonb, '{}'::jsonb),
     (SELECT count(*)::integer FROM eligible_records)
@@ -547,8 +561,8 @@ FROM selection
 `
 
 type CreateBrregWorkflowTaskSelectionParams struct {
-	TaskType            string    `json:"task_type"`
 	SelectedIds         []string  `json:"selected_ids"`
+	TaskType            string    `json:"task_type"`
 	Query               *string   `json:"query"`
 	LifecycleState      *string   `json:"lifecycle_state"`
 	TranslationStatus   *string   `json:"translation_status"`
@@ -570,8 +584,8 @@ type CreateBrregWorkflowTaskSelectionRow struct {
 
 func (q *Queries) CreateBrregWorkflowTaskSelection(ctx context.Context, arg CreateBrregWorkflowTaskSelectionParams) (CreateBrregWorkflowTaskSelectionRow, error) {
 	row := q.db.QueryRow(ctx, createBrregWorkflowTaskSelection,
-		arg.TaskType,
 		arg.SelectedIds,
+		arg.TaskType,
 		arg.Query,
 		arg.LifecycleState,
 		arg.TranslationStatus,

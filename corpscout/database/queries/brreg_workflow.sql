@@ -424,6 +424,7 @@ WITH filtered_records AS (
     ts.next_retry_at,
     ts.lease_until,
     ts.last_started_at,
+    COALESCE(cardinality(sqlc.arg('selected_ids')::text[]), 0) > 0 AS selected_by_id,
     (
       (sqlc.arg('task_type')::text = 'translate' AND ri.translation_status IN ('not_started', 'failed'))
       OR (sqlc.arg('task_type')::text = 'discover_domains' AND ri.domain_status IN ('not_started', 'failed'))
@@ -471,6 +472,11 @@ eligible_records AS (
   WHERE (
     (task_state_raw_record_id IS NULL AND artifact_needed)
     OR task_status = 'pending'
+    OR (
+      selected_by_id
+      AND artifact_needed
+      AND task_status IN ('failed_retryable', 'failed_terminal')
+    )
     OR (
       task_status = 'failed_retryable'
       AND attempt_count < sqlc.arg('max_attempts')::integer
@@ -531,6 +537,12 @@ selected_raw_records AS (
   SELECT
     rr.id,
     rr.last_seen_at,
+    COALESCE(jsonb_array_length(
+      CASE
+        WHEN jsonb_typeof(s.selection_definition->'ids') = 'array' THEN s.selection_definition->'ids'
+        ELSE '[]'::jsonb
+      END
+    ), 0) > 0 AS selected_by_id,
     (
       (sqlc.arg('task_type')::text = 'translate' AND ri.translation_status IN ('not_started', 'failed'))
       OR (sqlc.arg('task_type')::text = 'discover_domains' AND ri.domain_status IN ('not_started', 'failed'))
@@ -573,9 +585,18 @@ failed_task_ids AS (
   JOIN brreg_workflow.raw_record_task_states ts
     ON ts.raw_record_id = srr.id
    AND ts.task_type = sqlc.arg('task_type')::text
-  WHERE ts.status = 'failed_retryable'
-    AND ts.attempt_count < sqlc.arg('max_attempts')::integer
-    AND (ts.next_retry_at IS NULL OR ts.next_retry_at <= now())
+  WHERE srr.needs_artifact
+    AND (
+      (
+        srr.selected_by_id
+        AND ts.status IN ('failed_retryable', 'failed_terminal')
+      )
+      OR (
+        ts.status = 'failed_retryable'
+        AND ts.attempt_count < sqlc.arg('max_attempts')::integer
+        AND (ts.next_retry_at IS NULL OR ts.next_retry_at <= now())
+      )
+    )
   ORDER BY ts.next_retry_at ASC NULLS FIRST, ts.raw_record_id ASC
   LIMIT sqlc.arg('batch_size')::integer
 ),
@@ -685,14 +706,7 @@ claimed_task_ids AS (
   WHERE brreg_workflow.raw_record_task_states.task_type = sqlc.arg('task_type')::text
     AND (
       brreg_workflow.raw_record_task_states.status = 'pending'
-      OR (
-        brreg_workflow.raw_record_task_states.status = 'failed_retryable'
-        AND brreg_workflow.raw_record_task_states.attempt_count < sqlc.arg('max_attempts')::integer
-        AND (
-          brreg_workflow.raw_record_task_states.next_retry_at IS NULL
-          OR brreg_workflow.raw_record_task_states.next_retry_at <= now()
-        )
-      )
+      OR brreg_workflow.raw_record_task_states.status IN ('failed_retryable', 'failed_terminal')
       OR (
         brreg_workflow.raw_record_task_states.status = 'running'
         AND brreg_workflow.raw_record_task_states.attempt_count < sqlc.arg('max_attempts')::integer
