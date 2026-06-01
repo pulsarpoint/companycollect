@@ -5,8 +5,12 @@ from typing import Any
 
 import pytest
 
-from corpscout_crawl_service.models import DomainDiscoverResponse
-from corpscout_crawl_service.nats_worker import handle_brreg_domain_discovery_message
+from corpscout_crawl_service.models import Crawl4AiResponse, DomainDiscoverResponse, SearchAnalyzeResponse, ScoredLink
+from corpscout_crawl_service.nats_worker import (
+    handle_brreg_domain_discovery_message,
+    handle_search_analyze_message,
+    handle_search_fetch_message,
+)
 
 
 @pytest.mark.asyncio
@@ -67,6 +71,81 @@ async def test_nats_handler_returns_structured_error_for_invalid_payload() -> No
     assert body["errors"][0]["code"] == "invalid_nats_payload"
 
 
+@pytest.mark.asyncio
+async def test_search_fetch_nats_handler_replies_with_search_page_artifact() -> None:
+    service = FakeSearchActionService()
+    message = FakeNatsMessage(
+        {
+            "search_term": "BORTIGARD AS NO website",
+            "search_engine": "duckduckgo",
+            "timeout_seconds": 60,
+        }
+    )
+
+    await handle_search_fetch_message(message, service)
+
+    assert service.fetch_requests == [
+        {
+            "search_term": "BORTIGARD AS NO website",
+            "search_engine": "duckduckgo",
+            "timeout_seconds": 60,
+        }
+    ]
+    body = json.loads(message.replies[0].decode("utf-8"))
+    assert body["status"] == "succeeded"
+    assert body["markdown_hash"] == "search-hash"
+    assert body["links"] == ["https://bortigard.no/"]
+
+
+@pytest.mark.asyncio
+async def test_search_analyze_nats_handler_replies_with_candidates() -> None:
+    service = FakeSearchActionService()
+    message = FakeNatsMessage(
+        {
+            "company_name": "BORTIGARD AS",
+            "organization_number": "810202572",
+            "country": "NO",
+            "search_engine": "duckduckgo",
+            "search_term": "BORTIGARD AS NO website",
+            "links": ["https://bortigard.no/"],
+            "markdown": "# Search results",
+            "llm": {
+                "provider": "deepseek-v4-flash",
+                "model": "deepseek-v4-flash",
+                "base_url": "https://api.deepseek.com",
+                "api_key": "secret-key",
+            },
+        }
+    )
+
+    await handle_search_analyze_message(message, service)
+
+    assert service.analyze_requests[0]["company_name"] == "BORTIGARD AS"
+    assert service.analyze_requests[0]["llm"] == {
+        "provider": "deepseek-v4-flash",
+        "model": "deepseek-v4-flash",
+        "base_url": "https://api.deepseek.com",
+        "api_key": "secret-key",
+    }
+    body = json.loads(message.replies[0].decode("utf-8"))
+    assert body["status"] == "succeeded"
+    assert body["candidates"][0]["normalized_domain"] == "bortigard.no"
+    assert body["candidates"][0]["score"] == 88
+
+
+@pytest.mark.asyncio
+async def test_search_fetch_nats_handler_returns_structured_error_for_invalid_payload() -> None:
+    service = FakeSearchActionService()
+    message = FakeRawNatsMessage(b"{not-json")
+
+    await handle_search_fetch_message(message, service)
+
+    assert service.fetch_requests == []
+    body = json.loads(message.replies[0].decode("utf-8"))
+    assert body["status"] == "failed"
+    assert body["error"]["code"] == "invalid_nats_payload"
+
+
 class FakeBrregDomainService:
     def __init__(self, response: DomainDiscoverResponse) -> None:
         self.response = response
@@ -75,6 +154,39 @@ class FakeBrregDomainService:
     async def discover_brreg_domain(self, request: Any) -> DomainDiscoverResponse:
         self.requests.append(request.model_dump(mode="json"))
         return self.response
+
+
+class FakeSearchActionService:
+    def __init__(self) -> None:
+        self.fetch_requests: list[dict[str, Any]] = []
+        self.analyze_requests: list[dict[str, Any]] = []
+
+    async def fetch_search_page(self, request: Any) -> Crawl4AiResponse:
+        self.fetch_requests.append(request.model_dump(mode="json"))
+        return Crawl4AiResponse(
+            url="https://html.duckduckgo.com/html/?q=BORTIGARD%20AS%20NO%20website",
+            final_url="https://html.duckduckgo.com/html/?q=BORTIGARD%20AS%20NO%20website",
+            status="succeeded",
+            markdown="# Search results",
+            markdown_hash="search-hash",
+            links=["https://bortigard.no/"],
+            duration_ms=10,
+        )
+
+    async def analyze_search_page(self, request: Any) -> SearchAnalyzeResponse:
+        self.analyze_requests.append(request.model_dump(mode="json"))
+        return SearchAnalyzeResponse(
+            status="succeeded",
+            candidates=[
+                ScoredLink(
+                    url="https://bortigard.no/",
+                    domain="bortigard.no",
+                    normalized_domain="bortigard.no",
+                    score=88,
+                    reason="Search result matches.",
+                )
+            ],
+        )
 
 
 class FakeNatsMessage:

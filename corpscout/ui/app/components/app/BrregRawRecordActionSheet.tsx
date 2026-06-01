@@ -10,8 +10,9 @@ import {
   BrregTranslationActionForm,
   type BrregActionScope,
 } from "~/components/app/BrregTranslationActionForm";
+import { BrregDomainSearchActionForm } from "~/components/app/BrregDomainSearchActionForm";
 
-type BrregRawRecordAction = "" | "translation";
+type BrregRawRecordAction = "" | "translation" | "domain_search";
 
 interface Props {
   open: boolean;
@@ -32,6 +33,11 @@ const AVAILABLE_ACTIONS: Array<{
     key: "translation",
     label: "Translation",
     description: "Translate BRREG raw payloads into English artifacts.",
+  },
+  {
+    key: "domain_search",
+    label: "Domain search",
+    description: "Fetch search pages and extract candidate websites.",
   },
 ];
 
@@ -85,6 +91,17 @@ export function BrregRawRecordActionSheet({
 
           {selectedAction === "translation" && (
             <BrregTranslationActionForm
+              selectedIds={selectedIds}
+              totalCount={totalCount}
+              filters={filters}
+              initialScope={initialScope}
+              onStarted={onStarted}
+              onClose={() => onOpenChange(false)}
+            />
+          )}
+
+          {selectedAction === "domain_search" && (
+            <BrregDomainSearchActionForm
               selectedIds={selectedIds}
               totalCount={totalCount}
               filters={filters}

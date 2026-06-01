@@ -7,15 +7,26 @@ import os
 from typing import Any, Protocol
 
 import nats
+from pydantic import BaseModel
 from pydantic import ValidationError
 
-from corpscout_crawl_service.models import BrregDomainDiscoveryRequest, DomainDiscoverResponse, ServiceError
+from corpscout_crawl_service.models import (
+    BrregDomainDiscoveryRequest,
+    Crawl4AiResponse,
+    DomainDiscoverResponse,
+    SearchAnalyzeRequest,
+    SearchAnalyzeResponse,
+    SearchFetchRequest,
+    ServiceError,
+)
 from corpscout_crawl_service.mocking import MockCrawlService, mock_enabled_from_env
 from corpscout_crawl_service.service import CrawlService
 
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_NATS_SUBJECT = "brreg.domain.discover"
+DEFAULT_SEARCH_FETCH_SUBJECT = "brreg.domain.search.fetch"
+DEFAULT_SEARCH_ANALYZE_SUBJECT = "brreg.domain.search.analyze"
 DEFAULT_NATS_QUEUE = "brreg-domain-crawl"
 
 
@@ -27,6 +38,12 @@ class NatsMessage(Protocol):
 
 class BrregDomainDiscoveryService(Protocol):
     async def discover_brreg_domain(self, request: BrregDomainDiscoveryRequest) -> DomainDiscoverResponse: ...
+
+
+class SearchActionService(Protocol):
+    async def fetch_search_page(self, request: SearchFetchRequest) -> Crawl4AiResponse: ...
+
+    async def analyze_search_page(self, request: SearchAnalyzeRequest) -> SearchAnalyzeResponse: ...
 
 
 async def handle_brreg_domain_discovery_message(
@@ -49,25 +66,91 @@ async def handle_brreg_domain_discovery_message(
     await _respond(message, response)
 
 
+async def handle_search_fetch_message(
+    message: NatsMessage,
+    service: SearchActionService,
+) -> None:
+    try:
+        payload = json.loads(message.data.decode("utf-8"))
+        request = SearchFetchRequest.model_validate(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValidationError) as exc:
+        await _respond(message, _failed_crawl_response("invalid_nats_payload", "Invalid search fetch request.", exc))
+        return
+
+    try:
+        response = await service.fetch_search_page(request)
+    except Exception as exc:  # noqa: BLE001 - boundary handler must return structured failures.
+        LOGGER.exception("search fetch NATS handler failed")
+        response = _failed_crawl_response("crawl_worker_error", "Search fetch worker failed.", exc)
+
+    await _respond(message, response)
+
+
+async def handle_search_analyze_message(
+    message: NatsMessage,
+    service: SearchActionService,
+) -> None:
+    try:
+        payload = json.loads(message.data.decode("utf-8"))
+        request = SearchAnalyzeRequest.model_validate(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValidationError) as exc:
+        await _respond(
+            message,
+            _failed_search_analyze_response("invalid_nats_payload", "Invalid search analysis request.", exc),
+        )
+        return
+
+    try:
+        response = await service.analyze_search_page(request)
+    except Exception as exc:  # noqa: BLE001 - boundary handler must return structured failures.
+        LOGGER.exception("search analysis NATS handler failed")
+        response = _failed_search_analyze_response("crawl_worker_error", "Search analysis worker failed.", exc)
+
+    await _respond(message, response)
+
+
 async def run_worker() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     service: CrawlService | MockCrawlService = MockCrawlService.from_env() if mock_enabled_from_env() else CrawlService()
     nats_url = os.getenv("NATS_URL", "nats://localhost:4222")
-    subject = os.getenv("NATS_SUBJECT", DEFAULT_NATS_SUBJECT)
+    domain_discovery_subject = os.getenv(
+        "CRAWL_NATS_BRREG_DOMAIN_DISCOVERY_SUBJECT",
+        os.getenv("NATS_SUBJECT", DEFAULT_NATS_SUBJECT),
+    )
+    search_fetch_subject = os.getenv("CRAWL_NATS_SEARCH_FETCH_SUBJECT", DEFAULT_SEARCH_FETCH_SUBJECT)
+    search_analyze_subject = os.getenv("CRAWL_NATS_SEARCH_ANALYZE_SUBJECT", DEFAULT_SEARCH_ANALYZE_SUBJECT)
     queue = os.getenv("NATS_QUEUE", DEFAULT_NATS_QUEUE)
     max_concurrent = _positive_int_from_env("CRAWL_WORKER_MAX_CONCURRENT_REQUESTS", 1)
     semaphore = asyncio.Semaphore(max_concurrent)
 
     await service.start()
     nc = await nats.connect(nats_url)
-    LOGGER.info("crawl-service NATS worker connected subject=%s queue=%s max_concurrent=%s", subject, queue, max_concurrent)
+    LOGGER.info(
+        "crawl-service NATS worker connected subjects=%s queue=%s max_concurrent=%s",
+        ",".join(_configured_subjects(domain_discovery_subject, search_fetch_subject, search_analyze_subject)),
+        queue,
+        max_concurrent,
+    )
 
-    async def callback(message: Any) -> None:
+    async def domain_callback(message: Any) -> None:
         async with semaphore:
             await handle_brreg_domain_discovery_message(message, service)
 
+    async def search_fetch_callback(message: Any) -> None:
+        async with semaphore:
+            await handle_search_fetch_message(message, service)
+
+    async def search_analyze_callback(message: Any) -> None:
+        async with semaphore:
+            await handle_search_analyze_message(message, service)
+
     try:
-        await nc.subscribe(subject, queue=queue, cb=callback)
+        if domain_discovery_subject:
+            await nc.subscribe(domain_discovery_subject, queue=queue, cb=domain_callback)
+        if search_fetch_subject:
+            await nc.subscribe(search_fetch_subject, queue=queue, cb=search_fetch_callback)
+        if search_analyze_subject:
+            await nc.subscribe(search_analyze_subject, queue=queue, cb=search_analyze_callback)
         while True:
             await asyncio.sleep(3600)
     finally:
@@ -91,7 +174,36 @@ def _failed_response(code: str, message: str, exc: Exception) -> DomainDiscoverR
     )
 
 
-async def _respond(message: NatsMessage, response: DomainDiscoverResponse) -> None:
+def _failed_crawl_response(code: str, message: str, exc: Exception) -> Crawl4AiResponse:
+    return Crawl4AiResponse(
+        url="",
+        final_url="",
+        status="failed",
+        error={
+            "code": code,
+            "message": message,
+            "category": "crawl_service",
+            "retry_strategy": "retry_with_backoff",
+            "detail": {"error": str(exc)},
+        },
+        duration_ms=0,
+    )
+
+
+def _failed_search_analyze_response(code: str, message: str, exc: Exception) -> SearchAnalyzeResponse:
+    return SearchAnalyzeResponse(
+        status="failed",
+        error=ServiceError(
+            code=code,
+            message=message,
+            category="crawl_service",
+            retry_strategy="retry_with_backoff",
+            detail={"error": str(exc)},
+        ),
+    )
+
+
+async def _respond(message: NatsMessage, response: BaseModel) -> None:
     payload = response.model_dump_json(exclude_none=True).encode("utf-8")
     await message.respond(payload)
 
@@ -105,3 +217,7 @@ def _positive_int_from_env(key: str, default: int) -> int:
     except ValueError:
         return default
     return parsed if parsed > 0 else default
+
+
+def _configured_subjects(*subjects: str | None) -> list[str]:
+    return [subject for subject in subjects if subject]

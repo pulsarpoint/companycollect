@@ -292,6 +292,29 @@ export const api = {
       body,
     ),
 
+  searchBrregDomains: (
+    body: {
+      ids?: string[];
+      filters?: Record<string, string>;
+      limit?: number;
+      batch_size?: number;
+      max_attempts?: number;
+      max_parallel_tasks?: number;
+      lease_seconds?: number;
+      search_engine?: string;
+      provider?: string;
+      model?: string;
+      candidate_threshold?: number;
+      max_candidates?: number;
+      timeout_seconds?: number;
+      trigger?: string;
+    } = {},
+  ) =>
+    post<{ status: string; workflow_id: string; workflow_run_id?: string }>(
+      "/workflows/brreg/domain-search",
+      body,
+    ),
+
   cancelJob: (id: number) =>
     post<{ status: string; id: number }>(`/jobs/${id}/cancel`, {}),
 

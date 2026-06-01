@@ -9,7 +9,7 @@ import (
 	"github.com/pulsarpoint/corpscout/scheduler/internal/config"
 )
 
-func TestNewTemporalWorkersCreatesTranslationWorker(t *testing.T) {
+func TestNewTemporalWorkersCreatesBrregWorkers(t *testing.T) {
 	temporalClient, err := client.NewLazyClient(client.Options{
 		HostPort:  "localhost:7233",
 		Namespace: "corpscout",
@@ -22,8 +22,8 @@ func TestNewTemporalWorkersCreatesTranslationWorker(t *testing.T) {
 	workers := newTemporalWorkers(temporalClient, &temporalWorkerResources{})
 	defer stopTemporalWorkers(workers)
 
-	if len(workers) != 1 {
-		t.Fatalf("expected 1 temporal worker, got %d", len(workers))
+	if len(workers) != 2 {
+		t.Fatalf("expected 2 temporal workers, got %d", len(workers))
 	}
 }
 

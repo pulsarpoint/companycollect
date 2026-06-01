@@ -181,6 +181,17 @@ LLM_API_KEY=... uv run python scripts/smoke_crawl_nats.py \
   --base-url https://api.deepseek.com
 ```
 
+The NATS worker subscribes to the full BRREG domain-discovery subject and the
+granular search action subjects used by Corpscout Temporal workflows:
+
+```bash
+NATS_SUBJECT=brreg.domain.discover
+CRAWL_NATS_BRREG_DOMAIN_DISCOVERY_SUBJECT=brreg.domain.discover
+CRAWL_NATS_SEARCH_FETCH_SUBJECT=brreg.domain.search.fetch
+CRAWL_NATS_SEARCH_ANALYZE_SUBJECT=brreg.domain.search.analyze
+NATS_QUEUE=brreg-domain-crawl
+```
+
 ## Crawler Configuration
 
 The Docker image installs crawl4ai and Playwright Chromium in cached layers.
