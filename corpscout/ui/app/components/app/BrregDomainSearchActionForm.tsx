@@ -210,12 +210,12 @@ export function BrregDomainSearchActionForm({
       if (scope === "filtered") body.filters = filters;
 
       await api.searchBrregDomains(body);
-      toast.success("BRREG domain search workflow started.");
+      toast.success("BRREG domain discovery workflow started.");
       onStarted?.();
       onClose();
     } catch (error) {
       toast.error(
-        errorMessage(error, "Failed to start BRREG domain search."),
+        errorMessage(error, "Failed to start BRREG domain discovery."),
       );
     } finally {
       setSubmitting(false);
@@ -225,7 +225,7 @@ export function BrregDomainSearchActionForm({
   return (
     <div className="flex flex-col gap-5">
       <div className="rounded-md border bg-muted/20 p-3">
-        <div className="text-sm font-medium">Domain search</div>
+        <div className="text-sm font-medium">Domain discovery</div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
           Starts the Temporal workflow that fetches a search page, asks the LLM
           to extract candidate URLs, and writes search artifacts to Corpscout.
@@ -492,7 +492,7 @@ export function BrregDomainSearchActionForm({
       <div className="flex justify-end">
         <Button disabled={!canSubmit || submitting} onClick={submit}>
           <Play className="size-4" />
-          {submitting ? "Starting..." : "Start domain search"}
+          {submitting ? "Starting..." : "Start domain discovery"}
         </Button>
       </div>
     </div>

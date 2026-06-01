@@ -36,7 +36,7 @@ const AVAILABLE_ACTIONS: Array<{
   },
   {
     key: "domain_search",
-    label: "Domain search",
+    label: "Domain discovery",
     description: "Fetch search pages and extract candidate websites.",
   },
 ];
