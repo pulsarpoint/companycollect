@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add DB-backed LLM provider selection with encrypted API keys, UI dropdown selection, and request-scoped provider delivery to translation and crawl services while preserving the existing `.env` default provider path.
+**Goal:** Build Corpscout-local LLM provider management first, including provider CRUD and a UI test prompt, then wire those provider records into remote translation and crawl services.
 
-**Architecture:** Corpscout owns provider records, validation, encryption at rest, and workflow trigger selection. Temporal history and NATS messages carry only non-secret metadata plus encrypted key material; translation and crawl services decrypt in memory using the shared deployment key and fall back to `.env` configuration when no DB provider is selected.
+**Architecture:** Section 1 keeps everything inside Corpscout: provider records, validation, encryption at rest, management UI, and a local OpenAI-compatible probe endpoint for checking credentials. Section 2 reuses those records for BRREG workflows: Temporal history and NATS messages carry only non-secret metadata plus encrypted key material; translation and crawl services decrypt in memory using the shared deployment key and fall back to `.env` configuration when no DB provider is selected.
 
 **Tech Stack:** PostgreSQL migrations, sqlc, Go `log/slog`, Go `crypto/aes` + `cipher.NewGCM`, Temporal Go SDK, NATS request/reply clients, React/TypeScript UI, Python FastAPI/Pydantic services.
 
@@ -12,7 +12,22 @@
 
 ## Scope
 
-This plan implements provider management for the BRREG translation path first and adds the shared models needed for crawl/domain discovery to use the same provider object. The crawl service runtime resolver is included because the provider contract must be shared now, but BRREG domain UI wiring can remain on the current search-provider controls until the domain workflow is rebuilt.
+This plan is split into two sections.
+
+Section 1 creates a complete local Corpscout LLM management surface:
+
+- Store providers in Postgres.
+- Encrypt API keys at rest.
+- List, create, edit, enable, disable, and set a default provider.
+- Test a selected provider from the UI with a small prompt and show the raw response or structured error.
+- Keep the test local to Corpscout so provider setup can be validated before remote service integration exists.
+
+Section 2 wires DB providers into execution:
+
+- BRREG translation actions can select a DB provider.
+- Workflow/activity/NATS payloads carry the selected provider config.
+- Translation and crawl services support request-scoped provider config.
+- Existing `.env` default provider behavior remains the fallback.
 
 The default behavior stays unchanged:
 
@@ -47,17 +62,29 @@ Create or modify these files:
 - Create `corpscout/scheduler/internal/llmproviders/store.go`.
   Converts HTTP commands into sqlc params and returns response DTOs without exposing secret values.
 
-- Create `corpscout/scheduler/internal/llmproviders/types.go`.
-  Holds public Go DTOs used by HTTP, workflow input, and NATS clients.
+- Create `corpscout/scheduler/internal/llmproviders/openai_probe.go`.
+  Performs a small OpenAI-compatible chat completion from Corpscout for UI provider testing.
 
-- Create `corpscout/scheduler/internal/llmproviders/crypto_test.go` and `corpscout/scheduler/internal/llmproviders/store_test.go`.
-  Covers encryption, missing-key behavior, response masking, and provider payload building.
+- Create `corpscout/scheduler/internal/llmproviders/types.go`.
+  Holds public Go DTOs used by HTTP management, local provider testing, workflow input, and NATS clients.
+
+- Create `corpscout/scheduler/internal/llmproviders/crypto_test.go`, `corpscout/scheduler/internal/llmproviders/store_test.go`, and `corpscout/scheduler/internal/llmproviders/openai_probe_test.go`.
+  Covers encryption, missing-key behavior, response masking, provider payload building, and local provider test calls.
 
 - Modify `corpscout/scheduler/internal/httpapi/handlers.go`.
   Registers `/api/v1/llm-providers` routes.
 
 - Create `corpscout/scheduler/internal/httpapi/llm_providers.go` and `corpscout/scheduler/internal/httpapi/llm_providers_test.go`.
-  Implements admin-safe provider endpoints and request validation.
+  Implements admin-safe provider endpoints, provider test endpoint, and request validation.
+
+- Create `corpscout/ui/app/routes/settings.llm-providers.tsx`.
+  Hosts the local Corpscout provider management page.
+
+- Create `corpscout/ui/app/components/app/LLMProviderManagement.tsx`.
+  Lists providers, edits provider settings, and exposes the provider test prompt/response panel.
+
+- Modify `corpscout/ui/app/components/app/AppSidebar.tsx`.
+  Adds a settings link for LLM providers.
 
 - Modify `corpscout/scheduler/internal/httpapi/workflow_triggers.go` and `corpscout/scheduler/internal/httpapi/workflow_triggers_test.go`.
   Accepts `llm_provider_id`, loads the provider config, and includes it in the BRREG translation workflow input.
@@ -75,7 +102,7 @@ Create or modify these files:
   Adds `LLMProvider` and translation request fields.
 
 - Modify `corpscout/ui/app/lib/api.ts`.
-  Adds `getLLMProviders()` and passes `llm_provider_id` in workflow trigger requests.
+  Adds provider CRUD/test methods and passes `llm_provider_id` in workflow trigger requests.
 
 - Modify `corpscout/ui/app/components/app/BrregTranslationActionForm.tsx`.
   Replaces free-text provider entry with a dropdown and keeps model override out of the normal form.
@@ -197,6 +224,53 @@ Workflow input and NATS request payloads carry encrypted key material:
 ```
 
 If `api_key` is `null`, the service calls the provider without an API key. That supports local OpenAI-compatible servers that do not require authentication.
+
+### Local Provider Test Payload
+
+The Corpscout-local test endpoint accepts:
+
+```json
+{
+  "prompt": "Reply with one short sentence.",
+  "max_tokens": 128,
+  "timeout_seconds": 30
+}
+```
+
+It returns:
+
+```json
+{
+  "status": "succeeded",
+  "provider_id": "1a6531c9-6ea9-4e74-b292-8f8cefe8b4de",
+  "provider_slug": "deepseek",
+  "model": "deepseek-chat",
+  "response_text": "The provider is reachable.",
+  "duration_ms": 842,
+  "error": null
+}
+```
+
+Failure responses use the same response shape with `status="failed"`, an empty `response_text`, and a safe error object:
+
+```json
+{
+  "status": "failed",
+  "provider_id": "1a6531c9-6ea9-4e74-b292-8f8cefe8b4de",
+  "provider_slug": "deepseek",
+  "model": "deepseek-chat",
+  "response_text": "",
+  "duration_ms": 901,
+  "error": {
+    "code": "provider_request_failed",
+    "message": "LLM provider request failed with status 401"
+  }
+}
+```
+
+## Section 1: Corpscout-Local LLM Management
+
+Section 1 is complete when an admin can create/edit providers in Corpscout, store encrypted keys, select a default provider, and verify a provider with a small prompt from the UI. It does not require Temporal, NATS, translation-service, or crawl-service changes.
 
 ## Task 1: Add LLM Provider Schema and sqlc Queries
 
@@ -457,8 +531,10 @@ git commit -m "feat: add llm provider schema"
 - Create: `corpscout/scheduler/internal/llmproviders/types.go`
 - Create: `corpscout/scheduler/internal/llmproviders/crypto.go`
 - Create: `corpscout/scheduler/internal/llmproviders/store.go`
+- Create: `corpscout/scheduler/internal/llmproviders/openai_probe.go`
 - Create: `corpscout/scheduler/internal/llmproviders/crypto_test.go`
 - Create: `corpscout/scheduler/internal/llmproviders/store_test.go`
+- Create: `corpscout/scheduler/internal/llmproviders/openai_probe_test.go`
 
 - [ ] **Step 1: Write crypto tests**
 
@@ -550,6 +626,27 @@ type UpsertProviderCommand struct {
 	IsDefault    bool            `json:"is_default"`
 	Capabilities json.RawMessage `json:"capabilities"`
 	Metadata     json.RawMessage `json:"metadata"`
+}
+
+type TestProviderCommand struct {
+	Prompt         string `json:"prompt"`
+	MaxTokens      int    `json:"max_tokens"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
+type TestProviderError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type TestProviderResult struct {
+	Status       string             `json:"status"`
+	ProviderID   uuid.UUID          `json:"provider_id"`
+	ProviderSlug string             `json:"provider_slug"`
+	Model        string             `json:"model"`
+	ResponseText string             `json:"response_text"`
+	DurationMS   int64              `json:"duration_ms"`
+	Error        *TestProviderError `json:"error,omitempty"`
 }
 ```
 
@@ -864,7 +961,161 @@ GOWORK=off go test ./internal/llmproviders -count=1
 
 Expected: all tests pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Implement local OpenAI-compatible probe**
+
+Create `corpscout/scheduler/internal/llmproviders/openai_probe.go`:
+
+```go
+package llmproviders
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/cockroachdb/errors"
+)
+
+type ProbeClient struct {
+	httpClient *http.Client
+	cipher     *Cipher
+}
+
+func NewProbeClient(httpClient *http.Client, cipher *Cipher) *ProbeClient {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	return &ProbeClient{httpClient: httpClient, cipher: cipher}
+}
+
+func (c *ProbeClient) TestProvider(ctx context.Context, provider ProviderConfig, command TestProviderCommand) TestProviderResult {
+	start := time.Now()
+	result := TestProviderResult{
+		Status:       "failed",
+		ProviderID:   provider.ID,
+		ProviderSlug: provider.Slug,
+		Model:        provider.Model,
+	}
+	if strings.TrimSpace(command.Prompt) == "" {
+		result.Error = &TestProviderError{Code: "invalid_prompt", Message: "prompt is required"}
+		result.DurationMS = time.Since(start).Milliseconds()
+		return result
+	}
+	apiKey, err := c.apiKey(provider)
+	if err != nil {
+		result.Error = &TestProviderError{Code: "decrypt_failed", Message: "provider API key could not be decrypted"}
+		result.DurationMS = time.Since(start).Milliseconds()
+		return result
+	}
+	timeout := time.Duration(command.TimeoutSeconds) * time.Second
+	if timeout <= 0 || timeout > 120*time.Second {
+		timeout = 30 * time.Second
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	responseText, err := c.chatCompletion(requestCtx, provider, apiKey, command)
+	result.DurationMS = time.Since(start).Milliseconds()
+	if err != nil {
+		result.Error = &TestProviderError{Code: "provider_request_failed", Message: err.Error()}
+		return result
+	}
+	result.Status = "succeeded"
+	result.ResponseText = responseText
+	return result
+}
+
+func (c *ProbeClient) apiKey(provider ProviderConfig) (string, error) {
+	if provider.APIKey == nil {
+		return "", nil
+	}
+	if c.cipher == nil {
+		return "", errors.New("llm provider encryption key is not configured")
+	}
+	return c.cipher.Decrypt(*provider.APIKey)
+}
+
+func (c *ProbeClient) chatCompletion(ctx context.Context, provider ProviderConfig, apiKey string, command TestProviderCommand) (string, error) {
+	maxTokens := command.MaxTokens
+	if maxTokens <= 0 || maxTokens > 2048 {
+		maxTokens = 128
+	}
+	body := map[string]any{
+		"model": provider.Model,
+		"messages": []map[string]string{
+			{"role": "user", "content": command.Prompt},
+		},
+		"max_tokens": maxTokens,
+		"temperature": 0,
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", errors.Wrap(err, "marshal provider test request")
+	}
+	endpoint := strings.TrimRight(provider.BaseURL, "/") + "/v1/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return "", errors.Wrap(err, "create provider test request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", errors.Wrap(err, "call llm provider")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return "", errors.Newf("LLM provider request failed with status %d", resp.StatusCode)
+	}
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return "", errors.Wrap(err, "decode provider test response")
+	}
+	if len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
+		return "", errors.New("LLM provider returned an empty response")
+	}
+	return parsed.Choices[0].Message.Content, nil
+}
+```
+
+- [ ] **Step 8: Test local probe**
+
+Create `corpscout/scheduler/internal/llmproviders/openai_probe_test.go` with tests:
+
+```go
+func TestProbeClientCallsOpenAICompatibleEndpoint(t *testing.T) {}
+func TestProbeClientReturnsStructuredFailureForProviderStatus(t *testing.T) {}
+func TestProbeClientRequiresCipherForEncryptedAPIKey(t *testing.T) {}
+func TestProbeClientRejectsEmptyPrompt(t *testing.T) {}
+```
+
+Use `httptest.Server` and assert:
+
+- Request path is `/v1/chat/completions`.
+- Request body contains the selected model and prompt.
+- Response never includes the API key.
+- HTTP 401 becomes `status="failed"` and `error.code="provider_request_failed"`.
+
+Run:
+
+```bash
+cd corpscout/scheduler
+GOWORK=off go test ./internal/llmproviders -run 'TestProbeClient' -count=1
+```
+
+Expected: all probe tests pass.
+
+- [ ] **Step 9: Commit**
 
 ```bash
 git add corpscout/scheduler/internal/llmproviders
@@ -890,6 +1141,8 @@ func TestCreateLLMProviderRejectsAPIKeyWhenEncryptionKeyMissing(t *testing.T) {}
 func TestCreateLLMProviderRejectsEnabledWhenEncryptionKeyMissing(t *testing.T) {}
 func TestCreateLLMProviderStoresEncryptedKeyAndReturnsHasAPIKey(t *testing.T) {}
 func TestCreateLLMProviderRejectsUnknownFields(t *testing.T) {}
+func TestTestLLMProviderReturnsProbeResponse(t *testing.T) {}
+func TestTestLLMProviderRejectsEmptyPrompt(t *testing.T) {}
 ```
 
 Request body for create:
@@ -923,6 +1176,7 @@ r.Get("/llm-providers", h.handleListLLMProviders)
 r.Post("/llm-providers", h.handleCreateLLMProvider)
 r.Patch("/llm-providers/{id}", h.handleUpdateLLMProvider)
 r.Post("/llm-providers/{id}/default", h.handleSetDefaultLLMProvider)
+r.Post("/llm-providers/{id}/test", h.handleTestLLMProvider)
 ```
 
 - [ ] **Step 3: Implement handlers**
@@ -932,6 +1186,8 @@ Create `corpscout/scheduler/internal/httpapi/llm_providers.go` with handlers tha
 - Use `json.Decoder.DisallowUnknownFields()`.
 - Return `400` for invalid JSON and invalid UUID path params.
 - Return `503` for create/update requests that attempt to store `api_key` or set `enabled=true` while the encryption key is unavailable.
+- Return `400` from `/test` when `prompt` is empty or longer than 4000 characters.
+- Return `200` from `/test` for structured provider failures because the endpoint itself completed; the body contains `status="failed"` and an error object.
 - Log one boundary error with `slog.Error`.
 - Return safe client messages only.
 
@@ -957,9 +1213,10 @@ if key := strings.TrimSpace(os.Getenv("CORPSCOUT_LLM_PROVIDER_KEY_ENCRYPTION_KEY
 	llmCipher = cipher
 }
 llmProviderStore := llmproviders.NewStore(pool, llmCipher)
+llmProviderProbe := llmproviders.NewProbeClient(http.DefaultClient, llmCipher)
 ```
 
-Pass that concrete store into `httpapi.NewHandlers`. Do not introduce a new interface around the store.
+Pass the concrete store and probe client into `httpapi.NewHandlers`. Do not introduce new interfaces around them.
 
 - [ ] **Step 5: Run API tests**
 
@@ -980,7 +1237,184 @@ git add corpscout/scheduler/internal/httpapi/llm_providers.go \
 git commit -m "feat: add llm provider api"
 ```
 
-## Task 4: Carry DB Provider Through Translation Workflow
+## Task 4: Add Local LLM Provider Management UI
+
+**Files:**
+- Create: `corpscout/ui/app/routes/settings.llm-providers.tsx`
+- Create: `corpscout/ui/app/components/app/LLMProviderManagement.tsx`
+- Modify: `corpscout/ui/app/components/app/AppSidebar.tsx`
+- Modify: `corpscout/ui/app/types/api.ts`
+- Modify: `corpscout/ui/app/lib/api.ts`
+
+- [ ] **Step 1: Add TypeScript provider and test types**
+
+In `corpscout/ui/app/types/api.ts`, add:
+
+```ts
+export type LLMProvider = {
+  id: string;
+  slug: string;
+  display_name: string;
+  provider_type: "openai_compatible";
+  base_url: string;
+  model: string;
+  enabled: boolean;
+  is_default: boolean;
+  has_api_key: boolean;
+  capabilities: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LLMProviderListResponse = {
+  providers: LLMProvider[];
+};
+
+export type LLMProviderInput = {
+  slug: string;
+  display_name: string;
+  provider_type: "openai_compatible";
+  base_url: string;
+  model: string;
+  api_key?: string;
+  enabled: boolean;
+  is_default: boolean;
+  capabilities: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+};
+
+export type LLMProviderTestRequest = {
+  prompt: string;
+  max_tokens?: number;
+  timeout_seconds?: number;
+};
+
+export type LLMProviderTestResponse = {
+  status: "succeeded" | "failed";
+  provider_id: string;
+  provider_slug: string;
+  model: string;
+  response_text: string;
+  duration_ms: number;
+  error?: {
+    code: string;
+    message: string;
+  };
+};
+```
+
+- [ ] **Step 2: Add API client methods**
+
+In `corpscout/ui/app/lib/api.ts`, import the new types and add:
+
+```ts
+getLLMProviders: () => get<LLMProviderListResponse>("/llm-providers"),
+createLLMProvider: (body: LLMProviderInput) => post<LLMProvider>("/llm-providers", body),
+updateLLMProvider: (id: string, body: LLMProviderInput) => patch<LLMProvider>(`/llm-providers/${id}`, body),
+setDefaultLLMProvider: (id: string) => post<LLMProvider>(`/llm-providers/${id}/default`, {}),
+testLLMProvider: (id: string, body: LLMProviderTestRequest) =>
+  post<LLMProviderTestResponse>(`/llm-providers/${id}/test`, body),
+```
+
+- [ ] **Step 3: Create management route**
+
+Create `corpscout/ui/app/routes/settings.llm-providers.tsx`:
+
+```tsx
+import { LLMProviderManagement } from "~/components/app/LLMProviderManagement";
+
+export default function LLMProviderSettingsRoute() {
+  return <LLMProviderManagement />;
+}
+```
+
+- [ ] **Step 4: Create provider management component**
+
+Create `corpscout/ui/app/components/app/LLMProviderManagement.tsx` with:
+
+- A left table listing provider name, slug, model, enabled, default, and API-key presence.
+- A right edit form for `display_name`, `slug`, `base_url`, `model`, `api_key`, `enabled`, and `is_default`.
+- A separate test panel with a textarea prompt, max tokens, timeout seconds, `Run test` button, status badge, duration, response text, and structured error message.
+- No nested cards. Use a full-width page layout with a two-column grid on desktop and one column on mobile.
+
+The submit payload must send an `api_key` only when the API-key input is non-empty. Leaving the field empty preserves existing stored key on update.
+
+Use this test-panel state:
+
+```tsx
+const [testPrompt, setTestPrompt] = useState("Reply with one short sentence confirming that this LLM provider works.");
+const [testMaxTokens, setTestMaxTokens] = useState("128");
+const [testTimeoutSeconds, setTestTimeoutSeconds] = useState("30");
+const [testResult, setTestResult] = useState<LLMProviderTestResponse | null>(null);
+const [testing, setTesting] = useState(false);
+```
+
+The test action:
+
+```tsx
+async function runProviderTest(provider: LLMProvider) {
+  setTesting(true);
+  setTestResult(null);
+  try {
+    const result = await api.testLLMProvider(provider.id, {
+      prompt: testPrompt.trim(),
+      max_tokens: Number(testMaxTokens) || 128,
+      timeout_seconds: Number(testTimeoutSeconds) || 30,
+    });
+    setTestResult(result);
+  } catch (error) {
+    setTestResult({
+      status: "failed",
+      provider_id: provider.id,
+      provider_slug: provider.slug,
+      model: provider.model,
+      response_text: "",
+      duration_ms: 0,
+      error: { code: "request_failed", message: errorMessage(error, "Provider test failed") },
+    });
+  } finally {
+    setTesting(false);
+  }
+}
+```
+
+- [ ] **Step 5: Add sidebar navigation**
+
+In `corpscout/ui/app/components/app/AppSidebar.tsx`, import `Settings` from `lucide-react` and add:
+
+```ts
+{ title: "LLM Providers", url: "/settings/llm-providers", icon: Settings },
+```
+
+Place it after `Sources`.
+
+- [ ] **Step 6: Run UI checks**
+
+```bash
+cd corpscout/ui
+pnpm typecheck
+pnpm build
+```
+
+Expected: both commands pass.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add corpscout/ui/app/routes/settings.llm-providers.tsx \
+  corpscout/ui/app/components/app/LLMProviderManagement.tsx \
+  corpscout/ui/app/components/app/AppSidebar.tsx \
+  corpscout/ui/app/types/api.ts \
+  corpscout/ui/app/lib/api.ts
+git commit -m "feat: add llm provider management ui"
+```
+
+## Section 2: Remote Service Provider Propagation
+
+Section 2 starts only after Section 1 works locally in Corpscout. These tasks make BRREG workflows send selected DB providers to remote services and make those services decrypt and use request-scoped provider config.
+
+## Task 5: Carry DB Provider Through Translation Workflow
 
 **Files:**
 - Modify: `corpscout/scheduler/internal/httpapi/workflow_triggers.go`
@@ -1124,7 +1558,7 @@ git add corpscout/scheduler/internal/httpapi/workflow_triggers.go \
 git commit -m "feat: send llm provider to translation workflow"
 ```
 
-## Task 5: Update Translation Service for Request-Scoped Providers
+## Task 6: Update Translation Service for Request-Scoped Providers
 
 **Files:**
 - Modify: `data-pipelines/services/translation-service/src/corpscout_translation_service/models.py`
@@ -1321,7 +1755,7 @@ git add data-pipelines/services/translation-service/src/corpscout_translation_se
 git commit -m "feat: support request llm providers in translation service"
 ```
 
-## Task 6: Update Crawl Service Provider Resolution
+## Task 7: Update Crawl Service Provider Resolution
 
 **Files:**
 - Modify: `data-pipelines/services/crawl-service/src/corpscout_crawl_service/models.py`
@@ -1469,54 +1903,21 @@ git add data-pipelines/services/crawl-service/src/corpscout_crawl_service \
 git commit -m "feat: support request llm providers in crawl service"
 ```
 
-## Task 7: Update UI Provider Dropdown
+## Task 8: Use Provider Dropdown in BRREG Translation
 
 **Files:**
-- Modify: `corpscout/ui/app/types/api.ts`
 - Modify: `corpscout/ui/app/lib/api.ts`
 - Modify: `corpscout/ui/app/components/app/BrregTranslationActionForm.tsx`
 
-- [ ] **Step 1: Add TypeScript API types**
+- [ ] **Step 1: Extend translation trigger request**
 
-In `corpscout/ui/app/types/api.ts`, add:
-
-```ts
-export type LLMProvider = {
-  id: string;
-  slug: string;
-  display_name: string;
-  provider_type: "openai_compatible";
-  base_url: string;
-  model: string;
-  enabled: boolean;
-  is_default: boolean;
-  has_api_key: boolean;
-  capabilities: Record<string, unknown>;
-  metadata: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-};
-
-export type LLMProviderListResponse = {
-  providers: LLMProvider[];
-};
-```
-
-- [ ] **Step 2: Add API client method**
-
-In `corpscout/ui/app/lib/api.ts`, import `LLMProviderListResponse` and add:
-
-```ts
-getLLMProviders: () => get<LLMProviderListResponse>("/llm-providers"),
-```
-
-Extend `startBrregTranslationWorkflow` body type:
+In `corpscout/ui/app/lib/api.ts`, extend `startBrregTranslationWorkflow` body type:
 
 ```ts
 llm_provider_id?: string;
 ```
 
-- [ ] **Step 3: Replace provider text input**
+- [ ] **Step 2: Replace provider text input**
 
 In `BrregTranslationActionForm.tsx`:
 
@@ -1573,7 +1974,7 @@ llm_provider_id: selectedProviderID || undefined,
 
 Keep advanced controls for batch size, lease seconds, max attempts, and service retries.
 
-- [ ] **Step 4: Run UI checks**
+- [ ] **Step 3: Run UI checks**
 
 ```bash
 cd corpscout/ui
@@ -1583,16 +1984,15 @@ pnpm build
 
 Expected: both commands pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add corpscout/ui/app/types/api.ts \
-  corpscout/ui/app/lib/api.ts \
+git add corpscout/ui/app/lib/api.ts \
   corpscout/ui/app/components/app/BrregTranslationActionForm.tsx
 git commit -m "feat: select llm provider in brreg translation ui"
 ```
 
-## Task 8: Update Environment and Deployment
+## Task 9: Update Environment and Deployment
 
 **Files:**
 - Modify: `corpscout/.env.example`
@@ -1653,7 +2053,7 @@ git add corpscout/.env.example \
 git commit -m "chore: document llm provider encryption env"
 ```
 
-## Task 9: End-to-End Verification
+## Task 10: End-to-End Verification
 
 **Files:**
 - No new files.
@@ -1746,8 +2146,8 @@ If the command prints files changed during verification, review those files and 
 - DB provider endpoints are powerful because they can store credentials. If the deployment has no authenticated admin boundary, keep the endpoint reachable only from trusted networks until application-level admin auth exists.
 - Temporal history will contain encrypted key material for selected DB providers. This is acceptable for this design because services decrypt only in memory and plaintext keys are never passed to Temporal.
 - Do not log request bodies for provider create/update endpoints.
-- Do not include provider `api_key` in UI state after submission. The create form should clear that local state after a successful response when provider management UI is added.
-- This plan does not create a full provider management UI page. It creates the provider API and the BRREG translation dropdown. Providers can be seeded with HTTP until a dedicated admin page is needed.
+- Do not include provider `api_key` in UI state after submission. The create form clears that local state after a successful response.
+- The local Corpscout provider test proves stored credentials and provider connectivity. Remote-service propagation is still verified separately because services decrypt and use the encrypted provider payload in their own runtime.
 
 ## Self-Review
 
@@ -1755,10 +2155,11 @@ If the command prints files changed during verification, review those files and 
   - DB object for LLM providers: Task 1.
   - Encrypted API key storage: Tasks 1 and 2.
   - Empty encryption key forbids key insert and provider enablement: Tasks 2 and 3.
-  - Dropdown in UI and selected provider sent with request: Task 7.
-  - Services support default `.env` and provided DB config: Tasks 5 and 6.
-  - Remote servers share same decryption key: Task 8.
-  - No plaintext key in logs/responses/history: Tasks 3, 4, 5, 8, and risks section.
+  - Local Corpscout provider management UI and test prompt: Task 4.
+  - Dropdown in BRREG translation and selected provider sent with request: Task 8.
+  - Services support default `.env` and provided DB config: Tasks 6 and 7.
+  - Remote servers share same decryption key: Task 9.
+  - No plaintext key in logs/responses/history: Tasks 3, 4, 5, 8, 9, and risks section.
 
 - Type consistency:
   - Go provider payload is `llmproviders.ProviderConfig`.
