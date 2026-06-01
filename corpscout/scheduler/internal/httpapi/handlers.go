@@ -77,6 +77,8 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 		r.Patch("/sources/{name}", h.handlePatchSource)
 		r.Get("/sources/brreg/task-state", h.handleGetBrregTaskState)
 		r.Post("/workflows/brreg/translation", h.handleStartBrregTranslationWorkflow)
+		r.Get("/brreg/raw-records", h.handleListBrregRawRecords)
+		r.Get("/brreg/raw-records/{id}", h.handleGetBrregRawRecord)
 		r.Post("/jobs/cancel-bulk", h.handleCancelBulk)
 		r.Post("/jobs/{id}/cancel", h.handleCancelJob)
 		r.Get("/review", h.handleListReview)

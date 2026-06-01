@@ -311,6 +311,44 @@ func (q *Queries) ClaimBrregWorkflowTaskSelectionBatch(ctx context.Context, arg 
 	return items, nil
 }
 
+const countBrregWorkflowRawRecords = `-- name: CountBrregWorkflowRawRecords :one
+SELECT count(*)::bigint
+FROM brreg_workflow.v_raw_record_list ri
+WHERE (
+    $1::text IS NULL
+    OR ri.organization_name ILIKE '%' || $1::text || '%'
+    OR ri.organization_number ILIKE '%' || $1::text || '%'
+  )
+  AND ($2::text IS NULL OR ri.lifecycle_state = $2::text)
+  AND ($3::text IS NULL OR ri.translation_status = $3::text)
+  AND ($4::text IS NULL OR ri.domain_status = $4::text)
+  AND ($5::text IS NULL OR ri.financial_status = $5::text)
+  AND ($6::text IS NULL OR ri.enhanced_status = $6::text)
+`
+
+type CountBrregWorkflowRawRecordsParams struct {
+	Query             *string `json:"query"`
+	LifecycleState    *string `json:"lifecycle_state"`
+	TranslationStatus *string `json:"translation_status"`
+	DomainStatus      *string `json:"domain_status"`
+	FinancialStatus   *string `json:"financial_status"`
+	EnhancedStatus    *string `json:"enhanced_status"`
+}
+
+func (q *Queries) CountBrregWorkflowRawRecords(ctx context.Context, arg CountBrregWorkflowRawRecordsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countBrregWorkflowRawRecords,
+		arg.Query,
+		arg.LifecycleState,
+		arg.TranslationStatus,
+		arg.DomainStatus,
+		arg.FinancialStatus,
+		arg.EnhancedStatus,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createBrregDomainActionAttempt = `-- name: CreateBrregDomainActionAttempt :one
 INSERT INTO brreg_workflow.domain_action_attempts (
   workflow_run_id,
@@ -812,6 +850,46 @@ func (q *Queries) GetBrregWorkflowFinancialAssetState(ctx context.Context) (Brre
 	return i, err
 }
 
+const getBrregWorkflowRawRecordDetail = `-- name: GetBrregWorkflowRawRecordDetail :one
+SELECT id, organization_number, organization_name, website, registration_status, country_iso2, payload_hash, is_current, first_seen_at, last_seen_at, translation_status, domain_status, best_domain, financial_status, original_currency, enhanced_status, lifecycle_state, task_statuses, task_errors, raw_payload, raw_metadata, translation_result, domain_result, financial_result, enhanced_result, tasks
+FROM brreg_workflow.v_raw_record_detail
+WHERE id = $1::uuid
+`
+
+func (q *Queries) GetBrregWorkflowRawRecordDetail(ctx context.Context, id uuid.UUID) (BrregWorkflowVRawRecordDetail, error) {
+	row := q.db.QueryRow(ctx, getBrregWorkflowRawRecordDetail, id)
+	var i BrregWorkflowVRawRecordDetail
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationNumber,
+		&i.OrganizationName,
+		&i.Website,
+		&i.RegistrationStatus,
+		&i.CountryIso2,
+		&i.PayloadHash,
+		&i.IsCurrent,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.TranslationStatus,
+		&i.DomainStatus,
+		&i.BestDomain,
+		&i.FinancialStatus,
+		&i.OriginalCurrency,
+		&i.EnhancedStatus,
+		&i.LifecycleState,
+		&i.TaskStatuses,
+		&i.TaskErrors,
+		&i.RawPayload,
+		&i.RawMetadata,
+		&i.TranslationResult,
+		&i.DomainResult,
+		&i.FinancialResult,
+		&i.EnhancedResult,
+		&i.Tasks,
+	)
+	return i, err
+}
+
 const getBrregWorkflowTranslationAssetState = `-- name: GetBrregWorkflowTranslationAssetState :one
 SELECT asset, raw_records_current, task_no_state, task_pending, task_running_active, task_running_stale, task_failed_retryable, task_failed_terminal, task_succeeded, task_skipped, task_eligible_now, artifact_succeeded, artifact_skipped, artifact_failed, artifact_missing FROM brreg_workflow.v_translation_asset_state
 `
@@ -1077,6 +1155,106 @@ func (q *Queries) ListBrregWorkflowEnhancedReadyRecords(ctx context.Context) ([]
 			&i.UsdPayload,
 			&i.FxMetadata,
 			&i.TaskStatuses,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBrregWorkflowRawRecords = `-- name: ListBrregWorkflowRawRecords :many
+SELECT id, organization_number, organization_name, website, registration_status, country_iso2, payload_hash, is_current, first_seen_at, last_seen_at, translation_status, domain_status, best_domain, financial_status, original_currency, enhanced_status, lifecycle_state, task_statuses, task_errors
+FROM brreg_workflow.v_raw_record_list ri
+WHERE (
+    $1::text IS NULL
+    OR ri.organization_name ILIKE '%' || $1::text || '%'
+    OR ri.organization_number ILIKE '%' || $1::text || '%'
+  )
+  AND ($2::text IS NULL OR ri.lifecycle_state = $2::text)
+  AND ($3::text IS NULL OR ri.translation_status = $3::text)
+  AND ($4::text IS NULL OR ri.domain_status = $4::text)
+  AND ($5::text IS NULL OR ri.financial_status = $5::text)
+  AND ($6::text IS NULL OR ri.enhanced_status = $6::text)
+ORDER BY
+  CASE WHEN $7::text = 'organization' AND $8::text = 'asc' THEN lower(COALESCE(ri.organization_name, '')) END ASC,
+  CASE WHEN $7::text = 'organization' AND $8::text = 'desc' THEN lower(COALESCE(ri.organization_name, '')) END DESC,
+  CASE WHEN $7::text = 'website' AND $8::text = 'asc' THEN lower(COALESCE(ri.website, '')) END ASC,
+  CASE WHEN $7::text = 'website' AND $8::text = 'desc' THEN lower(COALESCE(ri.website, '')) END DESC,
+  CASE WHEN $7::text = 'state' AND $8::text = 'asc' THEN ri.lifecycle_state END ASC,
+  CASE WHEN $7::text = 'state' AND $8::text = 'desc' THEN ri.lifecycle_state END DESC,
+  CASE WHEN $7::text = 'translation_status' AND $8::text = 'asc' THEN ri.translation_status END ASC,
+  CASE WHEN $7::text = 'translation_status' AND $8::text = 'desc' THEN ri.translation_status END DESC,
+  CASE WHEN $7::text = 'domain_status' AND $8::text = 'asc' THEN ri.domain_status END ASC,
+  CASE WHEN $7::text = 'domain_status' AND $8::text = 'desc' THEN ri.domain_status END DESC,
+  CASE WHEN $7::text = 'financial_status' AND $8::text = 'asc' THEN ri.financial_status END ASC,
+  CASE WHEN $7::text = 'financial_status' AND $8::text = 'desc' THEN ri.financial_status END DESC,
+  CASE WHEN $7::text = 'enhanced_status' AND $8::text = 'asc' THEN ri.enhanced_status END ASC,
+  CASE WHEN $7::text = 'enhanced_status' AND $8::text = 'desc' THEN ri.enhanced_status END DESC,
+  CASE WHEN $7::text = 'last_seen_at' AND $8::text = 'asc' THEN ri.last_seen_at END ASC,
+  CASE WHEN $7::text = 'last_seen_at' AND $8::text = 'desc' THEN ri.last_seen_at END DESC,
+  ri.last_seen_at DESC,
+  ri.id ASC
+LIMIT $10::integer
+OFFSET $9::integer
+`
+
+type ListBrregWorkflowRawRecordsParams struct {
+	Query             *string `json:"query"`
+	LifecycleState    *string `json:"lifecycle_state"`
+	TranslationStatus *string `json:"translation_status"`
+	DomainStatus      *string `json:"domain_status"`
+	FinancialStatus   *string `json:"financial_status"`
+	EnhancedStatus    *string `json:"enhanced_status"`
+	SortBy            string  `json:"sort_by"`
+	SortDir           string  `json:"sort_dir"`
+	Offset            int32   `json:"offset"`
+	Limit             int32   `json:"limit"`
+}
+
+func (q *Queries) ListBrregWorkflowRawRecords(ctx context.Context, arg ListBrregWorkflowRawRecordsParams) ([]BrregWorkflowVRawRecordList, error) {
+	rows, err := q.db.Query(ctx, listBrregWorkflowRawRecords,
+		arg.Query,
+		arg.LifecycleState,
+		arg.TranslationStatus,
+		arg.DomainStatus,
+		arg.FinancialStatus,
+		arg.EnhancedStatus,
+		arg.SortBy,
+		arg.SortDir,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BrregWorkflowVRawRecordList
+	for rows.Next() {
+		var i BrregWorkflowVRawRecordList
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationNumber,
+			&i.OrganizationName,
+			&i.Website,
+			&i.RegistrationStatus,
+			&i.CountryIso2,
+			&i.PayloadHash,
+			&i.IsCurrent,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+			&i.TranslationStatus,
+			&i.DomainStatus,
+			&i.BestDomain,
+			&i.FinancialStatus,
+			&i.OriginalCurrency,
+			&i.EnhancedStatus,
+			&i.LifecycleState,
+			&i.TaskStatuses,
+			&i.TaskErrors,
 		); err != nil {
 			return nil, err
 		}

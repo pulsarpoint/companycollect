@@ -214,6 +214,60 @@ FROM brreg_workflow.raw_records
 WHERE organization_number = sqlc.arg('organization_number')::text
   AND is_current = true;
 
+-- name: CountBrregWorkflowRawRecords :one
+SELECT count(*)::bigint
+FROM brreg_workflow.v_raw_record_list ri
+WHERE (
+    sqlc.narg('query')::text IS NULL
+    OR ri.organization_name ILIKE '%' || sqlc.narg('query')::text || '%'
+    OR ri.organization_number ILIKE '%' || sqlc.narg('query')::text || '%'
+  )
+  AND (sqlc.narg('lifecycle_state')::text IS NULL OR ri.lifecycle_state = sqlc.narg('lifecycle_state')::text)
+  AND (sqlc.narg('translation_status')::text IS NULL OR ri.translation_status = sqlc.narg('translation_status')::text)
+  AND (sqlc.narg('domain_status')::text IS NULL OR ri.domain_status = sqlc.narg('domain_status')::text)
+  AND (sqlc.narg('financial_status')::text IS NULL OR ri.financial_status = sqlc.narg('financial_status')::text)
+  AND (sqlc.narg('enhanced_status')::text IS NULL OR ri.enhanced_status = sqlc.narg('enhanced_status')::text);
+
+-- name: ListBrregWorkflowRawRecords :many
+SELECT *
+FROM brreg_workflow.v_raw_record_list ri
+WHERE (
+    sqlc.narg('query')::text IS NULL
+    OR ri.organization_name ILIKE '%' || sqlc.narg('query')::text || '%'
+    OR ri.organization_number ILIKE '%' || sqlc.narg('query')::text || '%'
+  )
+  AND (sqlc.narg('lifecycle_state')::text IS NULL OR ri.lifecycle_state = sqlc.narg('lifecycle_state')::text)
+  AND (sqlc.narg('translation_status')::text IS NULL OR ri.translation_status = sqlc.narg('translation_status')::text)
+  AND (sqlc.narg('domain_status')::text IS NULL OR ri.domain_status = sqlc.narg('domain_status')::text)
+  AND (sqlc.narg('financial_status')::text IS NULL OR ri.financial_status = sqlc.narg('financial_status')::text)
+  AND (sqlc.narg('enhanced_status')::text IS NULL OR ri.enhanced_status = sqlc.narg('enhanced_status')::text)
+ORDER BY
+  CASE WHEN sqlc.arg('sort_by')::text = 'organization' AND sqlc.arg('sort_dir')::text = 'asc' THEN lower(COALESCE(ri.organization_name, '')) END ASC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'organization' AND sqlc.arg('sort_dir')::text = 'desc' THEN lower(COALESCE(ri.organization_name, '')) END DESC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'website' AND sqlc.arg('sort_dir')::text = 'asc' THEN lower(COALESCE(ri.website, '')) END ASC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'website' AND sqlc.arg('sort_dir')::text = 'desc' THEN lower(COALESCE(ri.website, '')) END DESC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'state' AND sqlc.arg('sort_dir')::text = 'asc' THEN ri.lifecycle_state END ASC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'state' AND sqlc.arg('sort_dir')::text = 'desc' THEN ri.lifecycle_state END DESC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'translation_status' AND sqlc.arg('sort_dir')::text = 'asc' THEN ri.translation_status END ASC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'translation_status' AND sqlc.arg('sort_dir')::text = 'desc' THEN ri.translation_status END DESC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'domain_status' AND sqlc.arg('sort_dir')::text = 'asc' THEN ri.domain_status END ASC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'domain_status' AND sqlc.arg('sort_dir')::text = 'desc' THEN ri.domain_status END DESC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'financial_status' AND sqlc.arg('sort_dir')::text = 'asc' THEN ri.financial_status END ASC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'financial_status' AND sqlc.arg('sort_dir')::text = 'desc' THEN ri.financial_status END DESC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'enhanced_status' AND sqlc.arg('sort_dir')::text = 'asc' THEN ri.enhanced_status END ASC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'enhanced_status' AND sqlc.arg('sort_dir')::text = 'desc' THEN ri.enhanced_status END DESC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'last_seen_at' AND sqlc.arg('sort_dir')::text = 'asc' THEN ri.last_seen_at END ASC,
+  CASE WHEN sqlc.arg('sort_by')::text = 'last_seen_at' AND sqlc.arg('sort_dir')::text = 'desc' THEN ri.last_seen_at END DESC,
+  ri.last_seen_at DESC,
+  ri.id ASC
+LIMIT sqlc.arg('limit')::integer
+OFFSET sqlc.arg('offset')::integer;
+
+-- name: GetBrregWorkflowRawRecordDetail :one
+SELECT *
+FROM brreg_workflow.v_raw_record_detail
+WHERE id = sqlc.arg('id')::uuid;
+
 -- name: SupersedeCurrentBrregWorkflowRawRecord :exec
 UPDATE brreg_workflow.raw_records
 SET

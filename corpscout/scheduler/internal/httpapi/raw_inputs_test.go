@@ -10,10 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pashagolub/pgxmock/v3"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/httpapi"
 )
 
@@ -170,6 +173,118 @@ func TestListRawInputs_brregUsesDedicatedRawRecordsEndpoint(t *testing.T) {
 	assert.Empty(t, body.Items)
 	assert.Zero(t, body.Total)
 	require.NoError(t, pool.ExpectationsWereMet())
+}
+
+func TestListBrregRawRecordsRouteExists(t *testing.T) {
+	r := routerFor(httpapi.NewHandlers(nil, nil, nil, nil, "", nil, ""))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/brreg/raw-records", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"database querier not available"`)
+}
+
+func TestListBrregRawRecordsReturnsWorkflowRawRecords(t *testing.T) {
+	q := &stubQuerier{}
+	recordID := uuid.New()
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	q.On("CountBrregWorkflowRawRecords", mock.Anything, db.CountBrregWorkflowRawRecordsParams{
+		Query:             ptrString("BORTIGARD"),
+		LifecycleState:    ptrString("input"),
+		TranslationStatus: ptrString("succeeded"),
+	}).Return(int64(1000), nil)
+	q.On("ListBrregWorkflowRawRecords", mock.Anything, db.ListBrregWorkflowRawRecordsParams{
+		Query:             ptrString("BORTIGARD"),
+		LifecycleState:    ptrString("input"),
+		TranslationStatus: ptrString("succeeded"),
+		SortBy:            "organization",
+		SortDir:           "asc",
+		Offset:            50,
+		Limit:             50,
+	}).Return([]db.BrregWorkflowVRawRecordList{{
+		ID:                 recordID,
+		OrganizationNumber: "810202572",
+		OrganizationName:   ptrString("BORTIGARD AS"),
+		Website:            ptrString("https://bortigard.no"),
+		RegistrationStatus: ptrString("active"),
+		CountryIso2:        "NO",
+		PayloadHash:        "hash",
+		IsCurrent:          true,
+		FirstSeenAt:        now,
+		LastSeenAt:         now,
+		TranslationStatus:  "succeeded",
+		DomainStatus:       "not_started",
+		FinancialStatus:    "not_started",
+		EnhancedStatus:     "not_started",
+		LifecycleState:     "input",
+		TaskStatuses:       json.RawMessage(`{"translate":"succeeded"}`),
+		TaskErrors:         json.RawMessage(`{}`),
+	}}, nil)
+
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", nil, ""))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/brreg/raw-records?page=2&q=BORTIGARD&state=input&translation_status=succeeded&sort=organization&dir=asc", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body struct {
+		Items []db.BrregWorkflowVRawRecordList `json:"items"`
+		Total int64                            `json:"total"`
+		Page  int                              `json:"page"`
+		Limit int                              `json:"limit"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, int64(1000), body.Total)
+	require.Equal(t, 2, body.Page)
+	require.Equal(t, 50, body.Limit)
+	require.Len(t, body.Items, 1)
+	require.Equal(t, "810202572", body.Items[0].OrganizationNumber)
+	require.Equal(t, "BORTIGARD AS", *body.Items[0].OrganizationName)
+	q.AssertExpectations(t)
+}
+
+func TestGetBrregRawRecordReturnsWorkflowRawRecordDetail(t *testing.T) {
+	q := &stubQuerier{}
+	recordID := uuid.New()
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	q.On("GetBrregWorkflowRawRecordDetail", mock.Anything, recordID).Return(db.BrregWorkflowVRawRecordDetail{
+		ID:                 recordID,
+		OrganizationNumber: "810202572",
+		OrganizationName:   ptrString("BORTIGARD AS"),
+		CountryIso2:        "NO",
+		PayloadHash:        "hash",
+		IsCurrent:          true,
+		FirstSeenAt:        now,
+		LastSeenAt:         now,
+		TranslationStatus:  "succeeded",
+		DomainStatus:       "not_started",
+		FinancialStatus:    "not_started",
+		EnhancedStatus:     "not_started",
+		LifecycleState:     "input",
+		TaskStatuses:       json.RawMessage(`{"translate":"succeeded"}`),
+		TaskErrors:         json.RawMessage(`{}`),
+		RawPayload:         json.RawMessage(`{"navn":"BORTIGARD AS"}`),
+		RawMetadata:        json.RawMessage(`{}`),
+		TranslationResult:  json.RawMessage(`{"status":"succeeded"}`),
+		DomainResult:       json.RawMessage(`{"status":null}`),
+		FinancialResult:    json.RawMessage(`{"status":null}`),
+		EnhancedResult:     json.RawMessage(`{"status":null}`),
+		Tasks:              json.RawMessage(`[{"task_type":"translate","status":"succeeded"}]`),
+	}, nil)
+
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", nil, ""))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/brreg/raw-records/"+recordID.String(), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body db.BrregWorkflowVRawRecordDetail
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, recordID, body.ID)
+	require.Equal(t, "BORTIGARD AS", *body.OrganizationName)
+	require.JSONEq(t, `{"navn":"BORTIGARD AS"}`, string(body.RawPayload))
+	q.AssertExpectations(t)
 }
 
 func TestGetRawInput_includesGLEIFDetail(t *testing.T) {

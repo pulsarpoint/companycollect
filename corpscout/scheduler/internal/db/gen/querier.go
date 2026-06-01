@@ -15,6 +15,7 @@ type Querier interface {
 	BeginBrregWorkflowRun(ctx context.Context, arg BeginBrregWorkflowRunParams) (uuid.UUID, error)
 	BulkUpdateCompanyFinancialStatus(ctx context.Context, arg BulkUpdateCompanyFinancialStatusParams) error
 	ClaimBrregWorkflowTaskSelectionBatch(ctx context.Context, arg ClaimBrregWorkflowTaskSelectionBatchParams) ([]ClaimBrregWorkflowTaskSelectionBatchRow, error)
+	CountBrregWorkflowRawRecords(ctx context.Context, arg CountBrregWorkflowRawRecordsParams) (int64, error)
 	CountCompanySuggestionReviews(ctx context.Context, arg CountCompanySuggestionReviewsParams) (int32, error)
 	CountDomains(ctx context.Context, arg CountDomainsParams) (int64, error)
 	CountPendingCompanyFinancials(ctx context.Context) (int32, error)
@@ -30,6 +31,7 @@ type Querier interface {
 	GetBrregWorkflowDomainAssetState(ctx context.Context) (BrregWorkflowVDomainAssetState, error)
 	GetBrregWorkflowEnhancedAssetState(ctx context.Context) (BrregWorkflowVEnhancedAssetState, error)
 	GetBrregWorkflowFinancialAssetState(ctx context.Context) (BrregWorkflowVFinancialAssetState, error)
+	GetBrregWorkflowRawRecordDetail(ctx context.Context, id uuid.UUID) (BrregWorkflowVRawRecordDetail, error)
 	GetBrregWorkflowTranslationAssetState(ctx context.Context) (BrregWorkflowVTranslationAssetState, error)
 	GetCompany(ctx context.Context, id uuid.UUID) (Company, error)
 	GetCompanyByExactName(ctx context.Context, lower string) (Company, error)
@@ -61,6 +63,7 @@ type Querier interface {
 	InsertSuggestion(ctx context.Context, arg InsertSuggestionParams) (Suggestion, error)
 	InsertSuggestionCompanyFinancial(ctx context.Context, arg InsertSuggestionCompanyFinancialParams) (SuggestionCompanyFinancial, error)
 	ListBrregWorkflowEnhancedReadyRecords(ctx context.Context) ([]BrregWorkflowVEnhancedReadyRecord, error)
+	ListBrregWorkflowRawRecords(ctx context.Context, arg ListBrregWorkflowRawRecordsParams) ([]BrregWorkflowVRawRecordList, error)
 	ListCompanyFinancials(ctx context.Context, companyID uuid.UUID) ([]CompanyFinancial, error)
 	ListCompanySuggestionReviewIDs(ctx context.Context) ([]uuid.UUID, error)
 	ListCompanySuggestionReviews(ctx context.Context, arg ListCompanySuggestionReviewsParams) ([]ListCompanySuggestionReviewsRow, error)

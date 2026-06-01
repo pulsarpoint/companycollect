@@ -412,6 +412,24 @@ func (s *stubQuerier) GetBrregWorkflowEnhancedAssetState(ctx context.Context) (d
 	return ret.Get(0).(db.BrregWorkflowVEnhancedAssetState), ret.Error(1)
 }
 
+func (s *stubQuerier) CountBrregWorkflowRawRecords(ctx context.Context, arg db.CountBrregWorkflowRawRecordsParams) (int64, error) {
+	ret := s.Called(ctx, arg)
+	return ret.Get(0).(int64), ret.Error(1)
+}
+
+func (s *stubQuerier) ListBrregWorkflowRawRecords(ctx context.Context, arg db.ListBrregWorkflowRawRecordsParams) ([]db.BrregWorkflowVRawRecordList, error) {
+	ret := s.Called(ctx, arg)
+	if v, ok := ret.Get(0).([]db.BrregWorkflowVRawRecordList); ok {
+		return v, ret.Error(1)
+	}
+	return nil, ret.Error(1)
+}
+
+func (s *stubQuerier) GetBrregWorkflowRawRecordDetail(ctx context.Context, id uuid.UUID) (db.BrregWorkflowVRawRecordDetail, error) {
+	ret := s.Called(ctx, id)
+	return ret.Get(0).(db.BrregWorkflowVRawRecordDetail), ret.Error(1)
+}
+
 // Sync checkpoint stubs
 func (s *stubQuerier) GetSyncCheckpoint(ctx context.Context, sourceName string) (db.SourceSyncCheckpoint, error) {
 	return db.SourceSyncCheckpoint{}, nil
