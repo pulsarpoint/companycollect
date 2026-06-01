@@ -238,6 +238,8 @@ NATS_SUBJECT=brreg.domain.discover
 CRAWL_NATS_BRREG_DOMAIN_DISCOVERY_SUBJECT=brreg.domain.discover
 CRAWL_NATS_SEARCH_FETCH_SUBJECT=brreg.domain.search.fetch
 CRAWL_NATS_SEARCH_ANALYZE_SUBJECT=brreg.domain.search.analyze
+CRAWL_NATS_PAGE_CRAWL_SUBJECT=brreg.domain.page.crawl
+CRAWL_NATS_PAGE_ANALYZE_SUBJECT=brreg.domain.page.analyze
 NATS_QUEUE=brreg-domain-crawl
 ```
 

@@ -307,7 +307,9 @@ export const api = {
       provider?: string;
       model?: string;
       candidate_threshold?: number;
+      domain_threshold?: number;
       max_candidates?: number;
+      max_site_checks?: number;
       timeout_seconds?: number;
       trigger?: string;
     } = {},

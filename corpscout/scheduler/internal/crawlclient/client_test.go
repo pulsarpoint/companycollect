@@ -111,6 +111,102 @@ func TestSearchActionsWrapRequestErrors(t *testing.T) {
 	require.Contains(t, err.Error(), "request brreg search fetch over nats")
 }
 
+func TestCrawlPageRequestsSubjectAndDecodesResponse(t *testing.T) {
+	fake := &fakeNATSRequester{
+		response: []byte(`{
+			"url":"https://bortigard.no/",
+			"final_url":"https://bortigard.no/",
+			"status":"succeeded",
+			"markdown":"# BORTIGARD AS",
+			"markdown_hash":"site-hash",
+			"links":["https://bortigard.no/contact"],
+			"duration_ms":9
+		}`),
+	}
+	client := newClientFromRequesterWithSubjects("fetch", "analyze", "brreg.domain.page.crawl", "brreg.domain.page.analyze", fake)
+
+	response, err := client.CrawlPage(context.Background(), CrawlPageRequest{
+		URL:            "https://bortigard.no/",
+		TimeoutSeconds: 60,
+		Metadata:       map[string]any{"candidate_score": 88},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "brreg.domain.page.crawl", fake.subject)
+	require.JSONEq(t, `{
+		"url":"https://bortigard.no/",
+		"timeout_seconds":60,
+		"metadata":{"candidate_score":88}
+	}`, string(fake.payload))
+	require.Equal(t, "succeeded", response.Status)
+	require.Equal(t, "site-hash", response.MarkdownHash)
+}
+
+func TestAnalyzeCompanyPageRequestsSubjectAndDecodesResponse(t *testing.T) {
+	fake := &fakeNATSRequester{
+		response: []byte(`{
+			"status":"succeeded",
+			"analysis":{
+				"decision":"accepted",
+				"score":91,
+				"site_type":"company_website",
+				"relationship":"primary_web_presence",
+				"owned_domain":true,
+				"reason":"The page names BORTIGARD AS.",
+				"evidence":["BORTIGARD AS"]
+			}
+		}`),
+	}
+	client := newClientFromRequesterWithSubjects("fetch", "analyze", "crawl", "brreg.domain.page.analyze", fake)
+
+	response, err := client.AnalyzeCompanyPage(context.Background(), PageAnalyzeRequest{
+		CompanyName:        "BORTIGARD AS",
+		OrganizationNumber: "810202572",
+		Country:            "NO",
+		URL:                "https://bortigard.no/",
+		FinalURL:           "https://bortigard.no/",
+		NormalizedDomain:   "bortigard.no",
+		Markdown:           "# BORTIGARD AS",
+		CandidateScore:     88,
+		CandidateReason:    "Search result matches.",
+		TimeoutSeconds:     60,
+		LLM: LLMSelection{
+			Provider: "deepseek-v4-flash",
+			Model:    "deepseek-v4-flash",
+			BaseURL:  "https://api.deepseek.com/v1",
+			APIKey:   "secret-key",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "brreg.domain.page.analyze", fake.subject)
+	require.JSONEq(t, `{
+		"company_name":"BORTIGARD AS",
+		"organization_number":"810202572",
+		"country":"NO",
+		"address_lines":null,
+		"business_activity":null,
+		"statutory_purpose":null,
+		"industry_codes":null,
+		"url":"https://bortigard.no/",
+		"final_url":"https://bortigard.no/",
+		"normalized_domain":"bortigard.no",
+		"markdown":"# BORTIGARD AS",
+		"candidate_score":88,
+		"candidate_reason":"Search result matches.",
+		"timeout_seconds":60,
+		"llm":{
+			"provider":"deepseek-v4-flash",
+			"model":"deepseek-v4-flash",
+			"base_url":"https://api.deepseek.com/v1",
+			"api_key":"secret-key"
+		}
+	}`, string(fake.payload))
+	require.Equal(t, "succeeded", response.Status)
+	require.Equal(t, "accepted", response.Analysis["decision"])
+	require.EqualValues(t, 91, response.Analysis["score"])
+}
+
 type fakeNATSRequester struct {
 	subject  string
 	payload  []byte

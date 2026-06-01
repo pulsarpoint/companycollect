@@ -49,6 +49,14 @@ func registerBrregDomainSearchWorker(worker temporalworker.Worker, resources *te
 		activity.RegisterOptions{Name: "AnalyzeBrregDomainSearchPages"},
 	)
 	worker.RegisterActivityWithOptions(
+		resources.domainSearchActions.CrawlBrregDomainCandidateSites,
+		activity.RegisterOptions{Name: "CrawlBrregDomainCandidateSites"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.domainSearchActions.AnalyzeBrregDomainCandidateSites,
+		activity.RegisterOptions{Name: "AnalyzeBrregDomainCandidateSites"},
+	)
+	worker.RegisterActivityWithOptions(
 		resources.domainSearchActions.SubmitBrregDomainSearchResults,
 		activity.RegisterOptions{Name: "SubmitBrregDomainSearchResults"},
 	)

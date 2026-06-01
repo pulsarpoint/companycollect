@@ -119,6 +119,14 @@ func TestSearchBrregDomainsProcessesBatchesUntilClaimDrains(t *testing.T) {
 		return AnalyzeBrregDomainSearchPagesResult{Results: results}, nil
 	}, activity.RegisterOptions{Name: "AnalyzeBrregDomainSearchPages"})
 
+	env.RegisterActivityWithOptions(func(input CrawlBrregDomainCandidateSitesInput) (CrawlBrregDomainCandidateSitesResult, error) {
+		return CrawlBrregDomainCandidateSitesResult{}, nil
+	}, activity.RegisterOptions{Name: "CrawlBrregDomainCandidateSites"})
+
+	env.RegisterActivityWithOptions(func(input AnalyzeBrregDomainCandidateSitesInput) (AnalyzeBrregDomainCandidateSitesResult, error) {
+		return AnalyzeBrregDomainCandidateSitesResult{Results: input.Results}, nil
+	}, activity.RegisterOptions{Name: "AnalyzeBrregDomainCandidateSites"})
+
 	env.RegisterActivityWithOptions(func(input SubmitBrregDomainSearchResultsInput) (SubmitBrregDomainSearchResultsResult, error) {
 		return SubmitBrregDomainSearchResultsResult{
 			RecordsSubmitted: int32(len(input.Results)),
@@ -212,6 +220,14 @@ func TestSearchBrregDomainsCompletesWhenRecordsFailInBusinessStep(t *testing.T) 
 		}
 		return AnalyzeBrregDomainSearchPagesResult{Results: results}, nil
 	}, activity.RegisterOptions{Name: "AnalyzeBrregDomainSearchPages"})
+
+	env.RegisterActivityWithOptions(func(input CrawlBrregDomainCandidateSitesInput) (CrawlBrregDomainCandidateSitesResult, error) {
+		return CrawlBrregDomainCandidateSitesResult{}, nil
+	}, activity.RegisterOptions{Name: "CrawlBrregDomainCandidateSites"})
+
+	env.RegisterActivityWithOptions(func(input AnalyzeBrregDomainCandidateSitesInput) (AnalyzeBrregDomainCandidateSitesResult, error) {
+		return AnalyzeBrregDomainCandidateSitesResult{Results: input.Results}, nil
+	}, activity.RegisterOptions{Name: "AnalyzeBrregDomainCandidateSites"})
 
 	env.RegisterActivityWithOptions(func(input SubmitBrregDomainSearchResultsInput) (SubmitBrregDomainSearchResultsResult, error) {
 		return SubmitBrregDomainSearchResultsResult{

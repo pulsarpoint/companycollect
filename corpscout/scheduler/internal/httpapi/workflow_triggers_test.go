@@ -155,7 +155,9 @@ func TestStartBrregDomainSearchWorkflowStartsTemporalWorkflow(t *testing.T) {
 		"provider": "deepseek",
 		"model": "deepseek-chat",
 		"candidate_threshold": 60,
+		"domain_threshold": 75,
 		"max_candidates": 12,
+		"max_site_checks": 4,
 		"timeout_seconds": 90
 	}`))
 	w := httptest.NewRecorder()
@@ -181,7 +183,9 @@ func TestStartBrregDomainSearchWorkflowStartsTemporalWorkflow(t *testing.T) {
 	require.Equal(t, "deepseek", input.Provider)
 	require.Equal(t, "deepseek-chat", input.Model)
 	require.Equal(t, 60, input.CandidateThreshold)
+	require.Equal(t, 75, input.DomainThreshold)
 	require.Equal(t, 12, input.MaxCandidates)
+	require.Equal(t, 4, input.MaxSiteChecks)
 	require.Equal(t, 90, input.TimeoutSeconds)
 }
 

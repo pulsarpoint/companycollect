@@ -58,7 +58,9 @@ type startBrregDomainSearchWorkflowRequest struct {
 	Provider           string `json:"provider,omitempty"`
 	Model              string `json:"model,omitempty"`
 	CandidateThreshold int    `json:"candidate_threshold,omitempty"`
+	DomainThreshold    int    `json:"domain_threshold,omitempty"`
 	MaxCandidates      int    `json:"max_candidates,omitempty"`
+	MaxSiteChecks      int    `json:"max_site_checks,omitempty"`
 	TimeoutSeconds     int    `json:"timeout_seconds,omitempty"`
 }
 
@@ -155,7 +157,9 @@ func (h *Handlers) handleStartBrregDomainSearchWorkflow(w http.ResponseWriter, r
 		Provider:           req.Provider,
 		Model:              req.Model,
 		CandidateThreshold: req.CandidateThreshold,
+		DomainThreshold:    req.DomainThreshold,
 		MaxCandidates:      req.MaxCandidates,
+		MaxSiteChecks:      req.MaxSiteChecks,
 		TimeoutSeconds:     req.TimeoutSeconds,
 	}
 	workflowID := newWorkflowID("brreg-domain-search")
@@ -173,7 +177,9 @@ func (h *Handlers) handleStartBrregDomainSearchWorkflow(w http.ResponseWriter, r
 		"provider", req.Provider,
 		"model", req.Model,
 		"candidate_threshold", req.CandidateThreshold,
+		"domain_threshold", req.DomainThreshold,
 		"max_candidates", req.MaxCandidates,
+		"max_site_checks", req.MaxSiteChecks,
 		"timeout_seconds", req.TimeoutSeconds,
 		"trigger", req.Trigger,
 	)
@@ -287,8 +293,14 @@ func decodeStartBrregDomainSearchWorkflowRequest(r *http.Request) (startBrregDom
 	if req.CandidateThreshold < 0 || req.CandidateThreshold > 100 {
 		return startBrregDomainSearchWorkflowRequest{}, errors.New("candidate_threshold must be between 0 and 100 when provided")
 	}
+	if req.DomainThreshold < 0 || req.DomainThreshold > 100 {
+		return startBrregDomainSearchWorkflowRequest{}, errors.New("domain_threshold must be between 0 and 100 when provided")
+	}
 	if req.MaxCandidates < 0 {
 		return startBrregDomainSearchWorkflowRequest{}, errors.New("max_candidates must be greater than zero when provided")
+	}
+	if req.MaxSiteChecks < 0 {
+		return startBrregDomainSearchWorkflowRequest{}, errors.New("max_site_checks must be greater than zero when provided")
 	}
 	if req.TimeoutSeconds < 0 {
 		return startBrregDomainSearchWorkflowRequest{}, errors.New("timeout_seconds must be greater than zero when provided")

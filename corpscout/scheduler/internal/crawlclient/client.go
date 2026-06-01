@@ -13,6 +13,8 @@ import (
 const (
 	DefaultSearchFetchSubject   = "brreg.domain.search.fetch"
 	DefaultSearchAnalyzeSubject = "brreg.domain.search.analyze"
+	DefaultPageCrawlSubject     = "brreg.domain.page.crawl"
+	DefaultPageAnalyzeSubject   = "brreg.domain.page.analyze"
 )
 
 type LLMSelection struct {
@@ -61,6 +63,32 @@ type SearchAnalyzeRequest struct {
 	LLM                LLMSelection `json:"llm"`
 }
 
+type CrawlPageRequest struct {
+	URL            string         `json:"url"`
+	TimeoutSeconds int            `json:"timeout_seconds"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+}
+
+type PageAnalyzeRequest struct {
+	CompanyName        string       `json:"company_name"`
+	OrganizationNumber string       `json:"organization_number,omitempty"`
+	Country            string       `json:"country"`
+	AddressLines       []string     `json:"address_lines"`
+	City               string       `json:"city,omitempty"`
+	PostalCode         string       `json:"postal_code,omitempty"`
+	BusinessActivity   []string     `json:"business_activity"`
+	StatutoryPurpose   []string     `json:"statutory_purpose"`
+	IndustryCodes      []string     `json:"industry_codes"`
+	URL                string       `json:"url"`
+	FinalURL           string       `json:"final_url"`
+	NormalizedDomain   string       `json:"normalized_domain"`
+	Markdown           string       `json:"markdown"`
+	CandidateScore     int          `json:"candidate_score"`
+	CandidateReason    string       `json:"candidate_reason,omitempty"`
+	TimeoutSeconds     int          `json:"timeout_seconds"`
+	LLM                LLMSelection `json:"llm"`
+}
+
 type ScoredLink struct {
 	URL              string         `json:"url"`
 	Domain           string         `json:"domain"`
@@ -86,6 +114,12 @@ type SearchAnalyzeResponse struct {
 	Error      *ServiceError `json:"error,omitempty"`
 }
 
+type PageAnalyzeResponse struct {
+	Status   string         `json:"status"`
+	Analysis map[string]any `json:"analysis,omitempty"`
+	Error    *ServiceError  `json:"error,omitempty"`
+}
+
 type natsRequester interface {
 	Request(context.Context, string, []byte) ([]byte, error)
 }
@@ -93,6 +127,8 @@ type natsRequester interface {
 type Client struct {
 	searchFetchSubject   string
 	searchAnalyzeSubject string
+	pageCrawlSubject     string
+	pageAnalyzeSubject   string
 	requester            natsRequester
 	conn                 *nats.Conn
 }
@@ -102,15 +138,33 @@ func NewNATS(url string) (*Client, error) {
 }
 
 func NewNATSWithSubjects(url string, searchFetchSubject string, searchAnalyzeSubject string) (*Client, error) {
+	return NewNATSWithActionSubjects(url, searchFetchSubject, searchAnalyzeSubject, "", "")
+}
+
+func NewNATSWithActionSubjects(
+	url string,
+	searchFetchSubject string,
+	searchAnalyzeSubject string,
+	pageCrawlSubject string,
+	pageAnalyzeSubject string,
+) (*Client, error) {
 	if searchFetchSubject == "" {
 		searchFetchSubject = DefaultSearchFetchSubject
 	}
 	if searchAnalyzeSubject == "" {
 		searchAnalyzeSubject = DefaultSearchAnalyzeSubject
 	}
+	if pageCrawlSubject == "" {
+		pageCrawlSubject = DefaultPageCrawlSubject
+	}
+	if pageAnalyzeSubject == "" {
+		pageAnalyzeSubject = DefaultPageAnalyzeSubject
+	}
 	slog.Debug("connecting brreg crawl nats client",
 		"search_fetch_subject", searchFetchSubject,
 		"search_analyze_subject", searchAnalyzeSubject,
+		"page_crawl_subject", pageCrawlSubject,
+		"page_analyze_subject", pageAnalyzeSubject,
 	)
 	conn, err := nats.Connect(url, nats.Timeout(10*time.Second))
 	if err != nil {
@@ -119,10 +173,14 @@ func NewNATSWithSubjects(url string, searchFetchSubject string, searchAnalyzeSub
 	slog.Debug("connected brreg crawl nats client",
 		"search_fetch_subject", searchFetchSubject,
 		"search_analyze_subject", searchAnalyzeSubject,
+		"page_crawl_subject", pageCrawlSubject,
+		"page_analyze_subject", pageAnalyzeSubject,
 	)
 	return &Client{
 		searchFetchSubject:   searchFetchSubject,
 		searchAnalyzeSubject: searchAnalyzeSubject,
+		pageCrawlSubject:     pageCrawlSubject,
+		pageAnalyzeSubject:   pageAnalyzeSubject,
 		requester:            natsConnRequester{conn: conn},
 		conn:                 conn,
 	}, nil
@@ -138,8 +196,27 @@ func newClientFromRequester(searchFetchSubject string, searchAnalyzeSubject stri
 	return &Client{
 		searchFetchSubject:   searchFetchSubject,
 		searchAnalyzeSubject: searchAnalyzeSubject,
+		pageCrawlSubject:     DefaultPageCrawlSubject,
+		pageAnalyzeSubject:   DefaultPageAnalyzeSubject,
 		requester:            requester,
 	}
+}
+
+func newClientFromRequesterWithSubjects(
+	searchFetchSubject string,
+	searchAnalyzeSubject string,
+	pageCrawlSubject string,
+	pageAnalyzeSubject string,
+	requester natsRequester,
+) *Client {
+	client := newClientFromRequester(searchFetchSubject, searchAnalyzeSubject, requester)
+	if pageCrawlSubject != "" {
+		client.pageCrawlSubject = pageCrawlSubject
+	}
+	if pageAnalyzeSubject != "" {
+		client.pageAnalyzeSubject = pageAnalyzeSubject
+	}
+	return client
 }
 
 func (c *Client) FetchSearchPage(ctx context.Context, request SearchFetchRequest) (Crawl4AiResponse, error) {
@@ -204,11 +281,71 @@ func (c *Client) AnalyzeSearchPage(ctx context.Context, request SearchAnalyzeReq
 	return decoded, nil
 }
 
+func (c *Client) CrawlPage(ctx context.Context, request CrawlPageRequest) (Crawl4AiResponse, error) {
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return Crawl4AiResponse{}, errors.Wrap(err, "encode brreg page crawl nats request")
+	}
+	slog.DebugContext(ctx, "requesting brreg page crawl over nats",
+		"subject", c.pageCrawlSubject,
+		"timeout_seconds", request.TimeoutSeconds,
+		"payload_bytes", len(payload),
+	)
+	responsePayload, err := c.requester.Request(ctx, c.pageCrawlSubject, payload)
+	if err != nil {
+		return Crawl4AiResponse{}, errors.Wrap(err, "request brreg page crawl over nats")
+	}
+	var decoded Crawl4AiResponse
+	if err := json.Unmarshal(responsePayload, &decoded); err != nil {
+		return Crawl4AiResponse{}, errors.Wrap(err, "decode brreg page crawl nats response")
+	}
+	slog.DebugContext(ctx, "received brreg page crawl nats response",
+		"subject", c.pageCrawlSubject,
+		"status", decoded.Status,
+		"links_count", len(decoded.Links),
+		"markdown_hash", decoded.MarkdownHash,
+		"response_bytes", len(responsePayload),
+	)
+	return decoded, nil
+}
+
+func (c *Client) AnalyzeCompanyPage(ctx context.Context, request PageAnalyzeRequest) (PageAnalyzeResponse, error) {
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return PageAnalyzeResponse{}, errors.Wrap(err, "encode brreg page analysis nats request")
+	}
+	slog.DebugContext(ctx, "requesting brreg page analysis over nats",
+		"subject", c.pageAnalyzeSubject,
+		"candidate_score", request.CandidateScore,
+		"provider", request.LLM.Provider,
+		"model", request.LLM.Model,
+		"has_inline_base_url", request.LLM.BaseURL != "",
+		"has_inline_api_key", request.LLM.APIKey != "",
+		"payload_bytes", len(payload),
+	)
+	responsePayload, err := c.requester.Request(ctx, c.pageAnalyzeSubject, payload)
+	if err != nil {
+		return PageAnalyzeResponse{}, errors.Wrap(err, "request brreg page analysis over nats")
+	}
+	var decoded PageAnalyzeResponse
+	if err := json.Unmarshal(responsePayload, &decoded); err != nil {
+		return PageAnalyzeResponse{}, errors.Wrap(err, "decode brreg page analysis nats response")
+	}
+	slog.DebugContext(ctx, "received brreg page analysis nats response",
+		"subject", c.pageAnalyzeSubject,
+		"status", decoded.Status,
+		"response_bytes", len(responsePayload),
+	)
+	return decoded, nil
+}
+
 func (c *Client) Close() {
 	if c != nil && c.conn != nil {
 		slog.Debug("closing brreg crawl nats connection",
 			"search_fetch_subject", c.searchFetchSubject,
 			"search_analyze_subject", c.searchAnalyzeSubject,
+			"page_crawl_subject", c.pageCrawlSubject,
+			"page_analyze_subject", c.pageAnalyzeSubject,
 		)
 		c.conn.Close()
 	}

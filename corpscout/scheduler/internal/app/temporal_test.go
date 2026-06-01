@@ -28,7 +28,7 @@ func TestNewTemporalWorkersCreatesBrregWorkers(t *testing.T) {
 }
 
 func TestNewTemporalWorkerResourcesRequiresNATSURL(t *testing.T) {
-	_, err := newTemporalWorkerResources(config.Config{}, nil, nil)
+	_, err := newTemporalWorkerResources(config.Config{}, nil, nil, nil)
 
 	if err == nil {
 		t.Fatal("expected missing nats url error")

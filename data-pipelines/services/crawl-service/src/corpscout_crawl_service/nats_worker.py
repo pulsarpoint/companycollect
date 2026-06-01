@@ -14,6 +14,9 @@ from corpscout_crawl_service.models import (
     BrregDomainDiscoveryRequest,
     Crawl4AiResponse,
     DomainDiscoverResponse,
+    PageAnalyzeRequest,
+    PageAnalyzeResponse,
+    PageCrawlRequest,
     SearchAnalyzeRequest,
     SearchAnalyzeResponse,
     SearchFetchRequest,
@@ -27,6 +30,8 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_NATS_SUBJECT = "brreg.domain.discover"
 DEFAULT_SEARCH_FETCH_SUBJECT = "brreg.domain.search.fetch"
 DEFAULT_SEARCH_ANALYZE_SUBJECT = "brreg.domain.search.analyze"
+DEFAULT_PAGE_CRAWL_SUBJECT = "brreg.domain.page.crawl"
+DEFAULT_PAGE_ANALYZE_SUBJECT = "brreg.domain.page.analyze"
 DEFAULT_NATS_QUEUE = "brreg-domain-crawl"
 
 
@@ -44,6 +49,10 @@ class SearchActionService(Protocol):
     async def fetch_search_page(self, request: SearchFetchRequest) -> Crawl4AiResponse: ...
 
     async def analyze_search_page(self, request: SearchAnalyzeRequest) -> SearchAnalyzeResponse: ...
+
+    async def crawl_page(self, request: PageCrawlRequest) -> Crawl4AiResponse: ...
+
+    async def analyze_company_page(self, request: PageAnalyzeRequest) -> PageAnalyzeResponse: ...
 
 
 async def handle_brreg_domain_discovery_message(
@@ -109,6 +118,49 @@ async def handle_search_analyze_message(
     await _respond(message, response)
 
 
+async def handle_page_crawl_message(
+    message: NatsMessage,
+    service: SearchActionService,
+) -> None:
+    try:
+        payload = json.loads(message.data.decode("utf-8"))
+        request = PageCrawlRequest.model_validate(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValidationError) as exc:
+        await _respond(message, _failed_crawl_response("invalid_nats_payload", "Invalid page crawl request.", exc))
+        return
+
+    try:
+        response = await service.crawl_page(request)
+    except Exception as exc:  # noqa: BLE001 - boundary handler must return structured failures.
+        LOGGER.exception("page crawl NATS handler failed")
+        response = _failed_crawl_response("crawl_worker_error", "Page crawl worker failed.", exc)
+
+    await _respond(message, response)
+
+
+async def handle_page_analyze_message(
+    message: NatsMessage,
+    service: SearchActionService,
+) -> None:
+    try:
+        payload = json.loads(message.data.decode("utf-8"))
+        request = PageAnalyzeRequest.model_validate(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValidationError) as exc:
+        await _respond(
+            message,
+            _failed_page_analyze_response("invalid_nats_payload", "Invalid page analysis request.", exc),
+        )
+        return
+
+    try:
+        response = await service.analyze_company_page(request)
+    except Exception as exc:  # noqa: BLE001 - boundary handler must return structured failures.
+        LOGGER.exception("page analysis NATS handler failed")
+        response = _failed_page_analyze_response("crawl_worker_error", "Page analysis worker failed.", exc)
+
+    await _respond(message, response)
+
+
 async def run_worker() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     service: CrawlService | MockCrawlService = MockCrawlService.from_env() if mock_enabled_from_env() else CrawlService()
@@ -119,6 +171,8 @@ async def run_worker() -> None:
     )
     search_fetch_subject = os.getenv("CRAWL_NATS_SEARCH_FETCH_SUBJECT", DEFAULT_SEARCH_FETCH_SUBJECT)
     search_analyze_subject = os.getenv("CRAWL_NATS_SEARCH_ANALYZE_SUBJECT", DEFAULT_SEARCH_ANALYZE_SUBJECT)
+    page_crawl_subject = os.getenv("CRAWL_NATS_PAGE_CRAWL_SUBJECT", DEFAULT_PAGE_CRAWL_SUBJECT)
+    page_analyze_subject = os.getenv("CRAWL_NATS_PAGE_ANALYZE_SUBJECT", DEFAULT_PAGE_ANALYZE_SUBJECT)
     queue = os.getenv("NATS_QUEUE", DEFAULT_NATS_QUEUE)
     max_concurrent = _positive_int_from_env("CRAWL_WORKER_MAX_CONCURRENT_REQUESTS", 1)
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -127,7 +181,15 @@ async def run_worker() -> None:
     nc = await nats.connect(nats_url)
     LOGGER.info(
         "crawl-service NATS worker connected subjects=%s queue=%s max_concurrent=%s",
-        ",".join(_configured_subjects(domain_discovery_subject, search_fetch_subject, search_analyze_subject)),
+        ",".join(
+            _configured_subjects(
+                domain_discovery_subject,
+                search_fetch_subject,
+                search_analyze_subject,
+                page_crawl_subject,
+                page_analyze_subject,
+            )
+        ),
         queue,
         max_concurrent,
     )
@@ -144,6 +206,14 @@ async def run_worker() -> None:
         async with semaphore:
             await handle_search_analyze_message(message, service)
 
+    async def page_crawl_callback(message: Any) -> None:
+        async with semaphore:
+            await handle_page_crawl_message(message, service)
+
+    async def page_analyze_callback(message: Any) -> None:
+        async with semaphore:
+            await handle_page_analyze_message(message, service)
+
     try:
         if domain_discovery_subject:
             await nc.subscribe(domain_discovery_subject, queue=queue, cb=domain_callback)
@@ -151,6 +221,10 @@ async def run_worker() -> None:
             await nc.subscribe(search_fetch_subject, queue=queue, cb=search_fetch_callback)
         if search_analyze_subject:
             await nc.subscribe(search_analyze_subject, queue=queue, cb=search_analyze_callback)
+        if page_crawl_subject:
+            await nc.subscribe(page_crawl_subject, queue=queue, cb=page_crawl_callback)
+        if page_analyze_subject:
+            await nc.subscribe(page_analyze_subject, queue=queue, cb=page_analyze_callback)
         while True:
             await asyncio.sleep(3600)
     finally:
@@ -192,6 +266,19 @@ def _failed_crawl_response(code: str, message: str, exc: Exception) -> Crawl4AiR
 
 def _failed_search_analyze_response(code: str, message: str, exc: Exception) -> SearchAnalyzeResponse:
     return SearchAnalyzeResponse(
+        status="failed",
+        error=ServiceError(
+            code=code,
+            message=message,
+            category="crawl_service",
+            retry_strategy="retry_with_backoff",
+            detail={"error": str(exc)},
+        ),
+    )
+
+
+def _failed_page_analyze_response(code: str, message: str, exc: Exception) -> PageAnalyzeResponse:
+    return PageAnalyzeResponse(
         status="failed",
         error=ServiceError(
             code=code,

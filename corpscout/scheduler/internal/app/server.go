@@ -72,7 +72,7 @@ func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
 	}
 	slog.Debug("scheduler river client started")
 
-	temporalDeps, err := newTemporalWorkerResources(cfg, pool, llmStore)
+	temporalDeps, err := newTemporalWorkerResources(cfg, pool, llmStore, s3)
 	if err != nil {
 		_ = riverClient.Stop(ctx)
 		pool.Close()

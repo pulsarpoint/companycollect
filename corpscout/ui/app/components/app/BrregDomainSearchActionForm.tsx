@@ -74,7 +74,9 @@ export function BrregDomainSearchActionForm({
   const [maxParallelTasks, setMaxParallelTasks] = useState("5");
   const [timeoutSeconds, setTimeoutSeconds] = useState("120");
   const [candidateThreshold, setCandidateThreshold] = useState("50");
+  const [domainThreshold, setDomainThreshold] = useState("70");
   const [maxCandidates, setMaxCandidates] = useState("10");
+  const [maxSiteChecks, setMaxSiteChecks] = useState("3");
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -93,7 +95,9 @@ export function BrregDomainSearchActionForm({
     setMaxParallelTasks("5");
     setTimeoutSeconds("120");
     setCandidateThreshold("50");
+    setDomainThreshold("70");
     setMaxCandidates("10");
+    setMaxSiteChecks("3");
     setProvider("");
     setModel("");
     setAdvancedOpen(false);
@@ -190,7 +194,9 @@ export function BrregDomainSearchActionForm({
         provider?: string;
         model?: string;
         candidate_threshold?: number;
+        domain_threshold?: number;
         max_candidates?: number;
+        max_site_checks?: number;
         timeout_seconds?: number;
       } = {
         limit: effectiveLimit,
@@ -202,7 +208,9 @@ export function BrregDomainSearchActionForm({
         provider: optionalText(provider),
         model: optionalText(model),
         candidate_threshold: parseOptionalPositiveNumber(candidateThreshold),
+        domain_threshold: parseOptionalPositiveNumber(domainThreshold),
         max_candidates: parseOptionalPositiveNumber(maxCandidates),
+        max_site_checks: parseOptionalPositiveNumber(maxSiteChecks),
         timeout_seconds: parseOptionalPositiveNumber(timeoutSeconds),
       };
 
@@ -416,7 +424,7 @@ export function BrregDomainSearchActionForm({
                   onChange={(event) => setCandidateThreshold(event.target.value)}
                 />
                 <FieldDescription>
-                  Minimum LLM score for candidate URLs to keep in the artifact.
+                  Minimum LLM score for URLs extracted from the search page.
                 </FieldDescription>
               </div>
 
@@ -433,6 +441,40 @@ export function BrregDomainSearchActionForm({
                 />
                 <FieldDescription>
                   Maximum candidate URLs returned by search-page analysis.
+                </FieldDescription>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="brreg-domain-search-domain-threshold">
+                  Domain threshold
+                </Label>
+                <Input
+                  id="brreg-domain-search-domain-threshold"
+                  min={0}
+                  max={100}
+                  type="number"
+                  value={domainThreshold}
+                  onChange={(event) => setDomainThreshold(event.target.value)}
+                />
+                <FieldDescription>
+                  Minimum LLM score for a crawled site to become an accepted
+                  company domain.
+                </FieldDescription>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="brreg-domain-search-max-site-checks">
+                  Max site checks
+                </Label>
+                <Input
+                  id="brreg-domain-search-max-site-checks"
+                  min={1}
+                  type="number"
+                  value={maxSiteChecks}
+                  onChange={(event) => setMaxSiteChecks(event.target.value)}
+                />
+                <FieldDescription>
+                  Maximum candidate sites to crawl and verify for each company.
                 </FieldDescription>
               </div>
             </div>
