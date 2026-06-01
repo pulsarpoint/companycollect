@@ -33,3 +33,15 @@ make corpscout-up
 make db-up
 ```
 
+## GHCR Package Permissions
+
+The Docker image workflow uses the repository `GITHUB_TOKEN` by default. When pushing to an existing GHCR package that was created by an older repository, GitHub may reject the push with:
+
+```text
+denied: permission_denied: write_package
+```
+
+Fix it in one of two ways:
+
+1. In each existing GHCR package, add `pulsarpoint/companycollect` under package settings -> Actions access.
+2. Or add a repository secret named `GHCR_TOKEN` with `write:packages` permission. The workflow will use it automatically when present.

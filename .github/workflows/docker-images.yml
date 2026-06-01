@@ -69,6 +69,7 @@ jobs:
       context: corpscout/scheduler
       dockerfile: corpscout/scheduler/Dockerfile
       cache_scope: corpscout-scheduler
+    secrets: inherit
 
   build-corpscout-ui:
     needs: changes
@@ -79,6 +80,7 @@ jobs:
       context: corpscout/ui
       dockerfile: corpscout/ui/Dockerfile
       cache_scope: corpscout-ui
+    secrets: inherit
 
   build-translation-service:
     needs: changes
@@ -89,6 +91,7 @@ jobs:
       context: data-pipelines/services/translation-service
       dockerfile: data-pipelines/services/translation-service/Dockerfile
       cache_scope: translation-service
+    secrets: inherit
 
   build-crawl-service:
     needs: changes
@@ -99,6 +102,7 @@ jobs:
       context: data-pipelines/services/crawl-service
       dockerfile: data-pipelines/services/crawl-service/Dockerfile
       cache_scope: crawl-service
+    secrets: inherit
 
   build-currency-service:
     needs: changes
@@ -109,6 +113,7 @@ jobs:
       context: data-pipelines/services/currency-service
       dockerfile: data-pipelines/services/currency-service/Dockerfile
       cache_scope: currency-service
+    secrets: inherit
 
   build-brreg-financial-service:
     needs: changes
@@ -119,6 +124,7 @@ jobs:
       context: data-pipelines/services/brreg-financial-service
       dockerfile: data-pipelines/services/brreg-financial-service/Dockerfile
       cache_scope: brreg-financial-service
+    secrets: inherit
 
   build-go-worker:
     needs: changes
@@ -129,6 +135,7 @@ jobs:
       context: data-pipelines/services/go-worker
       dockerfile: data-pipelines/services/go-worker/Dockerfile
       cache_scope: go-worker
+    secrets: inherit
 
   build-python-worker:
     needs: changes
@@ -139,4 +146,4 @@ jobs:
       context: data-pipelines/services/python-worker
       dockerfile: data-pipelines/services/python-worker/Dockerfile
       cache_scope: python-worker
-
+    secrets: inherit
