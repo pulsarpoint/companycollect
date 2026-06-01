@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/go-chi/chi/v5"
@@ -16,6 +17,7 @@ import (
 	"github.com/pulsarpoint/corpscout/scheduler/internal/config"
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/httpapi"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/llmproviders"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/s3client"
 )
 
@@ -96,6 +98,19 @@ func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
 
 	router := chi.NewRouter()
 	api := httpapi.NewHandlers(queries, riverClient, pool, s3, cfg.PostgRESTURL, temporalClient, cfg.TemporalUIURL)
+	llmCipher, err := llmProviderCipher(cfg)
+	if err != nil {
+		stopTemporalWorkers(temporalWorkers)
+		temporalClient.Close()
+		temporalDeps.Close()
+		_ = riverClient.Stop(ctx)
+		pool.Close()
+		return nil, err
+	}
+	api.ConfigureLLMProviders(
+		llmproviders.NewStore(queries, llmCipher),
+		llmproviders.NewProbeClient(http.DefaultClient, llmCipher),
+	)
 	api.RegisterRoutes(router)
 	slog.Debug("scheduler http routes registered")
 
@@ -107,6 +122,19 @@ func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
 		temporalWorkers: temporalWorkers,
 		temporalDeps:    temporalDeps,
 	}, nil
+}
+
+func llmProviderCipher(cfg config.Config) (*llmproviders.Cipher, error) {
+	key := strings.TrimSpace(cfg.LLMProviderKey)
+	if key == "" {
+		slog.Warn("llm provider encryption key not configured; provider creation with keys and provider enablement are disabled")
+		return nil, nil
+	}
+	cipher, err := llmproviders.NewCipher(key)
+	if err != nil {
+		return nil, errors.Wrap(err, "configure llm provider encryption")
+	}
+	return cipher, nil
 }
 
 func (s *Server) ListenAndServe() error {

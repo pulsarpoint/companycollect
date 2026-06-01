@@ -20,6 +20,7 @@ type Config struct {
 	TemporalHost    string
 	TemporalUIURL   string
 	LogLevel        string
+	LLMProviderKey  string
 }
 
 func Load() (Config, error) {
@@ -52,6 +53,7 @@ func Load() (Config, error) {
 		TemporalHost:    getEnv("CORPSCOUT_TEMPORAL_HOST", "localhost:7233"),
 		TemporalUIURL:   getEnv("CORPSCOUT_TEMPORAL_UI_URL", "http://localhost:8089"),
 		LogLevel:        logLevel,
+		LLMProviderKey:  getEnv("CORPSCOUT_LLM_PROVIDER_KEY_ENCRYPTION_KEY", ""),
 	}, nil
 }
 

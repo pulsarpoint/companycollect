@@ -15,6 +15,7 @@ type Querier interface {
 	BeginBrregWorkflowRun(ctx context.Context, arg BeginBrregWorkflowRunParams) (uuid.UUID, error)
 	BulkUpdateCompanyFinancialStatus(ctx context.Context, arg BulkUpdateCompanyFinancialStatusParams) error
 	ClaimBrregWorkflowTaskSelectionBatch(ctx context.Context, arg ClaimBrregWorkflowTaskSelectionBatchParams) ([]ClaimBrregWorkflowTaskSelectionBatchRow, error)
+	ClearDefaultLLMProvider(ctx context.Context) error
 	CountBrregWorkflowRawRecords(ctx context.Context, arg CountBrregWorkflowRawRecordsParams) (int64, error)
 	CountCompanySuggestionReviews(ctx context.Context, arg CountCompanySuggestionReviewsParams) (int32, error)
 	CountDomains(ctx context.Context, arg CountDomainsParams) (int64, error)
@@ -23,6 +24,7 @@ type Querier interface {
 	CreateBrregDomainActionAttempt(ctx context.Context, arg CreateBrregDomainActionAttemptParams) (uuid.UUID, error)
 	CreateBrregWorkflowTaskSelection(ctx context.Context, arg CreateBrregWorkflowTaskSelectionParams) (CreateBrregWorkflowTaskSelectionRow, error)
 	CreateCompanyFinancial(ctx context.Context, arg CreateCompanyFinancialParams) (CompanyFinancial, error)
+	CreateLLMProvider(ctx context.Context, arg CreateLLMProviderParams) (CreateLLMProviderRow, error)
 	FailRunningBrregWorkflowTasksForRun(ctx context.Context, arg FailRunningBrregWorkflowTasksForRunParams) (int32, error)
 	FinishBrregDomainActionAttempt(ctx context.Context, arg FinishBrregDomainActionAttemptParams) error
 	FinishBrregWorkflowRun(ctx context.Context, arg FinishBrregWorkflowRunParams) (uuid.UUID, error)
@@ -38,6 +40,8 @@ type Querier interface {
 	GetCompanyBySlug(ctx context.Context, canonicalSlug string) (Company, error)
 	GetCurrentBrregWorkflowRawRecord(ctx context.Context, organizationNumber string) (GetCurrentBrregWorkflowRawRecordRow, error)
 	GetDomainByID(ctx context.Context, id uuid.UUID) (GetDomainByIDRow, error)
+	GetLLMProviderBySlugForUse(ctx context.Context, slug string) (LlmProvider, error)
+	GetLLMProviderForUse(ctx context.Context, id uuid.UUID) (LlmProvider, error)
 	GetSourceByName(ctx context.Context, name string) (DataSource, error)
 	GetSourcesWithCapabilities(ctx context.Context) ([]DataSource, error)
 	GetStats(ctx context.Context) (GetStatsRow, error)
@@ -69,6 +73,8 @@ type Querier interface {
 	ListCompanySuggestionReviews(ctx context.Context, arg ListCompanySuggestionReviewsParams) ([]ListCompanySuggestionReviewsRow, error)
 	ListCountries(ctx context.Context) ([]Country, error)
 	ListDomains(ctx context.Context, arg ListDomainsParams) ([]ListDomainsRow, error)
+	ListEnabledLLMProviders(ctx context.Context) ([]ListEnabledLLMProvidersRow, error)
+	ListLLMProviders(ctx context.Context) ([]ListLLMProvidersRow, error)
 	ListPendingCompanyFinancialIDs(ctx context.Context) ([]uuid.UUID, error)
 	ListPendingCompanyFinancials(ctx context.Context, arg ListPendingCompanyFinancialsParams) ([]ListPendingCompanyFinancialsRow, error)
 	ListPendingCompanySuggestionReviewItems(ctx context.Context, suggestionID uuid.UUID) ([]ListPendingCompanySuggestionReviewItemsRow, error)
@@ -97,6 +103,7 @@ type Querier interface {
 	RecoverStaleBrregWorkflowRuns(ctx context.Context, arg RecoverStaleBrregWorkflowRunsParams) (RecoverStaleBrregWorkflowRunsRow, error)
 	RejectCompanyFinancial(ctx context.Context, arg RejectCompanyFinancialParams) error
 	ReviewCompanyDomain(ctx context.Context, arg ReviewCompanyDomainParams) error
+	SetDefaultLLMProvider(ctx context.Context, id uuid.UUID) (SetDefaultLLMProviderRow, error)
 	SupersedeCurrentBrregWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentBrregWorkflowRawRecordParams) error
 	// ── enrichment update ─────────────────────────────────────────────────────────
 	UpdateCompanyEnrichment(ctx context.Context, arg UpdateCompanyEnrichmentParams) (Company, error)
@@ -105,6 +112,7 @@ type Querier interface {
 	UpdateImportBatchCompleted(ctx context.Context, arg UpdateImportBatchCompletedParams) error
 	UpdateImportBatchRiverJob(ctx context.Context, arg UpdateImportBatchRiverJobParams) error
 	UpdateImportBatchStarted(ctx context.Context, arg UpdateImportBatchStartedParams) error
+	UpdateLLMProvider(ctx context.Context, arg UpdateLLMProviderParams) (UpdateLLMProviderRow, error)
 	UpdateSourceConfig(ctx context.Context, arg UpdateSourceConfigParams) error
 	UpdateSourceEnabled(ctx context.Context, arg UpdateSourceEnabledParams) error
 	UpdateSourceSchedule(ctx context.Context, arg UpdateSourceScheduleParams) error

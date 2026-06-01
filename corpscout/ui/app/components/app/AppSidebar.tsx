@@ -1,4 +1,4 @@
-import { BarChart3, Building2, CheckSquare, Globe, Server } from "lucide-react";
+import { BarChart3, Building2, CheckSquare, Globe, Server, Settings } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { Badge } from "~/components/ui/badge";
 import {
@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { title: "Companies", url: "/companies", icon: Building2 },
   { title: "Domains", url: "/domains", icon: Globe },
   { title: "Sources", url: "/sources", icon: Server },
+  { title: "LLM Providers", url: "/settings/llm-providers", icon: Settings },
 ] as const;
 
 interface AppSidebarProps {

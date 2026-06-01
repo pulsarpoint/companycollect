@@ -15,6 +15,11 @@ import type {
   RawInputDetail,
   BrregRawRecordListResponse,
   BrregRawRecordDetail,
+  LLMProvider,
+  LLMProviderInput,
+  LLMProviderListResponse,
+  LLMProviderTestRequest,
+  LLMProviderTestResponse,
 } from "~/types/api";
 
 const BASE = "/api/v1";
@@ -170,6 +175,20 @@ export const api = {
 
   getBrregRawRecord: (id: string) =>
     get<BrregRawRecordDetail>(`/brreg/raw-records/${id}`),
+
+  getLLMProviders: () => get<LLMProviderListResponse>("/llm-providers"),
+
+  createLLMProvider: (body: LLMProviderInput) =>
+    post<LLMProvider>("/llm-providers", body),
+
+  updateLLMProvider: (id: string, body: LLMProviderInput) =>
+    patch<LLMProvider>(`/llm-providers/${id}`, body),
+
+  setDefaultLLMProvider: (id: string) =>
+    post<LLMProvider>(`/llm-providers/${id}/default`, {}),
+
+  testLLMProvider: (id: string, body: LLMProviderTestRequest) =>
+    post<LLMProviderTestResponse>(`/llm-providers/${id}/test`, body),
 
   getCompanySuggestions: (page = 1, limit = 50) =>
     get<CompanySuggestionListResponse>(`/suggestions/companies?page=${page}&limit=${limit}`),

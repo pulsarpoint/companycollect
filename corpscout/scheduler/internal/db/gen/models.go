@@ -1284,6 +1284,25 @@ type LegacyBrregRawInputDomain struct {
 	RemovedBy  *string            `json:"removed_by"`
 }
 
+type LlmProvider struct {
+	ID               uuid.UUID       `json:"id"`
+	Slug             string          `json:"slug"`
+	DisplayName      string          `json:"display_name"`
+	ProviderType     string          `json:"provider_type"`
+	BaseUrl          string          `json:"base_url"`
+	Model            string          `json:"model"`
+	ApiKeyCiphertext *string         `json:"api_key_ciphertext"`
+	ApiKeyNonce      *string         `json:"api_key_nonce"`
+	ApiKeyKeyVersion string          `json:"api_key_key_version"`
+	ApiKeyAlgorithm  string          `json:"api_key_algorithm"`
+	IsDefault        bool            `json:"is_default"`
+	Enabled          bool            `json:"enabled"`
+	Capabilities     json.RawMessage `json:"capabilities"`
+	Metadata         json.RawMessage `json:"metadata"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+
 type OpenSourceProject struct {
 	ID               uuid.UUID       `json:"id"`
 	CanonicalSlug    string          `json:"canonical_slug"`

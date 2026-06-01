@@ -7,6 +7,58 @@ export interface StatsResponse {
   enabled_sources: number;
 }
 
+export interface LLMProvider {
+  id: string;
+  slug: string;
+  display_name: string;
+  provider_type: "openai_compatible";
+  base_url: string;
+  model: string;
+  has_api_key: boolean;
+  is_default: boolean;
+  enabled: boolean;
+  capabilities: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LLMProviderListResponse {
+  providers: LLMProvider[];
+}
+
+export interface LLMProviderInput {
+  slug: string;
+  display_name: string;
+  provider_type: "openai_compatible";
+  base_url: string;
+  model: string;
+  api_key?: string;
+  enabled: boolean;
+  is_default: boolean;
+  capabilities: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+}
+
+export interface LLMProviderTestRequest {
+  prompt: string;
+  max_tokens?: number;
+  timeout_seconds?: number;
+}
+
+export interface LLMProviderTestResponse {
+  status: "succeeded" | "failed";
+  provider_id: string;
+  provider_slug: string;
+  model: string;
+  response_text: string;
+  duration_ms: number;
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
 export interface RawInput {
   id: string;
   source: string;

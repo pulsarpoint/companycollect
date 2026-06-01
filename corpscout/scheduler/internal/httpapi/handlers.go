@@ -15,6 +15,7 @@ import (
 	"go.temporal.io/sdk/client"
 
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/llmproviders"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/s3client"
 )
 
@@ -42,12 +43,20 @@ type Handlers struct {
 	s3           *s3client.Client
 	postgrestURL string
 	temporal     client.Client
+	llmProviders *llmproviders.Store
+	llmProbe     *llmproviders.ProbeClient
 }
 
 // NewHandlers constructs Handlers. pool, rv, s3 and temporal may be nil in tests.
 func NewHandlers(q db.Querier, rv riverInserter, pool dbPool, s3 *s3client.Client, postgrestURL string, tc client.Client, temporalUIURL string) *Handlers {
 
 	return &Handlers{db: q, rv: rv, pool: pool, s3: s3, postgrestURL: postgrestURL, temporal: tc}
+}
+
+func (h *Handlers) ConfigureLLMProviders(store *llmproviders.Store, probe *llmproviders.ProbeClient) *Handlers {
+	h.llmProviders = store
+	h.llmProbe = probe
+	return h
 }
 
 // RegisterRoutes mounts all /api/v1 routes on the router.
@@ -75,6 +84,11 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 		r.Get("/sources", h.handleListSources)
 		r.Get("/sources/{name}", h.handleGetSource)
 		r.Patch("/sources/{name}", h.handlePatchSource)
+		r.Get("/llm-providers", h.handleListLLMProviders)
+		r.Post("/llm-providers", h.handleCreateLLMProvider)
+		r.Patch("/llm-providers/{id}", h.handleUpdateLLMProvider)
+		r.Post("/llm-providers/{id}/default", h.handleSetDefaultLLMProvider)
+		r.Post("/llm-providers/{id}/test", h.handleTestLLMProvider)
 		r.Get("/sources/brreg/task-state", h.handleGetBrregTaskState)
 		r.Post("/workflows/brreg/translation", h.handleStartBrregTranslationWorkflow)
 		r.Get("/brreg/raw-records", h.handleListBrregRawRecords)
