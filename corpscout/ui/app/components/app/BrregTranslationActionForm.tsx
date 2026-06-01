@@ -7,6 +7,7 @@ import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Separator } from "~/components/ui/separator";
 import { api, errorMessage } from "~/lib/api";
+import type { LLMProvider } from "~/types/api";
 
 export type BrregActionScope = "selected" | "filtered" | "eligible";
 
@@ -19,9 +20,15 @@ interface Props {
   onClose: () => void;
 }
 
-function scopeLabel(scope: BrregActionScope, selectedCount: number, totalCount: number) {
-  if (scope === "selected") return `${selectedCount.toLocaleString()} selected records`;
-  if (scope === "filtered") return `${totalCount.toLocaleString()} records matching the current filters`;
+function scopeLabel(
+  scope: BrregActionScope,
+  selectedCount: number,
+  totalCount: number,
+) {
+  if (scope === "selected")
+    return `${selectedCount.toLocaleString()} selected records`;
+  if (scope === "filtered")
+    return `${totalCount.toLocaleString()} records matching the current filters`;
   return "Next eligible records";
 }
 
@@ -46,6 +53,10 @@ function FieldDescription({ children }: { children: ReactNode }) {
   return <p className="text-xs leading-5 text-muted-foreground">{children}</p>;
 }
 
+function supportsTranslation(provider: LLMProvider) {
+  return provider.enabled && provider.capabilities?.translation !== false;
+}
+
 export function BrregTranslationActionForm({
   selectedIds,
   totalCount,
@@ -57,7 +68,8 @@ export function BrregTranslationActionForm({
   const selectedCount = selectedIds.length;
   const hasFilters = Object.keys(filters).length > 0;
   const defaultScope: BrregActionScope =
-    initialScope ?? (selectedCount > 0 ? "selected" : hasFilters ? "filtered" : "eligible");
+    initialScope ??
+    (selectedCount > 0 ? "selected" : hasFilters ? "filtered" : "eligible");
   const [scope, setScope] = useState<BrregActionScope>(defaultScope);
   const [limit, setLimit] = useState("1000");
   const [batchSize, setBatchSize] = useState("50");
@@ -72,6 +84,10 @@ export function BrregTranslationActionForm({
   const [targetLang, setTargetLang] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [llmProviders, setLLMProviders] = useState<LLMProvider[]>([]);
+  const [llmProvidersLoading, setLLMProvidersLoading] = useState(false);
+  const [llmProvidersLoaded, setLLMProvidersLoaded] = useState(false);
+  const [llmProvidersError, setLLMProvidersError] = useState("");
 
   useEffect(() => {
     setScope(defaultScope);
@@ -89,6 +105,34 @@ export function BrregTranslationActionForm({
     setAdvancedOpen(false);
   }, [defaultScope, selectedCount]);
 
+  useEffect(() => {
+    if (!advancedOpen || llmProvidersLoaded || llmProvidersLoading) return;
+
+    let cancelled = false;
+    setLLMProvidersLoading(true);
+    setLLMProvidersError("");
+    api
+      .getLLMProviders()
+      .then((response) => {
+        if (cancelled) return;
+        setLLMProviders(response.providers);
+        setLLMProvidersLoaded(true);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setLLMProvidersError(
+          errorMessage(error, "Failed to load LLM providers."),
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLLMProvidersLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [advancedOpen, llmProvidersLoaded, llmProvidersLoading]);
+
   const scopeOptions = useMemo(
     () => [
       {
@@ -101,14 +145,40 @@ export function BrregTranslationActionForm({
         label: `${totalCount.toLocaleString()} matching filters`,
         disabled: !hasFilters,
       },
-      { value: "eligible" as const, label: "Next eligible records", disabled: false },
+      {
+        value: "eligible" as const,
+        label: "Next eligible records",
+        disabled: false,
+      },
     ],
     [hasFilters, selectedCount, totalCount],
   );
 
   const limitDisabled = scope === "selected";
-  const effectiveLimit = limitDisabled ? selectedCount : parseRequiredPositiveNumber(limit);
-  const canSubmit = effectiveLimit !== null && (scope !== "selected" || selectedCount > 0);
+  const effectiveLimit = limitDisabled
+    ? selectedCount
+    : parseRequiredPositiveNumber(limit);
+  const canSubmit =
+    effectiveLimit !== null && (scope !== "selected" || selectedCount > 0);
+  const availableLLMProviders = useMemo(
+    () => llmProviders.filter(supportsTranslation),
+    [llmProviders],
+  );
+  const selectedLLMProvider = useMemo(
+    () =>
+      availableLLMProviders.find(
+        (llmProvider) => llmProvider.slug === provider,
+      ),
+    [availableLLMProviders, provider],
+  );
+
+  function changeProvider(nextProvider: string) {
+    setProvider(nextProvider);
+    const selected = availableLLMProviders.find(
+      (llmProvider) => llmProvider.slug === nextProvider,
+    );
+    setModel(selected?.model ?? "");
+  }
 
   async function submit() {
     if (!canSubmit || effectiveLimit === null) return;
@@ -162,15 +232,18 @@ export function BrregTranslationActionForm({
       <div className="rounded-md border bg-muted/20 p-3">
         <div className="text-sm font-medium">Translation</div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          Starts the Temporal workflow that claims BRREG raw records, sends payloads to the translation service,
-          and writes translation artifacts back to Corpscout.
+          Starts the Temporal workflow that claims BRREG raw records, sends
+          payloads to the translation service, and writes translation artifacts
+          back to Corpscout.
         </p>
       </div>
 
       <div className="flex flex-col gap-4">
         <div>
           <h3 className="text-sm font-medium">Required</h3>
-          <p className="mt-1 text-xs text-muted-foreground">{scopeLabel(scope, selectedCount, totalCount)}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {scopeLabel(scope, selectedCount, totalCount)}
+          </p>
         </div>
 
         <div className="flex flex-col gap-2">
@@ -179,17 +252,23 @@ export function BrregTranslationActionForm({
             id="brreg-translation-scope"
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             value={scope}
-            onChange={(event) => setScope(event.target.value as BrregActionScope)}
+            onChange={(event) =>
+              setScope(event.target.value as BrregActionScope)
+            }
           >
             {scopeOptions.map((option) => (
-              <option key={option.value} value={option.value} disabled={option.disabled}>
+              <option
+                key={option.value}
+                value={option.value}
+                disabled={option.disabled}
+              >
                 {option.label}
               </option>
             ))}
           </select>
           <FieldDescription>
-            Choose whether this run uses checked rows, the current table filters, or the next eligible untranslated
-            records.
+            Choose whether this run uses checked rows, the current table
+            filters, or the next eligible untranslated records.
           </FieldDescription>
         </div>
 
@@ -204,8 +283,8 @@ export function BrregTranslationActionForm({
             onChange={(event) => setLimit(event.target.value)}
           />
           <FieldDescription>
-            Maximum number of raw records this workflow can select. For checked rows, this is fixed to the selected
-            count.
+            Maximum number of raw records this workflow can select. For checked
+            rows, this is fixed to the selected count.
           </FieldDescription>
         </div>
       </div>
@@ -221,7 +300,9 @@ export function BrregTranslationActionForm({
           aria-expanded={advancedOpen}
         >
           Advanced options
-          <ChevronDown className={`size-4 transition-transform ${advancedOpen ? "rotate-180" : ""}`} />
+          <ChevronDown
+            className={`size-4 transition-transform ${advancedOpen ? "rotate-180" : ""}`}
+          />
         </Button>
 
         {advancedOpen && (
@@ -236,11 +317,16 @@ export function BrregTranslationActionForm({
                   value={batchSize}
                   onChange={(event) => setBatchSize(event.target.value)}
                 />
-                <FieldDescription>Number of records sent to the translation service in one workflow batch.</FieldDescription>
+                <FieldDescription>
+                  Number of records sent to the translation service in one
+                  workflow batch.
+                </FieldDescription>
               </div>
 
               <div className="flex flex-col gap-2">
-                <Label htmlFor="brreg-translation-timeout">Timeout seconds</Label>
+                <Label htmlFor="brreg-translation-timeout">
+                  Timeout seconds
+                </Label>
                 <Input
                   id="brreg-translation-timeout"
                   min={1}
@@ -249,12 +335,15 @@ export function BrregTranslationActionForm({
                   onChange={(event) => setLeaseSeconds(event.target.value)}
                 />
                 <FieldDescription>
-                  Lease and activity timeout budget for a claimed translation batch before it can be retried.
+                  Lease and activity timeout budget for a claimed translation
+                  batch before it can be retried.
                 </FieldDescription>
               </div>
 
               <div className="flex flex-col gap-2">
-                <Label htmlFor="brreg-translation-max-attempts">Retry attempts</Label>
+                <Label htmlFor="brreg-translation-max-attempts">
+                  Retry attempts
+                </Label>
                 <Input
                   id="brreg-translation-max-attempts"
                   min={1}
@@ -262,11 +351,16 @@ export function BrregTranslationActionForm({
                   value={maxAttempts}
                   onChange={(event) => setMaxAttempts(event.target.value)}
                 />
-                <FieldDescription>Maximum DB task attempts for a record before it becomes terminally failed.</FieldDescription>
+                <FieldDescription>
+                  Maximum DB task attempts for a record before it becomes
+                  terminally failed.
+                </FieldDescription>
               </div>
 
               <div className="flex flex-col gap-2">
-                <Label htmlFor="brreg-translation-service-retries">Service retries</Label>
+                <Label htmlFor="brreg-translation-service-retries">
+                  Service retries
+                </Label>
                 <Input
                   id="brreg-translation-service-retries"
                   min={1}
@@ -274,11 +368,16 @@ export function BrregTranslationActionForm({
                   value={maxServiceRetries}
                   onChange={(event) => setMaxServiceRetries(event.target.value)}
                 />
-                <FieldDescription>Retries inside one batch call when the translation service returns retryable errors.</FieldDescription>
+                <FieldDescription>
+                  Retries inside one batch call when the translation service
+                  returns retryable errors.
+                </FieldDescription>
               </div>
 
               <div className="flex flex-col gap-2">
-                <Label htmlFor="brreg-translation-parallel">Parallel batches</Label>
+                <Label htmlFor="brreg-translation-parallel">
+                  Parallel batches
+                </Label>
                 <Input
                   id="brreg-translation-parallel"
                   min={1}
@@ -286,7 +385,10 @@ export function BrregTranslationActionForm({
                   value={maxParallelTasks}
                   onChange={(event) => setMaxParallelTasks(event.target.value)}
                 />
-                <FieldDescription>Maximum translation batches the workflow can keep active at the same time.</FieldDescription>
+                <FieldDescription>
+                  Maximum translation batches the workflow can keep active at
+                  the same time.
+                </FieldDescription>
               </div>
 
               <div className="flex flex-col gap-2">
@@ -297,7 +399,9 @@ export function BrregTranslationActionForm({
                   placeholder="Server default"
                   onChange={(event) => setPromptVersion(event.target.value)}
                 />
-                <FieldDescription>Prompt contract version passed to the translation service.</FieldDescription>
+                <FieldDescription>
+                  Prompt contract version passed to the translation service.
+                </FieldDescription>
               </div>
             </div>
 
@@ -306,13 +410,32 @@ export function BrregTranslationActionForm({
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="brreg-translation-provider">LLM provider</Label>
-                <Input
+                <select
                   id="brreg-translation-provider"
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                   value={provider}
-                  placeholder="Server default"
-                  onChange={(event) => setProvider(event.target.value)}
-                />
-                <FieldDescription>Optional provider override, for example local or deepseek.</FieldDescription>
+                  onChange={(event) => changeProvider(event.target.value)}
+                >
+                  <option value="">Default provider</option>
+                  {availableLLMProviders.map((llmProvider) => (
+                    <option key={llmProvider.id} value={llmProvider.slug}>
+                      {llmProvider.display_name}
+                      {llmProvider.is_default ? " (default)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <FieldDescription>
+                  {llmProvidersLoading
+                    ? "Loading configured LLM providers."
+                    : selectedLLMProvider
+                      ? `Uses ${selectedLLMProvider.display_name} (${selectedLLMProvider.slug}) for this run.`
+                      : "Uses the default provider configured by the scheduler and translation service."}
+                </FieldDescription>
+                {llmProvidersError && (
+                  <p className="text-xs leading-5 text-destructive">
+                    {llmProvidersError}
+                  </p>
+                )}
               </div>
 
               <div className="flex flex-col gap-2">
@@ -323,29 +446,41 @@ export function BrregTranslationActionForm({
                   placeholder="Server default"
                   onChange={(event) => setModel(event.target.value)}
                 />
-                <FieldDescription>Optional model override sent to the translation service.</FieldDescription>
+                <FieldDescription>
+                  Optional model override sent to the translation service.
+                  Selecting an LLM provider fills this with that provider's
+                  configured model.
+                </FieldDescription>
               </div>
 
               <div className="flex flex-col gap-2">
-                <Label htmlFor="brreg-translation-source-lang">Source language</Label>
+                <Label htmlFor="brreg-translation-source-lang">
+                  Source language
+                </Label>
                 <Input
                   id="brreg-translation-source-lang"
                   value={sourceLang}
                   placeholder="Server default"
                   onChange={(event) => setSourceLang(event.target.value)}
                 />
-                <FieldDescription>Language code or name for the original BRREG payload text.</FieldDescription>
+                <FieldDescription>
+                  Language code or name for the original BRREG payload text.
+                </FieldDescription>
               </div>
 
               <div className="flex flex-col gap-2">
-                <Label htmlFor="brreg-translation-target-lang">Target language</Label>
+                <Label htmlFor="brreg-translation-target-lang">
+                  Target language
+                </Label>
                 <Input
                   id="brreg-translation-target-lang"
                   value={targetLang}
                   placeholder="Server default"
                   onChange={(event) => setTargetLang(event.target.value)}
                 />
-                <FieldDescription>Language code or name for translated output.</FieldDescription>
+                <FieldDescription>
+                  Language code or name for translated output.
+                </FieldDescription>
               </div>
             </div>
           </div>

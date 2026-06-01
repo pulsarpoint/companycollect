@@ -1,11 +1,26 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { CheckCircle2, KeyRound, Play, Plus, RefreshCw, Save, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  KeyRound,
+  Play,
+  Plus,
+  RefreshCw,
+  Save,
+  XCircle,
+} from "lucide-react";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Separator } from "~/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "~/components/ui/sheet";
 import { Switch } from "~/components/ui/switch";
 import {
   Table,
@@ -17,7 +32,11 @@ import {
 } from "~/components/ui/table";
 import { Textarea } from "~/components/ui/textarea";
 import { api, errorMessage } from "~/lib/api";
-import type { LLMProvider, LLMProviderInput, LLMProviderTestResponse } from "~/types/api";
+import type {
+  LLMProvider,
+  LLMProviderInput,
+  LLMProviderTestResponse,
+} from "~/types/api";
 
 type ProviderForm = {
   slug: string;
@@ -46,16 +65,21 @@ const emptyForm: ProviderForm = {
 export function LLMProviderManagement() {
   const [providers, setProviders] = useState<LLMProvider[]>([]);
   const [selectedID, setSelectedID] = useState<string>("");
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [form, setForm] = useState<ProviderForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [testPrompt, setTestPrompt] = useState("Reply with one short sentence confirming that this LLM provider works.");
-  const [testMaxTokens, setTestMaxTokens] = useState("128");
+  const [testPrompt, setTestPrompt] = useState(
+    "Reply with one short sentence confirming that this LLM provider works.",
+  );
+  const [testMaxTokens, setTestMaxTokens] = useState("512");
   const [testTimeoutSeconds, setTestTimeoutSeconds] = useState("30");
-  const [testResult, setTestResult] = useState<LLMProviderTestResponse | null>(null);
+  const [testResult, setTestResult] = useState<LLMProviderTestResponse | null>(
+    null,
+  );
 
   const selectedProvider = useMemo(
     () => providers.find((provider) => provider.id === selectedID) ?? null,
@@ -72,9 +96,6 @@ export function LLMProviderManagement() {
     try {
       const response = await api.getLLMProviders();
       setProviders(response.providers);
-      if (!selectedID && response.providers.length > 0) {
-        selectProvider(response.providers[0]);
-      }
     } catch (err) {
       setError(errorMessage(err, "Failed to load LLM providers"));
     } finally {
@@ -98,6 +119,7 @@ export function LLMProviderManagement() {
     setMessage(null);
     setError(null);
     setTestResult(null);
+    setSheetOpen(true);
   }
 
   function startNewProvider() {
@@ -106,6 +128,18 @@ export function LLMProviderManagement() {
     setMessage(null);
     setError(null);
     setTestResult(null);
+    setSheetOpen(true);
+  }
+
+  function changeSheetOpen(open: boolean) {
+    setSheetOpen(open);
+    if (!open) {
+      setSelectedID("");
+      setForm(emptyForm);
+      setTestResult(null);
+      setMessage(null);
+      setError(null);
+    }
   }
 
   async function saveProvider() {
@@ -121,7 +155,9 @@ export function LLMProviderManagement() {
       setForm((current) => ({ ...current, apiKey: "" }));
       const response = await api.getLLMProviders();
       setProviders(response.providers);
-      const nextSelected = response.providers.find((provider) => provider.id === saved.id);
+      const nextSelected = response.providers.find(
+        (provider) => provider.id === saved.id,
+      );
       if (nextSelected) selectProvider(nextSelected);
     } catch (err) {
       setError(errorMessage(err, "Failed to save LLM provider"));
@@ -140,7 +176,9 @@ export function LLMProviderManagement() {
       setMessage("Default provider updated");
       const response = await api.getLLMProviders();
       setProviders(response.providers);
-      const nextSelected = response.providers.find((provider) => provider.id === saved.id);
+      const nextSelected = response.providers.find(
+        (provider) => provider.id === saved.id,
+      );
       if (nextSelected) selectProvider(nextSelected);
     } catch (err) {
       setError(errorMessage(err, "Failed to set default provider"));
@@ -157,7 +195,7 @@ export function LLMProviderManagement() {
     try {
       const result = await api.testLLMProvider(selectedProvider.id, {
         prompt: testPrompt.trim(),
-        max_tokens: Number(testMaxTokens) || 128,
+        max_tokens: Number(testMaxTokens) || 512,
         timeout_seconds: Number(testTimeoutSeconds) || 30,
       });
       setTestResult(result);
@@ -169,7 +207,10 @@ export function LLMProviderManagement() {
         model: selectedProvider.model,
         response_text: "",
         duration_ms: 0,
-        error: { code: "request_failed", message: errorMessage(err, "Provider test failed") },
+        error: {
+          code: "request_failed",
+          message: errorMessage(err, "Provider test failed"),
+        },
       });
     } finally {
       setTesting(false);
@@ -181,7 +222,9 @@ export function LLMProviderManagement() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold">LLM Providers</h1>
-          <p className="text-sm text-muted-foreground">Manage provider records and verify access from Corpscout.</p>
+          <p className="text-sm text-muted-foreground">
+            Manage provider records and verify access from Corpscout.
+          </p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={loadProviders} disabled={loading}>
@@ -206,79 +249,94 @@ export function LLMProviderManagement() {
         </Alert>
       )}
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(420px,0.85fr)]">
-        <section className="rounded-lg border">
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <h2 className="text-sm font-semibold">Providers</h2>
-            <Badge variant="outline">{providers.length}</Badge>
-          </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Model</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Key</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {providers.map((provider) => (
-                <TableRow
-                  key={provider.id}
-                  data-state={provider.id === selectedID ? "selected" : undefined}
-                  className="cursor-pointer"
-                  onClick={() => selectProvider(provider)}
-                >
-                  <TableCell>
-                    <div className="flex flex-col gap-1">
-                      <span className="font-medium">{provider.display_name}</span>
-                      <span className="text-xs text-muted-foreground">{provider.slug}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>{provider.model}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Badge variant={provider.enabled ? "default" : "outline"}>
-                        {provider.enabled ? "Enabled" : "Disabled"}
-                      </Badge>
-                      {provider.is_default && <Badge variant="secondary">Default</Badge>}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    {provider.has_api_key ? (
-                      <span className="inline-flex items-center gap-1 text-xs">
-                        <KeyRound className="size-3" />
-                        Stored
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">None</span>
+      <section className="rounded-lg border">
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <h2 className="text-sm font-semibold">Providers</h2>
+          <Badge variant="outline">{providers.length}</Badge>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Model</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Key</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {providers.map((provider) => (
+              <TableRow
+                key={provider.id}
+                className="cursor-pointer"
+                onClick={() => selectProvider(provider)}
+              >
+                <TableCell>
+                  <div className="flex flex-col gap-1">
+                    <span className="font-medium">{provider.display_name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {provider.slug}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell>{provider.model}</TableCell>
+                <TableCell>
+                  <div className="flex gap-1">
+                    <Badge variant={provider.enabled ? "default" : "outline"}>
+                      {provider.enabled ? "Enabled" : "Disabled"}
+                    </Badge>
+                    {provider.is_default && (
+                      <Badge variant="secondary">Default</Badge>
                     )}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {!loading && providers.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                    No providers
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </section>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  {provider.has_api_key ? (
+                    <span className="inline-flex items-center gap-1 text-xs">
+                      <KeyRound className="size-3" />
+                      Stored
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">None</span>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+            {!loading && providers.length === 0 && (
+              <TableRow>
+                <TableCell
+                  colSpan={4}
+                  className="h-24 text-center text-muted-foreground"
+                >
+                  No providers
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </section>
 
-        <section className="flex flex-col gap-5">
-          <div className="rounded-lg border">
-            <div className="border-b px-4 py-3">
-              <h2 className="text-sm font-semibold">{selectedID ? "Edit Provider" : "New Provider"}</h2>
-            </div>
-            <div className="grid gap-4 p-4">
+      <Sheet open={sheetOpen} onOpenChange={changeSheetOpen}>
+        <SheetContent className="overflow-y-auto sm:max-w-2xl">
+          <SheetHeader>
+            <SheetTitle>
+              {selectedID ? "Edit LLM Provider" : "New LLM Provider"}
+            </SheetTitle>
+            <SheetDescription>
+              Configure the provider used by translation and domain discovery
+              workflows, then test it from Corpscout.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="flex flex-col gap-5 px-4 pb-4">
+            <section className="grid gap-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Display name" id="llm-display-name">
                   <Input
                     id="llm-display-name"
                     value={form.displayName}
-                    onChange={(event) => setForm({ ...form, displayName: event.target.value })}
+                    onChange={(event) =>
+                      setForm({ ...form, displayName: event.target.value })
+                    }
                   />
                 </Field>
                 <Field label="Slug" id="llm-slug">
@@ -286,7 +344,9 @@ export function LLMProviderManagement() {
                     id="llm-slug"
                     value={form.slug}
                     disabled={Boolean(selectedID)}
-                    onChange={(event) => setForm({ ...form, slug: event.target.value })}
+                    onChange={(event) =>
+                      setForm({ ...form, slug: event.target.value })
+                    }
                   />
                 </Field>
               </div>
@@ -296,7 +356,9 @@ export function LLMProviderManagement() {
                   id="llm-base-url"
                   value={form.baseURL}
                   placeholder="https://api.example.com"
-                  onChange={(event) => setForm({ ...form, baseURL: event.target.value })}
+                  onChange={(event) =>
+                    setForm({ ...form, baseURL: event.target.value })
+                  }
                 />
               </Field>
 
@@ -305,7 +367,9 @@ export function LLMProviderManagement() {
                   <Input
                     id="llm-model"
                     value={form.model}
-                    onChange={(event) => setForm({ ...form, model: event.target.value })}
+                    onChange={(event) =>
+                      setForm({ ...form, model: event.target.value })
+                    }
                   />
                 </Field>
                 <Field label="API key" id="llm-api-key">
@@ -313,22 +377,54 @@ export function LLMProviderManagement() {
                     id="llm-api-key"
                     type="password"
                     value={form.apiKey}
-                    placeholder={selectedProvider?.has_api_key ? "Stored key unchanged" : ""}
-                    onChange={(event) => setForm({ ...form, apiKey: event.target.value })}
+                    placeholder={
+                      selectedProvider?.has_api_key
+                        ? "Stored key unchanged"
+                        : ""
+                    }
+                    onChange={(event) =>
+                      setForm({ ...form, apiKey: event.target.value })
+                    }
                   />
                 </Field>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
-                <ToggleRow label="Enabled" checked={form.enabled} onCheckedChange={(enabled) => setForm({ ...form, enabled })} />
-                <ToggleRow label="Default" checked={form.isDefault} onCheckedChange={(isDefault) => setForm({ ...form, isDefault })} />
-                <ToggleRow label="Translation" checked={form.translation} onCheckedChange={(translation) => setForm({ ...form, translation })} />
-                <ToggleRow label="Domain discovery" checked={form.domainDiscovery} onCheckedChange={(domainDiscovery) => setForm({ ...form, domainDiscovery })} />
+                <ToggleRow
+                  label="Enabled"
+                  checked={form.enabled}
+                  onCheckedChange={(enabled) => setForm({ ...form, enabled })}
+                />
+                <ToggleRow
+                  label="Default"
+                  checked={form.isDefault}
+                  onCheckedChange={(isDefault) =>
+                    setForm({ ...form, isDefault })
+                  }
+                />
+                <ToggleRow
+                  label="Translation"
+                  checked={form.translation}
+                  onCheckedChange={(translation) =>
+                    setForm({ ...form, translation })
+                  }
+                />
+                <ToggleRow
+                  label="Domain discovery"
+                  checked={form.domainDiscovery}
+                  onCheckedChange={(domainDiscovery) =>
+                    setForm({ ...form, domainDiscovery })
+                  }
+                />
               </div>
 
               <div className="flex justify-end gap-2">
                 {selectedProvider && !selectedProvider.is_default && (
-                  <Button variant="outline" onClick={setAsDefault} disabled={saving}>
+                  <Button
+                    variant="outline"
+                    onClick={setAsDefault}
+                    disabled={saving}
+                  >
                     <CheckCircle2 className="size-4" />
                     Set default
                   </Button>
@@ -338,14 +434,19 @@ export function LLMProviderManagement() {
                   {saving ? "Saving..." : "Save provider"}
                 </Button>
               </div>
-            </div>
-          </div>
+            </section>
 
-          <div className="rounded-lg border">
-            <div className="border-b px-4 py-3">
-              <h2 className="text-sm font-semibold">Test Provider</h2>
-            </div>
-            <div className="grid gap-4 p-4">
+            <Separator />
+
+            <section className="grid gap-4">
+              <div>
+                <h2 className="text-sm font-semibold">Test Provider</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Sends a small OpenAI-compatible chat completion request using
+                  this provider configuration.
+                </p>
+              </div>
+
               <Field label="Prompt" id="llm-test-prompt">
                 <Textarea
                   id="llm-test-prompt"
@@ -370,13 +471,18 @@ export function LLMProviderManagement() {
                     type="number"
                     min={1}
                     value={testTimeoutSeconds}
-                    onChange={(event) => setTestTimeoutSeconds(event.target.value)}
+                    onChange={(event) =>
+                      setTestTimeoutSeconds(event.target.value)
+                    }
                   />
                 </Field>
               </div>
 
               <div className="flex justify-end">
-                <Button onClick={runProviderTest} disabled={!selectedProvider || testing}>
+                <Button
+                  onClick={runProviderTest}
+                  disabled={!selectedProvider || testing}
+                >
                   <Play className="size-4" />
                   {testing ? "Running..." : "Run test"}
                 </Button>
@@ -392,10 +498,18 @@ export function LLMProviderManagement() {
                       ) : (
                         <XCircle className="size-4 text-destructive" />
                       )}
-                      <Badge variant={testResult.status === "succeeded" ? "default" : "destructive"}>
+                      <Badge
+                        variant={
+                          testResult.status === "succeeded"
+                            ? "default"
+                            : "destructive"
+                        }
+                      >
                         {testResult.status}
                       </Badge>
-                      <span className="text-xs text-muted-foreground">{testResult.duration_ms} ms</span>
+                      <span className="text-xs text-muted-foreground">
+                        {testResult.duration_ms} ms
+                      </span>
                     </div>
                     {testResult.response_text && (
                       <pre className="max-h-72 overflow-auto rounded-md bg-muted p-3 text-sm whitespace-pre-wrap">
@@ -412,15 +526,23 @@ export function LLMProviderManagement() {
                   </div>
                 </>
               )}
-            </div>
+            </section>
           </div>
-        </section>
-      </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
 
-function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+function Field({
+  id,
+  label,
+  children,
+}: {
+  id: string;
+  label: string;
+  children: ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-2">
       <Label htmlFor={id}>{label}</Label>

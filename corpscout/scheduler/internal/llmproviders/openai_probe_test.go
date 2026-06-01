@@ -43,6 +43,62 @@ func TestProbeClientCallsOpenAICompatibleEndpoint(t *testing.T) {
 	require.NotContains(t, result.ResponseText, "secret-value")
 }
 
+func TestProbeClientNormalizesOpenAICompatibleBaseURL(t *testing.T) {
+	var requestPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"provider works"}}]}`))
+	}))
+	defer server.Close()
+
+	result := NewProbeClient(server.Client(), nil).TestProvider(t.Context(), ProviderConfig{
+		ID:           uuid.MustParse("1a6531c9-6ea9-4e74-b292-8f8cefe8b4de"),
+		Slug:         "deepseek",
+		ProviderType: ProviderTypeOpenAICompatible,
+		BaseURL:      server.URL + "/v1",
+		Model:        "deepseek-chat",
+	}, TestProviderCommand{Prompt: "Say ok", MaxTokens: 32, TimeoutSeconds: 5})
+
+	require.Equal(t, "succeeded", result.Status)
+	require.Equal(t, "/v1/chat/completions", requestPath)
+}
+
+func TestProbeClientReadsArrayContentBlocks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":[{"type":"text","text":"provider works"}]}}]}`))
+	}))
+	defer server.Close()
+
+	result := NewProbeClient(server.Client(), nil).TestProvider(t.Context(), ProviderConfig{
+		ID:           uuid.MustParse("1a6531c9-6ea9-4e74-b292-8f8cefe8b4de"),
+		Slug:         "deepseek",
+		ProviderType: ProviderTypeOpenAICompatible,
+		BaseURL:      server.URL,
+		Model:        "deepseek-chat",
+	}, TestProviderCommand{Prompt: "Say ok", MaxTokens: 32, TimeoutSeconds: 5})
+
+	require.Equal(t, "succeeded", result.Status)
+	require.Equal(t, "provider works", result.ResponseText)
+}
+
+func TestProbeClientReadsChoiceTextFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"text":"provider works"}]}`))
+	}))
+	defer server.Close()
+
+	result := NewProbeClient(server.Client(), nil).TestProvider(t.Context(), ProviderConfig{
+		ID:           uuid.MustParse("1a6531c9-6ea9-4e74-b292-8f8cefe8b4de"),
+		Slug:         "deepseek",
+		ProviderType: ProviderTypeOpenAICompatible,
+		BaseURL:      server.URL,
+		Model:        "deepseek-chat",
+	}, TestProviderCommand{Prompt: "Say ok", MaxTokens: 32, TimeoutSeconds: 5})
+
+	require.Equal(t, "succeeded", result.Status)
+	require.Equal(t, "provider works", result.ResponseText)
+}
+
 func TestProbeClientReturnsStructuredFailureForProviderStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
