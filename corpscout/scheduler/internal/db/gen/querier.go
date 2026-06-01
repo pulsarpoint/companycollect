@@ -66,6 +66,7 @@ type Querier interface {
 	InsertImportBatch(ctx context.Context, arg InsertImportBatchParams) (DomainImportBatch, error)
 	InsertSuggestion(ctx context.Context, arg InsertSuggestionParams) (Suggestion, error)
 	InsertSuggestionCompanyFinancial(ctx context.Context, arg InsertSuggestionCompanyFinancialParams) (SuggestionCompanyFinancial, error)
+	ListBrregWorkflowDomainSearchEvidenceByRawRecord(ctx context.Context, rawRecordID uuid.UUID) ([]BrregWorkflowVDomainSearchEvidence, error)
 	ListBrregWorkflowEnhancedReadyRecords(ctx context.Context) ([]BrregWorkflowVEnhancedReadyRecord, error)
 	ListBrregWorkflowRawRecords(ctx context.Context, arg ListBrregWorkflowRawRecordsParams) ([]BrregWorkflowVRawRecordList, error)
 	ListCompanyFinancials(ctx context.Context, companyID uuid.UUID) ([]CompanyFinancial, error)

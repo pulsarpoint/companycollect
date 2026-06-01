@@ -280,9 +280,34 @@ func TestListBrregRawRecordsReturnsEmptyArrayWhenNoRows(t *testing.T) {
 	q.AssertExpectations(t)
 }
 
+func TestListBrregRawRecordsFiltersByDomainSearchEvidence(t *testing.T) {
+	q := &stubQuerier{}
+	q.On("CountBrregWorkflowRawRecords", mock.Anything, db.CountBrregWorkflowRawRecordsParams{
+		DomainSearch: ptrString("with_markdown"),
+	}).Return(int64(0), nil)
+	q.On("ListBrregWorkflowRawRecords", mock.Anything, db.ListBrregWorkflowRawRecordsParams{
+		DomainSearch: ptrString("with_markdown"),
+		SortBy:       "last_seen_at",
+		SortDir:      "desc",
+		Offset:       0,
+		Limit:        50,
+	}).Return([]db.BrregWorkflowVRawRecordList(nil), nil)
+
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", nil, ""))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/brreg/raw-records?domain_search=with_markdown", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"items":[]`)
+	q.AssertExpectations(t)
+}
+
 func TestGetBrregRawRecordReturnsWorkflowRawRecordDetail(t *testing.T) {
 	q := &stubQuerier{}
 	recordID := uuid.New()
+	actionAttemptID := uuid.New()
+	artifactID := uuid.New()
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	q.On("GetBrregWorkflowRawRecordDetail", mock.Anything, recordID).Return(db.BrregWorkflowVRawRecordDetail{
 		ID:                 recordID,
@@ -308,6 +333,28 @@ func TestGetBrregRawRecordReturnsWorkflowRawRecordDetail(t *testing.T) {
 		EnhancedResult:     json.RawMessage(`{"status":null}`),
 		Tasks:              json.RawMessage(`[{"task_type":"translate","status":"succeeded"}]`),
 	}, nil)
+	q.On("ListBrregWorkflowDomainSearchEvidenceByRawRecord", mock.Anything, recordID).Return([]db.BrregWorkflowVDomainSearchEvidence{{
+		ActionAttemptID:   actionAttemptID,
+		RawRecordID:       recordID,
+		SearchEngine:      ptrString("duckduckgo"),
+		Attempt:           1,
+		ActionStatus:      "succeeded",
+		StartedAt:         now,
+		SearchTerm:        "BORTIGARD AS NO website",
+		ActionMetadata:    json.RawMessage(`{"search_engine":"duckduckgo"}`),
+		ArtifactID:        artifactID,
+		ArtifactCreatedAt: now,
+		SearchUrl:         "https://html.duckduckgo.com/html/?q=BORTIGARD%20AS%20NO%20website",
+		FinalUrl:          "https://html.duckduckgo.com/html/?q=BORTIGARD%20AS%20NO%20website",
+		CrawlStatus:       "succeeded",
+		Markdown:          "# Search results",
+		MarkdownHash:      "hash",
+		Links:             json.RawMessage(`["https://example.com"]`),
+		CrawlMetadata:     json.RawMessage(`{}`),
+		CrawlError:        json.RawMessage(`{}`),
+		ArtifactPayload:   json.RawMessage(`{"markdown":"# Search results"}`),
+		ArtifactMetadata:  json.RawMessage(`{}`),
+	}}, nil)
 
 	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", nil, ""))
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/brreg/raw-records/"+recordID.String(), nil)
@@ -320,6 +367,14 @@ func TestGetBrregRawRecordReturnsWorkflowRawRecordDetail(t *testing.T) {
 	require.Equal(t, recordID, body.ID)
 	require.Equal(t, "BORTIGARD AS", *body.OrganizationName)
 	require.JSONEq(t, `{"navn":"BORTIGARD AS"}`, string(body.RawPayload))
+
+	var fullBody struct {
+		DomainSearchEvidence []db.BrregWorkflowVDomainSearchEvidence `json:"domain_search_evidence"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fullBody))
+	require.Len(t, fullBody.DomainSearchEvidence, 1)
+	require.Equal(t, "BORTIGARD AS NO website", fullBody.DomainSearchEvidence[0].SearchTerm)
+	require.Equal(t, "# Search results", fullBody.DomainSearchEvidence[0].Markdown)
 	q.AssertExpectations(t)
 }
 

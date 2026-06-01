@@ -192,6 +192,7 @@ export const api = {
       lifecycle_state?: string;
       translation_status?: string;
       domain_status?: string;
+      domain_search?: string;
       financial_status?: string;
       enhanced_status?: string;
       sort?: string;
@@ -208,6 +209,7 @@ export const api = {
     if (params.translation_status)
       qs.set("translation_status", params.translation_status);
     if (params.domain_status) qs.set("domain_status", params.domain_status);
+    if (params.domain_search) qs.set("domain_search", params.domain_search);
     if (params.financial_status)
       qs.set("financial_status", params.financial_status);
     if (params.enhanced_status)

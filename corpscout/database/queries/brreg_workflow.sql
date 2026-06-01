@@ -226,7 +226,36 @@ WHERE (
   AND (sqlc.narg('translation_status')::text IS NULL OR ri.translation_status = sqlc.narg('translation_status')::text)
   AND (sqlc.narg('domain_status')::text IS NULL OR ri.domain_status = sqlc.narg('domain_status')::text)
   AND (sqlc.narg('financial_status')::text IS NULL OR ri.financial_status = sqlc.narg('financial_status')::text)
-  AND (sqlc.narg('enhanced_status')::text IS NULL OR ri.enhanced_status = sqlc.narg('enhanced_status')::text);
+  AND (sqlc.narg('enhanced_status')::text IS NULL OR ri.enhanced_status = sqlc.narg('enhanced_status')::text)
+  AND (
+    sqlc.narg('domain_search')::text IS NULL
+    OR (
+      sqlc.narg('domain_search')::text = 'performed'
+      AND EXISTS (
+        SELECT 1
+        FROM brreg_workflow.v_domain_search_evidence evidence
+        WHERE evidence.raw_record_id = ri.id
+      )
+    )
+    OR (
+      sqlc.narg('domain_search')::text = 'with_markdown'
+      AND EXISTS (
+        SELECT 1
+        FROM brreg_workflow.v_domain_search_evidence evidence
+        WHERE evidence.raw_record_id = ri.id
+          AND evidence.markdown IS NOT NULL
+          AND evidence.markdown <> ''
+      )
+    )
+    OR (
+      sqlc.narg('domain_search')::text = 'missing'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM brreg_workflow.v_domain_search_evidence evidence
+        WHERE evidence.raw_record_id = ri.id
+      )
+    )
+  );
 
 -- name: ListBrregWorkflowRawRecords :many
 SELECT *
@@ -241,6 +270,35 @@ WHERE (
   AND (sqlc.narg('domain_status')::text IS NULL OR ri.domain_status = sqlc.narg('domain_status')::text)
   AND (sqlc.narg('financial_status')::text IS NULL OR ri.financial_status = sqlc.narg('financial_status')::text)
   AND (sqlc.narg('enhanced_status')::text IS NULL OR ri.enhanced_status = sqlc.narg('enhanced_status')::text)
+  AND (
+    sqlc.narg('domain_search')::text IS NULL
+    OR (
+      sqlc.narg('domain_search')::text = 'performed'
+      AND EXISTS (
+        SELECT 1
+        FROM brreg_workflow.v_domain_search_evidence evidence
+        WHERE evidence.raw_record_id = ri.id
+      )
+    )
+    OR (
+      sqlc.narg('domain_search')::text = 'with_markdown'
+      AND EXISTS (
+        SELECT 1
+        FROM brreg_workflow.v_domain_search_evidence evidence
+        WHERE evidence.raw_record_id = ri.id
+          AND evidence.markdown IS NOT NULL
+          AND evidence.markdown <> ''
+      )
+    )
+    OR (
+      sqlc.narg('domain_search')::text = 'missing'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM brreg_workflow.v_domain_search_evidence evidence
+        WHERE evidence.raw_record_id = ri.id
+      )
+    )
+  )
 ORDER BY
   CASE WHEN sqlc.arg('sort_by')::text = 'organization' AND sqlc.arg('sort_dir')::text = 'asc' THEN lower(COALESCE(ri.organization_name, '')) END ASC,
   CASE WHEN sqlc.arg('sort_by')::text = 'organization' AND sqlc.arg('sort_dir')::text = 'desc' THEN lower(COALESCE(ri.organization_name, '')) END DESC,
@@ -267,6 +325,12 @@ OFFSET sqlc.arg('offset')::integer;
 SELECT *
 FROM brreg_workflow.v_raw_record_detail
 WHERE id = sqlc.arg('id')::uuid;
+
+-- name: ListBrregWorkflowDomainSearchEvidenceByRawRecord :many
+SELECT *
+FROM brreg_workflow.v_domain_search_evidence
+WHERE raw_record_id = sqlc.arg('raw_record_id')::uuid
+ORDER BY started_at DESC, artifact_created_at DESC NULLS LAST, action_attempt_id DESC;
 
 -- name: SupersedeCurrentBrregWorkflowRawRecord :exec
 UPDATE brreg_workflow.raw_records

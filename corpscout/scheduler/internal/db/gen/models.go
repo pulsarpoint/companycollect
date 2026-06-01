@@ -469,6 +469,37 @@ type BrregWorkflowVDomainAssetState struct {
 	ArtifactMissing     int64  `json:"artifact_missing"`
 }
 
+type BrregWorkflowVDomainSearchEvidence struct {
+	ActionAttemptID   uuid.UUID          `json:"action_attempt_id"`
+	WorkflowRunID     pgtype.UUID        `json:"workflow_run_id"`
+	TaskAttemptID     pgtype.UUID        `json:"task_attempt_id"`
+	RawRecordID       uuid.UUID          `json:"raw_record_id"`
+	SearchEngine      *string            `json:"search_engine"`
+	Model             *string            `json:"model"`
+	Attempt           int32              `json:"attempt"`
+	ActionStatus      string             `json:"action_status"`
+	StartedAt         time.Time          `json:"started_at"`
+	FinishedAt        pgtype.Timestamptz `json:"finished_at"`
+	ActionError       *string            `json:"action_error"`
+	ErrorCategory     *string            `json:"error_category"`
+	ErrorCode         *string            `json:"error_code"`
+	RetryStrategy     *string            `json:"retry_strategy"`
+	SearchTerm        string             `json:"search_term"`
+	ActionMetadata    json.RawMessage    `json:"action_metadata"`
+	ArtifactID        uuid.UUID          `json:"artifact_id"`
+	ArtifactCreatedAt time.Time          `json:"artifact_created_at"`
+	SearchUrl         string             `json:"search_url"`
+	FinalUrl          string             `json:"final_url"`
+	CrawlStatus       string             `json:"crawl_status"`
+	Markdown          string             `json:"markdown"`
+	MarkdownHash      string             `json:"markdown_hash"`
+	Links             json.RawMessage    `json:"links"`
+	CrawlMetadata     json.RawMessage    `json:"crawl_metadata"`
+	CrawlError        json.RawMessage    `json:"crawl_error"`
+	ArtifactPayload   json.RawMessage    `json:"artifact_payload"`
+	ArtifactMetadata  json.RawMessage    `json:"artifact_metadata"`
+}
+
 type BrregWorkflowVEnhancedAssetState struct {
 	Asset               string `json:"asset"`
 	RawRecordsCurrent   int64  `json:"raw_records_current"`

@@ -333,6 +333,35 @@ WHERE (
   AND ($4::text IS NULL OR ri.domain_status = $4::text)
   AND ($5::text IS NULL OR ri.financial_status = $5::text)
   AND ($6::text IS NULL OR ri.enhanced_status = $6::text)
+  AND (
+    $7::text IS NULL
+    OR (
+      $7::text = 'performed'
+      AND EXISTS (
+        SELECT 1
+        FROM brreg_workflow.v_domain_search_evidence evidence
+        WHERE evidence.raw_record_id = ri.id
+      )
+    )
+    OR (
+      $7::text = 'with_markdown'
+      AND EXISTS (
+        SELECT 1
+        FROM brreg_workflow.v_domain_search_evidence evidence
+        WHERE evidence.raw_record_id = ri.id
+          AND evidence.markdown IS NOT NULL
+          AND evidence.markdown <> ''
+      )
+    )
+    OR (
+      $7::text = 'missing'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM brreg_workflow.v_domain_search_evidence evidence
+        WHERE evidence.raw_record_id = ri.id
+      )
+    )
+  )
 `
 
 type CountBrregWorkflowRawRecordsParams struct {
@@ -342,6 +371,7 @@ type CountBrregWorkflowRawRecordsParams struct {
 	DomainStatus      *string `json:"domain_status"`
 	FinancialStatus   *string `json:"financial_status"`
 	EnhancedStatus    *string `json:"enhanced_status"`
+	DomainSearch      *string `json:"domain_search"`
 }
 
 func (q *Queries) CountBrregWorkflowRawRecords(ctx context.Context, arg CountBrregWorkflowRawRecordsParams) (int64, error) {
@@ -352,6 +382,7 @@ func (q *Queries) CountBrregWorkflowRawRecords(ctx context.Context, arg CountBrr
 		arg.DomainStatus,
 		arg.FinancialStatus,
 		arg.EnhancedStatus,
+		arg.DomainSearch,
 	)
 	var column_1 int64
 	err := row.Scan(&column_1)
@@ -1153,6 +1184,62 @@ func (q *Queries) InsertBrregWorkflowTranslationResult(ctx context.Context, arg 
 	return err
 }
 
+const listBrregWorkflowDomainSearchEvidenceByRawRecord = `-- name: ListBrregWorkflowDomainSearchEvidenceByRawRecord :many
+SELECT action_attempt_id, workflow_run_id, task_attempt_id, raw_record_id, search_engine, model, attempt, action_status, started_at, finished_at, action_error, error_category, error_code, retry_strategy, search_term, action_metadata, artifact_id, artifact_created_at, search_url, final_url, crawl_status, markdown, markdown_hash, links, crawl_metadata, crawl_error, artifact_payload, artifact_metadata
+FROM brreg_workflow.v_domain_search_evidence
+WHERE raw_record_id = $1::uuid
+ORDER BY started_at DESC, artifact_created_at DESC NULLS LAST, action_attempt_id DESC
+`
+
+func (q *Queries) ListBrregWorkflowDomainSearchEvidenceByRawRecord(ctx context.Context, rawRecordID uuid.UUID) ([]BrregWorkflowVDomainSearchEvidence, error) {
+	rows, err := q.db.Query(ctx, listBrregWorkflowDomainSearchEvidenceByRawRecord, rawRecordID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BrregWorkflowVDomainSearchEvidence
+	for rows.Next() {
+		var i BrregWorkflowVDomainSearchEvidence
+		if err := rows.Scan(
+			&i.ActionAttemptID,
+			&i.WorkflowRunID,
+			&i.TaskAttemptID,
+			&i.RawRecordID,
+			&i.SearchEngine,
+			&i.Model,
+			&i.Attempt,
+			&i.ActionStatus,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.ActionError,
+			&i.ErrorCategory,
+			&i.ErrorCode,
+			&i.RetryStrategy,
+			&i.SearchTerm,
+			&i.ActionMetadata,
+			&i.ArtifactID,
+			&i.ArtifactCreatedAt,
+			&i.SearchUrl,
+			&i.FinalUrl,
+			&i.CrawlStatus,
+			&i.Markdown,
+			&i.MarkdownHash,
+			&i.Links,
+			&i.CrawlMetadata,
+			&i.CrawlError,
+			&i.ArtifactPayload,
+			&i.ArtifactMetadata,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBrregWorkflowEnhancedReadyRecords = `-- name: ListBrregWorkflowEnhancedReadyRecords :many
 SELECT id, organization_number, organization_name, registration_status, website, country_iso2, raw_payload, payload_hash, raw_last_seen_at, translation_status, translation_payload, domain_status, best_domain, domain_payload, financial_status, original_payload, usd_payload, fx_metadata, task_statuses
 FROM brreg_workflow.v_enhanced_ready_records
@@ -1212,27 +1299,56 @@ WHERE (
   AND ($4::text IS NULL OR ri.domain_status = $4::text)
   AND ($5::text IS NULL OR ri.financial_status = $5::text)
   AND ($6::text IS NULL OR ri.enhanced_status = $6::text)
+  AND (
+    $7::text IS NULL
+    OR (
+      $7::text = 'performed'
+      AND EXISTS (
+        SELECT 1
+        FROM brreg_workflow.v_domain_search_evidence evidence
+        WHERE evidence.raw_record_id = ri.id
+      )
+    )
+    OR (
+      $7::text = 'with_markdown'
+      AND EXISTS (
+        SELECT 1
+        FROM brreg_workflow.v_domain_search_evidence evidence
+        WHERE evidence.raw_record_id = ri.id
+          AND evidence.markdown IS NOT NULL
+          AND evidence.markdown <> ''
+      )
+    )
+    OR (
+      $7::text = 'missing'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM brreg_workflow.v_domain_search_evidence evidence
+        WHERE evidence.raw_record_id = ri.id
+      )
+    )
+  )
 ORDER BY
-  CASE WHEN $7::text = 'organization' AND $8::text = 'asc' THEN lower(COALESCE(ri.organization_name, '')) END ASC,
-  CASE WHEN $7::text = 'organization' AND $8::text = 'desc' THEN lower(COALESCE(ri.organization_name, '')) END DESC,
-  CASE WHEN $7::text = 'website' AND $8::text = 'asc' THEN lower(COALESCE(ri.website, '')) END ASC,
-  CASE WHEN $7::text = 'website' AND $8::text = 'desc' THEN lower(COALESCE(ri.website, '')) END DESC,
-  CASE WHEN $7::text = 'state' AND $8::text = 'asc' THEN ri.lifecycle_state END ASC,
-  CASE WHEN $7::text = 'state' AND $8::text = 'desc' THEN ri.lifecycle_state END DESC,
-  CASE WHEN $7::text = 'translation_status' AND $8::text = 'asc' THEN ri.translation_status END ASC,
-  CASE WHEN $7::text = 'translation_status' AND $8::text = 'desc' THEN ri.translation_status END DESC,
-  CASE WHEN $7::text = 'domain_status' AND $8::text = 'asc' THEN ri.domain_status END ASC,
-  CASE WHEN $7::text = 'domain_status' AND $8::text = 'desc' THEN ri.domain_status END DESC,
-  CASE WHEN $7::text = 'financial_status' AND $8::text = 'asc' THEN ri.financial_status END ASC,
-  CASE WHEN $7::text = 'financial_status' AND $8::text = 'desc' THEN ri.financial_status END DESC,
-  CASE WHEN $7::text = 'enhanced_status' AND $8::text = 'asc' THEN ri.enhanced_status END ASC,
-  CASE WHEN $7::text = 'enhanced_status' AND $8::text = 'desc' THEN ri.enhanced_status END DESC,
-  CASE WHEN $7::text = 'last_seen_at' AND $8::text = 'asc' THEN ri.last_seen_at END ASC,
-  CASE WHEN $7::text = 'last_seen_at' AND $8::text = 'desc' THEN ri.last_seen_at END DESC,
+  CASE WHEN $8::text = 'organization' AND $9::text = 'asc' THEN lower(COALESCE(ri.organization_name, '')) END ASC,
+  CASE WHEN $8::text = 'organization' AND $9::text = 'desc' THEN lower(COALESCE(ri.organization_name, '')) END DESC,
+  CASE WHEN $8::text = 'website' AND $9::text = 'asc' THEN lower(COALESCE(ri.website, '')) END ASC,
+  CASE WHEN $8::text = 'website' AND $9::text = 'desc' THEN lower(COALESCE(ri.website, '')) END DESC,
+  CASE WHEN $8::text = 'state' AND $9::text = 'asc' THEN ri.lifecycle_state END ASC,
+  CASE WHEN $8::text = 'state' AND $9::text = 'desc' THEN ri.lifecycle_state END DESC,
+  CASE WHEN $8::text = 'translation_status' AND $9::text = 'asc' THEN ri.translation_status END ASC,
+  CASE WHEN $8::text = 'translation_status' AND $9::text = 'desc' THEN ri.translation_status END DESC,
+  CASE WHEN $8::text = 'domain_status' AND $9::text = 'asc' THEN ri.domain_status END ASC,
+  CASE WHEN $8::text = 'domain_status' AND $9::text = 'desc' THEN ri.domain_status END DESC,
+  CASE WHEN $8::text = 'financial_status' AND $9::text = 'asc' THEN ri.financial_status END ASC,
+  CASE WHEN $8::text = 'financial_status' AND $9::text = 'desc' THEN ri.financial_status END DESC,
+  CASE WHEN $8::text = 'enhanced_status' AND $9::text = 'asc' THEN ri.enhanced_status END ASC,
+  CASE WHEN $8::text = 'enhanced_status' AND $9::text = 'desc' THEN ri.enhanced_status END DESC,
+  CASE WHEN $8::text = 'last_seen_at' AND $9::text = 'asc' THEN ri.last_seen_at END ASC,
+  CASE WHEN $8::text = 'last_seen_at' AND $9::text = 'desc' THEN ri.last_seen_at END DESC,
   ri.last_seen_at DESC,
   ri.id ASC
-LIMIT $10::integer
-OFFSET $9::integer
+LIMIT $11::integer
+OFFSET $10::integer
 `
 
 type ListBrregWorkflowRawRecordsParams struct {
@@ -1242,6 +1358,7 @@ type ListBrregWorkflowRawRecordsParams struct {
 	DomainStatus      *string `json:"domain_status"`
 	FinancialStatus   *string `json:"financial_status"`
 	EnhancedStatus    *string `json:"enhanced_status"`
+	DomainSearch      *string `json:"domain_search"`
 	SortBy            string  `json:"sort_by"`
 	SortDir           string  `json:"sort_dir"`
 	Offset            int32   `json:"offset"`
@@ -1256,6 +1373,7 @@ func (q *Queries) ListBrregWorkflowRawRecords(ctx context.Context, arg ListBrreg
 		arg.DomainStatus,
 		arg.FinancialStatus,
 		arg.EnhancedStatus,
+		arg.DomainSearch,
 		arg.SortBy,
 		arg.SortDir,
 		arg.Offset,

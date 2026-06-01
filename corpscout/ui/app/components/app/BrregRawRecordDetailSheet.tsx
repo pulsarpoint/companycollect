@@ -7,6 +7,7 @@ import { Badge } from "~/components/ui/badge";
 import { Separator } from "~/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "~/components/ui/sheet";
 import { Skeleton } from "~/components/ui/skeleton";
+import type { BrregDomainSearchEvidence } from "~/types/api";
 
 function statusClass(status?: string) {
   if (status === "succeeded" || status === "built" || status === "published") {
@@ -74,6 +75,86 @@ function JsonBlock({
       ) : (
         <div className="rounded-md border px-3 py-5 text-sm text-muted-foreground">{emptyText}</div>
       )}
+    </section>
+  );
+}
+
+function stringArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+function DomainSearchEvidenceSummary({
+  evidence,
+}: {
+  evidence: BrregDomainSearchEvidence[];
+}) {
+  if (!Array.isArray(evidence) || evidence.length === 0) {
+    return (
+      <section className="space-y-2">
+        <h3 className="text-sm font-medium">Domain search evidence</h3>
+        <div className="rounded-md border px-3 py-5 text-sm text-muted-foreground">
+          No search-page evidence recorded.
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-medium">Domain search evidence</h3>
+      {evidence.map((item) => {
+        const links = stringArray(item.links);
+        return (
+          <div key={item.action_attempt_id} className="space-y-3 rounded-md border p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium">{item.search_engine || "search"}</p>
+                <p className="text-xs text-muted-foreground">{formatDate(item.artifact_created_at || item.started_at)}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge status={item.action_status} />
+                <StatusBadge status={item.crawl_status} />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <DetailRow label="Search term" value={item.search_term} />
+              <DetailRow label="Search URL" value={item.search_url} />
+              <DetailRow label="Final URL" value={item.final_url} />
+              <DetailRow label="Markdown hash" value={item.markdown_hash} />
+            </div>
+
+            {links.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Links</p>
+                <div className="max-h-32 overflow-auto rounded-md border bg-muted/40 p-2">
+                  {links.slice(0, 30).map((link) => (
+                    <a
+                      key={link}
+                      className="block truncate text-xs text-primary underline-offset-4 hover:underline"
+                      href={link}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {link}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {item.markdown ? (
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Search result markdown</p>
+                <pre className="max-h-72 overflow-auto rounded-md border bg-muted/60 p-3 text-xs whitespace-pre-wrap break-words">
+                  {item.markdown}
+                </pre>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
     </section>
   );
 }
@@ -234,6 +315,8 @@ export function BrregRawRecordDetailSheet({
 
             <Separator />
             <TaskSummary detail={detail} />
+            <Separator />
+            <DomainSearchEvidenceSummary evidence={detail.domain_search_evidence ?? []} />
             <Separator />
             <JsonBlock title="Raw payload" value={detail.raw_payload} emptyText="No raw payload available." />
             <JsonBlock title="Translation result" value={detail.translation_result} emptyText="No translation result available." />

@@ -19,6 +19,11 @@ type brregRawRecordListResponse struct {
 	Limit int                              `json:"limit"`
 }
 
+type brregRawRecordDetailResponse struct {
+	db.BrregWorkflowVRawRecordDetail
+	DomainSearchEvidence []db.BrregWorkflowVDomainSearchEvidence `json:"domain_search_evidence"`
+}
+
 func (h *Handlers) handleListBrregRawRecords(w http.ResponseWriter, r *http.Request) {
 	if h.db == nil {
 		writeError(w, http.StatusServiceUnavailable, "database querier not available")
@@ -33,6 +38,7 @@ func (h *Handlers) handleListBrregRawRecords(w http.ResponseWriter, r *http.Requ
 		DomainStatus:      params.DomainStatus,
 		FinancialStatus:   params.FinancialStatus,
 		EnhancedStatus:    params.EnhancedStatus,
+		DomainSearch:      params.DomainSearch,
 	}
 	total, err := h.db.CountBrregWorkflowRawRecords(r.Context(), countParams)
 	if err != nil {
@@ -80,7 +86,19 @@ func (h *Handlers) handleGetBrregRawRecord(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, row)
+	domainSearchEvidence, err := h.db.ListBrregWorkflowDomainSearchEvidenceByRawRecord(r.Context(), id)
+	if err != nil {
+		slog.Error("list brreg domain search evidence", "id", id.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if domainSearchEvidence == nil {
+		domainSearchEvidence = []db.BrregWorkflowVDomainSearchEvidence{}
+	}
+	writeJSON(w, http.StatusOK, brregRawRecordDetailResponse{
+		BrregWorkflowVRawRecordDetail: row,
+		DomainSearchEvidence:          domainSearchEvidence,
+	})
 }
 
 func brregRawRecordListParamsFromRequest(r *http.Request) db.ListBrregWorkflowRawRecordsParams {
@@ -93,6 +111,7 @@ func brregRawRecordListParamsFromRequest(r *http.Request) db.ListBrregWorkflowRa
 		DomainStatus:      queryString(r, "domain_status"),
 		FinancialStatus:   queryString(r, "financial_status"),
 		EnhancedStatus:    queryString(r, "enhanced_status"),
+		DomainSearch:      queryString(r, "domain_search"),
 		SortBy:            brregRawRecordSortBy(r.URL.Query().Get("sort")),
 		SortDir:           brregRawRecordSortDir(r.URL.Query().Get("dir")),
 		Offset:            int32((page - 1) * pageSize),

@@ -114,6 +114,37 @@ export interface BrregRawRecordDetail extends BrregRawRecordListItem {
   financial_result: Record<string, unknown>;
   enhanced_result: Record<string, unknown>;
   tasks: Array<Record<string, unknown>>;
+  domain_search_evidence: BrregDomainSearchEvidence[];
+}
+
+export interface BrregDomainSearchEvidence {
+  action_attempt_id: string;
+  workflow_run_id?: string;
+  task_attempt_id?: string;
+  raw_record_id: string;
+  search_engine?: string;
+  model?: string;
+  attempt: number;
+  action_status: string;
+  started_at: string;
+  finished_at?: string;
+  action_error?: string;
+  error_category?: string;
+  error_code?: string;
+  retry_strategy?: string;
+  search_term: string;
+  artifact_id: string;
+  artifact_created_at: string;
+  search_url: string;
+  final_url: string;
+  crawl_status: string;
+  markdown: string;
+  markdown_hash: string;
+  links: string[];
+  crawl_metadata: Record<string, unknown>;
+  crawl_error: Record<string, unknown>;
+  artifact_payload: Record<string, unknown>;
+  artifact_metadata: Record<string, unknown>;
 }
 
 interface BrregTaskStateAssetSummary {

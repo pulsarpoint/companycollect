@@ -1,0 +1,2 @@
+DROP VIEW IF EXISTS brreg_workflow.v_domain_search_evidence;
+DROP INDEX IF EXISTS brreg_workflow.idx_brreg_workflow_domain_results_search_evidence;

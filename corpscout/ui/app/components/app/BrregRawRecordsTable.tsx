@@ -37,6 +37,11 @@ const FILTER_OPTIONS = {
     ["failed", "Failed"],
     ["skipped", "Skipped"],
   ],
+  domain_search: [
+    ["performed", "Search performed"],
+    ["with_markdown", "Has markdown"],
+    ["missing", "No search evidence"],
+  ],
   financial_status: [
     ["not_started", "Not started"],
     ["succeeded", "Succeeded"],
@@ -138,6 +143,7 @@ export function BrregRawRecordsTable() {
   const lifecycleState = searchParams.get("state") ?? searchParams.get("lifecycle_state") ?? "";
   const translationStatus = searchParams.get("translation_status") ?? "";
   const domainStatus = searchParams.get("domain_status") ?? "";
+  const domainSearch = searchParams.get("domain_search") ?? "";
   const financialStatus = searchParams.get("financial_status") ?? "";
   const enhancedStatus = searchParams.get("enhanced_status") ?? "";
   const sort = searchParams.get("sort") ?? "";
@@ -170,6 +176,7 @@ export function BrregRawRecordsTable() {
         state: lifecycleState || undefined,
         translation_status: translationStatus || undefined,
         domain_status: domainStatus || undefined,
+        domain_search: domainSearch || undefined,
         financial_status: financialStatus || undefined,
         enhanced_status: enhancedStatus || undefined,
         sort: sort || undefined,
@@ -182,6 +189,7 @@ export function BrregRawRecordsTable() {
     }
   }, [
     domainStatus,
+    domainSearch,
     enhancedStatus,
     financialStatus,
     lifecycleState,
@@ -316,6 +324,12 @@ export function BrregRawRecordsTable() {
           value={domainStatus}
           options={FILTER_OPTIONS.domain_status}
           onChange={(value) => setParam("domain_status", value)}
+        />
+        <FilterSelect
+          label="Search evidence"
+          value={domainSearch}
+          options={FILTER_OPTIONS.domain_search}
+          onChange={(value) => setParam("domain_search", value)}
         />
         <FilterSelect
           label="Financial"

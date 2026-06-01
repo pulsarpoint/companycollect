@@ -425,6 +425,14 @@ func (s *stubQuerier) ListBrregWorkflowRawRecords(ctx context.Context, arg db.Li
 	return nil, ret.Error(1)
 }
 
+func (s *stubQuerier) ListBrregWorkflowDomainSearchEvidenceByRawRecord(ctx context.Context, rawRecordID uuid.UUID) ([]db.BrregWorkflowVDomainSearchEvidence, error) {
+	ret := s.Called(ctx, rawRecordID)
+	if v, ok := ret.Get(0).([]db.BrregWorkflowVDomainSearchEvidence); ok {
+		return v, ret.Error(1)
+	}
+	return nil, ret.Error(1)
+}
+
 func (s *stubQuerier) GetBrregWorkflowRawRecordDetail(ctx context.Context, id uuid.UUID) (db.BrregWorkflowVRawRecordDetail, error) {
 	ret := s.Called(ctx, id)
 	return ret.Get(0).(db.BrregWorkflowVRawRecordDetail), ret.Error(1)
