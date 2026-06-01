@@ -301,6 +301,23 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 		result.RecordsFailed += submitted.RecordsFailed
 	}
 
+	if result.RecordsClaimed > 0 && result.RecordsCompleted == 0 && result.RecordsFailed > 0 {
+		result.Status = "failed"
+		finalError := "all domain search records failed"
+		logger.Warn("brreg domain search workflow failed all claimed records",
+			"workflow_run_id", result.WorkflowRunID,
+			"records_selected", result.RecordsSelected,
+			"records_claimed", result.RecordsClaimed,
+			"records_failed", result.RecordsFailed,
+			"batches_processed", result.BatchesProcessed,
+		)
+		if err := finishBrregDomainSearchWorkflow(ctx, result, "failed", finalError); err != nil {
+			return result, err
+		}
+		finished = true
+		return result, errors.New(finalError)
+	}
+
 	result.Status = "succeeded"
 	if err := finishBrregDomainSearchWorkflow(ctx, result, "succeeded", ""); err != nil {
 		return result, err

@@ -40,6 +40,7 @@ type ClaimedTranslationRecord = actions.ClaimedTranslationRecord
 type TranslateBrregBatchInput = actions.TranslateBrregBatchInput
 type TranslateBrregBatchResult = actions.TranslateBrregBatchResult
 type TranslationRecordResult = actions.TranslationRecordResult
+type TranslationError = actions.TranslationError
 type SubmitBrregTranslationBatchInput = actions.SubmitBrregTranslationBatchInput
 type SubmitBrregTranslationBatchResult = actions.SubmitBrregTranslationBatchResult
 type FailRunningBrregTranslationTasksForWorkflowInput = actions.FailRunningBrregTranslationTasksForWorkflowInput
@@ -306,6 +307,24 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 		result.RecordsCompleted += submitted.RecordsCompleted
 		result.RecordsFailed += submitted.RecordsFailed
 		result.RecordsSkipped += submitted.RecordsSkipped
+	}
+
+	if result.RecordsClaimed > 0 && result.RecordsCompleted == 0 && result.RecordsFailed > 0 {
+		result.Status = "failed"
+		finalError := "all translation records failed"
+		logger.Warn("brreg translation workflow failed all claimed records",
+			"workflow_run_id", result.WorkflowRunID,
+			"records_selected", result.RecordsSelected,
+			"records_claimed", result.RecordsClaimed,
+			"records_failed", result.RecordsFailed,
+			"records_skipped", result.RecordsSkipped,
+			"batches_processed", result.BatchesProcessed,
+		)
+		if err := finishBrregTranslationWorkflow(ctx, result, "failed", finalError); err != nil {
+			return result, err
+		}
+		finished = true
+		return result, errors.New(finalError)
 	}
 
 	result.Status = "succeeded"

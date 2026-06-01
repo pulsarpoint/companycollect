@@ -152,7 +152,7 @@ func TestSearchBrregDomainsProcessesBatchesUntilClaimDrains(t *testing.T) {
 	require.EqualValues(t, 2, result.BatchesProcessed)
 }
 
-func TestSearchBrregDomainsCompletesWhenRecordsFailInBusinessStep(t *testing.T) {
+func TestSearchBrregDomainsFailsWhenAllRecordsFailInBusinessStep(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 
@@ -235,21 +235,19 @@ func TestSearchBrregDomainsCompletesWhenRecordsFailInBusinessStep(t *testing.T) 
 			RecordsFailed:    int32(len(input.Results)),
 		}, nil
 	}, activity.RegisterOptions{Name: "SubmitBrregDomainSearchResults"})
-	env.RegisterActivityWithOptions(func(FinishBrregDomainSearchWorkflowInput) (FinishBrregDomainSearchWorkflowResult, error) {
+	var finishInput FinishBrregDomainSearchWorkflowInput
+	env.RegisterActivityWithOptions(func(input FinishBrregDomainSearchWorkflowInput) (FinishBrregDomainSearchWorkflowResult, error) {
+		finishInput = input
 		return FinishBrregDomainSearchWorkflowResult{}, nil
 	}, activity.RegisterOptions{Name: "FinishBrregDomainSearchWorkflow"})
 
 	env.ExecuteWorkflow(SearchBrregDomains, SearchBrregDomainsInput{Limit: 2, BatchSize: 2})
 
 	require.True(t, env.IsWorkflowCompleted())
-	require.NoError(t, env.GetWorkflowError())
-
-	var result SearchBrregDomainsResult
-	require.NoError(t, env.GetWorkflowResult(&result))
-	require.Equal(t, "succeeded", result.Status)
-	require.EqualValues(t, 2, result.RecordsSelected)
-	require.EqualValues(t, 2, result.RecordsClaimed)
-	require.EqualValues(t, 0, result.RecordsCompleted)
-	require.EqualValues(t, 2, result.RecordsFailed)
-	require.EqualValues(t, 1, result.BatchesProcessed)
+	require.ErrorContains(t, env.GetWorkflowError(), "all domain search records failed")
+	require.Equal(t, "failed", finishInput.Status)
+	require.EqualValues(t, 2, finishInput.RecordsSeen)
+	require.EqualValues(t, 0, finishInput.RecordsCompleted)
+	require.EqualValues(t, 2, finishInput.RecordsFailed)
+	require.Equal(t, "all domain search records failed", finishInput.Error)
 }
