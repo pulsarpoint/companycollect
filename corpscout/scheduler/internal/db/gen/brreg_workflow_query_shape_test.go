@@ -65,6 +65,32 @@ func TestCreateBrregWorkflowTaskSelectionReturnsInsertedSelection(t *testing.T) 
 	require.NotContains(t, sql, "UPDATE brreg_workflow.task_selections ts\n  SET records_selected")
 }
 
+func TestBrregWorkflowTaskSelectionUsesArtifactsAsCompletionTruth(t *testing.T) {
+	body, err := os.ReadFile("../../../../database/queries/brreg_workflow.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	selectionQuery := querySection(sql, "-- name: CreateBrregWorkflowTaskSelection :one", "-- name: ClaimBrregWorkflowTaskSelectionBatch :many")
+	claimQuery := querySection(sql, "-- name: ClaimBrregWorkflowTaskSelectionBatch :many", "-- name: FinishBrregWorkflowTaskAttempt :exec")
+	finishQuery := querySection(sql, "-- name: FinishBrregWorkflowTaskAttempt :exec", "-- name: InsertBrregWorkflowTranslationResult :exec")
+
+	require.Contains(t, selectionQuery, "COALESCE(cardinality(sqlc.arg('selected_ids')::text[]), 0) = 0")
+	require.Contains(t, selectionQuery, "artifact_needed")
+	require.Contains(t, selectionQuery, "sqlc.arg('task_type')::text = 'translate'")
+	require.Contains(t, selectionQuery, "ri.translation_status = 'not_started'")
+	require.NotContains(t, selectionQuery, "ts.status IN ('succeeded', 'skipped')")
+
+	require.Contains(t, claimQuery, "needs_artifact")
+	require.Contains(t, claimQuery, "AND srr.needs_artifact")
+	require.NotContains(t, claimQuery, "artifact_missing_task_ids AS")
+	require.NotContains(t, claimQuery, "brreg_workflow.raw_record_task_states.status IN ('succeeded', 'skipped')")
+
+	require.Contains(t, finishQuery, "DELETE FROM brreg_workflow.raw_record_task_states")
+	require.Contains(t, finishQuery, "fa.status IN ('succeeded', 'skipped')")
+	require.NotContains(t, finishQuery, "WHEN fa.status = 'succeeded' THEN 'succeeded'")
+	require.NotContains(t, finishQuery, "WHEN fa.status = 'skipped' THEN 'skipped'")
+}
+
 func TestClaimBrregWorkflowTaskSelectionBatchReturnsRowsItClaims(t *testing.T) {
 	body, err := os.ReadFile("../../../../database/queries/brreg_workflow.sql")
 	require.NoError(t, err)

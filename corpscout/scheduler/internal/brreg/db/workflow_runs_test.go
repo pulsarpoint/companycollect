@@ -35,3 +35,14 @@ func TestPrepareWorkflowDefinitionIsDeterministic(t *testing.T) {
 	require.Contains(t, string(first), `"max_attempts":3`)
 	require.Contains(t, string(first), `"ids":["a","b"]`)
 }
+
+func TestStringFilterSupportsUIAliasKeys(t *testing.T) {
+	filters := map[string]string{
+		"q":               "BORTIGARD",
+		"lifecycle_state": "input",
+	}
+
+	require.Equal(t, "BORTIGARD", *stringFilter(filters, "query", "q"))
+	require.Equal(t, "input", *stringFilter(filters, "state", "lifecycle_state"))
+	require.Nil(t, stringFilter(filters, "translation_status"))
+}

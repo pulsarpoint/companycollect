@@ -111,7 +111,7 @@ CREATE TABLE brreg_workflow.raw_record_task_states (
     task_type IN ('translate', 'discover_domains', 'convert_financials', 'build_enhanced', 'publish')
   ),
   CONSTRAINT chk_brreg_workflow_task_state_status CHECK (
-    status IN ('pending', 'running', 'succeeded', 'skipped', 'failed_retryable', 'failed_terminal', 'cancelled')
+    status IN ('pending', 'running', 'failed_retryable', 'failed_terminal', 'cancelled')
   ),
   CONSTRAINT chk_brreg_workflow_task_state_attempt CHECK (attempt_count >= 0),
   CONSTRAINT chk_brreg_workflow_task_state_summary_object CHECK (jsonb_typeof(result_summary) = 'object')
@@ -263,8 +263,8 @@ SELECT
   count(*) FILTER (WHERE tr.status = 'running' AND coalesce(tr.lease_until, tr.last_started_at + interval '30 minutes') <= now())::bigint AS task_running_stale,
   count(*) FILTER (WHERE tr.status = 'failed_retryable')::bigint AS task_failed_retryable,
   count(*) FILTER (WHERE tr.status = 'failed_terminal')::bigint AS task_failed_terminal,
-  count(*) FILTER (WHERE tr.status = 'succeeded')::bigint AS task_succeeded,
-  count(*) FILTER (WHERE tr.status = 'skipped')::bigint AS task_skipped,
+  0::bigint AS task_succeeded,
+  0::bigint AS task_skipped,
   count(*) FILTER (
     WHERE tr.status IS NULL
        OR tr.status = 'pending'
@@ -310,8 +310,8 @@ SELECT
   count(*) FILTER (WHERE tr.status = 'running' AND coalesce(tr.lease_until, tr.last_started_at + interval '30 minutes') <= now())::bigint AS task_running_stale,
   count(*) FILTER (WHERE tr.status = 'failed_retryable')::bigint AS task_failed_retryable,
   count(*) FILTER (WHERE tr.status = 'failed_terminal')::bigint AS task_failed_terminal,
-  count(*) FILTER (WHERE tr.status = 'succeeded')::bigint AS task_succeeded,
-  count(*) FILTER (WHERE tr.status = 'skipped')::bigint AS task_skipped,
+  0::bigint AS task_succeeded,
+  0::bigint AS task_skipped,
   count(*) FILTER (
     WHERE tr.status IS NULL
        OR tr.status = 'pending'
@@ -357,8 +357,8 @@ SELECT
   count(*) FILTER (WHERE tr.status = 'running' AND coalesce(tr.lease_until, tr.last_started_at + interval '30 minutes') <= now())::bigint AS task_running_stale,
   count(*) FILTER (WHERE tr.status = 'failed_retryable')::bigint AS task_failed_retryable,
   count(*) FILTER (WHERE tr.status = 'failed_terminal')::bigint AS task_failed_terminal,
-  count(*) FILTER (WHERE tr.status = 'succeeded')::bigint AS task_succeeded,
-  count(*) FILTER (WHERE tr.status = 'skipped')::bigint AS task_skipped,
+  0::bigint AS task_succeeded,
+  0::bigint AS task_skipped,
   count(*) FILTER (
     WHERE tr.status IS NULL
        OR tr.status = 'pending'
@@ -404,8 +404,8 @@ SELECT
   count(*) FILTER (WHERE tr.status = 'running' AND coalesce(tr.lease_until, tr.last_started_at + interval '30 minutes') <= now())::bigint AS task_running_stale,
   count(*) FILTER (WHERE tr.status = 'failed_retryable')::bigint AS task_failed_retryable,
   count(*) FILTER (WHERE tr.status = 'failed_terminal')::bigint AS task_failed_terminal,
-  count(*) FILTER (WHERE tr.status = 'succeeded')::bigint AS task_succeeded,
-  count(*) FILTER (WHERE tr.status = 'skipped')::bigint AS task_skipped,
+  0::bigint AS task_succeeded,
+  0::bigint AS task_skipped,
   count(*) FILTER (
     WHERE tr.status IS NULL
        OR tr.status = 'pending'

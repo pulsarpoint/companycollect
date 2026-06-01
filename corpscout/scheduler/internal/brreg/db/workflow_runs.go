@@ -62,8 +62,8 @@ func (g *Gateway) PrepareWorkflow(ctx context.Context, command PrepareWorkflowCo
 		selection, err := q.CreateBrregWorkflowTaskSelection(ctx, db.CreateBrregWorkflowTaskSelectionParams{
 			TaskType:            command.TaskType.String(),
 			SelectedIds:         command.IDs,
-			Query:               stringFilter(command.Filters, "query"),
-			LifecycleState:      stringFilter(command.Filters, "state"),
+			Query:               stringFilter(command.Filters, "query", "q"),
+			LifecycleState:      stringFilter(command.Filters, "state", "lifecycle_state"),
 			TranslationStatus:   stringFilter(command.Filters, "translation_status"),
 			DomainStatus:        stringFilter(command.Filters, "domain_status"),
 			FinancialStatus:     stringFilter(command.Filters, "financial_status"),
@@ -173,13 +173,15 @@ func normalizePrepareWorkflowCommand(command PrepareWorkflowCommand) PrepareWork
 	return command
 }
 
-func stringFilter(filters map[string]string, key string) *string {
+func stringFilter(filters map[string]string, keys ...string) *string {
 	if filters == nil {
 		return nil
 	}
-	value := filters[key]
-	if value == "" {
-		return nil
+	for _, key := range keys {
+		value := filters[key]
+		if value != "" {
+			return &value
+		}
 	}
-	return &value
+	return nil
 }

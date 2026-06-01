@@ -62,18 +62,19 @@ func TestBrregWorkflowStoreMigrationDefinesTaskContract(t *testing.T) {
 		require.Contains(t, sql, task)
 	}
 
+	taskStateSection := migrationSection(sql, "CREATE TABLE brreg_workflow.raw_record_task_states", "CREATE TABLE brreg_workflow.translation_results")
 	requiredStatuses := []string{
 		"'pending'",
 		"'running'",
-		"'succeeded'",
-		"'skipped'",
 		"'failed_retryable'",
 		"'failed_terminal'",
 		"'cancelled'",
 	}
 	for _, status := range requiredStatuses {
-		require.Contains(t, sql, status)
+		require.Contains(t, taskStateSection, status)
 	}
+	require.NotContains(t, taskStateSection, "'succeeded'")
+	require.NotContains(t, taskStateSection, "'skipped'")
 
 	require.Contains(t, sql, "lease_until TIMESTAMPTZ")
 	require.Contains(t, sql, "next_retry_at TIMESTAMPTZ")
@@ -101,6 +102,8 @@ func TestBrregWorkflowStoreMigrationDefinesLiveViews(t *testing.T) {
 	require.Contains(t, sql, "artifact_missing")
 	require.Contains(t, sql, "task_running_active")
 	require.Contains(t, sql, "task_failed_terminal")
+	require.Contains(t, sql, "0::bigint AS task_succeeded")
+	require.Contains(t, sql, "0::bigint AS task_skipped")
 }
 
 func TestBrregWorkflowRawRecordReadModelMigrationDefinesListAndDetailViews(t *testing.T) {
@@ -140,4 +143,16 @@ func TestBrregWorkflowStoreDownMigrationDropsOwnedObjects(t *testing.T) {
 
 	require.Contains(t, sql, "DROP SCHEMA IF EXISTS brreg_workflow CASCADE")
 	require.False(t, strings.Contains(sql, "dagster_brreg"))
+}
+
+func migrationSection(sql, startMarker, endMarker string) string {
+	start := strings.Index(sql, startMarker)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(sql[start+len(startMarker):], endMarker)
+	if end < 0 {
+		return sql[start:]
+	}
+	return sql[start : start+len(startMarker)+end]
 }

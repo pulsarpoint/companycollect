@@ -69,10 +69,18 @@ active_slots AS (
     AND COALESCE(ts.lease_until, ts.last_started_at + interval '30 minutes') > now()
 ),
 selected_raw_records AS (
-  SELECT rr.id, rr.last_seen_at
+  SELECT
+    rr.id,
+    rr.last_seen_at,
+    (
+      ($1::text = 'translate' AND ri.translation_status = 'not_started')
+      OR ($1::text = 'discover_domains' AND ri.domain_status = 'not_started')
+      OR ($1::text = 'convert_financials' AND ri.financial_status = 'not_started')
+    ) AS needs_artifact
   FROM brreg_workflow.task_selections s
   JOIN brreg_workflow.task_selection_records sr ON sr.selection_id = s.id
   JOIN brreg_workflow.raw_records rr ON rr.id = sr.raw_record_id
+  JOIN brreg_workflow.v_raw_record_list ri ON ri.id = rr.id
   WHERE s.selection_hash = $3::text
     AND s.task_type = $1::text
     AND rr.is_current = true
@@ -86,6 +94,7 @@ new_task_ids AS (
     WHERE ts.raw_record_id = srr.id
       AND ts.task_type = $1::text
   )
+    AND srr.needs_artifact
   ORDER BY srr.last_seen_at ASC, srr.id ASC
   LIMIT $4::integer
 ),
@@ -404,8 +413,21 @@ func (q *Queries) CreateBrregDomainActionAttempt(ctx context.Context, arg Create
 }
 
 const createBrregWorkflowTaskSelection = `-- name: CreateBrregWorkflowTaskSelection :one
-WITH eligible_records AS (
-  SELECT rr.id
+WITH filtered_records AS (
+  SELECT
+    rr.id,
+    rr.last_seen_at,
+    ts.raw_record_id AS task_state_raw_record_id,
+    ts.status AS task_status,
+    ts.attempt_count,
+    ts.next_retry_at,
+    ts.lease_until,
+    ts.last_started_at,
+    (
+      ($1::text = 'translate' AND ri.translation_status = 'not_started')
+      OR ($1::text = 'discover_domains' AND ri.domain_status = 'not_started')
+      OR ($1::text = 'convert_financials' AND ri.financial_status = 'not_started')
+    ) AS artifact_needed
   FROM brreg_workflow.v_raw_record_list ri
   JOIN brreg_workflow.raw_records rr ON rr.id = ri.id
   LEFT JOIN brreg_workflow.raw_record_task_states ts
@@ -413,7 +435,7 @@ WITH eligible_records AS (
    AND ts.task_type = $1::text
   WHERE rr.is_current = true
     AND (
-      cardinality($2::text[]) = 0
+      COALESCE(cardinality($2::text[]), 0) = 0
       OR rr.id::text = ANY($2::text[])
     )
     AND (
@@ -441,21 +463,25 @@ WITH eligible_records AS (
       $8::text IS NULL
       OR ri.enhanced_status = $8::text
     )
-    AND (
-      ts.raw_record_id IS NULL
-      OR ts.status = 'pending'
-      OR (
-        ts.status = 'failed_retryable'
-        AND ts.attempt_count < $9::integer
-        AND (ts.next_retry_at IS NULL OR ts.next_retry_at <= now())
-      )
-      OR (
-        ts.status = 'running'
-        AND ts.attempt_count < $9::integer
-        AND COALESCE(ts.lease_until, ts.last_started_at + interval '30 minutes') <= now()
-      )
+),
+eligible_records AS (
+  SELECT id
+  FROM filtered_records
+  WHERE (
+    (task_state_raw_record_id IS NULL AND artifact_needed)
+    OR task_status = 'pending'
+    OR (
+      task_status = 'failed_retryable'
+      AND attempt_count < $9::integer
+      AND (next_retry_at IS NULL OR next_retry_at <= now())
     )
-  ORDER BY rr.last_seen_at ASC, rr.id ASC
+    OR (
+      task_status = 'running'
+      AND attempt_count < $9::integer
+      AND COALESCE(lease_until, last_started_at + interval '30 minutes') <= now()
+    )
+  )
+  ORDER BY last_seen_at ASC, id ASC
   LIMIT $10::integer
 ),
 selection AS (
@@ -708,6 +734,14 @@ WITH finished_attempt AS (
     retry_strategy = $2::text
   WHERE id = $7::uuid
   RETURNING id, raw_record_id, task_type, attempt, status
+),
+deleted_completed_state AS (
+  DELETE FROM brreg_workflow.raw_record_task_states ts
+  USING finished_attempt fa
+  WHERE ts.raw_record_id = fa.raw_record_id
+    AND ts.task_type = fa.task_type
+    AND fa.status IN ('succeeded', 'skipped')
+  RETURNING ts.raw_record_id
 )
 UPDATE brreg_workflow.raw_record_task_states ts
 SET
@@ -718,8 +752,6 @@ SET
         OR $2::text IN ('change_model_or_prompt', 'manual_config', 'manual_input', 'not_retryable')
       ) THEN 'failed_terminal'
     WHEN fa.status = 'failed' THEN 'failed_retryable'
-    WHEN fa.status = 'succeeded' THEN 'succeeded'
-    WHEN fa.status = 'skipped' THEN 'skipped'
     WHEN fa.status = 'cancelled' THEN 'cancelled'
     ELSE ts.status
   END,
@@ -744,6 +776,7 @@ SET
 FROM finished_attempt fa
 WHERE ts.raw_record_id = fa.raw_record_id
   AND ts.task_type = fa.task_type
+  AND fa.status NOT IN ('succeeded', 'skipped')
 `
 
 type FinishBrregWorkflowTaskAttemptParams struct {
