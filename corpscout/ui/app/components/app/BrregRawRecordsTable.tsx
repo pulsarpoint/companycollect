@@ -175,7 +175,7 @@ export function BrregRawRecordsTable() {
         sort: sort || undefined,
         dir: sort ? sortDirection : undefined,
       });
-      setItems(res.items);
+      setItems(Array.isArray(res.items) ? res.items : []);
       setTotal(res.total);
     } finally {
       setLoading(false);

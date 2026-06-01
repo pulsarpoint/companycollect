@@ -244,6 +244,42 @@ func TestListBrregRawRecordsReturnsWorkflowRawRecords(t *testing.T) {
 	q.AssertExpectations(t)
 }
 
+func TestListBrregRawRecordsReturnsEmptyArrayWhenNoRows(t *testing.T) {
+	q := &stubQuerier{}
+	q.On("CountBrregWorkflowRawRecords", mock.Anything, db.CountBrregWorkflowRawRecordsParams{
+		DomainStatus: ptrString("not_started"),
+	}).Return(int64(0), nil)
+	q.On("ListBrregWorkflowRawRecords", mock.Anything, db.ListBrregWorkflowRawRecordsParams{
+		DomainStatus: ptrString("not_started"),
+		SortBy:       "last_seen_at",
+		SortDir:      "desc",
+		Offset:       0,
+		Limit:        50,
+	}).Return([]db.BrregWorkflowVRawRecordList(nil), nil)
+
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", nil, ""))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/brreg/raw-records?domain_status=not_started", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"items":[]`)
+
+	var body struct {
+		Items []db.BrregWorkflowVRawRecordList `json:"items"`
+		Total int64                            `json:"total"`
+		Page  int                              `json:"page"`
+		Limit int                              `json:"limit"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.NotNil(t, body.Items)
+	require.Empty(t, body.Items)
+	require.Equal(t, int64(0), body.Total)
+	require.Equal(t, 1, body.Page)
+	require.Equal(t, 50, body.Limit)
+	q.AssertExpectations(t)
+}
+
 func TestGetBrregRawRecordReturnsWorkflowRawRecordDetail(t *testing.T) {
 	q := &stubQuerier{}
 	recordID := uuid.New()

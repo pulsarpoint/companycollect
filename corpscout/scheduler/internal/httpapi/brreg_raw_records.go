@@ -47,6 +47,9 @@ func (h *Handlers) handleListBrregRawRecords(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if items == nil {
+		items = []db.BrregWorkflowVRawRecordList{}
+	}
 
 	writeJSON(w, http.StatusOK, brregRawRecordListResponse{
 		Items: items,

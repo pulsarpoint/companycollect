@@ -361,9 +361,9 @@ WITH filtered_records AS (
     ts.lease_until,
     ts.last_started_at,
     (
-      (sqlc.arg('task_type')::text = 'translate' AND ri.translation_status = 'not_started')
-      OR (sqlc.arg('task_type')::text = 'discover_domains' AND ri.domain_status = 'not_started')
-      OR (sqlc.arg('task_type')::text = 'convert_financials' AND ri.financial_status = 'not_started')
+      (sqlc.arg('task_type')::text = 'translate' AND ri.translation_status IN ('not_started', 'failed'))
+      OR (sqlc.arg('task_type')::text = 'discover_domains' AND ri.domain_status IN ('not_started', 'failed'))
+      OR (sqlc.arg('task_type')::text = 'convert_financials' AND ri.financial_status IN ('not_started', 'failed'))
     ) AS artifact_needed
   FROM brreg_workflow.v_raw_record_list ri
   JOIN brreg_workflow.raw_records rr ON rr.id = ri.id
@@ -468,9 +468,9 @@ selected_raw_records AS (
     rr.id,
     rr.last_seen_at,
     (
-      (sqlc.arg('task_type')::text = 'translate' AND ri.translation_status = 'not_started')
-      OR (sqlc.arg('task_type')::text = 'discover_domains' AND ri.domain_status = 'not_started')
-      OR (sqlc.arg('task_type')::text = 'convert_financials' AND ri.financial_status = 'not_started')
+      (sqlc.arg('task_type')::text = 'translate' AND ri.translation_status IN ('not_started', 'failed'))
+      OR (sqlc.arg('task_type')::text = 'discover_domains' AND ri.domain_status IN ('not_started', 'failed'))
+      OR (sqlc.arg('task_type')::text = 'convert_financials' AND ri.financial_status IN ('not_started', 'failed'))
     ) AS needs_artifact
   FROM brreg_workflow.task_selections s
   JOIN brreg_workflow.task_selection_records sr ON sr.selection_id = s.id

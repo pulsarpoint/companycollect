@@ -262,7 +262,8 @@ export function BrregDomainSearchActionForm({
           </select>
           <FieldDescription>
             Choose whether this run uses checked rows, the current table
-            filters, or the next eligible records without domain artifacts.
+            filters, or the next eligible records with not-started or failed
+            domain discovery.
           </FieldDescription>
         </div>
 
