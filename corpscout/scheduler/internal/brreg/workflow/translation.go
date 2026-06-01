@@ -13,6 +13,7 @@ import (
 const (
 	TranslateBrregRawInputsTaskQueue    = "brreg-translation"
 	TranslateBrregRawInputsWorkflowName = "TranslateBrregRawInputs"
+	translationAllRecordsFailed         = "BRREG_ALL_TRANSLATION_RECORDS_FAILED"
 
 	prepareBrregTranslationWorkflowActivity    = "PrepareBrregTranslationWorkflow"
 	claimBrregTranslationBatchActivity         = "ClaimBrregTranslationBatch"
@@ -324,7 +325,7 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 			return result, err
 		}
 		finished = true
-		return result, errors.New(finalError)
+		return result, temporal.NewNonRetryableApplicationError(finalError, translationAllRecordsFailed, nil)
 	}
 
 	result.Status = "succeeded"

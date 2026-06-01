@@ -13,6 +13,7 @@ import (
 const (
 	SearchBrregDomainsTaskQueue    = "brreg-domain-search"
 	SearchBrregDomainsWorkflowName = "SearchBrregDomains"
+	domainSearchAllRecordsFailed   = "BRREG_ALL_DOMAIN_SEARCH_RECORDS_FAILED"
 
 	prepareBrregDomainSearchWorkflowActivity    = "PrepareBrregDomainSearchWorkflow"
 	claimBrregDomainSearchBatchActivity         = "ClaimBrregDomainSearchBatch"
@@ -315,7 +316,7 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 			return result, err
 		}
 		finished = true
-		return result, errors.New(finalError)
+		return result, temporal.NewNonRetryableApplicationError(finalError, domainSearchAllRecordsFailed, nil)
 	}
 
 	result.Status = "succeeded"
