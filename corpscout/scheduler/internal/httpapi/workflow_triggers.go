@@ -28,6 +28,15 @@ type startBrregTranslationWorkflowRequest struct {
 	BatchSize   int               `json:"batch_size,omitempty"`
 	MaxAttempts int               `json:"max_attempts,omitempty"`
 	Trigger     string            `json:"trigger,omitempty"`
+
+	MaxParallelTasks  int    `json:"max_parallel_tasks,omitempty"`
+	LeaseSeconds      int    `json:"lease_seconds,omitempty"`
+	Provider          string `json:"provider,omitempty"`
+	Model             string `json:"model,omitempty"`
+	PromptVersion     string `json:"prompt_version,omitempty"`
+	SourceLang        string `json:"source_lang,omitempty"`
+	TargetLang        string `json:"target_lang,omitempty"`
+	MaxServiceRetries int    `json:"max_service_retries,omitempty"`
 }
 
 func (h *Handlers) handleStartBrregTranslationWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -43,12 +52,20 @@ func (h *Handlers) handleStartBrregTranslationWorkflow(w http.ResponseWriter, r 
 	}
 
 	input := brregworkflow.TranslateBrregRawInputsInput{
-		IDs:         req.IDs,
-		Filters:     req.Filters,
-		Limit:       req.Limit,
-		BatchSize:   req.BatchSize,
-		MaxAttempts: req.MaxAttempts,
-		Trigger:     req.Trigger,
+		IDs:               req.IDs,
+		Filters:           req.Filters,
+		Limit:             req.Limit,
+		BatchSize:         req.BatchSize,
+		MaxAttempts:       req.MaxAttempts,
+		Trigger:           req.Trigger,
+		MaxParallelTasks:  req.MaxParallelTasks,
+		LeaseSeconds:      req.LeaseSeconds,
+		Provider:          req.Provider,
+		Model:             req.Model,
+		PromptVersion:     req.PromptVersion,
+		SourceLang:        req.SourceLang,
+		TargetLang:        req.TargetLang,
+		MaxServiceRetries: req.MaxServiceRetries,
 	}
 	workflowID := newWorkflowID("brreg-translation")
 	slog.Debug("starting brreg translation workflow",
@@ -59,6 +76,11 @@ func (h *Handlers) handleStartBrregTranslationWorkflow(w http.ResponseWriter, r 
 		"limit", req.Limit,
 		"batch_size", req.BatchSize,
 		"max_attempts", req.MaxAttempts,
+		"max_parallel_tasks", req.MaxParallelTasks,
+		"lease_seconds", req.LeaseSeconds,
+		"provider", req.Provider,
+		"model", req.Model,
+		"prompt_version", req.PromptVersion,
 		"trigger", req.Trigger,
 	)
 	run, err := h.temporal.ExecuteWorkflow(
@@ -103,6 +125,15 @@ func decodeStartBrregTranslationWorkflowRequest(r *http.Request) (startBrregTran
 	}
 	if req.MaxAttempts < 0 {
 		return startBrregTranslationWorkflowRequest{}, errors.New("max_attempts must be greater than zero when provided")
+	}
+	if req.MaxParallelTasks < 0 {
+		return startBrregTranslationWorkflowRequest{}, errors.New("max_parallel_tasks must be greater than zero when provided")
+	}
+	if req.LeaseSeconds < 0 {
+		return startBrregTranslationWorkflowRequest{}, errors.New("lease_seconds must be greater than zero when provided")
+	}
+	if req.MaxServiceRetries < 0 {
+		return startBrregTranslationWorkflowRequest{}, errors.New("max_service_retries must be greater than zero when provided")
 	}
 	for _, id := range req.IDs {
 		if _, err := uuid.Parse(id); err != nil {

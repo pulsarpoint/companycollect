@@ -23,7 +23,15 @@ func TestStartBrregTranslationWorkflowStartsTemporalWorkflow(t *testing.T) {
 		"limit": 1000,
 		"batch_size": 50,
 		"max_attempts": 3,
-		"trigger": "manual"
+		"trigger": "manual",
+		"max_parallel_tasks": 25,
+		"lease_seconds": 1200,
+		"provider": "deepseek",
+		"model": "deepseek-chat",
+		"prompt_version": "v2",
+		"source_lang": "no",
+		"target_lang": "en",
+		"max_service_retries": 4
 	}`))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -44,6 +52,14 @@ func TestStartBrregTranslationWorkflowStartsTemporalWorkflow(t *testing.T) {
 	require.Equal(t, 50, input.BatchSize)
 	require.Equal(t, 3, input.MaxAttempts)
 	require.Equal(t, "manual", input.Trigger)
+	require.Equal(t, 25, input.MaxParallelTasks)
+	require.Equal(t, 1200, input.LeaseSeconds)
+	require.Equal(t, "deepseek", input.Provider)
+	require.Equal(t, "deepseek-chat", input.Model)
+	require.Equal(t, "v2", input.PromptVersion)
+	require.Equal(t, "no", input.SourceLang)
+	require.Equal(t, "en", input.TargetLang)
+	require.Equal(t, 4, input.MaxServiceRetries)
 }
 
 func TestStartBrregTranslationWorkflowRejectsInvalidLimit(t *testing.T) {
@@ -56,6 +72,19 @@ func TestStartBrregTranslationWorkflowRejectsInvalidLimit(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Contains(t, w.Body.String(), `"error":"limit must be greater than zero when provided"`)
+	require.Nil(t, tc.workflow)
+}
+
+func TestStartBrregTranslationWorkflowRejectsInvalidAdvancedNumbers(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/translation", bytes.NewBufferString(`{"max_service_retries": -1}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"max_service_retries must be greater than zero when provided"`)
 	require.Nil(t, tc.workflow)
 }
 

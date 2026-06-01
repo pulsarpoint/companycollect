@@ -17,6 +17,9 @@ const (
 	defaultTranslationPromptVersion = "v1"
 	defaultTranslationSourceLang    = "no"
 	defaultTranslationTargetLang    = "en"
+	defaultTranslationLimit         = 1000
+	defaultTranslationBatchSize     = 50
+	defaultTranslationMaxAttempts   = 3
 )
 
 type TranslationActions struct {
@@ -26,6 +29,160 @@ type TranslationActions struct {
 
 func NewTranslationActions(gateway *brregdb.Gateway, translator *translationclient.Client) *TranslationActions {
 	return &TranslationActions{gateway: gateway, translator: translator}
+}
+
+type PrepareBrregTranslationWorkflowInput struct {
+	TemporalWorkflowID string            `json:"temporal_workflow_id"`
+	IDs                []string          `json:"ids,omitempty"`
+	Filters            map[string]string `json:"filters,omitempty"`
+	Limit              int32             `json:"limit"`
+	BatchSize          int32             `json:"batch_size"`
+	MaxAttempts        int32             `json:"max_attempts"`
+	Trigger            string            `json:"trigger,omitempty"`
+}
+
+type PrepareBrregTranslationWorkflowResult struct {
+	WorkflowRunID   string `json:"workflow_run_id"`
+	SelectionHash   string `json:"selection_hash"`
+	RecordsSelected int32  `json:"records_selected"`
+	BatchSize       int32  `json:"batch_size"`
+	MaxAttempts     int32  `json:"max_attempts"`
+}
+
+func (a *TranslationActions) PrepareBrregTranslationWorkflow(ctx context.Context, input PrepareBrregTranslationWorkflowInput) (PrepareBrregTranslationWorkflowResult, error) {
+	if a == nil || a.gateway == nil {
+		return PrepareBrregTranslationWorkflowResult{}, errors.New("brreg translation gateway not available")
+	}
+	slog.DebugContext(ctx, "preparing brreg translation workflow",
+		"temporal_workflow_id", input.TemporalWorkflowID,
+		"ids_count", len(input.IDs),
+		"filters_count", len(input.Filters),
+		"limit", input.Limit,
+		"batch_size", input.BatchSize,
+		"max_attempts", input.MaxAttempts,
+		"trigger", input.Trigger,
+	)
+	prepared, err := a.gateway.PrepareWorkflow(ctx, prepareTranslationWorkflowCommandFromInput(input))
+	if err != nil {
+		return PrepareBrregTranslationWorkflowResult{}, errors.Wrap(err, "prepare brreg translation workflow")
+	}
+	slog.DebugContext(ctx, "prepared brreg translation workflow",
+		"workflow_run_id", prepared.WorkflowRunID.String(),
+		"selection_hash", prepared.SelectionHash,
+		"records_selected", prepared.RecordsSelected,
+		"batch_size", prepared.BatchSize,
+		"max_attempts", prepared.MaxAttempts,
+	)
+	return PrepareBrregTranslationWorkflowResult{
+		WorkflowRunID:   prepared.WorkflowRunID.String(),
+		SelectionHash:   prepared.SelectionHash,
+		RecordsSelected: prepared.RecordsSelected,
+		BatchSize:       prepared.BatchSize,
+		MaxAttempts:     prepared.MaxAttempts,
+	}, nil
+}
+
+func prepareTranslationWorkflowCommandFromInput(input PrepareBrregTranslationWorkflowInput) brregdb.PrepareWorkflowCommand {
+	return brregdb.PrepareWorkflowCommand{
+		Source:             "brreg",
+		Action:             "translate",
+		TaskType:           brregdb.TaskTypeTranslate,
+		Trigger:            input.Trigger,
+		WorkflowID:         input.TemporalWorkflowID,
+		IDs:                input.IDs,
+		Filters:            input.Filters,
+		Limit:              input.Limit,
+		BatchSize:          input.BatchSize,
+		MaxAttempts:        input.MaxAttempts,
+		DefaultLimit:       defaultTranslationLimit,
+		DefaultBatchSize:   defaultTranslationBatchSize,
+		DefaultMaxAttempts: defaultTranslationMaxAttempts,
+	}
+}
+
+type FinishBrregTranslationWorkflowInput struct {
+	WorkflowRunID    string `json:"workflow_run_id"`
+	Status           string `json:"status"`
+	RecordsSeen      int32  `json:"records_seen"`
+	RecordsCompleted int32  `json:"records_completed"`
+	RecordsFailed    int32  `json:"records_failed"`
+	Error            string `json:"error,omitempty"`
+}
+
+type FinishBrregTranslationWorkflowResult struct{}
+
+func (a *TranslationActions) FinishBrregTranslationWorkflow(ctx context.Context, input FinishBrregTranslationWorkflowInput) (FinishBrregTranslationWorkflowResult, error) {
+	if a == nil || a.gateway == nil {
+		return FinishBrregTranslationWorkflowResult{}, errors.New("brreg translation gateway not available")
+	}
+	workflowRunID, err := uuid.Parse(input.WorkflowRunID)
+	if err != nil {
+		return FinishBrregTranslationWorkflowResult{}, errors.Wrap(err, "parse brreg translation workflow run id")
+	}
+	var workflowError *string
+	if input.Error != "" {
+		workflowError = &input.Error
+	}
+	if err := a.gateway.FinishWorkflowRun(ctx, finishTranslationWorkflowCommandFromInput(input, workflowRunID, workflowError)); err != nil {
+		return FinishBrregTranslationWorkflowResult{}, errors.Wrap(err, "finish brreg translation workflow")
+	}
+	slog.DebugContext(ctx, "finished brreg translation workflow",
+		"workflow_run_id", input.WorkflowRunID,
+		"status", input.Status,
+		"records_seen", input.RecordsSeen,
+		"records_completed", input.RecordsCompleted,
+		"records_failed", input.RecordsFailed,
+	)
+	return FinishBrregTranslationWorkflowResult{}, nil
+}
+
+func finishTranslationWorkflowCommandFromInput(
+	input FinishBrregTranslationWorkflowInput,
+	workflowRunID uuid.UUID,
+	workflowError *string,
+) brregdb.FinishWorkflowRunCommand {
+	return brregdb.FinishWorkflowRunCommand{
+		WorkflowRunID:    workflowRunID,
+		Status:           brregdb.WorkflowRunStatus(input.Status),
+		RecordsSeen:      input.RecordsSeen,
+		RecordsCompleted: input.RecordsCompleted,
+		RecordsFailed:    input.RecordsFailed,
+		Error:            workflowError,
+	}
+}
+
+type FailRunningBrregTranslationTasksForWorkflowInput struct {
+	WorkflowRunID string `json:"workflow_run_id"`
+	MaxAttempts   int32  `json:"max_attempts"`
+	Error         string `json:"error"`
+}
+
+type FailRunningBrregTranslationTasksForWorkflowResult struct {
+	FailedTasks int32 `json:"failed_tasks"`
+}
+
+func (a *TranslationActions) FailRunningBrregTranslationTasksForWorkflow(ctx context.Context, input FailRunningBrregTranslationTasksForWorkflowInput) (FailRunningBrregTranslationTasksForWorkflowResult, error) {
+	if a == nil || a.gateway == nil {
+		return FailRunningBrregTranslationTasksForWorkflowResult{}, errors.New("brreg translation gateway not available")
+	}
+	workflowRunID, err := uuid.Parse(input.WorkflowRunID)
+	if err != nil {
+		return FailRunningBrregTranslationTasksForWorkflowResult{}, errors.Wrap(err, "parse brreg translation workflow run id")
+	}
+	errorMessage := input.Error
+	failedTasks, err := a.gateway.FailRunningTasksForWorkflowRun(ctx, brregdb.FinishWorkflowRunCommand{
+		WorkflowRunID: workflowRunID,
+		MaxAttempts:   input.MaxAttempts,
+		Error:         &errorMessage,
+	})
+	if err != nil {
+		return FailRunningBrregTranslationTasksForWorkflowResult{}, errors.Wrap(err, "fail running brreg translation tasks for workflow")
+	}
+	slog.DebugContext(ctx, "failed running brreg translation tasks for workflow",
+		"workflow_run_id", input.WorkflowRunID,
+		"failed_tasks", failedTasks,
+	)
+	return FailRunningBrregTranslationTasksForWorkflowResult{FailedTasks: failedTasks}, nil
 }
 
 type ClaimBrregTranslationBatchInput struct {
@@ -211,8 +368,10 @@ func translateResultFromResponse(records []ClaimedTranslationRecord, response tr
 		claimedByRecordID[record.RawRecordID] = record
 	}
 	results := make([]TranslationRecordResult, 0, len(response.Results))
+	seenRecordIDs := make(map[string]struct{}, len(response.Results))
 	for _, result := range response.Results {
 		claimed := claimedByRecordID[result.RecordID]
+		seenRecordIDs[result.RecordID] = struct{}{}
 		results = append(results, TranslationRecordResult{
 			RawRecordID:        result.RecordID,
 			TaskAttemptID:      claimed.TaskAttemptID,
@@ -227,17 +386,47 @@ func translateResultFromResponse(records []ClaimedTranslationRecord, response tr
 			PromptVersion:      response.PromptVersion,
 		})
 	}
+	missingResults := 0
+	for _, record := range records {
+		if _, ok := seenRecordIDs[record.RawRecordID]; ok {
+			continue
+		}
+		missingResults++
+		results = append(results, missingTranslationRecordResult(record, response))
+	}
+	recordsSeen := response.RecordsSeen
+	if recordsSeen == 0 && len(records) > 0 {
+		recordsSeen = len(records)
+	}
 	return TranslateBrregBatchResult{
 		Status:           response.Status,
 		Provider:         response.Provider,
 		Model:            response.Model,
 		PromptVersion:    response.PromptVersion,
-		RecordsSeen:      response.RecordsSeen,
+		RecordsSeen:      recordsSeen,
 		RecordsCompleted: response.RecordsCompleted,
-		RecordsFailed:    response.RecordsFailed,
+		RecordsFailed:    response.RecordsFailed + missingResults,
 		RecordsSkipped:   response.RecordsSkipped,
 		DurationMS:       response.DurationMS,
 		Results:          results,
+	}
+}
+
+func missingTranslationRecordResult(record ClaimedTranslationRecord, response translationclient.BrregTranslateResponse) TranslationRecordResult {
+	return TranslationRecordResult{
+		RawRecordID:        record.RawRecordID,
+		TaskAttemptID:      record.TaskAttemptID,
+		OrganizationNumber: record.OrganizationNumber,
+		Status:             brregdb.ResultStatusFailed.String(),
+		Error: &TranslationError{
+			Message:       "translation service did not return a result for the claimed record",
+			Category:      "invalid_translation_response",
+			Code:          "missing_record_result",
+			RetryStrategy: "retry_with_backoff",
+		},
+		Provider:      response.Provider,
+		Model:         response.Model,
+		PromptVersion: response.PromptVersion,
 	}
 }
 

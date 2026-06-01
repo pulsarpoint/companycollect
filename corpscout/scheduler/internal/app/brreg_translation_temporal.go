@@ -25,6 +25,18 @@ func registerBrregTranslationWorker(worker temporalworker.Worker, resources *tem
 	slog.Debug("registering brreg translation temporal workflow and activities")
 	worker.RegisterWorkflow(brregworkflow.TranslateBrregRawInputs)
 	worker.RegisterActivityWithOptions(
+		resources.translationActions.PrepareBrregTranslationWorkflow,
+		activity.RegisterOptions{Name: "PrepareBrregTranslationWorkflow"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.translationActions.FailRunningBrregTranslationTasksForWorkflow,
+		activity.RegisterOptions{Name: "FailRunningBrregTranslationTasksForWorkflow"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.translationActions.FinishBrregTranslationWorkflow,
+		activity.RegisterOptions{Name: "FinishBrregTranslationWorkflow"},
+	)
+	worker.RegisterActivityWithOptions(
 		resources.translationActions.ClaimBrregTranslationBatch,
 		activity.RegisterOptions{Name: "ClaimBrregTranslationBatch"},
 	)

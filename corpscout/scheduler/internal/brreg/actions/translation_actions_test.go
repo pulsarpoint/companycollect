@@ -7,8 +7,59 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	brregdb "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/db"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/translationclient"
 )
+
+func TestPrepareTranslationWorkflowCommandFromInputMapsFields(t *testing.T) {
+	input := PrepareBrregTranslationWorkflowInput{
+		TemporalWorkflowID: "brreg-translation-20260601",
+		IDs:                []string{"record-1", "record-2"},
+		Filters:            map[string]string{"state": "raw"},
+		Limit:              1000,
+		BatchSize:          50,
+		MaxAttempts:        3,
+		Trigger:            "manual",
+	}
+
+	command := prepareTranslationWorkflowCommandFromInput(input)
+
+	require.Equal(t, "brreg", command.Source)
+	require.Equal(t, "translate", command.Action)
+	require.Equal(t, brregdb.TaskTypeTranslate, command.TaskType)
+	require.Equal(t, "manual", command.Trigger)
+	require.Equal(t, "brreg-translation-20260601", command.WorkflowID)
+	require.Equal(t, []string{"record-1", "record-2"}, command.IDs)
+	require.Equal(t, map[string]string{"state": "raw"}, command.Filters)
+	require.Equal(t, int32(1000), command.Limit)
+	require.Equal(t, int32(50), command.BatchSize)
+	require.Equal(t, int32(3), command.MaxAttempts)
+	require.Equal(t, int32(1000), command.DefaultLimit)
+	require.Equal(t, int32(50), command.DefaultBatchSize)
+	require.Equal(t, int32(3), command.DefaultMaxAttempts)
+}
+
+func TestFinishTranslationWorkflowCommandFromInputMapsFields(t *testing.T) {
+	workflowRunID := uuid.New()
+	errorMessage := "translation workflow failed"
+
+	command := finishTranslationWorkflowCommandFromInput(FinishBrregTranslationWorkflowInput{
+		WorkflowRunID:    workflowRunID.String(),
+		Status:           "failed",
+		RecordsSeen:      12,
+		RecordsCompleted: 10,
+		RecordsFailed:    2,
+		Error:            errorMessage,
+	}, workflowRunID, &errorMessage)
+
+	require.Equal(t, workflowRunID, command.WorkflowRunID)
+	require.Equal(t, brregdb.WorkflowRunStatusFailed, command.Status)
+	require.Equal(t, int32(12), command.RecordsSeen)
+	require.Equal(t, int32(10), command.RecordsCompleted)
+	require.Equal(t, int32(2), command.RecordsFailed)
+	require.NotNil(t, command.Error)
+	require.Equal(t, errorMessage, *command.Error)
+}
 
 func TestClaimTranslationCommandFromInputMapsFields(t *testing.T) {
 	workflowRunID := uuid.New()
@@ -89,6 +140,32 @@ func TestTranslateResultFromResponseCarriesTaskAttemptIDs(t *testing.T) {
 	require.Len(t, result.Results, 1)
 	require.Equal(t, "attempt-1", result.Results[0].TaskAttemptID)
 	require.Equal(t, map[string]any{"name": "BORTIGARD AS"}, result.Results[0].TranslatedPayload)
+}
+
+func TestTranslateResultFromResponseAddsFailuresForMissingRecordResults(t *testing.T) {
+	result := translateResultFromResponse(
+		[]ClaimedTranslationRecord{{
+			RawRecordID:        "record-1",
+			TaskAttemptID:      "attempt-1",
+			OrganizationNumber: "810202572",
+		}},
+		translationclient.BrregTranslateResponse{
+			Status:        "failed",
+			Provider:      "mock",
+			Model:         "mock-fast",
+			PromptVersion: "v1",
+			Results:       nil,
+		},
+	)
+
+	require.Len(t, result.Results, 1)
+	require.Equal(t, "record-1", result.Results[0].RawRecordID)
+	require.Equal(t, "attempt-1", result.Results[0].TaskAttemptID)
+	require.Equal(t, "failed", result.Results[0].Status)
+	require.NotNil(t, result.Results[0].Error)
+	require.Equal(t, "invalid_translation_response", result.Results[0].Error.Category)
+	require.Equal(t, "missing_record_result", result.Results[0].Error.Code)
+	require.Equal(t, "retry_with_backoff", result.Results[0].Error.RetryStrategy)
 }
 
 func TestSubmitTranslationCommandFromResultMapsFailure(t *testing.T) {
