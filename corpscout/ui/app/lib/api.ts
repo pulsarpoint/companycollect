@@ -204,6 +204,14 @@ export const api = {
     limit?: number;
     batch_size?: number;
     max_attempts?: number;
+    max_parallel_tasks?: number;
+    lease_seconds?: number;
+    provider?: string;
+    model?: string;
+    prompt_version?: string;
+    source_lang?: string;
+    target_lang?: string;
+    max_service_retries?: number;
     trigger?: string;
   } = {}) =>
     post<{ status: string; workflow_id: string; workflow_run_id?: string }>("/workflows/brreg/translation", body),
