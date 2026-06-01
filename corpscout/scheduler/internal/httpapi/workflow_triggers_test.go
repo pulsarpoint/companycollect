@@ -62,6 +62,32 @@ func TestStartBrregTranslationWorkflowStartsTemporalWorkflow(t *testing.T) {
 	require.Equal(t, 4, input.MaxServiceRetries)
 }
 
+func TestStartBrregTranslationWorkflowDefaultsProviderAtHTTPBoundary(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/translation", bytes.NewBufferString(`{
+		"provider": "  ",
+		"model": "  ",
+		"prompt_version": " v1 ",
+		"source_lang": " no ",
+		"target_lang": " en "
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(brregworkflow.TranslateBrregRawInputsInput)
+	require.Equal(t, "default", input.Provider)
+	require.Empty(t, input.Model)
+	require.Equal(t, "v1", input.PromptVersion)
+	require.Equal(t, "no", input.SourceLang)
+	require.Equal(t, "en", input.TargetLang)
+	require.Equal(t, "manual", input.Trigger)
+}
+
 func TestStartBrregTranslationWorkflowRejectsInvalidLimit(t *testing.T) {
 	tc := &temporalExecuteRecorder{}
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))

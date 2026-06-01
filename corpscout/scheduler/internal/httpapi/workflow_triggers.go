@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -13,6 +14,8 @@ import (
 
 	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
 )
+
+const defaultBrregTranslationProvider = "default"
 
 type startWorkflowResponse struct {
 	Status        string `json:"status"`
@@ -114,8 +117,17 @@ func decodeStartBrregTranslationWorkflowRequest(r *http.Request) (startBrregTran
 	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		return startBrregTranslationWorkflowRequest{}, errors.New("invalid request body")
 	}
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	req.Provider = strings.TrimSpace(req.Provider)
+	req.Model = strings.TrimSpace(req.Model)
+	req.PromptVersion = strings.TrimSpace(req.PromptVersion)
+	req.SourceLang = strings.TrimSpace(req.SourceLang)
+	req.TargetLang = strings.TrimSpace(req.TargetLang)
 	if req.Trigger == "" {
 		req.Trigger = "manual"
+	}
+	if req.Provider == "" {
+		req.Provider = defaultBrregTranslationProvider
 	}
 	if req.Limit < 0 {
 		return startBrregTranslationWorkflowRequest{}, errors.New("limit must be greater than zero when provided")
