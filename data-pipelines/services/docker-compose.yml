@@ -1,10 +1,15 @@
 services:
   nats:
     image: nats:2
-    command: ["-js", "-m", "8222", "--max_payload", "${NATS_MAX_PAYLOAD:-16777216}"]
+    command: ["-c", "/etc/nats/nats-server.conf"]
+    environment:
+      NATS_MAX_PAYLOAD: ${NATS_MAX_PAYLOAD:-16777216}
     ports:
       - "${NATS_PORT:-4222}:4222"
       - "${NATS_MONITOR_PORT:-8222}:8222"
+    volumes:
+      - ./nats-server.conf:/etc/nats/nats-server.conf:ro
+      - "${NATS_DATA_DIR:-./nats-data}:/data"
     restart: unless-stopped
 
   translation-service:
