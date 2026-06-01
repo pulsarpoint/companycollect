@@ -17,6 +17,8 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      LLM_PROVIDER_KEY_ENCRYPTION_KEY: ${LLM_PROVIDER_KEY_ENCRYPTION_KEY:-}
     ports:
       - "${TRANSLATION_SERVICE_PORT:-8095}:8095"
     healthcheck:
@@ -38,6 +40,7 @@ services:
       - path: .env
         required: false
     environment:
+      LLM_PROVIDER_KEY_ENCRYPTION_KEY: ${LLM_PROVIDER_KEY_ENCRYPTION_KEY:-}
       NATS_URL: nats://nats:4222
       TRANSLATION_NATS_SUBJECT: ${TRANSLATION_NATS_SUBJECT:-brreg.translation.translate}
       TRANSLATION_NATS_QUEUE: ${TRANSLATION_NATS_QUEUE:-brreg-translation}
@@ -51,6 +54,8 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      LLM_PROVIDER_KEY_ENCRYPTION_KEY: ${LLM_PROVIDER_KEY_ENCRYPTION_KEY:-}
     ports:
       - "${CRAWL_SERVICE_PORT:-8096}:8096"
     healthcheck:
@@ -72,6 +77,7 @@ services:
       - path: .env
         required: false
     environment:
+      LLM_PROVIDER_KEY_ENCRYPTION_KEY: ${LLM_PROVIDER_KEY_ENCRYPTION_KEY:-}
       NATS_URL: nats://nats:4222
       NATS_SUBJECT: ${NATS_SUBJECT:-brreg.domain.discover}
       NATS_QUEUE: ${NATS_QUEUE:-brreg-domain-crawl}
