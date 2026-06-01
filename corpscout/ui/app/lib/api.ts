@@ -44,12 +44,13 @@ async function responseError(res: Response): Promise<ApiError> {
 
   if (contentType.includes("application/json")) {
     try {
-      const body = await res.json() as { error?: unknown; message?: unknown };
-      const message = typeof body.error === "string"
-        ? body.error
-        : typeof body.message === "string"
-          ? body.message
-          : fallback;
+      const body = (await res.json()) as { error?: unknown; message?: unknown };
+      const message =
+        typeof body.error === "string"
+          ? body.error
+          : typeof body.message === "string"
+            ? body.message
+            : fallback;
       return new ApiError(res.status, message);
     } catch {
       return new ApiError(res.status, fallback);
@@ -57,7 +58,30 @@ async function responseError(res: Response): Promise<ApiError> {
   }
 
   const text = await res.text();
-  return new ApiError(res.status, text.trim() || fallback);
+  return new ApiError(
+    res.status,
+    safeNonJSONErrorMessage(res, contentType, text, fallback),
+  );
+}
+
+function safeNonJSONErrorMessage(
+  res: Response,
+  contentType: string,
+  text: string,
+  fallback: string,
+): string {
+  const trimmed = text.trim();
+  const looksLikeHTML =
+    contentType.includes("text/html") ||
+    trimmed.toLowerCase().startsWith("<!doctype") ||
+    trimmed.toLowerCase().startsWith("<html");
+  if (looksLikeHTML) {
+    if (res.status === 502) return "API backend unavailable";
+    if (res.status === 503) return "API backend temporarily unavailable";
+    if (res.status === 504) return "API backend request timed out";
+    return fallback;
+  }
+  return trimmed || fallback;
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -94,9 +118,13 @@ export const api = {
     limit = 50,
     filters?: { signal?: string; min_confidence?: number; q?: string },
   ) => {
-    const qs = new URLSearchParams({ page: String(page), limit: String(limit) });
+    const qs = new URLSearchParams({
+      page: String(page),
+      limit: String(limit),
+    });
     if (filters?.signal) qs.set("signal", filters.signal);
-    if (filters?.min_confidence != null) qs.set("min_confidence", String(filters.min_confidence));
+    if (filters?.min_confidence != null)
+      qs.set("min_confidence", String(filters.min_confidence));
     if (filters?.q) qs.set("q", filters.q);
     return get<ReviewListResponse>(`/review?${qs.toString()}`);
   },
@@ -107,33 +135,44 @@ export const api = {
   bulkReview: (ids: string[], action: "approved" | "rejected" | "superseded") =>
     post<{ updated: number; skipped: number }>("/review/bulk", { ids, action }),
 
-  getReviewIDs: (filters?: { signal?: string; min_confidence?: number; q?: string }) => {
+  getReviewIDs: (filters?: {
+    signal?: string;
+    min_confidence?: number;
+    q?: string;
+  }) => {
     const qs = new URLSearchParams();
     if (filters?.signal) qs.set("signal", filters.signal);
-    if (filters?.min_confidence != null) qs.set("min_confidence", String(filters.min_confidence));
+    if (filters?.min_confidence != null)
+      qs.set("min_confidence", String(filters.min_confidence));
     if (filters?.q) qs.set("q", filters.q);
-    return get<{ ids: string[] }>(`/review/ids${qs.toString() ? `?${qs.toString()}` : ""}`);
+    return get<{ ids: string[] }>(
+      `/review/ids${qs.toString() ? `?${qs.toString()}` : ""}`,
+    );
   },
 
-  getRawInputs: (params: {
-    page?: number;
-    limit?: number;
-    source?: string;
-    status?: string;
-    processing_status?: string;
-    translation_status?: string;
-    has_suggestion?: string;
-    q?: string;
-    sort?: string;
-    dir?: "asc" | "desc";
-  } = {}) => {
+  getRawInputs: (
+    params: {
+      page?: number;
+      limit?: number;
+      source?: string;
+      status?: string;
+      processing_status?: string;
+      translation_status?: string;
+      has_suggestion?: string;
+      q?: string;
+      sort?: string;
+      dir?: "asc" | "desc";
+    } = {},
+  ) => {
     const qs = new URLSearchParams();
     if (params.page) qs.set("page", String(params.page));
     if (params.limit) qs.set("limit", String(params.limit));
     if (params.source) qs.set("source", params.source);
-    if (params.processing_status) qs.set("processing_status", params.processing_status);
+    if (params.processing_status)
+      qs.set("processing_status", params.processing_status);
     else if (params.status) qs.set("status", params.status);
-    if (params.translation_status) qs.set("translation_status", params.translation_status);
+    if (params.translation_status)
+      qs.set("translation_status", params.translation_status);
     if (params.has_suggestion) qs.set("has_suggestion", params.has_suggestion);
     if (params.q) qs.set("q", params.q);
     if (params.sort) qs.set("sort", params.sort);
@@ -144,33 +183,41 @@ export const api = {
   getRawInput: (source: string, id: string) =>
     get<RawInputDetail>(`/raw-inputs/${source}/${id}`),
 
-  getBrregRawRecords: (params: {
-    page?: number;
-    limit?: number;
-    q?: string;
-    state?: string;
-    lifecycle_state?: string;
-    translation_status?: string;
-    domain_status?: string;
-    financial_status?: string;
-    enhanced_status?: string;
-    sort?: string;
-    dir?: "asc" | "desc";
-  } = {}) => {
+  getBrregRawRecords: (
+    params: {
+      page?: number;
+      limit?: number;
+      q?: string;
+      state?: string;
+      lifecycle_state?: string;
+      translation_status?: string;
+      domain_status?: string;
+      financial_status?: string;
+      enhanced_status?: string;
+      sort?: string;
+      dir?: "asc" | "desc";
+    } = {},
+  ) => {
     const qs = new URLSearchParams();
     if (params.page) qs.set("page", String(params.page));
     if (params.limit) qs.set("limit", String(params.limit));
     if (params.q) qs.set("q", params.q);
     if (params.state) qs.set("state", params.state);
-    if (params.lifecycle_state) qs.set("lifecycle_state", params.lifecycle_state);
-    if (params.translation_status) qs.set("translation_status", params.translation_status);
+    if (params.lifecycle_state)
+      qs.set("lifecycle_state", params.lifecycle_state);
+    if (params.translation_status)
+      qs.set("translation_status", params.translation_status);
     if (params.domain_status) qs.set("domain_status", params.domain_status);
-    if (params.financial_status) qs.set("financial_status", params.financial_status);
-    if (params.enhanced_status) qs.set("enhanced_status", params.enhanced_status);
+    if (params.financial_status)
+      qs.set("financial_status", params.financial_status);
+    if (params.enhanced_status)
+      qs.set("enhanced_status", params.enhanced_status);
     if (params.sort) qs.set("sort", params.sort);
     if (params.dir) qs.set("dir", params.dir);
     const q = qs.toString();
-    return get<BrregRawRecordListResponse>(`/brreg/raw-records${q ? `?${q}` : ""}`);
+    return get<BrregRawRecordListResponse>(
+      `/brreg/raw-records${q ? `?${q}` : ""}`,
+    );
   },
 
   getBrregRawRecord: (id: string) =>
@@ -191,19 +238,25 @@ export const api = {
     post<LLMProviderTestResponse>(`/llm-providers/${id}/test`, body),
 
   getCompanySuggestions: (page = 1, limit = 50) =>
-    get<CompanySuggestionListResponse>(`/suggestions/companies?page=${page}&limit=${limit}`),
+    get<CompanySuggestionListResponse>(
+      `/suggestions/companies?page=${page}&limit=${limit}`,
+    ),
 
   getCompanySuggestionIDs: () =>
     get<{ ids: string[] }>("/suggestions/companies/ids"),
 
   bulkCompanySuggestions: (ids: string[], action: "approve" | "reject") =>
-    post<{ updated: number; skipped: number }>("/suggestions/companies/bulk", { ids, action }),
+    post<{ updated: number; skipped: number }>("/suggestions/companies/bulk", {
+      ids,
+      action,
+    }),
 
   getSources: () => get<DataSource[]>("/sources"),
 
   getSource: (name: string) => get<DataSource>(`/sources/${name}`),
 
-  getBrregTaskState: () => get<BrregTaskStateResponse>("/sources/brreg/task-state"),
+  getBrregTaskState: () =>
+    get<BrregTaskStateResponse>("/sources/brreg/task-state"),
 
   patchSource: (
     name: string,
@@ -214,28 +267,33 @@ export const api = {
       schedule_expression?: string | null;
       config?: Record<string, unknown>;
     },
+  ) => patch<{ status: string }>(`/sources/${name}`, body),
+
+  translateBrreg: (
+    body: {
+      ids?: string[];
+      filters?: Record<string, string>;
+      limit?: number;
+      batch_size?: number;
+      max_attempts?: number;
+      max_parallel_tasks?: number;
+      lease_seconds?: number;
+      provider?: string;
+      model?: string;
+      prompt_version?: string;
+      source_lang?: string;
+      target_lang?: string;
+      max_service_retries?: number;
+      trigger?: string;
+    } = {},
   ) =>
-    patch<{ status: string }>(`/sources/${name}`, body),
+    post<{ status: string; workflow_id: string; workflow_run_id?: string }>(
+      "/workflows/brreg/translation",
+      body,
+    ),
 
-  translateBrreg: (body: {
-    ids?: string[];
-    filters?: Record<string, string>;
-    limit?: number;
-    batch_size?: number;
-    max_attempts?: number;
-    max_parallel_tasks?: number;
-    lease_seconds?: number;
-    provider?: string;
-    model?: string;
-    prompt_version?: string;
-    source_lang?: string;
-    target_lang?: string;
-    max_service_retries?: number;
-    trigger?: string;
-  } = {}) =>
-    post<{ status: string; workflow_id: string; workflow_run_id?: string }>("/workflows/brreg/translation", body),
-
-  cancelJob: (id: number) => post<{ status: string; id: number }>(`/jobs/${id}/cancel`, {}),
+  cancelJob: (id: number) =>
+    post<{ status: string; id: number }>(`/jobs/${id}/cancel`, {}),
 
   cancelBulkByIds: (ids: number[]) =>
     post<{ cancelled: number }>("/jobs/cancel-bulk", { ids }),
@@ -249,9 +307,12 @@ export const api = {
     post<{ job_id: number }>(`/companies/${id}/enrich-from-source`, { source }),
 
   getFinancialSuggestions: (page = 1, limit = 50) =>
-    get<{ items: CompanyFinancialPending[]; total: number; page: number; limit: number }>(
-      `/financials/review?page=${page}&limit=${limit}`,
-    ),
+    get<{
+      items: CompanyFinancialPending[];
+      total: number;
+      page: number;
+      limit: number;
+    }>(`/financials/review?page=${page}&limit=${limit}`),
 
   getFinancialSuggestionIDs: () =>
     get<{ ids: string[] }>("/financials/review/ids"),
@@ -276,7 +337,6 @@ export const api = {
       founded_year?: number;
     },
   ) => patch<VCompany>(`/companies/${id}`, body),
-
 };
 
 export function getDomain(domainId: string): Promise<DomainDetail> {

@@ -31,15 +31,19 @@ func TestNewCipherRejectsEmptyKey(t *testing.T) {
 	require.ErrorContains(t, err, "not configured")
 }
 
-func TestNewCipherRejectsNonBase64Key(t *testing.T) {
+func TestNewCipherAcceptsRawPassphrase(t *testing.T) {
 	cipher, err := NewCipher("not-base64")
 
-	require.Nil(t, cipher)
-	require.ErrorContains(t, err, "decode")
+	require.NoError(t, err)
+	secret, err := cipher.Encrypt("secret-value")
+	require.NoError(t, err)
+	plaintext, err := cipher.Decrypt(secret)
+	require.NoError(t, err)
+	require.Equal(t, "secret-value", plaintext)
 }
 
-func TestNewCipherRejectsWrongLengthKey(t *testing.T) {
-	cipher, err := NewCipher("c2hvcnQ=")
+func TestNewCipherRejectsExplicitBase64WrongLengthKey(t *testing.T) {
+	cipher, err := NewCipher("base64:c2hvcnQ=")
 
 	require.Nil(t, cipher)
 	require.ErrorContains(t, err, "32 bytes")

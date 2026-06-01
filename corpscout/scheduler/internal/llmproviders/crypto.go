@@ -4,8 +4,10 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"io"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 )
@@ -14,16 +16,13 @@ type Cipher struct {
 	gcm cipher.AEAD
 }
 
-func NewCipher(base64Key string) (*Cipher, error) {
-	if base64Key == "" {
+func NewCipher(keyValue string) (*Cipher, error) {
+	if keyValue == "" {
 		return nil, errors.New("llm provider encryption key is not configured")
 	}
-	key, err := base64.StdEncoding.DecodeString(base64Key)
+	key, err := keyBytes(keyValue)
 	if err != nil {
-		return nil, errors.Wrap(err, "decode llm provider encryption key")
-	}
-	if len(key) != 32 {
-		return nil, errors.Newf("llm provider encryption key must decode to 32 bytes, got %d", len(key))
+		return nil, err
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -34,6 +33,28 @@ func NewCipher(base64Key string) (*Cipher, error) {
 		return nil, errors.Wrap(err, "create llm provider gcm")
 	}
 	return &Cipher{gcm: gcm}, nil
+}
+
+func keyBytes(keyValue string) ([]byte, error) {
+	keyValue = strings.TrimSpace(keyValue)
+	if keyValue == "" {
+		return nil, errors.New("llm provider encryption key is not configured")
+	}
+	if encoded, ok := strings.CutPrefix(keyValue, "base64:"); ok {
+		key, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return nil, errors.Wrap(err, "decode llm provider encryption key")
+		}
+		if len(key) != 32 {
+			return nil, errors.Newf("llm provider encryption key must decode to 32 bytes, got %d", len(key))
+		}
+		return key, nil
+	}
+	if key, err := base64.StdEncoding.DecodeString(keyValue); err == nil && len(key) == 32 {
+		return key, nil
+	}
+	sum := sha256.Sum256([]byte(keyValue))
+	return sum[:], nil
 }
 
 func (c *Cipher) Encrypt(plaintext string) (EncryptedSecret, error) {
