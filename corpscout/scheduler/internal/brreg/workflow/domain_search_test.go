@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,8 @@ func TestSearchBrregDomainsFinishesWhenSelectionIsEmpty(t *testing.T) {
 	env.RegisterActivityWithOptions(func(FinishBrregDomainSearchWorkflowInput) (FinishBrregDomainSearchWorkflowResult, error) {
 		return FinishBrregDomainSearchWorkflowResult{}, nil
 	}, activity.RegisterOptions{Name: "FinishBrregDomainSearchWorkflow"})
+	cleanupCalls := 0
+	registerDomainSearchLeaseCleanup(env, &cleanupCalls)
 
 	env.ExecuteWorkflow(SearchBrregDomains, SearchBrregDomainsInput{Limit: 1000, BatchSize: 10})
 
@@ -36,6 +39,7 @@ func TestSearchBrregDomainsFinishesWhenSelectionIsEmpty(t *testing.T) {
 	require.Equal(t, "drained", result.Status)
 	require.EqualValues(t, 0, result.RecordsSelected)
 	require.EqualValues(t, 0, result.RecordsClaimed)
+	require.Equal(t, 1, cleanupCalls)
 }
 
 func TestSearchBrregDomainsProcessesBatchesUntilClaimDrains(t *testing.T) {
@@ -136,6 +140,8 @@ func TestSearchBrregDomainsProcessesBatchesUntilClaimDrains(t *testing.T) {
 	env.RegisterActivityWithOptions(func(FinishBrregDomainSearchWorkflowInput) (FinishBrregDomainSearchWorkflowResult, error) {
 		return FinishBrregDomainSearchWorkflowResult{}, nil
 	}, activity.RegisterOptions{Name: "FinishBrregDomainSearchWorkflow"})
+	cleanupCalls := 0
+	registerDomainSearchLeaseCleanup(env, &cleanupCalls)
 
 	env.ExecuteWorkflow(SearchBrregDomains, SearchBrregDomainsInput{Limit: 3, BatchSize: 2})
 
@@ -150,6 +156,7 @@ func TestSearchBrregDomainsProcessesBatchesUntilClaimDrains(t *testing.T) {
 	require.EqualValues(t, 3, result.RecordsCompleted)
 	require.EqualValues(t, 0, result.RecordsFailed)
 	require.EqualValues(t, 2, result.BatchesProcessed)
+	require.Equal(t, 1, cleanupCalls)
 }
 
 func TestSearchBrregDomainsFailsWhenAllRecordsFailInBusinessStep(t *testing.T) {
@@ -247,6 +254,8 @@ func TestSearchBrregDomainsFailsWhenAllRecordsFailInBusinessStep(t *testing.T) {
 		finishInput = input
 		return FinishBrregDomainSearchWorkflowResult{}, nil
 	}, activity.RegisterOptions{Name: "FinishBrregDomainSearchWorkflow"})
+	cleanupCalls := 0
+	registerDomainSearchLeaseCleanup(env, &cleanupCalls)
 
 	env.ExecuteWorkflow(SearchBrregDomains, SearchBrregDomainsInput{Limit: 2, BatchSize: 2})
 
@@ -261,4 +270,65 @@ func TestSearchBrregDomainsFailsWhenAllRecordsFailInBusinessStep(t *testing.T) {
 	require.Contains(t, finishInput.Error, "all domain search records failed")
 	require.Contains(t, finishInput.Error, "search_fetch_request_failed")
 	require.Contains(t, finishInput.Error, "nats: no responders available for request")
+	require.Equal(t, 1, cleanupCalls)
+}
+
+func TestSearchBrregDomainsCleansRunningLeasesWhenActivityFails(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.RegisterWorkflow(SearchBrregDomains)
+	env.RegisterActivityWithOptions(func(PrepareBrregDomainSearchWorkflowInput) (PrepareBrregDomainSearchWorkflowResult, error) {
+		return PrepareBrregDomainSearchWorkflowResult{
+			WorkflowRunID:   "9f03a113-0c1f-495e-98b8-bbc2dedc1d4c",
+			SelectionHash:   "selection-activity-failure",
+			RecordsSelected: 1,
+			BatchSize:       1,
+			MaxAttempts:     3,
+		}, nil
+	}, activity.RegisterOptions{Name: "PrepareBrregDomainSearchWorkflow"})
+	env.RegisterActivityWithOptions(func(ClaimBrregDomainSearchBatchInput) (ClaimBrregDomainSearchBatchResult, error) {
+		return ClaimBrregDomainSearchBatchResult{Records: []ClaimedDomainSearchRecord{
+			{
+				RawRecordID:        "11111111-1111-1111-1111-111111111111",
+				TaskAttemptID:      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+				OrganizationNumber: "111",
+				OrganizationName:   "A AS",
+				RawPayload:         []byte(`{"navn":"A AS"}`),
+			},
+		}}, nil
+	}, activity.RegisterOptions{Name: "ClaimBrregDomainSearchBatch"})
+	env.RegisterActivityWithOptions(func(FetchBrregDomainSearchPagesInput) (FetchBrregDomainSearchPagesResult, error) {
+		return FetchBrregDomainSearchPagesResult{}, errors.New("crawl service unavailable")
+	}, activity.RegisterOptions{Name: "FetchBrregDomainSearchPages"})
+
+	var cleanupInput FailRunningBrregDomainSearchTasksForWorkflowInput
+	env.RegisterActivityWithOptions(func(input FailRunningBrregDomainSearchTasksForWorkflowInput) (FailRunningBrregDomainSearchTasksForWorkflowResult, error) {
+		cleanupInput = input
+		return FailRunningBrregDomainSearchTasksForWorkflowResult{FailedTasks: 1}, nil
+	}, activity.RegisterOptions{Name: "FailRunningBrregDomainSearchTasksForWorkflow"})
+	var finishInput FinishBrregDomainSearchWorkflowInput
+	env.RegisterActivityWithOptions(func(input FinishBrregDomainSearchWorkflowInput) (FinishBrregDomainSearchWorkflowResult, error) {
+		finishInput = input
+		return FinishBrregDomainSearchWorkflowResult{}, nil
+	}, activity.RegisterOptions{Name: "FinishBrregDomainSearchWorkflow"})
+
+	env.ExecuteWorkflow(SearchBrregDomains, SearchBrregDomainsInput{Limit: 1, BatchSize: 1})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.ErrorContains(t, env.GetWorkflowError(), "fetch brreg domain search pages")
+	require.Equal(t, "9f03a113-0c1f-495e-98b8-bbc2dedc1d4c", cleanupInput.WorkflowRunID)
+	require.EqualValues(t, 3, cleanupInput.MaxAttempts)
+	require.Contains(t, cleanupInput.Error, "domain search workflow failed before all claimed records were submitted")
+	require.Equal(t, "failed", finishInput.Status)
+	require.Equal(t, "domain search workflow failed", finishInput.Error)
+}
+
+func registerDomainSearchLeaseCleanup(env *testsuite.TestWorkflowEnvironment, cleanupCalls *int) {
+	env.RegisterActivityWithOptions(func(FailRunningBrregDomainSearchTasksForWorkflowInput) (FailRunningBrregDomainSearchTasksForWorkflowResult, error) {
+		if cleanupCalls != nil {
+			(*cleanupCalls)++
+		}
+		return FailRunningBrregDomainSearchTasksForWorkflowResult{}, nil
+	}, activity.RegisterOptions{Name: "FailRunningBrregDomainSearchTasksForWorkflow"})
 }

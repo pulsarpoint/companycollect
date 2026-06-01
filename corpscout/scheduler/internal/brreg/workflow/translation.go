@@ -132,13 +132,14 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 		SelectionHash:   prepared.SelectionHash,
 		RecordsSelected: prepared.RecordsSelected,
 	}
-	finished := false
+	auditFinished := false
 	defer func() {
-		if finished || result.WorkflowRunID == "" {
+		if result.WorkflowRunID == "" {
 			return
 		}
 		logger.Debug("brreg translation workflow cleanup started",
 			"workflow_run_id", result.WorkflowRunID,
+			"audit_finished", auditFinished,
 			"records_claimed", result.RecordsClaimed,
 			"records_completed", result.RecordsCompleted,
 			"records_failed", result.RecordsFailed,
@@ -162,6 +163,9 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 				"workflow_run_id", result.WorkflowRunID,
 				"failed_tasks", failedRunning.FailedTasks,
 			)
+		}
+		if auditFinished {
+			return
 		}
 		if err := temporalworkflow.ExecuteActivity(disconnectedCtx, finishBrregTranslationWorkflowActivity, FinishBrregTranslationWorkflowInput{
 			WorkflowRunID:    result.WorkflowRunID,
@@ -192,7 +196,7 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 		if err := finishBrregTranslationWorkflow(ctx, result, "succeeded", ""); err != nil {
 			return result, err
 		}
-		finished = true
+		auditFinished = true
 		return result, nil
 	}
 
@@ -324,7 +328,7 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 		if err := finishBrregTranslationWorkflow(ctx, result, "failed", finalError); err != nil {
 			return result, err
 		}
-		finished = true
+		auditFinished = true
 		return result, temporal.NewNonRetryableApplicationError(finalError, translationAllRecordsFailed, nil)
 	}
 
@@ -342,7 +346,7 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 	if err := finishBrregTranslationWorkflow(ctx, result, "succeeded", ""); err != nil {
 		return result, err
 	}
-	finished = true
+	auditFinished = true
 	logger.Debug("brreg translation workflow finished",
 		"workflow_run_id", result.WorkflowRunID,
 		"status", result.Status,

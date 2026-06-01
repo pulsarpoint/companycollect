@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,8 @@ func TestTranslateBrregRawInputsFinishesWhenSelectionIsEmpty(t *testing.T) {
 	env.RegisterActivityWithOptions(func(FinishBrregTranslationWorkflowInput) (FinishBrregTranslationWorkflowResult, error) {
 		return FinishBrregTranslationWorkflowResult{}, nil
 	}, activity.RegisterOptions{Name: "FinishBrregTranslationWorkflow"})
+	cleanupCalls := 0
+	registerTranslationLeaseCleanup(env, &cleanupCalls)
 
 	env.ExecuteWorkflow(TranslateBrregRawInputs, TranslateBrregRawInputsInput{Limit: 1000, BatchSize: 50})
 
@@ -36,6 +39,7 @@ func TestTranslateBrregRawInputsFinishesWhenSelectionIsEmpty(t *testing.T) {
 	require.Equal(t, "drained", result.Status)
 	require.EqualValues(t, 0, result.RecordsSelected)
 	require.EqualValues(t, 0, result.RecordsClaimed)
+	require.Equal(t, 1, cleanupCalls)
 }
 
 func TestTranslateBrregRawInputsProcessesBatchesUntilClaimDrains(t *testing.T) {
@@ -117,6 +121,8 @@ func TestTranslateBrregRawInputsProcessesBatchesUntilClaimDrains(t *testing.T) {
 	env.RegisterActivityWithOptions(func(FinishBrregTranslationWorkflowInput) (FinishBrregTranslationWorkflowResult, error) {
 		return FinishBrregTranslationWorkflowResult{}, nil
 	}, activity.RegisterOptions{Name: "FinishBrregTranslationWorkflow"})
+	cleanupCalls := 0
+	registerTranslationLeaseCleanup(env, &cleanupCalls)
 
 	env.ExecuteWorkflow(TranslateBrregRawInputs, TranslateBrregRawInputsInput{Limit: 3, BatchSize: 2})
 
@@ -131,6 +137,7 @@ func TestTranslateBrregRawInputsProcessesBatchesUntilClaimDrains(t *testing.T) {
 	require.EqualValues(t, 3, result.RecordsCompleted)
 	require.EqualValues(t, 0, result.RecordsFailed)
 	require.EqualValues(t, 2, result.BatchesProcessed)
+	require.Equal(t, 1, cleanupCalls)
 }
 
 func TestTranslateBrregRawInputsFailsWhenAllRecordsFailInBusinessStep(t *testing.T) {
@@ -205,6 +212,8 @@ func TestTranslateBrregRawInputsFailsWhenAllRecordsFailInBusinessStep(t *testing
 		finishInput = input
 		return FinishBrregTranslationWorkflowResult{}, nil
 	}, activity.RegisterOptions{Name: "FinishBrregTranslationWorkflow"})
+	cleanupCalls := 0
+	registerTranslationLeaseCleanup(env, &cleanupCalls)
 
 	env.ExecuteWorkflow(TranslateBrregRawInputs, TranslateBrregRawInputsInput{Limit: 2, BatchSize: 2})
 
@@ -215,4 +224,64 @@ func TestTranslateBrregRawInputsFailsWhenAllRecordsFailInBusinessStep(t *testing
 	require.EqualValues(t, 0, finishInput.RecordsCompleted)
 	require.EqualValues(t, 2, finishInput.RecordsFailed)
 	require.Equal(t, "all translation records failed", finishInput.Error)
+	require.Equal(t, 1, cleanupCalls)
+}
+
+func TestTranslateBrregRawInputsCleansRunningLeasesWhenActivityFails(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.RegisterWorkflow(TranslateBrregRawInputs)
+	env.RegisterActivityWithOptions(func(PrepareBrregTranslationWorkflowInput) (PrepareBrregTranslationWorkflowResult, error) {
+		return PrepareBrregTranslationWorkflowResult{
+			WorkflowRunID:   "9f03a113-0c1f-495e-98b8-bbc2dedc1d4c",
+			SelectionHash:   "selection-activity-failure",
+			RecordsSelected: 1,
+			BatchSize:       1,
+			MaxAttempts:     3,
+		}, nil
+	}, activity.RegisterOptions{Name: "PrepareBrregTranslationWorkflow"})
+	env.RegisterActivityWithOptions(func(ClaimBrregTranslationBatchInput) (ClaimBrregTranslationBatchResult, error) {
+		return ClaimBrregTranslationBatchResult{Records: []ClaimedTranslationRecord{
+			{
+				RawRecordID:        "11111111-1111-1111-1111-111111111111",
+				TaskAttemptID:      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+				OrganizationNumber: "111",
+				RawPayload:         []byte(`{"navn":"A"}`),
+			},
+		}}, nil
+	}, activity.RegisterOptions{Name: "ClaimBrregTranslationBatch"})
+	env.RegisterActivityWithOptions(func(TranslateBrregBatchInput) (TranslateBrregBatchResult, error) {
+		return TranslateBrregBatchResult{}, errors.New("translation service unavailable")
+	}, activity.RegisterOptions{Name: "TranslateBrregBatch"})
+
+	var cleanupInput FailRunningBrregTranslationTasksForWorkflowInput
+	env.RegisterActivityWithOptions(func(input FailRunningBrregTranslationTasksForWorkflowInput) (FailRunningBrregTranslationTasksForWorkflowResult, error) {
+		cleanupInput = input
+		return FailRunningBrregTranslationTasksForWorkflowResult{FailedTasks: 1}, nil
+	}, activity.RegisterOptions{Name: "FailRunningBrregTranslationTasksForWorkflow"})
+	var finishInput FinishBrregTranslationWorkflowInput
+	env.RegisterActivityWithOptions(func(input FinishBrregTranslationWorkflowInput) (FinishBrregTranslationWorkflowResult, error) {
+		finishInput = input
+		return FinishBrregTranslationWorkflowResult{}, nil
+	}, activity.RegisterOptions{Name: "FinishBrregTranslationWorkflow"})
+
+	env.ExecuteWorkflow(TranslateBrregRawInputs, TranslateBrregRawInputsInput{Limit: 1, BatchSize: 1})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.ErrorContains(t, env.GetWorkflowError(), "translate brreg batch")
+	require.Equal(t, "9f03a113-0c1f-495e-98b8-bbc2dedc1d4c", cleanupInput.WorkflowRunID)
+	require.EqualValues(t, 3, cleanupInput.MaxAttempts)
+	require.Contains(t, cleanupInput.Error, "translation workflow failed before all claimed records were submitted")
+	require.Equal(t, "failed", finishInput.Status)
+	require.Equal(t, "translation workflow failed", finishInput.Error)
+}
+
+func registerTranslationLeaseCleanup(env *testsuite.TestWorkflowEnvironment, cleanupCalls *int) {
+	env.RegisterActivityWithOptions(func(FailRunningBrregTranslationTasksForWorkflowInput) (FailRunningBrregTranslationTasksForWorkflowResult, error) {
+		if cleanupCalls != nil {
+			(*cleanupCalls)++
+		}
+		return FailRunningBrregTranslationTasksForWorkflowResult{}, nil
+	}, activity.RegisterOptions{Name: "FailRunningBrregTranslationTasksForWorkflow"})
 }

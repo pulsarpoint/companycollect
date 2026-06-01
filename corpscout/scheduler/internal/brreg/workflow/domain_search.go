@@ -141,11 +141,19 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 		RecordsSelected: prepared.RecordsSelected,
 	}
 	firstFailureReason := ""
-	finished := false
+	auditFinished := false
 	defer func() {
-		if finished || result.WorkflowRunID == "" {
+		if result.WorkflowRunID == "" {
 			return
 		}
+		logger.Debug("brreg domain search workflow cleanup started",
+			"workflow_run_id", result.WorkflowRunID,
+			"audit_finished", auditFinished,
+			"records_claimed", result.RecordsClaimed,
+			"records_completed", result.RecordsCompleted,
+			"records_failed", result.RecordsFailed,
+			"batches_processed", result.BatchesProcessed,
+		)
 		disconnectedCtx, cancel := temporalworkflow.NewDisconnectedContext(ctx)
 		defer cancel()
 		var failedRunning FailRunningBrregDomainSearchTasksForWorkflowResult
@@ -163,6 +171,9 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 				"workflow_run_id", result.WorkflowRunID,
 				"failed_tasks", failedRunning.FailedTasks,
 			)
+		}
+		if auditFinished {
+			return
 		}
 		if err := temporalworkflow.ExecuteActivity(disconnectedCtx, finishBrregDomainSearchWorkflowActivity, FinishBrregDomainSearchWorkflowInput{
 			WorkflowRunID:    result.WorkflowRunID,
@@ -184,7 +195,7 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 		if err := finishBrregDomainSearchWorkflow(ctx, result, "succeeded", ""); err != nil {
 			return result, err
 		}
-		finished = true
+		auditFinished = true
 		return result, nil
 	}
 
@@ -332,7 +343,7 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 		if err := finishBrregDomainSearchWorkflow(ctx, result, "failed", finalError); err != nil {
 			return result, err
 		}
-		finished = true
+		auditFinished = true
 		return result, temporal.NewNonRetryableApplicationError(finalError, domainSearchAllRecordsFailed, nil)
 	}
 
@@ -340,7 +351,7 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 	if err := finishBrregDomainSearchWorkflow(ctx, result, "succeeded", ""); err != nil {
 		return result, err
 	}
-	finished = true
+	auditFinished = true
 	logger.Debug("brreg domain search workflow finished",
 		"workflow_run_id", result.WorkflowRunID,
 		"records_selected", result.RecordsSelected,
