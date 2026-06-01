@@ -1,4 +1,4 @@
-IMAGE ?= ghcr.io/pulsarpoint/corpscout-translation-service:latest
+IMAGE ?= ghcr.io/pulsarpoint/companycollect-translation-service:latest
 PORT ?= 8095
 
 .PHONY: sync test test-real run build

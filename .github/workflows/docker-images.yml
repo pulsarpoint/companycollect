@@ -87,7 +87,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.translation-service == 'true'
     uses: ./.github/workflows/reusable-docker-build.yml
     with:
-      image_name: pulsarpoint/corpscout-translation-service
+      image_name: pulsarpoint/companycollect-translation-service
       context: data-pipelines/services/translation-service
       dockerfile: data-pipelines/services/translation-service/Dockerfile
       cache_scope: translation-service
@@ -98,7 +98,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.crawl-service == 'true'
     uses: ./.github/workflows/reusable-docker-build.yml
     with:
-      image_name: pulsarpoint/corpscout-crawl-service
+      image_name: pulsarpoint/companycollect-crawl-service
       context: data-pipelines/services/crawl-service
       dockerfile: data-pipelines/services/crawl-service/Dockerfile
       cache_scope: crawl-service
@@ -131,7 +131,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.go-worker == 'true'
     uses: ./.github/workflows/reusable-docker-build.yml
     with:
-      image_name: pulsarpoint/temporal-go-worker
+      image_name: pulsarpoint/companycollect-temporal-go-worker
       context: data-pipelines/services/go-worker
       dockerfile: data-pipelines/services/go-worker/Dockerfile
       cache_scope: go-worker
@@ -142,7 +142,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.python-worker == 'true'
     uses: ./.github/workflows/reusable-docker-build.yml
     with:
-      image_name: pulsarpoint/temporal-python-worker
+      image_name: pulsarpoint/companycollect-temporal-python-worker
       context: data-pipelines/services/python-worker
       dockerfile: data-pipelines/services/python-worker/Dockerfile
       cache_scope: python-worker

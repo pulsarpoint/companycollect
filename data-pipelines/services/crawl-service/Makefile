@@ -1,4 +1,4 @@
-IMAGE ?= ghcr.io/pulsarpoint/corpscout-crawl-service:latest
+IMAGE ?= ghcr.io/pulsarpoint/companycollect-crawl-service:latest
 PORT ?= 8096
 
 .PHONY: sync test run build

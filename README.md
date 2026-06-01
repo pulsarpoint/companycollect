@@ -35,7 +35,9 @@ make db-up
 
 ## GHCR Package Permissions
 
-The Docker image workflow uses the repository `GITHUB_TOKEN` by default. When pushing to an existing GHCR package that was created by an older repository, GitHub may reject the push with:
+The Docker image workflow uses the repository `GITHUB_TOKEN` by default. The monorepo publishes new package names for services that previously existed in older repositories, for example `companycollect-translation-service` instead of `corpscout-translation-service`.
+
+When pushing to an existing GHCR package that was created by an older repository, GitHub may reject the push with:
 
 ```text
 denied: permission_denied: write_package
