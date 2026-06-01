@@ -113,6 +113,20 @@ func TestTranslateRequestFromInputMapsRecordsAndOptions(t *testing.T) {
 	require.Equal(t, json.RawMessage(`{"navn":"BORTIGARD AS"}`), request.Records[0].RawPayload)
 }
 
+func TestTranslateRequestFromInputDefaultsProvider(t *testing.T) {
+	request := translateRequestFromInput(TranslateBrregBatchInput{
+		Records: []ClaimedTranslationRecord{{
+			RawRecordID:        uuid.NewString(),
+			TaskAttemptID:      uuid.NewString(),
+			OrganizationNumber: "810202572",
+			RawPayload:         json.RawMessage(`{"navn":"BORTIGARD AS"}`),
+		}},
+	})
+
+	require.Equal(t, "default", request.LLM.Provider)
+	require.Empty(t, request.LLM.Model)
+}
+
 func TestTranslateResultFromResponseCarriesTaskAttemptIDs(t *testing.T) {
 	result := translateResultFromResponse(
 		[]ClaimedTranslationRecord{{
@@ -140,6 +154,43 @@ func TestTranslateResultFromResponseCarriesTaskAttemptIDs(t *testing.T) {
 	require.Len(t, result.Results, 1)
 	require.Equal(t, "attempt-1", result.Results[0].TaskAttemptID)
 	require.Equal(t, map[string]any{"name": "BORTIGARD AS"}, result.Results[0].TranslatedPayload)
+}
+
+func TestTranslateResultFromResponseDoesNotSubmitUnmatchedServiceIDs(t *testing.T) {
+	rawRecordID := uuid.NewString()
+	taskAttemptID := uuid.NewString()
+
+	result := translateResultFromResponse(
+		[]ClaimedTranslationRecord{{
+			RawRecordID:        rawRecordID,
+			TaskAttemptID:      taskAttemptID,
+			OrganizationNumber: "810202572",
+		}},
+		translationclient.BrregTranslateResponse{
+			Status:        "failed",
+			Provider:      "mock",
+			Model:         "mock-fast",
+			PromptVersion: "v1",
+			Results: []translationclient.BrregRecordTranslationResult{{
+				RecordID:           "unknown",
+				OrganizationNumber: "unknown",
+				Status:             "failed",
+				Error: &translationclient.TranslationError{
+					Message:       "Invalid BRREG translation request.",
+					Category:      "translation_service",
+					Code:          "invalid_nats_payload",
+					RetryStrategy: "retry_with_backoff",
+				},
+			}},
+		},
+	)
+
+	require.Len(t, result.Results, 1)
+	require.Equal(t, rawRecordID, result.Results[0].RawRecordID)
+	require.Equal(t, taskAttemptID, result.Results[0].TaskAttemptID)
+	require.Equal(t, "failed", result.Results[0].Status)
+	require.NotNil(t, result.Results[0].Error)
+	require.Equal(t, "invalid_nats_payload", result.Results[0].Error.Code)
 }
 
 func TestTranslateResultFromResponseAddsFailuresForMissingRecordResults(t *testing.T) {

@@ -369,7 +369,7 @@ func (a *TranslationActions) TranslateBrregBatch(ctx context.Context, input Tran
 func translateRequestFromInput(input TranslateBrregBatchInput) translationclient.BrregTranslateRequest {
 	request := translationclient.BrregTranslateRequest{
 		Records:       make([]translationclient.BrregRecord, 0, len(input.Records)),
-		LLM:           translationclient.LLMSelection{Provider: input.Provider, Model: input.Model},
+		LLM:           translationclient.LLMSelection{Provider: defaultString(input.Provider, "default"), Model: input.Model},
 		PromptVersion: defaultString(input.PromptVersion, defaultTranslationPromptVersion),
 		SourceLang:    defaultString(input.SourceLang, defaultTranslationSourceLang),
 		TargetLang:    defaultString(input.TargetLang, defaultTranslationTargetLang),
@@ -392,8 +392,15 @@ func translateResultFromResponse(records []ClaimedTranslationRecord, response tr
 	}
 	results := make([]TranslationRecordResult, 0, len(response.Results))
 	seenRecordIDs := make(map[string]struct{}, len(response.Results))
+	var unmatchedServiceError *TranslationError
 	for _, result := range response.Results {
-		claimed := claimedByRecordID[result.RecordID]
+		claimed, ok := claimedByRecordID[result.RecordID]
+		if !ok {
+			if unmatchedServiceError == nil && result.Error != nil {
+				unmatchedServiceError = translationErrorFromClient(result.Error)
+			}
+			continue
+		}
 		seenRecordIDs[result.RecordID] = struct{}{}
 		results = append(results, TranslationRecordResult{
 			RawRecordID:        result.RecordID,
@@ -415,7 +422,7 @@ func translateResultFromResponse(records []ClaimedTranslationRecord, response tr
 			continue
 		}
 		missingResults++
-		results = append(results, missingTranslationRecordResult(record, response))
+		results = append(results, missingTranslationRecordResult(record, response, unmatchedServiceError))
 	}
 	recordsSeen := response.RecordsSeen
 	if recordsSeen == 0 && len(records) > 0 {
@@ -435,21 +442,29 @@ func translateResultFromResponse(records []ClaimedTranslationRecord, response tr
 	}
 }
 
-func missingTranslationRecordResult(record ClaimedTranslationRecord, response translationclient.BrregTranslateResponse) TranslationRecordResult {
+func missingTranslationRecordResult(
+	record ClaimedTranslationRecord,
+	response translationclient.BrregTranslateResponse,
+	serviceError *TranslationError,
+) TranslationRecordResult {
+	err := serviceError
+	if err == nil {
+		err = &TranslationError{
+			Message:       "translation service did not return a result for the claimed record",
+			Category:      "invalid_translation_response",
+			Code:          "missing_record_result",
+			RetryStrategy: "retry_with_backoff",
+		}
+	}
 	return TranslationRecordResult{
 		RawRecordID:        record.RawRecordID,
 		TaskAttemptID:      record.TaskAttemptID,
 		OrganizationNumber: record.OrganizationNumber,
 		Status:             brregdb.ResultStatusFailed.String(),
-		Error: &TranslationError{
-			Message:       "translation service did not return a result for the claimed record",
-			Category:      "invalid_translation_response",
-			Code:          "missing_record_result",
-			RetryStrategy: "retry_with_backoff",
-		},
-		Provider:      response.Provider,
-		Model:         response.Model,
-		PromptVersion: response.PromptVersion,
+		Error:              err,
+		Provider:           response.Provider,
+		Model:              response.Model,
+		PromptVersion:      response.PromptVersion,
 	}
 }
 
