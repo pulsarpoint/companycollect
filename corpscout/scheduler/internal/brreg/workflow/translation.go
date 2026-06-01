@@ -79,8 +79,31 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 	input = normalizeTranslateBrregInput(input)
 	ctx = brregTranslationActivityContext(ctx)
 	workflowInfo := temporalworkflow.GetInfo(ctx)
+	logger := temporalworkflow.GetLogger(ctx)
+
+	logger.Debug("brreg translation workflow started",
+		"temporal_workflow_id", workflowInfo.WorkflowExecution.ID,
+		"ids_count", len(input.IDs),
+		"filters_count", len(input.Filters),
+		"limit", input.Limit,
+		"batch_size", input.BatchSize,
+		"max_attempts", input.MaxAttempts,
+		"max_parallel_tasks", input.MaxParallelTasks,
+		"lease_seconds", input.LeaseSeconds,
+		"provider", input.Provider,
+		"model", input.Model,
+		"prompt_version", input.PromptVersion,
+		"source_lang", input.SourceLang,
+		"target_lang", input.TargetLang,
+		"max_service_retries", input.MaxServiceRetries,
+		"trigger", input.Trigger,
+	)
 
 	var prepared PrepareBrregTranslationWorkflowResult
+	logger.Debug("brreg translation workflow preparing selection",
+		"activity", prepareBrregTranslationWorkflowActivity,
+		"temporal_workflow_id", workflowInfo.WorkflowExecution.ID,
+	)
 	if err := temporalworkflow.ExecuteActivity(ctx, prepareBrregTranslationWorkflowActivity, PrepareBrregTranslationWorkflowInput{
 		TemporalWorkflowID: workflowInfo.WorkflowExecution.ID,
 		IDs:                input.IDs,
@@ -92,6 +115,14 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 	}).Get(ctx, &prepared); err != nil {
 		return TranslateBrregRawInputsResult{}, errors.Wrap(err, "prepare brreg translation workflow")
 	}
+	logger.Debug("brreg translation workflow selection prepared",
+		"activity", prepareBrregTranslationWorkflowActivity,
+		"workflow_run_id", prepared.WorkflowRunID,
+		"selection_hash", prepared.SelectionHash,
+		"records_selected", prepared.RecordsSelected,
+		"batch_size", prepared.BatchSize,
+		"max_attempts", prepared.MaxAttempts,
+	)
 
 	result := TranslateBrregRawInputsResult{
 		Status:          "running",
@@ -104,25 +135,58 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 		if finished || result.WorkflowRunID == "" {
 			return
 		}
+		logger.Debug("brreg translation workflow cleanup started",
+			"workflow_run_id", result.WorkflowRunID,
+			"records_claimed", result.RecordsClaimed,
+			"records_completed", result.RecordsCompleted,
+			"records_failed", result.RecordsFailed,
+			"records_skipped", result.RecordsSkipped,
+			"batches_processed", result.BatchesProcessed,
+		)
 		disconnectedCtx, cancel := temporalworkflow.NewDisconnectedContext(ctx)
 		defer cancel()
-		_ = temporalworkflow.ExecuteActivity(disconnectedCtx, failRunningBrregTranslationTasksActivity, FailRunningBrregTranslationTasksForWorkflowInput{
+		var failedRunning FailRunningBrregTranslationTasksForWorkflowResult
+		if err := temporalworkflow.ExecuteActivity(disconnectedCtx, failRunningBrregTranslationTasksActivity, FailRunningBrregTranslationTasksForWorkflowInput{
 			WorkflowRunID: result.WorkflowRunID,
 			MaxAttempts:   int32(input.MaxAttempts),
 			Error:         "translation workflow failed before all claimed records were submitted",
-		}).Get(disconnectedCtx, nil)
-		_ = temporalworkflow.ExecuteActivity(disconnectedCtx, finishBrregTranslationWorkflowActivity, FinishBrregTranslationWorkflowInput{
+		}).Get(disconnectedCtx, &failedRunning); err != nil {
+			logger.Warn("brreg translation workflow cleanup failed to release running tasks",
+				"workflow_run_id", result.WorkflowRunID,
+				"error", err,
+			)
+		} else {
+			logger.Debug("brreg translation workflow cleanup released running tasks",
+				"workflow_run_id", result.WorkflowRunID,
+				"failed_tasks", failedRunning.FailedTasks,
+			)
+		}
+		if err := temporalworkflow.ExecuteActivity(disconnectedCtx, finishBrregTranslationWorkflowActivity, FinishBrregTranslationWorkflowInput{
 			WorkflowRunID:    result.WorkflowRunID,
 			Status:           "failed",
 			RecordsSeen:      result.RecordsClaimed,
 			RecordsCompleted: result.RecordsCompleted,
 			RecordsFailed:    result.RecordsFailed,
 			Error:            "translation workflow failed",
-		}).Get(disconnectedCtx, nil)
+		}).Get(disconnectedCtx, nil); err != nil {
+			logger.Warn("brreg translation workflow cleanup failed to finish audit run",
+				"workflow_run_id", result.WorkflowRunID,
+				"error", err,
+			)
+		} else {
+			logger.Debug("brreg translation workflow cleanup finished audit run",
+				"workflow_run_id", result.WorkflowRunID,
+				"status", "failed",
+			)
+		}
 	}()
 
 	if prepared.RecordsSelected == 0 {
 		result.Status = "drained"
+		logger.Debug("brreg translation workflow drained before claiming records",
+			"workflow_run_id", prepared.WorkflowRunID,
+			"selection_hash", prepared.SelectionHash,
+		)
 		if err := finishBrregTranslationWorkflow(ctx, result, "succeeded", ""); err != nil {
 			return result, err
 		}
@@ -132,6 +196,16 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 
 	for {
 		var claimed ClaimBrregTranslationBatchResult
+		logger.Debug("brreg translation workflow claiming batch",
+			"activity", claimBrregTranslationBatchActivity,
+			"workflow_run_id", prepared.WorkflowRunID,
+			"selection_hash", prepared.SelectionHash,
+			"batch_size", prepared.BatchSize,
+			"max_parallel_tasks", input.MaxParallelTasks,
+			"lease_seconds", input.LeaseSeconds,
+			"max_attempts", prepared.MaxAttempts,
+			"batches_processed", result.BatchesProcessed,
+		)
 		if err := temporalworkflow.ExecuteActivity(ctx, claimBrregTranslationBatchActivity, ClaimBrregTranslationBatchInput{
 			WorkflowRunID:    prepared.WorkflowRunID,
 			SelectionHash:    prepared.SelectionHash,
@@ -143,7 +217,21 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 		}).Get(ctx, &claimed); err != nil {
 			return result, errors.Wrap(err, "claim brreg translation batch")
 		}
+		logger.Debug("brreg translation workflow claimed batch",
+			"activity", claimBrregTranslationBatchActivity,
+			"workflow_run_id", prepared.WorkflowRunID,
+			"records_claimed", len(claimed.Records),
+			"batches_processed", result.BatchesProcessed,
+		)
 		if len(claimed.Records) == 0 {
+			logger.Debug("brreg translation workflow no more claimable records",
+				"workflow_run_id", prepared.WorkflowRunID,
+				"records_claimed_total", result.RecordsClaimed,
+				"records_completed", result.RecordsCompleted,
+				"records_failed", result.RecordsFailed,
+				"records_skipped", result.RecordsSkipped,
+				"batches_processed", result.BatchesProcessed,
+			)
 			break
 		}
 
@@ -152,6 +240,18 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 
 		var translated TranslateBrregBatchResult
 		serviceCtx := brregTranslationServiceActivityContext(ctx, input.LeaseSeconds)
+		logger.Debug("brreg translation workflow translating batch",
+			"activity", translateBrregBatchActivity,
+			"workflow_run_id", prepared.WorkflowRunID,
+			"batch_number", result.BatchesProcessed,
+			"records_count", len(claimed.Records),
+			"provider", input.Provider,
+			"model", input.Model,
+			"prompt_version", input.PromptVersion,
+			"source_lang", input.SourceLang,
+			"target_lang", input.TargetLang,
+			"max_service_retries", input.MaxServiceRetries,
+		)
 		if err := temporalworkflow.ExecuteActivity(serviceCtx, translateBrregBatchActivity, TranslateBrregBatchInput{
 			Records:       claimed.Records,
 			Provider:      input.Provider,
@@ -163,14 +263,45 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 		}).Get(serviceCtx, &translated); err != nil {
 			return result, errors.Wrap(err, "translate brreg batch")
 		}
+		logger.Debug("brreg translation workflow translated batch",
+			"activity", translateBrregBatchActivity,
+			"workflow_run_id", prepared.WorkflowRunID,
+			"batch_number", result.BatchesProcessed,
+			"status", translated.Status,
+			"records_seen", translated.RecordsSeen,
+			"records_completed", translated.RecordsCompleted,
+			"records_failed", translated.RecordsFailed,
+			"records_skipped", translated.RecordsSkipped,
+			"results_count", len(translated.Results),
+			"duration_ms", translated.DurationMS,
+			"provider", translated.Provider,
+			"model", translated.Model,
+			"prompt_version", translated.PromptVersion,
+		)
 
 		var submitted SubmitBrregTranslationBatchResult
+		logger.Debug("brreg translation workflow submitting batch",
+			"activity", submitBrregTranslationBatchActivity,
+			"workflow_run_id", prepared.WorkflowRunID,
+			"batch_number", result.BatchesProcessed,
+			"results_count", len(translated.Results),
+			"max_attempts", prepared.MaxAttempts,
+		)
 		if err := temporalworkflow.ExecuteActivity(ctx, submitBrregTranslationBatchActivity, SubmitBrregTranslationBatchInput{
 			Results:     translated.Results,
 			MaxAttempts: prepared.MaxAttempts,
 		}).Get(ctx, &submitted); err != nil {
 			return result, errors.Wrap(err, "submit brreg translation batch")
 		}
+		logger.Debug("brreg translation workflow submitted batch",
+			"activity", submitBrregTranslationBatchActivity,
+			"workflow_run_id", prepared.WorkflowRunID,
+			"batch_number", result.BatchesProcessed,
+			"records_submitted", submitted.RecordsSubmitted,
+			"records_completed", submitted.RecordsCompleted,
+			"records_failed", submitted.RecordsFailed,
+			"records_skipped", submitted.RecordsSkipped,
+		)
 
 		result.RecordsCompleted += submitted.RecordsCompleted
 		result.RecordsFailed += submitted.RecordsFailed
@@ -178,10 +309,30 @@ func TranslateBrregRawInputs(ctx temporalworkflow.Context, input TranslateBrregR
 	}
 
 	result.Status = "succeeded"
+	logger.Debug("brreg translation workflow finishing",
+		"workflow_run_id", result.WorkflowRunID,
+		"status", result.Status,
+		"records_selected", result.RecordsSelected,
+		"records_claimed", result.RecordsClaimed,
+		"records_completed", result.RecordsCompleted,
+		"records_failed", result.RecordsFailed,
+		"records_skipped", result.RecordsSkipped,
+		"batches_processed", result.BatchesProcessed,
+	)
 	if err := finishBrregTranslationWorkflow(ctx, result, "succeeded", ""); err != nil {
 		return result, err
 	}
 	finished = true
+	logger.Debug("brreg translation workflow finished",
+		"workflow_run_id", result.WorkflowRunID,
+		"status", result.Status,
+		"records_selected", result.RecordsSelected,
+		"records_claimed", result.RecordsClaimed,
+		"records_completed", result.RecordsCompleted,
+		"records_failed", result.RecordsFailed,
+		"records_skipped", result.RecordsSkipped,
+		"batches_processed", result.BatchesProcessed,
+	)
 	return result, nil
 }
 
@@ -244,6 +395,16 @@ func finishBrregTranslationWorkflow(
 	status string,
 	errorMessage string,
 ) error {
+	logger := temporalworkflow.GetLogger(ctx)
+	logger.Debug("brreg translation workflow finishing audit run",
+		"activity", finishBrregTranslationWorkflowActivity,
+		"workflow_run_id", result.WorkflowRunID,
+		"status", status,
+		"records_seen", result.RecordsClaimed,
+		"records_completed", result.RecordsCompleted,
+		"records_failed", result.RecordsFailed,
+		"has_error", errorMessage != "",
+	)
 	if err := temporalworkflow.ExecuteActivity(ctx, finishBrregTranslationWorkflowActivity, FinishBrregTranslationWorkflowInput{
 		WorkflowRunID:    result.WorkflowRunID,
 		Status:           status,
@@ -254,5 +415,10 @@ func finishBrregTranslationWorkflow(
 	}).Get(ctx, nil); err != nil {
 		return errors.Wrap(err, "finish brreg translation workflow")
 	}
+	logger.Debug("brreg translation workflow finished audit run",
+		"activity", finishBrregTranslationWorkflowActivity,
+		"workflow_run_id", result.WorkflowRunID,
+		"status", status,
+	)
 	return nil
 }

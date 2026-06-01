@@ -123,6 +123,14 @@ func (a *TranslationActions) FinishBrregTranslationWorkflow(ctx context.Context,
 	if input.Error != "" {
 		workflowError = &input.Error
 	}
+	slog.DebugContext(ctx, "finishing brreg translation workflow",
+		"workflow_run_id", input.WorkflowRunID,
+		"status", input.Status,
+		"records_seen", input.RecordsSeen,
+		"records_completed", input.RecordsCompleted,
+		"records_failed", input.RecordsFailed,
+		"has_error", workflowError != nil,
+	)
 	if err := a.gateway.FinishWorkflowRun(ctx, finishTranslationWorkflowCommandFromInput(input, workflowRunID, workflowError)); err != nil {
 		return FinishBrregTranslationWorkflowResult{}, errors.Wrap(err, "finish brreg translation workflow")
 	}
@@ -170,6 +178,10 @@ func (a *TranslationActions) FailRunningBrregTranslationTasksForWorkflow(ctx con
 		return FailRunningBrregTranslationTasksForWorkflowResult{}, errors.Wrap(err, "parse brreg translation workflow run id")
 	}
 	errorMessage := input.Error
+	slog.DebugContext(ctx, "failing running brreg translation tasks for workflow",
+		"workflow_run_id", input.WorkflowRunID,
+		"max_attempts", input.MaxAttempts,
+	)
 	failedTasks, err := a.gateway.FailRunningTasksForWorkflowRun(ctx, brregdb.FinishWorkflowRunCommand{
 		WorkflowRunID: workflowRunID,
 		MaxAttempts:   input.MaxAttempts,
@@ -231,7 +243,13 @@ func (a *TranslationActions) ClaimBrregTranslationBatch(ctx context.Context, inp
 	if err != nil {
 		return ClaimBrregTranslationBatchResult{}, errors.Wrap(err, "claim brreg translation batch")
 	}
-	slog.DebugContext(ctx, "claimed brreg translation batch", "records_count", len(rows), "selection_hash", input.SelectionHash)
+	slog.DebugContext(ctx, "claimed brreg translation batch",
+		"workflow_run_id", input.WorkflowRunID,
+		"records_count", len(rows),
+		"selection_hash", input.SelectionHash,
+		"first_raw_record_id", firstClaimedTranslationRawRecordID(rows),
+		"first_attempt", firstClaimedTranslationAttempt(rows),
+	)
 	return ClaimBrregTranslationBatchResult{Records: claimedTranslationRecordsFromRows(rows)}, nil
 }
 
@@ -332,6 +350,7 @@ func (a *TranslationActions) TranslateBrregBatch(ctx context.Context, input Tran
 	if err != nil {
 		return TranslateBrregBatchResult{}, errors.Wrap(err, "translate brreg batch")
 	}
+	result := translateResultFromResponse(input.Records, response)
 	slog.DebugContext(ctx, "translated brreg batch",
 		"status", response.Status,
 		"records_seen", response.RecordsSeen,
@@ -339,8 +358,12 @@ func (a *TranslationActions) TranslateBrregBatch(ctx context.Context, input Tran
 		"records_failed", response.RecordsFailed,
 		"records_skipped", response.RecordsSkipped,
 		"duration_ms", response.DurationMS,
+		"results_count", len(result.Results),
+		"provider", result.Provider,
+		"model", result.Model,
+		"prompt_version", result.PromptVersion,
 	)
-	return translateResultFromResponse(input.Records, response), nil
+	return result, nil
 }
 
 func translateRequestFromInput(input TranslateBrregBatchInput) translationclient.BrregTranslateRequest {
@@ -452,6 +475,19 @@ func (a *TranslationActions) SubmitBrregTranslationBatch(ctx context.Context, in
 	)
 	var summary SubmitBrregTranslationBatchResult
 	for _, result := range input.Results {
+		slog.DebugContext(ctx, "submitting brreg translation result",
+			"raw_record_id", result.RawRecordID,
+			"task_attempt_id", result.TaskAttemptID,
+			"organization_number", result.OrganizationNumber,
+			"status", result.Status,
+			"duration_ms", result.DurationMS,
+			"provider", result.Provider,
+			"model", result.Model,
+			"prompt_version", result.PromptVersion,
+			"error_category", translationErrorCategory(result.Error),
+			"error_code", translationErrorCode(result.Error),
+			"retry_strategy", translationErrorRetryStrategy(result.Error),
+		)
 		rawRecordID, err := uuid.Parse(result.RawRecordID)
 		if err != nil {
 			return SubmitBrregTranslationBatchResult{}, errors.Wrap(err, "parse brreg translation raw record id")
@@ -467,6 +503,15 @@ func (a *TranslationActions) SubmitBrregTranslationBatch(ctx context.Context, in
 		if err := a.gateway.SubmitTranslationResult(ctx, command); err != nil {
 			return SubmitBrregTranslationBatchResult{}, errors.Wrap(err, "submit brreg translation result")
 		}
+		slog.DebugContext(ctx, "submitted brreg translation result",
+			"raw_record_id", result.RawRecordID,
+			"task_attempt_id", result.TaskAttemptID,
+			"organization_number", result.OrganizationNumber,
+			"status", result.Status,
+			"error_category", translationErrorCategory(result.Error),
+			"error_code", translationErrorCode(result.Error),
+			"retry_strategy", translationErrorRetryStrategy(result.Error),
+		)
 		summary.RecordsSubmitted++
 		switch brregdb.ResultStatus(result.Status) {
 		case brregdb.ResultStatusSucceeded:
@@ -569,4 +614,39 @@ func defaultString(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func firstClaimedTranslationRawRecordID(rows []db.ClaimBrregWorkflowTaskSelectionBatchRow) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	return rows[0].RawRecordID.String()
+}
+
+func firstClaimedTranslationAttempt(rows []db.ClaimBrregWorkflowTaskSelectionBatchRow) int32 {
+	if len(rows) == 0 {
+		return 0
+	}
+	return rows[0].Attempt
+}
+
+func translationErrorCategory(err *TranslationError) string {
+	if err == nil {
+		return ""
+	}
+	return err.Category
+}
+
+func translationErrorCode(err *TranslationError) string {
+	if err == nil {
+		return ""
+	}
+	return err.Code
+}
+
+func translationErrorRetryStrategy(err *TranslationError) string {
+	if err == nil {
+		return ""
+	}
+	return err.RetryStrategy
 }
