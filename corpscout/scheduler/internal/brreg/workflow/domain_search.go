@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -53,6 +55,7 @@ type DomainSearchPageResult = actions.DomainSearchPageResult
 type AnalyzeBrregDomainSearchPagesInput = actions.AnalyzeBrregDomainSearchPagesInput
 type AnalyzeBrregDomainSearchPagesResult = actions.AnalyzeBrregDomainSearchPagesResult
 type DomainSearchRecordResult = actions.DomainSearchRecordResult
+type DomainSearchError = actions.DomainSearchError
 type CrawlBrregDomainCandidateSitesInput = actions.CrawlBrregDomainCandidateSitesInput
 type CrawlBrregDomainCandidateSitesResult = actions.CrawlBrregDomainCandidateSitesResult
 type DomainCandidateSiteCrawl = actions.DomainCandidateSiteCrawl
@@ -137,6 +140,7 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 		SelectionHash:   prepared.SelectionHash,
 		RecordsSelected: prepared.RecordsSelected,
 	}
+	firstFailureReason := ""
 	finished := false
 	defer func() {
 		if finished || result.WorkflowRunID == "" {
@@ -232,6 +236,9 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 			"batch_number", result.BatchesProcessed,
 			"results_count", len(pages.Results),
 		)
+		if firstFailureReason == "" {
+			firstFailureReason = firstDomainSearchPageFailureReason(pages.Results)
+		}
 
 		var analyzed AnalyzeBrregDomainSearchPagesResult
 		if err := temporalworkflow.ExecuteActivity(serviceCtx, analyzeBrregDomainSearchPagesActivity, AnalyzeBrregDomainSearchPagesInput{
@@ -250,6 +257,9 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 			"batch_number", result.BatchesProcessed,
 			"results_count", len(analyzed.Results),
 		)
+		if firstFailureReason == "" {
+			firstFailureReason = firstDomainSearchFailureReason(analyzed.Results)
+		}
 
 		var siteCrawls CrawlBrregDomainCandidateSitesResult
 		if err := temporalworkflow.ExecuteActivity(serviceCtx, crawlBrregDomainCandidateSitesActivity, CrawlBrregDomainCandidateSitesInput{
@@ -264,6 +274,9 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 			"batch_number", result.BatchesProcessed,
 			"site_crawls_count", len(siteCrawls.Results),
 		)
+		if firstFailureReason == "" {
+			firstFailureReason = firstDomainCandidateSiteCrawlFailureReason(siteCrawls.Results)
+		}
 
 		var verified AnalyzeBrregDomainCandidateSitesResult
 		if err := temporalworkflow.ExecuteActivity(serviceCtx, analyzeBrregDomainCandidateSitesActivity, AnalyzeBrregDomainCandidateSitesInput{
@@ -282,6 +295,9 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 			"batch_number", result.BatchesProcessed,
 			"results_count", len(verified.Results),
 		)
+		if firstFailureReason == "" {
+			firstFailureReason = firstDomainSearchFailureReason(verified.Results)
+		}
 
 		var submitted SubmitBrregDomainSearchResultsResult
 		if err := temporalworkflow.ExecuteActivity(ctx, submitBrregDomainSearchResultsActivity, SubmitBrregDomainSearchResultsInput{
@@ -304,13 +320,14 @@ func SearchBrregDomains(ctx temporalworkflow.Context, input SearchBrregDomainsIn
 
 	if result.RecordsClaimed > 0 && result.RecordsCompleted == 0 && result.RecordsFailed > 0 {
 		result.Status = "failed"
-		finalError := "all domain search records failed"
+		finalError := domainSearchAllFailedMessage(firstFailureReason)
 		logger.Warn("brreg domain search workflow failed all claimed records",
 			"workflow_run_id", result.WorkflowRunID,
 			"records_selected", result.RecordsSelected,
 			"records_claimed", result.RecordsClaimed,
 			"records_failed", result.RecordsFailed,
 			"batches_processed", result.BatchesProcessed,
+			"failure_reason", firstFailureReason,
 		)
 		if err := finishBrregDomainSearchWorkflow(ctx, result, "failed", finalError); err != nil {
 			return result, err
@@ -423,4 +440,99 @@ func finishBrregDomainSearchWorkflow(
 		return errors.Wrap(err, "finish brreg domain search workflow")
 	}
 	return nil
+}
+
+func domainSearchAllFailedMessage(reason string) string {
+	const base = "all domain search records failed"
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return base
+	}
+	return base + ": " + reason
+}
+
+func firstDomainSearchFailureReason(results []DomainSearchRecordResult) string {
+	for _, result := range results {
+		if result.Error != nil {
+			return domainSearchRecordFailureReason(result, result.Error)
+		}
+		for _, siteCheck := range result.SiteChecks {
+			if siteCheck.Error != nil {
+				return domainSearchRecordFailureReason(result, siteCheck.Error)
+			}
+		}
+	}
+	return ""
+}
+
+func firstDomainSearchPageFailureReason(results []DomainSearchPageResult) string {
+	for _, result := range results {
+		if result.Error == nil {
+			continue
+		}
+		return domainSearchRecordFailureReason(DomainSearchRecordResult{
+			RawRecordID:        result.RawRecordID,
+			TaskAttemptID:      result.TaskAttemptID,
+			OrganizationNumber: result.OrganizationNumber,
+			SearchEngine:       result.SearchEngine,
+			SearchTerm:         result.SearchTerm,
+		}, result.Error)
+	}
+	return ""
+}
+
+func firstDomainCandidateSiteCrawlFailureReason(results []DomainCandidateSiteCrawl) string {
+	for _, result := range results {
+		if result.Error == nil {
+			continue
+		}
+		return domainSearchRecordFailureReason(DomainSearchRecordResult{
+			RawRecordID:        result.RawRecordID,
+			TaskAttemptID:      result.TaskAttemptID,
+			OrganizationNumber: result.OrganizationNumber,
+		}, result.Error)
+	}
+	return ""
+}
+
+func domainSearchRecordFailureReason(result DomainSearchRecordResult, failure *DomainSearchError) string {
+	if failure == nil {
+		return ""
+	}
+	parts := []string{}
+	if result.OrganizationNumber != "" {
+		parts = append(parts, "organization_number="+result.OrganizationNumber)
+	}
+	if result.SearchTerm != "" {
+		parts = append(parts, "search_term="+result.SearchTerm)
+	}
+	if failure.Code != "" {
+		parts = append(parts, "code="+failure.Code)
+	}
+	if failure.Message != "" {
+		parts = append(parts, "message="+failure.Message)
+	}
+	if detailError := domainSearchFailureDetailError(failure); detailError != "" {
+		parts = append(parts, "detail_error="+detailError)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " ")
+}
+
+func domainSearchFailureDetailError(failure *DomainSearchError) string {
+	if failure == nil || failure.Detail == nil {
+		return ""
+	}
+	value, ok := failure.Detail["error"]
+	if !ok || value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return fmt.Sprint(typed)
+	}
 }

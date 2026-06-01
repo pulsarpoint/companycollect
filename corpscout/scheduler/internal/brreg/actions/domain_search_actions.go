@@ -938,7 +938,7 @@ func (a *DomainSearchActions) recordDomainSearchActionArtifacts(
 				Provider:      result.SearchEngine,
 				Input:         searchInput,
 				Attempt:       result.Attempt,
-				Error:         failure.Message,
+				Error:         domainSearchErrorText(failure),
 				ErrorCategory: failure.Category,
 				ErrorCode:     failure.Code,
 				RetryStrategy: failure.RetryStrategy,
@@ -1000,7 +1000,7 @@ func (a *DomainSearchActions) recordDomainSearchActionArtifacts(
 				Model:         result.Model,
 				Input:         analysisInput,
 				Attempt:       result.Attempt,
-				Error:         failure.Message,
+				Error:         domainSearchErrorText(failure),
 				ErrorCategory: failure.Category,
 				ErrorCode:     failure.Code,
 				RetryStrategy: failure.RetryStrategy,
@@ -1114,7 +1114,7 @@ func (a *DomainSearchActions) recordCandidateSiteCrawlArtifact(
 		Provider:      result.SearchEngine,
 		Input:         input,
 		Attempt:       result.Attempt,
-		Error:         failure.Message,
+		Error:         domainSearchErrorText(failure),
 		ErrorCategory: failure.Category,
 		ErrorCode:     failure.Code,
 		RetryStrategy: failure.RetryStrategy,
@@ -1202,7 +1202,7 @@ func (a *DomainSearchActions) recordCandidateSiteAnalysisArtifact(
 		Model:         result.Model,
 		Input:         input,
 		Attempt:       result.Attempt,
-		Error:         failure.Message,
+		Error:         domainSearchErrorText(failure),
 		ErrorCategory: failure.Category,
 		ErrorCode:     failure.Code,
 		RetryStrategy: failure.RetryStrategy,
@@ -1376,10 +1376,39 @@ func taskFailureFromDomainSearchError(status string, err *DomainSearchError) *br
 }
 
 func domainSearchErrorMessage(err *DomainSearchError) *string {
-	if err == nil || err.Message == "" {
+	if err == nil {
 		return nil
 	}
-	return &err.Message
+	message := domainSearchErrorText(err)
+	if message == "" {
+		return nil
+	}
+	return &message
+}
+
+func domainSearchErrorText(err *DomainSearchError) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.TrimSpace(err.Message)
+	if detail := domainSearchErrorDetail(err); detail != "" {
+		if message == "" {
+			return detail
+		}
+		return message + ": " + detail
+	}
+	return message
+}
+
+func domainSearchErrorDetail(err *DomainSearchError) string {
+	if err == nil || err.Detail == nil {
+		return ""
+	}
+	value, ok := err.Detail["error"]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func domainSearchErrorFromCrawlResponse(response crawlclient.Crawl4AiResponse, code string, message string) *DomainSearchError {

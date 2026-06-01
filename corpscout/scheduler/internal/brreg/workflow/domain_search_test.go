@@ -201,6 +201,13 @@ func TestSearchBrregDomainsFailsWhenAllRecordsFailInBusinessStep(t *testing.T) {
 				SearchEngine:       input.SearchEngine,
 				SearchTerm:         record.OrganizationName + " NO website",
 				Status:             "failed",
+				Error: &DomainSearchError{
+					Message:       "Search page fetch request failed.",
+					Category:      "crawl_service",
+					Code:          "search_fetch_request_failed",
+					RetryStrategy: "retry_with_backoff",
+					Detail:        map[string]any{"error": "request brreg search fetch over nats: nats: no responders available for request"},
+				},
 			})
 		}
 		return FetchBrregDomainSearchPagesResult{Results: results}, nil
@@ -245,9 +252,13 @@ func TestSearchBrregDomainsFailsWhenAllRecordsFailInBusinessStep(t *testing.T) {
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.ErrorContains(t, env.GetWorkflowError(), "all domain search records failed")
+	require.ErrorContains(t, env.GetWorkflowError(), "search_fetch_request_failed")
+	require.ErrorContains(t, env.GetWorkflowError(), "nats: no responders available for request")
 	require.Equal(t, "failed", finishInput.Status)
 	require.EqualValues(t, 2, finishInput.RecordsSeen)
 	require.EqualValues(t, 0, finishInput.RecordsCompleted)
 	require.EqualValues(t, 2, finishInput.RecordsFailed)
-	require.Equal(t, "all domain search records failed", finishInput.Error)
+	require.Contains(t, finishInput.Error, "all domain search records failed")
+	require.Contains(t, finishInput.Error, "search_fetch_request_failed")
+	require.Contains(t, finishInput.Error, "nats: no responders available for request")
 }
