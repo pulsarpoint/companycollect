@@ -46,8 +46,6 @@ type ProviderForm = {
   apiKey: string;
   enabled: boolean;
   isDefault: boolean;
-  translation: boolean;
-  domainDiscovery: boolean;
 };
 
 const emptyForm: ProviderForm = {
@@ -58,8 +56,6 @@ const emptyForm: ProviderForm = {
   apiKey: "",
   enabled: false,
   isDefault: false,
-  translation: true,
-  domainDiscovery: true,
 };
 
 export function LLMProviderManagement() {
@@ -113,8 +109,6 @@ export function LLMProviderManagement() {
       apiKey: "",
       enabled: provider.enabled,
       isDefault: provider.is_default,
-      translation: Boolean(provider.capabilities?.translation ?? true),
-      domainDiscovery: Boolean(provider.capabilities?.domain_discovery ?? true),
     });
     setMessage(null);
     setError(null);
@@ -322,8 +316,8 @@ export function LLMProviderManagement() {
               {selectedID ? "Edit LLM Provider" : "New LLM Provider"}
             </SheetTitle>
             <SheetDescription>
-              Configure the provider used by translation and domain discovery
-              workflows, then test it from Corpscout.
+              Configure the provider used by workflow requests, then test it
+              from Corpscout.
             </SheetDescription>
           </SheetHeader>
 
@@ -400,20 +394,6 @@ export function LLMProviderManagement() {
                   checked={form.isDefault}
                   onCheckedChange={(isDefault) =>
                     setForm({ ...form, isDefault })
-                  }
-                />
-                <ToggleRow
-                  label="Translation"
-                  checked={form.translation}
-                  onCheckedChange={(translation) =>
-                    setForm({ ...form, translation })
-                  }
-                />
-                <ToggleRow
-                  label="Domain discovery"
-                  checked={form.domainDiscovery}
-                  onCheckedChange={(domainDiscovery) =>
-                    setForm({ ...form, domainDiscovery })
                   }
                 />
               </div>
@@ -578,10 +558,7 @@ function providerInputFromForm(form: ProviderForm): LLMProviderInput {
     api_key: form.apiKey.trim() || undefined,
     enabled: form.enabled,
     is_default: form.isDefault,
-    capabilities: {
-      translation: form.translation,
-      domain_discovery: form.domainDiscovery,
-    },
+    capabilities: {},
     metadata: {},
   };
 }

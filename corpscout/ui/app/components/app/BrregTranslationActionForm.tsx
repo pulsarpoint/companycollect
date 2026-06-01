@@ -53,10 +53,6 @@ function FieldDescription({ children }: { children: ReactNode }) {
   return <p className="text-xs leading-5 text-muted-foreground">{children}</p>;
 }
 
-function supportsTranslation(provider: LLMProvider) {
-  return provider.enabled && provider.capabilities?.translation !== false;
-}
-
 export function BrregTranslationActionForm({
   selectedIds,
   totalCount,
@@ -86,7 +82,6 @@ export function BrregTranslationActionForm({
   const [submitting, setSubmitting] = useState(false);
   const [llmProviders, setLLMProviders] = useState<LLMProvider[]>([]);
   const [llmProvidersLoading, setLLMProvidersLoading] = useState(false);
-  const [llmProvidersLoaded, setLLMProvidersLoaded] = useState(false);
   const [llmProvidersError, setLLMProvidersError] = useState("");
 
   useEffect(() => {
@@ -106,7 +101,7 @@ export function BrregTranslationActionForm({
   }, [defaultScope, selectedCount]);
 
   useEffect(() => {
-    if (!advancedOpen || llmProvidersLoaded || llmProvidersLoading) return;
+    if (!advancedOpen) return;
 
     let cancelled = false;
     setLLMProvidersLoading(true);
@@ -116,7 +111,6 @@ export function BrregTranslationActionForm({
       .then((response) => {
         if (cancelled) return;
         setLLMProviders(response.providers);
-        setLLMProvidersLoaded(true);
       })
       .catch((error) => {
         if (cancelled) return;
@@ -131,7 +125,7 @@ export function BrregTranslationActionForm({
     return () => {
       cancelled = true;
     };
-  }, [advancedOpen, llmProvidersLoaded, llmProvidersLoading]);
+  }, [advancedOpen]);
 
   const scopeOptions = useMemo(
     () => [
@@ -161,7 +155,7 @@ export function BrregTranslationActionForm({
   const canSubmit =
     effectiveLimit !== null && (scope !== "selected" || selectedCount > 0);
   const availableLLMProviders = useMemo(
-    () => llmProviders.filter(supportsTranslation),
+    () => llmProviders.filter((llmProvider) => llmProvider.enabled),
     [llmProviders],
   );
   const selectedLLMProvider = useMemo(
