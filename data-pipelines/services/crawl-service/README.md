@@ -168,14 +168,63 @@ CRAWL_SERVICE_PROVIDER_DEEPSEEK_V4_FLASH_API_KEY=...
 Direct service smoke tests:
 
 ```bash
+# Same two-step action flow Corpscout Temporal uses: search fetch, then LLM analysis.
 LLM_API_KEY=... uv run python scripts/smoke_crawl_http.py \
+  --action search-flow \
   --url http://companycollect:8096 \
   --provider deepseek-v4-flash \
   --model deepseek-v4-flash \
   --base-url https://api.deepseek.com
 
 LLM_API_KEY=... uv run python scripts/smoke_crawl_nats.py \
+  --action search-flow \
   --nats-url nats://companycollect:4222 \
+  --provider deepseek-v4-flash \
+  --model deepseek-v4-flash \
+  --base-url https://api.deepseek.com
+```
+
+Run individual remote actions directly:
+
+```bash
+# Does not call the LLM; useful for checking crawl/search connectivity.
+uv run python scripts/smoke_crawl_http.py \
+  --action search-fetch \
+  --url http://companycollect:8096
+
+uv run python scripts/smoke_crawl_nats.py \
+  --action search-fetch \
+  --nats-url nats://companycollect:4222 \
+  --search-fetch-subject brreg.domain.search.fetch
+
+# Calls the LLM against provided or fetched markdown/links.
+LLM_API_KEY=... uv run python scripts/smoke_crawl_http.py \
+  --action search-analyze \
+  --url http://companycollect:8096 \
+  --provider deepseek-v4-flash \
+  --model deepseek-v4-flash \
+  --base-url https://api.deepseek.com
+
+LLM_API_KEY=... uv run python scripts/smoke_crawl_nats.py \
+  --action search-analyze \
+  --nats-url nats://companycollect:4222 \
+  --search-analyze-subject brreg.domain.search.analyze \
+  --provider deepseek-v4-flash \
+  --model deepseek-v4-flash \
+  --base-url https://api.deepseek.com
+
+# Legacy/full one-request domain discovery path.
+LLM_API_KEY=... uv run python scripts/smoke_crawl_http.py \
+  --action domain-discovery \
+  --url http://companycollect:8096 \
+  --provider deepseek-v4-flash \
+  --model deepseek-v4-flash \
+  --base-url https://api.deepseek.com
+
+LLM_API_KEY=... uv run python scripts/smoke_crawl_nats.py \
+  --action domain-discovery \
+  --nats-url nats://companycollect:4222 \
+  --domain-subject brreg.domain.discover \
   --provider deepseek-v4-flash \
   --model deepseek-v4-flash \
   --base-url https://api.deepseek.com
@@ -191,6 +240,10 @@ CRAWL_NATS_SEARCH_FETCH_SUBJECT=brreg.domain.search.fetch
 CRAWL_NATS_SEARCH_ANALYZE_SUBJECT=brreg.domain.search.analyze
 NATS_QUEUE=brreg-domain-crawl
 ```
+
+If a NATS smoke test returns `nats_no_responders`, NATS is reachable but no
+worker is subscribed to that action subject. Check the running worker image and
+the `CRAWL_NATS_*` subject environment variables in the services deployment.
 
 ## Crawler Configuration
 
