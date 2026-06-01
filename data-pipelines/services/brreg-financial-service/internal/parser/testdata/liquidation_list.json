@@ -1,0 +1,31 @@
+[
+    {
+        "id": 9000004,
+        "journalnr": "SYNTHETIC004",
+        "regnskapstype": "SELSKAP",
+        "virksomhet": {
+            "organisasjonsnummer": "777777777",
+            "organisasjonsform": "AS",
+            "morselskap": false
+        },
+        "regnskapsperiode": {"fraDato": "2023-01-01", "tilDato": "2023-12-31"},
+        "valuta": "NOK",
+        "avviklingsregnskap": true,
+        "oppstillingsplan": "store",
+        "revisjon": {"ikkeRevidertAarsregnskap": false, "fravalgRevisjon": false},
+        "regnkapsprinsipper": {"smaaForetak": false, "regnskapsregler": "regnskapslovenAlminneligRegler"},
+        "eiendeler": {"sumEiendeler": 100000.0},
+        "egenkapitalGjeld": {
+            "sumEgenkapitalGjeld": 100000.0,
+            "egenkapital": {"sumEgenkapital": 80000.0},
+            "gjeldOversikt": {"sumGjeld": 20000.0}
+        },
+        "resultatregnskapResultat": {
+            "aarsresultat": -10000.0,
+            "driftsresultat": {
+                "driftsresultat": -10000.0,
+                "driftsinntekter": {"sumDriftsinntekter": 0.0}
+            }
+        }
+    }
+]

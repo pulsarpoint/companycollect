@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS company_relationship_suggestions;
+DROP TABLE IF EXISTS company_status_suggestions;
+DROP TABLE IF EXISTS company_location_suggestions;
+DROP TABLE IF EXISTS company_contact_suggestions;
+DROP TABLE IF EXISTS company_domain_suggestions;
+DROP TABLE IF EXISTS open_source_project_suggestions;
+DROP TABLE IF EXISTS organization_suggestions;
+DROP TABLE IF EXISTS company_suggestions;
+DROP TABLE IF EXISTS suggestion_source_links;

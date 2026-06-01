@@ -1,0 +1,34 @@
+CREATE OR REPLACE VIEW v_domains AS
+SELECT
+    d.id,
+    d.domain,
+    d.first_seen_at,
+    d.last_verified_at,
+    COUNT(DISTINCT cd.company_id)::int AS company_count,
+    MAX(cd.confidence)                 AS max_confidence,
+    (
+        SELECT c2.name
+        FROM company_domains cd2
+        JOIN companies c2 ON c2.id = cd2.company_id
+        WHERE cd2.domain_id = d.id
+        ORDER BY cd2.confidence DESC
+        LIMIT 1
+    ) AS primary_company_name,
+    (
+        SELECT c2.id
+        FROM company_domains cd2
+        JOIN companies c2 ON c2.id = cd2.company_id
+        WHERE cd2.domain_id = d.id
+        ORDER BY cd2.confidence DESC
+        LIMIT 1
+    ) AS primary_company_id,
+    (
+        SELECT cd2.signal
+        FROM company_domains cd2
+        WHERE cd2.domain_id = d.id
+        ORDER BY cd2.confidence DESC
+        LIMIT 1
+    ) AS primary_signal
+FROM domains d
+LEFT JOIN company_domains cd ON cd.domain_id = d.id
+GROUP BY d.id, d.domain, d.first_seen_at, d.last_verified_at;

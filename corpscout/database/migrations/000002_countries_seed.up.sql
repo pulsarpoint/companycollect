@@ -1,0 +1,28 @@
+-- database/migrations/000002_countries_seed.up.sql
+INSERT INTO countries (iso_alpha2, iso_alpha3, name, has_public_registry, registry_url) VALUES
+('GB', 'GBR', 'United Kingdom',  true,  'https://find-and-update.company-information.service.gov.uk/'),
+('NO', 'NOR', 'Norway',          true,  'https://data.brreg.no/enhetsregisteret/api/enheter'),
+('EE', 'EST', 'Estonia',         true,  'https://ariregister.rik.ee/en'),
+('DK', 'DNK', 'Denmark',         true,  'https://cvrapi.dk/'),
+('US', 'USA', 'United States',   false, NULL),
+('DE', 'DEU', 'Germany',         false, NULL),
+('FR', 'FRA', 'France',          false, NULL),
+('NL', 'NLD', 'Netherlands',     false, NULL),
+('SE', 'SWE', 'Sweden',          false, NULL),
+('FI', 'FIN', 'Finland',         false, NULL),
+('CH', 'CHE', 'Switzerland',     false, NULL),
+('AT', 'AUT', 'Austria',         false, NULL),
+('BE', 'BEL', 'Belgium',         false, NULL),
+('IE', 'IRL', 'Ireland',         false, NULL),
+('PL', 'POL', 'Poland',          false, NULL),
+('ES', 'ESP', 'Spain',           false, NULL),
+('IT', 'ITA', 'Italy',           false, NULL),
+('PT', 'PRT', 'Portugal',        false, NULL),
+('AU', 'AUS', 'Australia',       false, NULL),
+('NZ', 'NZL', 'New Zealand',     true,  'https://app.companiesoffice.govt.nz/companies/app/ui/pages/companies/search'),
+('CA', 'CAN', 'Canada',          false, NULL),
+('SG', 'SGP', 'Singapore',       false, NULL),
+('JP', 'JPN', 'Japan',           false, NULL),
+('IN', 'IND', 'India',           false, NULL),
+('BR', 'BRA', 'Brazil',          false, NULL)
+ON CONFLICT (iso_alpha2) DO NOTHING;

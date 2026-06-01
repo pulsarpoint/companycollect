@@ -1,0 +1,142 @@
+name: Build Docker Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "corpscout/scheduler/**"
+      - "corpscout/ui/**"
+      - "data-pipelines/services/**"
+      - ".github/workflows/docker-images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      corpscout-scheduler: ${{ steps.filter.outputs.corpscout-scheduler }}
+      corpscout-ui: ${{ steps.filter.outputs.corpscout-ui }}
+      translation-service: ${{ steps.filter.outputs.translation-service }}
+      crawl-service: ${{ steps.filter.outputs.crawl-service }}
+      currency-service: ${{ steps.filter.outputs.currency-service }}
+      brreg-financial-service: ${{ steps.filter.outputs.brreg-financial-service }}
+      go-worker: ${{ steps.filter.outputs.go-worker }}
+      python-worker: ${{ steps.filter.outputs.python-worker }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            corpscout-scheduler:
+              - 'corpscout/scheduler/**'
+              - '.github/workflows/docker-images.yml'
+            corpscout-ui:
+              - 'corpscout/ui/**'
+              - '.github/workflows/docker-images.yml'
+            translation-service:
+              - 'data-pipelines/services/translation-service/**'
+              - '.github/workflows/docker-images.yml'
+            crawl-service:
+              - 'data-pipelines/services/crawl-service/**'
+              - '.github/workflows/docker-images.yml'
+            currency-service:
+              - 'data-pipelines/services/currency-service/**'
+              - '.github/workflows/docker-images.yml'
+            brreg-financial-service:
+              - 'data-pipelines/services/brreg-financial-service/**'
+              - '.github/workflows/docker-images.yml'
+            go-worker:
+              - 'data-pipelines/services/go-worker/**'
+              - '.github/workflows/docker-images.yml'
+            python-worker:
+              - 'data-pipelines/services/python-worker/**'
+              - '.github/workflows/docker-images.yml'
+
+  build-corpscout-scheduler:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.corpscout-scheduler == 'true'
+    uses: ./.github/workflows/reusable-docker-build.yml
+    with:
+      image_name: pulsarpoint/corpscout-scheduler
+      context: corpscout/scheduler
+      dockerfile: corpscout/scheduler/Dockerfile
+      cache_scope: corpscout-scheduler
+
+  build-corpscout-ui:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.corpscout-ui == 'true'
+    uses: ./.github/workflows/reusable-docker-build.yml
+    with:
+      image_name: pulsarpoint/corpscout-ui
+      context: corpscout/ui
+      dockerfile: corpscout/ui/Dockerfile
+      cache_scope: corpscout-ui
+
+  build-translation-service:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.translation-service == 'true'
+    uses: ./.github/workflows/reusable-docker-build.yml
+    with:
+      image_name: pulsarpoint/corpscout-translation-service
+      context: data-pipelines/services/translation-service
+      dockerfile: data-pipelines/services/translation-service/Dockerfile
+      cache_scope: translation-service
+
+  build-crawl-service:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.crawl-service == 'true'
+    uses: ./.github/workflows/reusable-docker-build.yml
+    with:
+      image_name: pulsarpoint/corpscout-crawl-service
+      context: data-pipelines/services/crawl-service
+      dockerfile: data-pipelines/services/crawl-service/Dockerfile
+      cache_scope: crawl-service
+
+  build-currency-service:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.currency-service == 'true'
+    uses: ./.github/workflows/reusable-docker-build.yml
+    with:
+      image_name: pulsarpoint/corpscout-currency-service
+      context: data-pipelines/services/currency-service
+      dockerfile: data-pipelines/services/currency-service/Dockerfile
+      cache_scope: currency-service
+
+  build-brreg-financial-service:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.brreg-financial-service == 'true'
+    uses: ./.github/workflows/reusable-docker-build.yml
+    with:
+      image_name: pulsarpoint/corpscout-brreg-financial-service
+      context: data-pipelines/services/brreg-financial-service
+      dockerfile: data-pipelines/services/brreg-financial-service/Dockerfile
+      cache_scope: brreg-financial-service
+
+  build-go-worker:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.go-worker == 'true'
+    uses: ./.github/workflows/reusable-docker-build.yml
+    with:
+      image_name: pulsarpoint/temporal-go-worker
+      context: data-pipelines/services/go-worker
+      dockerfile: data-pipelines/services/go-worker/Dockerfile
+      cache_scope: go-worker
+
+  build-python-worker:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.python-worker == 'true'
+    uses: ./.github/workflows/reusable-docker-build.yml
+    with:
+      image_name: pulsarpoint/temporal-python-worker
+      context: data-pipelines/services/python-worker
+      dockerfile: data-pipelines/services/python-worker/Dockerfile
+      cache_scope: python-worker
+

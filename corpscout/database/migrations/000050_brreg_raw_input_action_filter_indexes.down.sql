@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS idx_brreg_raw_input_action_events_action_status_latest;
+DROP INDEX IF EXISTS idx_brreg_raw_input_actions_type_raw_payload_attempt;

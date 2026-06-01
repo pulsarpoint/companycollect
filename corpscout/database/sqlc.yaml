@@ -1,0 +1,24 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "queries/"
+    schema:
+      - "migrations/"
+      - "schema_stubs/"
+    gen:
+      go:
+        package: "db"
+        out: "../scheduler/internal/db/gen"
+        emit_interface: true
+        emit_json_tags: true
+        emit_pointers_for_null_types: true
+        sql_package: "pgx/v5"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "jsonb"
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"

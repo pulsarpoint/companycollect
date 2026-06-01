@@ -1,0 +1,18 @@
+[
+    {
+        "id": 9000002,
+        "journalnr": "SYNTHETIC002",
+        "regnskapstype": "SELSKAP",
+        "virksomhet": {
+            "organisasjonsnummer": "999999999",
+            "organisasjonsform": "AS",
+            "morselskap": false
+        },
+        "regnskapsperiode": {"fraDato": "2023-01-01", "tilDato": "2023-12-31"},
+        "valuta": "NOK",
+        "avviklingsregnskap": false,
+        "oppstillingsplan": "store",
+        "revisjon": {"ikkeRevidertAarsregnskap": false, "fravalgRevisjon": false},
+        "regnkapsprinsipper": {"smaaForetak": true, "regnskapsregler": "regnskapslovenAlminneligRegler"}
+    }
+]

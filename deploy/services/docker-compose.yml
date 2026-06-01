@@ -1,0 +1,114 @@
+services:
+  nats:
+    image: nats:2
+    command: ["-js", "-m", "8222", "--max_payload", "${NATS_MAX_PAYLOAD:-16777216}"]
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+      - "${NATS_MONITOR_PORT:-8222}:8222"
+    restart: unless-stopped
+
+  translation-service:
+    image: ghcr.io/pulsarpoint/corpscout-translation-service:${SERVICES_IMAGE_TAG:-latest}
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${TRANSLATION_SERVICE_PORT:-8095}:8095"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/healthz', timeout=5).read()"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  translation-worker:
+    image: ghcr.io/pulsarpoint/corpscout-translation-service:${SERVICES_IMAGE_TAG:-latest}
+    command: ["corpscout-translation-service", "worker"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NATS_URL: nats://nats:4222
+      TRANSLATION_NATS_SUBJECT: ${TRANSLATION_NATS_SUBJECT:-brreg.translation.translate}
+      TRANSLATION_NATS_QUEUE: ${TRANSLATION_NATS_QUEUE:-brreg-translation}
+      TRANSLATION_WORKER_MAX_CONCURRENT_REQUESTS: ${TRANSLATION_WORKER_MAX_CONCURRENT_REQUESTS:-1}
+    depends_on:
+      - nats
+    restart: unless-stopped
+
+  crawl-service:
+    image: ghcr.io/pulsarpoint/corpscout-crawl-service:${SERVICES_IMAGE_TAG:-latest}
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${CRAWL_SERVICE_PORT:-8096}:8096"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8096/healthz', timeout=5).read()"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  crawl-worker:
+    image: ghcr.io/pulsarpoint/corpscout-crawl-service:${SERVICES_IMAGE_TAG:-latest}
+    command: ["corpscout-crawl-service", "worker"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NATS_URL: nats://nats:4222
+      NATS_SUBJECT: ${NATS_SUBJECT:-brreg.domain.discover}
+      NATS_QUEUE: ${NATS_QUEUE:-brreg-domain-crawl}
+      CRAWL_WORKER_MAX_CONCURRENT_REQUESTS: ${CRAWL_WORKER_MAX_CONCURRENT_REQUESTS:-1}
+    depends_on:
+      - nats
+    restart: unless-stopped
+
+  currency-service:
+    image: ghcr.io/pulsarpoint/corpscout-currency-service:${SERVICES_IMAGE_TAG:-latest}
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${CURRENCY_SERVICE_PORT:-8097}:8097"
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -qO-
+        - http://127.0.0.1:8097/healthz
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  brreg-financial-service:
+    image: ghcr.io/pulsarpoint/corpscout-brreg-financial-service:${SERVICES_IMAGE_TAG:-latest}
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${BRREG_FINANCIAL_SERVICE_PORT:-8098}:8098"
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -qO-
+        - http://127.0.0.1:8098/healthz
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped

@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS idx_brreg_raw_input_actions_enhance_lookup;
+DROP INDEX IF EXISTS idx_brreg_raw_inputs_created_at;

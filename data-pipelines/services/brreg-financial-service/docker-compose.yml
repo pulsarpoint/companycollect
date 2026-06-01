@@ -1,0 +1,10 @@
+services:
+  brreg-financial-service:
+    build: .
+    restart: always
+    network_mode: host
+    env_file: .env
+    ports:
+      - "8098:8098"
+    environment:
+      BRREG_FINANCIAL_SERVICE_PORT: 8098

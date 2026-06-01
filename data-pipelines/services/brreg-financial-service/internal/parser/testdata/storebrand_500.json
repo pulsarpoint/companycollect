@@ -1,0 +1,8 @@
+{
+    "timestamp": "2026-05-31T11:16:13.116+0000",
+    "status": "500",
+    "error": "Internal Server Error",
+    "message": "Regnskapet inneholder en oppstillingsplan som ikke er stottet (SKADE)",
+    "path": "/regnskapsregisteret/regnskap/930553506",
+    "trace": "f83094f1-3011-40a3-807d-267c325b6fe3"
+}

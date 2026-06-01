@@ -1,0 +1,29 @@
+.DS_Store
+.idea/
+.vscode/
+**/.superpowers/
+
+# Local environment files. Keep examples tracked.
+.env
+*.env
+*.env.local
+!*.env.example
+!**/.env.example
+
+# Local runtime data and generated artifacts.
+data/
+**/data/
+**/node_modules/
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/dist/
+**/build/
+corpscout/ui/.react-router/
+
+# Go build outputs.
+**/bin/
+*.test
+coverage.out

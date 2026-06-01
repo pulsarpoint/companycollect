@@ -1,0 +1,1 @@
+DROP SCHEMA IF EXISTS brreg_workflow CASCADE;

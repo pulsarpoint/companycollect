@@ -1,0 +1,147 @@
+package httpapi_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
+	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/httpapi"
+)
+
+func TestBrregTaskStateEndpointUsesTaskStateNamingInternally(t *testing.T) {
+	_, err := os.Stat("source_workflow.go")
+	require.True(t, os.IsNotExist(err), "BRREG task-state endpoint should not live in source_workflow.go")
+
+	source, err := os.ReadFile("brreg_task_state.go")
+	require.NoError(t, err)
+	handlers, err := os.ReadFile("handlers.go")
+	require.NoError(t, err)
+
+	require.Contains(t, string(source), "brregTaskStateResponse")
+	require.Contains(t, string(source), "handleGetBrregTaskState")
+	require.Contains(t, string(handlers), "h.handleGetBrregTaskState")
+	require.Contains(t, string(handlers), `"/sources/brreg/task-state"`)
+	require.NotContains(t, string(handlers), `"/sources/brreg/workflow"`)
+	require.NotContains(t, string(source), "brregWorkflowResponse")
+	require.NotContains(t, string(source), "handleGetBrregWorkflow")
+}
+
+func TestGetBrregTaskStateReturnsTaskActionsAndResultState(t *testing.T) {
+	q := &stubQuerier{}
+	q.On("GetBrregWorkflowTranslationAssetState", mock.Anything).Return(db.BrregWorkflowVTranslationAssetState{
+		Asset:               "translation_results",
+		RawRecordsCurrent:   1000,
+		TaskPending:         20,
+		TaskRunningActive:   3,
+		TaskFailedRetryable: 4,
+		TaskFailedTerminal:  5,
+		TaskSucceeded:       800,
+		TaskSkipped:         68,
+		TaskEligibleNow:     27,
+		ArtifactSucceeded:   800,
+		ArtifactSkipped:     68,
+		ArtifactFailed:      5,
+		ArtifactMissing:     127,
+	}, nil)
+	q.On("GetBrregWorkflowDomainAssetState", mock.Anything).Return(db.BrregWorkflowVDomainAssetState{
+		Asset:             "domain_results",
+		RawRecordsCurrent: 1000,
+		TaskNoState:       1000,
+		TaskEligibleNow:   1000,
+		ArtifactMissing:   1000,
+	}, nil)
+	q.On("GetBrregWorkflowFinancialAssetState", mock.Anything).Return(db.BrregWorkflowVFinancialAssetState{
+		Asset:             "financial_results",
+		RawRecordsCurrent: 1000,
+		TaskNoState:       1000,
+		TaskEligibleNow:   1000,
+		ArtifactMissing:   1000,
+	}, nil)
+	q.On("GetBrregWorkflowEnhancedAssetState", mock.Anything).Return(db.BrregWorkflowVEnhancedAssetState{
+		Asset:             "enhanced_records",
+		RawRecordsCurrent: 1000,
+		TaskNoState:       1000,
+		ArtifactMissing:   1000,
+	}, nil)
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", nil, ""))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/brreg/task-state", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body struct {
+		Source  string `json:"source"`
+		Actions []struct {
+			Key         string `json:"key"`
+			Label       string `json:"label"`
+			Description string `json:"description"`
+			State       struct {
+				ArtifactSucceeded   int64 `json:"artifact_succeeded"`
+				ArtifactMissing     int64 `json:"artifact_missing"`
+				TaskRunningActive   int64 `json:"task_running_active"`
+				TaskFailedRetryable int64 `json:"task_failed_retryable"`
+				TaskFailedTerminal  int64 `json:"task_failed_terminal"`
+				TaskEligibleNow     int64 `json:"task_eligible_now"`
+			} `json:"state"`
+		} `json:"actions"`
+		ResultTables []struct {
+			Name  string `json:"name"`
+			Count int64  `json:"count"`
+		} `json:"result_tables"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	var raw struct {
+		Actions []map[string]any `json:"actions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+
+	require.Equal(t, "brreg", body.Source)
+	require.Len(t, body.Actions, 4)
+	for _, action := range raw.Actions {
+		require.NotContains(t, action, "action_url")
+	}
+	require.Equal(t, "ingest_raw", body.Actions[0].Key)
+	require.Equal(t, "translate", body.Actions[1].Key)
+	require.Contains(t, body.Actions[1].Description, "task artifacts")
+	require.NotContains(t, body.Actions[1].Description, "workflow artifacts")
+	require.Equal(t, int64(800), body.Actions[1].State.ArtifactSucceeded)
+	require.Equal(t, int64(127), body.Actions[1].State.ArtifactMissing)
+	require.Equal(t, int64(3), body.Actions[1].State.TaskRunningActive)
+	require.Equal(t, int64(4), body.Actions[1].State.TaskFailedRetryable)
+	require.Equal(t, int64(5), body.Actions[1].State.TaskFailedTerminal)
+	require.Equal(t, int64(27), body.Actions[1].State.TaskEligibleNow)
+	require.Equal(t, "discover_domains", body.Actions[2].Key)
+	require.Equal(t, "convert_financials", body.Actions[3].Key)
+	for _, action := range body.Actions {
+		require.NotEqual(t, "build_enhanced", action.Key)
+	}
+
+	require.ElementsMatch(t, []struct {
+		Name  string `json:"name"`
+		Count int64  `json:"count"`
+	}{
+		{Name: "brreg_workflow.raw_records", Count: 1000},
+		{Name: "brreg_workflow.translation_results", Count: 873},
+		{Name: "brreg_workflow.domain_results", Count: 0},
+		{Name: "brreg_workflow.financial_results", Count: 0},
+		{Name: "brreg_workflow.enhanced_records", Count: 0},
+	}, body.ResultTables)
+}
+
+func TestGetBrregTaskStateDoesNotExposeWorkflowRoute(t *testing.T) {
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", nil, ""))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/brreg/workflow", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+}

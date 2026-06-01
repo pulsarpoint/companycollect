@@ -1,0 +1,10 @@
+.env
+*.env.local
+__pycache__/
+*.pyc
+.venv/
+bin/
+data/
+ui/.react-router/
+ui/build/
+ui/node_modules/

@@ -1,0 +1,59 @@
+[
+    {
+        "id": 6300609,
+        "journalnr": "2025741889",
+        "regnskapstype": "SELSKAP",
+        "virksomhet": {
+            "organisasjonsnummer": "917082308",
+            "organisasjonsform": "SF",
+            "morselskap": true
+        },
+        "regnskapsperiode": {
+            "fraDato": "2024-01-01",
+            "tilDato": "2024-12-31"
+        },
+        "valuta": "NOK",
+        "avviklingsregnskap": false,
+        "oppstillingsplan": "store",
+        "revisjon": {
+            "ikkeRevidertAarsregnskap": false,
+            "fravalgRevisjon": false
+        },
+        "regnkapsprinsipper": {
+            "smaaForetak": false,
+            "regnskapsregler": "regnskapslovenAlminneligRegler"
+        },
+        "egenkapitalGjeld": {
+            "sumEgenkapitalGjeld": 245683000000.0,
+            "egenkapital": {
+                "sumEgenkapital": 8678000000.0,
+                "opptjentEgenkapital": {"sumOpptjentEgenkapital": -331000000.0},
+                "innskuttEgenkapital": {"sumInnskuttEgenkaptial": 9009000000.0}
+            },
+            "gjeldOversikt": {
+                "sumGjeld": 237005000000.0,
+                "kortsiktigGjeld": {"sumKortsiktigGjeld": 12239000000.0},
+                "langsiktigGjeld": {"sumLangsiktigGjeld": 224766000000.0}
+            }
+        },
+        "eiendeler": {
+            "sumEiendeler": 245683000000.0,
+            "omloepsmidler": {"sumOmloepsmidler": 11157000000.0},
+            "anleggsmidler": {"sumAnleggsmidler": 234526000000.0}
+        },
+        "resultatregnskapResultat": {
+            "ordinaertResultatFoerSkattekostnad": 758000000.0,
+            "aarsresultat": 752000000.0,
+            "finansresultat": {
+                "nettoFinans": 773000000.0,
+                "finansinntekt": {"sumFinansinntekter": 813000000.0},
+                "finanskostnad": {"sumFinanskostnad": 40000000.0}
+            },
+            "driftsresultat": {
+                "driftsresultat": -15000000.0,
+                "driftsinntekter": {"sumDriftsinntekter": 17763000000.0},
+                "driftskostnad": {"sumDriftskostnad": 17778000000.0}
+            }
+        }
+    }
+]

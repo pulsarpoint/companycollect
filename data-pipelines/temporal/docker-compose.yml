@@ -1,0 +1,31 @@
+services:
+  temporal:
+    image: temporalio/auto-setup:1.24.2
+    extra_hosts:
+      - "companycollect:${POSTGRES_HOST_IP:-100.85.212.113}"
+    environment:
+      DB: postgres12
+      DB_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${TEMPORAL_USER:-temporal}
+      POSTGRES_PWD: ${TEMPORAL_PASSWORD:?TEMPORAL_PASSWORD is required}
+      POSTGRES_SEEDS: ${POSTGRES_HOST:-companycollect}
+      DBNAME: ${TEMPORAL_DB:-temporal}
+      VISIBILITY_DBNAME: ${TEMPORAL_VISIBILITY_DB:-temporal_visibility}
+      SKIP_DB_CREATE: "true"
+      DEFAULT_NAMESPACE: ${TEMPORAL_NAMESPACE:-corpscout}
+      DEFAULT_NAMESPACE_RETENTION: ${TEMPORAL_NAMESPACE_RETENTION:-168h}
+    ports:
+      - "${TEMPORAL_GRPC_PORT:-7233}:7233"
+
+  temporal-ui:
+    image: temporalio/ui:2.28.0
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: "http://localhost:3000"
+      TEMPORAL_CSRF_COOKIE_INSECURE: "true"
+      TEMPORAL_PERMIT_WRITE_API: "true"
+      TEMPORAL_DISABLE_WRITE_ACTIONS: "false"
+    ports:
+      - "${TEMPORAL_UI_PORT:-8089}:8080"
+    depends_on:
+      - temporal
