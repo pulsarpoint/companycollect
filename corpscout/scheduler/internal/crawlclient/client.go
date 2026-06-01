@@ -129,6 +129,7 @@ type Client struct {
 	searchAnalyzeSubject string
 	pageCrawlSubject     string
 	pageAnalyzeSubject   string
+	requestTimeout       time.Duration
 	requester            natsRequester
 	conn                 *nats.Conn
 }
@@ -141,12 +142,41 @@ func NewNATSWithSubjects(url string, searchFetchSubject string, searchAnalyzeSub
 	return NewNATSWithActionSubjects(url, searchFetchSubject, searchAnalyzeSubject, "", "")
 }
 
+func NewNATSWithRequestTimeout(url string, requestTimeout time.Duration) (*Client, error) {
+	return NewNATSWithActionSubjectsAndTimeout(
+		url,
+		DefaultSearchFetchSubject,
+		DefaultSearchAnalyzeSubject,
+		DefaultPageCrawlSubject,
+		DefaultPageAnalyzeSubject,
+		requestTimeout,
+	)
+}
+
 func NewNATSWithActionSubjects(
 	url string,
 	searchFetchSubject string,
 	searchAnalyzeSubject string,
 	pageCrawlSubject string,
 	pageAnalyzeSubject string,
+) (*Client, error) {
+	return NewNATSWithActionSubjectsAndTimeout(
+		url,
+		searchFetchSubject,
+		searchAnalyzeSubject,
+		pageCrawlSubject,
+		pageAnalyzeSubject,
+		0,
+	)
+}
+
+func NewNATSWithActionSubjectsAndTimeout(
+	url string,
+	searchFetchSubject string,
+	searchAnalyzeSubject string,
+	pageCrawlSubject string,
+	pageAnalyzeSubject string,
+	requestTimeout time.Duration,
 ) (*Client, error) {
 	if searchFetchSubject == "" {
 		searchFetchSubject = DefaultSearchFetchSubject
@@ -165,6 +195,7 @@ func NewNATSWithActionSubjects(
 		"search_analyze_subject", searchAnalyzeSubject,
 		"page_crawl_subject", pageCrawlSubject,
 		"page_analyze_subject", pageAnalyzeSubject,
+		"request_timeout", requestTimeout.String(),
 	)
 	conn, err := nats.Connect(url, nats.Timeout(10*time.Second))
 	if err != nil {
@@ -175,12 +206,14 @@ func NewNATSWithActionSubjects(
 		"search_analyze_subject", searchAnalyzeSubject,
 		"page_crawl_subject", pageCrawlSubject,
 		"page_analyze_subject", pageAnalyzeSubject,
+		"request_timeout", requestTimeout.String(),
 	)
 	return &Client{
 		searchFetchSubject:   searchFetchSubject,
 		searchAnalyzeSubject: searchAnalyzeSubject,
 		pageCrawlSubject:     pageCrawlSubject,
 		pageAnalyzeSubject:   pageAnalyzeSubject,
+		requestTimeout:       requestTimeout,
 		requester:            natsConnRequester{conn: conn},
 		conn:                 conn,
 	}, nil
@@ -229,8 +262,11 @@ func (c *Client) FetchSearchPage(ctx context.Context, request SearchFetchRequest
 		"search_engine", request.SearchEngine,
 		"timeout_seconds", request.TimeoutSeconds,
 		"payload_bytes", len(payload),
+		"request_timeout", c.requestTimeout.String(),
 	)
-	responsePayload, err := c.requester.Request(ctx, c.searchFetchSubject, payload)
+	requestCtx, cancel := natsRequestContext(ctx, c.requestTimeout)
+	defer cancel()
+	responsePayload, err := c.requester.Request(requestCtx, c.searchFetchSubject, payload)
 	if err != nil {
 		return Crawl4AiResponse{}, errors.Wrap(err, "request brreg search fetch over nats")
 	}
@@ -263,8 +299,11 @@ func (c *Client) AnalyzeSearchPage(ctx context.Context, request SearchAnalyzeReq
 		"has_inline_base_url", request.LLM.BaseURL != "",
 		"has_inline_api_key", request.LLM.APIKey != "",
 		"payload_bytes", len(payload),
+		"request_timeout", c.requestTimeout.String(),
 	)
-	responsePayload, err := c.requester.Request(ctx, c.searchAnalyzeSubject, payload)
+	requestCtx, cancel := natsRequestContext(ctx, c.requestTimeout)
+	defer cancel()
+	responsePayload, err := c.requester.Request(requestCtx, c.searchAnalyzeSubject, payload)
 	if err != nil {
 		return SearchAnalyzeResponse{}, errors.Wrap(err, "request brreg search analysis over nats")
 	}
@@ -290,8 +329,11 @@ func (c *Client) CrawlPage(ctx context.Context, request CrawlPageRequest) (Crawl
 		"subject", c.pageCrawlSubject,
 		"timeout_seconds", request.TimeoutSeconds,
 		"payload_bytes", len(payload),
+		"request_timeout", c.requestTimeout.String(),
 	)
-	responsePayload, err := c.requester.Request(ctx, c.pageCrawlSubject, payload)
+	requestCtx, cancel := natsRequestContext(ctx, c.requestTimeout)
+	defer cancel()
+	responsePayload, err := c.requester.Request(requestCtx, c.pageCrawlSubject, payload)
 	if err != nil {
 		return Crawl4AiResponse{}, errors.Wrap(err, "request brreg page crawl over nats")
 	}
@@ -322,8 +364,11 @@ func (c *Client) AnalyzeCompanyPage(ctx context.Context, request PageAnalyzeRequ
 		"has_inline_base_url", request.LLM.BaseURL != "",
 		"has_inline_api_key", request.LLM.APIKey != "",
 		"payload_bytes", len(payload),
+		"request_timeout", c.requestTimeout.String(),
 	)
-	responsePayload, err := c.requester.Request(ctx, c.pageAnalyzeSubject, payload)
+	requestCtx, cancel := natsRequestContext(ctx, c.requestTimeout)
+	defer cancel()
+	responsePayload, err := c.requester.Request(requestCtx, c.pageAnalyzeSubject, payload)
 	if err != nil {
 		return PageAnalyzeResponse{}, errors.Wrap(err, "request brreg page analysis over nats")
 	}
@@ -337,6 +382,16 @@ func (c *Client) AnalyzeCompanyPage(ctx context.Context, request PageAnalyzeRequ
 		"response_bytes", len(responsePayload),
 	)
 	return decoded, nil
+}
+
+func natsRequestContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= timeout {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 func (c *Client) Close() {

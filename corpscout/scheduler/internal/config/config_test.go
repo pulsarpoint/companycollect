@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pulsarpoint/corpscout/scheduler/internal/config"
 )
@@ -24,6 +25,9 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.NATSURL != "" {
 		t.Errorf("want empty default NATS URL, got %s", cfg.NATSURL)
 	}
+	if cfg.NATSRequestTimeout != 180*time.Second {
+		t.Errorf("want default NATS request timeout 180s, got %s", cfg.NATSRequestTimeout)
+	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("want default log level info, got %s", cfg.LogLevel)
 	}
@@ -36,6 +40,7 @@ func TestLoad_overrides(t *testing.T) {
 	t.Setenv("CORPSCOUT_S3_SECRET_KEY", "override-secret")
 	t.Setenv("CORPSCOUT_CRAWL_SERVICE_URL", "http://crawl-service:8096")
 	t.Setenv("CORPSCOUT_NATS_URL", "nats://companycollect:4222")
+	t.Setenv("CORPSCOUT_NATS_REQUEST_TIMEOUT_SECONDS", "240")
 	t.Setenv("CORPSCOUT_LOG_LEVEL", "debug")
 
 	cfg, err := config.Load()
@@ -52,8 +57,24 @@ func TestLoad_overrides(t *testing.T) {
 	if cfg.NATSURL != "nats://companycollect:4222" {
 		t.Errorf("want override NATS URL, got %s", cfg.NATSURL)
 	}
+	if cfg.NATSRequestTimeout != 240*time.Second {
+		t.Errorf("want override NATS request timeout 240s, got %s", cfg.NATSRequestTimeout)
+	}
 	if cfg.LogLevel != "debug" {
 		t.Errorf("want override log level debug, got %s", cfg.LogLevel)
+	}
+}
+
+func TestLoad_rejectsInvalidNATSRequestTimeout(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://test")
+	t.Setenv("CORPSCOUT_S3_ACCESS_KEY", "test-access")
+	t.Setenv("CORPSCOUT_S3_SECRET_KEY", "test-secret")
+	t.Setenv("CORPSCOUT_NATS_REQUEST_TIMEOUT_SECONDS", "0")
+
+	_, err := config.Load()
+
+	if err == nil {
+		t.Fatal("expected invalid NATS request timeout error")
 	}
 }
 

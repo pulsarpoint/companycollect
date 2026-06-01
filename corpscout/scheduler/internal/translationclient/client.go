@@ -79,9 +79,10 @@ type natsRequester interface {
 }
 
 type Client struct {
-	subject   string
-	requester natsRequester
-	conn      *nats.Conn
+	subject        string
+	requestTimeout time.Duration
+	requester      natsRequester
+	conn           *nats.Conn
 }
 
 func NewNATS(url string) (*Client, error) {
@@ -89,19 +90,34 @@ func NewNATS(url string) (*Client, error) {
 }
 
 func NewNATSWithSubject(url string, subject string) (*Client, error) {
+	return NewNATSWithSubjectAndTimeout(url, subject, 0)
+}
+
+func NewNATSWithRequestTimeout(url string, requestTimeout time.Duration) (*Client, error) {
+	return NewNATSWithSubjectAndTimeout(url, DefaultBrregTranslationSubject, requestTimeout)
+}
+
+func NewNATSWithSubjectAndTimeout(url string, subject string, requestTimeout time.Duration) (*Client, error) {
 	if subject == "" {
 		subject = DefaultBrregTranslationSubject
 	}
-	slog.Debug("connecting brreg translation nats client", "subject", subject)
+	slog.Debug("connecting brreg translation nats client",
+		"subject", subject,
+		"request_timeout", requestTimeout.String(),
+	)
 	conn, err := nats.Connect(url, nats.Timeout(10*time.Second))
 	if err != nil {
 		return nil, errors.Wrap(err, "connect to nats")
 	}
-	slog.Debug("connected brreg translation nats client", "subject", subject)
+	slog.Debug("connected brreg translation nats client",
+		"subject", subject,
+		"request_timeout", requestTimeout.String(),
+	)
 	return &Client{
-		subject:   subject,
-		requester: natsConnRequester{conn: conn},
-		conn:      conn,
+		subject:        subject,
+		requestTimeout: requestTimeout,
+		requester:      natsConnRequester{conn: conn},
+		conn:           conn,
 	}, nil
 }
 
@@ -126,8 +142,11 @@ func (c *Client) TranslateBrregRecords(ctx context.Context, request BrregTransla
 		"has_inline_api_key", request.LLM.APIKey != "",
 		"prompt_version", request.PromptVersion,
 		"payload_bytes", len(payload),
+		"request_timeout", c.requestTimeout.String(),
 	)
-	responsePayload, err := c.requester.Request(ctx, c.subject, payload)
+	requestCtx, cancel := natsRequestContext(ctx, c.requestTimeout)
+	defer cancel()
+	responsePayload, err := c.requester.Request(requestCtx, c.subject, payload)
 	if err != nil {
 		return BrregTranslateResponse{}, errors.Wrap(err, "request brreg translation over nats")
 	}
@@ -145,6 +164,16 @@ func (c *Client) TranslateBrregRecords(ctx context.Context, request BrregTransla
 		"response_bytes", len(responsePayload),
 	)
 	return decoded, nil
+}
+
+func natsRequestContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= timeout {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 func (c *Client) Close() {

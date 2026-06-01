@@ -28,12 +28,15 @@ func newTemporalWorkerResources(cfg config.Config, pool brregdb.TxPool, llmStore
 	if cfg.NATSURL == "" {
 		return nil, errors.New("CORPSCOUT_NATS_URL is required for temporal translation actions")
 	}
-	translator, err := translationclient.NewNATS(cfg.NATSURL)
+	translator, err := translationclient.NewNATSWithRequestTimeout(cfg.NATSURL, cfg.NATSRequestTimeout)
 	if err != nil {
 		return nil, errors.Wrap(err, "create brreg translation nats client")
 	}
-	slog.Debug("created brreg translation nats client", "subject", translationclient.DefaultBrregTranslationSubject)
-	crawler, err := crawlclient.NewNATS(cfg.NATSURL)
+	slog.Debug("created brreg translation nats client",
+		"subject", translationclient.DefaultBrregTranslationSubject,
+		"request_timeout", cfg.NATSRequestTimeout.String(),
+	)
+	crawler, err := crawlclient.NewNATSWithRequestTimeout(cfg.NATSURL, cfg.NATSRequestTimeout)
 	if err != nil {
 		translator.Close()
 		return nil, errors.Wrap(err, "create brreg crawl nats client")
@@ -43,6 +46,7 @@ func newTemporalWorkerResources(cfg config.Config, pool brregdb.TxPool, llmStore
 		"search_analyze_subject", crawlclient.DefaultSearchAnalyzeSubject,
 		"page_crawl_subject", crawlclient.DefaultPageCrawlSubject,
 		"page_analyze_subject", crawlclient.DefaultPageAnalyzeSubject,
+		"request_timeout", cfg.NATSRequestTimeout.String(),
 	)
 	gateway := brregdb.New(pool)
 	return &temporalWorkerResources{

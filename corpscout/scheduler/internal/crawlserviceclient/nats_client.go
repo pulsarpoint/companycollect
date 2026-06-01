@@ -16,9 +16,10 @@ type natsRequester interface {
 }
 
 type NATSClient struct {
-	subject   string
-	requester natsRequester
-	conn      *nats.Conn
+	subject        string
+	requestTimeout time.Duration
+	requester      natsRequester
+	conn           *nats.Conn
 }
 
 func NewNATS(url string) (*NATSClient, error) {
@@ -26,6 +27,14 @@ func NewNATS(url string) (*NATSClient, error) {
 }
 
 func NewNATSWithSubject(url string, subject string) (*NATSClient, error) {
+	return NewNATSWithSubjectAndTimeout(url, subject, 0)
+}
+
+func NewNATSWithRequestTimeout(url string, requestTimeout time.Duration) (*NATSClient, error) {
+	return NewNATSWithSubjectAndTimeout(url, DefaultBrregDomainDiscoverySubject, requestTimeout)
+}
+
+func NewNATSWithSubjectAndTimeout(url string, subject string, requestTimeout time.Duration) (*NATSClient, error) {
 	if subject == "" {
 		subject = DefaultBrregDomainDiscoverySubject
 	}
@@ -34,9 +43,10 @@ func NewNATSWithSubject(url string, subject string) (*NATSClient, error) {
 		return nil, errors.Wrap(err, "connect to nats")
 	}
 	return &NATSClient{
-		subject:   subject,
-		requester: natsConnRequester{conn: conn},
-		conn:      conn,
+		subject:        subject,
+		requestTimeout: requestTimeout,
+		requester:      natsConnRequester{conn: conn},
+		conn:           conn,
 	}, nil
 }
 
@@ -52,7 +62,9 @@ func (c *NATSClient) DiscoverBrregDomain(ctx context.Context, request BrregDomai
 	if err != nil {
 		return BrregDomainDiscoveryResponse{}, errors.Wrap(err, "encode brreg domain discovery nats request")
 	}
-	responsePayload, err := c.requester.Request(ctx, c.subject, payload)
+	requestCtx, cancel := natsRequestContext(ctx, c.requestTimeout)
+	defer cancel()
+	responsePayload, err := c.requester.Request(requestCtx, c.subject, payload)
 	if err != nil {
 		return BrregDomainDiscoveryResponse{}, errors.Wrap(err, "request brreg domain discovery over nats")
 	}
@@ -80,4 +92,14 @@ func (r natsConnRequester) Request(ctx context.Context, subject string, payload 
 		return nil, err
 	}
 	return msg.Data, nil
+}
+
+func natsRequestContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= timeout {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
 }

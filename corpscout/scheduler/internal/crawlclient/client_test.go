@@ -3,6 +3,7 @@ package crawlclient
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/require"
@@ -111,6 +112,42 @@ func TestSearchActionsWrapRequestErrors(t *testing.T) {
 	require.Contains(t, err.Error(), "request brreg search fetch over nats")
 }
 
+func TestSearchActionsApplyRequestTimeout(t *testing.T) {
+	fake := &fakeNATSRequester{response: []byte(`{"status":"succeeded","links":[]}`)}
+	client := &Client{
+		searchFetchSubject: "fetch",
+		requestTimeout:     2 * time.Minute,
+		requester:          fake,
+	}
+
+	_, err := client.FetchSearchPage(context.Background(), SearchFetchRequest{SearchTerm: "BORTIGARD AS"})
+
+	require.NoError(t, err)
+	require.True(t, fake.hasDeadline)
+	remaining := time.Until(fake.deadline)
+	require.Greater(t, remaining, 110*time.Second)
+	require.LessOrEqual(t, remaining, 2*time.Minute)
+}
+
+func TestSearchActionsKeepShorterParentDeadline(t *testing.T) {
+	fake := &fakeNATSRequester{response: []byte(`{"status":"succeeded","links":[]}`)}
+	client := &Client{
+		searchFetchSubject: "fetch",
+		requestTimeout:     2 * time.Minute,
+		requester:          fake,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := client.FetchSearchPage(ctx, SearchFetchRequest{SearchTerm: "BORTIGARD AS"})
+
+	require.NoError(t, err)
+	require.True(t, fake.hasDeadline)
+	remaining := time.Until(fake.deadline)
+	require.Greater(t, remaining, 20*time.Second)
+	require.LessOrEqual(t, remaining, 30*time.Second)
+}
+
 func TestCrawlPageRequestsSubjectAndDecodesResponse(t *testing.T) {
 	fake := &fakeNATSRequester{
 		response: []byte(`{
@@ -208,15 +245,18 @@ func TestAnalyzeCompanyPageRequestsSubjectAndDecodesResponse(t *testing.T) {
 }
 
 type fakeNATSRequester struct {
-	subject  string
-	payload  []byte
-	response []byte
-	err      error
+	subject     string
+	payload     []byte
+	response    []byte
+	err         error
+	hasDeadline bool
+	deadline    time.Time
 }
 
-func (f *fakeNATSRequester) Request(_ context.Context, subject string, payload []byte) ([]byte, error) {
+func (f *fakeNATSRequester) Request(ctx context.Context, subject string, payload []byte) ([]byte, error) {
 	f.subject = subject
 	f.payload = append([]byte(nil), payload...)
+	f.deadline, f.hasDeadline = ctx.Deadline()
 	if f.err != nil {
 		return nil, f.err
 	}
