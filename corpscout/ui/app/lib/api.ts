@@ -250,6 +250,7 @@ export const api = {
       lifecycle_status?: string;
       registration_status?: string;
       translation_status?: string;
+      website_status?: string;
       sort?: string;
       dir?: "asc" | "desc";
     } = {},
@@ -265,6 +266,7 @@ export const api = {
       qs.set("registration_status", params.registration_status);
     if (params.translation_status)
       qs.set("translation_status", params.translation_status);
+    if (params.website_status) qs.set("website_status", params.website_status);
     if (params.sort) qs.set("sort", params.sort);
     if (params.dir) qs.set("dir", params.dir);
     const q = qs.toString();

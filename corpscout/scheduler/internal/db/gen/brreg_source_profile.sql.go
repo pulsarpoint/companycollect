@@ -394,6 +394,27 @@ WHERE (
       AND entry.translation_missing_count = 0
     )
   )
+  AND (
+    $5::text IS NULL
+    OR (
+      $5::text = 'with'
+      AND EXISTS (
+        SELECT 1
+        FROM brreg_source.websites website
+        WHERE website.company_id = entry.company_id
+          AND website.status = 'active'
+      )
+    )
+    OR (
+      $5::text = 'without'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM brreg_source.websites website
+        WHERE website.company_id = entry.company_id
+          AND website.status = 'active'
+      )
+    )
+  )
 `
 
 type CountBrregSourceEntriesParams struct {
@@ -401,6 +422,7 @@ type CountBrregSourceEntriesParams struct {
 	LifecycleStatus    *string `json:"lifecycle_status"`
 	RegistrationStatus *string `json:"registration_status"`
 	TranslationStatus  *string `json:"translation_status"`
+	WebsiteStatus      *string `json:"website_status"`
 }
 
 func (q *Queries) CountBrregSourceEntries(ctx context.Context, arg CountBrregSourceEntriesParams) (int64, error) {
@@ -409,6 +431,7 @@ func (q *Queries) CountBrregSourceEntries(ctx context.Context, arg CountBrregSou
 		arg.LifecycleStatus,
 		arg.RegistrationStatus,
 		arg.TranslationStatus,
+		arg.WebsiteStatus,
 	)
 	var column_1 int64
 	err := row.Scan(&column_1)
@@ -669,6 +692,8 @@ SELECT
   entry.formatted_address,
   entry.employee_count,
   entry.employee_band,
+  coalesce(primary_website.url, '') AS website_url,
+  primary_website.host AS website_host,
   entry.website_count,
   entry.domain_count,
   entry.contact_count,
@@ -685,6 +710,19 @@ SELECT
   entry.domain_succeeded_count,
   entry.updated_at
 FROM brreg_source.v_company_explorer entry
+LEFT JOIN LATERAL (
+  SELECT
+    website.url,
+    website.host
+  FROM brreg_source.websites website
+  WHERE website.company_id = entry.company_id
+    AND website.status = 'active'
+  ORDER BY
+    website.is_primary DESC,
+    website.confidence DESC NULLS LAST,
+    website.created_at DESC
+  LIMIT 1
+) primary_website ON true
 WHERE (
     $1::text IS NULL
     OR entry.organization_name ILIKE '%' || $1::text || '%'
@@ -712,25 +750,36 @@ WHERE (
       AND entry.translation_missing_count = 0
     )
   )
+  AND (
+    $5::text IS NULL
+    OR (
+      $5::text = 'with'
+      AND entry.website_count > 0
+    )
+    OR (
+      $5::text = 'without'
+      AND entry.website_count = 0
+    )
+  )
 ORDER BY
-  CASE WHEN $5::text = 'organization' AND $6::text = 'asc' THEN entry.organization_name END ASC NULLS LAST,
-  CASE WHEN $5::text = 'organization' AND $6::text = 'desc' THEN entry.organization_name END DESC NULLS LAST,
-  CASE WHEN $5::text = 'industry' AND $6::text = 'asc' THEN entry.primary_industry_label END ASC NULLS LAST,
-  CASE WHEN $5::text = 'industry' AND $6::text = 'desc' THEN entry.primary_industry_label END DESC NULLS LAST,
-  CASE WHEN $5::text = 'location' AND $6::text = 'asc' THEN entry.city END ASC NULLS LAST,
-  CASE WHEN $5::text = 'location' AND $6::text = 'desc' THEN entry.city END DESC NULLS LAST,
-  CASE WHEN $5::text = 'employees' AND $6::text = 'asc' THEN entry.employee_count END ASC NULLS LAST,
-  CASE WHEN $5::text = 'employees' AND $6::text = 'desc' THEN entry.employee_count END DESC NULLS LAST,
-  CASE WHEN $5::text = 'revenue' AND $6::text = 'asc' THEN entry.latest_revenue_usd_cents END ASC NULLS LAST,
-  CASE WHEN $5::text = 'revenue' AND $6::text = 'desc' THEN entry.latest_revenue_usd_cents END DESC NULLS LAST,
-  CASE WHEN $5::text = 'translation_missing' AND $6::text = 'asc' THEN entry.translation_missing_count END ASC NULLS LAST,
-  CASE WHEN $5::text = 'translation_missing' AND $6::text = 'desc' THEN entry.translation_missing_count END DESC NULLS LAST,
-  CASE WHEN $5::text = 'updated_at' AND $6::text = 'asc' THEN entry.updated_at END ASC NULLS LAST,
-  CASE WHEN $5::text = 'updated_at' AND $6::text = 'desc' THEN entry.updated_at END DESC NULLS LAST,
+  CASE WHEN $6::text = 'organization' AND $7::text = 'asc' THEN entry.organization_name END ASC NULLS LAST,
+  CASE WHEN $6::text = 'organization' AND $7::text = 'desc' THEN entry.organization_name END DESC NULLS LAST,
+  CASE WHEN $6::text = 'industry' AND $7::text = 'asc' THEN entry.primary_industry_label END ASC NULLS LAST,
+  CASE WHEN $6::text = 'industry' AND $7::text = 'desc' THEN entry.primary_industry_label END DESC NULLS LAST,
+  CASE WHEN $6::text = 'location' AND $7::text = 'asc' THEN entry.city END ASC NULLS LAST,
+  CASE WHEN $6::text = 'location' AND $7::text = 'desc' THEN entry.city END DESC NULLS LAST,
+  CASE WHEN $6::text = 'employees' AND $7::text = 'asc' THEN entry.employee_count END ASC NULLS LAST,
+  CASE WHEN $6::text = 'employees' AND $7::text = 'desc' THEN entry.employee_count END DESC NULLS LAST,
+  CASE WHEN $6::text = 'revenue' AND $7::text = 'asc' THEN entry.latest_revenue_usd_cents END ASC NULLS LAST,
+  CASE WHEN $6::text = 'revenue' AND $7::text = 'desc' THEN entry.latest_revenue_usd_cents END DESC NULLS LAST,
+  CASE WHEN $6::text = 'translation_missing' AND $7::text = 'asc' THEN entry.translation_missing_count END ASC NULLS LAST,
+  CASE WHEN $6::text = 'translation_missing' AND $7::text = 'desc' THEN entry.translation_missing_count END DESC NULLS LAST,
+  CASE WHEN $6::text = 'updated_at' AND $7::text = 'asc' THEN entry.updated_at END ASC NULLS LAST,
+  CASE WHEN $6::text = 'updated_at' AND $7::text = 'desc' THEN entry.updated_at END DESC NULLS LAST,
   entry.updated_at DESC,
   entry.organization_number ASC
-LIMIT GREATEST($8::integer, 1)
-OFFSET GREATEST($7::integer, 0)
+LIMIT GREATEST($9::integer, 1)
+OFFSET GREATEST($8::integer, 0)
 `
 
 type ListBrregSourceEntriesParams struct {
@@ -738,6 +787,7 @@ type ListBrregSourceEntriesParams struct {
 	LifecycleStatus    *string `json:"lifecycle_status"`
 	RegistrationStatus *string `json:"registration_status"`
 	TranslationStatus  *string `json:"translation_status"`
+	WebsiteStatus      *string `json:"website_status"`
 	SortBy             string  `json:"sort_by"`
 	SortDir            string  `json:"sort_dir"`
 	Offset             int32   `json:"offset"`
@@ -765,6 +815,8 @@ type ListBrregSourceEntriesRow struct {
 	FormattedAddress          *string   `json:"formatted_address"`
 	EmployeeCount             *int32    `json:"employee_count"`
 	EmployeeBand              *string   `json:"employee_band"`
+	WebsiteUrl                string    `json:"website_url"`
+	WebsiteHost               *string   `json:"website_host"`
 	WebsiteCount              int64     `json:"website_count"`
 	DomainCount               int64     `json:"domain_count"`
 	ContactCount              int64     `json:"contact_count"`
@@ -788,6 +840,7 @@ func (q *Queries) ListBrregSourceEntries(ctx context.Context, arg ListBrregSourc
 		arg.LifecycleStatus,
 		arg.RegistrationStatus,
 		arg.TranslationStatus,
+		arg.WebsiteStatus,
 		arg.SortBy,
 		arg.SortDir,
 		arg.Offset,
@@ -821,6 +874,8 @@ func (q *Queries) ListBrregSourceEntries(ctx context.Context, arg ListBrregSourc
 			&i.FormattedAddress,
 			&i.EmployeeCount,
 			&i.EmployeeBand,
+			&i.WebsiteUrl,
+			&i.WebsiteHost,
 			&i.WebsiteCount,
 			&i.DomainCount,
 			&i.ContactCount,

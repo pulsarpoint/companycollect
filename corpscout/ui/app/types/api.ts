@@ -257,6 +257,8 @@ export interface BrregSourceEntryListItem {
   formatted_address?: string;
   employee_count?: number;
   employee_band?: string;
+  website_url: string;
+  website_host?: string;
   website_count: number;
   domain_count: number;
   contact_count: number;

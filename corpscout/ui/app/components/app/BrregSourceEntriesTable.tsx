@@ -36,6 +36,10 @@ const FILTER_OPTIONS = {
     ["bankrupt", "Bankrupt"],
     ["forced_dissolution", "Forced dissolution"],
   ],
+  website_status: [
+    ["with", "With website"],
+    ["without", "Without website"],
+  ],
   translation_status: [
     ["missing", "Missing translations"],
     ["complete", "Complete"],
@@ -183,9 +187,33 @@ function DomainDiscoveryState({ item }: { item: BrregSourceEntryListItem }) {
 function EntryCounts({ item }: { item: BrregSourceEntryListItem }) {
   return (
     <div className="flex flex-wrap gap-1">
-      <Badge variant="outline">{formatCount(item.website_count)} websites</Badge>
       <Badge variant="outline">{formatCount(item.domain_count)} domains</Badge>
       <Badge variant="outline">{formatCount(item.contact_count)} contacts</Badge>
+    </div>
+  );
+}
+
+function WebsiteCell({ item }: { item: BrregSourceEntryListItem }) {
+  if (!item.website_url) {
+    return <span className="text-sm text-muted-foreground">-</span>;
+  }
+
+  return (
+    <div className="flex min-w-48 flex-col gap-1">
+      <a
+        className="max-w-56 truncate text-sm font-medium underline-offset-4 hover:underline"
+        href={item.website_url}
+        rel="noreferrer"
+        target="_blank"
+        title={item.website_url}
+      >
+        {item.website_host || item.website_url}
+      </a>
+      {item.website_count > 1 && (
+        <Badge className="w-fit" variant="outline">
+          {formatCount(item.website_count)} websites
+        </Badge>
+      )}
     </div>
   );
 }
@@ -204,6 +232,7 @@ export function BrregSourceEntriesTable() {
   const query = searchParams.get("source_q") ?? "";
   const lifecycleStatus = searchParams.get("source_lifecycle_status") ?? "";
   const translationStatus = searchParams.get("source_translation_status") ?? "";
+  const websiteStatus = searchParams.get("source_website_status") ?? "";
   const sort = searchParams.get("source_sort") ?? "";
   const sortDirection: SortDirection =
     searchParams.get("source_dir") === "asc" ? "asc" : "desc";
@@ -214,7 +243,12 @@ export function BrregSourceEntriesTable() {
     if (lifecycleStatus) filters.lifecycle_state = lifecycleStatus;
     return filters;
   }, [lifecycleStatus, query]);
-  const filterKey = JSON.stringify(actionFilters);
+  const tableFilterKey = JSON.stringify({
+    lifecycleStatus,
+    query,
+    translationStatus,
+    websiteStatus,
+  });
   const selectedIdList = useMemo(() => Array.from(selectedIds), [selectedIds]);
   const currentPageSelected =
     items.length > 0 && (allFilteredSelected || items.every((item) => selectedIds.has(item.company_id)));
@@ -230,6 +264,7 @@ export function BrregSourceEntriesTable() {
         q: query || undefined,
         lifecycle_status: lifecycleStatus || undefined,
         translation_status: translationStatus || undefined,
+        website_status: websiteStatus || undefined,
         sort: sort || undefined,
         dir: sort ? sortDirection : undefined,
       });
@@ -238,7 +273,7 @@ export function BrregSourceEntriesTable() {
     } finally {
       setLoading(false);
     }
-  }, [lifecycleStatus, page, query, sort, sortDirection, translationStatus]);
+  }, [lifecycleStatus, page, query, sort, sortDirection, translationStatus, websiteStatus]);
 
   useEffect(() => {
     load();
@@ -251,7 +286,7 @@ export function BrregSourceEntriesTable() {
   useEffect(() => {
     setSelectedIds(new Set());
     setAllFilteredSelected(false);
-  }, [filterKey]);
+  }, [tableFilterKey]);
 
   const setParam = useCallback(
     (key: string, value: string) => {
@@ -315,6 +350,7 @@ export function BrregSourceEntriesTable() {
       { label: "Organization", sort: "organization" },
       { label: "Industry", sort: "industry" },
       { label: "Location", sort: "location" },
+      { label: "Website" },
       { label: "Employees", sort: "employees" },
       { label: "Revenue", sort: "revenue" },
       { label: "Signals" },
@@ -359,6 +395,12 @@ export function BrregSourceEntriesTable() {
           value={translationStatus}
           options={FILTER_OPTIONS.translation_status}
           onChange={(value) => setParam("source_translation_status", value)}
+        />
+        <FilterSelect
+          label="Website"
+          value={websiteStatus}
+          options={FILTER_OPTIONS.website_status}
+          onChange={(value) => setParam("source_website_status", value)}
         />
         <Button
           size="sm"
@@ -490,6 +532,9 @@ export function BrregSourceEntriesTable() {
                         {item.county ?? item.postal_code ?? ""}
                       </span>
                     </div>
+                  </TableCell>
+                  <TableCell>
+                    <WebsiteCell item={item} />
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-col gap-1">
