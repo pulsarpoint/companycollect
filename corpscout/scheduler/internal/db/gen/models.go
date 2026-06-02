@@ -1334,6 +1334,51 @@ type LlmProvider struct {
 	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
+type NaceClassification struct {
+	ID             uuid.UUID       `json:"id"`
+	CodeSystem     string          `json:"code_system"`
+	Revision       string          `json:"revision"`
+	Name           string          `json:"name"`
+	ValidFrom      pgtype.Date     `json:"valid_from"`
+	ValidTo        pgtype.Date     `json:"valid_to"`
+	SourceUrl      *string         `json:"source_url"`
+	SourceMetadata json.RawMessage `json:"source_metadata"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+type NaceCode struct {
+	ID               uuid.UUID       `json:"id"`
+	ClassificationID uuid.UUID       `json:"classification_id"`
+	Code             string          `json:"code"`
+	NormalizedCode   string          `json:"normalized_code"`
+	Level            int16           `json:"level"`
+	LevelName        string          `json:"level_name"`
+	ParentCode       *string         `json:"parent_code"`
+	ParentID         pgtype.UUID     `json:"parent_id"`
+	Title            string          `json:"title"`
+	Description      *string         `json:"description"`
+	Includes         *string         `json:"includes"`
+	Excludes         *string         `json:"excludes"`
+	Notes            json.RawMessage `json:"notes"`
+	SourcePayload    json.RawMessage `json:"source_payload"`
+	SourceHash       string          `json:"source_hash"`
+	Active           bool            `json:"active"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+
+type NaceCodeAlias struct {
+	ID                  uuid.UUID       `json:"id"`
+	NaceCodeID          uuid.UUID       `json:"nace_code_id"`
+	AliasType           string          `json:"alias_type"`
+	AliasCode           string          `json:"alias_code"`
+	NormalizedAliasCode string          `json:"normalized_alias_code"`
+	Source              string          `json:"source"`
+	Metadata            json.RawMessage `json:"metadata"`
+	CreatedAt           time.Time       `json:"created_at"`
+}
+
 type OpenSourceProject struct {
 	ID               uuid.UUID       `json:"id"`
 	CanonicalSlug    string          `json:"canonical_slug"`
@@ -1865,6 +1910,44 @@ type VDomain struct {
 	PrimarySignal      string             `json:"primary_signal"`
 	LastCrawledAt      interface{}        `json:"last_crawled_at"`
 	Crawled            bool               `json:"crawled"`
+}
+
+type VNaceCodeTree struct {
+	CodeSystem       string      `json:"code_system"`
+	Revision         string      `json:"revision"`
+	ID               uuid.UUID   `json:"id"`
+	ClassificationID uuid.UUID   `json:"classification_id"`
+	Code             string      `json:"code"`
+	NormalizedCode   string      `json:"normalized_code"`
+	Level            int16       `json:"level"`
+	LevelName        string      `json:"level_name"`
+	ParentCode       *string     `json:"parent_code"`
+	ParentID         pgtype.UUID `json:"parent_id"`
+	ParentNaceCode   *string     `json:"parent_nace_code"`
+	Title            string      `json:"title"`
+	Description      *string     `json:"description"`
+	Includes         *string     `json:"includes"`
+	Excludes         *string     `json:"excludes"`
+	Active           bool        `json:"active"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
+}
+
+type VNaceTaxonomyState struct {
+	ClassificationID        uuid.UUID   `json:"classification_id"`
+	CodeSystem              string      `json:"code_system"`
+	Revision                string      `json:"revision"`
+	Name                    string      `json:"name"`
+	ValidFrom               pgtype.Date `json:"valid_from"`
+	ValidTo                 pgtype.Date `json:"valid_to"`
+	ActiveCodes             int64       `json:"active_codes"`
+	InactiveCodes           int64       `json:"inactive_codes"`
+	Sections                int64       `json:"sections"`
+	Divisions               int64       `json:"divisions"`
+	Groups                  int64       `json:"groups"`
+	Classes                 int64       `json:"classes"`
+	CodesUpdatedAt          interface{} `json:"codes_updated_at"`
+	ClassificationUpdatedAt time.Time   `json:"classification_updated_at"`
 }
 
 type VResolvedEntity struct {

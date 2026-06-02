@@ -16,6 +16,7 @@ type Querier interface {
 	BulkUpdateCompanyFinancialStatus(ctx context.Context, arg BulkUpdateCompanyFinancialStatusParams) error
 	ClaimBrregWorkflowTaskSelectionBatch(ctx context.Context, arg ClaimBrregWorkflowTaskSelectionBatchParams) ([]ClaimBrregWorkflowTaskSelectionBatchRow, error)
 	ClearDefaultLLMProvider(ctx context.Context) error
+	ClearRootNACECodeParents(ctx context.Context, classificationID uuid.UUID) error
 	CountBrregWorkflowRawRecords(ctx context.Context, arg CountBrregWorkflowRawRecordsParams) (int64, error)
 	CountCompanySuggestionReviews(ctx context.Context, arg CountCompanySuggestionReviewsParams) (int32, error)
 	CountDomains(ctx context.Context, arg CountDomainsParams) (int64, error)
@@ -25,6 +26,7 @@ type Querier interface {
 	CreateBrregWorkflowTaskSelection(ctx context.Context, arg CreateBrregWorkflowTaskSelectionParams) (CreateBrregWorkflowTaskSelectionRow, error)
 	CreateCompanyFinancial(ctx context.Context, arg CreateCompanyFinancialParams) (CompanyFinancial, error)
 	CreateLLMProvider(ctx context.Context, arg CreateLLMProviderParams) (CreateLLMProviderRow, error)
+	DeactivateMissingNACECodes(ctx context.Context, arg DeactivateMissingNACECodesParams) (int32, error)
 	FailRunningBrregWorkflowTasksForRun(ctx context.Context, arg FailRunningBrregWorkflowTasksForRunParams) (int32, error)
 	FinishBrregDomainActionAttempt(ctx context.Context, arg FinishBrregDomainActionAttemptParams) error
 	FinishBrregWorkflowRun(ctx context.Context, arg FinishBrregWorkflowRunParams) (uuid.UUID, error)
@@ -42,6 +44,8 @@ type Querier interface {
 	GetDomainByID(ctx context.Context, id uuid.UUID) (GetDomainByIDRow, error)
 	GetLLMProviderBySlugForUse(ctx context.Context, slug string) (LlmProvider, error)
 	GetLLMProviderForUse(ctx context.Context, id uuid.UUID) (LlmProvider, error)
+	GetNACEClassificationByRevision(ctx context.Context, revision string) (NaceClassification, error)
+	GetNACECodeByRevisionAndCode(ctx context.Context, arg GetNACECodeByRevisionAndCodeParams) (NaceCode, error)
 	GetSourceByName(ctx context.Context, name string) (DataSource, error)
 	GetSourcesWithCapabilities(ctx context.Context) ([]DataSource, error)
 	GetStats(ctx context.Context) (GetStatsRow, error)
@@ -66,6 +70,7 @@ type Querier interface {
 	InsertImportBatch(ctx context.Context, arg InsertImportBatchParams) (DomainImportBatch, error)
 	InsertSuggestion(ctx context.Context, arg InsertSuggestionParams) (Suggestion, error)
 	InsertSuggestionCompanyFinancial(ctx context.Context, arg InsertSuggestionCompanyFinancialParams) (SuggestionCompanyFinancial, error)
+	LinkNACECodeParents(ctx context.Context, classificationID uuid.UUID) error
 	ListBrregWorkflowDomainSearchEvidenceByRawRecord(ctx context.Context, rawRecordID uuid.UUID) ([]BrregWorkflowVDomainSearchEvidence, error)
 	ListBrregWorkflowEnhancedReadyRecords(ctx context.Context) ([]BrregWorkflowVEnhancedReadyRecord, error)
 	ListBrregWorkflowRawRecords(ctx context.Context, arg ListBrregWorkflowRawRecordsParams) ([]BrregWorkflowVRawRecordList, error)
@@ -76,6 +81,8 @@ type Querier interface {
 	ListDomains(ctx context.Context, arg ListDomainsParams) ([]ListDomainsRow, error)
 	ListEnabledLLMProviders(ctx context.Context) ([]ListEnabledLLMProvidersRow, error)
 	ListLLMProviders(ctx context.Context) ([]ListLLMProvidersRow, error)
+	ListNACECodeTree(ctx context.Context, revision string) ([]VNaceCodeTree, error)
+	ListNACETaxonomyState(ctx context.Context) ([]VNaceTaxonomyState, error)
 	ListPendingCompanyFinancialIDs(ctx context.Context) ([]uuid.UUID, error)
 	ListPendingCompanyFinancials(ctx context.Context, arg ListPendingCompanyFinancialsParams) ([]ListPendingCompanyFinancialsRow, error)
 	ListPendingCompanySuggestionReviewItems(ctx context.Context, suggestionID uuid.UUID) ([]ListPendingCompanySuggestionReviewItemsRow, error)
@@ -103,6 +110,7 @@ type Querier interface {
 	MarkSuggestionCompanyServiceRejected(ctx context.Context, arg MarkSuggestionCompanyServiceRejectedParams) error
 	RecoverStaleBrregWorkflowRuns(ctx context.Context, arg RecoverStaleBrregWorkflowRunsParams) (RecoverStaleBrregWorkflowRunsRow, error)
 	RejectCompanyFinancial(ctx context.Context, arg RejectCompanyFinancialParams) error
+	ResolveNACECodeAlias(ctx context.Context, arg ResolveNACECodeAliasParams) (NaceCode, error)
 	ReviewCompanyDomain(ctx context.Context, arg ReviewCompanyDomainParams) error
 	SetDefaultLLMProvider(ctx context.Context, id uuid.UUID) (SetDefaultLLMProviderRow, error)
 	SupersedeCurrentBrregWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentBrregWorkflowRawRecordParams) error
@@ -138,6 +146,9 @@ type Querier interface {
 	UpsertCompanyService(ctx context.Context, arg UpsertCompanyServiceParams) (CompanyService, error)
 	UpsertDomain(ctx context.Context, domain string) (Domain, error)
 	UpsertDomainWithSource(ctx context.Context, arg UpsertDomainWithSourceParams) (Domain, error)
+	UpsertNACEClassification(ctx context.Context, arg UpsertNACEClassificationParams) (NaceClassification, error)
+	UpsertNACECode(ctx context.Context, arg UpsertNACECodeParams) (NaceCode, error)
+	UpsertNACECodeAlias(ctx context.Context, arg UpsertNACECodeAliasParams) error
 }
 
 var _ Querier = (*Queries)(nil)
