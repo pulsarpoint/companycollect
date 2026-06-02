@@ -5,6 +5,8 @@ import (
 	"unicode"
 )
 
+const DefaultRevision = "2.1"
+
 func NormalizeCode(value string) string {
 	value = strings.TrimSpace(value)
 	var b strings.Builder

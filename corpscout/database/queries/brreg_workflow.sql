@@ -336,6 +336,139 @@ FROM brreg_workflow.v_domain_search_evidence
 WHERE raw_record_id = sqlc.arg('raw_record_id')::uuid
 ORDER BY started_at DESC, artifact_created_at DESC NULLS LAST, action_attempt_id DESC;
 
+-- name: UpsertBrregWorkflowNACEMappingsForRawRecord :many
+WITH source_sections AS (
+  SELECT
+    raw.id AS raw_record_id,
+    source_section.source_field,
+    source_section.classification_type,
+    source_section.position,
+    source_section.raw_section
+  FROM brreg_workflow.raw_records raw
+  CROSS JOIN LATERAL (
+    SELECT
+      'naeringskode1'::text AS source_field,
+      'industry'::text AS classification_type,
+      1::smallint AS position,
+      raw.raw_payload -> 'naeringskode1' AS raw_section
+    UNION ALL
+    SELECT 'naeringskode2'::text, 'industry'::text, 2::smallint, raw.raw_payload -> 'naeringskode2'
+    UNION ALL
+    SELECT 'naeringskode3'::text, 'industry'::text, 3::smallint, raw.raw_payload -> 'naeringskode3'
+    UNION ALL
+    SELECT 'hjelpeenhetskode'::text, 'helper_unit'::text, 1::smallint, raw.raw_payload -> 'hjelpeenhetskode'
+  ) AS source_section
+  WHERE raw.id = sqlc.arg('raw_record_id')::uuid
+    AND jsonb_typeof(source_section.raw_section) = 'object'
+    AND COALESCE(source_section.raw_section ->> 'kode', '') <> ''
+),
+source_codes AS (
+  SELECT
+    source_sections.raw_record_id,
+    source_sections.source_field,
+    source_sections.classification_type,
+    source_sections.position,
+    source_sections.raw_section ->> 'kode' AS source_code,
+    source_sections.raw_section ->> 'beskrivelse' AS source_description,
+    regexp_replace(upper(source_sections.raw_section ->> 'kode'), '[^0-9A-Z]', '', 'g') AS normalized_source_code,
+    source_sections.raw_section
+  FROM source_sections
+),
+mapped_codes AS (
+  SELECT
+    source_codes.*,
+    CASE
+      WHEN source_codes.normalized_source_code ~ '^[0-9]{5}$'
+        THEN substring(source_codes.normalized_source_code from 1 for 2) || '.' || substring(source_codes.normalized_source_code from 3 for 2)
+      WHEN source_codes.normalized_source_code ~ '^[0-9]{4}$'
+        THEN substring(source_codes.normalized_source_code from 1 for 2) || '.' || substring(source_codes.normalized_source_code from 3 for 2)
+      ELSE NULL
+    END AS mapped_nace_code,
+    CASE
+      WHEN source_codes.normalized_source_code ~ '^[0-9]{5}$' THEN 'sn_level_5_to_nace_class'
+      WHEN source_codes.normalized_source_code ~ '^[0-9]{4}$' THEN 'nace_exact'
+      ELSE NULL
+    END AS mapping_method
+  FROM source_codes
+),
+resolved_mappings AS (
+  SELECT
+    mapped_codes.raw_record_id,
+    nace_code.id AS nace_code_id,
+    mapped_codes.source_field,
+    mapped_codes.classification_type,
+    mapped_codes.position,
+    mapped_codes.source_code,
+    mapped_codes.source_description,
+    mapped_codes.mapped_nace_code,
+    mapped_codes.mapping_method,
+    1::real AS confidence,
+    jsonb_build_object(
+      'source', 'brreg',
+      'raw_section', mapped_codes.raw_section,
+      'nace_revision', sqlc.arg('nace_revision')::text,
+      'normalized_source_code', mapped_codes.normalized_source_code
+    ) AS evidence
+  FROM mapped_codes
+  JOIN nace_classifications nace_classification
+    ON nace_classification.code_system = 'NACE'
+   AND nace_classification.revision = sqlc.arg('nace_revision')::text
+  JOIN nace_codes nace_code
+    ON nace_code.classification_id = nace_classification.id
+   AND nace_code.code = mapped_codes.mapped_nace_code
+   AND nace_code.level_name = 'class'
+   AND nace_code.active
+  WHERE mapped_codes.mapped_nace_code IS NOT NULL
+    AND mapped_codes.mapping_method IS NOT NULL
+),
+upserted AS (
+  INSERT INTO brreg_workflow.nace_mappings (
+    raw_record_id,
+    nace_code_id,
+    source_field,
+    classification_type,
+    position,
+    source_code,
+    source_description,
+    mapped_nace_code,
+    mapping_method,
+    confidence,
+    evidence
+  )
+  SELECT
+    raw_record_id,
+    nace_code_id,
+    source_field,
+    classification_type,
+    position,
+    source_code,
+    source_description,
+    mapped_nace_code,
+    mapping_method,
+    confidence,
+    evidence
+  FROM resolved_mappings
+  ON CONFLICT (raw_record_id, source_field, source_code, nace_code_id)
+  DO UPDATE SET
+    classification_type = EXCLUDED.classification_type,
+    position = EXCLUDED.position,
+    source_description = EXCLUDED.source_description,
+    mapped_nace_code = EXCLUDED.mapped_nace_code,
+    mapping_method = EXCLUDED.mapping_method,
+    confidence = EXCLUDED.confidence,
+    evidence = EXCLUDED.evidence,
+    updated_at = now()
+  RETURNING *
+)
+SELECT * FROM upserted
+ORDER BY position, source_field;
+
+-- name: ListBrregWorkflowNACEMappingsByRawRecord :many
+SELECT *
+FROM brreg_workflow.v_nace_mappings
+WHERE raw_record_id = sqlc.arg('raw_record_id')::uuid
+ORDER BY position, source_field, mapped_nace_code;
+
 -- name: SupersedeCurrentBrregWorkflowRawRecord :exec
 UPDATE brreg_workflow.raw_records
 SET

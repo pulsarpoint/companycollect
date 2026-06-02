@@ -368,6 +368,23 @@ type BrregWorkflowFinancialResult struct {
 	Metadata         json.RawMessage `json:"metadata"`
 }
 
+type BrregWorkflowNaceMapping struct {
+	ID                 uuid.UUID       `json:"id"`
+	RawRecordID        uuid.UUID       `json:"raw_record_id"`
+	NaceCodeID         uuid.UUID       `json:"nace_code_id"`
+	SourceField        string          `json:"source_field"`
+	ClassificationType string          `json:"classification_type"`
+	Position           int16           `json:"position"`
+	SourceCode         string          `json:"source_code"`
+	SourceDescription  *string         `json:"source_description"`
+	MappedNaceCode     string          `json:"mapped_nace_code"`
+	MappingMethod      string          `json:"mapping_method"`
+	Confidence         float32         `json:"confidence"`
+	Evidence           json.RawMessage `json:"evidence"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
+}
+
 type BrregWorkflowRawRecord struct {
 	ID                 uuid.UUID          `json:"id"`
 	BulkSnapshotID     pgtype.UUID        `json:"bulk_snapshot_id"`
@@ -556,6 +573,30 @@ type BrregWorkflowVFinancialAssetState struct {
 	ArtifactSkipped     int64  `json:"artifact_skipped"`
 	ArtifactFailed      int64  `json:"artifact_failed"`
 	ArtifactMissing     int64  `json:"artifact_missing"`
+}
+
+type BrregWorkflowVNaceMapping struct {
+	ID                 uuid.UUID       `json:"id"`
+	RawRecordID        uuid.UUID       `json:"raw_record_id"`
+	OrganizationNumber string          `json:"organization_number"`
+	OrganizationName   *string         `json:"organization_name"`
+	SourceField        string          `json:"source_field"`
+	ClassificationType string          `json:"classification_type"`
+	Position           int16           `json:"position"`
+	SourceCode         string          `json:"source_code"`
+	SourceDescription  *string         `json:"source_description"`
+	MappedNaceCode     string          `json:"mapped_nace_code"`
+	MappingMethod      string          `json:"mapping_method"`
+	Confidence         float32         `json:"confidence"`
+	NaceCodeID         uuid.UUID       `json:"nace_code_id"`
+	NaceRevision       string          `json:"nace_revision"`
+	NaceCode           string          `json:"nace_code"`
+	NaceLevel          int16           `json:"nace_level"`
+	NaceLevelName      string          `json:"nace_level_name"`
+	NaceTitle          string          `json:"nace_title"`
+	Evidence           json.RawMessage `json:"evidence"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 type BrregWorkflowVRawRecordDetail struct {

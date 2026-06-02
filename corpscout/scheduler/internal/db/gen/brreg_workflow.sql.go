@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -1302,6 +1303,55 @@ func (q *Queries) ListBrregWorkflowEnhancedReadyRecords(ctx context.Context) ([]
 	return items, nil
 }
 
+const listBrregWorkflowNACEMappingsByRawRecord = `-- name: ListBrregWorkflowNACEMappingsByRawRecord :many
+SELECT id, raw_record_id, organization_number, organization_name, source_field, classification_type, position, source_code, source_description, mapped_nace_code, mapping_method, confidence, nace_code_id, nace_revision, nace_code, nace_level, nace_level_name, nace_title, evidence, created_at, updated_at
+FROM brreg_workflow.v_nace_mappings
+WHERE raw_record_id = $1::uuid
+ORDER BY position, source_field, mapped_nace_code
+`
+
+func (q *Queries) ListBrregWorkflowNACEMappingsByRawRecord(ctx context.Context, rawRecordID uuid.UUID) ([]BrregWorkflowVNaceMapping, error) {
+	rows, err := q.db.Query(ctx, listBrregWorkflowNACEMappingsByRawRecord, rawRecordID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BrregWorkflowVNaceMapping
+	for rows.Next() {
+		var i BrregWorkflowVNaceMapping
+		if err := rows.Scan(
+			&i.ID,
+			&i.RawRecordID,
+			&i.OrganizationNumber,
+			&i.OrganizationName,
+			&i.SourceField,
+			&i.ClassificationType,
+			&i.Position,
+			&i.SourceCode,
+			&i.SourceDescription,
+			&i.MappedNaceCode,
+			&i.MappingMethod,
+			&i.Confidence,
+			&i.NaceCodeID,
+			&i.NaceRevision,
+			&i.NaceCode,
+			&i.NaceLevel,
+			&i.NaceLevelName,
+			&i.NaceTitle,
+			&i.Evidence,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBrregWorkflowRawRecords = `-- name: ListBrregWorkflowRawRecords :many
 SELECT id, organization_number, organization_name, website, registration_status, country_iso2, payload_hash, is_current, first_seen_at, last_seen_at, translation_status, domain_status, best_domain, financial_status, original_currency, enhanced_status, lifecycle_state, task_statuses, task_errors
 FROM brreg_workflow.v_raw_record_list ri
@@ -1582,6 +1632,191 @@ type SupersedeCurrentBrregWorkflowRawRecordParams struct {
 func (q *Queries) SupersedeCurrentBrregWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentBrregWorkflowRawRecordParams) error {
 	_, err := q.db.Exec(ctx, supersedeCurrentBrregWorkflowRawRecord, arg.OrganizationNumber, arg.PayloadHash)
 	return err
+}
+
+const upsertBrregWorkflowNACEMappingsForRawRecord = `-- name: UpsertBrregWorkflowNACEMappingsForRawRecord :many
+WITH source_sections AS (
+  SELECT
+    raw.id AS raw_record_id,
+    source_section.source_field,
+    source_section.classification_type,
+    source_section.position,
+    source_section.raw_section
+  FROM brreg_workflow.raw_records raw
+  CROSS JOIN LATERAL (
+    SELECT
+      'naeringskode1'::text AS source_field,
+      'industry'::text AS classification_type,
+      1::smallint AS position,
+      raw.raw_payload -> 'naeringskode1' AS raw_section
+    UNION ALL
+    SELECT 'naeringskode2'::text, 'industry'::text, 2::smallint, raw.raw_payload -> 'naeringskode2'
+    UNION ALL
+    SELECT 'naeringskode3'::text, 'industry'::text, 3::smallint, raw.raw_payload -> 'naeringskode3'
+    UNION ALL
+    SELECT 'hjelpeenhetskode'::text, 'helper_unit'::text, 1::smallint, raw.raw_payload -> 'hjelpeenhetskode'
+  ) AS source_section
+  WHERE raw.id = $1::uuid
+    AND jsonb_typeof(source_section.raw_section) = 'object'
+    AND COALESCE(source_section.raw_section ->> 'kode', '') <> ''
+),
+source_codes AS (
+  SELECT
+    source_sections.raw_record_id,
+    source_sections.source_field,
+    source_sections.classification_type,
+    source_sections.position,
+    source_sections.raw_section ->> 'kode' AS source_code,
+    source_sections.raw_section ->> 'beskrivelse' AS source_description,
+    regexp_replace(upper(source_sections.raw_section ->> 'kode'), '[^0-9A-Z]', '', 'g') AS normalized_source_code,
+    source_sections.raw_section
+  FROM source_sections
+),
+mapped_codes AS (
+  SELECT
+    source_codes.raw_record_id, source_codes.source_field, source_codes.classification_type, source_codes.position, source_codes.source_code, source_codes.source_description, source_codes.normalized_source_code, source_codes.raw_section,
+    CASE
+      WHEN source_codes.normalized_source_code ~ '^[0-9]{5}$'
+        THEN substring(source_codes.normalized_source_code from 1 for 2) || '.' || substring(source_codes.normalized_source_code from 3 for 2)
+      WHEN source_codes.normalized_source_code ~ '^[0-9]{4}$'
+        THEN substring(source_codes.normalized_source_code from 1 for 2) || '.' || substring(source_codes.normalized_source_code from 3 for 2)
+      ELSE NULL
+    END AS mapped_nace_code,
+    CASE
+      WHEN source_codes.normalized_source_code ~ '^[0-9]{5}$' THEN 'sn_level_5_to_nace_class'
+      WHEN source_codes.normalized_source_code ~ '^[0-9]{4}$' THEN 'nace_exact'
+      ELSE NULL
+    END AS mapping_method
+  FROM source_codes
+),
+resolved_mappings AS (
+  SELECT
+    mapped_codes.raw_record_id,
+    nace_code.id AS nace_code_id,
+    mapped_codes.source_field,
+    mapped_codes.classification_type,
+    mapped_codes.position,
+    mapped_codes.source_code,
+    mapped_codes.source_description,
+    mapped_codes.mapped_nace_code,
+    mapped_codes.mapping_method,
+    1::real AS confidence,
+    jsonb_build_object(
+      'source', 'brreg',
+      'raw_section', mapped_codes.raw_section,
+      'nace_revision', $2::text,
+      'normalized_source_code', mapped_codes.normalized_source_code
+    ) AS evidence
+  FROM mapped_codes
+  JOIN nace_classifications nace_classification
+    ON nace_classification.code_system = 'NACE'
+   AND nace_classification.revision = $2::text
+  JOIN nace_codes nace_code
+    ON nace_code.classification_id = nace_classification.id
+   AND nace_code.code = mapped_codes.mapped_nace_code
+   AND nace_code.level_name = 'class'
+   AND nace_code.active
+  WHERE mapped_codes.mapped_nace_code IS NOT NULL
+    AND mapped_codes.mapping_method IS NOT NULL
+),
+upserted AS (
+  INSERT INTO brreg_workflow.nace_mappings (
+    raw_record_id,
+    nace_code_id,
+    source_field,
+    classification_type,
+    position,
+    source_code,
+    source_description,
+    mapped_nace_code,
+    mapping_method,
+    confidence,
+    evidence
+  )
+  SELECT
+    raw_record_id,
+    nace_code_id,
+    source_field,
+    classification_type,
+    position,
+    source_code,
+    source_description,
+    mapped_nace_code,
+    mapping_method,
+    confidence,
+    evidence
+  FROM resolved_mappings
+  ON CONFLICT (raw_record_id, source_field, source_code, nace_code_id)
+  DO UPDATE SET
+    classification_type = EXCLUDED.classification_type,
+    position = EXCLUDED.position,
+    source_description = EXCLUDED.source_description,
+    mapped_nace_code = EXCLUDED.mapped_nace_code,
+    mapping_method = EXCLUDED.mapping_method,
+    confidence = EXCLUDED.confidence,
+    evidence = EXCLUDED.evidence,
+    updated_at = now()
+  RETURNING id, raw_record_id, nace_code_id, source_field, classification_type, position, source_code, source_description, mapped_nace_code, mapping_method, confidence, evidence, created_at, updated_at
+)
+SELECT id, raw_record_id, nace_code_id, source_field, classification_type, position, source_code, source_description, mapped_nace_code, mapping_method, confidence, evidence, created_at, updated_at FROM upserted
+ORDER BY position, source_field
+`
+
+type UpsertBrregWorkflowNACEMappingsForRawRecordParams struct {
+	RawRecordID  uuid.UUID `json:"raw_record_id"`
+	NaceRevision string    `json:"nace_revision"`
+}
+
+type UpsertBrregWorkflowNACEMappingsForRawRecordRow struct {
+	ID                 uuid.UUID       `json:"id"`
+	RawRecordID        uuid.UUID       `json:"raw_record_id"`
+	NaceCodeID         uuid.UUID       `json:"nace_code_id"`
+	SourceField        string          `json:"source_field"`
+	ClassificationType string          `json:"classification_type"`
+	Position           int16           `json:"position"`
+	SourceCode         string          `json:"source_code"`
+	SourceDescription  *string         `json:"source_description"`
+	MappedNaceCode     string          `json:"mapped_nace_code"`
+	MappingMethod      string          `json:"mapping_method"`
+	Confidence         float32         `json:"confidence"`
+	Evidence           json.RawMessage `json:"evidence"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
+}
+
+func (q *Queries) UpsertBrregWorkflowNACEMappingsForRawRecord(ctx context.Context, arg UpsertBrregWorkflowNACEMappingsForRawRecordParams) ([]UpsertBrregWorkflowNACEMappingsForRawRecordRow, error) {
+	rows, err := q.db.Query(ctx, upsertBrregWorkflowNACEMappingsForRawRecord, arg.RawRecordID, arg.NaceRevision)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UpsertBrregWorkflowNACEMappingsForRawRecordRow
+	for rows.Next() {
+		var i UpsertBrregWorkflowNACEMappingsForRawRecordRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RawRecordID,
+			&i.NaceCodeID,
+			&i.SourceField,
+			&i.ClassificationType,
+			&i.Position,
+			&i.SourceCode,
+			&i.SourceDescription,
+			&i.MappedNaceCode,
+			&i.MappingMethod,
+			&i.Confidence,
+			&i.Evidence,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertBrregWorkflowRawRecord = `-- name: UpsertBrregWorkflowRawRecord :one

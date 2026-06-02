@@ -73,6 +73,7 @@ type Querier interface {
 	LinkNACECodeParents(ctx context.Context, classificationID uuid.UUID) error
 	ListBrregWorkflowDomainSearchEvidenceByRawRecord(ctx context.Context, rawRecordID uuid.UUID) ([]BrregWorkflowVDomainSearchEvidence, error)
 	ListBrregWorkflowEnhancedReadyRecords(ctx context.Context) ([]BrregWorkflowVEnhancedReadyRecord, error)
+	ListBrregWorkflowNACEMappingsByRawRecord(ctx context.Context, rawRecordID uuid.UUID) ([]BrregWorkflowVNaceMapping, error)
 	ListBrregWorkflowRawRecords(ctx context.Context, arg ListBrregWorkflowRawRecordsParams) ([]BrregWorkflowVRawRecordList, error)
 	ListCompanyFinancials(ctx context.Context, companyID uuid.UUID) ([]CompanyFinancial, error)
 	ListCompanySuggestionReviewIDs(ctx context.Context) ([]uuid.UUID, error)
@@ -129,6 +130,7 @@ type Querier interface {
 	UpdateSourceStarted(ctx context.Context, name string) error
 	UpdateSuggestionAggregateStatus(ctx context.Context, arg UpdateSuggestionAggregateStatusParams) error
 	UpdateSuggestionCreatedCompany(ctx context.Context, arg UpdateSuggestionCreatedCompanyParams) error
+	UpsertBrregWorkflowNACEMappingsForRawRecord(ctx context.Context, arg UpsertBrregWorkflowNACEMappingsForRawRecordParams) ([]UpsertBrregWorkflowNACEMappingsForRawRecordRow, error)
 	UpsertBrregWorkflowRawRecord(ctx context.Context, arg UpsertBrregWorkflowRawRecordParams) (UpsertBrregWorkflowRawRecordRow, error)
 	UpsertCompanyDomain(ctx context.Context, arg UpsertCompanyDomainParams) (CompanyDomain, error)
 	// ── emails ────────────────────────────────────────────────────────────────────

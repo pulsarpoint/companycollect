@@ -162,6 +162,11 @@ type SubmitFinancialResultCommand struct {
 	MaxAttempts int32
 }
 
+type MapRawRecordIndustriesToNACECommand struct {
+	RawRecordID  uuid.UUID
+	NACERevision string
+}
+
 type RecordDomainActionSuccessCommand struct {
 	WorkflowRunID   uuid.UUID
 	TaskAttemptID   uuid.UUID
