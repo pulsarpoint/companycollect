@@ -84,6 +84,11 @@ function stringArray(value: unknown) {
   return value.filter((item): item is string => typeof item === "string" && item.length > 0);
 }
 
+function stringFromRecord(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 function DomainSearchEvidenceSummary({
   evidence,
 }: {
@@ -105,6 +110,7 @@ function DomainSearchEvidenceSummary({
       <h3 className="text-sm font-medium">Domain search evidence</h3>
       {evidence.map((item) => {
         const links = stringArray(item.links);
+        const markdownS3Key = stringFromRecord(item.crawl_metadata, "markdown_s3_key");
         return (
           <div key={item.action_attempt_id} className="space-y-3 rounded-md border p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -123,6 +129,7 @@ function DomainSearchEvidenceSummary({
               <DetailRow label="Search URL" value={item.search_url} />
               <DetailRow label="Final URL" value={item.final_url} />
               <DetailRow label="Markdown hash" value={item.markdown_hash} />
+              <DetailRow label="Markdown S3 key" value={markdownS3Key} />
             </div>
 
             {links.length > 0 && (
@@ -151,6 +158,10 @@ function DomainSearchEvidenceSummary({
                   {item.markdown}
                 </pre>
               </div>
+            ) : markdownS3Key ? (
+              <p className="text-xs text-muted-foreground">
+                Full search markdown is stored in object storage.
+              </p>
             ) : null}
           </div>
         );

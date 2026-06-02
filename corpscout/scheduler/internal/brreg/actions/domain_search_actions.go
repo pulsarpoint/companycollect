@@ -208,13 +208,14 @@ type ClaimBrregDomainSearchBatchResult struct {
 }
 
 type ClaimedDomainSearchRecord struct {
-	RawRecordID        string          `json:"raw_record_id"`
-	TaskAttemptID      string          `json:"task_attempt_id"`
-	OrganizationNumber string          `json:"organization_number"`
-	OrganizationName   string          `json:"organization_name,omitempty"`
-	Website            string          `json:"website,omitempty"`
-	RawPayload         json.RawMessage `json:"raw_payload"`
-	Attempt            int32           `json:"attempt"`
+	RawRecordID        string           `json:"raw_record_id"`
+	TaskAttemptID      string           `json:"task_attempt_id"`
+	OrganizationNumber string           `json:"organization_number"`
+	OrganizationName   string           `json:"organization_name,omitempty"`
+	Website            string           `json:"website,omitempty"`
+	Facts              brregDomainFacts `json:"facts,omitempty"`
+	RawPayload         json.RawMessage  `json:"raw_payload,omitempty"`
+	Attempt            int32            `json:"attempt"`
 }
 
 func (a *DomainSearchActions) ClaimBrregDomainSearchBatch(ctx context.Context, input ClaimBrregDomainSearchBatchInput) (ClaimBrregDomainSearchBatchResult, error) {
@@ -269,7 +270,6 @@ func claimedDomainSearchRecordsFromRows(rows []db.ClaimBrregWorkflowTaskSelectio
 			RawRecordID:        row.RawRecordID.String(),
 			TaskAttemptID:      row.TaskAttemptID.String(),
 			OrganizationNumber: row.OrganizationNumber,
-			RawPayload:         row.RawPayload,
 			Attempt:            row.Attempt,
 		}
 		if row.OrganizationName != nil {
@@ -278,6 +278,8 @@ func claimedDomainSearchRecordsFromRows(rows []db.ClaimBrregWorkflowTaskSelectio
 		if row.Website != nil {
 			record.Website = *row.Website
 		}
+		record.RawPayload = nil
+		record.Facts = domainFactsFromRawPayload(row.RawPayload, record.OrganizationName, record.OrganizationNumber)
 		records = append(records, record)
 	}
 	return records
@@ -303,6 +305,7 @@ type DomainSearchPageResult struct {
 	TimeoutSeconds     int                           `json:"timeout_seconds"`
 	Status             string                        `json:"status"`
 	Search             *crawlclient.Crawl4AiResponse `json:"search,omitempty"`
+	MarkdownS3Key      string                        `json:"markdown_s3_key,omitempty"`
 	Error              *DomainSearchError            `json:"error,omitempty"`
 }
 
@@ -347,13 +350,29 @@ func (a *DomainSearchActions) FetchBrregDomainSearchPages(ctx context.Context, i
 			results = append(results, result)
 			continue
 		}
-		result.Search = &response
 		if response.Status != "succeeded" {
 			result.Status = brregdb.ResultStatusFailed.String()
+			result.Search = scrubCrawlMarkdown(response)
 			result.Error = domainSearchErrorFromCrawlResponse(response, "domain_search_failed", "Search page fetch failed.")
 			results = append(results, result)
 			continue
 		}
+		markdownS3Key, err := a.uploadSearchPageMarkdown(ctx, result, &response)
+		if err != nil {
+			result.Status = brregdb.ResultStatusFailed.String()
+			result.Search = scrubCrawlMarkdown(response)
+			result.Error = &DomainSearchError{
+				Message:       "Search page markdown upload failed.",
+				Category:      "object_storage",
+				Code:          "search_page_markdown_upload_failed",
+				RetryStrategy: "retry_with_backoff",
+				Detail:        map[string]any{"error": err.Error(), "search_term": searchTerm},
+			}
+			results = append(results, result)
+			continue
+		}
+		result.Search = scrubCrawlMarkdown(response)
+		result.MarkdownS3Key = markdownS3Key
 		result.Status = brregdb.ResultStatusSucceeded.String()
 		results = append(results, result)
 	}
@@ -535,6 +554,19 @@ func (a *DomainSearchActions) AnalyzeBrregDomainSearchPages(ctx context.Context,
 			continue
 		}
 		facts := domainFactsFromRecord(record)
+		markdown, err := a.searchPageMarkdown(ctx, page)
+		if err != nil {
+			result.Status = brregdb.ResultStatusFailed.String()
+			result.Error = &DomainSearchError{
+				Message:       "Search page markdown could not be loaded for analysis.",
+				Category:      "object_storage",
+				Code:          "search_page_markdown_load_failed",
+				RetryStrategy: "retry_with_backoff",
+				Detail:        map[string]any{"error": err.Error(), "s3_key": page.MarkdownS3Key},
+			}
+			results = append(results, result)
+			continue
+		}
 		response, err := a.crawler.AnalyzeSearchPage(ctx, crawlclient.SearchAnalyzeRequest{
 			CompanyName:        facts.CompanyName,
 			OrganizationNumber: record.OrganizationNumber,
@@ -548,7 +580,7 @@ func (a *DomainSearchActions) AnalyzeBrregDomainSearchPages(ctx context.Context,
 			SearchEngine:       page.SearchEngine,
 			SearchTerm:         page.SearchTerm,
 			Links:              page.Search.Links,
-			Markdown:           page.Search.Markdown,
+			Markdown:           markdown,
 			CandidateThreshold: candidateThreshold,
 			MaxCandidates:      maxCandidates,
 			TimeoutSeconds:     timeoutSeconds,
@@ -1472,14 +1504,14 @@ func missingDomainSearchRecordResult(page DomainSearchPageResult) DomainSearchRe
 }
 
 type brregDomainFacts struct {
-	CompanyName      string
-	Country          string
-	AddressLines     []string
-	City             string
-	PostalCode       string
-	BusinessActivity []string
-	StatutoryPurpose []string
-	IndustryCodes    []string
+	CompanyName      string   `json:"company_name,omitempty"`
+	Country          string   `json:"country,omitempty"`
+	AddressLines     []string `json:"address_lines,omitempty"`
+	City             string   `json:"city,omitempty"`
+	PostalCode       string   `json:"postal_code,omitempty"`
+	BusinessActivity []string `json:"business_activity,omitempty"`
+	StatutoryPurpose []string `json:"statutory_purpose,omitempty"`
+	IndustryCodes    []string `json:"industry_codes,omitempty"`
 }
 
 type brregRawDomainPayload struct {
@@ -1506,10 +1538,21 @@ type brregRawDomainCodeValue struct {
 }
 
 func domainFactsFromRecord(record ClaimedDomainSearchRecord) brregDomainFacts {
+	if domainFactsPresent(record.Facts) {
+		return record.Facts
+	}
+	return domainFactsFromRawPayload(record.RawPayload, record.OrganizationName, record.OrganizationNumber)
+}
+
+func domainFactsFromRawPayload(
+	rawPayload json.RawMessage,
+	organizationName string,
+	organizationNumber string,
+) brregDomainFacts {
 	var raw brregRawDomainPayload
-	_ = json.Unmarshal(record.RawPayload, &raw)
+	_ = json.Unmarshal(rawPayload, &raw)
 	country := defaultString(strings.TrimSpace(raw.BusinessAddress.CountryCode), defaultDomainSearchCountry)
-	companyName := firstNonEmpty(record.OrganizationName, raw.Name, record.OrganizationNumber)
+	companyName := firstNonEmpty(organizationName, raw.Name, organizationNumber)
 	return brregDomainFacts{
 		CompanyName:      companyName,
 		Country:          country,
@@ -1520,6 +1563,17 @@ func domainFactsFromRecord(record ClaimedDomainSearchRecord) brregDomainFacts {
 		StatutoryPurpose: cleanStringSlice(raw.StatutoryPurpose),
 		IndustryCodes:    brregDomainIndustryCodes(raw),
 	}
+}
+
+func domainFactsPresent(facts brregDomainFacts) bool {
+	return strings.TrimSpace(facts.CompanyName) != "" ||
+		strings.TrimSpace(facts.Country) != "" ||
+		len(facts.AddressLines) > 0 ||
+		strings.TrimSpace(facts.City) != "" ||
+		strings.TrimSpace(facts.PostalCode) != "" ||
+		len(facts.BusinessActivity) > 0 ||
+		len(facts.StatutoryPurpose) > 0 ||
+		len(facts.IndustryCodes) > 0
 }
 
 func domainSearchTerm(facts brregDomainFacts) string {
@@ -1618,6 +1672,47 @@ func (a *DomainSearchActions) uploadCandidateSiteMarkdown(
 	return key, nil
 }
 
+func (a *DomainSearchActions) uploadSearchPageMarkdown(
+	ctx context.Context,
+	result DomainSearchPageResult,
+	response *crawlclient.Crawl4AiResponse,
+) (string, error) {
+	if response == nil || strings.TrimSpace(response.Markdown) == "" {
+		return "", nil
+	}
+	if a == nil || a.s3 == nil {
+		return "", errors.New("s3 client not available for search page markdown")
+	}
+	markdownHash := firstNonEmpty(response.MarkdownHash, sha256Hex([]byte(response.Markdown)))
+	response.MarkdownHash = markdownHash
+	key := searchPageMarkdownS3Key(result, markdownHash)
+	if err := a.s3.Upload(ctx, key, []byte(response.Markdown), "text/markdown; charset=utf-8"); err != nil {
+		return "", errors.Wrap(err, "upload search page markdown")
+	}
+	if response.Metadata == nil {
+		response.Metadata = map[string]any{}
+	}
+	response.Metadata["markdown_s3_key"] = key
+	return key, nil
+}
+
+func (a *DomainSearchActions) searchPageMarkdown(ctx context.Context, page DomainSearchPageResult) (string, error) {
+	if page.MarkdownS3Key == "" {
+		if page.Search != nil {
+			return page.Search.Markdown, nil
+		}
+		return "", nil
+	}
+	if a == nil || a.s3 == nil {
+		return "", errors.New("s3 client not available for search page markdown")
+	}
+	data, _, err := a.s3.Download(ctx, page.MarkdownS3Key)
+	if err != nil {
+		return "", errors.Wrap(err, "download search page markdown")
+	}
+	return string(data), nil
+}
+
 func (a *DomainSearchActions) candidateSiteMarkdown(ctx context.Context, siteCrawl DomainCandidateSiteCrawl) (string, error) {
 	if siteCrawl.MarkdownS3Key == "" {
 		if siteCrawl.Crawl != nil {
@@ -1633,6 +1728,19 @@ func (a *DomainSearchActions) candidateSiteMarkdown(ctx context.Context, siteCra
 		return "", errors.Wrap(err, "download candidate site markdown")
 	}
 	return string(data), nil
+}
+
+func searchPageMarkdownS3Key(result DomainSearchPageResult, markdownHash string) string {
+	if markdownHash == "" {
+		markdownHash = "unknown-hash"
+	}
+	return fmt.Sprintf(
+		"brreg/domain-discovery/%s/%s/search-pages/%s-%s.md",
+		sanitizeS3PathPart(result.RawRecordID),
+		sanitizeS3PathPart(result.TaskAttemptID),
+		sanitizeS3PathPart(result.SearchEngine),
+		sanitizeS3PathPart(markdownHash),
+	)
 }
 
 func candidateSiteMarkdownS3Key(result DomainSearchRecordResult, candidate crawlclient.ScoredLink, markdownHash string) string {

@@ -357,8 +357,10 @@ WHERE (
         SELECT 1
         FROM brreg_workflow.v_domain_search_evidence evidence
         WHERE evidence.raw_record_id = ri.id
-          AND evidence.markdown IS NOT NULL
-          AND evidence.markdown <> ''
+          AND (
+            (evidence.markdown IS NOT NULL AND evidence.markdown <> '')
+            OR COALESCE(evidence.crawl_metadata ->> 'markdown_s3_key', '') <> ''
+          )
       )
     )
     OR (
@@ -1329,8 +1331,10 @@ WHERE (
         SELECT 1
         FROM brreg_workflow.v_domain_search_evidence evidence
         WHERE evidence.raw_record_id = ri.id
-          AND evidence.markdown IS NOT NULL
-          AND evidence.markdown <> ''
+          AND (
+            (evidence.markdown IS NOT NULL AND evidence.markdown <> '')
+            OR COALESCE(evidence.crawl_metadata ->> 'markdown_s3_key', '') <> ''
+          )
       )
     )
     OR (
