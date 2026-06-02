@@ -1,0 +1,6 @@
+-- Intentionally no-op.
+--
+-- Migration 077 repairs databases that had already applied an older shape of
+-- migration 074 before brreg_source.action_tasks and the expanded explorer
+-- view were added. Fresh databases already get these objects from 074, so a
+-- down migration must not drop shared schema objects that may belong to 074.

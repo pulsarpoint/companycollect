@@ -59,3 +59,28 @@ func TestBrregSourceProfileTablesDownMigrationDropsSourceSchemaObjects(t *testin
 	require.Contains(t, sql, "DROP TABLE IF EXISTS brreg_source.addresses")
 	require.Contains(t, sql, "DROP TABLE IF EXISTS brreg_source.companies")
 }
+
+func TestBrregSourceProfileRepairMigrationUpgradesPreviouslyAppliedSchema(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000077_repair_brreg_source_action_tasks.up.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "CREATE TABLE IF NOT EXISTS brreg_source.action_tasks")
+	require.Contains(t, sql, "to_regclass('brreg_source.field_translation_tasks')")
+	require.Contains(t, sql, "'translate_field'")
+	require.Contains(t, sql, "source_text_hash")
+	require.Contains(t, sql, "CREATE VIEW brreg_source.v_company_explorer AS")
+	require.Contains(t, sql, "translation_pending_count")
+	require.Contains(t, sql, "domain_pending_count")
+	require.Contains(t, sql, "CREATE VIEW brreg_source.v_company_detail AS")
+	require.Contains(t, sql, "FROM brreg_source.action_tasks")
+}
+
+func TestBrregSourceProfileRepairDownMigrationKeepsSchemaObjects(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000077_repair_brreg_source_action_tasks.down.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.NotContains(t, sql, "DROP TABLE")
+	require.NotContains(t, sql, "DROP VIEW")
+}
