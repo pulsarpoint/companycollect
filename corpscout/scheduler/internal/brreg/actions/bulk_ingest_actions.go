@@ -3,8 +3,10 @@ package actions
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -82,19 +84,50 @@ func (a *BulkIngestActions) LoadBrregBulkRawRecords(
 		"batch_size", batchSize,
 		"trigger", input.Trigger,
 	)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
-	if err != nil {
-		return LoadBrregBulkRawRecordsActivityResult{}, errors.Wrap(err, "create brreg bulk download request")
-	}
-	request.Header.Set("Accept", "*/*")
-	request.Header.Set("User-Agent", "corpscout-scheduler/1.0")
-	response, err := a.httpClient.Do(request)
-	if err != nil {
-		return LoadBrregBulkRawRecordsActivityResult{}, errors.Wrap(err, "download brreg bulk data")
-	}
-	defer response.Body.Close()
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return LoadBrregBulkRawRecordsActivityResult{}, errors.Newf("download brreg bulk data returned status %d", response.StatusCode)
+	var bulkReader io.Reader
+	var response *http.Response
+	var staged *stagedBrregBulkPayload
+	if input.Limit <= 0 {
+		var lastDownloadHeartbeat int64
+		staged, err = downloadBrregBulkPayloadWithProgress(ctx, a.httpClient, sourceURL, func(bytesDownloaded int64) {
+			if bytesDownloaded-lastDownloadHeartbeat < 32*1024*1024 {
+				return
+			}
+			lastDownloadHeartbeat = bytesDownloaded
+			activity.RecordHeartbeat(ctx, map[string]any{
+				"phase":            "downloading",
+				"bytes_downloaded": bytesDownloaded,
+				"source_url":       sourceURL,
+			})
+		})
+		if err != nil {
+			return LoadBrregBulkRawRecordsActivityResult{}, err
+		}
+		defer staged.Close()
+		bulkReader = staged.Reader
+		activity.RecordHeartbeat(ctx, map[string]any{
+			"phase":            "downloaded",
+			"bytes_downloaded": staged.BytesDownloaded,
+			"source_url":       sourceURL,
+		})
+		slog.DebugContext(ctx, "downloaded brreg bulk payload",
+			"source_url", sourceURL,
+			"bytes_downloaded", staged.BytesDownloaded,
+		)
+	} else {
+		request, err := newBrregBulkDownloadRequest(ctx, sourceURL)
+		if err != nil {
+			return LoadBrregBulkRawRecordsActivityResult{}, err
+		}
+		response, err = a.httpClient.Do(request)
+		if err != nil {
+			return LoadBrregBulkRawRecordsActivityResult{}, errors.Wrap(err, "download brreg bulk data")
+		}
+		defer response.Body.Close()
+		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+			return LoadBrregBulkRawRecordsActivityResult{}, errors.Newf("download brreg bulk data returned status %d", response.StatusCode)
+		}
+		bulkReader = response.Body
 	}
 
 	var result LoadBrregBulkRawRecordsActivityResult
@@ -131,7 +164,7 @@ func (a *BulkIngestActions) LoadBrregBulkRawRecords(
 		return nil
 	}
 
-	streamed, err := brregbulk.StreamRecords(ctx, response.Body, input.Limit, func(record brregbulk.Record) error {
+	streamed, err := brregbulk.StreamRecords(ctx, bulkReader, input.Limit, func(record brregbulk.Record) error {
 		result.RowsSeen++
 		batch = append(batch, record.UpsertParams(pgtype.UUID{}, metadata))
 		if int32(len(batch)) >= batchSize {
@@ -156,4 +189,119 @@ func (a *BulkIngestActions) LoadBrregBulkRawRecords(
 		"rows_new_versions", result.RowsNewVersions,
 	)
 	return result, nil
+}
+
+type stagedBrregBulkPayload struct {
+	Reader          *os.File
+	path            string
+	BytesDownloaded int64
+}
+
+func (p *stagedBrregBulkPayload) Close() {
+	if p == nil {
+		return
+	}
+	if p.Reader != nil {
+		_ = p.Reader.Close()
+	}
+	if p.path != "" {
+		_ = os.Remove(p.path)
+	}
+}
+
+func downloadBrregBulkPayload(ctx context.Context, httpClient *http.Client, sourceURL string) (*stagedBrregBulkPayload, error) {
+	return downloadBrregBulkPayloadWithProgress(ctx, httpClient, sourceURL, nil)
+}
+
+func downloadBrregBulkPayloadWithProgress(
+	ctx context.Context,
+	httpClient *http.Client,
+	sourceURL string,
+	onProgress func(bytesDownloaded int64),
+) (*stagedBrregBulkPayload, error) {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	request, err := newBrregBulkDownloadRequest(ctx, sourceURL)
+	if err != nil {
+		return nil, err
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return nil, errors.Wrap(err, "download brreg bulk data")
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, errors.Newf("download brreg bulk data returned status %d", response.StatusCode)
+	}
+
+	tempFile, err := os.CreateTemp("", "corpscout-brreg-bulk-*.json.gz")
+	if err != nil {
+		return nil, errors.Wrap(err, "create brreg bulk temp file")
+	}
+	staged := &stagedBrregBulkPayload{Reader: tempFile, path: tempFile.Name()}
+	keep := false
+	defer func() {
+		if !keep {
+			staged.Close()
+		}
+	}()
+
+	bytesDownloaded, err := copyWithContext(ctx, tempFile, response.Body, onProgress)
+	if err != nil {
+		return nil, errors.Wrap(err, "download brreg bulk payload body")
+	}
+	if response.ContentLength >= 0 && bytesDownloaded != response.ContentLength {
+		return nil, errors.Newf(
+			"download brreg bulk payload incomplete: downloaded %d bytes, expected %d bytes",
+			bytesDownloaded,
+			response.ContentLength,
+		)
+	}
+	if _, err := tempFile.Seek(0, io.SeekStart); err != nil {
+		return nil, errors.Wrap(err, "rewind brreg bulk temp file")
+	}
+	staged.BytesDownloaded = bytesDownloaded
+	keep = true
+	return staged, nil
+}
+
+func newBrregBulkDownloadRequest(ctx context.Context, sourceURL string) (*http.Request, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return nil, errors.Wrap(err, "create brreg bulk download request")
+	}
+	request.Header.Set("Accept", "*/*")
+	request.Header.Set("User-Agent", "corpscout-scheduler/1.0")
+	return request, nil
+}
+
+func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader, onProgress func(bytesDownloaded int64)) (int64, error) {
+	var written int64
+	buffer := make([]byte, 1024*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return written, err
+		}
+		n, readErr := src.Read(buffer)
+		if n > 0 {
+			writeN, writeErr := dst.Write(buffer[:n])
+			written += int64(writeN)
+			if writeErr != nil {
+				return written, writeErr
+			}
+			if writeN != n {
+				return written, io.ErrShortWrite
+			}
+			if onProgress != nil {
+				onProgress(written)
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return written, nil
+			}
+			return written, readErr
+		}
+	}
 }

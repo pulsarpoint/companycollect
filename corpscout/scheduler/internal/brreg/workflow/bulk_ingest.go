@@ -48,7 +48,7 @@ func LoadBrregBulkRawRecords(
 			InitialInterval:    30 * time.Second,
 			BackoffCoefficient: 2,
 			MaximumInterval:    5 * time.Minute,
-			MaximumAttempts:    1,
+			MaximumAttempts:    3,
 		},
 	})
 	workflowInfo := temporalworkflow.GetInfo(ctx)

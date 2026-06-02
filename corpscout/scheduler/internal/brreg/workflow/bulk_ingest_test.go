@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	stderrors "errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -42,4 +43,31 @@ func TestLoadBrregBulkRawRecordsAllowsAllRecords(t *testing.T) {
 	require.Equal(t, "succeeded", result.Status)
 	require.EqualValues(t, 1172125, result.RowsSeen)
 	require.EqualValues(t, 1172125, result.RowsWritten)
+}
+
+func TestLoadBrregBulkRawRecordsRetriesTransientActivityFailure(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.RegisterWorkflow(LoadBrregBulkRawRecords)
+	attempts := 0
+	env.RegisterActivityWithOptions(func(LoadBrregBulkRawRecordsActivityInput) (LoadBrregBulkRawRecordsActivityResult, error) {
+		attempts++
+		if attempts == 1 {
+			return LoadBrregBulkRawRecordsActivityResult{}, stderrors.New("temporary EOF")
+		}
+		return LoadBrregBulkRawRecordsActivityResult{
+			RowsSeen:    2,
+			RowsWritten: 2,
+		}, nil
+	}, activity.RegisterOptions{Name: loadBrregBulkRawRecordsActivity})
+
+	env.ExecuteWorkflow(LoadBrregBulkRawRecords, LoadBrregBulkRawRecordsInput{
+		Limit:   0,
+		Trigger: "manual",
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	require.Equal(t, 2, attempts)
 }
