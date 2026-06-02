@@ -130,10 +130,10 @@ func firstQueryString(r *http.Request, keys ...string) *string {
 
 func brregRawRecordSortBy(value string) string {
 	switch value {
-	case "organization", "website", "state", "translation_status", "domain_status", "financial_status", "enhanced_status", "last_seen_at":
+	case "organization", "website", "state", "translation_status", "domain_status", "financial_status", "enhanced_status", "synced", "updated_at", "last_seen_at":
 		return value
 	default:
-		return "last_seen_at"
+		return "updated_at"
 	}
 }
 

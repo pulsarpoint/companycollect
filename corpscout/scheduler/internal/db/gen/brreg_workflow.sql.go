@@ -1353,7 +1353,7 @@ func (q *Queries) ListBrregWorkflowNACEMappingsByRawRecord(ctx context.Context, 
 }
 
 const listBrregWorkflowRawRecords = `-- name: ListBrregWorkflowRawRecords :many
-SELECT id, organization_number, organization_name, website, registration_status, country_iso2, payload_hash, is_current, first_seen_at, last_seen_at, translation_status, domain_status, best_domain, financial_status, original_currency, enhanced_status, lifecycle_state, task_statuses, task_errors
+SELECT id, organization_number, organization_name, website, registration_status, country_iso2, payload_hash, is_current, first_seen_at, last_seen_at, translation_status, domain_status, best_domain, financial_status, original_currency, enhanced_status, lifecycle_state, task_statuses, task_errors, source_company_id, source_payload_hash, source_synced_at, sync_status, synced, updated_at
 FROM brreg_workflow.v_raw_record_list ri
 WHERE (
     $1::text IS NULL
@@ -1411,6 +1411,10 @@ ORDER BY
   CASE WHEN $8::text = 'financial_status' AND $9::text = 'desc' THEN ri.financial_status END DESC,
   CASE WHEN $8::text = 'enhanced_status' AND $9::text = 'asc' THEN ri.enhanced_status END ASC,
   CASE WHEN $8::text = 'enhanced_status' AND $9::text = 'desc' THEN ri.enhanced_status END DESC,
+  CASE WHEN $8::text = 'synced' AND $9::text = 'asc' THEN ri.sync_status END ASC,
+  CASE WHEN $8::text = 'synced' AND $9::text = 'desc' THEN ri.sync_status END DESC,
+  CASE WHEN $8::text = 'updated_at' AND $9::text = 'asc' THEN ri.updated_at END ASC,
+  CASE WHEN $8::text = 'updated_at' AND $9::text = 'desc' THEN ri.updated_at END DESC,
   CASE WHEN $8::text = 'last_seen_at' AND $9::text = 'asc' THEN ri.last_seen_at END ASC,
   CASE WHEN $8::text = 'last_seen_at' AND $9::text = 'desc' THEN ri.last_seen_at END DESC,
   ri.last_seen_at DESC,
@@ -1474,6 +1478,12 @@ func (q *Queries) ListBrregWorkflowRawRecords(ctx context.Context, arg ListBrreg
 			&i.LifecycleState,
 			&i.TaskStatuses,
 			&i.TaskErrors,
+			&i.SourceCompanyID,
+			&i.SourcePayloadHash,
+			&i.SourceSyncedAt,
+			&i.SyncStatus,
+			&i.Synced,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

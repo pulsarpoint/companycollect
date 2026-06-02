@@ -69,7 +69,10 @@ FROM nace_codes parent
 WHERE child.classification_id = $1
   AND parent.classification_id = child.classification_id
   AND child.parent_code IS NOT NULL
-  AND child.parent_code = parent.code;
+  AND (
+    child.parent_code = parent.code
+    OR regexp_replace(upper(child.parent_code), '[^0-9A-Z]', '', 'g') = parent.normalized_code
+  );
 
 -- name: ClearRootNACECodeParents :exec
 UPDATE nace_codes
@@ -144,6 +147,167 @@ WHERE code_system = 'NACE'
   AND active = true
 ORDER BY level, code;
 
+-- name: ListNACECodeChildren :many
+SELECT
+  ncodes.id,
+  ncodes.classification_id,
+  ncodes.code,
+  ncodes.normalized_code,
+  ncodes.level,
+  ncodes.level_name,
+  ncodes.parent_code,
+  ncodes.parent_id,
+  ncodes.title,
+  ncodes.description,
+  ncodes.includes,
+  ncodes.excludes,
+  ncodes.active,
+  ncodes.created_at,
+  ncodes.updated_at,
+  EXISTS (
+    SELECT 1
+    FROM nace_codes child
+    WHERE child.parent_id = ncodes.id
+      AND child.active
+  ) AS has_children
+FROM nace_codes ncodes
+JOIN nace_classifications nclass ON nclass.id = ncodes.classification_id
+WHERE nclass.code_system = 'NACE'
+  AND nclass.revision = sqlc.arg('revision')::text
+  AND ncodes.active
+  AND (
+    (sqlc.narg('parent_id')::uuid IS NULL AND ncodes.parent_id IS NULL)
+    OR ncodes.parent_id = sqlc.narg('parent_id')::uuid
+  )
+ORDER BY ncodes.code;
+
 -- name: ListNACETaxonomyState :many
 SELECT * FROM v_nace_taxonomy_state
 ORDER BY revision;
+
+-- name: BeginNACEImportRun :one
+INSERT INTO nace_import_runs (
+  temporal_workflow_id,
+  revision,
+  source_url,
+  metadata
+) VALUES (
+  sqlc.arg('temporal_workflow_id'),
+  sqlc.arg('revision'),
+  sqlc.arg('source_url'),
+  COALESCE(sqlc.arg('metadata')::jsonb, '{}'::jsonb)
+)
+ON CONFLICT (temporal_workflow_id)
+DO UPDATE SET
+  revision = EXCLUDED.revision,
+  source_url = EXCLUDED.source_url,
+  status = 'running',
+  source_file_id = NULL,
+  content_sha256 = NULL,
+  records_seen = 0,
+  records_imported = 0,
+  records_deactivated = 0,
+  started_at = now(),
+  finished_at = NULL,
+  error = NULL,
+  metadata = EXCLUDED.metadata
+RETURNING *;
+
+-- name: GetNACEImportRunByWorkflowID :one
+SELECT *
+FROM nace_import_runs
+WHERE temporal_workflow_id = $1;
+
+-- name: GetProcessedNACESourceFileByHash :one
+SELECT *
+FROM nace_source_files
+WHERE revision = sqlc.arg('revision')
+  AND source_url = sqlc.arg('source_url')
+  AND content_sha256 = sqlc.arg('content_sha256')
+  AND status = 'processed';
+
+-- name: UpsertDownloadedNACESourceFile :one
+INSERT INTO nace_source_files (
+  revision,
+  source_url,
+  content_sha256,
+  content_length_bytes,
+  content_type,
+  etag,
+  last_modified,
+  status,
+  metadata
+) VALUES (
+  sqlc.arg('revision'),
+  sqlc.arg('source_url'),
+  sqlc.arg('content_sha256'),
+  sqlc.arg('content_length_bytes'),
+  sqlc.narg('content_type'),
+  sqlc.narg('etag'),
+  sqlc.narg('last_modified'),
+  'downloaded',
+  COALESCE(sqlc.arg('metadata')::jsonb, '{}'::jsonb)
+)
+ON CONFLICT (revision, source_url, content_sha256)
+DO UPDATE SET
+  content_length_bytes = EXCLUDED.content_length_bytes,
+  content_type = EXCLUDED.content_type,
+  etag = EXCLUDED.etag,
+  last_modified = EXCLUDED.last_modified,
+  status = CASE
+    WHEN nace_source_files.status = 'processed' THEN nace_source_files.status
+    ELSE 'downloaded'
+  END,
+  error = NULL,
+  metadata = EXCLUDED.metadata,
+  updated_at = now()
+RETURNING *;
+
+-- name: MarkNACESourceFileProcessing :one
+UPDATE nace_source_files
+SET status = 'processing',
+    error = NULL,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: MarkNACESourceFileProcessed :one
+UPDATE nace_source_files
+SET status = 'processed',
+    processed_at = now(),
+    error = NULL,
+    metadata = metadata || COALESCE(sqlc.arg('metadata')::jsonb, '{}'::jsonb),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+RETURNING *;
+
+-- name: MarkNACESourceFileFailed :one
+UPDATE nace_source_files
+SET status = 'failed',
+    error = sqlc.arg('error'),
+    metadata = metadata || COALESCE(sqlc.arg('metadata')::jsonb, '{}'::jsonb),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+RETURNING *;
+
+-- name: FinishNACEImportRun :one
+UPDATE nace_import_runs
+SET
+  source_file_id = sqlc.narg('source_file_id')::uuid,
+  status = sqlc.arg('status'),
+  content_sha256 = sqlc.narg('content_sha256'),
+  records_seen = sqlc.arg('records_seen'),
+  records_imported = sqlc.arg('records_imported'),
+  records_deactivated = sqlc.arg('records_deactivated'),
+  finished_at = now(),
+  error = NULLIF(sqlc.arg('error')::text, ''),
+  metadata = metadata || COALESCE(sqlc.arg('metadata')::jsonb, '{}'::jsonb)
+WHERE id = sqlc.arg('id')
+RETURNING *;
+
+-- name: ListNACESourceFileImports :many
+SELECT *
+FROM v_nace_source_file_imports
+WHERE revision = COALESCE(sqlc.narg('revision')::text, revision)
+ORDER BY started_at DESC
+LIMIT sqlc.arg('limit')::integer;

@@ -86,7 +86,7 @@ func (h *Handlers) handleGetBrregTaskState(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handlers) brregTaskState(ctx context.Context) (brregTaskStateResponse, error) {
-	translationState, err := h.db.GetBrregWorkflowTranslationAssetState(ctx)
+	translationState, err := h.db.GetBrregSourceTranslationAssetState(ctx)
 	if err != nil {
 		return brregTaskStateResponse{}, errors.Wrap(err, "get brreg translation task state")
 	}
@@ -125,7 +125,7 @@ func (h *Handlers) brregTaskState(ctx context.Context) (brregTaskStateResponse, 
 			{
 				Key:         "translate",
 				Label:       "Translate",
-				Description: "Translate raw BRREG payloads into English task artifacts.",
+				Description: "Translate BRREG source fields into English values stored in source tables.",
 				TaskType:    "translate",
 				Asset:       translation.Asset,
 				State:       translation,
@@ -149,7 +149,7 @@ func (h *Handlers) brregTaskState(ctx context.Context) (brregTaskStateResponse, 
 		},
 		ResultTables: []brregTaskStateResultTable{
 			{Name: "brreg_workflow.raw_records", Label: "Raw records", Count: translation.RawRecordsCurrent, Href: "/sources/brreg/raw_input"},
-			{Name: "brreg_workflow.translation_results", Label: "Translation results", Count: artifactCount(translation)},
+			{Name: "brreg_source.action_tasks", Label: "Source action tasks", Count: artifactCount(translation), Href: "/sources/brreg/source_entries"},
 			{Name: "brreg_workflow.domain_results", Label: "Domain results", Count: artifactCount(domains)},
 			{Name: "brreg_workflow.financial_results", Label: "Financial results", Count: artifactCount(financials)},
 			{Name: "brreg_workflow.enhanced_records", Label: "Enhanced records", Count: artifactCount(enhanced)},
@@ -161,7 +161,7 @@ func artifactCount(state brregTaskStateAssetSummary) int64 {
 	return state.ArtifactSucceeded + state.ArtifactSkipped + state.ArtifactFailed
 }
 
-func brregTaskStateTranslationSummary(row db.BrregWorkflowVTranslationAssetState) brregTaskStateAssetSummary {
+func brregTaskStateTranslationSummary(row db.GetBrregSourceTranslationAssetStateRow) brregTaskStateAssetSummary {
 	return brregTaskStateAssetSummaryFromState(brregTaskStateAssetFields(row))
 }
 

@@ -37,14 +37,15 @@ type errorResponse struct {
 
 // Handlers holds shared dependencies for all REST API handlers.
 type Handlers struct {
-	db           db.Querier
-	rv           riverInserter
-	pool         dbPool
-	s3           *s3client.Client
-	postgrestURL string
-	temporal     client.Client
-	llmProviders *llmproviders.Store
-	llmProbe     *llmproviders.ProbeClient
+	db            db.Querier
+	rv            riverInserter
+	pool          dbPool
+	s3            *s3client.Client
+	postgrestURL  string
+	temporal      client.Client
+	llmProviders  *llmproviders.Store
+	llmProbe      *llmproviders.ProbeClient
+	naceSourceURL string
 }
 
 // NewHandlers constructs Handlers. pool, rv, s3 and temporal may be nil in tests.
@@ -56,6 +57,11 @@ func NewHandlers(q db.Querier, rv riverInserter, pool dbPool, s3 *s3client.Clien
 func (h *Handlers) ConfigureLLMProviders(store *llmproviders.Store, probe *llmproviders.ProbeClient) *Handlers {
 	h.llmProviders = store
 	h.llmProbe = probe
+	return h
+}
+
+func (h *Handlers) ConfigureNACE(sourceURL string) *Handlers {
+	h.naceSourceURL = sourceURL
 	return h
 }
 
@@ -89,9 +95,24 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 		r.Patch("/llm-providers/{id}", h.handleUpdateLLMProvider)
 		r.Post("/llm-providers/{id}/default", h.handleSetDefaultLLMProvider)
 		r.Post("/llm-providers/{id}/test", h.handleTestLLMProvider)
+		r.Get("/nace/revisions", h.handleListNACERevisions)
+		r.Get("/nace/codes", h.handleListNACECodeChildren)
 		r.Get("/sources/brreg/task-state", h.handleGetBrregTaskState)
+		r.Get("/brreg/source-entries", h.handleListBrregSourceEntries)
 		r.Post("/workflows/brreg/translation", h.handleStartBrregTranslationWorkflow)
 		r.Post("/workflows/brreg/domain-search", h.handleStartBrregDomainSearchWorkflow)
+		r.Post("/workflows/brreg/bulk-raw-ingest", h.handleStartBrregBulkRawIngestWorkflow)
+		r.Post("/workflows/brreg/source-profile-normalization", h.handleStartBrregSourceProfileNormalizationWorkflow)
+		r.Post("/workflows/nace/taxonomy-sync", h.handleStartNACETaxonomySyncWorkflow)
+		r.Get("/workflows/nace/taxonomy-sync/runs", h.handleListNACETaxonomySyncWorkflowRuns)
+		r.Get("/workflow-schedules", h.handleListWorkflowSchedules)
+		r.Post("/workflow-schedules", h.handleCreateWorkflowSchedule)
+		r.Get("/workflow-schedules/{schedule_id}", h.handleGetWorkflowSchedule)
+		r.Patch("/workflow-schedules/{schedule_id}", h.handleUpdateWorkflowSchedule)
+		r.Post("/workflow-schedules/{schedule_id}/trigger", h.handleTriggerWorkflowSchedule)
+		r.Post("/workflow-schedules/{schedule_id}/pause", h.handlePauseWorkflowSchedule)
+		r.Post("/workflow-schedules/{schedule_id}/resume", h.handleResumeWorkflowSchedule)
+		r.Delete("/workflow-schedules/{schedule_id}", h.handleDeleteWorkflowSchedule)
 		r.Get("/brreg/raw-records", h.handleListBrregRawRecords)
 		r.Get("/brreg/raw-records/{id}", h.handleGetBrregRawRecord)
 		r.Post("/jobs/cancel-bulk", h.handleCancelBulk)

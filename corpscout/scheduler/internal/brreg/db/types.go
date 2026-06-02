@@ -216,6 +216,24 @@ type RecoverStaleWorkflowRunsResult struct {
 	TaskAttemptsRecovered int32
 }
 
+type NormalizeSourceProfilesCommand struct {
+	IDs     []string
+	Filters map[string]string
+	Limit   int32
+	Trigger string
+}
+
+type NormalizeSourceProfilesResult struct {
+	RecordsSeen        int32
+	CompaniesUpserted  int32
+	AddressesUpserted  int32
+	IndustriesUpserted int32
+	WebsitesUpserted   int32
+	DomainsUpserted    int32
+	ContactsUpserted   int32
+	CapitalUpserted    int32
+}
+
 func jsonObject(value []byte) []byte {
 	if len(value) == 0 {
 		return []byte(jsonPayloadEmptyObject)

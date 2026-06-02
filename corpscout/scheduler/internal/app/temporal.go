@@ -2,8 +2,10 @@ package app
 
 import (
 	"log/slog"
+	"net/http"
 
 	"github.com/cockroachdb/errors"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/client"
 	temporalworker "go.temporal.io/sdk/worker"
 
@@ -12,18 +14,22 @@ import (
 	"github.com/pulsarpoint/corpscout/scheduler/internal/config"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/crawlclient"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/llmproviders"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/s3client"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/translationclient"
 )
 
 type temporalWorkerResources struct {
-	translationClient   *translationclient.Client
-	translationActions  *brregactions.TranslationActions
-	crawlClient         *crawlclient.Client
-	domainSearchActions *brregactions.DomainSearchActions
+	translationClient    *translationclient.Client
+	translationActions   *brregactions.TranslationActions
+	crawlClient          *crawlclient.Client
+	domainSearchActions  *brregactions.DomainSearchActions
+	bulkIngestActions    *brregactions.BulkIngestActions
+	sourceProfileActions *brregactions.SourceProfileActions
+	naceTaxonomyActions  *nacetaxonomy.Actions
 }
 
-func newTemporalWorkerResources(cfg config.Config, pool brregdb.TxPool, llmStore *llmproviders.Store, s3 *s3client.Client) (*temporalWorkerResources, error) {
+func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore *llmproviders.Store, s3 *s3client.Client) (*temporalWorkerResources, error) {
 	slog.Debug("creating temporal worker resources")
 	if cfg.NATSURL == "" {
 		return nil, errors.New("CORPSCOUT_NATS_URL is required for temporal translation actions")
@@ -50,10 +56,13 @@ func newTemporalWorkerResources(cfg config.Config, pool brregdb.TxPool, llmStore
 	)
 	gateway := brregdb.New(pool)
 	return &temporalWorkerResources{
-		translationClient:   translator,
-		translationActions:  brregactions.NewTranslationActions(gateway, translator, llmStore),
-		crawlClient:         crawler,
-		domainSearchActions: brregactions.NewDomainSearchActions(gateway, crawler, llmStore, s3),
+		translationClient:    translator,
+		translationActions:   brregactions.NewTranslationActions(pool, translator, llmStore),
+		crawlClient:          crawler,
+		domainSearchActions:  brregactions.NewDomainSearchActions(gateway, crawler, llmStore, s3),
+		bulkIngestActions:    brregactions.NewBulkIngestActions(gateway, http.DefaultClient, cfg.BRREGBulkSourceURL),
+		sourceProfileActions: brregactions.NewSourceProfileActions(gateway),
+		naceTaxonomyActions:  nacetaxonomy.NewActions(pool, http.DefaultClient),
 	}, nil
 }
 
@@ -73,5 +82,8 @@ func newTemporalWorkers(temporalClient client.Client, resources *temporalWorkerR
 	return []temporalworker.Worker{
 		newBrregTranslationTemporalWorker(temporalClient, resources),
 		newBrregDomainSearchTemporalWorker(temporalClient, resources),
+		newBrregBulkIngestTemporalWorker(temporalClient, resources),
+		newBrregSourceProfileTemporalWorker(temporalClient, resources),
+		newNACETaxonomyTemporalWorker(temporalClient, resources),
 	}
 }

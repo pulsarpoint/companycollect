@@ -12,7 +12,14 @@ sql:
         emit_interface: true
         emit_json_tags: true
         emit_pointers_for_null_types: true
+        omit_unused_structs: true
         sql_package: "pgx/v5"
+        rename:
+          brreg_source_addresses: "LegacyBrregSourceAddress"
+          brreg_source_capital: "LegacyBrregSourceCapital"
+          brreg_source_companies: "LegacyBrregSourceCompany"
+          brreg_source_domains: "LegacyBrregSourceDomain"
+          brreg_source_industries: "LegacyBrregSourceIndustry"
         overrides:
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"

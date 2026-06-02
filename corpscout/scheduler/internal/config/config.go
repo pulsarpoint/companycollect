@@ -26,6 +26,8 @@ type Config struct {
 	TemporalUIURL      string
 	LogLevel           string
 	LLMProviderKey     string
+	NACESourceURL      string
+	BRREGBulkSourceURL string
 }
 
 func Load() (Config, error) {
@@ -64,6 +66,8 @@ func Load() (Config, error) {
 		TemporalUIURL:      getEnv("CORPSCOUT_TEMPORAL_UI_URL", "http://localhost:8089"),
 		LogLevel:           logLevel,
 		LLMProviderKey:     getEnv("CORPSCOUT_LLM_PROVIDER_KEY_ENCRYPTION_KEY", ""),
+		NACESourceURL:      getEnv("CORPSCOUT_NACE_REV21_SOURCE_URL", ""),
+		BRREGBulkSourceURL: getEnv("CORPSCOUT_BRREG_BULK_SOURCE_URL", "https://data.brreg.no/enhetsregisteret/api/enheter/lastned"),
 	}, nil
 }
 

@@ -251,7 +251,7 @@ func TestListBrregRawRecordsReturnsEmptyArrayWhenNoRows(t *testing.T) {
 	}).Return(int64(0), nil)
 	q.On("ListBrregWorkflowRawRecords", mock.Anything, db.ListBrregWorkflowRawRecordsParams{
 		DomainStatus: ptrString("not_started"),
-		SortBy:       "last_seen_at",
+		SortBy:       "updated_at",
 		SortDir:      "desc",
 		Offset:       0,
 		Limit:        50,
@@ -287,7 +287,7 @@ func TestListBrregRawRecordsFiltersByDomainSearchEvidence(t *testing.T) {
 	}).Return(int64(0), nil)
 	q.On("ListBrregWorkflowRawRecords", mock.Anything, db.ListBrregWorkflowRawRecordsParams{
 		DomainSearch: ptrString("with_markdown"),
-		SortBy:       "last_seen_at",
+		SortBy:       "updated_at",
 		SortDir:      "desc",
 		Offset:       0,
 		Limit:        50,

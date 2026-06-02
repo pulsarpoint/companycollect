@@ -49,6 +49,11 @@ func (s *stubQuerier) CountDomains(ctx context.Context, arg db.CountDomainsParam
 	return ret.Get(0).(int64), ret.Error(1)
 }
 
+func (s *stubQuerier) CountBrregSourceEntries(ctx context.Context, arg db.CountBrregSourceEntriesParams) (int64, error) {
+	ret := s.Called(ctx, arg)
+	return ret.Get(0).(int64), ret.Error(1)
+}
+
 func (s *stubQuerier) GetSourceByName(ctx context.Context, name string) (db.DataSource, error) {
 	ret := s.Called(ctx, name)
 	return ret.Get(0).(db.DataSource), ret.Error(1)
@@ -70,6 +75,14 @@ func (s *stubQuerier) ListDomains(ctx context.Context, arg db.ListDomainsParams)
 func (s *stubQuerier) ListSources(ctx context.Context) ([]db.DataSource, error) {
 	ret := s.Called(ctx)
 	if v, ok := ret.Get(0).([]db.DataSource); ok {
+		return v, ret.Error(1)
+	}
+	return nil, ret.Error(1)
+}
+
+func (s *stubQuerier) ListBrregSourceEntries(ctx context.Context, arg db.ListBrregSourceEntriesParams) ([]db.ListBrregSourceEntriesRow, error) {
+	ret := s.Called(ctx, arg)
+	if v, ok := ret.Get(0).([]db.ListBrregSourceEntriesRow); ok {
 		return v, ret.Error(1)
 	}
 	return nil, ret.Error(1)
@@ -395,6 +408,11 @@ func (s *stubQuerier) ListPendingCompanyFinancials(ctx context.Context, arg db.L
 func (s *stubQuerier) GetBrregWorkflowTranslationAssetState(ctx context.Context) (db.BrregWorkflowVTranslationAssetState, error) {
 	ret := s.Called(ctx)
 	return ret.Get(0).(db.BrregWorkflowVTranslationAssetState), ret.Error(1)
+}
+
+func (s *stubQuerier) GetBrregSourceTranslationAssetState(ctx context.Context) (db.GetBrregSourceTranslationAssetStateRow, error) {
+	ret := s.Called(ctx)
+	return ret.Get(0).(db.GetBrregSourceTranslationAssetStateRow), ret.Error(1)
 }
 
 func (s *stubQuerier) GetBrregWorkflowDomainAssetState(ctx context.Context) (db.BrregWorkflowVDomainAssetState, error) {

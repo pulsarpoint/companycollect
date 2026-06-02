@@ -6,13 +6,11 @@ import {
   SheetHeader,
   SheetTitle,
 } from "~/components/ui/sheet";
-import {
-  BrregTranslationActionForm,
-  type BrregActionScope,
-} from "~/components/app/BrregTranslationActionForm";
-import { BrregDomainSearchActionForm } from "~/components/app/BrregDomainSearchActionForm";
+import type { BrregActionScope } from "~/components/app/BrregActionScope";
+import { BrregBulkLoadActionForm } from "~/components/app/BrregBulkLoadActionForm";
+import { BrregSourceProfileNormalizationActionForm } from "~/components/app/BrregSourceProfileNormalizationActionForm";
 
-type BrregRawRecordAction = "" | "translation" | "domain_search";
+type BrregRawRecordAction = "" | "load_bulk" | "sync_source" | "sync_api";
 
 interface Props {
   open: boolean;
@@ -28,16 +26,23 @@ const AVAILABLE_ACTIONS: Array<{
   key: Exclude<BrregRawRecordAction, "">;
   label: string;
   description: string;
+  disabled?: boolean;
 }> = [
   {
-    key: "translation",
-    label: "Translation",
-    description: "Translate BRREG raw payloads into English artifacts.",
+    key: "load_bulk",
+    label: "Load bulk",
+    description: "Load raw BRREG entries from the bulk file.",
   },
   {
-    key: "domain_search",
-    label: "Domain discovery",
-    description: "Fetch search pages and extract candidate websites.",
+    key: "sync_source",
+    label: "Sync to brreg_source",
+    description: "Upsert raw entries into normalized BRREG source tables.",
+  },
+  {
+    key: "sync_api",
+    label: "Sync API",
+    description: "Fetch updates from the BRREG API. Not implemented yet.",
+    disabled: true,
   },
 ];
 
@@ -61,7 +66,7 @@ export function BrregRawRecordActionSheet({
       <SheetContent className="overflow-y-auto sm:max-w-2xl">
         <SheetHeader>
           <SheetTitle>BRREG actions</SheetTitle>
-          <SheetDescription>Select an action, then configure the options for that workflow.</SheetDescription>
+          <SheetDescription>Select a raw ingest or source sync action.</SheetDescription>
         </SheetHeader>
 
         <div className="flex flex-col gap-5 px-4 pb-4">
@@ -77,7 +82,7 @@ export function BrregRawRecordActionSheet({
             >
               <option value="">Select action</option>
               {AVAILABLE_ACTIONS.map((action) => (
-                <option key={action.key} value={action.key}>
+                <option key={action.key} value={action.key} disabled={action.disabled}>
                   {action.label}
                 </option>
               ))}
@@ -89,19 +94,15 @@ export function BrregRawRecordActionSheet({
             )}
           </div>
 
-          {selectedAction === "translation" && (
-            <BrregTranslationActionForm
-              selectedIds={selectedIds}
-              totalCount={totalCount}
-              filters={filters}
-              initialScope={initialScope}
+          {selectedAction === "load_bulk" && (
+            <BrregBulkLoadActionForm
               onStarted={onStarted}
               onClose={() => onOpenChange(false)}
             />
           )}
 
-          {selectedAction === "domain_search" && (
-            <BrregDomainSearchActionForm
+          {selectedAction === "sync_source" && (
+            <BrregSourceProfileNormalizationActionForm
               selectedIds={selectedIds}
               totalCount={totalCount}
               filters={filters}

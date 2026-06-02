@@ -8,14 +8,16 @@ import { Label } from "~/components/ui/label";
 import { Separator } from "~/components/ui/separator";
 import { api, errorMessage } from "~/lib/api";
 import type { LLMProvider } from "~/types/api";
-
-export type BrregActionScope = "selected" | "filtered" | "eligible";
+import type { BrregActionScope } from "~/components/app/BrregActionScope";
 
 interface Props {
   selectedIds: string[];
   totalCount: number;
   filters: Record<string, string>;
   initialScope?: BrregActionScope;
+  recordLabel?: string;
+  description?: string;
+  showAdvancedOptions?: boolean;
   onStarted?: () => void;
   onClose: () => void;
 }
@@ -24,12 +26,13 @@ function scopeLabel(
   scope: BrregActionScope,
   selectedCount: number,
   totalCount: number,
+  recordLabel: string,
 ) {
   if (scope === "selected")
-    return `${selectedCount.toLocaleString()} selected records`;
+    return `${selectedCount.toLocaleString()} selected ${recordLabel}`;
   if (scope === "filtered")
-    return `${totalCount.toLocaleString()} records matching the current filters`;
-  return "Next eligible records";
+    return `${totalCount.toLocaleString()} ${recordLabel} matching the current filters`;
+  return `Next eligible ${recordLabel}`;
 }
 
 function parseRequiredPositiveNumber(value: string) {
@@ -58,6 +61,9 @@ export function BrregTranslationActionForm({
   totalCount,
   filters,
   initialScope,
+  recordLabel = "raw records",
+  description = "Starts the Temporal workflow that claims BRREG raw records, sends payloads to the translation service, and writes translation artifacts back to Corpscout.",
+  showAdvancedOptions = true,
   onStarted,
   onClose,
 }: Props) {
@@ -101,7 +107,7 @@ export function BrregTranslationActionForm({
   }, [defaultScope, selectedCount]);
 
   useEffect(() => {
-    if (!advancedOpen) return;
+    if (!showAdvancedOptions || !advancedOpen) return;
 
     let cancelled = false;
     setLLMProvidersLoading(true);
@@ -125,7 +131,7 @@ export function BrregTranslationActionForm({
     return () => {
       cancelled = true;
     };
-  }, [advancedOpen]);
+  }, [advancedOpen, showAdvancedOptions]);
 
   const scopeOptions = useMemo(
     () => [
@@ -183,29 +189,24 @@ export function BrregTranslationActionForm({
         ids?: string[];
         filters?: Record<string, string>;
         limit?: number;
-        batch_size?: number;
-        max_attempts?: number;
-        max_parallel_tasks?: number;
-        lease_seconds?: number;
-        provider?: string;
-        model?: string;
-        prompt_version?: string;
-        source_lang?: string;
-        target_lang?: string;
-        max_service_retries?: number;
       } = {
         limit: effectiveLimit,
-        batch_size: parseOptionalPositiveNumber(batchSize),
-        max_attempts: parseOptionalPositiveNumber(maxAttempts),
-        max_parallel_tasks: parseOptionalPositiveNumber(maxParallelTasks),
-        lease_seconds: parseOptionalPositiveNumber(leaseSeconds),
-        provider: optionalText(provider),
-        model: optionalText(model),
-        prompt_version: optionalText(promptVersion),
-        source_lang: optionalText(sourceLang),
-        target_lang: optionalText(targetLang),
-        max_service_retries: parseOptionalPositiveNumber(maxServiceRetries),
       };
+
+      if (showAdvancedOptions) {
+        Object.assign(body, {
+          batch_size: parseOptionalPositiveNumber(batchSize),
+          max_attempts: parseOptionalPositiveNumber(maxAttempts),
+          max_parallel_tasks: parseOptionalPositiveNumber(maxParallelTasks),
+          lease_seconds: parseOptionalPositiveNumber(leaseSeconds),
+          provider: optionalText(provider),
+          model: optionalText(model),
+          prompt_version: optionalText(promptVersion),
+          source_lang: optionalText(sourceLang),
+          target_lang: optionalText(targetLang),
+          max_service_retries: parseOptionalPositiveNumber(maxServiceRetries),
+        });
+      }
 
       if (scope === "selected") body.ids = selectedIds;
       if (scope === "filtered") body.filters = filters;
@@ -226,9 +227,7 @@ export function BrregTranslationActionForm({
       <div className="rounded-md border bg-muted/20 p-3">
         <div className="text-sm font-medium">Translation</div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          Starts the Temporal workflow that claims BRREG raw records, sends
-          payloads to the translation service, and writes translation artifacts
-          back to Corpscout.
+          {description}
         </p>
       </div>
 
@@ -236,7 +235,7 @@ export function BrregTranslationActionForm({
         <div>
           <h3 className="text-sm font-medium">Required</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            {scopeLabel(scope, selectedCount, totalCount)}
+            {scopeLabel(scope, selectedCount, totalCount, recordLabel)}
           </p>
         </div>
 
@@ -277,14 +276,15 @@ export function BrregTranslationActionForm({
             onChange={(event) => setLimit(event.target.value)}
           />
           <FieldDescription>
-            Maximum number of raw records this workflow can select. For checked
+            Maximum number of {recordLabel} this workflow can select. For checked
             rows, this is fixed to the selected count.
           </FieldDescription>
         </div>
       </div>
 
-      <Separator />
+      {showAdvancedOptions && <Separator />}
 
+      {showAdvancedOptions && (
       <div className="flex flex-col gap-4">
         <Button
           type="button"
@@ -480,6 +480,7 @@ export function BrregTranslationActionForm({
           </div>
         )}
       </div>
+      )}
 
       <div className="flex justify-end">
         <Button disabled={!canSubmit || submitting} onClick={submit}>

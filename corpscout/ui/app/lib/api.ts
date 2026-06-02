@@ -15,11 +15,20 @@ import type {
   RawInputDetail,
   BrregRawRecordListResponse,
   BrregRawRecordDetail,
+  BrregSourceEntryListResponse,
   LLMProvider,
   LLMProviderInput,
   LLMProviderListResponse,
   LLMProviderTestRequest,
   LLMProviderTestResponse,
+  WorkflowSchedule,
+  WorkflowScheduleInput,
+  WorkflowScheduleListResponse,
+  NACETaxonomySyncRequest,
+  NACETaxonomyWorkflowRunListResponse,
+  NACECodeListResponse,
+  NACERevisionListResponse,
+  StartWorkflowResponse,
 } from "~/types/api";
 
 const BASE = "/api/v1";
@@ -106,6 +115,12 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (!res.ok) throw await responseError(res);
+  return res.json() as Promise<T>;
+}
+
+async function del<T>(path: string): Promise<T> {
+  const res = await fetch(BASE + path, { method: "DELETE" });
   if (!res.ok) throw await responseError(res);
   return res.json() as Promise<T>;
 }
@@ -225,6 +240,38 @@ export const api = {
   getBrregRawRecord: (id: string) =>
     get<BrregRawRecordDetail>(`/brreg/raw-records/${id}`),
 
+  getBrregSourceEntries: (
+    params: {
+      page?: number;
+      limit?: number;
+      q?: string;
+      state?: string;
+      lifecycle_status?: string;
+      registration_status?: string;
+      translation_status?: string;
+      sort?: string;
+      dir?: "asc" | "desc";
+    } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.page) qs.set("page", String(params.page));
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.q) qs.set("q", params.q);
+    if (params.state) qs.set("state", params.state);
+    if (params.lifecycle_status)
+      qs.set("lifecycle_status", params.lifecycle_status);
+    if (params.registration_status)
+      qs.set("registration_status", params.registration_status);
+    if (params.translation_status)
+      qs.set("translation_status", params.translation_status);
+    if (params.sort) qs.set("sort", params.sort);
+    if (params.dir) qs.set("dir", params.dir);
+    const q = qs.toString();
+    return get<BrregSourceEntryListResponse>(
+      `/brreg/source-entries${q ? `?${q}` : ""}`,
+    );
+  },
+
   getLLMProviders: () => get<LLMProviderListResponse>("/llm-providers"),
 
   createLLMProvider: (body: LLMProviderInput) =>
@@ -238,6 +285,59 @@ export const api = {
 
   testLLMProvider: (id: string, body: LLMProviderTestRequest) =>
     post<LLMProviderTestResponse>(`/llm-providers/${id}/test`, body),
+
+  getWorkflowSchedules: () =>
+    get<WorkflowScheduleListResponse>("/workflow-schedules"),
+
+  createWorkflowSchedule: (body: WorkflowScheduleInput) =>
+    post<WorkflowSchedule>("/workflow-schedules", body),
+
+  updateWorkflowSchedule: (scheduleId: string, body: WorkflowScheduleInput) =>
+    patch<WorkflowSchedule>(
+      `/workflow-schedules/${encodeURIComponent(scheduleId)}`,
+      body,
+    ),
+
+  triggerWorkflowSchedule: (scheduleId: string) =>
+    post<{ status: string; temporal_schedule_id: string }>(
+      `/workflow-schedules/${encodeURIComponent(scheduleId)}/trigger`,
+      {},
+    ),
+
+  pauseWorkflowSchedule: (scheduleId: string, note = "") =>
+    post<{ status: string; temporal_schedule_id: string }>(
+      `/workflow-schedules/${encodeURIComponent(scheduleId)}/pause`,
+      { note },
+    ),
+
+  resumeWorkflowSchedule: (scheduleId: string, note = "") =>
+    post<{ status: string; temporal_schedule_id: string }>(
+      `/workflow-schedules/${encodeURIComponent(scheduleId)}/resume`,
+      { note },
+    ),
+
+  deleteWorkflowSchedule: (scheduleId: string) =>
+    del<{ status: string; temporal_schedule_id: string }>(
+      `/workflow-schedules/${encodeURIComponent(scheduleId)}`,
+    ),
+
+  startNACETaxonomySync: (body: NACETaxonomySyncRequest = {}) =>
+    post<StartWorkflowResponse>("/workflows/nace/taxonomy-sync", body),
+
+  getNACETaxonomySyncRuns: (limit = 10) =>
+    get<NACETaxonomyWorkflowRunListResponse>(
+      `/workflows/nace/taxonomy-sync/runs?limit=${limit}`,
+    ),
+
+  getNACERevisions: () => get<NACERevisionListResponse>("/nace/revisions"),
+
+  getNACECodeChildren: (params: { revision?: string; parent_id?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.revision) qs.set("revision", params.revision);
+    if (params.parent_id) qs.set("parent_id", params.parent_id);
+    const q = qs.toString();
+    return get<NACECodeListResponse>(`/nace/codes${q ? `?${q}` : ""}`);
+  },
 
   getCompanySuggestions: (page = 1, limit = 50) =>
     get<CompanySuggestionListResponse>(
@@ -318,6 +418,27 @@ export const api = {
       "/workflows/brreg/domain-search",
       body,
     ),
+
+  syncBrregSourceProfiles: (
+    body: {
+      ids?: string[];
+      filters?: Record<string, string>;
+      limit?: number;
+      trigger?: string;
+    } = {},
+  ) =>
+    post<{ status: string; workflow_id: string; workflow_run_id?: string }>(
+      "/workflows/brreg/source-profile-normalization",
+      body,
+    ),
+
+  loadBrregBulkRawRecords: (
+    body: {
+      limit?: number;
+      source_url?: string;
+      trigger?: string;
+    } = {},
+  ) => post<StartWorkflowResponse>("/workflows/brreg/bulk-raw-ingest", body),
 
   cancelJob: (id: number) =>
     post<{ status: string; id: number }>(`/jobs/${id}/cancel`, {}),

@@ -122,6 +122,30 @@ func TestBrregWorkflowRawRecordReadModelMigrationDefinesListAndDetailViews(t *te
 	require.NotContains(t, sql, "brreg_company_raw_inputs")
 }
 
+func TestBrregWorkflowRawRecordSourceSyncMigrationDefinesSyncStatus(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000076_brreg_raw_record_source_sync_status.up.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "LEFT JOIN brreg_source.companies source_company")
+	require.Contains(t, sql, "source_company.payload_hash = rr.payload_hash")
+	require.Contains(t, sql, "rr.last_seen_at <= source_company.updated_at")
+	require.Contains(t, sql, "'needs_update'")
+	require.Contains(t, sql, "'synced'")
+	require.Contains(t, sql, "'not_synced'")
+	require.Contains(t, sql, "AS sync_status")
+	require.Contains(t, sql, "END::boolean AS synced")
+	require.Contains(t, sql, "rr.last_seen_at AS updated_at")
+}
+
+func TestBrregSourceProfileNormalizationSupportsUnlimitedBatch(t *testing.T) {
+	body, err := os.ReadFile("../../../database/queries/brreg_source_profile.sql")
+	require.NoError(t, err)
+	sql := string(body)
+	require.Contains(t, sql, "LIMIT NULLIF(sqlc.arg('limit')::integer, 0)")
+	require.NotContains(t, sql, "ORDER BY rr.organization_number\n  LIMIT GREATEST(sqlc.arg('limit')::integer, 1)")
+}
+
 func TestBrregWorkflowTaskSelectionMigrationDefinesRunScopedSelections(t *testing.T) {
 	body, err := os.ReadFile("../../../database/migrations/000055_brreg_workflow_task_selections.up.sql")
 	require.NoError(t, err)

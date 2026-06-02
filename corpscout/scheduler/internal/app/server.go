@@ -108,7 +108,7 @@ func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
 	api.ConfigureLLMProviders(
 		llmStore,
 		llmproviders.NewProbeClient(http.DefaultClient, llmCipher),
-	)
+	).ConfigureNACE(cfg.NACESourceURL)
 	api.RegisterRoutes(router)
 	slog.Debug("scheduler http routes registered")
 

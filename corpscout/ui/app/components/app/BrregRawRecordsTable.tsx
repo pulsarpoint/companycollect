@@ -16,59 +16,17 @@ const PAGE_SIZE = 50;
 
 type SortDirection = "asc" | "desc";
 
-const FILTER_OPTIONS = {
-  lifecycle_state: [
-    ["input", "Input"],
-    ["translated", "Translated"],
-    ["ready_to_enhance", "Ready to enhance"],
-    ["enhanced", "Enhanced"],
-  ],
-  translation_status: [
-    ["not_started", "Not started"],
-    ["succeeded", "Succeeded"],
-    ["skipped", "Skipped"],
-    ["failed", "Failed"],
-  ],
-  domain_status: [
-    ["not_started", "Not started"],
-    ["succeeded", "Succeeded"],
-    ["partial", "Partial"],
-    ["not_found", "Not found"],
-    ["failed", "Failed"],
-    ["skipped", "Skipped"],
-  ],
-  domain_search: [
-    ["performed", "Search performed"],
-    ["with_markdown", "Has markdown"],
-    ["missing", "No search evidence"],
-  ],
-  financial_status: [
-    ["not_started", "Not started"],
-    ["succeeded", "Succeeded"],
-    ["not_available", "Not available"],
-    ["failed", "Failed"],
-    ["skipped", "Skipped"],
-  ],
-  enhanced_status: [
-    ["not_started", "Not started"],
-    ["built", "Built"],
-    ["published", "Published"],
-    ["failed", "Failed"],
-  ],
-} as const;
-
 function pageFromParams(searchParams: URLSearchParams) {
   const page = Number(searchParams.get("page") ?? "1");
   return Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
 }
 
 function statusClass(status: string) {
-  if (status === "succeeded" || status === "built" || status === "published") {
+  if (status === "synced") {
     return "border-green-200 bg-green-100 text-green-800";
   }
-  if (status.includes("failed")) return "border-red-200 bg-red-100 text-red-800";
-  if (status === "running") return "border-blue-200 bg-blue-100 text-blue-800";
-  if (status === "not_started") return "border-gray-200 bg-gray-50 text-gray-700";
+  if (status === "needs_update") return "border-amber-200 bg-amber-50 text-amber-800";
+  if (status === "not_synced") return "border-gray-200 bg-gray-50 text-gray-700";
   return "border-amber-200 bg-amber-50 text-amber-800";
 }
 
@@ -97,36 +55,6 @@ function SortIcon({ active, direction }: { active: boolean; direction: SortDirec
   return <ArrowDown className="size-3.5" />;
 }
 
-function FilterSelect({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: readonly (readonly [string, string])[];
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="flex items-center gap-2 text-xs text-muted-foreground">
-      <span>{label}</span>
-      <select
-        className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        <option value="">All</option>
-        {options.map(([optionValue, optionLabel]) => (
-          <option key={optionValue} value={optionValue}>
-            {optionLabel}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
 export function BrregRawRecordsTable() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<BrregRawRecordListItem[]>([]);
@@ -140,25 +68,14 @@ export function BrregRawRecordsTable() {
 
   const page = pageFromParams(searchParams);
   const query = searchParams.get("q") ?? "";
-  const lifecycleState = searchParams.get("state") ?? searchParams.get("lifecycle_state") ?? "";
-  const translationStatus = searchParams.get("translation_status") ?? "";
-  const domainStatus = searchParams.get("domain_status") ?? "";
-  const domainSearch = searchParams.get("domain_search") ?? "";
-  const financialStatus = searchParams.get("financial_status") ?? "";
-  const enhancedStatus = searchParams.get("enhanced_status") ?? "";
   const sort = searchParams.get("sort") ?? "";
   const sortDirection: SortDirection = searchParams.get("dir") === "asc" ? "asc" : "desc";
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const actionFilters = useMemo(() => {
     const filters: Record<string, string> = {};
     if (query) filters.q = query;
-    if (lifecycleState) filters.lifecycle_state = lifecycleState;
-    if (translationStatus) filters.translation_status = translationStatus;
-    if (domainStatus) filters.domain_status = domainStatus;
-    if (financialStatus) filters.financial_status = financialStatus;
-    if (enhancedStatus) filters.enhanced_status = enhancedStatus;
     return filters;
-  }, [domainStatus, enhancedStatus, financialStatus, lifecycleState, query, translationStatus]);
+  }, [query]);
   const filterKey = JSON.stringify(actionFilters);
   const selectedIdList = useMemo(() => Array.from(selectedIds), [selectedIds]);
   const currentPageSelected =
@@ -173,12 +90,6 @@ export function BrregRawRecordsTable() {
         page,
         limit: PAGE_SIZE,
         q: query || undefined,
-        state: lifecycleState || undefined,
-        translation_status: translationStatus || undefined,
-        domain_status: domainStatus || undefined,
-        domain_search: domainSearch || undefined,
-        financial_status: financialStatus || undefined,
-        enhanced_status: enhancedStatus || undefined,
         sort: sort || undefined,
         dir: sort ? sortDirection : undefined,
       });
@@ -188,16 +99,10 @@ export function BrregRawRecordsTable() {
       setLoading(false);
     }
   }, [
-    domainStatus,
-    domainSearch,
-    enhancedStatus,
-    financialStatus,
-    lifecycleState,
     page,
     query,
     sort,
     sortDirection,
-    translationStatus,
   ]);
 
   useEffect(() => {
@@ -272,13 +177,8 @@ export function BrregRawRecordsTable() {
   const columns = useMemo(
     () => [
       { label: "Organization", sort: "organization" },
-      { label: "Website", sort: "website" },
-      { label: "Lifecycle", sort: "state" },
-      { label: "Translation", sort: "translation_status" },
-      { label: "Domain", sort: "domain_status" },
-      { label: "Financial", sort: "financial_status" },
-      { label: "Enhanced", sort: "enhanced_status" },
-      { label: "Last seen", sort: "last_seen_at" },
+      { label: "Synced", sort: "synced" },
+      { label: "Updated at", sort: "updated_at" },
     ],
     [],
   );
@@ -306,43 +206,6 @@ export function BrregRawRecordsTable() {
             Search
           </Button>
         )}
-
-        <FilterSelect
-          label="State"
-          value={lifecycleState}
-          options={FILTER_OPTIONS.lifecycle_state}
-          onChange={(value) => setParam("state", value)}
-        />
-        <FilterSelect
-          label="Translation"
-          value={translationStatus}
-          options={FILTER_OPTIONS.translation_status}
-          onChange={(value) => setParam("translation_status", value)}
-        />
-        <FilterSelect
-          label="Domain"
-          value={domainStatus}
-          options={FILTER_OPTIONS.domain_status}
-          onChange={(value) => setParam("domain_status", value)}
-        />
-        <FilterSelect
-          label="Search evidence"
-          value={domainSearch}
-          options={FILTER_OPTIONS.domain_search}
-          onChange={(value) => setParam("domain_search", value)}
-        />
-        <FilterSelect
-          label="Financial"
-          value={financialStatus}
-          options={FILTER_OPTIONS.financial_status}
-          onChange={(value) => setParam("financial_status", value)}
-        />
-        <FilterSelect
-          label="Enhanced"
-          value={enhancedStatus}
-          options={FILTER_OPTIONS.enhanced_status}
-          onChange={(value) => setParam("enhanced_status", value)}
-        />
 
         <Button
           size="sm"
@@ -449,46 +312,13 @@ export function BrregRawRecordsTable() {
                     <div className="flex flex-col gap-1">
                       <span className="font-medium">{item.organization_name || "Unnamed organization"}</span>
                       <span className="font-mono text-xs text-muted-foreground">{item.organization_number}</span>
-                      {item.registration_status && (
-                        <span className="text-xs text-muted-foreground">{item.registration_status}</span>
-                      )}
                     </div>
                   </TableCell>
                   <TableCell>
-                    {item.website ? (
-                      <a
-                        className="max-w-48 truncate text-sm text-primary underline-offset-4 hover:underline"
-                        href={item.website}
-                        onClick={(event) => event.stopPropagation()}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        {item.website}
-                      </a>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">-</span>
-                    )}
+                    <StatusBadge status={item.sync_status ?? (item.synced ? "synced" : "not_synced")} />
                   </TableCell>
                   <TableCell>
-                    <StatusBadge status={item.lifecycle_state} />
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge status={item.translation_status} />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-col gap-1">
-                      <StatusBadge status={item.domain_status} />
-                      {item.best_domain && <span className="text-xs text-muted-foreground">{item.best_domain}</span>}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge status={item.financial_status} />
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge status={item.enhanced_status} />
-                  </TableCell>
-                  <TableCell>
-                    <span className="whitespace-nowrap text-sm">{formatDate(item.last_seen_at)}</span>
+                    <span className="whitespace-nowrap text-sm">{formatDate(item.updated_at ?? item.last_seen_at)}</span>
                   </TableCell>
                 </TableRow>
               ))

@@ -8,7 +8,7 @@ import { Label } from "~/components/ui/label";
 import { Separator } from "~/components/ui/separator";
 import { api, errorMessage } from "~/lib/api";
 import type { LLMProvider } from "~/types/api";
-import type { BrregActionScope } from "~/components/app/BrregTranslationActionForm";
+import type { BrregActionScope } from "~/components/app/BrregActionScope";
 
 interface Props {
   selectedIds: string[];

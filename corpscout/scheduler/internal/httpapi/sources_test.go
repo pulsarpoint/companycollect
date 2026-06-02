@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	workflowservicepb "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
@@ -42,9 +43,12 @@ func (s *sourcePatchWriteRecorder) UpdateSourceEnabled(_ context.Context, _ db.U
 
 type temporalExecuteRecorder struct {
 	client.Client
-	options  client.StartWorkflowOptions
-	workflow interface{}
-	args     []interface{}
+	options              client.StartWorkflowOptions
+	workflow             interface{}
+	args                 []interface{}
+	listWorkflowRequest  *workflowservicepb.ListWorkflowExecutionsRequest
+	listWorkflowResponse *workflowservicepb.ListWorkflowExecutionsResponse
+	listWorkflowError    error
 }
 
 func (t *temporalExecuteRecorder) ExecuteWorkflow(ctx context.Context, options client.StartWorkflowOptions, workflow interface{}, args ...interface{}) (client.WorkflowRun, error) {

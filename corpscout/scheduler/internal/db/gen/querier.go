@@ -13,10 +13,14 @@ import (
 type Querier interface {
 	ApproveCompanyFinancial(ctx context.Context, arg ApproveCompanyFinancialParams) error
 	BeginBrregWorkflowRun(ctx context.Context, arg BeginBrregWorkflowRunParams) (uuid.UUID, error)
+	BeginNACEImportRun(ctx context.Context, arg BeginNACEImportRunParams) (NaceImportRun, error)
 	BulkUpdateCompanyFinancialStatus(ctx context.Context, arg BulkUpdateCompanyFinancialStatusParams) error
+	ClaimBrregSourceTranslationBatch(ctx context.Context, arg ClaimBrregSourceTranslationBatchParams) ([]ClaimBrregSourceTranslationBatchRow, error)
 	ClaimBrregWorkflowTaskSelectionBatch(ctx context.Context, arg ClaimBrregWorkflowTaskSelectionBatchParams) ([]ClaimBrregWorkflowTaskSelectionBatchRow, error)
 	ClearDefaultLLMProvider(ctx context.Context) error
 	ClearRootNACECodeParents(ctx context.Context, classificationID uuid.UUID) error
+	CompleteBrregSourceTranslationTask(ctx context.Context, arg CompleteBrregSourceTranslationTaskParams) (CompleteBrregSourceTranslationTaskRow, error)
+	CountBrregSourceEntries(ctx context.Context, arg CountBrregSourceEntriesParams) (int64, error)
 	CountBrregWorkflowRawRecords(ctx context.Context, arg CountBrregWorkflowRawRecordsParams) (int64, error)
 	CountCompanySuggestionReviews(ctx context.Context, arg CountCompanySuggestionReviewsParams) (int32, error)
 	CountDomains(ctx context.Context, arg CountDomainsParams) (int64, error)
@@ -26,12 +30,17 @@ type Querier interface {
 	CreateBrregWorkflowTaskSelection(ctx context.Context, arg CreateBrregWorkflowTaskSelectionParams) (CreateBrregWorkflowTaskSelectionRow, error)
 	CreateCompanyFinancial(ctx context.Context, arg CreateCompanyFinancialParams) (CompanyFinancial, error)
 	CreateLLMProvider(ctx context.Context, arg CreateLLMProviderParams) (CreateLLMProviderRow, error)
+	CreateTemporalScheduleMetadata(ctx context.Context, arg CreateTemporalScheduleMetadataParams) (TemporalScheduleMetadatum, error)
 	DeactivateMissingNACECodes(ctx context.Context, arg DeactivateMissingNACECodesParams) (int32, error)
+	DeleteTemporalScheduleMetadata(ctx context.Context, temporalScheduleID string) error
+	FailRunningBrregSourceTranslationTasksForRun(ctx context.Context, arg FailRunningBrregSourceTranslationTasksForRunParams) (int32, error)
 	FailRunningBrregWorkflowTasksForRun(ctx context.Context, arg FailRunningBrregWorkflowTasksForRunParams) (int32, error)
 	FinishBrregDomainActionAttempt(ctx context.Context, arg FinishBrregDomainActionAttemptParams) error
 	FinishBrregWorkflowRun(ctx context.Context, arg FinishBrregWorkflowRunParams) (uuid.UUID, error)
 	FinishBrregWorkflowRunWithStats(ctx context.Context, arg FinishBrregWorkflowRunWithStatsParams) (uuid.UUID, error)
 	FinishBrregWorkflowTaskAttempt(ctx context.Context, arg FinishBrregWorkflowTaskAttemptParams) error
+	FinishNACEImportRun(ctx context.Context, arg FinishNACEImportRunParams) (NaceImportRun, error)
+	GetBrregSourceTranslationAssetState(ctx context.Context) (GetBrregSourceTranslationAssetStateRow, error)
 	GetBrregWorkflowDomainAssetState(ctx context.Context) (BrregWorkflowVDomainAssetState, error)
 	GetBrregWorkflowEnhancedAssetState(ctx context.Context) (BrregWorkflowVEnhancedAssetState, error)
 	GetBrregWorkflowFinancialAssetState(ctx context.Context) (BrregWorkflowVFinancialAssetState, error)
@@ -46,6 +55,8 @@ type Querier interface {
 	GetLLMProviderForUse(ctx context.Context, id uuid.UUID) (LlmProvider, error)
 	GetNACEClassificationByRevision(ctx context.Context, revision string) (NaceClassification, error)
 	GetNACECodeByRevisionAndCode(ctx context.Context, arg GetNACECodeByRevisionAndCodeParams) (NaceCode, error)
+	GetNACEImportRunByWorkflowID(ctx context.Context, temporalWorkflowID string) (NaceImportRun, error)
+	GetProcessedNACESourceFileByHash(ctx context.Context, arg GetProcessedNACESourceFileByHashParams) (NaceSourceFile, error)
 	GetSourceByName(ctx context.Context, name string) (DataSource, error)
 	GetSourcesWithCapabilities(ctx context.Context) ([]DataSource, error)
 	GetStats(ctx context.Context) (GetStatsRow, error)
@@ -61,6 +72,7 @@ type Querier interface {
 	GetSuggestionCompanyRelationshipByID(ctx context.Context, id uuid.UUID) (SuggestionCompanyRelationship, error)
 	GetSuggestionCompanyServiceByID(ctx context.Context, id uuid.UUID) (SuggestionCompanyService, error)
 	GetSyncCheckpoint(ctx context.Context, sourceName string) (SourceSyncCheckpoint, error)
+	GetTemporalScheduleMetadata(ctx context.Context, temporalScheduleID string) (TemporalScheduleMetadatum, error)
 	InsertBrregDomainActionArtifact(ctx context.Context, arg InsertBrregDomainActionArtifactParams) error
 	InsertBrregWorkflowDomainResult(ctx context.Context, arg InsertBrregWorkflowDomainResultParams) error
 	InsertBrregWorkflowFinancialResult(ctx context.Context, arg InsertBrregWorkflowFinancialResultParams) error
@@ -71,6 +83,7 @@ type Querier interface {
 	InsertSuggestion(ctx context.Context, arg InsertSuggestionParams) (Suggestion, error)
 	InsertSuggestionCompanyFinancial(ctx context.Context, arg InsertSuggestionCompanyFinancialParams) (SuggestionCompanyFinancial, error)
 	LinkNACECodeParents(ctx context.Context, classificationID uuid.UUID) error
+	ListBrregSourceEntries(ctx context.Context, arg ListBrregSourceEntriesParams) ([]ListBrregSourceEntriesRow, error)
 	ListBrregWorkflowDomainSearchEvidenceByRawRecord(ctx context.Context, rawRecordID uuid.UUID) ([]BrregWorkflowVDomainSearchEvidence, error)
 	ListBrregWorkflowEnhancedReadyRecords(ctx context.Context) ([]BrregWorkflowVEnhancedReadyRecord, error)
 	ListBrregWorkflowNACEMappingsByRawRecord(ctx context.Context, rawRecordID uuid.UUID) ([]BrregWorkflowVNaceMapping, error)
@@ -82,13 +95,19 @@ type Querier interface {
 	ListDomains(ctx context.Context, arg ListDomainsParams) ([]ListDomainsRow, error)
 	ListEnabledLLMProviders(ctx context.Context) ([]ListEnabledLLMProvidersRow, error)
 	ListLLMProviders(ctx context.Context) ([]ListLLMProvidersRow, error)
+	ListNACECodeChildren(ctx context.Context, arg ListNACECodeChildrenParams) ([]ListNACECodeChildrenRow, error)
 	ListNACECodeTree(ctx context.Context, revision string) ([]VNaceCodeTree, error)
+	ListNACESourceFileImports(ctx context.Context, arg ListNACESourceFileImportsParams) ([]VNaceSourceFileImport, error)
 	ListNACETaxonomyState(ctx context.Context) ([]VNaceTaxonomyState, error)
 	ListPendingCompanyFinancialIDs(ctx context.Context) ([]uuid.UUID, error)
 	ListPendingCompanyFinancials(ctx context.Context, arg ListPendingCompanyFinancialsParams) ([]ListPendingCompanyFinancialsRow, error)
 	ListPendingCompanySuggestionReviewItems(ctx context.Context, suggestionID uuid.UUID) ([]ListPendingCompanySuggestionReviewItemsRow, error)
 	ListReviewCandidateIDs(ctx context.Context, arg ListReviewCandidateIDsParams) ([]uuid.UUID, error)
 	ListSources(ctx context.Context) ([]DataSource, error)
+	ListTemporalScheduleMetadata(ctx context.Context, arg ListTemporalScheduleMetadataParams) ([]TemporalScheduleMetadatum, error)
+	MarkNACESourceFileFailed(ctx context.Context, arg MarkNACESourceFileFailedParams) (NaceSourceFile, error)
+	MarkNACESourceFileProcessed(ctx context.Context, arg MarkNACESourceFileProcessedParams) (NaceSourceFile, error)
+	MarkNACESourceFileProcessing(ctx context.Context, id uuid.UUID) (NaceSourceFile, error)
 	MarkSuggestionCompanyDomainApplied(ctx context.Context, arg MarkSuggestionCompanyDomainAppliedParams) error
 	MarkSuggestionCompanyDomainRejected(ctx context.Context, arg MarkSuggestionCompanyDomainRejectedParams) error
 	MarkSuggestionCompanyEmailApplied(ctx context.Context, arg MarkSuggestionCompanyEmailAppliedParams) error
@@ -109,6 +128,8 @@ type Querier interface {
 	MarkSuggestionCompanyRelationshipRejected(ctx context.Context, arg MarkSuggestionCompanyRelationshipRejectedParams) error
 	MarkSuggestionCompanyServiceApplied(ctx context.Context, arg MarkSuggestionCompanyServiceAppliedParams) error
 	MarkSuggestionCompanyServiceRejected(ctx context.Context, arg MarkSuggestionCompanyServiceRejectedParams) error
+	NormalizeBrregSourceProfiles(ctx context.Context, arg NormalizeBrregSourceProfilesParams) (NormalizeBrregSourceProfilesRow, error)
+	PrepareBrregSourceTranslationTasks(ctx context.Context, arg PrepareBrregSourceTranslationTasksParams) (int32, error)
 	RecoverStaleBrregWorkflowRuns(ctx context.Context, arg RecoverStaleBrregWorkflowRunsParams) (RecoverStaleBrregWorkflowRunsRow, error)
 	RejectCompanyFinancial(ctx context.Context, arg RejectCompanyFinancialParams) error
 	ResolveNACECodeAlias(ctx context.Context, arg ResolveNACECodeAliasParams) (NaceCode, error)
@@ -130,6 +151,7 @@ type Querier interface {
 	UpdateSourceStarted(ctx context.Context, name string) error
 	UpdateSuggestionAggregateStatus(ctx context.Context, arg UpdateSuggestionAggregateStatusParams) error
 	UpdateSuggestionCreatedCompany(ctx context.Context, arg UpdateSuggestionCreatedCompanyParams) error
+	UpdateTemporalScheduleMetadata(ctx context.Context, arg UpdateTemporalScheduleMetadataParams) (TemporalScheduleMetadatum, error)
 	UpsertBrregWorkflowNACEMappingsForRawRecord(ctx context.Context, arg UpsertBrregWorkflowNACEMappingsForRawRecordParams) ([]UpsertBrregWorkflowNACEMappingsForRawRecordRow, error)
 	UpsertBrregWorkflowRawRecord(ctx context.Context, arg UpsertBrregWorkflowRawRecordParams) (UpsertBrregWorkflowRawRecordRow, error)
 	UpsertCompanyDomain(ctx context.Context, arg UpsertCompanyDomainParams) (CompanyDomain, error)
@@ -148,6 +170,7 @@ type Querier interface {
 	UpsertCompanyService(ctx context.Context, arg UpsertCompanyServiceParams) (CompanyService, error)
 	UpsertDomain(ctx context.Context, domain string) (Domain, error)
 	UpsertDomainWithSource(ctx context.Context, arg UpsertDomainWithSourceParams) (Domain, error)
+	UpsertDownloadedNACESourceFile(ctx context.Context, arg UpsertDownloadedNACESourceFileParams) (NaceSourceFile, error)
 	UpsertNACEClassification(ctx context.Context, arg UpsertNACEClassificationParams) (NaceClassification, error)
 	UpsertNACECode(ctx context.Context, arg UpsertNACECodeParams) (NaceCode, error)
 	UpsertNACECodeAlias(ctx context.Context, arg UpsertNACECodeAliasParams) error

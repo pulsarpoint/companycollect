@@ -8,10 +8,74 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const beginNACEImportRun = `-- name: BeginNACEImportRun :one
+INSERT INTO nace_import_runs (
+  temporal_workflow_id,
+  revision,
+  source_url,
+  metadata
+) VALUES (
+  $1,
+  $2,
+  $3,
+  COALESCE($4::jsonb, '{}'::jsonb)
+)
+ON CONFLICT (temporal_workflow_id)
+DO UPDATE SET
+  revision = EXCLUDED.revision,
+  source_url = EXCLUDED.source_url,
+  status = 'running',
+  source_file_id = NULL,
+  content_sha256 = NULL,
+  records_seen = 0,
+  records_imported = 0,
+  records_deactivated = 0,
+  started_at = now(),
+  finished_at = NULL,
+  error = NULL,
+  metadata = EXCLUDED.metadata
+RETURNING id, temporal_workflow_id, source_file_id, revision, source_url, status, content_sha256, records_seen, records_imported, records_deactivated, started_at, finished_at, error, metadata
+`
+
+type BeginNACEImportRunParams struct {
+	TemporalWorkflowID string          `json:"temporal_workflow_id"`
+	Revision           string          `json:"revision"`
+	SourceUrl          string          `json:"source_url"`
+	Metadata           json.RawMessage `json:"metadata"`
+}
+
+func (q *Queries) BeginNACEImportRun(ctx context.Context, arg BeginNACEImportRunParams) (NaceImportRun, error) {
+	row := q.db.QueryRow(ctx, beginNACEImportRun,
+		arg.TemporalWorkflowID,
+		arg.Revision,
+		arg.SourceUrl,
+		arg.Metadata,
+	)
+	var i NaceImportRun
+	err := row.Scan(
+		&i.ID,
+		&i.TemporalWorkflowID,
+		&i.SourceFileID,
+		&i.Revision,
+		&i.SourceUrl,
+		&i.Status,
+		&i.ContentSha256,
+		&i.RecordsSeen,
+		&i.RecordsImported,
+		&i.RecordsDeactivated,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Error,
+		&i.Metadata,
+	)
+	return i, err
+}
 
 const clearRootNACECodeParents = `-- name: ClearRootNACECodeParents :exec
 UPDATE nace_codes
@@ -55,6 +119,66 @@ func (q *Queries) DeactivateMissingNACECodes(ctx context.Context, arg Deactivate
 	var deactivated_count int32
 	err := row.Scan(&deactivated_count)
 	return deactivated_count, err
+}
+
+const finishNACEImportRun = `-- name: FinishNACEImportRun :one
+UPDATE nace_import_runs
+SET
+  source_file_id = $1::uuid,
+  status = $2,
+  content_sha256 = $3,
+  records_seen = $4,
+  records_imported = $5,
+  records_deactivated = $6,
+  finished_at = now(),
+  error = NULLIF($7::text, ''),
+  metadata = metadata || COALESCE($8::jsonb, '{}'::jsonb)
+WHERE id = $9
+RETURNING id, temporal_workflow_id, source_file_id, revision, source_url, status, content_sha256, records_seen, records_imported, records_deactivated, started_at, finished_at, error, metadata
+`
+
+type FinishNACEImportRunParams struct {
+	SourceFileID       pgtype.UUID     `json:"source_file_id"`
+	Status             string          `json:"status"`
+	ContentSha256      *string         `json:"content_sha256"`
+	RecordsSeen        int32           `json:"records_seen"`
+	RecordsImported    int32           `json:"records_imported"`
+	RecordsDeactivated int32           `json:"records_deactivated"`
+	Error              string          `json:"error"`
+	Metadata           json.RawMessage `json:"metadata"`
+	ID                 uuid.UUID       `json:"id"`
+}
+
+func (q *Queries) FinishNACEImportRun(ctx context.Context, arg FinishNACEImportRunParams) (NaceImportRun, error) {
+	row := q.db.QueryRow(ctx, finishNACEImportRun,
+		arg.SourceFileID,
+		arg.Status,
+		arg.ContentSha256,
+		arg.RecordsSeen,
+		arg.RecordsImported,
+		arg.RecordsDeactivated,
+		arg.Error,
+		arg.Metadata,
+		arg.ID,
+	)
+	var i NaceImportRun
+	err := row.Scan(
+		&i.ID,
+		&i.TemporalWorkflowID,
+		&i.SourceFileID,
+		&i.Revision,
+		&i.SourceUrl,
+		&i.Status,
+		&i.ContentSha256,
+		&i.RecordsSeen,
+		&i.RecordsImported,
+		&i.RecordsDeactivated,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Error,
+		&i.Metadata,
+	)
+	return i, err
 }
 
 const getNACEClassificationByRevision = `-- name: GetNACEClassificationByRevision :one
@@ -122,6 +246,71 @@ func (q *Queries) GetNACECodeByRevisionAndCode(ctx context.Context, arg GetNACEC
 	return i, err
 }
 
+const getNACEImportRunByWorkflowID = `-- name: GetNACEImportRunByWorkflowID :one
+SELECT id, temporal_workflow_id, source_file_id, revision, source_url, status, content_sha256, records_seen, records_imported, records_deactivated, started_at, finished_at, error, metadata
+FROM nace_import_runs
+WHERE temporal_workflow_id = $1
+`
+
+func (q *Queries) GetNACEImportRunByWorkflowID(ctx context.Context, temporalWorkflowID string) (NaceImportRun, error) {
+	row := q.db.QueryRow(ctx, getNACEImportRunByWorkflowID, temporalWorkflowID)
+	var i NaceImportRun
+	err := row.Scan(
+		&i.ID,
+		&i.TemporalWorkflowID,
+		&i.SourceFileID,
+		&i.Revision,
+		&i.SourceUrl,
+		&i.Status,
+		&i.ContentSha256,
+		&i.RecordsSeen,
+		&i.RecordsImported,
+		&i.RecordsDeactivated,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Error,
+		&i.Metadata,
+	)
+	return i, err
+}
+
+const getProcessedNACESourceFileByHash = `-- name: GetProcessedNACESourceFileByHash :one
+SELECT id, revision, source_url, content_sha256, content_length_bytes, content_type, etag, last_modified, status, processed_at, error, metadata, created_at, updated_at
+FROM nace_source_files
+WHERE revision = $1
+  AND source_url = $2
+  AND content_sha256 = $3
+  AND status = 'processed'
+`
+
+type GetProcessedNACESourceFileByHashParams struct {
+	Revision      string `json:"revision"`
+	SourceUrl     string `json:"source_url"`
+	ContentSha256 string `json:"content_sha256"`
+}
+
+func (q *Queries) GetProcessedNACESourceFileByHash(ctx context.Context, arg GetProcessedNACESourceFileByHashParams) (NaceSourceFile, error) {
+	row := q.db.QueryRow(ctx, getProcessedNACESourceFileByHash, arg.Revision, arg.SourceUrl, arg.ContentSha256)
+	var i NaceSourceFile
+	err := row.Scan(
+		&i.ID,
+		&i.Revision,
+		&i.SourceUrl,
+		&i.ContentSha256,
+		&i.ContentLengthBytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.LastModified,
+		&i.Status,
+		&i.ProcessedAt,
+		&i.Error,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const linkNACECodeParents = `-- name: LinkNACECodeParents :exec
 UPDATE nace_codes child
 SET parent_id = parent.id,
@@ -133,12 +322,111 @@ FROM nace_codes parent
 WHERE child.classification_id = $1
   AND parent.classification_id = child.classification_id
   AND child.parent_code IS NOT NULL
-  AND child.parent_code = parent.code
+  AND (
+    child.parent_code = parent.code
+    OR regexp_replace(upper(child.parent_code), '[^0-9A-Z]', '', 'g') = parent.normalized_code
+  )
 `
 
 func (q *Queries) LinkNACECodeParents(ctx context.Context, classificationID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, linkNACECodeParents, classificationID)
 	return err
+}
+
+const listNACECodeChildren = `-- name: ListNACECodeChildren :many
+SELECT
+  ncodes.id,
+  ncodes.classification_id,
+  ncodes.code,
+  ncodes.normalized_code,
+  ncodes.level,
+  ncodes.level_name,
+  ncodes.parent_code,
+  ncodes.parent_id,
+  ncodes.title,
+  ncodes.description,
+  ncodes.includes,
+  ncodes.excludes,
+  ncodes.active,
+  ncodes.created_at,
+  ncodes.updated_at,
+  EXISTS (
+    SELECT 1
+    FROM nace_codes child
+    WHERE child.parent_id = ncodes.id
+      AND child.active
+  ) AS has_children
+FROM nace_codes ncodes
+JOIN nace_classifications nclass ON nclass.id = ncodes.classification_id
+WHERE nclass.code_system = 'NACE'
+  AND nclass.revision = $1::text
+  AND ncodes.active
+  AND (
+    ($2::uuid IS NULL AND ncodes.parent_id IS NULL)
+    OR ncodes.parent_id = $2::uuid
+  )
+ORDER BY ncodes.code
+`
+
+type ListNACECodeChildrenParams struct {
+	Revision string      `json:"revision"`
+	ParentID pgtype.UUID `json:"parent_id"`
+}
+
+type ListNACECodeChildrenRow struct {
+	ID               uuid.UUID   `json:"id"`
+	ClassificationID uuid.UUID   `json:"classification_id"`
+	Code             string      `json:"code"`
+	NormalizedCode   string      `json:"normalized_code"`
+	Level            int16       `json:"level"`
+	LevelName        string      `json:"level_name"`
+	ParentCode       *string     `json:"parent_code"`
+	ParentID         pgtype.UUID `json:"parent_id"`
+	Title            string      `json:"title"`
+	Description      *string     `json:"description"`
+	Includes         *string     `json:"includes"`
+	Excludes         *string     `json:"excludes"`
+	Active           bool        `json:"active"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
+	HasChildren      bool        `json:"has_children"`
+}
+
+func (q *Queries) ListNACECodeChildren(ctx context.Context, arg ListNACECodeChildrenParams) ([]ListNACECodeChildrenRow, error) {
+	rows, err := q.db.Query(ctx, listNACECodeChildren, arg.Revision, arg.ParentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNACECodeChildrenRow
+	for rows.Next() {
+		var i ListNACECodeChildrenRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ClassificationID,
+			&i.Code,
+			&i.NormalizedCode,
+			&i.Level,
+			&i.LevelName,
+			&i.ParentCode,
+			&i.ParentID,
+			&i.Title,
+			&i.Description,
+			&i.Includes,
+			&i.Excludes,
+			&i.Active,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.HasChildren,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listNACECodeTree = `-- name: ListNACECodeTree :many
@@ -177,6 +465,59 @@ func (q *Queries) ListNACECodeTree(ctx context.Context, revision string) ([]VNac
 			&i.Active,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNACESourceFileImports = `-- name: ListNACESourceFileImports :many
+SELECT import_run_id, temporal_workflow_id, revision, source_url, import_status, content_sha256, records_seen, records_imported, records_deactivated, started_at, finished_at, import_error, source_file_id, source_file_status, content_length_bytes, content_type, etag, last_modified, processed_at
+FROM v_nace_source_file_imports
+WHERE revision = COALESCE($1::text, revision)
+ORDER BY started_at DESC
+LIMIT $2::integer
+`
+
+type ListNACESourceFileImportsParams struct {
+	Revision *string `json:"revision"`
+	Limit    int32   `json:"limit"`
+}
+
+func (q *Queries) ListNACESourceFileImports(ctx context.Context, arg ListNACESourceFileImportsParams) ([]VNaceSourceFileImport, error) {
+	rows, err := q.db.Query(ctx, listNACESourceFileImports, arg.Revision, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []VNaceSourceFileImport
+	for rows.Next() {
+		var i VNaceSourceFileImport
+		if err := rows.Scan(
+			&i.ImportRunID,
+			&i.TemporalWorkflowID,
+			&i.Revision,
+			&i.SourceUrl,
+			&i.ImportStatus,
+			&i.ContentSha256,
+			&i.RecordsSeen,
+			&i.RecordsImported,
+			&i.RecordsDeactivated,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.ImportError,
+			&i.SourceFileID,
+			&i.SourceFileStatus,
+			&i.ContentLengthBytes,
+			&i.ContentType,
+			&i.Etag,
+			&i.LastModified,
+			&i.ProcessedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -228,6 +569,113 @@ func (q *Queries) ListNACETaxonomyState(ctx context.Context) ([]VNaceTaxonomySta
 	return items, nil
 }
 
+const markNACESourceFileFailed = `-- name: MarkNACESourceFileFailed :one
+UPDATE nace_source_files
+SET status = 'failed',
+    error = $1,
+    metadata = metadata || COALESCE($2::jsonb, '{}'::jsonb),
+    updated_at = now()
+WHERE id = $3
+RETURNING id, revision, source_url, content_sha256, content_length_bytes, content_type, etag, last_modified, status, processed_at, error, metadata, created_at, updated_at
+`
+
+type MarkNACESourceFileFailedParams struct {
+	Error    *string         `json:"error"`
+	Metadata json.RawMessage `json:"metadata"`
+	ID       uuid.UUID       `json:"id"`
+}
+
+func (q *Queries) MarkNACESourceFileFailed(ctx context.Context, arg MarkNACESourceFileFailedParams) (NaceSourceFile, error) {
+	row := q.db.QueryRow(ctx, markNACESourceFileFailed, arg.Error, arg.Metadata, arg.ID)
+	var i NaceSourceFile
+	err := row.Scan(
+		&i.ID,
+		&i.Revision,
+		&i.SourceUrl,
+		&i.ContentSha256,
+		&i.ContentLengthBytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.LastModified,
+		&i.Status,
+		&i.ProcessedAt,
+		&i.Error,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markNACESourceFileProcessed = `-- name: MarkNACESourceFileProcessed :one
+UPDATE nace_source_files
+SET status = 'processed',
+    processed_at = now(),
+    error = NULL,
+    metadata = metadata || COALESCE($1::jsonb, '{}'::jsonb),
+    updated_at = now()
+WHERE id = $2
+RETURNING id, revision, source_url, content_sha256, content_length_bytes, content_type, etag, last_modified, status, processed_at, error, metadata, created_at, updated_at
+`
+
+type MarkNACESourceFileProcessedParams struct {
+	Metadata json.RawMessage `json:"metadata"`
+	ID       uuid.UUID       `json:"id"`
+}
+
+func (q *Queries) MarkNACESourceFileProcessed(ctx context.Context, arg MarkNACESourceFileProcessedParams) (NaceSourceFile, error) {
+	row := q.db.QueryRow(ctx, markNACESourceFileProcessed, arg.Metadata, arg.ID)
+	var i NaceSourceFile
+	err := row.Scan(
+		&i.ID,
+		&i.Revision,
+		&i.SourceUrl,
+		&i.ContentSha256,
+		&i.ContentLengthBytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.LastModified,
+		&i.Status,
+		&i.ProcessedAt,
+		&i.Error,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markNACESourceFileProcessing = `-- name: MarkNACESourceFileProcessing :one
+UPDATE nace_source_files
+SET status = 'processing',
+    error = NULL,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, revision, source_url, content_sha256, content_length_bytes, content_type, etag, last_modified, status, processed_at, error, metadata, created_at, updated_at
+`
+
+func (q *Queries) MarkNACESourceFileProcessing(ctx context.Context, id uuid.UUID) (NaceSourceFile, error) {
+	row := q.db.QueryRow(ctx, markNACESourceFileProcessing, id)
+	var i NaceSourceFile
+	err := row.Scan(
+		&i.ID,
+		&i.Revision,
+		&i.SourceUrl,
+		&i.ContentSha256,
+		&i.ContentLengthBytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.LastModified,
+		&i.Status,
+		&i.ProcessedAt,
+		&i.Error,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const resolveNACECodeAlias = `-- name: ResolveNACECodeAlias :one
 SELECT ncodes.id, ncodes.classification_id, ncodes.code, ncodes.normalized_code, ncodes.level, ncodes.level_name, ncodes.parent_code, ncodes.parent_id, ncodes.title, ncodes.description, ncodes.includes, ncodes.excludes, ncodes.notes, ncodes.source_payload, ncodes.source_hash, ncodes.active, ncodes.created_at, ncodes.updated_at
 FROM nace_code_aliases aliases
@@ -267,6 +715,86 @@ func (q *Queries) ResolveNACECodeAlias(ctx context.Context, arg ResolveNACECodeA
 		&i.SourcePayload,
 		&i.SourceHash,
 		&i.Active,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertDownloadedNACESourceFile = `-- name: UpsertDownloadedNACESourceFile :one
+INSERT INTO nace_source_files (
+  revision,
+  source_url,
+  content_sha256,
+  content_length_bytes,
+  content_type,
+  etag,
+  last_modified,
+  status,
+  metadata
+) VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7,
+  'downloaded',
+  COALESCE($8::jsonb, '{}'::jsonb)
+)
+ON CONFLICT (revision, source_url, content_sha256)
+DO UPDATE SET
+  content_length_bytes = EXCLUDED.content_length_bytes,
+  content_type = EXCLUDED.content_type,
+  etag = EXCLUDED.etag,
+  last_modified = EXCLUDED.last_modified,
+  status = CASE
+    WHEN nace_source_files.status = 'processed' THEN nace_source_files.status
+    ELSE 'downloaded'
+  END,
+  error = NULL,
+  metadata = EXCLUDED.metadata,
+  updated_at = now()
+RETURNING id, revision, source_url, content_sha256, content_length_bytes, content_type, etag, last_modified, status, processed_at, error, metadata, created_at, updated_at
+`
+
+type UpsertDownloadedNACESourceFileParams struct {
+	Revision           string          `json:"revision"`
+	SourceUrl          string          `json:"source_url"`
+	ContentSha256      string          `json:"content_sha256"`
+	ContentLengthBytes int64           `json:"content_length_bytes"`
+	ContentType        *string         `json:"content_type"`
+	Etag               *string         `json:"etag"`
+	LastModified       *string         `json:"last_modified"`
+	Metadata           json.RawMessage `json:"metadata"`
+}
+
+func (q *Queries) UpsertDownloadedNACESourceFile(ctx context.Context, arg UpsertDownloadedNACESourceFileParams) (NaceSourceFile, error) {
+	row := q.db.QueryRow(ctx, upsertDownloadedNACESourceFile,
+		arg.Revision,
+		arg.SourceUrl,
+		arg.ContentSha256,
+		arg.ContentLengthBytes,
+		arg.ContentType,
+		arg.Etag,
+		arg.LastModified,
+		arg.Metadata,
+	)
+	var i NaceSourceFile
+	err := row.Scan(
+		&i.ID,
+		&i.Revision,
+		&i.SourceUrl,
+		&i.ContentSha256,
+		&i.ContentLengthBytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.LastModified,
+		&i.Status,
+		&i.ProcessedAt,
+		&i.Error,
+		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

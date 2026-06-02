@@ -59,6 +59,131 @@ export interface LLMProviderTestResponse {
   };
 }
 
+export interface WorkflowScheduleSpec {
+  timezone: string;
+  cron_expression: string;
+  overlap_policy:
+    | "skip"
+    | "buffer_one"
+    | "allow_all"
+    | "cancel_other"
+    | "terminate_other";
+  catchup_window_seconds: number;
+}
+
+export interface WorkflowScheduleTemporalState {
+  exists: boolean;
+  paused: boolean;
+  note: string;
+  next_run_at?: string;
+}
+
+export interface WorkflowSchedule {
+  id: string;
+  temporal_schedule_id: string;
+  workflow_key: "nace_taxonomy_sync";
+  workflow_name: string;
+  task_queue: string;
+  domain: string;
+  purpose: string;
+  display_name: string;
+  description?: string;
+  enabled: boolean;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  spec: WorkflowScheduleSpec;
+  action_input: Record<string, unknown>;
+  temporal: WorkflowScheduleTemporalState;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowScheduleListResponse {
+  items: WorkflowSchedule[];
+}
+
+export interface WorkflowScheduleInput {
+  temporal_schedule_id: string;
+  workflow_key: "nace_taxonomy_sync";
+  display_name: string;
+  description?: string;
+  enabled: boolean;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  spec: WorkflowScheduleSpec;
+  action_input: Record<string, unknown>;
+}
+
+export interface NACETaxonomySyncRequest {
+  revision?: string;
+  source_url?: string;
+  trigger?: "manual" | "schedule";
+  force_reprocess?: boolean;
+}
+
+export interface NACETaxonomyWorkflowRun {
+  workflow_id: string;
+  run_id: string;
+  workflow_type: string;
+  status: string;
+  start_time?: string;
+  close_time?: string;
+  execution_time?: string;
+}
+
+export interface NACETaxonomyWorkflowRunListResponse {
+  items: NACETaxonomyWorkflowRun[];
+}
+
+export interface NACERevision {
+  classification_id: string;
+  code_system: "NACE";
+  revision: string;
+  name: string;
+  valid_from?: string;
+  valid_to?: string;
+  active_codes: number;
+  inactive_codes: number;
+  sections: number;
+  divisions: number;
+  groups: number;
+  classes: number;
+  codes_updated_at?: string;
+  classification_updated_at: string;
+}
+
+export interface NACERevisionListResponse {
+  items: NACERevision[];
+}
+
+export interface NACECode {
+  id: string;
+  classification_id: string;
+  code: string;
+  normalized_code: string;
+  level: number;
+  level_name: "section" | "division" | "group" | "class";
+  parent_code?: string | null;
+  parent_id?: string | null;
+  title: string;
+  description?: string | null;
+  includes?: string | null;
+  excludes?: string | null;
+  active: boolean;
+  has_children: boolean;
+}
+
+export interface NACECodeListResponse {
+  items: NACECode[];
+}
+
+export interface StartWorkflowResponse {
+  status: string;
+  workflow: string;
+  workflow_id: string;
+  workflow_run_id: string;
+}
+
 export interface RawInput {
   id: string;
   source: string;
@@ -96,10 +221,61 @@ export interface BrregRawRecordListItem {
   best_domain: string;
   task_statuses: Record<string, string>;
   task_errors: Record<string, unknown>;
+  source_company_id?: string | null;
+  source_payload_hash?: string | null;
+  source_synced_at?: string | null;
+  sync_status: "not_synced" | "synced" | "needs_update";
+  synced: boolean;
+  updated_at: string;
 }
 
 export interface BrregRawRecordListResponse {
   items: BrregRawRecordListItem[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface BrregSourceEntryListItem {
+  company_id: string;
+  organization_number: string;
+  organization_name: string;
+  description_en?: string;
+  lifecycle_status: string;
+  registration_status?: string;
+  organization_form_code?: string;
+  organization_form_label?: string;
+  primary_industry_code?: string;
+  primary_industry_label?: string;
+  primary_nace_code?: string;
+  primary_nace_title?: string;
+  city?: string;
+  municipality?: string;
+  municipality_number?: string;
+  county?: string;
+  postal_code?: string;
+  formatted_address?: string;
+  employee_count?: number;
+  employee_band?: string;
+  website_count: number;
+  domain_count: number;
+  contact_count: number;
+  latest_financial_year?: number;
+  latest_revenue_usd_cents?: number;
+  latest_total_assets_usd_cents?: number;
+  latest_net_income_usd_cents?: number;
+  translation_missing_count: number;
+  translation_pending_count: number;
+  translation_running_count: number;
+  translation_succeeded_count: number;
+  domain_pending_count: number;
+  domain_running_count: number;
+  domain_succeeded_count: number;
+  updated_at: string;
+}
+
+export interface BrregSourceEntryListResponse {
+  items: BrregSourceEntryListItem[];
   total: number;
   page: number;
   limit: number;

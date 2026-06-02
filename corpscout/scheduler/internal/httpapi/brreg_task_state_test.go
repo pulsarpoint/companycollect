@@ -34,8 +34,8 @@ func TestBrregTaskStateEndpointUsesTaskStateNamingInternally(t *testing.T) {
 
 func TestGetBrregTaskStateReturnsTaskActionsAndResultState(t *testing.T) {
 	q := &stubQuerier{}
-	q.On("GetBrregWorkflowTranslationAssetState", mock.Anything).Return(db.BrregWorkflowVTranslationAssetState{
-		Asset:               "translation_results",
+	q.On("GetBrregSourceTranslationAssetState", mock.Anything).Return(db.GetBrregSourceTranslationAssetStateRow{
+		Asset:               "action_tasks",
 		RawRecordsCurrent:   1000,
 		TaskPending:         20,
 		TaskRunningActive:   3,
@@ -110,7 +110,7 @@ func TestGetBrregTaskStateReturnsTaskActionsAndResultState(t *testing.T) {
 	}
 	require.Equal(t, "ingest_raw", body.Actions[0].Key)
 	require.Equal(t, "translate", body.Actions[1].Key)
-	require.Contains(t, body.Actions[1].Description, "task artifacts")
+	require.Contains(t, body.Actions[1].Description, "source tables")
 	require.NotContains(t, body.Actions[1].Description, "workflow artifacts")
 	require.Equal(t, int64(800), body.Actions[1].State.ArtifactSucceeded)
 	require.Equal(t, int64(127), body.Actions[1].State.ArtifactMissing)
@@ -129,7 +129,7 @@ func TestGetBrregTaskStateReturnsTaskActionsAndResultState(t *testing.T) {
 		Count int64  `json:"count"`
 	}{
 		{Name: "brreg_workflow.raw_records", Count: 1000},
-		{Name: "brreg_workflow.translation_results", Count: 873},
+		{Name: "brreg_source.action_tasks", Count: 873},
 		{Name: "brreg_workflow.domain_results", Count: 0},
 		{Name: "brreg_workflow.financial_results", Count: 0},
 		{Name: "brreg_workflow.enhanced_records", Count: 0},
