@@ -16,6 +16,7 @@ import type {
   BrregRawRecordListResponse,
   BrregRawRecordDetail,
   BrregSourceEntryListResponse,
+  BrregSourceCompanyDetail,
   LLMProvider,
   LLMProviderInput,
   LLMProviderListResponse,
@@ -271,6 +272,9 @@ export const api = {
       `/brreg/source-entries${q ? `?${q}` : ""}`,
     );
   },
+
+  getBrregSourceCompanyDetail: (id: string) =>
+    get<BrregSourceCompanyDetail>(`/sources/brreg/companies/${id}`),
 
   getLLMProviders: () => get<LLMProviderListResponse>("/llm-providers"),
 

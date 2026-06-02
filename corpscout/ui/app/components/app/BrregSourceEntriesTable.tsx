@@ -460,7 +460,7 @@ export function BrregSourceEntriesTable() {
                     <div className="flex min-w-56 flex-col gap-1">
                       <Link
                         className="font-medium underline-offset-4 hover:underline"
-                        to={`/companies/${item.company_id}`}
+                        to={`/sources/brreg/companies/${item.company_id}`}
                       >
                         {item.organization_name || "Unnamed organization"}
                       </Link>

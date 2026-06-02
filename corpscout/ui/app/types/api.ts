@@ -281,6 +281,78 @@ export interface BrregSourceEntryListResponse {
   limit: number;
 }
 
+export interface BrregSourceCompanyDetail {
+  id: string;
+  raw_record_id: string;
+  enhanced_record_id?: string;
+  translation_result_id?: string;
+  financial_result_id?: string;
+  organization_number: string;
+  source_native_id: string;
+  country_iso2: string;
+  organization_name: string;
+  organization_name_normalized: string;
+  organization_name_en?: string;
+  short_description?: string;
+  short_description_en?: string;
+  description?: string;
+  description_en?: string;
+  registration_status?: string;
+  registration_status_label?: string;
+  registration_status_label_en?: string;
+  lifecycle_status: string;
+  organization_form_code?: string;
+  organization_form_label?: string;
+  organization_form_label_en?: string;
+  language_code?: string;
+  response_class?: string;
+  response_class_en?: string;
+  founded_date?: string;
+  unit_registry_registered_at?: string;
+  enterprise_registry_registered_at?: string;
+  vat_registry_registered_at?: string;
+  vat_registry_unit_registered_at?: string;
+  articles_date?: string;
+  last_annual_report_year?: number;
+  activity_description?: string;
+  activity_description_en?: string;
+  statutory_purpose?: string;
+  statutory_purpose_en?: string;
+  is_bankrupt?: boolean;
+  is_in_group?: boolean;
+  is_under_liquidation?: boolean;
+  is_forced_dissolution?: boolean;
+  has_registered_employees?: boolean;
+  in_vat_register?: boolean;
+  in_business_register?: boolean;
+  in_voluntary_register?: boolean;
+  in_foundation_register?: boolean;
+  in_party_register?: boolean;
+  employee_count?: number;
+  employee_count_source?: string;
+  employee_band?: string;
+  source_updated_at?: string;
+  payload_hash: string;
+  profile_version: string;
+  row_status: string;
+  normalized_payload: Record<string, unknown>;
+  raw_company_payload: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  superseded_at?: string;
+  addresses: Array<Record<string, unknown>>;
+  industries: Array<Record<string, unknown>>;
+  websites: Array<Record<string, unknown>>;
+  domains: Array<Record<string, unknown>>;
+  contacts: Array<Record<string, unknown>>;
+  financial_years: Array<Record<string, unknown>>;
+  roles: Array<Record<string, unknown>>;
+  shareholdings: Array<Record<string, unknown>>;
+  translation_status: Record<string, number>;
+}
+
 export interface BrregRawRecordDetail extends BrregRawRecordListItem {
   country_iso2: string;
   raw_payload: Record<string, unknown>;

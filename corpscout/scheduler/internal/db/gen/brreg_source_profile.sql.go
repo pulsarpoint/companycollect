@@ -452,6 +452,89 @@ func (q *Queries) FailRunningBrregSourceTranslationTasksForRun(ctx context.Conte
 	return failed_tasks, err
 }
 
+const getBrregSourceCompanyDetail = `-- name: GetBrregSourceCompanyDetail :one
+SELECT detail.id, detail.raw_record_id, detail.enhanced_record_id, detail.translation_result_id, detail.financial_result_id, detail.organization_number, detail.source_native_id, detail.country_iso2, detail.organization_name, detail.organization_name_normalized, detail.organization_name_en, detail.short_description, detail.short_description_en, detail.description, detail.description_en, detail.registration_status, detail.registration_status_label, detail.registration_status_label_en, detail.lifecycle_status, detail.organization_form_code, detail.organization_form_label, detail.organization_form_label_en, detail.language_code, detail.response_class, detail.response_class_en, detail.founded_date, detail.unit_registry_registered_at, detail.enterprise_registry_registered_at, detail.vat_registry_registered_at, detail.vat_registry_unit_registered_at, detail.articles_date, detail.last_annual_report_year, detail.activity_description, detail.activity_description_en, detail.statutory_purpose, detail.statutory_purpose_en, detail.is_bankrupt, detail.is_in_group, detail.is_under_liquidation, detail.is_forced_dissolution, detail.has_registered_employees, detail.in_vat_register, detail.in_business_register, detail.in_voluntary_register, detail.in_foundation_register, detail.in_party_register, detail.employee_count, detail.employee_count_source, detail.employee_band, detail.source_updated_at, detail.payload_hash, detail.profile_version, detail.row_status, detail.normalized_payload, detail.raw_company_payload, detail.evidence, detail.metadata, detail.created_at, detail.updated_at, detail.superseded_at, detail.addresses, detail.industries, detail.websites, detail.domains, detail.contacts, detail.financial_years, detail.roles, detail.shareholdings, detail.translation_status
+FROM brreg_source.v_company_detail detail
+WHERE detail.id = $1::uuid
+`
+
+func (q *Queries) GetBrregSourceCompanyDetail(ctx context.Context, companyID uuid.UUID) (BrregSourceVCompanyDetail, error) {
+	row := q.db.QueryRow(ctx, getBrregSourceCompanyDetail, companyID)
+	var i BrregSourceVCompanyDetail
+	err := row.Scan(
+		&i.ID,
+		&i.RawRecordID,
+		&i.EnhancedRecordID,
+		&i.TranslationResultID,
+		&i.FinancialResultID,
+		&i.OrganizationNumber,
+		&i.SourceNativeID,
+		&i.CountryIso2,
+		&i.OrganizationName,
+		&i.OrganizationNameNormalized,
+		&i.OrganizationNameEn,
+		&i.ShortDescription,
+		&i.ShortDescriptionEn,
+		&i.Description,
+		&i.DescriptionEn,
+		&i.RegistrationStatus,
+		&i.RegistrationStatusLabel,
+		&i.RegistrationStatusLabelEn,
+		&i.LifecycleStatus,
+		&i.OrganizationFormCode,
+		&i.OrganizationFormLabel,
+		&i.OrganizationFormLabelEn,
+		&i.LanguageCode,
+		&i.ResponseClass,
+		&i.ResponseClassEn,
+		&i.FoundedDate,
+		&i.UnitRegistryRegisteredAt,
+		&i.EnterpriseRegistryRegisteredAt,
+		&i.VatRegistryRegisteredAt,
+		&i.VatRegistryUnitRegisteredAt,
+		&i.ArticlesDate,
+		&i.LastAnnualReportYear,
+		&i.ActivityDescription,
+		&i.ActivityDescriptionEn,
+		&i.StatutoryPurpose,
+		&i.StatutoryPurposeEn,
+		&i.IsBankrupt,
+		&i.IsInGroup,
+		&i.IsUnderLiquidation,
+		&i.IsForcedDissolution,
+		&i.HasRegisteredEmployees,
+		&i.InVatRegister,
+		&i.InBusinessRegister,
+		&i.InVoluntaryRegister,
+		&i.InFoundationRegister,
+		&i.InPartyRegister,
+		&i.EmployeeCount,
+		&i.EmployeeCountSource,
+		&i.EmployeeBand,
+		&i.SourceUpdatedAt,
+		&i.PayloadHash,
+		&i.ProfileVersion,
+		&i.RowStatus,
+		&i.NormalizedPayload,
+		&i.RawCompanyPayload,
+		&i.Evidence,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SupersededAt,
+		&i.Addresses,
+		&i.Industries,
+		&i.Websites,
+		&i.Domains,
+		&i.Contacts,
+		&i.FinancialYears,
+		&i.Roles,
+		&i.Shareholdings,
+		&i.TranslationStatus,
+	)
+	return i, err
+}
+
 const getBrregSourceTranslationAssetState = `-- name: GetBrregSourceTranslationAssetState :one
 WITH source_companies AS (
   SELECT id

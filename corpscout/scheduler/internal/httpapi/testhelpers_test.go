@@ -415,6 +415,11 @@ func (s *stubQuerier) GetBrregSourceTranslationAssetState(ctx context.Context) (
 	return ret.Get(0).(db.GetBrregSourceTranslationAssetStateRow), ret.Error(1)
 }
 
+func (s *stubQuerier) GetBrregSourceCompanyDetail(ctx context.Context, companyID uuid.UUID) (db.BrregSourceVCompanyDetail, error) {
+	ret := s.Called(ctx, companyID)
+	return ret.Get(0).(db.BrregSourceVCompanyDetail), ret.Error(1)
+}
+
 func (s *stubQuerier) GetBrregWorkflowDomainAssetState(ctx context.Context) (db.BrregWorkflowVDomainAssetState, error) {
 	ret := s.Called(ctx)
 	return ret.Get(0).(db.BrregWorkflowVDomainAssetState), ret.Error(1)

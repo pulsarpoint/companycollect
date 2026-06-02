@@ -12,6 +12,78 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type BrregSourceVCompanyDetail struct {
+	ID                             uuid.UUID          `json:"id"`
+	RawRecordID                    uuid.UUID          `json:"raw_record_id"`
+	EnhancedRecordID               pgtype.UUID        `json:"enhanced_record_id"`
+	TranslationResultID            pgtype.UUID        `json:"translation_result_id"`
+	FinancialResultID              pgtype.UUID        `json:"financial_result_id"`
+	OrganizationNumber             string             `json:"organization_number"`
+	SourceNativeID                 string             `json:"source_native_id"`
+	CountryIso2                    string             `json:"country_iso2"`
+	OrganizationName               string             `json:"organization_name"`
+	OrganizationNameNormalized     string             `json:"organization_name_normalized"`
+	OrganizationNameEn             *string            `json:"organization_name_en"`
+	ShortDescription               *string            `json:"short_description"`
+	ShortDescriptionEn             *string            `json:"short_description_en"`
+	Description                    *string            `json:"description"`
+	DescriptionEn                  *string            `json:"description_en"`
+	RegistrationStatus             *string            `json:"registration_status"`
+	RegistrationStatusLabel        *string            `json:"registration_status_label"`
+	RegistrationStatusLabelEn      *string            `json:"registration_status_label_en"`
+	LifecycleStatus                string             `json:"lifecycle_status"`
+	OrganizationFormCode           *string            `json:"organization_form_code"`
+	OrganizationFormLabel          *string            `json:"organization_form_label"`
+	OrganizationFormLabelEn        *string            `json:"organization_form_label_en"`
+	LanguageCode                   *string            `json:"language_code"`
+	ResponseClass                  *string            `json:"response_class"`
+	ResponseClassEn                *string            `json:"response_class_en"`
+	FoundedDate                    pgtype.Date        `json:"founded_date"`
+	UnitRegistryRegisteredAt       pgtype.Date        `json:"unit_registry_registered_at"`
+	EnterpriseRegistryRegisteredAt pgtype.Date        `json:"enterprise_registry_registered_at"`
+	VatRegistryRegisteredAt        pgtype.Date        `json:"vat_registry_registered_at"`
+	VatRegistryUnitRegisteredAt    pgtype.Date        `json:"vat_registry_unit_registered_at"`
+	ArticlesDate                   pgtype.Date        `json:"articles_date"`
+	LastAnnualReportYear           *int32             `json:"last_annual_report_year"`
+	ActivityDescription            *string            `json:"activity_description"`
+	ActivityDescriptionEn          *string            `json:"activity_description_en"`
+	StatutoryPurpose               *string            `json:"statutory_purpose"`
+	StatutoryPurposeEn             *string            `json:"statutory_purpose_en"`
+	IsBankrupt                     *bool              `json:"is_bankrupt"`
+	IsInGroup                      *bool              `json:"is_in_group"`
+	IsUnderLiquidation             *bool              `json:"is_under_liquidation"`
+	IsForcedDissolution            *bool              `json:"is_forced_dissolution"`
+	HasRegisteredEmployees         *bool              `json:"has_registered_employees"`
+	InVatRegister                  *bool              `json:"in_vat_register"`
+	InBusinessRegister             *bool              `json:"in_business_register"`
+	InVoluntaryRegister            *bool              `json:"in_voluntary_register"`
+	InFoundationRegister           *bool              `json:"in_foundation_register"`
+	InPartyRegister                *bool              `json:"in_party_register"`
+	EmployeeCount                  *int32             `json:"employee_count"`
+	EmployeeCountSource            *string            `json:"employee_count_source"`
+	EmployeeBand                   *string            `json:"employee_band"`
+	SourceUpdatedAt                pgtype.Timestamptz `json:"source_updated_at"`
+	PayloadHash                    string             `json:"payload_hash"`
+	ProfileVersion                 string             `json:"profile_version"`
+	RowStatus                      string             `json:"row_status"`
+	NormalizedPayload              json.RawMessage    `json:"normalized_payload"`
+	RawCompanyPayload              json.RawMessage    `json:"raw_company_payload"`
+	Evidence                       json.RawMessage    `json:"evidence"`
+	Metadata                       json.RawMessage    `json:"metadata"`
+	CreatedAt                      time.Time          `json:"created_at"`
+	UpdatedAt                      time.Time          `json:"updated_at"`
+	SupersededAt                   pgtype.Timestamptz `json:"superseded_at"`
+	Addresses                      json.RawMessage    `json:"addresses"`
+	Industries                     json.RawMessage    `json:"industries"`
+	Websites                       json.RawMessage    `json:"websites"`
+	Domains                        json.RawMessage    `json:"domains"`
+	Contacts                       json.RawMessage    `json:"contacts"`
+	FinancialYears                 json.RawMessage    `json:"financial_years"`
+	Roles                          json.RawMessage    `json:"roles"`
+	Shareholdings                  json.RawMessage    `json:"shareholdings"`
+	TranslationStatus              json.RawMessage    `json:"translation_status"`
+}
+
 type BrregWorkflowVDomainAssetState struct {
 	Asset               string `json:"asset"`
 	RawRecordsCurrent   int64  `json:"raw_records_current"`

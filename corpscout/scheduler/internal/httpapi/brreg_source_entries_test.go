@@ -25,6 +25,63 @@ func TestListBrregSourceEntriesRouteExists(t *testing.T) {
 	require.Contains(t, w.Body.String(), `"error":"database querier not available"`)
 }
 
+func TestGetBrregSourceCompanyDetailRouteExists(t *testing.T) {
+	r := routerFor(httpapi.NewHandlers(nil, nil, nil, nil, "", nil, ""))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/brreg/companies/7ffd5bf3-f96e-4907-9ef3-096eb4056ab8", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"database querier not available"`)
+}
+
+func TestGetBrregSourceCompanyDetailReturnsSourceCompany(t *testing.T) {
+	q := &stubQuerier{}
+	companyID := uuid.New()
+	rawRecordID := uuid.New()
+	now := time.Date(2026, 6, 2, 11, 45, 0, 0, time.UTC)
+	q.On("GetBrregSourceCompanyDetail", mock.Anything, companyID).Return(db.BrregSourceVCompanyDetail{
+		ID:                         companyID,
+		RawRecordID:                rawRecordID,
+		OrganizationNumber:         "810202572",
+		OrganizationName:           "BORTIGARD AS",
+		OrganizationNameNormalized: "bortigard as",
+		RegistrationStatus:         ptrString("active"),
+		LifecycleStatus:            "active",
+		PayloadHash:                "payload-hash",
+		ProfileVersion:             "brreg.source_profile.v1",
+		RowStatus:                  "active",
+		NormalizedPayload:          []byte(`{}`),
+		RawCompanyPayload:          []byte(`{}`),
+		Evidence:                   []byte(`{}`),
+		Metadata:                   []byte(`{}`),
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
+		Addresses:                  []byte(`[]`),
+		Industries:                 []byte(`[]`),
+		Websites:                   []byte(`[]`),
+		Domains:                    []byte(`[]`),
+		Contacts:                   []byte(`[]`),
+		FinancialYears:             []byte(`[]`),
+		Roles:                      []byte(`[]`),
+		Shareholdings:              []byte(`[]`),
+		TranslationStatus:          []byte(`{}`),
+	}, nil)
+
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", nil, ""))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/brreg/companies/"+companyID.String(), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body db.BrregSourceVCompanyDetail
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, companyID, body.ID)
+	require.Equal(t, "810202572", body.OrganizationNumber)
+	require.Equal(t, "BORTIGARD AS", body.OrganizationName)
+	q.AssertExpectations(t)
+}
+
 func TestListBrregSourceEntriesReturnsSourceEntries(t *testing.T) {
 	q := &stubQuerier{}
 	companyID := uuid.New()

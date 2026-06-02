@@ -40,6 +40,7 @@ type Querier interface {
 	FinishBrregWorkflowRunWithStats(ctx context.Context, arg FinishBrregWorkflowRunWithStatsParams) (uuid.UUID, error)
 	FinishBrregWorkflowTaskAttempt(ctx context.Context, arg FinishBrregWorkflowTaskAttemptParams) error
 	FinishNACEImportRun(ctx context.Context, arg FinishNACEImportRunParams) (NaceImportRun, error)
+	GetBrregSourceCompanyDetail(ctx context.Context, companyID uuid.UUID) (BrregSourceVCompanyDetail, error)
 	GetBrregSourceTranslationAssetState(ctx context.Context) (GetBrregSourceTranslationAssetStateRow, error)
 	GetBrregWorkflowDomainAssetState(ctx context.Context) (BrregWorkflowVDomainAssetState, error)
 	GetBrregWorkflowEnhancedAssetState(ctx context.Context) (BrregWorkflowVEnhancedAssetState, error)

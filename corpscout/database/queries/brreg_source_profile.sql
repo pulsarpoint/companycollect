@@ -1239,3 +1239,8 @@ ORDER BY
   entry.organization_number ASC
 LIMIT GREATEST(sqlc.arg('limit')::integer, 1)
 OFFSET GREATEST(sqlc.arg('offset')::integer, 0);
+
+-- name: GetBrregSourceCompanyDetail :one
+SELECT detail.*
+FROM brreg_source.v_company_detail detail
+WHERE detail.id = sqlc.arg('company_id')::uuid;
