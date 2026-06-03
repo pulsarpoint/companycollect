@@ -12,6 +12,7 @@ import (
 	temporalworker "go.temporal.io/sdk/worker"
 
 	brregactions "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/actions"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/brreg/companydata"
 	brregdb "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/db"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/config"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/crawlclient"
@@ -25,6 +26,7 @@ import (
 type temporalWorkerResources struct {
 	translationClient      *translationclient.Client
 	translationActions     *brregactions.TranslationActions
+	companyTranslation     *brregactions.CompanyTranslationActions
 	termTranslationNATS    *nats.Conn
 	termTranslationActions *brregactions.TermTranslationActions
 	crawlClient            *crawlclient.Client
@@ -71,9 +73,11 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 		"subject", translationclient.DefaultTermTranslationRequestSubject,
 	)
 	gateway := brregdb.New(pool)
+	brregCompanyData := companydata.New(pool)
 	return &temporalWorkerResources{
 		translationClient:      translator,
 		translationActions:     brregactions.NewTranslationActions(pool, translator, llmStore),
+		companyTranslation:     brregactions.NewCompanyTranslationActions(brregCompanyData),
 		termTranslationNATS:    termTranslationNATS,
 		termTranslationActions: brregactions.NewTermTranslationActions(gateway, termTranslationNATS),
 		crawlClient:            crawler,
@@ -105,6 +109,7 @@ func newTemporalWorkers(temporalClient client.Client, resources *temporalWorkerR
 	slog.Debug("creating temporal workers")
 	return []temporalworker.Worker{
 		newBrregTranslationTemporalWorker(temporalClient, resources),
+		newBrregCompanyTranslationTemporalWorker(temporalClient, resources),
 		newBrregTermTranslationTemporalWorker(temporalClient, resources),
 		newBrregDomainSearchTemporalWorker(temporalClient, resources),
 		newBrregBulkIngestTemporalWorker(temporalClient, resources),

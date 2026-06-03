@@ -24,6 +24,13 @@ func BeginTx(t *testing.T) pgx.Tx {
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 
+	var currentDatabase string
+	err = pool.QueryRow(ctx, "SELECT current_database()").Scan(&currentDatabase)
+	require.NoError(t, err)
+	if isProtectedDatabaseName(currentDatabase) {
+		t.Fatalf("%s must not point to protected database %q", testDatabaseURLEnv, currentDatabase)
+	}
+
 	var rawRecordsRegclass *string
 	err = pool.QueryRow(ctx, "SELECT to_regclass('brreg_workflow.raw_records')::text").Scan(&rawRecordsRegclass)
 	require.NoError(t, err)
@@ -35,4 +42,13 @@ func BeginTx(t *testing.T) pgx.Tx {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback(ctx) })
 	return tx
+}
+
+func isProtectedDatabaseName(name string) bool {
+	switch name {
+	case "corpscout", "temporal", "temporal_visibility", "postgres":
+		return true
+	default:
+		return false
+	}
 }

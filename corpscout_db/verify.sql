@@ -6,7 +6,7 @@ SELECT
   pg_encoding_to_char(encoding) AS encoding,
   datallowconn
 FROM pg_database
-WHERE datname IN (:'corpscout_db', :'temporal_db', :'temporal_visibility_db', 'postgres')
+WHERE datname IN (:'corpscout_db', :'corpscout_test_db', :'temporal_db', :'temporal_visibility_db', 'postgres')
 ORDER BY datname;
 
 SELECT

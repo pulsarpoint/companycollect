@@ -14,6 +14,7 @@ POSTGRES_ADMIN_DB ?= postgres
 POSTGRES_ADMIN_USER ?= corpscout
 
 CORPSCOUT_DB ?= corpscout
+CORPSCOUT_TEST_DB ?= corpscout_test
 CORPSCOUT_USER ?= corpscout
 CORPSCOUT_ANON_ROLE ?= corpscout_anon
 TEMPORAL_DB ?= temporal
@@ -37,6 +38,7 @@ bootstrap-cluster:
 	PGPASSWORD="$${POSTGRES_ADMIN_PASSWORD}" $(PSQL) "$(ADMIN_DSN)" \
 		-v ON_ERROR_STOP=1 \
 		-v corpscout_db="$(CORPSCOUT_DB)" \
+		-v corpscout_test_db="$(CORPSCOUT_TEST_DB)" \
 		-v corpscout_user="$(CORPSCOUT_USER)" \
 		-v corpscout_password="$${CORPSCOUT_PASSWORD}" \
 		-v temporal_db="$(TEMPORAL_DB)" \
@@ -51,6 +53,7 @@ verify:
 	PGPASSWORD="$${POSTGRES_ADMIN_PASSWORD}" $(PSQL) "$(ADMIN_DSN)" \
 		-v ON_ERROR_STOP=1 \
 		-v corpscout_db="$(CORPSCOUT_DB)" \
+		-v corpscout_test_db="$(CORPSCOUT_TEST_DB)" \
 		-v temporal_db="$(TEMPORAL_DB)" \
 		-v temporal_visibility_db="$(TEMPORAL_VISIBILITY_DB)" \
 		-v corpscout_user="$(CORPSCOUT_USER)" \

@@ -12,6 +12,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type BrregSourceCompanyProcessStatus struct {
+	CompanyID                 uuid.UUID          `json:"company_id"`
+	TranslationStatus         string             `json:"translation_status"`
+	TranslationAttemptCount   int32              `json:"translation_attempt_count"`
+	TranslationLeaseBy        *string            `json:"translation_lease_by"`
+	TranslationLeaseUntil     pgtype.Timestamptz `json:"translation_lease_until"`
+	TranslationLastStartedAt  pgtype.Timestamptz `json:"translation_last_started_at"`
+	TranslationLastFinishedAt pgtype.Timestamptz `json:"translation_last_finished_at"`
+	TranslationError          *string            `json:"translation_error"`
+	TranslationErrorCategory  *string            `json:"translation_error_category"`
+	TranslationErrorCode      *string            `json:"translation_error_code"`
+	TranslationRetryStrategy  *string            `json:"translation_retry_strategy"`
+	TranslationMetadata       json.RawMessage    `json:"translation_metadata"`
+	CurrencyStatus            string             `json:"currency_status"`
+	CurrencyAttemptCount      int32              `json:"currency_attempt_count"`
+	CurrencyLeaseBy           *string            `json:"currency_lease_by"`
+	CurrencyLeaseUntil        pgtype.Timestamptz `json:"currency_lease_until"`
+	CurrencyLastStartedAt     pgtype.Timestamptz `json:"currency_last_started_at"`
+	CurrencyLastFinishedAt    pgtype.Timestamptz `json:"currency_last_finished_at"`
+	CurrencyError             *string            `json:"currency_error"`
+	CurrencyErrorCategory     *string            `json:"currency_error_category"`
+	CurrencyErrorCode         *string            `json:"currency_error_code"`
+	CurrencyRetryStrategy     *string            `json:"currency_retry_strategy"`
+	CurrencyMetadata          json.RawMessage    `json:"currency_metadata"`
+	FinancialStatus           string             `json:"financial_status"`
+	FinancialAttemptCount     int32              `json:"financial_attempt_count"`
+	FinancialLeaseBy          *string            `json:"financial_lease_by"`
+	FinancialLeaseUntil       pgtype.Timestamptz `json:"financial_lease_until"`
+	FinancialLastStartedAt    pgtype.Timestamptz `json:"financial_last_started_at"`
+	FinancialLastFinishedAt   pgtype.Timestamptz `json:"financial_last_finished_at"`
+	FinancialError            *string            `json:"financial_error"`
+	FinancialErrorCategory    *string            `json:"financial_error_category"`
+	FinancialErrorCode        *string            `json:"financial_error_code"`
+	FinancialRetryStrategy    *string            `json:"financial_retry_strategy"`
+	FinancialMetadata         json.RawMessage    `json:"financial_metadata"`
+	CreatedAt                 time.Time          `json:"created_at"`
+	UpdatedAt                 time.Time          `json:"updated_at"`
+}
+
 type BrregSourceVCompanyDetail struct {
 	ID                             uuid.UUID          `json:"id"`
 	RawRecordID                    uuid.UUID          `json:"raw_record_id"`

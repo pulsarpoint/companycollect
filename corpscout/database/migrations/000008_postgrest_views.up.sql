@@ -1,5 +1,11 @@
 -- PostgREST read-only role
-CREATE ROLE corpscout_anon NOLOGIN;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'corpscout_anon') THEN
+    CREATE ROLE corpscout_anon NOLOGIN;
+  END IF;
+END
+$$;
 GRANT USAGE ON SCHEMA public TO corpscout_anon;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO corpscout_anon;
 GRANT corpscout_anon TO corpscout;

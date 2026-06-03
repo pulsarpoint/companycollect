@@ -18,6 +18,9 @@ type Querier interface {
 	BeginExchangeRateSyncRun(ctx context.Context, arg BeginExchangeRateSyncRunParams) (ExchangeRateSyncRun, error)
 	BeginNACEImportRun(ctx context.Context, arg BeginNACEImportRunParams) (NaceImportRun, error)
 	BulkUpdateCompanyFinancialStatus(ctx context.Context, arg BulkUpdateCompanyFinancialStatusParams) error
+	ClaimBrregCompanyCurrencyBatch(ctx context.Context, arg ClaimBrregCompanyCurrencyBatchParams) ([]ClaimBrregCompanyCurrencyBatchRow, error)
+	ClaimBrregCompanyFinancialBatch(ctx context.Context, arg ClaimBrregCompanyFinancialBatchParams) ([]ClaimBrregCompanyFinancialBatchRow, error)
+	ClaimBrregCompanyTranslationBatch(ctx context.Context, arg ClaimBrregCompanyTranslationBatchParams) ([]ClaimBrregCompanyTranslationBatchRow, error)
 	ClaimBrregSourceTranslationBatch(ctx context.Context, arg ClaimBrregSourceTranslationBatchParams) ([]ClaimBrregSourceTranslationBatchRow, error)
 	ClaimBrregWorkflowTaskSelectionBatch(ctx context.Context, arg ClaimBrregWorkflowTaskSelectionBatchParams) ([]ClaimBrregWorkflowTaskSelectionBatchRow, error)
 	ClearDefaultLLMProvider(ctx context.Context) error
@@ -39,6 +42,7 @@ type Querier interface {
 	DeactivateMissingNACECodes(ctx context.Context, arg DeactivateMissingNACECodesParams) (int32, error)
 	DeleteExchangeRatesNotInCurrencies(ctx context.Context, arg DeleteExchangeRatesNotInCurrenciesParams) (int32, error)
 	DeleteTemporalScheduleMetadata(ctx context.Context, temporalScheduleID string) error
+	EnsureBrregCompanyProcessStatuses(ctx context.Context, limit int32) (int32, error)
 	FailRunningBrregSourceTranslationTasksForRun(ctx context.Context, arg FailRunningBrregSourceTranslationTasksForRunParams) (int32, error)
 	FailRunningBrregWorkflowTasksForRun(ctx context.Context, arg FailRunningBrregWorkflowTasksForRunParams) (int32, error)
 	FinishBrregDomainActionAttempt(ctx context.Context, arg FinishBrregDomainActionAttemptParams) error
@@ -47,6 +51,8 @@ type Querier interface {
 	FinishBrregWorkflowTaskAttempt(ctx context.Context, arg FinishBrregWorkflowTaskAttemptParams) error
 	FinishExchangeRateSyncRun(ctx context.Context, arg FinishExchangeRateSyncRunParams) (ExchangeRateSyncRun, error)
 	FinishNACEImportRun(ctx context.Context, arg FinishNACEImportRunParams) (NaceImportRun, error)
+	GetBrregCompanyProcessStatus(ctx context.Context, companyID uuid.UUID) (BrregSourceCompanyProcessStatus, error)
+	GetBrregCompanyProcessStatusSummary(ctx context.Context) (GetBrregCompanyProcessStatusSummaryRow, error)
 	GetBrregSourceCompanyDetail(ctx context.Context, companyID uuid.UUID) (BrregSourceVCompanyDetail, error)
 	GetBrregSourceTranslationAssetState(ctx context.Context) (GetBrregSourceTranslationAssetStateRow, error)
 	GetBrregWorkflowDomainAssetState(ctx context.Context) (BrregWorkflowVDomainAssetState, error)
@@ -118,6 +124,18 @@ type Querier interface {
 	ListReviewCandidateIDs(ctx context.Context, arg ListReviewCandidateIDsParams) ([]uuid.UUID, error)
 	ListSources(ctx context.Context) ([]DataSource, error)
 	ListTemporalScheduleMetadata(ctx context.Context, arg ListTemporalScheduleMetadataParams) ([]TemporalScheduleMetadatum, error)
+	MarkBrregCompanyCurrencyDirty(ctx context.Context, arg MarkBrregCompanyCurrencyDirtyParams) (BrregSourceCompanyProcessStatus, error)
+	MarkBrregCompanyCurrencyFailed(ctx context.Context, arg MarkBrregCompanyCurrencyFailedParams) (BrregSourceCompanyProcessStatus, error)
+	MarkBrregCompanyCurrencySkipped(ctx context.Context, arg MarkBrregCompanyCurrencySkippedParams) (BrregSourceCompanyProcessStatus, error)
+	MarkBrregCompanyCurrencySucceeded(ctx context.Context, arg MarkBrregCompanyCurrencySucceededParams) (BrregSourceCompanyProcessStatus, error)
+	MarkBrregCompanyFinancialDirty(ctx context.Context, arg MarkBrregCompanyFinancialDirtyParams) (BrregSourceCompanyProcessStatus, error)
+	MarkBrregCompanyFinancialFailed(ctx context.Context, arg MarkBrregCompanyFinancialFailedParams) (BrregSourceCompanyProcessStatus, error)
+	MarkBrregCompanyFinancialSkipped(ctx context.Context, arg MarkBrregCompanyFinancialSkippedParams) (BrregSourceCompanyProcessStatus, error)
+	MarkBrregCompanyFinancialSucceeded(ctx context.Context, arg MarkBrregCompanyFinancialSucceededParams) (BrregSourceCompanyProcessStatus, error)
+	MarkBrregCompanyTranslationDirty(ctx context.Context, arg MarkBrregCompanyTranslationDirtyParams) (BrregSourceCompanyProcessStatus, error)
+	MarkBrregCompanyTranslationFailed(ctx context.Context, arg MarkBrregCompanyTranslationFailedParams) (BrregSourceCompanyProcessStatus, error)
+	MarkBrregCompanyTranslationSkipped(ctx context.Context, arg MarkBrregCompanyTranslationSkippedParams) (BrregSourceCompanyProcessStatus, error)
+	MarkBrregCompanyTranslationSucceeded(ctx context.Context, arg MarkBrregCompanyTranslationSucceededParams) (BrregSourceCompanyProcessStatus, error)
 	MarkBrregTranslationTermsQueued(ctx context.Context, arg MarkBrregTranslationTermsQueuedParams) ([]MarkBrregTranslationTermsQueuedRow, error)
 	MarkExchangeRateSourceFileFailed(ctx context.Context, arg MarkExchangeRateSourceFileFailedParams) (ExchangeRateSourceFile, error)
 	MarkExchangeRateSourceFileProcessed(ctx context.Context, id uuid.UUID) (ExchangeRateSourceFile, error)

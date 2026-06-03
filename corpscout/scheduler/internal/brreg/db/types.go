@@ -105,6 +105,35 @@ type ClaimTaskBatchCommand struct {
 	Metadata         json.RawMessage
 }
 
+type ClaimCompaniesForTranslationCommand struct {
+	Limit            int32
+	MaxParallelTasks int32
+	LeaseSeconds     int32
+	MaxAttempts      int32
+	WorkerID         *string
+}
+
+type ClaimCompaniesForTranslationResult struct {
+	StatusRowsInserted int32
+	Companies          []db.ClaimBrregCompanyTranslationBatchRow
+}
+
+type MarkCompanyTranslationStatusCommand struct {
+	CompanyID uuid.UUID
+	Metadata  json.RawMessage
+}
+
+type MarkCompanyTranslationFailedCommand struct {
+	CompanyID     uuid.UUID
+	Error         string
+	ErrorCategory string
+	ErrorCode     string
+	RetryStrategy string
+	MaxAttempts   int32
+	Terminal      bool
+	Metadata      json.RawMessage
+}
+
 type PrepareWorkflowCommand struct {
 	Source             string
 	Action             string

@@ -34,6 +34,7 @@ Pulled from `companycollect:5432` on 2026-05-30:
 
 The target cluster state added by these bootstrap files is:
 
+- `corpscout_test` database, owner `corpscout`
 - `temporal` database, owner `temporal`
 - `temporal_visibility` database, owner `temporal`
 - `temporal` login role with no superuser/admin permissions
@@ -72,8 +73,9 @@ Use this order for a clean server:
 
 1. `make up`
 2. `make bootstrap-cluster`
-3. run Corpscout migrations from `../database/migrations`
-4. start Temporal with:
+3. run Corpscout migrations from `../database/migrations` against `corpscout`
+4. run Corpscout migrations from `../database/migrations` against `corpscout_test`
+5. start Temporal with:
    - `DB=postgres12`
    - `POSTGRES_SEEDS=companycollect`
    - `POSTGRES_USER=temporal`
@@ -91,11 +93,22 @@ Use the same Postgres server, but keep separate databases:
 
 ```text
 corpscout             Corpscout application data and migrations
+corpscout_test        Corpscout integration-test data and migrations
 temporal              Temporal persistence
 temporal_visibility   Temporal visibility persistence
 ```
 
 Do not place Temporal tables in the `corpscout` database.
+Do not point `CORPSCOUT_TEST_DATABASE_URL` at `corpscout`, `temporal`,
+`temporal_visibility`, or `postgres`; scheduler test helpers refuse those
+database names.
+
+After bootstrap, migrate and run DB-backed scheduler tests from `../corpscout`:
+
+```bash
+make migrate-test-up
+make test-db
+```
 
 ## Notes
 

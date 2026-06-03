@@ -209,13 +209,16 @@ INSERT INTO brreg_source.companies (
   id,
   raw_record_id,
   organization_number,
+  source_native_id,
   organization_name,
+  organization_name_normalized,
   country_iso2,
   lifecycle_status,
   registration_status,
-  row_status
-) VALUES ($1, $2, $3, $4, 'NO', 'active', 'active', 'active')
-`, companyID, rawRecordID, organizationNumber, organizationName)
+  row_status,
+  payload_hash
+) VALUES ($1, $2, $3, $3, $4, lower($4), 'NO', 'active', 'active', 'active', $5)
+`, companyID, rawRecordID, organizationNumber, organizationName, payloadHash)
 	require.NoError(t, err)
 	return companyID
 }
