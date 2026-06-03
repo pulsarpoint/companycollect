@@ -90,6 +90,7 @@ async def handle_brreg_term_translation_message(
         response = _failed_term_response(request, "translation_worker_error", str(exc))
 
     await _publish_terms_response(publisher, response)
+    await _respond_if_supported(message, response)
     await _ack_if_supported(message)
 
 
@@ -185,6 +186,14 @@ async def _respond(message: NatsMessage, response: BrregTranslateResponse) -> No
 async def _publish_terms_response(publisher: NatsPublisher, response: TermTranslationResponse) -> None:
     payload = response.model_dump_json(exclude_none=True).encode("utf-8")
     await publisher.publish(TERM_RESULT_SUBJECT, payload)
+
+
+async def _respond_if_supported(message: NatsMessage, response: TermTranslationResponse) -> None:
+    respond = getattr(message, "respond", None)
+    if respond is None:
+        return
+    payload = response.model_dump_json(exclude_none=True).encode("utf-8")
+    await respond(payload)
 
 
 async def _ack_if_supported(message: NatsMessage) -> None:

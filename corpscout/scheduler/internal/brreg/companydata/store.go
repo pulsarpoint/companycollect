@@ -238,6 +238,43 @@ func (s *Store) ApplyCachedTranslations(
 	return result, nil
 }
 
+func (s *Store) SaveTranslationTerms(
+	ctx context.Context,
+	terms []TranslationTermResult,
+) (SaveTranslationTermsResult, error) {
+	if s == nil || s.gateway == nil {
+		return SaveTranslationTermsResult{}, errors.New("brreg companydata store not available")
+	}
+	if len(terms) == 0 {
+		return SaveTranslationTermsResult{}, nil
+	}
+	command := brregdb.UpsertTranslationTermsCommand{
+		Terms: make([]brregdb.TranslationTermResult, 0, len(terms)),
+	}
+	for _, term := range terms {
+		command.Terms = append(command.Terms, brregdb.TranslationTermResult{
+			SourceLang:           "no",
+			TargetLang:           "en",
+			SourceTextNormalized: term.SourceTextNormalized,
+			SourceText:           term.SourceText,
+			TermKey:              term.TermKey,
+			TranslatedText:       term.TranslatedText,
+			Status:               term.Status,
+			Provider:             term.Provider,
+			Model:                term.Model,
+			PromptVersion:        term.PromptVersion,
+			Error:                term.Error,
+			ErrorCode:            term.ErrorCode,
+			Metadata:             term.Metadata,
+		})
+	}
+	result, err := s.gateway.UpsertTranslationTerms(ctx, command)
+	if err != nil {
+		return SaveTranslationTermsResult{}, errors.Wrap(err, "save brreg companydata translation terms")
+	}
+	return SaveTranslationTermsResult{TermsSaved: result.TermsUpserted}, nil
+}
+
 func (s *Store) MarkTranslationSucceeded(ctx context.Context, command MarkTranslationStatusCommand) error {
 	if s == nil || s.gateway == nil {
 		return errors.New("brreg companydata store not available")

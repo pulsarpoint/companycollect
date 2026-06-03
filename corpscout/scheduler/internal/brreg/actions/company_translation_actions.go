@@ -9,14 +9,16 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/pulsarpoint/corpscout/scheduler/internal/brreg/companydata"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/translationclient"
 )
 
 type CompanyTranslationActions struct {
-	store *companydata.Store
+	store      *companydata.Store
+	translator *translationclient.Client
 }
 
-func NewCompanyTranslationActions(store *companydata.Store) *CompanyTranslationActions {
-	return &CompanyTranslationActions{store: store}
+func NewCompanyTranslationActions(store *companydata.Store, translator *translationclient.Client) *CompanyTranslationActions {
+	return &CompanyTranslationActions{store: store, translator: translator}
 }
 
 type ClaimBrregCompaniesForTranslationInput struct {
@@ -39,36 +41,23 @@ type ClaimBrregCompaniesForTranslationResult struct {
 	Companies          []ClaimedCompanyForTranslation `json:"companies"`
 }
 
-type ApplyBrregCachedCompanyTranslationsInput struct {
+type ProcessBrregCompanyTranslationInput struct {
 	CompanyID     string `json:"company_id"`
+	Provider      string `json:"provider,omitempty"`
+	Model         string `json:"model,omitempty"`
 	PromptVersion string `json:"prompt_version,omitempty"`
+	MaxAttempts   int32  `json:"max_attempts,omitempty"`
 }
 
-type ApplyBrregCachedCompanyTranslationsResult struct {
-	FieldsSeen      int32 `json:"fields_seen"`
-	FieldsApplied   int32 `json:"fields_applied"`
-	RemainingFields int32 `json:"remaining_fields"`
-}
-
-type MarkBrregCompanyTranslationSucceededInput struct {
-	CompanyID string `json:"company_id"`
-	Metadata  any    `json:"metadata,omitempty"`
-}
-
-type MarkBrregCompanyTranslationSkippedInput struct {
-	CompanyID string `json:"company_id"`
-	Metadata  any    `json:"metadata,omitempty"`
-}
-
-type MarkBrregCompanyTranslationFailedInput struct {
-	CompanyID     string `json:"company_id"`
-	Error         string `json:"error"`
-	ErrorCategory string `json:"error_category,omitempty"`
-	ErrorCode     string `json:"error_code,omitempty"`
-	RetryStrategy string `json:"retry_strategy,omitempty"`
-	MaxAttempts   int32  `json:"max_attempts"`
-	Terminal      bool   `json:"terminal"`
-	Metadata      any    `json:"metadata,omitempty"`
+type ProcessBrregCompanyTranslationResult struct {
+	CompanyID       string `json:"company_id"`
+	Status          string `json:"status"`
+	FieldsSeen      int32  `json:"fields_seen"`
+	FieldsApplied   int32  `json:"fields_applied"`
+	RemainingFields int32  `json:"remaining_fields"`
+	TermsRequested  int32  `json:"terms_requested"`
+	TermsSucceeded  int32  `json:"terms_succeeded"`
+	TermsFailed     int32  `json:"terms_failed"`
 }
 
 func (a *CompanyTranslationActions) ClaimBrregCompaniesForTranslation(
@@ -107,92 +96,266 @@ func (a *CompanyTranslationActions) ClaimBrregCompaniesForTranslation(
 	}, nil
 }
 
-func (a *CompanyTranslationActions) ApplyBrregCachedCompanyTranslations(
+func (a *CompanyTranslationActions) ProcessBrregCompanyTranslation(
 	ctx context.Context,
-	input ApplyBrregCachedCompanyTranslationsInput,
-) (ApplyBrregCachedCompanyTranslationsResult, error) {
+	input ProcessBrregCompanyTranslationInput,
+) (ProcessBrregCompanyTranslationResult, error) {
 	if a == nil || a.store == nil {
-		return ApplyBrregCachedCompanyTranslationsResult{}, errors.New("brreg companydata store not available")
+		return ProcessBrregCompanyTranslationResult{}, errors.New("brreg companydata store not available")
 	}
 	companyID, err := uuid.Parse(input.CompanyID)
 	if err != nil {
-		return ApplyBrregCachedCompanyTranslationsResult{}, errors.Wrap(err, "parse brreg company id")
+		return ProcessBrregCompanyTranslationResult{}, errors.Wrap(err, "parse brreg company id")
 	}
+	if input.PromptVersion == "" {
+		input.PromptVersion = defaultTranslationPromptVersion
+	}
+	if input.Provider == "" {
+		input.Provider = "default"
+	}
+	result := ProcessBrregCompanyTranslationResult{
+		CompanyID: input.CompanyID,
+		Status:    "running",
+	}
+	slog.DebugContext(ctx, "processing brreg company translation",
+		"company_id", input.CompanyID,
+		"provider", input.Provider,
+		"model", input.Model,
+		"prompt_version", input.PromptVersion,
+	)
+
 	applied, err := a.store.ApplyCachedTranslations(ctx, companydata.ApplyCachedTranslationsCommand{
 		CompanyID:     companyID,
 		PromptVersion: input.PromptVersion,
 	})
 	if err != nil {
-		return ApplyBrregCachedCompanyTranslationsResult{}, errors.Wrap(err, "apply cached brreg company translations")
+		return a.failCompanyTranslation(
+			ctx,
+			result,
+			companyID,
+			input.MaxAttempts,
+			"apply cached brreg company translations failed",
+			"translation_cache",
+			"apply_cached_failed",
+			map[string]any{"error": err.Error()},
+		)
 	}
-	slog.DebugContext(ctx, "applied cached brreg company translations",
-		"company_id", input.CompanyID,
-		"fields_seen", applied.FieldsSeen,
-		"fields_applied", applied.FieldsApplied,
-		"remaining_fields", applied.RemainingFields,
-	)
-	return ApplyBrregCachedCompanyTranslationsResult{
-		FieldsSeen:      applied.FieldsSeen,
-		FieldsApplied:   applied.FieldsApplied,
-		RemainingFields: applied.RemainingFields,
-	}, nil
-}
+	result.FieldsSeen = applied.FieldsSeen
+	result.FieldsApplied = applied.FieldsApplied
+	result.RemainingFields = applied.RemainingFields
 
-func (a *CompanyTranslationActions) MarkBrregCompanyTranslationSucceeded(
-	ctx context.Context,
-	input MarkBrregCompanyTranslationSucceededInput,
-) error {
-	if a == nil || a.store == nil {
-		return errors.New("brreg companydata store not available")
+	switch {
+	case applied.FieldsSeen == 0 && applied.RemainingFields == 0:
+		if err := a.store.MarkTranslationSkipped(ctx, companydata.MarkTranslationStatusCommand{
+			CompanyID: companyID,
+			Metadata:  jsonMetadata(map[string]any{"reason": "no_translation_fields"}),
+		}); err != nil {
+			return result, errors.Wrap(err, "mark brreg company translation skipped")
+		}
+		result.Status = "skipped"
+		return result, nil
+	case applied.RemainingFields == 0:
+		if err := a.store.MarkTranslationSucceeded(ctx, companydata.MarkTranslationStatusCommand{
+			CompanyID: companyID,
+			Metadata: jsonMetadata(map[string]any{
+				"fields_seen":    applied.FieldsSeen,
+				"fields_applied": applied.FieldsApplied,
+				"source":         "translation_cache",
+			}),
+		}); err != nil {
+			return result, errors.Wrap(err, "mark brreg company translation succeeded")
+		}
+		result.Status = "succeeded"
+		return result, nil
 	}
-	companyID, err := uuid.Parse(input.CompanyID)
-	if err != nil {
-		return errors.Wrap(err, "parse brreg company id")
-	}
-	return a.store.MarkTranslationSucceeded(ctx, companydata.MarkTranslationStatusCommand{
-		CompanyID: companyID,
-		Metadata:  jsonMetadata(input.Metadata),
-	})
-}
 
-func (a *CompanyTranslationActions) MarkBrregCompanyTranslationSkipped(
-	ctx context.Context,
-	input MarkBrregCompanyTranslationSkippedInput,
-) error {
-	if a == nil || a.store == nil {
-		return errors.New("brreg companydata store not available")
-	}
-	companyID, err := uuid.Parse(input.CompanyID)
+	data, err := a.store.Load(ctx, companyID)
 	if err != nil {
-		return errors.Wrap(err, "parse brreg company id")
+		return result, errors.Wrap(err, "load brreg company for translation")
 	}
-	return a.store.MarkTranslationSkipped(ctx, companydata.MarkTranslationStatusCommand{
-		CompanyID: companyID,
-		Metadata:  jsonMetadata(input.Metadata),
-	})
-}
+	terms := data.TranslationTerms()
+	if len(terms) == 0 {
+		if err := a.store.MarkTranslationSucceeded(ctx, companydata.MarkTranslationStatusCommand{
+			CompanyID: companyID,
+			Metadata:  jsonMetadata(map[string]any{"source": "companydata"}),
+		}); err != nil {
+			return result, errors.Wrap(err, "mark brreg company translation succeeded")
+		}
+		result.RemainingFields = 0
+		result.Status = "succeeded"
+		return result, nil
+	}
+	result.TermsRequested = int32(len(terms))
+	if a.translator == nil {
+		return a.failCompanyTranslation(
+			ctx,
+			result,
+			companyID,
+			input.MaxAttempts,
+			"brreg term translation client not available",
+			"translation_service",
+			"client_not_available",
+			nil,
+		)
+	}
 
-func (a *CompanyTranslationActions) MarkBrregCompanyTranslationFailed(
-	ctx context.Context,
-	input MarkBrregCompanyTranslationFailedInput,
-) error {
-	if a == nil || a.store == nil {
-		return errors.New("brreg companydata store not available")
-	}
-	companyID, err := uuid.Parse(input.CompanyID)
+	response, err := a.translator.TranslateBrregTerms(ctx, companyTranslationRequest(input, terms))
 	if err != nil {
-		return errors.Wrap(err, "parse brreg company id")
+		return a.failCompanyTranslation(
+			ctx,
+			result,
+			companyID,
+			input.MaxAttempts,
+			"request brreg term translation failed",
+			"translation_service",
+			"request_failed",
+			map[string]any{"error": err.Error()},
+		)
 	}
-	return a.store.MarkTranslationFailed(ctx, companydata.MarkTranslationFailedCommand{
+	termResults := companyTranslationTermResults(input, response)
+	result.TermsSucceeded, result.TermsFailed = countCompanyTranslationTerms(termResults)
+	if _, err := a.store.SaveTranslationTerms(ctx, termResults); err != nil {
+		return result, errors.Wrap(err, "save brreg company translation terms")
+	}
+
+	applied, err = a.store.ApplyCachedTranslations(ctx, companydata.ApplyCachedTranslationsCommand{
 		CompanyID:     companyID,
-		Error:         input.Error,
-		ErrorCategory: input.ErrorCategory,
-		ErrorCode:     input.ErrorCode,
-		RetryStrategy: input.RetryStrategy,
-		MaxAttempts:   input.MaxAttempts,
-		Terminal:      input.Terminal,
-		Metadata:      jsonMetadata(input.Metadata),
+		PromptVersion: input.PromptVersion,
 	})
+	if err != nil {
+		return result, errors.Wrap(err, "apply translated brreg company terms")
+	}
+	result.FieldsApplied += applied.FieldsApplied
+	result.RemainingFields = applied.RemainingFields
+	if applied.RemainingFields == 0 {
+		if err := a.store.MarkTranslationSucceeded(ctx, companydata.MarkTranslationStatusCommand{
+			CompanyID: companyID,
+			Metadata: jsonMetadata(map[string]any{
+				"terms_requested": result.TermsRequested,
+				"terms_succeeded": result.TermsSucceeded,
+				"terms_failed":    result.TermsFailed,
+				"provider":        response.Provider,
+				"model":           response.Model,
+				"prompt_version":  response.PromptVersion,
+			}),
+		}); err != nil {
+			return result, errors.Wrap(err, "mark brreg company translation succeeded")
+		}
+		result.Status = "succeeded"
+		return result, nil
+	}
+	return a.failCompanyTranslation(
+		ctx,
+		result,
+		companyID,
+		input.MaxAttempts,
+		"brreg term translation did not complete all company fields",
+		"translation_service",
+		"missing_translated_terms",
+		map[string]any{
+			"terms_requested":  result.TermsRequested,
+			"terms_succeeded":  result.TermsSucceeded,
+			"terms_failed":     result.TermsFailed,
+			"remaining_fields": result.RemainingFields,
+		},
+	)
+}
+
+func (a *CompanyTranslationActions) failCompanyTranslation(
+	ctx context.Context,
+	result ProcessBrregCompanyTranslationResult,
+	companyID uuid.UUID,
+	maxAttempts int32,
+	message string,
+	category string,
+	code string,
+	metadata any,
+) (ProcessBrregCompanyTranslationResult, error) {
+	if err := a.store.MarkTranslationFailed(ctx, companydata.MarkTranslationFailedCommand{
+		CompanyID:     companyID,
+		Error:         message,
+		ErrorCategory: category,
+		ErrorCode:     code,
+		RetryStrategy: "retry_with_backoff",
+		MaxAttempts:   maxAttempts,
+		Metadata:      jsonMetadata(metadata),
+	}); err != nil {
+		return result, errors.Wrap(err, "mark brreg company translation failed")
+	}
+	result.Status = "failed"
+	return result, nil
+}
+
+func companyTranslationRequest(
+	input ProcessBrregCompanyTranslationInput,
+	terms []companydata.TranslationTerm,
+) translationclient.TermTranslationRequest {
+	request := translationclient.TermTranslationRequest{
+		RequestID:     uuid.NewString(),
+		Source:        "brreg",
+		SourceLang:    "no",
+		TargetLang:    "en",
+		Provider:      input.Provider,
+		Model:         input.Model,
+		PromptVersion: input.PromptVersion,
+		Terms:         make([]translationclient.TermTranslationRequestTerm, 0, len(terms)),
+	}
+	for _, term := range terms {
+		request.Terms = append(request.Terms, translationclient.TermTranslationRequestTerm{
+			TermKey:              term.Key,
+			SourceText:           term.SourceText,
+			SourceTextNormalized: term.NormalizedText,
+		})
+	}
+	return request
+}
+
+func companyTranslationTermResults(
+	input ProcessBrregCompanyTranslationInput,
+	response translationclient.TermTranslationResult,
+) []companydata.TranslationTermResult {
+	provider := defaultString(response.Provider, input.Provider)
+	model := defaultString(response.Model, input.Model)
+	promptVersion := defaultString(response.PromptVersion, input.PromptVersion)
+	results := make([]companydata.TranslationTermResult, 0, len(response.Results)+len(response.Failures))
+	for _, item := range response.Results {
+		results = append(results, companydata.TranslationTermResult{
+			SourceText:           item.SourceText,
+			SourceTextNormalized: item.SourceTextNormalized,
+			TermKey:              item.TermKey,
+			TranslatedText:       item.TranslatedText,
+			Status:               defaultString(item.Status, "succeeded"),
+			Provider:             provider,
+			Model:                model,
+			PromptVersion:        promptVersion,
+		})
+	}
+	for _, failure := range response.Failures {
+		results = append(results, companydata.TranslationTermResult{
+			SourceText:           failure.SourceText,
+			SourceTextNormalized: failure.SourceTextNormalized,
+			TermKey:              failure.TermKey,
+			Status:               defaultString(failure.Status, "failed_retryable"),
+			Provider:             provider,
+			Model:                model,
+			PromptVersion:        promptVersion,
+			Error:                failure.Error,
+			ErrorCode:            failure.ErrorCode,
+		})
+	}
+	return results
+}
+
+func countCompanyTranslationTerms(terms []companydata.TranslationTermResult) (succeeded int32, failed int32) {
+	for _, term := range terms {
+		switch term.Status {
+		case "succeeded":
+			succeeded++
+		default:
+			failed++
+		}
+	}
+	return succeeded, failed
 }
 
 func jsonMetadata(value any) json.RawMessage {

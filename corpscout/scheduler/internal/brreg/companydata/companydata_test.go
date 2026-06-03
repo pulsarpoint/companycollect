@@ -344,6 +344,71 @@ func TestStoreApplyCachedTranslationsRespectsPromptVersionAndStatus(t *testing.T
 	require.Empty(t, loaded.Company.ResponseClassEN)
 }
 
+func TestStoreSaveTranslationTermsPersistsSucceededAndFailedTerms(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	terms := []TranslationTermResult{
+		{
+			SourceText:           "Aksjeselskap",
+			SourceTextNormalized: "aksjeselskap",
+			TermKey:              translationTermKey("Aksjeselskap"),
+			TranslatedText:       "Limited liability company",
+			Status:               "succeeded",
+			Provider:             "mock",
+			Model:                "mock-fast",
+			PromptVersion:        "v1",
+		},
+		{
+			SourceText:           "Enhet",
+			SourceTextNormalized: "enhet",
+			TermKey:              translationTermKey("Enhet"),
+			Status:               "failed_retryable",
+			Provider:             "mock",
+			Model:                "mock-fast",
+			PromptVersion:        "v1",
+			Error:                "temporary failure",
+			ErrorCode:            "temporary",
+		},
+	}
+
+	result, err := New(tx).SaveTranslationTerms(t.Context(), terms)
+
+	require.NoError(t, err)
+	require.EqualValues(t, 2, result.TermsSaved)
+	rows, err := tx.Query(t.Context(), `
+SELECT source_text, translated_text, status, error_code
+FROM brreg_source.translation_terms
+WHERE term_key IN ($1, $2)
+ORDER BY source_text
+`, translationTermKey("Aksjeselskap"), translationTermKey("Enhet"))
+	require.NoError(t, err)
+	defer rows.Close()
+
+	seen := map[string]struct {
+		translatedText *string
+		status         string
+		errorCode      *string
+	}{}
+	for rows.Next() {
+		var sourceText string
+		var translatedText *string
+		var status string
+		var errorCode *string
+		require.NoError(t, rows.Scan(&sourceText, &translatedText, &status, &errorCode))
+		seen[sourceText] = struct {
+			translatedText *string
+			status         string
+			errorCode      *string
+		}{translatedText: translatedText, status: status, errorCode: errorCode}
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, "succeeded", seen["Aksjeselskap"].status)
+	require.NotNil(t, seen["Aksjeselskap"].translatedText)
+	require.Equal(t, "Limited liability company", *seen["Aksjeselskap"].translatedText)
+	require.Equal(t, "failed_retryable", seen["Enhet"].status)
+	require.NotNil(t, seen["Enhet"].errorCode)
+	require.Equal(t, "temporary", *seen["Enhet"].errorCode)
+}
+
 func TestStoreClaimForTranslationReturnsCompanyData(t *testing.T) {
 	tx := testdb.BeginTx(t)
 	seed := seedCompanyData(t, tx, companyDataSeed{

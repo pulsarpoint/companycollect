@@ -29,19 +29,7 @@ func registerBrregCompanyTranslationWorker(worker temporalworker.Worker, resourc
 		activity.RegisterOptions{Name: "ClaimBrregCompaniesForTranslation"},
 	)
 	worker.RegisterActivityWithOptions(
-		resources.companyTranslation.ApplyBrregCachedCompanyTranslations,
-		activity.RegisterOptions{Name: "ApplyBrregCachedCompanyTranslations"},
-	)
-	worker.RegisterActivityWithOptions(
-		resources.companyTranslation.MarkBrregCompanyTranslationSucceeded,
-		activity.RegisterOptions{Name: "MarkBrregCompanyTranslationSucceeded"},
-	)
-	worker.RegisterActivityWithOptions(
-		resources.companyTranslation.MarkBrregCompanyTranslationSkipped,
-		activity.RegisterOptions{Name: "MarkBrregCompanyTranslationSkipped"},
-	)
-	worker.RegisterActivityWithOptions(
-		resources.companyTranslation.MarkBrregCompanyTranslationFailed,
-		activity.RegisterOptions{Name: "MarkBrregCompanyTranslationFailed"},
+		resources.companyTranslation.ProcessBrregCompanyTranslation,
+		activity.RegisterOptions{Name: "ProcessBrregCompanyTranslation"},
 	)
 }

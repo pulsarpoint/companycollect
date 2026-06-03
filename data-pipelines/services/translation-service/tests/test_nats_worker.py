@@ -148,6 +148,9 @@ async def test_term_nats_handler_publishes_result_response_and_acks() -> None:
     assert body["results"][0]["term_key"] == TERM_KEY_1
     assert body["results"][0]["translated_text"] == "Aksjeselskap EN"
     assert body["failures"] == []
+    assert len(message.replies) == 1
+    reply_body = json.loads(message.replies[0].decode("utf-8"))
+    assert reply_body == body
 
 
 @pytest.mark.asyncio

@@ -26,44 +26,33 @@ func TestTranslateBrregSourceCompaniesCompletesCachedCompanies(t *testing.T) {
 			},
 		}, nil
 	}, activity.RegisterOptions{Name: claimBrregCompaniesForTranslationActivity})
-	env.RegisterActivityWithOptions(func(input ApplyBrregCachedCompanyTranslationsInput) (ApplyBrregCachedCompanyTranslationsResult, error) {
+	var processed []ProcessBrregCompanyTranslationInput
+	env.RegisterActivityWithOptions(func(input ProcessBrregCompanyTranslationInput) (ProcessBrregCompanyTranslationResult, error) {
 		require.Equal(t, "v1", input.PromptVersion)
+		require.Equal(t, "deepseek", input.Provider)
+		require.Equal(t, "deepseek-chat", input.Model)
+		processed = append(processed, input)
 		switch input.CompanyID {
 		case "11111111-1111-1111-1111-111111111111":
-			return ApplyBrregCachedCompanyTranslationsResult{FieldsSeen: 2, FieldsApplied: 2, RemainingFields: 0}, nil
+			return ProcessBrregCompanyTranslationResult{CompanyID: input.CompanyID, Status: "succeeded", FieldsSeen: 2, FieldsApplied: 2, RemainingFields: 0}, nil
 		case "22222222-2222-2222-2222-222222222222":
-			return ApplyBrregCachedCompanyTranslationsResult{FieldsSeen: 0, FieldsApplied: 0, RemainingFields: 0}, nil
+			return ProcessBrregCompanyTranslationResult{CompanyID: input.CompanyID, Status: "skipped", FieldsSeen: 0, FieldsApplied: 0, RemainingFields: 0}, nil
 		default:
 			t.Fatalf("unexpected company id %s", input.CompanyID)
-			return ApplyBrregCachedCompanyTranslationsResult{}, nil
+			return ProcessBrregCompanyTranslationResult{}, nil
 		}
-	}, activity.RegisterOptions{Name: applyBrregCachedCompanyTranslationsActivity})
+	}, activity.RegisterOptions{Name: processBrregCompanyTranslationActivity})
 
-	var succeeded []MarkBrregCompanyTranslationSucceededInput
-	env.RegisterActivityWithOptions(func(input MarkBrregCompanyTranslationSucceededInput) error {
-		succeeded = append(succeeded, input)
-		return nil
-	}, activity.RegisterOptions{Name: markBrregCompanyTranslationSucceededActivity})
-
-	var skipped []MarkBrregCompanyTranslationSkippedInput
-	env.RegisterActivityWithOptions(func(input MarkBrregCompanyTranslationSkippedInput) error {
-		skipped = append(skipped, input)
-		return nil
-	}, activity.RegisterOptions{Name: markBrregCompanyTranslationSkippedActivity})
-
-	env.RegisterActivityWithOptions(func(input MarkBrregCompanyTranslationFailedInput) error {
-		t.Fatalf("unexpected failure mark for %s", input.CompanyID)
-		return nil
-	}, activity.RegisterOptions{Name: markBrregCompanyTranslationFailedActivity})
-
-	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{})
+	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{
+		Provider: "deepseek",
+		Model:    "deepseek-chat",
+	})
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())
-	require.Len(t, succeeded, 1)
-	require.Equal(t, "11111111-1111-1111-1111-111111111111", succeeded[0].CompanyID)
-	require.Len(t, skipped, 1)
-	require.Equal(t, "22222222-2222-2222-2222-222222222222", skipped[0].CompanyID)
+	require.Len(t, processed, 2)
+	require.Equal(t, "11111111-1111-1111-1111-111111111111", processed[0].CompanyID)
+	require.Equal(t, "22222222-2222-2222-2222-222222222222", processed[1].CompanyID)
 
 	var result TranslateBrregSourceCompaniesResult
 	require.NoError(t, env.GetWorkflowResult(&result))
@@ -86,33 +75,18 @@ func TestTranslateBrregSourceCompaniesFailsWhenAllClaimedCompaniesMissCache(t *t
 			},
 		}, nil
 	}, activity.RegisterOptions{Name: claimBrregCompaniesForTranslationActivity})
-	env.RegisterActivityWithOptions(func(ApplyBrregCachedCompanyTranslationsInput) (ApplyBrregCachedCompanyTranslationsResult, error) {
-		return ApplyBrregCachedCompanyTranslationsResult{FieldsSeen: 3, FieldsApplied: 1, RemainingFields: 2}, nil
-	}, activity.RegisterOptions{Name: applyBrregCachedCompanyTranslationsActivity})
-	env.RegisterActivityWithOptions(func(MarkBrregCompanyTranslationSucceededInput) error {
-		t.Fatal("unexpected succeeded mark")
-		return nil
-	}, activity.RegisterOptions{Name: markBrregCompanyTranslationSucceededActivity})
-	env.RegisterActivityWithOptions(func(MarkBrregCompanyTranslationSkippedInput) error {
-		t.Fatal("unexpected skipped mark")
-		return nil
-	}, activity.RegisterOptions{Name: markBrregCompanyTranslationSkippedActivity})
-
-	var failed MarkBrregCompanyTranslationFailedInput
-	env.RegisterActivityWithOptions(func(input MarkBrregCompanyTranslationFailedInput) error {
+	var failed ProcessBrregCompanyTranslationInput
+	env.RegisterActivityWithOptions(func(input ProcessBrregCompanyTranslationInput) (ProcessBrregCompanyTranslationResult, error) {
 		failed = input
-		return nil
-	}, activity.RegisterOptions{Name: markBrregCompanyTranslationFailedActivity})
+		return ProcessBrregCompanyTranslationResult{CompanyID: input.CompanyID, Status: "failed", FieldsSeen: 3, FieldsApplied: 1, RemainingFields: 2}, nil
+	}, activity.RegisterOptions{Name: processBrregCompanyTranslationActivity})
 
 	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{})
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.ErrorContains(t, env.GetWorkflowError(), "all company translation records failed")
 	require.Equal(t, "33333333-3333-3333-3333-333333333333", failed.CompanyID)
-	require.False(t, failed.Terminal)
-	require.Equal(t, "translation_cache", failed.ErrorCategory)
-	require.Equal(t, "missing_cached_terms", failed.ErrorCode)
-	require.Equal(t, "wait_for_terms", failed.RetryStrategy)
+	require.EqualValues(t, 5, failed.MaxAttempts)
 }
 
 func TestTranslateBrregSourceCompaniesDrainsWhenNothingClaimed(t *testing.T) {

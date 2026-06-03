@@ -46,6 +46,24 @@ type TermTranslation struct {
 	TranslatedText string
 }
 
+type TranslationTermResult struct {
+	SourceText           string
+	SourceTextNormalized string
+	TermKey              string
+	TranslatedText       string
+	Status               string
+	Provider             string
+	Model                string
+	PromptVersion        string
+	Error                string
+	ErrorCode            string
+	Metadata             map[string]any
+}
+
+type SaveTranslationTermsResult struct {
+	TermsSaved int32
+}
+
 type ApplyTranslationsResult struct {
 	FieldsApplied     int32
 	TermsWithoutMatch int32

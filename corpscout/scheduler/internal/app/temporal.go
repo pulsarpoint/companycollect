@@ -77,7 +77,7 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 	return &temporalWorkerResources{
 		translationClient:      translator,
 		translationActions:     brregactions.NewTranslationActions(pool, translator, llmStore),
-		companyTranslation:     brregactions.NewCompanyTranslationActions(brregCompanyData),
+		companyTranslation:     brregactions.NewCompanyTranslationActions(brregCompanyData, translator),
 		termTranslationNATS:    termTranslationNATS,
 		termTranslationActions: brregactions.NewTermTranslationActions(gateway, termTranslationNATS),
 		crawlClient:            crawler,

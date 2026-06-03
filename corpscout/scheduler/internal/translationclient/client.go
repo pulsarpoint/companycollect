@@ -166,6 +166,48 @@ func (c *Client) TranslateBrregRecords(ctx context.Context, request BrregTransla
 	return decoded, nil
 }
 
+func (c *Client) TranslateBrregTerms(ctx context.Context, request TermTranslationRequest) (TermTranslationResult, error) {
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return TermTranslationResult{}, errors.Wrap(err, "encode brreg term translation nats request")
+	}
+	subject := c.subject
+	if subject == "" || subject == DefaultBrregTranslationSubject {
+		subject = DefaultTermTranslationRequestSubject
+	}
+	slog.DebugContext(ctx, "requesting brreg term translation over nats",
+		"subject", subject,
+		"request_id", request.RequestID,
+		"terms_count", len(request.Terms),
+		"provider", request.Provider,
+		"model", request.Model,
+		"prompt_version", request.PromptVersion,
+		"payload_bytes", len(payload),
+		"request_timeout", c.requestTimeout.String(),
+	)
+	requestCtx, cancel := natsRequestContext(ctx, c.requestTimeout)
+	defer cancel()
+	responsePayload, err := c.requester.Request(requestCtx, subject, payload)
+	if err != nil {
+		return TermTranslationResult{}, errors.Wrap(err, "request brreg term translation over nats")
+	}
+	var decoded TermTranslationResult
+	if err := json.Unmarshal(responsePayload, &decoded); err != nil {
+		return TermTranslationResult{}, errors.Wrap(err, "decode brreg term translation nats response")
+	}
+	slog.DebugContext(ctx, "received brreg term translation nats response",
+		"subject", subject,
+		"request_id", decoded.RequestID,
+		"results", len(decoded.Results),
+		"failures", len(decoded.Failures),
+		"provider", decoded.Provider,
+		"model", decoded.Model,
+		"prompt_version", decoded.PromptVersion,
+		"response_bytes", len(responsePayload),
+	)
+	return decoded, nil
+}
+
 func natsRequestContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	if timeout <= 0 {
 		return ctx, func() {}

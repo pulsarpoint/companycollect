@@ -14,11 +14,8 @@ const (
 	TranslateBrregSourceCompaniesTaskQueue    = "brreg-company-translation"
 	TranslateBrregSourceCompaniesWorkflowName = "TranslateBrregSourceCompanies"
 
-	claimBrregCompaniesForTranslationActivity    = "ClaimBrregCompaniesForTranslation"
-	applyBrregCachedCompanyTranslationsActivity  = "ApplyBrregCachedCompanyTranslations"
-	markBrregCompanyTranslationSucceededActivity = "MarkBrregCompanyTranslationSucceeded"
-	markBrregCompanyTranslationSkippedActivity   = "MarkBrregCompanyTranslationSkipped"
-	markBrregCompanyTranslationFailedActivity    = "MarkBrregCompanyTranslationFailed"
+	claimBrregCompaniesForTranslationActivity = "ClaimBrregCompaniesForTranslation"
+	processBrregCompanyTranslationActivity    = "ProcessBrregCompanyTranslation"
 
 	defaultCompanyTranslationBatchSize        = 10
 	defaultCompanyTranslationMaxParallelTasks = 10
@@ -31,17 +28,16 @@ const (
 type ClaimBrregCompaniesForTranslationInput = actions.ClaimBrregCompaniesForTranslationInput
 type ClaimBrregCompaniesForTranslationResult = actions.ClaimBrregCompaniesForTranslationResult
 type ClaimedCompanyForTranslation = actions.ClaimedCompanyForTranslation
-type ApplyBrregCachedCompanyTranslationsInput = actions.ApplyBrregCachedCompanyTranslationsInput
-type ApplyBrregCachedCompanyTranslationsResult = actions.ApplyBrregCachedCompanyTranslationsResult
-type MarkBrregCompanyTranslationSucceededInput = actions.MarkBrregCompanyTranslationSucceededInput
-type MarkBrregCompanyTranslationSkippedInput = actions.MarkBrregCompanyTranslationSkippedInput
-type MarkBrregCompanyTranslationFailedInput = actions.MarkBrregCompanyTranslationFailedInput
+type ProcessBrregCompanyTranslationInput = actions.ProcessBrregCompanyTranslationInput
+type ProcessBrregCompanyTranslationResult = actions.ProcessBrregCompanyTranslationResult
 
 type TranslateBrregSourceCompaniesInput struct {
 	BatchSize        int    `json:"batch_size,omitempty"`
 	MaxParallelTasks int    `json:"max_parallel_tasks,omitempty"`
 	LeaseSeconds     int    `json:"lease_seconds,omitempty"`
 	MaxAttempts      int    `json:"max_attempts,omitempty"`
+	Provider         string `json:"provider,omitempty"`
+	Model            string `json:"model,omitempty"`
 	PromptVersion    string `json:"prompt_version,omitempty"`
 	Trigger          string `json:"trigger,omitempty"`
 }
@@ -80,6 +76,8 @@ func TranslateBrregSourceCompanies(
 		"max_parallel_tasks", input.MaxParallelTasks,
 		"lease_seconds", input.LeaseSeconds,
 		"max_attempts", input.MaxAttempts,
+		"provider", input.Provider,
+		"model", input.Model,
 		"prompt_version", input.PromptVersion,
 		"trigger", input.Trigger,
 	)
@@ -103,42 +101,28 @@ func TranslateBrregSourceCompanies(
 	}
 
 	for _, company := range claimed.Companies {
-		var applied ApplyBrregCachedCompanyTranslationsResult
-		err := temporalworkflow.ExecuteActivity(ctx, applyBrregCachedCompanyTranslationsActivity, ApplyBrregCachedCompanyTranslationsInput{
+		var processed ProcessBrregCompanyTranslationResult
+		err := temporalworkflow.ExecuteActivity(ctx, processBrregCompanyTranslationActivity, ProcessBrregCompanyTranslationInput{
 			CompanyID:     company.CompanyID,
+			Provider:      input.Provider,
+			Model:         input.Model,
 			PromptVersion: input.PromptVersion,
-		}).Get(ctx, &applied)
+			MaxAttempts:   int32(input.MaxAttempts),
+		}).Get(ctx, &processed)
 		if err != nil {
-			result.CompaniesFailed++
-			if markErr := markCompanyTranslationFailed(ctx, company.CompanyID, input.MaxAttempts, "apply cached company translations failed", "translation_cache", "apply_cached_failed", "retry_with_backoff", false); markErr != nil {
-				return result, markErr
-			}
-			continue
+			return result, errors.Wrap(err, "process brreg company translation")
 		}
-		result.FieldsSeen += applied.FieldsSeen
-		result.FieldsApplied += applied.FieldsApplied
-		result.RemainingFields += applied.RemainingFields
+		result.FieldsSeen += processed.FieldsSeen
+		result.FieldsApplied += processed.FieldsApplied
+		result.RemainingFields += processed.RemainingFields
 
-		switch {
-		case applied.FieldsSeen == 0 && applied.RemainingFields == 0:
-			if err := temporalworkflow.ExecuteActivity(ctx, markBrregCompanyTranslationSkippedActivity, MarkBrregCompanyTranslationSkippedInput{
-				CompanyID: company.CompanyID,
-			}).Get(ctx, nil); err != nil {
-				return result, errors.Wrap(err, "mark brreg company translation skipped")
-			}
-			result.CompaniesSkipped++
-		case applied.RemainingFields == 0:
-			if err := temporalworkflow.ExecuteActivity(ctx, markBrregCompanyTranslationSucceededActivity, MarkBrregCompanyTranslationSucceededInput{
-				CompanyID: company.CompanyID,
-			}).Get(ctx, nil); err != nil {
-				return result, errors.Wrap(err, "mark brreg company translation succeeded")
-			}
+		switch processed.Status {
+		case "succeeded":
 			result.CompaniesSucceeded++
+		case "skipped":
+			result.CompaniesSkipped++
 		default:
 			result.CompaniesFailed++
-			if err := markCompanyTranslationFailed(ctx, company.CompanyID, input.MaxAttempts, "company has translation fields without cached terms", "translation_cache", "missing_cached_terms", "wait_for_terms", false); err != nil {
-				return result, err
-			}
 		}
 	}
 
@@ -174,28 +158,4 @@ func normalizeTranslateBrregSourceCompaniesInput(input TranslateBrregSourceCompa
 		input.Trigger = defaultCompanyTranslationTrigger
 	}
 	return input
-}
-
-func markCompanyTranslationFailed(
-	ctx temporalworkflow.Context,
-	companyID string,
-	maxAttempts int,
-	message string,
-	category string,
-	code string,
-	retryStrategy string,
-	terminal bool,
-) error {
-	return errors.Wrap(
-		temporalworkflow.ExecuteActivity(ctx, markBrregCompanyTranslationFailedActivity, MarkBrregCompanyTranslationFailedInput{
-			CompanyID:     companyID,
-			Error:         message,
-			ErrorCategory: category,
-			ErrorCode:     code,
-			RetryStrategy: retryStrategy,
-			MaxAttempts:   int32(maxAttempts),
-			Terminal:      terminal,
-		}).Get(ctx, nil),
-		"mark brreg company translation failed",
-	)
 }
