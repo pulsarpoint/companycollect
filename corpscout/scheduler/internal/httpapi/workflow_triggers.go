@@ -23,6 +23,8 @@ import (
 const defaultBrregTranslationProvider = "default"
 const defaultBrregDomainSearchProvider = "default"
 const defaultBrregDomainSearchEngine = "duckduckgo"
+const defaultBrregWorkflowRunsLimit = 50
+const maxBrregWorkflowRunsLimit = 100
 const defaultNACETaxonomyWorkflowRunsLimit = 10
 const maxNACETaxonomyWorkflowRunsLimit = 50
 
@@ -90,6 +92,29 @@ type startNACETaxonomySyncWorkflowRequest struct {
 	SourceURL      string `json:"source_url,omitempty"`
 	Trigger        string `json:"trigger,omitempty"`
 	ForceReprocess bool   `json:"force_reprocess,omitempty"`
+}
+
+type brregWorkflowRunListResponse struct {
+	Prefixes []brregWorkflowPrefixResponse `json:"prefixes"`
+	Items    []brregWorkflowRunResponse    `json:"items"`
+}
+
+type brregWorkflowPrefixResponse struct {
+	Prefix       string `json:"prefix"`
+	Label        string `json:"label"`
+	WorkflowType string `json:"workflow_type"`
+}
+
+type brregWorkflowRunResponse struct {
+	WorkflowID    string     `json:"workflow_id"`
+	RunID         string     `json:"run_id"`
+	WorkflowType  string     `json:"workflow_type"`
+	Prefix        string     `json:"prefix"`
+	Action        string     `json:"action"`
+	Status        string     `json:"status"`
+	StartTime     *time.Time `json:"start_time,omitempty"`
+	CloseTime     *time.Time `json:"close_time,omitempty"`
+	ExecutionTime *time.Time `json:"execution_time,omitempty"`
 }
 
 type naceTaxonomyWorkflowRunListResponse struct {
@@ -385,6 +410,72 @@ func (h *Handlers) handleStartNACETaxonomySyncWorkflow(w http.ResponseWriter, r 
 	})
 }
 
+func (h *Handlers) handleListBrregWorkflowRuns(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	limit, err := parseBrregWorkflowRunsLimit(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	visibilityQuery, err := brregWorkflowRunsVisibilityQuery(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	response, err := h.temporal.ListWorkflow(r.Context(), &workflowservicepb.ListWorkflowExecutionsRequest{
+		PageSize: limit,
+		Query:    visibilityQuery,
+	})
+	if err != nil {
+		slog.Error("list brreg workflow runs", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list workflow runs")
+		return
+	}
+
+	search := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	items := make([]brregWorkflowRunResponse, 0, len(response.GetExecutions()))
+	for _, execution := range response.GetExecutions() {
+		item := brregWorkflowRunResponse{
+			WorkflowID:   execution.GetExecution().GetWorkflowId(),
+			RunID:        execution.GetExecution().GetRunId(),
+			WorkflowType: execution.GetType().GetName(),
+			Status:       workflowExecutionStatusString(execution.GetStatus()),
+		}
+		prefix := brregWorkflowPrefixForExecution(item.WorkflowID, item.WorkflowType)
+		if prefix == nil {
+			continue
+		}
+		item.Prefix = prefix.Prefix
+		item.Action = prefix.Label
+		if startTime := execution.GetStartTime(); startTime != nil {
+			value := startTime.AsTime()
+			item.StartTime = &value
+		}
+		if closeTime := execution.GetCloseTime(); closeTime != nil {
+			value := closeTime.AsTime()
+			item.CloseTime = &value
+		}
+		if executionTime := execution.GetExecutionTime(); executionTime != nil {
+			value := executionTime.AsTime()
+			item.ExecutionTime = &value
+		}
+		if !brregWorkflowRunMatchesSearch(item, search) {
+			continue
+		}
+		items = append(items, item)
+	}
+
+	writeJSON(w, http.StatusOK, brregWorkflowRunListResponse{
+		Prefixes: brregWorkflowPrefixResponses(),
+		Items:    items,
+	})
+}
+
 func (h *Handlers) handleListNACETaxonomySyncWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 	if h.temporal == nil {
 		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
@@ -607,6 +698,152 @@ func parseNACETaxonomyWorkflowRunsLimit(r *http.Request) (int32, error) {
 		limit = maxNACETaxonomyWorkflowRunsLimit
 	}
 	return int32(limit), nil
+}
+
+func parseBrregWorkflowRunsLimit(r *http.Request) (int32, error) {
+	rawLimit := strings.TrimSpace(r.URL.Query().Get("limit"))
+	if rawLimit == "" {
+		return defaultBrregWorkflowRunsLimit, nil
+	}
+	limit, err := strconv.Atoi(rawLimit)
+	if err != nil || limit <= 0 {
+		return 0, errors.New("limit must be a positive integer")
+	}
+	if limit > maxBrregWorkflowRunsLimit {
+		limit = maxBrregWorkflowRunsLimit
+	}
+	return int32(limit), nil
+}
+
+type brregWorkflowPrefix struct {
+	Prefix       string
+	Label        string
+	WorkflowType string
+}
+
+var brregWorkflowPrefixes = []brregWorkflowPrefix{
+	{
+		Prefix:       "brreg-translation",
+		Label:        "Translation",
+		WorkflowType: brregworkflow.TranslateBrregRawInputsWorkflowName,
+	},
+	{
+		Prefix:       "brreg-domain-search",
+		Label:        "Domain discovery",
+		WorkflowType: brregworkflow.SearchBrregDomainsWorkflowName,
+	},
+	{
+		Prefix:       "brreg-source-profile",
+		Label:        "Source profile sync",
+		WorkflowType: brregworkflow.NormalizeBrregSourceProfilesWorkflowName,
+	},
+	{
+		Prefix:       "brreg-bulk-ingest",
+		Label:        "Bulk raw ingest",
+		WorkflowType: brregworkflow.LoadBrregBulkRawRecordsWorkflowName,
+	},
+}
+
+func brregWorkflowPrefixResponses() []brregWorkflowPrefixResponse {
+	responses := make([]brregWorkflowPrefixResponse, 0, len(brregWorkflowPrefixes))
+	for _, prefix := range brregWorkflowPrefixes {
+		responses = append(responses, brregWorkflowPrefixResponse{
+			Prefix:       prefix.Prefix,
+			Label:        prefix.Label,
+			WorkflowType: prefix.WorkflowType,
+		})
+	}
+	return responses
+}
+
+func brregWorkflowRunsVisibilityQuery(r *http.Request) (string, error) {
+	prefixes, err := selectedBrregWorkflowPrefixes(r.URL.Query().Get("prefix"))
+	if err != nil {
+		return "", err
+	}
+
+	parts := []string{workflowTypeVisibilityQuery(prefixes)}
+	if len(prefixes) == 1 {
+		parts = append(parts, "WorkflowId STARTS_WITH '"+prefixes[0].Prefix+"-'")
+	}
+	if status := strings.TrimSpace(r.URL.Query().Get("status")); status != "" {
+		statusValue, err := brregWorkflowExecutionStatusQueryValue(status)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, "ExecutionStatus = '"+statusValue+"'")
+	}
+
+	return strings.Join(parts, " AND "), nil
+}
+
+func selectedBrregWorkflowPrefixes(prefix string) ([]brregWorkflowPrefix, error) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return brregWorkflowPrefixes, nil
+	}
+	for _, candidate := range brregWorkflowPrefixes {
+		if candidate.Prefix == prefix {
+			return []brregWorkflowPrefix{candidate}, nil
+		}
+	}
+	return nil, errors.New("unsupported brreg workflow prefix")
+}
+
+func workflowTypeVisibilityQuery(prefixes []brregWorkflowPrefix) string {
+	if len(prefixes) == 1 {
+		return "WorkflowType = '" + prefixes[0].WorkflowType + "'"
+	}
+	values := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		values = append(values, "'"+prefix.WorkflowType+"'")
+	}
+	return "WorkflowType IN (" + strings.Join(values, ", ") + ")"
+}
+
+func brregWorkflowExecutionStatusQueryValue(status string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running":
+		return "Running", nil
+	case "completed":
+		return "Completed", nil
+	case "failed":
+		return "Failed", nil
+	case "canceled":
+		return "Canceled", nil
+	case "terminated":
+		return "Terminated", nil
+	case "continued_as_new":
+		return "ContinuedAsNew", nil
+	case "timed_out":
+		return "TimedOut", nil
+	default:
+		return "", errors.New("unsupported brreg workflow status")
+	}
+}
+
+func brregWorkflowPrefixForExecution(workflowID string, workflowType string) *brregWorkflowPrefix {
+	for _, prefix := range brregWorkflowPrefixes {
+		if strings.HasPrefix(workflowID, prefix.Prefix+"-") || workflowType == prefix.WorkflowType {
+			return &prefix
+		}
+	}
+	return nil
+}
+
+func brregWorkflowRunMatchesSearch(item brregWorkflowRunResponse, search string) bool {
+	if search == "" {
+		return true
+	}
+	haystack := strings.ToLower(strings.Join([]string{
+		item.WorkflowID,
+		item.RunID,
+		item.WorkflowType,
+		item.Prefix,
+		item.Action,
+		item.Status,
+	}, " "))
+	return strings.Contains(haystack, search)
 }
 
 func workflowExecutionStatusString(status enumspb.WorkflowExecutionStatus) string {

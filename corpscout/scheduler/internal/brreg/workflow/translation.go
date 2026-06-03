@@ -29,6 +29,7 @@ const (
 	defaultTranslationServiceRetries           = 2
 	defaultTranslationMutationActivityAttempts = 1
 	defaultTranslationServiceActivityAttempts  = 3
+	defaultTranslationServiceHeartbeatTimeout  = 90 * time.Second
 )
 
 type PrepareBrregTranslationWorkflowInput = actions.PrepareBrregTranslationWorkflowInput
@@ -404,6 +405,7 @@ func brregTranslationServiceActivityContext(ctx temporalworkflow.Context, leaseS
 	}
 	return temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
 		StartToCloseTimeout: timeout,
+		HeartbeatTimeout:    defaultTranslationServiceHeartbeatTimeout,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    5 * time.Second,
 			BackoffCoefficient: 2,

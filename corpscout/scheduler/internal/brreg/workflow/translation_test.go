@@ -3,10 +3,12 @@ package workflow
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/testsuite"
+	temporalworkflow "go.temporal.io/sdk/workflow"
 )
 
 func TestTranslateBrregRawInputsFinishesWhenSelectionIsEmpty(t *testing.T) {
@@ -275,6 +277,25 @@ func TestTranslateBrregRawInputsCleansRunningLeasesWhenActivityFails(t *testing.
 	require.Contains(t, cleanupInput.Error, "translation workflow failed before all claimed records were submitted")
 	require.Equal(t, "failed", finishInput.Status)
 	require.Equal(t, "translation workflow failed", finishInput.Error)
+}
+
+func TestBrregTranslationServiceActivityContextConfiguresHeartbeatTimeout(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	workflowFn := func(ctx temporalworkflow.Context) (int64, error) {
+		ctx = brregTranslationServiceActivityContext(ctx, 900)
+		options := temporalworkflow.GetActivityOptions(ctx)
+		return int64(options.HeartbeatTimeout / time.Second), nil
+	}
+	env.RegisterWorkflow(workflowFn)
+
+	env.ExecuteWorkflow(workflowFn)
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	var heartbeatSeconds int64
+	require.NoError(t, env.GetWorkflowResult(&heartbeatSeconds))
+	require.EqualValues(t, 90, heartbeatSeconds)
 }
 
 func registerTranslationLeaseCleanup(env *testsuite.TestWorkflowEnvironment, cleanupCalls *int) {

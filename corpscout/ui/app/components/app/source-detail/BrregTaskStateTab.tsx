@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Database, Play, RefreshCw } from "lucide-react";
+import { AlertTriangle, Database, Play, RefreshCw, Search, X } from "lucide-react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 
 import { api, errorMessage } from "~/lib/api";
-import type { BrregTaskStateAction, BrregTaskStateResponse } from "~/types/api";
+import type {
+  BrregTaskStateAction,
+  BrregTaskStateResponse,
+  BrregWorkflowRun,
+  BrregWorkflowRunPrefix,
+} from "~/types/api";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
+import { Input } from "~/components/ui/input";
 import { Skeleton } from "~/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
 
@@ -33,6 +39,23 @@ const ACTION_RUNNERS: Record<string, { buttonLabel: string; run: () => Promise<s
   },
 };
 
+const WORKFLOW_STATUSES = [
+  ["running", "Running"],
+  ["completed", "Completed"],
+  ["failed", "Failed"],
+  ["canceled", "Canceled"],
+  ["terminated", "Terminated"],
+  ["continued_as_new", "Continued as new"],
+  ["timed_out", "Timed out"],
+] as const;
+
+function workflowStatusVariant(status: string) {
+  if (status === "completed") return "secondary";
+  if (status === "failed" || status === "terminated" || status === "timed_out") return "destructive";
+  if (status === "running") return "default";
+  return "outline";
+}
+
 function ActionMetrics({ action }: { action: BrregTaskStateAction }) {
   const metrics = [
     ["Eligible", action.state.task_eligible_now],
@@ -55,23 +78,93 @@ function ActionMetrics({ action }: { action: BrregTaskStateAction }) {
   );
 }
 
+function BrregWorkflowRunsTable({ runs }: { runs: BrregWorkflowRun[] }) {
+  return (
+    <div className="rounded-md border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Workflow</TableHead>
+            <TableHead>Action</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Started</TableHead>
+            <TableHead>Closed</TableHead>
+            <TableHead>Run ID</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {runs.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                No BRREG workflows found.
+              </TableCell>
+            </TableRow>
+          ) : (
+            runs.map((run) => (
+              <TableRow key={`${run.workflow_id}:${run.run_id}`}>
+                <TableCell>
+                  <div className="flex min-w-72 flex-col gap-1">
+                    <span className="font-mono text-xs">{run.workflow_id}</span>
+                    <span className="text-xs text-muted-foreground">{run.workflow_type}</span>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex min-w-44 flex-col gap-1">
+                    <span className="font-medium">{run.action}</span>
+                    <Badge variant="outline">{run.prefix}</Badge>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge variant={workflowStatusVariant(run.status)}>{run.status.replace(/_/g, " ")}</Badge>
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-sm">{formatDate(run.start_time)}</TableCell>
+                <TableCell className="whitespace-nowrap text-sm">{formatDate(run.close_time)}</TableCell>
+                <TableCell>
+                  <span className="font-mono text-xs text-muted-foreground">{run.run_id}</span>
+                </TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 export function BrregTaskStateTab() {
   const [taskState, setTaskState] = useState<BrregTaskStateResponse>();
+  const [runs, setRuns] = useState<BrregWorkflowRun[]>([]);
+  const [prefixes, setPrefixes] = useState<BrregWorkflowRunPrefix[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [runningAction, setRunningAction] = useState<string>();
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [prefix, setPrefix] = useState("");
+  const [status, setStatus] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(undefined);
     try {
-      setTaskState(await api.getBrregTaskState());
+      const [workflowRuns, nextTaskState] = await Promise.all([
+        api.getBrregWorkflowRuns({
+          limit: 50,
+          q: search || undefined,
+          prefix: prefix || undefined,
+          status: status || undefined,
+        }),
+        api.getBrregTaskState(),
+      ]);
+      setRuns(workflowRuns.items);
+      setPrefixes(workflowRuns.prefixes);
+      setTaskState(nextTaskState);
     } catch (err) {
-      setError(errorMessage(err, "Failed to load BRREG task state."));
+      setError(errorMessage(err, "Failed to load BRREG workflows."));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [prefix, search, status]);
 
   useEffect(() => {
     void load();
@@ -85,6 +178,13 @@ export function BrregTaskStateTab() {
       ) ?? 0,
     [taskState],
   );
+
+  const applySearch = () => setSearch(searchInput.trim());
+  const clearSearch = () => {
+    setSearchInput("");
+    setSearch("");
+  };
+
   async function runAction(action: BrregTaskStateAction) {
     const runner = ACTION_RUNNERS[action.key];
     if (!runner) return;
@@ -103,11 +203,7 @@ export function BrregTaskStateTab() {
     return (
       <div className="flex flex-col gap-4">
         <Skeleton className="h-10 w-full" />
-        <div className="grid gap-3 lg:grid-cols-2">
-          {Array.from({ length: 4 }).map((_, index) => (
-            <Skeleton key={index} className="h-52 w-full" />
-          ))}
-        </div>
+        <Skeleton className="h-96 w-full" />
       </div>
     );
   }
@@ -124,7 +220,7 @@ export function BrregTaskStateTab() {
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-base font-semibold">BRREG task state</h2>
+          <h2 className="text-base font-semibold">BRREG workflows</h2>
           <div className="text-sm text-muted-foreground">Updated {formatDate(taskState.updated_at)}</div>
         </div>
         <Button variant="outline" size="sm" onClick={load}>
@@ -139,6 +235,65 @@ export function BrregTaskStateTab() {
           <AlertDescription>{number(totalFailures)} BRREG tasks are failed.</AlertDescription>
         </Alert>
       )}
+
+      <section className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex items-center">
+            <Search className="absolute left-2.5 size-4 text-muted-foreground" />
+            <Input
+              className="h-8 w-80 pl-8 pr-8 text-sm"
+              placeholder="Search workflows"
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              onKeyDown={(event) => event.key === "Enter" && applySearch()}
+            />
+            {searchInput && (
+              <button className="absolute right-2" onClick={clearSearch} type="button">
+                <X className="size-3.5 text-muted-foreground" />
+              </button>
+            )}
+          </div>
+          {searchInput !== search && (
+            <Button size="sm" variant="secondary" className="h-8" onClick={applySearch}>
+              Search
+            </Button>
+          )}
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Prefix</span>
+            <select
+              className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+              value={prefix}
+              onChange={(event) => setPrefix(event.target.value)}
+            >
+              <option value="">All</option>
+              {prefixes.map((option) => (
+                <option key={option.prefix} value={option.prefix}>
+                  {option.prefix}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Status</span>
+            <select
+              className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+              value={status}
+              onChange={(event) => setStatus(event.target.value)}
+            >
+              <option value="">All</option>
+              {WORKFLOW_STATUSES.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="ml-auto text-sm text-muted-foreground">
+            {number(runs.length)} workflow runs
+          </span>
+        </div>
+        <BrregWorkflowRunsTable runs={runs} />
+      </section>
 
       <section className="grid gap-3 lg:grid-cols-2">
         {taskState.actions.map((action) => {

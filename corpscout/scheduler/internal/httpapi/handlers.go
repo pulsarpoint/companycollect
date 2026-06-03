@@ -104,6 +104,7 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 		r.Post("/workflows/brreg/domain-search", h.handleStartBrregDomainSearchWorkflow)
 		r.Post("/workflows/brreg/bulk-raw-ingest", h.handleStartBrregBulkRawIngestWorkflow)
 		r.Post("/workflows/brreg/source-profile-normalization", h.handleStartBrregSourceProfileNormalizationWorkflow)
+		r.Get("/workflows/brreg/runs", h.handleListBrregWorkflowRuns)
 		r.Post("/workflows/nace/taxonomy-sync", h.handleStartNACETaxonomySyncWorkflow)
 		r.Get("/workflows/nace/taxonomy-sync/runs", h.handleListNACETaxonomySyncWorkflowRuns)
 		r.Get("/workflow-schedules", h.handleListWorkflowSchedules)

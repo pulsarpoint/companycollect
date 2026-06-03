@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
+	"go.temporal.io/sdk/activity"
 
 	brregdb "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/db"
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
@@ -17,12 +20,13 @@ import (
 )
 
 const (
-	defaultTranslationPromptVersion = "v1"
-	defaultTranslationSourceLang    = "no"
-	defaultTranslationTargetLang    = "en"
-	defaultTranslationLimit         = 1000
-	defaultTranslationBatchSize     = 50
-	defaultTranslationMaxAttempts   = 3
+	defaultTranslationPromptVersion  = "v1"
+	defaultTranslationSourceLang     = "no"
+	defaultTranslationTargetLang     = "en"
+	defaultTranslationLimit          = 1000
+	defaultTranslationBatchSize      = 50
+	defaultTranslationMaxAttempts    = 3
+	defaultTranslationHeartbeatEvery = 30 * time.Second
 )
 
 type TranslationActions struct {
@@ -421,6 +425,15 @@ type TranslateBrregBatchResult struct {
 	Results          []TranslationRecordResult `json:"results"`
 }
 
+type translationBatchHeartbeatDetails struct {
+	Phase       string `json:"phase"`
+	Records     int    `json:"records"`
+	Provider    string `json:"provider,omitempty"`
+	Model       string `json:"model,omitempty"`
+	MaxRetries  int    `json:"max_retries,omitempty"`
+	StartedUnix int64  `json:"started_unix"`
+}
+
 type TranslationRecordResult struct {
 	RawRecordID        string            `json:"raw_record_id"`
 	TaskAttemptID      string            `json:"task_attempt_id"`
@@ -460,6 +473,22 @@ func (a *TranslationActions) TranslateBrregBatch(ctx context.Context, input Tran
 	if err != nil {
 		return TranslateBrregBatchResult{}, err
 	}
+	stopHeartbeats := startTranslationBatchHeartbeat(
+		ctx,
+		translationBatchHeartbeatDetails{
+			Phase:       "translation_request",
+			Records:     len(input.Records),
+			Provider:    request.LLM.Provider,
+			Model:       request.LLM.Model,
+			MaxRetries:  request.MaxRetries,
+			StartedUnix: time.Now().Unix(),
+		},
+		defaultTranslationHeartbeatEvery,
+		func(ctx context.Context, details any) {
+			activity.RecordHeartbeat(ctx, details)
+		},
+	)
+	defer stopHeartbeats()
 	response, err := a.translator.TranslateBrregRecords(ctx, request)
 	if err != nil {
 		return TranslateBrregBatchResult{}, errors.Wrap(err, "translate brreg batch")
@@ -478,6 +507,42 @@ func (a *TranslationActions) TranslateBrregBatch(ctx context.Context, input Tran
 		"prompt_version", result.PromptVersion,
 	)
 	return result, nil
+}
+
+func startTranslationBatchHeartbeat(
+	ctx context.Context,
+	details translationBatchHeartbeatDetails,
+	interval time.Duration,
+	record func(context.Context, any),
+) func() {
+	if record == nil {
+		return func() {}
+	}
+	if interval <= 0 {
+		interval = defaultTranslationHeartbeatEvery
+	}
+	record(ctx, details)
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				record(ctx, details)
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() {
+			close(done)
+		})
+	}
 }
 
 func (a *TranslationActions) translateRequestFromInput(ctx context.Context, input TranslateBrregBatchInput) (translationclient.BrregTranslateRequest, error) {

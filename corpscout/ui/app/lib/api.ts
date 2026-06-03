@@ -17,6 +17,7 @@ import type {
   BrregRawRecordDetail,
   BrregSourceEntryListResponse,
   BrregSourceCompanyDetail,
+  BrregWorkflowRunListResponse,
   LLMProvider,
   LLMProviderInput,
   LLMProviderListResponse,
@@ -334,6 +335,25 @@ export const api = {
     get<NACETaxonomyWorkflowRunListResponse>(
       `/workflows/nace/taxonomy-sync/runs?limit=${limit}`,
     ),
+
+  getBrregWorkflowRuns: (
+    params: {
+      limit?: number;
+      q?: string;
+      prefix?: string;
+      status?: string;
+    } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.q) qs.set("q", params.q);
+    if (params.prefix) qs.set("prefix", params.prefix);
+    if (params.status) qs.set("status", params.status);
+    const q = qs.toString();
+    return get<BrregWorkflowRunListResponse>(
+      `/workflows/brreg/runs${q ? `?${q}` : ""}`,
+    );
+  },
 
   getNACERevisions: () => get<NACERevisionListResponse>("/nace/revisions"),
 

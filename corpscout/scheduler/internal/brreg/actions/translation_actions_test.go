@@ -1,8 +1,10 @@
 package actions
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -246,4 +248,48 @@ func TestSubmitTranslationCommandFromResultMapsFailure(t *testing.T) {
 	require.Equal(t, "missing_translation_terms", command.Failure.ErrorCode)
 	require.Equal(t, "change_model_or_prompt", command.Failure.RetryStrategy)
 	require.Equal(t, int32(3), command.MaxAttempts)
+}
+
+func TestStartTranslationBatchHeartbeatRecordsImmediatelyAndPeriodically(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	heartbeatCalls := make(chan translationBatchHeartbeatDetails, 4)
+	stop := startTranslationBatchHeartbeat(
+		ctx,
+		translationBatchHeartbeatDetails{
+			Phase:       "translation_request",
+			Records:     2,
+			Provider:    "deepseek",
+			Model:       "deepseek-v4-flash",
+			MaxRetries:  2,
+			StartedUnix: 1710000000,
+		},
+		time.Millisecond,
+		func(_ context.Context, details any) {
+			heartbeatCalls <- details.(translationBatchHeartbeatDetails)
+		},
+	)
+	defer stop()
+
+	first := requireHeartbeat(t, heartbeatCalls)
+	require.Equal(t, "translation_request", first.Phase)
+	require.Equal(t, 2, first.Records)
+	require.Equal(t, "deepseek", first.Provider)
+	require.Equal(t, "deepseek-v4-flash", first.Model)
+	require.Equal(t, 2, first.MaxRetries)
+
+	requireHeartbeat(t, heartbeatCalls)
+	stop()
+	stop()
+}
+
+func requireHeartbeat(t *testing.T, heartbeats <-chan translationBatchHeartbeatDetails) translationBatchHeartbeatDetails {
+	t.Helper()
+	select {
+	case details := <-heartbeats:
+		return details
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for translation batch heartbeat")
+		return translationBatchHeartbeatDetails{}
+	}
 }

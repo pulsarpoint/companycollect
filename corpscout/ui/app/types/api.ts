@@ -135,6 +135,29 @@ export interface NACETaxonomyWorkflowRunListResponse {
   items: NACETaxonomyWorkflowRun[];
 }
 
+export interface BrregWorkflowRunPrefix {
+  prefix: string;
+  label: string;
+  workflow_type: string;
+}
+
+export interface BrregWorkflowRun {
+  workflow_id: string;
+  run_id: string;
+  workflow_type: string;
+  prefix: string;
+  action: string;
+  status: string;
+  start_time?: string;
+  close_time?: string;
+  execution_time?: string;
+}
+
+export interface BrregWorkflowRunListResponse {
+  prefixes: BrregWorkflowRunPrefix[];
+  items: BrregWorkflowRun[];
+}
+
 export interface NACERevision {
   classification_id: string;
   code_system: "NACE";

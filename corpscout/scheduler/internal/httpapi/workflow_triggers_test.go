@@ -435,6 +435,99 @@ func TestListNACETaxonomySyncWorkflowRunsReturnsRecentTemporalExecutions(t *test
 	require.Equal(t, startedAt.Format(time.RFC3339), body.Items[0].ExecutionTime)
 }
 
+func TestListBrregWorkflowRunsReturnsFilteredTemporalExecutions(t *testing.T) {
+	startedAt := time.Date(2026, 6, 2, 11, 30, 0, 0, time.UTC)
+	closedAt := startedAt.Add(2 * time.Minute)
+	tc := &temporalExecuteRecorder{
+		listWorkflowResponse: &workflowservicepb.ListWorkflowExecutionsResponse{
+			Executions: []*workflowpb.WorkflowExecutionInfo{
+				{
+					Execution:     &commonpb.WorkflowExecution{WorkflowId: "brreg-translation-20260602-113000", RunId: "run-123"},
+					Type:          &commonpb.WorkflowType{Name: brregworkflow.TranslateBrregRawInputsWorkflowName},
+					Status:        enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
+					StartTime:     timestamppb.New(startedAt),
+					ExecutionTime: timestamppb.New(startedAt),
+				},
+				{
+					Execution:     &commonpb.WorkflowExecution{WorkflowId: "brreg-translation-other", RunId: "run-456"},
+					Type:          &commonpb.WorkflowType{Name: brregworkflow.TranslateBrregRawInputsWorkflowName},
+					Status:        enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED,
+					StartTime:     timestamppb.New(startedAt.Add(-time.Hour)),
+					CloseTime:     timestamppb.New(closedAt),
+					ExecutionTime: timestamppb.New(startedAt.Add(-time.Hour)),
+				},
+			},
+		},
+	}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/brreg/runs?limit=5&prefix=brreg-translation&status=running&q=20260602", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, tc.listWorkflowRequest)
+	require.Equal(t, int32(5), tc.listWorkflowRequest.PageSize)
+	require.Equal(t, "WorkflowType = 'TranslateBrregRawInputs' AND WorkflowId STARTS_WITH 'brreg-translation-' AND ExecutionStatus = 'Running'", tc.listWorkflowRequest.Query)
+
+	var body struct {
+		Prefixes []struct {
+			Prefix       string `json:"prefix"`
+			Label        string `json:"label"`
+			WorkflowType string `json:"workflow_type"`
+		} `json:"prefixes"`
+		Items []struct {
+			WorkflowID    string `json:"workflow_id"`
+			RunID         string `json:"run_id"`
+			WorkflowType  string `json:"workflow_type"`
+			Prefix        string `json:"prefix"`
+			Action        string `json:"action"`
+			Status        string `json:"status"`
+			StartTime     string `json:"start_time"`
+			CloseTime     string `json:"close_time"`
+			ExecutionTime string `json:"execution_time"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Prefixes, 4)
+	require.Equal(t, "brreg-translation", body.Prefixes[0].Prefix)
+	require.Equal(t, brregworkflow.TranslateBrregRawInputsWorkflowName, body.Prefixes[0].WorkflowType)
+	require.Len(t, body.Items, 1)
+	require.Equal(t, "brreg-translation-20260602-113000", body.Items[0].WorkflowID)
+	require.Equal(t, "run-123", body.Items[0].RunID)
+	require.Equal(t, brregworkflow.TranslateBrregRawInputsWorkflowName, body.Items[0].WorkflowType)
+	require.Equal(t, "brreg-translation", body.Items[0].Prefix)
+	require.Equal(t, "Translation", body.Items[0].Action)
+	require.Equal(t, "running", body.Items[0].Status)
+	require.Equal(t, startedAt.Format(time.RFC3339), body.Items[0].StartTime)
+	require.Empty(t, body.Items[0].CloseTime)
+	require.Equal(t, startedAt.Format(time.RFC3339), body.Items[0].ExecutionTime)
+}
+
+func TestListBrregWorkflowRunsRejectsInvalidPrefix(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/brreg/runs?prefix=nace-taxonomy-sync", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"unsupported brreg workflow prefix"`)
+	require.Nil(t, tc.listWorkflowRequest)
+}
+
+func TestListBrregWorkflowRunsRequiresTemporalClient(t *testing.T) {
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", nil, ""))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/brreg/runs", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"temporal client not available"`)
+}
+
 func TestListNACETaxonomySyncWorkflowRunsRequiresTemporalClient(t *testing.T) {
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", nil, ""))
 
