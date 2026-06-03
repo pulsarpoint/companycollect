@@ -381,40 +381,33 @@ picked AS (
     AND (
       status_row.translation_status = 'dirty'
       OR (
-        status_row.translation_status IN ('pending', 'failed_retryable')
-        AND (
-          (nullif(btrim(company.organization_form_label), '') IS NOT NULL AND nullif(btrim(company.organization_form_label_en), '') IS NULL)
-          OR (nullif(btrim(company.response_class), '') IS NOT NULL AND nullif(btrim(company.response_class_en), '') IS NULL)
-          OR (nullif(btrim(company.activity_description), '') IS NOT NULL AND nullif(btrim(company.activity_description_en), '') IS NULL)
-          OR (nullif(btrim(company.statutory_purpose), '') IS NOT NULL AND nullif(btrim(company.statutory_purpose_en), '') IS NULL)
-          OR EXISTS (
-            SELECT 1
-            FROM brreg_source.capital capital
-            WHERE capital.company_id = company.id
-              AND nullif(btrim(capital.capital_type), '') IS NOT NULL
-              AND nullif(btrim(capital.capital_type_en), '') IS NULL
-          )
+        status_row.translation_status IN ('pending', 'succeeded', 'skipped')
+        AND EXISTS (
+          SELECT 1
+          FROM brreg_source.v_missing_translations missing
+          WHERE missing.company_id = company.id
+        )
+      )
+      OR (
+        status_row.translation_status = 'failed_retryable'
+        AND status_row.translation_attempt_count < GREATEST($3::integer, 1)
+        AND EXISTS (
+          SELECT 1
+          FROM brreg_source.v_missing_translations missing
+          WHERE missing.company_id = company.id
         )
       )
       OR (
         status_row.translation_status = 'running'
         AND coalesce(status_row.translation_lease_until, '-infinity'::timestamptz) <= now()
-        AND (
-          (nullif(btrim(company.organization_form_label), '') IS NOT NULL AND nullif(btrim(company.organization_form_label_en), '') IS NULL)
-          OR (nullif(btrim(company.response_class), '') IS NOT NULL AND nullif(btrim(company.response_class_en), '') IS NULL)
-          OR (nullif(btrim(company.activity_description), '') IS NOT NULL AND nullif(btrim(company.activity_description_en), '') IS NULL)
-          OR (nullif(btrim(company.statutory_purpose), '') IS NOT NULL AND nullif(btrim(company.statutory_purpose_en), '') IS NULL)
-          OR EXISTS (
-            SELECT 1
-            FROM brreg_source.capital capital
-            WHERE capital.company_id = company.id
-              AND nullif(btrim(capital.capital_type), '') IS NOT NULL
-              AND nullif(btrim(capital.capital_type_en), '') IS NULL
-          )
+        AND status_row.translation_attempt_count < GREATEST($3::integer, 1)
+        AND EXISTS (
+          SELECT 1
+          FROM brreg_source.v_missing_translations missing
+          WHERE missing.company_id = company.id
         )
       )
     )
-    AND status_row.translation_attempt_count < GREATEST($3::integer, 1)
   ORDER BY status_row.updated_at, status_row.company_id
   LIMIT GREATEST(LEAST(GREATEST($2::integer, 1), (SELECT available_slots FROM active_capacity)), 0)
   FOR UPDATE OF status_row SKIP LOCKED
@@ -568,18 +561,10 @@ WITH inserted AS (
     ON existing.company_id = company.id
   WHERE company.row_status = 'active'
     AND existing.company_id IS NULL
-    AND (
-      (nullif(btrim(company.organization_form_label), '') IS NOT NULL AND nullif(btrim(company.organization_form_label_en), '') IS NULL)
-      OR (nullif(btrim(company.response_class), '') IS NOT NULL AND nullif(btrim(company.response_class_en), '') IS NULL)
-      OR (nullif(btrim(company.activity_description), '') IS NOT NULL AND nullif(btrim(company.activity_description_en), '') IS NULL)
-      OR (nullif(btrim(company.statutory_purpose), '') IS NOT NULL AND nullif(btrim(company.statutory_purpose_en), '') IS NULL)
-      OR EXISTS (
-        SELECT 1
-        FROM brreg_source.capital capital
-        WHERE capital.company_id = company.id
-          AND nullif(btrim(capital.capital_type), '') IS NOT NULL
-          AND nullif(btrim(capital.capital_type_en), '') IS NULL
-      )
+    AND EXISTS (
+      SELECT 1
+      FROM brreg_source.v_missing_translations missing
+      WHERE missing.company_id = company.id
     )
   ORDER BY company.updated_at DESC, company.id
   LIMIT NULLIF(GREATEST($1::integer, 0), 0)
