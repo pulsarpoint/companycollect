@@ -234,6 +234,90 @@ type NormalizeSourceProfilesResult struct {
 	CapitalUpserted    int32
 }
 
+type ConvertSourceCapitalToUSDCommand struct {
+	IDs            []string
+	Filters        map[string]string
+	Limit          int32
+	RateDate       string
+	ForceReprocess bool
+	Trigger        string
+}
+
+type ConvertSourceCapitalToUSDResult struct {
+	CapitalSeen                    int32
+	CapitalConverted               int32
+	CapitalSkippedMissingRate      int32
+	CapitalSkippedAlreadyConverted int32
+	RateDate                       string
+}
+
+type EnsurePendingTranslationTermsCommand struct {
+	Provider      string
+	Model         string
+	PromptVersion string
+	WorkflowID    string
+	Limit         int32
+}
+
+type EnsurePendingTranslationTermsResult struct {
+	TermsInserted int32
+}
+
+type ClaimQueuedTranslationTermsCommand struct {
+	Provider      string
+	Model         string
+	PromptVersion string
+	Limit         int32
+	MaxAttempts   int32
+}
+
+type QueuedTranslationTerm struct {
+	ID                   string
+	SourceLang           string
+	TargetLang           string
+	SourceTextNormalized string
+	SourceText           string
+	TermKey              string
+	AttemptCount         int32
+}
+
+type TranslationTermResult struct {
+	SourceLang           string
+	TargetLang           string
+	SourceTextNormalized string
+	SourceText           string
+	TermKey              string
+	TranslatedText       string
+	Status               string
+	Provider             string
+	Model                string
+	PromptVersion        string
+	Error                string
+	ErrorCode            string
+	Metadata             map[string]any
+}
+
+type UpsertTranslationTermsCommand struct {
+	Terms []TranslationTermResult
+}
+
+type UpsertTranslationTermsResult struct {
+	TermsUpserted int32
+}
+
+type ApplyCachedTermTranslationsCommand struct {
+	PromptVersion string
+	Limit         int32
+}
+
+type ApplyCachedTermTranslationsResult struct {
+	FieldsApplied int32
+}
+
+type CountMissingTranslationFieldsResult struct {
+	MissingFields int32
+}
+
 func jsonObject(value []byte) []byte {
 	if len(value) == 0 {
 		return []byte(jsonPayloadEmptyObject)

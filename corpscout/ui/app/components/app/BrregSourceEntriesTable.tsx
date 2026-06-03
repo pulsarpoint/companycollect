@@ -158,14 +158,42 @@ function ActionTaskBadges({
   );
 }
 
+function TranslationTermBadges({
+  pendingCount,
+  succeededCount,
+  failedCount,
+}: {
+  pendingCount: number;
+  succeededCount: number;
+  failedCount: number;
+}) {
+  if (pendingCount === 0 && succeededCount === 0 && failedCount === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {pendingCount > 0 && (
+        <Badge variant="outline">{formatCount(pendingCount)} queued</Badge>
+      )}
+      {succeededCount > 0 && (
+        <Badge variant="secondary">{formatCount(succeededCount)} done</Badge>
+      )}
+      {failedCount > 0 && (
+        <Badge variant="destructive">{formatCount(failedCount)} failed</Badge>
+      )}
+    </div>
+  );
+}
+
 function TranslationState({ item }: { item: BrregSourceEntryListItem }) {
   return (
     <div className="flex min-w-40 flex-col gap-1">
       <TranslationBadge missingCount={item.translation_missing_count} />
-      <ActionTaskBadges
+      <TranslationTermBadges
         pendingCount={item.translation_pending_count}
-        runningCount={item.translation_running_count}
         succeededCount={item.translation_succeeded_count}
+        failedCount={item.translation_failed_count}
       />
     </div>
   );
@@ -241,8 +269,10 @@ export function BrregSourceEntriesTable() {
     const filters: Record<string, string> = {};
     if (query) filters.q = query;
     if (lifecycleStatus) filters.lifecycle_state = lifecycleStatus;
+    if (translationStatus) filters.translation_status = translationStatus;
+    if (websiteStatus) filters.website_status = websiteStatus;
     return filters;
-  }, [lifecycleStatus, query]);
+  }, [lifecycleStatus, query, translationStatus, websiteStatus]);
   const tableFilterKey = JSON.stringify({
     lifecycleStatus,
     query,

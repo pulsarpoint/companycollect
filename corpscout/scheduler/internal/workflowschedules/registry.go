@@ -6,6 +6,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 
+	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 )
 
@@ -21,7 +22,10 @@ type Definition struct {
 }
 
 func Definitions() []Definition {
-	return []Definition{naceTaxonomySyncDefinition()}
+	return []Definition{
+		naceTaxonomySyncDefinition(),
+		fxRateSyncDefinition(),
+	}
 }
 
 func DefinitionByKey(key string) (Definition, bool) {
@@ -68,6 +72,47 @@ func decodeNACETaxonomySyncInput(raw json.RawMessage) (any, error) {
 	}
 	if input.Trigger != "schedule" && input.Trigger != "manual" {
 		return nil, errors.New("nace taxonomy sync trigger must be schedule or manual")
+	}
+	return input, nil
+}
+
+func fxRateSyncDefinition() Definition {
+	return Definition{
+		Key:                "fx_rate_sync",
+		WorkflowName:       fx.SyncWorkflowName,
+		TaskQueue:          fx.SyncTaskQueue,
+		Domain:             "reference_data",
+		Purpose:            "fx_rate_sync",
+		DefaultDisplayName: "FX rate sync",
+		DefaultDescription: "Downloads and imports the configured ECB exchange rate feed when the source file changes.",
+		DecodeActionInput:  decodeFXRateSyncInput,
+	}
+}
+
+func decodeFXRateSyncInput(raw json.RawMessage) (any, error) {
+	var input fx.SyncExchangeRatesInput
+	if len(raw) > 0 && strings.TrimSpace(string(raw)) != "null" {
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return nil, errors.New("invalid fx rate sync action input")
+		}
+	}
+	input.Provider = strings.ToLower(strings.TrimSpace(input.Provider))
+	input.SourceURL = strings.TrimSpace(input.SourceURL)
+	input.Trigger = strings.TrimSpace(input.Trigger)
+	if input.Provider == "" {
+		input.Provider = fx.DefaultProvider
+	}
+	if input.SourceURL == "" {
+		return nil, errors.New("fx source url is required")
+	}
+	if input.Trigger == "" {
+		input.Trigger = "schedule"
+	}
+	if input.Provider != fx.DefaultProvider {
+		return nil, errors.New("fx provider must be ecb")
+	}
+	if input.Trigger != "schedule" && input.Trigger != "manual" {
+		return nil, errors.New("fx rate sync trigger must be schedule or manual")
 	}
 	return input, nil
 }

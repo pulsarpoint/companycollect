@@ -3,6 +3,7 @@ import {
   BookOpen,
   Building2,
   CheckSquare,
+  CircleDollarSign,
   Clock3,
   Globe,
   ListTree,
@@ -37,6 +38,7 @@ const SETTINGS_NAV_ITEMS = [
     url: "/settings/nace-taxonomy/browser",
     icon: ListTree,
   },
+  { title: "FX Rates", url: "/settings/fx-rates", icon: CircleDollarSign },
   { title: "Schedules", url: "/settings/workflow-schedules", icon: Clock3 },
 ] as const;
 

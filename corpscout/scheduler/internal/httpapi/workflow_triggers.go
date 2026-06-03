@@ -17,6 +17,7 @@ import (
 	"go.temporal.io/sdk/client"
 
 	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 )
 
@@ -27,6 +28,8 @@ const defaultBrregWorkflowRunsLimit = 50
 const maxBrregWorkflowRunsLimit = 100
 const defaultNACETaxonomyWorkflowRunsLimit = 10
 const maxNACETaxonomyWorkflowRunsLimit = 50
+const defaultFXWorkflowRunsLimit = 10
+const maxFXWorkflowRunsLimit = 50
 
 type startWorkflowResponse struct {
 	Status        string `json:"status"`
@@ -51,6 +54,18 @@ type startBrregTranslationWorkflowRequest struct {
 	SourceLang        string `json:"source_lang,omitempty"`
 	TargetLang        string `json:"target_lang,omitempty"`
 	MaxServiceRetries int    `json:"max_service_retries,omitempty"`
+}
+
+type startBrregTermTranslationWorkflowRequest struct {
+	AllRecords    bool   `json:"all_records,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
+	TermBatchSize int    `json:"term_batch_size,omitempty"`
+	MaxAttempts   int    `json:"max_attempts,omitempty"`
+	MaxLoops      int    `json:"max_loops,omitempty"`
+	Provider      string `json:"provider,omitempty"`
+	Model         string `json:"model,omitempty"`
+	PromptVersion string `json:"prompt_version,omitempty"`
+	Trigger       string `json:"trigger,omitempty"`
 }
 
 type startBrregDomainSearchWorkflowRequest struct {
@@ -80,6 +95,15 @@ type startBrregSourceProfileNormalizationWorkflowRequest struct {
 	Trigger string            `json:"trigger,omitempty"`
 }
 
+type startBrregSourceCapitalFXWorkflowRequest struct {
+	IDs            []string          `json:"ids,omitempty"`
+	Filters        map[string]string `json:"filters,omitempty"`
+	Limit          int               `json:"limit,omitempty"`
+	RateDate       string            `json:"rate_date,omitempty"`
+	ForceReprocess bool              `json:"force_reprocess,omitempty"`
+	Trigger        string            `json:"trigger,omitempty"`
+}
+
 type startBrregBulkRawIngestWorkflowRequest struct {
 	SourceURL string `json:"source_url,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
@@ -89,6 +113,13 @@ type startBrregBulkRawIngestWorkflowRequest struct {
 
 type startNACETaxonomySyncWorkflowRequest struct {
 	Revision       string `json:"revision,omitempty"`
+	SourceURL      string `json:"source_url,omitempty"`
+	Trigger        string `json:"trigger,omitempty"`
+	ForceReprocess bool   `json:"force_reprocess,omitempty"`
+}
+
+type startExchangeRateSyncWorkflowRequest struct {
+	Provider       string `json:"provider,omitempty"`
 	SourceURL      string `json:"source_url,omitempty"`
 	Trigger        string `json:"trigger,omitempty"`
 	ForceReprocess bool   `json:"force_reprocess,omitempty"`
@@ -121,7 +152,21 @@ type naceTaxonomyWorkflowRunListResponse struct {
 	Items []naceTaxonomyWorkflowRunResponse `json:"items"`
 }
 
+type exchangeRateSyncWorkflowRunListResponse struct {
+	Items []exchangeRateSyncWorkflowRunResponse `json:"items"`
+}
+
 type naceTaxonomyWorkflowRunResponse struct {
+	WorkflowID    string     `json:"workflow_id"`
+	RunID         string     `json:"run_id"`
+	WorkflowType  string     `json:"workflow_type"`
+	Status        string     `json:"status"`
+	StartTime     *time.Time `json:"start_time,omitempty"`
+	CloseTime     *time.Time `json:"close_time,omitempty"`
+	ExecutionTime *time.Time `json:"execution_time,omitempty"`
+}
+
+type exchangeRateSyncWorkflowRunResponse struct {
 	WorkflowID    string     `json:"workflow_id"`
 	RunID         string     `json:"run_id"`
 	WorkflowType  string     `json:"workflow_type"`
@@ -177,6 +222,67 @@ func (h *Handlers) handleStartBrregTranslationWorkflow(w http.ResponseWriter, r 
 	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
 		Status:        "started",
 		Workflow:      brregworkflow.TranslateBrregRawInputsWorkflowName,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
+func (h *Handlers) handleStartBrregTermTranslationWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := decodeStartBrregTermTranslationWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := brregworkflow.TranslateBrregSourceTermsInput{
+		AllRecords:    req.AllRecords,
+		Limit:         req.Limit,
+		TermBatchSize: req.TermBatchSize,
+		MaxAttempts:   req.MaxAttempts,
+		MaxLoops:      req.MaxLoops,
+		Provider:      req.Provider,
+		Model:         req.Model,
+		PromptVersion: req.PromptVersion,
+		Trigger:       req.Trigger,
+	}
+	workflowID := newWorkflowID("brreg-term-translation")
+	slog.Debug("starting brreg term translation workflow",
+		"workflow_id", workflowID,
+		"task_queue", brregworkflow.TranslateBrregSourceTermsTaskQueue,
+		"all_records", req.AllRecords,
+		"limit", req.Limit,
+		"term_batch_size", req.TermBatchSize,
+		"max_attempts", req.MaxAttempts,
+		"max_loops", req.MaxLoops,
+		"provider", req.Provider,
+		"model", req.Model,
+		"prompt_version", req.PromptVersion,
+		"trigger", req.Trigger,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: brregworkflow.TranslateBrregSourceTermsTaskQueue,
+		},
+		brregworkflow.TranslateBrregSourceTerms,
+		input,
+	)
+	if err != nil {
+		slog.Error("start brreg term translation workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("brreg term translation workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      brregworkflow.TranslateBrregSourceTermsWorkflowName,
 		WorkflowID:    workflowID,
 		WorkflowRunID: run.GetRunID(),
 	})
@@ -308,6 +414,61 @@ func (h *Handlers) handleStartBrregSourceProfileNormalizationWorkflow(w http.Res
 	})
 }
 
+func (h *Handlers) handleStartBrregSourceCapitalFXWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := decodeStartBrregSourceCapitalFXWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := brregworkflow.ConvertBrregSourceCapitalToUSDInput{
+		IDs:            req.IDs,
+		Filters:        req.Filters,
+		Limit:          req.Limit,
+		RateDate:       req.RateDate,
+		ForceReprocess: req.ForceReprocess,
+		Trigger:        req.Trigger,
+	}
+	workflowID := newWorkflowID("brreg-source-capital-fx")
+	slog.Debug("starting brreg source capital fx workflow",
+		"workflow_id", workflowID,
+		"task_queue", brregworkflow.ConvertBrregSourceCapitalToUSDTaskQueue,
+		"ids_count", len(req.IDs),
+		"filters_count", len(req.Filters),
+		"limit", req.Limit,
+		"rate_date", req.RateDate,
+		"force_reprocess", req.ForceReprocess,
+		"trigger", req.Trigger,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: brregworkflow.ConvertBrregSourceCapitalToUSDTaskQueue,
+		},
+		brregworkflow.ConvertBrregSourceCapitalToUSD,
+		input,
+	)
+	if err != nil {
+		slog.Error("start brreg source capital fx workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("brreg source capital fx workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      brregworkflow.ConvertBrregSourceCapitalToUSDWorkflowName,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
 func (h *Handlers) handleStartBrregBulkRawIngestWorkflow(w http.ResponseWriter, r *http.Request) {
 	if h.temporal == nil {
 		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
@@ -405,6 +566,57 @@ func (h *Handlers) handleStartNACETaxonomySyncWorkflow(w http.ResponseWriter, r 
 	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
 		Status:        "started",
 		Workflow:      nacetaxonomy.SyncWorkflowName,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
+func (h *Handlers) handleStartExchangeRateSyncWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := h.decodeStartExchangeRateSyncWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := fx.SyncExchangeRatesInput{
+		Provider:       req.Provider,
+		SourceURL:      req.SourceURL,
+		Trigger:        req.Trigger,
+		ForceReprocess: req.ForceReprocess,
+	}
+	workflowID := newWorkflowID("fx-rate-sync")
+	slog.Debug("starting exchange rate sync workflow",
+		"workflow_id", workflowID,
+		"task_queue", fx.SyncTaskQueue,
+		"provider", req.Provider,
+		"source_url", req.SourceURL,
+		"trigger", req.Trigger,
+		"force_reprocess", req.ForceReprocess,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: fx.SyncTaskQueue,
+		},
+		fx.SyncExchangeRates,
+		input,
+	)
+	if err != nil {
+		slog.Error("start exchange rate sync workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("exchange rate sync workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      fx.SyncWorkflowName,
 		WorkflowID:    workflowID,
 		WorkflowRunID: run.GetRunID(),
 	})
@@ -524,6 +736,54 @@ func (h *Handlers) handleListNACETaxonomySyncWorkflowRuns(w http.ResponseWriter,
 	writeJSON(w, http.StatusOK, naceTaxonomyWorkflowRunListResponse{Items: items})
 }
 
+func (h *Handlers) handleListExchangeRateSyncWorkflowRuns(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	limit, err := parseFXWorkflowRunsLimit(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	response, err := h.temporal.ListWorkflow(r.Context(), &workflowservicepb.ListWorkflowExecutionsRequest{
+		PageSize: limit,
+		Query:    "WorkflowType = 'SyncExchangeRates'",
+	})
+	if err != nil {
+		slog.Error("list exchange rate sync workflow runs", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list workflow runs")
+		return
+	}
+
+	items := make([]exchangeRateSyncWorkflowRunResponse, 0, len(response.GetExecutions()))
+	for _, execution := range response.GetExecutions() {
+		item := exchangeRateSyncWorkflowRunResponse{
+			WorkflowID:   execution.GetExecution().GetWorkflowId(),
+			RunID:        execution.GetExecution().GetRunId(),
+			WorkflowType: execution.GetType().GetName(),
+			Status:       workflowExecutionStatusString(execution.GetStatus()),
+		}
+		if startTime := execution.GetStartTime(); startTime != nil {
+			value := startTime.AsTime()
+			item.StartTime = &value
+		}
+		if closeTime := execution.GetCloseTime(); closeTime != nil {
+			value := closeTime.AsTime()
+			item.CloseTime = &value
+		}
+		if executionTime := execution.GetExecutionTime(); executionTime != nil {
+			value := executionTime.AsTime()
+			item.ExecutionTime = &value
+		}
+		items = append(items, item)
+	}
+
+	writeJSON(w, http.StatusOK, exchangeRateSyncWorkflowRunListResponse{Items: items})
+}
+
 func decodeStartBrregTranslationWorkflowRequest(r *http.Request) (startBrregTranslationWorkflowRequest, error) {
 	var req startBrregTranslationWorkflowRequest
 	decoder := json.NewDecoder(r.Body)
@@ -542,6 +802,35 @@ func decodeStartBrregTranslationWorkflowRequest(r *http.Request) (startBrregTran
 		if _, err := uuid.Parse(id); err != nil {
 			return startBrregTranslationWorkflowRequest{}, errors.New("ids must contain valid UUID values")
 		}
+	}
+	return req, nil
+}
+
+func decodeStartBrregTermTranslationWorkflowRequest(r *http.Request) (startBrregTermTranslationWorkflowRequest, error) {
+	var req startBrregTermTranslationWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startBrregTermTranslationWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.Provider = strings.TrimSpace(req.Provider)
+	req.Model = strings.TrimSpace(req.Model)
+	req.PromptVersion = strings.TrimSpace(req.PromptVersion)
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	if req.Trigger == "" {
+		req.Trigger = "manual"
+	}
+	if req.Limit < 0 {
+		return startBrregTermTranslationWorkflowRequest{}, errors.New("limit cannot be negative")
+	}
+	if req.TermBatchSize < 0 {
+		return startBrregTermTranslationWorkflowRequest{}, errors.New("term_batch_size cannot be negative")
+	}
+	if req.MaxAttempts < 0 {
+		return startBrregTermTranslationWorkflowRequest{}, errors.New("max_attempts cannot be negative")
+	}
+	if req.MaxLoops < 0 {
+		return startBrregTermTranslationWorkflowRequest{}, errors.New("max_loops cannot be negative")
 	}
 	return req, nil
 }
@@ -629,6 +918,34 @@ func decodeStartBrregSourceProfileNormalizationWorkflowRequest(r *http.Request) 
 	return req, nil
 }
 
+func decodeStartBrregSourceCapitalFXWorkflowRequest(r *http.Request) (startBrregSourceCapitalFXWorkflowRequest, error) {
+	var req startBrregSourceCapitalFXWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startBrregSourceCapitalFXWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.RateDate = strings.TrimSpace(req.RateDate)
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	if req.Trigger == "" {
+		req.Trigger = "manual"
+	}
+	if req.Limit < 0 {
+		return startBrregSourceCapitalFXWorkflowRequest{}, errors.New("limit cannot be negative")
+	}
+	if req.RateDate != "" {
+		if _, err := time.Parse("2006-01-02", req.RateDate); err != nil {
+			return startBrregSourceCapitalFXWorkflowRequest{}, errors.New("rate_date must use YYYY-MM-DD format")
+		}
+	}
+	for _, id := range req.IDs {
+		if _, err := uuid.Parse(id); err != nil {
+			return startBrregSourceCapitalFXWorkflowRequest{}, errors.New("ids must contain valid UUID values")
+		}
+	}
+	return req, nil
+}
+
 func decodeStartBrregBulkRawIngestWorkflowRequest(r *http.Request) (startBrregBulkRawIngestWorkflowRequest, error) {
 	var req startBrregBulkRawIngestWorkflowRequest
 	decoder := json.NewDecoder(r.Body)
@@ -685,6 +1002,38 @@ func (h *Handlers) decodeStartNACETaxonomySyncWorkflowRequest(r *http.Request) (
 	return req, nil
 }
 
+func (h *Handlers) decodeStartExchangeRateSyncWorkflowRequest(r *http.Request) (startExchangeRateSyncWorkflowRequest, error) {
+	var req startExchangeRateSyncWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startExchangeRateSyncWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
+	req.SourceURL = strings.TrimSpace(req.SourceURL)
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	if req.Provider == "" {
+		req.Provider = fx.DefaultProvider
+	}
+	if req.SourceURL == "" {
+		req.SourceURL = strings.TrimSpace(h.fxSourceURL)
+	}
+	if req.SourceURL == "" {
+		req.SourceURL = fx.DefaultDailySourceURL
+	}
+	if req.Trigger == "" {
+		req.Trigger = "manual"
+	}
+	if req.Provider != fx.DefaultProvider {
+		return startExchangeRateSyncWorkflowRequest{}, errors.New("provider must be ecb")
+	}
+	parsed, err := url.Parse(req.SourceURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return startExchangeRateSyncWorkflowRequest{}, errors.New("source_url must be http or https")
+	}
+	return req, nil
+}
+
 func parseNACETaxonomyWorkflowRunsLimit(r *http.Request) (int32, error) {
 	rawLimit := strings.TrimSpace(r.URL.Query().Get("limit"))
 	if rawLimit == "" {
@@ -696,6 +1045,21 @@ func parseNACETaxonomyWorkflowRunsLimit(r *http.Request) (int32, error) {
 	}
 	if limit > maxNACETaxonomyWorkflowRunsLimit {
 		limit = maxNACETaxonomyWorkflowRunsLimit
+	}
+	return int32(limit), nil
+}
+
+func parseFXWorkflowRunsLimit(r *http.Request) (int32, error) {
+	rawLimit := strings.TrimSpace(r.URL.Query().Get("limit"))
+	if rawLimit == "" {
+		return defaultFXWorkflowRunsLimit, nil
+	}
+	limit, err := strconv.Atoi(rawLimit)
+	if err != nil || limit <= 0 {
+		return 0, errors.New("limit must be a positive integer")
+	}
+	if limit > maxFXWorkflowRunsLimit {
+		limit = maxFXWorkflowRunsLimit
 	}
 	return int32(limit), nil
 }
@@ -728,6 +1092,11 @@ var brregWorkflowPrefixes = []brregWorkflowPrefix{
 		WorkflowType: brregworkflow.TranslateBrregRawInputsWorkflowName,
 	},
 	{
+		Prefix:       "brreg-term-translation",
+		Label:        "Term translation",
+		WorkflowType: brregworkflow.TranslateBrregSourceTermsWorkflowName,
+	},
+	{
 		Prefix:       "brreg-domain-search",
 		Label:        "Domain discovery",
 		WorkflowType: brregworkflow.SearchBrregDomainsWorkflowName,
@@ -736,6 +1105,11 @@ var brregWorkflowPrefixes = []brregWorkflowPrefix{
 		Prefix:       "brreg-source-profile",
 		Label:        "Source profile sync",
 		WorkflowType: brregworkflow.NormalizeBrregSourceProfilesWorkflowName,
+	},
+	{
+		Prefix:       "brreg-source-capital-fx",
+		Label:        "Capital FX conversion",
+		WorkflowType: brregworkflow.ConvertBrregSourceCapitalToUSDWorkflowName,
 	},
 	{
 		Prefix:       "brreg-bulk-ingest",

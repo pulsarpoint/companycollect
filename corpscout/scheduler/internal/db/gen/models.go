@@ -515,6 +515,64 @@ type DomainImportBatch struct {
 	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
 }
 
+type ExchangeRate struct {
+	ID          uuid.UUID       `json:"id"`
+	SheetID     uuid.UUID       `json:"sheet_id"`
+	Currency    string          `json:"currency"`
+	RatePerBase pgtype.Numeric  `json:"rate_per_base"`
+	Metadata    json.RawMessage `json:"metadata"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+type ExchangeRateSheet struct {
+	ID            uuid.UUID       `json:"id"`
+	Provider      string          `json:"provider"`
+	RateDate      pgtype.Date     `json:"rate_date"`
+	BaseCurrency  string          `json:"base_currency"`
+	SourceFileID  pgtype.UUID     `json:"source_file_id"`
+	ContentSha256 string          `json:"content_sha256"`
+	Metadata      json.RawMessage `json:"metadata"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+type ExchangeRateSourceFile struct {
+	ID                 uuid.UUID          `json:"id"`
+	Provider           string             `json:"provider"`
+	SourceUrl          string             `json:"source_url"`
+	RateDate           pgtype.Date        `json:"rate_date"`
+	ContentSha256      string             `json:"content_sha256"`
+	ContentLengthBytes int64              `json:"content_length_bytes"`
+	ContentType        *string            `json:"content_type"`
+	Etag               *string            `json:"etag"`
+	LastModified       *string            `json:"last_modified"`
+	Status             string             `json:"status"`
+	ProcessedAt        pgtype.Timestamptz `json:"processed_at"`
+	Error              *string            `json:"error"`
+	Metadata           json.RawMessage    `json:"metadata"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+}
+
+type ExchangeRateSyncRun struct {
+	ID                 uuid.UUID          `json:"id"`
+	TemporalWorkflowID string             `json:"temporal_workflow_id"`
+	Provider           string             `json:"provider"`
+	SourceUrl          string             `json:"source_url"`
+	Status             string             `json:"status"`
+	SourceFileID       pgtype.UUID        `json:"source_file_id"`
+	SheetID            pgtype.UUID        `json:"sheet_id"`
+	RateDate           pgtype.Date        `json:"rate_date"`
+	ContentSha256      *string            `json:"content_sha256"`
+	CurrenciesSeen     int32              `json:"currencies_seen"`
+	CurrenciesImported int32              `json:"currencies_imported"`
+	StartedAt          time.Time          `json:"started_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	Error              *string            `json:"error"`
+	Metadata           json.RawMessage    `json:"metadata"`
+}
+
 type LlmProvider struct {
 	ID               uuid.UUID       `json:"id"`
 	Slug             string          `json:"slug"`
@@ -867,6 +925,41 @@ type TemporalScheduleMetadatum struct {
 	Metadata           json.RawMessage `json:"metadata"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
+}
+
+type VExchangeRateSyncRun struct {
+	SyncRunID          uuid.UUID          `json:"sync_run_id"`
+	TemporalWorkflowID string             `json:"temporal_workflow_id"`
+	Provider           string             `json:"provider"`
+	SourceUrl          string             `json:"source_url"`
+	SyncStatus         string             `json:"sync_status"`
+	RateDate           pgtype.Date        `json:"rate_date"`
+	ContentSha256      *string            `json:"content_sha256"`
+	CurrenciesSeen     int32              `json:"currencies_seen"`
+	CurrenciesImported int32              `json:"currencies_imported"`
+	StartedAt          time.Time          `json:"started_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	SyncError          string             `json:"sync_error"`
+	SourceFileID       pgtype.UUID        `json:"source_file_id"`
+	SourceFileStatus   *string            `json:"source_file_status"`
+	ContentLengthBytes *int64             `json:"content_length_bytes"`
+	ContentType        *string            `json:"content_type"`
+	Etag               *string            `json:"etag"`
+	LastModified       *string            `json:"last_modified"`
+	ProcessedAt        pgtype.Timestamptz `json:"processed_at"`
+	SheetID            pgtype.UUID        `json:"sheet_id"`
+}
+
+type VExchangeRateSyncState struct {
+	Provider      string      `json:"provider"`
+	RateDate      pgtype.Date `json:"rate_date"`
+	BaseCurrency  string      `json:"base_currency"`
+	ContentSha256 string      `json:"content_sha256"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
+	CurrencyCount int32       `json:"currency_count"`
+	SourceUrl     string      `json:"source_url"`
+	ProcessedAt   time.Time   `json:"processed_at"`
 }
 
 type VNaceCodeTree struct {

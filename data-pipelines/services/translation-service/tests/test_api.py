@@ -9,6 +9,9 @@ from tests.fakes import FakeLLMClient
 from tests.fixtures import brreg_record_payload
 
 
+TERM_KEY_1 = "6b79e9d3d6b2cfb0c065d83384c1028947fb5f89af7938f4e176122bdd26db72"
+
+
 def test_mock_endpoints_are_hidden_when_mock_mode_is_disabled(monkeypatch) -> None:
     monkeypatch.delenv("TRANSLATION_MOCK_ENABLED", raising=False)
     monkeypatch.setenv("TRANSLATION_DEFAULT_PROVIDER", "local")
@@ -164,6 +167,46 @@ def test_api_translates_term_batch_and_accepts_llm_query_selection() -> None:
     ]
     assert body["missing_ids"] == []
     assert body["error"] is None
+
+
+def test_api_translates_brreg_term_contract() -> None:
+    app = create_app(translation_service=TranslationService(llm_client=FakeLLMClient()))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/terms/translate?provider=fake&model=fake-fast",
+        json={
+            "request_id": "request-1",
+            "source": "brreg",
+            "source_lang": "no",
+            "target_lang": "en",
+            "provider": "default",
+            "prompt_version": "v1",
+            "terms": [
+                {
+                    "term_key": TERM_KEY_1,
+                    "source_text": "Aksjeselskap",
+                    "source_text_normalized": "aksjeselskap",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["request_id"] == "request-1"
+    assert body["provider"] == "fake"
+    assert body["model"] == "fake-fast"
+    assert body["results"] == [
+        {
+            "term_key": TERM_KEY_1,
+            "source_text": "Aksjeselskap",
+            "source_text_normalized": "aksjeselskap",
+            "translated_text": "Aksjeselskap EN",
+            "status": "succeeded",
+        }
+    ]
+    assert body["failures"] == []
 
 
 def test_health_endpoint_reports_service_status() -> None:

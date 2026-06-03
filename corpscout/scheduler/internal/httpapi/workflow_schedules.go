@@ -20,6 +20,7 @@ import (
 	"go.temporal.io/sdk/converter"
 
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/workflowschedules"
 )
 
@@ -81,6 +82,11 @@ type workflowScheduleStatusResponse struct {
 
 type workflowScheduleNoteRequest struct {
 	Note string `json:"note"`
+}
+
+type workflowScheduleDefaults struct {
+	naceSourceURL string
+	fxSourceURL   string
 }
 
 func (h *Handlers) handleListWorkflowSchedules(w http.ResponseWriter, r *http.Request) {
@@ -147,7 +153,7 @@ func (h *Handlers) handleCreateWorkflowSchedule(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	def, options, err := buildWorkflowScheduleOptions(req, h.naceSourceURL)
+	def, options, err := buildWorkflowScheduleOptions(req, h.workflowScheduleDefaults())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -203,7 +209,7 @@ func (h *Handlers) handleUpdateWorkflowSchedule(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	def, options, err := buildWorkflowScheduleOptions(req, h.naceSourceURL)
+	def, options, err := buildWorkflowScheduleOptions(req, h.workflowScheduleDefaults())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -463,7 +469,14 @@ func decodeWorkflowScheduleRequestBody(r *http.Request, requireScheduleID bool) 
 	return req, nil
 }
 
-func buildWorkflowScheduleOptions(req workflowScheduleRequest, defaultNACESourceURL string) (workflowschedules.Definition, client.ScheduleOptions, error) {
+func (h *Handlers) workflowScheduleDefaults() workflowScheduleDefaults {
+	return workflowScheduleDefaults{
+		naceSourceURL: h.naceSourceURL,
+		fxSourceURL:   h.fxSourceURL,
+	}
+}
+
+func buildWorkflowScheduleOptions(req workflowScheduleRequest, defaults workflowScheduleDefaults) (workflowschedules.Definition, client.ScheduleOptions, error) {
 	def, ok := workflowschedules.DefinitionByKey(req.WorkflowKey)
 	if !ok {
 		return workflowschedules.Definition{}, client.ScheduleOptions{}, errors.New("workflow key is not schedulable")
@@ -481,7 +494,7 @@ func buildWorkflowScheduleOptions(req workflowScheduleRequest, defaultNACESource
 	if err != nil {
 		return workflowschedules.Definition{}, client.ScheduleOptions{}, err
 	}
-	req, err = applyWorkflowScheduleActionDefaults(req, defaultNACESourceURL)
+	req, err = applyWorkflowScheduleActionDefaults(req, defaults)
 	if err != nil {
 		return workflowschedules.Definition{}, client.ScheduleOptions{}, err
 	}
@@ -509,10 +522,18 @@ func buildWorkflowScheduleOptions(req workflowScheduleRequest, defaultNACESource
 	}, nil
 }
 
-func applyWorkflowScheduleActionDefaults(req workflowScheduleRequest, defaultNACESourceURL string) (workflowScheduleRequest, error) {
-	if req.WorkflowKey != "nace_taxonomy_sync" {
+func applyWorkflowScheduleActionDefaults(req workflowScheduleRequest, defaults workflowScheduleDefaults) (workflowScheduleRequest, error) {
+	switch req.WorkflowKey {
+	case "nace_taxonomy_sync":
+		return applyNACETaxonomyScheduleActionDefaults(req, defaults.naceSourceURL)
+	case "fx_rate_sync":
+		return applyFXRateScheduleActionDefaults(req, defaults.fxSourceURL)
+	default:
 		return req, nil
 	}
+}
+
+func applyNACETaxonomyScheduleActionDefaults(req workflowScheduleRequest, defaultNACESourceURL string) (workflowScheduleRequest, error) {
 	input := map[string]any{}
 	if len(req.ActionInput) > 0 && strings.TrimSpace(string(req.ActionInput)) != "null" {
 		if err := json.Unmarshal(req.ActionInput, &input); err != nil {
@@ -529,13 +550,8 @@ func applyWorkflowScheduleActionDefaults(req workflowScheduleRequest, defaultNAC
 		}
 		input["source_url"] = sourceURL
 	}
-	sourceURL := strings.TrimSpace(stringValue(input["source_url"]))
-	parsedURL, err := url.Parse(sourceURL)
-	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-		return workflowScheduleRequest{}, errors.New("nace source url must be http or https")
-	}
-	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return workflowScheduleRequest{}, errors.New("nace source url must be http or https")
+	if err := validateHTTPSourceURL(strings.TrimSpace(stringValue(input["source_url"])), "nace source url must be http or https"); err != nil {
+		return workflowScheduleRequest{}, err
 	}
 	if strings.TrimSpace(stringValue(input["trigger"])) == "" {
 		input["trigger"] = "schedule"
@@ -546,6 +562,51 @@ func applyWorkflowScheduleActionDefaults(req workflowScheduleRequest, defaultNAC
 	}
 	req.ActionInput = body
 	return req, nil
+}
+
+func applyFXRateScheduleActionDefaults(req workflowScheduleRequest, defaultFXSourceURL string) (workflowScheduleRequest, error) {
+	input := map[string]any{}
+	if len(req.ActionInput) > 0 && strings.TrimSpace(string(req.ActionInput)) != "null" {
+		if err := json.Unmarshal(req.ActionInput, &input); err != nil {
+			return workflowScheduleRequest{}, errors.New("invalid fx rate sync action input")
+		}
+		if input == nil {
+			input = map[string]any{}
+		}
+	}
+	if strings.TrimSpace(stringValue(input["provider"])) == "" {
+		input["provider"] = fx.DefaultProvider
+	}
+	if strings.TrimSpace(stringValue(input["source_url"])) == "" {
+		sourceURL := strings.TrimSpace(defaultFXSourceURL)
+		if sourceURL == "" {
+			sourceURL = fx.DefaultDailySourceURL
+		}
+		input["source_url"] = sourceURL
+	}
+	if err := validateHTTPSourceURL(strings.TrimSpace(stringValue(input["source_url"])), "fx source url must be http or https"); err != nil {
+		return workflowScheduleRequest{}, err
+	}
+	if strings.TrimSpace(stringValue(input["trigger"])) == "" {
+		input["trigger"] = "schedule"
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		return workflowScheduleRequest{}, errors.New("invalid fx rate sync action input")
+	}
+	req.ActionInput = body
+	return req, nil
+}
+
+func validateHTTPSourceURL(sourceURL string, message string) error {
+	parsedURL, err := url.Parse(sourceURL)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		return errors.New(message)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return errors.New(message)
+	}
+	return nil
 }
 
 func (h *Handlers) workflowScheduleResponse(ctx context.Context, row db.TemporalScheduleMetadatum) (workflowScheduleResponse, error) {

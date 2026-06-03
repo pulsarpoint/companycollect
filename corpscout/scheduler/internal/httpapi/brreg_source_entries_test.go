@@ -124,6 +124,7 @@ func TestListBrregSourceEntriesReturnsSourceEntries(t *testing.T) {
 		TranslationPendingCount:   2,
 		TranslationRunningCount:   1,
 		TranslationSucceededCount: 8,
+		TranslationFailedCount:    5,
 		DomainPendingCount:        4,
 		DomainRunningCount:        1,
 		DomainSucceededCount:      6,
@@ -159,6 +160,7 @@ func TestListBrregSourceEntriesReturnsSourceEntries(t *testing.T) {
 	require.EqualValues(t, 2, body.Items[0].TranslationPendingCount)
 	require.EqualValues(t, 1, body.Items[0].TranslationRunningCount)
 	require.EqualValues(t, 8, body.Items[0].TranslationSucceededCount)
+	require.EqualValues(t, 5, body.Items[0].TranslationFailedCount)
 	require.EqualValues(t, 4, body.Items[0].DomainPendingCount)
 	require.EqualValues(t, 1, body.Items[0].DomainRunningCount)
 	require.EqualValues(t, 6, body.Items[0].DomainSucceededCount)

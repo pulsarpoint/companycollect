@@ -81,7 +81,7 @@ export interface WorkflowScheduleTemporalState {
 export interface WorkflowSchedule {
   id: string;
   temporal_schedule_id: string;
-  workflow_key: "nace_taxonomy_sync";
+  workflow_key: WorkflowScheduleKey;
   workflow_name: string;
   task_queue: string;
   domain: string;
@@ -104,7 +104,7 @@ export interface WorkflowScheduleListResponse {
 
 export interface WorkflowScheduleInput {
   temporal_schedule_id: string;
-  workflow_key: "nace_taxonomy_sync";
+  workflow_key: WorkflowScheduleKey;
   display_name: string;
   description?: string;
   enabled: boolean;
@@ -113,6 +113,8 @@ export interface WorkflowScheduleInput {
   spec: WorkflowScheduleSpec;
   action_input: Record<string, unknown>;
 }
+
+export type WorkflowScheduleKey = "nace_taxonomy_sync" | "fx_rate_sync";
 
 export interface NACETaxonomySyncRequest {
   revision?: string;
@@ -133,6 +135,27 @@ export interface NACETaxonomyWorkflowRun {
 
 export interface NACETaxonomyWorkflowRunListResponse {
   items: NACETaxonomyWorkflowRun[];
+}
+
+export interface ExchangeRateSyncRequest {
+  provider?: "ecb";
+  source_url?: string;
+  trigger?: "manual" | "schedule";
+  force_reprocess?: boolean;
+}
+
+export interface ExchangeRateWorkflowRun {
+  workflow_id: string;
+  run_id: string;
+  workflow_type: string;
+  status: string;
+  start_time?: string;
+  close_time?: string;
+  execution_time?: string;
+}
+
+export interface ExchangeRateWorkflowRunListResponse {
+  items: ExchangeRateWorkflowRun[];
 }
 
 export interface BrregWorkflowRunPrefix {
@@ -205,6 +228,35 @@ export interface StartWorkflowResponse {
   workflow: string;
   workflow_id: string;
   workflow_run_id: string;
+}
+
+export interface BrregTranslationRequest {
+  ids?: string[];
+  filters?: Record<string, string>;
+  limit?: number;
+  batch_size?: number;
+  max_attempts?: number;
+  max_parallel_tasks?: number;
+  lease_seconds?: number;
+  provider?: string;
+  model?: string;
+  prompt_version?: string;
+  source_lang?: string;
+  target_lang?: string;
+  max_service_retries?: number;
+  trigger?: string;
+}
+
+export interface BrregTermTranslationRequest {
+  all_records?: boolean;
+  limit?: number;
+  term_batch_size?: number;
+  max_attempts?: number;
+  max_loops?: number;
+  provider?: string;
+  model?: string;
+  prompt_version?: string;
+  trigger?: string;
 }
 
 export interface RawInput {
@@ -293,6 +345,7 @@ export interface BrregSourceEntryListItem {
   translation_pending_count: number;
   translation_running_count: number;
   translation_succeeded_count: number;
+  translation_failed_count: number;
   domain_pending_count: number;
   domain_running_count: number;
   domain_succeeded_count: number;
@@ -492,7 +545,13 @@ export interface RawInputDetail {
   updated_at: string;
 }
 
-type Signal = "registry_website" | "wikidata" | "certsh" | "whois" | "search" | "manual_upload";
+type Signal =
+  | "registry_website"
+  | "wikidata"
+  | "certsh"
+  | "whois"
+  | "search"
+  | "manual_upload";
 
 export interface ReviewCandidate {
   id: string;

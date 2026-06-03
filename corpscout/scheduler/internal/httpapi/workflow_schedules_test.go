@@ -17,6 +17,7 @@ import (
 	"go.temporal.io/sdk/client"
 
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/httpapi"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 )
@@ -154,6 +155,79 @@ func TestCreateWorkflowScheduleCreatesTemporalScheduleAndMetadata(t *testing.T) 
 		"paused": false,
 		"note":   "",
 	}, body["temporal"])
+}
+
+func TestCreateWorkflowScheduleCreatesFXTemporalScheduleAndMetadata(t *testing.T) {
+	tc := newTemporalScheduleClientRecorder()
+	q := &scheduleMetadataQuerier{}
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", tc, "").ConfigureFX("https://example.test/ecb.xml"))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflow-schedules", bytes.NewBufferString(`{
+		"temporal_schedule_id": "fx-rate-sync-daily",
+		"workflow_key": "fx_rate_sync",
+		"display_name": "Daily FX rate sync",
+		"description": "Keep exchange rates fresh",
+		"enabled": true,
+		"tags": ["fx", "exchange-rates", "fx"],
+		"metadata": {"owner": "ops"},
+		"spec": {
+			"timezone": "Europe/Belgrade",
+			"cron_expression": "15 4 * * *",
+			"overlap_policy": "skip",
+			"catchup_window_seconds": 3600
+		},
+		"action_input": {
+			"trigger": "schedule",
+			"force_reprocess": false
+		}
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.True(t, tc.schedule.createCalled)
+	require.Equal(t, "fx-rate-sync-daily", tc.schedule.createOptions.ID)
+	action, ok := tc.schedule.createOptions.Action.(*client.ScheduleWorkflowAction)
+	require.True(t, ok)
+	require.Equal(t, fx.SyncWorkflowName, action.Workflow)
+	require.Equal(t, fx.SyncTaskQueue, action.TaskQueue)
+	require.Len(t, action.Args, 1)
+	actionInput, ok := action.Args[0].(fx.SyncExchangeRatesInput)
+	require.True(t, ok)
+	require.Equal(t, fx.DefaultProvider, actionInput.Provider)
+	require.Equal(t, "https://example.test/ecb.xml", actionInput.SourceURL)
+	require.Equal(t, "schedule", actionInput.Trigger)
+	require.False(t, actionInput.ForceReprocess)
+	require.Equal(t, "fx-rate-sync-daily", q.createParams.TemporalScheduleID)
+	require.Equal(t, "fx_rate_sync", q.createParams.WorkflowKey)
+	require.Equal(t, fx.SyncWorkflowName, q.createParams.WorkflowName)
+	require.Equal(t, fx.SyncTaskQueue, q.createParams.TaskQueue)
+	require.Equal(t, []string{"fx", "exchange-rates"}, q.createParams.Tags)
+}
+
+func TestCreateWorkflowScheduleRejectsInvalidFXSourceURL(t *testing.T) {
+	tc := newTemporalScheduleClientRecorder()
+	r := routerFor(httpapi.NewHandlers(&scheduleMetadataQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflow-schedules", bytes.NewBufferString(`{
+		"temporal_schedule_id": "fx-rate-sync-daily",
+		"workflow_key": "fx_rate_sync",
+		"display_name": "Daily FX rate sync",
+		"enabled": true,
+		"spec": {
+			"timezone": "Europe/Belgrade",
+			"cron_expression": "15 4 * * *",
+			"overlap_policy": "skip",
+			"catchup_window_seconds": 3600
+		},
+		"action_input": {"source_url": "file:///tmp/ecb.xml"}
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"fx source url must be http or https"`)
+	require.False(t, tc.schedule.createCalled)
 }
 
 func TestListWorkflowSchedulesReturnsMetadataAndTemporalState(t *testing.T) {

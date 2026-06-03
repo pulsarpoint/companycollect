@@ -9,9 +9,10 @@ import {
 import {
   BrregTranslationActionForm,
 } from "~/components/app/BrregTranslationActionForm";
+import { BrregSourceCapitalFXActionForm } from "~/components/app/BrregSourceCapitalFXActionForm";
 import type { BrregActionScope } from "~/components/app/BrregActionScope";
 
-type BrregSourceEntryAction = "" | "translation" | "domain_search";
+type BrregSourceEntryAction = "" | "translation" | "capital_fx" | "domain_search";
 
 interface Props {
   open: boolean;
@@ -33,6 +34,11 @@ const AVAILABLE_ACTIONS: Array<{
     key: "translation",
     label: "Translation",
     description: "Translate missing BRREG source fields and store the English values in brreg_source.",
+  },
+  {
+    key: "capital_fx",
+    label: "Convert capital to USD",
+    description: "Convert BRREG capital amounts to USD cents using locally synced exchange rates.",
   },
   {
     key: "domain_search",
@@ -97,10 +103,22 @@ export function BrregSourceEntryActionSheet({
               selectedIds={selectedIds}
               totalCount={totalCount}
               filters={filters}
+              mode="source_terms"
               initialScope={initialScope}
               recordLabel="source entries"
-              description="Starts the Temporal workflow that claims missing BRREG source fields, sends field payloads to the translation service, and stores translated values in brreg_source."
-              showAdvancedOptions={false}
+              description="Starts the Temporal workflow that translates missing distinct BRREG source terms and applies cached English values to brreg_source."
+              showAdvancedOptions
+              onStarted={onStarted}
+              onClose={() => onOpenChange(false)}
+            />
+          )}
+
+          {selectedAction === "capital_fx" && (
+            <BrregSourceCapitalFXActionForm
+              selectedIds={selectedIds}
+              totalCount={totalCount}
+              filters={filters}
+              initialScope={initialScope}
               onStarted={onStarted}
               onClose={() => onOpenChange(false)}
             />

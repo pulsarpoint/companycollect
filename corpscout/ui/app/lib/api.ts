@@ -18,6 +18,8 @@ import type {
   BrregSourceEntryListResponse,
   BrregSourceCompanyDetail,
   BrregWorkflowRunListResponse,
+  BrregTermTranslationRequest,
+  BrregTranslationRequest,
   LLMProvider,
   LLMProviderInput,
   LLMProviderListResponse,
@@ -26,6 +28,8 @@ import type {
   WorkflowSchedule,
   WorkflowScheduleInput,
   WorkflowScheduleListResponse,
+  ExchangeRateSyncRequest,
+  ExchangeRateWorkflowRunListResponse,
   NACETaxonomySyncRequest,
   NACETaxonomyWorkflowRunListResponse,
   NACECodeListResponse,
@@ -336,6 +340,14 @@ export const api = {
       `/workflows/nace/taxonomy-sync/runs?limit=${limit}`,
     ),
 
+  startExchangeRateSync: (body: ExchangeRateSyncRequest = {}) =>
+    post<StartWorkflowResponse>("/workflows/fx/rate-sync", body),
+
+  getExchangeRateSyncRuns: (limit = 10) =>
+    get<ExchangeRateWorkflowRunListResponse>(
+      `/workflows/fx/rate-sync/runs?limit=${limit}`,
+    ),
+
   getBrregWorkflowRuns: (
     params: {
       limit?: number;
@@ -397,28 +409,11 @@ export const api = {
     },
   ) => patch<{ status: string }>(`/sources/${name}`, body),
 
-  translateBrreg: (
-    body: {
-      ids?: string[];
-      filters?: Record<string, string>;
-      limit?: number;
-      batch_size?: number;
-      max_attempts?: number;
-      max_parallel_tasks?: number;
-      lease_seconds?: number;
-      provider?: string;
-      model?: string;
-      prompt_version?: string;
-      source_lang?: string;
-      target_lang?: string;
-      max_service_retries?: number;
-      trigger?: string;
-    } = {},
-  ) =>
-    post<{ status: string; workflow_id: string; workflow_run_id?: string }>(
-      "/workflows/brreg/translation",
-      body,
-    ),
+  translateBrreg: (body: BrregTranslationRequest = {}) =>
+    post<StartWorkflowResponse>("/workflows/brreg/translation", body),
+
+  translateBrregTerms: (body: BrregTermTranslationRequest = {}) =>
+    post<StartWorkflowResponse>("/workflows/brreg/term-translation", body),
 
   searchBrregDomains: (
     body: {
@@ -455,6 +450,21 @@ export const api = {
   ) =>
     post<{ status: string; workflow_id: string; workflow_run_id?: string }>(
       "/workflows/brreg/source-profile-normalization",
+      body,
+    ),
+
+  convertBrregSourceCapitalToUSD: (
+    body: {
+      ids?: string[];
+      filters?: Record<string, string>;
+      limit?: number;
+      rate_date?: string;
+      force_reprocess?: boolean;
+      trigger?: string;
+    } = {},
+  ) =>
+    post<{ status: string; workflow_id: string; workflow_run_id?: string }>(
+      "/workflows/brreg/source-capital-fx",
       body,
     ),
 

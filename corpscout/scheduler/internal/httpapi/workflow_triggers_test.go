@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/httpapi"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 )
@@ -135,6 +136,87 @@ func TestStartBrregTranslationWorkflowRequiresTemporalClient(t *testing.T) {
 
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 	require.Contains(t, w.Body.String(), `"error":"temporal client not available"`)
+}
+
+func TestStartBrregTermTranslationWorkflowStartsTemporalWorkflow(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/term-translation", bytes.NewBufferString(`{
+		"limit": 250,
+		"term_batch_size": 75,
+		"max_attempts": 4,
+		"max_loops": 12,
+		"provider": "deepseek",
+		"model": "deepseek-chat",
+		"prompt_version": "v2",
+		"trigger": "manual"
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"TranslateBrregSourceTerms"`)
+	require.Equal(t, "brreg-term-translation", tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(brregworkflow.TranslateBrregSourceTerms).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(brregworkflow.TranslateBrregSourceTermsInput)
+	require.Equal(t, 250, input.Limit)
+	require.Equal(t, 75, input.TermBatchSize)
+	require.Equal(t, 4, input.MaxAttempts)
+	require.Equal(t, 12, input.MaxLoops)
+	require.Equal(t, "deepseek", input.Provider)
+	require.Equal(t, "deepseek-chat", input.Model)
+	require.Equal(t, "v2", input.PromptVersion)
+	require.Equal(t, "manual", input.Trigger)
+}
+
+func TestStartBrregTermTranslationWorkflowSupportsAllRecords(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/term-translation", bytes.NewBufferString(`{
+		"all_records": true
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(brregworkflow.TranslateBrregSourceTermsInput)
+	require.True(t, input.AllRecords)
+	require.Zero(t, input.Limit)
+}
+
+func TestBrregTranslationEndpointSplitKeepsRawAndSourceTermWorkflowsSeparate(t *testing.T) {
+	rawTemporal := &temporalExecuteRecorder{}
+	rawRouter := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", rawTemporal, ""))
+
+	rawReq := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/translation", bytes.NewBufferString(`{"limit": 10}`))
+	rawW := httptest.NewRecorder()
+	rawRouter.ServeHTTP(rawW, rawReq)
+
+	require.Equal(t, http.StatusAccepted, rawW.Code)
+	require.Equal(t, "brreg-translation", rawTemporal.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(brregworkflow.TranslateBrregRawInputs).Pointer(), reflect.ValueOf(rawTemporal.workflow).Pointer())
+	require.Len(t, rawTemporal.args, 1)
+	require.IsType(t, brregworkflow.TranslateBrregRawInputsInput{}, rawTemporal.args[0])
+
+	termTemporal := &temporalExecuteRecorder{}
+	termRouter := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", termTemporal, ""))
+
+	termReq := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/term-translation", bytes.NewBufferString(`{"limit": 10}`))
+	termW := httptest.NewRecorder()
+	termRouter.ServeHTTP(termW, termReq)
+
+	require.Equal(t, http.StatusAccepted, termW.Code)
+	require.Equal(t, "brreg-term-translation", termTemporal.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(brregworkflow.TranslateBrregSourceTerms).Pointer(), reflect.ValueOf(termTemporal.workflow).Pointer())
+	require.Len(t, termTemporal.args, 1)
+	require.IsType(t, brregworkflow.TranslateBrregSourceTermsInput{}, termTemporal.args[0])
 }
 
 func TestStartBrregDomainSearchWorkflowStartsTemporalWorkflow(t *testing.T) {
@@ -274,6 +356,50 @@ func TestStartBrregSourceProfileNormalizationWorkflowRejectsInvalidID(t *testing
 	require.Nil(t, tc.workflow)
 }
 
+func TestStartBrregSourceCapitalFXWorkflowStartsTemporalWorkflow(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/source-capital-fx", bytes.NewBufferString(`{
+		"ids": ["7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"],
+		"filters": {"website_status": "with_website"},
+		"limit": 250,
+		"rate_date": "2026-06-02",
+		"force_reprocess": true,
+		"trigger": "manual"
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"ConvertBrregSourceCapitalToUSD"`)
+	require.Equal(t, "brreg-source-capital-fx", tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(brregworkflow.ConvertBrregSourceCapitalToUSD).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(brregworkflow.ConvertBrregSourceCapitalToUSDInput)
+	require.Equal(t, []string{"7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"}, input.IDs)
+	require.Equal(t, map[string]string{"website_status": "with_website"}, input.Filters)
+	require.Equal(t, 250, input.Limit)
+	require.Equal(t, "2026-06-02", input.RateDate)
+	require.True(t, input.ForceReprocess)
+	require.Equal(t, "manual", input.Trigger)
+}
+
+func TestStartBrregSourceCapitalFXWorkflowRejectsInvalidRateDate(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/source-capital-fx", bytes.NewBufferString(`{"rate_date":"06/02/2026"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"rate_date must use YYYY-MM-DD format"`)
+	require.Nil(t, tc.workflow)
+}
+
 func TestStartBrregBulkRawIngestWorkflowStartsTemporalWorkflowAndAllowsAll(t *testing.T) {
 	tc := &temporalExecuteRecorder{}
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
@@ -387,6 +513,115 @@ func TestStartNACETaxonomySyncWorkflowRejectsInvalidURL(t *testing.T) {
 	require.Nil(t, tc.workflow)
 }
 
+func TestStartExchangeRateSyncWorkflowStartsTemporalWorkflow(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/fx/rate-sync", bytes.NewBufferString(`{
+		"provider": "ecb",
+		"source_url": "https://example.test/ecb.xml",
+		"trigger": "manual",
+		"force_reprocess": true
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"SyncExchangeRates"`)
+	require.Equal(t, "fx-rate-sync", tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(fx.SyncExchangeRates).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(fx.SyncExchangeRatesInput)
+	require.Equal(t, "ecb", input.Provider)
+	require.Equal(t, "https://example.test/ecb.xml", input.SourceURL)
+	require.Equal(t, "manual", input.Trigger)
+	require.True(t, input.ForceReprocess)
+}
+
+func TestStartExchangeRateSyncWorkflowUsesDefaultValues(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/fx/rate-sync", bytes.NewBufferString(`{}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	input := tc.args[0].(fx.SyncExchangeRatesInput)
+	require.Equal(t, fx.DefaultProvider, input.Provider)
+	require.Equal(t, fx.DefaultDailySourceURL, input.SourceURL)
+	require.Equal(t, "manual", input.Trigger)
+}
+
+func TestStartExchangeRateSyncWorkflowUsesConfiguredSourceURL(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	handlers := httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, "").
+		ConfigureFX("https://example.test/configured-ecb.xml")
+	r := routerFor(handlers)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/fx/rate-sync", bytes.NewBufferString(`{}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	input := tc.args[0].(fx.SyncExchangeRatesInput)
+	require.Equal(t, "https://example.test/configured-ecb.xml", input.SourceURL)
+}
+
+func TestStartExchangeRateSyncWorkflowRejectsUnsupportedProvider(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/fx/rate-sync", bytes.NewBufferString(`{"provider":"other"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"provider must be ecb"`)
+	require.Nil(t, tc.workflow)
+}
+
+func TestStartExchangeRateSyncWorkflowRejectsInvalidSourceURL(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/fx/rate-sync", bytes.NewBufferString(`{"source_url":"file:///tmp/ecb.xml"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"source_url must be http or https"`)
+	require.Nil(t, tc.workflow)
+}
+
+func TestListExchangeRateSyncWorkflowRunsReturnsRecentTemporalExecutions(t *testing.T) {
+	startedAt := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	tc := &temporalExecuteRecorder{
+		listWorkflowResponse: &workflowservicepb.ListWorkflowExecutionsResponse{
+			Executions: []*workflowpb.WorkflowExecutionInfo{{
+				Execution: &commonpb.WorkflowExecution{WorkflowId: "fx-rate-sync-20260603", RunId: "run-123"},
+				Type:      &commonpb.WorkflowType{Name: fx.SyncWorkflowName},
+				Status:    enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED,
+				StartTime: timestamppb.New(startedAt),
+			}},
+		},
+	}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/fx/rate-sync/runs?limit=5", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, tc.listWorkflowRequest)
+	require.Equal(t, int32(5), tc.listWorkflowRequest.PageSize)
+	require.Equal(t, "WorkflowType = 'SyncExchangeRates'", tc.listWorkflowRequest.Query)
+	require.Contains(t, w.Body.String(), `"workflow_id":"fx-rate-sync-20260603"`)
+	require.Contains(t, w.Body.String(), `"status":"completed"`)
+}
+
 func TestListNACETaxonomySyncWorkflowRunsReturnsRecentTemporalExecutions(t *testing.T) {
 	startedAt := time.Date(2026, 6, 2, 11, 30, 0, 0, time.UTC)
 	closedAt := startedAt.Add(2 * time.Minute)
@@ -489,9 +724,11 @@ func TestListBrregWorkflowRunsReturnsFilteredTemporalExecutions(t *testing.T) {
 		} `json:"items"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	require.Len(t, body.Prefixes, 4)
+	require.Len(t, body.Prefixes, 6)
 	require.Equal(t, "brreg-translation", body.Prefixes[0].Prefix)
 	require.Equal(t, brregworkflow.TranslateBrregRawInputsWorkflowName, body.Prefixes[0].WorkflowType)
+	require.Equal(t, "brreg-term-translation", body.Prefixes[1].Prefix)
+	require.Equal(t, brregworkflow.TranslateBrregSourceTermsWorkflowName, body.Prefixes[1].WorkflowType)
 	require.Len(t, body.Items, 1)
 	require.Equal(t, "brreg-translation-20260602-113000", body.Items[0].WorkflowID)
 	require.Equal(t, "run-123", body.Items[0].RunID)

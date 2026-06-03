@@ -1211,6 +1211,7 @@ SELECT
   entry.translation_pending_count,
   entry.translation_running_count,
   entry.translation_succeeded_count,
+  entry.translation_failed_count,
   entry.domain_pending_count,
   entry.domain_running_count,
   entry.domain_succeeded_count,
@@ -1291,3 +1292,375 @@ OFFSET GREATEST(sqlc.arg('offset')::integer, 0);
 SELECT detail.*
 FROM brreg_source.v_company_detail detail
 WHERE detail.id = sqlc.arg('company_id')::uuid;
+
+-- name: ConvertBrregSourceCapitalToUSD :one
+WITH selected_sheet AS (
+  SELECT
+    sheet.id,
+    sheet.provider,
+    sheet.rate_date,
+    sheet.base_currency
+  FROM exchange_rate_sheets sheet
+  WHERE sheet.provider = 'ecb'
+    AND (
+      sqlc.narg('rate_date')::date IS NULL
+      OR sheet.rate_date = sqlc.narg('rate_date')::date
+    )
+  ORDER BY sheet.rate_date DESC
+  LIMIT 1
+),
+usd_rate AS (
+  SELECT
+    rate.sheet_id,
+    rate.rate_per_base
+  FROM exchange_rates rate
+  JOIN selected_sheet sheet ON sheet.id = rate.sheet_id
+  WHERE rate.currency = 'USD'
+),
+scoped_capital AS (
+  SELECT
+    capital.id,
+    capital.company_id,
+    capital.original_amount,
+    upper(btrim(capital.original_currency)) AS original_currency,
+    capital.amount_usd_cents,
+    company.organization_number,
+    company.organization_name,
+    company.updated_at
+  FROM brreg_source.capital capital
+  JOIN brreg_source.companies company ON company.id = capital.company_id
+  JOIN brreg_source.v_company_explorer entry ON entry.company_id = company.id
+  WHERE capital.original_amount IS NOT NULL
+    AND nullif(btrim(capital.original_currency), '') IS NOT NULL
+    AND (
+      COALESCE(cardinality(sqlc.arg('selected_ids')::text[]), 0) = 0
+      OR company.id::text = ANY(sqlc.arg('selected_ids')::text[])
+      OR company.raw_record_id::text = ANY(sqlc.arg('selected_ids')::text[])
+    )
+    AND (
+      sqlc.narg('query')::text IS NULL
+      OR entry.organization_name ILIKE '%' || sqlc.narg('query')::text || '%'
+      OR entry.organization_number ILIKE '%' || sqlc.narg('query')::text || '%'
+      OR entry.primary_industry_label ILIKE '%' || sqlc.narg('query')::text || '%'
+      OR entry.city ILIKE '%' || sqlc.narg('query')::text || '%'
+      OR entry.municipality ILIKE '%' || sqlc.narg('query')::text || '%'
+    )
+    AND (
+      sqlc.narg('lifecycle_status')::text IS NULL
+      OR entry.lifecycle_status = sqlc.narg('lifecycle_status')::text
+    )
+    AND (
+      sqlc.narg('registration_status')::text IS NULL
+      OR entry.registration_status = sqlc.narg('registration_status')::text
+    )
+    AND (
+      sqlc.narg('translation_status')::text IS NULL
+      OR (
+        sqlc.narg('translation_status')::text = 'missing'
+        AND entry.translation_missing_count > 0
+      )
+      OR (
+        sqlc.narg('translation_status')::text = 'complete'
+        AND entry.translation_missing_count = 0
+      )
+    )
+    AND (
+      sqlc.narg('website_status')::text IS NULL
+      OR (
+        sqlc.narg('website_status')::text = 'with'
+        AND entry.website_count > 0
+      )
+      OR (
+        sqlc.narg('website_status')::text = 'without'
+        AND entry.website_count = 0
+      )
+    )
+),
+limited_capital AS (
+  SELECT *
+  FROM (
+    SELECT
+      scoped_capital.*,
+      row_number() OVER (
+        ORDER BY scoped_capital.updated_at DESC, scoped_capital.organization_number ASC, scoped_capital.id ASC
+      ) AS row_number
+    FROM scoped_capital
+  ) numbered
+  WHERE sqlc.arg('limit')::integer = 0
+     OR numbered.row_number <= sqlc.arg('limit')::integer
+),
+eligible_capital AS (
+  SELECT *
+  FROM limited_capital
+  WHERE sqlc.arg('force_reprocess')::boolean
+     OR amount_usd_cents IS NULL
+),
+capital_with_rates AS (
+  SELECT
+    capital.id,
+    capital.original_amount,
+    capital.original_currency,
+    sheet.id AS sheet_id,
+    sheet.provider,
+    sheet.rate_date,
+    sheet.base_currency,
+    usd.rate_per_base AS usd_rate_per_base,
+    CASE
+      WHEN capital.original_currency = sheet.base_currency THEN 1::numeric
+      ELSE source_rate.rate_per_base
+    END AS source_rate_per_base
+  FROM eligible_capital capital
+  LEFT JOIN selected_sheet sheet ON true
+  LEFT JOIN usd_rate usd ON usd.sheet_id = sheet.id
+  LEFT JOIN exchange_rates source_rate
+    ON source_rate.sheet_id = sheet.id
+   AND source_rate.currency = capital.original_currency
+),
+missing_rate AS (
+  SELECT *
+  FROM capital_with_rates
+  WHERE sheet_id IS NULL
+     OR usd_rate_per_base IS NULL
+     OR source_rate_per_base IS NULL
+),
+converted AS (
+  UPDATE brreg_source.capital capital
+  SET
+    amount_usd_cents = round(capital_with_rates.original_amount * capital_with_rates.usd_rate_per_base / capital_with_rates.source_rate_per_base * 100)::bigint,
+    fx_source = capital_with_rates.provider,
+    fx_rate_date = capital_with_rates.rate_date,
+    fx_metadata = jsonb_build_object(
+      'provider', capital_with_rates.provider,
+      'sheet_id', capital_with_rates.sheet_id::text,
+      'rate_date', capital_with_rates.rate_date,
+      'base_currency', capital_with_rates.base_currency,
+      'source_currency', capital_with_rates.original_currency,
+      'target_currency', 'USD',
+      'source_rate_per_base', capital_with_rates.source_rate_per_base,
+      'target_rate_per_base', capital_with_rates.usd_rate_per_base,
+      'trigger', COALESCE(sqlc.narg('trigger')::text, 'manual'),
+      'force_reprocess', sqlc.arg('force_reprocess')::boolean
+    ),
+    updated_at = now()
+  FROM capital_with_rates
+  WHERE capital.id = capital_with_rates.id
+    AND capital_with_rates.sheet_id IS NOT NULL
+    AND capital_with_rates.usd_rate_per_base IS NOT NULL
+    AND capital_with_rates.source_rate_per_base IS NOT NULL
+  RETURNING capital.id
+)
+SELECT
+  (SELECT count(*)::integer FROM limited_capital) AS capital_seen,
+  (SELECT count(*)::integer FROM converted) AS capital_converted,
+  (SELECT count(*)::integer FROM missing_rate) AS capital_skipped_missing_rate,
+  (
+    SELECT count(*)::integer
+    FROM limited_capital
+    WHERE NOT sqlc.arg('force_reprocess')::boolean
+      AND amount_usd_cents IS NOT NULL
+  ) AS capital_skipped_already_converted,
+  COALESCE((SELECT rate_date::text FROM selected_sheet), '')::text AS rate_date;
+
+-- name: InsertPendingBrregTranslationTerms :one
+WITH inserted AS (
+  INSERT INTO brreg_source.translation_terms (
+    source,
+    source_lang,
+    target_lang,
+    source_text_normalized,
+    source_text,
+    term_key,
+    status,
+    provider,
+    model,
+    prompt_version,
+    metadata,
+    last_requested_at,
+    updated_at
+  )
+  SELECT
+    'brreg',
+    missing.source_lang,
+    missing.target_lang,
+    missing.source_text_normalized,
+    min(missing.source_text),
+    missing.term_key,
+    'pending',
+    sqlc.narg('provider')::text,
+    sqlc.narg('model')::text,
+    sqlc.arg('prompt_version')::text,
+    jsonb_build_object('workflow_id', sqlc.narg('workflow_id')::text),
+    now(),
+    now()
+  FROM brreg_source.v_missing_translation_fields missing
+  LEFT JOIN brreg_source.translation_terms existing
+    ON existing.source = 'brreg'
+   AND existing.source_lang = missing.source_lang
+   AND existing.target_lang = missing.target_lang
+   AND existing.prompt_version = sqlc.arg('prompt_version')::text
+   AND existing.term_key = missing.term_key
+  WHERE existing.id IS NULL
+  GROUP BY missing.source_lang, missing.target_lang, missing.source_text_normalized, missing.term_key
+  LIMIT CASE WHEN sqlc.arg('limit')::integer <= 0 THEN NULL ELSE sqlc.arg('limit')::integer END
+  ON CONFLICT (source, source_lang, target_lang, prompt_version, term_key) DO UPDATE
+  SET last_requested_at = now(),
+      updated_at = now()
+  RETURNING id
+)
+SELECT count(*)::integer AS terms_inserted
+FROM inserted;
+
+-- name: MarkBrregTranslationTermsQueued :many
+WITH picked AS (
+  SELECT id
+  FROM brreg_source.translation_terms
+  WHERE source = 'brreg'
+    AND status IN ('pending', 'failed_retryable')
+    AND prompt_version = sqlc.arg('prompt_version')::text
+    AND attempt_count < sqlc.arg('max_attempts')::integer
+  ORDER BY updated_at, id
+  LIMIT sqlc.arg('limit')::integer
+  FOR UPDATE SKIP LOCKED
+),
+queued AS (
+  UPDATE brreg_source.translation_terms term
+  SET status = 'queued',
+      attempt_count = term.attempt_count + 1,
+      provider = sqlc.narg('provider')::text,
+      model = sqlc.narg('model')::text,
+      last_requested_at = now(),
+      updated_at = now()
+  FROM picked
+  WHERE term.id = picked.id
+  RETURNING
+    term.id,
+    term.source_lang,
+    term.target_lang,
+    term.source_text_normalized,
+    term.source_text,
+    term.term_key,
+    term.attempt_count
+)
+SELECT * FROM queued;
+
+-- name: UpsertBrregTranslationTermResult :exec
+INSERT INTO brreg_source.translation_terms (
+  source,
+  source_lang,
+  target_lang,
+  source_text_normalized,
+  source_text,
+  term_key,
+  translated_text,
+  status,
+  provider,
+  model,
+  prompt_version,
+  error,
+  error_code,
+  metadata,
+  translated_at,
+  updated_at
+) VALUES (
+  'brreg',
+  sqlc.arg('source_lang')::text,
+  sqlc.arg('target_lang')::text,
+  sqlc.arg('source_text_normalized')::text,
+  sqlc.arg('source_text')::text,
+  sqlc.arg('term_key')::text,
+  sqlc.narg('translated_text')::text,
+  sqlc.arg('status')::text,
+  sqlc.narg('provider')::text,
+  sqlc.narg('model')::text,
+  sqlc.arg('prompt_version')::text,
+  sqlc.narg('error')::text,
+  sqlc.narg('error_code')::text,
+  sqlc.arg('metadata')::jsonb,
+  CASE WHEN sqlc.arg('status')::text = 'succeeded' THEN now() ELSE NULL END,
+  now()
+)
+ON CONFLICT (source, source_lang, target_lang, prompt_version, term_key) DO UPDATE
+SET translated_text = EXCLUDED.translated_text,
+    status = EXCLUDED.status,
+    provider = EXCLUDED.provider,
+    model = EXCLUDED.model,
+    error = EXCLUDED.error,
+    error_code = EXCLUDED.error_code,
+    metadata = brreg_source.translation_terms.metadata || EXCLUDED.metadata,
+    translated_at = CASE WHEN EXCLUDED.status = 'succeeded' THEN now() ELSE brreg_source.translation_terms.translated_at END,
+    updated_at = now();
+
+-- name: ApplyBrregSourceCompanyCachedTranslationTerms :one
+WITH matched AS (
+  SELECT missing.source_row_id, missing.target_column, term.translated_text
+  FROM brreg_source.v_missing_translation_fields missing
+  JOIN brreg_source.translation_terms term
+    ON term.source = 'brreg'
+   AND term.source_lang = missing.source_lang
+   AND term.target_lang = missing.target_lang
+   AND term.prompt_version = sqlc.arg('prompt_version')::text
+   AND term.term_key = missing.term_key
+   AND term.status = 'succeeded'
+  WHERE missing.source_table = 'brreg_source.companies'
+    AND missing.target_column IN (
+      'organization_form_label_en',
+      'response_class_en',
+      'activity_description_en',
+      'statutory_purpose_en'
+    )
+  ORDER BY missing.source_row_id, missing.target_column
+  LIMIT CASE WHEN sqlc.arg('limit')::integer <= 0 THEN NULL ELSE sqlc.arg('limit')::integer END
+),
+matched_rows AS (
+  SELECT
+    source_row_id,
+    max(translated_text) FILTER (WHERE target_column = 'organization_form_label_en') AS organization_form_label_en,
+    max(translated_text) FILTER (WHERE target_column = 'response_class_en') AS response_class_en,
+    max(translated_text) FILTER (WHERE target_column = 'activity_description_en') AS activity_description_en,
+    max(translated_text) FILTER (WHERE target_column = 'statutory_purpose_en') AS statutory_purpose_en,
+    count(*)::integer AS field_count
+  FROM matched
+  GROUP BY source_row_id
+),
+updated AS (
+  UPDATE brreg_source.companies company
+  SET organization_form_label_en = COALESCE(matched_rows.organization_form_label_en, company.organization_form_label_en),
+      response_class_en = COALESCE(matched_rows.response_class_en, company.response_class_en),
+      activity_description_en = COALESCE(matched_rows.activity_description_en, company.activity_description_en),
+      statutory_purpose_en = COALESCE(matched_rows.statutory_purpose_en, company.statutory_purpose_en),
+      updated_at = now()
+  FROM matched_rows
+  WHERE company.id = matched_rows.source_row_id
+  RETURNING matched_rows.field_count
+)
+SELECT COALESCE(sum(field_count), 0)::integer AS fields_applied FROM updated;
+
+-- name: ApplyBrregSourceCapitalCachedTranslationTerms :one
+WITH matched AS (
+  SELECT missing.source_row_id, term.translated_text
+  FROM brreg_source.v_missing_translation_fields missing
+  JOIN brreg_source.translation_terms term
+    ON term.source = 'brreg'
+   AND term.source_lang = missing.source_lang
+   AND term.target_lang = missing.target_lang
+   AND term.prompt_version = sqlc.arg('prompt_version')::text
+   AND term.term_key = missing.term_key
+   AND term.status = 'succeeded'
+  WHERE missing.source_table = 'brreg_source.capital'
+    AND missing.target_column = 'capital_type_en'
+  ORDER BY missing.source_row_id
+  LIMIT CASE WHEN sqlc.arg('limit')::integer <= 0 THEN NULL ELSE sqlc.arg('limit')::integer END
+),
+updated AS (
+  UPDATE brreg_source.capital capital
+  SET capital_type_en = matched.translated_text,
+      updated_at = now()
+  FROM matched
+  WHERE capital.id = matched.source_row_id
+  RETURNING capital.id
+)
+SELECT count(*)::integer AS fields_applied FROM updated;
+
+-- name: CountBrregMissingTranslationFields :one
+SELECT count(*)::integer AS missing_fields
+FROM brreg_source.v_missing_translation_fields;

@@ -10,24 +10,29 @@ import (
 	"github.com/go-chi/chi/v5"
 	pgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go"
 	"github.com/riverqueue/river"
 	"go.temporal.io/sdk/client"
 	temporalworker "go.temporal.io/sdk/worker"
 
+	brregactions "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/actions"
+	brregdb "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/db"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/config"
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/httpapi"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/llmproviders"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/s3client"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/translationclient"
 )
 
 type Server struct {
-	http            *http.Server
-	pool            *pgxpool.Pool
-	river           *river.Client[pgx.Tx]
-	temporal        client.Client
-	temporalWorkers []temporalworker.Worker
-	temporalDeps    *temporalWorkerResources
+	http                   *http.Server
+	pool                   *pgxpool.Pool
+	river                  *river.Client[pgx.Tx]
+	temporal               client.Client
+	temporalWorkers        []temporalworker.Worker
+	temporalDeps           *temporalWorkerResources
+	termTranslationResults *nats.Subscription
 }
 
 func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
@@ -92,9 +97,26 @@ func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
 	}
 	slog.Debug("scheduler temporal client connected", "host", cfg.TemporalHost, "namespace", "corpscout")
 
+	termTranslationResults, err := subscribeTermTranslationResults(
+		brregdb.New(pool),
+		temporalDeps.termTranslationNATS,
+		cfg.BRREGTermTranslationResultSubject,
+	)
+	if err != nil {
+		temporalClient.Close()
+		temporalDeps.Close()
+		_ = riverClient.Stop(ctx)
+		pool.Close()
+		return nil, err
+	}
+	slog.Debug("scheduler brreg term translation result consumer started",
+		"subject", cfg.BRREGTermTranslationResultSubject,
+	)
+
 	temporalWorkers := newTemporalWorkers(temporalClient, temporalDeps)
 	if err := startTemporalWorkers(temporalWorkers); err != nil {
 		stopTemporalWorkers(temporalWorkers)
+		_ = termTranslationResults.Unsubscribe()
 		temporalClient.Close()
 		temporalDeps.Close()
 		_ = riverClient.Stop(ctx)
@@ -108,18 +130,42 @@ func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
 	api.ConfigureLLMProviders(
 		llmStore,
 		llmproviders.NewProbeClient(http.DefaultClient, llmCipher),
-	).ConfigureNACE(cfg.NACESourceURL)
+	).ConfigureNACE(cfg.NACESourceURL).ConfigureFX(cfg.FXECBSourceURL)
 	api.RegisterRoutes(router)
 	slog.Debug("scheduler http routes registered")
 
 	return &Server{
-		http:            &http.Server{Addr: cfg.ListenAddr, Handler: router},
-		pool:            pool,
-		river:           riverClient,
-		temporal:        temporalClient,
-		temporalWorkers: temporalWorkers,
-		temporalDeps:    temporalDeps,
+		http:                   &http.Server{Addr: cfg.ListenAddr, Handler: router},
+		pool:                   pool,
+		river:                  riverClient,
+		temporal:               temporalClient,
+		temporalWorkers:        temporalWorkers,
+		temporalDeps:           temporalDeps,
+		termTranslationResults: termTranslationResults,
 	}, nil
+}
+
+func subscribeTermTranslationResults(gateway *brregdb.Gateway, conn *nats.Conn, subject string) (*nats.Subscription, error) {
+	if conn == nil {
+		return nil, errors.New("brreg term translation nats connection not available")
+	}
+	if subject == "" {
+		subject = translationclient.DefaultTermTranslationResultSubject
+	}
+	termConsumer := brregactions.NewTermTranslationResultConsumer(gateway, conn, subject)
+	subscription, err := conn.Subscribe(subject, func(msg *nats.Msg) {
+		if err := termConsumer.HandleMessage(context.Background(), msg); err != nil {
+			slog.Error("handle brreg term translation result", "error", err, "subject", msg.Subject)
+		}
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "subscribe brreg term translation results")
+	}
+	if err := conn.Flush(); err != nil {
+		_ = subscription.Unsubscribe()
+		return nil, errors.Wrap(err, "flush brreg term translation result subscription")
+	}
+	return subscription, nil
 }
 
 func llmProviderCipher(cfg config.Config) (*llmproviders.Cipher, error) {
@@ -145,6 +191,9 @@ func (s *Server) Shutdown(ctx context.Context) {
 		_ = s.http.Shutdown(ctx)
 	}
 	stopTemporalWorkers(s.temporalWorkers)
+	if s.termTranslationResults != nil {
+		_ = s.termTranslationResults.Unsubscribe()
+	}
 	if s.river != nil {
 		_ = s.river.Stop(ctx)
 	}

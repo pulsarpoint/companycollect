@@ -46,6 +46,7 @@ type Handlers struct {
 	llmProviders  *llmproviders.Store
 	llmProbe      *llmproviders.ProbeClient
 	naceSourceURL string
+	fxSourceURL   string
 }
 
 // NewHandlers constructs Handlers. pool, rv, s3 and temporal may be nil in tests.
@@ -62,6 +63,11 @@ func (h *Handlers) ConfigureLLMProviders(store *llmproviders.Store, probe *llmpr
 
 func (h *Handlers) ConfigureNACE(sourceURL string) *Handlers {
 	h.naceSourceURL = sourceURL
+	return h
+}
+
+func (h *Handlers) ConfigureFX(sourceURL string) *Handlers {
+	h.fxSourceURL = sourceURL
 	return h
 }
 
@@ -101,12 +107,16 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 		r.Get("/sources/brreg/companies/{id}", h.handleGetBrregSourceCompanyDetail)
 		r.Get("/brreg/source-entries", h.handleListBrregSourceEntries)
 		r.Post("/workflows/brreg/translation", h.handleStartBrregTranslationWorkflow)
+		r.Post("/workflows/brreg/term-translation", h.handleStartBrregTermTranslationWorkflow)
 		r.Post("/workflows/brreg/domain-search", h.handleStartBrregDomainSearchWorkflow)
 		r.Post("/workflows/brreg/bulk-raw-ingest", h.handleStartBrregBulkRawIngestWorkflow)
 		r.Post("/workflows/brreg/source-profile-normalization", h.handleStartBrregSourceProfileNormalizationWorkflow)
+		r.Post("/workflows/brreg/source-capital-fx", h.handleStartBrregSourceCapitalFXWorkflow)
 		r.Get("/workflows/brreg/runs", h.handleListBrregWorkflowRuns)
 		r.Post("/workflows/nace/taxonomy-sync", h.handleStartNACETaxonomySyncWorkflow)
 		r.Get("/workflows/nace/taxonomy-sync/runs", h.handleListNACETaxonomySyncWorkflowRuns)
+		r.Post("/workflows/fx/rate-sync", h.handleStartExchangeRateSyncWorkflow)
+		r.Get("/workflows/fx/rate-sync/runs", h.handleListExchangeRateSyncWorkflowRuns)
 		r.Get("/workflow-schedules", h.handleListWorkflowSchedules)
 		r.Post("/workflow-schedules", h.handleCreateWorkflowSchedule)
 		r.Get("/workflow-schedules/{schedule_id}", h.handleGetWorkflowSchedule)

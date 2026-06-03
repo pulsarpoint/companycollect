@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 RecordStatus = Literal["succeeded", "failed", "skipped"]
 BatchStatus = Literal["succeeded", "partial", "failed"]
+TermResultStatus = Literal["succeeded"]
+TermFailureStatus = Literal["failed_retryable", "failed_terminal"]
+TERM_KEY_PATTERN = r"^[0-9a-f]{64}$"
 
 
 class LLMSelection(BaseModel):
@@ -75,6 +78,59 @@ class LLMTranslateResponse(BaseModel):
     missing_ids: list[str] = Field(default_factory=list)
     error: TranslationError | None = None
     duration_ms: int
+
+
+class TermTranslationRequestTerm(BaseModel):
+    term_key: str = Field(pattern=TERM_KEY_PATTERN)
+    source_text: str = Field(min_length=1)
+    source_text_normalized: str = Field(min_length=1)
+
+
+class TermTranslationRequest(BaseModel):
+    request_id: str = Field(min_length=1)
+    source: str = Field(default="brreg", min_length=1)
+    source_lang: str = Field(default="no", min_length=2)
+    target_lang: str = Field(default="en", min_length=2)
+    provider: str = Field(default="default", min_length=1)
+    model: str | None = None
+    prompt_version: str = Field(default="v1", min_length=1)
+    terms: list[TermTranslationRequestTerm] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def reject_duplicate_term_keys(self) -> "TermTranslationRequest":
+        term_keys = [term.term_key for term in self.terms]
+        if len(set(term_keys)) != len(term_keys):
+            raise ValueError("terms must not contain duplicate term_key values")
+        return self
+
+
+class TermTranslationResultItem(BaseModel):
+    term_key: str = Field(pattern=TERM_KEY_PATTERN)
+    source_text: str = Field(min_length=1)
+    source_text_normalized: str = Field(min_length=1)
+    translated_text: str
+    status: TermResultStatus = "succeeded"
+
+
+class TermTranslationFailureResult(BaseModel):
+    term_key: str = Field(pattern=TERM_KEY_PATTERN)
+    source_text: str = Field(min_length=1)
+    source_text_normalized: str = Field(min_length=1)
+    status: TermFailureStatus
+    error_code: str | None = None
+    error: str | None = None
+
+
+class TermTranslationResponse(BaseModel):
+    request_id: str
+    source: str
+    source_lang: str
+    target_lang: str
+    provider: str
+    model: str | None = None
+    prompt_version: str
+    results: list[TermTranslationResultItem] = Field(default_factory=list)
+    failures: list[TermTranslationFailureResult] = Field(default_factory=list)
 
 
 class BrregRecordTranslationResult(BaseModel):

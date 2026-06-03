@@ -30,6 +30,11 @@ from corpscout_translation_service.models import (
     LLMTranslationRequest,
     LLMTermTranslation,
     LLMTranslateResponse,
+    TermTranslationFailureResult,
+    TermTranslationRequest,
+    TermTranslationRequestTerm,
+    TermTranslationResponse,
+    TermTranslationResultItem,
     TranslationError,
 )
 
@@ -174,6 +179,77 @@ class TranslationService:
             missing_ids=missing_ids,
             error=error,
             duration_ms=_elapsed_ms(started),
+        )
+
+    async def translate_brreg_terms(self, request: TermTranslationRequest) -> TermTranslationResponse:
+        provider = request.provider if request.provider != "default" else default_provider()
+        model = request.model if request.model and request.model != "default" else provider_model(provider)
+        terms_by_key = {term.term_key: term for term in request.terms}
+        llm_request = LLMTranslationRequest(
+            provider=provider,
+            model=model,
+            prompt_version=request.prompt_version,
+            source_lang=request.source_lang,
+            target_lang=request.target_lang,
+            items=[
+                LLMTranslationItem(id=term.term_key, category="brreg_term", text=term.source_text)
+                for term in request.terms
+            ],
+        )
+
+        try:
+            llm_response = await self.translate_terms(llm_request)
+        except Exception as exc:
+            logger.exception("BRREG term translation request failed")
+            return TermTranslationResponse(
+                request_id=request.request_id,
+                source=request.source,
+                source_lang=request.source_lang,
+                target_lang=request.target_lang,
+                provider=provider,
+                model=model,
+                prompt_version=request.prompt_version,
+                failures=[
+                    _term_failure(term, error_code="llm_request_failed", error=str(exc))
+                    for term in request.terms
+                ],
+            )
+
+        translated_by_key = {translation.id: translation.translation for translation in llm_response.translations}
+        results = [
+            TermTranslationResultItem(
+                term_key=term.term_key,
+                source_text=term.source_text,
+                source_text_normalized=term.source_text_normalized,
+                translated_text=translated_by_key[term.term_key],
+            )
+            for term in request.terms
+            if term.term_key in translated_by_key
+        ]
+
+        if llm_response.error is not None and llm_response.error.code == "llm_request_failed":
+            failures = [
+                _term_failure(term, error_code="llm_request_failed", error=_llm_error_text(llm_response.error))
+                for term in request.terms
+                if term.term_key not in translated_by_key
+            ]
+        else:
+            failures = [
+                _term_failure(terms_by_key[term_key], error_code="missing_term_translation")
+                for term_key in llm_response.missing_ids
+                if term_key in terms_by_key
+            ]
+
+        return TermTranslationResponse(
+            request_id=request.request_id,
+            source=request.source,
+            source_lang=request.source_lang,
+            target_lang=request.target_lang,
+            provider=llm_response.provider,
+            model=llm_response.model,
+            prompt_version=llm_response.prompt_version,
+            results=results,
+            failures=failures,
         )
 
     async def _translate_unique_items(
@@ -375,6 +451,29 @@ def _failed_result(
         error=TranslationError(code=code, message=message, detail=detail),
         duration_ms=_elapsed_ms(started),
     )
+
+
+def _term_failure(
+    term: TermTranslationRequestTerm,
+    *,
+    error_code: str,
+    error: str | None = None,
+) -> TermTranslationFailureResult:
+    return TermTranslationFailureResult(
+        term_key=term.term_key,
+        source_text=term.source_text,
+        source_text_normalized=term.source_text_normalized,
+        status="failed_retryable",
+        error_code=error_code,
+        error=error,
+    )
+
+
+def _llm_error_text(error: TranslationError) -> str:
+    detail_error = error.detail.get("error")
+    if isinstance(detail_error, str) and detail_error:
+        return detail_error
+    return error.message
 
 
 def _response(

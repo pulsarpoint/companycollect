@@ -11,7 +11,105 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const applyBrregSourceCapitalCachedTranslationTerms = `-- name: ApplyBrregSourceCapitalCachedTranslationTerms :one
+WITH matched AS (
+  SELECT missing.source_row_id, term.translated_text
+  FROM brreg_source.v_missing_translation_fields missing
+  JOIN brreg_source.translation_terms term
+    ON term.source = 'brreg'
+   AND term.source_lang = missing.source_lang
+   AND term.target_lang = missing.target_lang
+   AND term.prompt_version = $1::text
+   AND term.term_key = missing.term_key
+   AND term.status = 'succeeded'
+  WHERE missing.source_table = 'brreg_source.capital'
+    AND missing.target_column = 'capital_type_en'
+  ORDER BY missing.source_row_id
+  LIMIT CASE WHEN $2::integer <= 0 THEN NULL ELSE $2::integer END
+),
+updated AS (
+  UPDATE brreg_source.capital capital
+  SET capital_type_en = matched.translated_text,
+      updated_at = now()
+  FROM matched
+  WHERE capital.id = matched.source_row_id
+  RETURNING capital.id
+)
+SELECT count(*)::integer AS fields_applied FROM updated
+`
+
+type ApplyBrregSourceCapitalCachedTranslationTermsParams struct {
+	PromptVersion string `json:"prompt_version"`
+	Limit         int32  `json:"limit"`
+}
+
+func (q *Queries) ApplyBrregSourceCapitalCachedTranslationTerms(ctx context.Context, arg ApplyBrregSourceCapitalCachedTranslationTermsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, applyBrregSourceCapitalCachedTranslationTerms, arg.PromptVersion, arg.Limit)
+	var fields_applied int32
+	err := row.Scan(&fields_applied)
+	return fields_applied, err
+}
+
+const applyBrregSourceCompanyCachedTranslationTerms = `-- name: ApplyBrregSourceCompanyCachedTranslationTerms :one
+WITH matched AS (
+  SELECT missing.source_row_id, missing.target_column, term.translated_text
+  FROM brreg_source.v_missing_translation_fields missing
+  JOIN brreg_source.translation_terms term
+    ON term.source = 'brreg'
+   AND term.source_lang = missing.source_lang
+   AND term.target_lang = missing.target_lang
+   AND term.prompt_version = $1::text
+   AND term.term_key = missing.term_key
+   AND term.status = 'succeeded'
+  WHERE missing.source_table = 'brreg_source.companies'
+    AND missing.target_column IN (
+      'organization_form_label_en',
+      'response_class_en',
+      'activity_description_en',
+      'statutory_purpose_en'
+    )
+  ORDER BY missing.source_row_id, missing.target_column
+  LIMIT CASE WHEN $2::integer <= 0 THEN NULL ELSE $2::integer END
+),
+matched_rows AS (
+  SELECT
+    source_row_id,
+    max(translated_text) FILTER (WHERE target_column = 'organization_form_label_en') AS organization_form_label_en,
+    max(translated_text) FILTER (WHERE target_column = 'response_class_en') AS response_class_en,
+    max(translated_text) FILTER (WHERE target_column = 'activity_description_en') AS activity_description_en,
+    max(translated_text) FILTER (WHERE target_column = 'statutory_purpose_en') AS statutory_purpose_en,
+    count(*)::integer AS field_count
+  FROM matched
+  GROUP BY source_row_id
+),
+updated AS (
+  UPDATE brreg_source.companies company
+  SET organization_form_label_en = COALESCE(matched_rows.organization_form_label_en, company.organization_form_label_en),
+      response_class_en = COALESCE(matched_rows.response_class_en, company.response_class_en),
+      activity_description_en = COALESCE(matched_rows.activity_description_en, company.activity_description_en),
+      statutory_purpose_en = COALESCE(matched_rows.statutory_purpose_en, company.statutory_purpose_en),
+      updated_at = now()
+  FROM matched_rows
+  WHERE company.id = matched_rows.source_row_id
+  RETURNING matched_rows.field_count
+)
+SELECT COALESCE(sum(field_count), 0)::integer AS fields_applied FROM updated
+`
+
+type ApplyBrregSourceCompanyCachedTranslationTermsParams struct {
+	PromptVersion string `json:"prompt_version"`
+	Limit         int32  `json:"limit"`
+}
+
+func (q *Queries) ApplyBrregSourceCompanyCachedTranslationTerms(ctx context.Context, arg ApplyBrregSourceCompanyCachedTranslationTermsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, applyBrregSourceCompanyCachedTranslationTerms, arg.PromptVersion, arg.Limit)
+	var fields_applied int32
+	err := row.Scan(&fields_applied)
+	return fields_applied, err
+}
 
 const claimBrregSourceTranslationBatch = `-- name: ClaimBrregSourceTranslationBatch :many
 WITH lock_task AS (
@@ -364,6 +462,232 @@ func (q *Queries) CompleteBrregSourceTranslationTask(ctx context.Context, arg Co
 	return i, err
 }
 
+const convertBrregSourceCapitalToUSD = `-- name: ConvertBrregSourceCapitalToUSD :one
+WITH selected_sheet AS (
+  SELECT
+    sheet.id,
+    sheet.provider,
+    sheet.rate_date,
+    sheet.base_currency
+  FROM exchange_rate_sheets sheet
+  WHERE sheet.provider = 'ecb'
+    AND (
+      $2::date IS NULL
+      OR sheet.rate_date = $2::date
+    )
+  ORDER BY sheet.rate_date DESC
+  LIMIT 1
+),
+usd_rate AS (
+  SELECT
+    rate.sheet_id,
+    rate.rate_per_base
+  FROM exchange_rates rate
+  JOIN selected_sheet sheet ON sheet.id = rate.sheet_id
+  WHERE rate.currency = 'USD'
+),
+scoped_capital AS (
+  SELECT
+    capital.id,
+    capital.company_id,
+    capital.original_amount,
+    upper(btrim(capital.original_currency)) AS original_currency,
+    capital.amount_usd_cents,
+    company.organization_number,
+    company.organization_name,
+    company.updated_at
+  FROM brreg_source.capital capital
+  JOIN brreg_source.companies company ON company.id = capital.company_id
+  JOIN brreg_source.v_company_explorer entry ON entry.company_id = company.id
+  WHERE capital.original_amount IS NOT NULL
+    AND nullif(btrim(capital.original_currency), '') IS NOT NULL
+    AND (
+      COALESCE(cardinality($3::text[]), 0) = 0
+      OR company.id::text = ANY($3::text[])
+      OR company.raw_record_id::text = ANY($3::text[])
+    )
+    AND (
+      $4::text IS NULL
+      OR entry.organization_name ILIKE '%' || $4::text || '%'
+      OR entry.organization_number ILIKE '%' || $4::text || '%'
+      OR entry.primary_industry_label ILIKE '%' || $4::text || '%'
+      OR entry.city ILIKE '%' || $4::text || '%'
+      OR entry.municipality ILIKE '%' || $4::text || '%'
+    )
+    AND (
+      $5::text IS NULL
+      OR entry.lifecycle_status = $5::text
+    )
+    AND (
+      $6::text IS NULL
+      OR entry.registration_status = $6::text
+    )
+    AND (
+      $7::text IS NULL
+      OR (
+        $7::text = 'missing'
+        AND entry.translation_missing_count > 0
+      )
+      OR (
+        $7::text = 'complete'
+        AND entry.translation_missing_count = 0
+      )
+    )
+    AND (
+      $8::text IS NULL
+      OR (
+        $8::text = 'with'
+        AND entry.website_count > 0
+      )
+      OR (
+        $8::text = 'without'
+        AND entry.website_count = 0
+      )
+    )
+),
+limited_capital AS (
+  SELECT id, company_id, original_amount, original_currency, amount_usd_cents, organization_number, organization_name, updated_at, row_number
+  FROM (
+    SELECT
+      scoped_capital.id, scoped_capital.company_id, scoped_capital.original_amount, scoped_capital.original_currency, scoped_capital.amount_usd_cents, scoped_capital.organization_number, scoped_capital.organization_name, scoped_capital.updated_at,
+      row_number() OVER (
+        ORDER BY scoped_capital.updated_at DESC, scoped_capital.organization_number ASC, scoped_capital.id ASC
+      ) AS row_number
+    FROM scoped_capital
+  ) numbered
+  WHERE $9::integer = 0
+     OR numbered.row_number <= $9::integer
+),
+eligible_capital AS (
+  SELECT id, company_id, original_amount, original_currency, amount_usd_cents, organization_number, organization_name, updated_at, row_number
+  FROM limited_capital
+  WHERE $1::boolean
+     OR amount_usd_cents IS NULL
+),
+capital_with_rates AS (
+  SELECT
+    capital.id,
+    capital.original_amount,
+    capital.original_currency,
+    sheet.id AS sheet_id,
+    sheet.provider,
+    sheet.rate_date,
+    sheet.base_currency,
+    usd.rate_per_base AS usd_rate_per_base,
+    CASE
+      WHEN capital.original_currency = sheet.base_currency THEN 1::numeric
+      ELSE source_rate.rate_per_base
+    END AS source_rate_per_base
+  FROM eligible_capital capital
+  LEFT JOIN selected_sheet sheet ON true
+  LEFT JOIN usd_rate usd ON usd.sheet_id = sheet.id
+  LEFT JOIN exchange_rates source_rate
+    ON source_rate.sheet_id = sheet.id
+   AND source_rate.currency = capital.original_currency
+),
+missing_rate AS (
+  SELECT id, original_amount, original_currency, sheet_id, provider, rate_date, base_currency, usd_rate_per_base, source_rate_per_base
+  FROM capital_with_rates
+  WHERE sheet_id IS NULL
+     OR usd_rate_per_base IS NULL
+     OR source_rate_per_base IS NULL
+),
+converted AS (
+  UPDATE brreg_source.capital capital
+  SET
+    amount_usd_cents = round(capital_with_rates.original_amount * capital_with_rates.usd_rate_per_base / capital_with_rates.source_rate_per_base * 100)::bigint,
+    fx_source = capital_with_rates.provider,
+    fx_rate_date = capital_with_rates.rate_date,
+    fx_metadata = jsonb_build_object(
+      'provider', capital_with_rates.provider,
+      'sheet_id', capital_with_rates.sheet_id::text,
+      'rate_date', capital_with_rates.rate_date,
+      'base_currency', capital_with_rates.base_currency,
+      'source_currency', capital_with_rates.original_currency,
+      'target_currency', 'USD',
+      'source_rate_per_base', capital_with_rates.source_rate_per_base,
+      'target_rate_per_base', capital_with_rates.usd_rate_per_base,
+      'trigger', COALESCE($10::text, 'manual'),
+      'force_reprocess', $1::boolean
+    ),
+    updated_at = now()
+  FROM capital_with_rates
+  WHERE capital.id = capital_with_rates.id
+    AND capital_with_rates.sheet_id IS NOT NULL
+    AND capital_with_rates.usd_rate_per_base IS NOT NULL
+    AND capital_with_rates.source_rate_per_base IS NOT NULL
+  RETURNING capital.id
+)
+SELECT
+  (SELECT count(*)::integer FROM limited_capital) AS capital_seen,
+  (SELECT count(*)::integer FROM converted) AS capital_converted,
+  (SELECT count(*)::integer FROM missing_rate) AS capital_skipped_missing_rate,
+  (
+    SELECT count(*)::integer
+    FROM limited_capital
+    WHERE NOT $1::boolean
+      AND amount_usd_cents IS NOT NULL
+  ) AS capital_skipped_already_converted,
+  COALESCE((SELECT rate_date::text FROM selected_sheet), '')::text AS rate_date
+`
+
+type ConvertBrregSourceCapitalToUSDParams struct {
+	ForceReprocess     bool        `json:"force_reprocess"`
+	RateDate           pgtype.Date `json:"rate_date"`
+	SelectedIds        []string    `json:"selected_ids"`
+	Query              *string     `json:"query"`
+	LifecycleStatus    *string     `json:"lifecycle_status"`
+	RegistrationStatus *string     `json:"registration_status"`
+	TranslationStatus  *string     `json:"translation_status"`
+	WebsiteStatus      *string     `json:"website_status"`
+	Limit              int32       `json:"limit"`
+	Trigger            *string     `json:"trigger"`
+}
+
+type ConvertBrregSourceCapitalToUSDRow struct {
+	CapitalSeen                    int32  `json:"capital_seen"`
+	CapitalConverted               int32  `json:"capital_converted"`
+	CapitalSkippedMissingRate      int32  `json:"capital_skipped_missing_rate"`
+	CapitalSkippedAlreadyConverted int32  `json:"capital_skipped_already_converted"`
+	RateDate                       string `json:"rate_date"`
+}
+
+func (q *Queries) ConvertBrregSourceCapitalToUSD(ctx context.Context, arg ConvertBrregSourceCapitalToUSDParams) (ConvertBrregSourceCapitalToUSDRow, error) {
+	row := q.db.QueryRow(ctx, convertBrregSourceCapitalToUSD,
+		arg.ForceReprocess,
+		arg.RateDate,
+		arg.SelectedIds,
+		arg.Query,
+		arg.LifecycleStatus,
+		arg.RegistrationStatus,
+		arg.TranslationStatus,
+		arg.WebsiteStatus,
+		arg.Limit,
+		arg.Trigger,
+	)
+	var i ConvertBrregSourceCapitalToUSDRow
+	err := row.Scan(
+		&i.CapitalSeen,
+		&i.CapitalConverted,
+		&i.CapitalSkippedMissingRate,
+		&i.CapitalSkippedAlreadyConverted,
+		&i.RateDate,
+	)
+	return i, err
+}
+
+const countBrregMissingTranslationFields = `-- name: CountBrregMissingTranslationFields :one
+SELECT count(*)::integer AS missing_fields
+FROM brreg_source.v_missing_translation_fields
+`
+
+func (q *Queries) CountBrregMissingTranslationFields(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countBrregMissingTranslationFields)
+	var missing_fields int32
+	err := row.Scan(&missing_fields)
+	return missing_fields, err
+}
+
 const countBrregSourceEntries = `-- name: CountBrregSourceEntries :one
 SELECT count(*)::bigint
 FROM brreg_source.v_company_explorer entry
@@ -670,6 +994,77 @@ func (q *Queries) GetBrregSourceTranslationAssetState(ctx context.Context) (GetB
 	return i, err
 }
 
+const insertPendingBrregTranslationTerms = `-- name: InsertPendingBrregTranslationTerms :one
+WITH inserted AS (
+  INSERT INTO brreg_source.translation_terms (
+    source,
+    source_lang,
+    target_lang,
+    source_text_normalized,
+    source_text,
+    term_key,
+    status,
+    provider,
+    model,
+    prompt_version,
+    metadata,
+    last_requested_at,
+    updated_at
+  )
+  SELECT
+    'brreg',
+    missing.source_lang,
+    missing.target_lang,
+    missing.source_text_normalized,
+    min(missing.source_text),
+    missing.term_key,
+    'pending',
+    $1::text,
+    $2::text,
+    $3::text,
+    jsonb_build_object('workflow_id', $4::text),
+    now(),
+    now()
+  FROM brreg_source.v_missing_translation_fields missing
+  LEFT JOIN brreg_source.translation_terms existing
+    ON existing.source = 'brreg'
+   AND existing.source_lang = missing.source_lang
+   AND existing.target_lang = missing.target_lang
+   AND existing.prompt_version = $3::text
+   AND existing.term_key = missing.term_key
+  WHERE existing.id IS NULL
+  GROUP BY missing.source_lang, missing.target_lang, missing.source_text_normalized, missing.term_key
+  LIMIT CASE WHEN $5::integer <= 0 THEN NULL ELSE $5::integer END
+  ON CONFLICT (source, source_lang, target_lang, prompt_version, term_key) DO UPDATE
+  SET last_requested_at = now(),
+      updated_at = now()
+  RETURNING id
+)
+SELECT count(*)::integer AS terms_inserted
+FROM inserted
+`
+
+type InsertPendingBrregTranslationTermsParams struct {
+	Provider      *string `json:"provider"`
+	Model         *string `json:"model"`
+	PromptVersion string  `json:"prompt_version"`
+	WorkflowID    *string `json:"workflow_id"`
+	Limit         int32   `json:"limit"`
+}
+
+func (q *Queries) InsertPendingBrregTranslationTerms(ctx context.Context, arg InsertPendingBrregTranslationTermsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, insertPendingBrregTranslationTerms,
+		arg.Provider,
+		arg.Model,
+		arg.PromptVersion,
+		arg.WorkflowID,
+		arg.Limit,
+	)
+	var terms_inserted int32
+	err := row.Scan(&terms_inserted)
+	return terms_inserted, err
+}
+
 const listBrregSourceEntries = `-- name: ListBrregSourceEntries :many
 SELECT
   entry.company_id,
@@ -705,6 +1100,7 @@ SELECT
   entry.translation_pending_count,
   entry.translation_running_count,
   entry.translation_succeeded_count,
+  entry.translation_failed_count,
   entry.domain_pending_count,
   entry.domain_running_count,
   entry.domain_succeeded_count,
@@ -828,6 +1224,7 @@ type ListBrregSourceEntriesRow struct {
 	TranslationPendingCount   int64     `json:"translation_pending_count"`
 	TranslationRunningCount   int64     `json:"translation_running_count"`
 	TranslationSucceededCount int64     `json:"translation_succeeded_count"`
+	TranslationFailedCount    int64     `json:"translation_failed_count"`
 	DomainPendingCount        int64     `json:"domain_pending_count"`
 	DomainRunningCount        int64     `json:"domain_running_count"`
 	DomainSucceededCount      int64     `json:"domain_succeeded_count"`
@@ -887,10 +1284,97 @@ func (q *Queries) ListBrregSourceEntries(ctx context.Context, arg ListBrregSourc
 			&i.TranslationPendingCount,
 			&i.TranslationRunningCount,
 			&i.TranslationSucceededCount,
+			&i.TranslationFailedCount,
 			&i.DomainPendingCount,
 			&i.DomainRunningCount,
 			&i.DomainSucceededCount,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markBrregTranslationTermsQueued = `-- name: MarkBrregTranslationTermsQueued :many
+WITH picked AS (
+  SELECT id
+  FROM brreg_source.translation_terms
+  WHERE source = 'brreg'
+    AND status IN ('pending', 'failed_retryable')
+    AND prompt_version = $1::text
+    AND attempt_count < $2::integer
+  ORDER BY updated_at, id
+  LIMIT $3::integer
+  FOR UPDATE SKIP LOCKED
+),
+queued AS (
+  UPDATE brreg_source.translation_terms term
+  SET status = 'queued',
+      attempt_count = term.attempt_count + 1,
+      provider = $4::text,
+      model = $5::text,
+      last_requested_at = now(),
+      updated_at = now()
+  FROM picked
+  WHERE term.id = picked.id
+  RETURNING
+    term.id,
+    term.source_lang,
+    term.target_lang,
+    term.source_text_normalized,
+    term.source_text,
+    term.term_key,
+    term.attempt_count
+)
+SELECT id, source_lang, target_lang, source_text_normalized, source_text, term_key, attempt_count FROM queued
+`
+
+type MarkBrregTranslationTermsQueuedParams struct {
+	PromptVersion string  `json:"prompt_version"`
+	MaxAttempts   int32   `json:"max_attempts"`
+	Limit         int32   `json:"limit"`
+	Provider      *string `json:"provider"`
+	Model         *string `json:"model"`
+}
+
+type MarkBrregTranslationTermsQueuedRow struct {
+	ID                   uuid.UUID `json:"id"`
+	SourceLang           string    `json:"source_lang"`
+	TargetLang           string    `json:"target_lang"`
+	SourceTextNormalized string    `json:"source_text_normalized"`
+	SourceText           string    `json:"source_text"`
+	TermKey              string    `json:"term_key"`
+	AttemptCount         int32     `json:"attempt_count"`
+}
+
+func (q *Queries) MarkBrregTranslationTermsQueued(ctx context.Context, arg MarkBrregTranslationTermsQueuedParams) ([]MarkBrregTranslationTermsQueuedRow, error) {
+	rows, err := q.db.Query(ctx, markBrregTranslationTermsQueued,
+		arg.PromptVersion,
+		arg.MaxAttempts,
+		arg.Limit,
+		arg.Provider,
+		arg.Model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MarkBrregTranslationTermsQueuedRow
+	for rows.Next() {
+		var i MarkBrregTranslationTermsQueuedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceLang,
+			&i.TargetLang,
+			&i.SourceTextNormalized,
+			&i.SourceText,
+			&i.TermKey,
+			&i.AttemptCount,
 		); err != nil {
 			return nil, err
 		}
@@ -1750,4 +2234,87 @@ func (q *Queries) PrepareBrregSourceTranslationTasks(ctx context.Context, arg Pr
 	var records_selected int32
 	err := row.Scan(&records_selected)
 	return records_selected, err
+}
+
+const upsertBrregTranslationTermResult = `-- name: UpsertBrregTranslationTermResult :exec
+INSERT INTO brreg_source.translation_terms (
+  source,
+  source_lang,
+  target_lang,
+  source_text_normalized,
+  source_text,
+  term_key,
+  translated_text,
+  status,
+  provider,
+  model,
+  prompt_version,
+  error,
+  error_code,
+  metadata,
+  translated_at,
+  updated_at
+) VALUES (
+  'brreg',
+  $1::text,
+  $2::text,
+  $3::text,
+  $4::text,
+  $5::text,
+  $6::text,
+  $7::text,
+  $8::text,
+  $9::text,
+  $10::text,
+  $11::text,
+  $12::text,
+  $13::jsonb,
+  CASE WHEN $7::text = 'succeeded' THEN now() ELSE NULL END,
+  now()
+)
+ON CONFLICT (source, source_lang, target_lang, prompt_version, term_key) DO UPDATE
+SET translated_text = EXCLUDED.translated_text,
+    status = EXCLUDED.status,
+    provider = EXCLUDED.provider,
+    model = EXCLUDED.model,
+    error = EXCLUDED.error,
+    error_code = EXCLUDED.error_code,
+    metadata = brreg_source.translation_terms.metadata || EXCLUDED.metadata,
+    translated_at = CASE WHEN EXCLUDED.status = 'succeeded' THEN now() ELSE brreg_source.translation_terms.translated_at END,
+    updated_at = now()
+`
+
+type UpsertBrregTranslationTermResultParams struct {
+	SourceLang           string          `json:"source_lang"`
+	TargetLang           string          `json:"target_lang"`
+	SourceTextNormalized string          `json:"source_text_normalized"`
+	SourceText           string          `json:"source_text"`
+	TermKey              string          `json:"term_key"`
+	TranslatedText       *string         `json:"translated_text"`
+	Status               string          `json:"status"`
+	Provider             *string         `json:"provider"`
+	Model                *string         `json:"model"`
+	PromptVersion        string          `json:"prompt_version"`
+	Error                *string         `json:"error"`
+	ErrorCode            *string         `json:"error_code"`
+	Metadata             json.RawMessage `json:"metadata"`
+}
+
+func (q *Queries) UpsertBrregTranslationTermResult(ctx context.Context, arg UpsertBrregTranslationTermResultParams) error {
+	_, err := q.db.Exec(ctx, upsertBrregTranslationTermResult,
+		arg.SourceLang,
+		arg.TargetLang,
+		arg.SourceTextNormalized,
+		arg.SourceText,
+		arg.TermKey,
+		arg.TranslatedText,
+		arg.Status,
+		arg.Provider,
+		arg.Model,
+		arg.PromptVersion,
+		arg.Error,
+		arg.ErrorCode,
+		arg.Metadata,
+	)
+	return err
 }

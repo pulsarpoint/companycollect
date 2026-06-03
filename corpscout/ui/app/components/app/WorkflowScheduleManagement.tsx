@@ -32,9 +32,15 @@ import { api, errorMessage } from "~/lib/api";
 import type {
   WorkflowSchedule,
   WorkflowScheduleInput,
+  WorkflowScheduleKey,
   WorkflowScheduleSpec,
 } from "~/types/api";
 import { ScheduleEditor } from "~/components/app/ScheduleEditor";
+import {
+  FXRateSyncForm,
+  defaultFXRateSyncFormValue,
+  type FXRateSyncFormValue,
+} from "~/components/app/FXRateSyncForm";
 import {
   NACETaxonomySyncForm,
   defaultNACETaxonomySyncFormValue,
@@ -47,6 +53,15 @@ type ScheduleForm = {
   description: string;
 };
 
+type WorkflowScheduleOption = {
+  key: WorkflowScheduleKey;
+  label: string;
+  scheduleID: string;
+  displayName: string;
+  description: string;
+  tags: string[];
+};
+
 const defaultScheduleSpec: WorkflowScheduleSpec = {
   timezone: "Europe/Belgrade",
   cron_expression: "0 3 * * *",
@@ -54,11 +69,27 @@ const defaultScheduleSpec: WorkflowScheduleSpec = {
   catchup_window_seconds: 3600,
 };
 
-const emptyForm: ScheduleForm = {
-  scheduleID: "nace-taxonomy-sync-nightly",
-  displayName: "Nightly NACE taxonomy sync",
-  description: "",
-};
+const workflowScheduleOptions: WorkflowScheduleOption[] = [
+  {
+    key: "nace_taxonomy_sync",
+    label: "NACE taxonomy sync",
+    scheduleID: "nace-taxonomy-sync-nightly",
+    displayName: "Nightly NACE taxonomy sync",
+    description: "",
+    tags: ["taxonomy", "nace"],
+  },
+  {
+    key: "fx_rate_sync",
+    label: "FX rate sync",
+    scheduleID: "fx-rate-sync-daily",
+    displayName: "Daily FX rate sync",
+    description: "",
+    tags: ["fx", "exchange-rates"],
+  },
+];
+
+const defaultWorkflowKey: WorkflowScheduleKey = "nace_taxonomy_sync";
+const emptyForm = scheduleFormForWorkflow(defaultWorkflowKey);
 
 export function WorkflowScheduleManagement() {
   const [schedules, setSchedules] = useState<WorkflowSchedule[]>([]);
@@ -66,11 +97,15 @@ export function WorkflowScheduleManagement() {
   const [saving, setSaving] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [selectedID, setSelectedID] = useState("");
+  const [workflowKey, setWorkflowKey] =
+    useState<WorkflowScheduleKey>(defaultWorkflowKey);
   const [form, setForm] = useState<ScheduleForm>(emptyForm);
   const [enabled, setEnabled] = useState(true);
   const [spec, setSpec] = useState<WorkflowScheduleSpec>(defaultScheduleSpec);
   const [naceInput, setNaceInput] =
     useState<NACETaxonomySyncFormValue>(defaultNACETaxonomySyncFormValue);
+  const [fxInput, setFXInput] =
+    useState<FXRateSyncFormValue>(defaultFXRateSyncFormValue);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -101,10 +136,12 @@ export function WorkflowScheduleManagement() {
 
   function openCreateSheet() {
     setSelectedID("");
+    setWorkflowKey(defaultWorkflowKey);
     setForm(emptyForm);
     setEnabled(true);
     setSpec(defaultScheduleSpec);
     setNaceInput(defaultNACETaxonomySyncFormValue);
+    setFXInput(defaultFXRateSyncFormValue);
     setMessage(null);
     setError(null);
     setSheetOpen(true);
@@ -112,6 +149,7 @@ export function WorkflowScheduleManagement() {
 
   function openEditSheet(schedule: WorkflowSchedule) {
     setSelectedID(schedule.temporal_schedule_id);
+    setWorkflowKey(schedule.workflow_key);
     setForm({
       scheduleID: schedule.temporal_schedule_id,
       displayName: schedule.display_name,
@@ -136,9 +174,26 @@ export function WorkflowScheduleManagement() {
         "force_reprocess",
       ),
     });
+    setFXInput({
+      provider: "ecb",
+      source_url: stringFromRecord(schedule.action_input, "source_url"),
+      force_reprocess: booleanFromRecord(
+        schedule.action_input,
+        "force_reprocess",
+      ),
+    });
     setMessage(null);
     setError(null);
     setSheetOpen(true);
+  }
+
+  function selectWorkflow(nextWorkflowKey: WorkflowScheduleKey) {
+    setWorkflowKey(nextWorkflowKey);
+    if (!selectedSchedule) {
+      setForm(scheduleFormForWorkflow(nextWorkflowKey));
+      setNaceInput(defaultNACETaxonomySyncFormValue);
+      setFXInput(defaultFXRateSyncFormValue);
+    }
   }
 
   async function saveSchedule() {
@@ -146,21 +201,17 @@ export function WorkflowScheduleManagement() {
     setError(null);
     setMessage(null);
     try {
+      const workflowOption = workflowScheduleOption(workflowKey);
       const body: WorkflowScheduleInput = {
         temporal_schedule_id: form.scheduleID.trim(),
-        workflow_key: "nace_taxonomy_sync",
+        workflow_key: workflowKey,
         display_name: form.displayName.trim(),
         description: form.description.trim(),
         enabled,
-        tags: ["taxonomy", "nace"],
+        tags: workflowOption.tags,
         metadata: {},
         spec,
-        action_input: {
-          revision: naceInput.revision.trim(),
-          source_url: naceInput.source_url.trim(),
-          trigger: "schedule",
-          force_reprocess: naceInput.force_reprocess,
-        },
+        action_input: actionInputForWorkflow(workflowKey, naceInput, fxInput),
       };
       if (selectedSchedule) {
         await api.updateWorkflowSchedule(selectedSchedule.temporal_schedule_id, body);
@@ -376,11 +427,34 @@ export function WorkflowScheduleManagement() {
               {selectedSchedule ? "Edit schedule" : "Create schedule"}
             </SheetTitle>
             <SheetDescription>
-              NACE taxonomy sync is the first schedulable workflow.
+              Choose the workflow, configure its schedule, then set the
+              workflow-specific input values.
             </SheetDescription>
           </SheetHeader>
 
           <div className="mt-5 flex flex-col gap-5">
+            <div className="grid gap-2">
+              <Label htmlFor="schedule-workflow">Workflow</Label>
+              <select
+                id="schedule-workflow"
+                value={workflowKey}
+                onChange={(event) =>
+                  selectWorkflow(event.target.value as WorkflowScheduleKey)
+                }
+                className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                {workflowScheduleOptions.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                The selected workflow controls which action parameters are saved
+                into the Temporal schedule.
+              </p>
+            </div>
+
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="schedule-id">Schedule ID</Label>
@@ -435,7 +509,14 @@ export function WorkflowScheduleManagement() {
 
             <Separator />
 
-            <NACETaxonomySyncForm value={naceInput} onChange={setNaceInput} />
+            {workflowKey === "nace_taxonomy_sync" ? (
+              <NACETaxonomySyncForm
+                value={naceInput}
+                onChange={setNaceInput}
+              />
+            ) : (
+              <FXRateSyncForm value={fxInput} onChange={setFXInput} />
+            )}
 
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setSheetOpen(false)}>
@@ -476,4 +557,43 @@ function booleanFromRecord(
   key: string,
 ): boolean {
   return record[key] === true;
+}
+
+function workflowScheduleOption(
+  workflowKey: WorkflowScheduleKey,
+): WorkflowScheduleOption {
+  return (
+    workflowScheduleOptions.find((option) => option.key === workflowKey) ??
+    workflowScheduleOptions[0]
+  );
+}
+
+function scheduleFormForWorkflow(workflowKey: WorkflowScheduleKey): ScheduleForm {
+  const option = workflowScheduleOption(workflowKey);
+  return {
+    scheduleID: option.scheduleID,
+    displayName: option.displayName,
+    description: option.description,
+  };
+}
+
+function actionInputForWorkflow(
+  workflowKey: WorkflowScheduleKey,
+  naceInput: NACETaxonomySyncFormValue,
+  fxInput: FXRateSyncFormValue,
+): Record<string, unknown> {
+  if (workflowKey === "fx_rate_sync") {
+    return {
+      provider: fxInput.provider,
+      source_url: fxInput.source_url.trim(),
+      trigger: "schedule",
+      force_reprocess: fxInput.force_reprocess,
+    };
+  }
+  return {
+    revision: naceInput.revision.trim(),
+    source_url: naceInput.source_url.trim(),
+    trigger: "schedule",
+    force_reprocess: naceInput.force_reprocess,
+  };
 }

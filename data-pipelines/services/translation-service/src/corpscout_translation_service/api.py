@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
 
-from corpscout_translation_service.models import BrregTranslateRequest, LLMSelection, LLMTranslationRequest
+from corpscout_translation_service.models import BrregTranslateRequest, LLMSelection, LLMTranslationRequest, TermTranslationRequest
 from corpscout_translation_service.service import TranslationService
 
 
@@ -69,6 +69,24 @@ def create_app(*, translation_service: TranslationService | None = None) -> Fast
         if updates:
             request = request.model_copy(update=updates)
         return await service.translate_terms(request)
+
+    @app.post("/v1/terms/translate")
+    async def translate_brreg_terms(
+        request: TermTranslationRequest,
+        provider: Annotated[str | None, Query(min_length=1)] = None,
+        model: Annotated[str | None, Query(min_length=1)] = None,
+        prompt_version: Annotated[str | None, Query(min_length=1)] = None,
+    ):
+        updates: dict[str, str] = {}
+        if provider is not None:
+            updates["provider"] = provider
+        if model is not None:
+            updates["model"] = model
+        if prompt_version is not None:
+            updates["prompt_version"] = prompt_version
+        if updates:
+            request = request.model_copy(update=updates)
+        return await service.translate_brreg_terms(request)
 
     return app
 
