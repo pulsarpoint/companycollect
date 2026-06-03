@@ -97,7 +97,7 @@ async def test_nats_handler_returns_structured_error_for_invalid_payload() -> No
 
 
 @pytest.mark.asyncio
-async def test_term_nats_handler_publishes_result_response_and_acks() -> None:
+async def test_term_nats_handler_publishes_result_response_without_core_nats_ack() -> None:
     service = FakeTermTranslationService(
         TermTranslationResponse(
             request_id="request-1",
@@ -139,7 +139,7 @@ async def test_term_nats_handler_publishes_result_response_and_acks() -> None:
 
     await handle_brreg_term_translation_message(message, service, publisher)
 
-    assert message.ack_count == 1
+    assert message.ack_count == 0
     assert service.requests[0]["request_id"] == "request-1"
     assert service.requests[0]["terms"][0]["term_key"] == TERM_KEY_1
     assert publisher.published[0][0] == TERM_RESULT_SUBJECT
@@ -154,7 +154,7 @@ async def test_term_nats_handler_publishes_result_response_and_acks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_term_nats_handler_acks_invalid_term_key_without_publishing_poison_result() -> None:
+async def test_term_nats_handler_drops_invalid_term_key_without_core_nats_ack() -> None:
     service = FakeTermTranslationService(
         TermTranslationResponse(
             request_id="request-1",
@@ -188,7 +188,7 @@ async def test_term_nats_handler_acks_invalid_term_key_without_publishing_poison
 
     await handle_brreg_term_translation_message(message, service, publisher)
 
-    assert message.ack_count == 1
+    assert message.ack_count == 0
     assert service.requests == []
     assert publisher.published == []
 
@@ -233,11 +233,14 @@ async def test_term_nats_handler_deduplicates_invalid_payload_failures_by_term_k
 
     await handle_brreg_term_translation_message(message, service, publisher)
 
-    assert message.ack_count == 1
+    assert message.ack_count == 0
     assert service.requests == []
     assert len(publisher.published) == 1
     body = json.loads(publisher.published[0][1].decode("utf-8"))
     assert [failure["term_key"] for failure in body["failures"]] == [TERM_KEY_1]
+    assert len(message.replies) == 1
+    reply_body = json.loads(message.replies[0].decode("utf-8"))
+    assert reply_body == body
 
 
 class FakeBrregTranslationService:

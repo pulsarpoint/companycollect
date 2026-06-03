@@ -79,8 +79,8 @@ async def handle_brreg_term_translation_message(
         response = _failed_term_response_from_payload(payload, exc)
         if response is not None:
             await _publish_terms_response(publisher, response)
+            await _respond_if_supported(message, response)
         LOGGER.exception("Invalid BRREG term translation NATS payload")
-        await _ack_if_supported(message)
         return
 
     try:
@@ -91,7 +91,6 @@ async def handle_brreg_term_translation_message(
 
     await _publish_terms_response(publisher, response)
     await _respond_if_supported(message, response)
-    await _ack_if_supported(message)
 
 
 async def run_worker() -> None:
@@ -194,12 +193,6 @@ async def _respond_if_supported(message: NatsMessage, response: TermTranslationR
         return
     payload = response.model_dump_json(exclude_none=True).encode("utf-8")
     await respond(payload)
-
-
-async def _ack_if_supported(message: NatsMessage) -> None:
-    ack = getattr(message, "ack", None)
-    if ack is not None:
-        await ack()
 
 
 def _failed_term_response(
