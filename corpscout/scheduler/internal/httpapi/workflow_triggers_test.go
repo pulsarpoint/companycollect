@@ -196,6 +196,7 @@ func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/company-translation", bytes.NewBufferString(`{
+		"all_records": true,
 		"batch_size": 10,
 		"max_parallel_tasks": 5,
 		"lease_seconds": 900,
@@ -216,6 +217,7 @@ func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T
 	require.Len(t, tc.args, 1)
 
 	input := tc.args[0].(brregworkflow.TranslateBrregSourceCompaniesInput)
+	require.True(t, input.AllRecords)
 	require.Equal(t, 10, input.BatchSize)
 	require.Equal(t, 5, input.MaxParallelTasks)
 	require.Equal(t, 900, input.LeaseSeconds)

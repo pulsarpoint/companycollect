@@ -69,6 +69,7 @@ type startBrregTermTranslationWorkflowRequest struct {
 }
 
 type startBrregCompanyTranslationWorkflowRequest struct {
+	AllRecords       bool   `json:"all_records,omitempty"`
 	BatchSize        int    `json:"batch_size,omitempty"`
 	MaxParallelTasks int    `json:"max_parallel_tasks,omitempty"`
 	LeaseSeconds     int    `json:"lease_seconds,omitempty"`
@@ -312,6 +313,7 @@ func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWri
 	}
 
 	input := brregworkflow.TranslateBrregSourceCompaniesInput{
+		AllRecords:       req.AllRecords,
 		BatchSize:        req.BatchSize,
 		MaxParallelTasks: req.MaxParallelTasks,
 		LeaseSeconds:     req.LeaseSeconds,
@@ -325,6 +327,7 @@ func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWri
 	slog.Debug("starting brreg company translation workflow",
 		"workflow_id", workflowID,
 		"task_queue", brregworkflow.TranslateBrregSourceCompaniesTaskQueue,
+		"all_records", req.AllRecords,
 		"batch_size", req.BatchSize,
 		"max_parallel_tasks", req.MaxParallelTasks,
 		"lease_seconds", req.LeaseSeconds,

@@ -32,6 +32,7 @@ type ProcessBrregCompanyTranslationInput = actions.ProcessBrregCompanyTranslatio
 type ProcessBrregCompanyTranslationResult = actions.ProcessBrregCompanyTranslationResult
 
 type TranslateBrregSourceCompaniesInput struct {
+	AllRecords       bool   `json:"all_records,omitempty"`
 	BatchSize        int    `json:"batch_size,omitempty"`
 	MaxParallelTasks int    `json:"max_parallel_tasks,omitempty"`
 	LeaseSeconds     int    `json:"lease_seconds,omitempty"`
@@ -72,6 +73,7 @@ func TranslateBrregSourceCompanies(
 	logger := temporalworkflow.GetLogger(ctx)
 	logger.Debug("brreg company translation workflow started",
 		"temporal_workflow_id", workflowInfo.WorkflowExecution.ID,
+		"all_records", input.AllRecords,
 		"batch_size", input.BatchSize,
 		"max_parallel_tasks", input.MaxParallelTasks,
 		"lease_seconds", input.LeaseSeconds,
@@ -83,47 +85,57 @@ func TranslateBrregSourceCompanies(
 	)
 
 	result := TranslateBrregSourceCompaniesResult{Status: "running"}
-	var claimed ClaimBrregCompaniesForTranslationResult
-	if err := temporalworkflow.ExecuteActivity(ctx, claimBrregCompaniesForTranslationActivity, ClaimBrregCompaniesForTranslationInput{
-		Limit:            int32(input.BatchSize),
-		MaxParallelTasks: int32(input.MaxParallelTasks),
-		LeaseSeconds:     int32(input.LeaseSeconds),
-		MaxAttempts:      int32(input.MaxAttempts),
-		WorkerID:         workflowInfo.WorkflowExecution.ID,
-	}).Get(ctx, &claimed); err != nil {
-		return result, errors.Wrap(err, "claim brreg companies for translation")
+	for {
+		var claimed ClaimBrregCompaniesForTranslationResult
+		if err := temporalworkflow.ExecuteActivity(ctx, claimBrregCompaniesForTranslationActivity, ClaimBrregCompaniesForTranslationInput{
+			Limit:            int32(input.BatchSize),
+			MaxParallelTasks: int32(input.MaxParallelTasks),
+			LeaseSeconds:     int32(input.LeaseSeconds),
+			MaxAttempts:      int32(input.MaxAttempts),
+			WorkerID:         workflowInfo.WorkflowExecution.ID,
+		}).Get(ctx, &claimed); err != nil {
+			return result, errors.Wrap(err, "claim brreg companies for translation")
+		}
+		result.StatusRowsInserted += claimed.StatusRowsInserted
+		if len(claimed.Companies) == 0 {
+			break
+		}
+		result.CompaniesClaimed += int32(len(claimed.Companies))
+
+		for _, company := range claimed.Companies {
+			var processed ProcessBrregCompanyTranslationResult
+			err := temporalworkflow.ExecuteActivity(ctx, processBrregCompanyTranslationActivity, ProcessBrregCompanyTranslationInput{
+				CompanyID:     company.CompanyID,
+				Provider:      input.Provider,
+				Model:         input.Model,
+				PromptVersion: input.PromptVersion,
+				MaxAttempts:   int32(input.MaxAttempts),
+			}).Get(ctx, &processed)
+			if err != nil {
+				return result, errors.Wrap(err, "process brreg company translation")
+			}
+			result.FieldsSeen += processed.FieldsSeen
+			result.FieldsApplied += processed.FieldsApplied
+			result.RemainingFields += processed.RemainingFields
+
+			switch processed.Status {
+			case "succeeded":
+				result.CompaniesSucceeded++
+			case "skipped":
+				result.CompaniesSkipped++
+			default:
+				result.CompaniesFailed++
+			}
+		}
+
+		if !input.AllRecords {
+			break
+		}
 	}
-	result.StatusRowsInserted = claimed.StatusRowsInserted
-	result.CompaniesClaimed = int32(len(claimed.Companies))
-	if len(claimed.Companies) == 0 {
+
+	if result.CompaniesClaimed == 0 {
 		result.Status = "drained"
 		return result, nil
-	}
-
-	for _, company := range claimed.Companies {
-		var processed ProcessBrregCompanyTranslationResult
-		err := temporalworkflow.ExecuteActivity(ctx, processBrregCompanyTranslationActivity, ProcessBrregCompanyTranslationInput{
-			CompanyID:     company.CompanyID,
-			Provider:      input.Provider,
-			Model:         input.Model,
-			PromptVersion: input.PromptVersion,
-			MaxAttempts:   int32(input.MaxAttempts),
-		}).Get(ctx, &processed)
-		if err != nil {
-			return result, errors.Wrap(err, "process brreg company translation")
-		}
-		result.FieldsSeen += processed.FieldsSeen
-		result.FieldsApplied += processed.FieldsApplied
-		result.RemainingFields += processed.RemainingFields
-
-		switch processed.Status {
-		case "succeeded":
-			result.CompaniesSucceeded++
-		case "skipped":
-			result.CompaniesSkipped++
-		default:
-			result.CompaniesFailed++
-		}
 	}
 
 	if result.CompaniesFailed > 0 && result.CompaniesSucceeded == 0 && result.CompaniesSkipped == 0 {

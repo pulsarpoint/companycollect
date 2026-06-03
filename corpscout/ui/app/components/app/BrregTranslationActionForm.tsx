@@ -17,6 +17,7 @@ import type { BrregActionScope } from "~/components/app/BrregActionScope";
 
 type BrregTranslationMode = "raw" | "source_terms" | "source_companies";
 type TermTranslationScope = "eligible" | "all";
+type CompanyTranslationScope = "all" | "limited";
 
 interface Props {
   selectedIds: string[];
@@ -100,6 +101,8 @@ export function BrregTranslationActionForm({
   const [sourceLang, setSourceLang] = useState("");
   const [targetLang, setTargetLang] = useState("");
   const [termScope, setTermScope] = useState<TermTranslationScope>("eligible");
+  const [companyScope, setCompanyScope] =
+    useState<CompanyTranslationScope>("all");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [llmProviders, setLLMProviders] = useState<LLMProvider[]>([]);
@@ -126,6 +129,7 @@ export function BrregTranslationActionForm({
     setSourceLang("");
     setTargetLang("");
     setTermScope("eligible");
+    setCompanyScope("all");
     setAdvancedOpen(false);
   }, [defaultScope, selectedCount, usesScopedRecords, usesSourceCompanies]);
 
@@ -178,8 +182,12 @@ export function BrregTranslationActionForm({
   );
 
   const allSourceTermsSelected = usesSourceTerms && termScope === "all";
+  const allSourceCompaniesSelected =
+    usesSourceCompanies && companyScope === "all";
   const limitDisabled =
-    (usesScopedRecords && scope === "selected") || allSourceTermsSelected;
+    (usesScopedRecords && scope === "selected") ||
+    allSourceTermsSelected ||
+    allSourceCompaniesSelected;
   const effectiveLimit = limitDisabled
     ? usesScopedRecords
       ? selectedCount
@@ -233,7 +241,8 @@ export function BrregTranslationActionForm({
 
       if (mode === "source_companies") {
         const body: BrregCompanyTranslationRequest = {
-          batch_size: effectiveLimit,
+          all_records: allSourceCompaniesSelected,
+          batch_size: allSourceCompaniesSelected ? undefined : effectiveLimit,
           max_attempts: parseOptionalPositiveNumber(maxAttempts),
           max_parallel_tasks: parseOptionalPositiveNumber(maxParallelTasks),
           lease_seconds: parseOptionalPositiveNumber(leaseSeconds),
@@ -348,15 +357,49 @@ export function BrregTranslationActionForm({
           </div>
         )}
 
+        {usesSourceCompanies && (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="brreg-company-translation-scope">
+              Records to process
+            </Label>
+            <select
+              id="brreg-company-translation-scope"
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+              value={companyScope}
+              onChange={(event) =>
+                setCompanyScope(event.target.value as CompanyTranslationScope)
+              }
+            >
+              <option value="all">All eligible entries</option>
+              <option value="limited">Specific number</option>
+            </select>
+            <FieldDescription>
+              All eligible entries claims BRREG source companies until no
+              pending translation work remains. Specific number is intended for
+              testing.
+            </FieldDescription>
+          </div>
+        )}
+
         <div className="flex flex-col gap-2">
           <Label htmlFor="brreg-translation-limit">Records</Label>
           <Input
             id="brreg-translation-limit"
-            min={allSourceTermsSelected ? undefined : 1}
-            type={allSourceTermsSelected ? "text" : "number"}
+            min={
+              allSourceTermsSelected || allSourceCompaniesSelected
+                ? undefined
+                : 1
+            }
+            type={
+              allSourceTermsSelected || allSourceCompaniesSelected
+                ? "text"
+                : "number"
+            }
             value={
               allSourceTermsSelected
                 ? "All"
+                : allSourceCompaniesSelected
+                  ? "All eligible entries"
                 : limitDisabled
                   ? String(selectedCount)
                   : limit
@@ -367,6 +410,8 @@ export function BrregTranslationActionForm({
           <FieldDescription>
             {allSourceTermsSelected
               ? "No record limit is sent. The workflow scans all currently missing BRREG source terms."
+              : allSourceCompaniesSelected
+                ? "No test limit is sent. The workflow processes every eligible BRREG source company it can claim."
               : usesSourceCompanies
                 ? "Maximum number of pending BRREG source companies this workflow claims and processes in one run."
                 : usesScopedRecords

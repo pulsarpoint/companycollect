@@ -260,6 +260,7 @@ export interface BrregTermTranslationRequest {
 }
 
 export interface BrregCompanyTranslationRequest {
+  all_records?: boolean;
   batch_size?: number;
   max_parallel_tasks?: number;
   lease_seconds?: number;

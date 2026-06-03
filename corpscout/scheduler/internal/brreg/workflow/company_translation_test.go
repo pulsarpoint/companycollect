@@ -63,6 +63,62 @@ func TestTranslateBrregSourceCompaniesCompletesCachedCompanies(t *testing.T) {
 	require.Zero(t, result.CompaniesFailed)
 }
 
+func TestTranslateBrregSourceCompaniesAllRecordsClaimsUntilDrained(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.RegisterWorkflow(TranslateBrregSourceCompanies)
+	var claimCalls int
+	env.RegisterActivityWithOptions(func(input ClaimBrregCompaniesForTranslationInput) (ClaimBrregCompaniesForTranslationResult, error) {
+		claimCalls++
+		require.EqualValues(t, 10, input.Limit)
+		switch claimCalls {
+		case 1:
+			return ClaimBrregCompaniesForTranslationResult{
+				StatusRowsInserted: 2,
+				Companies: []ClaimedCompanyForTranslation{
+					{CompanyID: "11111111-1111-1111-1111-111111111111", OrganizationNumber: "999111222", OrganizationName: "FIRST AS"},
+					{CompanyID: "22222222-2222-2222-2222-222222222222", OrganizationNumber: "999111333", OrganizationName: "SECOND AS"},
+				},
+			}, nil
+		case 2:
+			return ClaimBrregCompaniesForTranslationResult{
+				StatusRowsInserted: 1,
+				Companies: []ClaimedCompanyForTranslation{
+					{CompanyID: "33333333-3333-3333-3333-333333333333", OrganizationNumber: "999111444", OrganizationName: "THIRD AS"},
+				},
+			}, nil
+		default:
+			return ClaimBrregCompaniesForTranslationResult{}, nil
+		}
+	}, activity.RegisterOptions{Name: claimBrregCompaniesForTranslationActivity})
+	var processed []string
+	env.RegisterActivityWithOptions(func(input ProcessBrregCompanyTranslationInput) (ProcessBrregCompanyTranslationResult, error) {
+		processed = append(processed, input.CompanyID)
+		return ProcessBrregCompanyTranslationResult{CompanyID: input.CompanyID, Status: "succeeded", FieldsSeen: 1, FieldsApplied: 1}, nil
+	}, activity.RegisterOptions{Name: processBrregCompanyTranslationActivity})
+
+	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{AllRecords: true})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	require.Equal(t, 3, claimCalls)
+	require.Equal(t, []string{
+		"11111111-1111-1111-1111-111111111111",
+		"22222222-2222-2222-2222-222222222222",
+		"33333333-3333-3333-3333-333333333333",
+	}, processed)
+
+	var result TranslateBrregSourceCompaniesResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	require.Equal(t, "succeeded", result.Status)
+	require.EqualValues(t, 3, result.StatusRowsInserted)
+	require.EqualValues(t, 3, result.CompaniesClaimed)
+	require.EqualValues(t, 3, result.CompaniesSucceeded)
+	require.EqualValues(t, 3, result.FieldsSeen)
+	require.EqualValues(t, 3, result.FieldsApplied)
+}
+
 func TestTranslateBrregSourceCompaniesFailsWhenAllClaimedCompaniesMissCache(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
