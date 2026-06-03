@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   ChevronsUpDown,
+  Columns3,
   ListChecks,
   Search,
   X,
@@ -15,6 +16,7 @@ import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "~/components/ui/popover";
 import { Skeleton } from "~/components/ui/skeleton";
 import {
   Table,
@@ -26,8 +28,28 @@ import {
 } from "~/components/ui/table";
 
 const PAGE_SIZE = 50;
+const COLUMN_STORAGE_KEY = "brreg.source_entries.columns";
 
 type SortDirection = "asc" | "desc";
+type SourceEntryColumnKey =
+  | "organization"
+  | "industry"
+  | "location"
+  | "website"
+  | "employees"
+  | "revenue"
+  | "related_data"
+  | "translation"
+  | "discovery"
+  | "updated";
+
+type SourceEntryColumn = {
+  key: SourceEntryColumnKey;
+  label: string;
+  sort?: string;
+  defaultVisible?: boolean;
+  locked?: boolean;
+};
 
 const FILTER_OPTIONS = {
   lifecycle_status: [
@@ -45,6 +67,57 @@ const FILTER_OPTIONS = {
     ["complete", "Complete"],
   ],
 } as const;
+
+const SOURCE_ENTRY_COLUMNS: SourceEntryColumn[] = [
+  { key: "organization", label: "Organization", sort: "organization", defaultVisible: true, locked: true },
+  { key: "industry", label: "Industry", sort: "industry", defaultVisible: true },
+  { key: "location", label: "Location", sort: "location", defaultVisible: true },
+  { key: "website", label: "Website", defaultVisible: true },
+  { key: "employees", label: "Employees", sort: "employees" },
+  { key: "revenue", label: "Revenue", sort: "revenue" },
+  { key: "related_data", label: "Related Data", defaultVisible: true },
+  { key: "translation", label: "Translation", sort: "translation_missing", defaultVisible: true },
+  { key: "discovery", label: "Discovery" },
+  { key: "updated", label: "Updated", sort: "updated_at", defaultVisible: true },
+];
+
+const SOURCE_ENTRY_COLUMN_KEYS = new Set<SourceEntryColumnKey>(
+  SOURCE_ENTRY_COLUMNS.map((column) => column.key),
+);
+
+function defaultVisibleColumnKeys() {
+  return new Set<SourceEntryColumnKey>(
+    SOURCE_ENTRY_COLUMNS.filter((column) => column.defaultVisible || column.locked).map(
+      (column) => column.key,
+    ),
+  );
+}
+
+function isSourceEntryColumnKey(value: string): value is SourceEntryColumnKey {
+  return SOURCE_ENTRY_COLUMN_KEYS.has(value as SourceEntryColumnKey);
+}
+
+function initialVisibleColumnKeys() {
+  if (typeof window === "undefined") return defaultVisibleColumnKeys();
+
+  try {
+    const stored = window.localStorage.getItem(COLUMN_STORAGE_KEY);
+    if (!stored) return defaultVisibleColumnKeys();
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return defaultVisibleColumnKeys();
+
+    const keys = new Set<SourceEntryColumnKey>();
+    for (const value of parsed) {
+      if (typeof value === "string" && isSourceEntryColumnKey(value)) {
+        keys.add(value);
+      }
+    }
+    keys.add("organization");
+    return keys.size > 0 ? keys : defaultVisibleColumnKeys();
+  } catch {
+    return defaultVisibleColumnKeys();
+  }
+}
 
 function pageFromParams(searchParams: URLSearchParams) {
   const page = Number(searchParams.get("source_page") ?? "1");
@@ -246,6 +319,89 @@ function WebsiteCell({ item }: { item: BrregSourceEntryListItem }) {
   );
 }
 
+function SourceEntryCell({
+  columnKey,
+  item,
+}: {
+  columnKey: SourceEntryColumnKey;
+  item: BrregSourceEntryListItem;
+}) {
+  switch (columnKey) {
+    case "organization":
+      return (
+        <div className="flex min-w-56 flex-col gap-1">
+          <Link
+            className="font-medium underline-offset-4 hover:underline"
+            to={`/sources/brreg/companies/${item.company_id}`}
+          >
+            {item.organization_name || "Unnamed organization"}
+          </Link>
+          <span className="font-mono text-xs text-muted-foreground">
+            {item.organization_number}
+          </span>
+          <div className="flex flex-wrap gap-1">
+            <Badge variant="outline">{compactStatus(item.lifecycle_status)}</Badge>
+            {item.organization_form_label && (
+              <Badge variant="secondary">{item.organization_form_label}</Badge>
+            )}
+          </div>
+        </div>
+      );
+    case "industry":
+      return (
+        <div className="flex min-w-48 flex-col gap-1">
+          <span>{item.primary_industry_label ?? "-"}</span>
+          <span className="text-xs text-muted-foreground">
+            {item.primary_industry_code ?? item.primary_nace_code ?? "-"}
+          </span>
+        </div>
+      );
+    case "location":
+      return (
+        <div className="flex min-w-40 flex-col gap-1">
+          <span>{item.city ?? item.municipality ?? "-"}</span>
+          <span className="text-xs text-muted-foreground">
+            {item.county ?? item.postal_code ?? ""}
+          </span>
+        </div>
+      );
+    case "website":
+      return <WebsiteCell item={item} />;
+    case "employees":
+      return (
+        <div className="flex flex-col gap-1">
+          <span>{item.employee_count?.toLocaleString() ?? "-"}</span>
+          {item.employee_band && (
+            <span className="text-xs text-muted-foreground">{item.employee_band}</span>
+          )}
+        </div>
+      );
+    case "revenue":
+      return (
+        <div className="flex flex-col gap-1">
+          <span>{formatCurrencyCents(item.latest_revenue_usd_cents)}</span>
+          {item.latest_financial_year && (
+            <span className="text-xs text-muted-foreground">
+              FY {item.latest_financial_year}
+            </span>
+          )}
+        </div>
+      );
+    case "related_data":
+      return <EntryCounts item={item} />;
+    case "translation":
+      return <TranslationState item={item} />;
+    case "discovery":
+      return <DomainDiscoveryState item={item} />;
+    case "updated":
+      return (
+        <span className="whitespace-nowrap text-sm">{formatDate(item.updated_at)}</span>
+      );
+    default:
+      return null;
+  }
+}
+
 export function BrregSourceEntriesTable() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<BrregSourceEntryListItem[]>([]);
@@ -255,6 +411,9 @@ export function BrregSourceEntriesTable() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [allFilteredSelected, setAllFilteredSelected] = useState(false);
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<Set<SourceEntryColumnKey>>(
+    initialVisibleColumnKeys,
+  );
 
   const page = pageFromParams(searchParams);
   const query = searchParams.get("source_q") ?? "";
@@ -284,6 +443,10 @@ export function BrregSourceEntriesTable() {
     items.length > 0 && (allFilteredSelected || items.every((item) => selectedIds.has(item.company_id)));
   const someCurrentPageSelected =
     !allFilteredSelected && items.some((item) => selectedIds.has(item.company_id)) && !currentPageSelected;
+  const visibleColumns = useMemo(
+    () => SOURCE_ENTRY_COLUMNS.filter((column) => visibleColumnKeys.has(column.key)),
+    [visibleColumnKeys],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -317,6 +480,11 @@ export function BrregSourceEntriesTable() {
     setSelectedIds(new Set());
     setAllFilteredSelected(false);
   }, [tableFilterKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(Array.from(visibleColumnKeys)));
+  }, [visibleColumnKeys]);
 
   const setParam = useCallback(
     (key: string, value: string) => {
@@ -375,21 +543,20 @@ export function BrregSourceEntriesTable() {
     setAllFilteredSelected(false);
   };
 
-  const columns = useMemo(
-    () => [
-      { label: "Organization", sort: "organization" },
-      { label: "Industry", sort: "industry" },
-      { label: "Location", sort: "location" },
-      { label: "Website" },
-      { label: "Employees", sort: "employees" },
-      { label: "Revenue", sort: "revenue" },
-      { label: "Signals" },
-      { label: "Translation", sort: "translation_missing" },
-      { label: "Discovery" },
-      { label: "Updated", sort: "updated_at" },
-    ],
-    [],
-  );
+  const toggleColumnVisibility = (column: SourceEntryColumn, checked: boolean) => {
+    if (column.locked) return;
+    setVisibleColumnKeys((current) => {
+      const next = new Set(current);
+      if (checked) next.add(column.key);
+      else next.delete(column.key);
+      next.add("organization");
+      return next;
+    });
+  };
+
+  const resetColumns = () => {
+    setVisibleColumnKeys(defaultVisibleColumnKeys());
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -432,6 +599,52 @@ export function BrregSourceEntriesTable() {
           options={FILTER_OPTIONS.website_status}
           onChange={(value) => setParam("source_website_status", value)}
         />
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button size="sm" variant="outline" className="h-8">
+              <Columns3 className="size-4" />
+              Columns
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-64 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium">Columns</div>
+                <p className="text-xs text-muted-foreground">
+                  Choose which source fields are visible.
+                </p>
+              </div>
+              <Button size="sm" variant="ghost" className="h-7 px-2" onClick={resetColumns}>
+                Reset
+              </Button>
+            </div>
+            <div className="mt-3 flex flex-col gap-2">
+              {SOURCE_ENTRY_COLUMNS.map((column) => {
+                const checkboxID = `brreg-source-column-${column.key}`;
+                return (
+                  <label
+                    key={column.key}
+                    htmlFor={checkboxID}
+                    className="flex items-center gap-2 rounded-sm px-1 py-1 text-sm hover:bg-muted/60"
+                  >
+                    <Checkbox
+                      id={checkboxID}
+                      checked={visibleColumnKeys.has(column.key)}
+                      disabled={column.locked}
+                      onCheckedChange={(checked) =>
+                        toggleColumnVisibility(column, checked === true)
+                      }
+                    />
+                    <span>{column.label}</span>
+                    {column.locked && (
+                      <span className="ml-auto text-xs text-muted-foreground">Required</span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          </PopoverContent>
+        </Popover>
         <Button
           size="sm"
           variant="outline"
@@ -477,22 +690,25 @@ export function BrregSourceEntriesTable() {
                   onCheckedChange={(checked) => toggleCurrentPageSelection(checked === true)}
                 />
               </TableHead>
-              {columns.map((column) => (
-                <TableHead key={column.label}>
-                  {column.sort ? (
+              {visibleColumns.map((column) => {
+                const sortKey = column.sort;
+                return (
+                  <TableHead key={column.key}>
+                    {sortKey ? (
                     <button
                       type="button"
                       className="flex h-8 items-center gap-1 text-left font-medium"
-                      onClick={() => setSort(column.sort)}
+                      onClick={() => setSort(sortKey)}
                     >
                       {column.label}
-                      <SortIcon active={sort === column.sort} direction={sortDirection} />
+                      <SortIcon active={sort === sortKey} direction={sortDirection} />
                     </button>
-                  ) : (
-                    column.label
-                  )}
-                </TableHead>
-              ))}
+                    ) : (
+                      column.label
+                    )}
+                  </TableHead>
+                );
+              })}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -502,8 +718,8 @@ export function BrregSourceEntriesTable() {
                   <TableCell>
                     <Skeleton className="size-4" />
                   </TableCell>
-                  {columns.map((column) => (
-                    <TableCell key={column.label}>
+                  {visibleColumns.map((column) => (
+                    <TableCell key={column.key}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
                   ))}
@@ -512,7 +728,7 @@ export function BrregSourceEntriesTable() {
             ) : items.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={columns.length + 1}
+                  colSpan={visibleColumns.length + 1}
                   className="py-12 text-center text-muted-foreground"
                 >
                   No BRREG source entries found.
@@ -528,74 +744,11 @@ export function BrregSourceEntriesTable() {
                       onCheckedChange={(checked) => toggleRowSelection(item.company_id, checked === true)}
                     />
                   </TableCell>
-                  <TableCell>
-                    <div className="flex min-w-56 flex-col gap-1">
-                      <Link
-                        className="font-medium underline-offset-4 hover:underline"
-                        to={`/sources/brreg/companies/${item.company_id}`}
-                      >
-                        {item.organization_name || "Unnamed organization"}
-                      </Link>
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {item.organization_number}
-                      </span>
-                      <div className="flex flex-wrap gap-1">
-                        <Badge variant="outline">{compactStatus(item.lifecycle_status)}</Badge>
-                        {item.organization_form_label && (
-                          <Badge variant="secondary">{item.organization_form_label}</Badge>
-                        )}
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex min-w-48 flex-col gap-1">
-                      <span>{item.primary_industry_label ?? "-"}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {item.primary_industry_code ?? item.primary_nace_code ?? "-"}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex min-w-40 flex-col gap-1">
-                      <span>{item.city ?? item.municipality ?? "-"}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {item.county ?? item.postal_code ?? ""}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <WebsiteCell item={item} />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-col gap-1">
-                      <span>{item.employee_count?.toLocaleString() ?? "-"}</span>
-                      {item.employee_band && (
-                        <span className="text-xs text-muted-foreground">{item.employee_band}</span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-col gap-1">
-                      <span>{formatCurrencyCents(item.latest_revenue_usd_cents)}</span>
-                      {item.latest_financial_year && (
-                        <span className="text-xs text-muted-foreground">
-                          FY {item.latest_financial_year}
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <EntryCounts item={item} />
-                  </TableCell>
-                  <TableCell>
-                    <TranslationState item={item} />
-                  </TableCell>
-                  <TableCell>
-                    <DomainDiscoveryState item={item} />
-                  </TableCell>
-                  <TableCell>
-                    <span className="whitespace-nowrap text-sm">{formatDate(item.updated_at)}</span>
-                  </TableCell>
+                  {visibleColumns.map((column) => (
+                    <TableCell key={column.key}>
+                      <SourceEntryCell columnKey={column.key} item={item} />
+                    </TableCell>
+                  ))}
                 </TableRow>
               ))
             )}
