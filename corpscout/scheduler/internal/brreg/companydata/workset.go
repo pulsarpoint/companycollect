@@ -273,7 +273,7 @@ SET status = 'translated',
     translated_text = ?,
     error = NULL
 WHERE term_key = ?
-  AND status IN ('pending', 'cached', 'translated')
+  AND status IN ('pending', 'cached', 'translated', 'failed')
 `, item.TranslatedText, item.TermKey); err != nil {
 				return SaveTranslationWorksetBatchResult{}, errors.Wrap(err, "save successful translation workset bindings")
 			}
