@@ -73,7 +73,9 @@ type startBrregCompanyTranslationWorkflowRequest struct {
 	BatchSize            int    `json:"batch_size,omitempty"`
 	ClaimMode            string `json:"claim_mode,omitempty"`
 	MaxRequestChars      int    `json:"max_request_chars,omitempty"`
+	MaxTerms             int    `json:"max_terms,omitempty"`
 	MaxCompaniesPerBatch int    `json:"max_companies_per_batch,omitempty"`
+	MaxBatches           int    `json:"max_batches,omitempty"`
 	MaxParallelTasks     int    `json:"max_parallel_tasks,omitempty"`
 	LeaseSeconds         int    `json:"lease_seconds,omitempty"`
 	MaxAttempts          int    `json:"max_attempts,omitempty"`
@@ -320,7 +322,9 @@ func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWri
 		BatchSize:            req.BatchSize,
 		ClaimMode:            req.ClaimMode,
 		MaxRequestChars:      req.MaxRequestChars,
+		MaxTerms:             req.MaxTerms,
 		MaxCompaniesPerBatch: req.MaxCompaniesPerBatch,
+		MaxBatches:           req.MaxBatches,
 		MaxParallelTasks:     req.MaxParallelTasks,
 		LeaseSeconds:         req.LeaseSeconds,
 		MaxAttempts:          req.MaxAttempts,
@@ -337,7 +341,9 @@ func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWri
 		"batch_size", req.BatchSize,
 		"claim_mode", req.ClaimMode,
 		"max_request_chars", req.MaxRequestChars,
+		"max_terms", req.MaxTerms,
 		"max_companies_per_batch", req.MaxCompaniesPerBatch,
+		"max_batches", req.MaxBatches,
 		"max_parallel_tasks", req.MaxParallelTasks,
 		"lease_seconds", req.LeaseSeconds,
 		"max_attempts", req.MaxAttempts,
@@ -941,8 +947,14 @@ func decodeStartBrregCompanyTranslationWorkflowRequest(r *http.Request) (startBr
 	if req.MaxRequestChars < 0 {
 		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_request_chars cannot be negative")
 	}
+	if req.MaxTerms < 0 {
+		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_terms cannot be negative")
+	}
 	if req.MaxCompaniesPerBatch < 0 {
 		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_companies_per_batch cannot be negative")
+	}
+	if req.MaxBatches < 0 {
+		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_batches cannot be negative")
 	}
 	if req.MaxParallelTasks < 0 {
 		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_parallel_tasks cannot be negative")

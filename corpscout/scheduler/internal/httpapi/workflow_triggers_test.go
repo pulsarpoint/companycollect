@@ -200,7 +200,9 @@ func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T
 		"batch_size": 10,
 		"claim_mode": "auto",
 		"max_request_chars": 16000,
+		"max_terms": 250,
 		"max_companies_per_batch": 250,
+		"max_batches": 50,
 		"max_parallel_tasks": 5,
 		"lease_seconds": 900,
 		"max_attempts": 3,
@@ -224,7 +226,9 @@ func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T
 	require.Equal(t, 10, input.BatchSize)
 	require.Equal(t, "auto", input.ClaimMode)
 	require.Equal(t, 16000, input.MaxRequestChars)
+	require.Equal(t, 250, input.MaxTerms)
 	require.Equal(t, 250, input.MaxCompaniesPerBatch)
+	require.Equal(t, 50, input.MaxBatches)
 	require.Equal(t, 5, input.MaxParallelTasks)
 	require.Equal(t, 900, input.LeaseSeconds)
 	require.Equal(t, 3, input.MaxAttempts)

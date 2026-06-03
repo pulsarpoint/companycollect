@@ -13,55 +13,82 @@ func TestTranslateBrregSourceCompaniesCompletesCachedCompanies(t *testing.T) {
 	env := suite.NewTestWorkflowEnvironment()
 
 	env.RegisterWorkflow(TranslateBrregSourceCompanies)
-	env.RegisterActivityWithOptions(func(input ClaimBrregCompaniesForTranslationInput) (ClaimBrregCompaniesForTranslationResult, error) {
-		require.EqualValues(t, 10, input.Limit)
-		require.Equal(t, "fixed", input.ClaimMode)
-		require.EqualValues(t, 10, input.MaxParallelTasks)
-		require.EqualValues(t, 900, input.LeaseSeconds)
-		require.EqualValues(t, 5, input.MaxAttempts)
-		require.NotEmpty(t, input.WorkerID)
-		return ClaimBrregCompaniesForTranslationResult{
-			Companies: []ClaimedCompanyForTranslation{
-				{CompanyID: "11111111-1111-1111-1111-111111111111", OrganizationNumber: "999111222", OrganizationName: "CACHE TEST AS"},
-				{CompanyID: "22222222-2222-2222-2222-222222222222", OrganizationNumber: "999111333", OrganizationName: "NO FIELDS TEST AS"},
-			},
+	var buildInput BuildBrregTranslationWorksetInput
+	env.RegisterActivityWithOptions(func(input BuildBrregTranslationWorksetInput) (BuildBrregTranslationWorksetResult, error) {
+		buildInput = input
+		return BuildBrregTranslationWorksetResult{
+			Path:              input.Path,
+			FieldsExported:    2,
+			TermsExported:     2,
+			CompaniesExported: 2,
 		}, nil
-	}, activity.RegisterOptions{Name: claimBrregCompaniesForTranslationActivity})
-	var processed []ProcessBrregCompanyTranslationInput
-	env.RegisterActivityWithOptions(func(input ProcessBrregCompanyTranslationInput) (ProcessBrregCompanyTranslationResult, error) {
-		require.Equal(t, "v1", input.PromptVersion)
+	}, activity.RegisterOptions{Name: buildBrregTranslationWorksetActivity})
+	var claimCalls int
+	env.RegisterActivityWithOptions(func(input ClaimBrregTranslationWorksetBatchInput) (ClaimBrregTranslationWorksetBatchResult, error) {
+		claimCalls++
+		require.NotEmpty(t, input.Path)
+		require.EqualValues(t, 12000, input.MaxRequestChars)
+		require.EqualValues(t, 10, input.MaxTerms)
+		require.EqualValues(t, 5, input.MaxAttempts)
+		if claimCalls == 1 {
+			return ClaimBrregTranslationWorksetBatchResult{
+				Status:         "claimed",
+				BatchID:        44,
+				EstimatedChars: 32,
+				Terms: []TranslationWorksetTerm{
+					{TermKey: "term-1", SourceText: "Enhet", SourceTextNormalized: "enhet"},
+					{TermKey: "term-2", SourceText: "Aksjeselskap", SourceTextNormalized: "aksjeselskap"},
+				},
+			}, nil
+		}
+		return ClaimBrregTranslationWorksetBatchResult{Status: "drained"}, nil
+	}, activity.RegisterOptions{Name: claimBrregTranslationWorksetBatchActivity})
+	env.RegisterActivityWithOptions(func(input TranslateBrregTranslationWorksetBatchInput) (TranslateBrregTranslationWorksetBatchResult, error) {
+		require.EqualValues(t, 44, input.BatchID)
 		require.Equal(t, "deepseek", input.Provider)
 		require.Equal(t, "deepseek-chat", input.Model)
-		processed = append(processed, input)
-		switch input.CompanyID {
-		case "11111111-1111-1111-1111-111111111111":
-			return ProcessBrregCompanyTranslationResult{CompanyID: input.CompanyID, Status: "succeeded", FieldsSeen: 2, FieldsApplied: 2, RemainingFields: 0}, nil
-		case "22222222-2222-2222-2222-222222222222":
-			return ProcessBrregCompanyTranslationResult{CompanyID: input.CompanyID, Status: "skipped", FieldsSeen: 0, FieldsApplied: 0, RemainingFields: 0}, nil
-		default:
-			t.Fatalf("unexpected company id %s", input.CompanyID)
-			return ProcessBrregCompanyTranslationResult{}, nil
-		}
-	}, activity.RegisterOptions{Name: processBrregCompanyTranslationActivity})
+		require.Equal(t, "v1", input.PromptVersion)
+		require.Len(t, input.Terms, 2)
+		return TranslateBrregTranslationWorksetBatchResult{
+			Results: []TranslationWorksetTermResult{
+				{TermKey: "term-1", SourceText: "Enhet", SourceTextNormalized: "enhet", TranslatedText: "Entity", Status: "succeeded"},
+				{TermKey: "term-2", SourceText: "Aksjeselskap", SourceTextNormalized: "aksjeselskap", TranslatedText: "Limited liability company", Status: "succeeded"},
+			},
+		}, nil
+	}, activity.RegisterOptions{Name: translateBrregTranslationWorksetBatchActivity})
+	env.RegisterActivityWithOptions(func(input SaveBrregTranslationWorksetBatchInput) (SaveBrregTranslationWorksetBatchResult, error) {
+		require.EqualValues(t, 44, input.BatchID)
+		require.Len(t, input.Results, 2)
+		return SaveBrregTranslationWorksetBatchResult{TermsSucceeded: 2}, nil
+	}, activity.RegisterOptions{Name: saveBrregTranslationWorksetBatchActivity})
+	env.RegisterActivityWithOptions(func(input ApplyBrregTranslationWorksetInput) (ApplyBrregTranslationWorksetResult, error) {
+		require.Equal(t, buildInput.Path, input.Path)
+		return ApplyBrregTranslationWorksetResult{TermsSaved: 2, BindingsApplied: 2}, nil
+	}, activity.RegisterOptions{Name: applyBrregTranslationWorksetActivity})
 
 	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{
 		Provider: "deepseek",
 		Model:    "deepseek-chat",
+		MaxTerms: 10,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())
-	require.Len(t, processed, 2)
-	require.Equal(t, "11111111-1111-1111-1111-111111111111", processed[0].CompanyID)
-	require.Equal(t, "22222222-2222-2222-2222-222222222222", processed[1].CompanyID)
+	require.Equal(t, "v1", buildInput.PromptVersion)
+	require.EqualValues(t, 10, buildInput.CompanyLimit)
+	require.Contains(t, buildInput.Path, "/tmp/corpscout/brreg-translation")
+	require.Equal(t, 2, claimCalls)
 
 	var result TranslateBrregSourceCompaniesResult
 	require.NoError(t, env.GetWorkflowResult(&result))
 	require.Equal(t, "succeeded", result.Status)
 	require.EqualValues(t, 2, result.CompaniesClaimed)
-	require.EqualValues(t, 1, result.CompaniesSucceeded)
-	require.EqualValues(t, 1, result.CompaniesSkipped)
-	require.Zero(t, result.CompaniesFailed)
+	require.EqualValues(t, 1, result.BatchesProcessed)
+	require.EqualValues(t, 2, result.TermsClaimed)
+	require.EqualValues(t, 2, result.TermsSucceeded)
+	require.EqualValues(t, 2, result.FieldsSeen)
+	require.EqualValues(t, 2, result.FieldsApplied)
+	require.EqualValues(t, 32, result.RequestCharsClaimed)
 }
 
 func TestTranslateBrregSourceCompaniesAllRecordsClaimsUntilDrained(t *testing.T) {
@@ -69,58 +96,61 @@ func TestTranslateBrregSourceCompaniesAllRecordsClaimsUntilDrained(t *testing.T)
 	env := suite.NewTestWorkflowEnvironment()
 
 	env.RegisterWorkflow(TranslateBrregSourceCompanies)
+	var buildInput BuildBrregTranslationWorksetInput
+	env.RegisterActivityWithOptions(func(input BuildBrregTranslationWorksetInput) (BuildBrregTranslationWorksetResult, error) {
+		buildInput = input
+		return BuildBrregTranslationWorksetResult{
+			Path:              input.Path,
+			FieldsExported:    3,
+			TermsExported:     3,
+			CompaniesExported: 3,
+		}, nil
+	}, activity.RegisterOptions{Name: buildBrregTranslationWorksetActivity})
 	var claimCalls int
-	env.RegisterActivityWithOptions(func(input ClaimBrregCompaniesForTranslationInput) (ClaimBrregCompaniesForTranslationResult, error) {
+	env.RegisterActivityWithOptions(func(input ClaimBrregTranslationWorksetBatchInput) (ClaimBrregTranslationWorksetBatchResult, error) {
 		claimCalls++
-		require.EqualValues(t, 10, input.Limit)
-		require.Equal(t, "auto", input.ClaimMode)
 		require.EqualValues(t, 12000, input.MaxRequestChars)
-		require.EqualValues(t, 500, input.MaxCompaniesPerBatch)
+		require.EqualValues(t, 10, input.MaxTerms)
 		switch claimCalls {
 		case 1:
-			return ClaimBrregCompaniesForTranslationResult{
-				StatusRowsInserted: 2,
-				Companies: []ClaimedCompanyForTranslation{
-					{CompanyID: "11111111-1111-1111-1111-111111111111", OrganizationNumber: "999111222", OrganizationName: "FIRST AS"},
-					{CompanyID: "22222222-2222-2222-2222-222222222222", OrganizationNumber: "999111333", OrganizationName: "SECOND AS"},
-				},
-			}, nil
+			return ClaimBrregTranslationWorksetBatchResult{Status: "claimed", BatchID: 1, EstimatedChars: 12, Terms: []TranslationWorksetTerm{{TermKey: "term-1", SourceText: "Enhet", SourceTextNormalized: "enhet"}}}, nil
 		case 2:
-			return ClaimBrregCompaniesForTranslationResult{
-				StatusRowsInserted: 1,
-				Companies: []ClaimedCompanyForTranslation{
-					{CompanyID: "33333333-3333-3333-3333-333333333333", OrganizationNumber: "999111444", OrganizationName: "THIRD AS"},
-				},
-			}, nil
+			return ClaimBrregTranslationWorksetBatchResult{Status: "claimed", BatchID: 2, EstimatedChars: 20, Terms: []TranslationWorksetTerm{{TermKey: "term-2", SourceText: "Aksjeselskap", SourceTextNormalized: "aksjeselskap"}, {TermKey: "term-3", SourceText: "Aksjekapital", SourceTextNormalized: "aksjekapital"}}}, nil
 		default:
-			return ClaimBrregCompaniesForTranslationResult{}, nil
+			return ClaimBrregTranslationWorksetBatchResult{Status: "drained"}, nil
 		}
-	}, activity.RegisterOptions{Name: claimBrregCompaniesForTranslationActivity})
-	var processed []string
-	env.RegisterActivityWithOptions(func(input ProcessBrregCompanyTranslationInput) (ProcessBrregCompanyTranslationResult, error) {
-		processed = append(processed, input.CompanyID)
-		return ProcessBrregCompanyTranslationResult{CompanyID: input.CompanyID, Status: "succeeded", FieldsSeen: 1, FieldsApplied: 1}, nil
-	}, activity.RegisterOptions{Name: processBrregCompanyTranslationActivity})
+	}, activity.RegisterOptions{Name: claimBrregTranslationWorksetBatchActivity})
+	env.RegisterActivityWithOptions(func(input TranslateBrregTranslationWorksetBatchInput) (TranslateBrregTranslationWorksetBatchResult, error) {
+		results := make([]TranslationWorksetTermResult, 0, len(input.Terms))
+		for _, term := range input.Terms {
+			results = append(results, TranslationWorksetTermResult{TermKey: term.TermKey, SourceText: term.SourceText, SourceTextNormalized: term.SourceTextNormalized, TranslatedText: "translated", Status: "succeeded"})
+		}
+		return TranslateBrregTranslationWorksetBatchResult{Results: results}, nil
+	}, activity.RegisterOptions{Name: translateBrregTranslationWorksetBatchActivity})
+	env.RegisterActivityWithOptions(func(input SaveBrregTranslationWorksetBatchInput) (SaveBrregTranslationWorksetBatchResult, error) {
+		return SaveBrregTranslationWorksetBatchResult{TermsSucceeded: int32(len(input.Results))}, nil
+	}, activity.RegisterOptions{Name: saveBrregTranslationWorksetBatchActivity})
+	env.RegisterActivityWithOptions(func(ApplyBrregTranslationWorksetInput) (ApplyBrregTranslationWorksetResult, error) {
+		return ApplyBrregTranslationWorksetResult{TermsSaved: 3, BindingsApplied: 3}, nil
+	}, activity.RegisterOptions{Name: applyBrregTranslationWorksetActivity})
 
-	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{AllRecords: true})
+	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{AllRecords: true, MaxTerms: 10})
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())
+	require.EqualValues(t, 0, buildInput.CompanyLimit)
 	require.Equal(t, 3, claimCalls)
-	require.Equal(t, []string{
-		"11111111-1111-1111-1111-111111111111",
-		"22222222-2222-2222-2222-222222222222",
-		"33333333-3333-3333-3333-333333333333",
-	}, processed)
 
 	var result TranslateBrregSourceCompaniesResult
 	require.NoError(t, env.GetWorkflowResult(&result))
 	require.Equal(t, "succeeded", result.Status)
-	require.EqualValues(t, 3, result.StatusRowsInserted)
 	require.EqualValues(t, 3, result.CompaniesClaimed)
 	require.EqualValues(t, 3, result.CompaniesSucceeded)
 	require.EqualValues(t, 3, result.FieldsSeen)
 	require.EqualValues(t, 3, result.FieldsApplied)
+	require.EqualValues(t, 2, result.BatchesProcessed)
+	require.EqualValues(t, 3, result.TermsClaimed)
+	require.EqualValues(t, 3, result.TermsSucceeded)
 }
 
 func TestTranslateBrregSourceCompaniesFailsWhenAllClaimedCompaniesMissCache(t *testing.T) {
@@ -128,25 +158,31 @@ func TestTranslateBrregSourceCompaniesFailsWhenAllClaimedCompaniesMissCache(t *t
 	env := suite.NewTestWorkflowEnvironment()
 
 	env.RegisterWorkflow(TranslateBrregSourceCompanies)
-	env.RegisterActivityWithOptions(func(ClaimBrregCompaniesForTranslationInput) (ClaimBrregCompaniesForTranslationResult, error) {
-		return ClaimBrregCompaniesForTranslationResult{
-			Companies: []ClaimedCompanyForTranslation{
-				{CompanyID: "33333333-3333-3333-3333-333333333333", OrganizationNumber: "999111444", OrganizationName: "MISSING CACHE TEST AS"},
-			},
-		}, nil
-	}, activity.RegisterOptions{Name: claimBrregCompaniesForTranslationActivity})
-	var failed ProcessBrregCompanyTranslationInput
-	env.RegisterActivityWithOptions(func(input ProcessBrregCompanyTranslationInput) (ProcessBrregCompanyTranslationResult, error) {
-		failed = input
-		return ProcessBrregCompanyTranslationResult{CompanyID: input.CompanyID, Status: "failed", FieldsSeen: 3, FieldsApplied: 1, RemainingFields: 2}, nil
-	}, activity.RegisterOptions{Name: processBrregCompanyTranslationActivity})
+	env.RegisterActivityWithOptions(func(input BuildBrregTranslationWorksetInput) (BuildBrregTranslationWorksetResult, error) {
+		return BuildBrregTranslationWorksetResult{Path: input.Path, FieldsExported: 1, TermsExported: 1, CompaniesExported: 1}, nil
+	}, activity.RegisterOptions{Name: buildBrregTranslationWorksetActivity})
+	var claimCalls int
+	env.RegisterActivityWithOptions(func(ClaimBrregTranslationWorksetBatchInput) (ClaimBrregTranslationWorksetBatchResult, error) {
+		claimCalls++
+		if claimCalls == 1 {
+			return ClaimBrregTranslationWorksetBatchResult{Status: "claimed", BatchID: 1, Terms: []TranslationWorksetTerm{{TermKey: "term-1", SourceText: "Enhet", SourceTextNormalized: "enhet"}}}, nil
+		}
+		return ClaimBrregTranslationWorksetBatchResult{Status: "drained"}, nil
+	}, activity.RegisterOptions{Name: claimBrregTranslationWorksetBatchActivity})
+	env.RegisterActivityWithOptions(func(TranslateBrregTranslationWorksetBatchInput) (TranslateBrregTranslationWorksetBatchResult, error) {
+		return TranslateBrregTranslationWorksetBatchResult{Results: []TranslationWorksetTermResult{{TermKey: "term-1", Status: "failed_retryable", Error: "temporary"}}}, nil
+	}, activity.RegisterOptions{Name: translateBrregTranslationWorksetBatchActivity})
+	env.RegisterActivityWithOptions(func(SaveBrregTranslationWorksetBatchInput) (SaveBrregTranslationWorksetBatchResult, error) {
+		return SaveBrregTranslationWorksetBatchResult{TermsFailed: 1}, nil
+	}, activity.RegisterOptions{Name: saveBrregTranslationWorksetBatchActivity})
+	env.RegisterActivityWithOptions(func(ApplyBrregTranslationWorksetInput) (ApplyBrregTranslationWorksetResult, error) {
+		return ApplyBrregTranslationWorksetResult{}, nil
+	}, activity.RegisterOptions{Name: applyBrregTranslationWorksetActivity})
 
 	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{})
 
 	require.True(t, env.IsWorkflowCompleted())
-	require.ErrorContains(t, env.GetWorkflowError(), "all company translation records failed")
-	require.Equal(t, "33333333-3333-3333-3333-333333333333", failed.CompanyID)
-	require.EqualValues(t, 5, failed.MaxAttempts)
+	require.ErrorContains(t, env.GetWorkflowError(), "all company translation terms failed")
 }
 
 func TestTranslateBrregSourceCompaniesDrainsWhenNothingClaimed(t *testing.T) {
@@ -154,9 +190,9 @@ func TestTranslateBrregSourceCompaniesDrainsWhenNothingClaimed(t *testing.T) {
 	env := suite.NewTestWorkflowEnvironment()
 
 	env.RegisterWorkflow(TranslateBrregSourceCompanies)
-	env.RegisterActivityWithOptions(func(ClaimBrregCompaniesForTranslationInput) (ClaimBrregCompaniesForTranslationResult, error) {
-		return ClaimBrregCompaniesForTranslationResult{}, nil
-	}, activity.RegisterOptions{Name: claimBrregCompaniesForTranslationActivity})
+	env.RegisterActivityWithOptions(func(input BuildBrregTranslationWorksetInput) (BuildBrregTranslationWorksetResult, error) {
+		return BuildBrregTranslationWorksetResult{Path: input.Path}, nil
+	}, activity.RegisterOptions{Name: buildBrregTranslationWorksetActivity})
 
 	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{})
 

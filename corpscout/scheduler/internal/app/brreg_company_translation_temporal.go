@@ -32,4 +32,24 @@ func registerBrregCompanyTranslationWorker(worker temporalworker.Worker, resourc
 		resources.companyTranslation.ProcessBrregCompanyTranslation,
 		activity.RegisterOptions{Name: "ProcessBrregCompanyTranslation"},
 	)
+	worker.RegisterActivityWithOptions(
+		resources.companyTranslation.BuildBrregTranslationWorkset,
+		activity.RegisterOptions{Name: "BuildBrregTranslationWorkset"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.companyTranslation.ClaimBrregTranslationWorksetBatch,
+		activity.RegisterOptions{Name: "ClaimBrregTranslationWorksetBatch"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.companyTranslation.TranslateBrregTranslationWorksetBatch,
+		activity.RegisterOptions{Name: "TranslateBrregTranslationWorksetBatch"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.companyTranslation.SaveBrregTranslationWorksetBatch,
+		activity.RegisterOptions{Name: "SaveBrregTranslationWorksetBatch"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.companyTranslation.ApplyBrregTranslationWorkset,
+		activity.RegisterOptions{Name: "ApplyBrregTranslationWorkset"},
+	)
 }

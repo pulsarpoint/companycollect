@@ -25,7 +25,8 @@ const (
 type BuildTranslationWorksetCommand struct {
 	Path          string
 	PromptVersion string
-	Limit         int32
+	CompanyLimit  int32
+	FieldLimit    int32
 }
 
 type BuildTranslationWorksetResult struct {
@@ -436,6 +437,14 @@ WITH missing AS (
     missing.priority
   FROM brreg_source.v_missing_translations missing
   WHERE nullif(btrim(missing.source_text), '') IS NOT NULL
+    AND (
+      $2::integer <= 0 OR missing.company_id IN (
+        SELECT company_id
+        FROM brreg_source.v_companies_missing_translations
+        ORDER BY company_id
+        LIMIT $2
+      )
+    )
 )
 SELECT
   missing.company_id,
@@ -457,8 +466,8 @@ LEFT JOIN brreg_source.translation_terms term
  AND term.status = 'succeeded'
  AND nullif(btrim(term.translated_text), '') IS NOT NULL
 ORDER BY missing.priority, missing.company_id, missing.source_table, missing.source_row_id, missing.target_column
-LIMIT NULLIF(GREATEST($2::integer, 0), 0)
-`, command.PromptVersion, command.Limit)
+LIMIT NULLIF(GREATEST($3::integer, 0), 0)
+`, command.PromptVersion, command.CompanyLimit, command.FieldLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "load brreg translation workset rows")
 	}
