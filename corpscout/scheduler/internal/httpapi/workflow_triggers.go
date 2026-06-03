@@ -21,7 +21,6 @@ import (
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 )
 
-const defaultBrregTranslationProvider = "default"
 const defaultBrregDomainSearchProvider = "default"
 const defaultBrregDomainSearchEngine = "duckduckgo"
 const defaultBrregWorkflowRunsLimit = 50
@@ -36,36 +35,6 @@ type startWorkflowResponse struct {
 	Workflow      string `json:"workflow"`
 	WorkflowID    string `json:"workflow_id"`
 	WorkflowRunID string `json:"workflow_run_id"`
-}
-
-type startBrregTranslationWorkflowRequest struct {
-	IDs         []string          `json:"ids,omitempty"`
-	Filters     map[string]string `json:"filters,omitempty"`
-	Limit       int               `json:"limit,omitempty"`
-	BatchSize   int               `json:"batch_size,omitempty"`
-	MaxAttempts int               `json:"max_attempts,omitempty"`
-	Trigger     string            `json:"trigger,omitempty"`
-
-	MaxParallelTasks  int    `json:"max_parallel_tasks,omitempty"`
-	LeaseSeconds      int    `json:"lease_seconds,omitempty"`
-	Provider          string `json:"provider,omitempty"`
-	Model             string `json:"model,omitempty"`
-	PromptVersion     string `json:"prompt_version,omitempty"`
-	SourceLang        string `json:"source_lang,omitempty"`
-	TargetLang        string `json:"target_lang,omitempty"`
-	MaxServiceRetries int    `json:"max_service_retries,omitempty"`
-}
-
-type startBrregTermTranslationWorkflowRequest struct {
-	AllRecords    bool   `json:"all_records,omitempty"`
-	Limit         int    `json:"limit,omitempty"`
-	TermBatchSize int    `json:"term_batch_size,omitempty"`
-	MaxAttempts   int    `json:"max_attempts,omitempty"`
-	MaxLoops      int    `json:"max_loops,omitempty"`
-	Provider      string `json:"provider,omitempty"`
-	Model         string `json:"model,omitempty"`
-	PromptVersion string `json:"prompt_version,omitempty"`
-	Trigger       string `json:"trigger,omitempty"`
 }
 
 type startBrregCompanyTranslationWorkflowRequest struct {
@@ -191,118 +160,6 @@ type exchangeRateSyncWorkflowRunResponse struct {
 	StartTime     *time.Time `json:"start_time,omitempty"`
 	CloseTime     *time.Time `json:"close_time,omitempty"`
 	ExecutionTime *time.Time `json:"execution_time,omitempty"`
-}
-
-func (h *Handlers) handleStartBrregTranslationWorkflow(w http.ResponseWriter, r *http.Request) {
-	if h.temporal == nil {
-		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
-		return
-	}
-
-	req, err := decodeStartBrregTranslationWorkflowRequest(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	input := brregworkflow.TranslateBrregRawInputsInput{
-		IDs:     req.IDs,
-		Filters: req.Filters,
-		Limit:   req.Limit,
-		Trigger: req.Trigger,
-	}
-	workflowID := newWorkflowID("brreg-translation")
-	slog.Debug("starting brreg translation workflow",
-		"workflow_id", workflowID,
-		"task_queue", brregworkflow.TranslateBrregRawInputsTaskQueue,
-		"ids_count", len(req.IDs),
-		"filters_count", len(req.Filters),
-		"limit", req.Limit,
-		"trigger", req.Trigger,
-	)
-	run, err := h.temporal.ExecuteWorkflow(
-		r.Context(),
-		client.StartWorkflowOptions{
-			ID:        workflowID,
-			TaskQueue: brregworkflow.TranslateBrregRawInputsTaskQueue,
-		},
-		brregworkflow.TranslateBrregRawInputs,
-		input,
-	)
-	if err != nil {
-		slog.Error("start brreg translation workflow", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to start workflow")
-		return
-	}
-	slog.Debug("brreg translation workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
-
-	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
-		Status:        "started",
-		Workflow:      brregworkflow.TranslateBrregRawInputsWorkflowName,
-		WorkflowID:    workflowID,
-		WorkflowRunID: run.GetRunID(),
-	})
-}
-
-func (h *Handlers) handleStartBrregTermTranslationWorkflow(w http.ResponseWriter, r *http.Request) {
-	if h.temporal == nil {
-		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
-		return
-	}
-
-	req, err := decodeStartBrregTermTranslationWorkflowRequest(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	input := brregworkflow.TranslateBrregSourceTermsInput{
-		AllRecords:    req.AllRecords,
-		Limit:         req.Limit,
-		TermBatchSize: req.TermBatchSize,
-		MaxAttempts:   req.MaxAttempts,
-		MaxLoops:      req.MaxLoops,
-		Provider:      req.Provider,
-		Model:         req.Model,
-		PromptVersion: req.PromptVersion,
-		Trigger:       req.Trigger,
-	}
-	workflowID := newWorkflowID("brreg-term-translation")
-	slog.Debug("starting brreg term translation workflow",
-		"workflow_id", workflowID,
-		"task_queue", brregworkflow.TranslateBrregSourceTermsTaskQueue,
-		"all_records", req.AllRecords,
-		"limit", req.Limit,
-		"term_batch_size", req.TermBatchSize,
-		"max_attempts", req.MaxAttempts,
-		"max_loops", req.MaxLoops,
-		"provider", req.Provider,
-		"model", req.Model,
-		"prompt_version", req.PromptVersion,
-		"trigger", req.Trigger,
-	)
-	run, err := h.temporal.ExecuteWorkflow(
-		r.Context(),
-		client.StartWorkflowOptions{
-			ID:        workflowID,
-			TaskQueue: brregworkflow.TranslateBrregSourceTermsTaskQueue,
-		},
-		brregworkflow.TranslateBrregSourceTerms,
-		input,
-	)
-	if err != nil {
-		slog.Error("start brreg term translation workflow", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to start workflow")
-		return
-	}
-	slog.Debug("brreg term translation workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
-
-	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
-		Status:        "started",
-		Workflow:      brregworkflow.TranslateBrregSourceTermsWorkflowName,
-		WorkflowID:    workflowID,
-		WorkflowRunID: run.GetRunID(),
-	})
 }
 
 func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -872,57 +729,6 @@ func (h *Handlers) handleListExchangeRateSyncWorkflowRuns(w http.ResponseWriter,
 	writeJSON(w, http.StatusOK, exchangeRateSyncWorkflowRunListResponse{Items: items})
 }
 
-func decodeStartBrregTranslationWorkflowRequest(r *http.Request) (startBrregTranslationWorkflowRequest, error) {
-	var req startBrregTranslationWorkflowRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-		return startBrregTranslationWorkflowRequest{}, errors.New("invalid request body")
-	}
-	req.Trigger = strings.TrimSpace(req.Trigger)
-	if req.Trigger == "" {
-		req.Trigger = "manual"
-	}
-	if req.Limit < 0 {
-		return startBrregTranslationWorkflowRequest{}, errors.New("limit must be greater than zero when provided")
-	}
-	for _, id := range req.IDs {
-		if _, err := uuid.Parse(id); err != nil {
-			return startBrregTranslationWorkflowRequest{}, errors.New("ids must contain valid UUID values")
-		}
-	}
-	return req, nil
-}
-
-func decodeStartBrregTermTranslationWorkflowRequest(r *http.Request) (startBrregTermTranslationWorkflowRequest, error) {
-	var req startBrregTermTranslationWorkflowRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-		return startBrregTermTranslationWorkflowRequest{}, errors.New("invalid request body")
-	}
-	req.Provider = strings.TrimSpace(req.Provider)
-	req.Model = strings.TrimSpace(req.Model)
-	req.PromptVersion = strings.TrimSpace(req.PromptVersion)
-	req.Trigger = strings.TrimSpace(req.Trigger)
-	if req.Trigger == "" {
-		req.Trigger = "manual"
-	}
-	if req.Limit < 0 {
-		return startBrregTermTranslationWorkflowRequest{}, errors.New("limit cannot be negative")
-	}
-	if req.TermBatchSize < 0 {
-		return startBrregTermTranslationWorkflowRequest{}, errors.New("term_batch_size cannot be negative")
-	}
-	if req.MaxAttempts < 0 {
-		return startBrregTermTranslationWorkflowRequest{}, errors.New("max_attempts cannot be negative")
-	}
-	if req.MaxLoops < 0 {
-		return startBrregTermTranslationWorkflowRequest{}, errors.New("max_loops cannot be negative")
-	}
-	return req, nil
-}
-
 func decodeStartBrregCompanyTranslationWorkflowRequest(r *http.Request) (startBrregCompanyTranslationWorkflowRequest, error) {
 	var req startBrregCompanyTranslationWorkflowRequest
 	decoder := json.NewDecoder(r.Body)
@@ -1219,16 +1025,6 @@ type brregWorkflowPrefix struct {
 }
 
 var brregWorkflowPrefixes = []brregWorkflowPrefix{
-	{
-		Prefix:       "brreg-translation",
-		Label:        "Translation",
-		WorkflowType: brregworkflow.TranslateBrregRawInputsWorkflowName,
-	},
-	{
-		Prefix:       "brreg-term-translation",
-		Label:        "Term translation",
-		WorkflowType: brregworkflow.TranslateBrregSourceTermsWorkflowName,
-	},
 	{
 		Prefix:       "brreg-company-translation",
 		Label:        "Company translation",

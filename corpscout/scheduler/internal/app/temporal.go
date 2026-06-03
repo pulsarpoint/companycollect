@@ -3,11 +3,9 @@ package app
 import (
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/nats-io/nats.go"
 	"go.temporal.io/sdk/client"
 	temporalworker "go.temporal.io/sdk/worker"
 
@@ -24,18 +22,15 @@ import (
 )
 
 type temporalWorkerResources struct {
-	translationClient      *translationclient.Client
-	translationActions     *brregactions.TranslationActions
-	companyTranslation     *brregactions.CompanyTranslationActions
-	termTranslationNATS    *nats.Conn
-	termTranslationActions *brregactions.TermTranslationActions
-	crawlClient            *crawlclient.Client
-	domainSearchActions    *brregactions.DomainSearchActions
-	bulkIngestActions      *brregactions.BulkIngestActions
-	sourceProfileActions   *brregactions.SourceProfileActions
-	sourceCapitalFX        *brregactions.SourceCapitalFXActions
-	naceTaxonomyActions    *nacetaxonomy.Actions
-	fxActions              *fx.Actions
+	translationClient    *translationclient.Client
+	companyTranslation   *brregactions.CompanyTranslationActions
+	crawlClient          *crawlclient.Client
+	domainSearchActions  *brregactions.DomainSearchActions
+	bulkIngestActions    *brregactions.BulkIngestActions
+	sourceProfileActions *brregactions.SourceProfileActions
+	sourceCapitalFX      *brregactions.SourceCapitalFXActions
+	naceTaxonomyActions  *nacetaxonomy.Actions
+	fxActions            *fx.Actions
 }
 
 func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore *llmproviders.Store, s3 *s3client.Client) (*temporalWorkerResources, error) {
@@ -63,30 +58,18 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 		"page_analyze_subject", crawlclient.DefaultPageAnalyzeSubject,
 		"request_timeout", cfg.NATSRequestTimeout.String(),
 	)
-	termTranslationNATS, err := nats.Connect(cfg.NATSURL, nats.Timeout(10*time.Second))
-	if err != nil {
-		translator.Close()
-		crawler.Close()
-		return nil, errors.Wrap(err, "create brreg term translation nats publisher")
-	}
-	slog.Debug("created brreg term translation nats publisher",
-		"subject", translationclient.DefaultTermTranslationRequestSubject,
-	)
 	gateway := brregdb.New(pool)
 	brregCompanyData := companydata.New(pool)
 	return &temporalWorkerResources{
-		translationClient:      translator,
-		translationActions:     brregactions.NewTranslationActions(pool, translator, llmStore),
-		companyTranslation:     brregactions.NewCompanyTranslationActions(brregCompanyData, translator),
-		termTranslationNATS:    termTranslationNATS,
-		termTranslationActions: brregactions.NewTermTranslationActions(gateway, termTranslationNATS),
-		crawlClient:            crawler,
-		domainSearchActions:    brregactions.NewDomainSearchActions(gateway, crawler, llmStore, s3),
-		bulkIngestActions:      brregactions.NewBulkIngestActions(gateway, http.DefaultClient, cfg.BRREGBulkSourceURL),
-		sourceProfileActions:   brregactions.NewSourceProfileActions(gateway),
-		sourceCapitalFX:        brregactions.NewSourceCapitalFXActions(gateway),
-		naceTaxonomyActions:    nacetaxonomy.NewActions(pool, http.DefaultClient),
-		fxActions:              fx.NewActions(pool, http.DefaultClient, cfg.FXECBSourceURL),
+		translationClient:    translator,
+		companyTranslation:   brregactions.NewCompanyTranslationActions(brregCompanyData, translator),
+		crawlClient:          crawler,
+		domainSearchActions:  brregactions.NewDomainSearchActions(gateway, crawler, llmStore, s3),
+		bulkIngestActions:    brregactions.NewBulkIngestActions(gateway, http.DefaultClient, cfg.BRREGBulkSourceURL),
+		sourceProfileActions: brregactions.NewSourceProfileActions(gateway),
+		sourceCapitalFX:      brregactions.NewSourceCapitalFXActions(gateway),
+		naceTaxonomyActions:  nacetaxonomy.NewActions(pool, http.DefaultClient),
+		fxActions:            fx.NewActions(pool, http.DefaultClient, cfg.FXECBSourceURL),
 	}, nil
 }
 
@@ -99,18 +82,12 @@ func (r *temporalWorkerResources) Close() {
 		slog.Debug("closing brreg crawl nats client")
 		r.crawlClient.Close()
 	}
-	if r != nil && r.termTranslationNATS != nil {
-		slog.Debug("closing brreg term translation nats publisher")
-		r.termTranslationNATS.Close()
-	}
 }
 
 func newTemporalWorkers(temporalClient client.Client, resources *temporalWorkerResources) []temporalworker.Worker {
 	slog.Debug("creating temporal workers")
 	return []temporalworker.Worker{
-		newBrregTranslationTemporalWorker(temporalClient, resources),
 		newBrregCompanyTranslationTemporalWorker(temporalClient, resources),
-		newBrregTermTranslationTemporalWorker(temporalClient, resources),
 		newBrregDomainSearchTemporalWorker(temporalClient, resources),
 		newBrregBulkIngestTemporalWorker(temporalClient, resources),
 		newBrregSourceProfileTemporalWorker(temporalClient, resources),

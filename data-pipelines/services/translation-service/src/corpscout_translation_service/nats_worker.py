@@ -26,7 +26,6 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_NATS_SUBJECT = "brreg.translation.translate"
 DEFAULT_NATS_QUEUE = "brreg-translation"
 TERM_REQUEST_SUBJECT = "brreg.translation.terms.request"
-TERM_RESULT_SUBJECT = "brreg.translation.terms.result"
 TERM_KEY_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -34,10 +33,6 @@ class NatsMessage(Protocol):
     data: bytes
 
     async def respond(self, payload: bytes) -> None: ...
-
-
-class NatsPublisher(Protocol):
-    async def publish(self, subject: str, payload: bytes) -> None: ...
 
 
 class BrregTranslationService(Protocol):
@@ -69,7 +64,6 @@ async def handle_brreg_translation_message(
 async def handle_brreg_term_translation_message(
     message: NatsMessage,
     service: BrregTranslationService,
-    publisher: NatsPublisher,
 ) -> None:
     payload: Any | None = None
     try:
@@ -78,7 +72,6 @@ async def handle_brreg_term_translation_message(
     except (UnicodeDecodeError, json.JSONDecodeError, ValidationError) as exc:
         response = _failed_term_response_from_payload(payload, exc)
         if response is not None:
-            await _publish_terms_response(publisher, response)
             await _respond_if_supported(message, response)
         LOGGER.exception("Invalid BRREG term translation NATS payload")
         return
@@ -89,7 +82,6 @@ async def handle_brreg_term_translation_message(
         LOGGER.exception("BRREG term translation NATS handler failed")
         response = _failed_term_response(request, "translation_worker_error", str(exc))
 
-    await _publish_terms_response(publisher, response)
     await _respond_if_supported(message, response)
 
 
@@ -116,7 +108,7 @@ async def run_worker() -> None:
 
     async def term_callback(message: Any) -> None:
         async with semaphore:
-            await handle_brreg_term_translation_message(message, service, nc)
+            await handle_brreg_term_translation_message(message, service)
 
     try:
         await nc.subscribe(subject, queue=queue, cb=callback)
@@ -180,11 +172,6 @@ def _failed_response(
 async def _respond(message: NatsMessage, response: BrregTranslateResponse) -> None:
     payload = response.model_dump_json(exclude_none=True).encode("utf-8")
     await message.respond(payload)
-
-
-async def _publish_terms_response(publisher: NatsPublisher, response: TermTranslationResponse) -> None:
-    payload = response.model_dump_json(exclude_none=True).encode("utf-8")
-    await publisher.publish(TERM_RESULT_SUBJECT, payload)
 
 
 async def _respond_if_supported(message: NatsMessage, response: TermTranslationResponse) -> None:

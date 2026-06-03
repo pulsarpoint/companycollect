@@ -230,35 +230,6 @@ export interface StartWorkflowResponse {
   workflow_run_id: string;
 }
 
-export interface BrregTranslationRequest {
-  ids?: string[];
-  filters?: Record<string, string>;
-  limit?: number;
-  batch_size?: number;
-  max_attempts?: number;
-  max_parallel_tasks?: number;
-  lease_seconds?: number;
-  provider?: string;
-  model?: string;
-  prompt_version?: string;
-  source_lang?: string;
-  target_lang?: string;
-  max_service_retries?: number;
-  trigger?: string;
-}
-
-export interface BrregTermTranslationRequest {
-  all_records?: boolean;
-  limit?: number;
-  term_batch_size?: number;
-  max_attempts?: number;
-  max_loops?: number;
-  provider?: string;
-  model?: string;
-  prompt_version?: string;
-  trigger?: string;
-}
-
 export interface BrregCompanyTranslationRequest {
   all_records?: boolean;
   batch_size?: number;

@@ -7,7 +7,6 @@ import pytest
 
 from corpscout_translation_service.models import BrregTranslateResponse, TermTranslationResponse
 from corpscout_translation_service.nats_worker import (
-    TERM_RESULT_SUBJECT,
     handle_brreg_term_translation_message,
     handle_brreg_translation_message,
 )
@@ -97,7 +96,7 @@ async def test_nats_handler_returns_structured_error_for_invalid_payload() -> No
 
 
 @pytest.mark.asyncio
-async def test_term_nats_handler_publishes_result_response_without_core_nats_ack() -> None:
+async def test_term_nats_handler_replies_with_result_response_without_core_nats_ack() -> None:
     service = FakeTermTranslationService(
         TermTranslationResponse(
             request_id="request-1",
@@ -117,7 +116,6 @@ async def test_term_nats_handler_publishes_result_response_without_core_nats_ack
             ],
         )
     )
-    publisher = FakeNatsPublisher()
     message = FakeAckNatsMessage(
         {
             "request_id": "request-1",
@@ -137,20 +135,17 @@ async def test_term_nats_handler_publishes_result_response_without_core_nats_ack
         }
     )
 
-    await handle_brreg_term_translation_message(message, service, publisher)
+    await handle_brreg_term_translation_message(message, service)
 
     assert message.ack_count == 0
     assert service.requests[0]["request_id"] == "request-1"
     assert service.requests[0]["terms"][0]["term_key"] == TERM_KEY_1
-    assert publisher.published[0][0] == TERM_RESULT_SUBJECT
-    body = json.loads(publisher.published[0][1].decode("utf-8"))
+    assert len(message.replies) == 1
+    body = json.loads(message.replies[0].decode("utf-8"))
     assert body["request_id"] == "request-1"
     assert body["results"][0]["term_key"] == TERM_KEY_1
     assert body["results"][0]["translated_text"] == "Aksjeselskap EN"
     assert body["failures"] == []
-    assert len(message.replies) == 1
-    reply_body = json.loads(message.replies[0].decode("utf-8"))
-    assert reply_body == body
 
 
 @pytest.mark.asyncio
@@ -166,7 +161,6 @@ async def test_term_nats_handler_drops_invalid_term_key_without_core_nats_ack() 
             prompt_version="v1",
         )
     )
-    publisher = FakeNatsPublisher()
     message = FakeAckNatsMessage(
         {
             "request_id": "request-1",
@@ -186,11 +180,11 @@ async def test_term_nats_handler_drops_invalid_term_key_without_core_nats_ack() 
         }
     )
 
-    await handle_brreg_term_translation_message(message, service, publisher)
+    await handle_brreg_term_translation_message(message, service)
 
     assert message.ack_count == 0
     assert service.requests == []
-    assert publisher.published == []
+    assert message.replies == []
 
 
 @pytest.mark.asyncio
@@ -206,7 +200,6 @@ async def test_term_nats_handler_deduplicates_invalid_payload_failures_by_term_k
             prompt_version="v1",
         )
     )
-    publisher = FakeNatsPublisher()
     message = FakeAckNatsMessage(
         {
             "request_id": "request-1",
@@ -231,16 +224,13 @@ async def test_term_nats_handler_deduplicates_invalid_payload_failures_by_term_k
         }
     )
 
-    await handle_brreg_term_translation_message(message, service, publisher)
+    await handle_brreg_term_translation_message(message, service)
 
     assert message.ack_count == 0
     assert service.requests == []
-    assert len(publisher.published) == 1
-    body = json.loads(publisher.published[0][1].decode("utf-8"))
-    assert [failure["term_key"] for failure in body["failures"]] == [TERM_KEY_1]
     assert len(message.replies) == 1
-    reply_body = json.loads(message.replies[0].decode("utf-8"))
-    assert reply_body == body
+    body = json.loads(message.replies[0].decode("utf-8"))
+    assert [failure["term_key"] for failure in body["failures"]] == [TERM_KEY_1]
 
 
 class FakeBrregTranslationService:
@@ -261,14 +251,6 @@ class FakeTermTranslationService:
     async def translate_brreg_terms(self, request: Any) -> TermTranslationResponse:
         self.requests.append(request.model_dump(mode="json"))
         return self.response
-
-
-class FakeNatsPublisher:
-    def __init__(self) -> None:
-        self.published: list[tuple[str, bytes]] = []
-
-    async def publish(self, subject: str, payload: bytes) -> None:
-        self.published.append((subject, payload))
 
 
 class FakeNatsMessage:

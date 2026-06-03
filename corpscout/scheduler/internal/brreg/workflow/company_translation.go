@@ -16,8 +16,6 @@ const (
 	TranslateBrregSourceCompaniesTaskQueue    = "brreg-company-translation"
 	TranslateBrregSourceCompaniesWorkflowName = "TranslateBrregSourceCompanies"
 
-	claimBrregCompaniesForTranslationActivity     = "ClaimBrregCompaniesForTranslation"
-	processBrregCompanyTranslationActivity        = "ProcessBrregCompanyTranslation"
 	buildBrregTranslationWorksetActivity          = "BuildBrregTranslationWorkset"
 	claimBrregTranslationWorksetBatchActivity     = "ClaimBrregTranslationWorksetBatch"
 	translateBrregTranslationWorksetBatchActivity = "TranslateBrregTranslationWorksetBatch"
@@ -34,13 +32,11 @@ const (
 	defaultCompanyTranslationMaxBatches       = 200
 	defaultCompanyTranslationPromptVersion    = "v1"
 	defaultCompanyTranslationTrigger          = "manual"
+
+	companyTranslationClaimModeAuto  = "auto"
+	companyTranslationClaimModeFixed = "fixed"
 )
 
-type ClaimBrregCompaniesForTranslationInput = actions.ClaimBrregCompaniesForTranslationInput
-type ClaimBrregCompaniesForTranslationResult = actions.ClaimBrregCompaniesForTranslationResult
-type ClaimedCompanyForTranslation = actions.ClaimedCompanyForTranslation
-type ProcessBrregCompanyTranslationInput = actions.ProcessBrregCompanyTranslationInput
-type ProcessBrregCompanyTranslationResult = actions.ProcessBrregCompanyTranslationResult
 type BuildBrregTranslationWorksetInput = actions.BuildBrregTranslationWorksetInput
 type BuildBrregTranslationWorksetResult = actions.BuildBrregTranslationWorksetResult
 type ClaimBrregTranslationWorksetBatchInput = actions.ClaimBrregTranslationWorksetBatchInput
@@ -274,14 +270,14 @@ func normalizeTranslateBrregSourceCompaniesInput(input TranslateBrregSourceCompa
 	input.ClaimMode = strings.ToLower(strings.TrimSpace(input.ClaimMode))
 	if input.ClaimMode == "" {
 		if input.AllRecords {
-			input.ClaimMode = actions.CompanyTranslationClaimModeAuto
+			input.ClaimMode = companyTranslationClaimModeAuto
 		} else {
-			input.ClaimMode = actions.CompanyTranslationClaimModeFixed
+			input.ClaimMode = companyTranslationClaimModeFixed
 		}
 	}
-	if input.ClaimMode != actions.CompanyTranslationClaimModeAuto &&
-		input.ClaimMode != actions.CompanyTranslationClaimModeFixed {
-		input.ClaimMode = actions.CompanyTranslationClaimModeFixed
+	if input.ClaimMode != companyTranslationClaimModeAuto &&
+		input.ClaimMode != companyTranslationClaimModeFixed {
+		input.ClaimMode = companyTranslationClaimModeFixed
 	}
 	if input.MaxRequestChars <= 0 {
 		input.MaxRequestChars = defaultCompanyTranslationMaxRequestChars

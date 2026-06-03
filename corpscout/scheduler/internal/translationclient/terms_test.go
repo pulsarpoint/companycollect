@@ -9,7 +9,6 @@ import (
 
 func TestTermTranslationRequestPayloadRoundTrips(t *testing.T) {
 	require.Equal(t, "brreg.translation.terms.request", DefaultTermTranslationRequestSubject)
-	require.Equal(t, "brreg.translation.terms.result", DefaultTermTranslationResultSubject)
 
 	request := TermTranslationRequest{
 		RequestID:     "request-1",

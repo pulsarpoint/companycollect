@@ -25,14 +25,6 @@ func registerBrregCompanyTranslationWorker(worker temporalworker.Worker, resourc
 	slog.Debug("registering brreg company translation temporal workflow and activities")
 	worker.RegisterWorkflow(brregworkflow.TranslateBrregSourceCompanies)
 	worker.RegisterActivityWithOptions(
-		resources.companyTranslation.ClaimBrregCompaniesForTranslation,
-		activity.RegisterOptions{Name: "ClaimBrregCompaniesForTranslation"},
-	)
-	worker.RegisterActivityWithOptions(
-		resources.companyTranslation.ProcessBrregCompanyTranslation,
-		activity.RegisterOptions{Name: "ProcessBrregCompanyTranslation"},
-	)
-	worker.RegisterActivityWithOptions(
 		resources.companyTranslation.BuildBrregTranslationWorkset,
 		activity.RegisterOptions{Name: "BuildBrregTranslationWorkset"},
 	)

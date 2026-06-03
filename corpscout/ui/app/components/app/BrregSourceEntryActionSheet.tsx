@@ -103,7 +103,6 @@ export function BrregSourceEntryActionSheet({
               selectedIds={selectedIds}
               totalCount={totalCount}
               filters={filters}
-              mode="source_companies"
               initialScope={initialScope}
               recordLabel="source entries"
               description="Starts the Temporal workflow that claims BRREG source companies, applies cached term translations, requests missing translations, and stores English values in brreg_source."

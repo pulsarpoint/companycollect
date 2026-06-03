@@ -33,8 +33,8 @@ const ACTION_RUNNERS: Record<string, { buttonLabel: string; run: () => Promise<s
   translate: {
     buttonLabel: "Translate",
     run: async () => {
-      await api.translateBrreg();
-      return "BRREG translation task run started.";
+      await api.translateBrregSourceCompanies({ all_records: true });
+      return "BRREG company translation workflow started.";
     },
   },
 };

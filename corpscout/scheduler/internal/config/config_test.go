@@ -28,9 +28,6 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.NATSRequestTimeout != 180*time.Second {
 		t.Errorf("want default NATS request timeout 180s, got %s", cfg.NATSRequestTimeout)
 	}
-	if cfg.BRREGTermTranslationResultSubject != "brreg.translation.terms.result" {
-		t.Errorf("want default BRREG term translation result subject, got %s", cfg.BRREGTermTranslationResultSubject)
-	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("want default log level info, got %s", cfg.LogLevel)
 	}
@@ -47,7 +44,6 @@ func TestLoad_overrides(t *testing.T) {
 	t.Setenv("CORPSCOUT_CRAWL_SERVICE_URL", "http://crawl-service:8096")
 	t.Setenv("CORPSCOUT_NATS_URL", "nats://companycollect:4222")
 	t.Setenv("CORPSCOUT_NATS_REQUEST_TIMEOUT_SECONDS", "240")
-	t.Setenv("CORPSCOUT_BRREG_TERM_TRANSLATION_RESULT_SUBJECT", "custom.brreg.translation.terms.result")
 	t.Setenv("CORPSCOUT_LOG_LEVEL", "debug")
 	t.Setenv("CORPSCOUT_FX_ECB_DAILY_URL", "https://example.test/ecb.xml")
 
@@ -67,9 +63,6 @@ func TestLoad_overrides(t *testing.T) {
 	}
 	if cfg.NATSRequestTimeout != 240*time.Second {
 		t.Errorf("want override NATS request timeout 240s, got %s", cfg.NATSRequestTimeout)
-	}
-	if cfg.BRREGTermTranslationResultSubject != "custom.brreg.translation.terms.result" {
-		t.Errorf("want override BRREG term translation result subject, got %s", cfg.BRREGTermTranslationResultSubject)
 	}
 	if cfg.LogLevel != "debug" {
 		t.Errorf("want override log level debug, got %s", cfg.LogLevel)

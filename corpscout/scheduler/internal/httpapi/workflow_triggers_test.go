@@ -24,173 +24,6 @@ import (
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 )
 
-func TestStartBrregTranslationWorkflowStartsTemporalWorkflow(t *testing.T) {
-	tc := &temporalExecuteRecorder{}
-	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/translation", bytes.NewBufferString(`{
-		"ids": ["7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"],
-		"filters": {"state": "raw"},
-		"limit": 1000,
-		"batch_size": 50,
-		"max_attempts": 3,
-		"trigger": "manual",
-		"max_parallel_tasks": 25,
-		"lease_seconds": 1200,
-		"provider": "deepseek",
-		"model": "deepseek-chat",
-		"prompt_version": "v2",
-		"source_lang": "no",
-		"target_lang": "en",
-		"max_service_retries": 4
-	}`))
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusAccepted, w.Code)
-	require.Contains(t, w.Body.String(), `"status":"started"`)
-	require.Contains(t, w.Body.String(), `"workflow":"TranslateBrregRawInputs"`)
-	require.Contains(t, w.Body.String(), `"workflow_run_id":"run-1"`)
-	require.NotEmpty(t, tc.options.ID)
-	require.Equal(t, "brreg-translation", tc.options.TaskQueue)
-	require.Equal(t, reflect.ValueOf(brregworkflow.TranslateBrregRawInputs).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
-	require.Len(t, tc.args, 1)
-
-	input := tc.args[0].(brregworkflow.TranslateBrregRawInputsInput)
-	require.Equal(t, []string{"7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"}, input.IDs)
-	require.Equal(t, map[string]string{"state": "raw"}, input.Filters)
-	require.Equal(t, 1000, input.Limit)
-	require.Zero(t, input.BatchSize)
-	require.Zero(t, input.MaxAttempts)
-	require.Equal(t, "manual", input.Trigger)
-	require.Zero(t, input.MaxParallelTasks)
-	require.Zero(t, input.LeaseSeconds)
-	require.Empty(t, input.Provider)
-	require.Empty(t, input.Model)
-	require.Empty(t, input.PromptVersion)
-	require.Empty(t, input.SourceLang)
-	require.Empty(t, input.TargetLang)
-	require.Zero(t, input.MaxServiceRetries)
-}
-
-func TestStartBrregTranslationWorkflowIgnoresAdvancedOptionsAtHTTPBoundary(t *testing.T) {
-	tc := &temporalExecuteRecorder{}
-	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/translation", bytes.NewBufferString(`{
-		"provider": "  ",
-		"model": "  ",
-		"prompt_version": " v1 ",
-		"source_lang": " no ",
-		"target_lang": " en ",
-		"max_service_retries": -1
-	}`))
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusAccepted, w.Code)
-	require.Len(t, tc.args, 1)
-
-	input := tc.args[0].(brregworkflow.TranslateBrregRawInputsInput)
-	require.Empty(t, input.Provider)
-	require.Empty(t, input.Model)
-	require.Empty(t, input.PromptVersion)
-	require.Empty(t, input.SourceLang)
-	require.Empty(t, input.TargetLang)
-	require.Zero(t, input.MaxServiceRetries)
-	require.Equal(t, "manual", input.Trigger)
-}
-
-func TestStartBrregTranslationWorkflowRejectsInvalidLimit(t *testing.T) {
-	tc := &temporalExecuteRecorder{}
-	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/translation", bytes.NewBufferString(`{"limit": -1}`))
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Contains(t, w.Body.String(), `"error":"limit must be greater than zero when provided"`)
-	require.Nil(t, tc.workflow)
-}
-
-func TestStartBrregTranslationWorkflowRejectsInvalidID(t *testing.T) {
-	tc := &temporalExecuteRecorder{}
-	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/translation", bytes.NewBufferString(`{"ids":["not-a-uuid"]}`))
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Contains(t, w.Body.String(), `"error":"ids must contain valid UUID values"`)
-	require.Nil(t, tc.workflow)
-}
-
-func TestStartBrregTranslationWorkflowRequiresTemporalClient(t *testing.T) {
-	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", nil, ""))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/translation", bytes.NewBufferString(`{}`))
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusServiceUnavailable, w.Code)
-	require.Contains(t, w.Body.String(), `"error":"temporal client not available"`)
-}
-
-func TestStartBrregTermTranslationWorkflowStartsTemporalWorkflow(t *testing.T) {
-	tc := &temporalExecuteRecorder{}
-	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/term-translation", bytes.NewBufferString(`{
-		"limit": 250,
-		"term_batch_size": 75,
-		"max_attempts": 4,
-		"max_loops": 12,
-		"provider": "deepseek",
-		"model": "deepseek-chat",
-		"prompt_version": "v2",
-		"trigger": "manual"
-	}`))
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusAccepted, w.Code)
-	require.Contains(t, w.Body.String(), `"status":"started"`)
-	require.Contains(t, w.Body.String(), `"workflow":"TranslateBrregSourceTerms"`)
-	require.Equal(t, "brreg-term-translation", tc.options.TaskQueue)
-	require.Equal(t, reflect.ValueOf(brregworkflow.TranslateBrregSourceTerms).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
-	require.Len(t, tc.args, 1)
-
-	input := tc.args[0].(brregworkflow.TranslateBrregSourceTermsInput)
-	require.Equal(t, 250, input.Limit)
-	require.Equal(t, 75, input.TermBatchSize)
-	require.Equal(t, 4, input.MaxAttempts)
-	require.Equal(t, 12, input.MaxLoops)
-	require.Equal(t, "deepseek", input.Provider)
-	require.Equal(t, "deepseek-chat", input.Model)
-	require.Equal(t, "v2", input.PromptVersion)
-	require.Equal(t, "manual", input.Trigger)
-}
-
-func TestStartBrregTermTranslationWorkflowSupportsAllRecords(t *testing.T) {
-	tc := &temporalExecuteRecorder{}
-	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/term-translation", bytes.NewBufferString(`{
-		"all_records": true
-	}`))
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusAccepted, w.Code)
-	require.Len(t, tc.args, 1)
-
-	input := tc.args[0].(brregworkflow.TranslateBrregSourceTermsInput)
-	require.True(t, input.AllRecords)
-	require.Zero(t, input.Limit)
-}
-
 func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T) {
 	tc := &temporalExecuteRecorder{}
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
@@ -261,34 +94,6 @@ func TestStartBrregCompanyTranslationWorkflowRejectsInvalidBatchSize(t *testing.
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Contains(t, w.Body.String(), `"error":"batch_size cannot be negative"`)
 	require.Nil(t, tc.workflow)
-}
-
-func TestBrregTranslationEndpointSplitKeepsRawAndSourceTermWorkflowsSeparate(t *testing.T) {
-	rawTemporal := &temporalExecuteRecorder{}
-	rawRouter := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", rawTemporal, ""))
-
-	rawReq := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/translation", bytes.NewBufferString(`{"limit": 10}`))
-	rawW := httptest.NewRecorder()
-	rawRouter.ServeHTTP(rawW, rawReq)
-
-	require.Equal(t, http.StatusAccepted, rawW.Code)
-	require.Equal(t, "brreg-translation", rawTemporal.options.TaskQueue)
-	require.Equal(t, reflect.ValueOf(brregworkflow.TranslateBrregRawInputs).Pointer(), reflect.ValueOf(rawTemporal.workflow).Pointer())
-	require.Len(t, rawTemporal.args, 1)
-	require.IsType(t, brregworkflow.TranslateBrregRawInputsInput{}, rawTemporal.args[0])
-
-	termTemporal := &temporalExecuteRecorder{}
-	termRouter := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", termTemporal, ""))
-
-	termReq := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/term-translation", bytes.NewBufferString(`{"limit": 10}`))
-	termW := httptest.NewRecorder()
-	termRouter.ServeHTTP(termW, termReq)
-
-	require.Equal(t, http.StatusAccepted, termW.Code)
-	require.Equal(t, "brreg-term-translation", termTemporal.options.TaskQueue)
-	require.Equal(t, reflect.ValueOf(brregworkflow.TranslateBrregSourceTerms).Pointer(), reflect.ValueOf(termTemporal.workflow).Pointer())
-	require.Len(t, termTemporal.args, 1)
-	require.IsType(t, brregworkflow.TranslateBrregSourceTermsInput{}, termTemporal.args[0])
 }
 
 func TestStartBrregDomainSearchWorkflowStartsTemporalWorkflow(t *testing.T) {
@@ -749,15 +554,15 @@ func TestListBrregWorkflowRunsReturnsFilteredTemporalExecutions(t *testing.T) {
 		listWorkflowResponse: &workflowservicepb.ListWorkflowExecutionsResponse{
 			Executions: []*workflowpb.WorkflowExecutionInfo{
 				{
-					Execution:     &commonpb.WorkflowExecution{WorkflowId: "brreg-translation-20260602-113000", RunId: "run-123"},
-					Type:          &commonpb.WorkflowType{Name: brregworkflow.TranslateBrregRawInputsWorkflowName},
+					Execution:     &commonpb.WorkflowExecution{WorkflowId: "brreg-company-translation-20260602-113000", RunId: "run-123"},
+					Type:          &commonpb.WorkflowType{Name: brregworkflow.TranslateBrregSourceCompaniesWorkflowName},
 					Status:        enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
 					StartTime:     timestamppb.New(startedAt),
 					ExecutionTime: timestamppb.New(startedAt),
 				},
 				{
-					Execution:     &commonpb.WorkflowExecution{WorkflowId: "brreg-translation-other", RunId: "run-456"},
-					Type:          &commonpb.WorkflowType{Name: brregworkflow.TranslateBrregRawInputsWorkflowName},
+					Execution:     &commonpb.WorkflowExecution{WorkflowId: "brreg-company-translation-other", RunId: "run-456"},
+					Type:          &commonpb.WorkflowType{Name: brregworkflow.TranslateBrregSourceCompaniesWorkflowName},
 					Status:        enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED,
 					StartTime:     timestamppb.New(startedAt.Add(-time.Hour)),
 					CloseTime:     timestamppb.New(closedAt),
@@ -768,14 +573,14 @@ func TestListBrregWorkflowRunsReturnsFilteredTemporalExecutions(t *testing.T) {
 	}
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/brreg/runs?limit=5&prefix=brreg-translation&status=running&q=20260602", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/brreg/runs?limit=5&prefix=brreg-company-translation&status=running&q=20260602", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.NotNil(t, tc.listWorkflowRequest)
 	require.Equal(t, int32(5), tc.listWorkflowRequest.PageSize)
-	require.Equal(t, "WorkflowType = 'TranslateBrregRawInputs' AND WorkflowId STARTS_WITH 'brreg-translation-' AND ExecutionStatus = 'Running'", tc.listWorkflowRequest.Query)
+	require.Equal(t, "WorkflowType = 'TranslateBrregSourceCompanies' AND WorkflowId STARTS_WITH 'brreg-company-translation-' AND ExecutionStatus = 'Running'", tc.listWorkflowRequest.Query)
 
 	var body struct {
 		Prefixes []struct {
@@ -796,19 +601,15 @@ func TestListBrregWorkflowRunsReturnsFilteredTemporalExecutions(t *testing.T) {
 		} `json:"items"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	require.Len(t, body.Prefixes, 7)
-	require.Equal(t, "brreg-translation", body.Prefixes[0].Prefix)
-	require.Equal(t, brregworkflow.TranslateBrregRawInputsWorkflowName, body.Prefixes[0].WorkflowType)
-	require.Equal(t, "brreg-term-translation", body.Prefixes[1].Prefix)
-	require.Equal(t, brregworkflow.TranslateBrregSourceTermsWorkflowName, body.Prefixes[1].WorkflowType)
-	require.Equal(t, "brreg-company-translation", body.Prefixes[2].Prefix)
-	require.Equal(t, brregworkflow.TranslateBrregSourceCompaniesWorkflowName, body.Prefixes[2].WorkflowType)
+	require.Len(t, body.Prefixes, 5)
+	require.Equal(t, "brreg-company-translation", body.Prefixes[0].Prefix)
+	require.Equal(t, brregworkflow.TranslateBrregSourceCompaniesWorkflowName, body.Prefixes[0].WorkflowType)
 	require.Len(t, body.Items, 1)
-	require.Equal(t, "brreg-translation-20260602-113000", body.Items[0].WorkflowID)
+	require.Equal(t, "brreg-company-translation-20260602-113000", body.Items[0].WorkflowID)
 	require.Equal(t, "run-123", body.Items[0].RunID)
-	require.Equal(t, brregworkflow.TranslateBrregRawInputsWorkflowName, body.Items[0].WorkflowType)
-	require.Equal(t, "brreg-translation", body.Items[0].Prefix)
-	require.Equal(t, "Translation", body.Items[0].Action)
+	require.Equal(t, brregworkflow.TranslateBrregSourceCompaniesWorkflowName, body.Items[0].WorkflowType)
+	require.Equal(t, "brreg-company-translation", body.Items[0].Prefix)
+	require.Equal(t, "Company translation", body.Items[0].Action)
 	require.Equal(t, "running", body.Items[0].Status)
 	require.Equal(t, startedAt.Format(time.RFC3339), body.Items[0].StartTime)
 	require.Empty(t, body.Items[0].CloseTime)

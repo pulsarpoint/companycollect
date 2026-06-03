@@ -19,8 +19,6 @@ import type {
   BrregSourceCompanyDetail,
   BrregWorkflowRunListResponse,
   BrregCompanyTranslationRequest,
-  BrregTermTranslationRequest,
-  BrregTranslationRequest,
   LLMProvider,
   LLMProviderInput,
   LLMProviderListResponse,
@@ -409,12 +407,6 @@ export const api = {
       config?: Record<string, unknown>;
     },
   ) => patch<{ status: string }>(`/sources/${name}`, body),
-
-  translateBrreg: (body: BrregTranslationRequest = {}) =>
-    post<StartWorkflowResponse>("/workflows/brreg/translation", body),
-
-  translateBrregTerms: (body: BrregTermTranslationRequest = {}) =>
-    post<StartWorkflowResponse>("/workflows/brreg/term-translation", body),
 
   translateBrregSourceCompanies: (body: BrregCompanyTranslationRequest = {}) =>
     post<StartWorkflowResponse>("/workflows/brreg/company-translation", body),

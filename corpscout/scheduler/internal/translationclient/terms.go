@@ -2,7 +2,6 @@ package translationclient
 
 const (
 	DefaultTermTranslationRequestSubject = "brreg.translation.terms.request"
-	DefaultTermTranslationResultSubject  = "brreg.translation.terms.result"
 )
 
 type TermTranslationRequest struct {

@@ -105,40 +105,6 @@ type ClaimTaskBatchCommand struct {
 	Metadata         json.RawMessage
 }
 
-type ClaimCompaniesForTranslationCommand struct {
-	Limit            int32
-	MaxParallelTasks int32
-	LeaseSeconds     int32
-	MaxAttempts      int32
-	WorkerID         *string
-}
-
-type ClaimCompaniesForTranslationResult struct {
-	StatusRowsInserted int32
-	Companies          []db.ClaimBrregCompanyTranslationBatchRow
-}
-
-type ReleaseCompanyTranslationClaimCommand struct {
-	CompanyID uuid.UUID
-	WorkerID  string
-}
-
-type MarkCompanyTranslationStatusCommand struct {
-	CompanyID uuid.UUID
-	Metadata  json.RawMessage
-}
-
-type MarkCompanyTranslationFailedCommand struct {
-	CompanyID     uuid.UUID
-	Error         string
-	ErrorCategory string
-	ErrorCode     string
-	RetryStrategy string
-	MaxAttempts   int32
-	Terminal      bool
-	Metadata      json.RawMessage
-}
-
 type PrepareWorkflowCommand struct {
 	Source             string
 	Action             string
@@ -285,36 +251,6 @@ type ConvertSourceCapitalToUSDResult struct {
 	RateDate                       string
 }
 
-type EnsurePendingTranslationTermsCommand struct {
-	Provider      string
-	Model         string
-	PromptVersion string
-	WorkflowID    string
-	Limit         int32
-}
-
-type EnsurePendingTranslationTermsResult struct {
-	TermsInserted int32
-}
-
-type ClaimQueuedTranslationTermsCommand struct {
-	Provider      string
-	Model         string
-	PromptVersion string
-	Limit         int32
-	MaxAttempts   int32
-}
-
-type QueuedTranslationTerm struct {
-	ID                   string
-	SourceLang           string
-	TargetLang           string
-	SourceTextNormalized string
-	SourceText           string
-	TermKey              string
-	AttemptCount         int32
-}
-
 type TranslationTermResult struct {
 	SourceLang           string
 	TargetLang           string
@@ -337,19 +273,6 @@ type UpsertTranslationTermsCommand struct {
 
 type UpsertTranslationTermsResult struct {
 	TermsUpserted int32
-}
-
-type ApplyCachedTermTranslationsCommand struct {
-	PromptVersion string
-	Limit         int32
-}
-
-type ApplyCachedTermTranslationsResult struct {
-	FieldsApplied int32
-}
-
-type CountMissingTranslationFieldsResult struct {
-	MissingFields int32
 }
 
 func jsonObject(value []byte) []byte {
