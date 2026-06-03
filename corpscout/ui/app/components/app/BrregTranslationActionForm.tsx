@@ -94,6 +94,8 @@ export function BrregTranslationActionForm({
   const [leaseSeconds, setLeaseSeconds] = useState("900");
   const [maxAttempts, setMaxAttempts] = useState("3");
   const [maxParallelTasks, setMaxParallelTasks] = useState("50");
+  const [maxRequestChars, setMaxRequestChars] = useState("12000");
+  const [maxCompaniesPerBatch, setMaxCompaniesPerBatch] = useState("500");
   const [maxServiceRetries, setMaxServiceRetries] = useState("2");
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
@@ -122,6 +124,8 @@ export function BrregTranslationActionForm({
     setLeaseSeconds("900");
     setMaxAttempts("3");
     setMaxParallelTasks(usesSourceCompanies ? "10" : "50");
+    setMaxRequestChars("12000");
+    setMaxCompaniesPerBatch("500");
     setMaxServiceRetries("2");
     setProvider("");
     setModel("");
@@ -240,9 +244,17 @@ export function BrregTranslationActionForm({
       }
 
       if (mode === "source_companies") {
+        const useAutoClaim = allSourceCompaniesSelected;
         const body: BrregCompanyTranslationRequest = {
           all_records: allSourceCompaniesSelected,
           batch_size: allSourceCompaniesSelected ? undefined : effectiveLimit,
+          claim_mode: useAutoClaim ? "auto" : "fixed",
+          max_request_chars: useAutoClaim
+            ? parseOptionalPositiveNumber(maxRequestChars)
+            : undefined,
+          max_companies_per_batch: useAutoClaim
+            ? parseOptionalPositiveNumber(maxCompaniesPerBatch)
+            : undefined,
           max_attempts: parseOptionalPositiveNumber(maxAttempts),
           max_parallel_tasks: parseOptionalPositiveNumber(maxParallelTasks),
           lease_seconds: parseOptionalPositiveNumber(leaseSeconds),
@@ -541,6 +553,48 @@ export function BrregTranslationActionForm({
                         {usesSourceCompanies
                           ? "Maximum company translation tasks the workflow can keep active at the same time."
                           : "Maximum translation batches the workflow can keep active at the same time."}
+                      </FieldDescription>
+                    </div>
+                  </>
+                )}
+
+                {usesSourceCompanies && allSourceCompaniesSelected && (
+                  <>
+                    <div className="flex flex-col gap-2">
+                      <Label htmlFor="brreg-company-translation-max-chars">
+                        Max request characters
+                      </Label>
+                      <Input
+                        id="brreg-company-translation-max-chars"
+                        min={1}
+                        type="number"
+                        value={maxRequestChars}
+                        onChange={(event) =>
+                          setMaxRequestChars(event.target.value)
+                        }
+                      />
+                      <FieldDescription>
+                        Auto-claim keeps adding companies until the estimated
+                        untranslated text reaches this request budget.
+                      </FieldDescription>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <Label htmlFor="brreg-company-translation-max-companies">
+                        Max companies per claim
+                      </Label>
+                      <Input
+                        id="brreg-company-translation-max-companies"
+                        min={1}
+                        type="number"
+                        value={maxCompaniesPerBatch}
+                        onChange={(event) =>
+                          setMaxCompaniesPerBatch(event.target.value)
+                        }
+                      />
+                      <FieldDescription>
+                        Safety cap for one auto-claim pass when many companies
+                        have short or cached translation fields.
                       </FieldDescription>
                     </div>
                   </>

@@ -4,12 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
 
 	"github.com/pulsarpoint/corpscout/scheduler/internal/brreg/companydata"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/translationclient"
+)
+
+const (
+	CompanyTranslationClaimModeAuto  = "auto"
+	CompanyTranslationClaimModeFixed = "fixed"
 )
 
 type CompanyTranslationActions struct {
@@ -22,11 +28,14 @@ func NewCompanyTranslationActions(store *companydata.Store, translator *translat
 }
 
 type ClaimBrregCompaniesForTranslationInput struct {
-	Limit            int32  `json:"limit"`
-	MaxParallelTasks int32  `json:"max_parallel_tasks"`
-	LeaseSeconds     int32  `json:"lease_seconds"`
-	MaxAttempts      int32  `json:"max_attempts"`
-	WorkerID         string `json:"worker_id,omitempty"`
+	Limit                int32  `json:"limit"`
+	ClaimMode            string `json:"claim_mode,omitempty"`
+	MaxRequestChars      int32  `json:"max_request_chars,omitempty"`
+	MaxCompaniesPerBatch int32  `json:"max_companies_per_batch,omitempty"`
+	MaxParallelTasks     int32  `json:"max_parallel_tasks"`
+	LeaseSeconds         int32  `json:"lease_seconds"`
+	MaxAttempts          int32  `json:"max_attempts"`
+	WorkerID             string `json:"worker_id,omitempty"`
 }
 
 type ClaimedCompanyForTranslation struct {
@@ -37,8 +46,9 @@ type ClaimedCompanyForTranslation struct {
 }
 
 type ClaimBrregCompaniesForTranslationResult struct {
-	StatusRowsInserted int32                          `json:"status_rows_inserted"`
-	Companies          []ClaimedCompanyForTranslation `json:"companies"`
+	StatusRowsInserted    int32                          `json:"status_rows_inserted"`
+	Companies             []ClaimedCompanyForTranslation `json:"companies"`
+	EstimatedRequestChars int32                          `json:"estimated_request_chars,omitempty"`
 }
 
 type ProcessBrregCompanyTranslationInput struct {
@@ -67,13 +77,34 @@ func (a *CompanyTranslationActions) ClaimBrregCompaniesForTranslation(
 	if a == nil || a.store == nil {
 		return ClaimBrregCompaniesForTranslationResult{}, errors.New("brreg companydata store not available")
 	}
-	result, err := a.store.ClaimForTranslation(ctx, companydata.ClaimForTranslationCommand{
-		Limit:            input.Limit,
-		MaxParallelTasks: input.MaxParallelTasks,
-		LeaseSeconds:     input.LeaseSeconds,
-		MaxAttempts:      input.MaxAttempts,
-		WorkerID:         input.WorkerID,
-	})
+	claimMode := strings.ToLower(strings.TrimSpace(input.ClaimMode))
+	var result companydata.ClaimForTranslationResult
+	var estimatedRequestChars int32
+	var err error
+	if claimMode == CompanyTranslationClaimModeAuto {
+		autoResult, autoErr := a.store.AutoClaimForTranslation(ctx, companydata.AutoClaimForTranslationCommand{
+			MaxRequestChars:      input.MaxRequestChars,
+			MaxCompaniesPerBatch: input.MaxCompaniesPerBatch,
+			MaxParallelTasks:     input.MaxParallelTasks,
+			LeaseSeconds:         input.LeaseSeconds,
+			MaxAttempts:          input.MaxAttempts,
+			WorkerID:             input.WorkerID,
+		})
+		err = autoErr
+		result = companydata.ClaimForTranslationResult{
+			StatusRowsInserted: autoResult.StatusRowsInserted,
+			Companies:          autoResult.Companies,
+		}
+		estimatedRequestChars = autoResult.EstimatedRequestChars
+	} else {
+		result, err = a.store.ClaimForTranslation(ctx, companydata.ClaimForTranslationCommand{
+			Limit:            input.Limit,
+			MaxParallelTasks: input.MaxParallelTasks,
+			LeaseSeconds:     input.LeaseSeconds,
+			MaxAttempts:      input.MaxAttempts,
+			WorkerID:         input.WorkerID,
+		})
+	}
 	if err != nil {
 		return ClaimBrregCompaniesForTranslationResult{}, errors.Wrap(err, "claim brreg companies for translation")
 	}
@@ -87,12 +118,15 @@ func (a *CompanyTranslationActions) ClaimBrregCompaniesForTranslation(
 		})
 	}
 	slog.DebugContext(ctx, "claimed brreg companies for translation",
+		"claim_mode", claimMode,
 		"status_rows_inserted", result.StatusRowsInserted,
 		"companies", len(companies),
+		"estimated_request_chars", estimatedRequestChars,
 	)
 	return ClaimBrregCompaniesForTranslationResult{
-		StatusRowsInserted: result.StatusRowsInserted,
-		Companies:          companies,
+		StatusRowsInserted:    result.StatusRowsInserted,
+		Companies:             companies,
+		EstimatedRequestChars: estimatedRequestChars,
 	}, nil
 }
 

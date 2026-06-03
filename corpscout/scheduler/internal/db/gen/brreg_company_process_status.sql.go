@@ -379,10 +379,39 @@ picked AS (
   JOIN brreg_source.companies company ON company.id = status_row.company_id
   WHERE company.row_status = 'active'
     AND (
-      status_row.translation_status IN ('pending', 'dirty', 'failed_retryable')
+      status_row.translation_status = 'dirty'
+      OR (
+        status_row.translation_status IN ('pending', 'failed_retryable')
+        AND (
+          (nullif(btrim(company.organization_form_label), '') IS NOT NULL AND nullif(btrim(company.organization_form_label_en), '') IS NULL)
+          OR (nullif(btrim(company.response_class), '') IS NOT NULL AND nullif(btrim(company.response_class_en), '') IS NULL)
+          OR (nullif(btrim(company.activity_description), '') IS NOT NULL AND nullif(btrim(company.activity_description_en), '') IS NULL)
+          OR (nullif(btrim(company.statutory_purpose), '') IS NOT NULL AND nullif(btrim(company.statutory_purpose_en), '') IS NULL)
+          OR EXISTS (
+            SELECT 1
+            FROM brreg_source.capital capital
+            WHERE capital.company_id = company.id
+              AND nullif(btrim(capital.capital_type), '') IS NOT NULL
+              AND nullif(btrim(capital.capital_type_en), '') IS NULL
+          )
+        )
+      )
       OR (
         status_row.translation_status = 'running'
         AND coalesce(status_row.translation_lease_until, '-infinity'::timestamptz) <= now()
+        AND (
+          (nullif(btrim(company.organization_form_label), '') IS NOT NULL AND nullif(btrim(company.organization_form_label_en), '') IS NULL)
+          OR (nullif(btrim(company.response_class), '') IS NOT NULL AND nullif(btrim(company.response_class_en), '') IS NULL)
+          OR (nullif(btrim(company.activity_description), '') IS NOT NULL AND nullif(btrim(company.activity_description_en), '') IS NULL)
+          OR (nullif(btrim(company.statutory_purpose), '') IS NOT NULL AND nullif(btrim(company.statutory_purpose_en), '') IS NULL)
+          OR EXISTS (
+            SELECT 1
+            FROM brreg_source.capital capital
+            WHERE capital.company_id = company.id
+              AND nullif(btrim(capital.capital_type), '') IS NOT NULL
+              AND nullif(btrim(capital.capital_type_en), '') IS NULL
+          )
+        )
       )
     )
     AND status_row.translation_attempt_count < GREATEST($3::integer, 1)
@@ -539,6 +568,19 @@ WITH inserted AS (
     ON existing.company_id = company.id
   WHERE company.row_status = 'active'
     AND existing.company_id IS NULL
+    AND (
+      (nullif(btrim(company.organization_form_label), '') IS NOT NULL AND nullif(btrim(company.organization_form_label_en), '') IS NULL)
+      OR (nullif(btrim(company.response_class), '') IS NOT NULL AND nullif(btrim(company.response_class_en), '') IS NULL)
+      OR (nullif(btrim(company.activity_description), '') IS NOT NULL AND nullif(btrim(company.activity_description_en), '') IS NULL)
+      OR (nullif(btrim(company.statutory_purpose), '') IS NOT NULL AND nullif(btrim(company.statutory_purpose_en), '') IS NULL)
+      OR EXISTS (
+        SELECT 1
+        FROM brreg_source.capital capital
+        WHERE capital.company_id = company.id
+          AND nullif(btrim(capital.capital_type), '') IS NOT NULL
+          AND nullif(btrim(capital.capital_type_en), '') IS NULL
+      )
+    )
   ORDER BY company.updated_at DESC, company.id
   LIMIT NULLIF(GREATEST($1::integer, 0), 0)
   ON CONFLICT (company_id) DO NOTHING
@@ -1571,6 +1613,70 @@ type MarkBrregCompanyTranslationSucceededParams struct {
 
 func (q *Queries) MarkBrregCompanyTranslationSucceeded(ctx context.Context, arg MarkBrregCompanyTranslationSucceededParams) (BrregSourceCompanyProcessStatus, error) {
 	row := q.db.QueryRow(ctx, markBrregCompanyTranslationSucceeded, arg.Metadata, arg.CompanyID)
+	var i BrregSourceCompanyProcessStatus
+	err := row.Scan(
+		&i.CompanyID,
+		&i.TranslationStatus,
+		&i.TranslationAttemptCount,
+		&i.TranslationLeaseBy,
+		&i.TranslationLeaseUntil,
+		&i.TranslationLastStartedAt,
+		&i.TranslationLastFinishedAt,
+		&i.TranslationError,
+		&i.TranslationErrorCategory,
+		&i.TranslationErrorCode,
+		&i.TranslationRetryStrategy,
+		&i.TranslationMetadata,
+		&i.CurrencyStatus,
+		&i.CurrencyAttemptCount,
+		&i.CurrencyLeaseBy,
+		&i.CurrencyLeaseUntil,
+		&i.CurrencyLastStartedAt,
+		&i.CurrencyLastFinishedAt,
+		&i.CurrencyError,
+		&i.CurrencyErrorCategory,
+		&i.CurrencyErrorCode,
+		&i.CurrencyRetryStrategy,
+		&i.CurrencyMetadata,
+		&i.FinancialStatus,
+		&i.FinancialAttemptCount,
+		&i.FinancialLeaseBy,
+		&i.FinancialLeaseUntil,
+		&i.FinancialLastStartedAt,
+		&i.FinancialLastFinishedAt,
+		&i.FinancialError,
+		&i.FinancialErrorCategory,
+		&i.FinancialErrorCode,
+		&i.FinancialRetryStrategy,
+		&i.FinancialMetadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const releaseBrregCompanyTranslationClaim = `-- name: ReleaseBrregCompanyTranslationClaim :one
+UPDATE brreg_source.company_process_status
+SET
+  translation_status = 'pending',
+  translation_attempt_count = GREATEST(translation_attempt_count - 1, 0),
+  translation_lease_by = NULL,
+  translation_lease_until = NULL,
+  translation_last_started_at = NULL,
+  updated_at = now()
+WHERE company_id = $1::uuid
+  AND translation_status = 'running'
+  AND translation_lease_by = $2::text
+RETURNING company_id, translation_status, translation_attempt_count, translation_lease_by, translation_lease_until, translation_last_started_at, translation_last_finished_at, translation_error, translation_error_category, translation_error_code, translation_retry_strategy, translation_metadata, currency_status, currency_attempt_count, currency_lease_by, currency_lease_until, currency_last_started_at, currency_last_finished_at, currency_error, currency_error_category, currency_error_code, currency_retry_strategy, currency_metadata, financial_status, financial_attempt_count, financial_lease_by, financial_lease_until, financial_last_started_at, financial_last_finished_at, financial_error, financial_error_category, financial_error_code, financial_retry_strategy, financial_metadata, created_at, updated_at
+`
+
+type ReleaseBrregCompanyTranslationClaimParams struct {
+	CompanyID uuid.UUID `json:"company_id"`
+	WorkerID  string    `json:"worker_id"`
+}
+
+func (q *Queries) ReleaseBrregCompanyTranslationClaim(ctx context.Context, arg ReleaseBrregCompanyTranslationClaimParams) (BrregSourceCompanyProcessStatus, error) {
+	row := q.db.QueryRow(ctx, releaseBrregCompanyTranslationClaim, arg.CompanyID, arg.WorkerID)
 	var i BrregSourceCompanyProcessStatus
 	err := row.Scan(
 		&i.CompanyID,

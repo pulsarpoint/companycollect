@@ -118,6 +118,11 @@ type ClaimCompaniesForTranslationResult struct {
 	Companies          []db.ClaimBrregCompanyTranslationBatchRow
 }
 
+type ReleaseCompanyTranslationClaimCommand struct {
+	CompanyID uuid.UUID
+	WorkerID  string
+}
+
 type MarkCompanyTranslationStatusCommand struct {
 	CompanyID uuid.UUID
 	Metadata  json.RawMessage

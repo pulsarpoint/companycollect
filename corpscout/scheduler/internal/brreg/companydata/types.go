@@ -64,6 +64,22 @@ type SaveTranslationTermsResult struct {
 	TermsSaved int32
 }
 
+type AutoClaimForTranslationCommand struct {
+	PageSize             int32
+	MaxRequestChars      int32
+	MaxCompaniesPerBatch int32
+	MaxParallelTasks     int32
+	LeaseSeconds         int32
+	MaxAttempts          int32
+	WorkerID             string
+}
+
+type AutoClaimForTranslationResult struct {
+	StatusRowsInserted    int32
+	Companies             []ClaimedCompanyData
+	EstimatedRequestChars int32
+}
+
 type ApplyTranslationsResult struct {
 	FieldsApplied     int32
 	TermsWithoutMatch int32

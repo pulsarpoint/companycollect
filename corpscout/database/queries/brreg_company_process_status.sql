@@ -7,6 +7,19 @@ WITH inserted AS (
     ON existing.company_id = company.id
   WHERE company.row_status = 'active'
     AND existing.company_id IS NULL
+    AND (
+      (nullif(btrim(company.organization_form_label), '') IS NOT NULL AND nullif(btrim(company.organization_form_label_en), '') IS NULL)
+      OR (nullif(btrim(company.response_class), '') IS NOT NULL AND nullif(btrim(company.response_class_en), '') IS NULL)
+      OR (nullif(btrim(company.activity_description), '') IS NOT NULL AND nullif(btrim(company.activity_description_en), '') IS NULL)
+      OR (nullif(btrim(company.statutory_purpose), '') IS NOT NULL AND nullif(btrim(company.statutory_purpose_en), '') IS NULL)
+      OR EXISTS (
+        SELECT 1
+        FROM brreg_source.capital capital
+        WHERE capital.company_id = company.id
+          AND nullif(btrim(capital.capital_type), '') IS NOT NULL
+          AND nullif(btrim(capital.capital_type_en), '') IS NULL
+      )
+    )
   ORDER BY company.updated_at DESC, company.id
   LIMIT NULLIF(GREATEST(sqlc.arg('limit')::integer, 0), 0)
   ON CONFLICT (company_id) DO NOTHING
@@ -109,10 +122,39 @@ picked AS (
   JOIN brreg_source.companies company ON company.id = status_row.company_id
   WHERE company.row_status = 'active'
     AND (
-      status_row.translation_status IN ('pending', 'dirty', 'failed_retryable')
+      status_row.translation_status = 'dirty'
+      OR (
+        status_row.translation_status IN ('pending', 'failed_retryable')
+        AND (
+          (nullif(btrim(company.organization_form_label), '') IS NOT NULL AND nullif(btrim(company.organization_form_label_en), '') IS NULL)
+          OR (nullif(btrim(company.response_class), '') IS NOT NULL AND nullif(btrim(company.response_class_en), '') IS NULL)
+          OR (nullif(btrim(company.activity_description), '') IS NOT NULL AND nullif(btrim(company.activity_description_en), '') IS NULL)
+          OR (nullif(btrim(company.statutory_purpose), '') IS NOT NULL AND nullif(btrim(company.statutory_purpose_en), '') IS NULL)
+          OR EXISTS (
+            SELECT 1
+            FROM brreg_source.capital capital
+            WHERE capital.company_id = company.id
+              AND nullif(btrim(capital.capital_type), '') IS NOT NULL
+              AND nullif(btrim(capital.capital_type_en), '') IS NULL
+          )
+        )
+      )
       OR (
         status_row.translation_status = 'running'
         AND coalesce(status_row.translation_lease_until, '-infinity'::timestamptz) <= now()
+        AND (
+          (nullif(btrim(company.organization_form_label), '') IS NOT NULL AND nullif(btrim(company.organization_form_label_en), '') IS NULL)
+          OR (nullif(btrim(company.response_class), '') IS NOT NULL AND nullif(btrim(company.response_class_en), '') IS NULL)
+          OR (nullif(btrim(company.activity_description), '') IS NOT NULL AND nullif(btrim(company.activity_description_en), '') IS NULL)
+          OR (nullif(btrim(company.statutory_purpose), '') IS NOT NULL AND nullif(btrim(company.statutory_purpose_en), '') IS NULL)
+          OR EXISTS (
+            SELECT 1
+            FROM brreg_source.capital capital
+            WHERE capital.company_id = company.id
+              AND nullif(btrim(capital.capital_type), '') IS NOT NULL
+              AND nullif(btrim(capital.capital_type_en), '') IS NULL
+          )
+        )
       )
     )
     AND status_row.translation_attempt_count < GREATEST(sqlc.arg('max_attempts')::integer, 1)
@@ -144,6 +186,20 @@ SELECT
 FROM claimed
 JOIN brreg_source.companies company ON company.id = claimed.company_id
 ORDER BY claimed.updated_at, claimed.company_id;
+
+-- name: ReleaseBrregCompanyTranslationClaim :one
+UPDATE brreg_source.company_process_status
+SET
+  translation_status = 'pending',
+  translation_attempt_count = GREATEST(translation_attempt_count - 1, 0),
+  translation_lease_by = NULL,
+  translation_lease_until = NULL,
+  translation_last_started_at = NULL,
+  updated_at = now()
+WHERE company_id = sqlc.arg('company_id')::uuid
+  AND translation_status = 'running'
+  AND translation_lease_by = sqlc.arg('worker_id')::text
+RETURNING *;
 
 -- name: MarkBrregCompanyTranslationSucceeded :one
 UPDATE brreg_source.company_process_status

@@ -86,6 +86,78 @@ func (s *Store) ClaimForTranslation(
 	return result, nil
 }
 
+func (s *Store) AutoClaimForTranslation(
+	ctx context.Context,
+	command AutoClaimForTranslationCommand,
+) (AutoClaimForTranslationResult, error) {
+	command = normalizeAutoClaimForTranslationCommand(command)
+	result := AutoClaimForTranslationResult{
+		Companies: make([]ClaimedCompanyData, 0),
+	}
+	seen := make(map[uuid.UUID]struct{})
+
+	for int32(len(result.Companies)) < command.MaxCompaniesPerBatch {
+		page, err := s.ClaimForTranslation(ctx, ClaimForTranslationCommand{
+			Limit:            command.PageSize,
+			MaxParallelTasks: command.MaxParallelTasks,
+			LeaseSeconds:     command.LeaseSeconds,
+			MaxAttempts:      command.MaxAttempts,
+			WorkerID:         command.WorkerID,
+		})
+		if err != nil {
+			return AutoClaimForTranslationResult{}, err
+		}
+		result.StatusRowsInserted += page.StatusRowsInserted
+		if len(page.Companies) == 0 {
+			return result, nil
+		}
+
+		for _, company := range page.Companies {
+			if _, ok := seen[company.Company.ID]; ok {
+				continue
+			}
+			companyChars := estimateTranslationRequestChars(company.CompanyData.TranslationTerms())
+			wouldExceed := result.EstimatedRequestChars > 0 &&
+				result.EstimatedRequestChars+companyChars > command.MaxRequestChars
+			if wouldExceed {
+				if err := s.ReleaseTranslationClaim(ctx, ReleaseTranslationClaimCommand{
+					CompanyID: company.Company.ID,
+					WorkerID:  command.WorkerID,
+				}); err != nil {
+					return AutoClaimForTranslationResult{}, err
+				}
+				return result, nil
+			}
+			result.Companies = append(result.Companies, company)
+			result.EstimatedRequestChars += companyChars
+			seen[company.Company.ID] = struct{}{}
+
+			if result.EstimatedRequestChars >= command.MaxRequestChars {
+				return result, nil
+			}
+			if int32(len(result.Companies)) >= command.MaxCompaniesPerBatch {
+				return result, nil
+			}
+		}
+	}
+	return result, nil
+}
+
+type ReleaseTranslationClaimCommand struct {
+	CompanyID uuid.UUID
+	WorkerID  string
+}
+
+func (s *Store) ReleaseTranslationClaim(ctx context.Context, command ReleaseTranslationClaimCommand) error {
+	if s == nil || s.gateway == nil {
+		return errors.New("brreg companydata store not available")
+	}
+	return s.gateway.ReleaseCompanyTranslationClaim(ctx, brregdb.ReleaseCompanyTranslationClaimCommand{
+		CompanyID: command.CompanyID,
+		WorkerID:  command.WorkerID,
+	})
+}
+
 func (s *Store) Load(ctx context.Context, companyID uuid.UUID) (*CompanyData, error) {
 	if s == nil || s.pool == nil {
 		return nil, errors.New("brreg companydata database not available")
@@ -236,6 +308,29 @@ func (s *Store) ApplyCachedTranslations(
 		return ApplyCachedTranslationsResult{}, err
 	}
 	return result, nil
+}
+
+func normalizeAutoClaimForTranslationCommand(command AutoClaimForTranslationCommand) AutoClaimForTranslationCommand {
+	command.PageSize = 1
+	if command.MaxRequestChars <= 0 {
+		command.MaxRequestChars = 12000
+	}
+	if command.MaxCompaniesPerBatch <= 0 {
+		command.MaxCompaniesPerBatch = 500
+	}
+	return command
+}
+
+func estimateTranslationRequestChars(terms []TranslationTerm) int32 {
+	var total int32
+	for _, term := range terms {
+		text := strings.TrimSpace(term.SourceText)
+		if text == "" {
+			continue
+		}
+		total += int32(len([]rune(text)))
+	}
+	return total
 }
 
 func (s *Store) SaveTranslationTerms(

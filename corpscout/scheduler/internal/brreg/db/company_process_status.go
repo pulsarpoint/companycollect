@@ -101,6 +101,29 @@ func (g *Gateway) MarkCompanyTranslationSucceeded(
 	return nil
 }
 
+func (g *Gateway) ReleaseCompanyTranslationClaim(
+	ctx context.Context,
+	command ReleaseCompanyTranslationClaimCommand,
+) error {
+	if g.pool == nil {
+		return errors.New("brreg workflow database pool not available")
+	}
+	if command.CompanyID == uuid.Nil {
+		return errors.New("company id is required")
+	}
+	if command.WorkerID == "" {
+		return errors.New("worker id is required")
+	}
+	_, err := db.New(g.pool).ReleaseBrregCompanyTranslationClaim(ctx, db.ReleaseBrregCompanyTranslationClaimParams{
+		CompanyID: command.CompanyID,
+		WorkerID:  command.WorkerID,
+	})
+	if err != nil {
+		return errors.Wrap(err, "release brreg company translation claim")
+	}
+	return nil
+}
+
 func (g *Gateway) MarkCompanyTranslationSkipped(
 	ctx context.Context,
 	command MarkCompanyTranslationStatusCommand,

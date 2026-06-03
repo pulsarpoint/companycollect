@@ -69,15 +69,18 @@ type startBrregTermTranslationWorkflowRequest struct {
 }
 
 type startBrregCompanyTranslationWorkflowRequest struct {
-	AllRecords       bool   `json:"all_records,omitempty"`
-	BatchSize        int    `json:"batch_size,omitempty"`
-	MaxParallelTasks int    `json:"max_parallel_tasks,omitempty"`
-	LeaseSeconds     int    `json:"lease_seconds,omitempty"`
-	MaxAttempts      int    `json:"max_attempts,omitempty"`
-	Provider         string `json:"provider,omitempty"`
-	Model            string `json:"model,omitempty"`
-	PromptVersion    string `json:"prompt_version,omitempty"`
-	Trigger          string `json:"trigger,omitempty"`
+	AllRecords           bool   `json:"all_records,omitempty"`
+	BatchSize            int    `json:"batch_size,omitempty"`
+	ClaimMode            string `json:"claim_mode,omitempty"`
+	MaxRequestChars      int    `json:"max_request_chars,omitempty"`
+	MaxCompaniesPerBatch int    `json:"max_companies_per_batch,omitempty"`
+	MaxParallelTasks     int    `json:"max_parallel_tasks,omitempty"`
+	LeaseSeconds         int    `json:"lease_seconds,omitempty"`
+	MaxAttempts          int    `json:"max_attempts,omitempty"`
+	Provider             string `json:"provider,omitempty"`
+	Model                string `json:"model,omitempty"`
+	PromptVersion        string `json:"prompt_version,omitempty"`
+	Trigger              string `json:"trigger,omitempty"`
 }
 
 type startBrregDomainSearchWorkflowRequest struct {
@@ -313,15 +316,18 @@ func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWri
 	}
 
 	input := brregworkflow.TranslateBrregSourceCompaniesInput{
-		AllRecords:       req.AllRecords,
-		BatchSize:        req.BatchSize,
-		MaxParallelTasks: req.MaxParallelTasks,
-		LeaseSeconds:     req.LeaseSeconds,
-		MaxAttempts:      req.MaxAttempts,
-		Provider:         req.Provider,
-		Model:            req.Model,
-		PromptVersion:    req.PromptVersion,
-		Trigger:          req.Trigger,
+		AllRecords:           req.AllRecords,
+		BatchSize:            req.BatchSize,
+		ClaimMode:            req.ClaimMode,
+		MaxRequestChars:      req.MaxRequestChars,
+		MaxCompaniesPerBatch: req.MaxCompaniesPerBatch,
+		MaxParallelTasks:     req.MaxParallelTasks,
+		LeaseSeconds:         req.LeaseSeconds,
+		MaxAttempts:          req.MaxAttempts,
+		Provider:             req.Provider,
+		Model:                req.Model,
+		PromptVersion:        req.PromptVersion,
+		Trigger:              req.Trigger,
 	}
 	workflowID := newWorkflowID("brreg-company-translation")
 	slog.Debug("starting brreg company translation workflow",
@@ -329,6 +335,9 @@ func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWri
 		"task_queue", brregworkflow.TranslateBrregSourceCompaniesTaskQueue,
 		"all_records", req.AllRecords,
 		"batch_size", req.BatchSize,
+		"claim_mode", req.ClaimMode,
+		"max_request_chars", req.MaxRequestChars,
+		"max_companies_per_batch", req.MaxCompaniesPerBatch,
 		"max_parallel_tasks", req.MaxParallelTasks,
 		"lease_seconds", req.LeaseSeconds,
 		"max_attempts", req.MaxAttempts,
@@ -918,12 +927,22 @@ func decodeStartBrregCompanyTranslationWorkflowRequest(r *http.Request) (startBr
 	req.Provider = strings.TrimSpace(req.Provider)
 	req.Model = strings.TrimSpace(req.Model)
 	req.PromptVersion = strings.TrimSpace(req.PromptVersion)
+	req.ClaimMode = strings.ToLower(strings.TrimSpace(req.ClaimMode))
 	req.Trigger = strings.TrimSpace(req.Trigger)
 	if req.Trigger == "" {
 		req.Trigger = "manual"
 	}
+	if req.ClaimMode != "" && req.ClaimMode != "auto" && req.ClaimMode != "fixed" {
+		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("claim_mode must be auto or fixed")
+	}
 	if req.BatchSize < 0 {
 		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("batch_size cannot be negative")
+	}
+	if req.MaxRequestChars < 0 {
+		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_request_chars cannot be negative")
+	}
+	if req.MaxCompaniesPerBatch < 0 {
+		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_companies_per_batch cannot be negative")
 	}
 	if req.MaxParallelTasks < 0 {
 		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_parallel_tasks cannot be negative")

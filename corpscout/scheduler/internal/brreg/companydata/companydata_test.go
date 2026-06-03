@@ -2,6 +2,7 @@ package companydata
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -527,6 +528,145 @@ INSERT INTO brreg_source.company_process_status (
 
 	require.NoError(t, err)
 	require.Empty(t, result.Companies)
+}
+
+func TestStoreClaimForTranslationSkipsCompleteNonDirtyCompanies(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	complete := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999111235",
+		OrganizationName:      "COMPLETE TRANSLATION AS",
+		OrganizationFormLabel: "Aksjeselskap",
+		ResponseClass:         "Enhet",
+	})
+	missing := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999111236",
+		OrganizationName:      "MISSING TRANSLATION AS",
+		OrganizationFormLabel: "Aksjeselskap",
+		ResponseClass:         "Enhet",
+	})
+	_, err := tx.Exec(t.Context(), `
+UPDATE brreg_source.companies
+SET organization_form_label_en = 'Limited liability company',
+    response_class_en = 'Entity'
+WHERE id = $1
+`, complete.CompanyID)
+	require.NoError(t, err)
+
+	result, err := New(tx).ClaimForTranslation(t.Context(), ClaimForTranslationCommand{
+		Limit:            10,
+		MaxParallelTasks: 10,
+		LeaseSeconds:     900,
+		MaxAttempts:      3,
+		WorkerID:         "test-worker",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Companies, 1)
+	require.Equal(t, missing.CompanyID, result.Companies[0].Company.ID)
+}
+
+func TestStoreClaimForTranslationClaimsDirtyCompleteCompanies(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	seed := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999111237",
+		OrganizationName:      "DIRTY COMPLETE TRANSLATION AS",
+		OrganizationFormLabel: "Aksjeselskap",
+		ResponseClass:         "Enhet",
+	})
+	_, err := tx.Exec(t.Context(), `
+UPDATE brreg_source.companies
+SET organization_form_label_en = 'Limited liability company',
+    response_class_en = 'Entity'
+WHERE id = $1
+`, seed.CompanyID)
+	require.NoError(t, err)
+	_, err = tx.Exec(t.Context(), `
+INSERT INTO brreg_source.company_process_status (company_id, translation_status)
+VALUES ($1, 'dirty')
+ON CONFLICT (company_id) DO UPDATE SET translation_status = 'dirty'
+`, seed.CompanyID)
+	require.NoError(t, err)
+
+	result, err := New(tx).ClaimForTranslation(t.Context(), ClaimForTranslationCommand{
+		Limit:            10,
+		MaxParallelTasks: 10,
+		LeaseSeconds:     900,
+		MaxAttempts:      3,
+		WorkerID:         "test-worker",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Companies, 1)
+	require.Equal(t, seed.CompanyID, result.Companies[0].Company.ID)
+}
+
+func TestStoreAutoClaimForTranslationKeepsOversizedFirstCompany(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	largeText := strings.Repeat("stor tekst ", 20)
+	seed := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999111238",
+		OrganizationName:      "OVERSIZED AUTO CLAIM AS",
+		ActivityDescription:   largeText,
+		OrganizationFormLabel: "Aksjeselskap",
+	})
+
+	result, err := New(tx).AutoClaimForTranslation(t.Context(), AutoClaimForTranslationCommand{
+		PageSize:             1,
+		MaxRequestChars:      20,
+		MaxCompaniesPerBatch: 100,
+		MaxParallelTasks:     10,
+		LeaseSeconds:         900,
+		MaxAttempts:          3,
+		WorkerID:             "auto-worker",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Companies, 1)
+	require.Equal(t, seed.CompanyID, result.Companies[0].Company.ID)
+	require.Greater(t, result.EstimatedRequestChars, int32(20))
+}
+
+func TestStoreAutoClaimForTranslationReleasesOverflowCompany(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	first := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999111239",
+		OrganizationName:      "FIRST AUTO CLAIM AS",
+		ActivityDescription:   "kort tekst",
+		OrganizationFormLabel: "Aksjeselskap",
+	})
+	second := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999111240",
+		OrganizationName:      "SECOND AUTO CLAIM AS",
+		ActivityDescription:   strings.Repeat("lang tekst ", 10),
+		OrganizationFormLabel: "Aksjeselskap",
+	})
+
+	result, err := New(tx).AutoClaimForTranslation(t.Context(), AutoClaimForTranslationCommand{
+		PageSize:             1,
+		MaxRequestChars:      40,
+		MaxCompaniesPerBatch: 100,
+		MaxParallelTasks:     10,
+		LeaseSeconds:         900,
+		MaxAttempts:          3,
+		WorkerID:             "auto-worker",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Companies, 1)
+	require.Equal(t, first.CompanyID, result.Companies[0].Company.ID)
+
+	var secondStatus string
+	var secondAttempt int32
+	var secondLeaseBy *string
+	err = tx.QueryRow(t.Context(), `
+SELECT translation_status, translation_attempt_count, translation_lease_by
+FROM brreg_source.company_process_status
+WHERE company_id = $1
+`, second.CompanyID).Scan(&secondStatus, &secondAttempt, &secondLeaseBy)
+	require.NoError(t, err)
+	require.Equal(t, "pending", secondStatus)
+	require.Zero(t, secondAttempt)
+	require.Nil(t, secondLeaseBy)
 }
 
 type seededCompanyData struct {

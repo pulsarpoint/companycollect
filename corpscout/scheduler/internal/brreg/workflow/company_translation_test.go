@@ -15,6 +15,7 @@ func TestTranslateBrregSourceCompaniesCompletesCachedCompanies(t *testing.T) {
 	env.RegisterWorkflow(TranslateBrregSourceCompanies)
 	env.RegisterActivityWithOptions(func(input ClaimBrregCompaniesForTranslationInput) (ClaimBrregCompaniesForTranslationResult, error) {
 		require.EqualValues(t, 10, input.Limit)
+		require.Equal(t, "fixed", input.ClaimMode)
 		require.EqualValues(t, 10, input.MaxParallelTasks)
 		require.EqualValues(t, 900, input.LeaseSeconds)
 		require.EqualValues(t, 5, input.MaxAttempts)
@@ -72,6 +73,9 @@ func TestTranslateBrregSourceCompaniesAllRecordsClaimsUntilDrained(t *testing.T)
 	env.RegisterActivityWithOptions(func(input ClaimBrregCompaniesForTranslationInput) (ClaimBrregCompaniesForTranslationResult, error) {
 		claimCalls++
 		require.EqualValues(t, 10, input.Limit)
+		require.Equal(t, "auto", input.ClaimMode)
+		require.EqualValues(t, 12000, input.MaxRequestChars)
+		require.EqualValues(t, 500, input.MaxCompaniesPerBatch)
 		switch claimCalls {
 		case 1:
 			return ClaimBrregCompaniesForTranslationResult{
