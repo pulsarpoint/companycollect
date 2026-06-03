@@ -68,6 +68,17 @@ type startBrregTermTranslationWorkflowRequest struct {
 	Trigger       string `json:"trigger,omitempty"`
 }
 
+type startBrregCompanyTranslationWorkflowRequest struct {
+	BatchSize        int    `json:"batch_size,omitempty"`
+	MaxParallelTasks int    `json:"max_parallel_tasks,omitempty"`
+	LeaseSeconds     int    `json:"lease_seconds,omitempty"`
+	MaxAttempts      int    `json:"max_attempts,omitempty"`
+	Provider         string `json:"provider,omitempty"`
+	Model            string `json:"model,omitempty"`
+	PromptVersion    string `json:"prompt_version,omitempty"`
+	Trigger          string `json:"trigger,omitempty"`
+}
+
 type startBrregDomainSearchWorkflowRequest struct {
 	IDs         []string          `json:"ids,omitempty"`
 	Filters     map[string]string `json:"filters,omitempty"`
@@ -283,6 +294,65 @@ func (h *Handlers) handleStartBrregTermTranslationWorkflow(w http.ResponseWriter
 	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
 		Status:        "started",
 		Workflow:      brregworkflow.TranslateBrregSourceTermsWorkflowName,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
+func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := decodeStartBrregCompanyTranslationWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := brregworkflow.TranslateBrregSourceCompaniesInput{
+		BatchSize:        req.BatchSize,
+		MaxParallelTasks: req.MaxParallelTasks,
+		LeaseSeconds:     req.LeaseSeconds,
+		MaxAttempts:      req.MaxAttempts,
+		Provider:         req.Provider,
+		Model:            req.Model,
+		PromptVersion:    req.PromptVersion,
+		Trigger:          req.Trigger,
+	}
+	workflowID := newWorkflowID("brreg-company-translation")
+	slog.Debug("starting brreg company translation workflow",
+		"workflow_id", workflowID,
+		"task_queue", brregworkflow.TranslateBrregSourceCompaniesTaskQueue,
+		"batch_size", req.BatchSize,
+		"max_parallel_tasks", req.MaxParallelTasks,
+		"lease_seconds", req.LeaseSeconds,
+		"max_attempts", req.MaxAttempts,
+		"provider", req.Provider,
+		"model", req.Model,
+		"prompt_version", req.PromptVersion,
+		"trigger", req.Trigger,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: brregworkflow.TranslateBrregSourceCompaniesTaskQueue,
+		},
+		brregworkflow.TranslateBrregSourceCompanies,
+		input,
+	)
+	if err != nil {
+		slog.Error("start brreg company translation workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("brreg company translation workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      brregworkflow.TranslateBrregSourceCompaniesWorkflowName,
 		WorkflowID:    workflowID,
 		WorkflowRunID: run.GetRunID(),
 	})
@@ -835,6 +905,35 @@ func decodeStartBrregTermTranslationWorkflowRequest(r *http.Request) (startBrreg
 	return req, nil
 }
 
+func decodeStartBrregCompanyTranslationWorkflowRequest(r *http.Request) (startBrregCompanyTranslationWorkflowRequest, error) {
+	var req startBrregCompanyTranslationWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.Provider = strings.TrimSpace(req.Provider)
+	req.Model = strings.TrimSpace(req.Model)
+	req.PromptVersion = strings.TrimSpace(req.PromptVersion)
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	if req.Trigger == "" {
+		req.Trigger = "manual"
+	}
+	if req.BatchSize < 0 {
+		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("batch_size cannot be negative")
+	}
+	if req.MaxParallelTasks < 0 {
+		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_parallel_tasks cannot be negative")
+	}
+	if req.LeaseSeconds < 0 {
+		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("lease_seconds cannot be negative")
+	}
+	if req.MaxAttempts < 0 {
+		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_attempts cannot be negative")
+	}
+	return req, nil
+}
+
 func decodeStartBrregDomainSearchWorkflowRequest(r *http.Request) (startBrregDomainSearchWorkflowRequest, error) {
 	var req startBrregDomainSearchWorkflowRequest
 	decoder := json.NewDecoder(r.Body)
@@ -1095,6 +1194,11 @@ var brregWorkflowPrefixes = []brregWorkflowPrefix{
 		Prefix:       "brreg-term-translation",
 		Label:        "Term translation",
 		WorkflowType: brregworkflow.TranslateBrregSourceTermsWorkflowName,
+	},
+	{
+		Prefix:       "brreg-company-translation",
+		Label:        "Company translation",
+		WorkflowType: brregworkflow.TranslateBrregSourceCompaniesWorkflowName,
 	},
 	{
 		Prefix:       "brreg-domain-search",

@@ -18,6 +18,7 @@ import type {
   BrregSourceEntryListResponse,
   BrregSourceCompanyDetail,
   BrregWorkflowRunListResponse,
+  BrregCompanyTranslationRequest,
   BrregTermTranslationRequest,
   BrregTranslationRequest,
   LLMProvider,
@@ -414,6 +415,9 @@ export const api = {
 
   translateBrregTerms: (body: BrregTermTranslationRequest = {}) =>
     post<StartWorkflowResponse>("/workflows/brreg/term-translation", body),
+
+  translateBrregSourceCompanies: (body: BrregCompanyTranslationRequest = {}) =>
+    post<StartWorkflowResponse>("/workflows/brreg/company-translation", body),
 
   searchBrregDomains: (
     body: {

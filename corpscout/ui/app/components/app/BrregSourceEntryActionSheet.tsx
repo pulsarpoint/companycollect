@@ -33,7 +33,7 @@ const AVAILABLE_ACTIONS: Array<{
   {
     key: "translation",
     label: "Translation",
-    description: "Translate missing BRREG source fields and store the English values in brreg_source.",
+    description: "Translate missing BRREG source company fields and store English values in brreg_source.",
   },
   {
     key: "capital_fx",
@@ -103,10 +103,10 @@ export function BrregSourceEntryActionSheet({
               selectedIds={selectedIds}
               totalCount={totalCount}
               filters={filters}
-              mode="source_terms"
+              mode="source_companies"
               initialScope={initialScope}
               recordLabel="source entries"
-              description="Starts the Temporal workflow that translates missing distinct BRREG source terms and applies cached English values to brreg_source."
+              description="Starts the Temporal workflow that claims BRREG source companies, applies cached term translations, requests missing translations, and stores English values in brreg_source."
               showAdvancedOptions
               onStarted={onStarted}
               onClose={() => onOpenChange(false)}

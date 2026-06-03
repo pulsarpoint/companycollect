@@ -259,6 +259,17 @@ export interface BrregTermTranslationRequest {
   trigger?: string;
 }
 
+export interface BrregCompanyTranslationRequest {
+  batch_size?: number;
+  max_parallel_tasks?: number;
+  lease_seconds?: number;
+  max_attempts?: number;
+  provider?: string;
+  model?: string;
+  prompt_version?: string;
+  trigger?: string;
+}
+
 export interface RawInput {
   id: string;
   source: string;

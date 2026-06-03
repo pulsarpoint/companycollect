@@ -8,13 +8,14 @@ import { Label } from "~/components/ui/label";
 import { Separator } from "~/components/ui/separator";
 import { api, errorMessage } from "~/lib/api";
 import type {
+  BrregCompanyTranslationRequest,
   BrregTermTranslationRequest,
   BrregTranslationRequest,
   LLMProvider,
 } from "~/types/api";
 import type { BrregActionScope } from "~/components/app/BrregActionScope";
 
-type BrregTranslationMode = "raw" | "source_terms";
+type BrregTranslationMode = "raw" | "source_terms" | "source_companies";
 type TermTranslationScope = "eligible" | "all";
 
 interface Props {
@@ -77,6 +78,10 @@ export function BrregTranslationActionForm({
   onClose,
 }: Props) {
   const usesScopedRecords = mode === "raw";
+  const usesSourceTerms = mode === "source_terms";
+  const usesSourceCompanies = mode === "source_companies";
+  const supportsLeaseOptions = usesScopedRecords || usesSourceCompanies;
+  const supportsRawServiceOptions = usesScopedRecords;
   const selectedCount = selectedIds.length;
   const hasFilters = Object.keys(filters).length > 0;
   const defaultScope: BrregActionScope =
@@ -104,12 +109,16 @@ export function BrregTranslationActionForm({
   useEffect(() => {
     setScope(defaultScope);
     setLimit(
-      usesScopedRecords && selectedCount > 0 ? String(selectedCount) : "1000",
+      usesScopedRecords && selectedCount > 0
+        ? String(selectedCount)
+        : usesSourceCompanies
+          ? "10"
+          : "1000",
     );
     setBatchSize("50");
     setLeaseSeconds("900");
     setMaxAttempts("3");
-    setMaxParallelTasks("50");
+    setMaxParallelTasks(usesSourceCompanies ? "10" : "50");
     setMaxServiceRetries("2");
     setProvider("");
     setModel("");
@@ -118,7 +127,7 @@ export function BrregTranslationActionForm({
     setTargetLang("");
     setTermScope("eligible");
     setAdvancedOpen(false);
-  }, [defaultScope, selectedCount, usesScopedRecords]);
+  }, [defaultScope, selectedCount, usesScopedRecords, usesSourceCompanies]);
 
   useEffect(() => {
     if (!showAdvancedOptions || !advancedOpen) return;
@@ -168,7 +177,7 @@ export function BrregTranslationActionForm({
     [hasFilters, selectedCount, totalCount],
   );
 
-  const allSourceTermsSelected = mode === "source_terms" && termScope === "all";
+  const allSourceTermsSelected = usesSourceTerms && termScope === "all";
   const limitDisabled =
     (usesScopedRecords && scope === "selected") || allSourceTermsSelected;
   const effectiveLimit = limitDisabled
@@ -217,6 +226,24 @@ export function BrregTranslationActionForm({
         };
         await api.translateBrregTerms(body);
         toast.success("BRREG term translation workflow started.");
+        onStarted?.();
+        onClose();
+        return;
+      }
+
+      if (mode === "source_companies") {
+        const body: BrregCompanyTranslationRequest = {
+          batch_size: effectiveLimit,
+          max_attempts: parseOptionalPositiveNumber(maxAttempts),
+          max_parallel_tasks: parseOptionalPositiveNumber(maxParallelTasks),
+          lease_seconds: parseOptionalPositiveNumber(leaseSeconds),
+          provider: optionalText(provider),
+          model: optionalText(model),
+          prompt_version: optionalText(promptVersion),
+          trigger: "manual",
+        };
+        await api.translateBrregSourceCompanies(body);
+        toast.success("BRREG company translation workflow started.");
         onStarted?.();
         onClose();
         return;
@@ -300,7 +327,7 @@ export function BrregTranslationActionForm({
           </>
         )}
 
-        {!usesScopedRecords && (
+        {usesSourceTerms && (
           <div className="flex flex-col gap-2">
             <Label htmlFor="brreg-term-translation-scope">Records source</Label>
             <select
@@ -340,7 +367,9 @@ export function BrregTranslationActionForm({
           <FieldDescription>
             {allSourceTermsSelected
               ? "No record limit is sent. The workflow scans all currently missing BRREG source terms."
-              : usesScopedRecords
+              : usesSourceCompanies
+                ? "Maximum number of pending BRREG source companies this workflow claims and processes in one run."
+                : usesScopedRecords
                 ? `Maximum number of ${recordLabel} this workflow can select. For checked rows, this is fixed to the selected count.`
                 : "Maximum number of missing source terms the workflow can prepare and apply per loop."}
           </FieldDescription>
@@ -367,24 +396,26 @@ export function BrregTranslationActionForm({
           {advancedOpen && (
             <div className="flex flex-col gap-4">
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="brreg-translation-batch-size">
-                    Batch size
-                  </Label>
-                  <Input
-                    id="brreg-translation-batch-size"
-                    min={1}
-                    type="number"
-                    value={batchSize}
-                    onChange={(event) => setBatchSize(event.target.value)}
-                  />
-                  <FieldDescription>
-                    Number of records sent to the translation service in one
-                    workflow batch.
-                  </FieldDescription>
-                </div>
+                {!usesSourceCompanies && (
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="brreg-translation-batch-size">
+                      Batch size
+                    </Label>
+                    <Input
+                      id="brreg-translation-batch-size"
+                      min={1}
+                      type="number"
+                      value={batchSize}
+                      onChange={(event) => setBatchSize(event.target.value)}
+                    />
+                    <FieldDescription>
+                      Number of records sent to the translation service in one
+                      workflow batch.
+                    </FieldDescription>
+                  </div>
+                )}
 
-                {usesScopedRecords && (
+                {supportsLeaseOptions && (
                   <div className="flex flex-col gap-2">
                     <Label htmlFor="brreg-translation-timeout">
                       Timeout seconds
@@ -415,13 +446,13 @@ export function BrregTranslationActionForm({
                     onChange={(event) => setMaxAttempts(event.target.value)}
                   />
                   <FieldDescription>
-                    {usesScopedRecords
-                      ? "Maximum DB task attempts for a record before it becomes terminally failed."
-                      : "Maximum translation attempts for a source term before it is skipped by this run."}
+                    {usesSourceTerms
+                      ? "Maximum translation attempts for a source term before it is skipped by this run."
+                      : "Maximum DB task attempts for a company before it becomes terminally failed."}
                   </FieldDescription>
                 </div>
 
-                {usesScopedRecords && (
+                {supportsRawServiceOptions && (
                   <>
                     <div className="flex flex-col gap-2">
                       <Label htmlFor="brreg-translation-service-retries">
@@ -441,10 +472,16 @@ export function BrregTranslationActionForm({
                         service returns retryable errors.
                       </FieldDescription>
                     </div>
+                  </>
+                )}
 
+                {supportsLeaseOptions && (
+                  <>
                     <div className="flex flex-col gap-2">
                       <Label htmlFor="brreg-translation-parallel">
-                        Parallel batches
+                        {usesSourceCompanies
+                          ? "Parallel companies"
+                          : "Parallel batches"}
                       </Label>
                       <Input
                         id="brreg-translation-parallel"
@@ -456,8 +493,9 @@ export function BrregTranslationActionForm({
                         }
                       />
                       <FieldDescription>
-                        Maximum translation batches the workflow can keep active
-                        at the same time.
+                        {usesSourceCompanies
+                          ? "Maximum company translation tasks the workflow can keep active at the same time."
+                          : "Maximum translation batches the workflow can keep active at the same time."}
                       </FieldDescription>
                     </div>
                   </>

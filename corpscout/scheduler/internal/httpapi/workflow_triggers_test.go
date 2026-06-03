@@ -191,6 +191,54 @@ func TestStartBrregTermTranslationWorkflowSupportsAllRecords(t *testing.T) {
 	require.Zero(t, input.Limit)
 }
 
+func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/company-translation", bytes.NewBufferString(`{
+		"batch_size": 10,
+		"max_parallel_tasks": 5,
+		"lease_seconds": 900,
+		"max_attempts": 3,
+		"provider": "deepseek",
+		"model": "deepseek-v4-flash",
+		"prompt_version": "v2",
+		"trigger": "manual"
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"TranslateBrregSourceCompanies"`)
+	require.Equal(t, "brreg-company-translation", tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(brregworkflow.TranslateBrregSourceCompanies).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(brregworkflow.TranslateBrregSourceCompaniesInput)
+	require.Equal(t, 10, input.BatchSize)
+	require.Equal(t, 5, input.MaxParallelTasks)
+	require.Equal(t, 900, input.LeaseSeconds)
+	require.Equal(t, 3, input.MaxAttempts)
+	require.Equal(t, "deepseek", input.Provider)
+	require.Equal(t, "deepseek-v4-flash", input.Model)
+	require.Equal(t, "v2", input.PromptVersion)
+	require.Equal(t, "manual", input.Trigger)
+}
+
+func TestStartBrregCompanyTranslationWorkflowRejectsInvalidBatchSize(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/company-translation", bytes.NewBufferString(`{"batch_size": -1}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"batch_size cannot be negative"`)
+	require.Nil(t, tc.workflow)
+}
+
 func TestBrregTranslationEndpointSplitKeepsRawAndSourceTermWorkflowsSeparate(t *testing.T) {
 	rawTemporal := &temporalExecuteRecorder{}
 	rawRouter := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", rawTemporal, ""))
@@ -724,11 +772,13 @@ func TestListBrregWorkflowRunsReturnsFilteredTemporalExecutions(t *testing.T) {
 		} `json:"items"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	require.Len(t, body.Prefixes, 6)
+	require.Len(t, body.Prefixes, 7)
 	require.Equal(t, "brreg-translation", body.Prefixes[0].Prefix)
 	require.Equal(t, brregworkflow.TranslateBrregRawInputsWorkflowName, body.Prefixes[0].WorkflowType)
 	require.Equal(t, "brreg-term-translation", body.Prefixes[1].Prefix)
 	require.Equal(t, brregworkflow.TranslateBrregSourceTermsWorkflowName, body.Prefixes[1].WorkflowType)
+	require.Equal(t, "brreg-company-translation", body.Prefixes[2].Prefix)
+	require.Equal(t, brregworkflow.TranslateBrregSourceCompaniesWorkflowName, body.Prefixes[2].WorkflowType)
 	require.Len(t, body.Items, 1)
 	require.Equal(t, "brreg-translation-20260602-113000", body.Items[0].WorkflowID)
 	require.Equal(t, "run-123", body.Items[0].RunID)
