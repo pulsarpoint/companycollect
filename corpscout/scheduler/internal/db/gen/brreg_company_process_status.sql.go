@@ -377,38 +377,28 @@ picked AS (
   SELECT status_row.company_id
   FROM brreg_source.company_process_status status_row
   JOIN brreg_source.companies company ON company.id = status_row.company_id
+  LEFT JOIN brreg_source.v_companies_missing_translations missing
+    ON missing.company_id = status_row.company_id
   WHERE company.row_status = 'active'
     AND (
       status_row.translation_status = 'dirty'
       OR (
         status_row.translation_status IN ('pending', 'succeeded', 'skipped')
-        AND EXISTS (
-          SELECT 1
-          FROM brreg_source.v_missing_translations missing
-          WHERE missing.company_id = company.id
-        )
+        AND missing.company_id IS NOT NULL
       )
       OR (
         status_row.translation_status = 'failed_retryable'
         AND status_row.translation_attempt_count < GREATEST($3::integer, 1)
-        AND EXISTS (
-          SELECT 1
-          FROM brreg_source.v_missing_translations missing
-          WHERE missing.company_id = company.id
-        )
+        AND missing.company_id IS NOT NULL
       )
       OR (
         status_row.translation_status = 'running'
         AND coalesce(status_row.translation_lease_until, '-infinity'::timestamptz) <= now()
         AND status_row.translation_attempt_count < GREATEST($3::integer, 1)
-        AND EXISTS (
-          SELECT 1
-          FROM brreg_source.v_missing_translations missing
-          WHERE missing.company_id = company.id
-        )
+        AND missing.company_id IS NOT NULL
       )
     )
-  ORDER BY status_row.updated_at, status_row.company_id
+  ORDER BY status_row.updated_at, missing.min_priority NULLS LAST, status_row.company_id
   LIMIT GREATEST(LEAST(GREATEST($2::integer, 1), (SELECT available_slots FROM active_capacity)), 0)
   FOR UPDATE OF status_row SKIP LOCKED
 ),
@@ -556,17 +546,14 @@ const ensureBrregCompanyProcessStatuses = `-- name: EnsureBrregCompanyProcessSta
 WITH inserted AS (
   INSERT INTO brreg_source.company_process_status (company_id)
   SELECT company.id
-  FROM brreg_source.companies company
+  FROM brreg_source.v_companies_missing_translations missing
+  JOIN brreg_source.companies company
+    ON company.id = missing.company_id
+   AND company.row_status = 'active'
   LEFT JOIN brreg_source.company_process_status existing
     ON existing.company_id = company.id
-  WHERE company.row_status = 'active'
-    AND existing.company_id IS NULL
-    AND EXISTS (
-      SELECT 1
-      FROM brreg_source.v_missing_translations missing
-      WHERE missing.company_id = company.id
-    )
-  ORDER BY company.updated_at DESC, company.id
+  WHERE existing.company_id IS NULL
+  ORDER BY missing.min_priority, company.updated_at DESC, company.id
   LIMIT NULLIF(GREATEST($1::integer, 0), 0)
   ON CONFLICT (company_id) DO NOTHING
   RETURNING company_id

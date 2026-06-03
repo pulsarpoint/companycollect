@@ -1,0 +1,9 @@
+DROP VIEW IF EXISTS brreg_source.v_companies_missing_translations;
+
+DROP INDEX IF EXISTS brreg_source.idx_brreg_source_roles_missing_translation_fields;
+DROP INDEX IF EXISTS brreg_source.idx_brreg_source_capital_missing_capital_type_en;
+DROP INDEX IF EXISTS brreg_source.idx_brreg_source_contacts_missing_label_en;
+DROP INDEX IF EXISTS brreg_source.idx_brreg_source_websites_missing_translation_fields;
+DROP INDEX IF EXISTS brreg_source.idx_brreg_source_industries_missing_source_label_en;
+DROP INDEX IF EXISTS brreg_source.idx_brreg_source_addresses_missing_country_en;
+DROP INDEX IF EXISTS brreg_source.idx_brreg_source_companies_missing_translation_fields;

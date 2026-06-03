@@ -579,6 +579,40 @@ func TestStoreClaimForTranslationReturnsCompanyData(t *testing.T) {
 	require.EqualValues(t, 1, result.Companies[0].AttemptCount)
 }
 
+func TestCompanyMissingTranslationsViewAggregatesByCompany(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	seed := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999111242",
+		OrganizationName:      "VIEW AGGREGATE AS",
+		OrganizationFormLabel: "Aksjeselskap",
+		ResponseClass:         "Enhet",
+		AddressCountry:        "Norge",
+		IndustryLabel:         "Andre egeninvesteringsselskaper",
+		WebsiteTitle:          "Kontakt oss",
+		WebsiteDescription:    "Offisiell hjemmeside",
+		ContactLabel:          "Sentralbord",
+		CapitalType:           "Aksjekapital",
+		RoleLabel:             "Styrets leder",
+		RoleGroup:             "Styret",
+	})
+
+	var companyID uuid.UUID
+	var missingFieldCount int64
+	var missingTermCount int64
+	var estimatedChars int64
+	err := tx.QueryRow(t.Context(), `
+SELECT company_id, missing_field_count, missing_term_count, estimated_chars
+FROM brreg_source.v_companies_missing_translations
+WHERE company_id = $1
+`, seed.CompanyID).Scan(&companyID, &missingFieldCount, &missingTermCount, &estimatedChars)
+
+	require.NoError(t, err)
+	require.Equal(t, seed.CompanyID, companyID)
+	require.EqualValues(t, 10, missingFieldCount)
+	require.EqualValues(t, 10, missingTermCount)
+	require.Positive(t, estimatedChars)
+}
+
 func TestStoreClaimForTranslationRespectsLimitAndActiveCapacity(t *testing.T) {
 	tx := testdb.BeginTx(t)
 	for idx, organizationNumber := range []string{"999111229", "999111230", "999111231"} {
