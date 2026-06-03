@@ -442,6 +442,9 @@ func TestTranslationWorksetProcessesDummySQLiteFileEndToEnd(t *testing.T) {
 
 	db := openWorksetDB(t, path)
 	defer db.Close()
+	bindings, err := loadTranslationWorksetBindings(t.Context(), db)
+	require.NoError(t, err)
+	require.Len(t, bindings, 4)
 	require.EqualValues(t, 4, countRows(t, db, "translation_terms"))
 	require.EqualValues(t, 4, countRowsWhere(t, db, "translation_terms", "status = 'succeeded'"))
 	require.EqualValues(t, 0, countRowsWhere(t, db, "translation_terms", "status IN ('pending', 'running', 'failed_retryable', 'failed_terminal')"))

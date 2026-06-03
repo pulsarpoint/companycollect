@@ -776,7 +776,7 @@ func loadTranslationWorksetBindings(ctx context.Context, db *sql.DB) ([]translat
 SELECT id, source_table, source_row_id, target_column, translated_text
 FROM translation_bindings
 WHERE status IN ('cached', 'translated')
-  AND nullif(btrim(translated_text), '') IS NOT NULL
+  AND nullif(trim(translated_text), '') IS NOT NULL
 ORDER BY id
 `)
 	if err != nil {
