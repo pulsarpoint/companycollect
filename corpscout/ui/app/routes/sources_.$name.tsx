@@ -94,6 +94,19 @@ export default function SourceDetailLayout() {
       }
       return;
     }
+    if (sourceName === "france") {
+      setTriggering(true);
+      try {
+        await api.loadFranceBulkRawRecords({ trigger: "manual" });
+        await refreshSource(sourceName);
+        toast.success("France SIRENE bulk ingest workflow started.");
+      } catch (err) {
+        toast.error(errorMessage(err, "Failed to start France SIRENE bulk ingest."));
+      } finally {
+        if (latestNameRef.current === sourceName) setTriggering(false);
+      }
+      return;
+    }
     toast.error(`Manual trigger is not available for ${sourceName}.`);
   }
 

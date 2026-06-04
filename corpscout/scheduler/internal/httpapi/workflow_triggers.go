@@ -19,8 +19,10 @@ import (
 	ariregisterworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/workflow"
 	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
 	cvrworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/cvr/workflow"
+	franceworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/france/workflow"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
+	seworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/se/workflow"
 )
 
 const defaultBrregDomainSearchProvider = "default"
@@ -140,6 +142,22 @@ type startCVRRawIngestWorkflowRequest struct {
 	PageSize  int    `json:"page_size,omitempty"`
 	BatchSize int    `json:"batch_size,omitempty"`
 	Trigger   string `json:"trigger,omitempty"`
+}
+
+type startFranceBulkRawIngestWorkflowRequest struct {
+	LegalUnitsURL     string `json:"legal_units_url,omitempty"`
+	EstablishmentsURL string `json:"establishments_url,omitempty"`
+	Limit             int    `json:"limit,omitempty"`
+	BatchSize         int    `json:"batch_size,omitempty"`
+	Trigger           string `json:"trigger,omitempty"`
+}
+
+type startSEBulkRawIngestWorkflowRequest struct {
+	Datasets     []seworkflow.HVDDatasetConfig `json:"datasets,omitempty"`
+	DatasetsJSON string                        `json:"datasets_json,omitempty"`
+	Limit        int                           `json:"limit,omitempty"`
+	BatchSize    int                           `json:"batch_size,omitempty"`
+	Trigger      string                        `json:"trigger,omitempty"`
 }
 
 type startNACETaxonomySyncWorkflowRequest struct {
@@ -720,6 +738,111 @@ func (h *Handlers) handleStartAriregisterSourceProfileWorkflow(w http.ResponseWr
 		Status:        "started",
 		Workflow:      ariregisterworkflow.NormalizeAriregisterSourceProfilesWithCopyWorkflowName,
 		TaskQueue:     ariregisterworkflow.NormalizeAriregisterSourceProfilesTaskQueue,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
+func (h *Handlers) handleStartFranceBulkRawIngestWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := decodeStartFranceBulkRawIngestWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := franceworkflow.LoadFranceBulkRawRecordsInput{
+		LegalUnitsURL:     req.LegalUnitsURL,
+		EstablishmentsURL: req.EstablishmentsURL,
+		Limit:             req.Limit,
+		BatchSize:         req.BatchSize,
+		Trigger:           req.Trigger,
+	}
+	workflowID := newWorkflowID("france-bulk-ingest")
+	slog.Debug("starting france bulk raw ingest workflow",
+		"workflow_id", workflowID,
+		"task_queue", franceworkflow.LoadFranceBulkRawRecordsTaskQueue,
+		"legal_units_url", req.LegalUnitsURL,
+		"establishments_url", req.EstablishmentsURL,
+		"limit", req.Limit,
+		"batch_size", req.BatchSize,
+		"trigger", req.Trigger,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: franceworkflow.LoadFranceBulkRawRecordsTaskQueue,
+		},
+		franceworkflow.LoadFranceBulkRawRecords,
+		input,
+	)
+	if err != nil {
+		slog.Error("start france bulk raw ingest workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("france bulk raw ingest workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      franceworkflow.LoadFranceBulkRawRecordsWorkflowName,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
+func (h *Handlers) handleStartSEBulkRawIngestWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := decodeStartSEBulkRawIngestWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := seworkflow.LoadSEBulkRawRecordsInput{
+		Datasets:     req.Datasets,
+		DatasetsJSON: req.DatasetsJSON,
+		Limit:        req.Limit,
+		BatchSize:    req.BatchSize,
+		Trigger:      req.Trigger,
+	}
+	workflowID := newWorkflowID("se-bulk-ingest")
+	slog.Debug("starting se bulk raw ingest workflow",
+		"workflow_id", workflowID,
+		"task_queue", seworkflow.LoadSEBulkRawRecordsTaskQueue,
+		"datasets_count", len(req.Datasets),
+		"limit", req.Limit,
+		"batch_size", req.BatchSize,
+		"trigger", req.Trigger,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: seworkflow.LoadSEBulkRawRecordsTaskQueue,
+		},
+		seworkflow.LoadSEBulkRawRecords,
+		input,
+	)
+	if err != nil {
+		slog.Error("start se bulk raw ingest workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("se bulk raw ingest workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      seworkflow.LoadSEBulkRawRecordsWorkflowName,
 		WorkflowID:    workflowID,
 		WorkflowRunID: run.GetRunID(),
 	})
@@ -1354,6 +1477,66 @@ func decodeStartAriregisterSourceProfileWorkflowRequest(r *http.Request) (startA
 	}
 	if req.BatchSize < 0 {
 		return startAriregisterSourceProfileWorkflowRequest{}, errors.New("batch_size cannot be negative")
+	}
+	return req, nil
+}
+
+func decodeStartFranceBulkRawIngestWorkflowRequest(r *http.Request) (startFranceBulkRawIngestWorkflowRequest, error) {
+	var req startFranceBulkRawIngestWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startFranceBulkRawIngestWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.LegalUnitsURL = strings.TrimSpace(req.LegalUnitsURL)
+	req.EstablishmentsURL = strings.TrimSpace(req.EstablishmentsURL)
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	if req.Trigger == "" {
+		req.Trigger = "manual"
+	}
+	if req.Limit < 0 {
+		return startFranceBulkRawIngestWorkflowRequest{}, errors.New("limit cannot be negative")
+	}
+	if req.BatchSize < 0 {
+		return startFranceBulkRawIngestWorkflowRequest{}, errors.New("batch_size cannot be negative")
+	}
+	if err := validateOptionalHTTPURL(req.LegalUnitsURL, "legal_units_url"); err != nil {
+		return startFranceBulkRawIngestWorkflowRequest{}, err
+	}
+	if err := validateOptionalHTTPURL(req.EstablishmentsURL, "establishments_url"); err != nil {
+		return startFranceBulkRawIngestWorkflowRequest{}, err
+	}
+	return req, nil
+}
+
+func decodeStartSEBulkRawIngestWorkflowRequest(r *http.Request) (startSEBulkRawIngestWorkflowRequest, error) {
+	var req startSEBulkRawIngestWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startSEBulkRawIngestWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.DatasetsJSON = strings.TrimSpace(req.DatasetsJSON)
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	if req.Trigger == "" {
+		req.Trigger = "manual"
+	}
+	if req.Limit < 0 {
+		return startSEBulkRawIngestWorkflowRequest{}, errors.New("limit cannot be negative")
+	}
+	if req.BatchSize < 0 {
+		return startSEBulkRawIngestWorkflowRequest{}, errors.New("batch_size cannot be negative")
+	}
+	for i := range req.Datasets {
+		req.Datasets[i].Dataset = strings.TrimSpace(req.Datasets[i].Dataset)
+		req.Datasets[i].URL = strings.TrimSpace(req.Datasets[i].URL)
+		req.Datasets[i].Format = strings.TrimSpace(req.Datasets[i].Format)
+		if req.Datasets[i].Dataset == "" || req.Datasets[i].URL == "" || req.Datasets[i].Format == "" {
+			return startSEBulkRawIngestWorkflowRequest{}, errors.New("datasets entries require dataset, url, and format")
+		}
+		if err := validateOptionalHTTPURL(req.Datasets[i].URL, "datasets.url"); err != nil {
+			return startSEBulkRawIngestWorkflowRequest{}, err
+		}
 	}
 	return req, nil
 }

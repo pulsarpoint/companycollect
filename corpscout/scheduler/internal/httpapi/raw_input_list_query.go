@@ -136,7 +136,7 @@ func buildRawInputListQuery(params rawInputListParams) rawInputListQuery {
 				WHERE s.source_input_table = '%s'
 				  AND s.source_input_id = ri.id::text
 			)`,
-			src.tableName,
+			rawInputSuggestionTableName(src),
 		)
 		if params.hasSuggestionFilter != "" {
 			existsClause := suggestionExistsClause

@@ -13,7 +13,11 @@ import {
 } from "~/components/ui/sheet";
 
 const SOURCE_LABELS: Record<string, string> = {
+  ariregister: "Ariregister",
   companies_house: "Companies House",
+  cvr: "CVR",
+  france: "SIRENE France",
+  gleif: "GLEIF",
 };
 
 function timeAgo(dateStr: string): string {
@@ -92,9 +96,7 @@ export function RawInputDetailSheet({
     };
   }, [open, source, id]);
 
-  const typeLabel = detail?.source === "companies_house"
-    ? detail.company_type
-    : detail?.registration_status;
+  const typeLabel = detail?.company_type || detail?.registration_status;
 
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>

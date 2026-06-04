@@ -8,6 +8,15 @@ export default function SourceEntriesPage() {
   const { source } = useOutletContext<SourceDetailContext>();
   if (source.name === "brreg") return <BrregSourceEntriesTable />;
   if (source.name === "ariregister") return <AriregisterSourceEntriesTable />;
+  if (source.name === "france") {
+    return (
+      <Alert>
+        <AlertDescription>
+          France source entries will be available after raw SIRENE records are normalized into the france_source schema.
+        </AlertDescription>
+      </Alert>
+    );
+  }
   return (
     <Alert>
       <AlertDescription>Source entries are not available for this source.</AlertDescription>

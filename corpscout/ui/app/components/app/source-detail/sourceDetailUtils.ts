@@ -3,6 +3,7 @@ import type { DataSource } from "~/types/api";
 const RAW_INPUT_TABLES = new Set([
   "brreg_workflow.raw_records",
   "cvr_workflow.raw_records",
+  "france_workflow.raw_legal_units",
   "gleif_company_raw_inputs",
   "companies_house_company_raw_inputs",
   "ariregister_company_raw_inputs",
@@ -48,19 +49,20 @@ export function hasPipeline(source: DataSource): boolean {
 
 export function defaultSourceDetailPath(sourceName: string): string {
   if (sourceName === "brreg") return `/sources/${sourceName}/tasks`;
-  if (sourceName === "ariregister" || sourceName === "cvr") return `/sources/${sourceName}/raw_input`;
+  if (sourceName === "ariregister" || sourceName === "cvr" || sourceName === "france") return `/sources/${sourceName}/raw_input`;
   return `/sources/${sourceName}/schedule`;
 }
 
 export function sourceDetailTabs(source: DataSource): Array<{ label: string; to: string }> {
-  const hasTaskTab = source.name === "brreg";
-  const hasSourceEntriesTab = source.source_entries_available;
+  const hasTaskTab = source.name === "brreg" || source.name === "france";
+  const hasSourceEntriesTab =
+    source.source_entries_available || source.name === "france";
   return [
     ...(hasTaskTab ? [{ label: "Tasks", to: `/sources/${source.name}/tasks` }] : []),
     ...(hasSourceEntriesTab ? [{ label: "Source Entries", to: `/sources/${source.name}/source_entries` }] : []),
-    ...(source.name !== "brreg" ? [{ label: "Schedule", to: `/sources/${source.name}/schedule` }] : []),
-    { label: "Config", to: `/sources/${source.name}/config` },
     ...(hasRawInputs(source) ? [{ label: "Raw Inputs", to: `/sources/${source.name}/raw_input` }] : []),
+    ...(source.name !== "brreg" && source.name !== "france" ? [{ label: "Schedule", to: `/sources/${source.name}/schedule` }] : []),
+    { label: "Config", to: `/sources/${source.name}/config` },
     ...(hasPipeline(source) ? [{ label: "Pipeline", to: `/sources/${source.name}/pipeline` }] : []),
   ];
 }

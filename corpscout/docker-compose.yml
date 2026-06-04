@@ -55,6 +55,8 @@ services:
       CORPSCOUT_POSTGREST_URL: http://postgrest:3000
       CORPSCOUT_LLM_PROVIDER_KEY_ENCRYPTION_KEY: ${CORPSCOUT_LLM_PROVIDER_KEY_ENCRYPTION_KEY:-}
       CORPSCOUT_BRREG_BULK_SOURCE_URL: ${CORPSCOUT_BRREG_BULK_SOURCE_URL:-https://data.brreg.no/enhetsregisteret/api/enheter/lastned}
+      CORPSCOUT_FRANCE_LEGAL_UNITS_SOURCE_URL: ${CORPSCOUT_FRANCE_LEGAL_UNITS_SOURCE_URL:-https://www.data.gouv.fr/api/1/datasets/r/350182c9-148a-46e0-8389-76c2ec1374a3}
+      CORPSCOUT_FRANCE_ESTABLISHMENTS_SOURCE_URL: ${CORPSCOUT_FRANCE_ESTABLISHMENTS_SOURCE_URL:-https://www.data.gouv.fr/api/1/datasets/r/a29c1297-1f92-4e2a-8f6b-8c902ce96c5f}
       CORPSCOUT_NACE_REV21_SOURCE_URL: ${CORPSCOUT_NACE_REV21_SOURCE_URL:-https://op.europa.eu/o/opportal-service/euvoc-download-handler?cellarURI=http%3A%2F%2Fpublications.europa.eu%2Fresource%2Fcellar%2Fbeb2efec-da9a-11ed-a05c-01aa75ed71a1.0001.02%2FDOC_1&fileName=ESTAT-NACE2.1.rdf}
       CORPSCOUT_FX_ECB_DAILY_URL: ${CORPSCOUT_FX_ECB_DAILY_URL:-https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml}
       CORPSCOUT_S3_ENDPOINT: http://rustfs:9000

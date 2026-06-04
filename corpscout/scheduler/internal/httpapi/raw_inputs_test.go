@@ -141,6 +141,48 @@ func TestListRawInputs_ariregisterReadsWorkflowRawRecords(t *testing.T) {
 	require.NoError(t, pool.ExpectationsWereMet())
 }
 
+func TestListRawInputs_franceReadsWorkflowRawRecords(t *testing.T) {
+	pool := newSQLContainsMock(t)
+	defer pool.Close()
+
+	createdAt := time.Date(2026, 6, 4, 16, 43, 35, 0, time.UTC)
+	pool.ExpectQuery("COUNT(*) FROM;;france_workflow.raw_legal_units;;france_workflow.raw_establishments;;display_name ILIKE;;!france_company_raw_inputs").
+		WithArgs("%PULSAR%").
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(int64(2)))
+	pool.ExpectQuery("raw_input_page;;SELECT p.id;;p.source;;p.name;;france_workflow.raw_legal_units;;france_workflow.raw_establishments;;'france' AS source;;'pending' AS status;;NULL::text AS translation_status;;ri.first_seen_at AS created_at;;!france_company_raw_inputs").
+		WithArgs("%PULSAR%", 50, 0).
+		WillReturnRows(rawInputListRows().
+			AddRow("legal-id", "france", "PULSAR POINT FRANCE", "552100554", "pending", nil, false, "pending", createdAt).
+			AddRow("establishment-id", "france", "PULSAR PARIS", "55210055400042", "pending", nil, false, "pending", createdAt))
+
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, pool, nil, "", nil, ""))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/raw-inputs?source=france&q=PULSAR", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body struct {
+		Items []struct {
+			Source            string  `json:"source"`
+			Name              string  `json:"name"`
+			NativeID          string  `json:"native_id"`
+			Status            string  `json:"status"`
+			TranslationStatus *string `json:"translation_status"`
+		} `json:"items"`
+		Total int64 `json:"total"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, int64(2), body.Total)
+	require.Len(t, body.Items, 2)
+	assert.Equal(t, "france", body.Items[0].Source)
+	assert.Equal(t, "PULSAR POINT FRANCE", body.Items[0].Name)
+	assert.Equal(t, "552100554", body.Items[0].NativeID)
+	assert.Equal(t, "pending", body.Items[0].Status)
+	assert.Nil(t, body.Items[0].TranslationStatus)
+	assert.Equal(t, "55210055400042", body.Items[1].NativeID)
+	require.NoError(t, pool.ExpectationsWereMet())
+}
+
 func TestListRawInputs_translationStatusFilterReturnsEmptyWithoutLegacyTranslatedSources(t *testing.T) {
 	pool := newSQLContainsMock(t)
 	defer pool.Close()
@@ -542,6 +584,43 @@ func TestGetRawInput_ariregisterReadsWorkflowRawRecordDetail(t *testing.T) {
 	assert.Equal(t, "Osaühing", body["company_type"])
 	assert.Equal(t, "Registrisse kantud", body["registration_status"])
 	assert.Equal(t, "EE", body["country_iso2"])
+	assert.NotContains(t, body, "translation_status")
+	assert.NotContains(t, body, "raw_payload_en")
+	require.NoError(t, pool.ExpectationsWereMet())
+}
+
+func TestGetRawInput_franceReadsWorkflowRawRecordDetail(t *testing.T) {
+	pool := newSQLContainsMock(t)
+	defer pool.Close()
+
+	now := time.Date(2026, 6, 4, 16, 43, 35, 0, time.UTC)
+	pool.ExpectQuery("france_workflow.raw_legal_units;;france_workflow.raw_establishments;;COALESCE(ri.display_name,'');;COALESCE(ri.native_id,'');;'pending';;COALESCE(ri.company_type,'');;COALESCE(ri.registration_status,'');;'FR';;0;;ri.raw_payload;;ri.first_seen_at;;ri.last_seen_at;;!raw_payload_en;;!translation_status").
+		WithArgs("raw-id").
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "source", "name", "native_id", "status", "state", "company_type", "registration_status", "website", "country_iso2",
+			"run_id", "processing_attempts", "processing_error", "payload_hash", "raw_payload",
+			"first_seen_at", "last_seen_at", "processed_at", "created_at", "updated_at",
+		}).AddRow(
+			"raw-id", "france", "PULSAR POINT FRANCE", "552100554", "pending", "pending", "legal_unit", "A", "", "FR",
+			"", 0, "", "hash", []byte(`{"siren":"552100554"}`),
+			now, now, nil, now, now,
+		))
+
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, pool, nil, "", nil, ""))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/raw-inputs/france/raw-id", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "france", body["source"])
+	assert.Equal(t, "PULSAR POINT FRANCE", body["name"])
+	assert.Equal(t, "552100554", body["native_id"])
+	assert.Equal(t, "pending", body["status"])
+	assert.Equal(t, "legal_unit", body["company_type"])
+	assert.Equal(t, "A", body["registration_status"])
+	assert.Equal(t, "FR", body["country_iso2"])
 	assert.NotContains(t, body, "translation_status")
 	assert.NotContains(t, body, "raw_payload_en")
 	require.NoError(t, pool.ExpectationsWereMet())

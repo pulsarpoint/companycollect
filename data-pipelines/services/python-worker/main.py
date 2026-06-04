@@ -13,6 +13,7 @@ from activities.download_brreg_bulk import download_brreg_bulk
 from activities.download_companies_house_sic_codes import download_companies_house_sic_codes
 from activities.download_cvr_file_set import download_cvr_file_set
 from activities.download_gleif_golden_copy import download_gleif_golden_copy
+from activities.download_se_hvd_dataset import download_se_hvd_dataset
 from activities.fetch_brreg_list import fetch_brreg_list
 from activities.fetch_companies_house_list import fetch_companies_house_list
 from activities.discover_company_domains import discover_company_domains
@@ -34,6 +35,7 @@ async def main() -> None:
             download_brreg_bulk,
             download_companies_house_sic_codes,
             download_gleif_golden_copy,
+            download_se_hvd_dataset,
             download_ariregister_dataset,
             download_cvr_file_set,
             fetch_brreg_list,

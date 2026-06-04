@@ -21,9 +21,11 @@ import (
 	ariregisterworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/workflow"
 	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
 	cvrworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/cvr/workflow"
+	franceworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/france/workflow"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/httpapi"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
+	seworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/se/workflow"
 )
 
 func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T) {
@@ -484,6 +486,97 @@ func TestStartAriregisterBulkRawIngestWorkflowRejectsInvalidSourceURL(t *testing
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Contains(t, w.Body.String(), `"error":"source_url must be http or https"`)
+	require.Nil(t, tc.workflow)
+}
+
+func TestStartFranceBulkRawIngestWorkflowStartsTemporalWorkflowAndAllowsAll(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/france/bulk-raw-ingest", bytes.NewBufferString(`{
+		"limit": 0,
+		"batch_size": 250,
+		"legal_units_url": "https://example.test/StockUniteLegale.parquet",
+		"establishments_url": "https://example.test/StockEtablissement.parquet",
+		"trigger": "manual"
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"LoadFranceBulkRawRecords"`)
+	require.Equal(t, "france-bulk-ingest", tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(franceworkflow.LoadFranceBulkRawRecords).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(franceworkflow.LoadFranceBulkRawRecordsInput)
+	require.Equal(t, 0, input.Limit)
+	require.Equal(t, 250, input.BatchSize)
+	require.Equal(t, "https://example.test/StockUniteLegale.parquet", input.LegalUnitsURL)
+	require.Equal(t, "https://example.test/StockEtablissement.parquet", input.EstablishmentsURL)
+	require.Equal(t, "manual", input.Trigger)
+}
+
+func TestStartFranceBulkRawIngestWorkflowRejectsInvalidLegalUnitsURL(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/france/bulk-raw-ingest", bytes.NewBufferString(`{"legal_units_url":"file:///tmp/StockUniteLegale.parquet"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"legal_units_url must be http or https"`)
+	require.Nil(t, tc.workflow)
+}
+
+func TestStartSEBulkRawIngestWorkflowStartsTemporalWorkflow(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/se/bulk-raw-ingest", bytes.NewBufferString(`{
+		"limit": 0,
+		"batch_size": 250,
+		"datasets": [
+			{"dataset":"organisationer","url":"https://example.test/se/organisationer.json","format":"json"}
+		],
+		"trigger": "manual"
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"LoadSEBulkRawRecords"`)
+	require.Equal(t, "se-bulk-ingest", tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(seworkflow.LoadSEBulkRawRecords).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(seworkflow.LoadSEBulkRawRecordsInput)
+	require.Equal(t, 0, input.Limit)
+	require.Equal(t, 250, input.BatchSize)
+	require.Len(t, input.Datasets, 1)
+	require.Equal(t, "organisationer", input.Datasets[0].Dataset)
+	require.Equal(t, "https://example.test/se/organisationer.json", input.Datasets[0].URL)
+	require.Equal(t, "json", input.Datasets[0].Format)
+	require.Equal(t, "manual", input.Trigger)
+}
+
+func TestStartSEBulkRawIngestWorkflowRejectsInvalidDatasetURL(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/se/bulk-raw-ingest", bytes.NewBufferString(`{
+		"datasets": [
+			{"dataset":"organisationer","url":"file:///tmp/organisationer.json","format":"json"}
+		]
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"datasets.url must be http or https"`)
 	require.Nil(t, tc.workflow)
 }
 

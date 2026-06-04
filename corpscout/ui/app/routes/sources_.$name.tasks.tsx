@@ -6,13 +6,20 @@ import type { SourceDetailContext } from "~/routes/sources_.$name";
 
 export default function SourceBrregTaskStatePage() {
   const { source } = useOutletContext<SourceDetailContext>();
-  if (source.name !== "brreg") {
+  if (source.name === "brreg") return <BrregTaskStateTab />;
+  if (source.name === "france") {
     return (
       <Alert>
-        <AlertDescription>Task state is available for BRREG only.</AlertDescription>
+        <AlertDescription>
+          France task state will be available after normalized SIRENE processing is added. Use Raw Inputs to inspect ingested legal units and establishments.
+        </AlertDescription>
       </Alert>
     );
   }
 
-  return <BrregTaskStateTab />;
+  return (
+    <Alert>
+      <AlertDescription>Task state is not available for this source.</AlertDescription>
+    </Alert>
+  );
 }

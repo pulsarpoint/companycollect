@@ -47,7 +47,8 @@ export function ScheduleTab({
   const [cronExpression, setCronExpression] = useState(source.schedule_kind === "cron" ? source.schedule_expression ?? "" : "");
   const [cronError, setCronError] = useState<string>();
   const scheduleMode = source.schedule_kind === "cron" ? "cron" : "interval";
-  const manualOnlyTemporalSource = source.name === "ariregister" || source.name === "cvr";
+  const manualOnlyTemporalSource =
+    source.name === "ariregister" || source.name === "cvr" || source.name === "france";
   const autoSchedulingAvailable =
     source.download_workflow_registered && !manualOnlyTemporalSource;
   const manualTriggerAvailable = source.manual_trigger_available;

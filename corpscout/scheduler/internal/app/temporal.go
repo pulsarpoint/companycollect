@@ -19,10 +19,14 @@ import (
 	"github.com/pulsarpoint/corpscout/scheduler/internal/crawlclient"
 	cvractions "github.com/pulsarpoint/corpscout/scheduler/internal/cvr/actions"
 	cvrdb "github.com/pulsarpoint/corpscout/scheduler/internal/cvr/db"
+	franceactions "github.com/pulsarpoint/corpscout/scheduler/internal/france/actions"
+	francedb "github.com/pulsarpoint/corpscout/scheduler/internal/france/db"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/llmproviders"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/s3client"
+	seactions "github.com/pulsarpoint/corpscout/scheduler/internal/se/actions"
+	sedb "github.com/pulsarpoint/corpscout/scheduler/internal/se/db"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/translationclient"
 )
 
@@ -38,6 +42,8 @@ type temporalWorkerResources struct {
 	ariregisterBulkIngest    *ariregisteractions.BulkIngestActions
 	ariregisterSourceProfile *ariregisteractions.SourceProfileActions
 	cvrRawIngest             *cvractions.RawIngestActions
+	franceBulkIngest         *franceactions.BulkIngestActions
+	seBulkIngest             *seactions.BulkIngestActions
 	naceTaxonomyActions      *nacetaxonomy.Actions
 	fxActions                *fx.Actions
 }
@@ -72,6 +78,8 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 	financialClient := financial.NewClient(cfg.BRREGFinancialURL, http.DefaultClient)
 	ariregisterGateway := ariregisterdb.New(pool)
 	cvrGateway := cvrdb.New(pool)
+	franceGateway := francedb.New(pool)
+	seGateway := sedb.New(pool)
 	return &temporalWorkerResources{
 		translationClient:        translator,
 		companyTranslation:       brregactions.NewCompanyTranslationActions(brregCompanyData, translator),
@@ -91,6 +99,13 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 			Password:    cfg.CVRPassword,
 			BearerToken: cfg.CVRBearerToken,
 			APIKey:      cfg.CVRAPIKey,
+		}),
+		franceBulkIngest: franceactions.NewBulkIngestActions(franceGateway, http.DefaultClient, franceactions.BulkIngestConfig{
+			LegalUnitsURL:     cfg.FranceLegalUnitsURL,
+			EstablishmentsURL: cfg.FranceEstablishmentsURL,
+		}),
+		seBulkIngest: seactions.NewBulkIngestActions(seGateway, http.DefaultClient, seactions.BulkIngestConfig{
+			DatasetsJSON: cfg.SEHVDDatasetsJSON,
 		}),
 		naceTaxonomyActions: nacetaxonomy.NewActions(pool, http.DefaultClient),
 		fxActions:           fx.NewActions(pool, http.DefaultClient, cfg.FXECBSourceURL),
@@ -122,6 +137,8 @@ func newTemporalWorkers(temporalClient client.Client, resources *temporalWorkerR
 		newAriregisterSourceProfileTemporalWorker(temporalClient, resources),
 		newAriregisterSourceExplorerRefreshTemporalWorker(temporalClient, resources),
 		newCVRRawIngestTemporalWorker(temporalClient, resources),
+		newFranceBulkIngestTemporalWorker(temporalClient, resources),
+		newSEBulkIngestTemporalWorker(temporalClient, resources),
 		newNACETaxonomyTemporalWorker(temporalClient, resources),
 		newFXTemporalWorker(temporalClient, resources),
 	}

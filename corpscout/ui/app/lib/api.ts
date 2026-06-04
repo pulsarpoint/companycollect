@@ -560,6 +560,16 @@ export const api = {
     } = {},
   ) => post<StartWorkflowResponse>("/workflows/cvr/raw-ingest", body),
 
+  loadFranceBulkRawRecords: (
+    body: {
+      limit?: number;
+      batch_size?: number;
+      legal_units_url?: string;
+      establishments_url?: string;
+      trigger?: string;
+    } = {},
+  ) => post<StartWorkflowResponse>("/workflows/france/bulk-raw-ingest", body),
+
   cancelJob: (id: number) =>
     post<{ status: string; id: number }>(`/jobs/${id}/cancel`, {}),
 

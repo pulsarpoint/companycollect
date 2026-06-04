@@ -16,6 +16,7 @@ type Querier interface {
 	BeginBrregWorkflowRun(ctx context.Context, arg BeginBrregWorkflowRunParams) (uuid.UUID, error)
 	BeginCVRWorkflowRun(ctx context.Context, arg BeginCVRWorkflowRunParams) (uuid.UUID, error)
 	BeginExchangeRateSyncRun(ctx context.Context, arg BeginExchangeRateSyncRunParams) (ExchangeRateSyncRun, error)
+	BeginFranceWorkflowRun(ctx context.Context, arg BeginFranceWorkflowRunParams) (uuid.UUID, error)
 	BeginNACEImportRun(ctx context.Context, arg BeginNACEImportRunParams) (NaceImportRun, error)
 	BulkUpdateCompanyFinancialStatus(ctx context.Context, arg BulkUpdateCompanyFinancialStatusParams) error
 	ClaimBrregCompanyCurrencyBatch(ctx context.Context, arg ClaimBrregCompanyCurrencyBatchParams) ([]ClaimBrregCompanyCurrencyBatchRow, error)
@@ -37,6 +38,7 @@ type Querier interface {
 	CreateBrregWorkflowTaskSelection(ctx context.Context, arg CreateBrregWorkflowTaskSelectionParams) (CreateBrregWorkflowTaskSelectionRow, error)
 	CreateCVRScrollSession(ctx context.Context, arg CreateCVRScrollSessionParams) (uuid.UUID, error)
 	CreateCompanyFinancial(ctx context.Context, arg CreateCompanyFinancialParams) (CompanyFinancial, error)
+	CreateFranceBulkSnapshot(ctx context.Context, arg CreateFranceBulkSnapshotParams) (uuid.UUID, error)
 	CreateLLMProvider(ctx context.Context, arg CreateLLMProviderParams) (CreateLLMProviderRow, error)
 	CreateTemporalScheduleMetadata(ctx context.Context, arg CreateTemporalScheduleMetadataParams) (TemporalScheduleMetadatum, error)
 	DeactivateMissingNACECodes(ctx context.Context, arg DeactivateMissingNACECodesParams) (int32, error)
@@ -53,6 +55,7 @@ type Querier interface {
 	FinishCVRScrollSession(ctx context.Context, arg FinishCVRScrollSessionParams) (uuid.UUID, error)
 	FinishCVRWorkflowRunWithStats(ctx context.Context, arg FinishCVRWorkflowRunWithStatsParams) (uuid.UUID, error)
 	FinishExchangeRateSyncRun(ctx context.Context, arg FinishExchangeRateSyncRunParams) (ExchangeRateSyncRun, error)
+	FinishFranceWorkflowRunWithStats(ctx context.Context, arg FinishFranceWorkflowRunWithStatsParams) (uuid.UUID, error)
 	FinishNACEImportRun(ctx context.Context, arg FinishNACEImportRunParams) (NaceImportRun, error)
 	GetAriregisterSourceCompanyDetail(ctx context.Context, companyID uuid.UUID) (AriregisterSourceVCompanyDetail, error)
 	GetAriregisterSourceCompanyExplorerRefreshSummary(ctx context.Context) (GetAriregisterSourceCompanyExplorerRefreshSummaryRow, error)
@@ -73,6 +76,8 @@ type Querier interface {
 	GetCurrentAriregisterWorkflowRawRecord(ctx context.Context, registryCode string) (GetCurrentAriregisterWorkflowRawRecordRow, error)
 	GetCurrentBrregWorkflowRawRecord(ctx context.Context, organizationNumber string) (GetCurrentBrregWorkflowRawRecordRow, error)
 	GetCurrentCVRWorkflowRawRecord(ctx context.Context, cvrNumber string) (GetCurrentCVRWorkflowRawRecordRow, error)
+	GetCurrentFranceWorkflowRawEstablishment(ctx context.Context, siret string) (GetCurrentFranceWorkflowRawEstablishmentRow, error)
+	GetCurrentFranceWorkflowRawLegalUnit(ctx context.Context, siren string) (GetCurrentFranceWorkflowRawLegalUnitRow, error)
 	GetDomainByID(ctx context.Context, id uuid.UUID) (GetDomainByIDRow, error)
 	GetExchangeRateSyncRunByWorkflowID(ctx context.Context, temporalWorkflowID string) (ExchangeRateSyncRun, error)
 	GetLLMProviderBySlugForUse(ctx context.Context, slug string) (LlmProvider, error)
@@ -149,6 +154,7 @@ type Querier interface {
 	MarkExchangeRateSourceFileFailed(ctx context.Context, arg MarkExchangeRateSourceFileFailedParams) (ExchangeRateSourceFile, error)
 	MarkExchangeRateSourceFileProcessed(ctx context.Context, id uuid.UUID) (ExchangeRateSourceFile, error)
 	MarkExchangeRateSourceFileProcessing(ctx context.Context, id uuid.UUID) (ExchangeRateSourceFile, error)
+	MarkFranceBulkSnapshotParsed(ctx context.Context, arg MarkFranceBulkSnapshotParsedParams) error
 	MarkNACESourceFileFailed(ctx context.Context, arg MarkNACESourceFileFailedParams) (NaceSourceFile, error)
 	MarkNACESourceFileProcessed(ctx context.Context, arg MarkNACESourceFileProcessedParams) (NaceSourceFile, error)
 	MarkNACESourceFileProcessing(ctx context.Context, id uuid.UUID) (NaceSourceFile, error)
@@ -173,6 +179,8 @@ type Querier interface {
 	MarkSuggestionCompanyServiceApplied(ctx context.Context, arg MarkSuggestionCompanyServiceAppliedParams) error
 	MarkSuggestionCompanyServiceRejected(ctx context.Context, arg MarkSuggestionCompanyServiceRejectedParams) error
 	RecordAriregisterSourceFile(ctx context.Context, arg RecordAriregisterSourceFileParams) (uuid.UUID, error)
+	// RecordFranceSourceFile relies on UNIQUE (bulk_snapshot_id, dataset_key) from the migration.
+	RecordFranceSourceFile(ctx context.Context, arg RecordFranceSourceFileParams) (uuid.UUID, error)
 	RecoverStaleBrregWorkflowRuns(ctx context.Context, arg RecoverStaleBrregWorkflowRunsParams) (RecoverStaleBrregWorkflowRunsRow, error)
 	RefreshAriregisterSourceCompanyExplorer(ctx context.Context) error
 	RejectCompanyFinancial(ctx context.Context, arg RejectCompanyFinancialParams) error
@@ -183,6 +191,8 @@ type Querier interface {
 	SupersedeCurrentAriregisterWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentAriregisterWorkflowRawRecordParams) error
 	SupersedeCurrentBrregWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentBrregWorkflowRawRecordParams) error
 	SupersedeCurrentCVRWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentCVRWorkflowRawRecordParams) error
+	SupersedeCurrentFranceWorkflowRawEstablishment(ctx context.Context, arg SupersedeCurrentFranceWorkflowRawEstablishmentParams) error
+	SupersedeCurrentFranceWorkflowRawLegalUnit(ctx context.Context, arg SupersedeCurrentFranceWorkflowRawLegalUnitParams) error
 	// ── enrichment update ─────────────────────────────────────────────────────────
 	UpdateCompanyEnrichment(ctx context.Context, arg UpdateCompanyEnrichmentParams) (Company, error)
 	UpdateCompanyInfo(ctx context.Context, arg UpdateCompanyInfoParams) (Company, error)
@@ -225,6 +235,8 @@ type Querier interface {
 	UpsertDownloadedNACESourceFile(ctx context.Context, arg UpsertDownloadedNACESourceFileParams) (NaceSourceFile, error)
 	UpsertExchangeRate(ctx context.Context, arg UpsertExchangeRateParams) (ExchangeRate, error)
 	UpsertExchangeRateSheet(ctx context.Context, arg UpsertExchangeRateSheetParams) (ExchangeRateSheet, error)
+	UpsertFranceWorkflowRawEstablishment(ctx context.Context, arg UpsertFranceWorkflowRawEstablishmentParams) (UpsertFranceWorkflowRawEstablishmentRow, error)
+	UpsertFranceWorkflowRawLegalUnit(ctx context.Context, arg UpsertFranceWorkflowRawLegalUnitParams) (UpsertFranceWorkflowRawLegalUnitRow, error)
 	UpsertNACEClassification(ctx context.Context, arg UpsertNACEClassificationParams) (NaceClassification, error)
 	UpsertNACECode(ctx context.Context, arg UpsertNACECodeParams) (NaceCode, error)
 	UpsertNACECodeAlias(ctx context.Context, arg UpsertNACECodeAliasParams) error

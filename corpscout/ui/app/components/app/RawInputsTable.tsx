@@ -24,6 +24,7 @@ import {
 import { RawInputDetailSheet } from "~/components/app/RawInputDetailSheet";
 import { AriregisterRawInputActionSheet } from "~/components/app/AriregisterRawInputActionSheet";
 import { CvrRawInputActionSheet } from "~/components/app/CvrRawInputActionSheet";
+import { FranceRawInputActionSheet } from "~/components/app/FranceRawInputActionSheet";
 
 const PAGE_SIZE = 50;
 
@@ -31,10 +32,11 @@ const SOURCE_LABELS: Record<string, string> = {
   ariregister: "Ariregister",
   companies_house: "Companies House",
   cvr: "CVR",
+  france: "SIRENE France",
   gleif: "GLEIF",
 };
 
-const SOURCE_OPTIONS = ["companies_house", "gleif", "cvr", "ariregister"];
+const SOURCE_OPTIONS = ["companies_house", "gleif", "cvr", "ariregister", "france"];
 const STATUS_OPTIONS = ["pending", "processing", "processed", "failed", "ignored", "superseded"];
 const TRANSLATION_OPTIONS = ["pending", "translating", "translated", "failed"];
 
@@ -397,7 +399,7 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
           <option value="false">No suggestion</option>
         </select>
 
-        {(sourceName === "ariregister" || sourceName === "cvr") && (
+        {(sourceName === "ariregister" || sourceName === "cvr" || sourceName === "france") && (
           <Button
             size="sm"
             variant="outline"
@@ -509,6 +511,14 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
 
       {sourceName === "cvr" && (
         <CvrRawInputActionSheet
+          open={actionSheetOpen}
+          onOpenChange={setActionSheetOpen}
+          onStarted={reloadCurrentPage}
+        />
+      )}
+
+      {sourceName === "france" && (
+        <FranceRawInputActionSheet
           open={actionSheetOpen}
           onOpenChange={setActionSheetOpen}
           onStarted={reloadCurrentPage}

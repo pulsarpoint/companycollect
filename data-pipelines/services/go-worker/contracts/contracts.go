@@ -64,6 +64,15 @@ type PullCVRInput struct {
 	Accumulated    PullCompaniesResult `json:"accumulated,omitempty"`
 }
 
+// PullSEInput is the input for the PullSE workflow.
+type PullSEInput struct {
+	CorpscoutRunID string              `json:"corpscout_run_id,omitempty"`
+	RunID          string              `json:"run_id,omitempty"`
+	Mode           string              `json:"mode,omitempty"`
+	OutputDir      string              `json:"output_dir,omitempty"`
+	Accumulated    PullCompaniesResult `json:"accumulated,omitempty"`
+}
+
 // DownloadBrregBulkResult is returned by the download_brreg_bulk Python activity.
 type DownloadBrregBulkResult struct {
 	FilePath string `json:"file_path"`
@@ -112,6 +121,7 @@ type ImportSourceBulkParams struct {
 type ImportGLEIFGoldenCopyParams = ImportSourceBulkParams
 type ImportAriregisterBulkParams = ImportSourceBulkParams
 type ImportCVRBulkParams = ImportSourceBulkParams
+type ImportSEHVDBulkParams = ImportSourceBulkParams
 
 // PullCompaniesResult is returned by the pull workflows.
 // Actual records are already written to the DB; this is metadata only.
