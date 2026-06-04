@@ -18,6 +18,10 @@ WITH selected_raw_records AS (
     AND (sqlc.narg('domain_status')::text IS NULL OR ri.domain_status = sqlc.narg('domain_status')::text)
     AND (sqlc.narg('financial_status')::text IS NULL OR ri.financial_status = sqlc.narg('financial_status')::text)
     AND (sqlc.narg('enhanced_status')::text IS NULL OR ri.enhanced_status = sqlc.narg('enhanced_status')::text)
+    AND (
+      COALESCE(cardinality(sqlc.arg('selected_ids')::text[]), 0) > 0
+      OR NOT ri.synced
+    )
   ORDER BY rr.organization_number
   LIMIT NULLIF(sqlc.arg('limit')::integer, 0)
 ),

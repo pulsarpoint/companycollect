@@ -11,6 +11,8 @@ import (
 )
 
 const (
+	defaultSourceProfileChunkSize = 5000
+
 	NormalizeBrregSourceProfilesTaskQueue    = "brreg-source-profile"
 	NormalizeBrregSourceProfilesWorkflowName = "NormalizeBrregSourceProfiles"
 
@@ -28,14 +30,16 @@ type RefreshBrregSourceExplorerActivityInput = actions.RefreshBrregSourceExplore
 type RefreshBrregSourceExplorerActivityResult = actions.RefreshBrregSourceExplorerActivityResult
 
 type NormalizeBrregSourceProfilesInput struct {
-	IDs     []string          `json:"ids,omitempty"`
-	Filters map[string]string `json:"filters,omitempty"`
-	Limit   int               `json:"limit,omitempty"`
-	Trigger string            `json:"trigger,omitempty"`
+	IDs       []string          `json:"ids,omitempty"`
+	Filters   map[string]string `json:"filters,omitempty"`
+	Limit     int               `json:"limit,omitempty"`
+	BatchSize int               `json:"batch_size,omitempty"`
+	Trigger   string            `json:"trigger,omitempty"`
 }
 
 type NormalizeBrregSourceProfilesResult struct {
 	Status             string `json:"status"`
+	ChunksProcessed    int32  `json:"chunks_processed"`
 	RecordsSeen        int32  `json:"records_seen"`
 	CompaniesUpserted  int32  `json:"companies_upserted"`
 	AddressesUpserted  int32  `json:"addresses_upserted"`
@@ -79,43 +83,81 @@ func NormalizeBrregSourceProfiles(
 		"ids_count", len(input.IDs),
 		"filters_count", len(input.Filters),
 		"limit", input.Limit,
+		"batch_size", input.BatchSize,
 		"trigger", input.Trigger,
 	)
 
-	var activityResult NormalizeBrregSourceProfilesActivityResult
-	if err := temporalworkflow.ExecuteActivity(ctx, normalizeBrregSourceProfilesActivity, NormalizeBrregSourceProfilesActivityInput{
-		IDs:                input.IDs,
-		Filters:            input.Filters,
-		Limit:              int32(input.Limit),
-		Trigger:            input.Trigger,
-		TemporalWorkflowID: workflowInfo.WorkflowExecution.ID,
-	}).Get(ctx, &activityResult); err != nil {
-		return NormalizeBrregSourceProfilesResult{}, errors.Wrap(err, "normalize brreg source profiles")
+	result := NormalizeBrregSourceProfilesResult{Status: "succeeded"}
+	remaining := input.Limit
+	for {
+		chunkLimit := input.BatchSize
+		if len(input.IDs) > 0 {
+			chunkLimit = input.Limit
+		}
+		if input.Limit > 0 && (chunkLimit <= 0 || remaining < chunkLimit) {
+			chunkLimit = remaining
+		}
+		if chunkLimit <= 0 {
+			chunkLimit = input.BatchSize
+		}
+
+		var activityResult NormalizeBrregSourceProfilesActivityResult
+		if err := temporalworkflow.ExecuteActivity(ctx, normalizeBrregSourceProfilesActivity, NormalizeBrregSourceProfilesActivityInput{
+			IDs:                input.IDs,
+			Filters:            input.Filters,
+			Limit:              int32(chunkLimit),
+			Trigger:            input.Trigger,
+			TemporalWorkflowID: workflowInfo.WorkflowExecution.ID,
+		}).Get(ctx, &activityResult); err != nil {
+			return NormalizeBrregSourceProfilesResult{}, errors.Wrap(err, "normalize brreg source profiles")
+		}
+		if activityResult.RecordsSeen == 0 {
+			break
+		}
+		result.ChunksProcessed++
+		result.add(activityResult)
+		if len(input.IDs) > 0 {
+			break
+		}
+		if input.Limit > 0 {
+			remaining -= int(activityResult.RecordsSeen)
+			if remaining <= 0 {
+				break
+			}
+		}
+		if int(activityResult.RecordsSeen) < chunkLimit {
+			break
+		}
 	}
 	logger.Debug("brreg source profile normalization workflow completed",
 		"temporal_workflow_id", workflowInfo.WorkflowExecution.ID,
-		"records_seen", activityResult.RecordsSeen,
-		"companies_upserted", activityResult.CompaniesUpserted,
+		"chunks_processed", result.ChunksProcessed,
+		"records_seen", result.RecordsSeen,
+		"companies_upserted", result.CompaniesUpserted,
 	)
 
-	return NormalizeBrregSourceProfilesResult{
-		Status:             "succeeded",
-		RecordsSeen:        activityResult.RecordsSeen,
-		CompaniesUpserted:  activityResult.CompaniesUpserted,
-		AddressesUpserted:  activityResult.AddressesUpserted,
-		IndustriesUpserted: activityResult.IndustriesUpserted,
-		WebsitesUpserted:   activityResult.WebsitesUpserted,
-		DomainsUpserted:    activityResult.DomainsUpserted,
-		ContactsUpserted:   activityResult.ContactsUpserted,
-		CapitalUpserted:    activityResult.CapitalUpserted,
-	}, nil
+	return result, nil
 }
 
 func normalizeBrregSourceProfilesInput(input NormalizeBrregSourceProfilesInput) NormalizeBrregSourceProfilesInput {
 	if input.Trigger == "" {
 		input.Trigger = "manual"
 	}
+	if input.BatchSize <= 0 {
+		input.BatchSize = defaultSourceProfileChunkSize
+	}
 	return input
+}
+
+func (r *NormalizeBrregSourceProfilesResult) add(chunk NormalizeBrregSourceProfilesActivityResult) {
+	r.RecordsSeen += chunk.RecordsSeen
+	r.CompaniesUpserted += chunk.CompaniesUpserted
+	r.AddressesUpserted += chunk.AddressesUpserted
+	r.IndustriesUpserted += chunk.IndustriesUpserted
+	r.WebsitesUpserted += chunk.WebsitesUpserted
+	r.DomainsUpserted += chunk.DomainsUpserted
+	r.ContactsUpserted += chunk.ContactsUpserted
+	r.CapitalUpserted += chunk.CapitalUpserted
 }
 
 func RefreshBrregSourceExplorer(

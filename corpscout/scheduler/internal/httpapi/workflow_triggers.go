@@ -75,10 +75,11 @@ type startBrregDomainSearchWorkflowRequest struct {
 }
 
 type startBrregSourceProfileNormalizationWorkflowRequest struct {
-	IDs     []string          `json:"ids,omitempty"`
-	Filters map[string]string `json:"filters,omitempty"`
-	Limit   int               `json:"limit,omitempty"`
-	Trigger string            `json:"trigger,omitempty"`
+	IDs       []string          `json:"ids,omitempty"`
+	Filters   map[string]string `json:"filters,omitempty"`
+	Limit     int               `json:"limit,omitempty"`
+	BatchSize int               `json:"batch_size,omitempty"`
+	Trigger   string            `json:"trigger,omitempty"`
 }
 
 type startBrregSourceExplorerRefreshWorkflowRequest struct {
@@ -325,10 +326,11 @@ func (h *Handlers) handleStartBrregSourceProfileNormalizationWorkflow(w http.Res
 	}
 
 	input := brregworkflow.NormalizeBrregSourceProfilesInput{
-		IDs:     req.IDs,
-		Filters: req.Filters,
-		Limit:   req.Limit,
-		Trigger: req.Trigger,
+		IDs:       req.IDs,
+		Filters:   req.Filters,
+		Limit:     req.Limit,
+		BatchSize: req.BatchSize,
+		Trigger:   req.Trigger,
 	}
 	workflowID := newWorkflowID("brreg-source-profile")
 	slog.Debug("starting brreg source profile normalization workflow",
@@ -337,6 +339,7 @@ func (h *Handlers) handleStartBrregSourceProfileNormalizationWorkflow(w http.Res
 		"ids_count", len(req.IDs),
 		"filters_count", len(req.Filters),
 		"limit", req.Limit,
+		"batch_size", req.BatchSize,
 		"trigger", req.Trigger,
 	)
 	run, err := h.temporal.ExecuteWorkflow(
@@ -897,6 +900,9 @@ func decodeStartBrregSourceProfileNormalizationWorkflowRequest(r *http.Request) 
 	}
 	if req.Limit < 0 {
 		return startBrregSourceProfileNormalizationWorkflowRequest{}, errors.New("limit cannot be negative")
+	}
+	if req.BatchSize < 0 {
+		return startBrregSourceProfileNormalizationWorkflowRequest{}, errors.New("batch size cannot be negative")
 	}
 	for _, id := range req.IDs {
 		if _, err := uuid.Parse(id); err != nil {

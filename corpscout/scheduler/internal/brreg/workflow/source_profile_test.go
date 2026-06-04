@@ -51,18 +51,23 @@ func TestNormalizeBrregSourceProfilesRunsSingleActivity(t *testing.T) {
 	require.EqualValues(t, 1, result.CapitalUpserted)
 }
 
-func TestNormalizeBrregSourceProfilesAllowsAllRecords(t *testing.T) {
+func TestNormalizeBrregSourceProfilesProcessesAllRecordsInChunks(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 
 	env.RegisterWorkflow(NormalizeBrregSourceProfiles)
-	var activityInput NormalizeBrregSourceProfilesActivityInput
+	var activityInputs []NormalizeBrregSourceProfilesActivityInput
 	env.RegisterActivityWithOptions(func(input NormalizeBrregSourceProfilesActivityInput) (NormalizeBrregSourceProfilesActivityResult, error) {
-		activityInput = input
-		return NormalizeBrregSourceProfilesActivityResult{
-			RecordsSeen:       1200,
-			CompaniesUpserted: 1200,
-		}, nil
+		activityInputs = append(activityInputs, input)
+		switch len(activityInputs) {
+		case 1, 2:
+			return NormalizeBrregSourceProfilesActivityResult{
+				RecordsSeen:       5000,
+				CompaniesUpserted: 5000,
+			}, nil
+		default:
+			return NormalizeBrregSourceProfilesActivityResult{}, nil
+		}
 	}, activity.RegisterOptions{Name: normalizeBrregSourceProfilesActivity})
 
 	env.ExecuteWorkflow(NormalizeBrregSourceProfiles, NormalizeBrregSourceProfilesInput{
@@ -72,13 +77,17 @@ func TestNormalizeBrregSourceProfilesAllowsAllRecords(t *testing.T) {
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())
-	require.EqualValues(t, 0, activityInput.Limit)
+	require.Len(t, activityInputs, 3)
+	require.EqualValues(t, defaultSourceProfileChunkSize, activityInputs[0].Limit)
+	require.EqualValues(t, defaultSourceProfileChunkSize, activityInputs[1].Limit)
+	require.EqualValues(t, defaultSourceProfileChunkSize, activityInputs[2].Limit)
 
 	var result NormalizeBrregSourceProfilesResult
 	require.NoError(t, env.GetWorkflowResult(&result))
 	require.Equal(t, "succeeded", result.Status)
-	require.EqualValues(t, 1200, result.RecordsSeen)
-	require.EqualValues(t, 1200, result.CompaniesUpserted)
+	require.EqualValues(t, 10000, result.RecordsSeen)
+	require.EqualValues(t, 10000, result.CompaniesUpserted)
+	require.EqualValues(t, 2, result.ChunksProcessed)
 }
 
 func TestRefreshBrregSourceExplorerRunsSingleActivity(t *testing.T) {

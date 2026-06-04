@@ -1415,6 +1415,10 @@ WITH selected_raw_records AS (
     AND ($5::text IS NULL OR ri.domain_status = $5::text)
     AND ($6::text IS NULL OR ri.financial_status = $6::text)
     AND ($7::text IS NULL OR ri.enhanced_status = $7::text)
+    AND (
+      COALESCE(cardinality($1::text[]), 0) > 0
+      OR NOT ri.synced
+    )
   ORDER BY rr.organization_number
   LIMIT NULLIF($8::integer, 0)
 ),

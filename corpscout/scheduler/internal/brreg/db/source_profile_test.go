@@ -96,6 +96,19 @@ INSERT INTO brreg_workflow.raw_records (
 	require.EqualValues(t, 1, result.ContactsUpserted)
 	require.EqualValues(t, 1, result.CapitalUpserted)
 
+	bulkRetryResult, err := New(tx).NormalizeSourceProfiles(ctx, NormalizeSourceProfilesCommand{
+		Limit: 10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 0, bulkRetryResult.RecordsSeen)
+
+	explicitRetryResult, err := New(tx).NormalizeSourceProfiles(ctx, NormalizeSourceProfilesCommand{
+		IDs:   []string{rawRecordID.String()},
+		Limit: 10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, explicitRetryResult.RecordsSeen)
+
 	var companyID uuid.UUID
 	var organizationName string
 	var activityDescription *string
