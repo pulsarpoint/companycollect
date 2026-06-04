@@ -144,6 +144,25 @@ func NormalizeAriregisterSourceProfilesWithCopy(
 			break
 		}
 	}
+	refreshCtx := temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
+		TaskQueue:           RefreshAriregisterSourceExplorerTaskQueue,
+		StartToCloseTimeout: 2 * time.Hour,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 1,
+		},
+	})
+	var refreshResult RefreshAriregisterSourceExplorerActivityResult
+	if err := temporalworkflow.ExecuteActivity(refreshCtx, RefreshAriregisterSourceExplorerActivity, RefreshAriregisterSourceExplorerActivityInput{
+		Trigger:            input.Trigger,
+		TemporalWorkflowID: workflowInfo.WorkflowExecution.ID,
+	}).Get(refreshCtx, &refreshResult); err != nil {
+		return NormalizeAriregisterSourceProfilesResult{}, errors.Wrap(err, "refresh ariregister source explorer after normalization")
+	}
+	logger.Debug("ariregister source profile explorer refreshed",
+		"temporal_workflow_id", workflowInfo.WorkflowExecution.ID,
+		"source_entries", refreshResult.SourceEntries,
+		"used_concurrent_refresh", refreshResult.UsedConcurrentRefresh,
+	)
 	logger.Debug("ariregister source profile normalization workflow completed",
 		"temporal_workflow_id", workflowInfo.WorkflowExecution.ID,
 		"mode", "copy",

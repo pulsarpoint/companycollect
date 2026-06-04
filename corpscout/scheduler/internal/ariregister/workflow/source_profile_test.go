@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,7 @@ func TestNormalizeAriregisterSourceProfilesWithCopyRunsSingleActivity(t *testing
 
 	env.RegisterWorkflow(NormalizeAriregisterSourceProfilesWithCopy)
 	var activityInput NormalizeAriregisterSourceProfilesActivityInput
+	refreshCalls := 0
 	env.RegisterActivityWithOptions(func(input NormalizeAriregisterSourceProfilesActivityInput) (NormalizeAriregisterSourceProfilesActivityResult, error) {
 		activityInput = input
 		return NormalizeAriregisterSourceProfilesActivityResult{
@@ -35,6 +37,7 @@ func TestNormalizeAriregisterSourceProfilesWithCopyRunsSingleActivity(t *testing
 			RegistryNotesUpserted:        1,
 		}, nil
 	}, activity.RegisterOptions{Name: NormalizeAriregisterSourceProfilesWithCopyActivity})
+	registerRefreshActivity(env, &refreshCalls)
 
 	env.ExecuteWorkflow(NormalizeAriregisterSourceProfilesWithCopy, NormalizeAriregisterSourceProfilesInput{
 		IDs:     []string{"11111111-1111-1111-1111-111111111111"},
@@ -68,6 +71,7 @@ func TestNormalizeAriregisterSourceProfilesWithCopyRunsSingleActivity(t *testing
 	require.EqualValues(t, 1, result.AnnualReportsUpserted)
 	require.EqualValues(t, 1, result.ArticlesUpserted)
 	require.EqualValues(t, 1, result.RegistryNotesUpserted)
+	require.Equal(t, 1, refreshCalls)
 }
 
 func TestNormalizeAriregisterSourceProfilesWithCopyIDsWithoutLimitUsesIDCount(t *testing.T) {
@@ -81,6 +85,7 @@ func TestNormalizeAriregisterSourceProfilesWithCopyIDsWithoutLimitUsesIDCount(t 
 
 	env.RegisterWorkflow(NormalizeAriregisterSourceProfilesWithCopy)
 	var activityInputs []NormalizeAriregisterSourceProfilesActivityInput
+	refreshCalls := 0
 	env.RegisterActivityWithOptions(func(input NormalizeAriregisterSourceProfilesActivityInput) (NormalizeAriregisterSourceProfilesActivityResult, error) {
 		activityInputs = append(activityInputs, input)
 		return NormalizeAriregisterSourceProfilesActivityResult{
@@ -88,6 +93,7 @@ func TestNormalizeAriregisterSourceProfilesWithCopyIDsWithoutLimitUsesIDCount(t 
 			CompaniesUpserted: int32(len(ids)),
 		}, nil
 	}, activity.RegisterOptions{Name: NormalizeAriregisterSourceProfilesWithCopyActivity})
+	registerRefreshActivity(env, &refreshCalls)
 
 	env.ExecuteWorkflow(NormalizeAriregisterSourceProfilesWithCopy, NormalizeAriregisterSourceProfilesInput{
 		IDs: ids,
@@ -103,6 +109,7 @@ func TestNormalizeAriregisterSourceProfilesWithCopyIDsWithoutLimitUsesIDCount(t 
 	require.Equal(t, "succeeded", result.Status)
 	require.EqualValues(t, len(ids), result.RecordsSeen)
 	require.EqualValues(t, 1, result.ChunksProcessed)
+	require.Equal(t, 1, refreshCalls)
 }
 
 func TestNormalizeAriregisterSourceProfilesWithCopyRejectsNegativeLimit(t *testing.T) {
@@ -111,10 +118,12 @@ func TestNormalizeAriregisterSourceProfilesWithCopyRejectsNegativeLimit(t *testi
 
 	env.RegisterWorkflow(NormalizeAriregisterSourceProfilesWithCopy)
 	activityCalls := 0
+	refreshCalls := 0
 	env.RegisterActivityWithOptions(func(input NormalizeAriregisterSourceProfilesActivityInput) (NormalizeAriregisterSourceProfilesActivityResult, error) {
 		activityCalls++
 		return NormalizeAriregisterSourceProfilesActivityResult{}, nil
 	}, activity.RegisterOptions{Name: NormalizeAriregisterSourceProfilesWithCopyActivity})
+	registerRefreshActivity(env, &refreshCalls)
 
 	env.ExecuteWorkflow(NormalizeAriregisterSourceProfilesWithCopy, NormalizeAriregisterSourceProfilesInput{
 		Limit: -1,
@@ -124,6 +133,43 @@ func TestNormalizeAriregisterSourceProfilesWithCopyRejectsNegativeLimit(t *testi
 	require.Error(t, env.GetWorkflowError())
 	require.Contains(t, env.GetWorkflowError().Error(), "limit cannot be negative")
 	require.Zero(t, activityCalls)
+	require.Zero(t, refreshCalls)
+}
+
+func TestNormalizeAriregisterSourceProfilesWithCopyRefreshesWhenNoRecordsChanged(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.RegisterWorkflow(NormalizeAriregisterSourceProfilesWithCopy)
+	activityCalls := 0
+	refreshCalls := 0
+	env.RegisterActivityWithOptions(func(input NormalizeAriregisterSourceProfilesActivityInput) (NormalizeAriregisterSourceProfilesActivityResult, error) {
+		activityCalls++
+		return NormalizeAriregisterSourceProfilesActivityResult{}, nil
+	}, activity.RegisterOptions{Name: NormalizeAriregisterSourceProfilesWithCopyActivity})
+	registerRefreshActivity(env, &refreshCalls)
+
+	env.ExecuteWorkflow(NormalizeAriregisterSourceProfilesWithCopy, NormalizeAriregisterSourceProfilesInput{
+		Limit:   1000,
+		Trigger: "manual",
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	require.Equal(t, 1, activityCalls)
+	require.Equal(t, 1, refreshCalls)
+
+	var result NormalizeAriregisterSourceProfilesResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	require.Equal(t, "succeeded", result.Status)
+	require.EqualValues(t, 0, result.RecordsSeen)
+	require.EqualValues(t, 0, result.ChunksProcessed)
+}
+
+func TestNormalizeAriregisterSourceProfilesRefreshUsesExplorerTaskQueue(t *testing.T) {
+	source, err := os.ReadFile("source_profile.go")
+	require.NoError(t, err)
+	require.Contains(t, string(source), "TaskQueue:           RefreshAriregisterSourceExplorerTaskQueue")
 }
 
 func TestNormalizeAriregisterSourceProfilesWithCopyProcessesAllRecordsInChunks(t *testing.T) {
@@ -132,6 +178,7 @@ func TestNormalizeAriregisterSourceProfilesWithCopyProcessesAllRecordsInChunks(t
 
 	env.RegisterWorkflow(NormalizeAriregisterSourceProfilesWithCopy)
 	var activityInputs []NormalizeAriregisterSourceProfilesActivityInput
+	refreshCalls := 0
 	env.RegisterActivityWithOptions(func(input NormalizeAriregisterSourceProfilesActivityInput) (NormalizeAriregisterSourceProfilesActivityResult, error) {
 		activityInputs = append(activityInputs, input)
 		switch len(activityInputs) {
@@ -145,6 +192,7 @@ func TestNormalizeAriregisterSourceProfilesWithCopyProcessesAllRecordsInChunks(t
 			return NormalizeAriregisterSourceProfilesActivityResult{}, nil
 		}
 	}, activity.RegisterOptions{Name: NormalizeAriregisterSourceProfilesWithCopyActivity})
+	registerRefreshActivity(env, &refreshCalls)
 
 	env.ExecuteWorkflow(NormalizeAriregisterSourceProfilesWithCopy, NormalizeAriregisterSourceProfilesInput{
 		Limit:   0,
@@ -165,6 +213,7 @@ func TestNormalizeAriregisterSourceProfilesWithCopyProcessesAllRecordsInChunks(t
 	require.EqualValues(t, 10000, result.CompaniesUpserted)
 	require.EqualValues(t, 10000, result.CompanyNamesUpserted)
 	require.EqualValues(t, 2, result.ChunksProcessed)
+	require.Equal(t, 1, refreshCalls)
 }
 
 func TestNormalizeAriregisterSourceProfilesWithCopyRespectsLimitAcrossChunks(t *testing.T) {
@@ -173,6 +222,7 @@ func TestNormalizeAriregisterSourceProfilesWithCopyRespectsLimitAcrossChunks(t *
 
 	env.RegisterWorkflow(NormalizeAriregisterSourceProfilesWithCopy)
 	var activityInputs []NormalizeAriregisterSourceProfilesActivityInput
+	refreshCalls := 0
 	env.RegisterActivityWithOptions(func(input NormalizeAriregisterSourceProfilesActivityInput) (NormalizeAriregisterSourceProfilesActivityResult, error) {
 		activityInputs = append(activityInputs, input)
 		if len(activityInputs) == 1 {
@@ -186,6 +236,7 @@ func TestNormalizeAriregisterSourceProfilesWithCopyRespectsLimitAcrossChunks(t *
 			CompaniesUpserted: 2500,
 		}, nil
 	}, activity.RegisterOptions{Name: NormalizeAriregisterSourceProfilesWithCopyActivity})
+	registerRefreshActivity(env, &refreshCalls)
 
 	env.ExecuteWorkflow(NormalizeAriregisterSourceProfilesWithCopy, NormalizeAriregisterSourceProfilesInput{
 		Limit:     7500,
@@ -205,6 +256,17 @@ func TestNormalizeAriregisterSourceProfilesWithCopyRespectsLimitAcrossChunks(t *
 	require.EqualValues(t, 7500, result.RecordsSeen)
 	require.EqualValues(t, 7500, result.CompaniesUpserted)
 	require.EqualValues(t, 2, result.ChunksProcessed)
+	require.Equal(t, 1, refreshCalls)
+}
+
+func registerRefreshActivity(env *testsuite.TestWorkflowEnvironment, calls *int) {
+	env.RegisterActivityWithOptions(func(input RefreshAriregisterSourceExplorerActivityInput) (RefreshAriregisterSourceExplorerActivityResult, error) {
+		*calls = *calls + 1
+		return RefreshAriregisterSourceExplorerActivityResult{
+			Refreshed:             true,
+			UsedConcurrentRefresh: true,
+		}, nil
+	}, activity.RegisterOptions{Name: RefreshAriregisterSourceExplorerActivity})
 }
 
 func TestRefreshAriregisterSourceExplorerRunsSingleActivity(t *testing.T) {
