@@ -450,36 +450,48 @@ WITH active_capacity AS (
     CASE
       WHEN sqlc.arg('max_parallel_tasks')::integer <= 0 THEN GREATEST(sqlc.arg('limit')::integer, 1)
       ELSE GREATEST(
-        sqlc.arg('max_parallel_tasks')::integer - count(*) FILTER (
-          WHERE financial_status = 'running'
-            AND coalesce(financial_lease_until, '-infinity'::timestamptz) > now()
-        )::integer,
+        sqlc.arg('max_parallel_tasks')::integer - count(*)::integer,
         0
       )
     END AS available_slots
   FROM brreg_source.company_process_status
+  WHERE financial_status = 'running'
+    AND coalesce(financial_lease_until, '-infinity'::timestamptz) > now()
 ),
-picked AS (
+ready_picked AS (
   SELECT status_row.company_id
   FROM brreg_source.company_process_status status_row
   JOIN brreg_source.companies company ON company.id = status_row.company_id
   WHERE company.row_status = 'active'
-    AND NOT EXISTS (
-      SELECT 1
-      FROM brreg_source.financial_statements financial_statement
-      WHERE financial_statement.company_id = status_row.company_id
-    )
-    AND (
-      status_row.financial_status IN ('pending', 'dirty', 'failed_retryable')
-      OR (
-        status_row.financial_status = 'running'
-        AND coalesce(status_row.financial_lease_until, '-infinity'::timestamptz) <= now()
-      )
-    )
+    AND status_row.financial_status IN ('pending', 'dirty', 'failed_retryable')
     AND status_row.financial_attempt_count < GREATEST(sqlc.arg('max_attempts')::integer, 1)
   ORDER BY status_row.updated_at, status_row.company_id
   LIMIT GREATEST(LEAST(GREATEST(sqlc.arg('limit')::integer, 1), (SELECT available_slots FROM active_capacity)), 0)
   FOR UPDATE OF status_row SKIP LOCKED
+),
+stale_picked AS (
+  SELECT status_row.company_id
+  FROM brreg_source.company_process_status status_row
+  JOIN brreg_source.companies company ON company.id = status_row.company_id
+  WHERE company.row_status = 'active'
+    AND status_row.financial_status = 'running'
+    AND coalesce(status_row.financial_lease_until, '-infinity'::timestamptz) <= now()
+    AND status_row.financial_attempt_count < GREATEST(sqlc.arg('max_attempts')::integer, 1)
+  ORDER BY status_row.financial_lease_until, status_row.company_id
+  LIMIT GREATEST(LEAST(GREATEST(sqlc.arg('limit')::integer, 1), (SELECT available_slots FROM active_capacity)), 0)
+  FOR UPDATE OF status_row SKIP LOCKED
+),
+picked AS (
+  SELECT ready_picked.company_id
+  FROM ready_picked
+  UNION ALL
+  SELECT stale_picked.company_id
+  FROM stale_picked
+  WHERE NOT EXISTS (SELECT 1 FROM ready_picked)
+),
+picked_ids AS (
+  SELECT coalesce(array_agg(picked.company_id), '{}'::uuid[]) AS company_ids
+  FROM picked
 ),
 claimed AS (
   UPDATE brreg_source.company_process_status status_row
@@ -494,8 +506,7 @@ claimed AS (
     financial_error_code = NULL,
     financial_retry_strategy = NULL,
     updated_at = now()
-  FROM picked
-  WHERE status_row.company_id = picked.company_id
+  WHERE status_row.company_id = ANY ((SELECT company_ids FROM picked_ids)::uuid[])
   RETURNING status_row.*
 )
 SELECT

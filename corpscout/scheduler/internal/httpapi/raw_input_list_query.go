@@ -87,11 +87,11 @@ func validRawInputListSort(sortBy string) bool {
 
 func buildRawInputListQuery(params rawInputListParams) rawInputListQuery {
 	var args []any
-	var commonWhere []string
 
+	var statusExpr string
 	if params.statusFilter != "" {
 		args = append(args, params.statusFilter)
-		commonWhere = append(commonWhere, fmt.Sprintf("ri.processing_status = $%d", len(args)))
+		statusExpr = fmt.Sprintf("$%d", len(args))
 	}
 
 	var nameExpr string
@@ -105,11 +105,7 @@ func buildRawInputListQuery(params rawInputListParams) rawInputListQuery {
 		translationExpr = fmt.Sprintf("ri.translation_status = $%d", len(args))
 	}
 
-	buildWhere := func(extra string) string {
-		parts := append([]string{}, commonWhere...)
-		if extra != "" {
-			parts = append(parts, extra)
-		}
+	buildWhere := func(parts []string) string {
 		if len(parts) == 0 {
 			return ""
 		}
@@ -127,8 +123,11 @@ func buildRawInputListQuery(params rawInputListParams) rawInputListQuery {
 		}
 
 		var extra []string
+		if statusExpr != "" {
+			extra = append(extra, fmt.Sprintf("%s = %s", rawInputAliasedExpr(rawInputSourceExpr(src.statusExpr, "processing_status")), statusExpr))
+		}
 		if nameExpr != "" {
-			extra = append(extra, fmt.Sprintf("ri.%s ILIKE %s", src.nameColumn, nameExpr))
+			extra = append(extra, fmt.Sprintf("%s ILIKE %s", rawInputAliasedExpr(src.nameColumn), nameExpr))
 		}
 		suggestionExistsClause := fmt.Sprintf(
 			`EXISTS (
@@ -153,19 +152,22 @@ func buildRawInputListQuery(params rawInputListParams) rawInputListQuery {
 				extra = append(extra, translationExpr)
 			}
 		}
-		whereSQL := buildWhere(strings.Join(extra, " AND "))
+		whereSQL := buildWhere(extra)
 		countSubs = append(countSubs, fmt.Sprintf(
 			`SELECT 1 FROM %s ri %s`,
 			src.tableName,
 			whereSQL,
 		))
 		dataSubs = append(dataSubs, fmt.Sprintf(
-			`SELECT ri.id::text, '%s' AS source, COALESCE(ri.%s, '') AS name, ri.%s AS native_id, ri.processing_status AS status, %s, %s AS has_suggestion, ri.processing_status AS state, ri.created_at FROM %s ri %s`,
+			`SELECT ri.id::text, '%s' AS source, COALESCE(%s, '') AS name, COALESCE(%s, '') AS native_id, %s AS status, %s, %s AS has_suggestion, %s AS state, %s AS created_at FROM %s ri %s`,
 			src.source,
-			src.nameColumn,
-			src.nativeColumn,
+			rawInputAliasedExpr(src.nameColumn),
+			rawInputAliasedExpr(src.nativeColumn),
+			rawInputAliasedExpr(rawInputSourceExpr(src.statusExpr, "processing_status")),
 			translationSelect,
 			suggestionExistsClause,
+			rawInputAliasedExpr(rawInputSourceExpr(src.stateExpr, rawInputSourceExpr(src.statusExpr, "processing_status"))),
+			rawInputAliasedExpr(rawInputSourceExpr(src.createdAtExpr, "created_at")),
 			src.tableName,
 			whereSQL,
 		))
@@ -203,6 +205,27 @@ func buildRawInputListQuery(params rawInputListParams) rawInputListQuery {
 		args:     args,
 		dataArgs: dataArgs,
 	}
+}
+
+func rawInputSourceExpr(expr string, fallback string) string {
+	if strings.TrimSpace(expr) != "" {
+		return expr
+	}
+	return fallback
+}
+
+func rawInputAliasedExpr(expr string) string {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return expr
+	}
+	if expr == "0" ||
+		strings.HasPrefix(expr, "'") ||
+		strings.Contains(expr, "(") ||
+		strings.Contains(expr, "::") {
+		return expr
+	}
+	return "ri." + expr
 }
 
 func scanRawInputListRows(rows pgx.Rows) ([]rawInputRow, error) {

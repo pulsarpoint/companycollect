@@ -6,10 +6,20 @@ type rawInputSource struct {
 	nameColumn         string
 	nativeColumn       string
 	translated         bool
+	statusExpr         string
+	stateExpr          string
 	companyTypeExpr    string
 	registrationColumn string
 	websiteExpr        string
 	countryColumn      string
+	runIDExpr          string
+	attemptsExpr       string
+	errorExpr          string
+	firstSeenExpr      string
+	lastSeenExpr       string
+	processedAtExpr    string
+	createdAtExpr      string
+	updatedAtExpr      string
 }
 
 var rawInputSources = []rawInputSource{
@@ -35,25 +45,43 @@ var rawInputSources = []rawInputSource{
 	},
 	{
 		source:             "cvr",
-		tableName:          "cvr_company_raw_inputs",
+		tableName:          "cvr_workflow.raw_records",
 		nameColumn:         "company_name",
 		nativeColumn:       "cvr_number",
-		translated:         true,
+		statusExpr:         "'pending'",
+		stateExpr:          "'pending'",
 		companyTypeExpr:    "company_type",
 		registrationColumn: "registration_status",
 		websiteExpr:        "website",
 		countryColumn:      "country_iso2",
+		runIDExpr:          "''",
+		attemptsExpr:       "0",
+		errorExpr:          "''",
+		firstSeenExpr:      "first_seen_at",
+		lastSeenExpr:       "last_seen_at",
+		processedAtExpr:    "NULL::timestamptz",
+		createdAtExpr:      "first_seen_at",
+		updatedAtExpr:      "last_seen_at",
 	},
 	{
 		source:             "ariregister",
-		tableName:          "ariregister_company_raw_inputs",
+		tableName:          "ariregister_workflow.raw_records",
 		nameColumn:         "legal_name",
 		nativeColumn:       "registry_code",
-		translated:         true,
+		statusExpr:         "'pending'",
+		stateExpr:          "'pending'",
 		companyTypeExpr:    "legal_form",
 		registrationColumn: "registration_status",
 		websiteExpr:        "website",
 		countryColumn:      "country_iso2",
+		runIDExpr:          "''",
+		attemptsExpr:       "0",
+		errorExpr:          "''",
+		firstSeenExpr:      "first_seen_at",
+		lastSeenExpr:       "last_seen_at",
+		processedAtExpr:    "NULL::timestamptz",
+		createdAtExpr:      "first_seen_at",
+		updatedAtExpr:      "last_seen_at",
 	},
 }
 

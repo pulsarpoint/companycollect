@@ -19,7 +19,6 @@ func TestBrregWorkflowQueriesUseCorpscoutWorkflowSchema(t *testing.T) {
 	require.Contains(t, sql, "brreg_workflow.translation_results")
 	require.Contains(t, sql, "brreg_workflow.domain_results")
 	require.Contains(t, sql, "brreg_workflow.financial_results")
-	require.Contains(t, sql, "brreg_workflow.v_enhanced_asset_state")
 	require.Contains(t, sql, "brreg_workflow.v_enhanced_ready_records")
 	require.NotContains(t, sql, "dagster_brreg")
 	require.NotContains(t, sql, "dagster_run_id")
@@ -43,15 +42,15 @@ func TestBrregWorkflowQueriesExposeActionBoundary(t *testing.T) {
 		"-- name: InsertBrregWorkflowTranslationResult :exec",
 		"-- name: InsertBrregWorkflowDomainResult :exec",
 		"-- name: InsertBrregWorkflowFinancialResult :exec",
-		"-- name: GetBrregWorkflowTranslationAssetState :one",
-		"-- name: GetBrregWorkflowDomainAssetState :one",
-		"-- name: GetBrregWorkflowFinancialAssetState :one",
-		"-- name: GetBrregWorkflowEnhancedAssetState :one",
 		"-- name: ListBrregWorkflowEnhancedReadyRecords :many",
 	}
 	for _, query := range requiredQueries {
 		require.Contains(t, sql, query)
 	}
+	require.NotContains(t, sql, "-- name: GetBrregWorkflowTranslationAssetState :one")
+	require.NotContains(t, sql, "-- name: GetBrregWorkflowDomainAssetState :one")
+	require.NotContains(t, sql, "-- name: GetBrregWorkflowFinancialAssetState :one")
+	require.NotContains(t, sql, "-- name: GetBrregWorkflowEnhancedAssetState :one")
 }
 
 func TestCreateBrregWorkflowTaskSelectionReturnsInsertedSelection(t *testing.T) {

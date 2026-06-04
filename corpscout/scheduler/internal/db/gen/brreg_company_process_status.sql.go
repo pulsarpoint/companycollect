@@ -192,36 +192,48 @@ WITH active_capacity AS (
     CASE
       WHEN $1::integer <= 0 THEN GREATEST($2::integer, 1)
       ELSE GREATEST(
-        $1::integer - count(*) FILTER (
-          WHERE financial_status = 'running'
-            AND coalesce(financial_lease_until, '-infinity'::timestamptz) > now()
-        )::integer,
+        $1::integer - count(*)::integer,
         0
       )
     END AS available_slots
   FROM brreg_source.company_process_status
+  WHERE financial_status = 'running'
+    AND coalesce(financial_lease_until, '-infinity'::timestamptz) > now()
 ),
-picked AS (
+ready_picked AS (
   SELECT status_row.company_id
   FROM brreg_source.company_process_status status_row
   JOIN brreg_source.companies company ON company.id = status_row.company_id
   WHERE company.row_status = 'active'
-    AND NOT EXISTS (
-      SELECT 1
-      FROM brreg_source.financial_statements financial_statement
-      WHERE financial_statement.company_id = status_row.company_id
-    )
-    AND (
-      status_row.financial_status IN ('pending', 'dirty', 'failed_retryable')
-      OR (
-        status_row.financial_status = 'running'
-        AND coalesce(status_row.financial_lease_until, '-infinity'::timestamptz) <= now()
-      )
-    )
+    AND status_row.financial_status IN ('pending', 'dirty', 'failed_retryable')
     AND status_row.financial_attempt_count < GREATEST($3::integer, 1)
   ORDER BY status_row.updated_at, status_row.company_id
   LIMIT GREATEST(LEAST(GREATEST($2::integer, 1), (SELECT available_slots FROM active_capacity)), 0)
   FOR UPDATE OF status_row SKIP LOCKED
+),
+stale_picked AS (
+  SELECT status_row.company_id
+  FROM brreg_source.company_process_status status_row
+  JOIN brreg_source.companies company ON company.id = status_row.company_id
+  WHERE company.row_status = 'active'
+    AND status_row.financial_status = 'running'
+    AND coalesce(status_row.financial_lease_until, '-infinity'::timestamptz) <= now()
+    AND status_row.financial_attempt_count < GREATEST($3::integer, 1)
+  ORDER BY status_row.financial_lease_until, status_row.company_id
+  LIMIT GREATEST(LEAST(GREATEST($2::integer, 1), (SELECT available_slots FROM active_capacity)), 0)
+  FOR UPDATE OF status_row SKIP LOCKED
+),
+picked AS (
+  SELECT ready_picked.company_id
+  FROM ready_picked
+  UNION ALL
+  SELECT stale_picked.company_id
+  FROM stale_picked
+  WHERE NOT EXISTS (SELECT 1 FROM ready_picked)
+),
+picked_ids AS (
+  SELECT coalesce(array_agg(picked.company_id), '{}'::uuid[]) AS company_ids
+  FROM picked
 ),
 claimed AS (
   UPDATE brreg_source.company_process_status status_row
@@ -236,8 +248,7 @@ claimed AS (
     financial_error_code = NULL,
     financial_retry_strategy = NULL,
     updated_at = now()
-  FROM picked
-  WHERE status_row.company_id = picked.company_id
+  WHERE status_row.company_id = ANY ((SELECT company_ids FROM picked_ids)::uuid[])
   RETURNING status_row.company_id, status_row.translation_status, status_row.translation_attempt_count, status_row.translation_lease_by, status_row.translation_lease_until, status_row.translation_last_started_at, status_row.translation_last_finished_at, status_row.translation_error, status_row.translation_error_category, status_row.translation_error_code, status_row.translation_retry_strategy, status_row.translation_metadata, status_row.currency_status, status_row.currency_attempt_count, status_row.currency_lease_by, status_row.currency_lease_until, status_row.currency_last_started_at, status_row.currency_last_finished_at, status_row.currency_error, status_row.currency_error_category, status_row.currency_error_code, status_row.currency_retry_strategy, status_row.currency_metadata, status_row.financial_status, status_row.financial_attempt_count, status_row.financial_lease_by, status_row.financial_lease_until, status_row.financial_last_started_at, status_row.financial_last_finished_at, status_row.financial_error, status_row.financial_error_category, status_row.financial_error_code, status_row.financial_retry_strategy, status_row.financial_metadata, status_row.created_at, status_row.updated_at
 )
 SELECT

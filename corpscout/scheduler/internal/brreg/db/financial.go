@@ -40,12 +40,7 @@ func (g *Gateway) ClaimSourceFinancialBatch(
 		workerID = &command.WorkerID
 	}
 
-	queries := db.New(g.pool)
-	statusRowsInserted, err := queries.EnsureBrregCompanyFinancialProcessStatuses(ctx, limit)
-	if err != nil {
-		return ClaimSourceFinancialBatchResult{}, errors.Wrap(err, "ensure brreg company financial process statuses")
-	}
-	companies, err := queries.ClaimBrregCompanyFinancialBatch(ctx, db.ClaimBrregCompanyFinancialBatchParams{
+	companies, err := db.New(g.pool).ClaimBrregCompanyFinancialBatch(ctx, db.ClaimBrregCompanyFinancialBatchParams{
 		MaxParallelTasks: command.MaxParallelTasks,
 		Limit:            limit,
 		MaxAttempts:      maxAttempts,
@@ -56,7 +51,7 @@ func (g *Gateway) ClaimSourceFinancialBatch(
 		return ClaimSourceFinancialBatchResult{}, errors.Wrap(err, "claim brreg company financial batch")
 	}
 	return ClaimSourceFinancialBatchResult{
-		StatusRowsInserted: statusRowsInserted,
+		StatusRowsInserted: 0,
 		Companies:          companies,
 	}, nil
 }

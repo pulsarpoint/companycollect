@@ -1047,18 +1047,6 @@ SET
   metadata = COALESCE(sqlc.narg('metadata')::jsonb, metadata)
 WHERE id = sqlc.arg('id')::uuid;
 
--- name: GetBrregWorkflowTranslationAssetState :one
-SELECT * FROM brreg_workflow.v_translation_asset_state;
-
--- name: GetBrregWorkflowDomainAssetState :one
-SELECT * FROM brreg_workflow.v_domain_asset_state;
-
--- name: GetBrregWorkflowFinancialAssetState :one
-SELECT * FROM brreg_workflow.v_financial_asset_state;
-
--- name: GetBrregWorkflowEnhancedAssetState :one
-SELECT * FROM brreg_workflow.v_enhanced_asset_state;
-
 -- name: ListBrregWorkflowEnhancedReadyRecords :many
 SELECT *
 FROM brreg_workflow.v_enhanced_ready_records

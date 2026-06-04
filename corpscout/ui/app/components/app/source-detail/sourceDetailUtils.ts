@@ -2,10 +2,11 @@ import type { DataSource } from "~/types/api";
 
 const RAW_INPUT_TABLES = new Set([
   "brreg_workflow.raw_records",
+  "cvr_workflow.raw_records",
   "gleif_company_raw_inputs",
   "companies_house_company_raw_inputs",
-  "cvr_company_raw_inputs",
   "ariregister_company_raw_inputs",
+  "ariregister_workflow.raw_records",
 ]);
 
 export function hasRawInputs(source: DataSource): boolean {
@@ -47,6 +48,7 @@ export function hasPipeline(source: DataSource): boolean {
 
 export function defaultSourceDetailPath(sourceName: string): string {
   if (sourceName === "brreg") return `/sources/${sourceName}/tasks`;
+  if (sourceName === "ariregister" || sourceName === "cvr") return `/sources/${sourceName}/raw_input`;
   return `/sources/${sourceName}/schedule`;
 }
 

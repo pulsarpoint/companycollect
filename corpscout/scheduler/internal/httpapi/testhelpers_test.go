@@ -405,34 +405,29 @@ func (s *stubQuerier) ListPendingCompanyFinancials(ctx context.Context, arg db.L
 	return nil, nil
 }
 
-func (s *stubQuerier) GetBrregWorkflowTranslationAssetState(ctx context.Context) (db.BrregWorkflowVTranslationAssetState, error) {
-	ret := s.Called(ctx)
-	return ret.Get(0).(db.BrregWorkflowVTranslationAssetState), ret.Error(1)
-}
-
 func (s *stubQuerier) GetBrregSourceTranslationAssetState(ctx context.Context) (db.GetBrregSourceTranslationAssetStateRow, error) {
 	ret := s.Called(ctx)
 	return ret.Get(0).(db.GetBrregSourceTranslationAssetStateRow), ret.Error(1)
 }
 
+func (s *stubQuerier) GetBrregSourceDomainAssetState(ctx context.Context) (db.GetBrregSourceDomainAssetStateRow, error) {
+	ret := s.Called(ctx)
+	return ret.Get(0).(db.GetBrregSourceDomainAssetStateRow), ret.Error(1)
+}
+
+func (s *stubQuerier) GetBrregSourceFinancialAssetState(ctx context.Context) (db.GetBrregSourceFinancialAssetStateRow, error) {
+	ret := s.Called(ctx)
+	return ret.Get(0).(db.GetBrregSourceFinancialAssetStateRow), ret.Error(1)
+}
+
+func (s *stubQuerier) GetBrregSourceResultTableCounts(ctx context.Context) (db.GetBrregSourceResultTableCountsRow, error) {
+	ret := s.Called(ctx)
+	return ret.Get(0).(db.GetBrregSourceResultTableCountsRow), ret.Error(1)
+}
+
 func (s *stubQuerier) GetBrregSourceCompanyDetail(ctx context.Context, companyID uuid.UUID) (db.BrregSourceVCompanyDetail, error) {
 	ret := s.Called(ctx, companyID)
 	return ret.Get(0).(db.BrregSourceVCompanyDetail), ret.Error(1)
-}
-
-func (s *stubQuerier) GetBrregWorkflowDomainAssetState(ctx context.Context) (db.BrregWorkflowVDomainAssetState, error) {
-	ret := s.Called(ctx)
-	return ret.Get(0).(db.BrregWorkflowVDomainAssetState), ret.Error(1)
-}
-
-func (s *stubQuerier) GetBrregWorkflowFinancialAssetState(ctx context.Context) (db.BrregWorkflowVFinancialAssetState, error) {
-	ret := s.Called(ctx)
-	return ret.Get(0).(db.BrregWorkflowVFinancialAssetState), ret.Error(1)
-}
-
-func (s *stubQuerier) GetBrregWorkflowEnhancedAssetState(ctx context.Context) (db.BrregWorkflowVEnhancedAssetState, error) {
-	ret := s.Called(ctx)
-	return ret.Get(0).(db.BrregWorkflowVEnhancedAssetState), ret.Error(1)
 }
 
 func (s *stubQuerier) CountBrregWorkflowRawRecords(ctx context.Context, arg db.CountBrregWorkflowRawRecordsParams) (int64, error) {

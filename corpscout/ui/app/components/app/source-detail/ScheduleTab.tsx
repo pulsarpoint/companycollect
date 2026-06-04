@@ -47,14 +47,18 @@ export function ScheduleTab({
   const [cronExpression, setCronExpression] = useState(source.schedule_kind === "cron" ? source.schedule_expression ?? "" : "");
   const [cronError, setCronError] = useState<string>();
   const scheduleMode = source.schedule_kind === "cron" ? "cron" : "interval";
-  const autoSchedulingAvailable = source.download_workflow_registered;
+  const manualOnlyTemporalSource = source.name === "ariregister" || source.name === "cvr";
+  const autoSchedulingAvailable =
+    source.download_workflow_registered && !manualOnlyTemporalSource;
   const manualTriggerAvailable = source.manual_trigger_available;
   const autoSchedulingEnabled =
     autoSchedulingAvailable &&
     source.enabled &&
     source.schedule_enabled &&
     (source.schedule_kind === "interval" || source.schedule_kind === "cron");
-  const schedulingMessage = autoSchedulingAvailable
+  const schedulingMessage = manualOnlyTemporalSource
+    ? "Manual Temporal workflow actions are available. Automatic scheduling is not configured for this source."
+    : autoSchedulingAvailable
     ? autoSchedulingEnabled
       ? "This source can be queued automatically. Manual actions remain available."
       : "Automatic scheduling is off. Manual actions remain available."

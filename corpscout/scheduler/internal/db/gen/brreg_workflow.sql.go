@@ -850,87 +850,6 @@ func (q *Queries) FinishBrregWorkflowTaskAttempt(ctx context.Context, arg Finish
 	return err
 }
 
-const getBrregWorkflowDomainAssetState = `-- name: GetBrregWorkflowDomainAssetState :one
-SELECT asset, raw_records_current, task_no_state, task_pending, task_running_active, task_running_stale, task_failed_retryable, task_failed_terminal, task_succeeded, task_skipped, task_eligible_now, artifact_succeeded, artifact_skipped, artifact_failed, artifact_missing FROM brreg_workflow.v_domain_asset_state
-`
-
-func (q *Queries) GetBrregWorkflowDomainAssetState(ctx context.Context) (BrregWorkflowVDomainAssetState, error) {
-	row := q.db.QueryRow(ctx, getBrregWorkflowDomainAssetState)
-	var i BrregWorkflowVDomainAssetState
-	err := row.Scan(
-		&i.Asset,
-		&i.RawRecordsCurrent,
-		&i.TaskNoState,
-		&i.TaskPending,
-		&i.TaskRunningActive,
-		&i.TaskRunningStale,
-		&i.TaskFailedRetryable,
-		&i.TaskFailedTerminal,
-		&i.TaskSucceeded,
-		&i.TaskSkipped,
-		&i.TaskEligibleNow,
-		&i.ArtifactSucceeded,
-		&i.ArtifactSkipped,
-		&i.ArtifactFailed,
-		&i.ArtifactMissing,
-	)
-	return i, err
-}
-
-const getBrregWorkflowEnhancedAssetState = `-- name: GetBrregWorkflowEnhancedAssetState :one
-SELECT asset, raw_records_current, task_no_state, task_pending, task_running_active, task_running_stale, task_failed_retryable, task_failed_terminal, task_succeeded, task_skipped, task_eligible_now, artifact_succeeded, artifact_skipped, artifact_failed, artifact_missing FROM brreg_workflow.v_enhanced_asset_state
-`
-
-func (q *Queries) GetBrregWorkflowEnhancedAssetState(ctx context.Context) (BrregWorkflowVEnhancedAssetState, error) {
-	row := q.db.QueryRow(ctx, getBrregWorkflowEnhancedAssetState)
-	var i BrregWorkflowVEnhancedAssetState
-	err := row.Scan(
-		&i.Asset,
-		&i.RawRecordsCurrent,
-		&i.TaskNoState,
-		&i.TaskPending,
-		&i.TaskRunningActive,
-		&i.TaskRunningStale,
-		&i.TaskFailedRetryable,
-		&i.TaskFailedTerminal,
-		&i.TaskSucceeded,
-		&i.TaskSkipped,
-		&i.TaskEligibleNow,
-		&i.ArtifactSucceeded,
-		&i.ArtifactSkipped,
-		&i.ArtifactFailed,
-		&i.ArtifactMissing,
-	)
-	return i, err
-}
-
-const getBrregWorkflowFinancialAssetState = `-- name: GetBrregWorkflowFinancialAssetState :one
-SELECT asset, raw_records_current, task_no_state, task_pending, task_running_active, task_running_stale, task_failed_retryable, task_failed_terminal, task_succeeded, task_skipped, task_eligible_now, artifact_succeeded, artifact_skipped, artifact_failed, artifact_missing FROM brreg_workflow.v_financial_asset_state
-`
-
-func (q *Queries) GetBrregWorkflowFinancialAssetState(ctx context.Context) (BrregWorkflowVFinancialAssetState, error) {
-	row := q.db.QueryRow(ctx, getBrregWorkflowFinancialAssetState)
-	var i BrregWorkflowVFinancialAssetState
-	err := row.Scan(
-		&i.Asset,
-		&i.RawRecordsCurrent,
-		&i.TaskNoState,
-		&i.TaskPending,
-		&i.TaskRunningActive,
-		&i.TaskRunningStale,
-		&i.TaskFailedRetryable,
-		&i.TaskFailedTerminal,
-		&i.TaskSucceeded,
-		&i.TaskSkipped,
-		&i.TaskEligibleNow,
-		&i.ArtifactSucceeded,
-		&i.ArtifactSkipped,
-		&i.ArtifactFailed,
-		&i.ArtifactMissing,
-	)
-	return i, err
-}
-
 const getBrregWorkflowRawRecordDetail = `-- name: GetBrregWorkflowRawRecordDetail :one
 SELECT id, organization_number, organization_name, website, registration_status, country_iso2, payload_hash, is_current, first_seen_at, last_seen_at, translation_status, domain_status, best_domain, financial_status, original_currency, enhanced_status, lifecycle_state, task_statuses, task_errors, raw_payload, raw_metadata, translation_result, domain_result, financial_result, enhanced_result, tasks
 FROM brreg_workflow.v_raw_record_detail
@@ -967,33 +886,6 @@ func (q *Queries) GetBrregWorkflowRawRecordDetail(ctx context.Context, id uuid.U
 		&i.FinancialResult,
 		&i.EnhancedResult,
 		&i.Tasks,
-	)
-	return i, err
-}
-
-const getBrregWorkflowTranslationAssetState = `-- name: GetBrregWorkflowTranslationAssetState :one
-SELECT asset, raw_records_current, task_no_state, task_pending, task_running_active, task_running_stale, task_failed_retryable, task_failed_terminal, task_succeeded, task_skipped, task_eligible_now, artifact_succeeded, artifact_skipped, artifact_failed, artifact_missing FROM brreg_workflow.v_translation_asset_state
-`
-
-func (q *Queries) GetBrregWorkflowTranslationAssetState(ctx context.Context) (BrregWorkflowVTranslationAssetState, error) {
-	row := q.db.QueryRow(ctx, getBrregWorkflowTranslationAssetState)
-	var i BrregWorkflowVTranslationAssetState
-	err := row.Scan(
-		&i.Asset,
-		&i.RawRecordsCurrent,
-		&i.TaskNoState,
-		&i.TaskPending,
-		&i.TaskRunningActive,
-		&i.TaskRunningStale,
-		&i.TaskFailedRetryable,
-		&i.TaskFailedTerminal,
-		&i.TaskSucceeded,
-		&i.TaskSkipped,
-		&i.TaskEligibleNow,
-		&i.ArtifactSucceeded,
-		&i.ArtifactSkipped,
-		&i.ArtifactFailed,
-		&i.ArtifactMissing,
 	)
 	return i, err
 }

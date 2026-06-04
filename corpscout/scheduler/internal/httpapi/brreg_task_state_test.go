@@ -35,7 +35,7 @@ func TestBrregTaskStateEndpointUsesTaskStateNamingInternally(t *testing.T) {
 func TestGetBrregTaskStateReturnsTaskActionsAndResultState(t *testing.T) {
 	q := &stubQuerier{}
 	q.On("GetBrregSourceTranslationAssetState", mock.Anything).Return(db.GetBrregSourceTranslationAssetStateRow{
-		Asset:               "action_tasks",
+		Asset:               "mv_company_translation_status",
 		RawRecordsCurrent:   1000,
 		TaskPending:         20,
 		TaskRunningActive:   3,
@@ -49,25 +49,35 @@ func TestGetBrregTaskStateReturnsTaskActionsAndResultState(t *testing.T) {
 		ArtifactFailed:      5,
 		ArtifactMissing:     127,
 	}, nil)
-	q.On("GetBrregWorkflowDomainAssetState", mock.Anything).Return(db.BrregWorkflowVDomainAssetState{
-		Asset:             "domain_results",
+	q.On("GetBrregSourceDomainAssetState", mock.Anything).Return(db.GetBrregSourceDomainAssetStateRow{
+		Asset:             "brreg_source.domains",
 		RawRecordsCurrent: 1000,
-		TaskNoState:       1000,
-		TaskEligibleNow:   1000,
-		ArtifactMissing:   1000,
+		TaskNoState:       900,
+		TaskSucceeded:     100,
+		TaskEligibleNow:   900,
+		ArtifactSucceeded: 100,
+		ArtifactMissing:   900,
 	}, nil)
-	q.On("GetBrregWorkflowFinancialAssetState", mock.Anything).Return(db.BrregWorkflowVFinancialAssetState{
-		Asset:             "financial_results",
-		RawRecordsCurrent: 1000,
-		TaskNoState:       1000,
-		TaskEligibleNow:   1000,
-		ArtifactMissing:   1000,
+	q.On("GetBrregSourceFinancialAssetState", mock.Anything).Return(db.GetBrregSourceFinancialAssetStateRow{
+		Asset:               "brreg_source.financial_statements",
+		RawRecordsCurrent:   1000,
+		TaskPending:         900,
+		TaskRunningActive:   1,
+		TaskFailedRetryable: 2,
+		TaskSucceeded:       90,
+		TaskSkipped:         7,
+		TaskEligibleNow:     902,
+		ArtifactSucceeded:   90,
+		ArtifactSkipped:     7,
+		ArtifactFailed:      2,
+		ArtifactMissing:     901,
 	}, nil)
-	q.On("GetBrregWorkflowEnhancedAssetState", mock.Anything).Return(db.BrregWorkflowVEnhancedAssetState{
-		Asset:             "enhanced_records",
-		RawRecordsCurrent: 1000,
-		TaskNoState:       1000,
-		ArtifactMissing:   1000,
+	q.On("GetBrregSourceResultTableCounts", mock.Anything).Return(db.GetBrregSourceResultTableCountsRow{
+		Companies:           1000,
+		TranslationStatus:   1000,
+		Websites:            120,
+		Domains:             100,
+		FinancialStatements: 90,
 	}, nil)
 	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", nil, ""))
 
@@ -83,6 +93,7 @@ func TestGetBrregTaskStateReturnsTaskActionsAndResultState(t *testing.T) {
 			Key         string `json:"key"`
 			Label       string `json:"label"`
 			Description string `json:"description"`
+			Asset       string `json:"asset"`
 			State       struct {
 				ArtifactSucceeded   int64 `json:"artifact_succeeded"`
 				ArtifactMissing     int64 `json:"artifact_missing"`
@@ -119,7 +130,13 @@ func TestGetBrregTaskStateReturnsTaskActionsAndResultState(t *testing.T) {
 	require.Equal(t, int64(5), body.Actions[1].State.TaskFailedTerminal)
 	require.Equal(t, int64(27), body.Actions[1].State.TaskEligibleNow)
 	require.Equal(t, "discover_domains", body.Actions[2].Key)
+	require.Equal(t, "brreg_source.domains", body.Actions[2].Asset)
+	require.Equal(t, int64(100), body.Actions[2].State.ArtifactSucceeded)
+	require.Equal(t, int64(900), body.Actions[2].State.ArtifactMissing)
 	require.Equal(t, "convert_financials", body.Actions[3].Key)
+	require.Equal(t, "brreg_source.financial_statements", body.Actions[3].Asset)
+	require.Equal(t, int64(90), body.Actions[3].State.ArtifactSucceeded)
+	require.Equal(t, int64(901), body.Actions[3].State.ArtifactMissing)
 	for _, action := range body.Actions {
 		require.NotEqual(t, "build_enhanced", action.Key)
 	}
@@ -129,10 +146,11 @@ func TestGetBrregTaskStateReturnsTaskActionsAndResultState(t *testing.T) {
 		Count int64  `json:"count"`
 	}{
 		{Name: "brreg_workflow.raw_records", Count: 1000},
-		{Name: "brreg_source.action_tasks", Count: 873},
-		{Name: "brreg_workflow.domain_results", Count: 0},
-		{Name: "brreg_workflow.financial_results", Count: 0},
-		{Name: "brreg_workflow.enhanced_records", Count: 0},
+		{Name: "brreg_source.companies", Count: 1000},
+		{Name: "brreg_source.mv_company_translation_status", Count: 1000},
+		{Name: "brreg_source.websites", Count: 120},
+		{Name: "brreg_source.domains", Count: 100},
+		{Name: "brreg_source.financial_statements", Count: 90},
 	}, body.ResultTables)
 }
 

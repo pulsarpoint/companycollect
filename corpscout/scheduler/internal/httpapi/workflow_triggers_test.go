@@ -20,6 +20,7 @@ import (
 
 	ariregisterworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/workflow"
 	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
+	cvrworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/cvr/workflow"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/httpapi"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
@@ -417,6 +418,52 @@ func TestStartAriregisterBulkRawIngestWorkflowRejectsInvalidSourceURL(t *testing
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/ariregister/bulk-raw-ingest", bytes.NewBufferString(`{"source_url":"file:///tmp/ettevotjad.csv.zip"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"source_url must be http or https"`)
+	require.Nil(t, tc.workflow)
+}
+
+func TestStartCVRRawIngestWorkflowStartsTemporalWorkflow(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/cvr/raw-ingest", bytes.NewBufferString(`{
+		"limit": 100,
+		"page_size": 25,
+		"batch_size": 50,
+		"source_url": "https://example.test/cvr-permanent/virksomhed/_search",
+		"scroll_url": "https://example.test/_search/scroll",
+		"scroll": "100",
+		"trigger": "manual"
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"LoadCVRRawRecords"`)
+	require.Equal(t, "cvr-raw-ingest", tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(cvrworkflow.LoadCVRRawRecords).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(cvrworkflow.LoadCVRRawRecordsInput)
+	require.Equal(t, 100, input.Limit)
+	require.Equal(t, 25, input.PageSize)
+	require.Equal(t, 50, input.BatchSize)
+	require.Equal(t, "https://example.test/cvr-permanent/virksomhed/_search", input.SourceURL)
+	require.Equal(t, "https://example.test/_search/scroll", input.ScrollURL)
+	require.Equal(t, "100", input.Scroll)
+	require.Equal(t, "manual", input.Trigger)
+}
+
+func TestStartCVRRawIngestWorkflowRejectsInvalidSourceURL(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/cvr/raw-ingest", bytes.NewBufferString(`{"source_url":"file:///tmp/cvr.json"}`))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

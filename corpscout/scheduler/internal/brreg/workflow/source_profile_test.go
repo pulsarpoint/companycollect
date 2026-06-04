@@ -8,11 +8,11 @@ import (
 	"go.temporal.io/sdk/testsuite"
 )
 
-func TestNormalizeBrregSourceProfilesRunsSingleActivity(t *testing.T) {
+func TestNormalizeBrregSourceProfilesWithCopyRunsSingleActivity(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 
-	env.RegisterWorkflow(NormalizeBrregSourceProfiles)
+	env.RegisterWorkflow(NormalizeBrregSourceProfilesWithCopy)
 	var activityInput NormalizeBrregSourceProfilesActivityInput
 	env.RegisterActivityWithOptions(func(input NormalizeBrregSourceProfilesActivityInput) (NormalizeBrregSourceProfilesActivityResult, error) {
 		activityInput = input
@@ -24,9 +24,9 @@ func TestNormalizeBrregSourceProfilesRunsSingleActivity(t *testing.T) {
 			ContactsUpserted:   1,
 			CapitalUpserted:    1,
 		}, nil
-	}, activity.RegisterOptions{Name: normalizeBrregSourceProfilesActivity})
+	}, activity.RegisterOptions{Name: normalizeBrregSourceProfilesWithCopyActivity})
 
-	env.ExecuteWorkflow(NormalizeBrregSourceProfiles, NormalizeBrregSourceProfilesInput{
+	env.ExecuteWorkflow(NormalizeBrregSourceProfilesWithCopy, NormalizeBrregSourceProfilesInput{
 		IDs:     []string{"11111111-1111-1111-1111-111111111111"},
 		Filters: map[string]string{"query": "BORTIGARD"},
 		Limit:   2,
@@ -51,11 +51,11 @@ func TestNormalizeBrregSourceProfilesRunsSingleActivity(t *testing.T) {
 	require.EqualValues(t, 1, result.CapitalUpserted)
 }
 
-func TestNormalizeBrregSourceProfilesProcessesAllRecordsInChunks(t *testing.T) {
+func TestNormalizeBrregSourceProfilesWithCopyProcessesAllRecordsInChunks(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 
-	env.RegisterWorkflow(NormalizeBrregSourceProfiles)
+	env.RegisterWorkflow(NormalizeBrregSourceProfilesWithCopy)
 	var activityInputs []NormalizeBrregSourceProfilesActivityInput
 	env.RegisterActivityWithOptions(func(input NormalizeBrregSourceProfilesActivityInput) (NormalizeBrregSourceProfilesActivityResult, error) {
 		activityInputs = append(activityInputs, input)
@@ -68,9 +68,9 @@ func TestNormalizeBrregSourceProfilesProcessesAllRecordsInChunks(t *testing.T) {
 		default:
 			return NormalizeBrregSourceProfilesActivityResult{}, nil
 		}
-	}, activity.RegisterOptions{Name: normalizeBrregSourceProfilesActivity})
+	}, activity.RegisterOptions{Name: normalizeBrregSourceProfilesWithCopyActivity})
 
-	env.ExecuteWorkflow(NormalizeBrregSourceProfiles, NormalizeBrregSourceProfilesInput{
+	env.ExecuteWorkflow(NormalizeBrregSourceProfilesWithCopy, NormalizeBrregSourceProfilesInput{
 		Limit:   0,
 		Trigger: "manual",
 	})

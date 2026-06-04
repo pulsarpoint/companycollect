@@ -14,454 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const applyBrregSourceCapitalCachedTranslationTerms = `-- name: ApplyBrregSourceCapitalCachedTranslationTerms :one
-WITH matched AS (
-  SELECT missing.source_row_id, term.translated_text
-  FROM brreg_source.v_missing_translation_fields missing
-  JOIN brreg_source.translation_terms term
-    ON term.source = 'brreg'
-   AND term.source_lang = missing.source_lang
-   AND term.target_lang = missing.target_lang
-   AND term.prompt_version = $1::text
-   AND term.term_key = missing.term_key
-   AND term.status = 'succeeded'
-  WHERE missing.source_table = 'brreg_source.capital'
-    AND missing.target_column = 'capital_type_en'
-  ORDER BY missing.source_row_id
-  LIMIT CASE WHEN $2::integer <= 0 THEN NULL ELSE $2::integer END
-),
-updated AS (
-  UPDATE brreg_source.capital capital
-  SET capital_type_en = matched.translated_text,
-      updated_at = now()
-  FROM matched
-  WHERE capital.id = matched.source_row_id
-  RETURNING capital.id
-)
-SELECT count(*)::integer AS fields_applied FROM updated
-`
-
-type ApplyBrregSourceCapitalCachedTranslationTermsParams struct {
-	PromptVersion string `json:"prompt_version"`
-	Limit         int32  `json:"limit"`
-}
-
-func (q *Queries) ApplyBrregSourceCapitalCachedTranslationTerms(ctx context.Context, arg ApplyBrregSourceCapitalCachedTranslationTermsParams) (int32, error) {
-	row := q.db.QueryRow(ctx, applyBrregSourceCapitalCachedTranslationTerms, arg.PromptVersion, arg.Limit)
-	var fields_applied int32
-	err := row.Scan(&fields_applied)
-	return fields_applied, err
-}
-
-const applyBrregSourceCompanyCachedTranslationTerms = `-- name: ApplyBrregSourceCompanyCachedTranslationTerms :one
-WITH matched AS (
-  SELECT missing.source_row_id, missing.target_column, term.translated_text
-  FROM brreg_source.v_missing_translation_fields missing
-  JOIN brreg_source.translation_terms term
-    ON term.source = 'brreg'
-   AND term.source_lang = missing.source_lang
-   AND term.target_lang = missing.target_lang
-   AND term.prompt_version = $1::text
-   AND term.term_key = missing.term_key
-   AND term.status = 'succeeded'
-  WHERE missing.source_table = 'brreg_source.companies'
-    AND missing.target_column IN (
-      'organization_form_label_en',
-      'response_class_en',
-      'activity_description_en',
-      'statutory_purpose_en'
-    )
-  ORDER BY missing.source_row_id, missing.target_column
-  LIMIT CASE WHEN $2::integer <= 0 THEN NULL ELSE $2::integer END
-),
-matched_rows AS (
-  SELECT
-    source_row_id,
-    max(translated_text) FILTER (WHERE target_column = 'organization_form_label_en') AS organization_form_label_en,
-    max(translated_text) FILTER (WHERE target_column = 'response_class_en') AS response_class_en,
-    max(translated_text) FILTER (WHERE target_column = 'activity_description_en') AS activity_description_en,
-    max(translated_text) FILTER (WHERE target_column = 'statutory_purpose_en') AS statutory_purpose_en,
-    count(*)::integer AS field_count
-  FROM matched
-  GROUP BY source_row_id
-),
-updated AS (
-  UPDATE brreg_source.companies company
-  SET organization_form_label_en = COALESCE(matched_rows.organization_form_label_en, company.organization_form_label_en),
-      response_class_en = COALESCE(matched_rows.response_class_en, company.response_class_en),
-      activity_description_en = COALESCE(matched_rows.activity_description_en, company.activity_description_en),
-      statutory_purpose_en = COALESCE(matched_rows.statutory_purpose_en, company.statutory_purpose_en),
-      updated_at = now()
-  FROM matched_rows
-  WHERE company.id = matched_rows.source_row_id
-  RETURNING matched_rows.field_count
-)
-SELECT COALESCE(sum(field_count), 0)::integer AS fields_applied FROM updated
-`
-
-type ApplyBrregSourceCompanyCachedTranslationTermsParams struct {
-	PromptVersion string `json:"prompt_version"`
-	Limit         int32  `json:"limit"`
-}
-
-func (q *Queries) ApplyBrregSourceCompanyCachedTranslationTerms(ctx context.Context, arg ApplyBrregSourceCompanyCachedTranslationTermsParams) (int32, error) {
-	row := q.db.QueryRow(ctx, applyBrregSourceCompanyCachedTranslationTerms, arg.PromptVersion, arg.Limit)
-	var fields_applied int32
-	err := row.Scan(&fields_applied)
-	return fields_applied, err
-}
-
-const claimBrregSourceTranslationBatch = `-- name: ClaimBrregSourceTranslationBatch :many
-WITH lock_task AS (
-  SELECT pg_advisory_xact_lock(hashtext('brreg_source.action_tasks.translate_field'))
-),
-active_slots AS (
-  SELECT GREATEST($1::integer - count(*)::integer, 0) AS available_slots
-  FROM brreg_source.action_tasks task
-  CROSS JOIN lock_task
-  WHERE task.action_type = 'translate_field'
-    AND task.status = 'running'
-    AND COALESCE(task.lease_until, task.last_started_at + interval '30 minutes') > now()
-),
-eligible_tasks AS (
-  SELECT
-    task.id,
-    task.source_table,
-    task.source_row_id,
-    task.source_column,
-    task.target_column,
-    task.source_text,
-    task.attempt_count,
-    missing.priority,
-    company.organization_number,
-    company.organization_name
-  FROM brreg_source.action_tasks task
-  JOIN brreg_source.v_missing_translations missing
-    ON missing.company_id = task.company_id
-   AND missing.source_table = task.source_table
-   AND missing.source_row_id = task.source_row_id
-   AND missing.target_column = task.target_key
-   AND missing.source_text_hash = task.source_fingerprint
-  JOIN brreg_source.companies company ON company.id = task.company_id
-  WHERE task.action_type = 'translate_field'
-    AND (
-      task.status = 'pending'
-      OR (
-        task.status = 'failed_retryable'
-        AND task.attempt_count < GREATEST($2::integer, 1)
-      )
-      OR (
-        task.status = 'running'
-        AND task.attempt_count < GREATEST($2::integer, 1)
-        AND COALESCE(task.lease_until, task.last_started_at + interval '30 minutes') <= now()
-      )
-    )
-  ORDER BY
-    missing.priority ASC,
-    company.organization_number ASC,
-    task.updated_at ASC,
-    task.id ASC
-  LIMIT LEAST(
-    GREATEST($3::integer, 1),
-    (SELECT available_slots FROM active_slots)
-  )
-  FOR UPDATE OF task SKIP LOCKED
-),
-claimed AS (
-  UPDATE brreg_source.action_tasks task
-  SET
-    status = 'running',
-    attempt_count = task.attempt_count + 1,
-    max_attempts = GREATEST($2::integer, task.max_attempts, 1),
-    lease_until = now() + make_interval(secs => GREATEST($4::integer, 1)),
-    last_started_at = now(),
-    last_finished_at = NULL,
-    error = NULL,
-    error_category = NULL,
-    error_code = NULL,
-    retry_strategy = NULL,
-    metadata = task.metadata
-      || COALESCE($5::jsonb, '{}'::jsonb)
-      || jsonb_strip_nulls(jsonb_build_object(
-        'workflow_run_id', $6::uuid::text,
-        'worker_id', $7::text
-      )),
-    updated_at = now()
-  FROM eligible_tasks eligible
-  WHERE task.id = eligible.id
-  RETURNING
-    task.id,
-    task.source_table,
-    task.source_column,
-    task.target_column,
-    task.source_text,
-    task.attempt_count,
-    eligible.organization_number,
-    eligible.organization_name
-)
-SELECT
-  claimed.id AS raw_record_id,
-  claimed.id AS task_attempt_id,
-  claimed.organization_number,
-  claimed.organization_name,
-  (
-  CASE
-    WHEN claimed.source_table = 'brreg_source.companies'
-      AND claimed.source_column = 'organization_form_label' THEN
-      jsonb_build_object(
-        'organisasjonsnummer', claimed.organization_number,
-        'organisasjonsform', jsonb_build_object('beskrivelse', claimed.source_text)
-      )
-    WHEN claimed.source_table = 'brreg_source.industries'
-      AND claimed.source_column = 'source_label' THEN
-      jsonb_build_object(
-        'organisasjonsnummer', claimed.organization_number,
-        'naeringskode1', jsonb_build_object('beskrivelse', claimed.source_text)
-      )
-    WHEN claimed.source_table = 'brreg_source.capital'
-      AND claimed.source_column = 'capital_type' THEN
-      jsonb_build_object(
-        'organisasjonsnummer', claimed.organization_number,
-        'kapital', jsonb_build_object('type', claimed.source_text)
-      )
-    WHEN claimed.source_table = 'brreg_source.companies'
-      AND claimed.source_column = 'statutory_purpose' THEN
-      jsonb_build_object(
-        'organisasjonsnummer', claimed.organization_number,
-        'vedtektsfestetFormaal', jsonb_build_array(claimed.source_text)
-      )
-    ELSE
-      jsonb_build_object(
-        'organisasjonsnummer', claimed.organization_number,
-        'aktivitet', jsonb_build_array(claimed.source_text)
-      )
-  END
-  )::jsonb AS raw_payload,
-  claimed.attempt_count::integer AS attempt
-FROM claimed
-ORDER BY claimed.organization_number ASC, claimed.id ASC
-`
-
-type ClaimBrregSourceTranslationBatchParams struct {
-	MaxParallelTasks int32     `json:"max_parallel_tasks"`
-	MaxAttempts      int32     `json:"max_attempts"`
-	BatchSize        int32     `json:"batch_size"`
-	LeaseSeconds     int32     `json:"lease_seconds"`
-	Metadata         []byte    `json:"metadata"`
-	WorkflowRunID    uuid.UUID `json:"workflow_run_id"`
-	WorkerID         *string   `json:"worker_id"`
-}
-
-type ClaimBrregSourceTranslationBatchRow struct {
-	RawRecordID        uuid.UUID       `json:"raw_record_id"`
-	TaskAttemptID      uuid.UUID       `json:"task_attempt_id"`
-	OrganizationNumber string          `json:"organization_number"`
-	OrganizationName   string          `json:"organization_name"`
-	RawPayload         json.RawMessage `json:"raw_payload"`
-	Attempt            int32           `json:"attempt"`
-}
-
-func (q *Queries) ClaimBrregSourceTranslationBatch(ctx context.Context, arg ClaimBrregSourceTranslationBatchParams) ([]ClaimBrregSourceTranslationBatchRow, error) {
-	rows, err := q.db.Query(ctx, claimBrregSourceTranslationBatch,
-		arg.MaxParallelTasks,
-		arg.MaxAttempts,
-		arg.BatchSize,
-		arg.LeaseSeconds,
-		arg.Metadata,
-		arg.WorkflowRunID,
-		arg.WorkerID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ClaimBrregSourceTranslationBatchRow
-	for rows.Next() {
-		var i ClaimBrregSourceTranslationBatchRow
-		if err := rows.Scan(
-			&i.RawRecordID,
-			&i.TaskAttemptID,
-			&i.OrganizationNumber,
-			&i.OrganizationName,
-			&i.RawPayload,
-			&i.Attempt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const completeBrregSourceTranslationTask = `-- name: CompleteBrregSourceTranslationTask :one
-WITH updated_task AS (
-  UPDATE brreg_source.action_tasks task
-  SET
-    status = CASE
-      WHEN $1::text = 'succeeded' THEN 'succeeded'
-      WHEN $1::text = 'skipped' THEN 'skipped'
-      WHEN $1::text = 'failed'
-        AND (
-          task.attempt_count >= GREATEST($2::integer, task.max_attempts, 1)
-          OR $3::text IN ('change_model_or_prompt', 'manual_config', 'manual_input', 'not_retryable')
-        ) THEN 'failed_terminal'
-      WHEN $1::text = 'failed' THEN 'failed_retryable'
-      ELSE task.status
-    END,
-    result = CASE
-      WHEN $1::text = 'succeeded'
-        THEN jsonb_build_object('translated_text', $4::text)
-      ELSE task.result
-    END,
-    model = $5::text,
-    prompt_version = $6::text,
-    error = $7::text,
-    error_category = $8::text,
-    error_code = $9::text,
-    retry_strategy = $3::text,
-    lease_until = NULL,
-    last_finished_at = now(),
-    updated_at = now()
-  WHERE task.id = $10::uuid
-    AND task.action_type = 'translate_field'
-  RETURNING id, company_id, action_type, source_table, source_row_id, target_key, source_fingerprint, source_column, target_column, source_text, source_lang, target_lang, status, attempt_count, max_attempts, lease_until, last_started_at, last_finished_at, result, model, prompt_version, error, error_category, error_code, retry_strategy, metadata, created_at, updated_at
-),
-successful_task AS (
-  SELECT updated_task.id, updated_task.company_id, updated_task.action_type, updated_task.source_table, updated_task.source_row_id, updated_task.target_key, updated_task.source_fingerprint, updated_task.source_column, updated_task.target_column, updated_task.source_text, updated_task.source_lang, updated_task.target_lang, updated_task.status, updated_task.attempt_count, updated_task.max_attempts, updated_task.lease_until, updated_task.last_started_at, updated_task.last_finished_at, updated_task.result, updated_task.model, updated_task.prompt_version, updated_task.error, updated_task.error_category, updated_task.error_code, updated_task.retry_strategy, updated_task.metadata, updated_task.created_at, updated_task.updated_at, updated_task.result ->> 'translated_text' AS translated_text
-  FROM updated_task
-  WHERE status = 'succeeded'
-    AND NULLIF(btrim(updated_task.result ->> 'translated_text'), '') IS NOT NULL
-),
-updated_companies AS (
-  UPDATE brreg_source.companies company
-  SET
-    short_description_en = CASE WHEN task.target_column = 'short_description_en' THEN task.translated_text ELSE company.short_description_en END,
-    description_en = CASE WHEN task.target_column = 'description_en' THEN task.translated_text ELSE company.description_en END,
-    registration_status_label_en = CASE WHEN task.target_column = 'registration_status_label_en' THEN task.translated_text ELSE company.registration_status_label_en END,
-    organization_form_label_en = CASE WHEN task.target_column = 'organization_form_label_en' THEN task.translated_text ELSE company.organization_form_label_en END,
-    response_class_en = CASE WHEN task.target_column = 'response_class_en' THEN task.translated_text ELSE company.response_class_en END,
-    activity_description_en = CASE WHEN task.target_column = 'activity_description_en' THEN task.translated_text ELSE company.activity_description_en END,
-    statutory_purpose_en = CASE WHEN task.target_column = 'statutory_purpose_en' THEN task.translated_text ELSE company.statutory_purpose_en END,
-    updated_at = now()
-  FROM successful_task task
-  WHERE task.source_table = 'brreg_source.companies'
-    AND company.id = task.source_row_id
-  RETURNING company.id
-),
-updated_addresses AS (
-  UPDATE brreg_source.addresses address
-  SET
-    country_en = CASE WHEN task.target_column = 'country_en' THEN task.translated_text ELSE address.country_en END,
-    updated_at = now()
-  FROM successful_task task
-  WHERE task.source_table = 'brreg_source.addresses'
-    AND address.id = task.source_row_id
-  RETURNING address.id
-),
-updated_industries AS (
-  UPDATE brreg_source.industries industry
-  SET
-    source_label_en = CASE WHEN task.target_column = 'source_label_en' THEN task.translated_text ELSE industry.source_label_en END,
-    updated_at = now()
-  FROM successful_task task
-  WHERE task.source_table = 'brreg_source.industries'
-    AND industry.id = task.source_row_id
-  RETURNING industry.id
-),
-updated_websites AS (
-  UPDATE brreg_source.websites website
-  SET
-    title_en = CASE WHEN task.target_column = 'title_en' THEN task.translated_text ELSE website.title_en END,
-    description_en = CASE WHEN task.target_column = 'description_en' THEN task.translated_text ELSE website.description_en END,
-    updated_at = now()
-  FROM successful_task task
-  WHERE task.source_table = 'brreg_source.websites'
-    AND website.id = task.source_row_id
-  RETURNING website.id
-),
-updated_contacts AS (
-  UPDATE brreg_source.contacts contact
-  SET
-    label_en = CASE WHEN task.target_column = 'label_en' THEN task.translated_text ELSE contact.label_en END,
-    updated_at = now()
-  FROM successful_task task
-  WHERE task.source_table = 'brreg_source.contacts'
-    AND contact.id = task.source_row_id
-  RETURNING contact.id
-),
-updated_capital AS (
-  UPDATE brreg_source.capital capital
-  SET
-    capital_type_en = CASE WHEN task.target_column = 'capital_type_en' THEN task.translated_text ELSE capital.capital_type_en END,
-    updated_at = now()
-  FROM successful_task task
-  WHERE task.source_table = 'brreg_source.capital'
-    AND capital.id = task.source_row_id
-  RETURNING capital.id
-),
-updated_roles AS (
-  UPDATE brreg_source.roles role
-  SET
-    role_label_en = CASE WHEN task.target_column = 'role_label_en' THEN task.translated_text ELSE role.role_label_en END,
-    role_group_en = CASE WHEN task.target_column = 'role_group_en' THEN task.translated_text ELSE role.role_group_en END,
-    updated_at = now()
-  FROM successful_task task
-  WHERE task.source_table = 'brreg_source.roles'
-    AND role.id = task.source_row_id
-  RETURNING role.id
-)
-SELECT
-  (SELECT count(*)::integer FROM updated_task) AS tasks_updated,
-  (
-    (SELECT count(*)::integer FROM updated_companies) +
-    (SELECT count(*)::integer FROM updated_addresses) +
-    (SELECT count(*)::integer FROM updated_industries) +
-    (SELECT count(*)::integer FROM updated_websites) +
-    (SELECT count(*)::integer FROM updated_contacts) +
-    (SELECT count(*)::integer FROM updated_capital) +
-    (SELECT count(*)::integer FROM updated_roles)
-  )::integer AS source_rows_updated
-`
-
-type CompleteBrregSourceTranslationTaskParams struct {
-	Status         string    `json:"status"`
-	MaxAttempts    int32     `json:"max_attempts"`
-	RetryStrategy  *string   `json:"retry_strategy"`
-	TranslatedText *string   `json:"translated_text"`
-	Model          *string   `json:"model"`
-	PromptVersion  *string   `json:"prompt_version"`
-	Error          *string   `json:"error"`
-	ErrorCategory  *string   `json:"error_category"`
-	ErrorCode      *string   `json:"error_code"`
-	TaskID         uuid.UUID `json:"task_id"`
-}
-
-type CompleteBrregSourceTranslationTaskRow struct {
-	TasksUpdated      int32 `json:"tasks_updated"`
-	SourceRowsUpdated int32 `json:"source_rows_updated"`
-}
-
-func (q *Queries) CompleteBrregSourceTranslationTask(ctx context.Context, arg CompleteBrregSourceTranslationTaskParams) (CompleteBrregSourceTranslationTaskRow, error) {
-	row := q.db.QueryRow(ctx, completeBrregSourceTranslationTask,
-		arg.Status,
-		arg.MaxAttempts,
-		arg.RetryStrategy,
-		arg.TranslatedText,
-		arg.Model,
-		arg.PromptVersion,
-		arg.Error,
-		arg.ErrorCategory,
-		arg.ErrorCode,
-		arg.TaskID,
-	)
-	var i CompleteBrregSourceTranslationTaskRow
-	err := row.Scan(&i.TasksUpdated, &i.SourceRowsUpdated)
-	return i, err
-}
-
 const convertBrregSourceCapitalToUSD = `-- name: ConvertBrregSourceCapitalToUSD :one
 WITH selected_sheet AS (
   SELECT
@@ -676,18 +228,6 @@ func (q *Queries) ConvertBrregSourceCapitalToUSD(ctx context.Context, arg Conver
 	return i, err
 }
 
-const countBrregMissingTranslationFields = `-- name: CountBrregMissingTranslationFields :one
-SELECT count(*)::integer AS missing_fields
-FROM brreg_source.v_missing_translation_fields
-`
-
-func (q *Queries) CountBrregMissingTranslationFields(ctx context.Context) (int32, error) {
-	row := q.db.QueryRow(ctx, countBrregMissingTranslationFields)
-	var missing_fields int32
-	err := row.Scan(&missing_fields)
-	return missing_fields, err
-}
-
 const countBrregSourceEntries = `-- name: CountBrregSourceEntries :one
 SELECT count(*)::bigint
 FROM brreg_source.mv_company_explorer entry
@@ -758,43 +298,6 @@ func (q *Queries) CountBrregSourceEntries(ctx context.Context, arg CountBrregSou
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
-}
-
-const failRunningBrregSourceTranslationTasksForRun = `-- name: FailRunningBrregSourceTranslationTasksForRun :one
-WITH failed AS (
-  UPDATE brreg_source.action_tasks task
-  SET
-    status = CASE
-      WHEN task.attempt_count >= GREATEST($1::integer, task.max_attempts, 1) THEN 'failed_terminal'
-      ELSE 'failed_retryable'
-    END,
-    lease_until = NULL,
-    last_finished_at = now(),
-    error = $2::text,
-    error_category = 'workflow_activity',
-    error_code = 'activity_failed',
-    retry_strategy = 'retry_with_backoff',
-    updated_at = now()
-  WHERE task.action_type = 'translate_field'
-    AND task.status = 'running'
-    AND task.metadata ->> 'workflow_run_id' = $3::uuid::text
-  RETURNING task.id
-)
-SELECT count(*)::integer AS failed_tasks
-FROM failed
-`
-
-type FailRunningBrregSourceTranslationTasksForRunParams struct {
-	MaxAttempts   int32     `json:"max_attempts"`
-	Error         *string   `json:"error"`
-	WorkflowRunID uuid.UUID `json:"workflow_run_id"`
-}
-
-func (q *Queries) FailRunningBrregSourceTranslationTasksForRun(ctx context.Context, arg FailRunningBrregSourceTranslationTasksForRunParams) (int32, error) {
-	row := q.db.QueryRow(ctx, failRunningBrregSourceTranslationTasksForRun, arg.MaxAttempts, arg.Error, arg.WorkflowRunID)
-	var failed_tasks int32
-	err := row.Scan(&failed_tasks)
-	return failed_tasks, err
 }
 
 const getBrregSourceCompanyDetail = `-- name: GetBrregSourceCompanyDetail :one
@@ -899,75 +402,224 @@ func (q *Queries) GetBrregSourceCompanyExplorerRefreshSummary(ctx context.Contex
 	return i, err
 }
 
-const getBrregSourceTranslationAssetState = `-- name: GetBrregSourceTranslationAssetState :one
-WITH source_companies AS (
+const getBrregSourceDomainAssetState = `-- name: GetBrregSourceDomainAssetState :one
+WITH active_companies AS (
   SELECT id
   FROM brreg_source.companies
   WHERE row_status = 'active'
 ),
-source_tasks AS (
-  SELECT task.id, task.company_id, task.action_type, task.source_table, task.source_row_id, task.target_key, task.source_fingerprint, task.source_column, task.target_column, task.source_text, task.source_lang, task.target_lang, task.status, task.attempt_count, task.max_attempts, task.lease_until, task.last_started_at, task.last_finished_at, task.result, task.model, task.prompt_version, task.error, task.error_category, task.error_code, task.retry_strategy, task.metadata, task.created_at, task.updated_at
-  FROM brreg_source.action_tasks task
-  JOIN source_companies company ON company.id = task.company_id
-  WHERE task.action_type = 'translate_field'
-),
-missing_tasks AS (
-  SELECT
-    task.id,
-    task.status,
-    task.attempt_count,
-    task.max_attempts,
-    task.lease_until,
-    task.last_started_at
-  FROM brreg_source.v_missing_translations missing
-  JOIN source_companies company ON company.id = missing.company_id
-  LEFT JOIN brreg_source.action_tasks task
-    ON task.action_type = 'translate_field'
-   AND task.source_table = missing.source_table
-   AND task.source_row_id = missing.source_row_id
-   AND task.target_key = missing.target_column
-   AND task.source_fingerprint = missing.source_text_hash
+domain_companies AS (
+  SELECT DISTINCT domain.company_id
+  FROM brreg_source.domains domain
+  JOIN active_companies company ON company.id = domain.company_id
+  WHERE domain.status = 'active'
 )
 SELECT
-  'action_tasks'::text AS asset,
-  (SELECT count(*) FROM source_companies)::bigint AS raw_records_current,
-  (SELECT count(*) FROM missing_tasks WHERE id IS NULL)::bigint AS task_no_state,
-  (SELECT count(*) FROM source_tasks WHERE status = 'pending')::bigint AS task_pending,
-  (
-    SELECT count(*)
-    FROM source_tasks
-    WHERE status = 'running'
-      AND COALESCE(lease_until, last_started_at + interval '30 minutes') > now()
+  'brreg_source.domains'::text AS asset,
+  count(*)::bigint AS raw_records_current,
+  count(*) FILTER (WHERE domain_companies.company_id IS NULL)::bigint AS task_no_state,
+  0::bigint AS task_pending,
+  0::bigint AS task_running_active,
+  0::bigint AS task_running_stale,
+  0::bigint AS task_failed_retryable,
+  0::bigint AS task_failed_terminal,
+  count(*) FILTER (WHERE domain_companies.company_id IS NOT NULL)::bigint AS task_succeeded,
+  0::bigint AS task_skipped,
+  count(*) FILTER (WHERE domain_companies.company_id IS NULL)::bigint AS task_eligible_now,
+  count(*) FILTER (WHERE domain_companies.company_id IS NOT NULL)::bigint AS artifact_succeeded,
+  0::bigint AS artifact_skipped,
+  0::bigint AS artifact_failed,
+  count(*) FILTER (WHERE domain_companies.company_id IS NULL)::bigint AS artifact_missing
+FROM active_companies company
+LEFT JOIN domain_companies ON domain_companies.company_id = company.id
+`
+
+type GetBrregSourceDomainAssetStateRow struct {
+	Asset               string `json:"asset"`
+	RawRecordsCurrent   int64  `json:"raw_records_current"`
+	TaskNoState         int64  `json:"task_no_state"`
+	TaskPending         int64  `json:"task_pending"`
+	TaskRunningActive   int64  `json:"task_running_active"`
+	TaskRunningStale    int64  `json:"task_running_stale"`
+	TaskFailedRetryable int64  `json:"task_failed_retryable"`
+	TaskFailedTerminal  int64  `json:"task_failed_terminal"`
+	TaskSucceeded       int64  `json:"task_succeeded"`
+	TaskSkipped         int64  `json:"task_skipped"`
+	TaskEligibleNow     int64  `json:"task_eligible_now"`
+	ArtifactSucceeded   int64  `json:"artifact_succeeded"`
+	ArtifactSkipped     int64  `json:"artifact_skipped"`
+	ArtifactFailed      int64  `json:"artifact_failed"`
+	ArtifactMissing     int64  `json:"artifact_missing"`
+}
+
+func (q *Queries) GetBrregSourceDomainAssetState(ctx context.Context) (GetBrregSourceDomainAssetStateRow, error) {
+	row := q.db.QueryRow(ctx, getBrregSourceDomainAssetState)
+	var i GetBrregSourceDomainAssetStateRow
+	err := row.Scan(
+		&i.Asset,
+		&i.RawRecordsCurrent,
+		&i.TaskNoState,
+		&i.TaskPending,
+		&i.TaskRunningActive,
+		&i.TaskRunningStale,
+		&i.TaskFailedRetryable,
+		&i.TaskFailedTerminal,
+		&i.TaskSucceeded,
+		&i.TaskSkipped,
+		&i.TaskEligibleNow,
+		&i.ArtifactSucceeded,
+		&i.ArtifactSkipped,
+		&i.ArtifactFailed,
+		&i.ArtifactMissing,
+	)
+	return i, err
+}
+
+const getBrregSourceFinancialAssetState = `-- name: GetBrregSourceFinancialAssetState :one
+WITH active_companies AS (
+  SELECT id
+  FROM brreg_source.companies
+  WHERE row_status = 'active'
+),
+statement_companies AS (
+  SELECT DISTINCT statement.company_id
+  FROM brreg_source.financial_statements statement
+  JOIN active_companies company ON company.id = statement.company_id
+),
+states AS (
+  SELECT
+    company.id AS company_id,
+    process_status.financial_status,
+    process_status.financial_lease_until,
+    statement_companies.company_id IS NOT NULL AS has_statement
+  FROM active_companies company
+  LEFT JOIN brreg_source.company_process_status process_status ON process_status.company_id = company.id
+  LEFT JOIN statement_companies ON statement_companies.company_id = company.id
+)
+SELECT
+  'brreg_source.financial_statements'::text AS asset,
+  count(*)::bigint AS raw_records_current,
+  count(*) FILTER (WHERE financial_status IS NULL)::bigint AS task_no_state,
+  count(*) FILTER (WHERE financial_status IN ('pending', 'dirty'))::bigint AS task_pending,
+  count(*) FILTER (
+    WHERE financial_status = 'running'
+      AND coalesce(financial_lease_until, '-infinity'::timestamptz) > now()
   )::bigint AS task_running_active,
-  (
-    SELECT count(*)
-    FROM source_tasks
-    WHERE status = 'running'
-      AND COALESCE(lease_until, last_started_at + interval '30 minutes') <= now()
+  count(*) FILTER (
+    WHERE financial_status = 'running'
+      AND coalesce(financial_lease_until, '-infinity'::timestamptz) <= now()
   )::bigint AS task_running_stale,
-  (SELECT count(*) FROM source_tasks WHERE status = 'failed_retryable')::bigint AS task_failed_retryable,
-  (SELECT count(*) FROM source_tasks WHERE status = 'failed_terminal')::bigint AS task_failed_terminal,
-  (SELECT count(*) FROM source_tasks WHERE status = 'succeeded')::bigint AS task_succeeded,
-  (SELECT count(*) FROM source_tasks WHERE status = 'skipped')::bigint AS task_skipped,
-  (
-    SELECT count(*)
-    FROM missing_tasks
-    WHERE id IS NULL
-      OR status = 'pending'
-      OR (
-        status = 'failed_retryable'
-        AND attempt_count < GREATEST(max_attempts, 1)
-      )
-      OR (
-        status = 'running'
-        AND attempt_count < GREATEST(max_attempts, 1)
-        AND COALESCE(lease_until, last_started_at + interval '30 minutes') <= now()
+  count(*) FILTER (WHERE financial_status = 'failed_retryable')::bigint AS task_failed_retryable,
+  count(*) FILTER (WHERE financial_status = 'failed_terminal')::bigint AS task_failed_terminal,
+  count(*) FILTER (WHERE financial_status = 'succeeded')::bigint AS task_succeeded,
+  count(*) FILTER (WHERE financial_status = 'skipped')::bigint AS task_skipped,
+  count(*) FILTER (
+    WHERE NOT has_statement
+      AND (
+        financial_status IS NULL
+        OR financial_status IN ('pending', 'dirty', 'failed_retryable')
+        OR (
+          financial_status = 'running'
+          AND coalesce(financial_lease_until, '-infinity'::timestamptz) <= now()
+        )
       )
   )::bigint AS task_eligible_now,
-  (SELECT count(*) FROM source_tasks WHERE status = 'succeeded')::bigint AS artifact_succeeded,
-  (SELECT count(*) FROM source_tasks WHERE status = 'skipped')::bigint AS artifact_skipped,
-  (SELECT count(*) FROM source_tasks WHERE status = 'failed_terminal')::bigint AS artifact_failed,
-  (SELECT count(*) FROM missing_tasks)::bigint AS artifact_missing
+  count(*) FILTER (WHERE has_statement)::bigint AS artifact_succeeded,
+  count(*) FILTER (WHERE financial_status = 'skipped' AND NOT has_statement)::bigint AS artifact_skipped,
+  count(*) FILTER (WHERE financial_status IN ('failed_retryable', 'failed_terminal') AND NOT has_statement)::bigint AS artifact_failed,
+  count(*) FILTER (WHERE NOT has_statement AND coalesce(financial_status, '') <> 'skipped')::bigint AS artifact_missing
+FROM states
+`
+
+type GetBrregSourceFinancialAssetStateRow struct {
+	Asset               string `json:"asset"`
+	RawRecordsCurrent   int64  `json:"raw_records_current"`
+	TaskNoState         int64  `json:"task_no_state"`
+	TaskPending         int64  `json:"task_pending"`
+	TaskRunningActive   int64  `json:"task_running_active"`
+	TaskRunningStale    int64  `json:"task_running_stale"`
+	TaskFailedRetryable int64  `json:"task_failed_retryable"`
+	TaskFailedTerminal  int64  `json:"task_failed_terminal"`
+	TaskSucceeded       int64  `json:"task_succeeded"`
+	TaskSkipped         int64  `json:"task_skipped"`
+	TaskEligibleNow     int64  `json:"task_eligible_now"`
+	ArtifactSucceeded   int64  `json:"artifact_succeeded"`
+	ArtifactSkipped     int64  `json:"artifact_skipped"`
+	ArtifactFailed      int64  `json:"artifact_failed"`
+	ArtifactMissing     int64  `json:"artifact_missing"`
+}
+
+func (q *Queries) GetBrregSourceFinancialAssetState(ctx context.Context) (GetBrregSourceFinancialAssetStateRow, error) {
+	row := q.db.QueryRow(ctx, getBrregSourceFinancialAssetState)
+	var i GetBrregSourceFinancialAssetStateRow
+	err := row.Scan(
+		&i.Asset,
+		&i.RawRecordsCurrent,
+		&i.TaskNoState,
+		&i.TaskPending,
+		&i.TaskRunningActive,
+		&i.TaskRunningStale,
+		&i.TaskFailedRetryable,
+		&i.TaskFailedTerminal,
+		&i.TaskSucceeded,
+		&i.TaskSkipped,
+		&i.TaskEligibleNow,
+		&i.ArtifactSucceeded,
+		&i.ArtifactSkipped,
+		&i.ArtifactFailed,
+		&i.ArtifactMissing,
+	)
+	return i, err
+}
+
+const getBrregSourceResultTableCounts = `-- name: GetBrregSourceResultTableCounts :one
+SELECT
+  (SELECT count(*)::bigint FROM brreg_source.companies WHERE row_status = 'active') AS companies,
+  (SELECT count(*)::bigint FROM brreg_source.mv_company_translation_status) AS translation_status,
+  (SELECT count(*)::bigint FROM brreg_source.websites WHERE status = 'active') AS websites,
+  (SELECT count(*)::bigint FROM brreg_source.domains WHERE status = 'active') AS domains,
+  (SELECT count(*)::bigint FROM brreg_source.financial_statements) AS financial_statements
+`
+
+type GetBrregSourceResultTableCountsRow struct {
+	Companies           int64 `json:"companies"`
+	TranslationStatus   int64 `json:"translation_status"`
+	Websites            int64 `json:"websites"`
+	Domains             int64 `json:"domains"`
+	FinancialStatements int64 `json:"financial_statements"`
+}
+
+func (q *Queries) GetBrregSourceResultTableCounts(ctx context.Context) (GetBrregSourceResultTableCountsRow, error) {
+	row := q.db.QueryRow(ctx, getBrregSourceResultTableCounts)
+	var i GetBrregSourceResultTableCountsRow
+	err := row.Scan(
+		&i.Companies,
+		&i.TranslationStatus,
+		&i.Websites,
+		&i.Domains,
+		&i.FinancialStatements,
+	)
+	return i, err
+}
+
+const getBrregSourceTranslationAssetState = `-- name: GetBrregSourceTranslationAssetState :one
+SELECT
+  'mv_company_translation_status'::text AS asset,
+  count(*)::bigint AS raw_records_current,
+  COALESCE(sum(translation_missing_count), 0)::bigint AS task_no_state,
+  COALESCE(sum(translation_pending_count), 0)::bigint AS task_pending,
+  COALESCE(sum(translation_running_count), 0)::bigint AS task_running_active,
+  0::bigint AS task_running_stale,
+  COALESCE(sum(translation_failed_count), 0)::bigint AS task_failed_retryable,
+  0::bigint AS task_failed_terminal,
+  COALESCE(sum(translation_succeeded_count), 0)::bigint AS task_succeeded,
+  0::bigint AS task_skipped,
+  COALESCE(sum(GREATEST(translation_missing_count - translation_cached_count, 0)), 0)::bigint AS task_eligible_now,
+  COALESCE(sum(translation_succeeded_count), 0)::bigint AS artifact_succeeded,
+  0::bigint AS artifact_skipped,
+  COALESCE(sum(translation_failed_count), 0)::bigint AS artifact_failed,
+  COALESCE(sum(translation_missing_count), 0)::bigint AS artifact_missing
+FROM brreg_source.mv_company_translation_status
 `
 
 type GetBrregSourceTranslationAssetStateRow struct {
@@ -1009,77 +661,6 @@ func (q *Queries) GetBrregSourceTranslationAssetState(ctx context.Context) (GetB
 		&i.ArtifactMissing,
 	)
 	return i, err
-}
-
-const insertPendingBrregTranslationTerms = `-- name: InsertPendingBrregTranslationTerms :one
-WITH inserted AS (
-  INSERT INTO brreg_source.translation_terms (
-    source,
-    source_lang,
-    target_lang,
-    source_text_normalized,
-    source_text,
-    term_key,
-    status,
-    provider,
-    model,
-    prompt_version,
-    metadata,
-    last_requested_at,
-    updated_at
-  )
-  SELECT
-    'brreg',
-    missing.source_lang,
-    missing.target_lang,
-    missing.source_text_normalized,
-    min(missing.source_text),
-    missing.term_key,
-    'pending',
-    $1::text,
-    $2::text,
-    $3::text,
-    jsonb_build_object('workflow_id', $4::text),
-    now(),
-    now()
-  FROM brreg_source.v_missing_translation_fields missing
-  LEFT JOIN brreg_source.translation_terms existing
-    ON existing.source = 'brreg'
-   AND existing.source_lang = missing.source_lang
-   AND existing.target_lang = missing.target_lang
-   AND existing.prompt_version = $3::text
-   AND existing.term_key = missing.term_key
-  WHERE existing.id IS NULL
-  GROUP BY missing.source_lang, missing.target_lang, missing.source_text_normalized, missing.term_key
-  LIMIT CASE WHEN $5::integer <= 0 THEN NULL ELSE $5::integer END
-  ON CONFLICT (source, source_lang, target_lang, prompt_version, term_key) DO UPDATE
-  SET last_requested_at = now(),
-      updated_at = now()
-  RETURNING id
-)
-SELECT count(*)::integer AS terms_inserted
-FROM inserted
-`
-
-type InsertPendingBrregTranslationTermsParams struct {
-	Provider      *string `json:"provider"`
-	Model         *string `json:"model"`
-	PromptVersion string  `json:"prompt_version"`
-	WorkflowID    *string `json:"workflow_id"`
-	Limit         int32   `json:"limit"`
-}
-
-func (q *Queries) InsertPendingBrregTranslationTerms(ctx context.Context, arg InsertPendingBrregTranslationTermsParams) (int32, error) {
-	row := q.db.QueryRow(ctx, insertPendingBrregTranslationTerms,
-		arg.Provider,
-		arg.Model,
-		arg.PromptVersion,
-		arg.WorkflowID,
-		arg.Limit,
-	)
-	var terms_inserted int32
-	err := row.Scan(&terms_inserted)
-	return terms_inserted, err
 }
 
 const listBrregSourceEntries = `-- name: ListBrregSourceEntries :many
@@ -1326,946 +907,6 @@ func (q *Queries) ListBrregSourceEntries(ctx context.Context, arg ListBrregSourc
 		return nil, err
 	}
 	return items, nil
-}
-
-const markBrregTranslationTermsQueued = `-- name: MarkBrregTranslationTermsQueued :many
-WITH picked AS (
-  SELECT id
-  FROM brreg_source.translation_terms
-  WHERE source = 'brreg'
-    AND status IN ('pending', 'failed_retryable')
-    AND prompt_version = $1::text
-    AND attempt_count < $2::integer
-  ORDER BY updated_at, id
-  LIMIT $3::integer
-  FOR UPDATE SKIP LOCKED
-),
-queued AS (
-  UPDATE brreg_source.translation_terms term
-  SET status = 'queued',
-      attempt_count = term.attempt_count + 1,
-      provider = $4::text,
-      model = $5::text,
-      last_requested_at = now(),
-      updated_at = now()
-  FROM picked
-  WHERE term.id = picked.id
-  RETURNING
-    term.id,
-    term.source_lang,
-    term.target_lang,
-    term.source_text_normalized,
-    term.source_text,
-    term.term_key,
-    term.attempt_count
-)
-SELECT id, source_lang, target_lang, source_text_normalized, source_text, term_key, attempt_count FROM queued
-`
-
-type MarkBrregTranslationTermsQueuedParams struct {
-	PromptVersion string  `json:"prompt_version"`
-	MaxAttempts   int32   `json:"max_attempts"`
-	Limit         int32   `json:"limit"`
-	Provider      *string `json:"provider"`
-	Model         *string `json:"model"`
-}
-
-type MarkBrregTranslationTermsQueuedRow struct {
-	ID                   uuid.UUID `json:"id"`
-	SourceLang           string    `json:"source_lang"`
-	TargetLang           string    `json:"target_lang"`
-	SourceTextNormalized string    `json:"source_text_normalized"`
-	SourceText           string    `json:"source_text"`
-	TermKey              string    `json:"term_key"`
-	AttemptCount         int32     `json:"attempt_count"`
-}
-
-func (q *Queries) MarkBrregTranslationTermsQueued(ctx context.Context, arg MarkBrregTranslationTermsQueuedParams) ([]MarkBrregTranslationTermsQueuedRow, error) {
-	rows, err := q.db.Query(ctx, markBrregTranslationTermsQueued,
-		arg.PromptVersion,
-		arg.MaxAttempts,
-		arg.Limit,
-		arg.Provider,
-		arg.Model,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []MarkBrregTranslationTermsQueuedRow
-	for rows.Next() {
-		var i MarkBrregTranslationTermsQueuedRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.SourceLang,
-			&i.TargetLang,
-			&i.SourceTextNormalized,
-			&i.SourceText,
-			&i.TermKey,
-			&i.AttemptCount,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const normalizeBrregSourceProfiles = `-- name: NormalizeBrregSourceProfiles :one
-WITH selected_raw_records AS (
-  SELECT rr.id, rr.bulk_snapshot_id, rr.source_native_id, rr.organization_number, rr.organization_name, rr.registration_status, rr.website, rr.country_iso2, rr.source_updated_at, rr.raw_payload, rr.payload_hash, rr.is_current, rr.first_seen_at, rr.last_seen_at, rr.metadata
-  FROM brreg_workflow.raw_records rr
-  JOIN brreg_workflow.v_raw_record_list ri ON ri.id = rr.id
-  WHERE rr.is_current
-    AND (
-      COALESCE(cardinality($1::text[]), 0) = 0
-      OR rr.id::text = ANY($1::text[])
-    )
-    AND (
-      $2::text IS NULL
-      OR ri.organization_name ILIKE '%' || $2::text || '%'
-      OR ri.organization_number ILIKE '%' || $2::text || '%'
-    )
-    AND ($3::text IS NULL OR ri.lifecycle_state = $3::text)
-    AND ($4::text IS NULL OR ri.translation_status = $4::text)
-    AND ($5::text IS NULL OR ri.domain_status = $5::text)
-    AND ($6::text IS NULL OR ri.financial_status = $6::text)
-    AND ($7::text IS NULL OR ri.enhanced_status = $7::text)
-    AND (
-      COALESCE(cardinality($1::text[]), 0) > 0
-      OR NOT ri.synced
-    )
-  ORDER BY rr.organization_number
-  LIMIT NULLIF($8::integer, 0)
-),
-company_source AS (
-  SELECT
-    raw.id AS raw_record_id,
-    raw.source_native_id,
-    raw.organization_number,
-    COALESCE(NULLIF(btrim(raw.organization_name), ''), NULLIF(btrim(raw.raw_payload ->> 'navn'), ''), raw.organization_number) AS organization_name,
-    lower(COALESCE(NULLIF(btrim(raw.organization_name), ''), NULLIF(btrim(raw.raw_payload ->> 'navn'), ''), raw.organization_number)) AS organization_name_normalized,
-    raw.country_iso2,
-    raw.registration_status,
-    raw.raw_payload,
-    raw.payload_hash,
-    raw.source_updated_at,
-    raw.raw_payload -> 'organisasjonsform' AS organization_form_payload,
-    ARRAY(
-      SELECT jsonb_array_elements_text(
-        CASE
-          WHEN jsonb_typeof(raw.raw_payload -> 'aktivitet') = 'array' THEN raw.raw_payload -> 'aktivitet'
-          ELSE '[]'::jsonb
-        END
-      )
-    ) AS activity_lines,
-    ARRAY(
-      SELECT jsonb_array_elements_text(
-        CASE
-          WHEN jsonb_typeof(raw.raw_payload -> 'vedtektsfestetFormaal') = 'array' THEN raw.raw_payload -> 'vedtektsfestetFormaal'
-          ELSE '[]'::jsonb
-        END
-      )
-    ) AS purpose_lines
-  FROM selected_raw_records raw
-),
-upserted_companies AS (
-  INSERT INTO brreg_source.companies (
-    raw_record_id,
-    source_native_id,
-    organization_number,
-    country_iso2,
-    organization_name,
-    organization_name_normalized,
-    registration_status,
-    registration_status_label,
-    lifecycle_status,
-    organization_form_code,
-    organization_form_label,
-    language_code,
-    response_class,
-    founded_date,
-    unit_registry_registered_at,
-    enterprise_registry_registered_at,
-    vat_registry_registered_at,
-    vat_registry_unit_registered_at,
-    articles_date,
-    last_annual_report_year,
-    activity_description,
-    statutory_purpose,
-    is_bankrupt,
-    is_in_group,
-    is_under_liquidation,
-    is_forced_dissolution,
-    has_registered_employees,
-    in_vat_register,
-    in_business_register,
-    in_voluntary_register,
-    in_foundation_register,
-    in_party_register,
-    source_updated_at,
-    payload_hash,
-    normalized_payload,
-    raw_company_payload,
-    evidence,
-    metadata,
-    updated_at
-  )
-  SELECT
-    source.raw_record_id,
-    source.source_native_id,
-    source.organization_number,
-    source.country_iso2,
-    source.organization_name,
-    source.organization_name_normalized,
-    source.registration_status,
-    CASE source.registration_status
-      WHEN 'active' THEN 'active'
-      WHEN 'inactive' THEN 'inactive'
-      ELSE source.registration_status
-    END,
-    CASE
-      WHEN COALESCE((source.raw_payload ->> 'konkurs')::boolean, false) THEN 'bankrupt'
-      WHEN COALESCE((source.raw_payload ->> 'underTvangsavviklingEllerTvangsopplosning')::boolean, false) THEN 'forced_dissolution'
-      WHEN COALESCE((source.raw_payload ->> 'underAvvikling')::boolean, false) THEN 'liquidating'
-      WHEN source.registration_status = 'active' THEN 'active'
-      WHEN source.registration_status = 'inactive' THEN 'inactive'
-      ELSE 'unknown'
-    END,
-    source.organization_form_payload ->> 'kode',
-    source.organization_form_payload ->> 'beskrivelse',
-    source.raw_payload ->> 'maalform',
-    source.raw_payload ->> 'respons_klasse',
-    CASE WHEN source.raw_payload ->> 'stiftelsesdato' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (source.raw_payload ->> 'stiftelsesdato')::date END,
-    CASE WHEN source.raw_payload ->> 'registreringsdatoEnhetsregisteret' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (source.raw_payload ->> 'registreringsdatoEnhetsregisteret')::date END,
-    CASE WHEN source.raw_payload ->> 'registreringsdatoForetaksregisteret' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (source.raw_payload ->> 'registreringsdatoForetaksregisteret')::date END,
-    CASE WHEN source.raw_payload ->> 'registreringsdatoMerverdiavgiftsregisteret' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (source.raw_payload ->> 'registreringsdatoMerverdiavgiftsregisteret')::date END,
-    CASE WHEN source.raw_payload ->> 'registreringsdatoMerverdiavgiftsregisteretEnhetsregisteret' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (source.raw_payload ->> 'registreringsdatoMerverdiavgiftsregisteretEnhetsregisteret')::date END,
-    CASE WHEN source.raw_payload ->> 'vedtektsdato' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (source.raw_payload ->> 'vedtektsdato')::date END,
-    CASE WHEN source.raw_payload ->> 'sisteInnsendteAarsregnskap' ~ '^[0-9]{4}$' THEN (source.raw_payload ->> 'sisteInnsendteAarsregnskap')::integer END,
-    NULLIF(btrim(array_to_string(source.activity_lines, E'\n')), ''),
-    NULLIF(btrim(array_to_string(source.purpose_lines, E'\n')), ''),
-    (source.raw_payload ->> 'konkurs')::boolean,
-    (source.raw_payload ->> 'erIKonsern')::boolean,
-    (source.raw_payload ->> 'underAvvikling')::boolean,
-    (source.raw_payload ->> 'underTvangsavviklingEllerTvangsopplosning')::boolean,
-    (source.raw_payload ->> 'harRegistrertAntallAnsatte')::boolean,
-    (source.raw_payload ->> 'registrertIMvaregisteret')::boolean,
-    (source.raw_payload ->> 'registrertIForetaksregisteret')::boolean,
-    (source.raw_payload ->> 'registrertIFrivillighetsregisteret')::boolean,
-    (source.raw_payload ->> 'registrertIStiftelsesregisteret')::boolean,
-    (source.raw_payload ->> 'registrertIPartiregisteret')::boolean,
-    source.source_updated_at,
-    source.payload_hash,
-    jsonb_build_object('source', 'brreg', 'version', 'brreg.source_profile.v1'),
-    source.raw_payload,
-    jsonb_build_object('source', 'brreg_workflow.raw_records', 'raw_record_id', source.raw_record_id),
-    jsonb_build_object('trigger', COALESCE(NULLIF($9::text, ''), 'manual')),
-    now()
-  FROM company_source source
-  ON CONFLICT (organization_number) WHERE row_status = 'active'
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    source_native_id = EXCLUDED.source_native_id,
-    country_iso2 = EXCLUDED.country_iso2,
-    organization_name = EXCLUDED.organization_name,
-    organization_name_normalized = EXCLUDED.organization_name_normalized,
-    registration_status = EXCLUDED.registration_status,
-    registration_status_label = EXCLUDED.registration_status_label,
-    lifecycle_status = EXCLUDED.lifecycle_status,
-    organization_form_code = EXCLUDED.organization_form_code,
-    organization_form_label = EXCLUDED.organization_form_label,
-    language_code = EXCLUDED.language_code,
-    response_class = EXCLUDED.response_class,
-    founded_date = EXCLUDED.founded_date,
-    unit_registry_registered_at = EXCLUDED.unit_registry_registered_at,
-    enterprise_registry_registered_at = EXCLUDED.enterprise_registry_registered_at,
-    vat_registry_registered_at = EXCLUDED.vat_registry_registered_at,
-    vat_registry_unit_registered_at = EXCLUDED.vat_registry_unit_registered_at,
-    articles_date = EXCLUDED.articles_date,
-    last_annual_report_year = EXCLUDED.last_annual_report_year,
-    activity_description = EXCLUDED.activity_description,
-    statutory_purpose = EXCLUDED.statutory_purpose,
-    is_bankrupt = EXCLUDED.is_bankrupt,
-    is_in_group = EXCLUDED.is_in_group,
-    is_under_liquidation = EXCLUDED.is_under_liquidation,
-    is_forced_dissolution = EXCLUDED.is_forced_dissolution,
-    has_registered_employees = EXCLUDED.has_registered_employees,
-    in_vat_register = EXCLUDED.in_vat_register,
-    in_business_register = EXCLUDED.in_business_register,
-    in_voluntary_register = EXCLUDED.in_voluntary_register,
-    in_foundation_register = EXCLUDED.in_foundation_register,
-    in_party_register = EXCLUDED.in_party_register,
-    source_updated_at = EXCLUDED.source_updated_at,
-    payload_hash = EXCLUDED.payload_hash,
-    normalized_payload = EXCLUDED.normalized_payload,
-    raw_company_payload = EXCLUDED.raw_company_payload,
-    evidence = EXCLUDED.evidence,
-    metadata = brreg_source.companies.metadata || EXCLUDED.metadata,
-    updated_at = now()
-  RETURNING id, raw_record_id
-),
-selected_companies AS (
-  SELECT
-    upserted.id AS company_id,
-    raw.id, raw.bulk_snapshot_id, raw.source_native_id, raw.organization_number, raw.organization_name, raw.registration_status, raw.website, raw.country_iso2, raw.source_updated_at, raw.raw_payload, raw.payload_hash, raw.is_current, raw.first_seen_at, raw.last_seen_at, raw.metadata
-  FROM upserted_companies upserted
-  JOIN selected_raw_records raw ON raw.id = upserted.raw_record_id
-),
-address_source AS (
-  SELECT
-    company.company_id,
-    company.id AS raw_record_id,
-    'business'::text AS address_type,
-    company.raw_payload -> 'forretningsadresse' AS raw_address,
-    ARRAY(
-      SELECT jsonb_array_elements_text(
-        CASE
-          WHEN jsonb_typeof((company.raw_payload -> 'forretningsadresse') -> 'adresse') = 'array' THEN (company.raw_payload -> 'forretningsadresse') -> 'adresse'
-          ELSE '[]'::jsonb
-        END
-      )
-    ) AS street_lines
-  FROM selected_companies company
-  WHERE jsonb_typeof(company.raw_payload -> 'forretningsadresse') = 'object'
-  UNION ALL
-  SELECT
-    company.company_id,
-    company.id AS raw_record_id,
-    'postal'::text AS address_type,
-    company.raw_payload -> 'postadresse' AS raw_address,
-    ARRAY(
-      SELECT jsonb_array_elements_text(
-        CASE
-          WHEN jsonb_typeof((company.raw_payload -> 'postadresse') -> 'adresse') = 'array' THEN (company.raw_payload -> 'postadresse') -> 'adresse'
-          ELSE '[]'::jsonb
-        END
-      )
-    ) AS street_lines
-  FROM selected_companies company
-  WHERE jsonb_typeof(company.raw_payload -> 'postadresse') = 'object'
-),
-upserted_addresses AS (
-  INSERT INTO brreg_source.addresses (
-    company_id,
-    raw_record_id,
-    address_type,
-    street_lines,
-    street_text,
-    postal_code,
-    city,
-    municipality,
-    municipality_number,
-    country,
-    country_code,
-    formatted_address,
-    raw_address_payload,
-    evidence,
-    updated_at
-  )
-  SELECT
-    source.company_id,
-    source.raw_record_id,
-    source.address_type,
-    source.street_lines,
-    NULLIF(btrim(array_to_string(source.street_lines, ', ')), ''),
-    NULLIF(btrim(source.raw_address ->> 'postnummer'), ''),
-    NULLIF(btrim(source.raw_address ->> 'poststed'), ''),
-    NULLIF(btrim(source.raw_address ->> 'kommune'), ''),
-    NULLIF(btrim(source.raw_address ->> 'kommunenummer'), ''),
-    NULLIF(btrim(source.raw_address ->> 'land'), ''),
-    NULLIF(btrim(source.raw_address ->> 'landkode'), ''),
-    NULLIF(btrim(concat_ws(', ',
-      NULLIF(btrim(array_to_string(source.street_lines, ', ')), ''),
-      NULLIF(btrim(concat_ws(' ', source.raw_address ->> 'postnummer', source.raw_address ->> 'poststed')), ''),
-      NULLIF(btrim(source.raw_address ->> 'land'), '')
-    )), ''),
-    source.raw_address,
-    jsonb_build_object('source', 'brreg_raw_payload', 'field', source.address_type),
-    now()
-  FROM address_source source
-  ON CONFLICT (company_id, address_type)
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    street_lines = EXCLUDED.street_lines,
-    street_text = EXCLUDED.street_text,
-    postal_code = EXCLUDED.postal_code,
-    city = EXCLUDED.city,
-    municipality = EXCLUDED.municipality,
-    municipality_number = EXCLUDED.municipality_number,
-    country = EXCLUDED.country,
-    country_code = EXCLUDED.country_code,
-    formatted_address = EXCLUDED.formatted_address,
-    raw_address_payload = EXCLUDED.raw_address_payload,
-    evidence = EXCLUDED.evidence,
-    updated_at = now()
-  RETURNING id
-),
-industry_source_sections AS (
-  SELECT
-    company.company_id,
-    company.id AS raw_record_id,
-    'naeringskode1'::text AS source_field,
-    'industry'::text AS classification_type,
-    1::smallint AS position,
-    company.raw_payload -> 'naeringskode1' AS raw_section
-  FROM selected_companies company
-  WHERE jsonb_typeof(company.raw_payload -> 'naeringskode1') = 'object'
-    AND COALESCE((company.raw_payload -> 'naeringskode1') ->> 'kode', '') <> ''
-  UNION ALL
-  SELECT company.company_id, company.id, 'naeringskode2', 'industry', 2::smallint, company.raw_payload -> 'naeringskode2'
-  FROM selected_companies company
-  WHERE jsonb_typeof(company.raw_payload -> 'naeringskode2') = 'object'
-    AND COALESCE((company.raw_payload -> 'naeringskode2') ->> 'kode', '') <> ''
-  UNION ALL
-  SELECT company.company_id, company.id, 'naeringskode3', 'industry', 3::smallint, company.raw_payload -> 'naeringskode3'
-  FROM selected_companies company
-  WHERE jsonb_typeof(company.raw_payload -> 'naeringskode3') = 'object'
-    AND COALESCE((company.raw_payload -> 'naeringskode3') ->> 'kode', '') <> ''
-  UNION ALL
-  SELECT company.company_id, company.id, 'hjelpeenhetskode', 'helper_unit', 1::smallint, company.raw_payload -> 'hjelpeenhetskode'
-  FROM selected_companies company
-  WHERE jsonb_typeof(company.raw_payload -> 'hjelpeenhetskode') = 'object'
-    AND COALESCE((company.raw_payload -> 'hjelpeenhetskode') ->> 'kode', '') <> ''
-  UNION ALL
-  SELECT company.company_id, company.id, 'institusjonellSektorkode', 'institutional_sector', 1::smallint, company.raw_payload -> 'institusjonellSektorkode'
-  FROM selected_companies company
-  WHERE jsonb_typeof(company.raw_payload -> 'institusjonellSektorkode') = 'object'
-    AND COALESCE((company.raw_payload -> 'institusjonellSektorkode') ->> 'kode', '') <> ''
-),
-industry_source_codes AS (
-  SELECT
-    source.company_id, source.raw_record_id, source.source_field, source.classification_type, source.position, source.raw_section,
-    source.raw_section ->> 'kode' AS source_code,
-    source.raw_section ->> 'beskrivelse' AS source_label,
-    regexp_replace(upper(source.raw_section ->> 'kode'), '[^0-9A-Z]', '', 'g') AS normalized_source_code
-  FROM industry_source_sections source
-),
-industry_mapped_codes AS (
-  SELECT
-    source.company_id, source.raw_record_id, source.source_field, source.classification_type, source.position, source.raw_section, source.source_code, source.source_label, source.normalized_source_code,
-    CASE
-      WHEN source.classification_type IN ('industry', 'helper_unit') AND source.normalized_source_code ~ '^[0-9]{5}$'
-        THEN substring(source.normalized_source_code from 1 for 2) || '.' || substring(source.normalized_source_code from 3 for 2)
-      WHEN source.classification_type IN ('industry', 'helper_unit') AND source.normalized_source_code ~ '^[0-9]{4}$'
-        THEN substring(source.normalized_source_code from 1 for 2) || '.' || substring(source.normalized_source_code from 3 for 2)
-      ELSE NULL
-    END AS mapped_nace_code,
-    CASE
-      WHEN source.classification_type IN ('industry', 'helper_unit') AND source.normalized_source_code ~ '^[0-9]{5}$' THEN 'sn_level_5_to_nace_class'
-      WHEN source.classification_type IN ('industry', 'helper_unit') AND source.normalized_source_code ~ '^[0-9]{4}$' THEN 'nace_exact'
-      ELSE NULL
-    END AS mapping_method
-  FROM industry_source_codes source
-),
-industry_resolved_codes AS (
-  SELECT
-    mapped.company_id, mapped.raw_record_id, mapped.source_field, mapped.classification_type, mapped.position, mapped.raw_section, mapped.source_code, mapped.source_label, mapped.normalized_source_code, mapped.mapped_nace_code, mapped.mapping_method,
-    nace_code.id AS nace_code_id,
-    nace_code.title AS nace_title,
-    nace_classification.revision AS nace_revision
-  FROM industry_mapped_codes mapped
-  LEFT JOIN nace_classifications nace_classification
-    ON nace_classification.code_system = 'NACE'
-   AND nace_classification.revision = COALESCE($10::text, '2.1')
-  LEFT JOIN nace_codes nace_code
-    ON nace_code.classification_id = nace_classification.id
-   AND nace_code.code = mapped.mapped_nace_code
-   AND nace_code.level_name = 'class'
-   AND nace_code.active
-),
-upserted_industries AS (
-  INSERT INTO brreg_source.industries (
-    company_id,
-    raw_record_id,
-    nace_code_id,
-    classification_type,
-    source_field,
-    position,
-    source_code,
-    source_label,
-    mapped_nace_code,
-    nace_revision,
-    nace_title,
-    nace_title_en,
-    mapping_method,
-    mapping_confidence,
-    is_primary,
-    raw_industry_payload,
-    evidence,
-    updated_at
-  )
-  SELECT
-    source.company_id,
-    source.raw_record_id,
-    source.nace_code_id,
-    source.classification_type,
-    source.source_field,
-    source.position,
-    source.source_code,
-    source.source_label,
-    source.mapped_nace_code,
-    source.nace_revision,
-    source.nace_title,
-    source.nace_title,
-    source.mapping_method,
-    CASE WHEN source.nace_code_id IS NOT NULL THEN 1::real END,
-    source.classification_type = 'industry' AND source.position = 1,
-    source.raw_section,
-    jsonb_build_object(
-      'source', 'brreg_raw_payload',
-      'source_field', source.source_field,
-      'normalized_source_code', source.normalized_source_code
-    ),
-    now()
-  FROM industry_resolved_codes source
-  ON CONFLICT (company_id, classification_type, position)
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    nace_code_id = EXCLUDED.nace_code_id,
-    source_field = EXCLUDED.source_field,
-    source_code = EXCLUDED.source_code,
-    source_label = EXCLUDED.source_label,
-    mapped_nace_code = EXCLUDED.mapped_nace_code,
-    nace_revision = EXCLUDED.nace_revision,
-    nace_title = EXCLUDED.nace_title,
-    nace_title_en = EXCLUDED.nace_title_en,
-    mapping_method = EXCLUDED.mapping_method,
-    mapping_confidence = EXCLUDED.mapping_confidence,
-    is_primary = EXCLUDED.is_primary,
-    raw_industry_payload = EXCLUDED.raw_industry_payload,
-    evidence = EXCLUDED.evidence,
-    updated_at = now()
-  RETURNING id
-),
-website_source AS (
-  SELECT
-    company.company_id,
-    company.id AS raw_record_id,
-    CASE
-      WHEN btrim(COALESCE(company.website, company.raw_payload ->> 'hjemmeside', '')) ~* '^https?://' THEN btrim(COALESCE(company.website, company.raw_payload ->> 'hjemmeside', ''))
-      ELSE 'https://' || btrim(COALESCE(company.website, company.raw_payload ->> 'hjemmeside', ''))
-    END AS url
-  FROM selected_companies company
-  WHERE NULLIF(btrim(COALESCE(company.website, company.raw_payload ->> 'hjemmeside', '')), '') IS NOT NULL
-),
-website_prepared AS (
-  SELECT
-    source.company_id, source.raw_record_id, source.url,
-    lower(regexp_replace(regexp_replace(source.url, '^https?://', '', 'i'), '/.*$', '')) AS host,
-    lower(trim(trailing '/' from source.url)) AS normalized_url
-  FROM website_source source
-),
-upserted_websites AS (
-  INSERT INTO brreg_source.websites (
-    company_id,
-    raw_record_id,
-    url,
-    normalized_url,
-    host,
-    website_type,
-    source,
-    status,
-    confidence,
-    is_primary,
-    evidence,
-    updated_at
-  )
-  SELECT
-    source.company_id,
-    source.raw_record_id,
-    source.url,
-    source.normalized_url,
-    source.host,
-    CASE
-      WHEN source.host = ANY(ARRAY['facebook.com', 'instagram.com', 'linkedin.com', 'x.com', 'twitter.com', 'youtube.com']) THEN 'social_profile'
-      ELSE 'official_site'
-    END,
-    'brreg',
-    'active',
-    90::smallint,
-    NOT EXISTS (
-      SELECT 1
-      FROM brreg_source.websites existing
-      WHERE existing.company_id = source.company_id
-        AND existing.status = 'active'
-        AND existing.is_primary
-    ),
-    jsonb_build_object('source', 'brreg_website'),
-    now()
-  FROM website_prepared source
-  ON CONFLICT (company_id, normalized_url) WHERE status = 'active'
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    url = EXCLUDED.url,
-    host = EXCLUDED.host,
-    website_type = EXCLUDED.website_type,
-    confidence = EXCLUDED.confidence,
-    is_primary = EXCLUDED.is_primary,
-    evidence = EXCLUDED.evidence,
-    last_seen_at = now(),
-    updated_at = now()
-  RETURNING id, company_id, raw_record_id, host
-),
-domain_source AS (
-  SELECT
-    website.id AS website_id,
-    website.company_id,
-    website.raw_record_id,
-    regexp_replace(website.host, '^www\.', '') AS normalized_domain
-  FROM upserted_websites website
-  WHERE website.host IS NOT NULL
-    AND website.host LIKE '%.%'
-    AND regexp_replace(website.host, '^www\.', '') <> ALL(ARRAY[
-      'facebook.com',
-      'instagram.com',
-      'linkedin.com',
-      'x.com',
-      'twitter.com',
-      'youtube.com',
-      'proff.no',
-      'brreg.no',
-      'gulesider.no',
-      '1881.no',
-      'yra.no'
-    ])
-),
-upserted_domains AS (
-  INSERT INTO brreg_source.domains (
-    company_id,
-    raw_record_id,
-    website_id,
-    domain,
-    normalized_domain,
-    registrable_domain,
-    domain_type,
-    source,
-    status,
-    confidence,
-    is_primary,
-    best_signal,
-    evidence,
-    updated_at
-  )
-  SELECT
-    source.company_id,
-    source.raw_record_id,
-    source.website_id,
-    source.normalized_domain,
-    source.normalized_domain,
-    source.normalized_domain,
-    'official',
-    'brreg_website',
-    'active',
-    90::smallint,
-    NOT EXISTS (
-      SELECT 1
-      FROM brreg_source.domains existing
-      WHERE existing.company_id = source.company_id
-        AND existing.status = 'active'
-        AND existing.is_primary
-    ),
-    'brreg_website',
-    jsonb_build_object('source', 'brreg_website'),
-    now()
-  FROM domain_source source
-  ON CONFLICT (company_id, normalized_domain) WHERE status = 'active'
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    website_id = EXCLUDED.website_id,
-    domain_type = EXCLUDED.domain_type,
-    source = EXCLUDED.source,
-    confidence = EXCLUDED.confidence,
-    is_primary = EXCLUDED.is_primary,
-    best_signal = EXCLUDED.best_signal,
-    evidence = EXCLUDED.evidence,
-    last_seen_at = now(),
-    updated_at = now()
-  RETURNING id
-),
-contact_source AS (
-  SELECT
-    company.company_id,
-    company.id AS raw_record_id,
-    'phone'::text AS contact_type,
-    NULLIF(btrim(company.raw_payload ->> 'telefon'), '') AS value,
-    NULLIF(regexp_replace(company.raw_payload ->> 'telefon', '[^0-9+]', '', 'g'), '') AS normalized_value,
-    'phone'::text AS label
-  FROM selected_companies company
-  WHERE NULLIF(btrim(company.raw_payload ->> 'telefon'), '') IS NOT NULL
-  UNION ALL
-  SELECT
-    company.company_id,
-    company.id,
-    'mobile',
-    NULLIF(btrim(company.raw_payload ->> 'mobil'), ''),
-    NULLIF(regexp_replace(company.raw_payload ->> 'mobil', '[^0-9+]', '', 'g'), ''),
-    'mobile'
-  FROM selected_companies company
-  WHERE NULLIF(btrim(company.raw_payload ->> 'mobil'), '') IS NOT NULL
-  UNION ALL
-  SELECT
-    company.company_id,
-    company.id,
-    'email',
-    NULLIF(btrim(company.raw_payload ->> 'epostadresse'), ''),
-    lower(NULLIF(btrim(company.raw_payload ->> 'epostadresse'), '')),
-    'email'
-  FROM selected_companies company
-  WHERE NULLIF(btrim(company.raw_payload ->> 'epostadresse'), '') IS NOT NULL
-),
-upserted_contacts AS (
-  INSERT INTO brreg_source.contacts (
-    company_id,
-    raw_record_id,
-    contact_type,
-    value,
-    normalized_value,
-    label,
-    source,
-    status,
-    confidence,
-    is_primary,
-    evidence,
-    updated_at
-  )
-  SELECT
-    source.company_id,
-    source.raw_record_id,
-    source.contact_type,
-    source.value,
-    source.normalized_value,
-    source.label,
-    'brreg',
-    'active',
-    90::smallint,
-    true,
-    jsonb_build_object('source', 'brreg_raw_payload'),
-    now()
-  FROM contact_source source
-  ON CONFLICT (company_id, contact_type, normalized_value) WHERE status = 'active' AND normalized_value IS NOT NULL
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    value = EXCLUDED.value,
-    label = EXCLUDED.label,
-    confidence = EXCLUDED.confidence,
-    is_primary = EXCLUDED.is_primary,
-    evidence = EXCLUDED.evidence,
-    last_seen_at = now(),
-    updated_at = now()
-  RETURNING id
-),
-capital_source AS (
-  SELECT
-    company.company_id,
-    company.id AS raw_record_id,
-    company.raw_payload -> 'kapital' AS capital_payload
-  FROM selected_companies company
-  WHERE jsonb_typeof(company.raw_payload -> 'kapital') = 'object'
-),
-upserted_capital AS (
-  INSERT INTO brreg_source.capital (
-    company_id,
-    raw_record_id,
-    capital_type,
-    original_amount,
-    original_currency,
-    introduced_at,
-    share_count,
-    raw_capital_payload,
-    evidence,
-    updated_at
-  )
-  SELECT
-    source.company_id,
-    source.raw_record_id,
-    source.capital_payload ->> 'type',
-    CASE WHEN source.capital_payload ->> 'belop' ~ '^-?[0-9]+([.][0-9]+)?$' THEN (source.capital_payload ->> 'belop')::numeric(20, 2) END,
-    source.capital_payload ->> 'valuta',
-    CASE WHEN source.capital_payload ->> 'innfortDato' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (source.capital_payload ->> 'innfortDato')::date END,
-    CASE WHEN source.capital_payload ->> 'antallAksjer' ~ '^[0-9]+$' THEN (source.capital_payload ->> 'antallAksjer')::bigint END,
-    source.capital_payload,
-    jsonb_build_object('source', 'brreg_raw_payload', 'field', 'kapital'),
-    now()
-  FROM capital_source source
-  ON CONFLICT (company_id)
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    capital_type = EXCLUDED.capital_type,
-    original_amount = EXCLUDED.original_amount,
-    original_currency = EXCLUDED.original_currency,
-    introduced_at = EXCLUDED.introduced_at,
-    share_count = EXCLUDED.share_count,
-    raw_capital_payload = EXCLUDED.raw_capital_payload,
-    evidence = EXCLUDED.evidence,
-    updated_at = now()
-  RETURNING id
-)
-SELECT
-  (SELECT count(*)::integer FROM selected_raw_records) AS records_seen,
-  (SELECT count(*)::integer FROM upserted_companies) AS companies_upserted,
-  (SELECT count(*)::integer FROM upserted_addresses) AS addresses_upserted,
-  (SELECT count(*)::integer FROM upserted_industries) AS industries_upserted,
-  (SELECT count(*)::integer FROM upserted_websites) AS websites_upserted,
-  (SELECT count(*)::integer FROM upserted_domains) AS domains_upserted,
-  (SELECT count(*)::integer FROM upserted_contacts) AS contacts_upserted,
-  (SELECT count(*)::integer FROM upserted_capital) AS capital_upserted
-`
-
-type NormalizeBrregSourceProfilesParams struct {
-	SelectedIds       []string `json:"selected_ids"`
-	Query             *string  `json:"query"`
-	LifecycleState    *string  `json:"lifecycle_state"`
-	TranslationStatus *string  `json:"translation_status"`
-	DomainStatus      *string  `json:"domain_status"`
-	FinancialStatus   *string  `json:"financial_status"`
-	EnhancedStatus    *string  `json:"enhanced_status"`
-	Limit             int32    `json:"limit"`
-	Trigger           *string  `json:"trigger"`
-	NaceRevision      *string  `json:"nace_revision"`
-}
-
-type NormalizeBrregSourceProfilesRow struct {
-	RecordsSeen        int32 `json:"records_seen"`
-	CompaniesUpserted  int32 `json:"companies_upserted"`
-	AddressesUpserted  int32 `json:"addresses_upserted"`
-	IndustriesUpserted int32 `json:"industries_upserted"`
-	WebsitesUpserted   int32 `json:"websites_upserted"`
-	DomainsUpserted    int32 `json:"domains_upserted"`
-	ContactsUpserted   int32 `json:"contacts_upserted"`
-	CapitalUpserted    int32 `json:"capital_upserted"`
-}
-
-func (q *Queries) NormalizeBrregSourceProfiles(ctx context.Context, arg NormalizeBrregSourceProfilesParams) (NormalizeBrregSourceProfilesRow, error) {
-	row := q.db.QueryRow(ctx, normalizeBrregSourceProfiles,
-		arg.SelectedIds,
-		arg.Query,
-		arg.LifecycleState,
-		arg.TranslationStatus,
-		arg.DomainStatus,
-		arg.FinancialStatus,
-		arg.EnhancedStatus,
-		arg.Limit,
-		arg.Trigger,
-		arg.NaceRevision,
-	)
-	var i NormalizeBrregSourceProfilesRow
-	err := row.Scan(
-		&i.RecordsSeen,
-		&i.CompaniesUpserted,
-		&i.AddressesUpserted,
-		&i.IndustriesUpserted,
-		&i.WebsitesUpserted,
-		&i.DomainsUpserted,
-		&i.ContactsUpserted,
-		&i.CapitalUpserted,
-	)
-	return i, err
-}
-
-const prepareBrregSourceTranslationTasks = `-- name: PrepareBrregSourceTranslationTasks :one
-WITH missing AS (
-  SELECT
-    missing.company_id,
-    missing.source_table,
-    missing.source_row_id,
-    missing.source_column,
-    missing.target_column,
-    missing.source_text_hash,
-    missing.source_text,
-    missing.priority
-  FROM brreg_source.v_missing_translations missing
-  JOIN brreg_source.companies company ON company.id = missing.company_id
-  LEFT JOIN brreg_source.action_tasks existing
-    ON existing.action_type = 'translate_field'
-   AND existing.source_table = missing.source_table
-   AND existing.source_row_id = missing.source_row_id
-   AND existing.target_key = missing.target_column
-   AND existing.source_fingerprint = missing.source_text_hash
-  WHERE (
-      COALESCE(cardinality($1::text[]), 0) = 0
-      OR company.raw_record_id::text = ANY($1::text[])
-      OR company.id::text = ANY($1::text[])
-    )
-    AND (
-      $2::text IS NULL
-      OR company.organization_name ILIKE '%' || $2::text || '%'
-      OR company.organization_number ILIKE '%' || $2::text || '%'
-    )
-    AND (
-      $3::text IS NULL
-      OR company.lifecycle_status = $3::text
-    )
-    AND (
-      $4::text IS NULL
-      OR COALESCE(existing.status, 'pending') = $4::text
-    )
-  ORDER BY
-    missing.priority ASC,
-    company.organization_number ASC,
-    missing.source_table ASC,
-    missing.source_row_id ASC,
-    missing.target_column ASC
-  LIMIT NULLIF(GREATEST($5::integer, 0), 0)
-),
-inserted AS (
-  INSERT INTO brreg_source.action_tasks (
-    company_id,
-    action_type,
-    source_table,
-    source_row_id,
-    target_key,
-    source_fingerprint,
-    source_column,
-    target_column,
-    source_text,
-    max_attempts,
-    metadata
-  )
-  SELECT
-    missing.company_id,
-    'translate_field',
-    missing.source_table,
-    missing.source_row_id,
-    missing.target_column,
-    missing.source_text_hash,
-    missing.source_column,
-    missing.target_column,
-    missing.source_text,
-    GREATEST($6::integer, 1),
-    jsonb_build_object('priority', missing.priority)
-  FROM missing
-  ON CONFLICT (action_type, source_table, source_row_id, target_key, source_fingerprint) DO NOTHING
-  RETURNING id
-)
-SELECT count(*)::integer AS records_selected
-FROM missing
-`
-
-type PrepareBrregSourceTranslationTasksParams struct {
-	SelectedIds       []string `json:"selected_ids"`
-	Query             *string  `json:"query"`
-	LifecycleState    *string  `json:"lifecycle_state"`
-	TranslationStatus *string  `json:"translation_status"`
-	Limit             int32    `json:"limit"`
-	MaxAttempts       int32    `json:"max_attempts"`
-}
-
-func (q *Queries) PrepareBrregSourceTranslationTasks(ctx context.Context, arg PrepareBrregSourceTranslationTasksParams) (int32, error) {
-	row := q.db.QueryRow(ctx, prepareBrregSourceTranslationTasks,
-		arg.SelectedIds,
-		arg.Query,
-		arg.LifecycleState,
-		arg.TranslationStatus,
-		arg.Limit,
-		arg.MaxAttempts,
-	)
-	var records_selected int32
-	err := row.Scan(&records_selected)
-	return records_selected, err
 }
 
 const upsertBrregSourceFinancialStatement = `-- name: UpsertBrregSourceFinancialStatement :one

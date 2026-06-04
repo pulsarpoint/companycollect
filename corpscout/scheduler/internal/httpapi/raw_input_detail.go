@@ -83,21 +83,33 @@ func (h *Handlers) handleGetRawInput(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) getBasicRawInputDetail(ctx context.Context, cfg rawInputSource, id string) (rawInputDetail, error) {
 	var row rawInputDetail
+	statusExpr := rawInputSourceExpr(cfg.statusExpr, "processing_status")
+	stateExpr := rawInputSourceExpr(cfg.stateExpr, statusExpr)
 	err := h.pool.QueryRow(ctx, fmt.Sprintf(`
-		SELECT id::text, '%s', COALESCE(%s,''), COALESCE(%s,''),
-		       COALESCE(processing_status,''), COALESCE(processing_status,''), %s, %s, %s, COALESCE(%s,''),
-		       COALESCE(run_id,''), processing_attempts, COALESCE(processing_error,''),
-		       COALESCE(payload_hash,''), raw_payload,
-		       first_seen_at, last_seen_at, processed_at, created_at, updated_at
-		FROM %s WHERE id = $1
+		SELECT ri.id::text, '%s', %s, %s,
+		       %s, %s, %s, %s, %s, COALESCE(%s,''),
+		       %s, %s, %s,
+		       COALESCE(ri.payload_hash,''), ri.raw_payload,
+		       %s, %s, %s, %s, %s
+		FROM %s ri WHERE ri.id = $1
 	`,
 		cfg.source,
-		cfg.nameColumn,
-		cfg.nativeColumn,
-		coalesceRawInputDetailText(cfg.companyTypeExpr),
-		coalesceRawInputDetailText(cfg.registrationColumn),
-		coalesceRawInputDetailText(cfg.websiteExpr),
-		cfg.countryColumn,
+		rawInputDetailTextExpr(cfg.nameColumn),
+		rawInputDetailTextExpr(cfg.nativeColumn),
+		rawInputDetailTextExpr(statusExpr),
+		rawInputDetailTextExpr(stateExpr),
+		rawInputDetailTextExpr(cfg.companyTypeExpr),
+		rawInputDetailTextExpr(cfg.registrationColumn),
+		rawInputDetailTextExpr(cfg.websiteExpr),
+		rawInputAliasedExpr(cfg.countryColumn),
+		rawInputDetailTextExpr(rawInputSourceExpr(cfg.runIDExpr, "run_id")),
+		rawInputAliasedExpr(rawInputSourceExpr(cfg.attemptsExpr, "processing_attempts")),
+		rawInputDetailTextExpr(rawInputSourceExpr(cfg.errorExpr, "processing_error")),
+		rawInputAliasedExpr(rawInputSourceExpr(cfg.firstSeenExpr, "first_seen_at")),
+		rawInputAliasedExpr(rawInputSourceExpr(cfg.lastSeenExpr, "last_seen_at")),
+		rawInputAliasedExpr(rawInputSourceExpr(cfg.processedAtExpr, "processed_at")),
+		rawInputAliasedExpr(rawInputSourceExpr(cfg.createdAtExpr, "created_at")),
+		rawInputAliasedExpr(rawInputSourceExpr(cfg.updatedAtExpr, "updated_at")),
 		cfg.tableName,
 	), id).Scan(
 		&row.ID, &row.Source, &row.Name, &row.NativeID,
@@ -107,6 +119,10 @@ func (h *Handlers) getBasicRawInputDetail(ctx context.Context, cfg rawInputSourc
 		&row.FirstSeenAt, &row.LastSeenAt, &row.ProcessedAt, &row.CreatedAt, &row.UpdatedAt,
 	)
 	return row, err
+}
+
+func rawInputDetailTextExpr(expr string) string {
+	return coalesceRawInputDetailText(rawInputAliasedExpr(expr))
 }
 
 func coalesceRawInputDetailText(expr string) string {
@@ -119,23 +135,35 @@ func coalesceRawInputDetailText(expr string) string {
 func (h *Handlers) getTranslatedRawInputDetail(ctx context.Context, cfg rawInputSource, id string) (rawInputDetail, error) {
 	var row rawInputDetail
 	var rawPayloadEn []byte
+	statusExpr := rawInputSourceExpr(cfg.statusExpr, "processing_status")
+	stateExpr := rawInputSourceExpr(cfg.stateExpr, statusExpr)
 	err := h.pool.QueryRow(ctx, fmt.Sprintf(`
-		SELECT id::text, '%s', COALESCE(%s,''), COALESCE(%s,''),
-		       COALESCE(processing_status,''), COALESCE(processing_status,''), %s, %s, %s, COALESCE(%s,''),
-		       COALESCE(run_id,''), processing_attempts, COALESCE(processing_error,''),
-		       COALESCE(payload_hash,''), raw_payload, raw_payload_en,
-		       COALESCE(translation_status,''), translation_attempts, COALESCE(translation_error,''), COALESCE(translation_model,''),
-		       COALESCE(translation_prompt_version,''), COALESCE(translation_fx_source,''), COALESCE(translation_fx_rate_date::text,''),
-		       translated_at, first_seen_at, last_seen_at, processed_at, created_at, updated_at
-		FROM %s WHERE id = $1
+		SELECT ri.id::text, '%s', %s, %s,
+		       %s, %s, %s, %s, %s, COALESCE(%s,''),
+		       %s, %s, %s,
+		       COALESCE(ri.payload_hash,''), ri.raw_payload, ri.raw_payload_en,
+		       COALESCE(ri.translation_status,''), ri.translation_attempts, COALESCE(ri.translation_error,''), COALESCE(ri.translation_model,''),
+		       COALESCE(ri.translation_prompt_version,''), COALESCE(ri.translation_fx_source,''), COALESCE(ri.translation_fx_rate_date::text,''),
+		       ri.translated_at, %s, %s, %s, %s, %s
+		FROM %s ri WHERE ri.id = $1
 	`,
 		cfg.source,
-		cfg.nameColumn,
-		cfg.nativeColumn,
-		coalesceRawInputDetailText(cfg.companyTypeExpr),
-		coalesceRawInputDetailText(cfg.registrationColumn),
-		coalesceRawInputDetailText(cfg.websiteExpr),
-		cfg.countryColumn,
+		rawInputDetailTextExpr(cfg.nameColumn),
+		rawInputDetailTextExpr(cfg.nativeColumn),
+		rawInputDetailTextExpr(statusExpr),
+		rawInputDetailTextExpr(stateExpr),
+		rawInputDetailTextExpr(cfg.companyTypeExpr),
+		rawInputDetailTextExpr(cfg.registrationColumn),
+		rawInputDetailTextExpr(cfg.websiteExpr),
+		rawInputAliasedExpr(cfg.countryColumn),
+		rawInputDetailTextExpr(rawInputSourceExpr(cfg.runIDExpr, "run_id")),
+		rawInputAliasedExpr(rawInputSourceExpr(cfg.attemptsExpr, "processing_attempts")),
+		rawInputDetailTextExpr(rawInputSourceExpr(cfg.errorExpr, "processing_error")),
+		rawInputAliasedExpr(rawInputSourceExpr(cfg.firstSeenExpr, "first_seen_at")),
+		rawInputAliasedExpr(rawInputSourceExpr(cfg.lastSeenExpr, "last_seen_at")),
+		rawInputAliasedExpr(rawInputSourceExpr(cfg.processedAtExpr, "processed_at")),
+		rawInputAliasedExpr(rawInputSourceExpr(cfg.createdAtExpr, "created_at")),
+		rawInputAliasedExpr(rawInputSourceExpr(cfg.updatedAtExpr, "updated_at")),
 		cfg.tableName,
 	), id).Scan(
 		&row.ID, &row.Source, &row.Name, &row.NativeID,

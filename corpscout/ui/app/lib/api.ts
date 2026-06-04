@@ -493,6 +493,27 @@ export const api = {
     } = {},
   ) => post<StartWorkflowResponse>("/workflows/brreg/bulk-raw-ingest", body),
 
+  loadAriregisterBulkRawRecords: (
+    body: {
+      limit?: number;
+      source_url?: string;
+      trigger?: string;
+    } = {},
+  ) =>
+    post<StartWorkflowResponse>("/workflows/ariregister/bulk-raw-ingest", body),
+
+  loadCVRRawRecords: (
+    body: {
+      limit?: number;
+      page_size?: number;
+      batch_size?: number;
+      source_url?: string;
+      scroll_url?: string;
+      scroll?: string;
+      trigger?: string;
+    } = {},
+  ) => post<StartWorkflowResponse>("/workflows/cvr/raw-ingest", body),
+
   cancelJob: (id: number) =>
     post<{ status: string; id: number }>(`/jobs/${id}/cancel`, {}),
 

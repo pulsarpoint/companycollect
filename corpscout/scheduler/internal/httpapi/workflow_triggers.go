@@ -18,6 +18,7 @@ import (
 
 	ariregisterworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/workflow"
 	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
+	cvrworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/cvr/workflow"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 )
@@ -118,6 +119,16 @@ type startBrregBulkRawIngestWorkflowRequest struct {
 type startAriregisterBulkRawIngestWorkflowRequest struct {
 	SourceURL string `json:"source_url,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
+	BatchSize int    `json:"batch_size,omitempty"`
+	Trigger   string `json:"trigger,omitempty"`
+}
+
+type startCVRRawIngestWorkflowRequest struct {
+	SourceURL string `json:"source_url,omitempty"`
+	ScrollURL string `json:"scroll_url,omitempty"`
+	Scroll    string `json:"scroll,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+	PageSize  int    `json:"page_size,omitempty"`
 	BatchSize int    `json:"batch_size,omitempty"`
 	Trigger   string `json:"trigger,omitempty"`
 }
@@ -645,6 +656,63 @@ func (h *Handlers) handleStartAriregisterBulkRawIngestWorkflow(w http.ResponseWr
 	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
 		Status:        "started",
 		Workflow:      ariregisterworkflow.LoadAriregisterBulkRawRecordsWorkflowName,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
+func (h *Handlers) handleStartCVRRawIngestWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := decodeStartCVRRawIngestWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := cvrworkflow.LoadCVRRawRecordsInput{
+		SourceURL: req.SourceURL,
+		ScrollURL: req.ScrollURL,
+		Scroll:    req.Scroll,
+		Limit:     req.Limit,
+		PageSize:  req.PageSize,
+		BatchSize: req.BatchSize,
+		Trigger:   req.Trigger,
+	}
+	workflowID := newWorkflowID("cvr-raw-ingest")
+	slog.Debug("starting cvr raw ingest workflow",
+		"workflow_id", workflowID,
+		"task_queue", cvrworkflow.LoadCVRRawRecordsTaskQueue,
+		"source_url", req.SourceURL,
+		"scroll_url", req.ScrollURL,
+		"scroll", req.Scroll,
+		"limit", req.Limit,
+		"page_size", req.PageSize,
+		"batch_size", req.BatchSize,
+		"trigger", req.Trigger,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: cvrworkflow.LoadCVRRawRecordsTaskQueue,
+		},
+		cvrworkflow.LoadCVRRawRecords,
+		input,
+	)
+	if err != nil {
+		slog.Error("start cvr raw ingest workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("cvr raw ingest workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      cvrworkflow.LoadCVRRawRecordsWorkflowName,
 		WorkflowID:    workflowID,
 		WorkflowRunID: run.GetRunID(),
 	})
@@ -1207,6 +1275,49 @@ func decodeStartAriregisterBulkRawIngestWorkflowRequest(r *http.Request) (startA
 		}
 	}
 	return req, nil
+}
+
+func decodeStartCVRRawIngestWorkflowRequest(r *http.Request) (startCVRRawIngestWorkflowRequest, error) {
+	var req startCVRRawIngestWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startCVRRawIngestWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.SourceURL = strings.TrimSpace(req.SourceURL)
+	req.ScrollURL = strings.TrimSpace(req.ScrollURL)
+	req.Scroll = strings.TrimSpace(req.Scroll)
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	if req.Trigger == "" {
+		req.Trigger = "manual"
+	}
+	if req.Limit < 0 {
+		return startCVRRawIngestWorkflowRequest{}, errors.New("limit cannot be negative")
+	}
+	if req.PageSize < 0 {
+		return startCVRRawIngestWorkflowRequest{}, errors.New("page_size cannot be negative")
+	}
+	if req.BatchSize < 0 {
+		return startCVRRawIngestWorkflowRequest{}, errors.New("batch_size cannot be negative")
+	}
+	if err := validateOptionalHTTPURL(req.SourceURL, "source_url"); err != nil {
+		return startCVRRawIngestWorkflowRequest{}, err
+	}
+	if err := validateOptionalHTTPURL(req.ScrollURL, "scroll_url"); err != nil {
+		return startCVRRawIngestWorkflowRequest{}, err
+	}
+	return req, nil
+}
+
+func validateOptionalHTTPURL(value string, fieldName string) error {
+	if value == "" {
+		return nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return errors.Newf("%s must be http or https", fieldName)
+	}
+	return nil
 }
 
 func (h *Handlers) decodeStartNACETaxonomySyncWorkflowRequest(r *http.Request) (startNACETaxonomySyncWorkflowRequest, error) {

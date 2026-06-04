@@ -13,12 +13,9 @@ import (
 const (
 	defaultSourceProfileChunkSize = 5000
 
-	NormalizeBrregSourceProfilesTaskQueue    = "brreg-source-profile"
-	NormalizeBrregSourceProfilesWorkflowName = "NormalizeBrregSourceProfiles"
-
+	NormalizeBrregSourceProfilesTaskQueue            = "brreg-source-profile"
 	NormalizeBrregSourceProfilesWithCopyWorkflowName = "NormalizeBrregSourceProfilesWithCopy"
 
-	normalizeBrregSourceProfilesActivity         = "NormalizeBrregSourceProfilesActivity"
 	normalizeBrregSourceProfilesWithCopyActivity = "NormalizeBrregSourceProfilesWithCopyActivity"
 
 	RefreshBrregSourceExplorerTaskQueue    = "brreg-source-explorer-refresh"
@@ -65,25 +62,9 @@ type RefreshBrregSourceExplorerResult struct {
 	LatestSourceUpdatedAt *string `json:"latest_source_updated_at,omitempty"`
 }
 
-func NormalizeBrregSourceProfiles(
-	ctx temporalworkflow.Context,
-	input NormalizeBrregSourceProfilesInput,
-) (NormalizeBrregSourceProfilesResult, error) {
-	return normalizeBrregSourceProfiles(ctx, input, normalizeBrregSourceProfilesActivity, "sql")
-}
-
 func NormalizeBrregSourceProfilesWithCopy(
 	ctx temporalworkflow.Context,
 	input NormalizeBrregSourceProfilesInput,
-) (NormalizeBrregSourceProfilesResult, error) {
-	return normalizeBrregSourceProfiles(ctx, input, normalizeBrregSourceProfilesWithCopyActivity, "copy")
-}
-
-func normalizeBrregSourceProfiles(
-	ctx temporalworkflow.Context,
-	input NormalizeBrregSourceProfilesInput,
-	activityName string,
-	mode string,
 ) (NormalizeBrregSourceProfilesResult, error) {
 	input = normalizeBrregSourceProfilesInput(input)
 	ctx = temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
@@ -99,7 +80,7 @@ func normalizeBrregSourceProfiles(
 	logger := temporalworkflow.GetLogger(ctx)
 	logger.Debug("brreg source profile normalization workflow started",
 		"temporal_workflow_id", workflowInfo.WorkflowExecution.ID,
-		"mode", mode,
+		"mode", "copy",
 		"ids_count", len(input.IDs),
 		"filters_count", len(input.Filters),
 		"limit", input.Limit,
@@ -122,7 +103,7 @@ func normalizeBrregSourceProfiles(
 		}
 
 		var activityResult NormalizeBrregSourceProfilesActivityResult
-		if err := temporalworkflow.ExecuteActivity(ctx, activityName, NormalizeBrregSourceProfilesActivityInput{
+		if err := temporalworkflow.ExecuteActivity(ctx, normalizeBrregSourceProfilesWithCopyActivity, NormalizeBrregSourceProfilesActivityInput{
 			IDs:                input.IDs,
 			Filters:            input.Filters,
 			Limit:              int32(chunkLimit),
@@ -151,7 +132,7 @@ func normalizeBrregSourceProfiles(
 	}
 	logger.Debug("brreg source profile normalization workflow completed",
 		"temporal_workflow_id", workflowInfo.WorkflowExecution.ID,
-		"mode", mode,
+		"mode", "copy",
 		"chunks_processed", result.ChunksProcessed,
 		"records_seen", result.RecordsSeen,
 		"companies_upserted", result.CompaniesUpserted,

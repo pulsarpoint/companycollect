@@ -90,23 +90,22 @@ func (h *Handlers) brregTaskState(ctx context.Context) (brregTaskStateResponse, 
 	if err != nil {
 		return brregTaskStateResponse{}, errors.Wrap(err, "get brreg translation task state")
 	}
-	domainState, err := h.db.GetBrregWorkflowDomainAssetState(ctx)
+	domainState, err := h.db.GetBrregSourceDomainAssetState(ctx)
 	if err != nil {
 		return brregTaskStateResponse{}, errors.Wrap(err, "get brreg domain task state")
 	}
-	financialState, err := h.db.GetBrregWorkflowFinancialAssetState(ctx)
+	financialState, err := h.db.GetBrregSourceFinancialAssetState(ctx)
 	if err != nil {
 		return brregTaskStateResponse{}, errors.Wrap(err, "get brreg financial task state")
 	}
-	enhancedState, err := h.db.GetBrregWorkflowEnhancedAssetState(ctx)
+	resultTableCounts, err := h.db.GetBrregSourceResultTableCounts(ctx)
 	if err != nil {
-		return brregTaskStateResponse{}, errors.Wrap(err, "get brreg enhanced task state")
+		return brregTaskStateResponse{}, errors.Wrap(err, "get brreg source result table counts")
 	}
 
 	translation := brregTaskStateTranslationSummary(translationState)
 	domains := brregTaskStateDomainSummary(domainState)
 	financials := brregTaskStateFinancialSummary(financialState)
-	enhanced := brregTaskStateEnhancedSummary(enhancedState)
 
 	return brregTaskStateResponse{
 		Source:    "brreg",
@@ -149,31 +148,24 @@ func (h *Handlers) brregTaskState(ctx context.Context) (brregTaskStateResponse, 
 		},
 		ResultTables: []brregTaskStateResultTable{
 			{Name: "brreg_workflow.raw_records", Label: "Raw records", Count: translation.RawRecordsCurrent, Href: "/sources/brreg/raw_input"},
-			{Name: "brreg_source.action_tasks", Label: "Source action tasks", Count: artifactCount(translation), Href: "/sources/brreg/source_entries"},
-			{Name: "brreg_workflow.domain_results", Label: "Domain results", Count: artifactCount(domains)},
-			{Name: "brreg_workflow.financial_results", Label: "Financial results", Count: artifactCount(financials)},
-			{Name: "brreg_workflow.enhanced_records", Label: "Enhanced records", Count: artifactCount(enhanced)},
+			{Name: "brreg_source.companies", Label: "Source companies", Count: resultTableCounts.Companies, Href: "/sources/brreg/source_entries"},
+			{Name: "brreg_source.mv_company_translation_status", Label: "Source translation status", Count: resultTableCounts.TranslationStatus, Href: "/sources/brreg/source_entries"},
+			{Name: "brreg_source.websites", Label: "Source websites", Count: resultTableCounts.Websites, Href: "/sources/brreg/source_entries"},
+			{Name: "brreg_source.domains", Label: "Source domains", Count: resultTableCounts.Domains, Href: "/sources/brreg/source_entries"},
+			{Name: "brreg_source.financial_statements", Label: "Source financial statements", Count: resultTableCounts.FinancialStatements, Href: "/sources/brreg/source_entries"},
 		},
 	}, nil
-}
-
-func artifactCount(state brregTaskStateAssetSummary) int64 {
-	return state.ArtifactSucceeded + state.ArtifactSkipped + state.ArtifactFailed
 }
 
 func brregTaskStateTranslationSummary(row db.GetBrregSourceTranslationAssetStateRow) brregTaskStateAssetSummary {
 	return brregTaskStateAssetSummaryFromState(brregTaskStateAssetFields(row))
 }
 
-func brregTaskStateDomainSummary(row db.BrregWorkflowVDomainAssetState) brregTaskStateAssetSummary {
+func brregTaskStateDomainSummary(row db.GetBrregSourceDomainAssetStateRow) brregTaskStateAssetSummary {
 	return brregTaskStateAssetSummaryFromState(brregTaskStateAssetFields(row))
 }
 
-func brregTaskStateFinancialSummary(row db.BrregWorkflowVFinancialAssetState) brregTaskStateAssetSummary {
-	return brregTaskStateAssetSummaryFromState(brregTaskStateAssetFields(row))
-}
-
-func brregTaskStateEnhancedSummary(row db.BrregWorkflowVEnhancedAssetState) brregTaskStateAssetSummary {
+func brregTaskStateFinancialSummary(row db.GetBrregSourceFinancialAssetStateRow) brregTaskStateAssetSummary {
 	return brregTaskStateAssetSummaryFromState(brregTaskStateAssetFields(row))
 }
 

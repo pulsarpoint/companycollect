@@ -56,3 +56,28 @@ func TestBrregCompanyFinancialClaimIndexesDownMigration(t *testing.T) {
 	require.Contains(t, sql, "DROP INDEX IF EXISTS brreg_source.idx_brreg_company_process_status_financial_ready_order")
 	require.NotContains(t, sql, "CONCURRENTLY")
 }
+
+func TestBrregCompanyProcessStatusBackfillTriggerMigration(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000089_brreg_company_process_status_backfill_trigger.up.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "CREATE OR REPLACE FUNCTION brreg_source.ensure_company_process_status()")
+	require.Contains(t, sql, "CREATE TRIGGER trg_brreg_source_companies_process_status")
+	require.Contains(t, sql, "AFTER INSERT OR UPDATE OF row_status ON brreg_source.companies")
+	require.Contains(t, sql, "WHEN (NEW.row_status = 'active')")
+	require.Contains(t, sql, "INSERT INTO brreg_source.company_process_status")
+	require.Contains(t, sql, "ON CONFLICT (company_id) DO NOTHING")
+	require.Contains(t, sql, "THEN 'succeeded'")
+	require.Contains(t, sql, "UPDATE brreg_source.company_process_status status_row")
+	require.Contains(t, sql, "WHERE status_row.financial_status IN ('pending', 'dirty', 'running', 'failed_retryable')")
+}
+
+func TestBrregCompanyProcessStatusBackfillTriggerDownMigration(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000089_brreg_company_process_status_backfill_trigger.down.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "DROP TRIGGER IF EXISTS trg_brreg_source_companies_process_status ON brreg_source.companies")
+	require.Contains(t, sql, "DROP FUNCTION IF EXISTS brreg_source.ensure_company_process_status()")
+}

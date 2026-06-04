@@ -123,24 +123,6 @@ type BrregSourceVCompanyDetail struct {
 	TranslationStatus              json.RawMessage    `json:"translation_status"`
 }
 
-type BrregWorkflowVDomainAssetState struct {
-	Asset               string `json:"asset"`
-	RawRecordsCurrent   int64  `json:"raw_records_current"`
-	TaskNoState         int64  `json:"task_no_state"`
-	TaskPending         int64  `json:"task_pending"`
-	TaskRunningActive   int64  `json:"task_running_active"`
-	TaskRunningStale    int64  `json:"task_running_stale"`
-	TaskFailedRetryable int64  `json:"task_failed_retryable"`
-	TaskFailedTerminal  int64  `json:"task_failed_terminal"`
-	TaskSucceeded       int64  `json:"task_succeeded"`
-	TaskSkipped         int64  `json:"task_skipped"`
-	TaskEligibleNow     int64  `json:"task_eligible_now"`
-	ArtifactSucceeded   int64  `json:"artifact_succeeded"`
-	ArtifactSkipped     int64  `json:"artifact_skipped"`
-	ArtifactFailed      int64  `json:"artifact_failed"`
-	ArtifactMissing     int64  `json:"artifact_missing"`
-}
-
 type BrregWorkflowVDomainSearchEvidence struct {
 	ActionAttemptID   uuid.UUID          `json:"action_attempt_id"`
 	WorkflowRunID     pgtype.UUID        `json:"workflow_run_id"`
@@ -172,24 +154,6 @@ type BrregWorkflowVDomainSearchEvidence struct {
 	ArtifactMetadata  json.RawMessage    `json:"artifact_metadata"`
 }
 
-type BrregWorkflowVEnhancedAssetState struct {
-	Asset               string `json:"asset"`
-	RawRecordsCurrent   int64  `json:"raw_records_current"`
-	TaskNoState         int64  `json:"task_no_state"`
-	TaskPending         int64  `json:"task_pending"`
-	TaskRunningActive   int64  `json:"task_running_active"`
-	TaskRunningStale    int64  `json:"task_running_stale"`
-	TaskFailedRetryable int64  `json:"task_failed_retryable"`
-	TaskFailedTerminal  int64  `json:"task_failed_terminal"`
-	TaskSucceeded       int64  `json:"task_succeeded"`
-	TaskSkipped         int64  `json:"task_skipped"`
-	TaskEligibleNow     int64  `json:"task_eligible_now"`
-	ArtifactSucceeded   int64  `json:"artifact_succeeded"`
-	ArtifactSkipped     int64  `json:"artifact_skipped"`
-	ArtifactFailed      int64  `json:"artifact_failed"`
-	ArtifactMissing     int64  `json:"artifact_missing"`
-}
-
 type BrregWorkflowVEnhancedReadyRecord struct {
 	ID                 uuid.UUID       `json:"id"`
 	OrganizationNumber string          `json:"organization_number"`
@@ -210,24 +174,6 @@ type BrregWorkflowVEnhancedReadyRecord struct {
 	UsdPayload         json.RawMessage `json:"usd_payload"`
 	FxMetadata         json.RawMessage `json:"fx_metadata"`
 	TaskStatuses       json.RawMessage `json:"task_statuses"`
-}
-
-type BrregWorkflowVFinancialAssetState struct {
-	Asset               string `json:"asset"`
-	RawRecordsCurrent   int64  `json:"raw_records_current"`
-	TaskNoState         int64  `json:"task_no_state"`
-	TaskPending         int64  `json:"task_pending"`
-	TaskRunningActive   int64  `json:"task_running_active"`
-	TaskRunningStale    int64  `json:"task_running_stale"`
-	TaskFailedRetryable int64  `json:"task_failed_retryable"`
-	TaskFailedTerminal  int64  `json:"task_failed_terminal"`
-	TaskSucceeded       int64  `json:"task_succeeded"`
-	TaskSkipped         int64  `json:"task_skipped"`
-	TaskEligibleNow     int64  `json:"task_eligible_now"`
-	ArtifactSucceeded   int64  `json:"artifact_succeeded"`
-	ArtifactSkipped     int64  `json:"artifact_skipped"`
-	ArtifactFailed      int64  `json:"artifact_failed"`
-	ArtifactMissing     int64  `json:"artifact_missing"`
 }
 
 type BrregWorkflowVNaceMapping struct {
@@ -309,24 +255,6 @@ type BrregWorkflowVRawRecordList struct {
 	SyncStatus         string             `json:"sync_status"`
 	Synced             bool               `json:"synced"`
 	UpdatedAt          time.Time          `json:"updated_at"`
-}
-
-type BrregWorkflowVTranslationAssetState struct {
-	Asset               string `json:"asset"`
-	RawRecordsCurrent   int64  `json:"raw_records_current"`
-	TaskNoState         int64  `json:"task_no_state"`
-	TaskPending         int64  `json:"task_pending"`
-	TaskRunningActive   int64  `json:"task_running_active"`
-	TaskRunningStale    int64  `json:"task_running_stale"`
-	TaskFailedRetryable int64  `json:"task_failed_retryable"`
-	TaskFailedTerminal  int64  `json:"task_failed_terminal"`
-	TaskSucceeded       int64  `json:"task_succeeded"`
-	TaskSkipped         int64  `json:"task_skipped"`
-	TaskEligibleNow     int64  `json:"task_eligible_now"`
-	ArtifactSucceeded   int64  `json:"artifact_succeeded"`
-	ArtifactSkipped     int64  `json:"artifact_skipped"`
-	ArtifactFailed      int64  `json:"artifact_failed"`
-	ArtifactMissing     int64  `json:"artifact_missing"`
 }
 
 type Company struct {

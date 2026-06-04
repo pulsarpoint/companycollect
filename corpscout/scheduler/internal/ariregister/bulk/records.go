@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	DefaultSourceURL = "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__lihtandmed.csv.zip"
+	DefaultSourceURL = "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__yldandmed.json.zip"
 	defaultCountry   = "EE"
 )
 
@@ -236,6 +236,7 @@ func streamJSONObject(ctx context.Context, decoder *json.Decoder, limit int32, e
 }
 
 func recordFromMap(fields map[string]any) (Record, error) {
+	generalData := selectedObject(fields, "yldandmed", "generaldata", "general_data")
 	registryCode := selectedField(fields, "registrikood", "ariregistrikood", "registrycode", "regcode", "code")
 	if registryCode == "" {
 		return Record{}, errors.New("registry code is required")
@@ -245,28 +246,112 @@ func recordFromMap(fields map[string]any) (Record, error) {
 		return Record{}, err
 	}
 	hash := sha256.Sum256(canonical)
+	website := selectedNestedField(fields, generalData, "www", "veebileht", "koduleht", "website", "homepage")
+	if website == "" {
+		website = selectedCommunicationValue(generalData, "WWW")
+	}
+	email := selectedNestedField(fields, generalData, "email", "epost", "emailiaadress")
+	if email == "" {
+		email = selectedCommunicationValue(generalData, "EMAIL")
+	}
+	phone := selectedNestedField(fields, generalData, "telefon", "phone")
+	if phone == "" {
+		phone = selectedCommunicationValue(generalData, "TEL", "MOB")
+	}
 	return Record{
 		RegistryCode:       registryCode,
 		LegalName:          selectedField(fields, "arinimi", "nimi", "ettevotjanimi", "legalname", "name"),
-		RegistrationStatus: selectedField(fields, "staatus", "ettevotjastaatus", "ettevotjastaatustekstina", "registrationstatus", "status"),
-		LegalForm:          selectedField(fields, "oiguslikvorm", "ettevotjaoiguslikvorm", "legalform", "companytype"),
-		VATNumber:          selectedField(fields, "kmkrnr", "vatnumber", "taxnumber"),
-		Website:            selectedField(fields, "www", "veebileht", "koduleht", "website", "homepage"),
-		Email:              selectedField(fields, "email", "epost", "emailiaadress"),
-		Phone:              selectedField(fields, "telefon", "phone"),
-		SourceUpdatedAt:    parseOptionalTime(selectedField(fields, "muutmiskp", "andmeteuuendamisekp", "updatedat", "lastupdated")),
+		RegistrationStatus: selectedNestedField(fields, generalData, "staatusetekstina", "staatus_tekstina", "ettevotjastaatustekstina", "registrationstatuslabel", "statuslabel", "staatus", "ettevotjastaatus", "registrationstatus", "status"),
+		LegalForm:          selectedNestedField(fields, generalData, "oiguslikuvormitekstina", "oiguslik_vorm_tekstina", "ettevotjaoiguslikvormtekstina", "legalformlabel", "companytypelabel", "oiguslikvorm", "ettevotjaoiguslikvorm", "legalform", "companytype"),
+		VATNumber:          selectedNestedField(fields, generalData, "kmkrnumber", "kmkr_number", "kmkrnr", "vatnumber", "taxnumber"),
+		Website:            website,
+		Email:              email,
+		Phone:              phone,
+		SourceUpdatedAt:    parseOptionalTime(selectedNestedField(fields, generalData, "muutmiskp", "andmeteuuendamisekp", "updatedat", "lastupdated")),
 		RawPayload:         canonical,
 		PayloadHash:        hex.EncodeToString(hash[:]),
 	}, nil
 }
 
-func selectedField(fields map[string]any, candidates ...string) string {
+func selectedNestedField(fields, nestedFields map[string]any, candidates ...string) string {
+	if value := selectedField(fields, candidates...); value != "" {
+		return value
+	}
+	return selectedField(nestedFields, candidates...)
+}
+
+func selectedObject(fields map[string]any, candidates ...string) map[string]any {
 	normalizedCandidates := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
 		normalizedCandidates[normalizeKey(candidate)] = struct{}{}
 	}
 	for key, value := range fields {
 		if _, ok := normalizedCandidates[normalizeKey(key)]; !ok {
+			continue
+		}
+		if typed, ok := value.(map[string]any); ok {
+			return typed
+		}
+	}
+	return nil
+}
+
+func selectedCommunicationValue(fields map[string]any, kinds ...string) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	raw, ok := selectedValue(fields, "sidevahendid", "communicationmeans", "contacts")
+	if !ok {
+		return ""
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return ""
+	}
+	acceptedKinds := make(map[string]struct{}, len(kinds))
+	for _, kind := range kinds {
+		acceptedKinds[strings.ToUpper(strings.TrimSpace(kind))] = struct{}{}
+	}
+	for _, item := range items {
+		contact, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		kind := strings.ToUpper(selectedField(contact, "liik", "type", "kind"))
+		if _, ok := acceptedKinds[kind]; !ok {
+			continue
+		}
+		if value := selectedField(contact, "sisu", "value", "content"); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func selectedValue(fields map[string]any, candidates ...string) (any, bool) {
+	normalizedCandidates := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		normalizedCandidates[normalizeKey(candidate)] = struct{}{}
+	}
+	for key, value := range fields {
+		if _, ok := normalizedCandidates[normalizeKey(key)]; ok {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+func selectedField(fields map[string]any, candidates ...string) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	normalizedFields := make(map[string]any, len(fields))
+	for key, value := range fields {
+		normalizedFields[normalizeKey(key)] = value
+	}
+	for _, candidate := range candidates {
+		value, ok := normalizedFields[normalizeKey(candidate)]
+		if !ok {
 			continue
 		}
 		switch typed := value.(type) {

@@ -67,6 +67,41 @@ func TestNewRecordReadsJSONPayload(t *testing.T) {
 	require.Equal(t, "https://json.example", record.Website)
 }
 
+func TestNewRecordReadsGeneralDataJSONPayload(t *testing.T) {
+	raw := json.RawMessage(`{
+		"ariregistri_kood": 16752073,
+		"nimi": "007 Agent & Partners OÜ",
+		"kmkr_number": "EE123456789",
+		"yldandmed": {
+			"staatus": "R",
+			"staatus_tekstina": "Registrisse kantud",
+			"oiguslik_vorm": "OÜ",
+			"oiguslik_vorm_tekstina": "Osaühing",
+			"sidevahendid": [
+				{"liik": "EMAIL", "sisu": "info@example.ee"},
+				{"liik": "MOB", "sisu": "+372 5587811"},
+				{"liik": "WWW", "sisu": "https://example.ee/"}
+			]
+		}
+	}`)
+
+	record, err := NewRecord(raw)
+
+	require.NoError(t, err)
+	require.Equal(t, "16752073", record.RegistryCode)
+	require.Equal(t, "007 Agent & Partners OÜ", record.LegalName)
+	require.Equal(t, "Registrisse kantud", record.RegistrationStatus)
+	require.Equal(t, "Osaühing", record.LegalForm)
+	require.Equal(t, "EE123456789", record.VATNumber)
+	require.Equal(t, "https://example.ee/", record.Website)
+	require.Equal(t, "info@example.ee", record.Email)
+	require.Equal(t, "+372 5587811", record.Phone)
+}
+
+func TestDefaultSourceURLUsesGeneralDataJSON(t *testing.T) {
+	require.Contains(t, DefaultSourceURL, "ettevotja_rekvisiidid__yldandmed.json.zip")
+}
+
 func TestRecordUpsertParamsUsesRegistryCodeAsNativeID(t *testing.T) {
 	record := Record{
 		RegistryCode: "12345678",

@@ -86,6 +86,7 @@ func sourceViewFromRow(source db.DataSource) sourceView {
 	if len(config) == 0 {
 		config = json.RawMessage("null")
 	}
+	workflowRegistered, manualTriggerAvailable := sourceWorkflowTriggerMetadata(source.Name)
 	return sourceView{
 		ID:                         source.ID,
 		Name:                       source.Name,
@@ -102,8 +103,8 @@ func sourceViewFromRow(source db.DataSource) sourceView {
 		LastSuccessAt:              source.LastSuccessAt,
 		LastFailedAt:               source.LastFailedAt,
 		NextScheduledAt:            nextScheduledAt(source),
-		DownloadWorkflowRegistered: false,
-		ManualTriggerAvailable:     false,
+		DownloadWorkflowRegistered: workflowRegistered,
+		ManualTriggerAvailable:     manualTriggerAvailable,
 		LastSourceMarkerType:       source.LastSourceMarkerType,
 		LastSourceMarker:           source.LastSourceMarker,
 		LastSourceModifiedAt:       source.LastSourceModifiedAt,
@@ -114,6 +115,15 @@ func sourceViewFromRow(source db.DataSource) sourceView {
 		RequiresTranslation:        source.RequiresTranslation,
 		CreatedAt:                  source.CreatedAt,
 		UpdatedAt:                  source.UpdatedAt,
+	}
+}
+
+func sourceWorkflowTriggerMetadata(sourceName string) (downloadWorkflowRegistered bool, manualTriggerAvailable bool) {
+	switch sourceName {
+	case "ariregister", "cvr":
+		return true, true
+	default:
+		return false, false
 	}
 }
 

@@ -133,6 +133,30 @@ func TestGetSourceReturnsReadOnlySourceMetadata(t *testing.T) {
 	q.AssertExpectations(t)
 }
 
+func TestGetAriregisterSourceExposesTemporalBulkIngestMetadata(t *testing.T) {
+	q := &stubQuerier{}
+	sourceID := uuid.New()
+	q.On("GetSourceByName", mock.Anything, "ariregister").Return(db.DataSource{
+		ID:             sourceID,
+		Name:           "ariregister",
+		InputTableName: "ariregister_company_raw_inputs",
+	}, nil)
+
+	r := routerFor(newTestHandlers(q))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/ariregister", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, sourceID.String(), body["id"])
+	require.Equal(t, "ariregister", body["name"])
+	require.Equal(t, true, body["download_workflow_registered"])
+	require.Equal(t, true, body["manual_trigger_available"])
+	q.AssertExpectations(t)
+}
+
 func ptrString(value string) *string {
 	return &value
 }

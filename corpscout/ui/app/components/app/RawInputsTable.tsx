@@ -6,7 +6,7 @@ import {
   useReactTable,
   type ColumnDef,
 } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ArrowUpDown, Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ListChecks, Search, X } from "lucide-react";
 import { api } from "~/lib/api";
 import type { RawInput } from "~/types/api";
 import { Badge } from "~/components/ui/badge";
@@ -22,6 +22,8 @@ import {
   TableRow,
 } from "~/components/ui/table";
 import { RawInputDetailSheet } from "~/components/app/RawInputDetailSheet";
+import { AriregisterRawInputActionSheet } from "~/components/app/AriregisterRawInputActionSheet";
+import { CvrRawInputActionSheet } from "~/components/app/CvrRawInputActionSheet";
 
 const PAGE_SIZE = 50;
 
@@ -114,6 +116,7 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
   const [sortCol, setSortCol] = useState(() => searchParams.get("sort") ?? "created_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">(() => searchParams.get("dir") === "asc" ? "asc" : "desc");
   const [selectedRow, setSelectedRow] = useState<RawInput | null>(null);
+  const [actionSheetOpen, setActionSheetOpen] = useState(false);
 
   const load = useCallback(
     async (
@@ -202,6 +205,28 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
     setFilterParam("q", "");
   };
   const totalPages = Math.ceil(total / PAGE_SIZE);
+  const reloadCurrentPage = useCallback(() => {
+    void load(
+      page,
+      sourceFilter,
+      statusFilter,
+      translationFilter,
+      hasSuggestionFilter,
+      searchQ,
+      sortCol,
+      sortDir,
+    );
+  }, [
+    load,
+    page,
+    sourceFilter,
+    statusFilter,
+    translationFilter,
+    hasSuggestionFilter,
+    searchQ,
+    sortCol,
+    sortDir,
+  ]);
 
   const columns = useMemo<ColumnDef<RawInput>[]>(() => {
     const cols: ColumnDef<RawInput>[] = [];
@@ -372,6 +397,19 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
           <option value="false">No suggestion</option>
         </select>
 
+        {(sourceName === "ariregister" || sourceName === "cvr") && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8"
+            disabled={loading}
+            onClick={() => setActionSheetOpen(true)}
+          >
+            <ListChecks className="size-4" />
+            Action
+          </Button>
+        )}
+
         <span className="ml-auto text-sm text-muted-foreground">
           {loading ? "Loading..." : `${total.toLocaleString()} entries`}
         </span>
@@ -458,6 +496,22 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
           onClose={() => setSelectedRow(null)}
           source={selectedRow.source}
           id={selectedRow.id}
+        />
+      )}
+
+      {sourceName === "ariregister" && (
+        <AriregisterRawInputActionSheet
+          open={actionSheetOpen}
+          onOpenChange={setActionSheetOpen}
+          onStarted={reloadCurrentPage}
+        />
+      )}
+
+      {sourceName === "cvr" && (
+        <CvrRawInputActionSheet
+          open={actionSheetOpen}
+          onOpenChange={setActionSheetOpen}
+          onStarted={reloadCurrentPage}
         />
       )}
     </div>

@@ -48,42 +48,22 @@ type RefreshBrregSourceExplorerActivityResult struct {
 	LatestSourceUpdatedAt *string `json:"latest_source_updated_at,omitempty"`
 }
 
-func (a *SourceProfileActions) NormalizeBrregSourceProfiles(
-	ctx context.Context,
-	input NormalizeBrregSourceProfilesActivityInput,
-) (NormalizeBrregSourceProfilesActivityResult, error) {
-	return a.normalizeBrregSourceProfiles(ctx, input, "sql", func(ctx context.Context, command brregdb.NormalizeSourceProfilesCommand) (brregdb.NormalizeSourceProfilesResult, error) {
-		return a.gateway.NormalizeSourceProfiles(ctx, command)
-	})
-}
-
 func (a *SourceProfileActions) NormalizeBrregSourceProfilesWithCopy(
 	ctx context.Context,
 	input NormalizeBrregSourceProfilesActivityInput,
-) (NormalizeBrregSourceProfilesActivityResult, error) {
-	return a.normalizeBrregSourceProfiles(ctx, input, "copy", func(ctx context.Context, command brregdb.NormalizeSourceProfilesCommand) (brregdb.NormalizeSourceProfilesResult, error) {
-		return a.gateway.NormalizeSourceProfilesWithCopy(ctx, command)
-	})
-}
-
-func (a *SourceProfileActions) normalizeBrregSourceProfiles(
-	ctx context.Context,
-	input NormalizeBrregSourceProfilesActivityInput,
-	mode string,
-	normalize func(context.Context, brregdb.NormalizeSourceProfilesCommand) (brregdb.NormalizeSourceProfilesResult, error),
 ) (NormalizeBrregSourceProfilesActivityResult, error) {
 	if a == nil || a.gateway == nil {
 		return NormalizeBrregSourceProfilesActivityResult{}, errors.New("brreg source profile gateway not available")
 	}
 	slog.DebugContext(ctx, "normalizing brreg source profiles",
-		"mode", mode,
+		"mode", "copy",
 		"temporal_workflow_id", input.TemporalWorkflowID,
 		"ids_count", len(input.IDs),
 		"filters_count", len(input.Filters),
 		"limit", input.Limit,
 		"trigger", input.Trigger,
 	)
-	result, err := normalize(ctx, brregdb.NormalizeSourceProfilesCommand{
+	result, err := a.gateway.NormalizeSourceProfilesWithCopy(ctx, brregdb.NormalizeSourceProfilesCommand{
 		IDs:     input.IDs,
 		Filters: input.Filters,
 		Limit:   input.Limit,
@@ -93,7 +73,7 @@ func (a *SourceProfileActions) normalizeBrregSourceProfiles(
 		return NormalizeBrregSourceProfilesActivityResult{}, errors.Wrap(err, "normalize brreg source profiles")
 	}
 	slog.DebugContext(ctx, "normalized brreg source profiles",
-		"mode", mode,
+		"mode", "copy",
 		"records_seen", result.RecordsSeen,
 		"companies_upserted", result.CompaniesUpserted,
 		"addresses_upserted", result.AddressesUpserted,

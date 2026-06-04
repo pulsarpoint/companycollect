@@ -141,6 +141,7 @@ INSERT INTO brreg_source.companies (
 	_, err = tx.Exec(ctx, `
 INSERT INTO brreg_source.company_process_status (company_id)
 VALUES ($1)
+ON CONFLICT (company_id) DO NOTHING
 `, companyID)
 	require.NoError(t, err)
 	return seededFinancialClaimCompany{CompanyID: companyID, RawRecordID: rawRecordID}

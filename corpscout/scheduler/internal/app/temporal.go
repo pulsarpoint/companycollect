@@ -17,6 +17,8 @@ import (
 	"github.com/pulsarpoint/corpscout/scheduler/internal/brreg/financial"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/config"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/crawlclient"
+	cvractions "github.com/pulsarpoint/corpscout/scheduler/internal/cvr/actions"
+	cvrdb "github.com/pulsarpoint/corpscout/scheduler/internal/cvr/db"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/llmproviders"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
@@ -34,6 +36,7 @@ type temporalWorkerResources struct {
 	sourceCapitalFX       *brregactions.SourceCapitalFXActions
 	sourceFinancial       *brregactions.SourceFinancialActions
 	ariregisterBulkIngest *ariregisteractions.BulkIngestActions
+	cvrRawIngest          *cvractions.RawIngestActions
 	naceTaxonomyActions   *nacetaxonomy.Actions
 	fxActions             *fx.Actions
 }
@@ -67,6 +70,7 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 	brregCompanyData := companydata.New(pool)
 	financialClient := financial.NewClient(cfg.BRREGFinancialURL, http.DefaultClient)
 	ariregisterGateway := ariregisterdb.New(pool)
+	cvrGateway := cvrdb.New(pool)
 	return &temporalWorkerResources{
 		translationClient:     translator,
 		companyTranslation:    brregactions.NewCompanyTranslationActions(brregCompanyData, translator),
@@ -77,8 +81,17 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 		sourceCapitalFX:       brregactions.NewSourceCapitalFXActions(gateway),
 		sourceFinancial:       brregactions.NewSourceFinancialActions(gateway, financialClient),
 		ariregisterBulkIngest: ariregisteractions.NewBulkIngestActions(ariregisterGateway, http.DefaultClient, cfg.AriregisterSourceURL),
-		naceTaxonomyActions:   nacetaxonomy.NewActions(pool, http.DefaultClient),
-		fxActions:             fx.NewActions(pool, http.DefaultClient, cfg.FXECBSourceURL),
+		cvrRawIngest: cvractions.NewRawIngestActions(cvrGateway, http.DefaultClient, cvractions.RawIngestConfig{
+			SourceURL:   cfg.CVRSourceURL,
+			ScrollURL:   cfg.CVRScrollURL,
+			Scroll:      cfg.CVRScroll,
+			Username:    cfg.CVRUsername,
+			Password:    cfg.CVRPassword,
+			BearerToken: cfg.CVRBearerToken,
+			APIKey:      cfg.CVRAPIKey,
+		}),
+		naceTaxonomyActions: nacetaxonomy.NewActions(pool, http.DefaultClient),
+		fxActions:           fx.NewActions(pool, http.DefaultClient, cfg.FXECBSourceURL),
 	}, nil
 }
 
@@ -104,6 +117,7 @@ func newTemporalWorkers(temporalClient client.Client, resources *temporalWorkerR
 		newBrregSourceCapitalFXTemporalWorker(temporalClient, resources),
 		newBrregSourceFinancialTemporalWorker(temporalClient, resources),
 		newAriregisterBulkIngestTemporalWorker(temporalClient, resources),
+		newCVRRawIngestTemporalWorker(temporalClient, resources),
 		newNACETaxonomyTemporalWorker(temporalClient, resources),
 		newFXTemporalWorker(temporalClient, resources),
 	}

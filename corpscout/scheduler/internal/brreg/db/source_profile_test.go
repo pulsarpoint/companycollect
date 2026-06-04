@@ -10,7 +10,7 @@ import (
 	"github.com/pulsarpoint/corpscout/scheduler/internal/testdb"
 )
 
-func TestNormalizeSourceProfilesUpsertsRawBrregProfile(t *testing.T) {
+func TestNormalizeSourceProfilesWithCopyUpsertsRawBrregProfileWithFilters(t *testing.T) {
 	tx := testdb.BeginTx(t)
 	ctx := t.Context()
 	rawRecordID := uuid.New()
@@ -73,7 +73,7 @@ INSERT INTO brreg_workflow.raw_records (
 `, rawRecordID, organizationNumber, rawPayload, uuid.NewString())
 	require.NoError(t, err)
 
-	mismatchedStateResult, err := New(tx).NormalizeSourceProfiles(ctx, NormalizeSourceProfilesCommand{
+	mismatchedStateResult, err := New(tx).NormalizeSourceProfilesWithCopy(ctx, NormalizeSourceProfilesCommand{
 		IDs:     []string{rawRecordID.String()},
 		Filters: map[string]string{"state": "translated"},
 		Limit:   10,
@@ -81,7 +81,7 @@ INSERT INTO brreg_workflow.raw_records (
 	require.NoError(t, err)
 	require.EqualValues(t, 0, mismatchedStateResult.RecordsSeen)
 
-	result, err := New(tx).NormalizeSourceProfiles(ctx, NormalizeSourceProfilesCommand{
+	result, err := New(tx).NormalizeSourceProfilesWithCopy(ctx, NormalizeSourceProfilesCommand{
 		IDs:     []string{rawRecordID.String()},
 		Filters: map[string]string{"state": "input"},
 		Limit:   10,
@@ -96,13 +96,13 @@ INSERT INTO brreg_workflow.raw_records (
 	require.EqualValues(t, 1, result.ContactsUpserted)
 	require.EqualValues(t, 1, result.CapitalUpserted)
 
-	bulkRetryResult, err := New(tx).NormalizeSourceProfiles(ctx, NormalizeSourceProfilesCommand{
+	bulkRetryResult, err := New(tx).NormalizeSourceProfilesWithCopy(ctx, NormalizeSourceProfilesCommand{
 		Limit: 10,
 	})
 	require.NoError(t, err)
 	require.EqualValues(t, 0, bulkRetryResult.RecordsSeen)
 
-	explicitRetryResult, err := New(tx).NormalizeSourceProfiles(ctx, NormalizeSourceProfilesCommand{
+	explicitRetryResult, err := New(tx).NormalizeSourceProfilesWithCopy(ctx, NormalizeSourceProfilesCommand{
 		IDs:   []string{rawRecordID.String()},
 		Limit: 10,
 	})
@@ -242,7 +242,7 @@ WHERE company_id = $1
 	require.EqualValues(t, 0, retryResult.RecordsSeen)
 }
 
-func TestNormalizeSourceProfilesRealRawRecordSample(t *testing.T) {
+func TestNormalizeSourceProfilesWithCopyRealRawRecordSample(t *testing.T) {
 	tx := testdb.BeginTx(t)
 	ctx := t.Context()
 
@@ -266,7 +266,7 @@ ORDER BY organization_number
 		t.Skip("brreg_workflow.raw_records contains no current rows")
 	}
 
-	result, err := New(tx).NormalizeSourceProfiles(ctx, NormalizeSourceProfilesCommand{
+	result, err := New(tx).NormalizeSourceProfilesWithCopy(ctx, NormalizeSourceProfilesCommand{
 		IDs:   rawRecordIDs,
 		Limit: 0,
 	})

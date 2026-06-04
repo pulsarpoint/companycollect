@@ -11,7 +11,10 @@ import (
 
 const defaultNATSRequestTimeout = 180 * time.Second
 const defaultFXECBDailyURL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
-const defaultAriregisterBulkSourceURL = "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__lihtandmed.csv.zip"
+const defaultAriregisterBulkSourceURL = "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__yldandmed.json.zip"
+const defaultCVRDistributionSourceURL = "https://distribution.virk.dk/cvr-permanent/virksomhed/_search"
+const defaultCVRDistributionScrollURL = "https://distribution.virk.dk/_search/scroll"
+const defaultCVRDistributionScroll = "1m"
 
 type Config struct {
 	DatabaseURL          string
@@ -32,6 +35,13 @@ type Config struct {
 	BRREGBulkSourceURL   string
 	BRREGFinancialURL    string
 	AriregisterSourceURL string
+	CVRSourceURL         string
+	CVRScrollURL         string
+	CVRScroll            string
+	CVRUsername          string
+	CVRPassword          string
+	CVRBearerToken       string
+	CVRAPIKey            string
 	FXECBSourceURL       string
 }
 
@@ -75,6 +85,13 @@ func Load() (Config, error) {
 		BRREGBulkSourceURL:   getEnv("CORPSCOUT_BRREG_BULK_SOURCE_URL", "https://data.brreg.no/enhetsregisteret/api/enheter/lastned"),
 		BRREGFinancialURL:    getEnv("CORPSCOUT_BRREG_FINANCIAL_BASE_URL", "https://data.brreg.no"),
 		AriregisterSourceURL: getEnv("CORPSCOUT_ARIREGISTER_BULK_SOURCE_URL", defaultAriregisterBulkSourceURL),
+		CVRSourceURL:         getEnv("CORPSCOUT_CVR_DISTRIBUTION_SOURCE_URL", defaultCVRDistributionSourceURL),
+		CVRScrollURL:         getEnv("CORPSCOUT_CVR_DISTRIBUTION_SCROLL_URL", defaultCVRDistributionScrollURL),
+		CVRScroll:            getEnv("CORPSCOUT_CVR_DISTRIBUTION_SCROLL", defaultCVRDistributionScroll),
+		CVRUsername:          getEnv("CORPSCOUT_CVR_DISTRIBUTION_USERNAME", ""),
+		CVRPassword:          getEnv("CORPSCOUT_CVR_DISTRIBUTION_PASSWORD", ""),
+		CVRBearerToken:       getEnv("CORPSCOUT_CVR_DISTRIBUTION_BEARER_TOKEN", ""),
+		CVRAPIKey:            getEnv("CORPSCOUT_CVR_DISTRIBUTION_API_KEY", ""),
 		FXECBSourceURL:       getEnv("CORPSCOUT_FX_ECB_DAILY_URL", defaultFXECBDailyURL),
 	}, nil
 }

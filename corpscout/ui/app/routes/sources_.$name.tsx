@@ -68,6 +68,32 @@ export default function SourceDetailLayout() {
   async function handleTrigger() {
     const sourceName = source?.name;
     if (!sourceName) return;
+    if (sourceName === "ariregister") {
+      setTriggering(true);
+      try {
+        await api.loadAriregisterBulkRawRecords({ trigger: "manual" });
+        await refreshSource(sourceName);
+        toast.success("Ariregister bulk ingest workflow started.");
+      } catch (err) {
+        toast.error(errorMessage(err, "Failed to start Ariregister bulk ingest."));
+      } finally {
+        if (latestNameRef.current === sourceName) setTriggering(false);
+      }
+      return;
+    }
+    if (sourceName === "cvr") {
+      setTriggering(true);
+      try {
+        await api.loadCVRRawRecords({ limit: 100, trigger: "manual" });
+        await refreshSource(sourceName);
+        toast.success("CVR raw ingest workflow started.");
+      } catch (err) {
+        toast.error(errorMessage(err, "Failed to start CVR raw ingest."));
+      } finally {
+        if (latestNameRef.current === sourceName) setTriggering(false);
+      }
+      return;
+    }
     toast.error(`Manual trigger is not available for ${sourceName}.`);
   }
 

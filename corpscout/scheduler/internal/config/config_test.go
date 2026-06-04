@@ -34,6 +34,18 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.FXECBSourceURL != "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml" {
 		t.Errorf("want default ECB FX URL, got %s", cfg.FXECBSourceURL)
 	}
+	if cfg.CVRSourceURL != "https://distribution.virk.dk/cvr-permanent/virksomhed/_search" {
+		t.Errorf("want default CVR source URL, got %s", cfg.CVRSourceURL)
+	}
+	if cfg.CVRScrollURL != "https://distribution.virk.dk/_search/scroll" {
+		t.Errorf("want default CVR scroll URL, got %s", cfg.CVRScrollURL)
+	}
+	if cfg.CVRScroll != "1m" {
+		t.Errorf("want default CVR scroll value 1m, got %s", cfg.CVRScroll)
+	}
+	if cfg.AriregisterSourceURL != "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__yldandmed.json.zip" {
+		t.Errorf("want default Ariregister general data URL, got %s", cfg.AriregisterSourceURL)
+	}
 }
 
 func TestLoad_overrides(t *testing.T) {
@@ -46,6 +58,11 @@ func TestLoad_overrides(t *testing.T) {
 	t.Setenv("CORPSCOUT_NATS_REQUEST_TIMEOUT_SECONDS", "240")
 	t.Setenv("CORPSCOUT_LOG_LEVEL", "debug")
 	t.Setenv("CORPSCOUT_FX_ECB_DAILY_URL", "https://example.test/ecb.xml")
+	t.Setenv("CORPSCOUT_CVR_DISTRIBUTION_SOURCE_URL", "https://example.test/cvr/_search")
+	t.Setenv("CORPSCOUT_CVR_DISTRIBUTION_SCROLL_URL", "https://example.test/_search/scroll")
+	t.Setenv("CORPSCOUT_CVR_DISTRIBUTION_SCROLL", "1m")
+	t.Setenv("CORPSCOUT_CVR_DISTRIBUTION_USERNAME", "cvr-user")
+	t.Setenv("CORPSCOUT_CVR_DISTRIBUTION_PASSWORD", "cvr-pass")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -69,6 +86,21 @@ func TestLoad_overrides(t *testing.T) {
 	}
 	if cfg.FXECBSourceURL != "https://example.test/ecb.xml" {
 		t.Errorf("want override ECB FX URL, got %s", cfg.FXECBSourceURL)
+	}
+	if cfg.CVRSourceURL != "https://example.test/cvr/_search" {
+		t.Errorf("want override CVR source URL, got %s", cfg.CVRSourceURL)
+	}
+	if cfg.CVRScrollURL != "https://example.test/_search/scroll" {
+		t.Errorf("want override CVR scroll URL, got %s", cfg.CVRScrollURL)
+	}
+	if cfg.CVRScroll != "1m" {
+		t.Errorf("want override CVR scroll value, got %s", cfg.CVRScroll)
+	}
+	if cfg.CVRUsername != "cvr-user" {
+		t.Errorf("want override CVR username, got %s", cfg.CVRUsername)
+	}
+	if cfg.CVRPassword != "cvr-pass" {
+		t.Errorf("want override CVR password, got %s", cfg.CVRPassword)
 	}
 }
 

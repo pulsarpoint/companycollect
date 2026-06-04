@@ -24,7 +24,8 @@ import (
 const (
 	defaultBulkIngestDBBatchSize int32 = 1000
 	ariregisterBulkRunType             = "bulk_ingest"
-	ariregisterBulkSource              = "ariregister_bulk"
+	ariregisterBulkDatasetKey          = "general"
+	ariregisterBulkSource              = "ariregister_general_bulk"
 )
 
 type BulkIngestActions struct {
@@ -78,6 +79,7 @@ func (a *BulkIngestActions) LoadAriregisterBulkRawRecords(
 		batchSize = defaultBulkIngestDBBatchSize
 	}
 	metadata, err := metadataPayload(map[string]any{
+		"dataset_key":          ariregisterBulkDatasetKey,
 		"source":               ariregisterBulkSource,
 		"source_url":           sourceURL,
 		"trigger":              input.Trigger,
@@ -143,7 +145,7 @@ func (a *BulkIngestActions) LoadAriregisterBulkRawRecords(
 
 	sourceFileID, err := a.gateway.RecordSourceFile(ctx, db.RecordAriregisterSourceFileParams{
 		BulkSnapshotID:     snapshotID,
-		DatasetKey:         "basic",
+		DatasetKey:         ariregisterBulkDatasetKey,
 		SourceUrl:          sourceURL,
 		ContentLengthBytes: &staged.BytesDownloaded,
 		PayloadHash:        &staged.PayloadHash,
@@ -222,7 +224,7 @@ func (a *BulkIngestActions) LoadAriregisterBulkRawRecords(
 	}
 	_, err = a.gateway.RecordSourceFile(ctx, db.RecordAriregisterSourceFileParams{
 		BulkSnapshotID:     snapshotID,
-		DatasetKey:         "basic",
+		DatasetKey:         ariregisterBulkDatasetKey,
 		SourceUrl:          sourceURL,
 		FileName:           optionalString(result.FileName),
 		ContentLengthBytes: &staged.BytesDownloaded,
