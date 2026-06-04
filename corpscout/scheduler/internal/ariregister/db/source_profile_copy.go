@@ -3,6 +3,7 @@ package ariregisterdb
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 
@@ -300,6 +301,7 @@ func copyCompanyNames(ctx context.Context, tx pgx.Tx, rows []sourceprofile.Compa
 	values := make([][]any, 0, len(rows))
 	for _, row := range rows {
 		values = append(values, []any{
+			sourceEntryStageKey(row.SourceEntryID, row.Name, row.StartedOn, row.EndedOn, jsonText(row.RawNamePayload)),
 			row.RegistryCode,
 			row.RawRecordID.String(),
 			nullableInt64(row.SourceEntryID),
@@ -323,6 +325,7 @@ func copyCompanyStatuses(ctx context.Context, tx pgx.Tx, rows []sourceprofile.Co
 	values := make([][]any, 0, len(rows))
 	for _, row := range rows {
 		values = append(values, []any{
+			companyStatusStageKey(row),
 			row.RegistryCode,
 			row.RawRecordID.String(),
 			nullableInt(row.CardRegion),
@@ -345,6 +348,14 @@ func copyLegalForms(ctx context.Context, tx pgx.Tx, rows []sourceprofile.LegalFo
 	values := make([][]any, 0, len(rows))
 	for _, row := range rows {
 		values = append(values, []any{
+			sourceEntryStageKey(
+				row.SourceEntryID,
+				row.LegalFormCode,
+				nullableIntKey(row.LegalFormNumber),
+				row.LegalFormLabel,
+				row.StartedOn,
+				row.EndedOn,
+			),
 			row.RegistryCode,
 			row.RawRecordID.String(),
 			nullableInt64(row.SourceEntryID),
@@ -373,6 +384,15 @@ func copyAddresses(ctx context.Context, tx pgx.Tx, rows []sourceprofile.AddressR
 	values := make([][]any, 0, len(rows))
 	for _, row := range rows {
 		values = append(values, []any{
+			sourceEntryStageKey(
+				row.SourceEntryID,
+				row.AddressType,
+				row.NormalizedFullAddress,
+				row.CountryCode,
+				row.EHAKCode,
+				row.StreetText,
+				row.PostalCode,
+			),
 			row.RegistryCode,
 			row.RawRecordID.String(),
 			nullableInt64(row.SourceEntryID),
@@ -514,6 +534,13 @@ func copyCapital(ctx context.Context, tx pgx.Tx, rows []sourceprofile.CapitalRow
 	values := make([][]any, 0, len(rows))
 	for _, row := range rows {
 		values = append(values, []any{
+			sourceEntryStageKey(
+				row.SourceEntryID,
+				row.CapitalAmount,
+				row.CapitalCurrency,
+				row.IntroducedOn,
+				row.EndedOn,
+			),
 			row.RegistryCode,
 			row.RawRecordID.String(),
 			nullableInt64(row.SourceEntryID),
@@ -535,6 +562,7 @@ func copyFinancialYearPeriods(ctx context.Context, tx pgx.Tx, rows []sourceprofi
 	values := make([][]any, 0, len(rows))
 	for _, row := range rows {
 		values = append(values, []any{
+			sourceEntryStageKey(row.SourceEntryID, row.PeriodStartMonthDay, row.PeriodEndMonthDay),
 			row.RegistryCode,
 			row.RawRecordID.String(),
 			nullableInt64(row.SourceEntryID),
@@ -554,6 +582,12 @@ func copyAnnualReports(ctx context.Context, tx pgx.Tx, rows []sourceprofile.Annu
 	values := make([][]any, 0, len(rows))
 	for _, row := range rows {
 		values = append(values, []any{
+			sourceEntryStageKey(
+				row.SourceEntryID,
+				nullableIntKey(row.FiscalYear),
+				row.PeriodStart,
+				row.PeriodEnd,
+			),
 			row.RegistryCode,
 			row.RawRecordID.String(),
 			nullableInt64(row.SourceEntryID),
@@ -582,6 +616,14 @@ func copyArticles(ctx context.Context, tx pgx.Tx, rows []sourceprofile.ArticleRo
 	values := make([][]any, 0, len(rows))
 	for _, row := range rows {
 		values = append(values, []any{
+			sourceEntryStageKey(
+				row.SourceEntryID,
+				row.ConfirmedOn,
+				row.ChangedOn,
+				row.Explanation,
+				row.StartedOn,
+				row.EndedOn,
+			),
 			row.RegistryCode,
 			row.RawRecordID.String(),
 			nullableInt64(row.SourceEntryID),
@@ -604,6 +646,13 @@ func copyRegistryNotes(ctx context.Context, tx pgx.Tx, rows []sourceprofile.Regi
 	values := make([][]any, 0, len(rows))
 	for _, row := range rows {
 		values = append(values, []any{
+			sourceEntryStageKey(
+				row.SourceEntryID,
+				row.NoteType,
+				row.NoteText,
+				row.StartedOn,
+				row.EndedOn,
+			),
 			row.RegistryCode,
 			row.RawRecordID.String(),
 			nullableInt64(row.SourceEntryID),
@@ -716,4 +765,40 @@ func nullableBool(value *bool) any {
 		return nil
 	}
 	return *value
+}
+
+func sourceEntryStageKey(sourceEntryID *int64, fields ...string) string {
+	if sourceEntryID != nil {
+		return stageKey("source_entry_id", strconv.FormatInt(*sourceEntryID, 10))
+	}
+	return stageKey(fields...)
+}
+
+func companyStatusStageKey(row sourceprofile.CompanyStatusRow) string {
+	if row.CardRegion != nil || row.CardNumber != nil || strings.TrimSpace(row.CardType) != "" || row.EntryNumber != nil {
+		return stageKey(
+			"card",
+			nullableIntKey(row.CardRegion),
+			nullableIntKey(row.CardNumber),
+			row.CardType,
+			nullableIntKey(row.EntryNumber),
+			row.StatusCode,
+		)
+	}
+	return stageKey(row.StatusCode, row.StatusLabel, row.StartedOn)
+}
+
+func stageKey(fields ...string) string {
+	parts := make([]string, 0, len(fields))
+	for _, field := range fields {
+		parts = append(parts, strings.TrimSpace(field))
+	}
+	return strings.Join(parts, "\x1f")
+}
+
+func nullableIntKey(value *int) string {
+	if value == nil {
+		return ""
+	}
+	return strconv.Itoa(*value)
 }

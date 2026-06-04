@@ -50,6 +50,7 @@ var sourceProfileCompanyStageColumns = []string{
 }
 
 var sourceProfileCompanyNameStageColumns = []string{
+	"stage_key",
 	"registry_code",
 	"raw_record_id",
 	"source_entry_id",
@@ -67,6 +68,7 @@ var sourceProfileCompanyNameStageColumns = []string{
 }
 
 var sourceProfileCompanyStatusStageColumns = []string{
+	"stage_key",
 	"registry_code",
 	"raw_record_id",
 	"card_region",
@@ -83,6 +85,7 @@ var sourceProfileCompanyStatusStageColumns = []string{
 }
 
 var sourceProfileLegalFormStageColumns = []string{
+	"stage_key",
 	"registry_code",
 	"raw_record_id",
 	"source_entry_id",
@@ -105,6 +108,7 @@ var sourceProfileLegalFormStageColumns = []string{
 }
 
 var sourceProfileAddressStageColumns = []string{
+	"stage_key",
 	"registry_code",
 	"raw_record_id",
 	"source_entry_id",
@@ -216,6 +220,7 @@ var sourceProfileIndustryStageColumns = []string{
 }
 
 var sourceProfileCapitalStageColumns = []string{
+	"stage_key",
 	"registry_code",
 	"raw_record_id",
 	"source_entry_id",
@@ -231,6 +236,7 @@ var sourceProfileCapitalStageColumns = []string{
 }
 
 var sourceProfileFinancialYearPeriodStageColumns = []string{
+	"stage_key",
 	"registry_code",
 	"raw_record_id",
 	"source_entry_id",
@@ -244,6 +250,7 @@ var sourceProfileFinancialYearPeriodStageColumns = []string{
 }
 
 var sourceProfileAnnualReportStageColumns = []string{
+	"stage_key",
 	"registry_code",
 	"raw_record_id",
 	"source_entry_id",
@@ -266,6 +273,7 @@ var sourceProfileAnnualReportStageColumns = []string{
 }
 
 var sourceProfileArticleStageColumns = []string{
+	"stage_key",
 	"registry_code",
 	"raw_record_id",
 	"source_entry_id",
@@ -282,6 +290,7 @@ var sourceProfileArticleStageColumns = []string{
 }
 
 var sourceProfileRegistryNoteStageColumns = []string{
+	"stage_key",
 	"registry_code",
 	"raw_record_id",
 	"source_entry_id",
@@ -358,6 +367,7 @@ CREATE TEMP TABLE ariregister_source_company_id_stage (
 ) ON COMMIT DROP;
 
 CREATE TEMP TABLE ariregister_source_company_name_stage (
+  stage_key text NOT NULL,
   registry_code text NOT NULL,
   raw_record_id text NOT NULL,
   source_entry_id bigint,
@@ -375,6 +385,7 @@ CREATE TEMP TABLE ariregister_source_company_name_stage (
 ) ON COMMIT DROP;
 
 CREATE TEMP TABLE ariregister_source_company_status_stage (
+  stage_key text NOT NULL,
   registry_code text NOT NULL,
   raw_record_id text NOT NULL,
   card_region integer,
@@ -391,6 +402,7 @@ CREATE TEMP TABLE ariregister_source_company_status_stage (
 ) ON COMMIT DROP;
 
 CREATE TEMP TABLE ariregister_source_legal_form_stage (
+  stage_key text NOT NULL,
   registry_code text NOT NULL,
   raw_record_id text NOT NULL,
   source_entry_id bigint,
@@ -413,6 +425,7 @@ CREATE TEMP TABLE ariregister_source_legal_form_stage (
 ) ON COMMIT DROP;
 
 CREATE TEMP TABLE ariregister_source_address_stage (
+  stage_key text NOT NULL,
   registry_code text NOT NULL,
   raw_record_id text NOT NULL,
   source_entry_id bigint,
@@ -531,6 +544,7 @@ CREATE TEMP TABLE ariregister_source_industry_stage (
 ) ON COMMIT DROP;
 
 CREATE TEMP TABLE ariregister_source_capital_stage (
+  stage_key text NOT NULL,
   registry_code text NOT NULL,
   raw_record_id text NOT NULL,
   source_entry_id bigint,
@@ -546,6 +560,7 @@ CREATE TEMP TABLE ariregister_source_capital_stage (
 ) ON COMMIT DROP;
 
 CREATE TEMP TABLE ariregister_source_financial_year_period_stage (
+  stage_key text NOT NULL,
   registry_code text NOT NULL,
   raw_record_id text NOT NULL,
   source_entry_id bigint,
@@ -559,6 +574,7 @@ CREATE TEMP TABLE ariregister_source_financial_year_period_stage (
 ) ON COMMIT DROP;
 
 CREATE TEMP TABLE ariregister_source_annual_report_stage (
+  stage_key text NOT NULL,
   registry_code text NOT NULL,
   raw_record_id text NOT NULL,
   source_entry_id bigint,
@@ -581,6 +597,7 @@ CREATE TEMP TABLE ariregister_source_annual_report_stage (
 ) ON COMMIT DROP;
 
 CREATE TEMP TABLE ariregister_source_article_stage (
+  stage_key text NOT NULL,
   registry_code text NOT NULL,
   raw_record_id text NOT NULL,
   source_entry_id bigint,
@@ -597,6 +614,7 @@ CREATE TEMP TABLE ariregister_source_article_stage (
 ) ON COMMIT DROP;
 
 CREATE TEMP TABLE ariregister_source_registry_note_stage (
+  stage_key text NOT NULL,
   registry_code text NOT NULL,
   raw_record_id text NOT NULL,
   source_entry_id bigint,
@@ -790,7 +808,43 @@ SELECT count(*)::integer FROM upserted;
 `
 
 const mergeSourceProfileCompanyNamesSQL = `
-WITH upserted AS (
+WITH resolved AS (
+  SELECT company.company_id, stage.*
+  FROM ariregister_source_company_name_stage stage
+  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
+),
+updated AS (
+  UPDATE ariregister_source.company_names target
+  SET
+    raw_record_id = stage.raw_record_id::uuid,
+    card_region = stage.card_region,
+    card_number = stage.card_number,
+    card_type = NULLIF(stage.card_type, ''),
+    entry_number = stage.entry_number,
+    name = stage.name,
+    name_en = COALESCE(NULLIF(stage.name_en, ''), target.name_en),
+    started_on = NULLIF(stage.started_on, '')::date,
+    ended_on = NULLIF(stage.ended_on, '')::date,
+    raw_name_payload = stage.raw_name_payload::jsonb,
+    evidence = stage.evidence::jsonb,
+    metadata = target.metadata || stage.metadata::jsonb,
+    updated_at = now()
+  FROM resolved stage
+  WHERE target.company_id = stage.company_id
+    AND (
+      (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+      OR (
+        target.source_entry_id IS NULL
+        AND stage.source_entry_id IS NULL
+        AND target.name = stage.name
+        AND target.started_on IS NOT DISTINCT FROM NULLIF(stage.started_on, '')::date
+        AND target.ended_on IS NOT DISTINCT FROM NULLIF(stage.ended_on, '')::date
+        AND target.raw_name_payload = stage.raw_name_payload::jsonb
+      )
+    )
+  RETURNING target.id
+),
+inserted AS (
   INSERT INTO ariregister_source.company_names (
     company_id,
     raw_record_id,
@@ -824,30 +878,58 @@ WITH upserted AS (
     stage.evidence::jsonb,
     stage.metadata::jsonb,
     now()
-  FROM ariregister_source_company_name_stage stage
-  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
-  ON CONFLICT (company_id, source_entry_id)
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    card_region = EXCLUDED.card_region,
-    card_number = EXCLUDED.card_number,
-    card_type = EXCLUDED.card_type,
-    entry_number = EXCLUDED.entry_number,
-    name = EXCLUDED.name,
-    name_en = COALESCE(EXCLUDED.name_en, ariregister_source.company_names.name_en),
-    started_on = EXCLUDED.started_on,
-    ended_on = EXCLUDED.ended_on,
-    raw_name_payload = EXCLUDED.raw_name_payload,
-    evidence = EXCLUDED.evidence,
-    metadata = ariregister_source.company_names.metadata || EXCLUDED.metadata,
-    updated_at = now()
+  FROM resolved stage
+  JOIN ariregister_source_company_id_stage company ON company.company_id = stage.company_id
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM ariregister_source.company_names target
+    WHERE target.company_id = stage.company_id
+      AND (
+        (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+        OR (
+          target.source_entry_id IS NULL
+          AND stage.source_entry_id IS NULL
+          AND target.name = stage.name
+          AND target.started_on IS NOT DISTINCT FROM NULLIF(stage.started_on, '')::date
+          AND target.ended_on IS NOT DISTINCT FROM NULLIF(stage.ended_on, '')::date
+          AND target.raw_name_payload = stage.raw_name_payload::jsonb
+        )
+      )
+  )
   RETURNING id
 )
-SELECT count(*)::integer FROM upserted;
+SELECT ((SELECT count(*) FROM updated) + (SELECT count(*) FROM inserted))::integer;
 `
 
 const mergeSourceProfileCompanyStatusesSQL = `
-WITH upserted AS (
+WITH resolved AS (
+  SELECT company.company_id, stage.*
+  FROM ariregister_source_company_status_stage stage
+  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
+),
+updated AS (
+  UPDATE ariregister_source.company_statuses target
+  SET
+    raw_record_id = stage.raw_record_id::uuid,
+    status_label = NULLIF(stage.status_label, ''),
+    status_label_en = COALESCE(NULLIF(stage.status_label_en, ''), target.status_label_en),
+    started_on = NULLIF(stage.started_on, '')::date,
+    raw_status_payload = stage.raw_status_payload::jsonb,
+    evidence = stage.evidence::jsonb,
+    metadata = target.metadata || stage.metadata::jsonb,
+    updated_at = now()
+  FROM resolved stage
+  WHERE target.company_id = stage.company_id
+    AND target.card_region IS NOT DISTINCT FROM stage.card_region
+    AND target.card_number IS NOT DISTINCT FROM stage.card_number
+    AND COALESCE(target.card_type, '') = COALESCE(NULLIF(stage.card_type, ''), '')
+    AND target.entry_number IS NOT DISTINCT FROM stage.entry_number
+    AND target.status_code = stage.status_code
+    AND target.status_label IS NOT DISTINCT FROM NULLIF(stage.status_label, '')
+    AND target.started_on IS NOT DISTINCT FROM NULLIF(stage.started_on, '')::date
+  RETURNING target.id
+),
+inserted AS (
   INSERT INTO ariregister_source.company_statuses (
     company_id,
     raw_record_id,
@@ -879,25 +961,69 @@ WITH upserted AS (
     stage.evidence::jsonb,
     stage.metadata::jsonb,
     now()
-  FROM ariregister_source_company_status_stage stage
-  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
-  ON CONFLICT (company_id, card_region, card_number, card_type, entry_number, status_code)
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    status_label = EXCLUDED.status_label,
-    status_label_en = COALESCE(EXCLUDED.status_label_en, ariregister_source.company_statuses.status_label_en),
-    started_on = EXCLUDED.started_on,
-    raw_status_payload = EXCLUDED.raw_status_payload,
-    evidence = EXCLUDED.evidence,
-    metadata = ariregister_source.company_statuses.metadata || EXCLUDED.metadata,
-    updated_at = now()
+  FROM resolved stage
+  JOIN ariregister_source_company_id_stage company ON company.company_id = stage.company_id
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM ariregister_source.company_statuses target
+    WHERE target.company_id = stage.company_id
+      AND target.card_region IS NOT DISTINCT FROM stage.card_region
+      AND target.card_number IS NOT DISTINCT FROM stage.card_number
+      AND COALESCE(target.card_type, '') = COALESCE(NULLIF(stage.card_type, ''), '')
+      AND target.entry_number IS NOT DISTINCT FROM stage.entry_number
+      AND target.status_code = stage.status_code
+      AND target.status_label IS NOT DISTINCT FROM NULLIF(stage.status_label, '')
+      AND target.started_on IS NOT DISTINCT FROM NULLIF(stage.started_on, '')::date
+  )
   RETURNING id
 )
-SELECT count(*)::integer FROM upserted;
+SELECT ((SELECT count(*) FROM updated) + (SELECT count(*) FROM inserted))::integer;
 `
 
 const mergeSourceProfileLegalFormsSQL = `
-WITH upserted AS (
+WITH resolved AS (
+  SELECT company.company_id, stage.*
+  FROM ariregister_source_legal_form_stage stage
+  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
+),
+updated AS (
+  UPDATE ariregister_source.legal_forms target
+  SET
+    raw_record_id = stage.raw_record_id::uuid,
+    card_region = stage.card_region,
+    card_number = stage.card_number,
+    card_type = NULLIF(stage.card_type, ''),
+    entry_number = stage.entry_number,
+    legal_form_code = NULLIF(stage.legal_form_code, ''),
+    legal_form_number = stage.legal_form_number,
+    legal_form_label = NULLIF(stage.legal_form_label, ''),
+    legal_form_label_en = COALESCE(NULLIF(stage.legal_form_label_en, ''), target.legal_form_label_en),
+    legal_form_subtype = NULLIF(stage.legal_form_subtype, ''),
+    legal_form_subtype_label = NULLIF(stage.legal_form_subtype_label, ''),
+    legal_form_subtype_label_en = COALESCE(NULLIF(stage.legal_form_subtype_label_en, ''), target.legal_form_subtype_label_en),
+    started_on = NULLIF(stage.started_on, '')::date,
+    ended_on = NULLIF(stage.ended_on, '')::date,
+    raw_legal_form_payload = stage.raw_legal_form_payload::jsonb,
+    evidence = stage.evidence::jsonb,
+    metadata = target.metadata || stage.metadata::jsonb,
+    updated_at = now()
+  FROM resolved stage
+  WHERE target.company_id = stage.company_id
+    AND (
+      (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+      OR (
+        target.source_entry_id IS NULL
+        AND stage.source_entry_id IS NULL
+        AND target.legal_form_code IS NOT DISTINCT FROM NULLIF(stage.legal_form_code, '')
+        AND target.legal_form_number IS NOT DISTINCT FROM stage.legal_form_number
+        AND target.legal_form_label IS NOT DISTINCT FROM NULLIF(stage.legal_form_label, '')
+        AND target.started_on IS NOT DISTINCT FROM NULLIF(stage.started_on, '')::date
+        AND target.ended_on IS NOT DISTINCT FROM NULLIF(stage.ended_on, '')::date
+      )
+    )
+  RETURNING target.id
+),
+inserted AS (
   INSERT INTO ariregister_source.legal_forms (
     company_id,
     raw_record_id,
@@ -941,35 +1067,82 @@ WITH upserted AS (
     stage.evidence::jsonb,
     stage.metadata::jsonb,
     now()
-  FROM ariregister_source_legal_form_stage stage
-  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
-  ON CONFLICT (company_id, source_entry_id)
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    card_region = EXCLUDED.card_region,
-    card_number = EXCLUDED.card_number,
-    card_type = EXCLUDED.card_type,
-    entry_number = EXCLUDED.entry_number,
-    legal_form_code = EXCLUDED.legal_form_code,
-    legal_form_number = EXCLUDED.legal_form_number,
-    legal_form_label = EXCLUDED.legal_form_label,
-    legal_form_label_en = COALESCE(EXCLUDED.legal_form_label_en, ariregister_source.legal_forms.legal_form_label_en),
-    legal_form_subtype = EXCLUDED.legal_form_subtype,
-    legal_form_subtype_label = EXCLUDED.legal_form_subtype_label,
-    legal_form_subtype_label_en = COALESCE(EXCLUDED.legal_form_subtype_label_en, ariregister_source.legal_forms.legal_form_subtype_label_en),
-    started_on = EXCLUDED.started_on,
-    ended_on = EXCLUDED.ended_on,
-    raw_legal_form_payload = EXCLUDED.raw_legal_form_payload,
-    evidence = EXCLUDED.evidence,
-    metadata = ariregister_source.legal_forms.metadata || EXCLUDED.metadata,
-    updated_at = now()
+  FROM resolved stage
+  JOIN ariregister_source_company_id_stage company ON company.company_id = stage.company_id
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM ariregister_source.legal_forms target
+    WHERE target.company_id = stage.company_id
+      AND (
+        (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+        OR (
+          target.source_entry_id IS NULL
+          AND stage.source_entry_id IS NULL
+          AND target.legal_form_code IS NOT DISTINCT FROM NULLIF(stage.legal_form_code, '')
+          AND target.legal_form_number IS NOT DISTINCT FROM stage.legal_form_number
+          AND target.legal_form_label IS NOT DISTINCT FROM NULLIF(stage.legal_form_label, '')
+          AND target.started_on IS NOT DISTINCT FROM NULLIF(stage.started_on, '')::date
+          AND target.ended_on IS NOT DISTINCT FROM NULLIF(stage.ended_on, '')::date
+        )
+      )
+  )
   RETURNING id
 )
-SELECT count(*)::integer FROM upserted;
+SELECT ((SELECT count(*) FROM updated) + (SELECT count(*) FROM inserted))::integer;
 `
 
 const mergeSourceProfileAddressesSQL = `
-WITH upserted AS (
+WITH resolved AS (
+  SELECT company.company_id, stage.*
+  FROM ariregister_source_address_stage stage
+  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
+),
+updated AS (
+  UPDATE ariregister_source.addresses target
+  SET
+    raw_record_id = stage.raw_record_id::uuid,
+    address_type = COALESCE(NULLIF(stage.address_type, ''), 'registered'),
+    country_code = NULLIF(stage.country_code, ''),
+    country_label = NULLIF(stage.country_label, ''),
+    country_label_en = COALESCE(NULLIF(stage.country_label_en, ''), target.country_label_en),
+    ehak_code = NULLIF(stage.ehak_code, ''),
+    ehak_name = NULLIF(stage.ehak_name, ''),
+    ehak_name_en = COALESCE(NULLIF(stage.ehak_name_en, ''), target.ehak_name_en),
+    street_text = NULLIF(stage.street_text, ''),
+    street_text_en = COALESCE(NULLIF(stage.street_text_en, ''), target.street_text_en),
+    postal_code = NULLIF(stage.postal_code, ''),
+    ads_oid = NULLIF(stage.ads_oid, ''),
+    adr_id = stage.adr_id,
+    normalized_full_address = NULLIF(stage.normalized_full_address, ''),
+    normalized_full_address_en = COALESCE(NULLIF(stage.normalized_full_address_en, ''), target.normalized_full_address_en),
+    normalized_full_address_detail = NULLIF(stage.normalized_full_address_detail, ''),
+    code_address = NULLIF(stage.code_address, ''),
+    adob_id = NULLIF(stage.adob_id, ''),
+    ads_type = NULLIF(stage.ads_type, ''),
+    started_on = NULLIF(stage.started_on, '')::date,
+    ended_on = NULLIF(stage.ended_on, '')::date,
+    raw_address_payload = stage.raw_address_payload::jsonb,
+    evidence = stage.evidence::jsonb,
+    metadata = target.metadata || stage.metadata::jsonb,
+    updated_at = now()
+  FROM resolved stage
+  WHERE target.company_id = stage.company_id
+    AND (
+      (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+      OR (
+        target.source_entry_id IS NULL
+        AND stage.source_entry_id IS NULL
+        AND target.address_type = COALESCE(NULLIF(stage.address_type, ''), 'registered')
+        AND target.normalized_full_address IS NOT DISTINCT FROM NULLIF(stage.normalized_full_address, '')
+        AND target.country_code IS NOT DISTINCT FROM NULLIF(stage.country_code, '')
+        AND target.ehak_code IS NOT DISTINCT FROM NULLIF(stage.ehak_code, '')
+        AND target.street_text IS NOT DISTINCT FROM NULLIF(stage.street_text, '')
+        AND target.postal_code IS NOT DISTINCT FROM NULLIF(stage.postal_code, '')
+      )
+    )
+  RETURNING target.id
+),
+inserted AS (
   INSERT INTO ariregister_source.addresses (
     company_id,
     raw_record_id,
@@ -1027,38 +1200,29 @@ WITH upserted AS (
     stage.evidence::jsonb,
     stage.metadata::jsonb,
     now()
-  FROM ariregister_source_address_stage stage
-  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
-  ON CONFLICT (company_id, source_entry_id)
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    address_type = EXCLUDED.address_type,
-    country_code = EXCLUDED.country_code,
-    country_label = EXCLUDED.country_label,
-    country_label_en = COALESCE(EXCLUDED.country_label_en, ariregister_source.addresses.country_label_en),
-    ehak_code = EXCLUDED.ehak_code,
-    ehak_name = EXCLUDED.ehak_name,
-    ehak_name_en = COALESCE(EXCLUDED.ehak_name_en, ariregister_source.addresses.ehak_name_en),
-    street_text = EXCLUDED.street_text,
-    street_text_en = COALESCE(EXCLUDED.street_text_en, ariregister_source.addresses.street_text_en),
-    postal_code = EXCLUDED.postal_code,
-    ads_oid = EXCLUDED.ads_oid,
-    adr_id = EXCLUDED.adr_id,
-    normalized_full_address = EXCLUDED.normalized_full_address,
-    normalized_full_address_en = COALESCE(EXCLUDED.normalized_full_address_en, ariregister_source.addresses.normalized_full_address_en),
-    normalized_full_address_detail = EXCLUDED.normalized_full_address_detail,
-    code_address = EXCLUDED.code_address,
-    adob_id = EXCLUDED.adob_id,
-    ads_type = EXCLUDED.ads_type,
-    started_on = EXCLUDED.started_on,
-    ended_on = EXCLUDED.ended_on,
-    raw_address_payload = EXCLUDED.raw_address_payload,
-    evidence = EXCLUDED.evidence,
-    metadata = ariregister_source.addresses.metadata || EXCLUDED.metadata,
-    updated_at = now()
+  FROM resolved stage
+  JOIN ariregister_source_company_id_stage company ON company.company_id = stage.company_id
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM ariregister_source.addresses target
+    WHERE target.company_id = stage.company_id
+      AND (
+        (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+        OR (
+          target.source_entry_id IS NULL
+          AND stage.source_entry_id IS NULL
+          AND target.address_type = COALESCE(NULLIF(stage.address_type, ''), 'registered')
+          AND target.normalized_full_address IS NOT DISTINCT FROM NULLIF(stage.normalized_full_address, '')
+          AND target.country_code IS NOT DISTINCT FROM NULLIF(stage.country_code, '')
+          AND target.ehak_code IS NOT DISTINCT FROM NULLIF(stage.ehak_code, '')
+          AND target.street_text IS NOT DISTINCT FROM NULLIF(stage.street_text, '')
+          AND target.postal_code IS NOT DISTINCT FROM NULLIF(stage.postal_code, '')
+        )
+      )
+  )
   RETURNING id
 )
-SELECT count(*)::integer FROM upserted;
+SELECT ((SELECT count(*) FROM updated) + (SELECT count(*) FROM inserted))::integer;
 `
 
 const mergeSourceProfileContactsSQL = `
@@ -1381,7 +1545,41 @@ SELECT count(*)::integer FROM upserted;
 `
 
 const mergeSourceProfileCapitalSQL = `
-WITH upserted AS (
+WITH resolved AS (
+  SELECT company.company_id, stage.*
+  FROM ariregister_source_capital_stage stage
+  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
+),
+updated AS (
+  UPDATE ariregister_source.capital target
+  SET
+    raw_record_id = stage.raw_record_id::uuid,
+    capital_amount = NULLIF(stage.capital_amount, '')::numeric,
+    capital_currency = NULLIF(stage.capital_currency, ''),
+    capital_currency_label = NULLIF(stage.capital_currency_label, ''),
+    capital_currency_label_en = COALESCE(NULLIF(stage.capital_currency_label_en, ''), target.capital_currency_label_en),
+    introduced_on = NULLIF(stage.introduced_on, '')::date,
+    ended_on = NULLIF(stage.ended_on, '')::date,
+    raw_capital_payload = stage.raw_capital_payload::jsonb,
+    evidence = stage.evidence::jsonb,
+    metadata = target.metadata || stage.metadata::jsonb,
+    updated_at = now()
+  FROM resolved stage
+  WHERE target.company_id = stage.company_id
+    AND (
+      (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+      OR (
+        target.source_entry_id IS NULL
+        AND stage.source_entry_id IS NULL
+        AND target.capital_amount IS NOT DISTINCT FROM NULLIF(stage.capital_amount, '')::numeric
+        AND target.capital_currency IS NOT DISTINCT FROM NULLIF(stage.capital_currency, '')
+        AND target.introduced_on IS NOT DISTINCT FROM NULLIF(stage.introduced_on, '')::date
+        AND target.ended_on IS NOT DISTINCT FROM NULLIF(stage.ended_on, '')::date
+      )
+    )
+  RETURNING target.id
+),
+inserted AS (
   INSERT INTO ariregister_source.capital (
     company_id,
     raw_record_id,
@@ -1411,28 +1609,61 @@ WITH upserted AS (
     stage.evidence::jsonb,
     stage.metadata::jsonb,
     now()
-  FROM ariregister_source_capital_stage stage
-  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
-  ON CONFLICT (company_id, source_entry_id)
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    capital_amount = EXCLUDED.capital_amount,
-    capital_currency = EXCLUDED.capital_currency,
-    capital_currency_label = EXCLUDED.capital_currency_label,
-    capital_currency_label_en = COALESCE(EXCLUDED.capital_currency_label_en, ariregister_source.capital.capital_currency_label_en),
-    introduced_on = EXCLUDED.introduced_on,
-    ended_on = EXCLUDED.ended_on,
-    raw_capital_payload = EXCLUDED.raw_capital_payload,
-    evidence = EXCLUDED.evidence,
-    metadata = ariregister_source.capital.metadata || EXCLUDED.metadata,
-    updated_at = now()
+  FROM resolved stage
+  JOIN ariregister_source_company_id_stage company ON company.company_id = stage.company_id
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM ariregister_source.capital target
+    WHERE target.company_id = stage.company_id
+      AND (
+        (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+        OR (
+          target.source_entry_id IS NULL
+          AND stage.source_entry_id IS NULL
+          AND target.capital_amount IS NOT DISTINCT FROM NULLIF(stage.capital_amount, '')::numeric
+          AND target.capital_currency IS NOT DISTINCT FROM NULLIF(stage.capital_currency, '')
+          AND target.introduced_on IS NOT DISTINCT FROM NULLIF(stage.introduced_on, '')::date
+          AND target.ended_on IS NOT DISTINCT FROM NULLIF(stage.ended_on, '')::date
+        )
+      )
+  )
   RETURNING id
 )
-SELECT count(*)::integer FROM upserted;
+SELECT ((SELECT count(*) FROM updated) + (SELECT count(*) FROM inserted))::integer;
 `
 
 const mergeSourceProfileFinancialYearPeriodsSQL = `
-WITH upserted AS (
+WITH resolved AS (
+  SELECT company.company_id, stage.*
+  FROM ariregister_source_financial_year_period_stage stage
+  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
+),
+updated AS (
+  UPDATE ariregister_source.financial_year_periods target
+  SET
+    raw_record_id = stage.raw_record_id::uuid,
+    period_start_month_day = NULLIF(stage.period_start_month_day, ''),
+    period_end_month_day = NULLIF(stage.period_end_month_day, ''),
+    started_on = NULLIF(stage.started_on, '')::date,
+    ended_on = NULLIF(stage.ended_on, '')::date,
+    raw_period_payload = stage.raw_period_payload::jsonb,
+    evidence = stage.evidence::jsonb,
+    metadata = target.metadata || stage.metadata::jsonb,
+    updated_at = now()
+  FROM resolved stage
+  WHERE target.company_id = stage.company_id
+    AND (
+      (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+      OR (
+        target.source_entry_id IS NULL
+        AND stage.source_entry_id IS NULL
+        AND target.period_start_month_day IS NOT DISTINCT FROM NULLIF(stage.period_start_month_day, '')
+        AND target.period_end_month_day IS NOT DISTINCT FROM NULLIF(stage.period_end_month_day, '')
+      )
+    )
+  RETURNING target.id
+),
+inserted AS (
   INSERT INTO ariregister_source.financial_year_periods (
     company_id,
     raw_record_id,
@@ -1458,26 +1689,69 @@ WITH upserted AS (
     stage.evidence::jsonb,
     stage.metadata::jsonb,
     now()
-  FROM ariregister_source_financial_year_period_stage stage
-  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
-  ON CONFLICT (company_id, source_entry_id)
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    period_start_month_day = EXCLUDED.period_start_month_day,
-    period_end_month_day = EXCLUDED.period_end_month_day,
-    started_on = EXCLUDED.started_on,
-    ended_on = EXCLUDED.ended_on,
-    raw_period_payload = EXCLUDED.raw_period_payload,
-    evidence = EXCLUDED.evidence,
-    metadata = ariregister_source.financial_year_periods.metadata || EXCLUDED.metadata,
-    updated_at = now()
+  FROM resolved stage
+  JOIN ariregister_source_company_id_stage company ON company.company_id = stage.company_id
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM ariregister_source.financial_year_periods target
+    WHERE target.company_id = stage.company_id
+      AND (
+        (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+        OR (
+          target.source_entry_id IS NULL
+          AND stage.source_entry_id IS NULL
+          AND target.period_start_month_day IS NOT DISTINCT FROM NULLIF(stage.period_start_month_day, '')
+          AND target.period_end_month_day IS NOT DISTINCT FROM NULLIF(stage.period_end_month_day, '')
+        )
+      )
+  )
   RETURNING id
 )
-SELECT count(*)::integer FROM upserted;
+SELECT ((SELECT count(*) FROM updated) + (SELECT count(*) FROM inserted))::integer;
 `
 
 const mergeSourceProfileAnnualReportsSQL = `
-WITH upserted AS (
+WITH resolved AS (
+  SELECT company.company_id, stage.*
+  FROM ariregister_source_annual_report_stage stage
+  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
+),
+updated AS (
+  UPDATE ariregister_source.annual_reports target
+  SET
+    raw_record_id = stage.raw_record_id::uuid,
+    fiscal_year = stage.fiscal_year,
+    period_start = NULLIF(stage.period_start, '')::date,
+    period_end = NULLIF(stage.period_end, '')::date,
+    employee_count = stage.employee_count,
+    report_address = NULLIF(stage.report_address, ''),
+    report_address_en = COALESCE(NULLIF(stage.report_address_en, ''), target.report_address_en),
+    activity_emtak_code = NULLIF(stage.activity_emtak_code, ''),
+    activity_label = NULLIF(stage.activity_label, ''),
+    activity_label_en = COALESCE(NULLIF(stage.activity_label_en, ''), target.activity_label_en),
+    activity_version = NULLIF(stage.activity_version, ''),
+    activity_version_label = NULLIF(stage.activity_version_label, ''),
+    activity_version_label_en = COALESCE(NULLIF(stage.activity_version_label_en, ''), target.activity_version_label_en),
+    activity_nace_code = NULLIF(stage.activity_nace_code, ''),
+    raw_report_payload = stage.raw_report_payload::jsonb,
+    evidence = stage.evidence::jsonb,
+    metadata = target.metadata || stage.metadata::jsonb,
+    updated_at = now()
+  FROM resolved stage
+  WHERE target.company_id = stage.company_id
+    AND (
+      (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+      OR (
+        target.source_entry_id IS NULL
+        AND stage.source_entry_id IS NULL
+        AND target.fiscal_year IS NOT DISTINCT FROM stage.fiscal_year
+        AND target.period_start IS NOT DISTINCT FROM NULLIF(stage.period_start, '')::date
+        AND target.period_end IS NOT DISTINCT FROM NULLIF(stage.period_end, '')::date
+      )
+    )
+  RETURNING target.id
+),
+inserted AS (
   INSERT INTO ariregister_source.annual_reports (
     company_id,
     raw_record_id,
@@ -1521,35 +1795,66 @@ WITH upserted AS (
     stage.evidence::jsonb,
     stage.metadata::jsonb,
     now()
-  FROM ariregister_source_annual_report_stage stage
-  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
-  ON CONFLICT (company_id, source_entry_id)
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    fiscal_year = EXCLUDED.fiscal_year,
-    period_start = EXCLUDED.period_start,
-    period_end = EXCLUDED.period_end,
-    employee_count = EXCLUDED.employee_count,
-    report_address = EXCLUDED.report_address,
-    report_address_en = COALESCE(EXCLUDED.report_address_en, ariregister_source.annual_reports.report_address_en),
-    activity_emtak_code = EXCLUDED.activity_emtak_code,
-    activity_label = EXCLUDED.activity_label,
-    activity_label_en = COALESCE(EXCLUDED.activity_label_en, ariregister_source.annual_reports.activity_label_en),
-    activity_version = EXCLUDED.activity_version,
-    activity_version_label = EXCLUDED.activity_version_label,
-    activity_version_label_en = COALESCE(EXCLUDED.activity_version_label_en, ariregister_source.annual_reports.activity_version_label_en),
-    activity_nace_code = EXCLUDED.activity_nace_code,
-    raw_report_payload = EXCLUDED.raw_report_payload,
-    evidence = EXCLUDED.evidence,
-    metadata = ariregister_source.annual_reports.metadata || EXCLUDED.metadata,
-    updated_at = now()
+  FROM resolved stage
+  JOIN ariregister_source_company_id_stage company ON company.company_id = stage.company_id
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM ariregister_source.annual_reports target
+    WHERE target.company_id = stage.company_id
+      AND (
+        (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+        OR (
+          target.source_entry_id IS NULL
+          AND stage.source_entry_id IS NULL
+          AND target.fiscal_year IS NOT DISTINCT FROM stage.fiscal_year
+          AND target.period_start IS NOT DISTINCT FROM NULLIF(stage.period_start, '')::date
+          AND target.period_end IS NOT DISTINCT FROM NULLIF(stage.period_end, '')::date
+        )
+      )
+  )
   RETURNING id
 )
-SELECT count(*)::integer FROM upserted;
+SELECT ((SELECT count(*) FROM updated) + (SELECT count(*) FROM inserted))::integer;
 `
 
 const mergeSourceProfileArticlesSQL = `
-WITH upserted AS (
+WITH resolved AS (
+  SELECT company.company_id, stage.*
+  FROM ariregister_source_article_stage stage
+  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
+),
+updated AS (
+  UPDATE ariregister_source.articles target
+  SET
+    raw_record_id = stage.raw_record_id::uuid,
+    confirmed_on = NULLIF(stage.confirmed_on, '')::date,
+    changed_on = NULLIF(stage.changed_on, '')::date,
+    explanation = NULLIF(stage.explanation, ''),
+    explanation_en = COALESCE(NULLIF(stage.explanation_en, ''), target.explanation_en),
+    contains_special_rights = stage.contains_special_rights,
+    started_on = NULLIF(stage.started_on, '')::date,
+    ended_on = NULLIF(stage.ended_on, '')::date,
+    raw_articles_payload = stage.raw_articles_payload::jsonb,
+    evidence = stage.evidence::jsonb,
+    metadata = target.metadata || stage.metadata::jsonb,
+    updated_at = now()
+  FROM resolved stage
+  WHERE target.company_id = stage.company_id
+    AND (
+      (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+      OR (
+        target.source_entry_id IS NULL
+        AND stage.source_entry_id IS NULL
+        AND target.confirmed_on IS NOT DISTINCT FROM NULLIF(stage.confirmed_on, '')::date
+        AND target.changed_on IS NOT DISTINCT FROM NULLIF(stage.changed_on, '')::date
+        AND target.explanation IS NOT DISTINCT FROM NULLIF(stage.explanation, '')
+        AND target.started_on IS NOT DISTINCT FROM NULLIF(stage.started_on, '')::date
+        AND target.ended_on IS NOT DISTINCT FROM NULLIF(stage.ended_on, '')::date
+      )
+    )
+  RETURNING target.id
+),
+inserted AS (
   INSERT INTO ariregister_source.articles (
     company_id,
     raw_record_id,
@@ -1581,29 +1886,72 @@ WITH upserted AS (
     stage.evidence::jsonb,
     stage.metadata::jsonb,
     now()
-  FROM ariregister_source_article_stage stage
-  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
-  ON CONFLICT (company_id, source_entry_id)
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    confirmed_on = EXCLUDED.confirmed_on,
-    changed_on = EXCLUDED.changed_on,
-    explanation = EXCLUDED.explanation,
-    explanation_en = COALESCE(EXCLUDED.explanation_en, ariregister_source.articles.explanation_en),
-    contains_special_rights = EXCLUDED.contains_special_rights,
-    started_on = EXCLUDED.started_on,
-    ended_on = EXCLUDED.ended_on,
-    raw_articles_payload = EXCLUDED.raw_articles_payload,
-    evidence = EXCLUDED.evidence,
-    metadata = ariregister_source.articles.metadata || EXCLUDED.metadata,
-    updated_at = now()
+  FROM resolved stage
+  JOIN ariregister_source_company_id_stage company ON company.company_id = stage.company_id
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM ariregister_source.articles target
+    WHERE target.company_id = stage.company_id
+      AND (
+        (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+        OR (
+          target.source_entry_id IS NULL
+          AND stage.source_entry_id IS NULL
+          AND target.confirmed_on IS NOT DISTINCT FROM NULLIF(stage.confirmed_on, '')::date
+          AND target.changed_on IS NOT DISTINCT FROM NULLIF(stage.changed_on, '')::date
+          AND target.explanation IS NOT DISTINCT FROM NULLIF(stage.explanation, '')
+          AND target.started_on IS NOT DISTINCT FROM NULLIF(stage.started_on, '')::date
+          AND target.ended_on IS NOT DISTINCT FROM NULLIF(stage.ended_on, '')::date
+        )
+      )
+  )
   RETURNING id
 )
-SELECT count(*)::integer FROM upserted;
+SELECT ((SELECT count(*) FROM updated) + (SELECT count(*) FROM inserted))::integer;
 `
 
 const mergeSourceProfileRegistryNotesSQL = `
-WITH upserted AS (
+WITH resolved AS (
+  SELECT company.company_id, stage.*
+  FROM ariregister_source_registry_note_stage stage
+  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
+),
+updated AS (
+  UPDATE ariregister_source.registry_notes target
+  SET
+    raw_record_id = stage.raw_record_id::uuid,
+    card_region = stage.card_region,
+    card_number = stage.card_number,
+    card_type = NULLIF(stage.card_type, ''),
+    entry_number = stage.entry_number,
+    column_number = stage.column_number,
+    note_type = NULLIF(stage.note_type, ''),
+    note_type_label = NULLIF(stage.note_type_label, ''),
+    note_type_label_en = COALESCE(NULLIF(stage.note_type_label_en, ''), target.note_type_label_en),
+    note_text = NULLIF(stage.note_text, ''),
+    note_text_en = COALESCE(NULLIF(stage.note_text_en, ''), target.note_text_en),
+    started_on = NULLIF(stage.started_on, '')::date,
+    ended_on = NULLIF(stage.ended_on, '')::date,
+    raw_note_payload = stage.raw_note_payload::jsonb,
+    evidence = stage.evidence::jsonb,
+    metadata = target.metadata || stage.metadata::jsonb,
+    updated_at = now()
+  FROM resolved stage
+  WHERE target.company_id = stage.company_id
+    AND (
+      (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+      OR (
+        target.source_entry_id IS NULL
+        AND stage.source_entry_id IS NULL
+        AND target.note_type IS NOT DISTINCT FROM NULLIF(stage.note_type, '')
+        AND target.note_text IS NOT DISTINCT FROM NULLIF(stage.note_text, '')
+        AND target.started_on IS NOT DISTINCT FROM NULLIF(stage.started_on, '')::date
+        AND target.ended_on IS NOT DISTINCT FROM NULLIF(stage.ended_on, '')::date
+      )
+    )
+  RETURNING target.id
+),
+inserted AS (
   INSERT INTO ariregister_source.registry_notes (
     company_id,
     raw_record_id,
@@ -1645,28 +1993,25 @@ WITH upserted AS (
     stage.evidence::jsonb,
     stage.metadata::jsonb,
     now()
-  FROM ariregister_source_registry_note_stage stage
-  JOIN ariregister_source_company_id_stage company ON company.registry_code = stage.registry_code
-  ON CONFLICT (company_id, source_entry_id)
-  DO UPDATE SET
-    raw_record_id = EXCLUDED.raw_record_id,
-    card_region = EXCLUDED.card_region,
-    card_number = EXCLUDED.card_number,
-    card_type = EXCLUDED.card_type,
-    entry_number = EXCLUDED.entry_number,
-    column_number = EXCLUDED.column_number,
-    note_type = EXCLUDED.note_type,
-    note_type_label = EXCLUDED.note_type_label,
-    note_type_label_en = COALESCE(EXCLUDED.note_type_label_en, ariregister_source.registry_notes.note_type_label_en),
-    note_text = EXCLUDED.note_text,
-    note_text_en = COALESCE(EXCLUDED.note_text_en, ariregister_source.registry_notes.note_text_en),
-    started_on = EXCLUDED.started_on,
-    ended_on = EXCLUDED.ended_on,
-    raw_note_payload = EXCLUDED.raw_note_payload,
-    evidence = EXCLUDED.evidence,
-    metadata = ariregister_source.registry_notes.metadata || EXCLUDED.metadata,
-    updated_at = now()
+  FROM resolved stage
+  JOIN ariregister_source_company_id_stage company ON company.company_id = stage.company_id
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM ariregister_source.registry_notes target
+    WHERE target.company_id = stage.company_id
+      AND (
+        (target.source_entry_id IS NOT NULL AND target.source_entry_id = stage.source_entry_id)
+        OR (
+          target.source_entry_id IS NULL
+          AND stage.source_entry_id IS NULL
+          AND target.note_type IS NOT DISTINCT FROM NULLIF(stage.note_type, '')
+          AND target.note_text IS NOT DISTINCT FROM NULLIF(stage.note_text, '')
+          AND target.started_on IS NOT DISTINCT FROM NULLIF(stage.started_on, '')::date
+          AND target.ended_on IS NOT DISTINCT FROM NULLIF(stage.ended_on, '')::date
+        )
+      )
+  )
   RETURNING id
 )
-SELECT count(*)::integer FROM upserted;
+SELECT ((SELECT count(*) FROM updated) + (SELECT count(*) FROM inserted))::integer;
 `
