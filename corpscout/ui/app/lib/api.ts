@@ -38,6 +38,14 @@ import type {
 
 const BASE = "/api/v1";
 
+type StartAriregisterSourceProfileRequest = {
+  ids?: string[];
+  filters?: Record<string, string>;
+  limit?: number;
+  batch_size?: number;
+  trigger?: string;
+};
+
 class ApiError extends Error {
   status: number;
 
@@ -501,6 +509,11 @@ export const api = {
     } = {},
   ) =>
     post<StartWorkflowResponse>("/workflows/ariregister/bulk-raw-ingest", body),
+
+  loadAriregisterSourceProfiles: (
+    body: StartAriregisterSourceProfileRequest = {},
+  ) =>
+    post<StartWorkflowResponse>("/workflows/ariregister/source-profile", body),
 
   loadCVRRawRecords: (
     body: {

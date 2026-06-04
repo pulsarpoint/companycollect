@@ -413,6 +413,67 @@ func TestStartAriregisterBulkRawIngestWorkflowStartsTemporalWorkflowAndAllowsAll
 	require.Equal(t, "manual", input.Trigger)
 }
 
+func TestStartAriregisterSourceProfileWorkflowStartsTemporalWorkflow(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/ariregister/source-profile", bytes.NewBufferString(`{
+		"limit": 1000,
+		"batch_size": 500,
+		"trigger": "manual"
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"NormalizeAriregisterSourceProfilesWithCopy"`)
+	require.Contains(t, w.Body.String(), `"task_queue":"ariregister-source-profile"`)
+	require.Contains(t, tc.options.ID, "ariregister-source-profile-")
+	require.Equal(t, "ariregister-source-profile", tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(ariregisterworkflow.NormalizeAriregisterSourceProfilesWithCopy).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(ariregisterworkflow.NormalizeAriregisterSourceProfilesInput)
+	require.Equal(t, 1000, input.Limit)
+	require.Equal(t, 500, input.BatchSize)
+	require.Equal(t, "manual", input.Trigger)
+}
+
+func TestStartAriregisterSourceProfileWorkflowRejectsNegativeLimits(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "limit",
+			body: `{"limit":-1}`,
+			want: `"error":"limit cannot be negative"`,
+		},
+		{
+			name: "batch size",
+			body: `{"batch_size":-1}`,
+			want: `"error":"batch_size cannot be negative"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := &temporalExecuteRecorder{}
+			r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/ariregister/source-profile", bytes.NewBufferString(tt.body))
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			require.Contains(t, w.Body.String(), tt.want)
+			require.Nil(t, tc.workflow)
+		})
+	}
+}
+
 func TestStartAriregisterBulkRawIngestWorkflowRejectsInvalidSourceURL(t *testing.T) {
 	tc := &temporalExecuteRecorder{}
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))

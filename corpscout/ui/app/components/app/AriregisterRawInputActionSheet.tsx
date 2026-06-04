@@ -7,8 +7,9 @@ import {
   SheetTitle,
 } from "~/components/ui/sheet";
 import { AriregisterBulkLoadActionForm } from "~/components/app/AriregisterBulkLoadActionForm";
+import { AriregisterSourceProfileActionForm } from "~/components/app/AriregisterSourceProfileActionForm";
 
-type AriregisterRawInputAction = "" | "load_bulk";
+type AriregisterRawInputAction = "" | "load_bulk" | "build_source_profile";
 
 interface Props {
   open: boolean;
@@ -25,6 +26,11 @@ const AVAILABLE_ACTIONS: Array<{
     key: "load_bulk",
     label: "Load general data",
     description: "Load raw Ariregister entries from the general-data JSON file.",
+  },
+  {
+    key: "build_source_profile",
+    label: "Build source profile",
+    description: "Parse current raw records into ariregister_source tables.",
   },
 ];
 
@@ -77,6 +83,13 @@ export function AriregisterRawInputActionSheet({
 
           {selectedAction === "load_bulk" && (
             <AriregisterBulkLoadActionForm
+              onStarted={onStarted}
+              onClose={() => onOpenChange(false)}
+            />
+          )}
+
+          {selectedAction === "build_source_profile" && (
+            <AriregisterSourceProfileActionForm
               onStarted={onStarted}
               onClose={() => onOpenChange(false)}
             />

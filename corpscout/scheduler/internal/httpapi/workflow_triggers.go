@@ -35,6 +35,7 @@ const maxFXWorkflowRunsLimit = 50
 type startWorkflowResponse struct {
 	Status        string `json:"status"`
 	Workflow      string `json:"workflow"`
+	TaskQueue     string `json:"task_queue,omitempty"`
 	WorkflowID    string `json:"workflow_id"`
 	WorkflowRunID string `json:"workflow_run_id"`
 }
@@ -121,6 +122,14 @@ type startAriregisterBulkRawIngestWorkflowRequest struct {
 	Limit     int    `json:"limit,omitempty"`
 	BatchSize int    `json:"batch_size,omitempty"`
 	Trigger   string `json:"trigger,omitempty"`
+}
+
+type startAriregisterSourceProfileWorkflowRequest struct {
+	IDs       []string          `json:"ids,omitempty"`
+	Filters   map[string]string `json:"filters,omitempty"`
+	Limit     int               `json:"limit,omitempty"`
+	BatchSize int               `json:"batch_size,omitempty"`
+	Trigger   string            `json:"trigger,omitempty"`
 }
 
 type startCVRRawIngestWorkflowRequest struct {
@@ -656,6 +665,61 @@ func (h *Handlers) handleStartAriregisterBulkRawIngestWorkflow(w http.ResponseWr
 	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
 		Status:        "started",
 		Workflow:      ariregisterworkflow.LoadAriregisterBulkRawRecordsWorkflowName,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
+func (h *Handlers) handleStartAriregisterSourceProfileWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := decodeStartAriregisterSourceProfileWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := ariregisterworkflow.NormalizeAriregisterSourceProfilesInput{
+		IDs:       req.IDs,
+		Filters:   req.Filters,
+		Limit:     req.Limit,
+		BatchSize: req.BatchSize,
+		Trigger:   req.Trigger,
+	}
+	workflowID := newWorkflowID("ariregister-source-profile")
+	slog.Debug("starting ariregister source profile workflow",
+		"workflow_id", workflowID,
+		"task_queue", ariregisterworkflow.NormalizeAriregisterSourceProfilesTaskQueue,
+		"workflow", ariregisterworkflow.NormalizeAriregisterSourceProfilesWithCopyWorkflowName,
+		"ids_count", len(req.IDs),
+		"filters_count", len(req.Filters),
+		"limit", req.Limit,
+		"batch_size", req.BatchSize,
+		"trigger", req.Trigger,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: ariregisterworkflow.NormalizeAriregisterSourceProfilesTaskQueue,
+		},
+		ariregisterworkflow.NormalizeAriregisterSourceProfilesWithCopy,
+		input,
+	)
+	if err != nil {
+		slog.Error("start ariregister source profile workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("ariregister source profile workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      ariregisterworkflow.NormalizeAriregisterSourceProfilesWithCopyWorkflowName,
+		TaskQueue:     ariregisterworkflow.NormalizeAriregisterSourceProfilesTaskQueue,
 		WorkflowID:    workflowID,
 		WorkflowRunID: run.GetRunID(),
 	})
@@ -1273,6 +1337,23 @@ func decodeStartAriregisterBulkRawIngestWorkflowRequest(r *http.Request) (startA
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			return startAriregisterBulkRawIngestWorkflowRequest{}, errors.New("source_url must be http or https")
 		}
+	}
+	return req, nil
+}
+
+func decodeStartAriregisterSourceProfileWorkflowRequest(r *http.Request) (startAriregisterSourceProfileWorkflowRequest, error) {
+	var req startAriregisterSourceProfileWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startAriregisterSourceProfileWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	if req.Limit < 0 {
+		return startAriregisterSourceProfileWorkflowRequest{}, errors.New("limit cannot be negative")
+	}
+	if req.BatchSize < 0 {
+		return startAriregisterSourceProfileWorkflowRequest{}, errors.New("batch_size cannot be negative")
 	}
 	return req, nil
 }
