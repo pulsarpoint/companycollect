@@ -128,7 +128,7 @@ func (q *Queries) GetAriregisterSourceCompanyDetail(ctx context.Context, company
 const getAriregisterSourceCompanyExplorerRefreshSummary = `-- name: GetAriregisterSourceCompanyExplorerRefreshSummary :one
 SELECT
   count(*)::bigint AS source_entries,
-  max(updated_at)::text AS latest_source_updated_at
+  COALESCE(max(updated_at)::text, '')::text AS latest_source_updated_at
 FROM ariregister_source.mv_company_explorer
 `
 
