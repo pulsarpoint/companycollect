@@ -206,6 +206,11 @@ picked AS (
   FROM brreg_source.company_process_status status_row
   JOIN brreg_source.companies company ON company.id = status_row.company_id
   WHERE company.row_status = 'active'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM brreg_source.financial_statements financial_statement
+      WHERE financial_statement.company_id = status_row.company_id
+    )
     AND (
       status_row.financial_status IN ('pending', 'dirty', 'failed_retryable')
       OR (
@@ -237,6 +242,7 @@ claimed AS (
 )
 SELECT
   claimed.company_id, claimed.translation_status, claimed.translation_attempt_count, claimed.translation_lease_by, claimed.translation_lease_until, claimed.translation_last_started_at, claimed.translation_last_finished_at, claimed.translation_error, claimed.translation_error_category, claimed.translation_error_code, claimed.translation_retry_strategy, claimed.translation_metadata, claimed.currency_status, claimed.currency_attempt_count, claimed.currency_lease_by, claimed.currency_lease_until, claimed.currency_last_started_at, claimed.currency_last_finished_at, claimed.currency_error, claimed.currency_error_category, claimed.currency_error_code, claimed.currency_retry_strategy, claimed.currency_metadata, claimed.financial_status, claimed.financial_attempt_count, claimed.financial_lease_by, claimed.financial_lease_until, claimed.financial_last_started_at, claimed.financial_last_finished_at, claimed.financial_error, claimed.financial_error_category, claimed.financial_error_code, claimed.financial_retry_strategy, claimed.financial_metadata, claimed.created_at, claimed.updated_at,
+  company.raw_record_id,
   company.organization_number,
   company.organization_name
 FROM claimed
@@ -289,6 +295,7 @@ type ClaimBrregCompanyFinancialBatchRow struct {
 	FinancialMetadata         json.RawMessage    `json:"financial_metadata"`
 	CreatedAt                 time.Time          `json:"created_at"`
 	UpdatedAt                 time.Time          `json:"updated_at"`
+	RawRecordID               uuid.UUID          `json:"raw_record_id"`
 	OrganizationNumber        string             `json:"organization_number"`
 	OrganizationName          string             `json:"organization_name"`
 }
@@ -345,6 +352,7 @@ func (q *Queries) ClaimBrregCompanyFinancialBatch(ctx context.Context, arg Claim
 			&i.FinancialMetadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RawRecordID,
 			&i.OrganizationNumber,
 			&i.OrganizationName,
 		); err != nil {
@@ -540,6 +548,36 @@ func (q *Queries) ClaimBrregCompanyTranslationBatch(ctx context.Context, arg Cla
 		return nil, err
 	}
 	return items, nil
+}
+
+const ensureBrregCompanyFinancialProcessStatuses = `-- name: EnsureBrregCompanyFinancialProcessStatuses :one
+WITH inserted AS (
+  INSERT INTO brreg_source.company_process_status (company_id)
+  SELECT company.id
+  FROM brreg_source.companies company
+  LEFT JOIN brreg_source.company_process_status existing
+    ON existing.company_id = company.id
+  WHERE company.row_status = 'active'
+    AND existing.company_id IS NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM brreg_source.financial_statements financial_statement
+      WHERE financial_statement.company_id = company.id
+    )
+  ORDER BY company.updated_at DESC, company.id
+  LIMIT NULLIF(GREATEST($1::integer, 0), 0)
+  ON CONFLICT (company_id) DO NOTHING
+  RETURNING company_id
+)
+SELECT count(*)::integer AS rows_inserted
+FROM inserted
+`
+
+func (q *Queries) EnsureBrregCompanyFinancialProcessStatuses(ctx context.Context, limit int32) (int32, error) {
+	row := q.db.QueryRow(ctx, ensureBrregCompanyFinancialProcessStatuses, limit)
+	var rows_inserted int32
+	err := row.Scan(&rows_inserted)
+	return rows_inserted, err
 }
 
 const ensureBrregCompanyProcessStatuses = `-- name: EnsureBrregCompanyProcessStatuses :one

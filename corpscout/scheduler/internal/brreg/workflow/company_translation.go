@@ -51,22 +51,26 @@ type ApplyBrregTranslationWorksetInput = actions.ApplyBrregTranslationWorksetInp
 type ApplyBrregTranslationWorksetResult = actions.ApplyBrregTranslationWorksetResult
 
 type TranslateBrregSourceCompaniesInput struct {
-	AllRecords           bool   `json:"all_records,omitempty"`
-	BatchSize            int    `json:"batch_size,omitempty"`
-	ClaimMode            string `json:"claim_mode,omitempty"`
-	MaxRequestChars      int    `json:"max_request_chars,omitempty"`
-	MaxTerms             int    `json:"max_terms,omitempty"`
-	MaxCompaniesPerBatch int    `json:"max_companies_per_batch,omitempty"`
-	MaxBatches           int    `json:"max_batches,omitempty"`
-	MaxParallelTasks     int    `json:"max_parallel_tasks,omitempty"`
-	LeaseSeconds         int    `json:"lease_seconds,omitempty"`
-	MaxAttempts          int    `json:"max_attempts,omitempty"`
-	Provider             string `json:"provider,omitempty"`
-	Model                string `json:"model,omitempty"`
-	PromptVersion        string `json:"prompt_version,omitempty"`
-	Trigger              string `json:"trigger,omitempty"`
-	WorksetPath          string `json:"workset_path,omitempty"`
-	WorksetPrepared      bool   `json:"workset_prepared,omitempty"`
+	AllRecords           bool              `json:"all_records,omitempty"`
+	IDs                  []string          `json:"ids,omitempty"`
+	Filters              map[string]string `json:"filters,omitempty"`
+	Limit                int               `json:"limit,omitempty"`
+	BatchSize            int               `json:"batch_size,omitempty"`
+	ClaimMode            string            `json:"claim_mode,omitempty"`
+	MaxRequestChars      int               `json:"max_request_chars,omitempty"`
+	MaxTerms             int               `json:"max_terms,omitempty"`
+	MaxCompaniesPerBatch int               `json:"max_companies_per_batch,omitempty"`
+	MaxBatches           int               `json:"max_batches,omitempty"`
+	MaxParallelTasks     int               `json:"max_parallel_tasks,omitempty"`
+	LeaseSeconds         int               `json:"lease_seconds,omitempty"`
+	MaxAttempts          int               `json:"max_attempts,omitempty"`
+	Provider             string            `json:"provider,omitempty"`
+	Model                string            `json:"model,omitempty"`
+	PromptVersion        string            `json:"prompt_version,omitempty"`
+	Trigger              string            `json:"trigger,omitempty"`
+	WorksetPath          string            `json:"workset_path,omitempty"`
+	WorksetPrepared      bool              `json:"workset_prepared,omitempty"`
+	WorksetCompanies     int32             `json:"workset_companies,omitempty"`
 
 	CarriedStatusRowsInserted int32 `json:"carried_status_rows_inserted,omitempty"`
 	CarriedCompaniesClaimed   int32 `json:"carried_companies_claimed,omitempty"`
@@ -98,13 +102,19 @@ type TranslateBrregSourceCompaniesResult struct {
 	WorksetPath         string `json:"workset_path,omitempty"`
 }
 
+type inFlightTranslationWorksetBatch struct {
+	Ordinal int32
+	Claimed ClaimBrregTranslationWorksetBatchResult
+	Future  temporalworkflow.Future
+}
+
 func TranslateBrregSourceCompanies(
 	ctx temporalworkflow.Context,
 	input TranslateBrregSourceCompaniesInput,
 ) (TranslateBrregSourceCompaniesResult, error) {
 	input = normalizeTranslateBrregSourceCompaniesInput(input)
 	ctx = temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
-		StartToCloseTimeout: 5 * time.Minute,
+		StartToCloseTimeout: time.Duration(input.LeaseSeconds) * time.Second,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    5 * time.Second,
 			BackoffCoefficient: 2,
@@ -117,6 +127,9 @@ func TranslateBrregSourceCompanies(
 	logger.Debug("brreg company translation workflow started",
 		"temporal_workflow_id", workflowInfo.WorkflowExecution.ID,
 		"all_records", input.AllRecords,
+		"ids_count", len(input.IDs),
+		"filters_count", len(input.Filters),
+		"limit", input.Limit,
 		"batch_size", input.BatchSize,
 		"claim_mode", input.ClaimMode,
 		"max_request_chars", input.MaxRequestChars,
@@ -155,12 +168,16 @@ func TranslateBrregSourceCompanies(
 	if !input.WorksetPrepared {
 		companyLimit := int32(input.BatchSize)
 		if input.AllRecords {
-			companyLimit = 0
+			companyLimit = int32(input.MaxCompaniesPerBatch)
+		} else if input.Limit > 0 {
+			companyLimit = int32(input.Limit)
 		}
 		var built BuildBrregTranslationWorksetResult
 		if err := temporalworkflow.ExecuteActivity(ctx, buildBrregTranslationWorksetActivity, BuildBrregTranslationWorksetInput{
 			Path:          result.WorksetPath,
 			PromptVersion: input.PromptVersion,
+			IDs:           input.IDs,
+			Filters:       input.Filters,
 			CompanyLimit:  companyLimit,
 		}).Get(ctx, &built); err != nil {
 			return result, errors.Wrap(err, "build brreg translation workset")
@@ -172,42 +189,33 @@ func TranslateBrregSourceCompanies(
 			return result, nil
 		}
 		input.WorksetPrepared = true
+		input.WorksetCompanies = built.CompaniesExported
 		input.CarriedFieldsSeen = result.FieldsSeen
 		input.CarriedCompaniesClaimed = result.CompaniesClaimed
 	}
 
-	for {
-		var claimed ClaimBrregTranslationWorksetBatchResult
-		if err := temporalworkflow.ExecuteActivity(ctx, claimBrregTranslationWorksetBatchActivity, ClaimBrregTranslationWorksetBatchInput{
-			Path:            result.WorksetPath,
-			MaxRequestChars: int32(input.MaxRequestChars),
-			MaxTerms:        int32(input.MaxTerms),
-			MaxAttempts:     int32(input.MaxAttempts),
-		}).Get(ctx, &claimed); err != nil {
-			return result, errors.Wrap(err, "claim brreg translation workset batch")
-		}
-		if claimed.Status == "drained" || len(claimed.Terms) == 0 {
-			break
-		}
-		result.BatchesProcessed++
-		result.TermsClaimed += int32(len(claimed.Terms))
-		result.RequestCharsClaimed += claimed.EstimatedChars
-
+	current, err := claimAndStartTranslationWorksetBatch(ctx, input, result.WorksetPath, &result)
+	if err != nil {
+		return result, err
+	}
+	for current != nil {
 		var translated TranslateBrregTranslationWorksetBatchResult
-		if err := temporalworkflow.ExecuteActivity(ctx, translateBrregTranslationWorksetBatchActivity, TranslateBrregTranslationWorksetBatchInput{
-			BatchID:       claimed.BatchID,
-			Terms:         claimed.Terms,
-			Provider:      input.Provider,
-			Model:         input.Model,
-			PromptVersion: input.PromptVersion,
-		}).Get(ctx, &translated); err != nil {
+		if err := current.Future.Get(ctx, &translated); err != nil {
 			return result, errors.Wrap(err, "translate brreg translation workset batch")
+		}
+
+		var next *inFlightTranslationWorksetBatch
+		if !shouldContinueAsNewAfterBatch(input, current.Ordinal) {
+			next, err = claimAndStartTranslationWorksetBatch(ctx, input, result.WorksetPath, &result)
+			if err != nil {
+				return result, err
+			}
 		}
 
 		var saved SaveBrregTranslationWorksetBatchResult
 		if err := temporalworkflow.ExecuteActivity(ctx, saveBrregTranslationWorksetBatchActivity, SaveBrregTranslationWorksetBatchInput{
 			Path:          result.WorksetPath,
-			BatchID:       claimed.BatchID,
+			BatchID:       current.Claimed.BatchID,
 			Provider:      input.Provider,
 			Model:         input.Model,
 			PromptVersion: input.PromptVersion,
@@ -218,7 +226,7 @@ func TranslateBrregSourceCompanies(
 		result.TermsSucceeded += saved.TermsSucceeded
 		result.TermsFailed += saved.TermsFailed
 
-		if input.MaxBatches > 0 && result.BatchesProcessed > 0 && int(result.BatchesProcessed)%input.MaxBatches == 0 {
+		if shouldContinueAsNewAfterBatch(input, current.Ordinal) {
 			input.CarriedStatusRowsInserted = result.StatusRowsInserted
 			input.CarriedCompaniesClaimed = result.CompaniesClaimed
 			input.CarriedFieldsSeen = result.FieldsSeen
@@ -230,6 +238,7 @@ func TranslateBrregSourceCompanies(
 			input.CarriedBatchesProcessed = result.BatchesProcessed
 			return result, temporalworkflow.NewContinueAsNewError(ctx, TranslateBrregSourceCompanies, input)
 		}
+		current = next
 	}
 
 	var applied ApplyBrregTranslationWorksetResult
@@ -244,6 +253,31 @@ func TranslateBrregSourceCompanies(
 	result.RemainingFields = result.FieldsSeen - result.FieldsApplied
 	if result.RemainingFields < 0 {
 		result.RemainingFields = 0
+	}
+	if input.AllRecords &&
+		applied.BindingsApplied > 0 &&
+		input.WorksetCompanies >= int32(input.MaxCompaniesPerBatch) {
+		input.WorksetPrepared = false
+		input.WorksetPath = ""
+		input.WorksetCompanies = 0
+		input.CarriedStatusRowsInserted = result.StatusRowsInserted
+		input.CarriedCompaniesClaimed = result.CompaniesClaimed
+		input.CarriedFieldsSeen = result.FieldsSeen
+		input.CarriedFieldsApplied = result.FieldsApplied
+		input.CarriedRequestChars = result.RequestCharsClaimed
+		input.CarriedTermsClaimed = result.TermsClaimed
+		input.CarriedTermsSucceeded = result.TermsSucceeded
+		input.CarriedTermsFailed = result.TermsFailed
+		input.CarriedBatchesProcessed = result.BatchesProcessed
+		logger.Debug("brreg company translation workflow continuing for next all-records chunk",
+			"companies_claimed", result.CompaniesClaimed,
+			"fields_seen", result.FieldsSeen,
+			"fields_applied", result.FieldsApplied,
+			"terms_succeeded", result.TermsSucceeded,
+			"terms_failed", result.TermsFailed,
+			"max_companies_per_batch", input.MaxCompaniesPerBatch,
+		)
+		return result, temporalworkflow.NewContinueAsNewError(ctx, TranslateBrregSourceCompanies, input)
 	}
 	if result.TermsClaimed == 0 && result.TermsSucceeded == 0 && result.TermsFailed == 0 {
 		result.Status = "succeeded"
@@ -261,6 +295,44 @@ func TranslateBrregSourceCompanies(
 	result.Status = "succeeded"
 	result.CompaniesSucceeded = result.CompaniesClaimed
 	return result, nil
+}
+
+func claimAndStartTranslationWorksetBatch(
+	ctx temporalworkflow.Context,
+	input TranslateBrregSourceCompaniesInput,
+	worksetPath string,
+	result *TranslateBrregSourceCompaniesResult,
+) (*inFlightTranslationWorksetBatch, error) {
+	var claimed ClaimBrregTranslationWorksetBatchResult
+	if err := temporalworkflow.ExecuteActivity(ctx, claimBrregTranslationWorksetBatchActivity, ClaimBrregTranslationWorksetBatchInput{
+		Path:            worksetPath,
+		MaxRequestChars: int32(input.MaxRequestChars),
+		MaxTerms:        int32(input.MaxTerms),
+		MaxAttempts:     int32(input.MaxAttempts),
+	}).Get(ctx, &claimed); err != nil {
+		return nil, errors.Wrap(err, "claim brreg translation workset batch")
+	}
+	if claimed.Status == "drained" || len(claimed.Terms) == 0 {
+		return nil, nil
+	}
+	result.BatchesProcessed++
+	result.TermsClaimed += int32(len(claimed.Terms))
+	result.RequestCharsClaimed += claimed.EstimatedChars
+	return &inFlightTranslationWorksetBatch{
+		Ordinal: result.BatchesProcessed,
+		Claimed: claimed,
+		Future: temporalworkflow.ExecuteActivity(ctx, translateBrregTranslationWorksetBatchActivity, TranslateBrregTranslationWorksetBatchInput{
+			BatchID:       claimed.BatchID,
+			Terms:         claimed.Terms,
+			Provider:      input.Provider,
+			Model:         input.Model,
+			PromptVersion: input.PromptVersion,
+		}),
+	}, nil
+}
+
+func shouldContinueAsNewAfterBatch(input TranslateBrregSourceCompaniesInput, batchOrdinal int32) bool {
+	return input.MaxBatches > 0 && batchOrdinal > 0 && int(batchOrdinal)%input.MaxBatches == 0
 }
 
 func normalizeTranslateBrregSourceCompaniesInput(input TranslateBrregSourceCompaniesInput) TranslateBrregSourceCompaniesInput {
@@ -307,7 +379,38 @@ func normalizeTranslateBrregSourceCompaniesInput(input TranslateBrregSourceCompa
 		input.Trigger = defaultCompanyTranslationTrigger
 	}
 	input.WorksetPath = strings.TrimSpace(input.WorksetPath)
+	input.IDs = compactTextValues(input.IDs)
+	input.Filters = compactTextFilters(input.Filters)
 	return input
+}
+
+func compactTextValues(values []string) []string {
+	compact := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			compact = append(compact, value)
+		}
+	}
+	return compact
+}
+
+func compactTextFilters(filters map[string]string) map[string]string {
+	if len(filters) == 0 {
+		return nil
+	}
+	compact := make(map[string]string, len(filters))
+	for key, value := range filters {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			compact[key] = value
+		}
+	}
+	if len(compact) == 0 {
+		return nil
+	}
+	return compact
 }
 
 func defaultBrregTranslationWorksetPath(workflowID string) string {
@@ -316,5 +419,5 @@ func defaultBrregTranslationWorksetPath(workflowID string) string {
 		workflowID = "brreg-company-translation"
 	}
 	workflowID = strings.NewReplacer("/", "_", "\\", "_", ":", "_").Replace(workflowID)
-	return filepath.Join("/tmp/corpscout/brreg-translation", workflowID+".sqlite")
+	return filepath.Join("/var/lib/corpscout/worksets/brreg-translation", workflowID+".sqlite")
 }

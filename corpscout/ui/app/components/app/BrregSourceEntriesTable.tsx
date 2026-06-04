@@ -38,6 +38,7 @@ type SourceEntryColumnKey =
   | "website"
   | "employees"
   | "revenue"
+  | "financial"
   | "related_data"
   | "translation"
   | "discovery"
@@ -66,6 +67,11 @@ const FILTER_OPTIONS = {
     ["missing", "Missing translations"],
     ["complete", "Complete"],
   ],
+  financial_status: [
+    ["success", "Success"],
+    ["skipped", "Skipped"],
+    ["unknown", "Unknown"],
+  ],
 } as const;
 
 const SOURCE_ENTRY_COLUMNS: SourceEntryColumn[] = [
@@ -75,6 +81,7 @@ const SOURCE_ENTRY_COLUMNS: SourceEntryColumn[] = [
   { key: "website", label: "Website", defaultVisible: true },
   { key: "employees", label: "Employees", sort: "employees" },
   { key: "revenue", label: "Revenue", sort: "revenue" },
+  { key: "financial", label: "Financial", defaultVisible: true },
   { key: "related_data", label: "Related Data", defaultVisible: true },
   { key: "translation", label: "Translation", sort: "translation_missing", defaultVisible: true },
   { key: "discovery", label: "Discovery" },
@@ -195,6 +202,17 @@ function TranslationBadge({ missingCount }: { missingCount: number }) {
     return <Badge variant="outline">{missingCount.toLocaleString()} missing</Badge>;
   }
   return <Badge variant="secondary">Complete</Badge>;
+}
+
+function FinancialStatusBadge({ status }: { status: BrregSourceEntryListItem["financial_status"] }) {
+  switch (status) {
+    case "success":
+      return <Badge variant="secondary">Success</Badge>;
+    case "skipped":
+      return <Badge variant="outline">Skipped</Badge>;
+    default:
+      return <Badge className="text-muted-foreground" variant="outline">Unknown</Badge>;
+  }
 }
 
 function ActionTaskBadges({
@@ -387,6 +405,17 @@ function SourceEntryCell({
           )}
         </div>
       );
+    case "financial":
+      return (
+        <div className="flex min-w-32 flex-col gap-1">
+          <FinancialStatusBadge status={item.financial_status} />
+          {item.latest_financial_year && (
+            <span className="text-xs text-muted-foreground">
+              FY {item.latest_financial_year}
+            </span>
+          )}
+        </div>
+      );
     case "related_data":
       return <EntryCounts item={item} />;
     case "translation":
@@ -419,6 +448,7 @@ export function BrregSourceEntriesTable() {
   const query = searchParams.get("source_q") ?? "";
   const lifecycleStatus = searchParams.get("source_lifecycle_status") ?? "";
   const translationStatus = searchParams.get("source_translation_status") ?? "";
+  const financialStatus = searchParams.get("source_financial_status") ?? "";
   const websiteStatus = searchParams.get("source_website_status") ?? "";
   const sort = searchParams.get("source_sort") ?? "";
   const sortDirection: SortDirection =
@@ -429,10 +459,12 @@ export function BrregSourceEntriesTable() {
     if (query) filters.q = query;
     if (lifecycleStatus) filters.lifecycle_state = lifecycleStatus;
     if (translationStatus) filters.translation_status = translationStatus;
+    if (financialStatus) filters.financial_status = financialStatus;
     if (websiteStatus) filters.website_status = websiteStatus;
     return filters;
-  }, [lifecycleStatus, query, translationStatus, websiteStatus]);
+  }, [financialStatus, lifecycleStatus, query, translationStatus, websiteStatus]);
   const tableFilterKey = JSON.stringify({
+    financialStatus,
     lifecycleStatus,
     query,
     translationStatus,
@@ -457,6 +489,7 @@ export function BrregSourceEntriesTable() {
         q: query || undefined,
         lifecycle_status: lifecycleStatus || undefined,
         translation_status: translationStatus || undefined,
+        financial_status: financialStatus || undefined,
         website_status: websiteStatus || undefined,
         sort: sort || undefined,
         dir: sort ? sortDirection : undefined,
@@ -466,7 +499,7 @@ export function BrregSourceEntriesTable() {
     } finally {
       setLoading(false);
     }
-  }, [lifecycleStatus, page, query, sort, sortDirection, translationStatus, websiteStatus]);
+  }, [financialStatus, lifecycleStatus, page, query, sort, sortDirection, translationStatus, websiteStatus]);
 
   useEffect(() => {
     load();
@@ -592,6 +625,12 @@ export function BrregSourceEntriesTable() {
           value={translationStatus}
           options={FILTER_OPTIONS.translation_status}
           onChange={(value) => setParam("source_translation_status", value)}
+        />
+        <FilterSelect
+          label="Financial"
+          value={financialStatus}
+          options={FILTER_OPTIONS.financial_status}
+          onChange={(value) => setParam("source_financial_status", value)}
         />
         <FilterSelect
           label="Website"

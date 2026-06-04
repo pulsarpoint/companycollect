@@ -11,9 +11,10 @@ import {
 } from "~/components/app/BrregTranslationActionForm";
 import { BrregSourceCapitalFXActionForm } from "~/components/app/BrregSourceCapitalFXActionForm";
 import { BrregSourceExplorerRefreshActionForm } from "~/components/app/BrregSourceExplorerRefreshActionForm";
+import { BrregSourceFinancialActionForm } from "~/components/app/BrregSourceFinancialActionForm";
 import type { BrregActionScope } from "~/components/app/BrregActionScope";
 
-type BrregSourceEntryAction = "" | "translation" | "capital_fx" | "refresh_explorer" | "domain_search";
+type BrregSourceEntryAction = "" | "translation" | "capital_fx" | "financial" | "refresh_explorer" | "domain_search";
 
 interface Props {
   open: boolean;
@@ -40,6 +41,11 @@ const AVAILABLE_ACTIONS: Array<{
     key: "capital_fx",
     label: "Convert capital to USD",
     description: "Convert BRREG capital amounts to USD cents using locally synced exchange rates.",
+  },
+  {
+    key: "financial",
+    label: "Fetch financial records",
+    description: "Fetch official BRREG annual-account key figures for companies without financial statements.",
   },
   {
     key: "refresh_explorer",
@@ -124,6 +130,13 @@ export function BrregSourceEntryActionSheet({
               totalCount={totalCount}
               filters={filters}
               initialScope={initialScope}
+              onStarted={onStarted}
+              onClose={() => onOpenChange(false)}
+            />
+          )}
+
+          {selectedAction === "financial" && (
+            <BrregSourceFinancialActionForm
               onStarted={onStarted}
               onClose={() => onOpenChange(false)}
             />

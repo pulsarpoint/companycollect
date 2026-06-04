@@ -90,6 +90,38 @@ func TestNormalizeBrregSourceProfilesProcessesAllRecordsInChunks(t *testing.T) {
 	require.EqualValues(t, 2, result.ChunksProcessed)
 }
 
+func TestNormalizeBrregSourceProfilesWithCopyRunsCopyActivity(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.RegisterWorkflow(NormalizeBrregSourceProfilesWithCopy)
+	var activityInput NormalizeBrregSourceProfilesActivityInput
+	env.RegisterActivityWithOptions(func(input NormalizeBrregSourceProfilesActivityInput) (NormalizeBrregSourceProfilesActivityResult, error) {
+		activityInput = input
+		return NormalizeBrregSourceProfilesActivityResult{
+			RecordsSeen:       3,
+			CompaniesUpserted: 3,
+		}, nil
+	}, activity.RegisterOptions{Name: normalizeBrregSourceProfilesWithCopyActivity})
+
+	env.ExecuteWorkflow(NormalizeBrregSourceProfilesWithCopy, NormalizeBrregSourceProfilesInput{
+		Limit:     3,
+		BatchSize: 1000,
+		Trigger:   "manual",
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	require.EqualValues(t, 3, activityInput.Limit)
+	require.Equal(t, "manual", activityInput.Trigger)
+
+	var result NormalizeBrregSourceProfilesResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	require.Equal(t, "succeeded", result.Status)
+	require.EqualValues(t, 3, result.RecordsSeen)
+	require.EqualValues(t, 3, result.CompaniesUpserted)
+}
+
 func TestRefreshBrregSourceExplorerRunsSingleActivity(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()

@@ -17,11 +17,15 @@ WHERE oid = 'brreg_source.mv_company_explorer'::regclass
 `
 	refreshSourceExplorerSQL             = `REFRESH MATERIALIZED VIEW brreg_source.mv_company_explorer`
 	refreshSourceExplorerConcurrentlySQL = `REFRESH MATERIALIZED VIEW CONCURRENTLY brreg_source.mv_company_explorer`
+	refreshCompanyTranslationStatusSQL   = `REFRESH MATERIALIZED VIEW brreg_source.mv_company_translation_status`
 )
 
 func (g *Gateway) RefreshSourceExplorer(ctx context.Context) (RefreshSourceExplorerResult, error) {
 	if g.pool == nil {
 		return RefreshSourceExplorerResult{}, errors.New("brreg workflow database pool not available")
+	}
+	if _, err := g.pool.Exec(ctx, refreshCompanyTranslationStatusSQL); err != nil {
+		return RefreshSourceExplorerResult{}, errors.Wrap(err, "refresh brreg company translation status materialized view")
 	}
 
 	var populated bool

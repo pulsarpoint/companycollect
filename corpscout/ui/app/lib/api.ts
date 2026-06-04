@@ -254,6 +254,7 @@ export const api = {
       lifecycle_status?: string;
       registration_status?: string;
       translation_status?: string;
+      financial_status?: string;
       website_status?: string;
       sort?: string;
       dir?: "asc" | "desc";
@@ -270,6 +271,8 @@ export const api = {
       qs.set("registration_status", params.registration_status);
     if (params.translation_status)
       qs.set("translation_status", params.translation_status);
+    if (params.financial_status)
+      qs.set("financial_status", params.financial_status);
     if (params.website_status) qs.set("website_status", params.website_status);
     if (params.sort) qs.set("sort", params.sort);
     if (params.dir) qs.set("dir", params.dir);
@@ -464,6 +467,21 @@ export const api = {
   ) =>
     post<{ status: string; workflow_id: string; workflow_run_id?: string }>(
       "/workflows/brreg/source-capital-fx",
+      body,
+    ),
+
+  fetchBrregSourceFinancialStatements: (
+    body: {
+      limit?: number;
+      batch_size?: number;
+      max_parallel_tasks?: number;
+      lease_seconds?: number;
+      max_attempts?: number;
+      trigger?: string;
+    } = {},
+  ) =>
+    post<{ status: string; workflow_id: string; workflow_run_id?: string }>(
+      "/workflows/brreg/source-financials",
       body,
     ),
 

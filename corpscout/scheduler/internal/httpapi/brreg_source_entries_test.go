@@ -90,12 +90,14 @@ func TestListBrregSourceEntriesReturnsSourceEntries(t *testing.T) {
 		Query:             ptrString("BORTIGARD"),
 		LifecycleStatus:   ptrString("active"),
 		TranslationStatus: ptrString("missing"),
+		FinancialStatus:   ptrString("skipped"),
 		WebsiteStatus:     ptrString("with"),
 	}).Return(int64(321), nil)
 	q.On("ListBrregSourceEntries", mock.Anything, db.ListBrregSourceEntriesParams{
 		Query:             ptrString("BORTIGARD"),
 		LifecycleStatus:   ptrString("active"),
 		TranslationStatus: ptrString("missing"),
+		FinancialStatus:   ptrString("skipped"),
 		WebsiteStatus:     ptrString("with"),
 		SortBy:            "organization",
 		SortDir:           "asc",
@@ -120,6 +122,7 @@ func TestListBrregSourceEntriesReturnsSourceEntries(t *testing.T) {
 		WebsiteCount:              1,
 		DomainCount:               1,
 		ContactCount:              2,
+		FinancialStatus:           "skipped",
 		TranslationMissingCount:   3,
 		TranslationPendingCount:   2,
 		TranslationRunningCount:   1,
@@ -136,7 +139,7 @@ func TestListBrregSourceEntriesReturnsSourceEntries(t *testing.T) {
 	}}, nil)
 
 	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", nil, ""))
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/brreg/source-entries?page=2&q=BORTIGARD&lifecycle_status=active&translation_status=missing&website_status=with&sort=organization&dir=asc", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/brreg/source-entries?page=2&q=BORTIGARD&lifecycle_status=active&translation_status=missing&financial_status=skipped&website_status=with&sort=organization&dir=asc", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -156,6 +159,7 @@ func TestListBrregSourceEntriesReturnsSourceEntries(t *testing.T) {
 	require.Equal(t, "810202572", body.Items[0].OrganizationNumber)
 	require.Equal(t, "https://bortigard.no", body.Items[0].WebsiteUrl)
 	require.Equal(t, "bortigard.no", *body.Items[0].WebsiteHost)
+	require.Equal(t, "skipped", body.Items[0].FinancialStatus)
 	require.EqualValues(t, 3, body.Items[0].TranslationMissingCount)
 	require.EqualValues(t, 2, body.Items[0].TranslationPendingCount)
 	require.EqualValues(t, 1, body.Items[0].TranslationRunningCount)

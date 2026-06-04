@@ -20,11 +20,15 @@ const (
 	defaultTranslationWorksetSource     = "brreg"
 	defaultTranslationWorksetSourceLang = "no"
 	defaultTranslationWorksetTargetLang = "en"
+
+	refreshCompanyTranslationStatusSQL = `REFRESH MATERIALIZED VIEW brreg_source.mv_company_translation_status`
 )
 
 type BuildTranslationWorksetCommand struct {
 	Path          string
 	PromptVersion string
+	IDs           []string
+	Filters       map[string]string
 	CompanyLimit  int32
 	FieldLimit    int32
 }
@@ -116,6 +120,9 @@ func (s *Store) BuildTranslationWorkset(
 		return BuildTranslationWorksetResult{}, errors.New("brreg companydata database not available")
 	}
 	command = normalizeBuildTranslationWorksetCommand(command)
+	if err := s.refreshCompanyTranslationStatus(ctx); err != nil {
+		return BuildTranslationWorksetResult{}, err
+	}
 	rows, err := s.loadTranslationWorksetRows(ctx, command)
 	if err != nil {
 		return BuildTranslationWorksetResult{}, err
@@ -137,7 +144,7 @@ func ClaimTranslationWorksetBatch(
 	command ClaimTranslationWorksetBatchCommand,
 ) (ClaimTranslationWorksetBatchResult, error) {
 	command = normalizeClaimTranslationWorksetBatchCommand(command)
-	db, err := openTranslationWorkset(command.Path)
+	db, err := openExistingTranslationWorkset(command.Path)
 	if err != nil {
 		return ClaimTranslationWorksetBatchResult{}, err
 	}
@@ -227,7 +234,7 @@ func SaveTranslationWorksetBatch(
 	command SaveTranslationWorksetBatchCommand,
 ) (SaveTranslationWorksetBatchResult, error) {
 	command = normalizeSaveTranslationWorksetBatchCommand(command)
-	db, err := openTranslationWorkset(command.Path)
+	db, err := openExistingTranslationWorkset(command.Path)
 	if err != nil {
 		return SaveTranslationWorksetBatchResult{}, err
 	}
@@ -337,7 +344,7 @@ func (s *Store) ApplyTranslationWorkset(
 		return ApplyTranslationWorksetResult{}, errors.New("brreg companydata database not available")
 	}
 	command = normalizeApplyTranslationWorksetCommand(command)
-	sqliteDB, err := openTranslationWorkset(command.Path)
+	sqliteDB, err := openExistingTranslationWorkset(command.Path)
 	if err != nil {
 		return ApplyTranslationWorksetResult{}, err
 	}
@@ -361,6 +368,11 @@ func (s *Store) ApplyTranslationWorkset(
 		return ApplyTranslationWorksetResult{}, err
 	}
 	if len(bindings) == 0 {
+		if result.TermsSaved > 0 {
+			if err := s.refreshCompanyTranslationStatus(ctx); err != nil {
+				return ApplyTranslationWorksetResult{}, err
+			}
+		}
 		return result, nil
 	}
 	appliedIDs, err := s.applyTranslationWorksetBindings(ctx, bindings)
@@ -371,7 +383,20 @@ func (s *Store) ApplyTranslationWorkset(
 		return ApplyTranslationWorksetResult{}, err
 	}
 	result.BindingsApplied = int32(len(appliedIDs))
+	if err := s.refreshCompanyTranslationStatus(ctx); err != nil {
+		return ApplyTranslationWorksetResult{}, err
+	}
 	return result, nil
+}
+
+func (s *Store) refreshCompanyTranslationStatus(ctx context.Context) error {
+	if s == nil || s.pool == nil {
+		return errors.New("brreg companydata database not available")
+	}
+	if _, err := s.pool.Exec(ctx, refreshCompanyTranslationStatusSQL); err != nil {
+		return errors.Wrap(err, "refresh brreg company translation status materialized view")
+	}
+	return nil
 }
 
 func normalizeBuildTranslationWorksetCommand(command BuildTranslationWorksetCommand) BuildTranslationWorksetCommand {
@@ -379,6 +404,8 @@ func normalizeBuildTranslationWorksetCommand(command BuildTranslationWorksetComm
 	if command.PromptVersion == "" {
 		command.PromptVersion = defaultPromptVersion
 	}
+	command.IDs = normalizedTextValues(command.IDs)
+	command.Filters = normalizedTextFilters(command.Filters)
 	return command
 }
 
@@ -424,7 +451,43 @@ func (s *Store) loadTranslationWorksetRows(
 		return nil, errors.New("translation workset path is required")
 	}
 	rows, err := s.pool.Query(ctx, `
-WITH missing AS (
+WITH selected_companies AS (
+  SELECT translation_status.company_id
+  FROM brreg_source.mv_company_translation_status translation_status
+  JOIN brreg_source.companies company ON company.id = translation_status.company_id
+  LEFT JOIN brreg_source.mv_company_explorer entry ON entry.company_id = translation_status.company_id
+  WHERE true
+    AND translation_status.translation_missing_count > 0
+    AND (
+      COALESCE(cardinality($4::text[]), 0) = 0
+      OR translation_status.company_id::text = ANY($4::text[])
+    )
+    AND (
+      $5::text IS NULL
+      OR company.organization_name ILIKE '%' || $5::text || '%'
+      OR company.organization_number ILIKE '%' || $5::text || '%'
+      OR coalesce(entry.primary_industry_label, '') ILIKE '%' || $5::text || '%'
+      OR coalesce(entry.city, '') ILIKE '%' || $5::text || '%'
+      OR coalesce(entry.municipality, '') ILIKE '%' || $5::text || '%'
+    )
+    AND ($6::text IS NULL OR company.lifecycle_status = $6::text)
+    AND ($7::text IS NULL OR company.registration_status = $7::text)
+    AND (
+      $8::text IS NULL
+      OR $8::text = 'missing'
+    )
+    AND (
+      $9::text IS NULL
+      OR ($9::text = 'with' AND entry.website_count > 0)
+      OR ($9::text = 'without' AND entry.website_count = 0)
+    )
+  ORDER BY translation_status.min_missing_priority ASC,
+    coalesce(entry.updated_at, translation_status.updated_at) DESC,
+    company.organization_number ASC,
+    translation_status.company_id ASC
+  LIMIT NULLIF(GREATEST($2::integer, 0), 0)
+),
+missing AS (
   SELECT
     missing.company_id::text AS company_id,
     missing.source_table,
@@ -436,15 +499,8 @@ WITH missing AS (
     encode(digest(lower(btrim(missing.source_text)), 'sha256'), 'hex') AS term_key,
     missing.priority
   FROM brreg_source.v_missing_translations missing
+  JOIN selected_companies selected ON selected.company_id = missing.company_id
   WHERE nullif(btrim(missing.source_text), '') IS NOT NULL
-    AND (
-      $2::integer <= 0 OR missing.company_id IN (
-        SELECT company_id
-        FROM brreg_source.v_companies_missing_translations
-        ORDER BY company_id
-        LIMIT $2
-      )
-    )
 )
 SELECT
   missing.company_id,
@@ -467,7 +523,16 @@ LEFT JOIN brreg_source.translation_terms term
  AND nullif(btrim(term.translated_text), '') IS NOT NULL
 ORDER BY missing.priority, missing.company_id, missing.source_table, missing.source_row_id, missing.target_column
 LIMIT NULLIF(GREATEST($3::integer, 0), 0)
-`, command.PromptVersion, command.CompanyLimit, command.FieldLimit)
+`, command.PromptVersion,
+		command.CompanyLimit,
+		command.FieldLimit,
+		command.IDs,
+		textFilterValue(command.Filters, "query", "q"),
+		textFilterValue(command.Filters, "state", "lifecycle_state", "lifecycle_status"),
+		textFilterValue(command.Filters, "registration_status"),
+		textFilterValue(command.Filters, "translation_status"),
+		textFilterValue(command.Filters, "website_status"),
+	)
 	if err != nil {
 		return nil, errors.Wrap(err, "load brreg translation workset rows")
 	}
@@ -495,6 +560,47 @@ LIMIT NULLIF(GREATEST($3::integer, 0), 0)
 		return nil, errors.Wrap(err, "iterate brreg translation workset rows")
 	}
 	return worksetRows, nil
+}
+
+func normalizedTextValues(values []string) []string {
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			normalized = append(normalized, value)
+		}
+	}
+	return normalized
+}
+
+func normalizedTextFilters(filters map[string]string) map[string]string {
+	if len(filters) == 0 {
+		return nil
+	}
+	normalized := make(map[string]string, len(filters))
+	for key, value := range filters {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			normalized[key] = value
+		}
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
+func textFilterValue(filters map[string]string, keys ...string) *string {
+	if len(filters) == 0 {
+		return nil
+	}
+	for _, key := range keys {
+		if value := strings.TrimSpace(filters[key]); value != "" {
+			return &value
+		}
+	}
+	return nil
 }
 
 func writeTranslationWorkset(
@@ -538,6 +644,24 @@ func openTranslationWorkset(path string) (*sql.DB, error) {
 		return nil, errors.Wrap(err, "open translation workset sqlite")
 	}
 	return db, nil
+}
+
+func openExistingTranslationWorkset(path string) (*sql.DB, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, errors.New("translation workset path is required")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, errors.Newf("translation workset file does not exist: %s", path)
+		}
+		return nil, errors.Wrap(err, "stat translation workset file")
+	}
+	if info.IsDir() {
+		return nil, errors.Newf("translation workset path is a directory: %s", path)
+	}
+	return openTranslationWorkset(path)
 }
 
 func createTranslationWorksetSchema(ctx context.Context, db *sql.DB) error {

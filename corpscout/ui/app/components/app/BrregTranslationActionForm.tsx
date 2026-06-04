@@ -48,9 +48,9 @@ function FieldDescription({ children }: { children: ReactNode }) {
 }
 
 export function BrregTranslationActionForm({
-  selectedIds: _selectedIds,
+  selectedIds,
   totalCount: _totalCount,
-  filters: _filters,
+  filters,
   initialScope: _initialScope,
   recordLabel: _recordLabel = "source entries",
   description = "Starts the Temporal workflow that exports missing BRREG source translations to a local workset, translates uncached terms, and writes English values back to brreg_source.",
@@ -146,9 +146,15 @@ export function BrregTranslationActionForm({
 
     setSubmitting(true);
     try {
+      const hasSelectedRows = selectedIds.length > 0;
       const useAutoClaim = allSourceCompaniesSelected;
       const body: BrregCompanyTranslationRequest = {
         all_records: allSourceCompaniesSelected,
+        ids: hasSelectedRows ? selectedIds : undefined,
+        filters: hasSelectedRows ? undefined : filters,
+        limit: hasSelectedRows
+          ? selectedIds.length
+          : effectiveLimit,
         batch_size: allSourceCompaniesSelected ? undefined : effectiveLimit,
         claim_mode: useAutoClaim ? "auto" : "fixed",
         max_request_chars: useAutoClaim
@@ -220,7 +226,7 @@ export function BrregTranslationActionForm({
           />
           <FieldDescription>
             {allSourceCompaniesSelected
-              ? "No test limit is sent. The workflow exports every eligible BRREG source company into one local workset."
+              ? "No test limit is sent. The workflow drains eligible BRREG source companies in bounded workset chunks."
               : "Maximum number of BRREG source companies exported into the workset for this test run."}
           </FieldDescription>
         </div>

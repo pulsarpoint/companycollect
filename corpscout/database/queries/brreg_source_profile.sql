@@ -670,7 +670,7 @@ upserted_capital AS (
     CASE WHEN source.capital_payload ->> 'belop' ~ '^-?[0-9]+([.][0-9]+)?$' THEN (source.capital_payload ->> 'belop')::numeric(20, 2) END,
     source.capital_payload ->> 'valuta',
     CASE WHEN source.capital_payload ->> 'innfortDato' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (source.capital_payload ->> 'innfortDato')::date END,
-    CASE WHEN source.capital_payload ->> 'antallAksjer' ~ '^[0-9]+$' THEN (source.capital_payload ->> 'antallAksjer')::integer END,
+    CASE WHEN source.capital_payload ->> 'antallAksjer' ~ '^[0-9]+$' THEN (source.capital_payload ->> 'antallAksjer')::bigint END,
     source.capital_payload,
     jsonb_build_object('source', 'brreg_raw_payload', 'field', 'kapital'),
     now()
@@ -1131,6 +1131,8 @@ SELECT
 -- name: CountBrregSourceEntries :one
 SELECT count(*)::bigint
 FROM brreg_source.mv_company_explorer entry
+LEFT JOIN brreg_source.mv_company_translation_status translation_status
+  ON translation_status.company_id = entry.company_id
 WHERE (
     sqlc.narg('query')::text IS NULL
     OR entry.organization_name ILIKE '%' || sqlc.narg('query')::text || '%'
@@ -1151,11 +1153,11 @@ WHERE (
     sqlc.narg('translation_status')::text IS NULL
     OR (
       sqlc.narg('translation_status')::text = 'missing'
-      AND entry.translation_missing_count > 0
+      AND coalesce(translation_status.translation_missing_count, entry.translation_missing_count, 0) > 0
     )
     OR (
       sqlc.narg('translation_status')::text = 'complete'
-      AND entry.translation_missing_count = 0
+      AND coalesce(translation_status.translation_missing_count, entry.translation_missing_count, 0) = 0
     )
   )
   AND (
@@ -1168,6 +1170,10 @@ WHERE (
       sqlc.narg('website_status')::text = 'without'
       AND entry.website_count = 0
     )
+  )
+  AND (
+    sqlc.narg('financial_status')::text IS NULL
+    OR entry.financial_status = sqlc.narg('financial_status')::text
   );
 
 -- name: ListBrregSourceEntries :many
@@ -1201,16 +1207,19 @@ SELECT
   entry.latest_revenue_usd_cents,
   entry.latest_total_assets_usd_cents,
   entry.latest_net_income_usd_cents,
-  entry.translation_missing_count,
-  entry.translation_pending_count,
-  entry.translation_running_count,
-  entry.translation_succeeded_count,
-  entry.translation_failed_count,
+  entry.financial_status,
+  coalesce(translation_status.translation_missing_count, entry.translation_missing_count, 0) AS translation_missing_count,
+  coalesce(translation_status.translation_pending_count, entry.translation_pending_count, 0) AS translation_pending_count,
+  coalesce(translation_status.translation_running_count, entry.translation_running_count, 0) AS translation_running_count,
+  coalesce(translation_status.translation_succeeded_count, entry.translation_succeeded_count, 0) AS translation_succeeded_count,
+  coalesce(translation_status.translation_failed_count, entry.translation_failed_count, 0) AS translation_failed_count,
   entry.domain_pending_count,
   entry.domain_running_count,
   entry.domain_succeeded_count,
   entry.updated_at
 FROM brreg_source.mv_company_explorer entry
+LEFT JOIN brreg_source.mv_company_translation_status translation_status
+  ON translation_status.company_id = entry.company_id
 LEFT JOIN LATERAL (
   SELECT
     website.url,
@@ -1244,11 +1253,11 @@ WHERE (
     sqlc.narg('translation_status')::text IS NULL
     OR (
       sqlc.narg('translation_status')::text = 'missing'
-      AND entry.translation_missing_count > 0
+      AND coalesce(translation_status.translation_missing_count, entry.translation_missing_count, 0) > 0
     )
     OR (
       sqlc.narg('translation_status')::text = 'complete'
-      AND entry.translation_missing_count = 0
+      AND coalesce(translation_status.translation_missing_count, entry.translation_missing_count, 0) = 0
     )
   )
   AND (
@@ -1262,6 +1271,10 @@ WHERE (
       AND entry.website_count = 0
     )
   )
+  AND (
+    sqlc.narg('financial_status')::text IS NULL
+    OR entry.financial_status = sqlc.narg('financial_status')::text
+  )
 ORDER BY
   CASE WHEN sqlc.arg('sort_by')::text = 'organization' AND sqlc.arg('sort_dir')::text = 'asc' THEN entry.organization_name END ASC NULLS LAST,
   CASE WHEN sqlc.arg('sort_by')::text = 'organization' AND sqlc.arg('sort_dir')::text = 'desc' THEN entry.organization_name END DESC NULLS LAST,
@@ -1273,8 +1286,8 @@ ORDER BY
   CASE WHEN sqlc.arg('sort_by')::text = 'employees' AND sqlc.arg('sort_dir')::text = 'desc' THEN entry.employee_count END DESC NULLS LAST,
   CASE WHEN sqlc.arg('sort_by')::text = 'revenue' AND sqlc.arg('sort_dir')::text = 'asc' THEN entry.latest_revenue_usd_cents END ASC NULLS LAST,
   CASE WHEN sqlc.arg('sort_by')::text = 'revenue' AND sqlc.arg('sort_dir')::text = 'desc' THEN entry.latest_revenue_usd_cents END DESC NULLS LAST,
-  CASE WHEN sqlc.arg('sort_by')::text = 'translation_missing' AND sqlc.arg('sort_dir')::text = 'asc' THEN entry.translation_missing_count END ASC NULLS LAST,
-  CASE WHEN sqlc.arg('sort_by')::text = 'translation_missing' AND sqlc.arg('sort_dir')::text = 'desc' THEN entry.translation_missing_count END DESC NULLS LAST,
+  CASE WHEN sqlc.arg('sort_by')::text = 'translation_missing' AND sqlc.arg('sort_dir')::text = 'asc' THEN coalesce(translation_status.translation_missing_count, entry.translation_missing_count, 0) END ASC NULLS LAST,
+  CASE WHEN sqlc.arg('sort_by')::text = 'translation_missing' AND sqlc.arg('sort_dir')::text = 'desc' THEN coalesce(translation_status.translation_missing_count, entry.translation_missing_count, 0) END DESC NULLS LAST,
   CASE WHEN sqlc.arg('sort_by')::text = 'updated_at' AND sqlc.arg('sort_dir')::text = 'asc' THEN entry.updated_at END ASC NULLS LAST,
   CASE WHEN sqlc.arg('sort_by')::text = 'updated_at' AND sqlc.arg('sort_dir')::text = 'desc' THEN entry.updated_at END DESC NULLS LAST,
   entry.updated_at DESC,
@@ -1460,6 +1473,230 @@ SELECT
       AND amount_usd_cents IS NOT NULL
   ) AS capital_skipped_already_converted,
   COALESCE((SELECT rate_date::text FROM selected_sheet), '')::text AS rate_date;
+
+-- name: UpsertBrregSourceFinancialStatement :one
+WITH input_values AS (
+  SELECT
+    sqlc.arg('company_id')::uuid AS company_id,
+    sqlc.arg('raw_record_id')::uuid AS raw_record_id,
+    sqlc.arg('fiscal_year')::integer AS fiscal_year,
+    CASE
+      WHEN NULLIF(sqlc.narg('period_start')::text, '') IS NULL THEN NULL::date
+      ELSE NULLIF(sqlc.narg('period_start')::text, '')::date
+    END AS period_start,
+    CASE
+      WHEN NULLIF(sqlc.narg('period_end')::text, '') IS NULL THEN NULL::date
+      ELSE NULLIF(sqlc.narg('period_end')::text, '')::date
+    END AS period_end,
+    COALESCE(NULLIF(sqlc.arg('statement_type')::text, ''), 'annual_accounts') AS statement_type,
+    sqlc.arg('is_consolidated')::boolean AS is_consolidated,
+    NULLIF(upper(btrim(sqlc.narg('original_currency')::text)), '') AS original_currency,
+    NULLIF(sqlc.narg('revenue_original_amount')::text, '')::numeric AS revenue_original_amount,
+    NULLIF(sqlc.narg('operating_income_original_amount')::text, '')::numeric AS operating_income_original_amount,
+    NULLIF(sqlc.narg('operating_profit_original_amount')::text, '')::numeric AS operating_profit_original_amount,
+    NULLIF(sqlc.narg('profit_before_tax_original_amount')::text, '')::numeric AS profit_before_tax_original_amount,
+    NULLIF(sqlc.narg('net_income_original_amount')::text, '')::numeric AS net_income_original_amount,
+    NULLIF(sqlc.narg('total_assets_original_amount')::text, '')::numeric AS total_assets_original_amount,
+    NULLIF(sqlc.narg('current_assets_original_amount')::text, '')::numeric AS current_assets_original_amount,
+    NULLIF(sqlc.narg('fixed_assets_original_amount')::text, '')::numeric AS fixed_assets_original_amount,
+    NULLIF(sqlc.narg('total_equity_original_amount')::text, '')::numeric AS total_equity_original_amount,
+    NULLIF(sqlc.narg('total_liabilities_original_amount')::text, '')::numeric AS total_liabilities_original_amount,
+    NULLIF(sqlc.narg('current_liabilities_original_amount')::text, '')::numeric AS current_liabilities_original_amount,
+    NULLIF(sqlc.narg('long_term_liabilities_original_amount')::text, '')::numeric AS long_term_liabilities_original_amount,
+    NULLIF(sqlc.narg('source_url')::text, '') AS source_url,
+    COALESCE(sqlc.narg('facts')::jsonb, '{}'::jsonb) AS facts,
+    COALESCE(sqlc.narg('evidence')::jsonb, '{}'::jsonb) AS evidence,
+    COALESCE(sqlc.narg('raw_financial_payload')::jsonb, '{}'::jsonb) AS raw_financial_payload,
+    COALESCE(sqlc.narg('metadata')::jsonb, '{}'::jsonb) AS metadata,
+    COALESCE(NULLIF(sqlc.narg('trigger')::text, ''), 'manual') AS trigger
+),
+selected_sheet AS (
+  SELECT
+    sheet.id,
+    sheet.provider,
+    sheet.rate_date,
+    sheet.base_currency
+  FROM exchange_rate_sheets sheet
+  WHERE sheet.provider = 'ecb'
+  ORDER BY sheet.rate_date DESC
+  LIMIT 1
+),
+rate_context AS (
+  SELECT
+    sheet.id AS sheet_id,
+    sheet.provider,
+    sheet.rate_date,
+    sheet.base_currency,
+    input.original_currency AS source_currency,
+    usd.rate_per_base AS usd_rate_per_base,
+    CASE
+      WHEN input.original_currency = sheet.base_currency THEN 1::numeric
+      ELSE source_rate.rate_per_base
+    END AS source_rate_per_base
+  FROM input_values input
+  LEFT JOIN selected_sheet sheet ON true
+  LEFT JOIN exchange_rates usd ON usd.sheet_id = sheet.id AND usd.currency = 'USD'
+  LEFT JOIN exchange_rates source_rate ON source_rate.sheet_id = sheet.id AND source_rate.currency = input.original_currency
+),
+prepared AS (
+  SELECT
+    input.*,
+    rate_context.sheet_id,
+    rate_context.provider,
+    rate_context.rate_date,
+    rate_context.base_currency,
+    rate_context.source_currency,
+    rate_context.usd_rate_per_base,
+    rate_context.source_rate_per_base,
+    CASE
+      WHEN rate_context.sheet_id IS NULL
+        OR rate_context.usd_rate_per_base IS NULL
+        OR rate_context.source_rate_per_base IS NULL
+      THEN '{}'::jsonb
+      ELSE jsonb_build_object(
+        'provider', rate_context.provider,
+        'sheet_id', rate_context.sheet_id::text,
+        'rate_date', rate_context.rate_date,
+        'base_currency', rate_context.base_currency,
+        'source_currency', rate_context.source_currency,
+        'target_currency', 'USD',
+        'source_rate_per_base', rate_context.source_rate_per_base,
+        'target_rate_per_base', rate_context.usd_rate_per_base,
+        'trigger', input.trigger
+      )
+    END AS fx_metadata
+  FROM input_values input
+  LEFT JOIN rate_context ON true
+),
+upserted AS (
+  INSERT INTO brreg_source.financial_statements (
+    company_id,
+    raw_record_id,
+    fiscal_year,
+    period_start,
+    period_end,
+    statement_type,
+    is_consolidated,
+    original_currency,
+    revenue_original_amount,
+    revenue_usd_cents,
+    operating_income_original_amount,
+    operating_income_usd_cents,
+    operating_profit_original_amount,
+    operating_profit_usd_cents,
+    profit_before_tax_original_amount,
+    profit_before_tax_usd_cents,
+    net_income_original_amount,
+    net_income_usd_cents,
+    total_assets_original_amount,
+    total_assets_usd_cents,
+    current_assets_original_amount,
+    current_assets_usd_cents,
+    fixed_assets_original_amount,
+    fixed_assets_usd_cents,
+    total_equity_original_amount,
+    total_equity_usd_cents,
+    total_liabilities_original_amount,
+    total_liabilities_usd_cents,
+    current_liabilities_original_amount,
+    current_liabilities_usd_cents,
+    long_term_liabilities_original_amount,
+    long_term_liabilities_usd_cents,
+    fx_source,
+    fx_rate_date,
+    fx_metadata,
+    source_url,
+    facts,
+    evidence,
+    raw_financial_payload,
+    metadata,
+    updated_at
+  )
+  SELECT
+    company_id,
+    raw_record_id,
+    fiscal_year,
+    period_start,
+    period_end,
+    statement_type,
+    is_consolidated,
+    original_currency,
+    revenue_original_amount,
+    CASE WHEN revenue_original_amount IS NULL OR usd_rate_per_base IS NULL OR source_rate_per_base IS NULL THEN NULL ELSE round(revenue_original_amount * usd_rate_per_base / source_rate_per_base * 100)::bigint END,
+    operating_income_original_amount,
+    CASE WHEN operating_income_original_amount IS NULL OR usd_rate_per_base IS NULL OR source_rate_per_base IS NULL THEN NULL ELSE round(operating_income_original_amount * usd_rate_per_base / source_rate_per_base * 100)::bigint END,
+    operating_profit_original_amount,
+    CASE WHEN operating_profit_original_amount IS NULL OR usd_rate_per_base IS NULL OR source_rate_per_base IS NULL THEN NULL ELSE round(operating_profit_original_amount * usd_rate_per_base / source_rate_per_base * 100)::bigint END,
+    profit_before_tax_original_amount,
+    CASE WHEN profit_before_tax_original_amount IS NULL OR usd_rate_per_base IS NULL OR source_rate_per_base IS NULL THEN NULL ELSE round(profit_before_tax_original_amount * usd_rate_per_base / source_rate_per_base * 100)::bigint END,
+    net_income_original_amount,
+    CASE WHEN net_income_original_amount IS NULL OR usd_rate_per_base IS NULL OR source_rate_per_base IS NULL THEN NULL ELSE round(net_income_original_amount * usd_rate_per_base / source_rate_per_base * 100)::bigint END,
+    total_assets_original_amount,
+    CASE WHEN total_assets_original_amount IS NULL OR usd_rate_per_base IS NULL OR source_rate_per_base IS NULL THEN NULL ELSE round(total_assets_original_amount * usd_rate_per_base / source_rate_per_base * 100)::bigint END,
+    current_assets_original_amount,
+    CASE WHEN current_assets_original_amount IS NULL OR usd_rate_per_base IS NULL OR source_rate_per_base IS NULL THEN NULL ELSE round(current_assets_original_amount * usd_rate_per_base / source_rate_per_base * 100)::bigint END,
+    fixed_assets_original_amount,
+    CASE WHEN fixed_assets_original_amount IS NULL OR usd_rate_per_base IS NULL OR source_rate_per_base IS NULL THEN NULL ELSE round(fixed_assets_original_amount * usd_rate_per_base / source_rate_per_base * 100)::bigint END,
+    total_equity_original_amount,
+    CASE WHEN total_equity_original_amount IS NULL OR usd_rate_per_base IS NULL OR source_rate_per_base IS NULL THEN NULL ELSE round(total_equity_original_amount * usd_rate_per_base / source_rate_per_base * 100)::bigint END,
+    total_liabilities_original_amount,
+    CASE WHEN total_liabilities_original_amount IS NULL OR usd_rate_per_base IS NULL OR source_rate_per_base IS NULL THEN NULL ELSE round(total_liabilities_original_amount * usd_rate_per_base / source_rate_per_base * 100)::bigint END,
+    current_liabilities_original_amount,
+    CASE WHEN current_liabilities_original_amount IS NULL OR usd_rate_per_base IS NULL OR source_rate_per_base IS NULL THEN NULL ELSE round(current_liabilities_original_amount * usd_rate_per_base / source_rate_per_base * 100)::bigint END,
+    long_term_liabilities_original_amount,
+    CASE WHEN long_term_liabilities_original_amount IS NULL OR usd_rate_per_base IS NULL OR source_rate_per_base IS NULL THEN NULL ELSE round(long_term_liabilities_original_amount * usd_rate_per_base / source_rate_per_base * 100)::bigint END,
+    provider,
+    rate_date,
+    fx_metadata,
+    source_url,
+    facts,
+    evidence,
+    raw_financial_payload,
+    metadata,
+    now()
+  FROM prepared
+  ON CONFLICT (company_id, fiscal_year, statement_type, is_consolidated)
+  DO UPDATE SET
+    raw_record_id = EXCLUDED.raw_record_id,
+    period_start = EXCLUDED.period_start,
+    period_end = EXCLUDED.period_end,
+    original_currency = EXCLUDED.original_currency,
+    revenue_original_amount = EXCLUDED.revenue_original_amount,
+    revenue_usd_cents = EXCLUDED.revenue_usd_cents,
+    operating_income_original_amount = EXCLUDED.operating_income_original_amount,
+    operating_income_usd_cents = EXCLUDED.operating_income_usd_cents,
+    operating_profit_original_amount = EXCLUDED.operating_profit_original_amount,
+    operating_profit_usd_cents = EXCLUDED.operating_profit_usd_cents,
+    profit_before_tax_original_amount = EXCLUDED.profit_before_tax_original_amount,
+    profit_before_tax_usd_cents = EXCLUDED.profit_before_tax_usd_cents,
+    net_income_original_amount = EXCLUDED.net_income_original_amount,
+    net_income_usd_cents = EXCLUDED.net_income_usd_cents,
+    total_assets_original_amount = EXCLUDED.total_assets_original_amount,
+    total_assets_usd_cents = EXCLUDED.total_assets_usd_cents,
+    current_assets_original_amount = EXCLUDED.current_assets_original_amount,
+    current_assets_usd_cents = EXCLUDED.current_assets_usd_cents,
+    fixed_assets_original_amount = EXCLUDED.fixed_assets_original_amount,
+    fixed_assets_usd_cents = EXCLUDED.fixed_assets_usd_cents,
+    total_equity_original_amount = EXCLUDED.total_equity_original_amount,
+    total_equity_usd_cents = EXCLUDED.total_equity_usd_cents,
+    total_liabilities_original_amount = EXCLUDED.total_liabilities_original_amount,
+    total_liabilities_usd_cents = EXCLUDED.total_liabilities_usd_cents,
+    current_liabilities_original_amount = EXCLUDED.current_liabilities_original_amount,
+    current_liabilities_usd_cents = EXCLUDED.current_liabilities_usd_cents,
+    long_term_liabilities_original_amount = EXCLUDED.long_term_liabilities_original_amount,
+    long_term_liabilities_usd_cents = EXCLUDED.long_term_liabilities_usd_cents,
+    fx_source = EXCLUDED.fx_source,
+    fx_rate_date = EXCLUDED.fx_rate_date,
+    fx_metadata = EXCLUDED.fx_metadata,
+    source_url = EXCLUDED.source_url,
+    facts = EXCLUDED.facts,
+    evidence = EXCLUDED.evidence,
+    raw_financial_payload = EXCLUDED.raw_financial_payload,
+    metadata = brreg_source.financial_statements.metadata || EXCLUDED.metadata,
+    updated_at = now()
+  RETURNING id
+)
+SELECT id FROM upserted;
 
 -- name: InsertPendingBrregTranslationTerms :one
 WITH inserted AS (

@@ -30,6 +30,7 @@ func (h *Handlers) handleListBrregSourceEntries(w http.ResponseWriter, r *http.R
 		LifecycleStatus:    params.LifecycleStatus,
 		RegistrationStatus: params.RegistrationStatus,
 		TranslationStatus:  params.TranslationStatus,
+		FinancialStatus:    params.FinancialStatus,
 		WebsiteStatus:      params.WebsiteStatus,
 	}
 	total, err := h.db.CountBrregSourceEntries(r.Context(), countParams)
@@ -89,6 +90,7 @@ func brregSourceEntryListParamsFromRequest(r *http.Request) db.ListBrregSourceEn
 		LifecycleStatus:    firstQueryString(r, "state", "lifecycle_state", "lifecycle_status"),
 		RegistrationStatus: queryString(r, "registration_status"),
 		TranslationStatus:  queryString(r, "translation_status"),
+		FinancialStatus:    brregSourceEntryFinancialStatus(r.URL.Query().Get("financial_status")),
 		WebsiteStatus:      brregSourceEntryWebsiteStatus(r.URL.Query().Get("website_status")),
 		SortBy:             brregSourceEntrySortBy(r.URL.Query().Get("sort")),
 		SortDir:            brregSourceEntrySortDir(r.URL.Query().Get("dir")),
@@ -103,6 +105,15 @@ func brregSourceEntrySortBy(value string) string {
 		return value
 	default:
 		return "updated_at"
+	}
+}
+
+func brregSourceEntryFinancialStatus(value string) *string {
+	switch value {
+	case "success", "unknown", "skipped":
+		return &value
+	default:
+		return nil
 	}
 }
 

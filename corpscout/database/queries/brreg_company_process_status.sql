@@ -422,6 +422,28 @@ SET
   updated_at = now()
 RETURNING *;
 
+-- name: EnsureBrregCompanyFinancialProcessStatuses :one
+WITH inserted AS (
+  INSERT INTO brreg_source.company_process_status (company_id)
+  SELECT company.id
+  FROM brreg_source.companies company
+  LEFT JOIN brreg_source.company_process_status existing
+    ON existing.company_id = company.id
+  WHERE company.row_status = 'active'
+    AND existing.company_id IS NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM brreg_source.financial_statements financial_statement
+      WHERE financial_statement.company_id = company.id
+    )
+  ORDER BY company.updated_at DESC, company.id
+  LIMIT NULLIF(GREATEST(sqlc.arg('limit')::integer, 0), 0)
+  ON CONFLICT (company_id) DO NOTHING
+  RETURNING company_id
+)
+SELECT count(*)::integer AS rows_inserted
+FROM inserted;
+
 -- name: ClaimBrregCompanyFinancialBatch :many
 WITH active_capacity AS (
   SELECT
@@ -442,6 +464,11 @@ picked AS (
   FROM brreg_source.company_process_status status_row
   JOIN brreg_source.companies company ON company.id = status_row.company_id
   WHERE company.row_status = 'active'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM brreg_source.financial_statements financial_statement
+      WHERE financial_statement.company_id = status_row.company_id
+    )
     AND (
       status_row.financial_status IN ('pending', 'dirty', 'failed_retryable')
       OR (
@@ -473,6 +500,7 @@ claimed AS (
 )
 SELECT
   claimed.*,
+  company.raw_record_id,
   company.organization_number,
   company.organization_name
 FROM claimed

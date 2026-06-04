@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS brreg_source.idx_brreg_company_process_status_financial_running_lease;
+DROP INDEX IF EXISTS brreg_source.idx_brreg_company_process_status_financial_ready_order;

@@ -16,6 +16,7 @@ import (
 	workflowservicepb "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 
+	ariregisterworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/workflow"
 	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
@@ -38,20 +39,23 @@ type startWorkflowResponse struct {
 }
 
 type startBrregCompanyTranslationWorkflowRequest struct {
-	AllRecords           bool   `json:"all_records,omitempty"`
-	BatchSize            int    `json:"batch_size,omitempty"`
-	ClaimMode            string `json:"claim_mode,omitempty"`
-	MaxRequestChars      int    `json:"max_request_chars,omitempty"`
-	MaxTerms             int    `json:"max_terms,omitempty"`
-	MaxCompaniesPerBatch int    `json:"max_companies_per_batch,omitempty"`
-	MaxBatches           int    `json:"max_batches,omitempty"`
-	MaxParallelTasks     int    `json:"max_parallel_tasks,omitempty"`
-	LeaseSeconds         int    `json:"lease_seconds,omitempty"`
-	MaxAttempts          int    `json:"max_attempts,omitempty"`
-	Provider             string `json:"provider,omitempty"`
-	Model                string `json:"model,omitempty"`
-	PromptVersion        string `json:"prompt_version,omitempty"`
-	Trigger              string `json:"trigger,omitempty"`
+	AllRecords           bool              `json:"all_records,omitempty"`
+	IDs                  []string          `json:"ids,omitempty"`
+	Filters              map[string]string `json:"filters,omitempty"`
+	Limit                int               `json:"limit,omitempty"`
+	BatchSize            int               `json:"batch_size,omitempty"`
+	ClaimMode            string            `json:"claim_mode,omitempty"`
+	MaxRequestChars      int               `json:"max_request_chars,omitempty"`
+	MaxTerms             int               `json:"max_terms,omitempty"`
+	MaxCompaniesPerBatch int               `json:"max_companies_per_batch,omitempty"`
+	MaxBatches           int               `json:"max_batches,omitempty"`
+	MaxParallelTasks     int               `json:"max_parallel_tasks,omitempty"`
+	LeaseSeconds         int               `json:"lease_seconds,omitempty"`
+	MaxAttempts          int               `json:"max_attempts,omitempty"`
+	Provider             string            `json:"provider,omitempty"`
+	Model                string            `json:"model,omitempty"`
+	PromptVersion        string            `json:"prompt_version,omitempty"`
+	Trigger              string            `json:"trigger,omitempty"`
 }
 
 type startBrregDomainSearchWorkflowRequest struct {
@@ -95,7 +99,23 @@ type startBrregSourceCapitalFXWorkflowRequest struct {
 	Trigger        string            `json:"trigger,omitempty"`
 }
 
+type startBrregSourceFinancialWorkflowRequest struct {
+	Limit            int    `json:"limit,omitempty"`
+	BatchSize        int    `json:"batch_size,omitempty"`
+	MaxParallelTasks int    `json:"max_parallel_tasks,omitempty"`
+	LeaseSeconds     int    `json:"lease_seconds,omitempty"`
+	MaxAttempts      int    `json:"max_attempts,omitempty"`
+	Trigger          string `json:"trigger,omitempty"`
+}
+
 type startBrregBulkRawIngestWorkflowRequest struct {
+	SourceURL string `json:"source_url,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+	BatchSize int    `json:"batch_size,omitempty"`
+	Trigger   string `json:"trigger,omitempty"`
+}
+
+type startAriregisterBulkRawIngestWorkflowRequest struct {
 	SourceURL string `json:"source_url,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 	BatchSize int    `json:"batch_size,omitempty"`
@@ -181,6 +201,9 @@ func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWri
 
 	input := brregworkflow.TranslateBrregSourceCompaniesInput{
 		AllRecords:           req.AllRecords,
+		IDs:                  req.IDs,
+		Filters:              req.Filters,
+		Limit:                req.Limit,
 		BatchSize:            req.BatchSize,
 		ClaimMode:            req.ClaimMode,
 		MaxRequestChars:      req.MaxRequestChars,
@@ -200,6 +223,9 @@ func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWri
 		"workflow_id", workflowID,
 		"task_queue", brregworkflow.TranslateBrregSourceCompaniesTaskQueue,
 		"all_records", req.AllRecords,
+		"ids_count", len(req.IDs),
+		"filters_count", len(req.Filters),
+		"limit", req.Limit,
 		"batch_size", req.BatchSize,
 		"claim_mode", req.ClaimMode,
 		"max_request_chars", req.MaxRequestChars,
@@ -336,6 +362,7 @@ func (h *Handlers) handleStartBrregSourceProfileNormalizationWorkflow(w http.Res
 	slog.Debug("starting brreg source profile normalization workflow",
 		"workflow_id", workflowID,
 		"task_queue", brregworkflow.NormalizeBrregSourceProfilesTaskQueue,
+		"workflow", brregworkflow.NormalizeBrregSourceProfilesWithCopyWorkflowName,
 		"ids_count", len(req.IDs),
 		"filters_count", len(req.Filters),
 		"limit", req.Limit,
@@ -348,7 +375,7 @@ func (h *Handlers) handleStartBrregSourceProfileNormalizationWorkflow(w http.Res
 			ID:        workflowID,
 			TaskQueue: brregworkflow.NormalizeBrregSourceProfilesTaskQueue,
 		},
-		brregworkflow.NormalizeBrregSourceProfiles,
+		brregworkflow.NormalizeBrregSourceProfilesWithCopy,
 		input,
 	)
 	if err != nil {
@@ -360,7 +387,7 @@ func (h *Handlers) handleStartBrregSourceProfileNormalizationWorkflow(w http.Res
 
 	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
 		Status:        "started",
-		Workflow:      brregworkflow.NormalizeBrregSourceProfilesWorkflowName,
+		Workflow:      brregworkflow.NormalizeBrregSourceProfilesWithCopyWorkflowName,
 		WorkflowID:    workflowID,
 		WorkflowRunID: run.GetRunID(),
 	})
@@ -466,6 +493,61 @@ func (h *Handlers) handleStartBrregSourceCapitalFXWorkflow(w http.ResponseWriter
 	})
 }
 
+func (h *Handlers) handleStartBrregSourceFinancialWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := decodeStartBrregSourceFinancialWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := brregworkflow.FetchBrregSourceFinancialStatementsInput{
+		Limit:            req.Limit,
+		BatchSize:        req.BatchSize,
+		MaxParallelTasks: req.MaxParallelTasks,
+		LeaseSeconds:     req.LeaseSeconds,
+		MaxAttempts:      req.MaxAttempts,
+		Trigger:          req.Trigger,
+	}
+	workflowID := newWorkflowID("brreg-source-financial")
+	slog.Debug("starting brreg source financial workflow",
+		"workflow_id", workflowID,
+		"task_queue", brregworkflow.FetchBrregSourceFinancialStatementsTaskQueue,
+		"limit", req.Limit,
+		"batch_size", req.BatchSize,
+		"max_parallel_tasks", req.MaxParallelTasks,
+		"lease_seconds", req.LeaseSeconds,
+		"max_attempts", req.MaxAttempts,
+		"trigger", req.Trigger,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: brregworkflow.FetchBrregSourceFinancialStatementsTaskQueue,
+		},
+		brregworkflow.FetchBrregSourceFinancialStatements,
+		input,
+	)
+	if err != nil {
+		slog.Error("start brreg source financial workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("brreg source financial workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      brregworkflow.FetchBrregSourceFinancialStatementsWorkflowName,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
 func (h *Handlers) handleStartBrregBulkRawIngestWorkflow(w http.ResponseWriter, r *http.Request) {
 	if h.temporal == nil {
 		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
@@ -512,6 +594,57 @@ func (h *Handlers) handleStartBrregBulkRawIngestWorkflow(w http.ResponseWriter, 
 	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
 		Status:        "started",
 		Workflow:      brregworkflow.LoadBrregBulkRawRecordsWorkflowName,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
+func (h *Handlers) handleStartAriregisterBulkRawIngestWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := decodeStartAriregisterBulkRawIngestWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := ariregisterworkflow.LoadAriregisterBulkRawRecordsInput{
+		SourceURL: req.SourceURL,
+		Limit:     req.Limit,
+		BatchSize: req.BatchSize,
+		Trigger:   req.Trigger,
+	}
+	workflowID := newWorkflowID("ariregister-bulk-ingest")
+	slog.Debug("starting ariregister bulk raw ingest workflow",
+		"workflow_id", workflowID,
+		"task_queue", ariregisterworkflow.LoadAriregisterBulkRawRecordsTaskQueue,
+		"source_url", req.SourceURL,
+		"limit", req.Limit,
+		"batch_size", req.BatchSize,
+		"trigger", req.Trigger,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: ariregisterworkflow.LoadAriregisterBulkRawRecordsTaskQueue,
+		},
+		ariregisterworkflow.LoadAriregisterBulkRawRecords,
+		input,
+	)
+	if err != nil {
+		slog.Error("start ariregister bulk raw ingest workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("ariregister bulk raw ingest workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      ariregisterworkflow.LoadAriregisterBulkRawRecordsWorkflowName,
 		WorkflowID:    workflowID,
 		WorkflowRunID: run.GetRunID(),
 	})
@@ -793,11 +926,21 @@ func decodeStartBrregCompanyTranslationWorkflowRequest(r *http.Request) (startBr
 	req.PromptVersion = strings.TrimSpace(req.PromptVersion)
 	req.ClaimMode = strings.ToLower(strings.TrimSpace(req.ClaimMode))
 	req.Trigger = strings.TrimSpace(req.Trigger)
+	req.IDs = compactRequestStrings(req.IDs)
+	req.Filters = compactRequestFilters(req.Filters)
 	if req.Trigger == "" {
 		req.Trigger = "manual"
 	}
+	for _, id := range req.IDs {
+		if _, err := uuid.Parse(id); err != nil {
+			return startBrregCompanyTranslationWorkflowRequest{}, errors.New("ids must contain valid UUID values")
+		}
+	}
 	if req.ClaimMode != "" && req.ClaimMode != "auto" && req.ClaimMode != "fixed" {
 		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("claim_mode must be auto or fixed")
+	}
+	if req.Limit < 0 {
+		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("limit cannot be negative")
 	}
 	if req.BatchSize < 0 {
 		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("batch_size cannot be negative")
@@ -824,6 +967,35 @@ func decodeStartBrregCompanyTranslationWorkflowRequest(r *http.Request) (startBr
 		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_attempts cannot be negative")
 	}
 	return req, nil
+}
+
+func compactRequestStrings(values []string) []string {
+	compact := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			compact = append(compact, value)
+		}
+	}
+	return compact
+}
+
+func compactRequestFilters(filters map[string]string) map[string]string {
+	if len(filters) == 0 {
+		return nil
+	}
+	compact := make(map[string]string, len(filters))
+	for key, value := range filters {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			compact[key] = value
+		}
+	}
+	if len(compact) == 0 {
+		return nil
+	}
+	return compact
 }
 
 func decodeStartBrregDomainSearchWorkflowRequest(r *http.Request) (startBrregDomainSearchWorkflowRequest, error) {
@@ -954,6 +1126,35 @@ func decodeStartBrregSourceCapitalFXWorkflowRequest(r *http.Request) (startBrreg
 	return req, nil
 }
 
+func decodeStartBrregSourceFinancialWorkflowRequest(r *http.Request) (startBrregSourceFinancialWorkflowRequest, error) {
+	var req startBrregSourceFinancialWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startBrregSourceFinancialWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	if req.Trigger == "" {
+		req.Trigger = "manual"
+	}
+	if req.Limit < 0 {
+		return startBrregSourceFinancialWorkflowRequest{}, errors.New("limit cannot be negative")
+	}
+	if req.BatchSize < 0 {
+		return startBrregSourceFinancialWorkflowRequest{}, errors.New("batch_size cannot be negative")
+	}
+	if req.MaxParallelTasks < 0 {
+		return startBrregSourceFinancialWorkflowRequest{}, errors.New("max_parallel_tasks cannot be negative")
+	}
+	if req.LeaseSeconds < 0 {
+		return startBrregSourceFinancialWorkflowRequest{}, errors.New("lease_seconds cannot be negative")
+	}
+	if req.MaxAttempts < 0 {
+		return startBrregSourceFinancialWorkflowRequest{}, errors.New("max_attempts cannot be negative")
+	}
+	return req, nil
+}
+
 func decodeStartBrregBulkRawIngestWorkflowRequest(r *http.Request) (startBrregBulkRawIngestWorkflowRequest, error) {
 	var req startBrregBulkRawIngestWorkflowRequest
 	decoder := json.NewDecoder(r.Body)
@@ -976,6 +1177,33 @@ func decodeStartBrregBulkRawIngestWorkflowRequest(r *http.Request) (startBrregBu
 		parsed, err := url.Parse(req.SourceURL)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			return startBrregBulkRawIngestWorkflowRequest{}, errors.New("source_url must be http or https")
+		}
+	}
+	return req, nil
+}
+
+func decodeStartAriregisterBulkRawIngestWorkflowRequest(r *http.Request) (startAriregisterBulkRawIngestWorkflowRequest, error) {
+	var req startAriregisterBulkRawIngestWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startAriregisterBulkRawIngestWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.SourceURL = strings.TrimSpace(req.SourceURL)
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	if req.Trigger == "" {
+		req.Trigger = "manual"
+	}
+	if req.Limit < 0 {
+		return startAriregisterBulkRawIngestWorkflowRequest{}, errors.New("limit cannot be negative")
+	}
+	if req.BatchSize < 0 {
+		return startAriregisterBulkRawIngestWorkflowRequest{}, errors.New("batch_size cannot be negative")
+	}
+	if req.SourceURL != "" {
+		parsed, err := url.Parse(req.SourceURL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return startAriregisterBulkRawIngestWorkflowRequest{}, errors.New("source_url must be http or https")
 		}
 	}
 	return req, nil
@@ -1107,7 +1335,7 @@ var brregWorkflowPrefixes = []brregWorkflowPrefix{
 	{
 		Prefix:       "brreg-source-profile",
 		Label:        "Source profile sync",
-		WorkflowType: brregworkflow.NormalizeBrregSourceProfilesWorkflowName,
+		WorkflowType: brregworkflow.NormalizeBrregSourceProfilesWithCopyWorkflowName,
 	},
 	{
 		Prefix:       "brreg-source-explorer-refresh",
@@ -1118,6 +1346,11 @@ var brregWorkflowPrefixes = []brregWorkflowPrefix{
 		Prefix:       "brreg-source-capital-fx",
 		Label:        "Capital FX conversion",
 		WorkflowType: brregworkflow.ConvertBrregSourceCapitalToUSDWorkflowName,
+	},
+	{
+		Prefix:       "brreg-source-financial",
+		Label:        "Source financial records",
+		WorkflowType: brregworkflow.FetchBrregSourceFinancialStatementsWorkflowName,
 	},
 	{
 		Prefix:       "brreg-bulk-ingest",

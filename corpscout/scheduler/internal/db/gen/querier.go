@@ -14,6 +14,7 @@ type Querier interface {
 	ApplyBrregSourceCapitalCachedTranslationTerms(ctx context.Context, arg ApplyBrregSourceCapitalCachedTranslationTermsParams) (int32, error)
 	ApplyBrregSourceCompanyCachedTranslationTerms(ctx context.Context, arg ApplyBrregSourceCompanyCachedTranslationTermsParams) (int32, error)
 	ApproveCompanyFinancial(ctx context.Context, arg ApproveCompanyFinancialParams) error
+	BeginAriregisterWorkflowRun(ctx context.Context, arg BeginAriregisterWorkflowRunParams) (uuid.UUID, error)
 	BeginBrregWorkflowRun(ctx context.Context, arg BeginBrregWorkflowRunParams) (uuid.UUID, error)
 	BeginExchangeRateSyncRun(ctx context.Context, arg BeginExchangeRateSyncRunParams) (ExchangeRateSyncRun, error)
 	BeginNACEImportRun(ctx context.Context, arg BeginNACEImportRunParams) (NaceImportRun, error)
@@ -34,6 +35,7 @@ type Querier interface {
 	CountDomains(ctx context.Context, arg CountDomainsParams) (int64, error)
 	CountPendingCompanyFinancials(ctx context.Context) (int32, error)
 	CountSuggestionReviewItemStatuses(ctx context.Context, suggestionID uuid.UUID) (CountSuggestionReviewItemStatusesRow, error)
+	CreateAriregisterBulkSnapshot(ctx context.Context, arg CreateAriregisterBulkSnapshotParams) (uuid.UUID, error)
 	CreateBrregDomainActionAttempt(ctx context.Context, arg CreateBrregDomainActionAttemptParams) (uuid.UUID, error)
 	CreateBrregWorkflowTaskSelection(ctx context.Context, arg CreateBrregWorkflowTaskSelectionParams) (CreateBrregWorkflowTaskSelectionRow, error)
 	CreateCompanyFinancial(ctx context.Context, arg CreateCompanyFinancialParams) (CompanyFinancial, error)
@@ -42,9 +44,11 @@ type Querier interface {
 	DeactivateMissingNACECodes(ctx context.Context, arg DeactivateMissingNACECodesParams) (int32, error)
 	DeleteExchangeRatesNotInCurrencies(ctx context.Context, arg DeleteExchangeRatesNotInCurrenciesParams) (int32, error)
 	DeleteTemporalScheduleMetadata(ctx context.Context, temporalScheduleID string) error
+	EnsureBrregCompanyFinancialProcessStatuses(ctx context.Context, limit int32) (int32, error)
 	EnsureBrregCompanyProcessStatuses(ctx context.Context, limit int32) (int32, error)
 	FailRunningBrregSourceTranslationTasksForRun(ctx context.Context, arg FailRunningBrregSourceTranslationTasksForRunParams) (int32, error)
 	FailRunningBrregWorkflowTasksForRun(ctx context.Context, arg FailRunningBrregWorkflowTasksForRunParams) (int32, error)
+	FinishAriregisterWorkflowRunWithStats(ctx context.Context, arg FinishAriregisterWorkflowRunWithStatsParams) (uuid.UUID, error)
 	FinishBrregDomainActionAttempt(ctx context.Context, arg FinishBrregDomainActionAttemptParams) error
 	FinishBrregWorkflowRun(ctx context.Context, arg FinishBrregWorkflowRunParams) (uuid.UUID, error)
 	FinishBrregWorkflowRunWithStats(ctx context.Context, arg FinishBrregWorkflowRunWithStatsParams) (uuid.UUID, error)
@@ -64,6 +68,7 @@ type Querier interface {
 	GetCompany(ctx context.Context, id uuid.UUID) (Company, error)
 	GetCompanyByExactName(ctx context.Context, lower string) (Company, error)
 	GetCompanyBySlug(ctx context.Context, canonicalSlug string) (Company, error)
+	GetCurrentAriregisterWorkflowRawRecord(ctx context.Context, registryCode string) (GetCurrentAriregisterWorkflowRawRecordRow, error)
 	GetCurrentBrregWorkflowRawRecord(ctx context.Context, organizationNumber string) (GetCurrentBrregWorkflowRawRecordRow, error)
 	GetDomainByID(ctx context.Context, id uuid.UUID) (GetDomainByIDRow, error)
 	GetExchangeRateSyncRunByWorkflowID(ctx context.Context, temporalWorkflowID string) (ExchangeRateSyncRun, error)
@@ -125,6 +130,7 @@ type Querier interface {
 	ListReviewCandidateIDs(ctx context.Context, arg ListReviewCandidateIDsParams) ([]uuid.UUID, error)
 	ListSources(ctx context.Context) ([]DataSource, error)
 	ListTemporalScheduleMetadata(ctx context.Context, arg ListTemporalScheduleMetadataParams) ([]TemporalScheduleMetadatum, error)
+	MarkAriregisterBulkSnapshotParsed(ctx context.Context, arg MarkAriregisterBulkSnapshotParsedParams) error
 	MarkBrregCompanyCurrencyDirty(ctx context.Context, arg MarkBrregCompanyCurrencyDirtyParams) (BrregSourceCompanyProcessStatus, error)
 	MarkBrregCompanyCurrencyFailed(ctx context.Context, arg MarkBrregCompanyCurrencyFailedParams) (BrregSourceCompanyProcessStatus, error)
 	MarkBrregCompanyCurrencySkipped(ctx context.Context, arg MarkBrregCompanyCurrencySkippedParams) (BrregSourceCompanyProcessStatus, error)
@@ -166,12 +172,14 @@ type Querier interface {
 	MarkSuggestionCompanyServiceRejected(ctx context.Context, arg MarkSuggestionCompanyServiceRejectedParams) error
 	NormalizeBrregSourceProfiles(ctx context.Context, arg NormalizeBrregSourceProfilesParams) (NormalizeBrregSourceProfilesRow, error)
 	PrepareBrregSourceTranslationTasks(ctx context.Context, arg PrepareBrregSourceTranslationTasksParams) (int32, error)
+	RecordAriregisterSourceFile(ctx context.Context, arg RecordAriregisterSourceFileParams) (uuid.UUID, error)
 	RecoverStaleBrregWorkflowRuns(ctx context.Context, arg RecoverStaleBrregWorkflowRunsParams) (RecoverStaleBrregWorkflowRunsRow, error)
 	RejectCompanyFinancial(ctx context.Context, arg RejectCompanyFinancialParams) error
 	ReleaseBrregCompanyTranslationClaim(ctx context.Context, arg ReleaseBrregCompanyTranslationClaimParams) (BrregSourceCompanyProcessStatus, error)
 	ResolveNACECodeAlias(ctx context.Context, arg ResolveNACECodeAliasParams) (NaceCode, error)
 	ReviewCompanyDomain(ctx context.Context, arg ReviewCompanyDomainParams) error
 	SetDefaultLLMProvider(ctx context.Context, id uuid.UUID) (SetDefaultLLMProviderRow, error)
+	SupersedeCurrentAriregisterWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentAriregisterWorkflowRawRecordParams) error
 	SupersedeCurrentBrregWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentBrregWorkflowRawRecordParams) error
 	// ── enrichment update ─────────────────────────────────────────────────────────
 	UpdateCompanyEnrichment(ctx context.Context, arg UpdateCompanyEnrichmentParams) (Company, error)
@@ -189,6 +197,8 @@ type Querier interface {
 	UpdateSuggestionAggregateStatus(ctx context.Context, arg UpdateSuggestionAggregateStatusParams) error
 	UpdateSuggestionCreatedCompany(ctx context.Context, arg UpdateSuggestionCreatedCompanyParams) error
 	UpdateTemporalScheduleMetadata(ctx context.Context, arg UpdateTemporalScheduleMetadataParams) (TemporalScheduleMetadatum, error)
+	UpsertAriregisterWorkflowRawRecord(ctx context.Context, arg UpsertAriregisterWorkflowRawRecordParams) (UpsertAriregisterWorkflowRawRecordRow, error)
+	UpsertBrregSourceFinancialStatement(ctx context.Context, arg UpsertBrregSourceFinancialStatementParams) (uuid.UUID, error)
 	UpsertBrregTranslationTermResult(ctx context.Context, arg UpsertBrregTranslationTermResultParams) error
 	UpsertBrregWorkflowNACEMappingsForRawRecord(ctx context.Context, arg UpsertBrregWorkflowNACEMappingsForRawRecordParams) ([]UpsertBrregWorkflowNACEMappingsForRawRecordRow, error)
 	UpsertBrregWorkflowRawRecord(ctx context.Context, arg UpsertBrregWorkflowRawRecordParams) (UpsertBrregWorkflowRawRecordRow, error)

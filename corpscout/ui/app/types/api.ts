@@ -235,6 +235,9 @@ export interface StartWorkflowResponse {
 
 export interface BrregCompanyTranslationRequest {
   all_records?: boolean;
+  ids?: string[];
+  filters?: Record<string, string>;
+  limit?: number;
   batch_size?: number;
   claim_mode?: "auto" | "fixed";
   max_request_chars?: number;
@@ -330,6 +333,7 @@ export interface BrregSourceEntryListItem {
   latest_revenue_usd_cents?: number;
   latest_total_assets_usd_cents?: number;
   latest_net_income_usd_cents?: number;
+  financial_status: "success" | "unknown" | "skipped";
   translation_missing_count: number;
   translation_pending_count: number;
   translation_running_count: number;

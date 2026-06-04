@@ -11,25 +11,28 @@ import (
 
 const defaultNATSRequestTimeout = 180 * time.Second
 const defaultFXECBDailyURL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
+const defaultAriregisterBulkSourceURL = "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__lihtandmed.csv.zip"
 
 type Config struct {
-	DatabaseURL        string
-	ListenAddr         string
-	PostgRESTURL       string
-	S3Endpoint         string
-	S3AccessKey        string
-	S3SecretKey        string
-	S3Bucket           string
-	CrawlServiceURL    string
-	NATSURL            string
-	NATSRequestTimeout time.Duration
-	TemporalHost       string
-	TemporalUIURL      string
-	LogLevel           string
-	LLMProviderKey     string
-	NACESourceURL      string
-	BRREGBulkSourceURL string
-	FXECBSourceURL     string
+	DatabaseURL          string
+	ListenAddr           string
+	PostgRESTURL         string
+	S3Endpoint           string
+	S3AccessKey          string
+	S3SecretKey          string
+	S3Bucket             string
+	CrawlServiceURL      string
+	NATSURL              string
+	NATSRequestTimeout   time.Duration
+	TemporalHost         string
+	TemporalUIURL        string
+	LogLevel             string
+	LLMProviderKey       string
+	NACESourceURL        string
+	BRREGBulkSourceURL   string
+	BRREGFinancialURL    string
+	AriregisterSourceURL string
+	FXECBSourceURL       string
 }
 
 func Load() (Config, error) {
@@ -54,23 +57,25 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	return Config{
-		DatabaseURL:        databaseURL,
-		ListenAddr:         getEnv("CORPSCOUT_LISTEN_ADDR", ":8090"),
-		PostgRESTURL:       getEnv("CORPSCOUT_POSTGREST_URL", "http://localhost:3000"),
-		S3Endpoint:         getEnv("CORPSCOUT_S3_ENDPOINT", "http://localhost:9000"),
-		S3AccessKey:        s3AccessKey,
-		S3SecretKey:        s3SecretKey,
-		S3Bucket:           getEnv("CORPSCOUT_S3_BUCKET", "crawls"),
-		CrawlServiceURL:    getEnv("CORPSCOUT_CRAWL_SERVICE_URL", "http://localhost:8096"),
-		NATSURL:            getEnv("CORPSCOUT_NATS_URL", ""),
-		NATSRequestTimeout: natsRequestTimeout,
-		TemporalHost:       getEnv("CORPSCOUT_TEMPORAL_HOST", "localhost:7233"),
-		TemporalUIURL:      getEnv("CORPSCOUT_TEMPORAL_UI_URL", "http://localhost:8089"),
-		LogLevel:           logLevel,
-		LLMProviderKey:     getEnv("CORPSCOUT_LLM_PROVIDER_KEY_ENCRYPTION_KEY", ""),
-		NACESourceURL:      getEnv("CORPSCOUT_NACE_REV21_SOURCE_URL", ""),
-		BRREGBulkSourceURL: getEnv("CORPSCOUT_BRREG_BULK_SOURCE_URL", "https://data.brreg.no/enhetsregisteret/api/enheter/lastned"),
-		FXECBSourceURL:     getEnv("CORPSCOUT_FX_ECB_DAILY_URL", defaultFXECBDailyURL),
+		DatabaseURL:          databaseURL,
+		ListenAddr:           getEnv("CORPSCOUT_LISTEN_ADDR", ":8090"),
+		PostgRESTURL:         getEnv("CORPSCOUT_POSTGREST_URL", "http://localhost:3000"),
+		S3Endpoint:           getEnv("CORPSCOUT_S3_ENDPOINT", "http://localhost:9000"),
+		S3AccessKey:          s3AccessKey,
+		S3SecretKey:          s3SecretKey,
+		S3Bucket:             getEnv("CORPSCOUT_S3_BUCKET", "crawls"),
+		CrawlServiceURL:      getEnv("CORPSCOUT_CRAWL_SERVICE_URL", "http://localhost:8096"),
+		NATSURL:              getEnv("CORPSCOUT_NATS_URL", ""),
+		NATSRequestTimeout:   natsRequestTimeout,
+		TemporalHost:         getEnv("CORPSCOUT_TEMPORAL_HOST", "localhost:7233"),
+		TemporalUIURL:        getEnv("CORPSCOUT_TEMPORAL_UI_URL", "http://localhost:8089"),
+		LogLevel:             logLevel,
+		LLMProviderKey:       getEnv("CORPSCOUT_LLM_PROVIDER_KEY_ENCRYPTION_KEY", ""),
+		NACESourceURL:        getEnv("CORPSCOUT_NACE_REV21_SOURCE_URL", ""),
+		BRREGBulkSourceURL:   getEnv("CORPSCOUT_BRREG_BULK_SOURCE_URL", "https://data.brreg.no/enhetsregisteret/api/enheter/lastned"),
+		BRREGFinancialURL:    getEnv("CORPSCOUT_BRREG_FINANCIAL_BASE_URL", "https://data.brreg.no"),
+		AriregisterSourceURL: getEnv("CORPSCOUT_ARIREGISTER_BULK_SOURCE_URL", defaultAriregisterBulkSourceURL),
+		FXECBSourceURL:       getEnv("CORPSCOUT_FX_ECB_DAILY_URL", defaultFXECBDailyURL),
 	}, nil
 }
 

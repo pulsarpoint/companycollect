@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useOutletContext, useParams } from "react-router";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, ExternalLink } from "lucide-react";
 import { api, errorMessage } from "~/lib/api";
 import type { SourceDetailContext } from "~/routes/sources_.$name";
 import type { BrregSourceCompanyDetail } from "~/types/api";
@@ -41,6 +41,187 @@ function dateValue(value?: string): string {
 
 function rowsFrom(value: Array<Record<string, unknown>> | undefined) {
   return Array.isArray(value) ? value : [];
+}
+
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+function formatUsdCents(value: unknown): string {
+  const cents = numberValue(value);
+  if (cents == null) return "-";
+  return new Intl.NumberFormat(undefined, {
+    currency: "USD",
+    maximumFractionDigits: 0,
+    style: "currency",
+  }).format(cents / 100);
+}
+
+function formatOriginalAmount(amount: unknown, currency: unknown): string {
+  const numericAmount = numberValue(amount);
+  if (numericAmount == null) return "-";
+  const currencyCode = stringValue(currency);
+  if (!currencyCode) return numericAmount.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return `${numericAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${currencyCode}`;
+}
+
+function formatPercent(value: unknown): string {
+  const numericValue = numberValue(value);
+  if (numericValue == null) return "-";
+  return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
+}
+
+function formatRatio(value: unknown): string {
+  const numericValue = numberValue(value);
+  if (numericValue == null) return "-";
+  return numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatPeriod(row: Record<string, unknown>): string {
+  const start = dateValue(stringValue(row.period_start));
+  const end = dateValue(stringValue(row.period_end));
+  if (start === "-" && end === "-") return "-";
+  if (start === "-") return end;
+  if (end === "-") return start;
+  return `${start} - ${end}`;
+}
+
+function metricLabel(value: string): string {
+  return value.replace(/_/g, " ");
+}
+
+function FinancialAmountCell({
+  row,
+  metric,
+}: {
+  row: Record<string, unknown>;
+  metric: string;
+}) {
+  const usd = formatUsdCents(row[`${metric}_usd_cents`]);
+  const original = formatOriginalAmount(row[`${metric}_original_amount`], row.original_currency);
+  return (
+    <div className="flex min-w-32 flex-col gap-1">
+      <span className="font-medium">{usd}</span>
+      {original !== "-" && <span className="text-xs text-muted-foreground">{original}</span>}
+    </div>
+  );
+}
+
+function FinancialsSection({ rows }: { rows: Array<Record<string, unknown>> }) {
+  const latest = rows[0];
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <CardTitle>Financials</CardTitle>
+            <CardDescription>
+              Annual financial statements stored for this BRREG source company.
+            </CardDescription>
+          </div>
+          <Badge variant="outline">{rows.length.toLocaleString()}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5">
+        {rows.length === 0 ? (
+          <div className="py-6 text-sm text-muted-foreground">
+            No financial statements stored for this BRREG company.
+          </div>
+        ) : (
+          <>
+            <KeyValueGrid
+              items={[
+                ["Latest fiscal year", latest?.fiscal_year],
+                ["Statement type", metricLabel(textValue(latest?.statement_type))],
+                ["Consolidated", latest?.is_consolidated],
+                ["Currency", latest?.original_currency],
+                ["Revenue", formatUsdCents(latest?.revenue_usd_cents)],
+                ["Total assets", formatUsdCents(latest?.total_assets_usd_cents)],
+                ["Net income", formatUsdCents(latest?.net_income_usd_cents)],
+                ["Period", latest ? formatPeriod(latest) : undefined],
+                ["FX date", dateValue(stringValue(latest?.fx_rate_date))],
+              ]}
+            />
+
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Year</TableHead>
+                    <TableHead>Period</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Revenue</TableHead>
+                    <TableHead>Operating profit</TableHead>
+                    <TableHead>Net income</TableHead>
+                    <TableHead>Total assets</TableHead>
+                    <TableHead>Equity</TableHead>
+                    <TableHead>Liabilities</TableHead>
+                    <TableHead>Employees</TableHead>
+                    <TableHead>Ratios</TableHead>
+                    <TableHead>Source</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((row, rowIndex) => (
+                    <TableRow key={String(row.id ?? `${row.fiscal_year ?? "year"}-${rowIndex}`)}>
+                      <TableCell className="font-medium">{textValue(row.fiscal_year)}</TableCell>
+                      <TableCell>{formatPeriod(row)}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          <span>{metricLabel(textValue(row.statement_type))}</span>
+                          {row.is_consolidated === true && (
+                            <Badge variant="secondary">Consolidated</Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell><FinancialAmountCell row={row} metric="revenue" /></TableCell>
+                      <TableCell><FinancialAmountCell row={row} metric="operating_profit" /></TableCell>
+                      <TableCell><FinancialAmountCell row={row} metric="net_income" /></TableCell>
+                      <TableCell><FinancialAmountCell row={row} metric="total_assets" /></TableCell>
+                      <TableCell><FinancialAmountCell row={row} metric="total_equity" /></TableCell>
+                      <TableCell><FinancialAmountCell row={row} metric="total_liabilities" /></TableCell>
+                      <TableCell>{textValue(row.employee_count)}</TableCell>
+                      <TableCell>
+                        <div className="flex min-w-36 flex-col gap-1 text-xs">
+                          <span>Operating margin: {formatPercent(row.operating_margin_percent)}</span>
+                          <span>Net margin: {formatPercent(row.net_margin_percent)}</span>
+                          <span>Equity ratio: {formatPercent(row.equity_ratio_percent)}</span>
+                          <span>Current ratio: {formatRatio(row.current_ratio)}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {stringValue(row.source_url) ? (
+                          <Button asChild variant="ghost" size="sm">
+                            <a href={stringValue(row.source_url)} target="_blank" rel="noreferrer">
+                              <ExternalLink data-icon="inline-start" />
+                              Open
+                            </a>
+                          </Button>
+                        ) : (
+                          "-"
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function KeyValueGrid({
@@ -326,6 +507,8 @@ export default function BrregSourceCompanyDetailPage() {
           ["status", "Status"],
         ]}
       />
+
+      <FinancialsSection rows={rowsFrom(company.financial_years)} />
 
       <Card>
         <CardHeader>

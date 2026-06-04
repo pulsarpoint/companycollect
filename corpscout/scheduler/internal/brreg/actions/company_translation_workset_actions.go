@@ -12,10 +12,12 @@ import (
 )
 
 type BuildBrregTranslationWorksetInput struct {
-	Path          string `json:"path"`
-	PromptVersion string `json:"prompt_version,omitempty"`
-	CompanyLimit  int32  `json:"company_limit,omitempty"`
-	FieldLimit    int32  `json:"field_limit,omitempty"`
+	Path          string            `json:"path"`
+	PromptVersion string            `json:"prompt_version,omitempty"`
+	IDs           []string          `json:"ids,omitempty"`
+	Filters       map[string]string `json:"filters,omitempty"`
+	CompanyLimit  int32             `json:"company_limit,omitempty"`
+	FieldLimit    int32             `json:"field_limit,omitempty"`
 }
 
 type BuildBrregTranslationWorksetResult = companydata.BuildTranslationWorksetResult
@@ -71,6 +73,8 @@ func (a *CompanyTranslationActions) BuildBrregTranslationWorkset(
 	}
 	slog.DebugContext(ctx, "building brreg translation workset",
 		"path", input.Path,
+		"ids_count", len(input.IDs),
+		"filters_count", len(input.Filters),
 		"company_limit", input.CompanyLimit,
 		"field_limit", input.FieldLimit,
 		"prompt_version", input.PromptVersion,
@@ -78,6 +82,8 @@ func (a *CompanyTranslationActions) BuildBrregTranslationWorkset(
 	result, err := a.store.BuildTranslationWorkset(ctx, companydata.BuildTranslationWorksetCommand{
 		Path:          input.Path,
 		PromptVersion: input.PromptVersion,
+		IDs:           input.IDs,
+		Filters:       input.Filters,
 		CompanyLimit:  input.CompanyLimit,
 		FieldLimit:    input.FieldLimit,
 	})

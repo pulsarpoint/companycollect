@@ -65,6 +65,8 @@ services:
       CORPSCOUT_TEMPORAL_UI_URL: http://100.85.212.113:8089
     ports:
       - "8092:8090"
+    volumes:
+      - ./data/scheduler-worksets:/var/lib/corpscout/worksets
     restart: unless-stopped
 
   ui:

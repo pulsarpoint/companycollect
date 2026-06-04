@@ -31,3 +31,28 @@ func TestBrregCompanyProcessStatusDownMigrationDropsTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(body), "DROP TABLE IF EXISTS brreg_source.company_process_status")
 }
+
+func TestBrregCompanyFinancialClaimIndexesMigration(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000088_brreg_source_financial_claim_indexes.up.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "CREATE INDEX IF NOT EXISTS idx_brreg_company_process_status_financial_running_lease")
+	require.Contains(t, sql, "ON brreg_source.company_process_status(financial_lease_until, company_id)")
+	require.Contains(t, sql, "WHERE financial_status = 'running'")
+	require.Contains(t, sql, "CREATE INDEX IF NOT EXISTS idx_brreg_company_process_status_financial_ready_order")
+	require.Contains(t, sql, "ON brreg_source.company_process_status(updated_at, company_id)")
+	require.Contains(t, sql, "INCLUDE (financial_status, financial_attempt_count)")
+	require.Contains(t, sql, "WHERE financial_status IN ('pending', 'dirty', 'failed_retryable')")
+	require.NotContains(t, sql, "CONCURRENTLY")
+}
+
+func TestBrregCompanyFinancialClaimIndexesDownMigration(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000088_brreg_source_financial_claim_indexes.down.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "DROP INDEX IF EXISTS brreg_source.idx_brreg_company_process_status_financial_running_lease")
+	require.Contains(t, sql, "DROP INDEX IF EXISTS brreg_source.idx_brreg_company_process_status_financial_ready_order")
+	require.NotContains(t, sql, "CONCURRENTLY")
+}

@@ -35,9 +35,14 @@ func newBrregSourceExplorerRefreshTemporalWorker(temporalClient client.Client, r
 func registerBrregSourceProfileWorker(worker temporalworker.Worker, resources *temporalWorkerResources) {
 	slog.Debug("registering brreg source profile temporal workflow and activities")
 	worker.RegisterWorkflow(brregworkflow.NormalizeBrregSourceProfiles)
+	worker.RegisterWorkflow(brregworkflow.NormalizeBrregSourceProfilesWithCopy)
 	worker.RegisterActivityWithOptions(
 		resources.sourceProfileActions.NormalizeBrregSourceProfiles,
 		activity.RegisterOptions{Name: "NormalizeBrregSourceProfilesActivity"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.sourceProfileActions.NormalizeBrregSourceProfilesWithCopy,
+		activity.RegisterOptions{Name: "NormalizeBrregSourceProfilesWithCopyActivity"},
 	)
 }
 

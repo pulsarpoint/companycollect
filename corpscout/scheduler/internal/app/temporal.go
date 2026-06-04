@@ -9,9 +9,12 @@ import (
 	"go.temporal.io/sdk/client"
 	temporalworker "go.temporal.io/sdk/worker"
 
+	ariregisteractions "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/actions"
+	ariregisterdb "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/db"
 	brregactions "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/actions"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/brreg/companydata"
 	brregdb "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/db"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/brreg/financial"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/config"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/crawlclient"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
@@ -22,15 +25,17 @@ import (
 )
 
 type temporalWorkerResources struct {
-	translationClient    *translationclient.Client
-	companyTranslation   *brregactions.CompanyTranslationActions
-	crawlClient          *crawlclient.Client
-	domainSearchActions  *brregactions.DomainSearchActions
-	bulkIngestActions    *brregactions.BulkIngestActions
-	sourceProfileActions *brregactions.SourceProfileActions
-	sourceCapitalFX      *brregactions.SourceCapitalFXActions
-	naceTaxonomyActions  *nacetaxonomy.Actions
-	fxActions            *fx.Actions
+	translationClient     *translationclient.Client
+	companyTranslation    *brregactions.CompanyTranslationActions
+	crawlClient           *crawlclient.Client
+	domainSearchActions   *brregactions.DomainSearchActions
+	bulkIngestActions     *brregactions.BulkIngestActions
+	sourceProfileActions  *brregactions.SourceProfileActions
+	sourceCapitalFX       *brregactions.SourceCapitalFXActions
+	sourceFinancial       *brregactions.SourceFinancialActions
+	ariregisterBulkIngest *ariregisteractions.BulkIngestActions
+	naceTaxonomyActions   *nacetaxonomy.Actions
+	fxActions             *fx.Actions
 }
 
 func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore *llmproviders.Store, s3 *s3client.Client) (*temporalWorkerResources, error) {
@@ -60,16 +65,20 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 	)
 	gateway := brregdb.New(pool)
 	brregCompanyData := companydata.New(pool)
+	financialClient := financial.NewClient(cfg.BRREGFinancialURL, http.DefaultClient)
+	ariregisterGateway := ariregisterdb.New(pool)
 	return &temporalWorkerResources{
-		translationClient:    translator,
-		companyTranslation:   brregactions.NewCompanyTranslationActions(brregCompanyData, translator),
-		crawlClient:          crawler,
-		domainSearchActions:  brregactions.NewDomainSearchActions(gateway, crawler, llmStore, s3),
-		bulkIngestActions:    brregactions.NewBulkIngestActions(gateway, http.DefaultClient, cfg.BRREGBulkSourceURL),
-		sourceProfileActions: brregactions.NewSourceProfileActions(gateway),
-		sourceCapitalFX:      brregactions.NewSourceCapitalFXActions(gateway),
-		naceTaxonomyActions:  nacetaxonomy.NewActions(pool, http.DefaultClient),
-		fxActions:            fx.NewActions(pool, http.DefaultClient, cfg.FXECBSourceURL),
+		translationClient:     translator,
+		companyTranslation:    brregactions.NewCompanyTranslationActions(brregCompanyData, translator),
+		crawlClient:           crawler,
+		domainSearchActions:   brregactions.NewDomainSearchActions(gateway, crawler, llmStore, s3),
+		bulkIngestActions:     brregactions.NewBulkIngestActions(gateway, http.DefaultClient, cfg.BRREGBulkSourceURL),
+		sourceProfileActions:  brregactions.NewSourceProfileActions(gateway),
+		sourceCapitalFX:       brregactions.NewSourceCapitalFXActions(gateway),
+		sourceFinancial:       brregactions.NewSourceFinancialActions(gateway, financialClient),
+		ariregisterBulkIngest: ariregisteractions.NewBulkIngestActions(ariregisterGateway, http.DefaultClient, cfg.AriregisterSourceURL),
+		naceTaxonomyActions:   nacetaxonomy.NewActions(pool, http.DefaultClient),
+		fxActions:             fx.NewActions(pool, http.DefaultClient, cfg.FXECBSourceURL),
 	}, nil
 }
 
@@ -93,6 +102,8 @@ func newTemporalWorkers(temporalClient client.Client, resources *temporalWorkerR
 		newBrregSourceProfileTemporalWorker(temporalClient, resources),
 		newBrregSourceExplorerRefreshTemporalWorker(temporalClient, resources),
 		newBrregSourceCapitalFXTemporalWorker(temporalClient, resources),
+		newBrregSourceFinancialTemporalWorker(temporalClient, resources),
+		newAriregisterBulkIngestTemporalWorker(temporalClient, resources),
 		newNACETaxonomyTemporalWorker(temporalClient, resources),
 		newFXTemporalWorker(temporalClient, resources),
 	}

@@ -35,6 +35,7 @@ func TestBrregSourceProfileTablesMigrationDefinesSourceSchema(t *testing.T) {
 
 	require.Contains(t, sql, "website_type IN ('official_site', 'social_profile', 'marketplace', 'directory_profile', 'contact_page', 'other', 'unknown')")
 	require.Contains(t, sql, "domain_type IN ('official', 'related', 'email_domain', 'infrastructure', 'unknown')")
+	require.Contains(t, sql, "share_count BIGINT")
 	require.Contains(t, sql, "UNIQUE (action_type, source_table, source_row_id, target_key, source_fingerprint)")
 
 	require.Contains(t, sql, "CREATE OR REPLACE VIEW brreg_source.v_company_explorer AS")
@@ -96,4 +97,31 @@ func TestBrregSourceCompanyExplorerMaterializedViewMigration(t *testing.T) {
 	require.Contains(t, sql, "idx_brreg_source_mv_company_explorer_updated")
 	require.Contains(t, sql, "idx_brreg_source_mv_company_explorer_org_name_trgm")
 	require.Contains(t, sql, "GRANT SELECT ON brreg_source.mv_company_explorer TO corpscout_anon")
+}
+
+func TestBrregSourceCompanyTranslationStatusMaterializedViewMigration(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000085_brreg_source_company_translation_status_materialized_view.up.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "CREATE MATERIALIZED VIEW brreg_source.mv_company_translation_status AS")
+	require.Contains(t, sql, "FROM brreg_source.v_missing_translations")
+	require.Contains(t, sql, "CREATE UNIQUE INDEX uq_brreg_source_mv_company_translation_status_company")
+	require.Contains(t, sql, "idx_brreg_source_mv_company_translation_status_missing")
+	require.Contains(t, sql, "GRANT SELECT ON brreg_source.mv_company_translation_status TO corpscout_anon")
+}
+
+func TestBrregSourceCompanyExplorerFinancialStatusMigration(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000086_brreg_source_financial_status_explorer.up.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "CASE")
+	require.Contains(t, sql, "THEN 'success'")
+	require.Contains(t, sql, "process_status.financial_status = 'skipped'")
+	require.Contains(t, sql, "ELSE 'unknown'")
+	require.Contains(t, sql, "AS financial_status")
+	require.Contains(t, sql, "idx_brreg_source_mv_company_explorer_financial_status_updated")
+	require.Contains(t, sql, "DROP VIEW IF EXISTS brreg_source.v_company_explorer")
+	require.NotContains(t, sql, "CREATE OR REPLACE VIEW brreg_source.v_company_explorer")
 }

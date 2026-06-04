@@ -10,6 +10,121 @@ import (
 	"github.com/pulsarpoint/corpscout/scheduler/internal/testdb"
 )
 
+func TestBuildTranslationWorksetScopesCompaniesFromMaterializedExplorer(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	first := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999555101",
+		OrganizationName:      "MATERIALIZED TARGET AS",
+		OrganizationFormLabel: "Aksjeselskap",
+		ResponseClass:         "Enhet",
+	})
+	second := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999555102",
+		OrganizationName:      "MATERIALIZED OTHER AS",
+		OrganizationFormLabel: "Aksjeselskap",
+		ResponseClass:         "Enhet",
+	})
+	_, err := tx.Exec(t.Context(), "REFRESH MATERIALIZED VIEW brreg_source.mv_company_explorer")
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "translation-workset.sqlite")
+	result, err := New(tx).BuildTranslationWorkset(t.Context(), BuildTranslationWorksetCommand{
+		Path:          path,
+		PromptVersion: "v1",
+		IDs:           []string{first.CompanyID.String()},
+		Filters:       map[string]string{"translation_status": "missing"},
+	})
+
+	require.NoError(t, err)
+	require.EqualValues(t, 1, result.CompaniesExported)
+	require.EqualValues(t, 2, result.FieldsExported)
+
+	db := openWorksetDB(t, path)
+	defer db.Close()
+	require.EqualValues(t, 2, countRowsWhere(t, db, "translation_bindings", "company_id = '"+first.CompanyID.String()+"'"))
+	require.EqualValues(t, 0, countRowsWhere(t, db, "translation_bindings", "company_id = '"+second.CompanyID.String()+"'"))
+}
+
+func TestSaveTranslationWorksetBatchReportsMissingWorksetFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing", "translation-workset.sqlite")
+
+	_, err := SaveTranslationWorksetBatch(t.Context(), SaveTranslationWorksetBatchCommand{
+		Path:    path,
+		BatchID: 1,
+		Results: []TranslationTermResult{{
+			TermKey:        "term-1",
+			TranslatedText: "Entity",
+			Status:         "succeeded",
+		}},
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "translation workset file does not exist")
+}
+
+func TestBuildTranslationWorksetAllRecordsUsesLiveMissingTranslationsWhenExplorerIsStale(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	first := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999555201",
+		OrganizationName:      "STALE EXPLORER FIRST AS",
+		OrganizationFormLabel: "Aksjeselskap",
+		ResponseClass:         "Enhet",
+	})
+	second := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999555202",
+		OrganizationName:      "STALE EXPLORER SECOND AS",
+		OrganizationFormLabel: "Aksjeselskap",
+		ResponseClass:         "Enhet",
+	})
+	_, err := tx.Exec(t.Context(), `
+UPDATE brreg_source.companies
+SET updated_at = now() + interval '1 minute'
+WHERE id = $1
+`, first.CompanyID)
+	require.NoError(t, err)
+	_, err = tx.Exec(t.Context(), "REFRESH MATERIALIZED VIEW brreg_source.mv_company_explorer")
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "translation-workset.sqlite")
+	result, err := New(tx).BuildTranslationWorkset(t.Context(), BuildTranslationWorksetCommand{
+		Path:          path,
+		PromptVersion: "v1",
+		IDs:           []string{first.CompanyID.String(), second.CompanyID.String()},
+		CompanyLimit:  1,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, result.CompaniesExported)
+
+	db := openWorksetDB(t, path)
+	require.EqualValues(t, 2, countRowsWhere(t, db, "translation_bindings", "company_id = '"+first.CompanyID.String()+"'"))
+	db.Close()
+
+	_, err = tx.Exec(t.Context(), `
+UPDATE brreg_source.companies
+SET organization_form_label_en = 'Limited liability company',
+    response_class_en = 'Entity',
+    updated_at = now()
+WHERE id = $1
+`, first.CompanyID)
+	require.NoError(t, err)
+
+	nextPath := filepath.Join(t.TempDir(), "translation-workset-next.sqlite")
+	nextResult, err := New(tx).BuildTranslationWorkset(t.Context(), BuildTranslationWorksetCommand{
+		Path:          nextPath,
+		PromptVersion: "v1",
+		IDs:           []string{first.CompanyID.String(), second.CompanyID.String()},
+		CompanyLimit:  1,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, nextResult.CompaniesExported)
+	require.EqualValues(t, 2, nextResult.FieldsExported)
+
+	nextDB := openWorksetDB(t, nextPath)
+	defer nextDB.Close()
+	require.EqualValues(t, 0, countRowsWhere(t, nextDB, "translation_bindings", "company_id = '"+first.CompanyID.String()+"'"))
+	require.EqualValues(t, 2, countRowsWhere(t, nextDB, "translation_bindings", "company_id = '"+second.CompanyID.String()+"'"))
+}
+
 func TestWriteTranslationWorksetCreatesSQLiteFileWithBindingsAndTerms(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "translation-workset.sqlite")
 	rows := []translationWorksetRow{
@@ -470,6 +585,8 @@ func TestStoreBuildTranslationWorksetExportsMissingFieldsFromRelatedTables(t *te
 		RoleLabel:             "Styrets leder",
 		RoleGroup:             "Styret",
 	})
+	_, err := tx.Exec(t.Context(), "REFRESH MATERIALIZED VIEW brreg_source.mv_company_explorer")
+	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "translation-workset.sqlite")
 
 	result, err := New(tx).BuildTranslationWorkset(t.Context(), BuildTranslationWorksetCommand{
@@ -485,7 +602,7 @@ func TestStoreBuildTranslationWorksetExportsMissingFieldsFromRelatedTables(t *te
 	db := openWorksetDB(t, path)
 	defer db.Close()
 	require.EqualValues(t, result.FieldsExported, countRows(t, db, "translation_bindings"))
-	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_bindings", "source_table = 'brreg_source.companies' AND source_row_id = '"+seed.CompanyID.String()+"'"))
+	require.EqualValues(t, 2, countRowsWhere(t, db, "translation_bindings", "source_table = 'brreg_source.companies' AND source_row_id = '"+seed.CompanyID.String()+"'"))
 	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_bindings", "source_table = 'brreg_source.addresses' AND source_row_id = '"+seed.AddressID.String()+"'"))
 	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_bindings", "source_table = 'brreg_source.industries' AND source_row_id = '"+seed.IndustryID.String()+"'"))
 	require.EqualValues(t, 2, countRowsWhere(t, db, "translation_bindings", "source_table = 'brreg_source.websites' AND source_row_id = '"+seed.WebsiteID.String()+"'"))

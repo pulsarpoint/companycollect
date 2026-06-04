@@ -18,6 +18,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	ariregisterworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/workflow"
 	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/httpapi"
@@ -30,6 +31,9 @@ func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/company-translation", bytes.NewBufferString(`{
 		"all_records": true,
+		"ids": ["7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"],
+		"filters": {"translation_status": "missing", "q": "BORTIGARD"},
+		"limit": 25,
 		"batch_size": 10,
 		"claim_mode": "auto",
 		"max_request_chars": 16000,
@@ -56,6 +60,9 @@ func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T
 
 	input := tc.args[0].(brregworkflow.TranslateBrregSourceCompaniesInput)
 	require.True(t, input.AllRecords)
+	require.Equal(t, []string{"7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"}, input.IDs)
+	require.Equal(t, map[string]string{"translation_status": "missing", "q": "BORTIGARD"}, input.Filters)
+	require.Equal(t, 25, input.Limit)
 	require.Equal(t, 10, input.BatchSize)
 	require.Equal(t, "auto", input.ClaimMode)
 	require.Equal(t, 16000, input.MaxRequestChars)
@@ -208,9 +215,9 @@ func TestStartBrregSourceProfileNormalizationWorkflowStartsTemporalWorkflow(t *t
 
 	require.Equal(t, http.StatusAccepted, w.Code)
 	require.Contains(t, w.Body.String(), `"status":"started"`)
-	require.Contains(t, w.Body.String(), `"workflow":"NormalizeBrregSourceProfiles"`)
+	require.Contains(t, w.Body.String(), `"workflow":"NormalizeBrregSourceProfilesWithCopy"`)
 	require.Equal(t, "brreg-source-profile", tc.options.TaskQueue)
-	require.Equal(t, reflect.ValueOf(brregworkflow.NormalizeBrregSourceProfiles).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Equal(t, reflect.ValueOf(brregworkflow.NormalizeBrregSourceProfilesWithCopy).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
 	require.Len(t, tc.args, 1)
 
 	input := tc.args[0].(brregworkflow.NormalizeBrregSourceProfilesInput)
@@ -298,6 +305,50 @@ func TestStartBrregSourceCapitalFXWorkflowRejectsInvalidRateDate(t *testing.T) {
 	require.Nil(t, tc.workflow)
 }
 
+func TestStartBrregSourceFinancialWorkflowStartsTemporalWorkflow(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/source-financials", bytes.NewBufferString(`{
+		"limit": 250,
+		"batch_size": 10,
+		"max_parallel_tasks": 25,
+		"lease_seconds": 900,
+		"max_attempts": 3,
+		"trigger": "manual"
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"FetchBrregSourceFinancialStatements"`)
+	require.Equal(t, "brreg-source-financial", tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(brregworkflow.FetchBrregSourceFinancialStatements).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(brregworkflow.FetchBrregSourceFinancialStatementsInput)
+	require.Equal(t, 250, input.Limit)
+	require.Equal(t, 10, input.BatchSize)
+	require.Equal(t, 25, input.MaxParallelTasks)
+	require.Equal(t, 900, input.LeaseSeconds)
+	require.Equal(t, 3, input.MaxAttempts)
+	require.Equal(t, "manual", input.Trigger)
+}
+
+func TestStartBrregSourceFinancialWorkflowRejectsNegativeBatchSize(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/source-financials", bytes.NewBufferString(`{"batch_size":-1}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"batch_size cannot be negative"`)
+	require.Nil(t, tc.workflow)
+}
+
 func TestStartBrregBulkRawIngestWorkflowStartsTemporalWorkflowAndAllowsAll(t *testing.T) {
 	tc := &temporalExecuteRecorder{}
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
@@ -328,6 +379,44 @@ func TestStartBrregBulkRawIngestWorkflowRejectsInvalidSourceURL(t *testing.T) {
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/bulk-raw-ingest", bytes.NewBufferString(`{"source_url":"file:///tmp/brreg.json.gz"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"error":"source_url must be http or https"`)
+	require.Nil(t, tc.workflow)
+}
+
+func TestStartAriregisterBulkRawIngestWorkflowStartsTemporalWorkflowAndAllowsAll(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/ariregister/bulk-raw-ingest", bytes.NewBufferString(`{
+		"limit": 0,
+		"source_url": "https://example.test/ettevotjad.csv.zip",
+		"trigger": "manual"
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"LoadAriregisterBulkRawRecords"`)
+	require.Equal(t, "ariregister-bulk-ingest", tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(ariregisterworkflow.LoadAriregisterBulkRawRecords).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(ariregisterworkflow.LoadAriregisterBulkRawRecordsInput)
+	require.Equal(t, 0, input.Limit)
+	require.Equal(t, "https://example.test/ettevotjad.csv.zip", input.SourceURL)
+	require.Equal(t, "manual", input.Trigger)
+}
+
+func TestStartAriregisterBulkRawIngestWorkflowRejectsInvalidSourceURL(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/ariregister/bulk-raw-ingest", bytes.NewBufferString(`{"source_url":"file:///tmp/ettevotjad.csv.zip"}`))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -622,9 +711,11 @@ func TestListBrregWorkflowRunsReturnsFilteredTemporalExecutions(t *testing.T) {
 		} `json:"items"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	require.Len(t, body.Prefixes, 6)
+	require.Len(t, body.Prefixes, 7)
 	require.Equal(t, "brreg-company-translation", body.Prefixes[0].Prefix)
 	require.Equal(t, brregworkflow.TranslateBrregSourceCompaniesWorkflowName, body.Prefixes[0].WorkflowType)
+	require.Equal(t, "brreg-source-financial", body.Prefixes[5].Prefix)
+	require.Equal(t, brregworkflow.FetchBrregSourceFinancialStatementsWorkflowName, body.Prefixes[5].WorkflowType)
 	require.Len(t, body.Items, 1)
 	require.Equal(t, "brreg-company-translation-20260602-113000", body.Items[0].WorkflowID)
 	require.Equal(t, "run-123", body.Items[0].RunID)

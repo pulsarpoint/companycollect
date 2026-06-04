@@ -386,7 +386,7 @@ CREATE TABLE brreg_source.capital (
   fx_rate_date DATE,
   fx_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   introduced_at DATE,
-  share_count INTEGER,
+  share_count BIGINT,
 
   raw_capital_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   evidence JSONB NOT NULL DEFAULT '{}'::jsonb,

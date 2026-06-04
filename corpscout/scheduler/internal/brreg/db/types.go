@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/pulsarpoint/corpscout/scheduler/internal/brreg/financial"
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
 )
 
@@ -256,6 +257,47 @@ type ConvertSourceCapitalToUSDResult struct {
 	CapitalSkippedMissingRate      int32
 	CapitalSkippedAlreadyConverted int32
 	RateDate                       string
+}
+
+type ClaimSourceFinancialBatchCommand struct {
+	Limit            int32
+	MaxParallelTasks int32
+	LeaseSeconds     int32
+	MaxAttempts      int32
+	WorkerID         string
+}
+
+type ClaimSourceFinancialBatchResult struct {
+	StatusRowsInserted int32
+	Companies          []db.ClaimBrregCompanyFinancialBatchRow
+}
+
+type StoreSourceFinancialStatementsCommand struct {
+	CompanyID   uuid.UUID
+	RawRecordID uuid.UUID
+	Statements  []financial.Statement
+	Trigger     string
+	Metadata    map[string]any
+}
+
+type StoreSourceFinancialStatementsResult struct {
+	StatementsUpserted int32
+}
+
+type MarkSourceFinancialSkippedCommand struct {
+	CompanyID uuid.UUID
+	Metadata  map[string]any
+}
+
+type MarkSourceFinancialFailedCommand struct {
+	CompanyID     uuid.UUID
+	MaxAttempts   int32
+	Terminal      bool
+	Error         string
+	ErrorCategory string
+	ErrorCode     string
+	RetryStrategy string
+	Metadata      map[string]any
 }
 
 type TranslationTermResult struct {

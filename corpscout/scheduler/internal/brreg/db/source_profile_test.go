@@ -53,7 +53,7 @@ func TestNormalizeSourceProfilesUpsertsRawBrregProfile(t *testing.T) {
 			"belop":        81870,
 			"valuta":       "NOK",
 			"innfortDato":  "2012-07-09",
-			"antallAksjer": 8187,
+			"antallAksjer": 2283028025,
 		},
 	}
 	rawPayload, err := json.Marshal(payload)
@@ -139,6 +139,107 @@ WHERE company_id = $1
 `, companyID).Scan(&domain)
 	require.NoError(t, err)
 	require.Equal(t, "bortigard.example", domain)
+
+	var shareCount int64
+	err = tx.QueryRow(ctx, `
+SELECT share_count
+FROM brreg_source.capital
+WHERE company_id = $1
+`, companyID).Scan(&shareCount)
+	require.NoError(t, err)
+	require.EqualValues(t, 2283028025, shareCount)
+}
+
+func TestNormalizeSourceProfilesWithCopyUpsertsRawBrregProfile(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	ctx := t.Context()
+	rawRecordID := uuid.New()
+	organizationNumber := "copy-" + uuid.NewString()
+	payload := map[string]any{
+		"navn":                          "COPY TEST AS",
+		"konkurs":                       false,
+		"registrertIMvaregisteret":      true,
+		"registrertIForetaksregisteret": true,
+		"organisasjonsform": map[string]any{
+			"kode":        "AS",
+			"beskrivelse": "Aksjeselskap",
+		},
+		"forretningsadresse": map[string]any{
+			"adresse":       []string{"Løkkeveien 18"},
+			"postnummer":    "3085",
+			"poststed":      "HOLMESTRAND",
+			"kommune":       "HOLMESTRAND",
+			"kommunenummer": "3903",
+			"land":          "Norge",
+			"landkode":      "NO",
+		},
+		"naeringskode1": map[string]any{
+			"kode":        "41.000",
+			"beskrivelse": "Oppføring av bygninger",
+		},
+		"telefon": "33051963",
+		"kapital": map[string]any{
+			"type":         "Aksjekapital",
+			"belop":        81870,
+			"valuta":       "NOK",
+			"innfortDato":  "2012-07-09",
+			"antallAksjer": 2283028025,
+		},
+	}
+	rawPayload, err := json.Marshal(payload)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `
+INSERT INTO brreg_workflow.raw_records (
+  id,
+  source_native_id,
+  organization_number,
+  organization_name,
+  registration_status,
+  website,
+  country_iso2,
+  raw_payload,
+  payload_hash
+) VALUES ($1, $2, $2, 'COPY TEST AS', 'active', 'https://copy.example', 'NO', $3::jsonb, $4)
+`, rawRecordID, organizationNumber, rawPayload, uuid.NewString())
+	require.NoError(t, err)
+
+	result, err := New(tx).NormalizeSourceProfilesWithCopy(ctx, NormalizeSourceProfilesCommand{
+		Limit: 10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, result.RecordsSeen)
+	require.EqualValues(t, 1, result.CompaniesUpserted)
+	require.EqualValues(t, 1, result.AddressesUpserted)
+	require.EqualValues(t, 1, result.IndustriesUpserted)
+	require.EqualValues(t, 1, result.WebsitesUpserted)
+	require.EqualValues(t, 1, result.DomainsUpserted)
+	require.EqualValues(t, 1, result.ContactsUpserted)
+	require.EqualValues(t, 1, result.CapitalUpserted)
+
+	var companyID uuid.UUID
+	var organizationName string
+	err = tx.QueryRow(ctx, `
+SELECT id, organization_name
+FROM brreg_source.companies
+WHERE raw_record_id = $1
+`, rawRecordID).Scan(&companyID, &organizationName)
+	require.NoError(t, err)
+	require.Equal(t, "COPY TEST AS", organizationName)
+
+	var shareCount int64
+	err = tx.QueryRow(ctx, `
+SELECT share_count
+FROM brreg_source.capital
+WHERE company_id = $1
+`, companyID).Scan(&shareCount)
+	require.NoError(t, err)
+	require.EqualValues(t, 2283028025, shareCount)
+
+	retryResult, err := New(tx).NormalizeSourceProfilesWithCopy(ctx, NormalizeSourceProfilesCommand{
+		Limit: 10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 0, retryResult.RecordsSeen)
 }
 
 func TestNormalizeSourceProfilesRealRawRecordSample(t *testing.T) {
