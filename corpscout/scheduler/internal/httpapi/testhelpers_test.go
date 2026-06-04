@@ -54,6 +54,11 @@ func (s *stubQuerier) CountBrregSourceEntries(ctx context.Context, arg db.CountB
 	return ret.Get(0).(int64), ret.Error(1)
 }
 
+func (s *stubQuerier) CountAriregisterSourceEntries(ctx context.Context, arg db.CountAriregisterSourceEntriesParams) (int64, error) {
+	ret := s.Called(ctx, arg)
+	return ret.Get(0).(int64), ret.Error(1)
+}
+
 func (s *stubQuerier) GetSourceByName(ctx context.Context, name string) (db.DataSource, error) {
 	ret := s.Called(ctx, name)
 	return ret.Get(0).(db.DataSource), ret.Error(1)
@@ -83,6 +88,14 @@ func (s *stubQuerier) ListSources(ctx context.Context) ([]db.DataSource, error) 
 func (s *stubQuerier) ListBrregSourceEntries(ctx context.Context, arg db.ListBrregSourceEntriesParams) ([]db.ListBrregSourceEntriesRow, error) {
 	ret := s.Called(ctx, arg)
 	if v, ok := ret.Get(0).([]db.ListBrregSourceEntriesRow); ok {
+		return v, ret.Error(1)
+	}
+	return nil, ret.Error(1)
+}
+
+func (s *stubQuerier) ListAriregisterSourceEntries(ctx context.Context, arg db.ListAriregisterSourceEntriesParams) ([]db.AriregisterSourceMvCompanyExplorer, error) {
+	ret := s.Called(ctx, arg)
+	if v, ok := ret.Get(0).([]db.AriregisterSourceMvCompanyExplorer); ok {
 		return v, ret.Error(1)
 	}
 	return nil, ret.Error(1)

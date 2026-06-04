@@ -106,6 +106,7 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 		r.Get("/sources/brreg/task-state", h.handleGetBrregTaskState)
 		r.Get("/sources/brreg/companies/{id}", h.handleGetBrregSourceCompanyDetail)
 		r.Get("/brreg/source-entries", h.handleListBrregSourceEntries)
+		r.Get("/ariregister/source-entries", h.handleListAriregisterSourceEntries)
 		r.Post("/workflows/brreg/company-translation", h.handleStartBrregCompanyTranslationWorkflow)
 		r.Post("/workflows/brreg/domain-search", h.handleStartBrregDomainSearchWorkflow)
 		r.Post("/workflows/brreg/bulk-raw-ingest", h.handleStartBrregBulkRawIngestWorkflow)

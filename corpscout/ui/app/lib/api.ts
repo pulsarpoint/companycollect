@@ -16,6 +16,7 @@ import type {
   BrregRawRecordListResponse,
   BrregRawRecordDetail,
   BrregSourceEntryListResponse,
+  AriregisterSourceEntryListResponse,
   BrregSourceCompanyDetail,
   BrregWorkflowRunListResponse,
   BrregCompanyTranslationRequest,
@@ -292,6 +293,38 @@ export const api = {
 
   getBrregSourceCompanyDetail: (id: string) =>
     get<BrregSourceCompanyDetail>(`/sources/brreg/companies/${id}`),
+
+  getAriregisterSourceEntries: (
+    params: {
+      page?: number;
+      limit?: number;
+      q?: string;
+      state?: string;
+      lifecycle_status?: string;
+      registration_status?: string;
+      translation_status?: string;
+      sort?: string;
+      dir?: "asc" | "desc";
+    } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.page) qs.set("page", String(params.page));
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.q) qs.set("q", params.q);
+    if (params.state) qs.set("state", params.state);
+    if (params.lifecycle_status)
+      qs.set("lifecycle_status", params.lifecycle_status);
+    if (params.registration_status)
+      qs.set("registration_status", params.registration_status);
+    if (params.translation_status)
+      qs.set("translation_status", params.translation_status);
+    if (params.sort) qs.set("sort", params.sort);
+    if (params.dir) qs.set("dir", params.dir);
+    const q = qs.toString();
+    return get<AriregisterSourceEntryListResponse>(
+      `/ariregister/source-entries${q ? `?${q}` : ""}`,
+    );
+  },
 
   getLLMProviders: () => get<LLMProviderListResponse>("/llm-providers"),
 

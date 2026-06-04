@@ -32,6 +32,7 @@ type sourceView struct {
 	NextScheduledAt            *time.Time          `json:"next_scheduled_at"`
 	DownloadWorkflowRegistered bool                `json:"download_workflow_registered"`
 	ManualTriggerAvailable     bool                `json:"manual_trigger_available"`
+	SourceEntriesAvailable     bool                `json:"source_entries_available"`
 	LastSourceMarkerType       *string             `json:"last_source_marker_type"`
 	LastSourceMarker           *string             `json:"last_source_marker"`
 	LastSourceModifiedAt       pgtype.Timestamptz  `json:"last_source_modified_at"`
@@ -105,6 +106,7 @@ func sourceViewFromRow(source db.DataSource) sourceView {
 		NextScheduledAt:            nextScheduledAt(source),
 		DownloadWorkflowRegistered: workflowRegistered,
 		ManualTriggerAvailable:     manualTriggerAvailable,
+		SourceEntriesAvailable:     sourceEntriesAvailable(source.Name),
 		LastSourceMarkerType:       source.LastSourceMarkerType,
 		LastSourceMarker:           source.LastSourceMarker,
 		LastSourceModifiedAt:       source.LastSourceModifiedAt,
@@ -115,6 +117,15 @@ func sourceViewFromRow(source db.DataSource) sourceView {
 		RequiresTranslation:        source.RequiresTranslation,
 		CreatedAt:                  source.CreatedAt,
 		UpdatedAt:                  source.UpdatedAt,
+	}
+}
+
+func sourceEntriesAvailable(sourceName string) bool {
+	switch sourceName {
+	case "ariregister", "brreg":
+		return true
+	default:
+		return false
 	}
 }
 

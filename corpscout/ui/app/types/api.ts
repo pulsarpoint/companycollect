@@ -352,6 +352,37 @@ export interface BrregSourceEntryListResponse {
   limit: number;
 }
 
+export interface AriregisterSourceEntryListItem {
+  company_id: string;
+  registry_code: string;
+  legal_name: string;
+  legal_form_label?: string;
+  lifecycle_status: string;
+  registration_status?: string;
+  registration_status_label?: string;
+  primary_industry_code?: string;
+  primary_industry_label?: string;
+  primary_nace_code?: string;
+  primary_nace_title?: string;
+  city_or_area?: string;
+  postal_code?: string;
+  normalized_full_address?: string;
+  employee_count?: number;
+  latest_financial_year?: number;
+  website_count: number;
+  domain_count: number;
+  contact_count: number;
+  translation_missing_count: number;
+  updated_at: string;
+}
+
+export interface AriregisterSourceEntryListResponse {
+  items: AriregisterSourceEntryListItem[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 export interface BrregSourceCompanyDetail {
   id: string;
   raw_record_id: string;
@@ -628,6 +659,7 @@ export interface DataSource {
   next_scheduled_at: string | null;
   download_workflow_registered: boolean;
   manual_trigger_available: boolean;
+  source_entries_available: boolean;
   last_source_marker_type: string | null;
   last_source_marker: string | null;
   last_source_modified_at: string | null;

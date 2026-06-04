@@ -53,9 +53,11 @@ export function defaultSourceDetailPath(sourceName: string): string {
 }
 
 export function sourceDetailTabs(source: DataSource): Array<{ label: string; to: string }> {
+  const hasTaskTab = source.name === "brreg";
+  const hasSourceEntriesTab = source.source_entries_available;
   return [
-    ...(source.name === "brreg" ? [{ label: "Tasks", to: `/sources/${source.name}/tasks` }] : []),
-    ...(source.name === "brreg" ? [{ label: "Source Entries", to: `/sources/${source.name}/source_entries` }] : []),
+    ...(hasTaskTab ? [{ label: "Tasks", to: `/sources/${source.name}/tasks` }] : []),
+    ...(hasSourceEntriesTab ? [{ label: "Source Entries", to: `/sources/${source.name}/source_entries` }] : []),
     ...(source.name !== "brreg" ? [{ label: "Schedule", to: `/sources/${source.name}/schedule` }] : []),
     { label: "Config", to: `/sources/${source.name}/config` },
     ...(hasRawInputs(source) ? [{ label: "Raw Inputs", to: `/sources/${source.name}/raw_input` }] : []),

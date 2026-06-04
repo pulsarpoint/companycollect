@@ -157,6 +157,29 @@ func TestGetAriregisterSourceExposesTemporalBulkIngestMetadata(t *testing.T) {
 	q.AssertExpectations(t)
 }
 
+func TestGetAriregisterSourceExposesSourceEntries(t *testing.T) {
+	q := &stubQuerier{}
+	sourceID := uuid.New()
+	q.On("GetSourceByName", mock.Anything, "ariregister").Return(db.DataSource{
+		ID:             sourceID,
+		Name:           "ariregister",
+		DisplayName:    ptrString("Ariregister (Estonia)"),
+		InputTableName: "ariregister_workflow.raw_records",
+		SourceGroup:    "registry",
+		Enabled:        true,
+		Config:         json.RawMessage(`{"dataset_key":"general"}`),
+	}, nil)
+
+	r := routerFor(newTestHandlers(q))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/ariregister", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"source_entries_available":true`)
+	q.AssertExpectations(t)
+}
+
 func ptrString(value string) *string {
 	return &value
 }
