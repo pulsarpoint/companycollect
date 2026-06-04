@@ -444,7 +444,7 @@ func buildCompany(record RawRecord, registryCode string, payload, generalData ma
 	return CompanyRow{
 		RawRecordID:             record.ID,
 		RegistryCode:            registryCode,
-		SourceNativeID:          firstNonEmpty(record.SourceNativeID, registryCode),
+		SourceNativeID:          firstNonEmpty(registryCode, record.SourceNativeID),
 		CountryISO2:             strings.ToUpper(firstNonEmpty(record.CountryISO2, defaultCountryISO2)),
 		LegalName:               legalName,
 		LegalNameNormalized:     strings.ToLower(legalName),
@@ -714,7 +714,10 @@ func buildDomains(record RawRecord, registryCode string, websites []WebsiteRow, 
 func buildIndustries(record RawRecord, registryCode string, generalData map[string]any, metadata json.RawMessage) []IndustryRow {
 	items := objectArray(generalData, "teatatud_tegevusalad")
 	rows := make([]IndustryRow, 0, len(items))
-	for index, item := range items {
+	for _, item := range items {
+		if len(rows) >= 50 {
+			break
+		}
 		code := stringValue(item, "emtak_kood")
 		if code == "" {
 			continue
@@ -733,7 +736,7 @@ func buildIndustries(record RawRecord, registryCode string, generalData map[stri
 			SourceEntryID:      card.SourceEntryID,
 			ClassificationType: "declared_activity",
 			SourceField:        "teatatud_tegevusalad",
-			Position:           int16(index + 1),
+			Position:           int16(len(rows) + 1),
 			EMTAKCode:          code,
 			EMTAKLabel:         stringValue(item, "emtak_tekstina"),
 			EMTAKVersion:       intPtr(item, "emtak_versioon"),

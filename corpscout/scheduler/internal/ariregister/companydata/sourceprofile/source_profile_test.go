@@ -42,15 +42,22 @@ func TestBuildBatchMapsGeneralDataPayload(t *testing.T) {
 	require.Equal(t, "007 Agent & Partners OÜ", batch.Companies[0].LegalName)
 	require.Equal(t, "Registrisse kantud", batch.Companies[0].RegistrationStatusLabel)
 	require.Equal(t, "Osaühing", batch.Companies[0].LegalFormLabel)
+	require.Equal(t, "2023-06-05", batch.Companies[0].FirstRegisteredOn)
 	require.Len(t, batch.Addresses, 1)
 	require.Equal(t, "Pirita linnaosa, Tallinn, Harju maakond", batch.Addresses[0].EHAKName)
 	require.Len(t, batch.Contacts, 2)
 	require.Len(t, batch.Websites, 1)
+	require.Equal(t, "https://example.ee", batch.Websites[0].NormalizedURL)
 	require.Len(t, batch.Domains, 1)
+	require.Equal(t, "example.ee", batch.Domains[0].NormalizedDomain)
 	require.Len(t, batch.Industries, 1)
 	require.True(t, batch.Industries[0].IsPrimary)
 	require.Len(t, batch.Capital, 1)
 	require.Len(t, batch.AnnualReports, 1)
+	require.NotNil(t, batch.AnnualReports[0].FiscalYear)
+	require.Equal(t, 2024, *batch.AnnualReports[0].FiscalYear)
+	require.NotNil(t, batch.AnnualReports[0].EmployeeCount)
+	require.Equal(t, 0, *batch.AnnualReports[0].EmployeeCount)
 }
 
 func TestBuildBatchMapsOfficialGeneralDataAliases(t *testing.T) {
@@ -66,12 +73,13 @@ func TestBuildBatchMapsOfficialGeneralDataAliases(t *testing.T) {
 	}`)
 
 	batch, err := BuildBatch(Command{Trigger: "manual", Records: []RawRecord{{
-		ID: rawID, RegistryCode: "raw-registry", LegalName: "Raw Name", CountryISO2: "EE", RawPayload: payload, PayloadHash: "hash",
+		ID: rawID, SourceNativeID: "stale-native", RegistryCode: "raw-registry", LegalName: "Raw Name", CountryISO2: "EE", RawPayload: payload, PayloadHash: "hash",
 	}}})
 
 	require.NoError(t, err)
 	require.Len(t, batch.Companies, 1)
 	require.Equal(t, "14035143", batch.Companies[0].RegistryCode)
+	require.Equal(t, "14035143", batch.Companies[0].SourceNativeID)
 	require.Equal(t, "Payload Name OÜ", batch.Companies[0].LegalName)
 
 	require.Len(t, batch.CompanyNames, 1)
@@ -86,4 +94,37 @@ func TestBuildBatchMapsOfficialGeneralDataAliases(t *testing.T) {
 	require.Len(t, batch.FinancialYearPeriods, 1)
 	require.Equal(t, "01-01", batch.FinancialYearPeriods[0].PeriodStartMonthDay)
 	require.Equal(t, "12-31", batch.FinancialYearPeriods[0].PeriodEndMonthDay)
+}
+
+func TestBuildBatchLimitsDeclaredIndustryPositionsToDatabaseConstraint(t *testing.T) {
+	activities := make([]map[string]any, 51)
+	for index := range activities {
+		activities[index] = map[string]any{
+			"kirje_id":       index + 1,
+			"emtak_kood":     "73111",
+			"emtak_tekstina": "Reklaamiagentuuride tegevus",
+		}
+	}
+	payload := mustRawJSON(t, map[string]any{
+		"ariregistri_kood": 14035143,
+		"nimi":             "Industry Cap OÜ",
+		"yldandmed": map[string]any{
+			"teatatud_tegevusalad": activities,
+		},
+	})
+
+	batch, err := BuildBatch(Command{Records: []RawRecord{{
+		ID: uuid.MustParse("00000000-0000-0000-0000-000000000003"), RawPayload: payload, PayloadHash: "hash",
+	}}})
+
+	require.NoError(t, err)
+	require.Len(t, batch.Industries, 50)
+	require.EqualValues(t, 50, batch.Industries[49].Position)
+}
+
+func mustRawJSON(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(value)
+	require.NoError(t, err)
+	return data
 }
