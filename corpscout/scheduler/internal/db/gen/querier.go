@@ -25,6 +25,7 @@ type Querier interface {
 	ClearDefaultLLMProvider(ctx context.Context) error
 	ClearRootNACECodeParents(ctx context.Context, classificationID uuid.UUID) error
 	ConvertBrregSourceCapitalToUSD(ctx context.Context, arg ConvertBrregSourceCapitalToUSDParams) (ConvertBrregSourceCapitalToUSDRow, error)
+	CountAriregisterSourceEntries(ctx context.Context, arg CountAriregisterSourceEntriesParams) (int64, error)
 	CountBrregSourceEntries(ctx context.Context, arg CountBrregSourceEntriesParams) (int64, error)
 	CountBrregWorkflowRawRecords(ctx context.Context, arg CountBrregWorkflowRawRecordsParams) (int64, error)
 	CountCompanySuggestionReviews(ctx context.Context, arg CountCompanySuggestionReviewsParams) (int32, error)
@@ -53,6 +54,10 @@ type Querier interface {
 	FinishCVRWorkflowRunWithStats(ctx context.Context, arg FinishCVRWorkflowRunWithStatsParams) (uuid.UUID, error)
 	FinishExchangeRateSyncRun(ctx context.Context, arg FinishExchangeRateSyncRunParams) (ExchangeRateSyncRun, error)
 	FinishNACEImportRun(ctx context.Context, arg FinishNACEImportRunParams) (NaceImportRun, error)
+	GetAriregisterSourceCompanyDetail(ctx context.Context, companyID uuid.UUID) (AriregisterSourceVCompanyDetail, error)
+	GetAriregisterSourceCompanyExplorerRefreshSummary(ctx context.Context) (GetAriregisterSourceCompanyExplorerRefreshSummaryRow, error)
+	GetAriregisterSourceResultTableCounts(ctx context.Context) (GetAriregisterSourceResultTableCountsRow, error)
+	GetAriregisterSourceTranslationAssetState(ctx context.Context) (GetAriregisterSourceTranslationAssetStateRow, error)
 	GetBrregCompanyProcessStatus(ctx context.Context, companyID uuid.UUID) (BrregSourceCompanyProcessStatus, error)
 	GetBrregCompanyProcessStatusSummary(ctx context.Context) (GetBrregCompanyProcessStatusSummaryRow, error)
 	GetBrregSourceCompanyDetail(ctx context.Context, companyID uuid.UUID) (BrregSourceVCompanyDetail, error)
@@ -103,6 +108,7 @@ type Querier interface {
 	InsertSuggestion(ctx context.Context, arg InsertSuggestionParams) (Suggestion, error)
 	InsertSuggestionCompanyFinancial(ctx context.Context, arg InsertSuggestionCompanyFinancialParams) (SuggestionCompanyFinancial, error)
 	LinkNACECodeParents(ctx context.Context, classificationID uuid.UUID) error
+	ListAriregisterSourceEntries(ctx context.Context, arg ListAriregisterSourceEntriesParams) ([]AriregisterSourceMvCompanyExplorer, error)
 	ListBrregSourceEntries(ctx context.Context, arg ListBrregSourceEntriesParams) ([]ListBrregSourceEntriesRow, error)
 	ListBrregWorkflowDomainSearchEvidenceByRawRecord(ctx context.Context, rawRecordID uuid.UUID) ([]BrregWorkflowVDomainSearchEvidence, error)
 	ListBrregWorkflowEnhancedReadyRecords(ctx context.Context) ([]BrregWorkflowVEnhancedReadyRecord, error)
@@ -168,6 +174,7 @@ type Querier interface {
 	MarkSuggestionCompanyServiceRejected(ctx context.Context, arg MarkSuggestionCompanyServiceRejectedParams) error
 	RecordAriregisterSourceFile(ctx context.Context, arg RecordAriregisterSourceFileParams) (uuid.UUID, error)
 	RecoverStaleBrregWorkflowRuns(ctx context.Context, arg RecoverStaleBrregWorkflowRunsParams) (RecoverStaleBrregWorkflowRunsRow, error)
+	RefreshAriregisterSourceCompanyExplorer(ctx context.Context) error
 	RejectCompanyFinancial(ctx context.Context, arg RejectCompanyFinancialParams) error
 	ReleaseBrregCompanyTranslationClaim(ctx context.Context, arg ReleaseBrregCompanyTranslationClaimParams) (BrregSourceCompanyProcessStatus, error)
 	ResolveNACECodeAlias(ctx context.Context, arg ResolveNACECodeAliasParams) (NaceCode, error)

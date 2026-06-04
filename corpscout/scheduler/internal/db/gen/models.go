@@ -12,6 +12,95 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AriregisterSourceMvCompanyExplorer struct {
+	CompanyID               uuid.UUID `json:"company_id"`
+	RegistryCode            string    `json:"registry_code"`
+	LegalName               string    `json:"legal_name"`
+	LegalFormLabel          *string   `json:"legal_form_label"`
+	LifecycleStatus         string    `json:"lifecycle_status"`
+	RegistrationStatus      *string   `json:"registration_status"`
+	RegistrationStatusLabel *string   `json:"registration_status_label"`
+	PrimaryIndustryCode     *string   `json:"primary_industry_code"`
+	PrimaryIndustryLabel    *string   `json:"primary_industry_label"`
+	PrimaryNaceCode         *string   `json:"primary_nace_code"`
+	PrimaryNaceTitle        *string   `json:"primary_nace_title"`
+	CityOrArea              *string   `json:"city_or_area"`
+	PostalCode              *string   `json:"postal_code"`
+	NormalizedFullAddress   *string   `json:"normalized_full_address"`
+	EmployeeCount           *int32    `json:"employee_count"`
+	LatestFinancialYear     *int32    `json:"latest_financial_year"`
+	WebsiteCount            int64     `json:"website_count"`
+	DomainCount             int64     `json:"domain_count"`
+	ContactCount            int64     `json:"contact_count"`
+	TranslationMissingCount int64     `json:"translation_missing_count"`
+	UpdatedAt               time.Time `json:"updated_at"`
+}
+
+type AriregisterSourceVCompanyDetail struct {
+	ID                                         uuid.UUID          `json:"id"`
+	RawRecordID                                uuid.UUID          `json:"raw_record_id"`
+	RegistryCode                               string             `json:"registry_code"`
+	SourceNativeID                             string             `json:"source_native_id"`
+	CountryIso2                                string             `json:"country_iso2"`
+	LegalName                                  string             `json:"legal_name"`
+	LegalNameNormalized                        string             `json:"legal_name_normalized"`
+	LegalNameEn                                *string            `json:"legal_name_en"`
+	RegistrationStatus                         *string            `json:"registration_status"`
+	RegistrationStatusLabel                    *string            `json:"registration_status_label"`
+	RegistrationStatusLabelEn                  *string            `json:"registration_status_label_en"`
+	LifecycleStatus                            string             `json:"lifecycle_status"`
+	LegalFormCode                              *string            `json:"legal_form_code"`
+	LegalFormNumber                            *int32             `json:"legal_form_number"`
+	LegalFormLabel                             *string            `json:"legal_form_label"`
+	LegalFormLabelEn                           *string            `json:"legal_form_label_en"`
+	LegalFormSubtype                           *string            `json:"legal_form_subtype"`
+	LegalFormSubtypeLabel                      *string            `json:"legal_form_subtype_label"`
+	LegalFormSubtypeLabelEn                    *string            `json:"legal_form_subtype_label_en"`
+	RegionCode                                 *int32             `json:"region_code"`
+	RegionLabel                                *string            `json:"region_label"`
+	RegionLabelEn                              *string            `json:"region_label_en"`
+	RegionLabelLong                            *string            `json:"region_label_long"`
+	RegionLabelLongEn                          *string            `json:"region_label_long_en"`
+	ActiveLabel                                *string            `json:"active_label"`
+	ActiveLabelEn                              *string            `json:"active_label_en"`
+	FirstRegisteredOn                          pgtype.Date        `json:"first_registered_on"`
+	DeletedOn                                  pgtype.Date        `json:"deleted_on"`
+	EvksRegisteredAt                           pgtype.Date        `json:"evks_registered_at"`
+	HasMissingBeneficialOwnerDiscrepancyNotice *bool              `json:"has_missing_beneficial_owner_discrepancy_notice"`
+	FoundedWithoutContribution                 *bool              `json:"founded_without_contribution"`
+	WaivedFormRequirements                     *bool              `json:"waived_form_requirements"`
+	IsAccountingRequired                       *bool              `json:"is_accounting_required"`
+	ReportsBeneficialOwners                    *bool              `json:"reports_beneficial_owners"`
+	IsActive                                   *bool              `json:"is_active"`
+	LastAnnualReportYear                       *int32             `json:"last_annual_report_year"`
+	EmployeeCount                              *int32             `json:"employee_count"`
+	EmployeeCountSource                        *string            `json:"employee_count_source"`
+	EmployeeBand                               *string            `json:"employee_band"`
+	SourceUpdatedAt                            pgtype.Timestamptz `json:"source_updated_at"`
+	PayloadHash                                string             `json:"payload_hash"`
+	ProfileVersion                             string             `json:"profile_version"`
+	RowStatus                                  string             `json:"row_status"`
+	NormalizedPayload                          json.RawMessage    `json:"normalized_payload"`
+	RawCompanyPayload                          json.RawMessage    `json:"raw_company_payload"`
+	Evidence                                   json.RawMessage    `json:"evidence"`
+	Metadata                                   json.RawMessage    `json:"metadata"`
+	CreatedAt                                  time.Time          `json:"created_at"`
+	UpdatedAt                                  time.Time          `json:"updated_at"`
+	SupersededAt                               pgtype.Timestamptz `json:"superseded_at"`
+	Names                                      json.RawMessage    `json:"names"`
+	Statuses                                   json.RawMessage    `json:"statuses"`
+	LegalForms                                 json.RawMessage    `json:"legal_forms"`
+	Addresses                                  json.RawMessage    `json:"addresses"`
+	Contacts                                   json.RawMessage    `json:"contacts"`
+	Websites                                   json.RawMessage    `json:"websites"`
+	Domains                                    json.RawMessage    `json:"domains"`
+	Industries                                 json.RawMessage    `json:"industries"`
+	Capital                                    json.RawMessage    `json:"capital"`
+	AnnualReports                              json.RawMessage    `json:"annual_reports"`
+	Articles                                   json.RawMessage    `json:"articles"`
+	RegistryNotes                              json.RawMessage    `json:"registry_notes"`
+}
+
 type BrregSourceCompanyProcessStatus struct {
 	CompanyID                 uuid.UUID          `json:"company_id"`
 	TranslationStatus         string             `json:"translation_status"`
