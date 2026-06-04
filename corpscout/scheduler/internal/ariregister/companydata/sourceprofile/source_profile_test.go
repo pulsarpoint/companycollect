@@ -52,3 +52,38 @@ func TestBuildBatchMapsGeneralDataPayload(t *testing.T) {
 	require.Len(t, batch.Capital, 1)
 	require.Len(t, batch.AnnualReports, 1)
 }
+
+func TestBuildBatchMapsOfficialGeneralDataAliases(t *testing.T) {
+	rawID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	payload := json.RawMessage(`{
+		"ariregistri_kood": 14035143,
+		"nimi": "Payload Name OÜ",
+		"yldandmed": {
+			"arinimed": [{"kirje_id": 10, "sisu": "Historic Name OÜ"}],
+			"oiguslikud_vormid": [{"kirje_id": 11, "sisu": "OÜ", "sisu_nr": 5, "sisu_tekstina": "Osaühing"}],
+			"majandusaastad": [{"kirje_id": 12, "maj_aasta_algus": "01.01", "maj_aasta_lopp": "31.12"}]
+		}
+	}`)
+
+	batch, err := BuildBatch(Command{Trigger: "manual", Records: []RawRecord{{
+		ID: rawID, RegistryCode: "raw-registry", LegalName: "Raw Name", CountryISO2: "EE", RawPayload: payload, PayloadHash: "hash",
+	}}})
+
+	require.NoError(t, err)
+	require.Len(t, batch.Companies, 1)
+	require.Equal(t, "14035143", batch.Companies[0].RegistryCode)
+	require.Equal(t, "Payload Name OÜ", batch.Companies[0].LegalName)
+
+	require.Len(t, batch.CompanyNames, 1)
+	require.Equal(t, "Historic Name OÜ", batch.CompanyNames[0].Name)
+
+	require.Len(t, batch.LegalForms, 1)
+	require.Equal(t, "OÜ", batch.LegalForms[0].LegalFormCode)
+	require.NotNil(t, batch.LegalForms[0].LegalFormNumber)
+	require.Equal(t, 5, *batch.LegalForms[0].LegalFormNumber)
+	require.Equal(t, "Osaühing", batch.LegalForms[0].LegalFormLabel)
+
+	require.Len(t, batch.FinancialYearPeriods, 1)
+	require.Equal(t, "01-01", batch.FinancialYearPeriods[0].PeriodStartMonthDay)
+	require.Equal(t, "12-31", batch.FinancialYearPeriods[0].PeriodEndMonthDay)
+}

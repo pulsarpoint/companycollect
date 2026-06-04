@@ -404,7 +404,7 @@ func BuildBatch(command Command) (Batch, error) {
 			return Batch{}, errors.Wrap(err, "decode ariregister raw payload")
 		}
 		generalData := object(payload, "yldandmed")
-		registryCode := firstNonEmpty(record.RegistryCode, stringValue(payload, "ariregistri_kood"))
+		registryCode := firstNonEmpty(stringValue(payload, "ariregistri_kood"), record.RegistryCode)
 		if registryCode == "" {
 			return Batch{}, errors.New("registry code is required")
 		}
@@ -434,7 +434,7 @@ func BuildBatch(command Command) (Batch, error) {
 }
 
 func buildCompany(record RawRecord, registryCode string, payload, generalData map[string]any, rawPayload json.RawMessage, annualReports []AnnualReportRow, trigger string) CompanyRow {
-	legalName := firstNonEmpty(record.LegalName, stringValue(payload, "nimi"), registryCode)
+	legalName := firstNonEmpty(stringValue(payload, "nimi"), record.LegalName, registryCode)
 	activeLabel := stringValue(generalData, "tegutseb_tekstina")
 	isActive := boolPtr(generalData, "tegutseb")
 	if isActive == nil {
@@ -487,7 +487,7 @@ func buildCompanyNames(record RawRecord, registryCode string, generalData map[st
 	items := objectArray(generalData, "arinimed")
 	rows := make([]CompanyNameRow, 0, len(items))
 	for _, item := range items {
-		name := firstNonEmpty(stringValue(item, "nimi"), stringValue(item, "arinimi"))
+		name := firstNonEmpty(stringValue(item, "sisu"), stringValue(item, "nimi"), stringValue(item, "arinimi"))
 		if name == "" {
 			continue
 		}
@@ -551,9 +551,9 @@ func buildLegalForms(record RawRecord, registryCode string, generalData map[stri
 			CardNumber:            card.CardNumber,
 			CardType:              card.CardType,
 			EntryNumber:           card.EntryNumber,
-			LegalFormCode:         stringValue(item, "oiguslik_vorm"),
-			LegalFormNumber:       intPtr(item, "oiguslik_vorm_nr"),
-			LegalFormLabel:        stringValue(item, "oiguslik_vorm_tekstina"),
+			LegalFormCode:         firstNonEmpty(stringValue(item, "sisu"), stringValue(item, "oiguslik_vorm")),
+			LegalFormNumber:       firstIntPtr(intPtr(item, "sisu_nr"), intPtr(item, "oiguslik_vorm_nr")),
+			LegalFormLabel:        firstNonEmpty(stringValue(item, "sisu_tekstina"), stringValue(item, "oiguslik_vorm_tekstina")),
 			LegalFormSubtype:      stringValue(item, "oigusliku_vormi_alaliik"),
 			LegalFormSubtypeLabel: stringValue(item, "oigusliku_vormi_alaliik_tekstina"),
 			StartedOn:             card.StartedOn,
@@ -787,8 +787,8 @@ func buildFinancialYearPeriods(record RawRecord, registryCode string, generalDat
 			RegistryCode:        registryCode,
 			RawRecordID:         record.ID,
 			SourceEntryID:       card.SourceEntryID,
-			PeriodStartMonthDay: monthDayText(firstNonEmpty(stringValue(item, "majandusaasta_perioodi_algus_kpv"), stringValue(item, "algus_kpv"))),
-			PeriodEndMonthDay:   monthDayText(firstNonEmpty(stringValue(item, "majandusaasta_perioodi_lopp_kpv"), stringValue(item, "lopp_kpv"))),
+			PeriodStartMonthDay: monthDayText(firstNonEmpty(stringValue(item, "maj_aasta_algus"), stringValue(item, "majandusaasta_perioodi_algus_kpv"), stringValue(item, "algus_kpv"))),
+			PeriodEndMonthDay:   monthDayText(firstNonEmpty(stringValue(item, "maj_aasta_lopp"), stringValue(item, "majandusaasta_perioodi_lopp_kpv"), stringValue(item, "lopp_kpv"))),
 			StartedOn:           card.StartedOn,
 			EndedOn:             card.EndedOn,
 			RawPeriodPayload:    mustJSON(item),
@@ -1007,6 +1007,15 @@ func intPtr(payload map[string]any, key string) *int {
 		return nil
 	}
 	return &value
+}
+
+func firstIntPtr(values ...*int) *int {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
 }
 
 func nonNegativeIntPtr(payload map[string]any, key string) *int {
