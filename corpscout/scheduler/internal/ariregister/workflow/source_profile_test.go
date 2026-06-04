@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -67,6 +68,62 @@ func TestNormalizeAriregisterSourceProfilesWithCopyRunsSingleActivity(t *testing
 	require.EqualValues(t, 1, result.AnnualReportsUpserted)
 	require.EqualValues(t, 1, result.ArticlesUpserted)
 	require.EqualValues(t, 1, result.RegistryNotesUpserted)
+}
+
+func TestNormalizeAriregisterSourceProfilesWithCopyIDsWithoutLimitUsesIDCount(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	ids := make([]string, defaultSourceProfileChunkSize+1)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("source-record-%d", i+1)
+	}
+
+	env.RegisterWorkflow(NormalizeAriregisterSourceProfilesWithCopy)
+	var activityInputs []NormalizeAriregisterSourceProfilesActivityInput
+	env.RegisterActivityWithOptions(func(input NormalizeAriregisterSourceProfilesActivityInput) (NormalizeAriregisterSourceProfilesActivityResult, error) {
+		activityInputs = append(activityInputs, input)
+		return NormalizeAriregisterSourceProfilesActivityResult{
+			RecordsSeen:       int32(len(ids)),
+			CompaniesUpserted: int32(len(ids)),
+		}, nil
+	}, activity.RegisterOptions{Name: NormalizeAriregisterSourceProfilesWithCopyActivity})
+
+	env.ExecuteWorkflow(NormalizeAriregisterSourceProfilesWithCopy, NormalizeAriregisterSourceProfilesInput{
+		IDs: ids,
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	require.Len(t, activityInputs, 1)
+	require.EqualValues(t, len(ids), activityInputs[0].Limit)
+
+	var result NormalizeAriregisterSourceProfilesResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	require.Equal(t, "succeeded", result.Status)
+	require.EqualValues(t, len(ids), result.RecordsSeen)
+	require.EqualValues(t, 1, result.ChunksProcessed)
+}
+
+func TestNormalizeAriregisterSourceProfilesWithCopyRejectsNegativeLimit(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.RegisterWorkflow(NormalizeAriregisterSourceProfilesWithCopy)
+	activityCalls := 0
+	env.RegisterActivityWithOptions(func(input NormalizeAriregisterSourceProfilesActivityInput) (NormalizeAriregisterSourceProfilesActivityResult, error) {
+		activityCalls++
+		return NormalizeAriregisterSourceProfilesActivityResult{}, nil
+	}, activity.RegisterOptions{Name: NormalizeAriregisterSourceProfilesWithCopyActivity})
+
+	env.ExecuteWorkflow(NormalizeAriregisterSourceProfilesWithCopy, NormalizeAriregisterSourceProfilesInput{
+		Limit: -1,
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.Error(t, env.GetWorkflowError())
+	require.Contains(t, env.GetWorkflowError().Error(), "limit cannot be negative")
+	require.Zero(t, activityCalls)
 }
 
 func TestNormalizeAriregisterSourceProfilesWithCopyProcessesAllRecordsInChunks(t *testing.T) {

@@ -73,6 +73,9 @@ func NormalizeAriregisterSourceProfilesWithCopy(
 	ctx temporalworkflow.Context,
 	input NormalizeAriregisterSourceProfilesInput,
 ) (NormalizeAriregisterSourceProfilesResult, error) {
+	if input.Limit < 0 {
+		return NormalizeAriregisterSourceProfilesResult{}, errors.New("limit cannot be negative")
+	}
 	input = normalizeAriregisterSourceProfilesInput(input)
 	ctx = temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,
@@ -100,7 +103,11 @@ func NormalizeAriregisterSourceProfilesWithCopy(
 	for {
 		chunkLimit := input.BatchSize
 		if len(input.IDs) > 0 {
-			chunkLimit = input.Limit
+			if input.Limit > 0 {
+				chunkLimit = input.Limit
+			} else {
+				chunkLimit = len(input.IDs)
+			}
 		}
 		if input.Limit > 0 && (chunkLimit <= 0 || remaining < chunkLimit) {
 			chunkLimit = remaining
