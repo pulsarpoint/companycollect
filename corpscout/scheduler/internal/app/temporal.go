@@ -27,18 +27,19 @@ import (
 )
 
 type temporalWorkerResources struct {
-	translationClient     *translationclient.Client
-	companyTranslation    *brregactions.CompanyTranslationActions
-	crawlClient           *crawlclient.Client
-	domainSearchActions   *brregactions.DomainSearchActions
-	bulkIngestActions     *brregactions.BulkIngestActions
-	sourceProfileActions  *brregactions.SourceProfileActions
-	sourceCapitalFX       *brregactions.SourceCapitalFXActions
-	sourceFinancial       *brregactions.SourceFinancialActions
-	ariregisterBulkIngest *ariregisteractions.BulkIngestActions
-	cvrRawIngest          *cvractions.RawIngestActions
-	naceTaxonomyActions   *nacetaxonomy.Actions
-	fxActions             *fx.Actions
+	translationClient        *translationclient.Client
+	companyTranslation       *brregactions.CompanyTranslationActions
+	crawlClient              *crawlclient.Client
+	domainSearchActions      *brregactions.DomainSearchActions
+	bulkIngestActions        *brregactions.BulkIngestActions
+	sourceProfileActions     *brregactions.SourceProfileActions
+	sourceCapitalFX          *brregactions.SourceCapitalFXActions
+	sourceFinancial          *brregactions.SourceFinancialActions
+	ariregisterBulkIngest    *ariregisteractions.BulkIngestActions
+	ariregisterSourceProfile *ariregisteractions.SourceProfileActions
+	cvrRawIngest             *cvractions.RawIngestActions
+	naceTaxonomyActions      *nacetaxonomy.Actions
+	fxActions                *fx.Actions
 }
 
 func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore *llmproviders.Store, s3 *s3client.Client) (*temporalWorkerResources, error) {
@@ -72,15 +73,16 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 	ariregisterGateway := ariregisterdb.New(pool)
 	cvrGateway := cvrdb.New(pool)
 	return &temporalWorkerResources{
-		translationClient:     translator,
-		companyTranslation:    brregactions.NewCompanyTranslationActions(brregCompanyData, translator),
-		crawlClient:           crawler,
-		domainSearchActions:   brregactions.NewDomainSearchActions(gateway, crawler, llmStore, s3),
-		bulkIngestActions:     brregactions.NewBulkIngestActions(gateway, http.DefaultClient, cfg.BRREGBulkSourceURL),
-		sourceProfileActions:  brregactions.NewSourceProfileActions(gateway),
-		sourceCapitalFX:       brregactions.NewSourceCapitalFXActions(gateway),
-		sourceFinancial:       brregactions.NewSourceFinancialActions(gateway, financialClient),
-		ariregisterBulkIngest: ariregisteractions.NewBulkIngestActions(ariregisterGateway, http.DefaultClient, cfg.AriregisterSourceURL),
+		translationClient:        translator,
+		companyTranslation:       brregactions.NewCompanyTranslationActions(brregCompanyData, translator),
+		crawlClient:              crawler,
+		domainSearchActions:      brregactions.NewDomainSearchActions(gateway, crawler, llmStore, s3),
+		bulkIngestActions:        brregactions.NewBulkIngestActions(gateway, http.DefaultClient, cfg.BRREGBulkSourceURL),
+		sourceProfileActions:     brregactions.NewSourceProfileActions(gateway),
+		sourceCapitalFX:          brregactions.NewSourceCapitalFXActions(gateway),
+		sourceFinancial:          brregactions.NewSourceFinancialActions(gateway, financialClient),
+		ariregisterBulkIngest:    ariregisteractions.NewBulkIngestActions(ariregisterGateway, http.DefaultClient, cfg.AriregisterSourceURL),
+		ariregisterSourceProfile: ariregisteractions.NewSourceProfileActions(ariregisterGateway),
 		cvrRawIngest: cvractions.NewRawIngestActions(cvrGateway, http.DefaultClient, cvractions.RawIngestConfig{
 			SourceURL:   cfg.CVRSourceURL,
 			ScrollURL:   cfg.CVRScrollURL,
@@ -117,6 +119,8 @@ func newTemporalWorkers(temporalClient client.Client, resources *temporalWorkerR
 		newBrregSourceCapitalFXTemporalWorker(temporalClient, resources),
 		newBrregSourceFinancialTemporalWorker(temporalClient, resources),
 		newAriregisterBulkIngestTemporalWorker(temporalClient, resources),
+		newAriregisterSourceProfileTemporalWorker(temporalClient, resources),
+		newAriregisterSourceExplorerRefreshTemporalWorker(temporalClient, resources),
 		newCVRRawIngestTemporalWorker(temporalClient, resources),
 		newNACETaxonomyTemporalWorker(temporalClient, resources),
 		newFXTemporalWorker(temporalClient, resources),

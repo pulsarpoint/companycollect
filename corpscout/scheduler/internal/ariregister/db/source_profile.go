@@ -29,6 +29,13 @@ type NormalizeSourceProfilesResult struct {
 	RegistryNotesUpserted        int32
 }
 
+type RefreshSourceExplorerResult struct {
+	Refreshed             bool
+	UsedConcurrentRefresh bool
+	SourceEntries         int64
+	LatestSourceUpdatedAt *string
+}
+
 func textFilter(filters map[string]string, keys ...string) *string {
 	if filters == nil {
 		return nil
