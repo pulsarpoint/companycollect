@@ -84,3 +84,16 @@ func TestBrregSourceProfileRepairDownMigrationKeepsSchemaObjects(t *testing.T) {
 	require.NotContains(t, sql, "DROP TABLE")
 	require.NotContains(t, sql, "DROP VIEW")
 }
+
+func TestBrregSourceCompanyExplorerMaterializedViewMigration(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000083_brreg_source_company_explorer_materialized_view.up.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "CREATE MATERIALIZED VIEW brreg_source.mv_company_explorer AS")
+	require.Contains(t, sql, "FROM brreg_source.v_company_explorer")
+	require.Contains(t, sql, "CREATE UNIQUE INDEX uq_brreg_source_mv_company_explorer_company")
+	require.Contains(t, sql, "idx_brreg_source_mv_company_explorer_updated")
+	require.Contains(t, sql, "idx_brreg_source_mv_company_explorer_org_name_trgm")
+	require.Contains(t, sql, "GRANT SELECT ON brreg_source.mv_company_explorer TO corpscout_anon")
+}

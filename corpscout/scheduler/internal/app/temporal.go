@@ -91,6 +91,7 @@ func newTemporalWorkers(temporalClient client.Client, resources *temporalWorkerR
 		newBrregDomainSearchTemporalWorker(temporalClient, resources),
 		newBrregBulkIngestTemporalWorker(temporalClient, resources),
 		newBrregSourceProfileTemporalWorker(temporalClient, resources),
+		newBrregSourceExplorerRefreshTemporalWorker(temporalClient, resources),
 		newBrregSourceCapitalFXTemporalWorker(temporalClient, resources),
 		newNACETaxonomyTemporalWorker(temporalClient, resources),
 		newFXTemporalWorker(temporalClient, resources),

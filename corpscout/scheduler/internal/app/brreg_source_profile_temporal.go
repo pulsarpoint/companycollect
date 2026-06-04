@@ -21,11 +21,31 @@ func newBrregSourceProfileTemporalWorker(temporalClient client.Client, resources
 	return sourceProfileWorker
 }
 
+func newBrregSourceExplorerRefreshTemporalWorker(temporalClient client.Client, resources *temporalWorkerResources) temporalworker.Worker {
+	slog.Debug("creating brreg source explorer refresh temporal worker", "task_queue", brregworkflow.RefreshBrregSourceExplorerTaskQueue)
+	worker := temporalworker.New(
+		temporalClient,
+		brregworkflow.RefreshBrregSourceExplorerTaskQueue,
+		temporalworker.Options{},
+	)
+	registerBrregSourceExplorerRefreshWorker(worker, resources)
+	return worker
+}
+
 func registerBrregSourceProfileWorker(worker temporalworker.Worker, resources *temporalWorkerResources) {
 	slog.Debug("registering brreg source profile temporal workflow and activities")
 	worker.RegisterWorkflow(brregworkflow.NormalizeBrregSourceProfiles)
 	worker.RegisterActivityWithOptions(
 		resources.sourceProfileActions.NormalizeBrregSourceProfiles,
 		activity.RegisterOptions{Name: "NormalizeBrregSourceProfilesActivity"},
+	)
+}
+
+func registerBrregSourceExplorerRefreshWorker(worker temporalworker.Worker, resources *temporalWorkerResources) {
+	slog.Debug("registering brreg source explorer refresh temporal workflow and activities")
+	worker.RegisterWorkflow(brregworkflow.RefreshBrregSourceExplorer)
+	worker.RegisterActivityWithOptions(
+		resources.sourceProfileActions.RefreshBrregSourceExplorer,
+		activity.RegisterOptions{Name: "RefreshBrregSourceExplorerActivity"},
 	)
 }

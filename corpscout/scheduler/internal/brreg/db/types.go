@@ -234,6 +234,13 @@ type NormalizeSourceProfilesResult struct {
 	CapitalUpserted    int32
 }
 
+type RefreshSourceExplorerResult struct {
+	Refreshed             bool
+	UsedConcurrentRefresh bool
+	SourceEntries         int64
+	LatestSourceUpdatedAt *string
+}
+
 type ConvertSourceCapitalToUSDCommand struct {
 	IDs            []string
 	Filters        map[string]string

@@ -649,7 +649,7 @@ export function BrregSourceEntriesTable() {
           size="sm"
           variant="outline"
           className="h-8"
-          disabled={loading || total === 0}
+          disabled={loading}
           onClick={() => setActionSheetOpen(true)}
         >
           <ListChecks className="size-4" />

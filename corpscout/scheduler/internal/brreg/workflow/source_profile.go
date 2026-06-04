@@ -15,10 +15,17 @@ const (
 	NormalizeBrregSourceProfilesWorkflowName = "NormalizeBrregSourceProfiles"
 
 	normalizeBrregSourceProfilesActivity = "NormalizeBrregSourceProfilesActivity"
+
+	RefreshBrregSourceExplorerTaskQueue    = "brreg-source-explorer-refresh"
+	RefreshBrregSourceExplorerWorkflowName = "RefreshBrregSourceExplorer"
+
+	refreshBrregSourceExplorerActivity = "RefreshBrregSourceExplorerActivity"
 )
 
 type NormalizeBrregSourceProfilesActivityInput = actions.NormalizeBrregSourceProfilesActivityInput
 type NormalizeBrregSourceProfilesActivityResult = actions.NormalizeBrregSourceProfilesActivityResult
+type RefreshBrregSourceExplorerActivityInput = actions.RefreshBrregSourceExplorerActivityInput
+type RefreshBrregSourceExplorerActivityResult = actions.RefreshBrregSourceExplorerActivityResult
 
 type NormalizeBrregSourceProfilesInput struct {
 	IDs     []string          `json:"ids,omitempty"`
@@ -37,6 +44,18 @@ type NormalizeBrregSourceProfilesResult struct {
 	DomainsUpserted    int32  `json:"domains_upserted"`
 	ContactsUpserted   int32  `json:"contacts_upserted"`
 	CapitalUpserted    int32  `json:"capital_upserted"`
+}
+
+type RefreshBrregSourceExplorerInput struct {
+	Trigger string `json:"trigger,omitempty"`
+}
+
+type RefreshBrregSourceExplorerResult struct {
+	Status                string  `json:"status"`
+	Refreshed             bool    `json:"refreshed"`
+	UsedConcurrentRefresh bool    `json:"used_concurrent_refresh"`
+	SourceEntries         int64   `json:"source_entries"`
+	LatestSourceUpdatedAt *string `json:"latest_source_updated_at,omitempty"`
 }
 
 func NormalizeBrregSourceProfiles(
@@ -93,6 +112,53 @@ func NormalizeBrregSourceProfiles(
 }
 
 func normalizeBrregSourceProfilesInput(input NormalizeBrregSourceProfilesInput) NormalizeBrregSourceProfilesInput {
+	if input.Trigger == "" {
+		input.Trigger = "manual"
+	}
+	return input
+}
+
+func RefreshBrregSourceExplorer(
+	ctx temporalworkflow.Context,
+	input RefreshBrregSourceExplorerInput,
+) (RefreshBrregSourceExplorerResult, error) {
+	input = normalizeRefreshBrregSourceExplorerInput(input)
+	ctx = temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
+		StartToCloseTimeout: 2 * time.Hour,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 1,
+		},
+	})
+	workflowInfo := temporalworkflow.GetInfo(ctx)
+	logger := temporalworkflow.GetLogger(ctx)
+	logger.Debug("brreg source explorer refresh workflow started",
+		"temporal_workflow_id", workflowInfo.WorkflowExecution.ID,
+		"trigger", input.Trigger,
+	)
+
+	var activityResult RefreshBrregSourceExplorerActivityResult
+	if err := temporalworkflow.ExecuteActivity(ctx, refreshBrregSourceExplorerActivity, RefreshBrregSourceExplorerActivityInput{
+		TemporalWorkflowID: workflowInfo.WorkflowExecution.ID,
+		Trigger:            input.Trigger,
+	}).Get(ctx, &activityResult); err != nil {
+		return RefreshBrregSourceExplorerResult{}, errors.Wrap(err, "refresh brreg source explorer")
+	}
+	logger.Debug("brreg source explorer refresh workflow completed",
+		"temporal_workflow_id", workflowInfo.WorkflowExecution.ID,
+		"source_entries", activityResult.SourceEntries,
+		"used_concurrent_refresh", activityResult.UsedConcurrentRefresh,
+	)
+
+	return RefreshBrregSourceExplorerResult{
+		Status:                "succeeded",
+		Refreshed:             activityResult.Refreshed,
+		UsedConcurrentRefresh: activityResult.UsedConcurrentRefresh,
+		SourceEntries:         activityResult.SourceEntries,
+		LatestSourceUpdatedAt: activityResult.LatestSourceUpdatedAt,
+	}, nil
+}
+
+func normalizeRefreshBrregSourceExplorerInput(input RefreshBrregSourceExplorerInput) RefreshBrregSourceExplorerInput {
 	if input.Trigger == "" {
 		input.Trigger = "manual"
 	}

@@ -22,8 +22,8 @@ func TestNewTemporalWorkersCreatesBrregWorkers(t *testing.T) {
 	workers := newTemporalWorkers(temporalClient, &temporalWorkerResources{})
 	defer stopTemporalWorkers(workers)
 
-	if len(workers) != 7 {
-		t.Fatalf("expected 7 temporal workers, got %d", len(workers))
+	if len(workers) != 8 {
+		t.Fatalf("expected 8 temporal workers, got %d", len(workers))
 	}
 }
 

@@ -233,6 +233,27 @@ func TestStartBrregSourceProfileNormalizationWorkflowRejectsInvalidID(t *testing
 	require.Nil(t, tc.workflow)
 }
 
+func TestStartBrregSourceExplorerRefreshWorkflowStartsTemporalWorkflow(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/source-explorer-refresh", bytes.NewBufferString(`{
+		"trigger": "manual"
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"RefreshBrregSourceExplorer"`)
+	require.Equal(t, "brreg-source-explorer-refresh", tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(brregworkflow.RefreshBrregSourceExplorer).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(brregworkflow.RefreshBrregSourceExplorerInput)
+	require.Equal(t, "manual", input.Trigger)
+}
+
 func TestStartBrregSourceCapitalFXWorkflowStartsTemporalWorkflow(t *testing.T) {
 	tc := &temporalExecuteRecorder{}
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
@@ -601,7 +622,7 @@ func TestListBrregWorkflowRunsReturnsFilteredTemporalExecutions(t *testing.T) {
 		} `json:"items"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	require.Len(t, body.Prefixes, 5)
+	require.Len(t, body.Prefixes, 6)
 	require.Equal(t, "brreg-company-translation", body.Prefixes[0].Prefix)
 	require.Equal(t, brregworkflow.TranslateBrregSourceCompaniesWorkflowName, body.Prefixes[0].WorkflowType)
 	require.Len(t, body.Items, 1)

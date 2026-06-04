@@ -54,6 +54,7 @@ type Querier interface {
 	GetBrregCompanyProcessStatus(ctx context.Context, companyID uuid.UUID) (BrregSourceCompanyProcessStatus, error)
 	GetBrregCompanyProcessStatusSummary(ctx context.Context) (GetBrregCompanyProcessStatusSummaryRow, error)
 	GetBrregSourceCompanyDetail(ctx context.Context, companyID uuid.UUID) (BrregSourceVCompanyDetail, error)
+	GetBrregSourceCompanyExplorerRefreshSummary(ctx context.Context) (GetBrregSourceCompanyExplorerRefreshSummaryRow, error)
 	GetBrregSourceTranslationAssetState(ctx context.Context) (GetBrregSourceTranslationAssetStateRow, error)
 	GetBrregWorkflowDomainAssetState(ctx context.Context) (BrregWorkflowVDomainAssetState, error)
 	GetBrregWorkflowEnhancedAssetState(ctx context.Context) (BrregWorkflowVEnhancedAssetState, error)

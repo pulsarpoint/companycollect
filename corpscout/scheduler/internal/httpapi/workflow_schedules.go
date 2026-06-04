@@ -528,6 +528,8 @@ func applyWorkflowScheduleActionDefaults(req workflowScheduleRequest, defaults w
 		return applyNACETaxonomyScheduleActionDefaults(req, defaults.naceSourceURL)
 	case "fx_rate_sync":
 		return applyFXRateScheduleActionDefaults(req, defaults.fxSourceURL)
+	case "brreg_source_explorer_refresh":
+		return applyBrregSourceExplorerRefreshScheduleActionDefaults(req)
 	default:
 		return req, nil
 	}
@@ -593,6 +595,27 @@ func applyFXRateScheduleActionDefaults(req workflowScheduleRequest, defaultFXSou
 	body, err := json.Marshal(input)
 	if err != nil {
 		return workflowScheduleRequest{}, errors.New("invalid fx rate sync action input")
+	}
+	req.ActionInput = body
+	return req, nil
+}
+
+func applyBrregSourceExplorerRefreshScheduleActionDefaults(req workflowScheduleRequest) (workflowScheduleRequest, error) {
+	input := map[string]any{}
+	if len(req.ActionInput) > 0 && strings.TrimSpace(string(req.ActionInput)) != "null" {
+		if err := json.Unmarshal(req.ActionInput, &input); err != nil {
+			return workflowScheduleRequest{}, errors.New("invalid brreg source explorer refresh action input")
+		}
+		if input == nil {
+			input = map[string]any{}
+		}
+	}
+	if strings.TrimSpace(stringValue(input["trigger"])) == "" {
+		input["trigger"] = "schedule"
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		return workflowScheduleRequest{}, errors.New("invalid brreg source explorer refresh action input")
 	}
 	req.ActionInput = body
 	return req, nil

@@ -16,6 +16,7 @@ import (
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 
+	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/httpapi"
@@ -203,6 +204,50 @@ func TestCreateWorkflowScheduleCreatesFXTemporalScheduleAndMetadata(t *testing.T
 	require.Equal(t, fx.SyncWorkflowName, q.createParams.WorkflowName)
 	require.Equal(t, fx.SyncTaskQueue, q.createParams.TaskQueue)
 	require.Equal(t, []string{"fx", "exchange-rates"}, q.createParams.Tags)
+}
+
+func TestCreateWorkflowScheduleCreatesBrregSourceExplorerRefreshScheduleAndMetadata(t *testing.T) {
+	tc := newTemporalScheduleClientRecorder()
+	q := &scheduleMetadataQuerier{}
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflow-schedules", bytes.NewBufferString(`{
+		"temporal_schedule_id": "brreg-source-explorer-refresh-hourly",
+		"workflow_key": "brreg_source_explorer_refresh",
+		"display_name": "Hourly BRREG source explorer refresh",
+		"description": "Keep source entries reads fast",
+		"enabled": true,
+		"tags": ["brreg", "source-explorer"],
+		"metadata": {"owner": "ops"},
+		"spec": {
+			"timezone": "Europe/Belgrade",
+			"cron_expression": "10 * * * *",
+			"overlap_policy": "skip",
+			"catchup_window_seconds": 3600
+		},
+		"action_input": {}
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.True(t, tc.schedule.createCalled)
+	require.Equal(t, "brreg-source-explorer-refresh-hourly", tc.schedule.createOptions.ID)
+	action, ok := tc.schedule.createOptions.Action.(*client.ScheduleWorkflowAction)
+	require.True(t, ok)
+	require.Equal(t, brregworkflow.RefreshBrregSourceExplorerWorkflowName, action.Workflow)
+	require.Equal(t, brregworkflow.RefreshBrregSourceExplorerTaskQueue, action.TaskQueue)
+	require.Len(t, action.Args, 1)
+	actionInput, ok := action.Args[0].(brregworkflow.RefreshBrregSourceExplorerInput)
+	require.True(t, ok)
+	require.Equal(t, "schedule", actionInput.Trigger)
+	require.Equal(t, "brreg-source-explorer-refresh-hourly", q.createParams.TemporalScheduleID)
+	require.Equal(t, "brreg_source_explorer_refresh", q.createParams.WorkflowKey)
+	require.Equal(t, brregworkflow.RefreshBrregSourceExplorerWorkflowName, q.createParams.WorkflowName)
+	require.Equal(t, brregworkflow.RefreshBrregSourceExplorerTaskQueue, q.createParams.TaskQueue)
+	require.Equal(t, "brreg", q.createParams.Domain)
+	require.Equal(t, "source_explorer_refresh", q.createParams.Purpose)
+	require.Equal(t, []string{"brreg", "source-explorer"}, q.createParams.Tags)
 }
 
 func TestCreateWorkflowScheduleRejectsInvalidFXSourceURL(t *testing.T) {

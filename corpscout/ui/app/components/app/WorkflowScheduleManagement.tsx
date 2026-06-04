@@ -86,6 +86,14 @@ const workflowScheduleOptions: WorkflowScheduleOption[] = [
     description: "",
     tags: ["fx", "exchange-rates"],
   },
+  {
+    key: "brreg_source_explorer_refresh",
+    label: "BRREG source explorer refresh",
+    scheduleID: "brreg-source-explorer-refresh-hourly",
+    displayName: "Hourly BRREG source explorer refresh",
+    description: "Refresh the indexed source entries table snapshot.",
+    tags: ["brreg", "source-explorer"],
+  },
 ];
 
 const defaultWorkflowKey: WorkflowScheduleKey = "nace_taxonomy_sync";
@@ -509,14 +517,13 @@ export function WorkflowScheduleManagement() {
 
             <Separator />
 
-            {workflowKey === "nace_taxonomy_sync" ? (
-              <NACETaxonomySyncForm
-                value={naceInput}
-                onChange={setNaceInput}
-              />
-            ) : (
-              <FXRateSyncForm value={fxInput} onChange={setFXInput} />
-            )}
+            <WorkflowActionInputForm
+              workflowKey={workflowKey}
+              naceInput={naceInput}
+              fxInput={fxInput}
+              onNaceInputChange={setNaceInput}
+              onFXInputChange={setFXInput}
+            />
 
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setSheetOpen(false)}>
@@ -582,6 +589,9 @@ function actionInputForWorkflow(
   naceInput: NACETaxonomySyncFormValue,
   fxInput: FXRateSyncFormValue,
 ): Record<string, unknown> {
+  if (workflowKey === "brreg_source_explorer_refresh") {
+    return { trigger: "schedule" };
+  }
   if (workflowKey === "fx_rate_sync") {
     return {
       provider: fxInput.provider,
@@ -596,4 +606,36 @@ function actionInputForWorkflow(
     trigger: "schedule",
     force_reprocess: naceInput.force_reprocess,
   };
+}
+
+function WorkflowActionInputForm({
+  workflowKey,
+  naceInput,
+  fxInput,
+  onNaceInputChange,
+  onFXInputChange,
+}: {
+  workflowKey: WorkflowScheduleKey;
+  naceInput: NACETaxonomySyncFormValue;
+  fxInput: FXRateSyncFormValue;
+  onNaceInputChange: (value: NACETaxonomySyncFormValue) => void;
+  onFXInputChange: (value: FXRateSyncFormValue) => void;
+}) {
+  if (workflowKey === "nace_taxonomy_sync") {
+    return (
+      <NACETaxonomySyncForm
+        value={naceInput}
+        onChange={onNaceInputChange}
+      />
+    );
+  }
+  if (workflowKey === "fx_rate_sync") {
+    return <FXRateSyncForm value={fxInput} onChange={onFXInputChange} />;
+  }
+  return (
+    <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
+      This schedule refreshes the indexed BRREG source entries snapshot. It has
+      no workflow-specific parameters.
+    </div>
+  );
 }

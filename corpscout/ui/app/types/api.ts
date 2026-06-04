@@ -114,7 +114,10 @@ export interface WorkflowScheduleInput {
   action_input: Record<string, unknown>;
 }
 
-export type WorkflowScheduleKey = "nace_taxonomy_sync" | "fx_rate_sync";
+export type WorkflowScheduleKey =
+  | "nace_taxonomy_sync"
+  | "fx_rate_sync"
+  | "brreg_source_explorer_refresh";
 
 export interface NACETaxonomySyncRequest {
   revision?: string;

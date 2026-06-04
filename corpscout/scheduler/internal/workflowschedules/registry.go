@@ -6,6 +6,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 
+	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 )
@@ -25,6 +26,7 @@ func Definitions() []Definition {
 	return []Definition{
 		naceTaxonomySyncDefinition(),
 		fxRateSyncDefinition(),
+		brregSourceExplorerRefreshDefinition(),
 	}
 }
 
@@ -113,6 +115,36 @@ func decodeFXRateSyncInput(raw json.RawMessage) (any, error) {
 	}
 	if input.Trigger != "schedule" && input.Trigger != "manual" {
 		return nil, errors.New("fx rate sync trigger must be schedule or manual")
+	}
+	return input, nil
+}
+
+func brregSourceExplorerRefreshDefinition() Definition {
+	return Definition{
+		Key:                "brreg_source_explorer_refresh",
+		WorkflowName:       brregworkflow.RefreshBrregSourceExplorerWorkflowName,
+		TaskQueue:          brregworkflow.RefreshBrregSourceExplorerTaskQueue,
+		Domain:             "brreg",
+		Purpose:            "source_explorer_refresh",
+		DefaultDisplayName: "BRREG source explorer refresh",
+		DefaultDescription: "Refreshes the indexed BRREG source explorer materialized view used by the source entries table.",
+		DecodeActionInput:  decodeBrregSourceExplorerRefreshInput,
+	}
+}
+
+func decodeBrregSourceExplorerRefreshInput(raw json.RawMessage) (any, error) {
+	var input brregworkflow.RefreshBrregSourceExplorerInput
+	if len(raw) > 0 && strings.TrimSpace(string(raw)) != "null" {
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return nil, errors.New("invalid brreg source explorer refresh action input")
+		}
+	}
+	input.Trigger = strings.TrimSpace(input.Trigger)
+	if input.Trigger == "" {
+		input.Trigger = "schedule"
+	}
+	if input.Trigger != "schedule" && input.Trigger != "manual" {
+		return nil, errors.New("brreg source explorer refresh trigger must be schedule or manual")
 	}
 	return input, nil
 }

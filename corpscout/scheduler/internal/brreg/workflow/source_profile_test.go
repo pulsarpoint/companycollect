@@ -80,3 +80,37 @@ func TestNormalizeBrregSourceProfilesAllowsAllRecords(t *testing.T) {
 	require.EqualValues(t, 1200, result.RecordsSeen)
 	require.EqualValues(t, 1200, result.CompaniesUpserted)
 }
+
+func TestRefreshBrregSourceExplorerRunsSingleActivity(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.RegisterWorkflow(RefreshBrregSourceExplorer)
+	var activityInput RefreshBrregSourceExplorerActivityInput
+	env.RegisterActivityWithOptions(func(input RefreshBrregSourceExplorerActivityInput) (RefreshBrregSourceExplorerActivityResult, error) {
+		activityInput = input
+		latest := "2026-06-04 06:33:17+00"
+		return RefreshBrregSourceExplorerActivityResult{
+			Refreshed:             true,
+			UsedConcurrentRefresh: true,
+			SourceEntries:         1000,
+			LatestSourceUpdatedAt: &latest,
+		}, nil
+	}, activity.RegisterOptions{Name: refreshBrregSourceExplorerActivity})
+
+	env.ExecuteWorkflow(RefreshBrregSourceExplorer, RefreshBrregSourceExplorerInput{
+		Trigger: "manual",
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	require.Equal(t, "manual", activityInput.Trigger)
+
+	var result RefreshBrregSourceExplorerResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	require.Equal(t, "succeeded", result.Status)
+	require.True(t, result.Refreshed)
+	require.True(t, result.UsedConcurrentRefresh)
+	require.EqualValues(t, 1000, result.SourceEntries)
+	require.NotNil(t, result.LatestSourceUpdatedAt)
+}

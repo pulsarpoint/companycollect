@@ -690,7 +690,7 @@ func (q *Queries) CountBrregMissingTranslationFields(ctx context.Context) (int32
 
 const countBrregSourceEntries = `-- name: CountBrregSourceEntries :one
 SELECT count(*)::bigint
-FROM brreg_source.v_company_explorer entry
+FROM brreg_source.mv_company_explorer entry
 WHERE (
     $1::text IS NULL
     OR entry.organization_name ILIKE '%' || $1::text || '%'
@@ -722,21 +722,11 @@ WHERE (
     $5::text IS NULL
     OR (
       $5::text = 'with'
-      AND EXISTS (
-        SELECT 1
-        FROM brreg_source.websites website
-        WHERE website.company_id = entry.company_id
-          AND website.status = 'active'
-      )
+      AND entry.website_count > 0
     )
     OR (
       $5::text = 'without'
-      AND NOT EXISTS (
-        SELECT 1
-        FROM brreg_source.websites website
-        WHERE website.company_id = entry.company_id
-          AND website.status = 'active'
-      )
+      AND entry.website_count = 0
     )
   )
 `
@@ -879,6 +869,25 @@ func (q *Queries) GetBrregSourceCompanyDetail(ctx context.Context, companyID uui
 		&i.Shareholdings,
 		&i.TranslationStatus,
 	)
+	return i, err
+}
+
+const getBrregSourceCompanyExplorerRefreshSummary = `-- name: GetBrregSourceCompanyExplorerRefreshSummary :one
+SELECT
+  count(*)::bigint AS source_entries,
+  max(updated_at)::text AS latest_source_updated_at
+FROM brreg_source.mv_company_explorer
+`
+
+type GetBrregSourceCompanyExplorerRefreshSummaryRow struct {
+	SourceEntries         int64  `json:"source_entries"`
+	LatestSourceUpdatedAt string `json:"latest_source_updated_at"`
+}
+
+func (q *Queries) GetBrregSourceCompanyExplorerRefreshSummary(ctx context.Context) (GetBrregSourceCompanyExplorerRefreshSummaryRow, error) {
+	row := q.db.QueryRow(ctx, getBrregSourceCompanyExplorerRefreshSummary)
+	var i GetBrregSourceCompanyExplorerRefreshSummaryRow
+	err := row.Scan(&i.SourceEntries, &i.LatestSourceUpdatedAt)
 	return i, err
 }
 
@@ -1105,7 +1114,7 @@ SELECT
   entry.domain_running_count,
   entry.domain_succeeded_count,
   entry.updated_at
-FROM brreg_source.v_company_explorer entry
+FROM brreg_source.mv_company_explorer entry
 LEFT JOIN LATERAL (
   SELECT
     website.url,

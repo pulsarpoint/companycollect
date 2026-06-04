@@ -449,6 +449,9 @@ export const api = {
       body,
     ),
 
+  refreshBrregSourceExplorer: (body: { trigger?: string } = {}) =>
+    post<StartWorkflowResponse>("/workflows/brreg/source-explorer-refresh", body),
+
   convertBrregSourceCapitalToUSD: (
     body: {
       ids?: string[];

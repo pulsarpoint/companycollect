@@ -36,6 +36,18 @@ type NormalizeBrregSourceProfilesActivityResult struct {
 	CapitalUpserted    int32 `json:"capital_upserted"`
 }
 
+type RefreshBrregSourceExplorerActivityInput struct {
+	TemporalWorkflowID string `json:"temporal_workflow_id,omitempty"`
+	Trigger            string `json:"trigger,omitempty"`
+}
+
+type RefreshBrregSourceExplorerActivityResult struct {
+	Refreshed             bool    `json:"refreshed"`
+	UsedConcurrentRefresh bool    `json:"used_concurrent_refresh"`
+	SourceEntries         int64   `json:"source_entries"`
+	LatestSourceUpdatedAt *string `json:"latest_source_updated_at,omitempty"`
+}
+
 func (a *SourceProfileActions) NormalizeBrregSourceProfiles(
 	ctx context.Context,
 	input NormalizeBrregSourceProfilesActivityInput,
@@ -78,5 +90,32 @@ func (a *SourceProfileActions) NormalizeBrregSourceProfiles(
 		DomainsUpserted:    result.DomainsUpserted,
 		ContactsUpserted:   result.ContactsUpserted,
 		CapitalUpserted:    result.CapitalUpserted,
+	}, nil
+}
+
+func (a *SourceProfileActions) RefreshBrregSourceExplorer(
+	ctx context.Context,
+	input RefreshBrregSourceExplorerActivityInput,
+) (RefreshBrregSourceExplorerActivityResult, error) {
+	if a == nil || a.gateway == nil {
+		return RefreshBrregSourceExplorerActivityResult{}, errors.New("brreg source profile gateway not available")
+	}
+	slog.DebugContext(ctx, "refreshing brreg source explorer materialized view",
+		"temporal_workflow_id", input.TemporalWorkflowID,
+		"trigger", input.Trigger,
+	)
+	result, err := a.gateway.RefreshSourceExplorer(ctx)
+	if err != nil {
+		return RefreshBrregSourceExplorerActivityResult{}, errors.Wrap(err, "refresh brreg source explorer")
+	}
+	slog.DebugContext(ctx, "refreshed brreg source explorer materialized view",
+		"source_entries", result.SourceEntries,
+		"used_concurrent_refresh", result.UsedConcurrentRefresh,
+	)
+	return RefreshBrregSourceExplorerActivityResult{
+		Refreshed:             result.Refreshed,
+		UsedConcurrentRefresh: result.UsedConcurrentRefresh,
+		SourceEntries:         result.SourceEntries,
+		LatestSourceUpdatedAt: result.LatestSourceUpdatedAt,
 	}, nil
 }

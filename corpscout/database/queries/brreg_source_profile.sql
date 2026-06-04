@@ -1126,7 +1126,7 @@ SELECT
 
 -- name: CountBrregSourceEntries :one
 SELECT count(*)::bigint
-FROM brreg_source.v_company_explorer entry
+FROM brreg_source.mv_company_explorer entry
 WHERE (
     sqlc.narg('query')::text IS NULL
     OR entry.organization_name ILIKE '%' || sqlc.narg('query')::text || '%'
@@ -1158,21 +1158,11 @@ WHERE (
     sqlc.narg('website_status')::text IS NULL
     OR (
       sqlc.narg('website_status')::text = 'with'
-      AND EXISTS (
-        SELECT 1
-        FROM brreg_source.websites website
-        WHERE website.company_id = entry.company_id
-          AND website.status = 'active'
-      )
+      AND entry.website_count > 0
     )
     OR (
       sqlc.narg('website_status')::text = 'without'
-      AND NOT EXISTS (
-        SELECT 1
-        FROM brreg_source.websites website
-        WHERE website.company_id = entry.company_id
-          AND website.status = 'active'
-      )
+      AND entry.website_count = 0
     )
   );
 
@@ -1216,7 +1206,7 @@ SELECT
   entry.domain_running_count,
   entry.domain_succeeded_count,
   entry.updated_at
-FROM brreg_source.v_company_explorer entry
+FROM brreg_source.mv_company_explorer entry
 LEFT JOIN LATERAL (
   SELECT
     website.url,
@@ -1287,6 +1277,12 @@ ORDER BY
   entry.organization_number ASC
 LIMIT GREATEST(sqlc.arg('limit')::integer, 1)
 OFFSET GREATEST(sqlc.arg('offset')::integer, 0);
+
+-- name: GetBrregSourceCompanyExplorerRefreshSummary :one
+SELECT
+  count(*)::bigint AS source_entries,
+  max(updated_at)::text AS latest_source_updated_at
+FROM brreg_source.mv_company_explorer;
 
 -- name: GetBrregSourceCompanyDetail :one
 SELECT detail.*

@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	enumspb "go.temporal.io/api/enums/v1"
 
+	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 )
 
@@ -60,6 +61,28 @@ func TestBuildNACEScheduleActionInputRequiresSourceURL(t *testing.T) {
 
 	_, err := def.DecodeActionInput(nil)
 	require.ErrorContains(t, err, "nace source url is required")
+}
+
+func TestWorkflowDefinitionsIncludeBrregSourceExplorerRefresh(t *testing.T) {
+	def, ok := DefinitionByKey("brreg_source_explorer_refresh")
+	require.True(t, ok)
+	require.Equal(t, "brreg_source_explorer_refresh", def.Key)
+	require.Equal(t, brregworkflow.RefreshBrregSourceExplorerWorkflowName, def.WorkflowName)
+	require.Equal(t, brregworkflow.RefreshBrregSourceExplorerTaskQueue, def.TaskQueue)
+	require.Equal(t, "brreg", def.Domain)
+	require.Equal(t, "source_explorer_refresh", def.Purpose)
+}
+
+func TestBuildBrregSourceExplorerRefreshScheduleActionInputDefaults(t *testing.T) {
+	def, ok := DefinitionByKey("brreg_source_explorer_refresh")
+	require.True(t, ok)
+
+	input, err := def.DecodeActionInput(json.RawMessage(`{}`))
+	require.NoError(t, err)
+
+	typed, ok := input.(brregworkflow.RefreshBrregSourceExplorerInput)
+	require.True(t, ok)
+	require.Equal(t, "schedule", typed.Trigger)
 }
 
 func TestBuildScheduleSpecValidatesCron(t *testing.T) {

@@ -81,6 +81,10 @@ type startBrregSourceProfileNormalizationWorkflowRequest struct {
 	Trigger string            `json:"trigger,omitempty"`
 }
 
+type startBrregSourceExplorerRefreshWorkflowRequest struct {
+	Trigger string `json:"trigger,omitempty"`
+}
+
 type startBrregSourceCapitalFXWorkflowRequest struct {
 	IDs            []string          `json:"ids,omitempty"`
 	Filters        map[string]string `json:"filters,omitempty"`
@@ -354,6 +358,51 @@ func (h *Handlers) handleStartBrregSourceProfileNormalizationWorkflow(w http.Res
 	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
 		Status:        "started",
 		Workflow:      brregworkflow.NormalizeBrregSourceProfilesWorkflowName,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
+func (h *Handlers) handleStartBrregSourceExplorerRefreshWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := decodeStartBrregSourceExplorerRefreshWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := brregworkflow.RefreshBrregSourceExplorerInput{
+		Trigger: req.Trigger,
+	}
+	workflowID := newWorkflowID("brreg-source-explorer-refresh")
+	slog.Debug("starting brreg source explorer refresh workflow",
+		"workflow_id", workflowID,
+		"task_queue", brregworkflow.RefreshBrregSourceExplorerTaskQueue,
+		"trigger", req.Trigger,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: brregworkflow.RefreshBrregSourceExplorerTaskQueue,
+		},
+		brregworkflow.RefreshBrregSourceExplorer,
+		input,
+	)
+	if err != nil {
+		slog.Error("start brreg source explorer refresh workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("brreg source explorer refresh workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      brregworkflow.RefreshBrregSourceExplorerWorkflowName,
 		WorkflowID:    workflowID,
 		WorkflowRunID: run.GetRunID(),
 	})
@@ -857,6 +906,20 @@ func decodeStartBrregSourceProfileNormalizationWorkflowRequest(r *http.Request) 
 	return req, nil
 }
 
+func decodeStartBrregSourceExplorerRefreshWorkflowRequest(r *http.Request) (startBrregSourceExplorerRefreshWorkflowRequest, error) {
+	var req startBrregSourceExplorerRefreshWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startBrregSourceExplorerRefreshWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	if req.Trigger == "" {
+		req.Trigger = "manual"
+	}
+	return req, nil
+}
+
 func decodeStartBrregSourceCapitalFXWorkflowRequest(r *http.Request) (startBrregSourceCapitalFXWorkflowRequest, error) {
 	var req startBrregSourceCapitalFXWorkflowRequest
 	decoder := json.NewDecoder(r.Body)
@@ -1039,6 +1102,11 @@ var brregWorkflowPrefixes = []brregWorkflowPrefix{
 		Prefix:       "brreg-source-profile",
 		Label:        "Source profile sync",
 		WorkflowType: brregworkflow.NormalizeBrregSourceProfilesWorkflowName,
+	},
+	{
+		Prefix:       "brreg-source-explorer-refresh",
+		Label:        "Source explorer refresh",
+		WorkflowType: brregworkflow.RefreshBrregSourceExplorerWorkflowName,
 	},
 	{
 		Prefix:       "brreg-source-capital-fx",
