@@ -9,7 +9,7 @@ import (
 	"github.com/cockroachdb/errors"
 )
 
-const defaultNATSRequestTimeout = 180 * time.Second
+const defaultNATSRequestTimeout = 900 * time.Second
 const defaultFXECBDailyURL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
 const defaultAriregisterBulkSourceURL = "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__yldandmed.json.zip"
 const defaultCVRDistributionSourceURL = "https://distribution.virk.dk/cvr-permanent/virksomhed/_search"

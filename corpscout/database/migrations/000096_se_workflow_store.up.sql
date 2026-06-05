@@ -152,15 +152,26 @@ VALUES (
     'docs_url', 'https://www.scb.se/vara-tjanster/bestall-data-och-statistik/foretagsregistret/vardefulla-datamangder--grundlaggande-foretagsinformation/',
     'api_portal_url', 'https://portal.api.bolagsverket.se/devportal/apis/ff8f9a91-1fdd-4705-8836-c1906581162f',
     'metadata_url', 'https://metadata.bolagsverket.se/store/2/resource/42',
-    'file_download_url', 'https://bolagsverket.se/apierochoppnadata/nedladdningsbarafiler.2517.html',
+    'file_download_url', 'https://vardefulla-datamangder.bolagsverket.se/bolagsverket/bolagsverket_bulkfil.zip',
     'protocol', 'Bolagsverket/SCB HVD file download',
     'datasets', jsonb_build_array(
       jsonb_build_object(
-        'dataset', 'organisationer',
-        'label', 'Organisationer',
-        'url', 'https://metadata.bolagsverket.se/store/2/resource/42',
-        'format', 'metadata',
-        'distribution_format', 'application/zip'
+        'dataset', 'bolagsverket',
+        'label', 'Bolagsverket bulk file',
+        'url', 'https://vardefulla-datamangder.bolagsverket.se/bolagsverket/bolagsverket_bulkfil.zip',
+        'format', 'zip',
+        'encoding', 'utf-8',
+        'delimiter', ';',
+        'target_table', 'se_workflow.bolagsverket_raw_records'
+      ),
+      jsonb_build_object(
+        'dataset', 'scb',
+        'label', 'SCB bulk file',
+        'url', 'https://vardefulla-datamangder.bolagsverket.se/scb/scb_bulkfil.zip',
+        'format', 'zip',
+        'encoding', 'iso-8859-1',
+        'delimiter', '\t',
+        'target_table', 'se_workflow.scb_raw_records'
       )
     ),
     'fields', jsonb_build_array(
@@ -172,7 +183,7 @@ VALUES (
       'naringsgrenOrganisation',
       'postadressOrganisation'
     ),
-    'notes', 'Initial ingest stores raw HVD organization records in se_workflow.raw_records. The workflow resolves the configured metadata URL to the current HVD bulk file. Edit config.datasets to use a direct zip/json URL if Bolagsverket changes its download metadata or blocks automated discovery.'
+    'notes', 'Initial ingest downloads the direct Bolagsverket and SCB HVD ZIP files and stores their source-specific rows in se_workflow.bolagsverket_raw_records and se_workflow.scb_raw_records. File hashes prevent processing the same source file twice.'
   )
 )
 ON CONFLICT (name) DO UPDATE SET

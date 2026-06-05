@@ -1,10 +1,19 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { ArrowDown, ArrowUp, ChevronsUpDown, Search, X } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronsUpDown,
+  ListChecks,
+  Search,
+  X,
+} from "lucide-react";
+import { AriregisterSourceEntryActionSheet } from "~/components/app/AriregisterSourceEntryActionSheet";
 import { api } from "~/lib/api";
 import type { AriregisterSourceEntryListItem } from "~/types/api";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { Skeleton } from "~/components/ui/skeleton";
 import {
@@ -111,9 +120,24 @@ function RelatedCounts({ item }: { item: AriregisterSourceEntryListItem }) {
   );
 }
 
-function SourceEntryRow({ item }: { item: AriregisterSourceEntryListItem }) {
+function SourceEntryRow({
+  item,
+  selected,
+  onSelectedChange,
+}: {
+  item: AriregisterSourceEntryListItem;
+  selected: boolean;
+  onSelectedChange: (checked: boolean) => void;
+}) {
   return (
     <TableRow>
+      <TableCell>
+        <Checkbox
+          checked={selected}
+          aria-label={`Select ${item.legal_name || item.registry_code}`}
+          onCheckedChange={(checked) => onSelectedChange(checked === true)}
+        />
+      </TableCell>
       <TableCell>
         <div className="flex min-w-56 flex-col gap-1">
           <Link
@@ -180,6 +204,9 @@ export function AriregisterSourceEntriesTable() {
   const [searchInput, setSearchInput] = useState(
     searchParams.get("source_q") ?? "",
   );
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [allFilteredSelected, setAllFilteredSelected] = useState(false);
+  const [actionSheetOpen, setActionSheetOpen] = useState(false);
 
   const page = pageFromParams(searchParams);
   const query = searchParams.get("source_q") ?? "";
@@ -189,6 +216,27 @@ export function AriregisterSourceEntriesTable() {
   const sortDirection: SortDirection =
     searchParams.get("source_dir") === "asc" ? "asc" : "desc";
   const totalPages = Math.ceil(total / PAGE_SIZE);
+  const actionFilters = useMemo(() => {
+    const filters: Record<string, string> = {};
+    if (query) filters.q = query;
+    if (lifecycleStatus) filters.lifecycle_status = lifecycleStatus;
+    if (translationStatus) filters.translation_status = translationStatus;
+    return filters;
+  }, [lifecycleStatus, query, translationStatus]);
+  const tableFilterKey = JSON.stringify({
+    lifecycleStatus,
+    query,
+    translationStatus,
+  });
+  const selectedIdList = useMemo(() => Array.from(selectedIds), [selectedIds]);
+  const currentPageSelected =
+    items.length > 0 &&
+    (allFilteredSelected ||
+      items.every((item) => selectedIds.has(item.company_id)));
+  const someCurrentPageSelected =
+    !allFilteredSelected &&
+    items.some((item) => selectedIds.has(item.company_id)) &&
+    !currentPageSelected;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -216,6 +264,11 @@ export function AriregisterSourceEntriesTable() {
   useEffect(() => {
     setSearchInput(query);
   }, [query]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setAllFilteredSelected(false);
+  }, [tableFilterKey]);
 
   const setParam = useCallback(
     (key: string, value: string) => {
@@ -246,6 +299,33 @@ export function AriregisterSourceEntriesTable() {
     },
     [searchParams, setSearchParams, sort, sortDirection],
   );
+
+  const toggleCurrentPageSelection = (checked: boolean) => {
+    setAllFilteredSelected(false);
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      for (const item of items) {
+        if (checked) next.add(item.company_id);
+        else next.delete(item.company_id);
+      }
+      return next;
+    });
+  };
+
+  const toggleRowSelection = (id: string, checked: boolean) => {
+    setAllFilteredSelected(false);
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setAllFilteredSelected(false);
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -282,15 +362,71 @@ export function AriregisterSourceEntriesTable() {
           options={FILTER_OPTIONS.translation_status}
           onChange={(value) => setParam("source_translation_status", value)}
         />
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8"
+          disabled={loading}
+          onClick={() => setActionSheetOpen(true)}
+        >
+          <ListChecks className="size-4" />
+          Action
+        </Button>
         <span className="ml-auto text-sm text-muted-foreground">
           {loading ? "Loading..." : `${total.toLocaleString()} source entries`}
         </span>
       </div>
 
+      {(selectedIdList.length > 0 || allFilteredSelected) && (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <span>
+            {allFilteredSelected
+              ? `${total.toLocaleString()} filtered source entries selected`
+              : `${selectedIdList.length.toLocaleString()} source entries selected`}
+          </span>
+          {!allFilteredSelected &&
+            total > items.length &&
+            Object.keys(actionFilters).length > 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2"
+                onClick={() => setAllFilteredSelected(true)}
+              >
+                Select all filtered
+              </Button>
+            )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2"
+            onClick={clearSelection}
+          >
+            Clear
+          </Button>
+        </div>
+      )}
+
       <div className="rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-10">
+                <Checkbox
+                  checked={
+                    currentPageSelected
+                      ? true
+                      : someCurrentPageSelected
+                        ? "indeterminate"
+                        : false
+                  }
+                  disabled={loading || items.length === 0}
+                  aria-label="Select current page"
+                  onCheckedChange={(checked) =>
+                    toggleCurrentPageSelection(checked === true)
+                  }
+                />
+              </TableHead>
               <TableHead>
                 <button
                   type="button"
@@ -322,6 +458,9 @@ export function AriregisterSourceEntriesTable() {
             {loading ? (
               Array.from({ length: 8 }).map((_, rowIndex) => (
                 <TableRow key={rowIndex}>
+                  <TableCell>
+                    <Skeleton className="size-4" />
+                  </TableCell>
                   {Array.from({ length: 7 }).map((__, cellIndex) => (
                     <TableCell key={cellIndex}>
                       <Skeleton className="h-4 w-full" />
@@ -332,7 +471,7 @@ export function AriregisterSourceEntriesTable() {
             ) : items.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={8}
                   className="py-12 text-center text-muted-foreground"
                 >
                   No Ariregister source entries found.
@@ -340,7 +479,16 @@ export function AriregisterSourceEntriesTable() {
               </TableRow>
             ) : (
               items.map((item) => (
-                <SourceEntryRow key={item.company_id} item={item} />
+                <SourceEntryRow
+                  key={item.company_id}
+                  item={item}
+                  selected={
+                    allFilteredSelected || selectedIds.has(item.company_id)
+                  }
+                  onSelectedChange={(checked) =>
+                    toggleRowSelection(item.company_id, checked)
+                  }
+                />
               ))
             )}
           </TableBody>
@@ -372,6 +520,18 @@ export function AriregisterSourceEntriesTable() {
           </div>
         </div>
       )}
+      <AriregisterSourceEntryActionSheet
+        open={actionSheetOpen}
+        onOpenChange={setActionSheetOpen}
+        selectedIds={allFilteredSelected ? [] : selectedIdList}
+        totalCount={total}
+        filters={actionFilters}
+        initialScope={allFilteredSelected ? "filtered" : undefined}
+        onStarted={() => {
+          clearSelection();
+          load();
+        }}
+      />
     </div>
   );
 }

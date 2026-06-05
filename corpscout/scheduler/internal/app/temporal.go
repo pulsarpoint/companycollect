@@ -45,6 +45,7 @@ type temporalWorkerResources struct {
 	ariregisterSourceProfile      *ariregisteractions.SourceProfileActions
 	cvrRawIngest                  *cvractions.RawIngestActions
 	franceBulkIngest              *franceactions.BulkIngestActions
+	franceSourceProfile           *franceactions.SourceProfileActions
 	seBulkIngest                  *seactions.BulkIngestActions
 	naceTaxonomyActions           *nacetaxonomy.Actions
 	fxActions                     *fx.Actions
@@ -108,6 +109,7 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 			LegalUnitsURL:     cfg.FranceLegalUnitsURL,
 			EstablishmentsURL: cfg.FranceEstablishmentsURL,
 		}),
+		franceSourceProfile: franceactions.NewSourceProfileActions(franceGateway),
 		seBulkIngest: seactions.NewBulkIngestActions(seGateway, http.DefaultClient, seactions.BulkIngestConfig{
 			DatasetsJSON: cfg.SEHVDDatasetsJSON,
 			StagingRoot:  cfg.SEHVDStagingRoot,
@@ -144,6 +146,7 @@ func newTemporalWorkers(temporalClient client.Client, resources *temporalWorkerR
 		newAriregisterSourceExplorerRefreshTemporalWorker(temporalClient, resources),
 		newCVRRawIngestTemporalWorker(temporalClient, resources),
 		newFranceBulkIngestTemporalWorker(temporalClient, resources),
+		newFranceSourceProfileTemporalWorker(temporalClient, resources),
 		newSEBulkIngestTemporalWorker(temporalClient, resources),
 		newNACETaxonomyTemporalWorker(temporalClient, resources),
 		newFXTemporalWorker(temporalClient, resources),

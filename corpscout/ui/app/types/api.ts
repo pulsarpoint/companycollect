@@ -241,10 +241,12 @@ export interface BrregCompanyTranslationRequest {
   batch_size?: number;
   claim_mode?: "auto" | "fixed";
   max_request_chars?: number;
+  max_terms?: number;
   max_companies_per_batch?: number;
   max_parallel_tasks?: number;
   lease_seconds?: number;
   max_attempts?: number;
+  batch_delay_seconds?: number;
   provider?: string;
   model?: string;
   prompt_version?: string;

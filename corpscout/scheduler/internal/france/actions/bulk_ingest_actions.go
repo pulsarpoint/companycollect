@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -24,10 +25,11 @@ import (
 )
 
 const (
-	defaultBulkIngestDBBatchSize int32 = 1000
-	defaultFranceBulkStagingRoot       = "/var/lib/corpscout/worksets/france-sirene"
-	franceBulkRunType                  = "bulk_ingest"
-	franceBulkSource                   = "sirene_bulk"
+	defaultBulkIngestDBBatchSize     int32 = 5000
+	franceBulkBatchHeartbeatInterval       = time.Minute
+	defaultFranceBulkStagingRoot           = "/var/lib/corpscout/worksets/france-sirene"
+	franceBulkRunType                      = "bulk_ingest"
+	franceBulkSource                       = "sirene_bulk"
 )
 
 type BulkIngestConfig struct {
@@ -380,22 +382,22 @@ func (a *BulkIngestActions) processLegalUnits(
 		if len(batch) == 0 {
 			return nil
 		}
-		ingested, err := a.gateway.IngestLegalUnits(ctx, batch)
-		if err != nil {
-			return errors.Wrap(err, "ingest france legal unit batch")
+		progress := result
+		pendingBatchSize := int32(len(batch))
+		if err := runWithPeriodicHeartbeat(ctx, franceBulkBatchHeartbeatInterval, func() {
+			activity.RecordHeartbeat(ctx, legalUnitsHeartbeatDetails(input, progress, pendingBatchSize, "ingesting_legal_units_batch"))
+		}, func() error {
+			ingested, err := a.gateway.IngestLegalUnits(ctx, batch)
+			if err != nil {
+				return errors.Wrap(err, "ingest france legal unit batch")
+			}
+			addIngestResult(&result, ingested)
+			batch = batch[:0]
+			return nil
+		}); err != nil {
+			return err
 		}
-		addIngestResult(&result, ingested)
-		batch = batch[:0]
-		activity.RecordHeartbeat(ctx, map[string]any{
-			"phase":                          "ingesting_legal_units",
-			"legal_units_seen":               result.RowsSeen,
-			"legal_units_written":            result.RowsWritten,
-			"legal_units_inserted_new":       result.RowsInsertedNew,
-			"legal_units_existing_unchanged": result.RowsExistingUnchanged,
-			"legal_units_new_versions":       result.RowsNewVersions,
-			"configured_record_limit":        input.Limit,
-			"configured_database_batch_size": input.BatchSize,
-		})
+		activity.RecordHeartbeat(ctx, legalUnitsHeartbeatDetails(input, result, 0, "ingesting_legal_units"))
 		return nil
 	}
 	streamed, err := francebulk.StreamLegalUnitsFile(ctx, input.SourcePath, input.Limit, func(record francebulk.LegalUnitRecord) error {
@@ -436,22 +438,22 @@ func (a *BulkIngestActions) processEstablishments(
 		if len(batch) == 0 {
 			return nil
 		}
-		ingested, err := a.gateway.IngestEstablishments(ctx, batch)
-		if err != nil {
-			return errors.Wrap(err, "ingest france establishment batch")
+		progress := result
+		pendingBatchSize := int32(len(batch))
+		if err := runWithPeriodicHeartbeat(ctx, franceBulkBatchHeartbeatInterval, func() {
+			activity.RecordHeartbeat(ctx, establishmentsHeartbeatDetails(input, progress, pendingBatchSize, "ingesting_establishments_batch"))
+		}, func() error {
+			ingested, err := a.gateway.IngestEstablishments(ctx, batch)
+			if err != nil {
+				return errors.Wrap(err, "ingest france establishment batch")
+			}
+			addIngestResult(&result, ingested)
+			batch = batch[:0]
+			return nil
+		}); err != nil {
+			return err
 		}
-		addIngestResult(&result, ingested)
-		batch = batch[:0]
-		activity.RecordHeartbeat(ctx, map[string]any{
-			"phase":                             "ingesting_establishments",
-			"establishments_seen":               result.RowsSeen,
-			"establishments_written":            result.RowsWritten,
-			"establishments_inserted_new":       result.RowsInsertedNew,
-			"establishments_existing_unchanged": result.RowsExistingUnchanged,
-			"establishments_new_versions":       result.RowsNewVersions,
-			"configured_record_limit":           input.Limit,
-			"configured_database_batch_size":    input.BatchSize,
-		})
+		activity.RecordHeartbeat(ctx, establishmentsHeartbeatDetails(input, result, 0, "ingesting_establishments"))
 		return nil
 	}
 	streamed, err := francebulk.StreamEstablishmentsFile(ctx, input.SourcePath, input.Limit, func(record francebulk.EstablishmentRecord) error {
@@ -776,6 +778,66 @@ func normalizeBatchSize(batchSize int32) int32 {
 		return defaultBulkIngestDBBatchSize
 	}
 	return batchSize
+}
+
+func legalUnitsHeartbeatDetails(input processSourceFileInput, result francedb.IngestRawRecordsResult, pendingBatchSize int32, phase string) map[string]any {
+	return map[string]any{
+		"phase":                          phase,
+		"legal_units_seen":               result.RowsSeen,
+		"legal_units_written":            result.RowsWritten,
+		"legal_units_inserted_new":       result.RowsInsertedNew,
+		"legal_units_existing_unchanged": result.RowsExistingUnchanged,
+		"legal_units_new_versions":       result.RowsNewVersions,
+		"pending_batch_records":          pendingBatchSize,
+		"configured_record_limit":        input.Limit,
+		"configured_database_batch_size": input.BatchSize,
+	}
+}
+
+func establishmentsHeartbeatDetails(input processSourceFileInput, result francedb.IngestRawRecordsResult, pendingBatchSize int32, phase string) map[string]any {
+	return map[string]any{
+		"phase":                             phase,
+		"establishments_seen":               result.RowsSeen,
+		"establishments_written":            result.RowsWritten,
+		"establishments_inserted_new":       result.RowsInsertedNew,
+		"establishments_existing_unchanged": result.RowsExistingUnchanged,
+		"establishments_new_versions":       result.RowsNewVersions,
+		"pending_batch_records":             pendingBatchSize,
+		"configured_record_limit":           input.Limit,
+		"configured_database_batch_size":    input.BatchSize,
+	}
+}
+
+func runWithPeriodicHeartbeat(ctx context.Context, interval time.Duration, heartbeat func(), operation func() error) error {
+	if heartbeat == nil {
+		return operation()
+	}
+	if interval <= 0 {
+		interval = franceBulkBatchHeartbeatInterval
+	}
+	heartbeat()
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				heartbeat()
+			}
+		}
+	}()
+	err := operation()
+	close(done)
+	wg.Wait()
+	return err
 }
 
 func stagedPayloadFromProcessInput(input processSourceFileInput) *stagedPayload {

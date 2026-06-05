@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -15,9 +16,12 @@ import (
 	"strings"
 
 	"github.com/cockroachdb/errors"
+	"golang.org/x/text/encoding/charmap"
 )
 
 const OrganizationDatasetKey = "organisationer"
+const BolagsverketDatasetKey = "bolagsverket"
+const SCBDatasetKey = "scb"
 
 type StreamResult struct {
 	RowsSeen int32
@@ -34,6 +38,72 @@ type Record struct {
 	PostalAddress       json.RawMessage
 	RawPayload          json.RawMessage
 	PayloadHash         string
+}
+
+type BolagsverketRecord struct {
+	RowNumber                                         int32
+	SourceRecordKey                                   string
+	Organisationsidentitet                            string
+	OrganizationNumber                                string
+	Namnskyddslopnummer                               string
+	Registreringsland                                 string
+	Organisationsnamn                                 string
+	OrganizationName                                  string
+	Organisationsform                                 string
+	Avregistreringsdatum                              string
+	Avregistreringsorsak                              string
+	PagandeAvvecklingsEllerOmstruktureringsforfarande string
+	Registreringsdatum                                string
+	Verksamhetsbeskrivning                            string
+	Postadress                                        string
+	PostalAddress                                     json.RawMessage
+	RawPayload                                        json.RawMessage
+	PayloadHash                                       string
+}
+
+type SCBRecord struct {
+	RowNumber          int32
+	SourceRecordKey    string
+	ForAndrTyp         string
+	COAdress           string
+	Foretagsnamn       string
+	FtgStat            string
+	Gatuadress         string
+	JEStat             string
+	JurForm            string
+	Namn               string
+	Ng1                string
+	Ng2                string
+	Ng3                string
+	Ng4                string
+	Ng5                string
+	PeOrgNr            string
+	OrganizationNumber string
+	PostNr             string
+	PostOrt            string
+	RegDatKtid         string
+	Reklamsparrtyp     string
+	MCOAdress          string
+	MForetagsnamn      string
+	MFtgStat           string
+	MGatuadress        string
+	MJEStat            string
+	MJurForm           string
+	MNamn              string
+	MNg1               string
+	MNg2               string
+	MNg3               string
+	MNg4               string
+	MNg5               string
+	MPostNr            string
+	MPostOrt           string
+	MRegDatKtid        string
+	MReklamsparrtyp    string
+	MaskColumns        json.RawMessage
+	SNICodes           json.RawMessage
+	PostalAddress      json.RawMessage
+	RawPayload         json.RawMessage
+	PayloadHash        string
 }
 
 type payload struct {
@@ -53,6 +123,11 @@ type sniCode struct {
 	Label string `json:"label,omitempty"`
 }
 
+type orderedSniCode struct {
+	Code     string `json:"code"`
+	Position int    `json:"position"`
+}
+
 func StreamRecordsFile(ctx context.Context, path string, format string, limit int32, emit func(Record) error) (StreamResult, error) {
 	reader, err := openRecordsFile(path, format)
 	if err != nil {
@@ -60,6 +135,240 @@ func StreamRecordsFile(ctx context.Context, path string, format string, limit in
 	}
 	defer reader.Close()
 	return StreamRecords(ctx, reader, limit, emit)
+}
+
+func StreamBolagsverketRecordsFile(ctx context.Context, path string, format string, limit int32, emit func(BolagsverketRecord) error) (StreamResult, error) {
+	reader, err := openRecordsFile(path, format)
+	if err != nil {
+		return StreamResult{}, err
+	}
+	defer reader.Close()
+	return StreamBolagsverketRecords(ctx, reader, limit, emit)
+}
+
+func StreamBolagsverketRecords(ctx context.Context, reader io.Reader, limit int32, emit func(BolagsverketRecord) error) (StreamResult, error) {
+	if emit == nil {
+		return StreamResult{}, errors.New("emit callback is required")
+	}
+	csvReader := csv.NewReader(reader)
+	csvReader.Comma = ';'
+	csvReader.FieldsPerRecord = -1
+	csvReader.LazyQuotes = true
+
+	header, err := readCSVHeader(csvReader)
+	if err != nil {
+		return StreamResult{}, errors.Wrap(err, "read Bolagsverket HVD header")
+	}
+	var result StreamResult
+	var rowNumber int32
+	for {
+		if err := ctx.Err(); err != nil {
+			return StreamResult{}, err
+		}
+		if limit > 0 && result.RowsSeen >= limit {
+			break
+		}
+		row, err := csvReader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return StreamResult{}, errors.Wrap(err, "read Bolagsverket HVD row")
+		}
+		if emptyCSVRow(row) {
+			continue
+		}
+		rowNumber++
+		record, ok, err := BolagsverketRecordFromRow(header, row, rowNumber)
+		if err != nil || !ok {
+			return StreamResult{}, err
+		}
+		result.RowsSeen++
+		if err := emit(record); err != nil {
+			return StreamResult{}, err
+		}
+	}
+	return result, nil
+}
+
+func BolagsverketRecordFromRow(header []string, row []string, rowNumber int32) (BolagsverketRecord, bool, error) {
+	values := csvRowMap(header, row)
+	rawPayload, err := json.Marshal(values)
+	if err != nil {
+		return BolagsverketRecord{}, false, errors.Wrap(err, "encode Bolagsverket HVD raw payload")
+	}
+	organizationNumber := normalizeTaggedOrganizationNumber(values["organisationsidentitet"])
+	if organizationNumber == "" {
+		return BolagsverketRecord{}, false, nil
+	}
+	postalAddress, err := json.Marshal(parseBolagsverketPostadress(values["postadress"]))
+	if err != nil {
+		return BolagsverketRecord{}, false, errors.Wrap(err, "encode Bolagsverket HVD postal address")
+	}
+	nameProtectionSequence := strings.TrimSpace(values["namnskyddslopnummer"])
+	sourceRecordKey := organizationNumber
+	if nameProtectionSequence != "" {
+		sourceRecordKey += "|" + nameProtectionSequence
+	}
+	return BolagsverketRecord{
+		RowNumber:              rowNumber,
+		SourceRecordKey:        sourceRecordKey,
+		Organisationsidentitet: strings.TrimSpace(values["organisationsidentitet"]),
+		OrganizationNumber:     organizationNumber,
+		Namnskyddslopnummer:    nameProtectionSequence,
+		Registreringsland:      strings.TrimSpace(values["registreringsland"]),
+		Organisationsnamn:      strings.TrimSpace(values["organisationsnamn"]),
+		OrganizationName:       firstTaggedPart(values["organisationsnamn"]),
+		Organisationsform:      strings.TrimSpace(values["organisationsform"]),
+		Avregistreringsdatum:   strings.TrimSpace(values["avregistreringsdatum"]),
+		Avregistreringsorsak:   strings.TrimSpace(values["avregistreringsorsak"]),
+		PagandeAvvecklingsEllerOmstruktureringsforfarande: strings.TrimSpace(values["pagandeAvvecklingsEllerOmstruktureringsforfarande"]),
+		Registreringsdatum:     strings.TrimSpace(values["registreringsdatum"]),
+		Verksamhetsbeskrivning: strings.TrimSpace(values["verksamhetsbeskrivning"]),
+		Postadress:             strings.TrimSpace(values["postadress"]),
+		PostalAddress:          postalAddress,
+		RawPayload:             rawPayload,
+		PayloadHash:            hashBytes(rawPayload),
+	}, true, nil
+}
+
+func StreamSCBRecordsFile(ctx context.Context, path string, format string, limit int32, emit func(SCBRecord) error) (StreamResult, error) {
+	reader, err := openRecordsFile(path, format)
+	if err != nil {
+		return StreamResult{}, err
+	}
+	defer reader.Close()
+	return StreamSCBRecords(ctx, reader, limit, emit)
+}
+
+func StreamSCBRecords(ctx context.Context, reader io.Reader, limit int32, emit func(SCBRecord) error) (StreamResult, error) {
+	if emit == nil {
+		return StreamResult{}, errors.New("emit callback is required")
+	}
+	decoded := charmap.ISO8859_1.NewDecoder().Reader(reader)
+	csvReader := csv.NewReader(decoded)
+	csvReader.Comma = '\t'
+	csvReader.FieldsPerRecord = -1
+
+	header, err := readCSVHeader(csvReader)
+	if err != nil {
+		return StreamResult{}, errors.Wrap(err, "read SCB HVD header")
+	}
+	var result StreamResult
+	var rowNumber int32
+	for {
+		if err := ctx.Err(); err != nil {
+			return StreamResult{}, err
+		}
+		if limit > 0 && result.RowsSeen >= limit {
+			break
+		}
+		row, err := csvReader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return StreamResult{}, errors.Wrap(err, "read SCB HVD row")
+		}
+		if emptyCSVRow(row) {
+			continue
+		}
+		rowNumber++
+		record, ok, err := SCBRecordFromRow(header, row, rowNumber)
+		if err != nil || !ok {
+			return StreamResult{}, err
+		}
+		result.RowsSeen++
+		if err := emit(record); err != nil {
+			return StreamResult{}, err
+		}
+	}
+	return result, nil
+}
+
+func SCBRecordFromRow(header []string, row []string, rowNumber int32) (SCBRecord, bool, error) {
+	values := csvRowMap(header, row)
+	rawPayload, err := json.Marshal(values)
+	if err != nil {
+		return SCBRecord{}, false, errors.Wrap(err, "encode SCB HVD raw payload")
+	}
+	peOrgNr := strings.TrimSpace(values["PeOrgNr"])
+	if peOrgNr == "" {
+		return SCBRecord{}, false, nil
+	}
+	maskColumns, err := json.Marshal(map[string]string{
+		"mCOAdress":       strings.TrimSpace(values["mCOAdress"]),
+		"mForetagsnamn":   strings.TrimSpace(values["mForetagsnamn"]),
+		"mFtgStat":        strings.TrimSpace(values["mFtgStat"]),
+		"mGatuadress":     strings.TrimSpace(values["mGatuadress"]),
+		"mJEStat":         strings.TrimSpace(values["mJEStat"]),
+		"mJurForm":        strings.TrimSpace(values["mJurForm"]),
+		"mNamn":           strings.TrimSpace(values["mNamn"]),
+		"mNg1":            strings.TrimSpace(values["mNg1"]),
+		"mNg2":            strings.TrimSpace(values["mNg2"]),
+		"mNg3":            strings.TrimSpace(values["mNg3"]),
+		"mNg4":            strings.TrimSpace(values["mNg4"]),
+		"mNg5":            strings.TrimSpace(values["mNg5"]),
+		"mPostNr":         strings.TrimSpace(values["mPostNr"]),
+		"mPostOrt":        strings.TrimSpace(values["mPostOrt"]),
+		"mRegDatKtid":     strings.TrimSpace(values["mRegDatKtid"]),
+		"mReklamsparrtyp": strings.TrimSpace(values["mReklamsparrtyp"]),
+	})
+	if err != nil {
+		return SCBRecord{}, false, errors.Wrap(err, "encode SCB HVD mask columns")
+	}
+	sniPayload, err := json.Marshal(orderedSNICodes(values["Ng1"], values["Ng2"], values["Ng3"], values["Ng4"], values["Ng5"]))
+	if err != nil {
+		return SCBRecord{}, false, errors.Wrap(err, "encode SCB HVD SNI codes")
+	}
+	postalAddress, err := json.Marshal(parseSCBPostalAddress(values))
+	if err != nil {
+		return SCBRecord{}, false, errors.Wrap(err, "encode SCB HVD postal address")
+	}
+	return SCBRecord{
+		RowNumber:          rowNumber,
+		SourceRecordKey:    peOrgNr,
+		ForAndrTyp:         strings.TrimSpace(values["ForAndrTyp"]),
+		COAdress:           strings.TrimSpace(values["COAdress"]),
+		Foretagsnamn:       strings.TrimSpace(values["Foretagsnamn"]),
+		FtgStat:            strings.TrimSpace(values["FtgStat"]),
+		Gatuadress:         strings.TrimSpace(values["Gatuadress"]),
+		JEStat:             strings.TrimSpace(values["JEStat"]),
+		JurForm:            strings.TrimSpace(values["JurForm"]),
+		Namn:               strings.TrimSpace(values["Namn"]),
+		Ng1:                strings.TrimSpace(values["Ng1"]),
+		Ng2:                strings.TrimSpace(values["Ng2"]),
+		Ng3:                strings.TrimSpace(values["Ng3"]),
+		Ng4:                strings.TrimSpace(values["Ng4"]),
+		Ng5:                strings.TrimSpace(values["Ng5"]),
+		PeOrgNr:            peOrgNr,
+		OrganizationNumber: organizationNumberFromPeOrgNr(peOrgNr),
+		PostNr:             strings.TrimSpace(values["PostNr"]),
+		PostOrt:            strings.TrimSpace(values["PostOrt"]),
+		RegDatKtid:         strings.TrimSpace(values["RegDatKtid"]),
+		Reklamsparrtyp:     strings.TrimSpace(values["Reklamsparrtyp"]),
+		MCOAdress:          strings.TrimSpace(values["mCOAdress"]),
+		MForetagsnamn:      strings.TrimSpace(values["mForetagsnamn"]),
+		MFtgStat:           strings.TrimSpace(values["mFtgStat"]),
+		MGatuadress:        strings.TrimSpace(values["mGatuadress"]),
+		MJEStat:            strings.TrimSpace(values["mJEStat"]),
+		MJurForm:           strings.TrimSpace(values["mJurForm"]),
+		MNamn:              strings.TrimSpace(values["mNamn"]),
+		MNg1:               strings.TrimSpace(values["mNg1"]),
+		MNg2:               strings.TrimSpace(values["mNg2"]),
+		MNg3:               strings.TrimSpace(values["mNg3"]),
+		MNg4:               strings.TrimSpace(values["mNg4"]),
+		MNg5:               strings.TrimSpace(values["mNg5"]),
+		MPostNr:            strings.TrimSpace(values["mPostNr"]),
+		MPostOrt:           strings.TrimSpace(values["mPostOrt"]),
+		MRegDatKtid:        strings.TrimSpace(values["mRegDatKtid"]),
+		MReklamsparrtyp:    strings.TrimSpace(values["mReklamsparrtyp"]),
+		MaskColumns:        maskColumns,
+		SNICodes:           sniPayload,
+		PostalAddress:      postalAddress,
+		RawPayload:         rawPayload,
+		PayloadHash:        hashBytes(rawPayload),
+	}, true, nil
 }
 
 func StreamRecords(ctx context.Context, reader io.Reader, limit int32, emit func(Record) error) (StreamResult, error) {
@@ -573,4 +882,108 @@ func stringInSlice(value string, candidates []string) bool {
 		}
 	}
 	return false
+}
+
+func readCSVHeader(reader *csv.Reader) ([]string, error) {
+	header, err := reader.Read()
+	if err != nil {
+		return nil, err
+	}
+	return trimTrailingEmptyFields(header), nil
+}
+
+func emptyCSVRow(row []string) bool {
+	for _, value := range row {
+		if strings.TrimSpace(value) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func csvRowMap(header []string, row []string) map[string]string {
+	row = trimTrailingEmptyFields(row)
+	values := make(map[string]string, len(header))
+	for i, key := range header {
+		key = strings.TrimPrefix(strings.TrimSpace(key), "\ufeff")
+		if key == "" {
+			continue
+		}
+		if i >= len(row) {
+			values[key] = ""
+			continue
+		}
+		values[key] = strings.TrimSpace(row[i])
+	}
+	return values
+}
+
+func trimTrailingEmptyFields(values []string) []string {
+	end := len(values)
+	for end > 0 && strings.TrimSpace(values[end-1]) == "" {
+		end--
+	}
+	return values[:end]
+}
+
+func firstTaggedPart(value string) string {
+	parts := strings.Split(strings.TrimSpace(value), "$")
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[0])
+}
+
+func normalizeTaggedOrganizationNumber(value string) string {
+	return normalizeOrganizationNumber(firstTaggedPart(value))
+}
+
+func parseBolagsverketPostadress(value string) map[string]string {
+	parts := strings.Split(strings.TrimSpace(value), "$")
+	out := make(map[string]string)
+	add := func(key string, index int) {
+		if index < len(parts) {
+			if trimmed := strings.TrimSpace(parts[index]); trimmed != "" {
+				out[key] = trimmed
+			}
+		}
+	}
+	add("address_line_1", 0)
+	add("address_line_2", 1)
+	add("city", 2)
+	add("post_code", 3)
+	add("country_code", 4)
+	return out
+}
+
+func parseSCBPostalAddress(values map[string]string) map[string]string {
+	out := make(map[string]string)
+	add := func(key string, value string) {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out[key] = trimmed
+		}
+	}
+	add("care_of", values["COAdress"])
+	add("street_address", values["Gatuadress"])
+	add("post_code", values["PostNr"])
+	add("city", values["PostOrt"])
+	return out
+}
+
+func orderedSNICodes(values ...string) []orderedSniCode {
+	codes := make([]orderedSniCode, 0, len(values))
+	for i, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			codes = append(codes, orderedSniCode{Code: trimmed, Position: i + 1})
+		}
+	}
+	return codes
+}
+
+func organizationNumberFromPeOrgNr(value string) string {
+	value = normalizeOrganizationNumber(value)
+	if len(value) == 12 && strings.HasPrefix(value, "16") {
+		return value[2:]
+	}
+	return ""
 }

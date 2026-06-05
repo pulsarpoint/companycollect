@@ -3,11 +3,13 @@ package actions
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
 
 	"github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/companydata"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/sourcetranslation"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/translationclient"
 )
 
@@ -20,31 +22,59 @@ type BuildAriregisterTranslationWorksetInput struct {
 	FieldLimit    int32             `json:"field_limit,omitempty"`
 }
 
-type BuildAriregisterTranslationWorksetResult = companydata.BuildTranslationWorksetResult
+type BuildAriregisterTranslationWorksetResult struct {
+	Path                string `json:"path,omitempty"`
+	FieldsExported      int32  `json:"fields_exported"`
+	TermsExported       int32  `json:"terms_exported"`
+	CompaniesExported   int32  `json:"companies_exported"`
+	CachedFields        int32  `json:"cached_fields"`
+	CompaniesQueued     int32  `json:"companies_queued"`
+	TerminalRowsDeleted int32  `json:"terminal_rows_deleted"`
+}
 
 type ClaimAriregisterTranslationWorksetBatchInput struct {
-	Path            string `json:"path"`
-	MaxRequestChars int32  `json:"max_request_chars,omitempty"`
-	MaxTerms        int32  `json:"max_terms,omitempty"`
-	MaxAttempts     int32  `json:"max_attempts,omitempty"`
+	Path                string `json:"path,omitempty"`
+	BatchID             string `json:"batch_id,omitempty"`
+	MaxRequestChars     int32  `json:"max_request_chars,omitempty"`
+	MaxTerms            int32  `json:"max_terms,omitempty"`
+	MaxAttempts         int32  `json:"max_attempts,omitempty"`
+	StaleRunningSeconds int32  `json:"stale_running_seconds,omitempty"`
 }
 
 type TranslationWorksetTerm = companydata.TranslationWorksetTerm
-type ClaimAriregisterTranslationWorksetBatchResult = companydata.ClaimTranslationWorksetBatchResult
+type ClaimAriregisterTranslationWorksetBatchResult = companydata.ClaimTranslationQueueBatchResult
 
 type TranslateAriregisterTranslationWorksetBatchInput struct {
-	BatchID       int64                    `json:"batch_id"`
-	Terms         []TranslationWorksetTerm `json:"terms"`
-	Provider      string                   `json:"provider,omitempty"`
-	Model         string                   `json:"model,omitempty"`
-	PromptVersion string                   `json:"prompt_version,omitempty"`
+	BatchID       string   `json:"batch_id"`
+	CompanyIDs    []string `json:"company_ids"`
+	Provider      string   `json:"provider,omitempty"`
+	Model         string   `json:"model,omitempty"`
+	PromptVersion string   `json:"prompt_version,omitempty"`
 }
 
 type TranslationWorksetTermResult = companydata.TranslationTermResult
 
 type TranslateAriregisterTranslationWorksetBatchResult struct {
-	Results []TranslationWorksetTermResult `json:"results"`
+	Results               []TranslationWorksetTermResult `json:"results"`
+	CompaniesProcessed    int32                          `json:"companies_processed"`
+	FieldsSeen            int32                          `json:"fields_seen"`
+	TermsClaimed          int32                          `json:"terms_claimed"`
+	TermsSucceeded        int32                          `json:"terms_succeeded"`
+	TermsFailed           int32                          `json:"terms_failed"`
+	TermsSaved            int32                          `json:"terms_saved"`
+	BindingsApplied       int32                          `json:"bindings_applied"`
+	CachedBindingsApplied int32                          `json:"cached_bindings_applied"`
 }
+
+type CompleteAriregisterTranslationQueueBatchInput struct {
+	BatchID string `json:"batch_id"`
+}
+
+type ReleaseAriregisterTranslationQueueBatchInput struct {
+	BatchID string `json:"batch_id"`
+}
+
+type TranslationQueueBatchResult = companydata.TranslationQueueBatchResult
 
 type SaveAriregisterTranslationWorksetBatchInput struct {
 	Path          string                         `json:"path"`
@@ -79,23 +109,29 @@ func (a *CompanyTranslationActions) BuildAriregisterTranslationWorkset(
 		"field_limit", input.FieldLimit,
 		"prompt_version", input.PromptVersion,
 	)
-	result, err := a.store.BuildTranslationWorkset(ctx, companydata.BuildTranslationWorksetCommand{
-		Path:          input.Path,
-		PromptVersion: input.PromptVersion,
-		IDs:           input.IDs,
-		Filters:       input.Filters,
-		CompanyLimit:  input.CompanyLimit,
-		FieldLimit:    input.FieldLimit,
+	prepared, err := a.store.PrepareTranslationQueue(ctx, companydata.PrepareTranslationQueueCommand{
+		IDs:          input.IDs,
+		Filters:      input.Filters,
+		CompanyLimit: input.CompanyLimit,
 	})
 	if err != nil {
-		return BuildAriregisterTranslationWorksetResult{}, errors.Wrap(err, "build ariregister translation workset")
+		return BuildAriregisterTranslationWorksetResult{}, errors.Wrap(err, "prepare ariregister translation queue")
+	}
+	result := BuildAriregisterTranslationWorksetResult{
+		Path:                input.Path,
+		FieldsExported:      prepared.FieldsSeen,
+		TermsExported:       prepared.FieldsSeen,
+		CompaniesExported:   prepared.CompaniesSeen,
+		CompaniesQueued:     prepared.CompaniesQueued,
+		TerminalRowsDeleted: prepared.TerminalRowsDeleted,
 	}
 	slog.DebugContext(ctx, "built ariregister translation workset",
 		"path", result.Path,
 		"fields_exported", result.FieldsExported,
 		"terms_exported", result.TermsExported,
 		"companies_exported", result.CompaniesExported,
-		"cached_fields", result.CachedFields,
+		"companies_queued", result.CompaniesQueued,
+		"terminal_rows_deleted", result.TerminalRowsDeleted,
 	)
 	return result, nil
 }
@@ -104,20 +140,25 @@ func (a *CompanyTranslationActions) ClaimAriregisterTranslationWorksetBatch(
 	ctx context.Context,
 	input ClaimAriregisterTranslationWorksetBatchInput,
 ) (ClaimAriregisterTranslationWorksetBatchResult, error) {
-	result, err := companydata.ClaimTranslationWorksetBatch(ctx, companydata.ClaimTranslationWorksetBatchCommand{
-		Path:            input.Path,
-		MaxRequestChars: input.MaxRequestChars,
-		MaxTerms:        input.MaxTerms,
-		MaxAttempts:     input.MaxAttempts,
+	if a == nil || a.store == nil {
+		return ClaimAriregisterTranslationWorksetBatchResult{}, errors.New("ariregister companydata store not available")
+	}
+	if _, err := a.store.ResetStaleTranslationQueueEntries(ctx, input.StaleRunningSeconds); err != nil {
+		return ClaimAriregisterTranslationWorksetBatchResult{}, errors.Wrap(err, "reset stale ariregister translation queue entries")
+	}
+	result, err := a.store.ClaimTranslationQueueBatch(ctx, companydata.ClaimTranslationQueueBatchCommand{
+		BatchID:          input.BatchID,
+		MaxCandidateRows: input.MaxTerms,
+		MaxRequestChars:  input.MaxRequestChars,
 	})
 	if err != nil {
-		return ClaimAriregisterTranslationWorksetBatchResult{}, errors.Wrap(err, "claim ariregister translation workset batch")
+		return ClaimAriregisterTranslationWorksetBatchResult{}, errors.Wrap(err, "claim ariregister translation queue batch")
 	}
 	slog.DebugContext(ctx, "claimed ariregister translation workset batch",
 		"path", input.Path,
 		"status", result.Status,
 		"batch_id", result.BatchID,
-		"terms", len(result.Terms),
+		"companies", len(result.CompanyIDs),
 		"estimated_chars", result.EstimatedChars,
 	)
 	return result, nil
@@ -127,8 +168,8 @@ func (a *CompanyTranslationActions) TranslateAriregisterTranslationWorksetBatch(
 	ctx context.Context,
 	input TranslateAriregisterTranslationWorksetBatchInput,
 ) (TranslateAriregisterTranslationWorksetBatchResult, error) {
-	if a == nil || a.translator == nil {
-		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.New("ariregister term translation client not available")
+	if a == nil || a.store == nil {
+		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.New("ariregister companydata store not available")
 	}
 	if input.PromptVersion == "" {
 		input.PromptVersion = defaultTranslationPromptVersion
@@ -136,6 +177,78 @@ func (a *CompanyTranslationActions) TranslateAriregisterTranslationWorksetBatch(
 	if input.Provider == "" {
 		input.Provider = "default"
 	}
+	companyIDs := compactActionTextValues(input.CompanyIDs)
+	if len(companyIDs) == 0 {
+		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.New("ariregister translation queue batch company ids are required")
+	}
+	fields, err := a.store.LoadMissingTranslationFields(ctx, sourcetranslation.LoadMissingFieldsCommand{
+		PromptVersion: input.PromptVersion,
+		CompanyIDs:    companyIDs,
+	})
+	if err != nil {
+		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.Wrap(err, "load ariregister queue batch missing translation fields")
+	}
+	result := TranslateAriregisterTranslationWorksetBatchResult{
+		CompaniesProcessed: int32(len(companyIDs)),
+		FieldsSeen:         int32(len(fields)),
+	}
+	if len(fields) == 0 {
+		if err := a.store.RefreshTranslationStatus(ctx); err != nil {
+			return TranslateAriregisterTranslationWorksetBatchResult{}, errors.Wrap(err, "refresh ariregister translation status after empty queue batch")
+		}
+		return result, nil
+	}
+	termKeys := sourcetranslation.TranslationTermKeys(fields)
+	cachedTerms, err := a.store.LoadCachedTranslationTerms(ctx, sourcetranslation.LoadCachedTermsCommand{
+		PromptVersion: input.PromptVersion,
+		TermKeys:      termKeys,
+	})
+	if err != nil {
+		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.Wrap(err, "load cached ariregister queue batch translation terms")
+	}
+	builtTerms := sourcetranslation.BuildTranslationQueueTerms(fields, cachedTerms)
+	result.TermsClaimed = int32(len(builtTerms.UncachedTerms))
+	if len(builtTerms.UncachedTerms) > 0 && a.translator == nil {
+		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.New("ariregister term translation client not available")
+	}
+	if len(builtTerms.UncachedTerms) > 0 {
+		translated, err := a.translateUncachedAriregisterQueueTerms(ctx, input, builtTerms.UncachedTerms)
+		if err != nil {
+			return TranslateAriregisterTranslationWorksetBatchResult{}, err
+		}
+		result.Results = translated
+		result.TermsSucceeded, result.TermsFailed = countTranslationTermResults(translated)
+		saved, err := a.store.SaveTranslationTerms(ctx, sourcetranslation.SaveTermsCommand{
+			PromptVersion: input.PromptVersion,
+			Terms:         translated,
+		})
+		if err != nil {
+			return TranslateAriregisterTranslationWorksetBatchResult{}, errors.Wrap(err, "save ariregister queue batch translation terms")
+		}
+		result.TermsSaved = saved.TermsSaved
+	}
+	resultBindings := sourcetranslation.BuildTranslationBindingsForResults(fields, result.Results)
+	appliedCached, err := applyAriregisterQueueBindings(ctx, a.store, builtTerms.CachedBindings)
+	if err != nil {
+		return TranslateAriregisterTranslationWorksetBatchResult{}, err
+	}
+	result.CachedBindingsApplied = appliedCached
+	appliedResults, err := applyAriregisterQueueBindings(ctx, a.store, resultBindings)
+	if err != nil {
+		return TranslateAriregisterTranslationWorksetBatchResult{}, err
+	}
+	result.BindingsApplied = appliedCached + appliedResults
+	if err := a.store.RefreshTranslationStatus(ctx); err != nil {
+		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.Wrap(err, "refresh ariregister translation status after queue batch")
+	}
+	return result, nil
+}
+
+func (a *CompanyTranslationActions) translateUncachedAriregisterQueueTerms(
+	ctx context.Context,
+	input TranslateAriregisterTranslationWorksetBatchInput,
+	terms []sourcetranslation.TranslationTerm,
+) ([]TranslationWorksetTermResult, error) {
 	request := translationclient.TermTranslationRequest{
 		RequestID:     uuid.NewString(),
 		Source:        "ariregister",
@@ -144,9 +257,9 @@ func (a *CompanyTranslationActions) TranslateAriregisterTranslationWorksetBatch(
 		Provider:      input.Provider,
 		Model:         input.Model,
 		PromptVersion: input.PromptVersion,
-		Terms:         make([]translationclient.TermTranslationRequestTerm, 0, len(input.Terms)),
+		Terms:         make([]translationclient.TermTranslationRequestTerm, 0, len(terms)),
 	}
-	for _, term := range input.Terms {
+	for _, term := range terms {
 		request.Terms = append(request.Terms, translationclient.TermTranslationRequestTerm{
 			TermKey:              term.TermKey,
 			SourceText:           term.SourceText,
@@ -162,13 +275,11 @@ func (a *CompanyTranslationActions) TranslateAriregisterTranslationWorksetBatch(
 	)
 	response, err := a.translator.TranslateTerms(ctx, request)
 	if err != nil {
-		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.Wrap(err, "translate ariregister translation workset batch")
+		return nil, errors.Wrap(err, "translate ariregister translation queue batch")
 	}
-	result := TranslateAriregisterTranslationWorksetBatchResult{
-		Results: make([]TranslationWorksetTermResult, 0, len(response.Results)+len(response.Failures)),
-	}
+	results := make([]TranslationWorksetTermResult, 0, len(response.Results)+len(response.Failures))
 	for _, item := range response.Results {
-		result.Results = append(result.Results, companydata.TranslationTermResult{
+		results = append(results, companydata.TranslationTermResult{
 			TermKey:              item.TermKey,
 			SourceText:           item.SourceText,
 			SourceTextNormalized: item.SourceTextNormalized,
@@ -180,7 +291,7 @@ func (a *CompanyTranslationActions) TranslateAriregisterTranslationWorksetBatch(
 		})
 	}
 	for _, failure := range response.Failures {
-		result.Results = append(result.Results, companydata.TranslationTermResult{
+		results = append(results, companydata.TranslationTermResult{
 			TermKey:              failure.TermKey,
 			SourceText:           failure.SourceText,
 			SourceTextNormalized: failure.SourceTextNormalized,
@@ -191,6 +302,34 @@ func (a *CompanyTranslationActions) TranslateAriregisterTranslationWorksetBatch(
 			Error:                failure.Error,
 			ErrorCode:            failure.ErrorCode,
 		})
+	}
+	return results, nil
+}
+
+func (a *CompanyTranslationActions) CompleteAriregisterTranslationQueueBatch(
+	ctx context.Context,
+	input CompleteAriregisterTranslationQueueBatchInput,
+) (TranslationQueueBatchResult, error) {
+	if a == nil || a.store == nil {
+		return TranslationQueueBatchResult{}, errors.New("ariregister companydata store not available")
+	}
+	result, err := a.store.CompleteTranslationQueueBatch(ctx, input.BatchID)
+	if err != nil {
+		return TranslationQueueBatchResult{}, errors.Wrap(err, "complete ariregister translation queue batch")
+	}
+	return result, nil
+}
+
+func (a *CompanyTranslationActions) ReleaseAriregisterTranslationQueueBatch(
+	ctx context.Context,
+	input ReleaseAriregisterTranslationQueueBatchInput,
+) (TranslationQueueBatchResult, error) {
+	if a == nil || a.store == nil {
+		return TranslationQueueBatchResult{}, errors.New("ariregister companydata store not available")
+	}
+	result, err := a.store.ReleaseTranslationQueueBatch(ctx, input.BatchID)
+	if err != nil {
+		return TranslationQueueBatchResult{}, errors.Wrap(err, "release ariregister translation queue batch")
 	}
 	return result, nil
 }
@@ -239,4 +378,76 @@ func (a *CompanyTranslationActions) ApplyAriregisterTranslationWorkset(
 		"bindings_applied", result.BindingsApplied,
 	)
 	return result, nil
+}
+
+func applyAriregisterQueueBindings(
+	ctx context.Context,
+	store *companydata.Store,
+	bindings []sourcetranslation.TranslationBinding,
+) (int32, error) {
+	if len(bindings) == 0 {
+		return 0, nil
+	}
+	grouped := groupAriregisterQueueBindingsByCompany(bindings)
+	var applied int32
+	for _, group := range grouped {
+		result, err := store.ApplyCompanyTranslations(ctx, sourcetranslation.ApplyCompanyTranslationsCommand{
+			CompanyID: group.CompanyID,
+			Bindings:  group.Bindings,
+		})
+		if err != nil {
+			return 0, errors.Wrapf(err, "apply ariregister queue translation bindings for company %s", group.CompanyID)
+		}
+		applied += result.BindingsApplied
+	}
+	return applied, nil
+}
+
+type ariregisterQueueBindingGroup struct {
+	CompanyID string
+	Bindings  []sourcetranslation.TranslationBinding
+}
+
+func groupAriregisterQueueBindingsByCompany(
+	bindings []sourcetranslation.TranslationBinding,
+) []ariregisterQueueBindingGroup {
+	groups := make([]ariregisterQueueBindingGroup, 0)
+	indexByCompany := make(map[string]int)
+	for _, binding := range bindings {
+		companyID := strings.TrimSpace(binding.CompanyID)
+		if companyID == "" {
+			continue
+		}
+		index, ok := indexByCompany[companyID]
+		if !ok {
+			index = len(groups)
+			indexByCompany[companyID] = index
+			groups = append(groups, ariregisterQueueBindingGroup{CompanyID: companyID})
+		}
+		groups[index].Bindings = append(groups[index].Bindings, binding)
+	}
+	return groups
+}
+
+func countTranslationTermResults(results []TranslationWorksetTermResult) (succeeded int32, failed int32) {
+	for _, result := range results {
+		switch result.Status {
+		case "succeeded":
+			succeeded++
+		default:
+			failed++
+		}
+	}
+	return succeeded, failed
+}
+
+func compactActionTextValues(values []string) []string {
+	compact := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			compact = append(compact, value)
+		}
+	}
+	return compact
 }

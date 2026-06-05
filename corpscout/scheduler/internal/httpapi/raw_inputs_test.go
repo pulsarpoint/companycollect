@@ -149,7 +149,7 @@ func TestListRawInputs_franceReadsWorkflowRawRecords(t *testing.T) {
 	pool.ExpectQuery("COUNT(*) FROM;;france_workflow.raw_legal_units;;france_workflow.raw_establishments;;display_name ILIKE;;!france_company_raw_inputs").
 		WithArgs("%PULSAR%").
 		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(int64(2)))
-	pool.ExpectQuery("raw_input_page;;SELECT p.id;;p.source;;p.name;;france_workflow.raw_legal_units;;france_workflow.raw_establishments;;'france' AS source;;'pending' AS status;;NULL::text AS translation_status;;ri.first_seen_at AS created_at;;!france_company_raw_inputs").
+	pool.ExpectQuery("raw_input_page;;SELECT p.id;;p.source;;p.name;;france_workflow.raw_legal_units;;france_workflow.raw_establishments;;'france' AS source;;'pending' AS status;;NULL::text AS translation_status;;ri.created_at AS created_at;;!france_company_raw_inputs").
 		WithArgs("%PULSAR%", 50, 0).
 		WillReturnRows(rawInputListRows().
 			AddRow("legal-id", "france", "PULSAR POINT FRANCE", "552100554", "pending", nil, false, "pending", createdAt).
@@ -188,10 +188,10 @@ func TestListRawInputs_seReadsWorkflowRawRecords(t *testing.T) {
 	defer pool.Close()
 
 	createdAt := time.Date(2026, 6, 5, 10, 0, 0, 0, time.UTC)
-	pool.ExpectQuery("COUNT(*) FROM;;se_workflow.raw_records;;organization_name ILIKE;;!se_company_raw_inputs").
+	pool.ExpectQuery("COUNT(*) FROM;;se_workflow.bolagsverket_raw_records;;se_workflow.scb_raw_records;;display_name ILIKE;;!se_company_raw_inputs").
 		WithArgs("%Pulsar%").
 		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(int64(1)))
-	pool.ExpectQuery("raw_input_page;;SELECT p.id;;p.source;;p.name;;se_workflow.raw_records;;'pending' AS status;;NULL::text AS translation_status;;'pending' AS state;;ri.first_seen_at AS created_at;;!se_company_raw_inputs").
+	pool.ExpectQuery("raw_input_page;;SELECT p.id;;p.source;;p.name;;se_workflow.bolagsverket_raw_records;;se_workflow.scb_raw_records;;'pending' AS status;;NULL::text AS translation_status;;'pending' AS state;;ri.first_seen_at AS created_at;;!se_company_raw_inputs").
 		WithArgs("%Pulsar%", 50, 0).
 		WillReturnRows(rawInputListRows().
 			AddRow("se-id", "se", "Pulsar Sverige AB", "5599990000", "pending", nil, false, "pending", createdAt))
@@ -671,7 +671,7 @@ func TestGetRawInput_seReadsWorkflowRawRecordDetail(t *testing.T) {
 	defer pool.Close()
 
 	now := time.Date(2026, 6, 5, 10, 0, 0, 0, time.UTC)
-	pool.ExpectQuery("se_workflow.raw_records;;COALESCE(ri.organization_name,'');;COALESCE(ri.organization_number,'');;'pending';;COALESCE(ri.legal_form,'');;COALESCE(ri.registration_status,'');;COALESCE(ri.country_iso2,'');;0;;ri.raw_payload;;ri.first_seen_at;;ri.last_seen_at;;!raw_payload_en;;!translation_status").
+	pool.ExpectQuery("se_workflow.bolagsverket_raw_records;;se_workflow.scb_raw_records;;COALESCE(ri.display_name,'');;COALESCE(ri.native_id,'');;'pending';;COALESCE(ri.company_type,'');;COALESCE(ri.registration_status,'');;COALESCE(ri.country_iso2,'');;0;;ri.raw_payload;;ri.first_seen_at;;ri.last_seen_at;;!raw_payload_en;;!translation_status").
 		WithArgs("raw-id").
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "source", "name", "native_id", "status", "state", "company_type", "registration_status", "website", "country_iso2",

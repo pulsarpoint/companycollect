@@ -17,6 +17,24 @@ type IngestRawRecordsResult struct {
 	RawRecordIDs          []uuid.UUID
 }
 
+type NormalizeSourceProfilesCommand struct {
+	IDs     []string
+	Filters map[string]string
+	Limit   int32
+	Trigger string
+}
+
+type NormalizeSourceProfilesResult struct {
+	RecordsSeen            int32
+	CompaniesUpserted      int32
+	EstablishmentsUpserted int32
+	AddressesUpserted      int32
+	IndustriesInserted     int32
+	WebsitesUpserted       int32
+	DomainsUpserted        int32
+	ContactsUpserted       int32
+}
+
 func jsonObject(value []byte) []byte {
 	if len(value) == 0 {
 		return []byte(jsonPayloadEmptyObject)

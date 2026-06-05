@@ -22,7 +22,7 @@ function parsePositiveNumber(value: string) {
 export function SEBulkLoadActionForm({ onStarted, onClose }: Props) {
   const [mode, setMode] = useState<BulkLoadMode>("limit");
   const [limit, setLimit] = useState("1000");
-  const [batchSize, setBatchSize] = useState("1000");
+  const [batchSize, setBatchSize] = useState("250");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -64,7 +64,7 @@ export function SEBulkLoadActionForm({ onStarted, onClose }: Props) {
       <div className="rounded-md border bg-muted/20 p-3">
         <div className="text-sm font-medium">Load Sweden HVD bulk</div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          Download Swedish HVD bulk files from the configured source and process them into se_workflow.raw_records.
+          Download Swedish HVD bulk files and process them into Bolagsverket and SCB raw tables.
         </p>
       </div>
 

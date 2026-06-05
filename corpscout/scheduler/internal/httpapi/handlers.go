@@ -121,6 +121,7 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 		r.Post("/workflows/ariregister/source-profile", h.handleStartAriregisterSourceProfileWorkflow)
 		r.Post("/workflows/cvr/raw-ingest", h.handleStartCVRRawIngestWorkflow)
 		r.Post("/workflows/france/bulk-raw-ingest", h.handleStartFranceBulkRawIngestWorkflow)
+		r.Post("/workflows/france/source-profile", h.handleStartFranceSourceProfileWorkflow)
 		r.Post("/workflows/se/bulk-raw-ingest", h.handleStartSEBulkRawIngestWorkflow)
 		r.Post("/workflows/nace/taxonomy-sync", h.handleStartNACETaxonomySyncWorkflow)
 		r.Get("/workflows/nace/taxonomy-sync/runs", h.handleListNACETaxonomySyncWorkflowRuns)

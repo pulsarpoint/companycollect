@@ -25,8 +25,8 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.NATSURL != "" {
 		t.Errorf("want empty default NATS URL, got %s", cfg.NATSURL)
 	}
-	if cfg.NATSRequestTimeout != 180*time.Second {
-		t.Errorf("want default NATS request timeout 180s, got %s", cfg.NATSRequestTimeout)
+	if cfg.NATSRequestTimeout != 900*time.Second {
+		t.Errorf("want default NATS request timeout 900s, got %s", cfg.NATSRequestTimeout)
 	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("want default log level info, got %s", cfg.LogLevel)

@@ -19,12 +19,16 @@ type Querier interface {
 	BeginFranceWorkflowRun(ctx context.Context, arg BeginFranceWorkflowRunParams) (uuid.UUID, error)
 	BeginNACEImportRun(ctx context.Context, arg BeginNACEImportRunParams) (NaceImportRun, error)
 	BulkUpdateCompanyFinancialStatus(ctx context.Context, arg BulkUpdateCompanyFinancialStatusParams) error
+	ClaimAriregisterTranslationQueueBatch(ctx context.Context, arg ClaimAriregisterTranslationQueueBatchParams) ([]ClaimAriregisterTranslationQueueBatchRow, error)
 	ClaimBrregCompanyCurrencyBatch(ctx context.Context, arg ClaimBrregCompanyCurrencyBatchParams) ([]ClaimBrregCompanyCurrencyBatchRow, error)
 	ClaimBrregCompanyFinancialBatch(ctx context.Context, arg ClaimBrregCompanyFinancialBatchParams) ([]ClaimBrregCompanyFinancialBatchRow, error)
 	ClaimBrregCompanyTranslationBatch(ctx context.Context, arg ClaimBrregCompanyTranslationBatchParams) ([]ClaimBrregCompanyTranslationBatchRow, error)
+	ClaimBrregTranslationQueueBatch(ctx context.Context, arg ClaimBrregTranslationQueueBatchParams) ([]ClaimBrregTranslationQueueBatchRow, error)
 	ClaimBrregWorkflowTaskSelectionBatch(ctx context.Context, arg ClaimBrregWorkflowTaskSelectionBatchParams) ([]ClaimBrregWorkflowTaskSelectionBatchRow, error)
 	ClearDefaultLLMProvider(ctx context.Context) error
 	ClearRootNACECodeParents(ctx context.Context, classificationID uuid.UUID) error
+	CompleteAriregisterTranslationQueueBatch(ctx context.Context, batchID string) (int32, error)
+	CompleteBrregTranslationQueueBatch(ctx context.Context, batchID string) (int32, error)
 	ConvertBrregSourceCapitalToUSD(ctx context.Context, arg ConvertBrregSourceCapitalToUSDParams) (ConvertBrregSourceCapitalToUSDRow, error)
 	CountAriregisterSourceEntries(ctx context.Context, arg CountAriregisterSourceEntriesParams) (int64, error)
 	CountBrregSourceEntries(ctx context.Context, arg CountBrregSourceEntriesParams) (int64, error)
@@ -32,6 +36,8 @@ type Querier interface {
 	CountCompanySuggestionReviews(ctx context.Context, arg CountCompanySuggestionReviewsParams) (int32, error)
 	CountDomains(ctx context.Context, arg CountDomainsParams) (int64, error)
 	CountPendingCompanyFinancials(ctx context.Context) (int32, error)
+	CountRunningAriregisterTranslationQueueEntries(ctx context.Context) (int32, error)
+	CountRunningBrregTranslationQueueEntries(ctx context.Context) (int32, error)
 	CountSuggestionReviewItemStatuses(ctx context.Context, suggestionID uuid.UUID) (CountSuggestionReviewItemStatusesRow, error)
 	CreateAriregisterBulkSnapshot(ctx context.Context, arg CreateAriregisterBulkSnapshotParams) (uuid.UUID, error)
 	CreateBrregDomainActionAttempt(ctx context.Context, arg CreateBrregDomainActionAttemptParams) (uuid.UUID, error)
@@ -43,9 +49,13 @@ type Querier interface {
 	CreateTemporalScheduleMetadata(ctx context.Context, arg CreateTemporalScheduleMetadataParams) (TemporalScheduleMetadatum, error)
 	DeactivateMissingNACECodes(ctx context.Context, arg DeactivateMissingNACECodesParams) (int32, error)
 	DeleteExchangeRatesNotInCurrencies(ctx context.Context, arg DeleteExchangeRatesNotInCurrenciesParams) (int32, error)
+	DeleteFranceSourceIndustriesForLegalUnits(ctx context.Context, rawLegalUnitIds []uuid.UUID) error
 	DeleteTemporalScheduleMetadata(ctx context.Context, temporalScheduleID string) error
+	DemoteFranceSourceHeadquartersForLegalUnits(ctx context.Context, rawLegalUnitIds []uuid.UUID) error
 	EnsureBrregCompanyFinancialProcessStatuses(ctx context.Context, limit int32) (int32, error)
 	EnsureBrregCompanyProcessStatuses(ctx context.Context, limit int32) (int32, error)
+	FailAriregisterTranslationQueueBatch(ctx context.Context, batchID string) (int32, error)
+	FailBrregTranslationQueueBatch(ctx context.Context, batchID string) (int32, error)
 	FailFranceWorkflowRunByOrchestrator(ctx context.Context, arg FailFranceWorkflowRunByOrchestratorParams) error
 	FailRunningBrregWorkflowTasksForRun(ctx context.Context, arg FailRunningBrregWorkflowTasksForRunParams) (int32, error)
 	FinishAriregisterWorkflowRunWithStats(ctx context.Context, arg FinishAriregisterWorkflowRunWithStatsParams) (uuid.UUID, error)
@@ -110,6 +120,7 @@ type Querier interface {
 	InsertBrregWorkflowTranslationResult(ctx context.Context, arg InsertBrregWorkflowTranslationResultParams) error
 	InsertCompany(ctx context.Context, arg InsertCompanyParams) (Company, error)
 	InsertCompanyFromRawInput(ctx context.Context, arg InsertCompanyFromRawInputParams) (Company, error)
+	InsertFranceSourceIndustries(ctx context.Context, arg InsertFranceSourceIndustriesParams) (int32, error)
 	InsertImportBatch(ctx context.Context, arg InsertImportBatchParams) (DomainImportBatch, error)
 	InsertSuggestion(ctx context.Context, arg InsertSuggestionParams) (Suggestion, error)
 	InsertSuggestionCompanyFinancial(ctx context.Context, arg InsertSuggestionCompanyFinancialParams) (SuggestionCompanyFinancial, error)
@@ -179,6 +190,8 @@ type Querier interface {
 	MarkSuggestionCompanyRelationshipRejected(ctx context.Context, arg MarkSuggestionCompanyRelationshipRejectedParams) error
 	MarkSuggestionCompanyServiceApplied(ctx context.Context, arg MarkSuggestionCompanyServiceAppliedParams) error
 	MarkSuggestionCompanyServiceRejected(ctx context.Context, arg MarkSuggestionCompanyServiceRejectedParams) error
+	PrepareAriregisterTranslationQueue(ctx context.Context, arg PrepareAriregisterTranslationQueueParams) (PrepareAriregisterTranslationQueueRow, error)
+	PrepareBrregTranslationQueue(ctx context.Context, arg PrepareBrregTranslationQueueParams) (PrepareBrregTranslationQueueRow, error)
 	RecordAriregisterSourceFile(ctx context.Context, arg RecordAriregisterSourceFileParams) (uuid.UUID, error)
 	// RecordFranceSourceFile relies on UNIQUE (bulk_snapshot_id, dataset_key) from the migration.
 	RecordFranceSourceFile(ctx context.Context, arg RecordFranceSourceFileParams) (uuid.UUID, error)
@@ -186,15 +199,22 @@ type Querier interface {
 	RefreshAriregisterSourceCompanyExplorer(ctx context.Context) error
 	RefreshAriregisterSourceCompanyTranslationStatus(ctx context.Context) error
 	RejectCompanyFinancial(ctx context.Context, arg RejectCompanyFinancialParams) error
+	ReleaseAriregisterTranslationQueueBatch(ctx context.Context, batchID string) (int32, error)
 	ReleaseBrregCompanyTranslationClaim(ctx context.Context, arg ReleaseBrregCompanyTranslationClaimParams) (BrregSourceCompanyProcessStatus, error)
+	ReleaseBrregTranslationQueueBatch(ctx context.Context, batchID string) (int32, error)
+	ResetStaleAriregisterTranslationQueueEntries(ctx context.Context, staleRunningSeconds int32) (int32, error)
+	ResetStaleBrregTranslationQueueEntries(ctx context.Context, staleRunningSeconds int32) (int32, error)
 	ResolveNACECodeAlias(ctx context.Context, arg ResolveNACECodeAliasParams) (NaceCode, error)
 	ReviewCompanyDomain(ctx context.Context, arg ReviewCompanyDomainParams) error
+	SelectFranceSourceProfileLegalUnitIDs(ctx context.Context, arg SelectFranceSourceProfileLegalUnitIDsParams) ([]uuid.UUID, error)
 	SetDefaultLLMProvider(ctx context.Context, id uuid.UUID) (SetDefaultLLMProviderRow, error)
 	SupersedeCurrentAriregisterWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentAriregisterWorkflowRawRecordParams) error
 	SupersedeCurrentBrregWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentBrregWorkflowRawRecordParams) error
 	SupersedeCurrentCVRWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentCVRWorkflowRawRecordParams) error
 	SupersedeCurrentFranceWorkflowRawEstablishment(ctx context.Context, arg SupersedeCurrentFranceWorkflowRawEstablishmentParams) error
 	SupersedeCurrentFranceWorkflowRawLegalUnit(ctx context.Context, arg SupersedeCurrentFranceWorkflowRawLegalUnitParams) error
+	SupersedeFranceSourceCompaniesForLegalUnits(ctx context.Context, rawLegalUnitIds []uuid.UUID) error
+	SupersedeFranceSourceEstablishmentsForLegalUnits(ctx context.Context, rawLegalUnitIds []uuid.UUID) error
 	// ── enrichment update ─────────────────────────────────────────────────────────
 	UpdateCompanyEnrichment(ctx context.Context, arg UpdateCompanyEnrichmentParams) (Company, error)
 	UpdateCompanyInfo(ctx context.Context, arg UpdateCompanyInfoParams) (Company, error)
@@ -238,6 +258,9 @@ type Querier interface {
 	UpsertDownloadedNACESourceFile(ctx context.Context, arg UpsertDownloadedNACESourceFileParams) (NaceSourceFile, error)
 	UpsertExchangeRate(ctx context.Context, arg UpsertExchangeRateParams) (ExchangeRate, error)
 	UpsertExchangeRateSheet(ctx context.Context, arg UpsertExchangeRateSheetParams) (ExchangeRateSheet, error)
+	UpsertFranceSourceAddresses(ctx context.Context, arg UpsertFranceSourceAddressesParams) (int32, error)
+	UpsertFranceSourceCompanies(ctx context.Context, arg UpsertFranceSourceCompaniesParams) (int32, error)
+	UpsertFranceSourceEstablishments(ctx context.Context, arg UpsertFranceSourceEstablishmentsParams) (int32, error)
 	UpsertFranceWorkflowRawEstablishment(ctx context.Context, arg UpsertFranceWorkflowRawEstablishmentParams) (UpsertFranceWorkflowRawEstablishmentRow, error)
 	UpsertFranceWorkflowRawLegalUnit(ctx context.Context, arg UpsertFranceWorkflowRawLegalUnitParams) (UpsertFranceWorkflowRawLegalUnitRow, error)
 	UpsertNACEClassification(ctx context.Context, arg UpsertNACEClassificationParams) (NaceClassification, error)

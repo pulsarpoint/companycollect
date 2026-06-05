@@ -67,6 +67,50 @@ const franceRawInputTableName = `(
 	WHERE is_current
 )`
 
+const seRawInputTableName = `(
+	SELECT
+		id,
+		COALESCE(NULLIF(organization_name, ''), NULLIF(organization_number, ''), organisationsidentitet) AS display_name,
+		COALESCE(NULLIF(organization_number, ''), organisationsidentitet) AS native_id,
+		COALESCE(organisationsform, '') AS company_type,
+		CASE WHEN COALESCE(avregistreringsdatum, '') = '' THEN 'active' ELSE 'inactive' END AS registration_status,
+		''::text AS website,
+		country_iso2,
+		COALESCE(run_id, '') AS run_id,
+		0::integer AS processing_attempts,
+		''::text AS processing_error,
+		payload_hash,
+		raw_payload,
+		first_seen_at,
+		last_seen_at,
+		NULL::timestamptz AS processed_at,
+		first_seen_at AS created_at,
+		last_seen_at AS updated_at
+	FROM se_workflow.bolagsverket_raw_records
+	WHERE is_current
+	UNION ALL
+	SELECT
+		id,
+		COALESCE(NULLIF(namn, ''), NULLIF(foretagsnamn, ''), NULLIF(organization_number, ''), pe_org_nr) AS display_name,
+		COALESCE(NULLIF(organization_number, ''), pe_org_nr) AS native_id,
+		COALESCE(jur_form, '') AS company_type,
+		COALESCE(ftg_stat, '') AS registration_status,
+		''::text AS website,
+		country_iso2,
+		COALESCE(run_id, '') AS run_id,
+		0::integer AS processing_attempts,
+		''::text AS processing_error,
+		payload_hash,
+		raw_payload,
+		first_seen_at,
+		last_seen_at,
+		NULL::timestamptz AS processed_at,
+		first_seen_at AS created_at,
+		last_seen_at AS updated_at
+	FROM se_workflow.scb_raw_records
+	WHERE is_current
+)`
+
 var rawInputSources = []rawInputSource{
 	{
 		source:             "gleif",
@@ -150,24 +194,25 @@ var rawInputSources = []rawInputSource{
 		updatedAtExpr:       "updated_at",
 	},
 	{
-		source:             "se",
-		tableName:          "se_workflow.raw_records",
-		nameColumn:         "organization_name",
-		nativeColumn:       "organization_number",
-		statusExpr:         "'pending'",
-		stateExpr:          "'pending'",
-		companyTypeExpr:    "legal_form",
-		registrationColumn: "registration_status",
-		websiteExpr:        "''",
-		countryColumn:      "country_iso2",
-		runIDExpr:          "run_id",
-		attemptsExpr:       "0",
-		errorExpr:          "''",
-		firstSeenExpr:      "first_seen_at",
-		lastSeenExpr:       "last_seen_at",
-		processedAtExpr:    "NULL::timestamptz",
-		createdAtExpr:      "first_seen_at",
-		updatedAtExpr:      "last_seen_at",
+		source:              "se",
+		tableName:           seRawInputTableName,
+		suggestionTableName: "se_workflow.raw_records",
+		nameColumn:          "display_name",
+		nativeColumn:        "native_id",
+		statusExpr:          "'pending'",
+		stateExpr:           "'pending'",
+		companyTypeExpr:     "company_type",
+		registrationColumn:  "registration_status",
+		websiteExpr:         "website",
+		countryColumn:       "country_iso2",
+		runIDExpr:           "run_id",
+		attemptsExpr:        "0",
+		errorExpr:           "''",
+		firstSeenExpr:       "first_seen_at",
+		lastSeenExpr:        "last_seen_at",
+		processedAtExpr:     "NULL::timestamptz",
+		createdAtExpr:       "first_seen_at",
+		updatedAtExpr:       "last_seen_at",
 	},
 }
 

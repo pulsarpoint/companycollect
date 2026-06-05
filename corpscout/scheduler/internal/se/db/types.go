@@ -36,6 +36,78 @@ type RawRecord struct {
 	Metadata            []byte
 }
 
+type BolagsverketRawRecord struct {
+	SourceFileID                                      uuid.UUID
+	SourceRecordKey                                   string
+	RowNumber                                         int32
+	Organisationsidentitet                            string
+	OrganizationNumber                                string
+	Namnskyddslopnummer                               string
+	Registreringsland                                 string
+	Organisationsnamn                                 string
+	OrganizationName                                  string
+	Organisationsform                                 string
+	Avregistreringsdatum                              string
+	Avregistreringsorsak                              string
+	PagandeAvvecklingsEllerOmstruktureringsforfarande string
+	Registreringsdatum                                string
+	Verksamhetsbeskrivning                            string
+	Postadress                                        string
+	PostalAddress                                     []byte
+	RawPayload                                        []byte
+	PayloadHash                                       string
+	RunID                                             string
+	Metadata                                          []byte
+}
+
+type SCBRawRecord struct {
+	SourceFileID       uuid.UUID
+	SourceRecordKey    string
+	RowNumber          int32
+	ForAndrTyp         string
+	COAdress           string
+	Foretagsnamn       string
+	FtgStat            string
+	Gatuadress         string
+	JEStat             string
+	JurForm            string
+	Namn               string
+	Ng1                string
+	Ng2                string
+	Ng3                string
+	Ng4                string
+	Ng5                string
+	PeOrgNr            string
+	OrganizationNumber string
+	PostNr             string
+	PostOrt            string
+	RegDatKtid         string
+	Reklamsparrtyp     string
+	MCOAdress          string
+	MForetagsnamn      string
+	MFtgStat           string
+	MGatuadress        string
+	MJEStat            string
+	MJurForm           string
+	MNamn              string
+	MNg1               string
+	MNg2               string
+	MNg3               string
+	MNg4               string
+	MNg5               string
+	MPostNr            string
+	MPostOrt           string
+	MRegDatKtid        string
+	MReklamsparrtyp    string
+	MaskColumns        []byte
+	SNICodes           []byte
+	PostalAddress      []byte
+	RawPayload         []byte
+	PayloadHash        string
+	RunID              string
+	Metadata           []byte
+}
+
 type currentRawRecord struct {
 	ID          uuid.UUID
 	PayloadHash string

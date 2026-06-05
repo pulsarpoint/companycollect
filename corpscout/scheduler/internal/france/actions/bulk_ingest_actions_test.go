@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -40,4 +42,30 @@ func TestDownloadPayloadWithProgressWritesTargetPathAndKeepsFile(t *testing.T) {
 	got, err := os.ReadFile(targetPath)
 	require.NoError(t, err)
 	require.Equal(t, payload, got)
+}
+
+func TestRunWithPeriodicHeartbeatRecordsWhileOperationIsRunning(t *testing.T) {
+	var heartbeats atomic.Int32
+
+	err := runWithPeriodicHeartbeat(
+		context.Background(),
+		time.Millisecond,
+		func() {
+			heartbeats.Add(1)
+		},
+		func() error {
+			require.Eventually(t, func() bool {
+				return heartbeats.Load() >= 2
+			}, 100*time.Millisecond, time.Millisecond)
+			return nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, heartbeats.Load(), int32(2))
+}
+
+func TestNormalizeBatchSizeDefaultsToLargeFranceBulkBatch(t *testing.T) {
+	require.EqualValues(t, 5000, normalizeBatchSize(0))
+	require.EqualValues(t, 2500, normalizeBatchSize(2500))
 }

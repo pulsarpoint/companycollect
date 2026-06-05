@@ -49,6 +49,14 @@ type StartAriregisterSourceProfileRequest = {
   trigger?: string;
 };
 
+type StartFranceSourceProfileRequest = {
+  ids?: string[];
+  filters?: Record<string, string>;
+  limit?: number;
+  batch_size?: number;
+  trigger?: string;
+};
+
 class ApiError extends Error {
   status: number;
 
@@ -582,6 +590,10 @@ export const api = {
       trigger?: string;
     } = {},
   ) => post<StartWorkflowResponse>("/workflows/france/bulk-raw-ingest", body),
+
+  loadFranceSourceProfiles: (
+    body: StartFranceSourceProfileRequest = {},
+  ) => post<StartWorkflowResponse>("/workflows/france/source-profile", body),
 
   loadSEBulkRawRecords: (
     body: {

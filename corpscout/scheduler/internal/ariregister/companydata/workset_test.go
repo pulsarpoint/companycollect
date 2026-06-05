@@ -135,6 +135,113 @@ WHERE source = 'ariregister'
 	require.EqualValues(t, 2, count)
 }
 
+func TestStoreTranslationQueuePreparesClaimsAndCompletesAriregisterCompanies(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	first := seedAriregisterCompanyData(t, tx, ariregisterCompanySeed{
+		RegistryCode:            "999555450",
+		LegalName:               "QUEUE FIRST OU",
+		RegistrationStatusLabel: "Registrisse kantud",
+		LegalFormLabel:          "Osaühing",
+		AddressCountryLabel:     "Eesti",
+	})
+	second := seedAriregisterCompanyData(t, tx, ariregisterCompanySeed{
+		RegistryCode:            "999555451",
+		LegalName:               "QUEUE SECOND OU",
+		RegistrationStatusLabel: "Registrisse kantud",
+		LegalFormLabel:          "Osaühing",
+		AddressCountryLabel:     "Eesti",
+	})
+	store := New(tx)
+
+	prepared, err := store.PrepareTranslationQueue(t.Context(), PrepareTranslationQueueCommand{
+		IDs:          []string{first.CompanyID.String(), second.CompanyID.String()},
+		CompanyLimit: 10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, prepared.CompaniesSeen)
+	require.EqualValues(t, 2, prepared.CompaniesQueued)
+
+	preparedAgain, err := store.PrepareTranslationQueue(t.Context(), PrepareTranslationQueueCommand{
+		IDs:          []string{first.CompanyID.String(), second.CompanyID.String()},
+		CompanyLimit: 10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, preparedAgain.CompaniesSeen)
+	require.EqualValues(t, 0, preparedAgain.CompaniesQueued)
+
+	claimed, err := store.ClaimTranslationQueueBatch(t.Context(), ClaimTranslationQueueBatchCommand{
+		BatchID:          "ariregister-test-batch-1",
+		MaxCandidateRows: 10,
+		MaxRequestChars:  10000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "claimed", claimed.Status)
+	require.ElementsMatch(t, []string{first.CompanyID.String(), second.CompanyID.String()}, claimed.CompanyIDs)
+	require.Greater(t, claimed.EstimatedChars, int32(0))
+
+	blocked, err := store.ClaimTranslationQueueBatch(t.Context(), ClaimTranslationQueueBatchCommand{
+		BatchID:          "ariregister-test-batch-2",
+		MaxCandidateRows: 10,
+		MaxRequestChars:  10000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "blocked", blocked.Status)
+
+	completed, err := store.CompleteTranslationQueueBatch(t.Context(), "ariregister-test-batch-1")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, completed.RowsAffected)
+
+	drained, err := store.ClaimTranslationQueueBatch(t.Context(), ClaimTranslationQueueBatchCommand{
+		BatchID:          "ariregister-test-batch-3",
+		MaxCandidateRows: 10,
+		MaxRequestChars:  10000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "drained", drained.Status)
+}
+
+func TestStoreResetStaleTranslationQueueEntriesReleasesAriregisterRunningBatch(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	seed := seedAriregisterCompanyData(t, tx, ariregisterCompanySeed{
+		RegistryCode:            "999555452",
+		LegalName:               "QUEUE STALE OU",
+		RegistrationStatusLabel: "Registrisse kantud",
+		LegalFormLabel:          "Osaühing",
+		AddressCountryLabel:     "Eesti",
+	})
+	store := New(tx)
+	_, err := store.PrepareTranslationQueue(t.Context(), PrepareTranslationQueueCommand{
+		IDs: []string{seed.CompanyID.String()},
+	})
+	require.NoError(t, err)
+	claimed, err := store.ClaimTranslationQueueBatch(t.Context(), ClaimTranslationQueueBatchCommand{
+		BatchID:          "ariregister-stale-batch",
+		MaxCandidateRows: 10,
+		MaxRequestChars:  10000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "claimed", claimed.Status)
+	_, err = tx.Exec(t.Context(), `
+UPDATE ariregister_source.translation_queue_entries
+SET status_changed_at = now() - interval '2 hours'
+WHERE batch_id = 'ariregister-stale-batch'
+`)
+	require.NoError(t, err)
+
+	reset, err := store.ResetStaleTranslationQueueEntries(t.Context(), 3600)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, reset.RowsAffected)
+
+	reclaimed, err := store.ClaimTranslationQueueBatch(t.Context(), ClaimTranslationQueueBatchCommand{
+		BatchID:          "ariregister-reclaimed-batch",
+		MaxCandidateRows: 10,
+		MaxRequestChars:  10000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "claimed", reclaimed.Status)
+	require.Equal(t, []string{seed.CompanyID.String()}, reclaimed.CompanyIDs)
+}
+
 func TestStoreApplyCompanyTranslationsUpdatesSupportedColumns(t *testing.T) {
 	tx := testdb.BeginTx(t)
 	seed := seedAriregisterCompanyData(t, tx, ariregisterCompanySeed{

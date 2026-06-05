@@ -18,6 +18,9 @@ const (
 	compareSEBulkSourceFilesActivity  = "CompareSEBulkSourceFilesActivity"
 	downloadSEBulkSourceFilesActivity = "DownloadSEBulkSourceFilesActivity"
 	processSEBulkRawRecordsActivity   = "ProcessSEBulkRawRecordsActivity"
+
+	seBulkActivityStartToCloseTimeout = 8 * time.Hour
+	seBulkActivityHeartbeatTimeout    = 10 * time.Minute
 )
 
 type HVDDatasetConfig = actions.HVDDatasetConfig
@@ -64,8 +67,8 @@ func LoadSEBulkRawRecords(
 ) (LoadSEBulkRawRecordsResult, error) {
 	input = normalizeLoadSEBulkRawRecordsInput(input)
 	ctx = temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
-		StartToCloseTimeout: 8 * time.Hour,
-		HeartbeatTimeout:    2 * time.Minute,
+		StartToCloseTimeout: seBulkActivityStartToCloseTimeout,
+		HeartbeatTimeout:    seBulkActivityHeartbeatTimeout,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    30 * time.Second,
 			BackoffCoefficient: 2,

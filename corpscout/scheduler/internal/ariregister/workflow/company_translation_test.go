@@ -1,219 +1,205 @@
 package workflow
 
 import (
-	"strconv"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/testsuite"
 )
 
-func TestTranslateAriregisterSourceCompaniesCachedWorksetCompletes(t *testing.T) {
+func TestTranslateAriregisterSourceCompaniesCompletesQueueBatch(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-
 	env.RegisterWorkflow(TranslateAriregisterSourceCompanies)
+
 	var buildInput BuildAriregisterTranslationWorksetInput
 	env.RegisterActivityWithOptions(func(input BuildAriregisterTranslationWorksetInput) (BuildAriregisterTranslationWorksetResult, error) {
 		buildInput = input
 		return BuildAriregisterTranslationWorksetResult{
-			Path:              input.Path,
-			FieldsExported:    2,
-			TermsExported:     2,
+			FieldsExported:    3,
+			TermsExported:     3,
 			CompaniesExported: 2,
+			CompaniesQueued:   2,
 		}, nil
 	}, activity.RegisterOptions{Name: buildAriregisterTranslationWorksetActivity})
+
 	var claimCalls int
 	env.RegisterActivityWithOptions(func(input ClaimAriregisterTranslationWorksetBatchInput) (ClaimAriregisterTranslationWorksetBatchResult, error) {
 		claimCalls++
-		require.NotEmpty(t, input.Path)
-		require.EqualValues(t, 12000, input.MaxRequestChars)
-		require.EqualValues(t, 10, input.MaxTerms)
-		require.EqualValues(t, 5, input.MaxAttempts)
+		require.Empty(t, input.Path)
+		require.EqualValues(t, 6000, input.MaxRequestChars)
+		require.EqualValues(t, 25, input.MaxTerms)
+		require.EqualValues(t, 8, input.MaxAttempts)
+		require.EqualValues(t, 3600, input.StaleRunningSeconds)
 		if claimCalls == 1 {
+			require.Contains(t, input.BatchID, "/batch/000001")
 			return ClaimAriregisterTranslationWorksetBatchResult{
 				Status:         "claimed",
-				BatchID:        44,
+				BatchID:        input.BatchID,
+				CompanyIDs:     []string{"company-a", "company-b"},
 				EstimatedChars: 32,
-				Terms: []TranslationWorksetTerm{
-					{TermKey: "term-1", SourceText: "Osaühing", SourceTextNormalized: "osaühing"},
-					{TermKey: "term-2", SourceText: "Registrisse kantud", SourceTextNormalized: "registrisse kantud"},
-				},
 			}, nil
 		}
 		return ClaimAriregisterTranslationWorksetBatchResult{Status: "drained"}, nil
 	}, activity.RegisterOptions{Name: claimAriregisterTranslationWorksetBatchActivity})
+
 	env.RegisterActivityWithOptions(func(input TranslateAriregisterTranslationWorksetBatchInput) (TranslateAriregisterTranslationWorksetBatchResult, error) {
-		require.EqualValues(t, 44, input.BatchID)
+		require.Contains(t, input.BatchID, "/batch/000001")
+		require.Equal(t, []string{"company-a", "company-b"}, input.CompanyIDs)
 		require.Equal(t, "deepseek", input.Provider)
 		require.Equal(t, "deepseek-chat", input.Model)
 		require.Equal(t, "v1", input.PromptVersion)
-		require.Len(t, input.Terms, 2)
 		return TranslateAriregisterTranslationWorksetBatchResult{
-			Results: []TranslationWorksetTermResult{
-				{TermKey: "term-1", SourceText: "Osaühing", SourceTextNormalized: "osaühing", TranslatedText: "Private limited company", Status: "succeeded"},
-				{TermKey: "term-2", SourceText: "Registrisse kantud", SourceTextNormalized: "registrisse kantud", TranslatedText: "Entered in the register", Status: "succeeded"},
-			},
+			CompaniesProcessed: 2,
+			FieldsSeen:         3,
+			TermsClaimed:       3,
+			TermsSucceeded:     3,
+			TermsSaved:         3,
+			BindingsApplied:    3,
 		}, nil
 	}, activity.RegisterOptions{Name: translateAriregisterTranslationWorksetBatchActivity})
-	env.RegisterActivityWithOptions(func(input SaveAriregisterTranslationWorksetBatchInput) (SaveAriregisterTranslationWorksetBatchResult, error) {
-		require.EqualValues(t, 44, input.BatchID)
-		require.Len(t, input.Results, 2)
-		return SaveAriregisterTranslationWorksetBatchResult{TermsSucceeded: 2}, nil
-	}, activity.RegisterOptions{Name: saveAriregisterTranslationWorksetBatchActivity})
-	env.RegisterActivityWithOptions(func(input ApplyAriregisterTranslationWorksetInput) (ApplyAriregisterTranslationWorksetResult, error) {
-		require.Equal(t, buildInput.Path, input.Path)
-		return ApplyAriregisterTranslationWorksetResult{TermsSaved: 2, BindingsApplied: 2}, nil
-	}, activity.RegisterOptions{Name: applyAriregisterTranslationWorksetActivity})
+
+	env.RegisterActivityWithOptions(func(input CompleteAriregisterTranslationQueueBatchInput) (TranslationQueueBatchResult, error) {
+		require.Contains(t, input.BatchID, "/batch/000001")
+		return TranslationQueueBatchResult{RowsAffected: 2}, nil
+	}, activity.RegisterOptions{Name: completeAriregisterTranslationQueueBatchActivity})
+
 	env.ExecuteWorkflow(TranslateAriregisterSourceCompanies, TranslateAriregisterSourceCompaniesInput{
 		Provider: "deepseek",
 		Model:    "deepseek-chat",
-		MaxTerms: 10,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())
 	require.Equal(t, "v1", buildInput.PromptVersion)
 	require.EqualValues(t, 10, buildInput.CompanyLimit)
-	require.Contains(t, buildInput.Path, "/var/lib/corpscout/worksets/ariregister-translation")
 	require.Equal(t, 2, claimCalls)
 
 	var result TranslateAriregisterSourceCompaniesResult
 	require.NoError(t, env.GetWorkflowResult(&result))
 	require.Equal(t, "succeeded", result.Status)
+	require.EqualValues(t, 2, result.StatusRowsInserted)
 	require.EqualValues(t, 2, result.CompaniesClaimed)
+	require.EqualValues(t, 2, result.CompaniesSucceeded)
 	require.EqualValues(t, 1, result.BatchesProcessed)
-	require.EqualValues(t, 2, result.TermsClaimed)
-	require.EqualValues(t, 2, result.TermsSucceeded)
-	require.EqualValues(t, 2, result.FieldsSeen)
-	require.EqualValues(t, 2, result.FieldsApplied)
+	require.EqualValues(t, 3, result.TermsClaimed)
+	require.EqualValues(t, 3, result.TermsSucceeded)
+	require.EqualValues(t, 3, result.TermsSaved)
+	require.EqualValues(t, 3, result.FieldsSeen)
+	require.EqualValues(t, 3, result.FieldsApplied)
 	require.EqualValues(t, 32, result.RequestCharsClaimed)
 }
 
-func TestTranslateAriregisterSourceCompaniesPipelinesNextBatchBeforeSavingCurrent(t *testing.T) {
+func TestTranslateAriregisterSourceCompaniesWaitsWhenQueueIsBlocked(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-
 	env.RegisterWorkflow(TranslateAriregisterSourceCompanies)
-	events := make([]string, 0)
-	env.RegisterActivityWithOptions(func(input BuildAriregisterTranslationWorksetInput) (BuildAriregisterTranslationWorksetResult, error) {
-		events = append(events, "build")
-		return BuildAriregisterTranslationWorksetResult{
-			Path:              input.Path,
-			FieldsExported:    2,
-			TermsExported:     2,
-			CompaniesExported: 2,
-		}, nil
+
+	env.RegisterActivityWithOptions(func(BuildAriregisterTranslationWorksetInput) (BuildAriregisterTranslationWorksetResult, error) {
+		return BuildAriregisterTranslationWorksetResult{FieldsExported: 1, CompaniesExported: 1, CompaniesQueued: 1}, nil
 	}, activity.RegisterOptions{Name: buildAriregisterTranslationWorksetActivity})
+
+	claimTimes := make([]time.Time, 0, 3)
 	var claimCalls int
-	env.RegisterActivityWithOptions(func(ClaimAriregisterTranslationWorksetBatchInput) (ClaimAriregisterTranslationWorksetBatchResult, error) {
+	env.RegisterActivityWithOptions(func(input ClaimAriregisterTranslationWorksetBatchInput) (ClaimAriregisterTranslationWorksetBatchResult, error) {
+		claimTimes = append(claimTimes, env.Now())
 		claimCalls++
-		events = append(events, "claim")
 		switch claimCalls {
 		case 1:
-			return ClaimAriregisterTranslationWorksetBatchResult{Status: "claimed", BatchID: 1, EstimatedChars: 10, Terms: []TranslationWorksetTerm{{TermKey: "term-1", SourceText: "Osaühing", SourceTextNormalized: "osaühing"}}}, nil
+			return ClaimAriregisterTranslationWorksetBatchResult{Status: "blocked"}, nil
 		case 2:
-			return ClaimAriregisterTranslationWorksetBatchResult{Status: "claimed", BatchID: 2, EstimatedChars: 20, Terms: []TranslationWorksetTerm{{TermKey: "term-2", SourceText: "Eesti", SourceTextNormalized: "eesti"}}}, nil
+			return ClaimAriregisterTranslationWorksetBatchResult{Status: "claimed", BatchID: input.BatchID, CompanyIDs: []string{"company-a"}, EstimatedChars: 10}, nil
 		default:
 			return ClaimAriregisterTranslationWorksetBatchResult{Status: "drained"}, nil
 		}
 	}, activity.RegisterOptions{Name: claimAriregisterTranslationWorksetBatchActivity})
-	env.RegisterActivityWithOptions(func(input TranslateAriregisterTranslationWorksetBatchInput) (TranslateAriregisterTranslationWorksetBatchResult, error) {
-		events = append(events, batchEvent("translate", input.BatchID))
-		return TranslateAriregisterTranslationWorksetBatchResult{Results: []TranslationWorksetTermResult{{
-			TermKey:              input.Terms[0].TermKey,
-			SourceText:           input.Terms[0].SourceText,
-			SourceTextNormalized: input.Terms[0].SourceTextNormalized,
-			TranslatedText:       "translated",
-			Status:               "succeeded",
-		}}}, nil
-	}, activity.RegisterOptions{Name: translateAriregisterTranslationWorksetBatchActivity})
-	env.RegisterActivityWithOptions(func(input SaveAriregisterTranslationWorksetBatchInput) (SaveAriregisterTranslationWorksetBatchResult, error) {
-		events = append(events, batchEvent("save", input.BatchID))
-		return SaveAriregisterTranslationWorksetBatchResult{TermsSucceeded: int32(len(input.Results))}, nil
-	}, activity.RegisterOptions{Name: saveAriregisterTranslationWorksetBatchActivity})
-	env.RegisterActivityWithOptions(func(ApplyAriregisterTranslationWorksetInput) (ApplyAriregisterTranslationWorksetResult, error) {
-		events = append(events, "apply")
-		return ApplyAriregisterTranslationWorksetResult{TermsSaved: 2, BindingsApplied: 2}, nil
-	}, activity.RegisterOptions{Name: applyAriregisterTranslationWorksetActivity})
 
-	env.ExecuteWorkflow(TranslateAriregisterSourceCompanies, TranslateAriregisterSourceCompaniesInput{MaxTerms: 10})
+	env.RegisterActivityWithOptions(func(TranslateAriregisterTranslationWorksetBatchInput) (TranslateAriregisterTranslationWorksetBatchResult, error) {
+		return TranslateAriregisterTranslationWorksetBatchResult{TermsClaimed: 1, TermsSucceeded: 1, TermsSaved: 1, BindingsApplied: 1}, nil
+	}, activity.RegisterOptions{Name: translateAriregisterTranslationWorksetBatchActivity})
+	env.RegisterActivityWithOptions(func(CompleteAriregisterTranslationQueueBatchInput) (TranslationQueueBatchResult, error) {
+		return TranslationQueueBatchResult{RowsAffected: 1}, nil
+	}, activity.RegisterOptions{Name: completeAriregisterTranslationQueueBatchActivity})
+
+	env.ExecuteWorkflow(TranslateAriregisterSourceCompanies, TranslateAriregisterSourceCompaniesInput{})
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())
-	require.Less(t, indexOfEvent(events, "translate:2"), indexOfEvent(events, "save:1"), events)
+	require.Len(t, claimTimes, 3)
+	require.GreaterOrEqual(t, claimTimes[1].Sub(claimTimes[0]), 5*time.Second)
 }
 
-func TestTranslateAriregisterSourceCompaniesContinuesAsNewForAllRecords(t *testing.T) {
+func TestTranslateAriregisterSourceCompaniesReleasesQueueBatchAfterTranslationFailure(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-
 	env.RegisterWorkflow(TranslateAriregisterSourceCompanies)
+
+	env.RegisterActivityWithOptions(func(BuildAriregisterTranslationWorksetInput) (BuildAriregisterTranslationWorksetResult, error) {
+		return BuildAriregisterTranslationWorksetResult{FieldsExported: 1, CompaniesExported: 1, CompaniesQueued: 1}, nil
+	}, activity.RegisterOptions{Name: buildAriregisterTranslationWorksetActivity})
+	env.RegisterActivityWithOptions(func(input ClaimAriregisterTranslationWorksetBatchInput) (ClaimAriregisterTranslationWorksetBatchResult, error) {
+		return ClaimAriregisterTranslationWorksetBatchResult{Status: "claimed", BatchID: input.BatchID, CompanyIDs: []string{"company-a"}}, nil
+	}, activity.RegisterOptions{Name: claimAriregisterTranslationWorksetBatchActivity})
+	env.RegisterActivityWithOptions(func(TranslateAriregisterTranslationWorksetBatchInput) (TranslateAriregisterTranslationWorksetBatchResult, error) {
+		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.New("llm timeout")
+	}, activity.RegisterOptions{Name: translateAriregisterTranslationWorksetBatchActivity})
+
+	var releasedBatchID string
+	env.RegisterActivityWithOptions(func(input ReleaseAriregisterTranslationQueueBatchInput) (TranslationQueueBatchResult, error) {
+		releasedBatchID = input.BatchID
+		return TranslationQueueBatchResult{RowsAffected: 1}, nil
+	}, activity.RegisterOptions{Name: releaseAriregisterTranslationQueueBatchActivity})
+
+	env.ExecuteWorkflow(TranslateAriregisterSourceCompanies, TranslateAriregisterSourceCompaniesInput{MaxAttempts: 1})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.ErrorContains(t, env.GetWorkflowError(), "llm timeout")
+	require.Contains(t, releasedBatchID, "/batch/000001")
+}
+
+func TestTranslateAriregisterSourceCompaniesAllRecordsContinuesAfterFullQueueChunk(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterWorkflow(TranslateAriregisterSourceCompanies)
+
 	env.RegisterActivityWithOptions(func(input BuildAriregisterTranslationWorksetInput) (BuildAriregisterTranslationWorksetResult, error) {
+		require.EqualValues(t, 25, input.CompanyLimit)
 		return BuildAriregisterTranslationWorksetResult{
-			Path:              input.Path,
 			FieldsExported:    25,
-			TermsExported:     25,
 			CompaniesExported: 25,
-			CachedFields:      25,
+			CompaniesQueued:   25,
 		}, nil
 	}, activity.RegisterOptions{Name: buildAriregisterTranslationWorksetActivity})
-	env.RegisterActivityWithOptions(func(ClaimAriregisterTranslationWorksetBatchInput) (ClaimAriregisterTranslationWorksetBatchResult, error) {
-		return ClaimAriregisterTranslationWorksetBatchResult{Status: "drained"}, nil
+	env.RegisterActivityWithOptions(func(input ClaimAriregisterTranslationWorksetBatchInput) (ClaimAriregisterTranslationWorksetBatchResult, error) {
+		return ClaimAriregisterTranslationWorksetBatchResult{Status: "claimed", BatchID: input.BatchID, CompanyIDs: makeCompanyIDs(25)}, nil
 	}, activity.RegisterOptions{Name: claimAriregisterTranslationWorksetBatchActivity})
-	env.RegisterActivityWithOptions(func(ApplyAriregisterTranslationWorksetInput) (ApplyAriregisterTranslationWorksetResult, error) {
-		return ApplyAriregisterTranslationWorksetResult{TermsSaved: 25, BindingsApplied: 25}, nil
-	}, activity.RegisterOptions{Name: applyAriregisterTranslationWorksetActivity})
+	env.RegisterActivityWithOptions(func(TranslateAriregisterTranslationWorksetBatchInput) (TranslateAriregisterTranslationWorksetBatchResult, error) {
+		return TranslateAriregisterTranslationWorksetBatchResult{TermsClaimed: 25, TermsSucceeded: 25, TermsSaved: 25, BindingsApplied: 25}, nil
+	}, activity.RegisterOptions{Name: translateAriregisterTranslationWorksetBatchActivity})
+	env.RegisterActivityWithOptions(func(CompleteAriregisterTranslationQueueBatchInput) (TranslationQueueBatchResult, error) {
+		return TranslationQueueBatchResult{RowsAffected: 25}, nil
+	}, activity.RegisterOptions{Name: completeAriregisterTranslationQueueBatchActivity})
 
 	env.ExecuteWorkflow(TranslateAriregisterSourceCompanies, TranslateAriregisterSourceCompaniesInput{
 		AllRecords:           true,
 		MaxCompaniesPerBatch: 25,
+		MaxBatches:           1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.ErrorContains(t, env.GetWorkflowError(), "continue as new")
 }
 
-func TestTranslateAriregisterSourceCompaniesFailsWhenAllTermsFail(t *testing.T) {
+func TestTranslateAriregisterSourceCompaniesDrainsWhenNothingPrepared(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-
 	env.RegisterWorkflow(TranslateAriregisterSourceCompanies)
-	env.RegisterActivityWithOptions(func(input BuildAriregisterTranslationWorksetInput) (BuildAriregisterTranslationWorksetResult, error) {
-		return BuildAriregisterTranslationWorksetResult{Path: input.Path, FieldsExported: 1, TermsExported: 1, CompaniesExported: 1}, nil
-	}, activity.RegisterOptions{Name: buildAriregisterTranslationWorksetActivity})
-	var claimCalls int
-	env.RegisterActivityWithOptions(func(ClaimAriregisterTranslationWorksetBatchInput) (ClaimAriregisterTranslationWorksetBatchResult, error) {
-		claimCalls++
-		if claimCalls == 1 {
-			return ClaimAriregisterTranslationWorksetBatchResult{Status: "claimed", BatchID: 1, Terms: []TranslationWorksetTerm{{TermKey: "term-1", SourceText: "Osaühing", SourceTextNormalized: "osaühing"}}}, nil
-		}
-		return ClaimAriregisterTranslationWorksetBatchResult{Status: "drained"}, nil
-	}, activity.RegisterOptions{Name: claimAriregisterTranslationWorksetBatchActivity})
-	env.RegisterActivityWithOptions(func(TranslateAriregisterTranslationWorksetBatchInput) (TranslateAriregisterTranslationWorksetBatchResult, error) {
-		return TranslateAriregisterTranslationWorksetBatchResult{Results: []TranslationWorksetTermResult{{TermKey: "term-1", Status: "failed_retryable", Error: "temporary"}}}, nil
-	}, activity.RegisterOptions{Name: translateAriregisterTranslationWorksetBatchActivity})
-	env.RegisterActivityWithOptions(func(SaveAriregisterTranslationWorksetBatchInput) (SaveAriregisterTranslationWorksetBatchResult, error) {
-		return SaveAriregisterTranslationWorksetBatchResult{TermsFailed: 1}, nil
-	}, activity.RegisterOptions{Name: saveAriregisterTranslationWorksetBatchActivity})
-	env.RegisterActivityWithOptions(func(ApplyAriregisterTranslationWorksetInput) (ApplyAriregisterTranslationWorksetResult, error) {
-		return ApplyAriregisterTranslationWorksetResult{}, nil
-	}, activity.RegisterOptions{Name: applyAriregisterTranslationWorksetActivity})
 
-	env.ExecuteWorkflow(TranslateAriregisterSourceCompanies, TranslateAriregisterSourceCompaniesInput{})
-
-	require.True(t, env.IsWorkflowCompleted())
-	require.ErrorContains(t, env.GetWorkflowError(), "all company translation terms failed")
-}
-
-func TestTranslateAriregisterSourceCompaniesDrainsWhenNothingClaimed(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
-
-	env.RegisterWorkflow(TranslateAriregisterSourceCompanies)
-	env.RegisterActivityWithOptions(func(input BuildAriregisterTranslationWorksetInput) (BuildAriregisterTranslationWorksetResult, error) {
-		return BuildAriregisterTranslationWorksetResult{Path: input.Path}, nil
+	env.RegisterActivityWithOptions(func(BuildAriregisterTranslationWorksetInput) (BuildAriregisterTranslationWorksetResult, error) {
+		return BuildAriregisterTranslationWorksetResult{}, nil
 	}, activity.RegisterOptions{Name: buildAriregisterTranslationWorksetActivity})
 
 	env.ExecuteWorkflow(TranslateAriregisterSourceCompanies, TranslateAriregisterSourceCompaniesInput{})
@@ -226,15 +212,10 @@ func TestTranslateAriregisterSourceCompaniesDrainsWhenNothingClaimed(t *testing.
 	require.Zero(t, result.CompaniesClaimed)
 }
 
-func indexOfEvent(events []string, target string) int {
-	for index, event := range events {
-		if event == target {
-			return index
-		}
+func makeCompanyIDs(count int) []string {
+	ids := make([]string, 0, count)
+	for index := 0; index < count; index++ {
+		ids = append(ids, "company-"+string(rune('a'+index%26)))
 	}
-	return len(events)
-}
-
-func batchEvent(prefix string, batchID int64) string {
-	return prefix + ":" + strconv.FormatInt(batchID, 10)
+	return ids
 }

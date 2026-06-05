@@ -3,12 +3,17 @@ package workflow
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/testsuite"
 )
+
+func TestSEBulkActivityHeartbeatTimeoutAllowsLongBulkIngestPhases(t *testing.T) {
+	require.GreaterOrEqual(t, seBulkActivityHeartbeatTimeout, 10*time.Minute)
+}
 
 func TestLoadSEBulkRawRecordsWorkflowRunsSplitActivities(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite

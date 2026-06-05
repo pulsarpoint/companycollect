@@ -56,6 +56,7 @@ type startBrregCompanyTranslationWorkflowRequest struct {
 	MaxParallelTasks     int               `json:"max_parallel_tasks,omitempty"`
 	LeaseSeconds         int               `json:"lease_seconds,omitempty"`
 	MaxAttempts          int               `json:"max_attempts,omitempty"`
+	BatchDelaySeconds    int               `json:"batch_delay_seconds,omitempty"`
 	Provider             string            `json:"provider,omitempty"`
 	Model                string            `json:"model,omitempty"`
 	PromptVersion        string            `json:"prompt_version,omitempty"`
@@ -140,6 +141,7 @@ type startAriregisterCompanyTranslationWorkflowRequest struct {
 	MaxParallelTasks     int               `json:"max_parallel_tasks,omitempty"`
 	LeaseSeconds         int               `json:"lease_seconds,omitempty"`
 	MaxAttempts          int               `json:"max_attempts,omitempty"`
+	BatchDelaySeconds    int               `json:"batch_delay_seconds,omitempty"`
 	Provider             string            `json:"provider,omitempty"`
 	Model                string            `json:"model,omitempty"`
 	PromptVersion        string            `json:"prompt_version,omitempty"`
@@ -170,6 +172,14 @@ type startFranceBulkRawIngestWorkflowRequest struct {
 	Limit             int    `json:"limit,omitempty"`
 	BatchSize         int    `json:"batch_size,omitempty"`
 	Trigger           string `json:"trigger,omitempty"`
+}
+
+type startFranceSourceProfileWorkflowRequest struct {
+	IDs       []string          `json:"ids,omitempty"`
+	Filters   map[string]string `json:"filters,omitempty"`
+	Limit     int               `json:"limit,omitempty"`
+	BatchSize int               `json:"batch_size,omitempty"`
+	Trigger   string            `json:"trigger,omitempty"`
 }
 
 type startSEBulkRawIngestWorkflowRequest struct {
@@ -269,6 +279,7 @@ func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWri
 		MaxParallelTasks:     req.MaxParallelTasks,
 		LeaseSeconds:         req.LeaseSeconds,
 		MaxAttempts:          req.MaxAttempts,
+		BatchDelaySeconds:    req.BatchDelaySeconds,
 		Provider:             req.Provider,
 		Model:                req.Model,
 		PromptVersion:        req.PromptVersion,
@@ -291,6 +302,7 @@ func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWri
 		"max_parallel_tasks", req.MaxParallelTasks,
 		"lease_seconds", req.LeaseSeconds,
 		"max_attempts", req.MaxAttempts,
+		"batch_delay_seconds", req.BatchDelaySeconds,
 		"provider", req.Provider,
 		"model", req.Model,
 		"prompt_version", req.PromptVersion,
@@ -421,6 +433,7 @@ func (h *Handlers) handleStartAriregisterCompanyTranslationWorkflow(w http.Respo
 		MaxParallelTasks:     req.MaxParallelTasks,
 		LeaseSeconds:         req.LeaseSeconds,
 		MaxAttempts:          req.MaxAttempts,
+		BatchDelaySeconds:    req.BatchDelaySeconds,
 		Provider:             req.Provider,
 		Model:                req.Model,
 		PromptVersion:        req.PromptVersion,
@@ -443,6 +456,7 @@ func (h *Handlers) handleStartAriregisterCompanyTranslationWorkflow(w http.Respo
 		"max_parallel_tasks", req.MaxParallelTasks,
 		"lease_seconds", req.LeaseSeconds,
 		"max_attempts", req.MaxAttempts,
+		"batch_delay_seconds", req.BatchDelaySeconds,
 		"provider", req.Provider,
 		"model", req.Model,
 		"prompt_version", req.PromptVersion,
@@ -833,6 +847,61 @@ func (h *Handlers) handleStartAriregisterSourceProfileWorkflow(w http.ResponseWr
 		Status:        "started",
 		Workflow:      ariregisterworkflow.NormalizeAriregisterSourceProfilesWithCopyWorkflowName,
 		TaskQueue:     ariregisterworkflow.NormalizeAriregisterSourceProfilesTaskQueue,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
+func (h *Handlers) handleStartFranceSourceProfileWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := decodeStartFranceSourceProfileWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := franceworkflow.NormalizeFranceSourceProfilesInput{
+		IDs:       req.IDs,
+		Filters:   req.Filters,
+		Limit:     req.Limit,
+		BatchSize: req.BatchSize,
+		Trigger:   req.Trigger,
+	}
+	workflowID := newWorkflowID("france-source-profile")
+	slog.Debug("starting france source profile workflow",
+		"workflow_id", workflowID,
+		"task_queue", franceworkflow.NormalizeFranceSourceProfilesTaskQueue,
+		"workflow", franceworkflow.NormalizeFranceSourceProfilesWorkflowName,
+		"ids_count", len(req.IDs),
+		"filters_count", len(req.Filters),
+		"limit", req.Limit,
+		"batch_size", req.BatchSize,
+		"trigger", req.Trigger,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: franceworkflow.NormalizeFranceSourceProfilesTaskQueue,
+		},
+		franceworkflow.NormalizeFranceSourceProfiles,
+		input,
+	)
+	if err != nil {
+		slog.Error("start france source profile workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("france source profile workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      franceworkflow.NormalizeFranceSourceProfilesWorkflowName,
+		TaskQueue:     franceworkflow.NormalizeFranceSourceProfilesTaskQueue,
 		WorkflowID:    workflowID,
 		WorkflowRunID: run.GetRunID(),
 	})
@@ -1313,6 +1382,9 @@ func decodeStartBrregCompanyTranslationWorkflowRequest(r *http.Request) (startBr
 	if req.MaxAttempts < 0 {
 		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_attempts cannot be negative")
 	}
+	if req.BatchDelaySeconds < 0 {
+		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("batch_delay_seconds cannot be negative")
+	}
 	return req, nil
 }
 
@@ -1367,6 +1439,9 @@ func decodeStartAriregisterCompanyTranslationWorkflowRequest(r *http.Request) (s
 	}
 	if req.MaxAttempts < 0 {
 		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("max_attempts cannot be negative")
+	}
+	if req.BatchDelaySeconds < 0 {
+		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("batch_delay_seconds cannot be negative")
 	}
 	return req, nil
 }
@@ -1624,6 +1699,26 @@ func decodeStartAriregisterSourceProfileWorkflowRequest(r *http.Request) (startA
 	}
 	if req.BatchSize < 0 {
 		return startAriregisterSourceProfileWorkflowRequest{}, errors.New("batch_size cannot be negative")
+	}
+	return req, nil
+}
+
+func decodeStartFranceSourceProfileWorkflowRequest(r *http.Request) (startFranceSourceProfileWorkflowRequest, error) {
+	var req startFranceSourceProfileWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startFranceSourceProfileWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	if req.Trigger == "" {
+		req.Trigger = "manual"
+	}
+	if req.Limit < 0 {
+		return startFranceSourceProfileWorkflowRequest{}, errors.New("limit cannot be negative")
+	}
+	if req.BatchSize < 0 {
+		return startFranceSourceProfileWorkflowRequest{}, errors.New("batch_size cannot be negative")
 	}
 	return req, nil
 }

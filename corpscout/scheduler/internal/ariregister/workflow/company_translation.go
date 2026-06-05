@@ -1,7 +1,7 @@
 package workflow
 
 import (
-	"path/filepath"
+	"fmt"
 	"strings"
 	"time"
 
@@ -21,17 +21,21 @@ const (
 	translateAriregisterTranslationWorksetBatchActivity = "TranslateAriregisterTranslationWorksetBatch"
 	saveAriregisterTranslationWorksetBatchActivity      = "SaveAriregisterTranslationWorksetBatch"
 	applyAriregisterTranslationWorksetActivity          = "ApplyAriregisterTranslationWorkset"
+	completeAriregisterTranslationQueueBatchActivity    = "CompleteAriregisterTranslationQueueBatch"
+	releaseAriregisterTranslationQueueBatchActivity     = "ReleaseAriregisterTranslationQueueBatch"
 
 	defaultCompanyTranslationBatchSize        = 10
 	defaultCompanyTranslationMaxParallelTasks = 10
-	defaultCompanyTranslationLeaseSeconds     = 900
-	defaultCompanyTranslationMaxAttempts      = 5
-	defaultCompanyTranslationMaxRequestChars  = 12000
-	defaultCompanyTranslationMaxCompanies     = 500
-	defaultCompanyTranslationMaxTerms         = 200
+	defaultCompanyTranslationLeaseSeconds     = 1800
+	defaultCompanyTranslationMaxAttempts      = 8
+	defaultCompanyTranslationBatchDelay       = 60
+	defaultCompanyTranslationMaxRequestChars  = 6000
+	defaultCompanyTranslationMaxCompanies     = 100
+	defaultCompanyTranslationMaxTerms         = 25
 	defaultCompanyTranslationMaxBatches       = 200
 	defaultCompanyTranslationPromptVersion    = "v1"
 	defaultCompanyTranslationTrigger          = "manual"
+	defaultCompanyTranslationQueuePollDelay   = 5
 
 	companyTranslationClaimModeAuto  = "auto"
 	companyTranslationClaimModeFixed = "fixed"
@@ -49,6 +53,9 @@ type SaveAriregisterTranslationWorksetBatchInput = actions.SaveAriregisterTransl
 type SaveAriregisterTranslationWorksetBatchResult = actions.SaveAriregisterTranslationWorksetBatchResult
 type ApplyAriregisterTranslationWorksetInput = actions.ApplyAriregisterTranslationWorksetInput
 type ApplyAriregisterTranslationWorksetResult = actions.ApplyAriregisterTranslationWorksetResult
+type CompleteAriregisterTranslationQueueBatchInput = actions.CompleteAriregisterTranslationQueueBatchInput
+type ReleaseAriregisterTranslationQueueBatchInput = actions.ReleaseAriregisterTranslationQueueBatchInput
+type TranslationQueueBatchResult = actions.TranslationQueueBatchResult
 
 type TranslateAriregisterSourceCompaniesInput struct {
 	AllRecords           bool              `json:"all_records,omitempty"`
@@ -64,6 +71,7 @@ type TranslateAriregisterSourceCompaniesInput struct {
 	MaxParallelTasks     int               `json:"max_parallel_tasks,omitempty"`
 	LeaseSeconds         int               `json:"lease_seconds,omitempty"`
 	MaxAttempts          int               `json:"max_attempts,omitempty"`
+	BatchDelaySeconds    int               `json:"batch_delay_seconds,omitempty"`
 	Provider             string            `json:"provider,omitempty"`
 	Model                string            `json:"model,omitempty"`
 	PromptVersion        string            `json:"prompt_version,omitempty"`
@@ -71,15 +79,19 @@ type TranslateAriregisterSourceCompaniesInput struct {
 	WorksetPath          string            `json:"workset_path,omitempty"`
 	WorksetPrepared      bool              `json:"workset_prepared,omitempty"`
 	WorksetCompanies     int32             `json:"workset_companies,omitempty"`
+	QueuePrepared        bool              `json:"queue_prepared,omitempty"`
+	QueueCompanies       int32             `json:"queue_companies,omitempty"`
 
 	CarriedStatusRowsInserted int32 `json:"carried_status_rows_inserted,omitempty"`
 	CarriedCompaniesClaimed   int32 `json:"carried_companies_claimed,omitempty"`
+	CarriedCompaniesSucceeded int32 `json:"carried_companies_succeeded,omitempty"`
 	CarriedFieldsSeen         int32 `json:"carried_fields_seen,omitempty"`
 	CarriedFieldsApplied      int32 `json:"carried_fields_applied,omitempty"`
 	CarriedRequestChars       int32 `json:"carried_request_chars,omitempty"`
 	CarriedTermsClaimed       int32 `json:"carried_terms_claimed,omitempty"`
 	CarriedTermsSucceeded     int32 `json:"carried_terms_succeeded,omitempty"`
 	CarriedTermsFailed        int32 `json:"carried_terms_failed,omitempty"`
+	CarriedTermsSaved         int32 `json:"carried_terms_saved,omitempty"`
 	CarriedBatchesProcessed   int32 `json:"carried_batches_processed,omitempty"`
 }
 
@@ -102,10 +114,9 @@ type TranslateAriregisterSourceCompaniesResult struct {
 	WorksetPath         string `json:"workset_path,omitempty"`
 }
 
-type inFlightTranslationWorksetBatch struct {
+type translationWorksetBatch struct {
 	Ordinal int32
 	Claimed ClaimAriregisterTranslationWorksetBatchResult
-	Future  temporalworkflow.Future
 }
 
 func TranslateAriregisterSourceCompanies(
@@ -116,10 +127,10 @@ func TranslateAriregisterSourceCompanies(
 	ctx = temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
 		StartToCloseTimeout: time.Duration(input.LeaseSeconds) * time.Second,
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    5 * time.Second,
+			InitialInterval:    companyTranslationRetryInitialInterval(input.BatchDelaySeconds),
 			BackoffCoefficient: 2,
-			MaximumInterval:    time.Minute,
-			MaximumAttempts:    3,
+			MaximumInterval:    10 * time.Minute,
+			MaximumAttempts:    int32(input.MaxAttempts),
 		},
 	})
 	workflowInfo := temporalworkflow.GetInfo(ctx)
@@ -139,135 +150,137 @@ func TranslateAriregisterSourceCompanies(
 		"max_parallel_tasks", input.MaxParallelTasks,
 		"lease_seconds", input.LeaseSeconds,
 		"max_attempts", input.MaxAttempts,
+		"batch_delay_seconds", input.BatchDelaySeconds,
 		"provider", input.Provider,
 		"model", input.Model,
 		"prompt_version", input.PromptVersion,
 		"trigger", input.Trigger,
-		"workset_path", input.WorksetPath,
-		"workset_prepared", input.WorksetPrepared,
+		"queue_prepared", input.QueuePrepared,
 	)
 
 	result := TranslateAriregisterSourceCompaniesResult{
 		Status:              "running",
 		StatusRowsInserted:  input.CarriedStatusRowsInserted,
 		CompaniesClaimed:    input.CarriedCompaniesClaimed,
+		CompaniesSucceeded:  input.CarriedCompaniesSucceeded,
 		FieldsSeen:          input.CarriedFieldsSeen,
 		FieldsApplied:       input.CarriedFieldsApplied,
 		RequestCharsClaimed: input.CarriedRequestChars,
 		TermsClaimed:        input.CarriedTermsClaimed,
 		TermsSucceeded:      input.CarriedTermsSucceeded,
 		TermsFailed:         input.CarriedTermsFailed,
+		TermsSaved:          input.CarriedTermsSaved,
 		BatchesProcessed:    input.CarriedBatchesProcessed,
 		WorksetPath:         input.WorksetPath,
 	}
-	if result.WorksetPath == "" {
-		result.WorksetPath = defaultAriregisterTranslationWorksetPath(workflowInfo.WorkflowExecution.ID)
-	}
-	input.WorksetPath = result.WorksetPath
 
-	if !input.WorksetPrepared {
+	if !input.QueuePrepared {
 		companyLimit := int32(input.BatchSize)
 		if input.AllRecords {
 			companyLimit = int32(input.MaxCompaniesPerBatch)
 		} else if input.Limit > 0 {
 			companyLimit = int32(input.Limit)
 		}
-		var built BuildAriregisterTranslationWorksetResult
+		var prepared BuildAriregisterTranslationWorksetResult
 		if err := temporalworkflow.ExecuteActivity(ctx, buildAriregisterTranslationWorksetActivity, BuildAriregisterTranslationWorksetInput{
 			Path:          result.WorksetPath,
 			PromptVersion: input.PromptVersion,
 			IDs:           input.IDs,
 			Filters:       input.Filters,
 			CompanyLimit:  companyLimit,
-		}).Get(ctx, &built); err != nil {
-			return result, errors.Wrap(err, "build ariregister translation workset")
+		}).Get(ctx, &prepared); err != nil {
+			return result, errors.Wrap(err, "prepare ariregister translation queue")
 		}
-		result.FieldsSeen = built.FieldsExported
-		result.CompaniesClaimed = built.CompaniesExported
-		if built.FieldsExported == 0 {
+		result.FieldsSeen = prepared.FieldsExported
+		result.StatusRowsInserted += prepared.CompaniesQueued
+		if prepared.FieldsExported == 0 {
 			result.Status = "drained"
 			return result, nil
 		}
+		input.QueuePrepared = true
+		input.QueueCompanies = prepared.CompaniesExported
 		input.WorksetPrepared = true
-		input.WorksetCompanies = built.CompaniesExported
+		input.WorksetCompanies = prepared.CompaniesExported
+		input.CarriedStatusRowsInserted = result.StatusRowsInserted
 		input.CarriedFieldsSeen = result.FieldsSeen
-		input.CarriedCompaniesClaimed = result.CompaniesClaimed
 	}
 
-	current, err := claimAndStartTranslationWorksetBatch(ctx, input, result.WorksetPath, &result)
-	if err != nil {
-		return result, err
-	}
-	for current != nil {
+	for {
+		current, err := claimTranslationWorksetBatch(ctx, input, workflowInfo.WorkflowExecution.ID, &result)
+		if err != nil {
+			return result, err
+		}
+		if current == nil {
+			break
+		}
+
 		var translated TranslateAriregisterTranslationWorksetBatchResult
-		if err := current.Future.Get(ctx, &translated); err != nil {
-			return result, errors.Wrap(err, "translate ariregister translation workset batch")
-		}
-
-		var next *inFlightTranslationWorksetBatch
-		if !shouldContinueAsNewAfterBatch(input, current.Ordinal) {
-			next, err = claimAndStartTranslationWorksetBatch(ctx, input, result.WorksetPath, &result)
-			if err != nil {
-				return result, err
-			}
-		}
-
-		var saved SaveAriregisterTranslationWorksetBatchResult
-		if err := temporalworkflow.ExecuteActivity(ctx, saveAriregisterTranslationWorksetBatchActivity, SaveAriregisterTranslationWorksetBatchInput{
-			Path:          result.WorksetPath,
+		if err := temporalworkflow.ExecuteActivity(ctx, translateAriregisterTranslationWorksetBatchActivity, TranslateAriregisterTranslationWorksetBatchInput{
 			BatchID:       current.Claimed.BatchID,
+			CompanyIDs:    current.Claimed.CompanyIDs,
 			Provider:      input.Provider,
 			Model:         input.Model,
 			PromptVersion: input.PromptVersion,
-			Results:       translated.Results,
-		}).Get(ctx, &saved); err != nil {
-			return result, errors.Wrap(err, "save ariregister translation workset batch")
+		}).Get(ctx, &translated); err != nil {
+			var released TranslationQueueBatchResult
+			if releaseErr := temporalworkflow.ExecuteActivity(ctx, releaseAriregisterTranslationQueueBatchActivity, ReleaseAriregisterTranslationQueueBatchInput{
+				BatchID: current.Claimed.BatchID,
+			}).Get(ctx, &released); releaseErr != nil {
+				return result, errors.Wrap(releaseErr, "release ariregister translation queue batch after failed translation")
+			}
+			return result, errors.Wrap(err, "translate ariregister translation queue batch")
 		}
-		result.TermsSucceeded += saved.TermsSucceeded
-		result.TermsFailed += saved.TermsFailed
+
+		var completed TranslationQueueBatchResult
+		if err := temporalworkflow.ExecuteActivity(ctx, completeAriregisterTranslationQueueBatchActivity, CompleteAriregisterTranslationQueueBatchInput{
+			BatchID: current.Claimed.BatchID,
+		}).Get(ctx, &completed); err != nil {
+			return result, errors.Wrap(err, "complete ariregister translation queue batch")
+		}
+		result.CompaniesSucceeded += completed.RowsAffected
+		result.TermsClaimed += translated.TermsClaimed
+		result.TermsSucceeded += translated.TermsSucceeded
+		result.TermsFailed += translated.TermsFailed
+		result.TermsSaved += translated.TermsSaved
+		result.FieldsApplied += translated.BindingsApplied
 
 		if shouldContinueAsNewAfterBatch(input, current.Ordinal) {
 			input.CarriedStatusRowsInserted = result.StatusRowsInserted
 			input.CarriedCompaniesClaimed = result.CompaniesClaimed
+			input.CarriedCompaniesSucceeded = result.CompaniesSucceeded
 			input.CarriedFieldsSeen = result.FieldsSeen
 			input.CarriedFieldsApplied = result.FieldsApplied
 			input.CarriedRequestChars = result.RequestCharsClaimed
 			input.CarriedTermsClaimed = result.TermsClaimed
 			input.CarriedTermsSucceeded = result.TermsSucceeded
 			input.CarriedTermsFailed = result.TermsFailed
+			input.CarriedTermsSaved = result.TermsSaved
 			input.CarriedBatchesProcessed = result.BatchesProcessed
 			return result, temporalworkflow.NewContinueAsNewError(ctx, TranslateAriregisterSourceCompanies, input)
 		}
-		current = next
 	}
 
-	var applied ApplyAriregisterTranslationWorksetResult
-	if err := temporalworkflow.ExecuteActivity(ctx, applyAriregisterTranslationWorksetActivity, ApplyAriregisterTranslationWorksetInput{
-		Path:          result.WorksetPath,
-		PromptVersion: input.PromptVersion,
-	}).Get(ctx, &applied); err != nil {
-		return result, errors.Wrap(err, "apply ariregister translation workset")
-	}
-	result.TermsSaved = applied.TermsSaved
-	result.FieldsApplied = applied.BindingsApplied
 	result.RemainingFields = result.FieldsSeen - result.FieldsApplied
 	if result.RemainingFields < 0 {
 		result.RemainingFields = 0
 	}
 	if input.AllRecords &&
-		applied.BindingsApplied > 0 &&
-		input.WorksetCompanies >= int32(input.MaxCompaniesPerBatch) {
+		result.FieldsApplied > 0 &&
+		input.QueueCompanies >= int32(input.MaxCompaniesPerBatch) {
 		input.WorksetPrepared = false
-		input.WorksetPath = ""
 		input.WorksetCompanies = 0
+		input.QueuePrepared = false
+		input.QueueCompanies = 0
 		input.CarriedStatusRowsInserted = result.StatusRowsInserted
 		input.CarriedCompaniesClaimed = result.CompaniesClaimed
+		input.CarriedCompaniesSucceeded = result.CompaniesSucceeded
 		input.CarriedFieldsSeen = result.FieldsSeen
 		input.CarriedFieldsApplied = result.FieldsApplied
 		input.CarriedRequestChars = result.RequestCharsClaimed
 		input.CarriedTermsClaimed = result.TermsClaimed
 		input.CarriedTermsSucceeded = result.TermsSucceeded
 		input.CarriedTermsFailed = result.TermsFailed
+		input.CarriedTermsSaved = result.TermsSaved
 		input.CarriedBatchesProcessed = result.BatchesProcessed
 		logger.Debug("ariregister company translation workflow continuing for next all-records chunk",
 			"companies_claimed", result.CompaniesClaimed,
@@ -281,10 +294,9 @@ func TranslateAriregisterSourceCompanies(
 	}
 	if result.TermsClaimed == 0 && result.TermsSucceeded == 0 && result.TermsFailed == 0 {
 		result.Status = "succeeded"
-		result.CompaniesSucceeded = result.CompaniesClaimed
 		return result, nil
 	}
-	if result.TermsFailed > 0 && result.TermsSucceeded == 0 {
+	if result.TermsFailed > 0 && result.TermsSucceeded == 0 && result.FieldsApplied == 0 {
 		result.Status = "failed"
 		return result, temporal.NewNonRetryableApplicationError("all company translation terms failed", "ARIREGISTER_ALL_COMPANY_TRANSLATION_TERMS_FAILED", nil)
 	}
@@ -293,42 +305,43 @@ func TranslateAriregisterSourceCompanies(
 		return result, nil
 	}
 	result.Status = "succeeded"
-	result.CompaniesSucceeded = result.CompaniesClaimed
 	return result, nil
 }
 
-func claimAndStartTranslationWorksetBatch(
+func claimTranslationWorksetBatch(
 	ctx temporalworkflow.Context,
 	input TranslateAriregisterSourceCompaniesInput,
-	worksetPath string,
+	workflowID string,
 	result *TranslateAriregisterSourceCompaniesResult,
-) (*inFlightTranslationWorksetBatch, error) {
-	var claimed ClaimAriregisterTranslationWorksetBatchResult
-	if err := temporalworkflow.ExecuteActivity(ctx, claimAriregisterTranslationWorksetBatchActivity, ClaimAriregisterTranslationWorksetBatchInput{
-		Path:            worksetPath,
-		MaxRequestChars: int32(input.MaxRequestChars),
-		MaxTerms:        int32(input.MaxTerms),
-		MaxAttempts:     int32(input.MaxAttempts),
-	}).Get(ctx, &claimed); err != nil {
-		return nil, errors.Wrap(err, "claim ariregister translation workset batch")
+) (*translationWorksetBatch, error) {
+	for {
+		var claimed ClaimAriregisterTranslationWorksetBatchResult
+		if err := temporalworkflow.ExecuteActivity(ctx, claimAriregisterTranslationWorksetBatchActivity, ClaimAriregisterTranslationWorksetBatchInput{
+			BatchID:             translationQueueBatchID(workflowID, result.BatchesProcessed+1),
+			MaxRequestChars:     int32(input.MaxRequestChars),
+			MaxTerms:            int32(input.MaxTerms),
+			MaxAttempts:         int32(input.MaxAttempts),
+			StaleRunningSeconds: int32(input.LeaseSeconds * 2),
+		}).Get(ctx, &claimed); err != nil {
+			return nil, errors.Wrap(err, "claim ariregister translation queue batch")
+		}
+		if claimed.Status == "blocked" {
+			if err := temporalworkflow.Sleep(ctx, defaultCompanyTranslationQueuePollDelay*time.Second); err != nil {
+				return nil, errors.Wrap(err, "wait for running ariregister translation queue batch")
+			}
+			continue
+		}
+		if claimed.Status == "drained" || len(claimed.CompanyIDs) == 0 {
+			return nil, nil
+		}
+		result.BatchesProcessed++
+		result.CompaniesClaimed += int32(len(claimed.CompanyIDs))
+		result.RequestCharsClaimed += claimed.EstimatedChars
+		return &translationWorksetBatch{
+			Ordinal: result.BatchesProcessed,
+			Claimed: claimed,
+		}, nil
 	}
-	if claimed.Status == "drained" || len(claimed.Terms) == 0 {
-		return nil, nil
-	}
-	result.BatchesProcessed++
-	result.TermsClaimed += int32(len(claimed.Terms))
-	result.RequestCharsClaimed += claimed.EstimatedChars
-	return &inFlightTranslationWorksetBatch{
-		Ordinal: result.BatchesProcessed,
-		Claimed: claimed,
-		Future: temporalworkflow.ExecuteActivity(ctx, translateAriregisterTranslationWorksetBatchActivity, TranslateAriregisterTranslationWorksetBatchInput{
-			BatchID:       claimed.BatchID,
-			Terms:         claimed.Terms,
-			Provider:      input.Provider,
-			Model:         input.Model,
-			PromptVersion: input.PromptVersion,
-		}),
-	}, nil
 }
 
 func shouldContinueAsNewAfterBatch(input TranslateAriregisterSourceCompaniesInput, batchOrdinal int32) bool {
@@ -372,19 +385,70 @@ func normalizeTranslateAriregisterSourceCompaniesInput(input TranslateAriregiste
 	if input.MaxAttempts <= 0 {
 		input.MaxAttempts = defaultCompanyTranslationMaxAttempts
 	}
+	if input.BatchDelaySeconds <= 0 {
+		input.BatchDelaySeconds = defaultCompanyTranslationBatchDelay
+	}
 	if input.PromptVersion == "" {
 		input.PromptVersion = defaultCompanyTranslationPromptVersion
 	}
 	if input.Trigger == "" {
 		input.Trigger = defaultCompanyTranslationTrigger
 	}
+	input.WorksetPath = strings.TrimSpace(input.WorksetPath)
+	input.QueuePrepared = input.QueuePrepared || input.WorksetPrepared
+	if input.QueueCompanies == 0 {
+		input.QueueCompanies = input.WorksetCompanies
+	}
+	input.IDs = compactTextValues(input.IDs)
+	input.Filters = compactTextFilters(input.Filters)
 	return input
 }
 
-func defaultAriregisterTranslationWorksetPath(workflowID string) string {
+func companyTranslationRetryInitialInterval(batchDelaySeconds int) time.Duration {
+	interval := time.Duration(batchDelaySeconds) * time.Second
+	if interval < 30*time.Second {
+		return 30 * time.Second
+	}
+	if interval > 10*time.Minute {
+		return 10 * time.Minute
+	}
+	return interval
+}
+
+func compactTextValues(values []string) []string {
+	compact := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			compact = append(compact, value)
+		}
+	}
+	return compact
+}
+
+func compactTextFilters(filters map[string]string) map[string]string {
+	if len(filters) == 0 {
+		return nil
+	}
+	compact := make(map[string]string, len(filters))
+	for key, value := range filters {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			compact[key] = value
+		}
+	}
+	if len(compact) == 0 {
+		return nil
+	}
+	return compact
+}
+
+func translationQueueBatchID(workflowID string, ordinal int32) string {
 	workflowID = strings.TrimSpace(workflowID)
 	if workflowID == "" {
-		workflowID = "manual"
+		workflowID = "ariregister-company-translation"
 	}
-	return filepath.Join("/var/lib/corpscout/worksets", "ariregister-translation-"+workflowID+".sqlite")
+	workflowID = strings.NewReplacer("/", "_", "\\", "_", ":", "_").Replace(workflowID)
+	return fmt.Sprintf("%s/batch/%06d", workflowID, ordinal)
 }

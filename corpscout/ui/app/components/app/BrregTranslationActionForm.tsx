@@ -61,7 +61,7 @@ export function BrregTranslationActionForm({
   filters,
   initialScope: _initialScope,
   recordLabel: _recordLabel = "source entries",
-  description = "Starts the Temporal workflow that exports missing BRREG source translations to a local workset, translates uncached terms, and writes English values back to brreg_source.",
+  description,
   sourceLabel = "BRREG",
   sourceDatabase = "brreg_source",
   formIdPrefix = "brreg",
@@ -73,11 +73,13 @@ export function BrregTranslationActionForm({
   onClose,
 }: Props) {
   const [limit, setLimit] = useState("1000");
-  const [leaseSeconds, setLeaseSeconds] = useState("900");
-  const [maxAttempts, setMaxAttempts] = useState("3");
-  const [maxParallelTasks, setMaxParallelTasks] = useState("50");
-  const [maxRequestChars, setMaxRequestChars] = useState("12000");
-  const [maxCompaniesPerBatch, setMaxCompaniesPerBatch] = useState("500");
+  const [leaseSeconds, setLeaseSeconds] = useState("1800");
+  const [maxAttempts, setMaxAttempts] = useState("8");
+  const [batchDelaySeconds, setBatchDelaySeconds] = useState("60");
+  const [maxParallelTasks, setMaxParallelTasks] = useState("1");
+  const [maxRequestChars, setMaxRequestChars] = useState("6000");
+  const [maxTerms, setMaxTerms] = useState("25");
+  const [maxCompaniesPerBatch, setMaxCompaniesPerBatch] = useState("100");
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [promptVersion, setPromptVersion] = useState("");
@@ -91,11 +93,13 @@ export function BrregTranslationActionForm({
 
   useEffect(() => {
     setLimit("10");
-    setLeaseSeconds("900");
-    setMaxAttempts("3");
-    setMaxParallelTasks("10");
-    setMaxRequestChars("12000");
-    setMaxCompaniesPerBatch("500");
+    setLeaseSeconds("1800");
+    setMaxAttempts("8");
+    setBatchDelaySeconds("60");
+    setMaxParallelTasks("1");
+    setMaxRequestChars("6000");
+    setMaxTerms("25");
+    setMaxCompaniesPerBatch("100");
     setProvider("");
     setModel("");
     setPromptVersion("");
@@ -139,6 +143,9 @@ export function BrregTranslationActionForm({
     () => llmProviders.filter((llmProvider) => llmProvider.enabled),
     [llmProviders],
   );
+  const effectiveDescription =
+    description ??
+    `Starts the Temporal workflow that prepares a Postgres company translation queue, translates uncached terms, and writes English values back to ${sourceDatabase}.`;
   const selectedLLMProvider = useMemo(
     () =>
       availableLLMProviders.find(
@@ -174,10 +181,12 @@ export function BrregTranslationActionForm({
         max_request_chars: useAutoClaim
           ? parseOptionalPositiveNumber(maxRequestChars)
           : undefined,
+        max_terms: parseOptionalPositiveNumber(maxTerms),
         max_companies_per_batch: useAutoClaim
           ? parseOptionalPositiveNumber(maxCompaniesPerBatch)
           : undefined,
         max_attempts: parseOptionalPositiveNumber(maxAttempts),
+        batch_delay_seconds: parseOptionalPositiveNumber(batchDelaySeconds),
         max_parallel_tasks: parseOptionalPositiveNumber(maxParallelTasks),
         lease_seconds: parseOptionalPositiveNumber(leaseSeconds),
         provider: optionalText(provider),
@@ -201,13 +210,13 @@ export function BrregTranslationActionForm({
       <div className="rounded-md border bg-muted/20 p-3">
         <div className="text-sm font-medium">Translation</div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          {description}
+          {effectiveDescription}
         </p>
       </div>
 
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <Label htmlFor="brreg-company-translation-scope">
+          <Label htmlFor={`${formIdPrefix}-company-translation-scope`}>
             Records to process
           </Label>
           <select
@@ -222,9 +231,9 @@ export function BrregTranslationActionForm({
             <option value="limited">Specific number</option>
           </select>
           <FieldDescription>
-            All eligible entries builds a workset for every {sourceLabel} source
-            company with missing English fields. Specific number is intended for
-            testing.
+            All eligible entries prepares queue rows for every {sourceLabel}
+            source company with missing English fields. Specific number is
+            intended for testing.
           </FieldDescription>
         </div>
 
@@ -240,8 +249,8 @@ export function BrregTranslationActionForm({
           />
           <FieldDescription>
             {allSourceCompaniesSelected
-              ? `No test limit is sent. The workflow drains eligible ${sourceLabel} source companies in bounded workset chunks.`
-              : `Maximum number of ${sourceLabel} source companies exported into the workset for this test run.`}
+              ? `No test limit is sent. The workflow drains eligible ${sourceLabel} source companies in bounded queue chunks.`
+              : `Maximum number of ${sourceLabel} source companies prepared in the queue for this test run.`}
           </FieldDescription>
         </div>
       </div>
@@ -278,7 +287,7 @@ export function BrregTranslationActionForm({
                     onChange={(event) => setLeaseSeconds(event.target.value)}
                   />
                   <FieldDescription>
-                    Activity timeout budget for translation workset steps.
+                    Activity timeout budget for translation queue steps.
                   </FieldDescription>
                 </div>
 
@@ -294,8 +303,27 @@ export function BrregTranslationActionForm({
                     onChange={(event) => setMaxAttempts(event.target.value)}
                   />
                   <FieldDescription>
-                    Maximum attempts for a term inside the local workset before
-                    it is left failed for a later retry.
+                    Maximum attempts for queue preparation, claim, translation,
+                    and completion activities.
+                  </FieldDescription>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor={`${formIdPrefix}-translation-batch-delay`}>
+                    Batch delay seconds
+                  </Label>
+                  <Input
+                    id={`${formIdPrefix}-translation-batch-delay`}
+                    min={1}
+                    type="number"
+                    value={batchDelaySeconds}
+                    onChange={(event) =>
+                      setBatchDelaySeconds(event.target.value)
+                    }
+                  />
+                  <FieldDescription>
+                    Retry backoff hint for Temporal activities. A blocked queue
+                    claim is checked again every 5 seconds.
                   </FieldDescription>
                 </div>
 
@@ -313,55 +341,71 @@ export function BrregTranslationActionForm({
                     }
                   />
                   <FieldDescription>
-                    Kept for workflow compatibility. The current workset flow
-                    processes one local SQLite workset per workflow run.
+                    Kept for workflow compatibility. The queue admits one
+                    running translation batch per source.
                   </FieldDescription>
                 </div>
 
                 {allSourceCompaniesSelected && (
-                  <>
-                    <div className="flex flex-col gap-2">
-                      <Label
-                        htmlFor={`${formIdPrefix}-company-translation-max-chars`}
-                      >
-                        Max request characters
-                      </Label>
-                      <Input
-                        id={`${formIdPrefix}-company-translation-max-chars`}
-                        min={1}
-                        type="number"
-                        value={maxRequestChars}
-                        onChange={(event) =>
-                          setMaxRequestChars(event.target.value)
-                        }
-                      />
-                      <FieldDescription>
-                        Auto-claim keeps adding companies until the estimated
-                        untranslated text reaches this request budget.
-                      </FieldDescription>
-                    </div>
+                  <div className="flex flex-col gap-2">
+                    <Label
+                      htmlFor={`${formIdPrefix}-company-translation-max-chars`}
+                    >
+                      Max request characters
+                    </Label>
+                    <Input
+                      id={`${formIdPrefix}-company-translation-max-chars`}
+                      min={1}
+                      type="number"
+                      value={maxRequestChars}
+                      onChange={(event) =>
+                        setMaxRequestChars(event.target.value)
+                      }
+                    />
+                    <FieldDescription>
+                      Queue claim keeps adding companies until the estimated
+                      untranslated text reaches this LLM request budget.
+                    </FieldDescription>
+                  </div>
+                )}
 
-                    <div className="flex flex-col gap-2">
-                      <Label
-                        htmlFor={`${formIdPrefix}-company-translation-max-companies`}
-                      >
-                        Max companies per claim
-                      </Label>
-                      <Input
-                        id={`${formIdPrefix}-company-translation-max-companies`}
-                        min={1}
-                        type="number"
-                        value={maxCompaniesPerBatch}
-                        onChange={(event) =>
-                          setMaxCompaniesPerBatch(event.target.value)
-                        }
-                      />
-                      <FieldDescription>
-                        Safety cap for one auto-claim pass when many companies
-                        have short or cached translation fields.
-                      </FieldDescription>
-                    </div>
-                  </>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor={`${formIdPrefix}-company-translation-max-terms`}>
+                    Max claim candidates
+                  </Label>
+                  <Input
+                    id={`${formIdPrefix}-company-translation-max-terms`}
+                    min={1}
+                    type="number"
+                    value={maxTerms}
+                    onChange={(event) => setMaxTerms(event.target.value)}
+                  />
+                  <FieldDescription>
+                    Caps pending company queue rows inspected per claim. The
+                    character budget decides the final LLM batch size.
+                  </FieldDescription>
+                </div>
+
+                {allSourceCompaniesSelected && (
+                  <div className="flex flex-col gap-2">
+                    <Label
+                      htmlFor={`${formIdPrefix}-company-translation-max-companies`}
+                    >
+                      Max companies per queue prep
+                    </Label>
+                    <Input
+                      id={`${formIdPrefix}-company-translation-max-companies`}
+                      min={1}
+                      type="number"
+                      value={maxCompaniesPerBatch}
+                      onChange={(event) =>
+                        setMaxCompaniesPerBatch(event.target.value)
+                      }
+                    />
+                    <FieldDescription>
+                      Safety cap for one all-records queue preparation pass.
+                    </FieldDescription>
+                  </div>
                 )}
 
                 <div className="flex flex-col gap-2">

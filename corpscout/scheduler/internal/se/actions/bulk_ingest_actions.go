@@ -25,12 +25,16 @@ import (
 )
 
 const (
-	defaultBulkIngestDBBatchSize int32 = 1000
+	defaultBulkIngestDBBatchSize int32 = 250
+	maxBulkIngestDBBatchSize     int32 = 250
 	seBulkRunType                      = "bulk_ingest"
 	seBulkSource                       = "se_hvd_bulk"
 	seDataSourceName                   = "se"
 	defaultSEBulkStagingRoot           = "/tmp/corpscout-worksets/se-hvd"
 	maxDiscoveryBodyBytes        int64 = 5 * 1024 * 1024
+	seLegacyMetadataDatasetURL         = "https://metadata.bolagsverket.se/store/2/resource/42"
+	seBolagsverketBulkURL              = "https://vardefulla-datamangder.bolagsverket.se/bolagsverket/bolagsverket_bulkfil.zip"
+	seSCBBulkURL                       = "https://vardefulla-datamangder.bolagsverket.se/scb/scb_bulkfil.zip"
 )
 
 var (
@@ -623,6 +627,15 @@ func (a *BulkIngestActions) loadDataset(
 		if len(batch) == 0 {
 			return nil
 		}
+		activity.RecordHeartbeat(ctx, map[string]any{
+			"phase":                          "flushing",
+			"dataset_key":                    dataset.Dataset,
+			"rows_buffered":                  len(batch),
+			"rows_seen":                      result.RowsSeen,
+			"rows_written":                   result.RowsWritten,
+			"configured_record_limit":        input.Limit,
+			"configured_database_batch_size": input.BatchSize,
+		})
 		ingested, err := a.gateway.IngestRawRecords(ctx, batch)
 		if err != nil {
 			return errors.Wrap(err, "ingest se bulk raw record batch")
@@ -772,6 +785,21 @@ func (a *BulkIngestActions) processDownloadedSourceFile(
 	input ProcessSEBulkRawRecordsActivityInput,
 	sourceFile DownloadedSEBulkSourceFile,
 ) (LoadSEBulkSourceFileResult, error) {
+	switch strings.ToLower(strings.TrimSpace(sourceFile.Dataset)) {
+	case sebulk.BolagsverketDatasetKey:
+		return a.processBolagsverketDownloadedSourceFile(ctx, input, sourceFile)
+	case sebulk.SCBDatasetKey:
+		return a.processSCBDownloadedSourceFile(ctx, input, sourceFile)
+	default:
+		return a.processGenericDownloadedSourceFile(ctx, input, sourceFile)
+	}
+}
+
+func (a *BulkIngestActions) processGenericDownloadedSourceFile(
+	ctx context.Context,
+	input ProcessSEBulkRawRecordsActivityInput,
+	sourceFile DownloadedSEBulkSourceFile,
+) (LoadSEBulkSourceFileResult, error) {
 	sourceFileID, err := uuid.Parse(sourceFile.SourceFileID)
 	if err != nil {
 		return LoadSEBulkSourceFileResult{}, errors.Wrap(err, "parse se source file id")
@@ -841,6 +869,172 @@ func (a *BulkIngestActions) processDownloadedSourceFile(
 	}, nil
 }
 
+func (a *BulkIngestActions) processBolagsverketDownloadedSourceFile(
+	ctx context.Context,
+	input ProcessSEBulkRawRecordsActivityInput,
+	sourceFile DownloadedSEBulkSourceFile,
+) (LoadSEBulkSourceFileResult, error) {
+	sourceFileID, err := uuid.Parse(sourceFile.SourceFileID)
+	if err != nil {
+		return LoadSEBulkSourceFileResult{}, errors.Wrap(err, "parse se Bolagsverket source file id")
+	}
+	dataset := datasetConfigFromVerified(sourceFile.VerifiedSEBulkSourceFile)
+	var result sedb.IngestRawRecordsResult
+	var batch []sedb.BolagsverketRawRecord
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		activity.RecordHeartbeat(ctx, map[string]any{
+			"phase":                          "flushing",
+			"dataset_key":                    sourceFile.Dataset,
+			"rows_buffered":                  len(batch),
+			"rows_seen":                      result.RowsSeen,
+			"rows_written":                   result.RowsWritten,
+			"configured_record_limit":        input.Limit,
+			"configured_database_batch_size": input.BatchSize,
+		})
+		ingested, err := a.gateway.IngestBolagsverketRawRecords(ctx, batch)
+		if err != nil {
+			return errors.Wrap(err, "ingest se Bolagsverket raw record batch")
+		}
+		addIngestResult(&result, ingested)
+		batch = batch[:0]
+		activity.RecordHeartbeat(ctx, map[string]any{
+			"phase":                          "ingesting",
+			"dataset_key":                    sourceFile.Dataset,
+			"rows_seen":                      result.RowsSeen,
+			"rows_written":                   result.RowsWritten,
+			"rows_inserted_new":              result.RowsInsertedNew,
+			"rows_existing_unchanged":        result.RowsExistingUnchanged,
+			"rows_new_versions":              result.RowsNewVersions,
+			"configured_record_limit":        input.Limit,
+			"configured_database_batch_size": input.BatchSize,
+		})
+		return nil
+	}
+
+	streamed, err := sebulk.StreamBolagsverketRecordsFile(ctx, sourceFile.SourcePath, sourceFile.FileFormat, input.Limit, func(record sebulk.BolagsverketRecord) error {
+		batch = append(batch, bolagsverketRawRecordFromBulk(record, sourceFileID, input.TemporalWorkflowID, input.Metadata))
+		if int32(len(batch)) >= input.BatchSize {
+			return flush()
+		}
+		return nil
+	})
+	if err != nil {
+		_ = a.recordFailedSourceFile(ctx, mustUUID(input.SnapshotID), dataset, stagedPayloadFromDownload(sourceFile), err, input.Metadata)
+		return LoadSEBulkSourceFileResult{}, err
+	}
+	if err := flush(); err != nil {
+		_ = a.recordFailedSourceFile(ctx, mustUUID(input.SnapshotID), dataset, stagedPayloadFromDownload(sourceFile), err, input.Metadata)
+		return LoadSEBulkSourceFileResult{}, err
+	}
+	if streamed.RowsSeen != result.RowsSeen {
+		err := errors.New("se Bolagsverket parser row count mismatch")
+		_ = a.recordFailedSourceFile(ctx, mustUUID(input.SnapshotID), dataset, stagedPayloadFromDownload(sourceFile), err, input.Metadata)
+		return LoadSEBulkSourceFileResult{}, err
+	}
+	if _, err := a.recordParsedSourceFile(ctx, mustUUID(input.SnapshotID), dataset, stagedPayloadFromDownload(sourceFile), result, sourceFileMetadata(input.Metadata, sourceFile.VerifiedSEBulkSourceFile, nil)); err != nil {
+		return LoadSEBulkSourceFileResult{}, err
+	}
+	return LoadSEBulkSourceFileResult{
+		Dataset:               sourceFile.Dataset,
+		SourceFileID:          sourceFile.SourceFileID,
+		SourceURL:             sourceFile.SourceURL,
+		FileName:              filepath.Base(sourceFile.SourcePath),
+		FileFormat:            sourceFile.FileFormat,
+		Status:                "parsed",
+		RowsSeen:              result.RowsSeen,
+		RowsWritten:           result.RowsWritten,
+		RowsInsertedNew:       result.RowsInsertedNew,
+		RowsExistingUnchanged: result.RowsExistingUnchanged,
+		RowsNewVersions:       result.RowsNewVersions,
+	}, nil
+}
+
+func (a *BulkIngestActions) processSCBDownloadedSourceFile(
+	ctx context.Context,
+	input ProcessSEBulkRawRecordsActivityInput,
+	sourceFile DownloadedSEBulkSourceFile,
+) (LoadSEBulkSourceFileResult, error) {
+	sourceFileID, err := uuid.Parse(sourceFile.SourceFileID)
+	if err != nil {
+		return LoadSEBulkSourceFileResult{}, errors.Wrap(err, "parse se SCB source file id")
+	}
+	dataset := datasetConfigFromVerified(sourceFile.VerifiedSEBulkSourceFile)
+	var result sedb.IngestRawRecordsResult
+	var batch []sedb.SCBRawRecord
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		activity.RecordHeartbeat(ctx, map[string]any{
+			"phase":                          "flushing",
+			"dataset_key":                    sourceFile.Dataset,
+			"rows_buffered":                  len(batch),
+			"rows_seen":                      result.RowsSeen,
+			"rows_written":                   result.RowsWritten,
+			"configured_record_limit":        input.Limit,
+			"configured_database_batch_size": input.BatchSize,
+		})
+		ingested, err := a.gateway.IngestSCBRawRecords(ctx, batch)
+		if err != nil {
+			return errors.Wrap(err, "ingest se SCB raw record batch")
+		}
+		addIngestResult(&result, ingested)
+		batch = batch[:0]
+		activity.RecordHeartbeat(ctx, map[string]any{
+			"phase":                          "ingesting",
+			"dataset_key":                    sourceFile.Dataset,
+			"rows_seen":                      result.RowsSeen,
+			"rows_written":                   result.RowsWritten,
+			"rows_inserted_new":              result.RowsInsertedNew,
+			"rows_existing_unchanged":        result.RowsExistingUnchanged,
+			"rows_new_versions":              result.RowsNewVersions,
+			"configured_record_limit":        input.Limit,
+			"configured_database_batch_size": input.BatchSize,
+		})
+		return nil
+	}
+
+	streamed, err := sebulk.StreamSCBRecordsFile(ctx, sourceFile.SourcePath, sourceFile.FileFormat, input.Limit, func(record sebulk.SCBRecord) error {
+		batch = append(batch, scbRawRecordFromBulk(record, sourceFileID, input.TemporalWorkflowID, input.Metadata))
+		if int32(len(batch)) >= input.BatchSize {
+			return flush()
+		}
+		return nil
+	})
+	if err != nil {
+		_ = a.recordFailedSourceFile(ctx, mustUUID(input.SnapshotID), dataset, stagedPayloadFromDownload(sourceFile), err, input.Metadata)
+		return LoadSEBulkSourceFileResult{}, err
+	}
+	if err := flush(); err != nil {
+		_ = a.recordFailedSourceFile(ctx, mustUUID(input.SnapshotID), dataset, stagedPayloadFromDownload(sourceFile), err, input.Metadata)
+		return LoadSEBulkSourceFileResult{}, err
+	}
+	if streamed.RowsSeen != result.RowsSeen {
+		err := errors.New("se SCB parser row count mismatch")
+		_ = a.recordFailedSourceFile(ctx, mustUUID(input.SnapshotID), dataset, stagedPayloadFromDownload(sourceFile), err, input.Metadata)
+		return LoadSEBulkSourceFileResult{}, err
+	}
+	if _, err := a.recordParsedSourceFile(ctx, mustUUID(input.SnapshotID), dataset, stagedPayloadFromDownload(sourceFile), result, sourceFileMetadata(input.Metadata, sourceFile.VerifiedSEBulkSourceFile, nil)); err != nil {
+		return LoadSEBulkSourceFileResult{}, err
+	}
+	return LoadSEBulkSourceFileResult{
+		Dataset:               sourceFile.Dataset,
+		SourceFileID:          sourceFile.SourceFileID,
+		SourceURL:             sourceFile.SourceURL,
+		FileName:              filepath.Base(sourceFile.SourcePath),
+		FileFormat:            sourceFile.FileFormat,
+		Status:                "parsed",
+		RowsSeen:              result.RowsSeen,
+		RowsWritten:           result.RowsWritten,
+		RowsInsertedNew:       result.RowsInsertedNew,
+		RowsExistingUnchanged: result.RowsExistingUnchanged,
+		RowsNewVersions:       result.RowsNewVersions,
+	}, nil
+}
+
 func rawRecordFromBulk(record sebulk.Record, sourceFileID uuid.UUID, workflowID string, metadata []byte) sedb.RawRecord {
 	return sedb.RawRecord{
 		SourceFileID:        sourceFileID,
@@ -856,6 +1050,82 @@ func rawRecordFromBulk(record sebulk.Record, sourceFileID uuid.UUID, workflowID 
 		PayloadHash:         record.PayloadHash,
 		RunID:               workflowID,
 		Metadata:            metadata,
+	}
+}
+
+func bolagsverketRawRecordFromBulk(record sebulk.BolagsverketRecord, sourceFileID uuid.UUID, workflowID string, metadata []byte) sedb.BolagsverketRawRecord {
+	return sedb.BolagsverketRawRecord{
+		SourceFileID:           sourceFileID,
+		SourceRecordKey:        record.SourceRecordKey,
+		RowNumber:              record.RowNumber,
+		Organisationsidentitet: record.Organisationsidentitet,
+		OrganizationNumber:     record.OrganizationNumber,
+		Namnskyddslopnummer:    record.Namnskyddslopnummer,
+		Registreringsland:      record.Registreringsland,
+		Organisationsnamn:      record.Organisationsnamn,
+		OrganizationName:       record.OrganizationName,
+		Organisationsform:      record.Organisationsform,
+		Avregistreringsdatum:   record.Avregistreringsdatum,
+		Avregistreringsorsak:   record.Avregistreringsorsak,
+		PagandeAvvecklingsEllerOmstruktureringsforfarande: record.PagandeAvvecklingsEllerOmstruktureringsforfarande,
+		Registreringsdatum:     record.Registreringsdatum,
+		Verksamhetsbeskrivning: record.Verksamhetsbeskrivning,
+		Postadress:             record.Postadress,
+		PostalAddress:          record.PostalAddress,
+		RawPayload:             record.RawPayload,
+		PayloadHash:            record.PayloadHash,
+		RunID:                  workflowID,
+		Metadata:               metadata,
+	}
+}
+
+func scbRawRecordFromBulk(record sebulk.SCBRecord, sourceFileID uuid.UUID, workflowID string, metadata []byte) sedb.SCBRawRecord {
+	return sedb.SCBRawRecord{
+		SourceFileID:       sourceFileID,
+		SourceRecordKey:    record.SourceRecordKey,
+		RowNumber:          record.RowNumber,
+		ForAndrTyp:         record.ForAndrTyp,
+		COAdress:           record.COAdress,
+		Foretagsnamn:       record.Foretagsnamn,
+		FtgStat:            record.FtgStat,
+		Gatuadress:         record.Gatuadress,
+		JEStat:             record.JEStat,
+		JurForm:            record.JurForm,
+		Namn:               record.Namn,
+		Ng1:                record.Ng1,
+		Ng2:                record.Ng2,
+		Ng3:                record.Ng3,
+		Ng4:                record.Ng4,
+		Ng5:                record.Ng5,
+		PeOrgNr:            record.PeOrgNr,
+		OrganizationNumber: record.OrganizationNumber,
+		PostNr:             record.PostNr,
+		PostOrt:            record.PostOrt,
+		RegDatKtid:         record.RegDatKtid,
+		Reklamsparrtyp:     record.Reklamsparrtyp,
+		MCOAdress:          record.MCOAdress,
+		MForetagsnamn:      record.MForetagsnamn,
+		MFtgStat:           record.MFtgStat,
+		MGatuadress:        record.MGatuadress,
+		MJEStat:            record.MJEStat,
+		MJurForm:           record.MJurForm,
+		MNamn:              record.MNamn,
+		MNg1:               record.MNg1,
+		MNg2:               record.MNg2,
+		MNg3:               record.MNg3,
+		MNg4:               record.MNg4,
+		MNg5:               record.MNg5,
+		MPostNr:            record.MPostNr,
+		MPostOrt:           record.MPostOrt,
+		MRegDatKtid:        record.MRegDatKtid,
+		MReklamsparrtyp:    record.MReklamsparrtyp,
+		MaskColumns:        record.MaskColumns,
+		SNICodes:           record.SNICodes,
+		PostalAddress:      record.PostalAddress,
+		RawPayload:         record.RawPayload,
+		PayloadHash:        record.PayloadHash,
+		RunID:              workflowID,
+		Metadata:           metadata,
 	}
 }
 
@@ -909,10 +1179,7 @@ func (a *BulkIngestActions) recordFailedSourceFile(
 }
 
 func (a *BulkIngestActions) resolveInput(ctx context.Context, input LoadSEBulkRawRecordsActivityInput) (resolvedBulkInput, error) {
-	batchSize := input.BatchSize
-	if batchSize <= 0 {
-		batchSize = defaultBulkIngestDBBatchSize
-	}
+	batchSize := normalizedBulkIngestDBBatchSize(input.BatchSize)
 	datasets := input.Datasets
 	if len(datasets) == 0 {
 		if rawConfig := strings.TrimSpace(input.DatasetsJSON); rawConfig != "" {
@@ -953,6 +1220,16 @@ func (a *BulkIngestActions) resolveInput(ctx context.Context, input LoadSEBulkRa
 	}, nil
 }
 
+func normalizedBulkIngestDBBatchSize(value int32) int32 {
+	if value <= 0 {
+		return defaultBulkIngestDBBatchSize
+	}
+	if value > maxBulkIngestDBBatchSize {
+		return maxBulkIngestDBBatchSize
+	}
+	return value
+}
+
 func parseDatasetsJSON(rawConfig string) ([]HVDDatasetConfig, error) {
 	rawConfig = strings.TrimSpace(rawConfig)
 	if rawConfig == "" {
@@ -962,7 +1239,7 @@ func parseDatasetsJSON(rawConfig string) ([]HVDDatasetConfig, error) {
 	if err := json.Unmarshal([]byte(rawConfig), &datasets); err != nil {
 		return nil, errors.Wrap(err, "parse Sweden HVD dataset JSON")
 	}
-	return validateHVDDatasets(datasets, "Sweden HVD dataset JSON")
+	return validateHVDDatasets(expandLegacySwedenHVDDatasets(datasets), "Sweden HVD dataset JSON")
 }
 
 func (a *BulkIngestActions) datasetsFromDataSourceConfig(ctx context.Context) ([]HVDDatasetConfig, error) {
@@ -1001,7 +1278,52 @@ func parseDatasetsFromDataSourceConfig(config []byte) ([]HVDDatasetConfig, error
 			Format:  firstNonEmpty(configured.Format, configured.FileFormat),
 		})
 	}
-	return validateHVDDatasets(datasets, "Sweden HVD source config datasets")
+	return validateHVDDatasets(expandLegacySwedenHVDDatasets(datasets), "Sweden HVD source config datasets")
+}
+
+func expandLegacySwedenHVDDatasets(datasets []HVDDatasetConfig) []HVDDatasetConfig {
+	hasBolagsverket := false
+	hasSCB := false
+	legacyMetadata := false
+	expanded := make([]HVDDatasetConfig, 0, len(datasets)+2)
+	for _, dataset := range datasets {
+		dataset = dataset.trimmed()
+		switch strings.ToLower(dataset.Dataset) {
+		case sebulk.BolagsverketDatasetKey:
+			hasBolagsverket = true
+		case sebulk.SCBDatasetKey:
+			hasSCB = true
+		}
+		if isLegacySwedenHVDMetadataDataset(dataset) {
+			legacyMetadata = true
+			continue
+		}
+		expanded = append(expanded, dataset)
+	}
+	if legacyMetadata {
+		if !hasBolagsverket {
+			expanded = append(expanded, HVDDatasetConfig{
+				Dataset: sebulk.BolagsverketDatasetKey,
+				URL:     seBolagsverketBulkURL,
+				Format:  "zip",
+			})
+		}
+		if !hasSCB {
+			expanded = append(expanded, HVDDatasetConfig{
+				Dataset: sebulk.SCBDatasetKey,
+				URL:     seSCBBulkURL,
+				Format:  "zip",
+			})
+		}
+	}
+	return expanded
+}
+
+func isLegacySwedenHVDMetadataDataset(dataset HVDDatasetConfig) bool {
+	if !isMetadataFormat(dataset.Format) {
+		return false
+	}
+	return strings.TrimRight(dataset.URL, "/") == seLegacyMetadataDatasetURL
 }
 
 func validateHVDDatasets(datasets []HVDDatasetConfig, label string) ([]HVDDatasetConfig, error) {

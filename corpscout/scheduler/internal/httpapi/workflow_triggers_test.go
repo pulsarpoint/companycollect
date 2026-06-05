@@ -46,6 +46,7 @@ func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T
 		"max_parallel_tasks": 5,
 		"lease_seconds": 900,
 		"max_attempts": 3,
+		"batch_delay_seconds": 90,
 		"provider": "deepseek",
 		"model": "deepseek-v4-flash",
 		"prompt_version": "v2",
@@ -75,6 +76,7 @@ func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T
 	require.Equal(t, 5, input.MaxParallelTasks)
 	require.Equal(t, 900, input.LeaseSeconds)
 	require.Equal(t, 3, input.MaxAttempts)
+	require.Equal(t, 90, input.BatchDelaySeconds)
 	require.Equal(t, "deepseek", input.Provider)
 	require.Equal(t, "deepseek-v4-flash", input.Model)
 	require.Equal(t, "v2", input.PromptVersion)
@@ -99,6 +101,7 @@ func TestStartAriregisterCompanyTranslationWorkflowStartsTemporalWorkflow(t *tes
 		"max_parallel_tasks": 5,
 		"lease_seconds": 900,
 		"max_attempts": 3,
+		"batch_delay_seconds": 90,
 		"provider": "deepseek",
 		"model": "deepseek-v4-flash",
 		"prompt_version": "v2",
@@ -128,6 +131,7 @@ func TestStartAriregisterCompanyTranslationWorkflowStartsTemporalWorkflow(t *tes
 	require.Equal(t, 5, input.MaxParallelTasks)
 	require.Equal(t, 900, input.LeaseSeconds)
 	require.Equal(t, 3, input.MaxAttempts)
+	require.Equal(t, 90, input.BatchDelaySeconds)
 	require.Equal(t, "deepseek", input.Provider)
 	require.Equal(t, "deepseek-v4-flash", input.Model)
 	require.Equal(t, "v2", input.PromptVersion)
@@ -540,6 +544,71 @@ func TestStartAriregisterBulkRawIngestWorkflowRejectsInvalidSourceURL(t *testing
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Contains(t, w.Body.String(), `"error":"source_url must be http or https"`)
 	require.Nil(t, tc.workflow)
+}
+
+func TestStartFranceSourceProfileWorkflowStartsTemporalWorkflow(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/france/source-profile", bytes.NewBufferString(`{
+		"ids": ["7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"],
+		"filters": {"query": "PULSAR"},
+		"limit": 2500,
+		"batch_size": 500,
+		"trigger": "manual"
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"NormalizeFranceSourceProfiles"`)
+	require.Contains(t, w.Body.String(), `"task_queue":"france-source-profile"`)
+	require.Contains(t, tc.options.ID, "france-source-profile-")
+	require.Equal(t, franceworkflow.NormalizeFranceSourceProfilesTaskQueue, tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(franceworkflow.NormalizeFranceSourceProfiles).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(franceworkflow.NormalizeFranceSourceProfilesInput)
+	require.Equal(t, []string{"7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"}, input.IDs)
+	require.Equal(t, map[string]string{"query": "PULSAR"}, input.Filters)
+	require.Equal(t, 2500, input.Limit)
+	require.Equal(t, 500, input.BatchSize)
+	require.Equal(t, "manual", input.Trigger)
+}
+
+func TestStartFranceSourceProfileWorkflowRejectsNegativeLimits(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "limit",
+			body: `{"limit":-1}`,
+			want: `"error":"limit cannot be negative"`,
+		},
+		{
+			name: "batch size",
+			body: `{"batch_size":-1}`,
+			want: `"error":"batch_size cannot be negative"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := &temporalExecuteRecorder{}
+			r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/france/source-profile", bytes.NewBufferString(tt.body))
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			require.Contains(t, w.Body.String(), tt.want)
+			require.Nil(t, tc.workflow)
+		})
+	}
 }
 
 func TestStartFranceBulkRawIngestWorkflowStartsTemporalWorkflowAndAllowsAll(t *testing.T) {

@@ -199,6 +199,110 @@ INSERT INTO brreg_source.translation_terms (
 	}, terms)
 }
 
+func TestStoreTranslationQueuePreparesClaimsAndCompletesBRREGCompanies(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	first := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999555350",
+		OrganizationName:      "QUEUE FIRST AS",
+		OrganizationFormLabel: "Aksjeselskap",
+		ResponseClass:         "Enhet",
+	})
+	second := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999555351",
+		OrganizationName:      "QUEUE SECOND AS",
+		OrganizationFormLabel: "Aksjeselskap",
+		ResponseClass:         "Enhet",
+	})
+	store := New(tx)
+
+	prepared, err := store.PrepareTranslationQueue(t.Context(), PrepareTranslationQueueCommand{
+		IDs:          []string{first.CompanyID.String(), second.CompanyID.String()},
+		CompanyLimit: 10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, prepared.CompaniesSeen)
+	require.EqualValues(t, 2, prepared.CompaniesQueued)
+
+	preparedAgain, err := store.PrepareTranslationQueue(t.Context(), PrepareTranslationQueueCommand{
+		IDs:          []string{first.CompanyID.String(), second.CompanyID.String()},
+		CompanyLimit: 10,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, preparedAgain.CompaniesSeen)
+	require.EqualValues(t, 0, preparedAgain.CompaniesQueued)
+
+	claimed, err := store.ClaimTranslationQueueBatch(t.Context(), ClaimTranslationQueueBatchCommand{
+		BatchID:          "brreg-test-batch-1",
+		MaxCandidateRows: 10,
+		MaxRequestChars:  10000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "claimed", claimed.Status)
+	require.ElementsMatch(t, []string{first.CompanyID.String(), second.CompanyID.String()}, claimed.CompanyIDs)
+	require.Greater(t, claimed.EstimatedChars, int32(0))
+
+	blocked, err := store.ClaimTranslationQueueBatch(t.Context(), ClaimTranslationQueueBatchCommand{
+		BatchID:          "brreg-test-batch-2",
+		MaxCandidateRows: 10,
+		MaxRequestChars:  10000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "blocked", blocked.Status)
+
+	completed, err := store.CompleteTranslationQueueBatch(t.Context(), "brreg-test-batch-1")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, completed.RowsAffected)
+
+	drained, err := store.ClaimTranslationQueueBatch(t.Context(), ClaimTranslationQueueBatchCommand{
+		BatchID:          "brreg-test-batch-3",
+		MaxCandidateRows: 10,
+		MaxRequestChars:  10000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "drained", drained.Status)
+}
+
+func TestStoreResetStaleTranslationQueueEntriesReleasesBRREGRunningBatch(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	seed := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999555352",
+		OrganizationName:      "QUEUE STALE AS",
+		OrganizationFormLabel: "Aksjeselskap",
+		ResponseClass:         "Enhet",
+	})
+	store := New(tx)
+	_, err := store.PrepareTranslationQueue(t.Context(), PrepareTranslationQueueCommand{
+		IDs: []string{seed.CompanyID.String()},
+	})
+	require.NoError(t, err)
+	claimed, err := store.ClaimTranslationQueueBatch(t.Context(), ClaimTranslationQueueBatchCommand{
+		BatchID:          "brreg-stale-batch",
+		MaxCandidateRows: 10,
+		MaxRequestChars:  10000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "claimed", claimed.Status)
+	_, err = tx.Exec(t.Context(), `
+UPDATE brreg_source.translation_queue_entries
+SET status_changed_at = now() - interval '2 hours'
+WHERE batch_id = 'brreg-stale-batch'
+`)
+	require.NoError(t, err)
+
+	reset, err := store.ResetStaleTranslationQueueEntries(t.Context(), 3600)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, reset.RowsAffected)
+
+	reclaimed, err := store.ClaimTranslationQueueBatch(t.Context(), ClaimTranslationQueueBatchCommand{
+		BatchID:          "brreg-reclaimed-batch",
+		MaxCandidateRows: 10,
+		MaxRequestChars:  10000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "claimed", reclaimed.Status)
+	require.Equal(t, []string{seed.CompanyID.String()}, reclaimed.CompanyIDs)
+}
+
 func TestStoreApplyCompanyTranslationsRejectsUnsupportedBRREGTarget(t *testing.T) {
 	tx := testdb.BeginTx(t)
 	seed := seedCompanyData(t, tx, companyDataSeed{

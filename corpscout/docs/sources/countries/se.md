@@ -68,7 +68,7 @@ Configure `se_workflow` with both HVD datasets:
 1. Verify both source files exist by requesting the direct ZIP URLs and checking for `application/zip` content.
 2. Compare each remote file with the latest downloaded file for that dataset. Use the downloaded file SHA-256 as the canonical duplicate guard; headers such as `etag` and `last-modified` can be recorded as metadata but should not replace content hashing.
 3. Download only datasets whose content hash has not already been processed.
-4. Stream each ZIP entry and parse it into `se_workflow.raw_records`. Store one raw record per logical CSV row with dataset key, source URL, ZIP entry name, file hash, row number, raw source payload, and ingest metadata.
+4. Stream each ZIP entry and parse it into `se_workflow.bolagsverket_raw_records` or `se_workflow.scb_raw_records` based on dataset key. Store one raw record per logical CSV row with source file ID, row number, source payload, file hash, and ingest metadata.
 
 ### Raw parsing rules
 - Bolagsverket file: UTF-8, semicolon-delimited, quoted CSV.

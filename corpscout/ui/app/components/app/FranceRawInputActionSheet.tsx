@@ -7,8 +7,9 @@ import {
   SheetTitle,
 } from "~/components/ui/sheet";
 import { FranceBulkLoadActionForm } from "~/components/app/FranceBulkLoadActionForm";
+import { FranceSourceProfileActionForm } from "~/components/app/FranceSourceProfileActionForm";
 
-type FranceRawInputAction = "" | "load_bulk";
+type FranceRawInputAction = "" | "load_bulk" | "build_source_profile";
 
 interface Props {
   open: boolean;
@@ -25,6 +26,11 @@ const AVAILABLE_ACTIONS: Array<{
     key: "load_bulk",
     label: "Load SIRENE bulk",
     description: "Load legal-unit and establishment rows from the official SIRENE parquet files.",
+  },
+  {
+    key: "build_source_profile",
+    label: "Build source profile",
+    description: "Parse current SIRENE raw records into france_source tables.",
   },
 ];
 
@@ -76,6 +82,13 @@ export function FranceRawInputActionSheet({
 
           {selectedAction === "load_bulk" && (
             <FranceBulkLoadActionForm
+              onStarted={onStarted}
+              onClose={() => onOpenChange(false)}
+            />
+          )}
+
+          {selectedAction === "build_source_profile" && (
+            <FranceSourceProfileActionForm
               onStarted={onStarted}
               onClose={() => onOpenChange(false)}
             />

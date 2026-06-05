@@ -425,13 +425,13 @@ func normalizeBuildWorksetCommand(config SourceConfig, command BuildWorksetComma
 func normalizeClaimBatchCommand(command ClaimBatchCommand) ClaimBatchCommand {
 	command.Path = strings.TrimSpace(command.Path)
 	if command.MaxRequestChars <= 0 {
-		command.MaxRequestChars = 12000
+		command.MaxRequestChars = 6000
 	}
 	if command.MaxTerms <= 0 {
-		command.MaxTerms = 200
+		command.MaxTerms = 25
 	}
 	if command.MaxAttempts <= 0 {
-		command.MaxAttempts = 3
+		command.MaxAttempts = 8
 	}
 	return command
 }
