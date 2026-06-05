@@ -15,6 +15,7 @@ func TestFranceWorkflowQueriesDefineBulkIngestContract(t *testing.T) {
 	for _, expected := range []string{
 		"-- name: BeginFranceWorkflowRun :one",
 		"-- name: FinishFranceWorkflowRunWithStats :one",
+		"-- name: FailFranceWorkflowRunByOrchestrator :exec",
 		"-- name: CreateFranceBulkSnapshot :one",
 		"-- name: MarkFranceBulkSnapshotParsed :exec",
 		"-- name: RecordFranceSourceFile :one",

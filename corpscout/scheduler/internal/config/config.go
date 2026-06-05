@@ -17,6 +17,7 @@ const defaultCVRDistributionScrollURL = "https://distribution.virk.dk/_search/sc
 const defaultCVRDistributionScroll = "1m"
 const defaultFranceLegalUnitsSourceURL = "https://www.data.gouv.fr/api/1/datasets/r/350182c9-148a-46e0-8389-76c2ec1374a3"
 const defaultFranceEstablishmentsSourceURL = "https://www.data.gouv.fr/api/1/datasets/r/a29c1297-1f92-4e2a-8f6b-8c902ce96c5f"
+const defaultSEHVDStagingRoot = "/tmp/corpscout-worksets/se-hvd"
 
 type Config struct {
 	DatabaseURL             string
@@ -47,6 +48,7 @@ type Config struct {
 	FranceLegalUnitsURL     string
 	FranceEstablishmentsURL string
 	SEHVDDatasetsJSON       string
+	SEHVDStagingRoot        string
 	FXECBSourceURL          string
 }
 
@@ -100,6 +102,7 @@ func Load() (Config, error) {
 		FranceLegalUnitsURL:     getEnv("CORPSCOUT_FRANCE_LEGAL_UNITS_SOURCE_URL", defaultFranceLegalUnitsSourceURL),
 		FranceEstablishmentsURL: getEnv("CORPSCOUT_FRANCE_ESTABLISHMENTS_SOURCE_URL", defaultFranceEstablishmentsSourceURL),
 		SEHVDDatasetsJSON:       getEnv("CORPSCOUT_SE_HVD_DATASETS_JSON", os.Getenv("SE_HVD_DATASETS_JSON")),
+		SEHVDStagingRoot:        getEnv("CORPSCOUT_SE_HVD_STAGING_ROOT", defaultSEHVDStagingRoot),
 		FXECBSourceURL:          getEnv("CORPSCOUT_FX_ECB_DAILY_URL", defaultFXECBDailyURL),
 	}, nil
 }

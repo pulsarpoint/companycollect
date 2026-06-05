@@ -24,8 +24,26 @@ func newFranceBulkIngestTemporalWorker(temporalClient client.Client, resources *
 func registerFranceBulkIngestWorker(worker temporalworker.Worker, resources *temporalWorkerResources) {
 	slog.Debug("registering france bulk ingest temporal workflow and activities")
 	worker.RegisterWorkflow(franceworkflow.LoadFranceBulkRawRecords)
+	worker.RegisterWorkflow(franceworkflow.ProcessFranceSireneStockUniteLegale)
+	worker.RegisterWorkflow(franceworkflow.ProcessFranceSireneStockEtablissement)
 	worker.RegisterActivityWithOptions(
-		resources.franceBulkIngest.LoadFranceBulkRawRecords,
-		activity.RegisterOptions{Name: "LoadFranceBulkRawRecordsActivity"},
+		resources.franceBulkIngest.StageFranceBulkRawFiles,
+		activity.RegisterOptions{Name: "StageFranceBulkRawFilesActivity"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.franceBulkIngest.ProcessFranceSireneStockUniteLegale,
+		activity.RegisterOptions{Name: "ProcessFranceSireneStockUniteLegaleActivity"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.franceBulkIngest.ProcessFranceSireneStockEtablissement,
+		activity.RegisterOptions{Name: "ProcessFranceSireneStockEtablissementActivity"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.franceBulkIngest.FinishFranceBulkRawIngest,
+		activity.RegisterOptions{Name: "FinishFranceBulkRawIngestActivity"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.franceBulkIngest.MarkFranceBulkRawIngestFailed,
+		activity.RegisterOptions{Name: "MarkFranceBulkRawIngestFailedActivity"},
 	)
 }

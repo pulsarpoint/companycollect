@@ -21,6 +21,14 @@ interface Props {
   initialScope?: unknown;
   recordLabel?: string;
   description?: string;
+  sourceLabel?: string;
+  sourceDatabase?: string;
+  formIdPrefix?: string;
+  submitTranslation?: (
+    body: BrregCompanyTranslationRequest,
+  ) => Promise<unknown>;
+  successMessage?: string;
+  failureMessage?: string;
   showAdvancedOptions?: boolean;
   onStarted?: () => void;
   onClose: () => void;
@@ -54,6 +62,12 @@ export function BrregTranslationActionForm({
   initialScope: _initialScope,
   recordLabel: _recordLabel = "source entries",
   description = "Starts the Temporal workflow that exports missing BRREG source translations to a local workset, translates uncached terms, and writes English values back to brreg_source.",
+  sourceLabel = "BRREG",
+  sourceDatabase = "brreg_source",
+  formIdPrefix = "brreg",
+  submitTranslation = api.translateBrregSourceCompanies,
+  successMessage = "BRREG company translation workflow started.",
+  failureMessage = "Failed to start BRREG translation.",
   showAdvancedOptions = true,
   onStarted,
   onClose,
@@ -171,12 +185,12 @@ export function BrregTranslationActionForm({
         prompt_version: optionalText(promptVersion),
         trigger: "manual",
       };
-      await api.translateBrregSourceCompanies(body);
-      toast.success("BRREG company translation workflow started.");
+      await submitTranslation(body);
+      toast.success(successMessage);
       onStarted?.();
       onClose();
     } catch (error) {
-      toast.error(errorMessage(error, "Failed to start BRREG translation."));
+      toast.error(errorMessage(error, failureMessage));
     } finally {
       setSubmitting(false);
     }
@@ -197,7 +211,7 @@ export function BrregTranslationActionForm({
             Records to process
           </Label>
           <select
-            id="brreg-company-translation-scope"
+            id={`${formIdPrefix}-company-translation-scope`}
             className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             value={companyScope}
             onChange={(event) =>
@@ -208,16 +222,16 @@ export function BrregTranslationActionForm({
             <option value="limited">Specific number</option>
           </select>
           <FieldDescription>
-            All eligible entries builds a workset for every BRREG source company
-            with missing English fields. Specific number is intended for
+            All eligible entries builds a workset for every {sourceLabel} source
+            company with missing English fields. Specific number is intended for
             testing.
           </FieldDescription>
         </div>
 
         <div className="flex flex-col gap-2">
-          <Label htmlFor="brreg-translation-limit">Records</Label>
+          <Label htmlFor={`${formIdPrefix}-translation-limit`}>Records</Label>
           <Input
-            id="brreg-translation-limit"
+            id={`${formIdPrefix}-translation-limit`}
             min={allSourceCompaniesSelected ? undefined : 1}
             type={allSourceCompaniesSelected ? "text" : "number"}
             value={allSourceCompaniesSelected ? "All eligible entries" : limit}
@@ -226,8 +240,8 @@ export function BrregTranslationActionForm({
           />
           <FieldDescription>
             {allSourceCompaniesSelected
-              ? "No test limit is sent. The workflow drains eligible BRREG source companies in bounded workset chunks."
-              : "Maximum number of BRREG source companies exported into the workset for this test run."}
+              ? `No test limit is sent. The workflow drains eligible ${sourceLabel} source companies in bounded workset chunks.`
+              : `Maximum number of ${sourceLabel} source companies exported into the workset for this test run.`}
           </FieldDescription>
         </div>
       </div>
@@ -253,11 +267,11 @@ export function BrregTranslationActionForm({
             <div className="flex flex-col gap-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="brreg-translation-timeout">
+                  <Label htmlFor={`${formIdPrefix}-translation-timeout`}>
                     Timeout seconds
                   </Label>
                   <Input
-                    id="brreg-translation-timeout"
+                    id={`${formIdPrefix}-translation-timeout`}
                     min={1}
                     type="number"
                     value={leaseSeconds}
@@ -269,11 +283,11 @@ export function BrregTranslationActionForm({
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="brreg-translation-max-attempts">
+                  <Label htmlFor={`${formIdPrefix}-translation-max-attempts`}>
                     Retry attempts
                   </Label>
                   <Input
-                    id="brreg-translation-max-attempts"
+                    id={`${formIdPrefix}-translation-max-attempts`}
                     min={1}
                     type="number"
                     value={maxAttempts}
@@ -286,11 +300,11 @@ export function BrregTranslationActionForm({
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="brreg-translation-parallel">
+                  <Label htmlFor={`${formIdPrefix}-translation-parallel`}>
                     Parallel worksets
                   </Label>
                   <Input
-                    id="brreg-translation-parallel"
+                    id={`${formIdPrefix}-translation-parallel`}
                     min={1}
                     type="number"
                     value={maxParallelTasks}
@@ -307,11 +321,13 @@ export function BrregTranslationActionForm({
                 {allSourceCompaniesSelected && (
                   <>
                     <div className="flex flex-col gap-2">
-                      <Label htmlFor="brreg-company-translation-max-chars">
+                      <Label
+                        htmlFor={`${formIdPrefix}-company-translation-max-chars`}
+                      >
                         Max request characters
                       </Label>
                       <Input
-                        id="brreg-company-translation-max-chars"
+                        id={`${formIdPrefix}-company-translation-max-chars`}
                         min={1}
                         type="number"
                         value={maxRequestChars}
@@ -326,11 +342,13 @@ export function BrregTranslationActionForm({
                     </div>
 
                     <div className="flex flex-col gap-2">
-                      <Label htmlFor="brreg-company-translation-max-companies">
+                      <Label
+                        htmlFor={`${formIdPrefix}-company-translation-max-companies`}
+                      >
                         Max companies per claim
                       </Label>
                       <Input
-                        id="brreg-company-translation-max-companies"
+                        id={`${formIdPrefix}-company-translation-max-companies`}
                         min={1}
                         type="number"
                         value={maxCompaniesPerBatch}
@@ -347,11 +365,11 @@ export function BrregTranslationActionForm({
                 )}
 
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="brreg-translation-prompt">
+                  <Label htmlFor={`${formIdPrefix}-translation-prompt`}>
                     Prompt version
                   </Label>
                   <Input
-                    id="brreg-translation-prompt"
+                    id={`${formIdPrefix}-translation-prompt`}
                     value={promptVersion}
                     placeholder="Server default"
                     onChange={(event) => setPromptVersion(event.target.value)}
@@ -366,11 +384,11 @@ export function BrregTranslationActionForm({
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="brreg-translation-provider">
+                  <Label htmlFor={`${formIdPrefix}-translation-provider`}>
                     LLM provider
                   </Label>
                   <select
-                    id="brreg-translation-provider"
+                    id={`${formIdPrefix}-translation-provider`}
                     className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                     value={provider}
                     onChange={(event) => changeProvider(event.target.value)}
@@ -398,9 +416,11 @@ export function BrregTranslationActionForm({
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="brreg-translation-model">LLM model</Label>
+                  <Label htmlFor={`${formIdPrefix}-translation-model`}>
+                    LLM model
+                  </Label>
                   <Input
-                    id="brreg-translation-model"
+                    id={`${formIdPrefix}-translation-model`}
                     value={model}
                     placeholder="Server default"
                     onChange={(event) => setModel(event.target.value)}

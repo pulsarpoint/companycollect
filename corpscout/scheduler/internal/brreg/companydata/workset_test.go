@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/pulsarpoint/corpscout/scheduler/internal/sourcetranslation"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/testdb"
 )
 
@@ -125,448 +126,142 @@ WHERE id = $1
 	require.EqualValues(t, 2, countRowsWhere(t, nextDB, "translation_bindings", "company_id = '"+second.CompanyID.String()+"'"))
 }
 
-func TestWriteTranslationWorksetCreatesSQLiteFileWithBindingsAndTerms(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "translation-workset.sqlite")
-	rows := []translationWorksetRow{
-		{
-			CompanyID:            "company-1",
-			SourceTable:          "brreg_source.companies",
-			SourceRowID:          "company-1",
-			SourceColumn:         "organization_form_label",
-			TargetColumn:         "organization_form_label_en",
-			SourceText:           "Aksjeselskap",
-			SourceTextNormalized: "aksjeselskap",
-			TermKey:              translationTermKey("Aksjeselskap"),
-		},
-		{
-			CompanyID:            "company-1",
-			SourceTable:          "brreg_source.industries",
-			SourceRowID:          "industry-1",
-			SourceColumn:         "source_label",
-			TargetColumn:         "source_label_en",
-			SourceText:           "Aksjeselskap",
-			SourceTextNormalized: "aksjeselskap",
-			TermKey:              translationTermKey("Aksjeselskap"),
-		},
-		{
-			CompanyID:            "company-2",
-			SourceTable:          "brreg_source.capital",
-			SourceRowID:          "capital-1",
-			SourceColumn:         "capital_type",
-			TargetColumn:         "capital_type_en",
-			SourceText:           "Aksjekapital",
-			SourceTextNormalized: "aksjekapital",
-			TermKey:              translationTermKey("Aksjekapital"),
-			CachedTranslatedText: "Share capital",
-		},
-	}
+func TestStoreLoadMissingTranslationFieldsUsesBRREGFiltersAndNormalizedKeys(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	first := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999555301",
+		OrganizationName:      "FILTER TARGET AS",
+		OrganizationFormLabel: " Aksjeselskap ",
+		ResponseClass:         "Enhet",
+	})
+	second := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber:    "999555302",
+		OrganizationName:      "FILTER OTHER AS",
+		OrganizationFormLabel: "Aksjeselskap",
+		ResponseClass:         "Enhet",
+	})
+	_, err := tx.Exec(t.Context(), "REFRESH MATERIALIZED VIEW brreg_source.mv_company_explorer")
+	require.NoError(t, err)
+	store := New(tx)
+	require.NoError(t, store.RefreshTranslationStatus(t.Context()))
 
-	result, err := writeTranslationWorkset(t.Context(), path, translationWorksetMetadata{
-		Source:        "brreg",
-		SourceLang:    "no",
-		TargetLang:    "en",
+	fields, err := store.LoadMissingTranslationFields(t.Context(), sourcetranslation.LoadMissingFieldsCommand{
+		CompanyIDs:   []string{" " + first.CompanyID.String() + " ", second.CompanyID.String()},
+		Filters:      map[string]string{"query": "target", "state": "active", "registration_status": "active", "translation_status": "missing", "website_status": "without"},
+		CompanyLimit: 1,
+		FieldLimit:   1,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, fields, 1)
+	require.Equal(t, first.CompanyID.String(), fields[0].CompanyID)
+	require.Equal(t, "brreg_source.companies", fields[0].SourceTable)
+	require.Equal(t, first.CompanyID.String(), fields[0].SourceRowID)
+	require.Equal(t, "organization_form_label", fields[0].SourceColumn)
+	require.Equal(t, "organization_form_label_en", fields[0].TargetColumn)
+	require.Equal(t, "Aksjeselskap", fields[0].SourceText)
+	require.Equal(t, "aksjeselskap", fields[0].SourceTextNormalized)
+	require.Equal(t, translationTermKey("Aksjeselskap"), fields[0].TermKey)
+	require.EqualValues(t, 20, fields[0].Priority)
+}
+
+func TestStoreLoadCachedTranslationTermsReturnsSucceededBRREGTerms(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	_, err := tx.Exec(t.Context(), `
+INSERT INTO brreg_source.translation_terms (
+  source, source_lang, target_lang, source_text_normalized, source_text,
+  term_key, translated_text, status, prompt_version
+) VALUES
+  ('brreg', 'no', 'en', 'aksjeselskap', 'Aksjeselskap', $1, 'Limited liability company', 'succeeded', 'v1'),
+  ('brreg', 'no', 'en', 'enhet', 'Enhet', $2, 'Entity', 'failed_retryable', 'v1'),
+  ('brreg', 'no', 'en', 'aksjekapital', 'Aksjekapital', $3, 'Share capital', 'succeeded', 'v2'),
+  ('brreg', 'no', 'en', 'norge', 'Norge', $4, '   ', 'succeeded', 'v1')
+`, translationTermKey("Aksjeselskap"), translationTermKey("Enhet"), translationTermKey("Aksjekapital"), translationTermKey("Norge"))
+	require.NoError(t, err)
+
+	terms, err := New(tx).LoadCachedTranslationTerms(t.Context(), sourcetranslation.LoadCachedTermsCommand{
 		PromptVersion: "v1",
-	}, rows)
-
-	require.NoError(t, err)
-	require.Equal(t, path, result.Path)
-	require.EqualValues(t, 3, result.FieldsExported)
-	require.EqualValues(t, 2, result.TermsExported)
-	require.EqualValues(t, 2, result.CompaniesExported)
-	require.EqualValues(t, 1, result.CachedFields)
-
-	db := openWorksetDB(t, path)
-	defer db.Close()
-
-	require.EqualValues(t, 3, countRows(t, db, "translation_bindings"))
-	require.EqualValues(t, 2, countRows(t, db, "translation_terms"))
-	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_bindings", "status = 'cached'"))
-	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_terms", "status = 'succeeded'"))
-	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_terms", "status = 'pending'"))
-
-	var sourceText string
-	var translatedText sql.NullString
-	err = db.QueryRowContext(t.Context(), `
-SELECT source_text, translated_text
-FROM translation_terms
-WHERE term_key = ?
-`, translationTermKey("Aksjekapital")).Scan(&sourceText, &translatedText)
-	require.NoError(t, err)
-	require.Equal(t, "Aksjekapital", sourceText)
-	require.True(t, translatedText.Valid)
-	require.Equal(t, "Share capital", translatedText.String)
-}
-
-func TestWriteTranslationWorksetReplacesExistingFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "translation-workset.sqlite")
-	first, err := writeTranslationWorkset(t.Context(), path, translationWorksetMetadata{}, []translationWorksetRow{{
-		CompanyID:            "company-1",
-		SourceTable:          "brreg_source.companies",
-		SourceRowID:          "company-1",
-		SourceColumn:         "response_class",
-		TargetColumn:         "response_class_en",
-		SourceText:           "Enhet",
-		SourceTextNormalized: "enhet",
-		TermKey:              translationTermKey("Enhet"),
-	}})
-	require.NoError(t, err)
-	require.EqualValues(t, 1, first.FieldsExported)
-
-	second, err := writeTranslationWorkset(t.Context(), path, translationWorksetMetadata{}, nil)
-
-	require.NoError(t, err)
-	require.EqualValues(t, 0, second.FieldsExported)
-	db := openWorksetDB(t, path)
-	defer db.Close()
-	require.EqualValues(t, 0, countRows(t, db, "translation_bindings"))
-	require.EqualValues(t, 0, countRows(t, db, "translation_terms"))
-}
-
-func TestClaimTranslationWorksetBatchPacksPendingTermsByCharacterBudget(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "translation-workset.sqlite")
-	_, err := writeTranslationWorkset(t.Context(), path, translationWorksetMetadata{}, []translationWorksetRow{
-		{
-			CompanyID:            "company-1",
-			SourceTable:          "brreg_source.companies",
-			SourceRowID:          "company-1",
-			SourceColumn:         "response_class",
-			TargetColumn:         "response_class_en",
-			SourceText:           "Kort",
-			SourceTextNormalized: "kort",
-			TermKey:              translationTermKey("Kort"),
-		},
-		{
-			CompanyID:            "company-2",
-			SourceTable:          "brreg_source.companies",
-			SourceRowID:          "company-2",
-			SourceColumn:         "activity_description",
-			TargetColumn:         "activity_description_en",
-			SourceText:           "Dette er en lengre tekst",
-			SourceTextNormalized: "dette er en lengre tekst",
-			TermKey:              translationTermKey("Dette er en lengre tekst"),
-		},
-		{
-			CompanyID:            "company-3",
-			SourceTable:          "brreg_source.capital",
-			SourceRowID:          "capital-3",
-			SourceColumn:         "capital_type",
-			TargetColumn:         "capital_type_en",
-			SourceText:           "Aksjekapital",
-			SourceTextNormalized: "aksjekapital",
-			TermKey:              translationTermKey("Aksjekapital"),
+		TermKeys: []string{
+			translationTermKey("Aksjeselskap"),
+			translationTermKey("Enhet"),
+			translationTermKey("Aksjekapital"),
+			translationTermKey("Norge"),
+			translationTermKey("Ukjent"),
 		},
 	})
-	require.NoError(t, err)
-
-	claimed, err := ClaimTranslationWorksetBatch(t.Context(), ClaimTranslationWorksetBatchCommand{
-		Path:            path,
-		MaxRequestChars: 20,
-		MaxTerms:        10,
-	})
 
 	require.NoError(t, err)
-	require.Equal(t, "claimed", claimed.Status)
-	require.NotZero(t, claimed.BatchID)
-	require.Len(t, claimed.Terms, 1)
-	require.Equal(t, "Aksjekapital", claimed.Terms[0].SourceText)
-	require.EqualValues(t, 12, claimed.EstimatedChars)
-
-	db := openWorksetDB(t, path)
-	defer db.Close()
-	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_terms", "status = 'running'"))
-	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_batches", "status = 'running'"))
+	require.Equal(t, map[string]sourcetranslation.CachedTerm{
+		translationTermKey("Aksjeselskap"): {
+			TermKey:        translationTermKey("Aksjeselskap"),
+			TranslatedText: "Limited liability company",
+		},
+	}, terms)
 }
 
-func TestClaimTranslationWorksetBatchKeepsOversizedFirstTerm(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "translation-workset.sqlite")
-	_, err := writeTranslationWorkset(t.Context(), path, translationWorksetMetadata{}, []translationWorksetRow{{
-		CompanyID:            "company-1",
-		SourceTable:          "brreg_source.companies",
-		SourceRowID:          "company-1",
-		SourceColumn:         "activity_description",
-		TargetColumn:         "activity_description_en",
-		SourceText:           "Dette er mye lengre enn grensen",
-		SourceTextNormalized: "dette er mye lengre enn grensen",
-		TermKey:              translationTermKey("Dette er mye lengre enn grensen"),
-	}})
-	require.NoError(t, err)
-
-	claimed, err := ClaimTranslationWorksetBatch(t.Context(), ClaimTranslationWorksetBatchCommand{
-		Path:            path,
-		MaxRequestChars: 5,
-		MaxTerms:        10,
+func TestStoreApplyCompanyTranslationsRejectsUnsupportedBRREGTarget(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	seed := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber: "999555303",
+		OrganizationName:   "UNSUPPORTED TARGET AS",
+		ResponseClass:      "Enhet",
 	})
 
-	require.NoError(t, err)
-	require.Equal(t, "claimed", claimed.Status)
-	require.Len(t, claimed.Terms, 1)
-	require.Greater(t, claimed.EstimatedChars, int32(5))
-}
-
-func TestClaimTranslationWorksetBatchRetriesFailedTermsUntilMaxAttempts(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "translation-workset.sqlite")
-	_, err := writeTranslationWorkset(t.Context(), path, translationWorksetMetadata{}, []translationWorksetRow{{
-		CompanyID:            "company-1",
-		SourceTable:          "brreg_source.companies",
-		SourceRowID:          "company-1",
-		SourceColumn:         "response_class",
-		TargetColumn:         "response_class_en",
-		SourceText:           "Enhet",
-		SourceTextNormalized: "enhet",
-		TermKey:              translationTermKey("Enhet"),
-	}})
-	require.NoError(t, err)
-
-	first, err := ClaimTranslationWorksetBatch(t.Context(), ClaimTranslationWorksetBatchCommand{
-		Path:            path,
-		MaxRequestChars: 100,
-		MaxTerms:        10,
-		MaxAttempts:     2,
-	})
-	require.NoError(t, err)
-	_, err = SaveTranslationWorksetBatch(t.Context(), SaveTranslationWorksetBatchCommand{
-		Path:          path,
-		BatchID:       first.BatchID,
-		Provider:      "mock",
-		Model:         "mock-fast",
-		PromptVersion: "v1",
-		Results: []TranslationTermResult{{
-			TermKey: translationTermKey("Enhet"),
-			Status:  "failed_retryable",
-			Error:   "temporary",
+	_, err := New(tx).ApplyCompanyTranslations(t.Context(), sourcetranslation.ApplyCompanyTranslationsCommand{
+		CompanyID: seed.CompanyID.String(),
+		Bindings: []sourcetranslation.TranslationBinding{{
+			ID:             42,
+			CompanyID:      seed.CompanyID.String(),
+			SourceTable:    "brreg_source.companies",
+			SourceRowID:    seed.CompanyID.String(),
+			SourceColumn:   "response_class",
+			TargetColumn:   "unsupported_en",
+			TranslatedText: "Entity",
 		}},
 	})
-	require.NoError(t, err)
 
-	second, err := ClaimTranslationWorksetBatch(t.Context(), ClaimTranslationWorksetBatchCommand{
-		Path:            path,
-		MaxRequestChars: 100,
-		MaxTerms:        10,
-		MaxAttempts:     2,
-	})
-	require.NoError(t, err)
-	require.Equal(t, "claimed", second.Status)
-	require.Len(t, second.Terms, 1)
-	require.Equal(t, "Enhet", second.Terms[0].SourceText)
-	_, err = SaveTranslationWorksetBatch(t.Context(), SaveTranslationWorksetBatchCommand{
-		Path:          path,
-		BatchID:       second.BatchID,
-		Provider:      "mock",
-		Model:         "mock-fast",
-		PromptVersion: "v1",
-		Results: []TranslationTermResult{{
-			TermKey: translationTermKey("Enhet"),
-			Status:  "failed_retryable",
-			Error:   "still temporary",
-		}},
-	})
-	require.NoError(t, err)
-
-	drained, err := ClaimTranslationWorksetBatch(t.Context(), ClaimTranslationWorksetBatchCommand{
-		Path:            path,
-		MaxRequestChars: 100,
-		MaxTerms:        10,
-		MaxAttempts:     2,
-	})
-	require.NoError(t, err)
-	require.Equal(t, "drained", drained.Status)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "unsupported brreg company translation target column")
 }
 
-func TestSaveTranslationWorksetBatchStoresResultsAndUpdatesBindings(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "translation-workset.sqlite")
-	_, err := writeTranslationWorkset(t.Context(), path, translationWorksetMetadata{}, []translationWorksetRow{
-		{
-			CompanyID:            "company-1",
-			SourceTable:          "brreg_source.companies",
-			SourceRowID:          "company-1",
-			SourceColumn:         "response_class",
-			TargetColumn:         "response_class_en",
-			SourceText:           "Enhet",
-			SourceTextNormalized: "enhet",
-			TermKey:              translationTermKey("Enhet"),
-		},
-		{
-			CompanyID:            "company-2",
-			SourceTable:          "brreg_source.capital",
-			SourceRowID:          "capital-2",
-			SourceColumn:         "capital_type",
-			TargetColumn:         "capital_type_en",
-			SourceText:           "Aksjekapital",
-			SourceTextNormalized: "aksjekapital",
-			TermKey:              translationTermKey("Aksjekapital"),
-		},
+func TestStoreApplyCompanyTranslationsReturnsAlreadySatisfiedBRREGBindings(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	seed := seedCompanyData(t, tx, companyDataSeed{
+		OrganizationNumber: "999555304",
+		OrganizationName:   "SATISFIED TARGET AS",
+		ResponseClass:      "Enhet",
 	})
+	_, err := tx.Exec(t.Context(), `
+UPDATE brreg_source.companies
+SET response_class_en = 'Existing value'
+WHERE id = $1
+`, seed.CompanyID)
 	require.NoError(t, err)
-	claimed, err := ClaimTranslationWorksetBatch(t.Context(), ClaimTranslationWorksetBatchCommand{
-		Path:            path,
-		MaxRequestChars: 100,
-		MaxTerms:        10,
-	})
-	require.NoError(t, err)
-	require.Len(t, claimed.Terms, 2)
 
-	result, err := SaveTranslationWorksetBatch(t.Context(), SaveTranslationWorksetBatchCommand{
-		Path:          path,
-		BatchID:       claimed.BatchID,
-		Provider:      "mock",
-		Model:         "mock-fast",
-		PromptVersion: "v1",
-		Results: []TranslationTermResult{{
-			TermKey:              translationTermKey("Enhet"),
-			SourceText:           "Enhet",
-			SourceTextNormalized: "enhet",
-			TranslatedText:       "Entity",
-			Status:               "succeeded",
-		}, {
-			TermKey:              translationTermKey("Aksjekapital"),
-			SourceText:           "Aksjekapital",
-			SourceTextNormalized: "aksjekapital",
-			Status:               "failed_retryable",
-			Error:                "temporary failure",
-			ErrorCode:            "temporary",
+	result, err := New(tx).ApplyCompanyTranslations(t.Context(), sourcetranslation.ApplyCompanyTranslationsCommand{
+		CompanyID: seed.CompanyID.String(),
+		Bindings: []sourcetranslation.TranslationBinding{{
+			ID:             77,
+			CompanyID:      seed.CompanyID.String(),
+			SourceTable:    "brreg_source.companies",
+			SourceRowID:    seed.CompanyID.String(),
+			SourceColumn:   "response_class",
+			TargetColumn:   "response_class_en",
+			TranslatedText: "Entity",
 		}},
 	})
 
 	require.NoError(t, err)
-	require.EqualValues(t, 1, result.TermsSucceeded)
-	require.EqualValues(t, 1, result.TermsFailed)
-	db := openWorksetDB(t, path)
-	defer db.Close()
-	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_terms", "status = 'succeeded'"))
-	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_terms", "status = 'failed_retryable'"))
-	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_bindings", "status = 'translated'"))
-	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_bindings", "status = 'failed'"))
-	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_batches", "status = 'succeeded'"))
-}
-
-func TestTranslationWorksetProcessesDummySQLiteFileEndToEnd(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "translation-workset.sqlite")
-	_, err := writeTranslationWorkset(t.Context(), path, translationWorksetMetadata{PromptVersion: "v1"}, []translationWorksetRow{
-		cachedWorksetRow("company-1", "brreg_source.capital", "capital-1", "capital_type", "capital_type_en", "Aksjekapital", "Share capital"),
-		{
-			CompanyID:            "company-1",
-			SourceTable:          "brreg_source.companies",
-			SourceRowID:          "company-1",
-			SourceColumn:         "organization_form_label",
-			TargetColumn:         "organization_form_label_en",
-			SourceText:           "Aksjeselskap",
-			SourceTextNormalized: "aksjeselskap",
-			TermKey:              translationTermKey("Aksjeselskap"),
-		},
-		{
-			CompanyID:            "company-1",
-			SourceTable:          "brreg_source.industries",
-			SourceRowID:          "industry-1",
-			SourceColumn:         "source_label",
-			TargetColumn:         "source_label_en",
-			SourceText:           "Andre egeninvesteringsselskaper",
-			SourceTextNormalized: "andre egeninvesteringsselskaper",
-			TermKey:              translationTermKey("Andre egeninvesteringsselskaper"),
-		},
-		{
-			CompanyID:            "company-2",
-			SourceTable:          "brreg_source.companies",
-			SourceRowID:          "company-2",
-			SourceColumn:         "response_class",
-			TargetColumn:         "response_class_en",
-			SourceText:           "Enhet",
-			SourceTextNormalized: "enhet",
-			TermKey:              translationTermKey("Enhet"),
-		},
-	})
+	require.EqualValues(t, 1, result.BindingsApplied)
+	require.Equal(t, []int64{77}, result.AppliedBindingIDs)
+	var responseClassEN string
+	err = tx.QueryRow(t.Context(), `
+SELECT response_class_en
+FROM brreg_source.companies
+WHERE id = $1
+`, seed.CompanyID).Scan(&responseClassEN)
 	require.NoError(t, err)
-
-	first, err := ClaimTranslationWorksetBatch(t.Context(), ClaimTranslationWorksetBatchCommand{
-		Path:            path,
-		MaxRequestChars: 1000,
-		MaxTerms:        2,
-		MaxAttempts:     2,
-	})
-	require.NoError(t, err)
-	require.Equal(t, "claimed", first.Status)
-	require.Len(t, first.Terms, 2)
-
-	firstResults := make([]TranslationTermResult, 0, len(first.Terms))
-	for _, term := range first.Terms {
-		result := TranslationTermResult{
-			TermKey:              term.TermKey,
-			SourceText:           term.SourceText,
-			SourceTextNormalized: term.SourceTextNormalized,
-			TranslatedText:       "translated " + term.SourceTextNormalized,
-			Status:               "succeeded",
-		}
-		if term.SourceText == "Aksjeselskap" {
-			result.TranslatedText = ""
-			result.Status = "failed_retryable"
-			result.Error = "temporary dummy failure"
-		}
-		firstResults = append(firstResults, result)
-	}
-	firstSaved, err := SaveTranslationWorksetBatch(t.Context(), SaveTranslationWorksetBatchCommand{
-		Path:          path,
-		BatchID:       first.BatchID,
-		Provider:      "mock",
-		Model:         "mock-fast",
-		PromptVersion: "v1",
-		Results:       firstResults,
-	})
-	require.NoError(t, err)
-	require.EqualValues(t, 1, firstSaved.TermsSucceeded)
-	require.EqualValues(t, 1, firstSaved.TermsFailed)
-
-	second, err := ClaimTranslationWorksetBatch(t.Context(), ClaimTranslationWorksetBatchCommand{
-		Path:            path,
-		MaxRequestChars: 1000,
-		MaxTerms:        10,
-		MaxAttempts:     2,
-	})
-	require.NoError(t, err)
-	require.Equal(t, "claimed", second.Status)
-	require.Len(t, second.Terms, 2)
-
-	secondResults := make([]TranslationTermResult, 0, len(second.Terms))
-	for _, term := range second.Terms {
-		secondResults = append(secondResults, TranslationTermResult{
-			TermKey:              term.TermKey,
-			SourceText:           term.SourceText,
-			SourceTextNormalized: term.SourceTextNormalized,
-			TranslatedText:       "translated " + term.SourceTextNormalized,
-			Status:               "succeeded",
-		})
-	}
-	secondSaved, err := SaveTranslationWorksetBatch(t.Context(), SaveTranslationWorksetBatchCommand{
-		Path:          path,
-		BatchID:       second.BatchID,
-		Provider:      "mock",
-		Model:         "mock-fast",
-		PromptVersion: "v1",
-		Results:       secondResults,
-	})
-	require.NoError(t, err)
-	require.EqualValues(t, 2, secondSaved.TermsSucceeded)
-	require.Zero(t, secondSaved.TermsFailed)
-
-	drained, err := ClaimTranslationWorksetBatch(t.Context(), ClaimTranslationWorksetBatchCommand{
-		Path:            path,
-		MaxRequestChars: 1000,
-		MaxTerms:        10,
-		MaxAttempts:     2,
-	})
-	require.NoError(t, err)
-	require.Equal(t, "drained", drained.Status)
-
-	db := openWorksetDB(t, path)
-	defer db.Close()
-	bindings, err := loadTranslationWorksetBindings(t.Context(), db)
-	require.NoError(t, err)
-	require.Len(t, bindings, 4)
-	require.EqualValues(t, 4, countRows(t, db, "translation_terms"))
-	require.EqualValues(t, 4, countRowsWhere(t, db, "translation_terms", "status = 'succeeded'"))
-	require.EqualValues(t, 0, countRowsWhere(t, db, "translation_terms", "status IN ('pending', 'running', 'failed_retryable', 'failed_terminal')"))
-	require.EqualValues(t, 4, countRows(t, db, "translation_bindings"))
-	require.EqualValues(t, 1, countRowsWhere(t, db, "translation_bindings", "status = 'cached'"))
-	require.EqualValues(t, 3, countRowsWhere(t, db, "translation_bindings", "status = 'translated'"))
-	require.EqualValues(t, 2, countRowsWhere(t, db, "translation_batches", "status = 'succeeded'"))
+	require.Equal(t, "Existing value", responseClassEN)
 }
 
 func TestStoreBuildTranslationWorksetExportsMissingFieldsFromRelatedTables(t *testing.T) {
@@ -628,18 +323,65 @@ func TestStoreApplyTranslationWorksetUpdatesPostgresFields(t *testing.T) {
 		RoleGroup:             "Styret",
 	})
 	path := filepath.Join(t.TempDir(), "translation-workset.sqlite")
-	_, err := writeTranslationWorkset(t.Context(), path, translationWorksetMetadata{PromptVersion: "v1"}, []translationWorksetRow{
-		cachedWorksetRow(seed.CompanyID.String(), "brreg_source.companies", seed.CompanyID.String(), "response_class", "response_class_en", "Enhet", "Entity"),
-		cachedWorksetRow(seed.CompanyID.String(), "brreg_source.addresses", seed.AddressID.String(), "country", "country_en", "Norge", "Norway"),
-		cachedWorksetRow(seed.CompanyID.String(), "brreg_source.industries", seed.IndustryID.String(), "source_label", "source_label_en", "Andre egeninvesteringsselskaper", "Other own-investment companies"),
-		cachedWorksetRow(seed.CompanyID.String(), "brreg_source.websites", seed.WebsiteID.String(), "title", "title_en", "Kontakt oss", "Contact us"),
-		cachedWorksetRow(seed.CompanyID.String(), "brreg_source.websites", seed.WebsiteID.String(), "description", "description_en", "Offisiell hjemmeside", "Official website"),
-		cachedWorksetRow(seed.CompanyID.String(), "brreg_source.contacts", seed.ContactID.String(), "label", "label_en", "Sentralbord", "Switchboard"),
-		cachedWorksetRow(seed.CompanyID.String(), "brreg_source.capital", seed.CapitalID.String(), "capital_type", "capital_type_en", "Aksjekapital", "Share capital"),
-		cachedWorksetRow(seed.CompanyID.String(), "brreg_source.roles", seed.RoleID.String(), "role_label", "role_label_en", "Styrets leder", "Chair of the board"),
-		cachedWorksetRow(seed.CompanyID.String(), "brreg_source.roles", seed.RoleID.String(), "role_group", "role_group_en", "Styret", "Board"),
+	built, err := New(tx).BuildTranslationWorkset(t.Context(), BuildTranslationWorksetCommand{
+		Path:          path,
+		PromptVersion: "v1",
+		IDs:           []string{seed.CompanyID.String()},
 	})
 	require.NoError(t, err)
+	require.GreaterOrEqual(t, built.FieldsExported, int32(9))
+
+	claimed, err := ClaimTranslationWorksetBatch(t.Context(), ClaimTranslationWorksetBatchCommand{
+		Path:            path,
+		MaxRequestChars: 10000,
+		MaxTerms:        50,
+		MaxAttempts:     3,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "claimed", claimed.Status)
+	require.NotEmpty(t, claimed.Terms)
+	translated := map[string]string{
+		"Aksjeselskap":                    "Limited liability company",
+		"Enhet":                           "Entity",
+		"Norge":                           "Norway",
+		"Andre egeninvesteringsselskaper": "Other own-investment companies",
+		"Kontakt oss":                     "Contact us",
+		"Offisiell hjemmeside":            "Official website",
+		"Sentralbord":                     "Switchboard",
+		"Aksjekapital":                    "Share capital",
+		"Styrets leder":                   "Chair of the board",
+		"Styret":                          "Board",
+	}
+	results := make([]TranslationTermResult, 0, len(claimed.Terms))
+	for _, term := range claimed.Terms {
+		translatedText := translated[term.SourceText]
+		require.NotEmpty(t, translatedText, "missing test translation for %q", term.SourceText)
+		results = append(results, TranslationTermResult{
+			TermKey:              term.TermKey,
+			SourceText:           term.SourceText,
+			SourceTextNormalized: term.SourceTextNormalized,
+			TranslatedText:       translatedText,
+			Status:               "succeeded",
+		})
+	}
+	saved, err := SaveTranslationWorksetBatch(t.Context(), SaveTranslationWorksetBatchCommand{
+		Path:          path,
+		BatchID:       claimed.BatchID,
+		Provider:      "mock",
+		Model:         "mock-fast",
+		PromptVersion: "v1",
+		Results:       results,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, len(results), saved.TermsSucceeded)
+	drained, err := ClaimTranslationWorksetBatch(t.Context(), ClaimTranslationWorksetBatchCommand{
+		Path:            path,
+		MaxRequestChars: 10000,
+		MaxTerms:        50,
+		MaxAttempts:     3,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "drained", drained.Status)
 
 	result, err := New(tx).ApplyTranslationWorkset(t.Context(), ApplyTranslationWorksetCommand{
 		Path:          path,
@@ -647,8 +389,8 @@ func TestStoreApplyTranslationWorksetUpdatesPostgresFields(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.EqualValues(t, 9, result.BindingsApplied)
-	require.EqualValues(t, 9, result.TermsSaved)
+	require.EqualValues(t, built.FieldsExported, result.BindingsApplied)
+	require.EqualValues(t, len(results), result.TermsSaved)
 
 	var responseClassEN string
 	var countryEN string
@@ -703,28 +445,6 @@ WHERE company.id = $1
 	db := openWorksetDB(t, path)
 	defer db.Close()
 	require.EqualValues(t, 9, countRowsWhere(t, db, "translation_bindings", "status = 'applied'"))
-}
-
-func cachedWorksetRow(
-	companyID string,
-	sourceTable string,
-	sourceRowID string,
-	sourceColumn string,
-	targetColumn string,
-	sourceText string,
-	translatedText string,
-) translationWorksetRow {
-	return translationWorksetRow{
-		CompanyID:            companyID,
-		SourceTable:          sourceTable,
-		SourceRowID:          sourceRowID,
-		SourceColumn:         sourceColumn,
-		TargetColumn:         targetColumn,
-		SourceText:           sourceText,
-		SourceTextNormalized: normalizeTranslationText(sourceText),
-		TermKey:              translationTermKey(sourceText),
-		CachedTranslatedText: translatedText,
-	}
 }
 
 func openWorksetDB(t *testing.T, path string) *sql.DB {

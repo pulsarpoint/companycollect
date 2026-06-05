@@ -10,6 +10,7 @@ import (
 	temporalworker "go.temporal.io/sdk/worker"
 
 	ariregisteractions "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/actions"
+	ariregistercompanydata "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/companydata"
 	ariregisterdb "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/db"
 	brregactions "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/actions"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/brreg/companydata"
@@ -31,21 +32,22 @@ import (
 )
 
 type temporalWorkerResources struct {
-	translationClient        *translationclient.Client
-	companyTranslation       *brregactions.CompanyTranslationActions
-	crawlClient              *crawlclient.Client
-	domainSearchActions      *brregactions.DomainSearchActions
-	bulkIngestActions        *brregactions.BulkIngestActions
-	sourceProfileActions     *brregactions.SourceProfileActions
-	sourceCapitalFX          *brregactions.SourceCapitalFXActions
-	sourceFinancial          *brregactions.SourceFinancialActions
-	ariregisterBulkIngest    *ariregisteractions.BulkIngestActions
-	ariregisterSourceProfile *ariregisteractions.SourceProfileActions
-	cvrRawIngest             *cvractions.RawIngestActions
-	franceBulkIngest         *franceactions.BulkIngestActions
-	seBulkIngest             *seactions.BulkIngestActions
-	naceTaxonomyActions      *nacetaxonomy.Actions
-	fxActions                *fx.Actions
+	translationClient             *translationclient.Client
+	companyTranslation            *brregactions.CompanyTranslationActions
+	crawlClient                   *crawlclient.Client
+	domainSearchActions           *brregactions.DomainSearchActions
+	bulkIngestActions             *brregactions.BulkIngestActions
+	sourceProfileActions          *brregactions.SourceProfileActions
+	sourceCapitalFX               *brregactions.SourceCapitalFXActions
+	sourceFinancial               *brregactions.SourceFinancialActions
+	ariregisterCompanyTranslation *ariregisteractions.CompanyTranslationActions
+	ariregisterBulkIngest         *ariregisteractions.BulkIngestActions
+	ariregisterSourceProfile      *ariregisteractions.SourceProfileActions
+	cvrRawIngest                  *cvractions.RawIngestActions
+	franceBulkIngest              *franceactions.BulkIngestActions
+	seBulkIngest                  *seactions.BulkIngestActions
+	naceTaxonomyActions           *nacetaxonomy.Actions
+	fxActions                     *fx.Actions
 }
 
 func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore *llmproviders.Store, s3 *s3client.Client) (*temporalWorkerResources, error) {
@@ -77,20 +79,22 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 	brregCompanyData := companydata.New(pool)
 	financialClient := financial.NewClient(cfg.BRREGFinancialURL, http.DefaultClient)
 	ariregisterGateway := ariregisterdb.New(pool)
+	ariregisterCompanyData := ariregistercompanydata.New(pool)
 	cvrGateway := cvrdb.New(pool)
 	franceGateway := francedb.New(pool)
 	seGateway := sedb.New(pool)
 	return &temporalWorkerResources{
-		translationClient:        translator,
-		companyTranslation:       brregactions.NewCompanyTranslationActions(brregCompanyData, translator),
-		crawlClient:              crawler,
-		domainSearchActions:      brregactions.NewDomainSearchActions(gateway, crawler, llmStore, s3),
-		bulkIngestActions:        brregactions.NewBulkIngestActions(gateway, http.DefaultClient, cfg.BRREGBulkSourceURL),
-		sourceProfileActions:     brregactions.NewSourceProfileActions(gateway),
-		sourceCapitalFX:          brregactions.NewSourceCapitalFXActions(gateway),
-		sourceFinancial:          brregactions.NewSourceFinancialActions(gateway, financialClient),
-		ariregisterBulkIngest:    ariregisteractions.NewBulkIngestActions(ariregisterGateway, http.DefaultClient, cfg.AriregisterSourceURL),
-		ariregisterSourceProfile: ariregisteractions.NewSourceProfileActions(ariregisterGateway),
+		translationClient:             translator,
+		companyTranslation:            brregactions.NewCompanyTranslationActions(brregCompanyData, translator),
+		crawlClient:                   crawler,
+		domainSearchActions:           brregactions.NewDomainSearchActions(gateway, crawler, llmStore, s3),
+		bulkIngestActions:             brregactions.NewBulkIngestActions(gateway, http.DefaultClient, cfg.BRREGBulkSourceURL),
+		sourceProfileActions:          brregactions.NewSourceProfileActions(gateway),
+		sourceCapitalFX:               brregactions.NewSourceCapitalFXActions(gateway),
+		sourceFinancial:               brregactions.NewSourceFinancialActions(gateway, financialClient),
+		ariregisterCompanyTranslation: ariregisteractions.NewCompanyTranslationActions(ariregisterCompanyData, translator),
+		ariregisterBulkIngest:         ariregisteractions.NewBulkIngestActions(ariregisterGateway, http.DefaultClient, cfg.AriregisterSourceURL),
+		ariregisterSourceProfile:      ariregisteractions.NewSourceProfileActions(ariregisterGateway),
 		cvrRawIngest: cvractions.NewRawIngestActions(cvrGateway, http.DefaultClient, cvractions.RawIngestConfig{
 			SourceURL:   cfg.CVRSourceURL,
 			ScrollURL:   cfg.CVRScrollURL,
@@ -106,6 +110,7 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 		}),
 		seBulkIngest: seactions.NewBulkIngestActions(seGateway, http.DefaultClient, seactions.BulkIngestConfig{
 			DatasetsJSON: cfg.SEHVDDatasetsJSON,
+			StagingRoot:  cfg.SEHVDStagingRoot,
 		}),
 		naceTaxonomyActions: nacetaxonomy.NewActions(pool, http.DefaultClient),
 		fxActions:           fx.NewActions(pool, http.DefaultClient, cfg.FXECBSourceURL),
@@ -133,6 +138,7 @@ func newTemporalWorkers(temporalClient client.Client, resources *temporalWorkerR
 		newBrregSourceExplorerRefreshTemporalWorker(temporalClient, resources),
 		newBrregSourceCapitalFXTemporalWorker(temporalClient, resources),
 		newBrregSourceFinancialTemporalWorker(temporalClient, resources),
+		newAriregisterCompanyTranslationTemporalWorker(temporalClient, resources),
 		newAriregisterBulkIngestTemporalWorker(temporalClient, resources),
 		newAriregisterSourceProfileTemporalWorker(temporalClient, resources),
 		newAriregisterSourceExplorerRefreshTemporalWorker(temporalClient, resources),

@@ -31,6 +31,16 @@ func (g *Gateway) FinishWorkflowRun(ctx context.Context, params db.FinishFranceW
 	return nil
 }
 
+func (g *Gateway) FailWorkflowRunByOrchestrator(ctx context.Context, params db.FailFranceWorkflowRunByOrchestratorParams) error {
+	if g == nil || g.pool == nil {
+		return errors.New("france workflow database pool not available")
+	}
+	if err := db.New(g.pool).FailFranceWorkflowRunByOrchestrator(ctx, params); err != nil {
+		return errors.Wrap(err, "fail france workflow run by orchestrator")
+	}
+	return nil
+}
+
 func (g *Gateway) CreateBulkSnapshot(ctx context.Context, params db.CreateFranceBulkSnapshotParams) (uuid.UUID, error) {
 	if g == nil || g.pool == nil {
 		return uuid.Nil, errors.New("france workflow database pool not available")

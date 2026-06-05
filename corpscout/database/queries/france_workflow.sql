@@ -33,6 +33,15 @@ SET
 WHERE id = sqlc.arg('id')::uuid
 RETURNING id;
 
+-- name: FailFranceWorkflowRunByOrchestrator :exec
+UPDATE france_workflow.workflow_runs
+SET
+  status = 'failed',
+  finished_at = now(),
+  error = sqlc.narg('error')::text
+WHERE orchestrator_run_id = sqlc.arg('orchestrator_run_id')::text
+  AND status = 'running';
+
 -- name: CreateFranceBulkSnapshot :one
 INSERT INTO france_workflow.bulk_snapshots (
   workflow_run_id,

@@ -41,6 +41,15 @@ type currentRawRecord struct {
 	PayloadHash string
 }
 
+type ProcessedSourceFile struct {
+	ID          uuid.UUID
+	SourceURL   string
+	PayloadHash string
+	RowsSeen    int32
+	RowsWritten int32
+	Metadata    []byte
+}
+
 func jsonObject(value []byte) []byte {
 	if len(value) == 0 || !json.Valid(value) {
 		return []byte(jsonPayloadEmptyObject)

@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
+	"github.com/pulsarpoint/corpscout/scheduler/internal/sourcetranslation"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/testdb"
 )
 
@@ -400,7 +401,7 @@ WHERE company.id = $1
 
 func TestStoreSaveTranslationTermsPersistsSucceededAndFailedTerms(t *testing.T) {
 	tx := testdb.BeginTx(t)
-	terms := []TranslationTermResult{
+	terms := []sourcetranslation.TranslationTermResult{
 		{
 			SourceText:           "Aksjeselskap",
 			SourceTextNormalized: "aksjeselskap",
@@ -424,7 +425,10 @@ func TestStoreSaveTranslationTermsPersistsSucceededAndFailedTerms(t *testing.T) 
 		},
 	}
 
-	result, err := New(tx).SaveTranslationTerms(t.Context(), terms)
+	result, err := New(tx).SaveTranslationTerms(t.Context(), sourcetranslation.SaveTermsCommand{
+		PromptVersion: "v1",
+		Terms:         terms,
+	})
 
 	require.NoError(t, err)
 	require.EqualValues(t, 2, result.TermsSaved)

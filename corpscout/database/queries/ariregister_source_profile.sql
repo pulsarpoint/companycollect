@@ -15,7 +15,7 @@ SELECT
   0::bigint AS artifact_skipped,
   0::bigint AS artifact_failed,
   COALESCE(sum(translation_missing_count), 0)::bigint AS artifact_missing
-FROM ariregister_source.mv_company_explorer;
+FROM ariregister_source.mv_company_translation_status;
 
 -- name: GetAriregisterSourceResultTableCounts :one
 SELECT
@@ -104,3 +104,53 @@ FROM ariregister_source.mv_company_explorer;
 
 -- name: RefreshAriregisterSourceCompanyExplorer :exec
 REFRESH MATERIALIZED VIEW CONCURRENTLY ariregister_source.mv_company_explorer;
+
+-- name: RefreshAriregisterSourceCompanyTranslationStatus :exec
+REFRESH MATERIALIZED VIEW ariregister_source.mv_company_translation_status;
+
+-- name: UpsertAriregisterTranslationTermResult :exec
+INSERT INTO ariregister_source.translation_terms (
+  source,
+  source_lang,
+  target_lang,
+  source_text_normalized,
+  source_text,
+  term_key,
+  translated_text,
+  status,
+  provider,
+  model,
+  prompt_version,
+  error,
+  error_code,
+  metadata,
+  translated_at,
+  updated_at
+) VALUES (
+  'ariregister',
+  sqlc.arg('source_lang')::text,
+  sqlc.arg('target_lang')::text,
+  sqlc.arg('source_text_normalized')::text,
+  sqlc.arg('source_text')::text,
+  sqlc.arg('term_key')::text,
+  sqlc.narg('translated_text')::text,
+  sqlc.arg('status')::text,
+  sqlc.narg('provider')::text,
+  sqlc.narg('model')::text,
+  sqlc.arg('prompt_version')::text,
+  sqlc.narg('error')::text,
+  sqlc.narg('error_code')::text,
+  sqlc.arg('metadata')::jsonb,
+  CASE WHEN sqlc.arg('status')::text = 'succeeded' THEN now() ELSE NULL END,
+  now()
+)
+ON CONFLICT (source, source_lang, target_lang, prompt_version, term_key) DO UPDATE
+SET translated_text = EXCLUDED.translated_text,
+    status = EXCLUDED.status,
+    provider = EXCLUDED.provider,
+    model = EXCLUDED.model,
+    error = EXCLUDED.error,
+    error_code = EXCLUDED.error_code,
+    metadata = ariregister_source.translation_terms.metadata || EXCLUDED.metadata,
+    translated_at = CASE WHEN EXCLUDED.status = 'succeeded' THEN now() ELSE ariregister_source.translation_terms.translated_at END,
+    updated_at = now();

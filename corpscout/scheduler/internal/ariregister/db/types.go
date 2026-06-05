@@ -17,6 +17,30 @@ type IngestRawRecordsResult struct {
 	RawRecordIDs          []uuid.UUID
 }
 
+type TranslationTermResult struct {
+	SourceLang           string
+	TargetLang           string
+	SourceTextNormalized string
+	SourceText           string
+	TermKey              string
+	TranslatedText       string
+	Status               string
+	Provider             string
+	Model                string
+	PromptVersion        string
+	Error                string
+	ErrorCode            string
+	Metadata             map[string]any
+}
+
+type UpsertTranslationTermsCommand struct {
+	Terms []TranslationTermResult
+}
+
+type UpsertTranslationTermsResult struct {
+	TermsUpserted int32
+}
+
 func jsonObject(value []byte) []byte {
 	if len(value) == 0 {
 		return []byte(jsonPayloadEmptyObject)

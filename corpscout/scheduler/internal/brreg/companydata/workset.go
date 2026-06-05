@@ -2,18 +2,14 @@ package companydata
 
 import (
 	"context"
-	"database/sql"
-	"os"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	_ "modernc.org/sqlite"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/sourcetranslation"
 )
 
 const (
@@ -24,6 +20,13 @@ const (
 	refreshCompanyTranslationStatusSQL = `REFRESH MATERIALIZED VIEW brreg_source.mv_company_translation_status`
 )
 
+var brregTranslationSourceConfig = sourcetranslation.SourceConfig{
+	Source:               defaultTranslationWorksetSource,
+	SourceLang:           defaultTranslationWorksetSourceLang,
+	TargetLang:           defaultTranslationWorksetTargetLang,
+	DefaultPromptVersion: defaultPromptVersion,
+}
+
 type BuildTranslationWorksetCommand struct {
 	Path          string
 	PromptVersion string
@@ -33,84 +36,23 @@ type BuildTranslationWorksetCommand struct {
 	FieldLimit    int32
 }
 
-type BuildTranslationWorksetResult struct {
-	Path              string
-	FieldsExported    int32
-	TermsExported     int32
-	CompaniesExported int32
-	CachedFields      int32
-}
+type BuildTranslationWorksetResult = sourcetranslation.BuildWorksetResult
 
-type translationWorksetMetadata struct {
-	Source        string
-	SourceLang    string
-	TargetLang    string
-	PromptVersion string
-}
+type ClaimTranslationWorksetBatchCommand = sourcetranslation.ClaimBatchCommand
 
-type translationWorksetRow struct {
-	CompanyID            string
-	SourceTable          string
-	SourceRowID          string
-	SourceColumn         string
-	TargetColumn         string
-	SourceText           string
-	SourceTextNormalized string
-	TermKey              string
-	CachedTranslatedText string
-}
+type TranslationWorksetTerm = sourcetranslation.TranslationTerm
 
-type ClaimTranslationWorksetBatchCommand struct {
-	Path            string
-	MaxRequestChars int32
-	MaxTerms        int32
-	MaxAttempts     int32
-}
+type ClaimTranslationWorksetBatchResult = sourcetranslation.ClaimBatchResult
 
-type TranslationWorksetTerm struct {
-	TermKey              string
-	SourceText           string
-	SourceTextNormalized string
-}
+type SaveTranslationWorksetBatchCommand = sourcetranslation.SaveBatchCommand
 
-type ClaimTranslationWorksetBatchResult struct {
-	Status         string
-	BatchID        int64
-	Terms          []TranslationWorksetTerm
-	EstimatedChars int32
-}
+type SaveTranslationWorksetBatchResult = sourcetranslation.SaveBatchResult
 
-type SaveTranslationWorksetBatchCommand struct {
-	Path          string
-	BatchID       int64
-	Provider      string
-	Model         string
-	PromptVersion string
-	Results       []TranslationTermResult
-}
+type ApplyTranslationWorksetCommand = sourcetranslation.ApplyWorksetCommand
 
-type SaveTranslationWorksetBatchResult struct {
-	TermsSucceeded int32
-	TermsFailed    int32
-}
+type ApplyTranslationWorksetResult = sourcetranslation.ApplyWorksetResult
 
-type ApplyTranslationWorksetCommand struct {
-	Path          string
-	PromptVersion string
-}
-
-type ApplyTranslationWorksetResult struct {
-	TermsSaved      int32
-	BindingsApplied int32
-}
-
-type translationWorksetBinding struct {
-	ID             int64
-	SourceTable    string
-	SourceRowID    string
-	TargetColumn   string
-	TranslatedText string
-}
+type translationWorksetBinding = sourcetranslation.TranslationBinding
 
 func (s *Store) BuildTranslationWorkset(
 	ctx context.Context,
@@ -119,221 +61,28 @@ func (s *Store) BuildTranslationWorkset(
 	if s == nil || s.pool == nil {
 		return BuildTranslationWorksetResult{}, errors.New("brreg companydata database not available")
 	}
-	command = normalizeBuildTranslationWorksetCommand(command)
-	if err := s.refreshCompanyTranslationStatus(ctx); err != nil {
-		return BuildTranslationWorksetResult{}, err
-	}
-	rows, err := s.loadTranslationWorksetRows(ctx, command)
-	if err != nil {
-		return BuildTranslationWorksetResult{}, err
-	}
-	result, err := writeTranslationWorkset(ctx, command.Path, translationWorksetMetadata{
-		Source:        defaultTranslationWorksetSource,
-		SourceLang:    defaultTranslationWorksetSourceLang,
-		TargetLang:    defaultTranslationWorksetTargetLang,
+	return sourcetranslation.BuildWorkset(ctx, s, brregTranslationSourceConfig, sourcetranslation.BuildWorksetCommand{
+		Path:          command.Path,
 		PromptVersion: command.PromptVersion,
-	}, rows)
-	if err != nil {
-		return BuildTranslationWorksetResult{}, errors.Wrap(err, "write brreg translation workset")
-	}
-	return result, nil
+		CompanyIDs:    command.IDs,
+		Filters:       command.Filters,
+		CompanyLimit:  command.CompanyLimit,
+		FieldLimit:    command.FieldLimit,
+	})
 }
 
 func ClaimTranslationWorksetBatch(
 	ctx context.Context,
 	command ClaimTranslationWorksetBatchCommand,
 ) (ClaimTranslationWorksetBatchResult, error) {
-	command = normalizeClaimTranslationWorksetBatchCommand(command)
-	db, err := openExistingTranslationWorkset(command.Path)
-	if err != nil {
-		return ClaimTranslationWorksetBatchResult{}, err
-	}
-	defer db.Close()
-
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return ClaimTranslationWorksetBatchResult{}, errors.Wrap(err, "begin translation workset batch claim")
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	pendingRows, err := tx.QueryContext(ctx, `
-SELECT term_key, source_text, source_text_normalized
-FROM translation_terms
-WHERE status = 'pending'
-   OR (status = 'failed_retryable' AND attempt_count < ?)
-ORDER BY updated_at, source_text_normalized, term_key
-`, command.MaxAttempts)
-	if err != nil {
-		return ClaimTranslationWorksetBatchResult{}, errors.Wrap(err, "select pending translation workset terms")
-	}
-	defer pendingRows.Close()
-
-	terms := make([]TranslationWorksetTerm, 0)
-	var estimatedChars int32
-	for pendingRows.Next() {
-		var term TranslationWorksetTerm
-		if err := pendingRows.Scan(&term.TermKey, &term.SourceText, &term.SourceTextNormalized); err != nil {
-			return ClaimTranslationWorksetBatchResult{}, errors.Wrap(err, "scan pending translation workset term")
-		}
-		termChars := int32(len([]rune(strings.TrimSpace(term.SourceText))))
-		wouldExceedChars := len(terms) > 0 && estimatedChars+termChars > command.MaxRequestChars
-		wouldExceedTerms := len(terms) > 0 && int32(len(terms)) >= command.MaxTerms
-		if wouldExceedChars || wouldExceedTerms {
-			break
-		}
-		terms = append(terms, term)
-		estimatedChars += termChars
-	}
-	if err := pendingRows.Err(); err != nil {
-		return ClaimTranslationWorksetBatchResult{}, errors.Wrap(err, "iterate pending translation workset terms")
-	}
-	if len(terms) == 0 {
-		return ClaimTranslationWorksetBatchResult{Status: "drained"}, nil
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	batchResult, err := tx.ExecContext(ctx, `
-INSERT INTO translation_batches (status, term_count, estimated_chars, created_at, updated_at)
-VALUES ('running', ?, ?, ?, ?)
-`, len(terms), estimatedChars, now, now)
-	if err != nil {
-		return ClaimTranslationWorksetBatchResult{}, errors.Wrap(err, "insert translation workset batch")
-	}
-	batchID, err := batchResult.LastInsertId()
-	if err != nil {
-		return ClaimTranslationWorksetBatchResult{}, errors.Wrap(err, "get translation workset batch id")
-	}
-	for _, term := range terms {
-		if _, err := tx.ExecContext(ctx, `
-UPDATE translation_terms
-SET status = 'running',
-    attempt_count = attempt_count + 1,
-    updated_at = ?
-WHERE term_key = ?
-  AND (
-    status = 'pending'
-    OR (status = 'failed_retryable' AND attempt_count < ?)
-  )
-`, now, term.TermKey, command.MaxAttempts); err != nil {
-			return ClaimTranslationWorksetBatchResult{}, errors.Wrap(err, "mark translation workset term running")
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return ClaimTranslationWorksetBatchResult{}, errors.Wrap(err, "commit translation workset batch claim")
-	}
-	return ClaimTranslationWorksetBatchResult{
-		Status:         "claimed",
-		BatchID:        batchID,
-		Terms:          terms,
-		EstimatedChars: estimatedChars,
-	}, nil
+	return sourcetranslation.ClaimBatch(ctx, command)
 }
 
 func SaveTranslationWorksetBatch(
 	ctx context.Context,
 	command SaveTranslationWorksetBatchCommand,
 ) (SaveTranslationWorksetBatchResult, error) {
-	command = normalizeSaveTranslationWorksetBatchCommand(command)
-	db, err := openExistingTranslationWorkset(command.Path)
-	if err != nil {
-		return SaveTranslationWorksetBatchResult{}, err
-	}
-	defer db.Close()
-
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return SaveTranslationWorksetBatchResult{}, errors.Wrap(err, "begin translation workset batch save")
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	result := SaveTranslationWorksetBatchResult{}
-	for _, item := range command.Results {
-		item.TermKey = strings.TrimSpace(item.TermKey)
-		item.SourceText = strings.TrimSpace(item.SourceText)
-		item.SourceTextNormalized = strings.TrimSpace(item.SourceTextNormalized)
-		item.TranslatedText = strings.TrimSpace(item.TranslatedText)
-		item.Status = strings.TrimSpace(item.Status)
-		if item.TermKey == "" {
-			continue
-		}
-		if item.SourceTextNormalized == "" {
-			item.SourceTextNormalized = normalizeTranslationText(item.SourceText)
-		}
-		if item.Status == "succeeded" && item.TranslatedText != "" {
-			if _, err := tx.ExecContext(ctx, `
-UPDATE translation_terms
-SET status = 'succeeded',
-    translated_text = ?,
-    error = NULL,
-    provider = ?,
-    model = ?,
-    prompt_version = ?,
-    updated_at = ?
-WHERE term_key = ?
-`, item.TranslatedText, command.Provider, command.Model, command.PromptVersion, now, item.TermKey); err != nil {
-				return SaveTranslationWorksetBatchResult{}, errors.Wrap(err, "save successful translation workset term")
-			}
-			if _, err := tx.ExecContext(ctx, `
-UPDATE translation_bindings
-SET status = 'translated',
-    translated_text = ?,
-    error = NULL
-WHERE term_key = ?
-  AND status IN ('pending', 'cached', 'translated', 'failed')
-`, item.TranslatedText, item.TermKey); err != nil {
-				return SaveTranslationWorksetBatchResult{}, errors.Wrap(err, "save successful translation workset bindings")
-			}
-			result.TermsSucceeded++
-			continue
-		}
-		status := item.Status
-		if status == "" || status == "failed" {
-			status = "failed_retryable"
-		}
-		errorMessage := strings.TrimSpace(item.Error)
-		if errorMessage == "" {
-			errorMessage = strings.TrimSpace(item.ErrorCode)
-		}
-		if _, err := tx.ExecContext(ctx, `
-UPDATE translation_terms
-SET status = ?,
-    error = ?,
-    provider = ?,
-    model = ?,
-    prompt_version = ?,
-    updated_at = ?
-WHERE term_key = ?
-`, status, errorMessage, command.Provider, command.Model, command.PromptVersion, now, item.TermKey); err != nil {
-			return SaveTranslationWorksetBatchResult{}, errors.Wrap(err, "save failed translation workset term")
-		}
-		if _, err := tx.ExecContext(ctx, `
-UPDATE translation_bindings
-SET status = 'failed',
-    error = ?
-WHERE term_key = ?
-  AND status IN ('pending', 'failed')
-`, errorMessage, item.TermKey); err != nil {
-			return SaveTranslationWorksetBatchResult{}, errors.Wrap(err, "save failed translation workset bindings")
-		}
-		result.TermsFailed++
-	}
-	batchStatus := "succeeded"
-	if result.TermsSucceeded == 0 && result.TermsFailed > 0 {
-		batchStatus = "failed"
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE translation_batches
-SET status = ?,
-    updated_at = ?
-WHERE id = ?
-`, batchStatus, now, command.BatchID); err != nil {
-		return SaveTranslationWorksetBatchResult{}, errors.Wrap(err, "mark translation workset batch finished")
-	}
-	if err := tx.Commit(); err != nil {
-		return SaveTranslationWorksetBatchResult{}, errors.Wrap(err, "commit translation workset batch save")
-	}
-	return result, nil
+	return sourcetranslation.SaveBatch(ctx, command)
 }
 
 func (s *Store) ApplyTranslationWorkset(
@@ -343,50 +92,11 @@ func (s *Store) ApplyTranslationWorkset(
 	if s == nil || s.pool == nil {
 		return ApplyTranslationWorksetResult{}, errors.New("brreg companydata database not available")
 	}
-	command = normalizeApplyTranslationWorksetCommand(command)
-	sqliteDB, err := openExistingTranslationWorkset(command.Path)
-	if err != nil {
-		return ApplyTranslationWorksetResult{}, err
-	}
-	defer sqliteDB.Close()
+	return sourcetranslation.ApplyWorkset(ctx, s, command)
+}
 
-	terms, err := loadTranslationWorksetTermResults(ctx, sqliteDB, command.PromptVersion)
-	if err != nil {
-		return ApplyTranslationWorksetResult{}, err
-	}
-	result := ApplyTranslationWorksetResult{}
-	if len(terms) > 0 {
-		saved, err := s.SaveTranslationTerms(ctx, terms)
-		if err != nil {
-			return ApplyTranslationWorksetResult{}, errors.Wrap(err, "save translation workset terms to postgres")
-		}
-		result.TermsSaved = saved.TermsSaved
-	}
-
-	bindings, err := loadTranslationWorksetBindings(ctx, sqliteDB)
-	if err != nil {
-		return ApplyTranslationWorksetResult{}, err
-	}
-	if len(bindings) == 0 {
-		if result.TermsSaved > 0 {
-			if err := s.refreshCompanyTranslationStatus(ctx); err != nil {
-				return ApplyTranslationWorksetResult{}, err
-			}
-		}
-		return result, nil
-	}
-	appliedIDs, err := s.applyTranslationWorksetBindings(ctx, bindings)
-	if err != nil {
-		return ApplyTranslationWorksetResult{}, err
-	}
-	if err := markTranslationWorksetBindingsApplied(ctx, sqliteDB, appliedIDs); err != nil {
-		return ApplyTranslationWorksetResult{}, err
-	}
-	result.BindingsApplied = int32(len(appliedIDs))
-	if err := s.refreshCompanyTranslationStatus(ctx); err != nil {
-		return ApplyTranslationWorksetResult{}, err
-	}
-	return result, nil
+func (s *Store) RefreshTranslationStatus(ctx context.Context) error {
+	return s.refreshCompanyTranslationStatus(ctx)
 }
 
 func (s *Store) refreshCompanyTranslationStatus(ctx context.Context) error {
@@ -399,57 +109,15 @@ func (s *Store) refreshCompanyTranslationStatus(ctx context.Context) error {
 	return nil
 }
 
-func normalizeBuildTranslationWorksetCommand(command BuildTranslationWorksetCommand) BuildTranslationWorksetCommand {
-	command.Path = strings.TrimSpace(command.Path)
-	if command.PromptVersion == "" {
-		command.PromptVersion = defaultPromptVersion
-	}
-	command.IDs = normalizedTextValues(command.IDs)
-	command.Filters = normalizedTextFilters(command.Filters)
-	return command
-}
-
-func normalizeClaimTranslationWorksetBatchCommand(
-	command ClaimTranslationWorksetBatchCommand,
-) ClaimTranslationWorksetBatchCommand {
-	command.Path = strings.TrimSpace(command.Path)
-	if command.MaxRequestChars <= 0 {
-		command.MaxRequestChars = 12000
-	}
-	if command.MaxTerms <= 0 {
-		command.MaxTerms = 200
-	}
-	if command.MaxAttempts <= 0 {
-		command.MaxAttempts = 3
-	}
-	return command
-}
-
-func normalizeSaveTranslationWorksetBatchCommand(
-	command SaveTranslationWorksetBatchCommand,
-) SaveTranslationWorksetBatchCommand {
-	command.Path = strings.TrimSpace(command.Path)
-	if command.PromptVersion == "" {
-		command.PromptVersion = defaultPromptVersion
-	}
-	return command
-}
-
-func normalizeApplyTranslationWorksetCommand(command ApplyTranslationWorksetCommand) ApplyTranslationWorksetCommand {
-	command.Path = strings.TrimSpace(command.Path)
-	if command.PromptVersion == "" {
-		command.PromptVersion = defaultPromptVersion
-	}
-	return command
-}
-
-func (s *Store) loadTranslationWorksetRows(
+func (s *Store) LoadMissingTranslationFields(
 	ctx context.Context,
-	command BuildTranslationWorksetCommand,
-) ([]translationWorksetRow, error) {
-	if command.Path == "" {
-		return nil, errors.New("translation workset path is required")
+	command sourcetranslation.LoadMissingFieldsCommand,
+) ([]sourcetranslation.MissingField, error) {
+	if s == nil || s.pool == nil {
+		return nil, errors.New("brreg companydata database not available")
 	}
+	command.CompanyIDs = normalizedTextValues(command.CompanyIDs)
+	command.Filters = normalizedTextFilters(command.Filters)
 	rows, err := s.pool.Query(ctx, `
 WITH selected_companies AS (
   SELECT translation_status.company_id
@@ -459,33 +127,33 @@ WITH selected_companies AS (
   WHERE true
     AND translation_status.translation_missing_count > 0
     AND (
-      COALESCE(cardinality($4::text[]), 0) = 0
-      OR translation_status.company_id::text = ANY($4::text[])
+      COALESCE(cardinality($3::text[]), 0) = 0
+      OR translation_status.company_id::text = ANY($3::text[])
     )
     AND (
-      $5::text IS NULL
-      OR company.organization_name ILIKE '%' || $5::text || '%'
-      OR company.organization_number ILIKE '%' || $5::text || '%'
-      OR coalesce(entry.primary_industry_label, '') ILIKE '%' || $5::text || '%'
-      OR coalesce(entry.city, '') ILIKE '%' || $5::text || '%'
-      OR coalesce(entry.municipality, '') ILIKE '%' || $5::text || '%'
+      $4::text IS NULL
+      OR company.organization_name ILIKE '%' || $4::text || '%'
+      OR company.organization_number ILIKE '%' || $4::text || '%'
+      OR coalesce(entry.primary_industry_label, '') ILIKE '%' || $4::text || '%'
+      OR coalesce(entry.city, '') ILIKE '%' || $4::text || '%'
+      OR coalesce(entry.municipality, '') ILIKE '%' || $4::text || '%'
     )
-    AND ($6::text IS NULL OR company.lifecycle_status = $6::text)
-    AND ($7::text IS NULL OR company.registration_status = $7::text)
+    AND ($5::text IS NULL OR company.lifecycle_status = $5::text)
+    AND ($6::text IS NULL OR company.registration_status = $6::text)
+    AND (
+      $7::text IS NULL
+      OR $7::text = 'missing'
+    )
     AND (
       $8::text IS NULL
-      OR $8::text = 'missing'
-    )
-    AND (
-      $9::text IS NULL
-      OR ($9::text = 'with' AND entry.website_count > 0)
-      OR ($9::text = 'without' AND entry.website_count = 0)
+      OR ($8::text = 'with' AND entry.website_count > 0)
+      OR ($8::text = 'without' AND entry.website_count = 0)
     )
   ORDER BY translation_status.min_missing_priority ASC,
     coalesce(entry.updated_at, translation_status.updated_at) DESC,
     company.organization_number ASC,
     translation_status.company_id ASC
-  LIMIT NULLIF(GREATEST($2::integer, 0), 0)
+  LIMIT NULLIF(GREATEST($1::integer, 0), 0)
 ),
 missing AS (
   SELECT
@@ -511,22 +179,14 @@ SELECT
   missing.source_text,
   missing.source_text_normalized,
   missing.term_key,
-  coalesce(term.translated_text, '') AS cached_translated_text
+  missing.priority
 FROM missing
-LEFT JOIN brreg_source.translation_terms term
-  ON term.source = 'brreg'
- AND term.source_lang = 'no'
- AND term.target_lang = 'en'
- AND term.prompt_version = $1
- AND term.term_key = missing.term_key
- AND term.status = 'succeeded'
- AND nullif(btrim(term.translated_text), '') IS NOT NULL
 ORDER BY missing.priority, missing.company_id, missing.source_table, missing.source_row_id, missing.target_column
-LIMIT NULLIF(GREATEST($3::integer, 0), 0)
-`, command.PromptVersion,
+LIMIT NULLIF(GREATEST($2::integer, 0), 0)
+`,
 		command.CompanyLimit,
 		command.FieldLimit,
-		command.IDs,
+		command.CompanyIDs,
 		textFilterValue(command.Filters, "query", "q"),
 		textFilterValue(command.Filters, "state", "lifecycle_state", "lifecycle_status"),
 		textFilterValue(command.Filters, "registration_status"),
@@ -534,32 +194,82 @@ LIMIT NULLIF(GREATEST($3::integer, 0), 0)
 		textFilterValue(command.Filters, "website_status"),
 	)
 	if err != nil {
-		return nil, errors.Wrap(err, "load brreg translation workset rows")
+		return nil, errors.Wrap(err, "load brreg missing translation fields")
 	}
 	defer rows.Close()
 
-	worksetRows := make([]translationWorksetRow, 0)
+	fields := make([]sourcetranslation.MissingField, 0)
 	for rows.Next() {
-		var row translationWorksetRow
+		var field sourcetranslation.MissingField
 		if err := rows.Scan(
-			&row.CompanyID,
-			&row.SourceTable,
-			&row.SourceRowID,
-			&row.SourceColumn,
-			&row.TargetColumn,
-			&row.SourceText,
-			&row.SourceTextNormalized,
-			&row.TermKey,
-			&row.CachedTranslatedText,
+			&field.CompanyID,
+			&field.SourceTable,
+			&field.SourceRowID,
+			&field.SourceColumn,
+			&field.TargetColumn,
+			&field.SourceText,
+			&field.SourceTextNormalized,
+			&field.TermKey,
+			&field.Priority,
 		); err != nil {
-			return nil, errors.Wrap(err, "scan brreg translation workset row")
+			return nil, errors.Wrap(err, "scan brreg missing translation field")
 		}
-		worksetRows = append(worksetRows, row)
+		fields = append(fields, field)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, errors.Wrap(err, "iterate brreg translation workset rows")
+		return nil, errors.Wrap(err, "iterate brreg missing translation fields")
 	}
-	return worksetRows, nil
+	return fields, nil
+}
+
+func (s *Store) LoadCachedTranslationTerms(
+	ctx context.Context,
+	command sourcetranslation.LoadCachedTermsCommand,
+) (map[string]sourcetranslation.CachedTerm, error) {
+	if s == nil || s.pool == nil {
+		return nil, errors.New("brreg companydata database not available")
+	}
+	promptVersion := strings.TrimSpace(command.PromptVersion)
+	if promptVersion == "" {
+		promptVersion = defaultPromptVersion
+	}
+	termKeys := normalizedTextValues(command.TermKeys)
+	if len(termKeys) == 0 {
+		return map[string]sourcetranslation.CachedTerm{}, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT term_key, btrim(translated_text) AS translated_text
+FROM brreg_source.translation_terms
+WHERE source = $1
+  AND source_lang = $2
+  AND target_lang = $3
+  AND prompt_version = $4
+  AND term_key = ANY($5::text[])
+  AND status = 'succeeded'
+  AND nullif(btrim(translated_text), '') IS NOT NULL
+`, defaultTranslationWorksetSource,
+		defaultTranslationWorksetSourceLang,
+		defaultTranslationWorksetTargetLang,
+		promptVersion,
+		termKeys,
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "load brreg cached translation terms")
+	}
+	defer rows.Close()
+
+	terms := make(map[string]sourcetranslation.CachedTerm)
+	for rows.Next() {
+		var term sourcetranslation.CachedTerm
+		if err := rows.Scan(&term.TermKey, &term.TranslatedText); err != nil {
+			return nil, errors.Wrap(err, "scan brreg cached translation term")
+		}
+		terms[term.TermKey] = term
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Wrap(err, "iterate brreg cached translation terms")
+	}
+	return terms, nil
 }
 
 func normalizedTextValues(values []string) []string {
@@ -603,359 +313,44 @@ func textFilterValue(filters map[string]string, keys ...string) *string {
 	return nil
 }
 
-func writeTranslationWorkset(
+func (s *Store) ApplyCompanyTranslations(
 	ctx context.Context,
-	path string,
-	metadata translationWorksetMetadata,
-	rows []translationWorksetRow,
-) (BuildTranslationWorksetResult, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return BuildTranslationWorksetResult{}, errors.New("translation workset path is required")
+	command sourcetranslation.ApplyCompanyTranslationsCommand,
+) (sourcetranslation.ApplyCompanyTranslationsResult, error) {
+	if s == nil || s.pool == nil {
+		return sourcetranslation.ApplyCompanyTranslationsResult{}, errors.New("brreg companydata database not available")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return BuildTranslationWorksetResult{}, errors.Wrap(err, "create translation workset directory")
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return BuildTranslationWorksetResult{}, errors.Wrap(err, "remove existing translation workset")
-	}
-
-	db, err := openTranslationWorkset(path)
-	if err != nil {
-		return BuildTranslationWorksetResult{}, err
-	}
-	defer db.Close()
-	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
-		return BuildTranslationWorksetResult{}, errors.Wrap(err, "enable translation workset foreign keys")
-	}
-	if err := createTranslationWorksetSchema(ctx, db); err != nil {
-		return BuildTranslationWorksetResult{}, err
-	}
-	return insertTranslationWorksetRows(ctx, db, path, metadata, rows)
-}
-
-func openTranslationWorkset(path string) (*sql.DB, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return nil, errors.New("translation workset path is required")
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, errors.Wrap(err, "open translation workset sqlite")
-	}
-	return db, nil
-}
-
-func openExistingTranslationWorkset(path string) (*sql.DB, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return nil, errors.New("translation workset path is required")
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, errors.Newf("translation workset file does not exist: %s", path)
-		}
-		return nil, errors.Wrap(err, "stat translation workset file")
-	}
-	if info.IsDir() {
-		return nil, errors.Newf("translation workset path is a directory: %s", path)
-	}
-	return openTranslationWorkset(path)
-}
-
-func createTranslationWorksetSchema(ctx context.Context, db *sql.DB) error {
-	_, err := db.ExecContext(ctx, `
-CREATE TABLE workset_metadata (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-
-CREATE TABLE translation_terms (
-  term_key TEXT PRIMARY KEY,
-  source_text TEXT NOT NULL,
-  source_text_normalized TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'succeeded', 'failed_retryable', 'failed_terminal')),
-  translated_text TEXT,
-  error TEXT,
-  attempt_count INTEGER NOT NULL DEFAULT 0,
-  provider TEXT,
-  model TEXT,
-  prompt_version TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE translation_bindings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  company_id TEXT NOT NULL,
-  source_table TEXT NOT NULL,
-  source_row_id TEXT NOT NULL,
-  source_column TEXT NOT NULL,
-  target_column TEXT NOT NULL,
-  source_text TEXT NOT NULL,
-  source_text_normalized TEXT NOT NULL,
-  term_key TEXT NOT NULL REFERENCES translation_terms(term_key),
-  status TEXT NOT NULL CHECK (status IN ('pending', 'cached', 'translated', 'applied', 'failed')),
-  translated_text TEXT,
-  error TEXT,
-  applied_at TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE translation_batches (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'succeeded', 'failed')),
-  term_count INTEGER NOT NULL DEFAULT 0,
-  estimated_chars INTEGER NOT NULL DEFAULT 0,
-  error TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE INDEX idx_translation_terms_status ON translation_terms(status, updated_at);
-CREATE INDEX idx_translation_bindings_term_key ON translation_bindings(term_key);
-CREATE INDEX idx_translation_bindings_status ON translation_bindings(status, company_id);
-CREATE INDEX idx_translation_bindings_target ON translation_bindings(source_table, source_row_id, target_column);
-`)
-	if err != nil {
-		return errors.Wrap(err, "create translation workset schema")
-	}
-	return nil
-}
-
-func insertTranslationWorksetRows(
-	ctx context.Context,
-	db *sql.DB,
-	path string,
-	metadata translationWorksetMetadata,
-	rows []translationWorksetRow,
-) (BuildTranslationWorksetResult, error) {
-	metadata = normalizeTranslationWorksetMetadata(metadata)
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return BuildTranslationWorksetResult{}, errors.Wrap(err, "begin translation workset insert")
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	metadataRows := map[string]string{
-		"source":         metadata.Source,
-		"source_lang":    metadata.SourceLang,
-		"target_lang":    metadata.TargetLang,
-		"prompt_version": metadata.PromptVersion,
-		"created_at":     now,
-	}
-	for key, value := range metadataRows {
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO workset_metadata (key, value)
-VALUES (?, ?)
-`, key, value); err != nil {
-			return BuildTranslationWorksetResult{}, errors.Wrap(err, "insert translation workset metadata")
-		}
-	}
-
-	companyIDs := make(map[string]struct{})
-	termKeys := make(map[string]struct{})
-	result := BuildTranslationWorksetResult{Path: path}
-	for _, row := range rows {
-		row = normalizeTranslationWorksetRow(row)
-		if row.CompanyID == "" || row.SourceText == "" || row.TermKey == "" {
-			continue
-		}
-		companyIDs[row.CompanyID] = struct{}{}
-		termKeys[row.TermKey] = struct{}{}
-		termStatus := "pending"
-		bindingStatus := "pending"
-		translatedText := sql.NullString{}
-		if row.CachedTranslatedText != "" {
-			termStatus = "succeeded"
-			bindingStatus = "cached"
-			translatedText = sql.NullString{String: row.CachedTranslatedText, Valid: true}
-			result.CachedFields++
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO translation_terms (
-  term_key, source_text, source_text_normalized, status, translated_text,
-  prompt_version, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(term_key) DO UPDATE SET
-  status = CASE
-    WHEN excluded.status = 'succeeded' THEN 'succeeded'
-    ELSE translation_terms.status
-  END,
-  translated_text = COALESCE(excluded.translated_text, translation_terms.translated_text),
-  updated_at = excluded.updated_at
-`, row.TermKey, row.SourceText, row.SourceTextNormalized, termStatus, translatedText, metadata.PromptVersion, now); err != nil {
-			return BuildTranslationWorksetResult{}, errors.Wrap(err, "insert translation workset term")
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO translation_bindings (
-  company_id, source_table, source_row_id, source_column, target_column,
-  source_text, source_text_normalized, term_key, status, translated_text, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, row.CompanyID, row.SourceTable, row.SourceRowID, row.SourceColumn, row.TargetColumn,
-			row.SourceText, row.SourceTextNormalized, row.TermKey, bindingStatus, translatedText, now); err != nil {
-			return BuildTranslationWorksetResult{}, errors.Wrap(err, "insert translation workset binding")
-		}
-		result.FieldsExported++
-	}
-	result.TermsExported = int32(len(termKeys))
-	result.CompaniesExported = int32(len(companyIDs))
-
-	if err := tx.Commit(); err != nil {
-		return BuildTranslationWorksetResult{}, errors.Wrap(err, "commit translation workset insert")
-	}
-	return result, nil
-}
-
-func normalizeTranslationWorksetMetadata(metadata translationWorksetMetadata) translationWorksetMetadata {
-	if metadata.Source == "" {
-		metadata.Source = defaultTranslationWorksetSource
-	}
-	if metadata.SourceLang == "" {
-		metadata.SourceLang = defaultTranslationWorksetSourceLang
-	}
-	if metadata.TargetLang == "" {
-		metadata.TargetLang = defaultTranslationWorksetTargetLang
-	}
-	if metadata.PromptVersion == "" {
-		metadata.PromptVersion = defaultPromptVersion
-	}
-	return metadata
-}
-
-func normalizeTranslationWorksetRow(row translationWorksetRow) translationWorksetRow {
-	row.CompanyID = strings.TrimSpace(row.CompanyID)
-	row.SourceTable = strings.TrimSpace(row.SourceTable)
-	row.SourceRowID = strings.TrimSpace(row.SourceRowID)
-	row.SourceColumn = strings.TrimSpace(row.SourceColumn)
-	row.TargetColumn = strings.TrimSpace(row.TargetColumn)
-	row.SourceText = strings.TrimSpace(row.SourceText)
-	row.SourceTextNormalized = strings.TrimSpace(row.SourceTextNormalized)
-	row.TermKey = strings.TrimSpace(row.TermKey)
-	row.CachedTranslatedText = strings.TrimSpace(row.CachedTranslatedText)
-	if row.SourceTextNormalized == "" {
-		row.SourceTextNormalized = normalizeTranslationText(row.SourceText)
-	}
-	if row.TermKey == "" && row.SourceText != "" {
-		row.TermKey = translationTermKey(row.SourceText)
-	}
-	return row
-}
-
-func loadTranslationWorksetTermResults(
-	ctx context.Context,
-	db *sql.DB,
-	promptVersion string,
-) ([]TranslationTermResult, error) {
-	rows, err := db.QueryContext(ctx, `
-SELECT
-  term_key,
-  source_text,
-  source_text_normalized,
-  coalesce(translated_text, ''),
-  status,
-  coalesce(provider, ''),
-  coalesce(model, ''),
-  coalesce(prompt_version, ''),
-  coalesce(error, '')
-FROM translation_terms
-WHERE status IN ('succeeded', 'failed_retryable', 'failed_terminal')
-ORDER BY updated_at, term_key
-`)
-	if err != nil {
-		return nil, errors.Wrap(err, "load translation workset terms")
-	}
-	defer rows.Close()
-
-	results := make([]TranslationTermResult, 0)
-	for rows.Next() {
-		var result TranslationTermResult
-		if err := rows.Scan(
-			&result.TermKey,
-			&result.SourceText,
-			&result.SourceTextNormalized,
-			&result.TranslatedText,
-			&result.Status,
-			&result.Provider,
-			&result.Model,
-			&result.PromptVersion,
-			&result.Error,
-		); err != nil {
-			return nil, errors.Wrap(err, "scan translation workset term")
-		}
-		if result.PromptVersion == "" {
-			result.PromptVersion = promptVersion
-		}
-		results = append(results, result)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, errors.Wrap(err, "iterate translation workset terms")
-	}
-	return results, nil
-}
-
-func loadTranslationWorksetBindings(ctx context.Context, db *sql.DB) ([]translationWorksetBinding, error) {
-	rows, err := db.QueryContext(ctx, `
-SELECT id, source_table, source_row_id, target_column, translated_text
-FROM translation_bindings
-WHERE status IN ('cached', 'translated')
-  AND nullif(trim(translated_text), '') IS NOT NULL
-ORDER BY id
-`)
-	if err != nil {
-		return nil, errors.Wrap(err, "load translation workset bindings")
-	}
-	defer rows.Close()
-
-	bindings := make([]translationWorksetBinding, 0)
-	for rows.Next() {
-		var binding translationWorksetBinding
-		if err := rows.Scan(
-			&binding.ID,
-			&binding.SourceTable,
-			&binding.SourceRowID,
-			&binding.TargetColumn,
-			&binding.TranslatedText,
-		); err != nil {
-			return nil, errors.Wrap(err, "scan translation workset binding")
-		}
-		bindings = append(bindings, binding)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, errors.Wrap(err, "iterate translation workset bindings")
-	}
-	return bindings, nil
-}
-
-func (s *Store) applyTranslationWorksetBindings(
-	ctx context.Context,
-	bindings []translationWorksetBinding,
-) ([]int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, errors.Wrap(err, "begin apply translation workset bindings")
+		return sourcetranslation.ApplyCompanyTranslationsResult{}, errors.Wrap(err, "begin apply brreg company translations")
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	appliedIDs := make([]int64, 0, len(bindings))
-	for _, binding := range bindings {
+	appliedIDs := make([]int64, 0, len(command.Bindings))
+	for _, binding := range command.Bindings {
+		binding.TranslatedText = strings.TrimSpace(binding.TranslatedText)
+		if binding.TranslatedText == "" {
+			continue
+		}
 		rowID, err := uuid.Parse(binding.SourceRowID)
 		if err != nil {
-			return nil, errors.Wrap(err, "parse translation workset binding row id")
+			return sourcetranslation.ApplyCompanyTranslationsResult{}, errors.Wrap(err, "parse brreg translation binding row id")
 		}
 		tag, err := applyTranslationWorksetBinding(ctx, tx, rowID, binding)
 		if err != nil {
-			return nil, err
+			return sourcetranslation.ApplyCompanyTranslationsResult{}, err
 		}
 		if tag.RowsAffected() > 0 {
 			appliedIDs = append(appliedIDs, binding.ID)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, errors.Wrap(err, "commit apply translation workset bindings")
+		return sourcetranslation.ApplyCompanyTranslationsResult{}, errors.Wrap(err, "commit apply brreg company translations")
 	}
-	return appliedIDs, nil
+	return sourcetranslation.ApplyCompanyTranslationsResult{
+		BindingsApplied:   int32(len(appliedIDs)),
+		AppliedBindingIDs: appliedIDs,
+	}, nil
 }
 
 func applyTranslationWorksetBinding(
@@ -1023,43 +418,50 @@ func applyCompanyTranslationWorksetBinding(
 		return tx.Exec(ctx, `
 UPDATE brreg_source.companies
 SET short_description_en = COALESCE(NULLIF(btrim(short_description_en), ''), $2), updated_at = now()
-WHERE id = $1 AND row_status = 'active'
+WHERE id = $1
+  AND row_status = 'active'
 `, rowID, binding.TranslatedText)
 	case "description_en":
 		return tx.Exec(ctx, `
 UPDATE brreg_source.companies
 SET description_en = COALESCE(NULLIF(btrim(description_en), ''), $2), updated_at = now()
-WHERE id = $1 AND row_status = 'active'
+WHERE id = $1
+  AND row_status = 'active'
 `, rowID, binding.TranslatedText)
 	case "registration_status_label_en":
 		return tx.Exec(ctx, `
 UPDATE brreg_source.companies
 SET registration_status_label_en = COALESCE(NULLIF(btrim(registration_status_label_en), ''), $2), updated_at = now()
-WHERE id = $1 AND row_status = 'active'
+WHERE id = $1
+  AND row_status = 'active'
 `, rowID, binding.TranslatedText)
 	case "organization_form_label_en":
 		return tx.Exec(ctx, `
 UPDATE brreg_source.companies
 SET organization_form_label_en = COALESCE(NULLIF(btrim(organization_form_label_en), ''), $2), updated_at = now()
-WHERE id = $1 AND row_status = 'active'
+WHERE id = $1
+  AND row_status = 'active'
 `, rowID, binding.TranslatedText)
 	case "response_class_en":
 		return tx.Exec(ctx, `
 UPDATE brreg_source.companies
 SET response_class_en = COALESCE(NULLIF(btrim(response_class_en), ''), $2), updated_at = now()
-WHERE id = $1 AND row_status = 'active'
+WHERE id = $1
+  AND row_status = 'active'
 `, rowID, binding.TranslatedText)
 	case "activity_description_en":
 		return tx.Exec(ctx, `
 UPDATE brreg_source.companies
 SET activity_description_en = COALESCE(NULLIF(btrim(activity_description_en), ''), $2), updated_at = now()
-WHERE id = $1 AND row_status = 'active'
+WHERE id = $1
+  AND row_status = 'active'
 `, rowID, binding.TranslatedText)
 	case "statutory_purpose_en":
 		return tx.Exec(ctx, `
 UPDATE brreg_source.companies
 SET statutory_purpose_en = COALESCE(NULLIF(btrim(statutory_purpose_en), ''), $2), updated_at = now()
-WHERE id = $1 AND row_status = 'active'
+WHERE id = $1
+  AND row_status = 'active'
 `, rowID, binding.TranslatedText)
 	default:
 		return pgconn.CommandTag{}, errors.Newf("unsupported brreg company translation target column %q", binding.TargetColumn)
@@ -1112,31 +514,4 @@ WHERE id = $1
 	default:
 		return pgconn.CommandTag{}, errors.Newf("unsupported brreg role translation target column %q", binding.TargetColumn)
 	}
-}
-
-func markTranslationWorksetBindingsApplied(ctx context.Context, db *sql.DB, bindingIDs []int64) error {
-	if len(bindingIDs) == 0 {
-		return nil
-	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return errors.Wrap(err, "begin mark translation workset bindings applied")
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	for _, bindingID := range bindingIDs {
-		if _, err := tx.ExecContext(ctx, `
-UPDATE translation_bindings
-SET status = 'applied',
-    applied_at = ?
-WHERE id = ?
-`, now, bindingID); err != nil {
-			return errors.Wrap(err, "mark translation workset binding applied")
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return errors.Wrap(err, "commit mark translation workset bindings applied")
-	}
-	return nil
 }

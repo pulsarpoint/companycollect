@@ -126,6 +126,26 @@ type startAriregisterBulkRawIngestWorkflowRequest struct {
 	Trigger   string `json:"trigger,omitempty"`
 }
 
+type startAriregisterCompanyTranslationWorkflowRequest struct {
+	AllRecords           bool              `json:"all_records,omitempty"`
+	IDs                  []string          `json:"ids,omitempty"`
+	Filters              map[string]string `json:"filters,omitempty"`
+	Limit                int               `json:"limit,omitempty"`
+	BatchSize            int               `json:"batch_size,omitempty"`
+	ClaimMode            string            `json:"claim_mode,omitempty"`
+	MaxRequestChars      int               `json:"max_request_chars,omitempty"`
+	MaxTerms             int               `json:"max_terms,omitempty"`
+	MaxCompaniesPerBatch int               `json:"max_companies_per_batch,omitempty"`
+	MaxBatches           int               `json:"max_batches,omitempty"`
+	MaxParallelTasks     int               `json:"max_parallel_tasks,omitempty"`
+	LeaseSeconds         int               `json:"lease_seconds,omitempty"`
+	MaxAttempts          int               `json:"max_attempts,omitempty"`
+	Provider             string            `json:"provider,omitempty"`
+	Model                string            `json:"model,omitempty"`
+	PromptVersion        string            `json:"prompt_version,omitempty"`
+	Trigger              string            `json:"trigger,omitempty"`
+}
+
 type startAriregisterSourceProfileWorkflowRequest struct {
 	IDs       []string          `json:"ids,omitempty"`
 	Filters   map[string]string `json:"filters,omitempty"`
@@ -153,11 +173,9 @@ type startFranceBulkRawIngestWorkflowRequest struct {
 }
 
 type startSEBulkRawIngestWorkflowRequest struct {
-	Datasets     []seworkflow.HVDDatasetConfig `json:"datasets,omitempty"`
-	DatasetsJSON string                        `json:"datasets_json,omitempty"`
-	Limit        int                           `json:"limit,omitempty"`
-	BatchSize    int                           `json:"batch_size,omitempty"`
-	Trigger      string                        `json:"trigger,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+	BatchSize int    `json:"batch_size,omitempty"`
+	Trigger   string `json:"trigger,omitempty"`
 }
 
 type startNACETaxonomySyncWorkflowRequest struct {
@@ -372,6 +390,83 @@ func (h *Handlers) handleStartBrregDomainSearchWorkflow(w http.ResponseWriter, r
 	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
 		Status:        "started",
 		Workflow:      brregworkflow.SearchBrregDomainsWorkflowName,
+		WorkflowID:    workflowID,
+		WorkflowRunID: run.GetRunID(),
+	})
+}
+
+func (h *Handlers) handleStartAriregisterCompanyTranslationWorkflow(w http.ResponseWriter, r *http.Request) {
+	if h.temporal == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporal client not available")
+		return
+	}
+
+	req, err := decodeStartAriregisterCompanyTranslationWorkflowRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := ariregisterworkflow.TranslateAriregisterSourceCompaniesInput{
+		AllRecords:           req.AllRecords,
+		IDs:                  req.IDs,
+		Filters:              req.Filters,
+		Limit:                req.Limit,
+		BatchSize:            req.BatchSize,
+		ClaimMode:            req.ClaimMode,
+		MaxRequestChars:      req.MaxRequestChars,
+		MaxTerms:             req.MaxTerms,
+		MaxCompaniesPerBatch: req.MaxCompaniesPerBatch,
+		MaxBatches:           req.MaxBatches,
+		MaxParallelTasks:     req.MaxParallelTasks,
+		LeaseSeconds:         req.LeaseSeconds,
+		MaxAttempts:          req.MaxAttempts,
+		Provider:             req.Provider,
+		Model:                req.Model,
+		PromptVersion:        req.PromptVersion,
+		Trigger:              req.Trigger,
+	}
+	workflowID := newWorkflowID("ariregister-company-translation")
+	slog.Debug("starting ariregister company translation workflow",
+		"workflow_id", workflowID,
+		"task_queue", ariregisterworkflow.TranslateAriregisterSourceCompaniesTaskQueue,
+		"all_records", req.AllRecords,
+		"ids_count", len(req.IDs),
+		"filters_count", len(req.Filters),
+		"limit", req.Limit,
+		"batch_size", req.BatchSize,
+		"claim_mode", req.ClaimMode,
+		"max_request_chars", req.MaxRequestChars,
+		"max_terms", req.MaxTerms,
+		"max_companies_per_batch", req.MaxCompaniesPerBatch,
+		"max_batches", req.MaxBatches,
+		"max_parallel_tasks", req.MaxParallelTasks,
+		"lease_seconds", req.LeaseSeconds,
+		"max_attempts", req.MaxAttempts,
+		"provider", req.Provider,
+		"model", req.Model,
+		"prompt_version", req.PromptVersion,
+		"trigger", req.Trigger,
+	)
+	run, err := h.temporal.ExecuteWorkflow(
+		r.Context(),
+		client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: ariregisterworkflow.TranslateAriregisterSourceCompaniesTaskQueue,
+		},
+		ariregisterworkflow.TranslateAriregisterSourceCompanies,
+		input,
+	)
+	if err != nil {
+		slog.Error("start ariregister company translation workflow", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to start workflow")
+		return
+	}
+	slog.Debug("ariregister company translation workflow started", "workflow_id", workflowID, "run_id", run.GetRunID())
+
+	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
+		Status:        "started",
+		Workflow:      ariregisterworkflow.TranslateAriregisterSourceCompaniesWorkflowName,
 		WorkflowID:    workflowID,
 		WorkflowRunID: run.GetRunID(),
 	})
@@ -809,17 +904,14 @@ func (h *Handlers) handleStartSEBulkRawIngestWorkflow(w http.ResponseWriter, r *
 	}
 
 	input := seworkflow.LoadSEBulkRawRecordsInput{
-		Datasets:     req.Datasets,
-		DatasetsJSON: req.DatasetsJSON,
-		Limit:        req.Limit,
-		BatchSize:    req.BatchSize,
-		Trigger:      req.Trigger,
+		Limit:     req.Limit,
+		BatchSize: req.BatchSize,
+		Trigger:   req.Trigger,
 	}
 	workflowID := newWorkflowID("se-bulk-ingest")
 	slog.Debug("starting se bulk raw ingest workflow",
 		"workflow_id", workflowID,
 		"task_queue", seworkflow.LoadSEBulkRawRecordsTaskQueue,
-		"datasets_count", len(req.Datasets),
 		"limit", req.Limit,
 		"batch_size", req.BatchSize,
 		"trigger", req.Trigger,
@@ -1224,6 +1316,61 @@ func decodeStartBrregCompanyTranslationWorkflowRequest(r *http.Request) (startBr
 	return req, nil
 }
 
+func decodeStartAriregisterCompanyTranslationWorkflowRequest(r *http.Request) (startAriregisterCompanyTranslationWorkflowRequest, error) {
+	var req startAriregisterCompanyTranslationWorkflowRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("invalid request body")
+	}
+	req.Provider = strings.TrimSpace(req.Provider)
+	req.Model = strings.TrimSpace(req.Model)
+	req.PromptVersion = strings.TrimSpace(req.PromptVersion)
+	req.ClaimMode = strings.ToLower(strings.TrimSpace(req.ClaimMode))
+	req.Trigger = strings.TrimSpace(req.Trigger)
+	req.IDs = compactRequestStrings(req.IDs)
+	req.Filters = compactRequestFilters(req.Filters)
+	if req.Trigger == "" {
+		req.Trigger = "manual"
+	}
+	for _, id := range req.IDs {
+		if _, err := uuid.Parse(id); err != nil {
+			return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("ids must contain valid UUID values")
+		}
+	}
+	if req.ClaimMode != "" && req.ClaimMode != "auto" && req.ClaimMode != "fixed" {
+		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("claim_mode must be auto or fixed")
+	}
+	if req.Limit < 0 {
+		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("limit cannot be negative")
+	}
+	if req.BatchSize < 0 {
+		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("batch_size cannot be negative")
+	}
+	if req.MaxRequestChars < 0 {
+		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("max_request_chars cannot be negative")
+	}
+	if req.MaxTerms < 0 {
+		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("max_terms cannot be negative")
+	}
+	if req.MaxCompaniesPerBatch < 0 {
+		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("max_companies_per_batch cannot be negative")
+	}
+	if req.MaxBatches < 0 {
+		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("max_batches cannot be negative")
+	}
+	if req.MaxParallelTasks < 0 {
+		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("max_parallel_tasks cannot be negative")
+	}
+	if req.LeaseSeconds < 0 {
+		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("lease_seconds cannot be negative")
+	}
+	if req.MaxAttempts < 0 {
+		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("max_attempts cannot be negative")
+	}
+	return req, nil
+}
+
 func compactRequestStrings(values []string) []string {
 	compact := make([]string, 0, len(values))
 	for _, value := range values {
@@ -1516,7 +1663,6 @@ func decodeStartSEBulkRawIngestWorkflowRequest(r *http.Request) (startSEBulkRawI
 	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		return startSEBulkRawIngestWorkflowRequest{}, errors.New("invalid request body")
 	}
-	req.DatasetsJSON = strings.TrimSpace(req.DatasetsJSON)
 	req.Trigger = strings.TrimSpace(req.Trigger)
 	if req.Trigger == "" {
 		req.Trigger = "manual"
@@ -1526,17 +1672,6 @@ func decodeStartSEBulkRawIngestWorkflowRequest(r *http.Request) (startSEBulkRawI
 	}
 	if req.BatchSize < 0 {
 		return startSEBulkRawIngestWorkflowRequest{}, errors.New("batch_size cannot be negative")
-	}
-	for i := range req.Datasets {
-		req.Datasets[i].Dataset = strings.TrimSpace(req.Datasets[i].Dataset)
-		req.Datasets[i].URL = strings.TrimSpace(req.Datasets[i].URL)
-		req.Datasets[i].Format = strings.TrimSpace(req.Datasets[i].Format)
-		if req.Datasets[i].Dataset == "" || req.Datasets[i].URL == "" || req.Datasets[i].Format == "" {
-			return startSEBulkRawIngestWorkflowRequest{}, errors.New("datasets entries require dataset, url, and format")
-		}
-		if err := validateOptionalHTTPURL(req.Datasets[i].URL, "datasets.url"); err != nil {
-			return startSEBulkRawIngestWorkflowRequest{}, err
-		}
 	}
 	return req, nil
 }

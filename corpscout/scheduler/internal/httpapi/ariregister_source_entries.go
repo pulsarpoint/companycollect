@@ -4,6 +4,11 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cockroachdb/errors"
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	pgx "github.com/jackc/pgx/v5"
+
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
 )
 
@@ -49,6 +54,30 @@ func (h *Handlers) handleListAriregisterSourceEntries(w http.ResponseWriter, r *
 		Page:  queryInt(r, "page", 1),
 		Limit: int(params.Limit),
 	})
+}
+
+func (h *Handlers) handleGetAriregisterSourceCompanyDetail(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		writeError(w, http.StatusServiceUnavailable, "database querier not available")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "id must be a valid UUID")
+		return
+	}
+
+	row, err := h.db.GetAriregisterSourceCompanyDetail(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "ariregister source company not found")
+			return
+		}
+		slog.Error("get ariregister source company detail", "id", id.String(), "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
 }
 
 func ariregisterSourceEntryListParamsFromRequest(r *http.Request) db.ListAriregisterSourceEntriesParams {

@@ -131,7 +131,7 @@ func sourceEntriesAvailable(sourceName string) bool {
 
 func sourceWorkflowTriggerMetadata(sourceName string) (downloadWorkflowRegistered bool, manualTriggerAvailable bool) {
 	switch sourceName {
-	case "ariregister", "cvr", "france":
+	case "ariregister", "cvr", "france", "se":
 		return true, true
 	default:
 		return false, false

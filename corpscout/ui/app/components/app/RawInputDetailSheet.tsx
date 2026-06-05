@@ -18,6 +18,7 @@ const SOURCE_LABELS: Record<string, string> = {
   cvr: "CVR",
   france: "SIRENE France",
   gleif: "GLEIF",
+  se: "Sweden HVD",
 };
 
 function timeAgo(dateStr: string): string {

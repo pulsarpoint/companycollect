@@ -4,6 +4,7 @@ const RAW_INPUT_TABLES = new Set([
   "brreg_workflow.raw_records",
   "cvr_workflow.raw_records",
   "france_workflow.raw_legal_units",
+  "se_workflow.raw_records",
   "gleif_company_raw_inputs",
   "companies_house_company_raw_inputs",
   "ariregister_company_raw_inputs",
@@ -49,7 +50,7 @@ export function hasPipeline(source: DataSource): boolean {
 
 export function defaultSourceDetailPath(sourceName: string): string {
   if (sourceName === "brreg") return `/sources/${sourceName}/tasks`;
-  if (sourceName === "ariregister" || sourceName === "cvr" || sourceName === "france") return `/sources/${sourceName}/raw_input`;
+  if (sourceName === "ariregister" || sourceName === "cvr" || sourceName === "france" || sourceName === "se") return `/sources/${sourceName}/raw_input`;
   return `/sources/${sourceName}/schedule`;
 }
 

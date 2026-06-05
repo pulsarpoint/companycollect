@@ -25,6 +25,7 @@ import { RawInputDetailSheet } from "~/components/app/RawInputDetailSheet";
 import { AriregisterRawInputActionSheet } from "~/components/app/AriregisterRawInputActionSheet";
 import { CvrRawInputActionSheet } from "~/components/app/CvrRawInputActionSheet";
 import { FranceRawInputActionSheet } from "~/components/app/FranceRawInputActionSheet";
+import { SERawInputActionSheet } from "~/components/app/SERawInputActionSheet";
 
 const PAGE_SIZE = 50;
 
@@ -34,9 +35,10 @@ const SOURCE_LABELS: Record<string, string> = {
   cvr: "CVR",
   france: "SIRENE France",
   gleif: "GLEIF",
+  se: "Sweden HVD",
 };
 
-const SOURCE_OPTIONS = ["companies_house", "gleif", "cvr", "ariregister", "france"];
+const SOURCE_OPTIONS = ["companies_house", "gleif", "cvr", "ariregister", "france", "se"];
 const STATUS_OPTIONS = ["pending", "processing", "processed", "failed", "ignored", "superseded"];
 const TRANSLATION_OPTIONS = ["pending", "translating", "translated", "failed"];
 
@@ -119,6 +121,7 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
   const [sortDir, setSortDir] = useState<"asc" | "desc">(() => searchParams.get("dir") === "asc" ? "asc" : "desc");
   const [selectedRow, setSelectedRow] = useState<RawInput | null>(null);
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
+  const supportsRawTranslation = requiresTranslation && sourceName !== "se";
 
   const load = useCallback(
     async (
@@ -138,7 +141,7 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
           limit: PAGE_SIZE,
           source: (sourceName ?? source) || undefined,
           processing_status: status || undefined,
-          translation_status: translationStatus || undefined,
+          translation_status: sourceName === "se" ? undefined : translationStatus || undefined,
           has_suggestion: hasSuggestion || undefined,
           q: query || undefined,
           sort,
@@ -280,7 +283,7 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
       },
     );
 
-    if (requiresTranslation) {
+    if (supportsRawTranslation) {
       cols.push({
         accessorKey: "translation_status",
         header: "Translation",
@@ -315,7 +318,7 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
     });
 
     return cols;
-  }, [sourceName, requiresTranslation, sortCol, sortDir]);
+  }, [sourceName, supportsRawTranslation, sortCol, sortDir]);
 
   const table = useReactTable({
     data: items,
@@ -376,7 +379,7 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
           ))}
         </select>
 
-        {requiresTranslation && (
+        {supportsRawTranslation && (
           <select
             className="h-8 rounded-md border bg-background px-2 text-sm"
             value={translationFilter}
@@ -399,7 +402,7 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
           <option value="false">No suggestion</option>
         </select>
 
-        {(sourceName === "ariregister" || sourceName === "cvr" || sourceName === "france") && (
+        {(sourceName === "ariregister" || sourceName === "cvr" || sourceName === "france" || sourceName === "se") && (
           <Button
             size="sm"
             variant="outline"
@@ -519,6 +522,14 @@ export function RawInputsTable({ sourceName, requiresTranslation }: RawInputsTab
 
       {sourceName === "france" && (
         <FranceRawInputActionSheet
+          open={actionSheetOpen}
+          onOpenChange={setActionSheetOpen}
+          onStarted={reloadCurrentPage}
+        />
+      )}
+
+      {sourceName === "se" && (
+        <SERawInputActionSheet
           open={actionSheetOpen}
           onOpenChange={setActionSheetOpen}
           onStarted={reloadCurrentPage}

@@ -107,6 +107,19 @@ export default function SourceDetailLayout() {
       }
       return;
     }
+    if (sourceName === "se") {
+      setTriggering(true);
+      try {
+        await api.loadSEBulkRawRecords({ trigger: "manual" });
+        await refreshSource(sourceName);
+        toast.success("Sweden HVD bulk ingest workflow started.");
+      } catch (err) {
+        toast.error(errorMessage(err, "Failed to start Sweden HVD bulk ingest."));
+      } finally {
+        if (latestNameRef.current === sourceName) setTriggering(false);
+      }
+      return;
+    }
     toast.error(`Manual trigger is not available for ${sourceName}.`);
   }
 

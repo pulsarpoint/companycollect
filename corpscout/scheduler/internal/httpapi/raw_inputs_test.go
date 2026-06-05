@@ -183,6 +183,46 @@ func TestListRawInputs_franceReadsWorkflowRawRecords(t *testing.T) {
 	require.NoError(t, pool.ExpectationsWereMet())
 }
 
+func TestListRawInputs_seReadsWorkflowRawRecords(t *testing.T) {
+	pool := newSQLContainsMock(t)
+	defer pool.Close()
+
+	createdAt := time.Date(2026, 6, 5, 10, 0, 0, 0, time.UTC)
+	pool.ExpectQuery("COUNT(*) FROM;;se_workflow.raw_records;;organization_name ILIKE;;!se_company_raw_inputs").
+		WithArgs("%Pulsar%").
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(int64(1)))
+	pool.ExpectQuery("raw_input_page;;SELECT p.id;;p.source;;p.name;;se_workflow.raw_records;;'pending' AS status;;NULL::text AS translation_status;;'pending' AS state;;ri.first_seen_at AS created_at;;!se_company_raw_inputs").
+		WithArgs("%Pulsar%", 50, 0).
+		WillReturnRows(rawInputListRows().
+			AddRow("se-id", "se", "Pulsar Sverige AB", "5599990000", "pending", nil, false, "pending", createdAt))
+
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, pool, nil, "", nil, ""))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/raw-inputs?source=se&q=Pulsar", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body struct {
+		Items []struct {
+			Source            string  `json:"source"`
+			Name              string  `json:"name"`
+			NativeID          string  `json:"native_id"`
+			Status            string  `json:"status"`
+			TranslationStatus *string `json:"translation_status"`
+		} `json:"items"`
+		Total int64 `json:"total"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, int64(1), body.Total)
+	require.Len(t, body.Items, 1)
+	assert.Equal(t, "se", body.Items[0].Source)
+	assert.Equal(t, "Pulsar Sverige AB", body.Items[0].Name)
+	assert.Equal(t, "5599990000", body.Items[0].NativeID)
+	assert.Equal(t, "pending", body.Items[0].Status)
+	assert.Nil(t, body.Items[0].TranslationStatus)
+	require.NoError(t, pool.ExpectationsWereMet())
+}
+
 func TestListRawInputs_translationStatusFilterReturnsEmptyWithoutLegacyTranslatedSources(t *testing.T) {
 	pool := newSQLContainsMock(t)
 	defer pool.Close()
@@ -621,6 +661,44 @@ func TestGetRawInput_franceReadsWorkflowRawRecordDetail(t *testing.T) {
 	assert.Equal(t, "legal_unit", body["company_type"])
 	assert.Equal(t, "A", body["registration_status"])
 	assert.Equal(t, "FR", body["country_iso2"])
+	assert.NotContains(t, body, "translation_status")
+	assert.NotContains(t, body, "raw_payload_en")
+	require.NoError(t, pool.ExpectationsWereMet())
+}
+
+func TestGetRawInput_seReadsWorkflowRawRecordDetail(t *testing.T) {
+	pool := newSQLContainsMock(t)
+	defer pool.Close()
+
+	now := time.Date(2026, 6, 5, 10, 0, 0, 0, time.UTC)
+	pool.ExpectQuery("se_workflow.raw_records;;COALESCE(ri.organization_name,'');;COALESCE(ri.organization_number,'');;'pending';;COALESCE(ri.legal_form,'');;COALESCE(ri.registration_status,'');;COALESCE(ri.country_iso2,'');;0;;ri.raw_payload;;ri.first_seen_at;;ri.last_seen_at;;!raw_payload_en;;!translation_status").
+		WithArgs("raw-id").
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "source", "name", "native_id", "status", "state", "company_type", "registration_status", "website", "country_iso2",
+			"run_id", "processing_attempts", "processing_error", "payload_hash", "raw_payload",
+			"first_seen_at", "last_seen_at", "processed_at", "created_at", "updated_at",
+		}).AddRow(
+			"raw-id", "se", "Pulsar Sverige AB", "5599990000", "pending", "pending", "Aktiebolag", "Registrerad", "", "SE",
+			"se-bulk-ingest-1", 0, "", "hash", []byte(`{"identitetsbeteckning":"5599990000"}`),
+			now, now, nil, now, now,
+		))
+
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, pool, nil, "", nil, ""))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/raw-inputs/se/raw-id", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "se", body["source"])
+	assert.Equal(t, "Pulsar Sverige AB", body["name"])
+	assert.Equal(t, "5599990000", body["native_id"])
+	assert.Equal(t, "pending", body["status"])
+	assert.Equal(t, "Aktiebolag", body["company_type"])
+	assert.Equal(t, "Registrerad", body["registration_status"])
+	assert.Equal(t, "SE", body["country_iso2"])
+	assert.Equal(t, "se-bulk-ingest-1", body["run_id"])
 	assert.NotContains(t, body, "translation_status")
 	assert.NotContains(t, body, "raw_payload_en")
 	require.NoError(t, pool.ExpectationsWereMet())

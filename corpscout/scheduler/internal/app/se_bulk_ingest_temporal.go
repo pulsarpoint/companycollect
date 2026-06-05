@@ -25,7 +25,19 @@ func registerSEBulkIngestWorker(worker temporalworker.Worker, resources *tempora
 	slog.Debug("registering se bulk ingest temporal workflow and activities")
 	worker.RegisterWorkflow(seworkflow.LoadSEBulkRawRecords)
 	worker.RegisterActivityWithOptions(
-		resources.seBulkIngest.LoadSEBulkRawRecords,
-		activity.RegisterOptions{Name: "LoadSEBulkRawRecordsActivity"},
+		resources.seBulkIngest.VerifySEBulkSourceFiles,
+		activity.RegisterOptions{Name: "VerifySEBulkSourceFilesActivity"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.seBulkIngest.CompareSEBulkSourceFiles,
+		activity.RegisterOptions{Name: "CompareSEBulkSourceFilesActivity"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.seBulkIngest.DownloadSEBulkSourceFiles,
+		activity.RegisterOptions{Name: "DownloadSEBulkSourceFilesActivity"},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.seBulkIngest.ProcessSEBulkRawRecords,
+		activity.RegisterOptions{Name: "ProcessSEBulkRawRecordsActivity"},
 	)
 }

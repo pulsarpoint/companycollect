@@ -2,10 +2,12 @@ package sedb
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type BeginWorkflowRunParams struct {
@@ -178,6 +180,84 @@ func (g *Gateway) RecordSourceFile(ctx context.Context, params RecordSourceFileP
 		return uuid.Nil, errors.Wrap(err, "record se source file")
 	}
 	return id, nil
+}
+
+func (g *Gateway) GetProcessedSourceFileByHash(ctx context.Context, datasetKey string, payloadHash string) (ProcessedSourceFile, bool, error) {
+	if g == nil || g.pool == nil {
+		return ProcessedSourceFile{}, false, errors.New("se workflow database pool not available")
+	}
+	if strings.TrimSpace(datasetKey) == "" || strings.TrimSpace(payloadHash) == "" {
+		return ProcessedSourceFile{}, false, nil
+	}
+
+	var file ProcessedSourceFile
+	err := g.pool.QueryRow(ctx, `
+		SELECT id, COALESCE(source_url, ''), COALESCE(payload_hash, ''), rows_seen, rows_written, metadata
+		FROM se_workflow.source_files
+		WHERE dataset_key = $1
+		  AND payload_hash = $2
+		  AND status = 'parsed'
+		ORDER BY updated_at DESC, created_at DESC
+		LIMIT 1
+	`, datasetKey, payloadHash).Scan(&file.ID, &file.SourceURL, &file.PayloadHash, &file.RowsSeen, &file.RowsWritten, &file.Metadata)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ProcessedSourceFile{}, false, nil
+	}
+	if err != nil {
+		return ProcessedSourceFile{}, false, errors.Wrap(err, "get processed se source file by hash")
+	}
+	return file, true, nil
+}
+
+func (g *Gateway) GetLatestParsedSourceFile(ctx context.Context, datasetKey string, sourceURL string) (ProcessedSourceFile, bool, error) {
+	if g == nil || g.pool == nil {
+		return ProcessedSourceFile{}, false, errors.New("se workflow database pool not available")
+	}
+	if strings.TrimSpace(datasetKey) == "" || strings.TrimSpace(sourceURL) == "" {
+		return ProcessedSourceFile{}, false, nil
+	}
+
+	var file ProcessedSourceFile
+	err := g.pool.QueryRow(ctx, `
+		SELECT id, COALESCE(source_url, ''), COALESCE(payload_hash, ''), rows_seen, rows_written, metadata
+		FROM se_workflow.source_files
+		WHERE dataset_key = $1
+		  AND source_url = $2
+		  AND status = 'parsed'
+		ORDER BY updated_at DESC, created_at DESC
+		LIMIT 1
+	`, datasetKey, sourceURL).Scan(&file.ID, &file.SourceURL, &file.PayloadHash, &file.RowsSeen, &file.RowsWritten, &file.Metadata)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ProcessedSourceFile{}, false, nil
+	}
+	if err != nil {
+		return ProcessedSourceFile{}, false, errors.Wrap(err, "get latest parsed se source file")
+	}
+	return file, true, nil
+}
+
+func (g *Gateway) GetDataSourceConfig(ctx context.Context, sourceName string) ([]byte, bool, error) {
+	if g == nil || g.pool == nil {
+		return nil, false, errors.New("se workflow database pool not available")
+	}
+	sourceName = strings.TrimSpace(sourceName)
+	if sourceName == "" {
+		return nil, false, nil
+	}
+
+	var config []byte
+	err := g.pool.QueryRow(ctx, `
+		SELECT config
+		FROM data_sources
+		WHERE name = $1
+	`, sourceName).Scan(&config)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, errors.Wrap(err, "get se data source config")
+	}
+	return config, true, nil
 }
 
 func nullableText(value string) *string {

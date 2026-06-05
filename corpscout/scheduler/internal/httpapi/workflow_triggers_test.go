@@ -81,6 +81,59 @@ func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T
 	require.Equal(t, "manual", input.Trigger)
 }
 
+func TestStartAriregisterCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T) {
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/ariregister/company-translation", bytes.NewBufferString(`{
+		"all_records": true,
+		"ids": ["7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"],
+		"filters": {"translation_status": "missing", "q": "TALLINN"},
+		"limit": 25,
+		"batch_size": 10,
+		"claim_mode": "auto",
+		"max_request_chars": 12000,
+		"max_terms": 250,
+		"max_companies_per_batch": 500,
+		"max_batches": 50,
+		"max_parallel_tasks": 5,
+		"lease_seconds": 900,
+		"max_attempts": 3,
+		"provider": "deepseek",
+		"model": "deepseek-v4-flash",
+		"prompt_version": "v2",
+		"trigger": "manual"
+	}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Contains(t, w.Body.String(), `"status":"started"`)
+	require.Contains(t, w.Body.String(), `"workflow":"TranslateAriregisterSourceCompanies"`)
+	require.Equal(t, "ariregister-company-translation", tc.options.TaskQueue)
+	require.Equal(t, reflect.ValueOf(ariregisterworkflow.TranslateAriregisterSourceCompanies).Pointer(), reflect.ValueOf(tc.workflow).Pointer())
+	require.Len(t, tc.args, 1)
+
+	input := tc.args[0].(ariregisterworkflow.TranslateAriregisterSourceCompaniesInput)
+	require.True(t, input.AllRecords)
+	require.Equal(t, []string{"7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"}, input.IDs)
+	require.Equal(t, map[string]string{"translation_status": "missing", "q": "TALLINN"}, input.Filters)
+	require.Equal(t, 25, input.Limit)
+	require.Equal(t, 10, input.BatchSize)
+	require.Equal(t, "auto", input.ClaimMode)
+	require.Equal(t, 12000, input.MaxRequestChars)
+	require.Equal(t, 250, input.MaxTerms)
+	require.Equal(t, 500, input.MaxCompaniesPerBatch)
+	require.Equal(t, 50, input.MaxBatches)
+	require.Equal(t, 5, input.MaxParallelTasks)
+	require.Equal(t, 900, input.LeaseSeconds)
+	require.Equal(t, 3, input.MaxAttempts)
+	require.Equal(t, "deepseek", input.Provider)
+	require.Equal(t, "deepseek-v4-flash", input.Model)
+	require.Equal(t, "v2", input.PromptVersion)
+	require.Equal(t, "manual", input.Trigger)
+}
+
 func TestStartBrregCompanyTranslationWorkflowRejectsInvalidClaimMode(t *testing.T) {
 	tc := &temporalExecuteRecorder{}
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
@@ -538,9 +591,6 @@ func TestStartSEBulkRawIngestWorkflowStartsTemporalWorkflow(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/se/bulk-raw-ingest", bytes.NewBufferString(`{
 		"limit": 0,
 		"batch_size": 250,
-		"datasets": [
-			{"dataset":"organisationer","url":"https://example.test/se/organisationer.json","format":"json"}
-		],
 		"trigger": "manual"
 	}`))
 	w := httptest.NewRecorder()
@@ -556,14 +606,12 @@ func TestStartSEBulkRawIngestWorkflowStartsTemporalWorkflow(t *testing.T) {
 	input := tc.args[0].(seworkflow.LoadSEBulkRawRecordsInput)
 	require.Equal(t, 0, input.Limit)
 	require.Equal(t, 250, input.BatchSize)
-	require.Len(t, input.Datasets, 1)
-	require.Equal(t, "organisationer", input.Datasets[0].Dataset)
-	require.Equal(t, "https://example.test/se/organisationer.json", input.Datasets[0].URL)
-	require.Equal(t, "json", input.Datasets[0].Format)
+	require.Empty(t, input.Datasets)
+	require.Empty(t, input.DatasetsJSON)
 	require.Equal(t, "manual", input.Trigger)
 }
 
-func TestStartSEBulkRawIngestWorkflowRejectsInvalidDatasetURL(t *testing.T) {
+func TestStartSEBulkRawIngestWorkflowRejectsDatasetOverride(t *testing.T) {
 	tc := &temporalExecuteRecorder{}
 	r := routerFor(httpapi.NewHandlers(&stubQuerier{}, nil, nil, nil, "", tc, ""))
 
@@ -576,7 +624,7 @@ func TestStartSEBulkRawIngestWorkflowRejectsInvalidDatasetURL(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Contains(t, w.Body.String(), `"error":"datasets.url must be http or https"`)
+	require.Contains(t, w.Body.String(), `"error":"invalid request body"`)
 	require.Nil(t, tc.workflow)
 }
 

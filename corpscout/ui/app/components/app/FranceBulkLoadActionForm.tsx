@@ -20,7 +20,7 @@ function parsePositiveNumber(value: string) {
 }
 
 export function FranceBulkLoadActionForm({ onStarted, onClose }: Props) {
-  const [mode, setMode] = useState<BulkLoadMode>("all");
+  const [mode, setMode] = useState<BulkLoadMode>("limit");
   const [limit, setLimit] = useState("1000");
   const [batchSize, setBatchSize] = useState("1000");
   const [submitting, setSubmitting] = useState(false);
@@ -76,8 +76,8 @@ export function FranceBulkLoadActionForm({ onStarted, onClose }: Props) {
           value={mode}
           onChange={(event) => setMode(event.target.value as BulkLoadMode)}
         >
-          <option value="all">All records</option>
           <option value="limit">Limited sample</option>
+          <option value="all">All records</option>
         </select>
         <p className="text-xs leading-5 text-muted-foreground">
           Full ingest downloads both official SIRENE stock files. Use a limited sample when validating changes.

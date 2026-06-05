@@ -73,6 +73,17 @@ func TestAriregisterSourceProfileMigrationDefinesTranslationColumns(t *testing.T
 	}
 }
 
+func TestAriregisterSourceTranslationTermsMigrationDefinesCacheAndStatus(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000099_ariregister_source_translation_terms.up.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "CREATE TABLE ariregister_source.translation_terms")
+	require.Contains(t, sql, "CONSTRAINT chk_ariregister_source_translation_terms_source CHECK (source = 'ariregister')")
+	require.Contains(t, sql, "CREATE MATERIALIZED VIEW ariregister_source.mv_company_translation_status AS")
+	require.Contains(t, sql, "FROM ariregister_source.v_missing_translations")
+}
+
 func TestAriregisterSourceProfileDownMigrationDropsOwnedSchema(t *testing.T) {
 	body, err := os.ReadFile("../../../database/migrations/000093_ariregister_source_profile_tables.down.sql")
 	require.NoError(t, err)

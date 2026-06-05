@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	brregdb "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/db"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/sourcetranslation"
 )
 
 const defaultPromptVersion = "v1"
@@ -253,39 +254,51 @@ WHERE id = $1 AND company_id = $4
 
 func (s *Store) SaveTranslationTerms(
 	ctx context.Context,
-	terms []TranslationTermResult,
-) (SaveTranslationTermsResult, error) {
+	command sourcetranslation.SaveTermsCommand,
+) (sourcetranslation.SaveTermsResult, error) {
 	if s == nil || s.gateway == nil {
-		return SaveTranslationTermsResult{}, errors.New("brreg companydata store not available")
+		return sourcetranslation.SaveTermsResult{}, errors.New("brreg companydata store not available")
 	}
+	terms := command.Terms
 	if len(terms) == 0 {
-		return SaveTranslationTermsResult{}, nil
+		return sourcetranslation.SaveTermsResult{}, nil
 	}
-	command := brregdb.UpsertTranslationTermsCommand{
+	upsertCommand := brregdb.UpsertTranslationTermsCommand{
 		Terms: make([]brregdb.TranslationTermResult, 0, len(terms)),
 	}
 	for _, term := range terms {
-		command.Terms = append(command.Terms, brregdb.TranslationTermResult{
-			SourceLang:           "no",
-			TargetLang:           "en",
-			SourceTextNormalized: term.SourceTextNormalized,
+		promptVersion := strings.TrimSpace(term.PromptVersion)
+		if promptVersion == "" {
+			promptVersion = strings.TrimSpace(command.PromptVersion)
+		}
+		if promptVersion == "" {
+			promptVersion = defaultPromptVersion
+		}
+		normalizedText := strings.TrimSpace(term.SourceTextNormalized)
+		if normalizedText == "" {
+			normalizedText = sourcetranslation.NormalizeText(term.SourceText)
+		}
+		upsertCommand.Terms = append(upsertCommand.Terms, brregdb.TranslationTermResult{
+			SourceLang:           defaultTranslationWorksetSourceLang,
+			TargetLang:           defaultTranslationWorksetTargetLang,
+			SourceTextNormalized: normalizedText,
 			SourceText:           term.SourceText,
 			TermKey:              term.TermKey,
 			TranslatedText:       term.TranslatedText,
 			Status:               term.Status,
 			Provider:             term.Provider,
 			Model:                term.Model,
-			PromptVersion:        term.PromptVersion,
+			PromptVersion:        promptVersion,
 			Error:                term.Error,
 			ErrorCode:            term.ErrorCode,
 			Metadata:             term.Metadata,
 		})
 	}
-	result, err := s.gateway.UpsertTranslationTerms(ctx, command)
+	result, err := s.gateway.UpsertTranslationTerms(ctx, upsertCommand)
 	if err != nil {
-		return SaveTranslationTermsResult{}, errors.Wrap(err, "save brreg companydata translation terms")
+		return sourcetranslation.SaveTermsResult{}, errors.Wrap(err, "save brreg companydata translation terms")
 	}
-	return SaveTranslationTermsResult{TermsSaved: result.TermsUpserted}, nil
+	return sourcetranslation.SaveTermsResult{TermsSaved: result.TermsUpserted}, nil
 }
 
 func (s *Store) loadAddresses(ctx context.Context, companyID uuid.UUID) ([]Address, error) {

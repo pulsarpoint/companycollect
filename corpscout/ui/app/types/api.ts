@@ -251,6 +251,9 @@ export interface BrregCompanyTranslationRequest {
   trigger?: string;
 }
 
+export type AriregisterCompanyTranslationRequest =
+  BrregCompanyTranslationRequest;
+
 export interface RawInput {
   id: string;
   source: string;
@@ -381,6 +384,71 @@ export interface AriregisterSourceEntryListResponse {
   total: number;
   page: number;
   limit: number;
+}
+
+export interface AriregisterSourceCompanyDetail {
+  id: string;
+  raw_record_id: string;
+  registry_code: string;
+  source_native_id: string;
+  country_iso2: string;
+  legal_name: string;
+  legal_name_normalized: string;
+  legal_name_en?: string | null;
+  registration_status?: string | null;
+  registration_status_label?: string | null;
+  registration_status_label_en?: string | null;
+  lifecycle_status: string;
+  legal_form_code?: string | null;
+  legal_form_number?: number | null;
+  legal_form_label?: string | null;
+  legal_form_label_en?: string | null;
+  legal_form_subtype?: string | null;
+  legal_form_subtype_label?: string | null;
+  legal_form_subtype_label_en?: string | null;
+  region_code?: number | null;
+  region_label?: string | null;
+  region_label_en?: string | null;
+  region_label_long?: string | null;
+  region_label_long_en?: string | null;
+  active_label?: string | null;
+  active_label_en?: string | null;
+  first_registered_on?: string | null;
+  deleted_on?: string | null;
+  evks_registered_at?: string | null;
+  has_missing_beneficial_owner_discrepancy_notice?: boolean | null;
+  founded_without_contribution?: boolean | null;
+  waived_form_requirements?: boolean | null;
+  is_accounting_required?: boolean | null;
+  reports_beneficial_owners?: boolean | null;
+  is_active?: boolean | null;
+  last_annual_report_year?: number | null;
+  employee_count?: number | null;
+  employee_count_source?: string | null;
+  employee_band?: string | null;
+  source_updated_at?: string | null;
+  payload_hash: string;
+  profile_version: string;
+  row_status: string;
+  normalized_payload: Record<string, unknown>;
+  raw_company_payload: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  superseded_at?: string | null;
+  names: Array<Record<string, unknown>>;
+  statuses: Array<Record<string, unknown>>;
+  legal_forms: Array<Record<string, unknown>>;
+  addresses: Array<Record<string, unknown>>;
+  contacts: Array<Record<string, unknown>>;
+  websites: Array<Record<string, unknown>>;
+  domains: Array<Record<string, unknown>>;
+  industries: Array<Record<string, unknown>>;
+  capital: Array<Record<string, unknown>>;
+  annual_reports: Array<Record<string, unknown>>;
+  articles: Array<Record<string, unknown>>;
+  registry_notes: Array<Record<string, unknown>>;
 }
 
 export interface BrregSourceCompanyDetail {

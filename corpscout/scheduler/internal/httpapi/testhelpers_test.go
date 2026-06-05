@@ -443,6 +443,11 @@ func (s *stubQuerier) GetBrregSourceCompanyDetail(ctx context.Context, companyID
 	return ret.Get(0).(db.BrregSourceVCompanyDetail), ret.Error(1)
 }
 
+func (s *stubQuerier) GetAriregisterSourceCompanyDetail(ctx context.Context, companyID uuid.UUID) (db.AriregisterSourceVCompanyDetail, error) {
+	ret := s.Called(ctx, companyID)
+	return ret.Get(0).(db.AriregisterSourceVCompanyDetail), ret.Error(1)
+}
+
 func (s *stubQuerier) CountBrregWorkflowRawRecords(ctx context.Context, arg db.CountBrregWorkflowRawRecordsParams) (int64, error) {
 	ret := s.Called(ctx, arg)
 	return ret.Get(0).(int64), ret.Error(1)

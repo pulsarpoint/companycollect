@@ -1,6 +1,10 @@
 package companydata
 
-import "github.com/google/uuid"
+import (
+	"github.com/google/uuid"
+
+	"github.com/pulsarpoint/corpscout/scheduler/internal/sourcetranslation"
+)
 
 type CompanyData struct {
 	Company    Company
@@ -97,23 +101,9 @@ type TermTranslation struct {
 	TranslatedText string
 }
 
-type TranslationTermResult struct {
-	SourceText           string
-	SourceTextNormalized string
-	TermKey              string
-	TranslatedText       string
-	Status               string
-	Provider             string
-	Model                string
-	PromptVersion        string
-	Error                string
-	ErrorCode            string
-	Metadata             map[string]any
-}
+type TranslationTermResult = sourcetranslation.TranslationTermResult
 
-type SaveTranslationTermsResult struct {
-	TermsSaved int32
-}
+type SaveTranslationTermsResult = sourcetranslation.SaveTermsResult
 
 type ApplyTranslationsResult struct {
 	FieldsApplied     int32

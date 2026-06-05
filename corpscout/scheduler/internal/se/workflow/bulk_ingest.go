@@ -14,7 +14,10 @@ const (
 	LoadSEBulkRawRecordsTaskQueue    = "se-bulk-ingest"
 	LoadSEBulkRawRecordsWorkflowName = "LoadSEBulkRawRecords"
 
-	loadSEBulkRawRecordsActivity = "LoadSEBulkRawRecordsActivity"
+	verifySEBulkSourceFilesActivity   = "VerifySEBulkSourceFilesActivity"
+	compareSEBulkSourceFilesActivity  = "CompareSEBulkSourceFilesActivity"
+	downloadSEBulkSourceFilesActivity = "DownloadSEBulkSourceFilesActivity"
+	processSEBulkRawRecordsActivity   = "ProcessSEBulkRawRecordsActivity"
 )
 
 type HVDDatasetConfig = actions.HVDDatasetConfig
@@ -22,6 +25,17 @@ type LoadSEBulkRawRecordsActivityInput = actions.LoadSEBulkRawRecordsActivityInp
 type LoadSEBulkRawRecordsActivityResult = actions.LoadSEBulkRawRecordsActivityResult
 type LoadSEBulkSourceFileResult = actions.LoadSEBulkSourceFileResult
 type LoadSEBulkDatasetLoadResult = actions.LoadSEBulkDatasetLoadResult
+type VerifySEBulkSourceFilesActivityInput = actions.VerifySEBulkSourceFilesActivityInput
+type VerifySEBulkSourceFilesActivityResult = actions.VerifySEBulkSourceFilesActivityResult
+type VerifiedSEBulkSourceFile = actions.VerifiedSEBulkSourceFile
+type CompareSEBulkSourceFilesActivityInput = actions.CompareSEBulkSourceFilesActivityInput
+type CompareSEBulkSourceFilesActivityResult = actions.CompareSEBulkSourceFilesActivityResult
+type ComparedSEBulkSourceFile = actions.ComparedSEBulkSourceFile
+type DownloadSEBulkSourceFilesActivityInput = actions.DownloadSEBulkSourceFilesActivityInput
+type DownloadSEBulkSourceFilesActivityResult = actions.DownloadSEBulkSourceFilesActivityResult
+type DownloadedSEBulkSourceFile = actions.DownloadedSEBulkSourceFile
+type ProcessSEBulkRawRecordsActivityInput = actions.ProcessSEBulkRawRecordsActivityInput
+type ProcessSEBulkRawRecordsActivityResult = actions.ProcessSEBulkRawRecordsActivityResult
 
 type LoadSEBulkRawRecordsInput struct {
 	Datasets     []HVDDatasetConfig `json:"datasets,omitempty"`
@@ -69,16 +83,53 @@ func LoadSEBulkRawRecords(
 		"trigger", input.Trigger,
 	)
 
-	var activityResult LoadSEBulkRawRecordsActivityResult
-	if err := temporalworkflow.ExecuteActivity(ctx, loadSEBulkRawRecordsActivity, LoadSEBulkRawRecordsActivityInput{
+	var verified VerifySEBulkSourceFilesActivityResult
+	if err := temporalworkflow.ExecuteActivity(ctx, verifySEBulkSourceFilesActivity, VerifySEBulkSourceFilesActivityInput{
 		TemporalWorkflowID: workflowInfo.WorkflowExecution.ID,
 		Datasets:           input.Datasets,
 		DatasetsJSON:       input.DatasetsJSON,
 		Limit:              int32(input.Limit),
 		BatchSize:          int32(input.BatchSize),
 		Trigger:            input.Trigger,
+	}).Get(ctx, &verified); err != nil {
+		return LoadSEBulkRawRecordsResult{}, errors.Wrap(err, "verify se bulk source files")
+	}
+
+	var compared CompareSEBulkSourceFilesActivityResult
+	if err := temporalworkflow.ExecuteActivity(ctx, compareSEBulkSourceFilesActivity, CompareSEBulkSourceFilesActivityInput{
+		WorkflowRunID: verified.WorkflowRunID,
+		SnapshotID:    verified.SnapshotID,
+		Limit:         verified.Limit,
+		BatchSize:     verified.BatchSize,
+		Metadata:      verified.Metadata,
+		SourceFiles:   verified.SourceFiles,
+	}).Get(ctx, &compared); err != nil {
+		return LoadSEBulkRawRecordsResult{}, errors.Wrap(err, "compare se bulk source file hashes")
+	}
+
+	var downloaded DownloadSEBulkSourceFilesActivityResult
+	if err := temporalworkflow.ExecuteActivity(ctx, downloadSEBulkSourceFilesActivity, DownloadSEBulkSourceFilesActivityInput{
+		WorkflowRunID: compared.WorkflowRunID,
+		SnapshotID:    compared.SnapshotID,
+		Limit:         compared.Limit,
+		BatchSize:     compared.BatchSize,
+		Metadata:      compared.Metadata,
+		SourceFiles:   compared.SourceFiles,
+	}).Get(ctx, &downloaded); err != nil {
+		return LoadSEBulkRawRecordsResult{}, errors.Wrap(err, "download se bulk source files")
+	}
+
+	var activityResult ProcessSEBulkRawRecordsActivityResult
+	if err := temporalworkflow.ExecuteActivity(ctx, processSEBulkRawRecordsActivity, ProcessSEBulkRawRecordsActivityInput{
+		WorkflowRunID:      downloaded.WorkflowRunID,
+		SnapshotID:         downloaded.SnapshotID,
+		TemporalWorkflowID: workflowInfo.WorkflowExecution.ID,
+		Limit:              downloaded.Limit,
+		BatchSize:          downloaded.BatchSize,
+		Metadata:           downloaded.Metadata,
+		SourceFiles:        downloaded.SourceFiles,
 	}).Get(ctx, &activityResult); err != nil {
-		return LoadSEBulkRawRecordsResult{}, errors.Wrap(err, "load se bulk raw records")
+		return LoadSEBulkRawRecordsResult{}, errors.Wrap(err, "process se bulk raw records")
 	}
 	logger.Debug("se bulk raw ingest workflow completed",
 		"temporal_workflow_id", workflowInfo.WorkflowExecution.ID,

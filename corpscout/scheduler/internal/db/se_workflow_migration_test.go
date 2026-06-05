@@ -29,7 +29,8 @@ func TestSEWorkflowMigrationDefinesRawDumpSchema(t *testing.T) {
 	require.Contains(t, sql, "idx_se_workflow_raw_records_current_org")
 	require.Contains(t, sql, "'se'")
 	require.Contains(t, sql, "'se_workflow.raw_records'")
-	require.Contains(t, sql, "SE_HVD_DATASETS_JSON")
+	require.Contains(t, sql, "https://metadata.bolagsverket.se/store/2/resource/42")
+	require.Contains(t, sql, "'format', 'metadata'")
 }
 
 func TestSEWorkflowDownMigrationDropsOwnedSchema(t *testing.T) {
@@ -37,4 +38,27 @@ func TestSEWorkflowDownMigrationDropsOwnedSchema(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Contains(t, string(body), "DROP SCHEMA IF EXISTS se_workflow CASCADE")
+}
+
+func TestSESourceFileDuplicateStatusMigrationTracksProcessedFileHashes(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000097_se_source_file_duplicate_status.up.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "skipped_duplicate")
+	require.Contains(t, sql, "idx_se_workflow_source_files_hash_status")
+	require.Contains(t, sql, "dataset_key, payload_hash, status")
+}
+
+func TestSEHVDSourceConfigMigrationStoresEditableDefaultDatasetURL(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000098_se_hvd_source_config.up.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "UPDATE data_sources")
+	require.Contains(t, sql, "WHERE name = 'se'")
+	require.Contains(t, sql, "'datasets'")
+	require.Contains(t, sql, "'url', 'https://metadata.bolagsverket.se/store/2/resource/42'")
+	require.Contains(t, sql, "'format', 'metadata'")
+	require.Contains(t, sql, "se_workflow.raw_records")
 }

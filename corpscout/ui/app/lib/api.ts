@@ -17,8 +17,10 @@ import type {
   BrregRawRecordDetail,
   BrregSourceEntryListResponse,
   AriregisterSourceEntryListResponse,
+  AriregisterSourceCompanyDetail,
   BrregSourceCompanyDetail,
   BrregWorkflowRunListResponse,
+  AriregisterCompanyTranslationRequest,
   BrregCompanyTranslationRequest,
   LLMProvider,
   LLMProviderInput,
@@ -326,6 +328,9 @@ export const api = {
     );
   },
 
+  getAriregisterSourceCompanyDetail: (id: string) =>
+    get<AriregisterSourceCompanyDetail>(`/sources/ariregister/companies/${id}`),
+
   getLLMProviders: () => get<LLMProviderListResponse>("/llm-providers"),
 
   createLLMProvider: (body: LLMProviderInput) =>
@@ -455,6 +460,14 @@ export const api = {
   translateBrregSourceCompanies: (body: BrregCompanyTranslationRequest = {}) =>
     post<StartWorkflowResponse>("/workflows/brreg/company-translation", body),
 
+  translateAriregisterSourceCompanies: (
+    body: AriregisterCompanyTranslationRequest = {},
+  ) =>
+    post<StartWorkflowResponse>(
+      "/workflows/ariregister/company-translation",
+      body,
+    ),
+
   searchBrregDomains: (
     body: {
       ids?: string[];
@@ -569,6 +582,14 @@ export const api = {
       trigger?: string;
     } = {},
   ) => post<StartWorkflowResponse>("/workflows/france/bulk-raw-ingest", body),
+
+  loadSEBulkRawRecords: (
+    body: {
+      limit?: number;
+      batch_size?: number;
+      trigger?: string;
+    } = {},
+  ) => post<StartWorkflowResponse>("/workflows/se/bulk-raw-ingest", body),
 
   cancelJob: (id: number) =>
     post<{ status: string; id: number }>(`/jobs/${id}/cancel`, {}),

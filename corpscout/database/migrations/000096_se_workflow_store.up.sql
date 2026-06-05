@@ -151,11 +151,17 @@ VALUES (
   jsonb_build_object(
     'docs_url', 'https://www.scb.se/vara-tjanster/bestall-data-och-statistik/foretagsregistret/vardefulla-datamangder--grundlaggande-foretagsinformation/',
     'api_portal_url', 'https://portal.api.bolagsverket.se/devportal/apis/ff8f9a91-1fdd-4705-8836-c1906581162f',
+    'metadata_url', 'https://metadata.bolagsverket.se/store/2/resource/42',
+    'file_download_url', 'https://bolagsverket.se/apierochoppnadata/nedladdningsbarafiler.2517.html',
     'protocol', 'Bolagsverket/SCB HVD file download',
-    'datasets_env', 'SE_HVD_DATASETS_JSON',
     'datasets', jsonb_build_array(
-      jsonb_build_object('key', 'organisationer', 'format', 'json'),
-      jsonb_build_object('key', 'arsredovisningar', 'format', 'json')
+      jsonb_build_object(
+        'dataset', 'organisationer',
+        'label', 'Organisationer',
+        'url', 'https://metadata.bolagsverket.se/store/2/resource/42',
+        'format', 'metadata',
+        'distribution_format', 'application/zip'
+      )
     ),
     'fields', jsonb_build_array(
       'identitetsbeteckning',
@@ -166,7 +172,7 @@ VALUES (
       'naringsgrenOrganisation',
       'postadressOrganisation'
     ),
-    'notes', 'Initial ingest stores raw HVD organization records in se_workflow.raw_records. Source file URLs are supplied through SE_HVD_DATASETS_JSON so portal-published HVD download URLs can be changed without a migration.'
+    'notes', 'Initial ingest stores raw HVD organization records in se_workflow.raw_records. The workflow resolves the configured metadata URL to the current HVD bulk file. Edit config.datasets to use a direct zip/json URL if Bolagsverket changes its download metadata or blocks automated discovery.'
   )
 )
 ON CONFLICT (name) DO UPDATE SET

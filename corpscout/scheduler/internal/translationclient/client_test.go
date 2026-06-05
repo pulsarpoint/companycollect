@@ -122,6 +122,104 @@ func TestTranslateBrregTermsRequestsSubjectAndDecodesResponse(t *testing.T) {
 	require.Equal(t, "Limited liability company", response.Results[0].TranslatedText)
 }
 
+func TestTranslateTermsRequestsDefaultTermSubjectAndDecodesResponse(t *testing.T) {
+	fake := &fakeNATSRequester{
+		response: []byte(`{
+			"request_id":"request-1",
+			"source":"brreg",
+			"source_lang":"no",
+			"target_lang":"en",
+			"provider":"mock",
+			"model":"mock-fast",
+			"prompt_version":"v1",
+			"results":[{
+				"term_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"source_text":"Aksjeselskap",
+				"source_text_normalized":"aksjeselskap",
+				"translated_text":"Limited liability company",
+				"status":"succeeded"
+			}]
+		}`),
+	}
+	client := newClientFromRequester(DefaultBrregTranslationSubject, fake)
+
+	response, err := client.TranslateTerms(context.Background(), TermTranslationRequest{
+		RequestID:     "request-1",
+		Source:        "brreg",
+		SourceLang:    "no",
+		TargetLang:    "en",
+		Provider:      "mock",
+		Model:         "mock-fast",
+		PromptVersion: "v1",
+		Terms: []TermTranslationRequestTerm{{
+			TermKey:              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			SourceText:           "Aksjeselskap",
+			SourceTextNormalized: "aksjeselskap",
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, DefaultTermTranslationRequestSubject, fake.subject)
+	require.JSONEq(t, `{
+		"request_id":"request-1",
+		"source":"brreg",
+		"source_lang":"no",
+		"target_lang":"en",
+		"provider":"mock",
+		"model":"mock-fast",
+		"prompt_version":"v1",
+		"terms":[{
+			"term_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"source_text":"Aksjeselskap",
+			"source_text_normalized":"aksjeselskap"
+		}]
+	}`, string(fake.payload))
+	require.Len(t, response.Results, 1)
+	require.Equal(t, "Limited liability company", response.Results[0].TranslatedText)
+}
+
+func TestTranslateBrregTermsDelegatesToTranslateTerms(t *testing.T) {
+	fake := &fakeNATSRequester{
+		response: []byte(`{
+			"request_id":"request-2",
+			"source":"brreg",
+			"source_lang":"no",
+			"target_lang":"en",
+			"provider":"mock",
+			"model":"mock-fast",
+			"prompt_version":"v1",
+			"results":[{
+				"term_key":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				"source_text":"Allmennaksjeselskap",
+				"source_text_normalized":"allmennaksjeselskap",
+				"translated_text":"Public limited company",
+				"status":"succeeded"
+			}]
+		}`),
+	}
+	client := newClientFromRequester(DefaultBrregTranslationSubject, fake)
+
+	response, err := client.TranslateBrregTerms(context.Background(), TermTranslationRequest{
+		RequestID:     "request-2",
+		Source:        "brreg",
+		SourceLang:    "no",
+		TargetLang:    "en",
+		Provider:      "mock",
+		Model:         "mock-fast",
+		PromptVersion: "v1",
+		Terms: []TermTranslationRequestTerm{{
+			TermKey:              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			SourceText:           "Allmennaksjeselskap",
+			SourceTextNormalized: "allmennaksjeselskap",
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, DefaultTermTranslationRequestSubject, fake.subject)
+	require.Len(t, response.Results, 1)
+	require.Equal(t, "Public limited company", response.Results[0].TranslatedText)
+}
+
 func TestTranslateBrregRecordsWrapsRequestErrors(t *testing.T) {
 	client := newClientFromRequester("brreg.translation.translate", &fakeNATSRequester{err: errors.New("nats down")})
 

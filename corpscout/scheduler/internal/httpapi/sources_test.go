@@ -157,6 +157,30 @@ func TestGetAriregisterSourceExposesTemporalBulkIngestMetadata(t *testing.T) {
 	q.AssertExpectations(t)
 }
 
+func TestGetSESourceExposesTemporalBulkIngestMetadata(t *testing.T) {
+	q := &stubQuerier{}
+	sourceID := uuid.New()
+	q.On("GetSourceByName", mock.Anything, "se").Return(db.DataSource{
+		ID:             sourceID,
+		Name:           "se",
+		InputTableName: "se_workflow.raw_records",
+	}, nil)
+
+	r := routerFor(newTestHandlers(q))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/se", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, sourceID.String(), body["id"])
+	require.Equal(t, "se", body["name"])
+	require.Equal(t, true, body["download_workflow_registered"])
+	require.Equal(t, true, body["manual_trigger_available"])
+	q.AssertExpectations(t)
+}
+
 func TestGetAriregisterSourceExposesSourceEntries(t *testing.T) {
 	q := &stubQuerier{}
 	sourceID := uuid.New()
@@ -434,6 +458,28 @@ func TestPatchSource_config_merge_preserves_json_numeric_type(t *testing.T) {
 	require.Equal(t, "gleif", q.updateSourceConfigParams.Name)
 	require.JSONEq(t, `{"limit":25,"nested":{"threshold":0.75},"unchanged":true}`, string(q.updateSourceConfigParams.Config))
 	require.Equal(t, `{"limit":25,"nested":{"threshold":0.75},"unchanged":true}`, string(q.updateSourceConfigParams.Config))
+	q.AssertExpectations(t)
+}
+
+func TestPatchSource_config_allowsSwedenHVDDatasetURL(t *testing.T) {
+	q := &sourceConfigStubQuerier{}
+
+	q.On("GetSourceByName", mock.Anything, "se").Return(db.DataSource{
+		Name:   "se",
+		Config: json.RawMessage(`{"datasets":[]}`),
+	}, nil)
+
+	r := routerFor(newTestHandlers(q))
+
+	body := strings.NewReader(`{"config":{"datasets":[{"dataset":"organisationer","url":"https://metadata.bolagsverket.se/store/2/resource/42","format":"metadata"}]}}`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/sources/se", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, q.updateSourceConfigParams)
+	require.JSONEq(t, `{"datasets":[{"dataset":"organisationer","url":"https://metadata.bolagsverket.se/store/2/resource/42","format":"metadata"}]}`, string(q.updateSourceConfigParams.Config))
 	q.AssertExpectations(t)
 }
 

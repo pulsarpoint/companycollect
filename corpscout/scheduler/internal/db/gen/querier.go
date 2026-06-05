@@ -46,6 +46,7 @@ type Querier interface {
 	DeleteTemporalScheduleMetadata(ctx context.Context, temporalScheduleID string) error
 	EnsureBrregCompanyFinancialProcessStatuses(ctx context.Context, limit int32) (int32, error)
 	EnsureBrregCompanyProcessStatuses(ctx context.Context, limit int32) (int32, error)
+	FailFranceWorkflowRunByOrchestrator(ctx context.Context, arg FailFranceWorkflowRunByOrchestratorParams) error
 	FailRunningBrregWorkflowTasksForRun(ctx context.Context, arg FailRunningBrregWorkflowTasksForRunParams) (int32, error)
 	FinishAriregisterWorkflowRunWithStats(ctx context.Context, arg FinishAriregisterWorkflowRunWithStatsParams) (uuid.UUID, error)
 	FinishBrregDomainActionAttempt(ctx context.Context, arg FinishBrregDomainActionAttemptParams) error
@@ -183,6 +184,7 @@ type Querier interface {
 	RecordFranceSourceFile(ctx context.Context, arg RecordFranceSourceFileParams) (uuid.UUID, error)
 	RecoverStaleBrregWorkflowRuns(ctx context.Context, arg RecoverStaleBrregWorkflowRunsParams) (RecoverStaleBrregWorkflowRunsRow, error)
 	RefreshAriregisterSourceCompanyExplorer(ctx context.Context) error
+	RefreshAriregisterSourceCompanyTranslationStatus(ctx context.Context) error
 	RejectCompanyFinancial(ctx context.Context, arg RejectCompanyFinancialParams) error
 	ReleaseBrregCompanyTranslationClaim(ctx context.Context, arg ReleaseBrregCompanyTranslationClaimParams) (BrregSourceCompanyProcessStatus, error)
 	ResolveNACECodeAlias(ctx context.Context, arg ResolveNACECodeAliasParams) (NaceCode, error)
@@ -209,6 +211,7 @@ type Querier interface {
 	UpdateSuggestionAggregateStatus(ctx context.Context, arg UpdateSuggestionAggregateStatusParams) error
 	UpdateSuggestionCreatedCompany(ctx context.Context, arg UpdateSuggestionCreatedCompanyParams) error
 	UpdateTemporalScheduleMetadata(ctx context.Context, arg UpdateTemporalScheduleMetadataParams) (TemporalScheduleMetadatum, error)
+	UpsertAriregisterTranslationTermResult(ctx context.Context, arg UpsertAriregisterTranslationTermResultParams) error
 	UpsertAriregisterWorkflowRawRecord(ctx context.Context, arg UpsertAriregisterWorkflowRawRecordParams) (UpsertAriregisterWorkflowRawRecordRow, error)
 	UpsertBrregSourceFinancialStatement(ctx context.Context, arg UpsertBrregSourceFinancialStatementParams) (uuid.UUID, error)
 	UpsertBrregTranslationTermResult(ctx context.Context, arg UpsertBrregTranslationTermResultParams) error

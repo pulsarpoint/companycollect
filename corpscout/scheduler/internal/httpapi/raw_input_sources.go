@@ -149,6 +149,26 @@ var rawInputSources = []rawInputSource{
 		createdAtExpr:       "created_at",
 		updatedAtExpr:       "updated_at",
 	},
+	{
+		source:             "se",
+		tableName:          "se_workflow.raw_records",
+		nameColumn:         "organization_name",
+		nativeColumn:       "organization_number",
+		statusExpr:         "'pending'",
+		stateExpr:          "'pending'",
+		companyTypeExpr:    "legal_form",
+		registrationColumn: "registration_status",
+		websiteExpr:        "''",
+		countryColumn:      "country_iso2",
+		runIDExpr:          "run_id",
+		attemptsExpr:       "0",
+		errorExpr:          "''",
+		firstSeenExpr:      "first_seen_at",
+		lastSeenExpr:       "last_seen_at",
+		processedAtExpr:    "NULL::timestamptz",
+		createdAtExpr:      "first_seen_at",
+		updatedAtExpr:      "last_seen_at",
+	},
 }
 
 func rawInputSourceByName(source string) (rawInputSource, bool) {

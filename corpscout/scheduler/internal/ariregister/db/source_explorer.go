@@ -51,3 +51,13 @@ func (g *Gateway) RefreshSourceExplorer(ctx context.Context) (RefreshSourceExplo
 		LatestSourceUpdatedAt: latest,
 	}, nil
 }
+
+func (g *Gateway) RefreshCompanyTranslationStatus(ctx context.Context) error {
+	if g == nil || g.pool == nil {
+		return errors.New("ariregister workflow database pool not available")
+	}
+	if err := db.New(g.pool).RefreshAriregisterSourceCompanyTranslationStatus(ctx); err != nil {
+		return errors.Wrap(err, "refresh ariregister source company translation status")
+	}
+	return nil
+}

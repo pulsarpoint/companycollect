@@ -94,6 +94,26 @@ func (q *Queries) CreateFranceBulkSnapshot(ctx context.Context, arg CreateFrance
 	return id, err
 }
 
+const failFranceWorkflowRunByOrchestrator = `-- name: FailFranceWorkflowRunByOrchestrator :exec
+UPDATE france_workflow.workflow_runs
+SET
+  status = 'failed',
+  finished_at = now(),
+  error = $1::text
+WHERE orchestrator_run_id = $2::text
+  AND status = 'running'
+`
+
+type FailFranceWorkflowRunByOrchestratorParams struct {
+	Error             *string `json:"error"`
+	OrchestratorRunID string  `json:"orchestrator_run_id"`
+}
+
+func (q *Queries) FailFranceWorkflowRunByOrchestrator(ctx context.Context, arg FailFranceWorkflowRunByOrchestratorParams) error {
+	_, err := q.db.Exec(ctx, failFranceWorkflowRunByOrchestrator, arg.Error, arg.OrchestratorRunID)
+	return err
+}
+
 const finishFranceWorkflowRunWithStats = `-- name: FinishFranceWorkflowRunWithStats :one
 UPDATE france_workflow.workflow_runs
 SET

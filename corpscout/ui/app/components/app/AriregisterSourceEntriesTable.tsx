@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { ArrowDown, ArrowUp, ChevronsUpDown, Search, X } from "lucide-react";
 import { api } from "~/lib/api";
 import type { AriregisterSourceEntryListItem } from "~/types/api";
@@ -116,7 +116,12 @@ function SourceEntryRow({ item }: { item: AriregisterSourceEntryListItem }) {
     <TableRow>
       <TableCell>
         <div className="flex min-w-56 flex-col gap-1">
-          <span className="font-medium">{item.legal_name || "Unnamed company"}</span>
+          <Link
+            className="font-medium text-foreground underline-offset-4 hover:underline"
+            to={`/sources/ariregister/companies/${item.company_id}`}
+          >
+            {item.legal_name || "Unnamed company"}
+          </Link>
           <span className="font-mono text-xs text-muted-foreground">
             {item.registry_code}
           </span>

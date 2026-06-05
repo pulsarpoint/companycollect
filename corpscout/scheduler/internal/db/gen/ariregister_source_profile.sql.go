@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/google/uuid"
 )
@@ -191,7 +192,7 @@ SELECT
   0::bigint AS artifact_skipped,
   0::bigint AS artifact_failed,
   COALESCE(sum(translation_missing_count), 0)::bigint AS artifact_missing
-FROM ariregister_source.mv_company_explorer
+FROM ariregister_source.mv_company_translation_status
 `
 
 type GetAriregisterSourceTranslationAssetStateRow struct {
@@ -352,5 +353,97 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY ariregister_source.mv_company_explorer
 
 func (q *Queries) RefreshAriregisterSourceCompanyExplorer(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, refreshAriregisterSourceCompanyExplorer)
+	return err
+}
+
+const refreshAriregisterSourceCompanyTranslationStatus = `-- name: RefreshAriregisterSourceCompanyTranslationStatus :exec
+REFRESH MATERIALIZED VIEW ariregister_source.mv_company_translation_status
+`
+
+func (q *Queries) RefreshAriregisterSourceCompanyTranslationStatus(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, refreshAriregisterSourceCompanyTranslationStatus)
+	return err
+}
+
+const upsertAriregisterTranslationTermResult = `-- name: UpsertAriregisterTranslationTermResult :exec
+INSERT INTO ariregister_source.translation_terms (
+  source,
+  source_lang,
+  target_lang,
+  source_text_normalized,
+  source_text,
+  term_key,
+  translated_text,
+  status,
+  provider,
+  model,
+  prompt_version,
+  error,
+  error_code,
+  metadata,
+  translated_at,
+  updated_at
+) VALUES (
+  'ariregister',
+  $1::text,
+  $2::text,
+  $3::text,
+  $4::text,
+  $5::text,
+  $6::text,
+  $7::text,
+  $8::text,
+  $9::text,
+  $10::text,
+  $11::text,
+  $12::text,
+  $13::jsonb,
+  CASE WHEN $7::text = 'succeeded' THEN now() ELSE NULL END,
+  now()
+)
+ON CONFLICT (source, source_lang, target_lang, prompt_version, term_key) DO UPDATE
+SET translated_text = EXCLUDED.translated_text,
+    status = EXCLUDED.status,
+    provider = EXCLUDED.provider,
+    model = EXCLUDED.model,
+    error = EXCLUDED.error,
+    error_code = EXCLUDED.error_code,
+    metadata = ariregister_source.translation_terms.metadata || EXCLUDED.metadata,
+    translated_at = CASE WHEN EXCLUDED.status = 'succeeded' THEN now() ELSE ariregister_source.translation_terms.translated_at END,
+    updated_at = now()
+`
+
+type UpsertAriregisterTranslationTermResultParams struct {
+	SourceLang           string          `json:"source_lang"`
+	TargetLang           string          `json:"target_lang"`
+	SourceTextNormalized string          `json:"source_text_normalized"`
+	SourceText           string          `json:"source_text"`
+	TermKey              string          `json:"term_key"`
+	TranslatedText       *string         `json:"translated_text"`
+	Status               string          `json:"status"`
+	Provider             *string         `json:"provider"`
+	Model                *string         `json:"model"`
+	PromptVersion        string          `json:"prompt_version"`
+	Error                *string         `json:"error"`
+	ErrorCode            *string         `json:"error_code"`
+	Metadata             json.RawMessage `json:"metadata"`
+}
+
+func (q *Queries) UpsertAriregisterTranslationTermResult(ctx context.Context, arg UpsertAriregisterTranslationTermResultParams) error {
+	_, err := q.db.Exec(ctx, upsertAriregisterTranslationTermResult,
+		arg.SourceLang,
+		arg.TargetLang,
+		arg.SourceTextNormalized,
+		arg.SourceText,
+		arg.TermKey,
+		arg.TranslatedText,
+		arg.Status,
+		arg.Provider,
+		arg.Model,
+		arg.PromptVersion,
+		arg.Error,
+		arg.ErrorCode,
+		arg.Metadata,
+	)
 	return err
 }

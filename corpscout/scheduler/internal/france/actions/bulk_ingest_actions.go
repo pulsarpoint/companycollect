@@ -25,6 +25,7 @@ import (
 
 const (
 	defaultBulkIngestDBBatchSize int32 = 1000
+	defaultFranceBulkStagingRoot       = "/var/lib/corpscout/worksets/france-sirene"
 	franceBulkRunType                  = "bulk_ingest"
 	franceBulkSource                   = "sirene_bulk"
 )
@@ -51,7 +52,7 @@ func NewBulkIngestActions(gateway *francedb.Gateway, httpClient *http.Client, cf
 	}
 }
 
-type LoadFranceBulkRawRecordsActivityInput struct {
+type StageFranceBulkRawFilesActivityInput struct {
 	TemporalWorkflowID string `json:"temporal_workflow_id,omitempty"`
 	LegalUnitsURL      string `json:"legal_units_url,omitempty"`
 	EstablishmentsURL  string `json:"establishments_url,omitempty"`
@@ -60,20 +61,80 @@ type LoadFranceBulkRawRecordsActivityInput struct {
 	Trigger            string `json:"trigger,omitempty"`
 }
 
-type LoadFranceBulkRawRecordsActivityResult struct {
-	RowsSeen                   int32  `json:"rows_seen"`
-	RowsWritten                int32  `json:"rows_written"`
-	RowsInsertedNew            int32  `json:"rows_inserted_new"`
-	RowsExistingUnchanged      int32  `json:"rows_existing_unchanged"`
-	RowsNewVersions            int32  `json:"rows_new_versions"`
-	LegalUnitsSeen             int32  `json:"legal_units_seen"`
-	LegalUnitsWritten          int32  `json:"legal_units_written"`
-	EstablishmentsSeen         int32  `json:"establishments_seen"`
-	EstablishmentsWritten      int32  `json:"establishments_written"`
-	WorkflowRunID              string `json:"workflow_run_id,omitempty"`
-	SnapshotID                 string `json:"snapshot_id,omitempty"`
-	LegalUnitsSourceFileID     string `json:"legal_units_source_file_id,omitempty"`
-	EstablishmentsSourceFileID string `json:"establishments_source_file_id,omitempty"`
+type StageFranceBulkRawFilesActivityResult struct {
+	WorkflowRunID                 string `json:"workflow_run_id,omitempty"`
+	SnapshotID                    string `json:"snapshot_id,omitempty"`
+	LegalUnitsSourceFileID        string `json:"legal_units_source_file_id,omitempty"`
+	EstablishmentsSourceFileID    string `json:"establishments_source_file_id,omitempty"`
+	LegalUnitsPath                string `json:"legal_units_path,omitempty"`
+	EstablishmentsPath            string `json:"establishments_path,omitempty"`
+	LegalUnitsURL                 string `json:"legal_units_url,omitempty"`
+	EstablishmentsURL             string `json:"establishments_url,omitempty"`
+	LegalUnitsResolvedURL         string `json:"legal_units_resolved_url,omitempty"`
+	EstablishmentsResolvedURL     string `json:"establishments_resolved_url,omitempty"`
+	LegalUnitsContentType         string `json:"legal_units_content_type,omitempty"`
+	EstablishmentsContentType     string `json:"establishments_content_type,omitempty"`
+	LegalUnitsBytesDownloaded     int64  `json:"legal_units_bytes_downloaded,omitempty"`
+	EstablishmentsBytesDownloaded int64  `json:"establishments_bytes_downloaded,omitempty"`
+	LegalUnitsChecksumValue       string `json:"legal_units_checksum_value,omitempty"`
+	EstablishmentsChecksumValue   string `json:"establishments_checksum_value,omitempty"`
+	Limit                         int32  `json:"limit"`
+	BatchSize                     int32  `json:"batch_size,omitempty"`
+	Metadata                      []byte `json:"metadata,omitempty"`
+}
+
+type ProcessFranceSireneDatasetResult struct {
+	RowsSeen              int32 `json:"rows_seen"`
+	RowsWritten           int32 `json:"rows_written"`
+	RowsInsertedNew       int32 `json:"rows_inserted_new"`
+	RowsExistingUnchanged int32 `json:"rows_existing_unchanged"`
+	RowsNewVersions       int32 `json:"rows_new_versions"`
+}
+
+type ProcessFranceSireneStockUniteLegaleActivityInput struct {
+	SnapshotID         string `json:"snapshot_id"`
+	SourceFileID       string `json:"source_file_id"`
+	SourcePath         string `json:"source_path"`
+	SourceURL          string `json:"source_url"`
+	ResolvedURL        string `json:"resolved_url,omitempty"`
+	ContentType        string `json:"content_type,omitempty"`
+	ContentLengthBytes int64  `json:"content_length_bytes,omitempty"`
+	ChecksumValue      string `json:"checksum_value,omitempty"`
+	Limit              int32  `json:"limit"`
+	BatchSize          int32  `json:"batch_size,omitempty"`
+	Metadata           []byte `json:"metadata,omitempty"`
+}
+
+type ProcessFranceSireneStockEtablissementActivityInput struct {
+	SnapshotID         string `json:"snapshot_id"`
+	SourceFileID       string `json:"source_file_id"`
+	SourcePath         string `json:"source_path"`
+	SourceURL          string `json:"source_url"`
+	ResolvedURL        string `json:"resolved_url,omitempty"`
+	ContentType        string `json:"content_type,omitempty"`
+	ContentLengthBytes int64  `json:"content_length_bytes,omitempty"`
+	ChecksumValue      string `json:"checksum_value,omitempty"`
+	Limit              int32  `json:"limit"`
+	BatchSize          int32  `json:"batch_size,omitempty"`
+	Metadata           []byte `json:"metadata,omitempty"`
+}
+
+type FinishFranceBulkRawIngestActivityInput struct {
+	WorkflowRunID string `json:"workflow_run_id"`
+	SnapshotID    string `json:"snapshot_id"`
+
+	RowsSeen              int32 `json:"rows_seen"`
+	RowsWritten           int32 `json:"rows_written"`
+	RowsInsertedNew       int32 `json:"rows_inserted_new"`
+	RowsExistingUnchanged int32 `json:"rows_existing_unchanged"`
+	RowsNewVersions       int32 `json:"rows_new_versions"`
+
+	Metadata []byte `json:"metadata,omitempty"`
+}
+
+type MarkFranceBulkRawIngestFailedActivityInput struct {
+	TemporalWorkflowID string `json:"temporal_workflow_id"`
+	Error              string `json:"error,omitempty"`
 }
 
 type resolvedBulkInput struct {
@@ -83,25 +144,26 @@ type resolvedBulkInput struct {
 	BatchSize         int32
 }
 
-func (a *BulkIngestActions) LoadFranceBulkRawRecords(
+func (a *BulkIngestActions) StageFranceBulkRawFiles(
 	ctx context.Context,
-	input LoadFranceBulkRawRecordsActivityInput,
-) (LoadFranceBulkRawRecordsActivityResult, error) {
+	input StageFranceBulkRawFilesActivityInput,
+) (StageFranceBulkRawFilesActivityResult, error) {
 	if a == nil || a.gateway == nil {
-		return LoadFranceBulkRawRecordsActivityResult{}, errors.New("france bulk ingest gateway not available")
+		return StageFranceBulkRawFilesActivityResult{}, errors.New("france bulk ingest gateway not available")
 	}
 	resolved := a.resolveInput(input)
 	metadata, err := metadataPayload(map[string]any{
 		"source":                franceBulkSource,
 		"legal_units_url":       resolved.LegalUnitsURL,
 		"establishments_url":    resolved.EstablishmentsURL,
+		"staging_root":          defaultFranceBulkStagingRoot,
 		"record_limit_per_file": resolved.Limit,
 		"database_batch_size":   resolved.BatchSize,
 		"trigger":               input.Trigger,
 		"temporal_workflow_id":  input.TemporalWorkflowID,
 	})
 	if err != nil {
-		return LoadFranceBulkRawRecordsActivityResult{}, err
+		return StageFranceBulkRawFilesActivityResult{}, err
 	}
 
 	workflowRunID, err := a.gateway.BeginWorkflowRun(ctx, db.BeginFranceWorkflowRunParams{
@@ -110,25 +172,8 @@ func (a *BulkIngestActions) LoadFranceBulkRawRecords(
 		Metadata:          metadata,
 	})
 	if err != nil {
-		return LoadFranceBulkRawRecordsActivityResult{}, err
+		return StageFranceBulkRawFilesActivityResult{}, err
 	}
-
-	var result LoadFranceBulkRawRecordsActivityResult
-	result.WorkflowRunID = workflowRunID.String()
-	status := "succeeded"
-	var finishError *string
-	defer func() {
-		if finishErr := a.gateway.FinishWorkflowRun(ctx, db.FinishFranceWorkflowRunWithStatsParams{
-			Status:           status,
-			RecordsSeen:      result.RowsSeen,
-			RecordsCompleted: result.RowsWritten,
-			RecordsFailed:    result.RowsSeen - result.RowsWritten,
-			Error:            finishError,
-			ID:               workflowRunID,
-		}); finishErr != nil {
-			slog.ErrorContext(ctx, "finish france bulk ingest workflow run", "error", finishErr, "workflow_run_id", workflowRunID)
-		}
-	}()
 
 	snapshotID, err := a.gateway.CreateBulkSnapshot(ctx, db.CreateFranceBulkSnapshotParams{
 		WorkflowRunID:  pgUUID(workflowRunID),
@@ -137,82 +182,200 @@ func (a *BulkIngestActions) LoadFranceBulkRawRecords(
 		Metadata:       metadata,
 	})
 	if err != nil {
-		status = "failed"
-		message := err.Error()
-		finishError = &message
-		return LoadFranceBulkRawRecordsActivityResult{}, err
+		return StageFranceBulkRawFilesActivityResult{}, err
 	}
-	result.SnapshotID = snapshotID.String()
 
-	slog.DebugContext(ctx, "loading france sirene bulk raw records",
+	slog.DebugContext(ctx, "staging france sirene bulk raw files",
 		"temporal_workflow_id", input.TemporalWorkflowID,
 		"legal_units_url", resolved.LegalUnitsURL,
 		"establishments_url", resolved.EstablishmentsURL,
+		"staging_root", defaultFranceBulkStagingRoot,
 		"limit", resolved.Limit,
 		"batch_size", resolved.BatchSize,
 		"trigger", input.Trigger,
 	)
 
-	legalResult, legalFileID, err := a.loadLegalUnits(ctx, snapshotID, resolved, metadata)
-	if err != nil {
-		status = "failed"
-		message := err.Error()
-		finishError = &message
-		return LoadFranceBulkRawRecordsActivityResult{}, err
-	}
-	result.LegalUnitsSourceFileID = legalFileID.String()
-	result.LegalUnitsSeen = legalResult.RowsSeen
-	result.LegalUnitsWritten = legalResult.RowsWritten
-	result.add(legalResult)
-
-	establishmentResult, establishmentFileID, err := a.loadEstablishments(ctx, snapshotID, resolved, metadata)
-	if err != nil {
-		status = "failed"
-		message := err.Error()
-		finishError = &message
-		return LoadFranceBulkRawRecordsActivityResult{}, err
-	}
-	result.EstablishmentsSourceFileID = establishmentFileID.String()
-	result.EstablishmentsSeen = establishmentResult.RowsSeen
-	result.EstablishmentsWritten = establishmentResult.RowsWritten
-	result.add(establishmentResult)
-
-	if err := a.gateway.MarkBulkSnapshotParsed(ctx, db.MarkFranceBulkSnapshotParsedParams{
-		RecordsSeen:    result.RowsSeen,
-		RecordsWritten: result.RowsWritten,
-		Metadata:       metadata,
-		ID:             snapshotID,
-	}); err != nil {
-		status = "failed"
-		message := err.Error()
-		finishError = &message
-		return LoadFranceBulkRawRecordsActivityResult{}, err
-	}
-	return result, nil
-}
-
-func (a *BulkIngestActions) loadLegalUnits(
-	ctx context.Context,
-	snapshotID uuid.UUID,
-	input resolvedBulkInput,
-	metadata []byte,
-) (francedb.IngestRawRecordsResult, uuid.UUID, error) {
-	staged, sourceFileID, err := a.downloadAndRecordSourceFile(
+	legalStaged, legalFileID, err := a.downloadAndRecordSourceFile(
 		ctx,
 		snapshotID,
 		francebulk.LegalUnitsDatasetKey,
 		francebulk.LegalUnitsResourceID,
-		input.LegalUnitsURL,
+		resolved.LegalUnitsURL,
+		stagingPath(defaultFranceBulkStagingRoot, input.TemporalWorkflowID, francebulk.LegalUnitsDatasetKey),
 		metadata,
 	)
 	if err != nil {
-		return francedb.IngestRawRecordsResult{}, uuid.Nil, err
+		return StageFranceBulkRawFilesActivityResult{}, err
 	}
-	defer staged.Close()
+
+	establishmentStaged, establishmentFileID, err := a.downloadAndRecordSourceFile(
+		ctx,
+		snapshotID,
+		francebulk.EstablishmentsDatasetKey,
+		francebulk.EstablishmentsResourceID,
+		resolved.EstablishmentsURL,
+		stagingPath(defaultFranceBulkStagingRoot, input.TemporalWorkflowID, francebulk.EstablishmentsDatasetKey),
+		metadata,
+	)
+	if err != nil {
+		return StageFranceBulkRawFilesActivityResult{}, err
+	}
+
+	return StageFranceBulkRawFilesActivityResult{
+		WorkflowRunID:                 workflowRunID.String(),
+		SnapshotID:                    snapshotID.String(),
+		LegalUnitsSourceFileID:        legalFileID.String(),
+		EstablishmentsSourceFileID:    establishmentFileID.String(),
+		LegalUnitsPath:                legalStaged.Path,
+		EstablishmentsPath:            establishmentStaged.Path,
+		LegalUnitsURL:                 resolved.LegalUnitsURL,
+		EstablishmentsURL:             resolved.EstablishmentsURL,
+		LegalUnitsResolvedURL:         legalStaged.ResolvedURL,
+		EstablishmentsResolvedURL:     establishmentStaged.ResolvedURL,
+		LegalUnitsContentType:         legalStaged.ContentType,
+		EstablishmentsContentType:     establishmentStaged.ContentType,
+		LegalUnitsBytesDownloaded:     legalStaged.BytesDownloaded,
+		EstablishmentsBytesDownloaded: establishmentStaged.BytesDownloaded,
+		LegalUnitsChecksumValue:       legalStaged.PayloadHash,
+		EstablishmentsChecksumValue:   establishmentStaged.PayloadHash,
+		Limit:                         resolved.Limit,
+		BatchSize:                     resolved.BatchSize,
+		Metadata:                      metadata,
+	}, nil
+}
+
+func (a *BulkIngestActions) FinishFranceBulkRawIngest(ctx context.Context, input FinishFranceBulkRawIngestActivityInput) error {
+	if a == nil || a.gateway == nil {
+		return errors.New("france bulk ingest gateway not available")
+	}
+	workflowRunID, err := parseRequiredUUID(input.WorkflowRunID, "workflow_run_id")
+	if err != nil {
+		return err
+	}
+	snapshotID, err := parseRequiredUUID(input.SnapshotID, "snapshot_id")
+	if err != nil {
+		return err
+	}
+	if err := a.gateway.MarkBulkSnapshotParsed(ctx, db.MarkFranceBulkSnapshotParsedParams{
+		RecordsSeen:    input.RowsSeen,
+		RecordsWritten: input.RowsWritten,
+		Metadata:       input.Metadata,
+		ID:             snapshotID,
+	}); err != nil {
+		return err
+	}
+	if err := a.gateway.FinishWorkflowRun(ctx, db.FinishFranceWorkflowRunWithStatsParams{
+		Status:           "succeeded",
+		RecordsSeen:      input.RowsSeen,
+		RecordsCompleted: input.RowsWritten,
+		RecordsFailed:    input.RowsSeen - input.RowsWritten,
+		Error:            nil,
+		ID:               workflowRunID,
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a *BulkIngestActions) ProcessFranceSireneStockUniteLegale(
+	ctx context.Context,
+	input ProcessFranceSireneStockUniteLegaleActivityInput,
+) (ProcessFranceSireneDatasetResult, error) {
+	if a == nil || a.gateway == nil {
+		return ProcessFranceSireneDatasetResult{}, errors.New("france bulk ingest gateway not available")
+	}
+	snapshotID, sourceFileID, err := parseProcessSourceFileIDs(input.SnapshotID, input.SourceFileID)
+	if err != nil {
+		return ProcessFranceSireneDatasetResult{}, err
+	}
+	result, err := a.processLegalUnits(ctx, processSourceFileInput{
+		SnapshotID:         snapshotID,
+		SourceFileID:       sourceFileID,
+		SourcePath:         input.SourcePath,
+		SourceURL:          input.SourceURL,
+		ResolvedURL:        input.ResolvedURL,
+		ContentType:        input.ContentType,
+		ContentLengthBytes: input.ContentLengthBytes,
+		ChecksumValue:      input.ChecksumValue,
+		Limit:              input.Limit,
+		BatchSize:          normalizeBatchSize(input.BatchSize),
+		Metadata:           input.Metadata,
+	})
+	if err != nil {
+		return ProcessFranceSireneDatasetResult{}, err
+	}
+	return datasetResult(result), nil
+}
+
+func (a *BulkIngestActions) ProcessFranceSireneStockEtablissement(
+	ctx context.Context,
+	input ProcessFranceSireneStockEtablissementActivityInput,
+) (ProcessFranceSireneDatasetResult, error) {
+	if a == nil || a.gateway == nil {
+		return ProcessFranceSireneDatasetResult{}, errors.New("france bulk ingest gateway not available")
+	}
+	snapshotID, sourceFileID, err := parseProcessSourceFileIDs(input.SnapshotID, input.SourceFileID)
+	if err != nil {
+		return ProcessFranceSireneDatasetResult{}, err
+	}
+	result, err := a.processEstablishments(ctx, processSourceFileInput{
+		SnapshotID:         snapshotID,
+		SourceFileID:       sourceFileID,
+		SourcePath:         input.SourcePath,
+		SourceURL:          input.SourceURL,
+		ResolvedURL:        input.ResolvedURL,
+		ContentType:        input.ContentType,
+		ContentLengthBytes: input.ContentLengthBytes,
+		ChecksumValue:      input.ChecksumValue,
+		Limit:              input.Limit,
+		BatchSize:          normalizeBatchSize(input.BatchSize),
+		Metadata:           input.Metadata,
+	})
+	if err != nil {
+		return ProcessFranceSireneDatasetResult{}, err
+	}
+	return datasetResult(result), nil
+}
+
+func (a *BulkIngestActions) MarkFranceBulkRawIngestFailed(
+	ctx context.Context,
+	input MarkFranceBulkRawIngestFailedActivityInput,
+) error {
+	if a == nil || a.gateway == nil {
+		return errors.New("france bulk ingest gateway not available")
+	}
+	if strings.TrimSpace(input.TemporalWorkflowID) == "" {
+		return errors.New("temporal workflow id is required")
+	}
+	return a.gateway.FailWorkflowRunByOrchestrator(ctx, db.FailFranceWorkflowRunByOrchestratorParams{
+		OrchestratorRunID: input.TemporalWorkflowID,
+		Error:             optionalString(input.Error),
+	})
+}
+
+type processSourceFileInput struct {
+	SnapshotID         uuid.UUID
+	SourceFileID       uuid.UUID
+	SourcePath         string
+	SourceURL          string
+	ResolvedURL        string
+	ContentType        string
+	ContentLengthBytes int64
+	ChecksumValue      string
+	Limit              int32
+	BatchSize          int32
+	Metadata           []byte
+}
+
+func (a *BulkIngestActions) processLegalUnits(
+	ctx context.Context,
+	input processSourceFileInput,
+) (francedb.IngestRawRecordsResult, error) {
+	staged := stagedPayloadFromProcessInput(input)
 
 	var result francedb.IngestRawRecordsResult
 	var batch []db.UpsertFranceWorkflowRawLegalUnitParams
-	sourceFileUUID := pgUUID(sourceFileID)
+	sourceFileUUID := pgUUID(input.SourceFileID)
 	flush := func() error {
 		if len(batch) == 0 {
 			return nil
@@ -235,54 +398,40 @@ func (a *BulkIngestActions) loadLegalUnits(
 		})
 		return nil
 	}
-	streamed, err := francebulk.StreamLegalUnitsFile(ctx, staged.Path, input.Limit, func(record francebulk.LegalUnitRecord) error {
-		batch = append(batch, record.UpsertParams(sourceFileUUID, metadata))
+	streamed, err := francebulk.StreamLegalUnitsFile(ctx, input.SourcePath, input.Limit, func(record francebulk.LegalUnitRecord) error {
+		batch = append(batch, record.UpsertParams(sourceFileUUID, input.Metadata))
 		if int32(len(batch)) >= input.BatchSize {
 			return flush()
 		}
 		return nil
 	})
 	if err != nil {
-		_ = a.recordFailedSourceFile(ctx, snapshotID, francebulk.LegalUnitsDatasetKey, francebulk.LegalUnitsResourceID, input.LegalUnitsURL, staged, err, metadata)
-		return francedb.IngestRawRecordsResult{}, sourceFileID, err
+		_ = a.recordFailedSourceFile(ctx, input.SnapshotID, francebulk.LegalUnitsDatasetKey, francebulk.LegalUnitsResourceID, input.SourceURL, staged, err, input.Metadata)
+		return francedb.IngestRawRecordsResult{}, err
 	}
 	if err := flush(); err != nil {
-		_ = a.recordFailedSourceFile(ctx, snapshotID, francebulk.LegalUnitsDatasetKey, francebulk.LegalUnitsResourceID, input.LegalUnitsURL, staged, err, metadata)
-		return francedb.IngestRawRecordsResult{}, sourceFileID, err
+		_ = a.recordFailedSourceFile(ctx, input.SnapshotID, francebulk.LegalUnitsDatasetKey, francebulk.LegalUnitsResourceID, input.SourceURL, staged, err, input.Metadata)
+		return francedb.IngestRawRecordsResult{}, err
 	}
 	if streamed.RowsSeen != result.RowsSeen {
 		err := errors.New("france legal unit stream row count mismatch")
-		_ = a.recordFailedSourceFile(ctx, snapshotID, francebulk.LegalUnitsDatasetKey, francebulk.LegalUnitsResourceID, input.LegalUnitsURL, staged, err, metadata)
-		return francedb.IngestRawRecordsResult{}, sourceFileID, err
+		_ = a.recordFailedSourceFile(ctx, input.SnapshotID, francebulk.LegalUnitsDatasetKey, francebulk.LegalUnitsResourceID, input.SourceURL, staged, err, input.Metadata)
+		return francedb.IngestRawRecordsResult{}, err
 	}
-	if _, err := a.recordParsedSourceFile(ctx, snapshotID, francebulk.LegalUnitsDatasetKey, francebulk.LegalUnitsResourceID, input.LegalUnitsURL, staged, result, metadata); err != nil {
-		return francedb.IngestRawRecordsResult{}, sourceFileID, err
+	if _, err := a.recordParsedSourceFile(ctx, input.SnapshotID, francebulk.LegalUnitsDatasetKey, francebulk.LegalUnitsResourceID, input.SourceURL, staged, result, input.Metadata); err != nil {
+		return francedb.IngestRawRecordsResult{}, err
 	}
-	return result, sourceFileID, nil
+	return result, nil
 }
 
-func (a *BulkIngestActions) loadEstablishments(
+func (a *BulkIngestActions) processEstablishments(
 	ctx context.Context,
-	snapshotID uuid.UUID,
-	input resolvedBulkInput,
-	metadata []byte,
-) (francedb.IngestRawRecordsResult, uuid.UUID, error) {
-	staged, sourceFileID, err := a.downloadAndRecordSourceFile(
-		ctx,
-		snapshotID,
-		francebulk.EstablishmentsDatasetKey,
-		francebulk.EstablishmentsResourceID,
-		input.EstablishmentsURL,
-		metadata,
-	)
-	if err != nil {
-		return francedb.IngestRawRecordsResult{}, uuid.Nil, err
-	}
-	defer staged.Close()
-
+	input processSourceFileInput,
+) (francedb.IngestRawRecordsResult, error) {
+	staged := stagedPayloadFromProcessInput(input)
 	var result francedb.IngestRawRecordsResult
 	var batch []db.UpsertFranceWorkflowRawEstablishmentParams
-	sourceFileUUID := pgUUID(sourceFileID)
+	sourceFileUUID := pgUUID(input.SourceFileID)
 	flush := func() error {
 		if len(batch) == 0 {
 			return nil
@@ -305,30 +454,30 @@ func (a *BulkIngestActions) loadEstablishments(
 		})
 		return nil
 	}
-	streamed, err := francebulk.StreamEstablishmentsFile(ctx, staged.Path, input.Limit, func(record francebulk.EstablishmentRecord) error {
-		batch = append(batch, record.UpsertParams(sourceFileUUID, metadata))
+	streamed, err := francebulk.StreamEstablishmentsFile(ctx, input.SourcePath, input.Limit, func(record francebulk.EstablishmentRecord) error {
+		batch = append(batch, record.UpsertParams(sourceFileUUID, input.Metadata))
 		if int32(len(batch)) >= input.BatchSize {
 			return flush()
 		}
 		return nil
 	})
 	if err != nil {
-		_ = a.recordFailedSourceFile(ctx, snapshotID, francebulk.EstablishmentsDatasetKey, francebulk.EstablishmentsResourceID, input.EstablishmentsURL, staged, err, metadata)
-		return francedb.IngestRawRecordsResult{}, sourceFileID, err
+		_ = a.recordFailedSourceFile(ctx, input.SnapshotID, francebulk.EstablishmentsDatasetKey, francebulk.EstablishmentsResourceID, input.SourceURL, staged, err, input.Metadata)
+		return francedb.IngestRawRecordsResult{}, err
 	}
 	if err := flush(); err != nil {
-		_ = a.recordFailedSourceFile(ctx, snapshotID, francebulk.EstablishmentsDatasetKey, francebulk.EstablishmentsResourceID, input.EstablishmentsURL, staged, err, metadata)
-		return francedb.IngestRawRecordsResult{}, sourceFileID, err
+		_ = a.recordFailedSourceFile(ctx, input.SnapshotID, francebulk.EstablishmentsDatasetKey, francebulk.EstablishmentsResourceID, input.SourceURL, staged, err, input.Metadata)
+		return francedb.IngestRawRecordsResult{}, err
 	}
 	if streamed.RowsSeen != result.RowsSeen {
 		err := errors.New("france establishment stream row count mismatch")
-		_ = a.recordFailedSourceFile(ctx, snapshotID, francebulk.EstablishmentsDatasetKey, francebulk.EstablishmentsResourceID, input.EstablishmentsURL, staged, err, metadata)
-		return francedb.IngestRawRecordsResult{}, sourceFileID, err
+		_ = a.recordFailedSourceFile(ctx, input.SnapshotID, francebulk.EstablishmentsDatasetKey, francebulk.EstablishmentsResourceID, input.SourceURL, staged, err, input.Metadata)
+		return francedb.IngestRawRecordsResult{}, err
 	}
-	if _, err := a.recordParsedSourceFile(ctx, snapshotID, francebulk.EstablishmentsDatasetKey, francebulk.EstablishmentsResourceID, input.EstablishmentsURL, staged, result, metadata); err != nil {
-		return francedb.IngestRawRecordsResult{}, sourceFileID, err
+	if _, err := a.recordParsedSourceFile(ctx, input.SnapshotID, francebulk.EstablishmentsDatasetKey, francebulk.EstablishmentsResourceID, input.SourceURL, staged, result, input.Metadata); err != nil {
+		return francedb.IngestRawRecordsResult{}, err
 	}
-	return result, sourceFileID, nil
+	return result, nil
 }
 
 func (a *BulkIngestActions) downloadAndRecordSourceFile(
@@ -337,9 +486,10 @@ func (a *BulkIngestActions) downloadAndRecordSourceFile(
 	datasetKey string,
 	resourceID string,
 	sourceURL string,
+	targetPath string,
 	metadata []byte,
 ) (*stagedPayload, uuid.UUID, error) {
-	staged, err := downloadPayloadWithProgress(ctx, a.httpClient, sourceURL, func(bytesDownloaded int64) {
+	staged, err := downloadPayloadWithProgress(ctx, a.httpClient, sourceURL, targetPath, func(bytesDownloaded int64) {
 		activity.RecordHeartbeat(ctx, map[string]any{
 			"phase":            "downloading",
 			"dataset_key":      datasetKey,
@@ -363,10 +513,9 @@ func (a *BulkIngestActions) downloadAndRecordSourceFile(
 		ChecksumType:       optionalString("sha256"),
 		ChecksumValue:      optionalString(staged.PayloadHash),
 		Status:             "downloaded",
-		Metadata:           metadata,
+		Metadata:           sourceFileMetadata(metadata, staged.Path),
 	})
 	if err != nil {
-		staged.Close()
 		return nil, uuid.Nil, err
 	}
 	return staged, sourceFileID, nil
@@ -397,7 +546,7 @@ func (a *BulkIngestActions) recordParsedSourceFile(
 		RowsSeen:           result.RowsSeen,
 		RowsWritten:        result.RowsWritten,
 		Status:             "parsed",
-		Metadata:           metadata,
+		Metadata:           sourceFileMetadata(metadata, staged.Path),
 	})
 }
 
@@ -426,12 +575,12 @@ func (a *BulkIngestActions) recordFailedSourceFile(
 		ChecksumValue:      optionalString(staged.PayloadHash),
 		Status:             "failed",
 		Error:              &message,
-		Metadata:           metadata,
+		Metadata:           sourceFileMetadata(metadata, staged.Path),
 	})
 	return err
 }
 
-func (a *BulkIngestActions) resolveInput(input LoadFranceBulkRawRecordsActivityInput) resolvedBulkInput {
+func (a *BulkIngestActions) resolveInput(input StageFranceBulkRawFilesActivityInput) resolvedBulkInput {
 	batchSize := input.BatchSize
 	if batchSize <= 0 {
 		batchSize = defaultBulkIngestDBBatchSize
@@ -452,16 +601,13 @@ type stagedPayload struct {
 	ResolvedURL     string
 }
 
-func (p *stagedPayload) Close() {
-	if p == nil || p.Path == "" {
-		return
-	}
-	_ = os.Remove(p.Path)
-}
-
-func downloadPayloadWithProgress(ctx context.Context, httpClient *http.Client, sourceURL string, onProgress func(int64)) (*stagedPayload, error) {
+func downloadPayloadWithProgress(ctx context.Context, httpClient *http.Client, sourceURL string, targetPath string, onProgress func(int64)) (*stagedPayload, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
+	}
+	targetPath = strings.TrimSpace(targetPath)
+	if targetPath == "" {
+		return nil, errors.New("france bulk target path is required")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
@@ -478,16 +624,21 @@ func downloadPayloadWithProgress(ctx context.Context, httpClient *http.Client, s
 		return nil, errors.Newf("download france bulk data returned status %d", response.StatusCode)
 	}
 
-	tempFile, err := os.CreateTemp("", "corpscout-france-sirene-*.parquet")
-	if err != nil {
-		return nil, errors.Wrap(err, "create france bulk temp file")
+	targetDir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return nil, errors.Wrap(err, "create france bulk staging directory")
 	}
-	staged := &stagedPayload{Path: tempFile.Name()}
+	tempFile, err := os.CreateTemp(targetDir, "."+filepath.Base(targetPath)+".*.tmp")
+	if err != nil {
+		return nil, errors.Wrap(err, "create france bulk staging temp file")
+	}
+	tempPath := tempFile.Name()
+	staged := &stagedPayload{Path: targetPath}
 	keep := false
 	defer func() {
 		_ = tempFile.Close()
 		if !keep {
-			staged.Close()
+			_ = os.Remove(tempPath)
 		}
 	}()
 
@@ -504,6 +655,12 @@ func downloadPayloadWithProgress(ctx context.Context, httpClient *http.Client, s
 	staged.ContentType = response.Header.Get("Content-Type")
 	if response.Request != nil && response.Request.URL != nil {
 		staged.ResolvedURL = response.Request.URL.String()
+	}
+	if err := tempFile.Close(); err != nil {
+		return nil, errors.Wrap(err, "close france bulk staging temp file")
+	}
+	if err := os.Rename(tempPath, targetPath); err != nil {
+		return nil, errors.Wrap(err, "move france bulk staging temp file")
 	}
 	keep = true
 	return staged, nil
@@ -547,12 +704,98 @@ func metadataPayload(value map[string]any) ([]byte, error) {
 	return payload, nil
 }
 
-func (r *LoadFranceBulkRawRecordsActivityResult) add(result francedb.IngestRawRecordsResult) {
-	r.RowsSeen += result.RowsSeen
-	r.RowsWritten += result.RowsWritten
-	r.RowsInsertedNew += result.RowsInsertedNew
-	r.RowsExistingUnchanged += result.RowsExistingUnchanged
-	r.RowsNewVersions += result.RowsNewVersions
+func sourceFileMetadata(base []byte, localPath string) []byte {
+	var metadata map[string]any
+	if len(base) > 0 {
+		if err := json.Unmarshal(base, &metadata); err != nil {
+			metadata = nil
+		}
+	}
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	if trimmed := strings.TrimSpace(localPath); trimmed != "" {
+		metadata["local_path"] = trimmed
+	}
+	payload, err := json.Marshal(metadata)
+	if err != nil {
+		return base
+	}
+	return payload
+}
+
+func stagingPath(root string, workflowID string, datasetKey string) string {
+	return filepath.Join(root, safePathComponent(workflowID, "france-bulk-ingest"), franceBulkFileName(datasetKey))
+}
+
+func franceBulkFileName(datasetKey string) string {
+	switch datasetKey {
+	case francebulk.LegalUnitsDatasetKey:
+		return "stock_unite_legale.parquet"
+	case francebulk.EstablishmentsDatasetKey:
+		return "stock_etablissement.parquet"
+	default:
+		return safePathComponent(datasetKey, "source") + ".parquet"
+	}
+}
+
+func safePathComponent(value string, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		trimmed = fallback
+	}
+	return strings.NewReplacer("/", "_", "\\", "_", ":", "_").Replace(trimmed)
+}
+
+func parseProcessSourceFileIDs(snapshotIDValue string, sourceFileIDValue string) (uuid.UUID, uuid.UUID, error) {
+	snapshotID, err := parseRequiredUUID(snapshotIDValue, "snapshot_id")
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	sourceFileID, err := parseRequiredUUID(sourceFileIDValue, "source_file_id")
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	return snapshotID, sourceFileID, nil
+}
+
+func parseRequiredUUID(value string, fieldName string) (uuid.UUID, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return uuid.Nil, errors.Newf("%s is required", fieldName)
+	}
+	parsed, err := uuid.Parse(trimmed)
+	if err != nil {
+		return uuid.Nil, errors.Wrapf(err, "parse %s", fieldName)
+	}
+	return parsed, nil
+}
+
+func normalizeBatchSize(batchSize int32) int32 {
+	if batchSize <= 0 {
+		return defaultBulkIngestDBBatchSize
+	}
+	return batchSize
+}
+
+func stagedPayloadFromProcessInput(input processSourceFileInput) *stagedPayload {
+	return &stagedPayload{
+		Path:            input.SourcePath,
+		BytesDownloaded: input.ContentLengthBytes,
+		PayloadHash:     input.ChecksumValue,
+		ContentType:     input.ContentType,
+		ResolvedURL:     input.ResolvedURL,
+	}
+}
+
+func datasetResult(result francedb.IngestRawRecordsResult) ProcessFranceSireneDatasetResult {
+	return ProcessFranceSireneDatasetResult{
+		RowsSeen:              result.RowsSeen,
+		RowsWritten:           result.RowsWritten,
+		RowsInsertedNew:       result.RowsInsertedNew,
+		RowsExistingUnchanged: result.RowsExistingUnchanged,
+		RowsNewVersions:       result.RowsNewVersions,
+	}
 }
 
 func addIngestResult(target *francedb.IngestRawRecordsResult, result francedb.IngestRawRecordsResult) {
