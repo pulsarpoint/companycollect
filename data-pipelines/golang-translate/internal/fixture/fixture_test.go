@@ -14,6 +14,24 @@ func TestSelectItemsReturnsLimitedCopy(t *testing.T) {
 	}
 }
 
+func TestSelectItemsExpandsWithUniqueIDsWhenLimitExceedsFixtureSize(t *testing.T) {
+	items := []Item{{ID: "one", Text: "One"}, {ID: "two", Text: "Two"}}
+	selected := SelectItems(items, 5)
+	if len(selected) != 5 {
+		t.Fatalf("selected item count = %d, want 5", len(selected))
+	}
+	gotIDs := []string{selected[0].ID, selected[1].ID, selected[2].ID, selected[3].ID, selected[4].ID}
+	wantIDs := []string{"one", "two", "one-r002", "two-r002", "one-r003"}
+	for index := range wantIDs {
+		if gotIDs[index] != wantIDs[index] {
+			t.Fatalf("selected ids = %v, want %v", gotIDs, wantIDs)
+		}
+	}
+	if selected[2].Text != "One" {
+		t.Fatalf("expanded item text = %q, want One", selected[2].Text)
+	}
+}
+
 func TestChunkItemsSplitsFixedSizeBatches(t *testing.T) {
 	items := []Item{{ID: "one"}, {ID: "two"}, {ID: "three"}, {ID: "four"}, {ID: "five"}}
 	chunks := ChunkItems(items, 2)

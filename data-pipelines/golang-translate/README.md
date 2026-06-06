@@ -66,6 +66,40 @@ The benchmark writes to `output/benchmark-<timestamp>/` by default. That folder 
 
 After the run finishes, ask the LLM to analyze the output folder and start with `analysis-prompt.md`.
 
+## Adaptive Batch Search
+
+Use `scale-start.sh` to find a better sequential batch size without brute-forcing every value:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/data-pipelines/golang-translate
+./scale-start.sh
+```
+
+Defaults:
+
+- `ITEMS=128`
+- `START_BATCH_SIZE=16`
+- `MAX_BATCH_SIZE=128`
+- `MIN_STEP=4`
+- `MAX_ROUNDS=12`
+- `DEGRADATION_PERCENT=5`
+
+The search starts at `START_BATCH_SIZE`, doubles upward until a request fails or terms/sec drops more than `DEGRADATION_PERCENT` below the best result, then tests midpoint batch sizes around the best result until the search interval reaches `MIN_STEP`.
+
+Example:
+
+```bash
+ITEMS=128 \
+START_BATCH_SIZE=16 \
+MAX_BATCH_SIZE=128 \
+MIN_STEP=4 \
+./scale-start.sh
+```
+
+The script writes to `output/scale-<timestamp>/` by default. That folder contains `summary.csv`, `results.tsv`, `analysis-prompt.md`, and one folder per tested batch size.
+
+`input.json` has 64 base terms. If `ITEMS` is larger than 64, the runner cycles through the fixture and appends unique suffixes to repeated IDs, so `ITEMS=128`, `256`, and larger values still produce unique expected translation IDs.
+
 ## Dry Run
 
 Validate the bash control flow without spending LLM time:

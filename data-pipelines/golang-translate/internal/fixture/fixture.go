@@ -2,6 +2,7 @@ package fixture
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/cockroachdb/errors"
@@ -35,10 +36,19 @@ func Load(path string) (Input, error) {
 }
 
 func SelectItems(items []Item, limit int) []Item {
-	if limit <= 0 || limit >= len(items) {
+	if limit <= 0 {
 		return append([]Item(nil), items...)
 	}
-	return append([]Item(nil), items[:limit]...)
+	selected := make([]Item, 0, limit)
+	for index := 0; index < limit; index++ {
+		item := items[index%len(items)]
+		if index >= len(items) {
+			round := index/len(items) + 1
+			item.ID = fmt.Sprintf("%s-r%03d", item.ID, round)
+		}
+		selected = append(selected, item)
+	}
+	return selected
 }
 
 func ChunkItems(items []Item, size int) [][]Item {
