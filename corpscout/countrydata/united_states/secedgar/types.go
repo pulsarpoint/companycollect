@@ -24,6 +24,12 @@ type SecTickerRecord struct {
 	CIKStr int64  `json:"cik_str"`
 	Ticker string `json:"ticker"`
 	Title  string `json:"title"`
+
+	// RawPayload is the exact source NDJSON line the record was decoded from and
+	// PayloadHash is its SHA-256, both populated by Process for raw storage. They
+	// are not part of the source JSON.
+	RawPayload  []byte `json:"-"`
+	PayloadHash string `json:"-"`
 }
 
 // tickerFile is the company_tickers.json top-level object. The keys are

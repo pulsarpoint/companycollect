@@ -21,6 +21,7 @@ type UnitedStatesSECEDGARImportInput struct {
 	RequestTimeout time.Duration
 	UserAgent      string
 	MetadataStore  countryimport.MetadataStore
+	StoreFunc      func(context.Context, []secedgar.SecTickerRecord) (countryimport.StoreResult, error)
 }
 
 type UnitedStatesSECEDGARImportResult struct {
@@ -37,6 +38,7 @@ func (i UnitedStatesSECEDGARImporter) Run(ctx context.Context, input UnitedState
 		HTTPClient:     i.HTTPClient,
 		MetadataStore:  input.MetadataStore,
 	})
+	source.StoreFunc = input.StoreFunc
 
 	download, err := source.Download(ctx, countryimport.DownloadOptions{
 		RequestTimeout: input.RequestTimeout,
