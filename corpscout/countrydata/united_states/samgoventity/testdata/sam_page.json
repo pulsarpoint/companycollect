@@ -1,0 +1,135 @@
+{
+  "totalRecords": 2,
+  "entityData": [
+    {
+      "entityRegistration": {
+        "samRegistered": "Yes",
+        "ueiSAM": "ABC123DEF456",
+        "cageCode": "1ABC2",
+        "legalBusinessName": "EXAMPLE ANALYTICS LLC",
+        "dbaName": null,
+        "registrationStatus": "Active",
+        "registrationDate": "2024-01-15",
+        "registrationExpirationDate": "2025-01-15",
+        "lastUpdateDate": "2024-02-01",
+        "ueiStatus": "Active",
+        "purposeOfRegistrationCode": "Z2",
+        "purposeOfRegistrationDesc": "All Awards"
+      },
+      "coreData": {
+        "physicalAddress": {
+          "addressLine1": "100 Main St",
+          "addressLine2": null,
+          "city": "Denver",
+          "stateOrProvinceCode": "CO",
+          "zipCode": "80202",
+          "zipCodePlus4": "1234",
+          "countryCode": "USA"
+        },
+        "mailingAddress": {
+          "addressLine1": "PO Box 50",
+          "addressLine2": null,
+          "city": "Denver",
+          "stateOrProvinceCode": "CO",
+          "zipCode": "80201",
+          "zipCodePlus4": null,
+          "countryCode": "USA"
+        },
+        "entityInformation": {
+          "entityURL": "https://example-analytics.com",
+          "entityStartDate": "2019-05-01",
+          "fiscalYearEndCloseDate": "12/31"
+        },
+        "generalInformation": {
+          "entityStructureCode": "2L",
+          "entityStructureDesc": "Corporate Entity (Not Tax Exempt)",
+          "entityTypeCode": "F",
+          "entityTypeDesc": "Business or Organization",
+          "profitStructureCode": "2X",
+          "profitStructureDesc": "For Profit Organization",
+          "stateOfIncorporationCode": "CO",
+          "stateOfIncorporationDesc": "COLORADO",
+          "countryOfIncorporationCode": "USA",
+          "countryOfIncorporationDesc": "UNITED STATES"
+        }
+      },
+      "assertions": {
+        "goodsAndServices": {
+          "primaryNaics": "541511",
+          "naicsList": [
+            {
+              "naicsCode": "541511",
+              "naicsDescription": "Custom Computer Programming Services",
+              "sbaSmallBusiness": "Y",
+              "naicsException": null
+            },
+            {
+              "naicsCode": "518210",
+              "naicsDescription": "Data Processing, Hosting, and Related Services",
+              "sbaSmallBusiness": "N",
+              "naicsException": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "entityRegistration": {
+        "samRegistered": "Yes",
+        "ueiSAM": "XYZ987UVW654",
+        "cageCode": null,
+        "legalBusinessName": "GLOBAL WIDGETS INC",
+        "dbaName": "GlobalWidgets",
+        "registrationStatus": "Expired",
+        "registrationDate": "2021-03-10",
+        "registrationExpirationDate": "2022-03-10",
+        "lastUpdateDate": "2022-03-10",
+        "ueiStatus": "Active",
+        "purposeOfRegistrationCode": "Z5",
+        "purposeOfRegistrationDesc": "All Awards"
+      },
+      "coreData": {
+        "physicalAddress": {
+          "addressLine1": "500 King St",
+          "addressLine2": "Suite 9",
+          "city": "Toronto",
+          "stateOrProvinceCode": "ON",
+          "zipCode": "M5V 1J5",
+          "zipCodePlus4": null,
+          "countryCode": "CAN"
+        },
+        "entityInformation": {
+          "entityURL": null,
+          "entityStartDate": "2015-01-01",
+          "fiscalYearEndCloseDate": "06/30"
+        },
+        "generalInformation": {
+          "entityStructureCode": "2L",
+          "entityStructureDesc": "Corporate Entity (Not Tax Exempt)",
+          "entityTypeCode": "F",
+          "entityTypeDesc": "Business or Organization",
+          "profitStructureCode": "2X",
+          "profitStructureDesc": "For Profit Organization",
+          "stateOfIncorporationCode": null,
+          "stateOfIncorporationDesc": null,
+          "countryOfIncorporationCode": "CAN",
+          "countryOfIncorporationDesc": "CANADA"
+        }
+      },
+      "assertions": {
+        "goodsAndServices": {
+          "primaryNaics": "339999",
+          "naicsList": [
+            {
+              "naicsCode": "339999",
+              "naicsDescription": "All Other Miscellaneous Manufacturing",
+              "sbaSmallBusiness": "Y",
+              "naicsException": null
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "links": {}
+}
