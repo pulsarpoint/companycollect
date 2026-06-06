@@ -204,7 +204,35 @@ Package tests should cover:
 - HTTP non-2xx returns a wrapped error
 - default concurrency serializes concurrent calls through one client
 
-Tests should use `httptest.Server` for the HTTP boundary. No NATS, Temporal, Postgres, or real LLM is required for this package's test suite.
+Default package unit tests should use `httptest.Server` for the HTTP boundary. No NATS, Temporal, Postgres, or real LLM is required for the default test suite.
+
+## Real Local LLM Integration Test
+
+The package should also include an opt-in integration test against the same local LLM style used by the direct Go performance benchmark.
+
+This test should be skipped by default and enabled only with an explicit environment variable so CI and regular local test runs remain deterministic:
+
+```bash
+CORPSCOUT_DIRECT_LLM_REAL_TEST=1 \
+CORPSCOUT_DIRECT_LLM_BASE_URL=http://100.77.62.33:8888 \
+CORPSCOUT_DIRECT_LLM_MODEL=qwen3:6b \
+go test ./internal/directllmtranslation -run TestRealLocalLLM -count=1 -v
+```
+
+The test should:
+
+- create one shared `Client`
+- use `MaxBatchSize = 16`
+- use `MaxConcurrentRequests = 1`
+- submit exactly one batch of 16 registry-style terms
+- include source and target languages from the fixture input, not command-line flags
+- verify every input id receives a non-empty translation
+- verify no unexpected ids are returned
+- print elapsed time and terms per second through `t.Logf`
+
+The fixture should live in the package test code or a small package-local fixture file. It should not import benchmark-only packages from `data-pipelines/golang-translate`.
+
+This real test is not a replacement for the benchmark app. Its purpose is to prove the package contract works against the actual local LLM endpoint and to catch prompt or response-shape regressions before wiring the package into source translation workers.
 
 ## Non-Goals
 
