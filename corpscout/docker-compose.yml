@@ -38,7 +38,9 @@ services:
       - ./data/rustfs:/data
 
   scheduler:
-    build: ./scheduler
+    build:
+      context: .
+      dockerfile: scheduler/Dockerfile
     extra_hosts:
       - "companycollect:100.85.212.113"
     depends_on:

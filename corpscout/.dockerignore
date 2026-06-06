@@ -1,0 +1,10 @@
+.git
+data/
+ui/node_modules/
+ui/.react-router/
+ui/build/
+scheduler/bin/
+scheduler/worker
+scheduler/*.test
+scheduler/coverage.out
+**/.DS_Store
