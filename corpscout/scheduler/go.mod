@@ -14,6 +14,7 @@ require (
 	github.com/nats-io/nats-server/v2 v2.10.24
 	github.com/nats-io/nats.go v1.39.1
 	github.com/pashagolub/pgxmock/v3 v3.4.0
+	github.com/pulsarpoint/corpscout/countrydata v0.0.0
 	github.com/riverqueue/river v0.14.0
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.14.0
 	github.com/riverqueue/river/rivertype v0.14.0
@@ -96,3 +97,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+replace github.com/pulsarpoint/corpscout/countrydata => ../countrydata
