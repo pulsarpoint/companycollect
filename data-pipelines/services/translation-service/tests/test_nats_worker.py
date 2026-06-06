@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 import pytest
+from nats.js.api import RetentionPolicy, StorageType
 
 from corpscout_translation_service.models import (
     BrregTranslateResponse,
@@ -12,14 +13,98 @@ from corpscout_translation_service.models import (
     TermTranslationResultItem,
 )
 from corpscout_translation_service.nats_worker import (
+    JetStreamResultPublisher,
+    JetStreamTranslationConfig,
+    _ensure_jetstream_streams,
     handle_brreg_translation_message,
     handle_jetstream_translation_job,
     handle_source_term_translation_message,
+    jetstream_translation_config_from_env,
     run_jetstream_translation_loop,
 )
 
 
 TERM_KEY_1 = "6b79e9d3d6b2cfb0c065d83384c1028947fb5f89af7938f4e176122bdd26db72"
+
+
+def test_jetstream_translation_config_uses_production_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TRANSLATION_JETSTREAM_JOB_SUBJECT", raising=False)
+    monkeypatch.delenv("TRANSLATION_JETSTREAM_RESULT_SUBJECT", raising=False)
+    monkeypatch.delenv("TRANSLATION_JETSTREAM_JOB_STREAM", raising=False)
+    monkeypatch.delenv("TRANSLATION_JETSTREAM_RESULT_STREAM", raising=False)
+    monkeypatch.delenv("TRANSLATION_JETSTREAM_DURABLE", raising=False)
+
+    config = jetstream_translation_config_from_env()
+
+    assert config.job_subject == "source.translation.jobs"
+    assert config.result_subject == "source.translation.results"
+    assert config.job_stream == "SOURCE_TRANSLATION"
+    assert config.result_stream == "SOURCE_TRANSLATION"
+    assert config.durable == "translation-service"
+
+
+def test_jetstream_translation_config_reads_isolated_queue_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRANSLATION_JETSTREAM_JOB_SUBJECT", "e2e.source.translation.jobs")
+    monkeypatch.setenv("TRANSLATION_JETSTREAM_RESULT_SUBJECT", "e2e.source.translation.results")
+    monkeypatch.setenv("TRANSLATION_JETSTREAM_JOB_STREAM", "E2E_SOURCE_TRANSLATION_JOBS")
+    monkeypatch.setenv("TRANSLATION_JETSTREAM_RESULT_STREAM", "E2E_SOURCE_TRANSLATION_RESULTS")
+    monkeypatch.setenv("TRANSLATION_JETSTREAM_DURABLE", "e2e-translation-service")
+
+    config = jetstream_translation_config_from_env()
+
+    assert config.job_subject == "e2e.source.translation.jobs"
+    assert config.result_subject == "e2e.source.translation.results"
+    assert config.job_stream == "E2E_SOURCE_TRANSLATION_JOBS"
+    assert config.result_stream == "E2E_SOURCE_TRANSLATION_RESULTS"
+    assert config.durable == "e2e-translation-service"
+
+
+@pytest.mark.asyncio
+async def test_jetstream_result_publisher_uses_configured_result_subject() -> None:
+    js = FakeJetStreamContext()
+    publisher = JetStreamResultPublisher(
+        js,
+        JetStreamTranslationConfig(
+            job_subject="e2e.source.translation.jobs",
+            result_subject="e2e.source.translation.results",
+            job_stream="E2E_SOURCE_TRANSLATION_JOBS",
+            result_stream="E2E_SOURCE_TRANSLATION_RESULTS",
+            durable="e2e-translation-service",
+        ),
+    )
+
+    await publisher.publish_result(_jetstream_result(job_id="job-1", batch_id="batch-1"))
+
+    assert js.published[0][0] == "e2e.source.translation.results"
+    body = json.loads(js.published[0][1].decode("utf-8"))
+    assert body["job_id"] == "job-1"
+
+
+@pytest.mark.asyncio
+async def test_ensure_jetstream_streams_uses_workqueue_for_isolated_streams() -> None:
+    js = FakeJetStreamStreamManager()
+
+    await _ensure_jetstream_streams(
+        js,
+        JetStreamTranslationConfig(
+            job_subject="e2e.source.translation.jobs",
+            result_subject="e2e.source.translation.results",
+            job_stream="E2E_SOURCE_TRANSLATION_JOBS",
+            result_stream="E2E_SOURCE_TRANSLATION_RESULTS",
+            durable="e2e-translation-service",
+        ),
+    )
+
+    assert [config.name for config in js.streams] == [
+        "E2E_SOURCE_TRANSLATION_JOBS",
+        "E2E_SOURCE_TRANSLATION_RESULTS",
+    ]
+    assert [config.subjects for config in js.streams] == [
+        ["e2e.source.translation.jobs"],
+        ["e2e.source.translation.results"],
+    ]
+    assert all(config.retention == RetentionPolicy.WORK_QUEUE for config in js.streams)
+    assert all(config.storage == StorageType.FILE for config in js.streams)
 
 
 @pytest.mark.asyncio
@@ -357,6 +442,22 @@ class FakeResultPublisher:
         self.results.append(result.model_dump(exclude_none=True))
 
 
+class FakeJetStreamContext:
+    def __init__(self) -> None:
+        self.published: list[tuple[str, bytes]] = []
+
+    async def publish(self, subject: str, payload: bytes) -> None:
+        self.published.append((subject, payload))
+
+
+class FakeJetStreamStreamManager:
+    def __init__(self) -> None:
+        self.streams: list[Any] = []
+
+    async def add_stream(self, config: Any = None, **_: Any) -> None:
+        self.streams.append(config)
+
+
 class FakeSourceTermTranslationService:
     def __init__(
         self,
@@ -418,3 +519,19 @@ def _jetstream_job_payload(*, job_id: str, batch_id: str, source: str = "brreg")
             }
         ],
     }
+
+
+def _jetstream_result(*, job_id: str, batch_id: str) -> Any:
+    from corpscout_translation_service.models import JetStreamTranslationResult
+
+    return JetStreamTranslationResult(
+        job_id=job_id,
+        batch_id=batch_id,
+        source="e2e",
+        status="succeeded",
+        provider="default",
+        model="default",
+        prompt_version="v1",
+        company_ids=["company-a"],
+        duration_ms=1,
+    )

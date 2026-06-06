@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from dataclasses import dataclass
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ import time
 from typing import Any, Protocol
 
 import nats
+from nats.js.api import RetentionPolicy, StorageType, StreamConfig
 from nats.js.errors import FetchTimeoutError
 from pydantic import ValidationError
 
@@ -35,10 +37,34 @@ DEFAULT_NATS_SUBJECT = "brreg.translation.translate"
 DEFAULT_NATS_QUEUE = "brreg-translation"
 TERM_REQUEST_SUBJECT = "brreg.translation.terms.request"
 TERM_KEY_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-JETSTREAM_JOB_SUBJECT = "source.translation.jobs"
-JETSTREAM_RESULT_SUBJECT = "source.translation.results"
-JETSTREAM_STREAM = "SOURCE_TRANSLATION"
-JETSTREAM_DURABLE = "translation-service"
+DEFAULT_JETSTREAM_JOB_SUBJECT = "source.translation.jobs"
+DEFAULT_JETSTREAM_RESULT_SUBJECT = "source.translation.results"
+DEFAULT_JETSTREAM_STREAM = "SOURCE_TRANSLATION"
+DEFAULT_JETSTREAM_DURABLE = "translation-service"
+JETSTREAM_JOB_SUBJECT = DEFAULT_JETSTREAM_JOB_SUBJECT
+JETSTREAM_RESULT_SUBJECT = DEFAULT_JETSTREAM_RESULT_SUBJECT
+JETSTREAM_STREAM = DEFAULT_JETSTREAM_STREAM
+JETSTREAM_DURABLE = DEFAULT_JETSTREAM_DURABLE
+
+
+@dataclass(frozen=True)
+class JetStreamTranslationConfig:
+    job_subject: str
+    result_subject: str
+    job_stream: str
+    result_stream: str
+    durable: str
+
+
+def jetstream_translation_config_from_env() -> JetStreamTranslationConfig:
+    job_stream = _env_text("TRANSLATION_JETSTREAM_JOB_STREAM", DEFAULT_JETSTREAM_STREAM)
+    return JetStreamTranslationConfig(
+        job_subject=_env_text("TRANSLATION_JETSTREAM_JOB_SUBJECT", DEFAULT_JETSTREAM_JOB_SUBJECT),
+        result_subject=_env_text("TRANSLATION_JETSTREAM_RESULT_SUBJECT", DEFAULT_JETSTREAM_RESULT_SUBJECT),
+        job_stream=job_stream,
+        result_stream=_env_text("TRANSLATION_JETSTREAM_RESULT_STREAM", job_stream),
+        durable=_env_text("TRANSLATION_JETSTREAM_DURABLE", DEFAULT_JETSTREAM_DURABLE),
+    )
 
 
 class NatsMessage(Protocol):
@@ -202,12 +228,13 @@ async def handle_jetstream_translation_job(
 
 
 class JetStreamResultPublisher:
-    def __init__(self, js: Any) -> None:
+    def __init__(self, js: Any, config: JetStreamTranslationConfig | None = None) -> None:
         self._js = js
+        self._config = config or jetstream_translation_config_from_env()
 
     async def publish_result(self, result: JetStreamTranslationResult) -> None:
         await self._js.publish(
-            JETSTREAM_RESULT_SUBJECT,
+            self._config.result_subject,
             result.model_dump_json(exclude_none=True).encode("utf-8"),
         )
 
@@ -237,23 +264,30 @@ async def run_worker() -> None:
     subject = os.getenv("TRANSLATION_NATS_SUBJECT", os.getenv("NATS_SUBJECT", DEFAULT_NATS_SUBJECT))
     queue = os.getenv("TRANSLATION_NATS_QUEUE", os.getenv("NATS_QUEUE", DEFAULT_NATS_QUEUE))
     max_concurrent = _positive_int_from_env("TRANSLATION_WORKER_MAX_CONCURRENT_REQUESTS", 1)
+    jetstream_config = jetstream_translation_config_from_env()
     semaphore = asyncio.Semaphore(max_concurrent)
 
     nc = await nats.connect(nats_url)
     js = nc.jetstream()
-    await _ensure_jetstream_stream(js)
+    await _ensure_jetstream_streams(js, jetstream_config)
     pull_subscription = await js.pull_subscribe(
-        JETSTREAM_JOB_SUBJECT,
-        durable=JETSTREAM_DURABLE,
-        stream=JETSTREAM_STREAM,
+        jetstream_config.job_subject,
+        durable=jetstream_config.durable,
+        stream=jetstream_config.job_stream,
     )
-    result_publisher = JetStreamResultPublisher(js)
+    result_publisher = JetStreamResultPublisher(js, jetstream_config)
     LOGGER.info(
-        "translation-service NATS worker connected subject=%s queue=%s max_concurrent=%s jetstream_stream=%s",
+        (
+            "translation-service NATS worker connected subject=%s queue=%s max_concurrent=%s "
+            "jetstream_job_stream=%s jetstream_job_subject=%s jetstream_result_stream=%s jetstream_result_subject=%s"
+        ),
         subject,
         queue,
         max_concurrent,
-        JETSTREAM_STREAM,
+        jetstream_config.job_stream,
+        jetstream_config.job_subject,
+        jetstream_config.result_stream,
+        jetstream_config.result_subject,
     )
 
     async def callback(message: Any) -> None:
@@ -356,12 +390,27 @@ async def _ack_if_supported(message: Any) -> None:
     await ack()
 
 
-async def _ensure_jetstream_stream(js: Any) -> None:
+async def _ensure_jetstream_streams(js: Any, config: JetStreamTranslationConfig) -> None:
+    if config.job_stream == config.result_stream:
+        await _ensure_jetstream_stream(js, config.job_stream, [config.job_subject, config.result_subject])
+        return
+    await _ensure_jetstream_stream(js, config.job_stream, [config.job_subject], work_queue=True)
+    await _ensure_jetstream_stream(js, config.result_stream, [config.result_subject], work_queue=True)
+
+
+async def _ensure_jetstream_stream(
+    js: Any,
+    name: str,
+    subjects: list[str],
+    *,
+    work_queue: bool = False,
+) -> None:
+    stream_config = StreamConfig(name=name, subjects=subjects)
+    if work_queue:
+        stream_config.retention = RetentionPolicy.WORK_QUEUE
+        stream_config.storage = StorageType.FILE
     try:
-        await js.add_stream(
-            name=JETSTREAM_STREAM,
-            subjects=[JETSTREAM_JOB_SUBJECT, JETSTREAM_RESULT_SUBJECT],
-        )
+        await js.add_stream(config=stream_config)
     except Exception as exc:
         if _is_stream_already_exists_error(exc):
             return
@@ -470,3 +519,10 @@ def _positive_int_from_env(key: str, default: int) -> int:
     except ValueError:
         return default
     return parsed if parsed > 0 else default
+
+
+def _env_text(key: str, default: str) -> str:
+    value = os.getenv(key)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip()
