@@ -91,7 +91,7 @@ analysis/
     {source_slug}/
       source_field_catalog.json
       source_field_catalog.md
-      sample_record.json
+      sample_record.json  # optional when safe
   country_company_profile.schema.json
   country_company_profile.example.json
   country_company_profile_mapping.md
@@ -124,6 +124,12 @@ blocked_by_authentication
 Include blocked or restricted sources only when they document important values
 that are unavailable from open sources. Keep them clearly marked as restricted
 or planning-only.
+
+Restricted, paid, authenticated, or license-uncertain sources may be cataloged
+only from public documentation, source inventory notes, or metadata the user is
+allowed to use. Do not copy raw records, observed example values, or extracted
+field values from restricted sources into outputs unless the license/access
+terms explicitly allow that use. Mark such fields as planning-only.
 
 Skip sources classified as:
 
@@ -306,6 +312,10 @@ Rules:
 - Do not include secrets or credential-protected data.
 - If the real record is huge, keep only one company/entity and note truncation in
   `source_field_catalog.md`.
+- If a sample is unsafe, unavailable, too large, or not permitted, omit
+  `sample_record.json` and document the reason in `source_field_catalog.md`.
+- Restricted, paid, authenticated, or license-uncertain sources must not have raw sample records
+  unless the license/access terms explicitly allow that use.
 
 ## Country-Specific Combined Profile
 
@@ -315,6 +325,16 @@ Write:
 analysis/country_company_profile.schema.json
 analysis/country_company_profile.example.json
 ```
+
+`analysis/country_company_profile.schema.json` must be a JSON Schema document,
+not a data-shaped example record. Include standard JSON Schema fields such as
+`$schema`, `type`, `properties`, and `required`. Use `description`, custom
+`x-source`, `x-source-path`, `x-join-key`, `x-freshness`, `x-access`, or similar
+source/provenance annotations where useful.
+
+`analysis/country_company_profile.example.json` must be a data-shaped example
+record that conforms to the schema and illustrates the richest practical company
+profile that can be built for that country from the analyzed sources.
 
 The combined profile is country-specific. It should represent what can be built
 for that country from the analyzed sources.
@@ -332,7 +352,47 @@ Rules:
 - Include restricted/paid/license-uncertain data only as clearly marked
   planning-only sections unless the user explicitly asks otherwise.
 
-Example shape only:
+JSON Schema shape only:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Serbia Company Profile",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": {
+      "type": "string",
+      "const": "Serbia"
+    },
+    "country_slug": {
+      "type": "string",
+      "const": "serbia"
+    },
+    "registration": {
+      "type": "object",
+      "required": ["maticni_broj"],
+      "properties": {
+        "maticni_broj": {
+          "type": "string",
+          "description": "Serbian company registration identifier.",
+          "x-source": "apr_companies",
+          "x-source-path": "Podaci.<maticni_broj>",
+          "x-join-key": true
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  }
+}
+```
+
+Example record shape only:
 
 ```json
 {
@@ -472,6 +532,14 @@ Summarize later cross-country mapping opportunities.
 - Do not treat public access as permission for redistribution.
 - Do not bypass authentication, payment, CAPTCHA, robots restrictions, or access
   controls.
+- Restricted, paid, authenticated, or license-uncertain sources may be cataloged
+  only from public documentation, source inventory notes, or metadata the user is
+  allowed to use.
+- Do not copy raw records, observed example values, or extracted field values
+  from restricted sources into outputs unless the license/access terms explicitly
+  allow that use.
+- Mark fields from restricted, paid, authenticated, or license-uncertain sources
+  as planning-only.
 - Do not parse huge raw files without bounded sampling.
 - Mark license uncertainty and paid/restricted access clearly.
 - Mark stale sources clearly.
