@@ -1,7 +1,6 @@
 package workflow
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -16,14 +15,7 @@ const (
 	TranslateBrregSourceCompaniesTaskQueue    = "brreg-company-translation"
 	TranslateBrregSourceCompaniesWorkflowName = "TranslateBrregSourceCompanies"
 
-	buildBrregTranslationWorksetActivity          = "BuildBrregTranslationWorkset"
-	claimBrregTranslationWorksetBatchActivity     = "ClaimBrregTranslationWorksetBatch"
-	translateBrregTranslationWorksetBatchActivity = "TranslateBrregTranslationWorksetBatch"
-	saveBrregTranslationWorksetBatchActivity      = "SaveBrregTranslationWorksetBatch"
-	applyBrregTranslationWorksetActivity          = "ApplyBrregTranslationWorkset"
-	refreshBrregTranslationStatusActivity         = "RefreshBrregTranslationStatus"
-	completeBrregTranslationQueueBatchActivity    = "CompleteBrregTranslationQueueBatch"
-	releaseBrregTranslationQueueBatchActivity     = "ReleaseBrregTranslationQueueBatch"
+	buildBrregTranslationWorksetActivity = "BuildBrregTranslationWorkset"
 
 	defaultCompanyTranslationBatchSize        = 10
 	defaultCompanyTranslationMaxParallelTasks = 2
@@ -35,27 +27,12 @@ const (
 	defaultCompanyTranslationMaxBatches       = 200
 	defaultCompanyTranslationPromptVersion    = "v1"
 	defaultCompanyTranslationTrigger          = "manual"
-	defaultCompanyTranslationQueuePollDelay   = 5
-
-	companyTranslationClaimModeAuto  = "auto"
-	companyTranslationClaimModeFixed = "fixed"
+	companyTranslationClaimModeAuto           = "auto"
+	companyTranslationClaimModeFixed          = "fixed"
 )
 
 type BuildBrregTranslationWorksetInput = actions.BuildBrregTranslationWorksetInput
 type BuildBrregTranslationWorksetResult = actions.BuildBrregTranslationWorksetResult
-type ClaimBrregTranslationWorksetBatchInput = actions.ClaimBrregTranslationWorksetBatchInput
-type ClaimBrregTranslationWorksetBatchResult = actions.ClaimBrregTranslationWorksetBatchResult
-type TranslationWorksetTerm = actions.TranslationWorksetTerm
-type TranslateBrregTranslationWorksetBatchInput = actions.TranslateBrregTranslationWorksetBatchInput
-type TranslateBrregTranslationWorksetBatchResult = actions.TranslateBrregTranslationWorksetBatchResult
-type TranslationWorksetTermResult = actions.TranslationWorksetTermResult
-type SaveBrregTranslationWorksetBatchInput = actions.SaveBrregTranslationWorksetBatchInput
-type SaveBrregTranslationWorksetBatchResult = actions.SaveBrregTranslationWorksetBatchResult
-type ApplyBrregTranslationWorksetInput = actions.ApplyBrregTranslationWorksetInput
-type ApplyBrregTranslationWorksetResult = actions.ApplyBrregTranslationWorksetResult
-type CompleteBrregTranslationQueueBatchInput = actions.CompleteBrregTranslationQueueBatchInput
-type ReleaseBrregTranslationQueueBatchInput = actions.ReleaseBrregTranslationQueueBatchInput
-type TranslationQueueBatchResult = actions.TranslationQueueBatchResult
 
 type TranslateBrregSourceCompaniesInput struct {
 	AllRecords        bool              `json:"all_records,omitempty"`
@@ -111,11 +88,6 @@ type TranslateBrregSourceCompaniesResult struct {
 	TermsSaved          int32  `json:"terms_saved"`
 	BatchesProcessed    int32  `json:"batches_processed"`
 	WorksetPath         string `json:"workset_path,omitempty"`
-}
-
-type translationWorksetBatch struct {
-	Ordinal int32
-	Claimed ClaimBrregTranslationWorksetBatchResult
 }
 
 func TranslateBrregSourceCompanies(
@@ -203,137 +175,12 @@ func TranslateBrregSourceCompanies(
 		input.WorksetCompanies = prepared.CompaniesExported
 		input.CarriedStatusRowsInserted = result.StatusRowsInserted
 		input.CarriedFieldsSeen = result.FieldsSeen
-	}
-
-	for {
-		current, err := claimTranslationWorksetBatch(ctx, input, workflowInfo.WorkflowExecution.ID, &result)
-		if err != nil {
-			return result, err
-		}
-		if current == nil {
-			break
-		}
-
-		var translated TranslateBrregTranslationWorksetBatchResult
-		if err := temporalworkflow.ExecuteActivity(ctx, translateBrregTranslationWorksetBatchActivity, TranslateBrregTranslationWorksetBatchInput{
-			BatchID:       current.Claimed.BatchID,
-			CompanyIDs:    current.Claimed.CompanyIDs,
-			SourceLang:    current.Claimed.SourceLang,
-			TargetLang:    current.Claimed.TargetLang,
-			Provider:      defaultString(current.Claimed.Provider, input.Provider),
-			Model:         defaultString(current.Claimed.Model, input.Model),
-			PromptVersion: defaultString(current.Claimed.PromptVersion, input.PromptVersion),
-		}).Get(ctx, &translated); err != nil {
-			var released TranslationQueueBatchResult
-			if releaseErr := temporalworkflow.ExecuteActivity(ctx, releaseBrregTranslationQueueBatchActivity, ReleaseBrregTranslationQueueBatchInput{
-				BatchID: current.Claimed.BatchID,
-			}).Get(ctx, &released); releaseErr != nil {
-				return result, errors.Wrap(releaseErr, "release brreg translation queue batch after failed translation")
-			}
-			return result, errors.Wrap(err, "translate brreg translation queue batch")
-		}
-
-		var completed TranslationQueueBatchResult
-		if err := temporalworkflow.ExecuteActivity(ctx, completeBrregTranslationQueueBatchActivity, CompleteBrregTranslationQueueBatchInput{
-			BatchID: current.Claimed.BatchID,
-		}).Get(ctx, &completed); err != nil {
-			return result, errors.Wrap(err, "complete brreg translation queue batch")
-		}
-		result.CompaniesSucceeded += completed.RowsAffected
-		result.TermsClaimed += translated.TermsClaimed
-		result.TermsSucceeded += translated.TermsSucceeded
-		result.TermsFailed += translated.TermsFailed
-		result.TermsSaved += translated.TermsSaved
-		result.FieldsApplied += translated.BindingsApplied
-
-		if shouldContinueAsNewAfterBatch(input, current.Ordinal) {
-			input.CarriedStatusRowsInserted = result.StatusRowsInserted
-			input.CarriedCompaniesClaimed = result.CompaniesClaimed
-			input.CarriedCompaniesSucceeded = result.CompaniesSucceeded
-			input.CarriedFieldsSeen = result.FieldsSeen
-			input.CarriedFieldsApplied = result.FieldsApplied
-			input.CarriedRequestChars = result.RequestCharsClaimed
-			input.CarriedTermsClaimed = result.TermsClaimed
-			input.CarriedTermsSucceeded = result.TermsSucceeded
-			input.CarriedTermsFailed = result.TermsFailed
-			input.CarriedTermsSaved = result.TermsSaved
-			input.CarriedBatchesProcessed = result.BatchesProcessed
-			return result, temporalworkflow.NewContinueAsNewError(ctx, TranslateBrregSourceCompanies, input)
-		}
-	}
-
-	if result.BatchesProcessed > 0 {
-		if err := refreshBrregTranslationStatus(ctx); err != nil {
-			return result, err
-		}
-	}
-
-	result.RemainingFields = result.FieldsSeen - result.FieldsApplied
-	if result.RemainingFields < 0 {
-		result.RemainingFields = 0
-	}
-	if result.TermsClaimed == 0 && result.TermsSucceeded == 0 && result.TermsFailed == 0 {
-		result.Status = "succeeded"
+		result.Status = "queued"
 		return result, nil
 	}
-	if result.TermsFailed > 0 && result.TermsSucceeded == 0 && result.FieldsApplied == 0 {
-		result.Status = "failed"
-		return result, temporal.NewNonRetryableApplicationError("all company translation terms failed", "BRREG_ALL_COMPANY_TRANSLATION_TERMS_FAILED", nil)
-	}
-	if result.TermsFailed > 0 || result.RemainingFields > 0 {
-		result.Status = "partial"
-		return result, nil
-	}
-	result.Status = "succeeded"
+
+	result.Status = "queued"
 	return result, nil
-}
-
-func refreshBrregTranslationStatus(ctx temporalworkflow.Context) error {
-	if err := temporalworkflow.ExecuteActivity(ctx, refreshBrregTranslationStatusActivity).Get(ctx, nil); err != nil {
-		return errors.Wrap(err, "refresh brreg translation status")
-	}
-	return nil
-}
-
-func claimTranslationWorksetBatch(
-	ctx temporalworkflow.Context,
-	input TranslateBrregSourceCompaniesInput,
-	workflowID string,
-	result *TranslateBrregSourceCompaniesResult,
-) (*translationWorksetBatch, error) {
-	for {
-		var claimed ClaimBrregTranslationWorksetBatchResult
-		if err := temporalworkflow.ExecuteActivity(ctx, claimBrregTranslationWorksetBatchActivity, ClaimBrregTranslationWorksetBatchInput{
-			BatchID:             translationQueueBatchID(workflowID, result.BatchesProcessed+1),
-			MaxRequestChars:     int32(input.MaxRequestChars),
-			MaxTerms:            int32(input.MaxTerms),
-			MaxSourceRunning:    int32(input.MaxParallelTasks),
-			MaxAttempts:         int32(input.MaxAttempts),
-			StaleRunningSeconds: int32(input.LeaseSeconds * 2),
-		}).Get(ctx, &claimed); err != nil {
-			return nil, errors.Wrap(err, "claim brreg translation queue batch")
-		}
-		if claimed.Status == "blocked" {
-			if err := temporalworkflow.Sleep(ctx, defaultCompanyTranslationQueuePollDelay*time.Second); err != nil {
-				return nil, errors.Wrap(err, "wait for running brreg translation queue batch")
-			}
-			continue
-		}
-		if claimed.Status == "drained" || len(claimed.CompanyIDs) == 0 {
-			return nil, nil
-		}
-		result.BatchesProcessed++
-		result.CompaniesClaimed += int32(len(claimed.CompanyIDs))
-		result.RequestCharsClaimed += claimed.EstimatedChars
-		return &translationWorksetBatch{
-			Ordinal: result.BatchesProcessed,
-			Claimed: claimed,
-		}, nil
-	}
-}
-
-func shouldContinueAsNewAfterBatch(input TranslateBrregSourceCompaniesInput, batchOrdinal int32) bool {
-	return input.MaxBatches > 0 && batchOrdinal > 0 && int(batchOrdinal)%input.MaxBatches == 0
 }
 
 func normalizeTranslateBrregSourceCompaniesInput(input TranslateBrregSourceCompaniesInput) TranslateBrregSourceCompaniesInput {
@@ -427,21 +274,4 @@ func compactTextFilters(filters map[string]string) map[string]string {
 		return nil
 	}
 	return compact
-}
-
-func defaultString(value string, fallback string) string {
-	value = strings.TrimSpace(value)
-	if value != "" {
-		return value
-	}
-	return fallback
-}
-
-func translationQueueBatchID(workflowID string, ordinal int32) string {
-	workflowID = strings.TrimSpace(workflowID)
-	if workflowID == "" {
-		workflowID = "brreg-company-translation"
-	}
-	workflowID = strings.NewReplacer("/", "_", "\\", "_", ":", "_").Replace(workflowID)
-	return fmt.Sprintf("%s/batch/%06d", workflowID, ordinal)
 }
