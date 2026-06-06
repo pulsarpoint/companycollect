@@ -20,8 +20,15 @@ class LLMClient(Protocol):
 
 
 class OpenAICompatibleLLMClient:
-    def __init__(self, *, timeout_seconds: float = 120) -> None:
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 120,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._timeout_seconds = timeout_seconds
+        self._http_client = http_client
+        self._owns_http_client = http_client is None
 
     @classmethod
     def from_env(cls) -> "OpenAICompatibleLLMClient":
@@ -31,18 +38,17 @@ class OpenAICompatibleLLMClient:
         base_url = normalize_openai_api_base(request.base_url) if request.base_url else _provider_base_url(request.provider)
         api_key = request.api_key if request.api_key is not None else _provider_api_key(request.provider)
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
-            response = await client.post(
-                f"{base_url}/chat/completions",
-                headers=headers,
-                json={
-                    "model": request.model,
-                    "messages": build_translation_messages(request),
-                    "temperature": 0,
-                    "max_tokens": translation_max_tokens(request.items),
-                    "chat_template_kwargs": {"enable_thinking": False},
-                },
-            )
+        response = await self._client().post(
+            f"{base_url}/chat/completions",
+            headers=headers,
+            json={
+                "model": request.model,
+                "messages": build_translation_messages(request),
+                "temperature": 0,
+                "max_tokens": translation_max_tokens(request.items),
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        )
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
         return parse_llm_translation_response(
@@ -50,6 +56,16 @@ class OpenAICompatibleLLMClient:
             expected_ids={item.id for item in request.items},
             require_all=False,
         )
+
+    def _client(self) -> httpx.AsyncClient:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=self._timeout_seconds)
+        return self._http_client
+
+    async def aclose(self) -> None:
+        if self._http_client is not None and self._owns_http_client:
+            await self._http_client.aclose()
+            self._http_client = None
 
 
 def default_provider() -> str:

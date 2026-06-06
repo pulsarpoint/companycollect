@@ -317,6 +317,7 @@ async def run_worker() -> None:
             jetstream_task.cancel()
             with suppress(asyncio.CancelledError):
                 await jetstream_task
+        await service.aclose()
         await nc.drain()
 
 

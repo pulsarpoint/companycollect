@@ -63,6 +63,11 @@ class TranslationService:
     def mock_state(self) -> dict[str, object]:
         return self._mock_controller.state()
 
+    async def aclose(self) -> None:
+        close = getattr(self._llm_client, "aclose", None)
+        if close is not None:
+            await close()
+
     async def translate_brreg_records(self, request: BrregTranslateRequest) -> BrregTranslateResponse:
         started = time.monotonic()
         llm = _effective_llm_selection(request.llm)
@@ -185,6 +190,11 @@ class TranslationService:
         provider = request.provider if request.provider != "default" else default_provider()
         model = request.model if request.model and request.model != "default" else provider_model(provider)
         terms_by_key = {term.term_key: term for term in request.terms}
+        local_id_by_term_key = {
+            term.term_key: _local_translation_item_id(index)
+            for index, term in enumerate(request.terms)
+        }
+        term_key_by_local_id = {local_id: term_key for term_key, local_id in local_id_by_term_key.items()}
         llm_request = LLMTranslationRequest(
             provider=provider,
             model=model,
@@ -192,7 +202,11 @@ class TranslationService:
             source_lang=request.source_lang,
             target_lang=request.target_lang,
             items=[
-                LLMTranslationItem(id=term.term_key, category=f"{request.source}_term", text=term.source_text)
+                LLMTranslationItem(
+                    id=local_id_by_term_key[term.term_key],
+                    category=f"{request.source}_term",
+                    text=term.source_text,
+                )
                 for term in request.terms
             ],
         )
@@ -215,7 +229,11 @@ class TranslationService:
                 ],
             )
 
-        translated_by_key = {translation.id: translation.translation for translation in llm_response.translations}
+        translated_by_key = {
+            term_key_by_local_id[translation.id]: translation.translation
+            for translation in llm_response.translations
+            if translation.id in term_key_by_local_id
+        }
         results = [
             TermTranslationResultItem(
                 term_key=term.term_key,
@@ -236,7 +254,7 @@ class TranslationService:
         else:
             failures = [
                 _term_failure(terms_by_key[term_key], error_code="missing_term_translation")
-                for term_key in llm_response.missing_ids
+                for term_key in _term_keys_from_local_ids(llm_response.missing_ids, term_key_by_local_id)
                 if term_key in terms_by_key
             ]
 
@@ -435,6 +453,18 @@ def _unique_llm_items(items: Iterable[TranslationItem]) -> list[LLMTranslationIt
 def _chunks(items: list[LLMTranslationItem], size: int) -> Iterable[list[LLMTranslationItem]]:
     for index in range(0, len(items), size):
         yield items[index : index + size]
+
+
+def _local_translation_item_id(index: int) -> str:
+    return f"t{index + 1:03d}"
+
+
+def _term_keys_from_local_ids(local_ids: Iterable[str], term_key_by_local_id: dict[str, str]) -> list[str]:
+    return [
+        term_key_by_local_id[local_id]
+        for local_id in local_ids
+        if local_id in term_key_by_local_id
+    ]
 
 
 def _failed_result(

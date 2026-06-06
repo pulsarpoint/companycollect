@@ -63,14 +63,14 @@ async def test_source_term_translation_maps_terms_through_llm_request() -> None:
     assert llm_request.source_lang == "et"
     assert llm_request.target_lang == "en"
     assert [item.model_dump(mode="json") for item in llm_request.items] == [
-        {"id": TERM_KEY_1, "category": "ariregister_term", "text": "Aksjeselskap"}
+        {"id": "t001", "category": "ariregister_term", "text": "Aksjeselskap"}
     ]
 
 
 @pytest.mark.asyncio
 async def test_source_term_translation_maps_missing_llm_terms_to_retryable_failures() -> None:
     service = TranslationService(
-        llm_client=FakeLLMClient(always_missing_ids={TERM_KEY_2}),
+        llm_client=FakeLLMClient(always_missing_ids={"t002"}),
         max_llm_items_per_request=50,
     )
 
@@ -105,6 +105,37 @@ async def test_source_term_translation_maps_missing_llm_terms_to_retryable_failu
             "error_code": "missing_term_translation",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_source_term_translation_maps_missing_local_ids_back_to_term_keys() -> None:
+    service = TranslationService(
+        llm_client=FakeLLMClient(always_missing_ids={"t002"}),
+        max_llm_items_per_request=50,
+    )
+
+    response = await service.translate_source_terms(
+        TermTranslationRequest(
+            request_id="request-local-missing",
+            provider="fake",
+            model="fake-fast",
+            terms=[
+                TermTranslationRequestTerm(
+                    term_key=TERM_KEY_1,
+                    source_text="Aksjeselskap",
+                    source_text_normalized="aksjeselskap",
+                ),
+                TermTranslationRequestTerm(
+                    term_key=TERM_KEY_2,
+                    source_text="Ukjent verdi",
+                    source_text_normalized="ukjent verdi",
+                ),
+            ],
+        )
+    )
+
+    assert [result.term_key for result in response.results] == [TERM_KEY_1]
+    assert [failure.term_key for failure in response.failures] == [TERM_KEY_2]
 
 
 @pytest.mark.asyncio

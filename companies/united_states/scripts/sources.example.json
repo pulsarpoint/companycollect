@@ -1,0 +1,82 @@
+[
+  {
+    "name": "SEC EDGAR company tickers",
+    "slug": "sec_company_tickers",
+    "type": "bulk",
+    "url": "https://www.sec.gov/files/company_tickers.json",
+    "method": "GET",
+    "headers": {
+      "User-Agent": "companycollect/0.1 open-data-research goran.raovic@gmail.com"
+    },
+    "max_pages": 0
+  },
+  {
+    "name": "SEC EDGAR submissions bulk",
+    "slug": "sec_submissions",
+    "type": "bulk",
+    "url": "https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip",
+    "method": "GET",
+    "headers": {
+      "User-Agent": "companycollect/0.1 open-data-research goran.raovic@gmail.com"
+    },
+    "max_pages": 0
+  },
+  {
+    "name": "IRS EO BMF Region 1",
+    "slug": "irs_eo_bmf_region1",
+    "type": "bulk",
+    "url": "https://www.irs.gov/pub/irs-soi/eo1.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "IRS EO BMF Region 2",
+    "slug": "irs_eo_bmf_region2",
+    "type": "bulk",
+    "url": "https://www.irs.gov/pub/irs-soi/eo2.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "IRS EO BMF Region 3",
+    "slug": "irs_eo_bmf_region3",
+    "type": "bulk",
+    "url": "https://www.irs.gov/pub/irs-soi/eo3.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "IRS EO BMF Region 4",
+    "slug": "irs_eo_bmf_region4",
+    "type": "bulk",
+    "url": "https://www.irs.gov/pub/irs-soi/eo4.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "Colorado Business Entities full CSV",
+    "slug": "colorado_business_entities",
+    "type": "bulk",
+    "url": "https://data.colorado.gov/api/views/4ykn-tg5h/rows.csv?accessType=DOWNLOAD",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "Colorado Business Entities API (paged)",
+    "slug": "colorado_business_entities_api",
+    "type": "api_page",
+    "url": "https://data.colorado.gov/resource/4ykn-tg5h.json?$limit=1000",
+    "method": "GET",
+    "headers": {
+      "Accept": "application/json"
+    },
+    "page_param": "$offset",
+    "page_start": 0,
+    "max_pages": 3
+  }
+]

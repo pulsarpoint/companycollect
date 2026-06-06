@@ -1,0 +1,29 @@
+[
+  {
+    "name": "APR Companies Open Data",
+    "slug": "apr_companies",
+    "type": "bulk",
+    "url": "https://openapi.apr.gov.rs/api/opendata/companies",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0
+  },
+  {
+    "name": "APR Financial Statements Open Data",
+    "slug": "apr_financial_statements",
+    "type": "bulk",
+    "url": "https://openapi.apr.gov.rs/api/opendata/companies/financial-statements",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0
+  },
+  {
+    "name": "APR NGO Open Data",
+    "slug": "apr_ngo",
+    "type": "bulk",
+    "url": "https://openapi.apr.gov.rs/api/opendata/ngo",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0
+  }
+]

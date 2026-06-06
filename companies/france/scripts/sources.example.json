@@ -1,0 +1,46 @@
+[
+  {
+    "name": "Sirene StockUniteLegale (legal units, Parquet)",
+    "slug": "sirene_stock_unitelegale_parquet",
+    "type": "bulk",
+    "url": "https://static.data.gouv.fr/resources/base-sirene-des-entreprises-et-de-leurs-etablissements-siren-siret/20260601-092310/stock-stockunitelegale-parquet.parquet",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "~695 MB. URL is dated; re-resolve monthly from https://www.data.gouv.fr/api/1/datasets/5b7ffc618b4c4169d30727e0/"
+  },
+  {
+    "name": "Sirene StockEtablissement (establishments, Parquet)",
+    "slug": "sirene_stock_etablissement_parquet",
+    "type": "bulk",
+    "url": "https://static.data.gouv.fr/resources/base-sirene-des-entreprises-et-de-leurs-etablissements-siren-siret/20260601-092940/stock-stocketablissement-parquet.parquet",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "~2.18 GB. Dated URL; re-resolve monthly."
+  },
+  {
+    "name": "API Recherche d'Entreprises (no auth)",
+    "slug": "recherche_entreprises",
+    "type": "api_page",
+    "url": "https://recherche-entreprises.api.gouv.fr/search?q=la+poste&per_page=20",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 3,
+    "note": "Public, ~7 req/s limit. Swap q= for your query or use ?siren= / filters."
+  },
+  {
+    "name": "BODACC annonces-commerciales (no auth)",
+    "slug": "bodacc_annonces",
+    "type": "api_page",
+    "url": "https://bodacc-datadila.opendatasoft.com/api/explore/v2.1/catalog/datasets/annonces-commerciales/records?limit=100",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "offset",
+    "page_start": 0,
+    "max_pages": 3,
+    "note": "Opendatasoft Explore v2.1. Use offset stepping (limit=100 -> offset 0,100,200...). ~49.4M total records."
+  }
+]

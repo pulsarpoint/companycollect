@@ -1,0 +1,38 @@
+[
+  {
+    "name": "OffeneRegister.de company bulk (JSONL/bz2)",
+    "slug": "offeneregister_companies_jsonl",
+    "type": "bulk",
+    "url": "https://daten.offeneregister.de/de_companies_ocdata.jsonl.bz2",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "OffeneRegister.de SQLite (handelsregister.db, 2022)",
+    "slug": "offeneregister_handelsregister_db",
+    "type": "bulk",
+    "url": "https://daten.offeneregister.de/handelsregister.db",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "OffeneRegister.de legacy openregister SQLite (gz)",
+    "slug": "offeneregister_openregister_db",
+    "type": "bulk",
+    "url": "https://daten.offeneregister.de/openregister.db.gz",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "OpenSanctions de_offeneregister FollowTheMoney dump",
+    "slug": "opensanctions_de_offeneregister_ftm",
+    "type": "bulk",
+    "url": "https://data.opensanctions.org/datasets/latest/de_offeneregister/entities.ftm.json",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]

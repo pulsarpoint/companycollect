@@ -1,0 +1,287 @@
+{
+  "businessId": {
+    "value": "0100130-4",
+    "registrationDate": "1978-03-15",
+    "source": "3"
+  },
+  "euId": {
+    "value": "FIFPRO.0100130-4",
+    "source": "1"
+  },
+  "names": [
+    {
+      "name": "Dynava Oy",
+      "type": "1",
+      "registrationDate": "2022-01-21",
+      "version": 1,
+      "source": "1"
+    },
+    {
+      "name": "Oy Eniro Finland Ab",
+      "type": "1",
+      "registrationDate": "2000-09-22",
+      "endDate": "2022-01-21",
+      "version": 2,
+      "source": "1"
+    },
+    {
+      "name": "EDS Media",
+      "type": "3",
+      "registrationDate": "2009-11-30",
+      "version": 1,
+      "source": "1"
+    },
+    {
+      "name": "Eniro",
+      "type": "3",
+      "registrationDate": "2000-10-11",
+      "version": 1,
+      "source": "1"
+    }
+  ],
+  "mainBusinessLine": {
+    "type": "82200",
+    "descriptions": [
+      {
+        "languageCode": "3",
+        "description": "Activities of call centres"
+      },
+      {
+        "languageCode": "2",
+        "description": "Callcenterverksamhet"
+      },
+      {
+        "languageCode": "1",
+        "description": "Puhelinpalvelukeskusten toiminta"
+      }
+    ],
+    "typeCodeSet": "TOIMI4",
+    "registrationDate": "2026-01-01",
+    "source": "2"
+  },
+  "website": {
+    "url": "www.dynava.fi",
+    "registrationDate": "2025-09-29",
+    "source": "0"
+  },
+  "companyForms": [
+    {
+      "type": "16",
+      "descriptions": [
+        {
+          "languageCode": "2",
+          "description": "Aktiebolag"
+        },
+        {
+          "languageCode": "3",
+          "description": "Limited company"
+        },
+        {
+          "languageCode": "1",
+          "description": "Osakeyhtiö"
+        }
+      ],
+      "version": 1,
+      "source": "1"
+    }
+  ],
+  "companySituations": [],
+  "registeredEntries": [
+    {
+      "type": "1",
+      "descriptions": [
+        {
+          "languageCode": "3",
+          "description": "Registered"
+        },
+        {
+          "languageCode": "2",
+          "description": "Registrerad"
+        },
+        {
+          "languageCode": "1",
+          "description": "Rekisterissä"
+        }
+      ],
+      "registrationDate": "1973-08-10",
+      "register": "1",
+      "authority": "2"
+    },
+    {
+      "type": "1",
+      "descriptions": [
+        {
+          "languageCode": "3",
+          "description": "Registered"
+        },
+        {
+          "languageCode": "2",
+          "description": "Registrerad"
+        },
+        {
+          "languageCode": "1",
+          "description": "Rekisterissä"
+        }
+      ],
+      "registrationDate": "1978-03-15",
+      "register": "4",
+      "authority": "1"
+    },
+    {
+      "type": "55",
+      "descriptions": [
+        {
+          "languageCode": "3",
+          "description": "Registered"
+        },
+        {
+          "languageCode": "2",
+          "description": "Registrerad"
+        },
+        {
+          "languageCode": "1",
+          "description": "Rekisterissä"
+        }
+      ],
+      "registrationDate": "1995-03-01",
+      "register": "5",
+      "authority": "1"
+    },
+    {
+      "type": "80",
+      "descriptions": [
+        {
+          "languageCode": "1",
+          "description": "Liiketoiminnasta arvonlisäverovelvollinen"
+        },
+        {
+          "languageCode": "2",
+          "description": "Momsskyldig för rörelseverksamhet"
+        },
+        {
+          "languageCode": "3",
+          "description": "VAT-liable for business activity"
+        }
+      ],
+      "registrationDate": "1994-06-01",
+      "register": "6",
+      "authority": "1"
+    },
+    {
+      "type": "82",
+      "descriptions": [
+        {
+          "languageCode": "2",
+          "description": "För överlåtelse av nyttjanderätten till en fastighet"
+        },
+        {
+          "languageCode": "1",
+          "description": "Kiinteistön käyttöoikeuden luovuttamisesta"
+        },
+        {
+          "languageCode": "3",
+          "description": "VAT-obliged for the transfer of rights to use immovable property"
+        }
+      ],
+      "registrationDate": "2004-03-03",
+      "register": "6",
+      "authority": "1"
+    },
+    {
+      "type": "41",
+      "descriptions": [
+        {
+          "languageCode": "3",
+          "description": "Registered"
+        },
+        {
+          "languageCode": "2",
+          "description": "Registrerad"
+        },
+        {
+          "languageCode": "1",
+          "description": "Rekisterissä"
+        }
+      ],
+      "registrationDate": "1998-03-01",
+      "register": "7",
+      "authority": "1"
+    },
+    {
+      "type": "41",
+      "descriptions": [
+        {
+          "languageCode": "3",
+          "description": "Registered"
+        },
+        {
+          "languageCode": "2",
+          "description": "Registrerad"
+        },
+        {
+          "languageCode": "1",
+          "description": "Rekisterissä"
+        }
+      ],
+      "registrationDate": "1987-01-01",
+      "endDate": "1995-12-31",
+      "register": "7",
+      "authority": "1"
+    }
+  ],
+  "addresses": [
+    {
+      "type": 1,
+      "street": "Valimotie",
+      "postCode": "00380",
+      "postOffices": [
+        {
+          "city": "HELSINGFORS",
+          "languageCode": "2",
+          "municipalityCode": "091"
+        },
+        {
+          "city": "HELSINKI",
+          "languageCode": "1",
+          "municipalityCode": "091"
+        }
+      ],
+      "buildingNumber": "17-19",
+      "entrance": "",
+      "apartmentNumber": "",
+      "apartmentIdSuffix": "",
+      "co": "",
+      "registrationDate": "2025-09-29",
+      "source": "0"
+    },
+    {
+      "type": 2,
+      "street": "Valimotie",
+      "postCode": "00380",
+      "postOffices": [
+        {
+          "city": "HELSINGFORS",
+          "languageCode": "2",
+          "municipalityCode": "091"
+        },
+        {
+          "city": "HELSINKI",
+          "languageCode": "1",
+          "municipalityCode": "091"
+        }
+      ],
+      "postOfficeBox": "",
+      "buildingNumber": "17-19",
+      "entrance": "",
+      "apartmentNumber": "",
+      "apartmentIdSuffix": "",
+      "co": "",
+      "registrationDate": "2025-09-29",
+      "source": "0"
+    }
+  ],
+  "tradeRegisterStatus": "1",
+  "status": "2",
+  "registrationDate": "1973-08-10",
+  "lastModified": "2026-04-20T12:09:25"
+}
