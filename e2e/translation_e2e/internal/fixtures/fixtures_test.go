@@ -12,7 +12,7 @@ func TestBuildJobsCreatesDefaultBatchSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse config: %v", err)
 	}
-	jobs := BuildJobs(cfg)
+	jobs := BuildJobs(cfg, "run-a")
 	if len(jobs) != 50 {
 		t.Fatalf("jobs len = %d, want 50", len(jobs))
 	}
@@ -30,5 +30,28 @@ func TestBuildJobsCreatesDefaultBatchSet(t *testing.T) {
 	}
 	if !regexp.MustCompile(`\b\d{9}\b`).MatchString(jobs[0].Job.Terms[0].SourceText) {
 		t.Fatalf("source text does not contain 9-digit org number: %s", jobs[0].Job.Terms[0].SourceText)
+	}
+}
+
+func TestBuildJobsScopesIdentifiersToRunID(t *testing.T) {
+	cfg, err := config.Parse([]string{"--batches", "1"})
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	firstRun := BuildJobs(cfg, "run-a")
+	secondRun := BuildJobs(cfg, "run-b")
+
+	if firstRun[0].Job.JobID == secondRun[0].Job.JobID {
+		t.Fatalf("job ids should differ across runs: %s", firstRun[0].Job.JobID)
+	}
+	if firstRun[0].Job.BatchID == secondRun[0].Job.BatchID {
+		t.Fatalf("batch ids should differ across runs: %s", firstRun[0].Job.BatchID)
+	}
+	if firstRun[0].Job.CompanyIDs[0] == secondRun[0].Job.CompanyIDs[0] {
+		t.Fatalf("company ids should differ across runs: %s", firstRun[0].Job.CompanyIDs[0])
+	}
+	if firstRun[0].Job.Terms[0].TermKey == secondRun[0].Job.Terms[0].TermKey {
+		t.Fatalf("term keys should differ across runs: %s", firstRun[0].Job.Terms[0].TermKey)
 	}
 }

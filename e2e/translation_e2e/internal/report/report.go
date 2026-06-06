@@ -27,6 +27,7 @@ type Report struct {
 	BatchesPlanned    int            `json:"batches_planned"`
 	BatchesSent       int            `json:"batches_sent"`
 	BatchesReceived   int            `json:"batches_received"`
+	ResultsIgnored    int            `json:"results_ignored"`
 	TermsSent         int            `json:"terms_sent"`
 	TermsSucceeded    int            `json:"terms_succeeded"`
 	TermsFailed       int            `json:"terms_failed"`
@@ -84,6 +85,7 @@ func (r *Report) Print(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "Batches planned: %d\n", r.BatchesPlanned)
 	_, _ = fmt.Fprintf(w, "Batches sent: %d\n", r.BatchesSent)
 	_, _ = fmt.Fprintf(w, "Batches received: %d\n", r.BatchesReceived)
+	_, _ = fmt.Fprintf(w, "Results ignored: %d\n", r.ResultsIgnored)
 	_, _ = fmt.Fprintf(w, "Terms sent: %d\n", r.TermsSent)
 	_, _ = fmt.Fprintf(w, "Terms succeeded: %d\n", r.TermsSucceeded)
 	_, _ = fmt.Fprintf(w, "Terms failed: %d\n", r.TermsFailed)

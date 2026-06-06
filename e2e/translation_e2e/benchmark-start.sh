@@ -20,7 +20,7 @@ mkdir -p "${output_dir}"
 summary_csv="${output_dir}/summary.csv"
 analysis_prompt="${output_dir}/analysis-prompt.md"
 
-printf 'scenario,repeat,batches,terms_per_batch,max_input_messages,status,exit_code,elapsed,batches_per_second,terms_per_second,p95_batch_latency,last_input_depth,report_json,stdout_log\n' > "${summary_csv}"
+printf 'scenario,repeat,batches,terms_per_batch,max_input_messages,status,exit_code,elapsed,batches_per_second,terms_per_second,p95_batch_latency,results_ignored,last_input_depth,report_json,stdout_log\n' > "${summary_csv}"
 
 cat > "${analysis_prompt}" <<EOF
 # Translation Benchmark Analysis Request
@@ -32,6 +32,7 @@ Focus on:
 - Compare throughput by terms/sec and batches/sec.
 - Compare p95 batch latency and max batch latency.
 - Identify failed or partial runs before ranking.
+- Note ignored result counts; high values mean the benchmark shared a result subject with other translation traffic.
 - Recommend the best strategy for full production translation.
 - Recommend the next benchmark matrix if results are inconclusive.
 
@@ -135,10 +136,11 @@ for repeat in $(seq 1 "${repeats}"); do
         batches_per_second="$(extract_line_value "Batches/sec" "${stdout_log}")"
         terms_per_second="$(extract_line_value "Terms/sec" "${stdout_log}")"
         p95_batch_latency="$(extract_line_value "P95 batch latency" "${stdout_log}")"
+        results_ignored="$(extract_line_value "Results ignored" "${stdout_log}")"
         last_input_depth="$(extract_line_value "Last input depth" "${stdout_log}")"
       fi
 
-      printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+      printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
         "${scenario}" \
         "${repeat}" \
         "${batches}" \
@@ -150,6 +152,7 @@ for repeat in $(seq 1 "${repeats}"); do
         "${batches_per_second}" \
         "${terms_per_second}" \
         "${p95_batch_latency}" \
+        "${results_ignored:-}" \
         "${last_input_depth}" \
         "${report_json}" \
         "${stdout_log}" >> "${summary_csv}"

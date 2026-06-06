@@ -45,7 +45,7 @@ func validResultFixture(t *testing.T) (config.Config, fixtures.ExpectedJob, cont
 	if err != nil {
 		t.Fatalf("parse config: %v", err)
 	}
-	expected := fixtures.BuildJobs(cfg)[0]
+	expected := fixtures.BuildJobs(cfg, "run-a")[0]
 	term := expected.Job.Terms[0]
 	result := contracts.TranslationResult{
 		JobID:         expected.Job.JobID,

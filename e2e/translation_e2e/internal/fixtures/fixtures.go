@@ -20,14 +20,18 @@ type ExpectedJob struct {
 	Terms map[string]contracts.TranslationJobTerm
 }
 
-func BuildJobs(cfg config.Config) []ExpectedJob {
+func BuildJobs(cfg config.Config, runID string) []ExpectedJob {
+	runPrefix := strings.TrimSpace(runID)
+	if runPrefix == "" {
+		runPrefix = "translation-e2e"
+	}
 	jobs := make([]ExpectedJob, 0, cfg.Batches)
 	for batchIndex := 0; batchIndex < cfg.Batches; batchIndex++ {
-		companyID := fmt.Sprintf("e2e-company-%03d", batchIndex+1)
+		companyID := fmt.Sprintf("%s-company-%03d", runPrefix, batchIndex+1)
 		orgNumber := fmt.Sprintf("81%07d", batchIndex+1)
 		job := contracts.TranslationJob{
-			JobID:         fmt.Sprintf("e2e-job-%03d", batchIndex+1),
-			BatchID:       fmt.Sprintf("e2e-batch-%03d", batchIndex+1),
+			JobID:         fmt.Sprintf("%s-job-%03d", runPrefix, batchIndex+1),
+			BatchID:       fmt.Sprintf("%s-batch-%03d", runPrefix, batchIndex+1),
 			Source:        cfg.Source,
 			SourceLang:    sourceLang,
 			TargetLang:    targetLang,

@@ -58,6 +58,7 @@ The example script uses the production translation JetStream subjects:
 
 It always passes `--purge=false` so it does not delete messages from the shared server stream.
 For that shared stream, queue depth is measured from the translation-service consumer pending counts, because the production stream keeps already-acked historical messages.
+The runner uses run-scoped job, batch, company, and term IDs, and it acks and ignores result messages that do not belong to the current run. A high ignored count means other scheduler or benchmark traffic is sharing the same result subject.
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/e2e/translation_e2e
@@ -127,6 +128,7 @@ The terminal report includes:
 
 - batches planned/sent/received,
 - terms sent/succeeded/failed,
+- ignored results from other runs or scheduler traffic,
 - elapsed time,
 - batches/sec,
 - terms/sec,

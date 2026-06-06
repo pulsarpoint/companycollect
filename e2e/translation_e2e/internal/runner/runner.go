@@ -19,7 +19,7 @@ const resultFetchWait = 250 * time.Millisecond
 func Run(ctx context.Context, cfg config.Config) (*report.Report, error) {
 	startedAt := time.Now()
 	runID := fmt.Sprintf("translation-e2e-%s", startedAt.UTC().Format("20060102-150405.000000000"))
-	jobs := fixtures.BuildJobs(cfg)
+	jobs := fixtures.BuildJobs(cfg, runID)
 	rep := report.New(
 		runID,
 		cfg.NATSURL,
@@ -89,47 +89,58 @@ func Run(ctx context.Context, cfg config.Config) (*report.Report, error) {
 			return rep, err
 		}
 		for _, message := range messages {
-			result := message.Result
-			expected, ok := expectedByJobID[result.JobID]
-			if !ok {
-				invalid := report.InvalidBatch{JobID: result.JobID, BatchID: result.BatchID, Error: "unknown job_id"}
-				rep.InvalidBatches = append(rep.InvalidBatches, invalid)
-				rep.FailureReason = invalid.Error
-				rep.Finish(latencies)
-				return rep, fmt.Errorf("received result for unknown job_id %q", result.JobID)
-			}
-			if _, duplicate := receivedAt[result.JobID]; duplicate {
-				invalid := report.InvalidBatch{JobID: result.JobID, BatchID: result.BatchID, Error: "duplicate result"}
-				rep.InvalidBatches = append(rep.InvalidBatches, invalid)
-				rep.FailureReason = invalid.Error
-				rep.Finish(latencies)
-				return rep, fmt.Errorf("received duplicate result for job_id %q", result.JobID)
-			}
-			if err := validate.Result(cfg, expected, result); err != nil {
-				invalid := report.InvalidBatch{JobID: result.JobID, BatchID: result.BatchID, Error: err.Error()}
-				rep.InvalidBatches = append(rep.InvalidBatches, invalid)
+			if err := handleResultMessage(runCtx, cfg, message, expectedByJobID, sentAt, receivedAt, rep, &latencies); err != nil {
 				rep.FailureReason = err.Error()
 				rep.Finish(latencies)
 				return rep, err
-			}
-			if err := message.Ack(runCtx); err != nil {
-				rep.FailureReason = err.Error()
-				rep.Finish(latencies)
-				return rep, err
-			}
-			now := time.Now()
-			receivedAt[result.JobID] = now
-			rep.BatchesReceived++
-			rep.TermsSucceeded += len(result.Results)
-			rep.TermsFailed += len(result.Failures)
-			if sent := sentAt[result.JobID]; !sent.IsZero() {
-				latencies = append(latencies, now.Sub(sent))
 			}
 		}
 	}
 	rep.MissingBatches = missingJobIDs(jobs, receivedAt)
 	rep.Finish(latencies)
 	return rep, nil
+}
+
+func handleResultMessage(
+	ctx context.Context,
+	cfg config.Config,
+	message jetstream.ResultMessage,
+	expectedByJobID map[string]fixtures.ExpectedJob,
+	sentAt map[string]time.Time,
+	receivedAt map[string]time.Time,
+	rep *report.Report,
+	latencies *[]time.Duration,
+) error {
+	result := message.Result
+	expected, ok := expectedByJobID[result.JobID]
+	if !ok {
+		rep.ResultsIgnored++
+		return message.Ack(ctx)
+	}
+	if _, duplicate := receivedAt[result.JobID]; duplicate {
+		invalid := report.InvalidBatch{JobID: result.JobID, BatchID: result.BatchID, Error: "duplicate result"}
+		rep.InvalidBatches = append(rep.InvalidBatches, invalid)
+		rep.FailureReason = invalid.Error
+		return fmt.Errorf("received duplicate result for job_id %q", result.JobID)
+	}
+	if err := validate.Result(cfg, expected, result); err != nil {
+		invalid := report.InvalidBatch{JobID: result.JobID, BatchID: result.BatchID, Error: err.Error()}
+		rep.InvalidBatches = append(rep.InvalidBatches, invalid)
+		rep.FailureReason = err.Error()
+		return err
+	}
+	if err := message.Ack(ctx); err != nil {
+		return err
+	}
+	now := time.Now()
+	receivedAt[result.JobID] = now
+	rep.BatchesReceived++
+	rep.TermsSucceeded += len(result.Results)
+	rep.TermsFailed += len(result.Failures)
+	if sent := sentAt[result.JobID]; !sent.IsZero() {
+		*latencies = append(*latencies, now.Sub(sent))
+	}
+	return nil
 }
 
 func missingJobIDs(jobs []fixtures.ExpectedJob, receivedAt map[string]time.Time) []string {
