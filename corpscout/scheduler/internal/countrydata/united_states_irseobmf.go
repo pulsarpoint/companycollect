@@ -23,6 +23,7 @@ type UnitedStatesIRSEoBmfImportInput struct {
 	RequestTimeout time.Duration
 	UserAgent      string
 	MetadataStore  countryimport.MetadataStore
+	StoreFunc      func(context.Context, []irseobmf.IrsEoBmfRecord) (countryimport.StoreResult, error)
 }
 
 type UnitedStatesIRSEoBmfImportResult struct {
@@ -40,6 +41,7 @@ func (i UnitedStatesIRSEoBmfImporter) Run(ctx context.Context, input UnitedState
 		HTTPClient:     i.HTTPClient,
 		MetadataStore:  input.MetadataStore,
 	})
+	source.StoreFunc = input.StoreFunc
 
 	download, err := source.Download(ctx, countryimport.DownloadOptions{
 		MaxPages:       input.MaxFiles,

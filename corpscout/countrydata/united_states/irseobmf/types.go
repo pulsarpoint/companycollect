@@ -57,6 +57,12 @@ type IrsEoBmfRecord struct {
 	RevenueAmt     string `json:"REVENUE_AMT"`
 	NteeCd         string `json:"NTEE_CD"`
 	SortName       string `json:"SORT_NAME"`
+
+	// RawPayload is the exact source NDJSON line the record was decoded from and
+	// PayloadHash is its SHA-256, both populated by Process for raw storage. They
+	// are not part of the source JSON.
+	RawPayload  []byte `json:"-"`
+	PayloadHash string `json:"-"`
 }
 
 // recordFromRow builds a record from a CSV row using a column-name index so the
