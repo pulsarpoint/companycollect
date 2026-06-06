@@ -87,6 +87,7 @@ type Querier interface {
 	GetCurrentAriregisterWorkflowRawRecord(ctx context.Context, registryCode string) (GetCurrentAriregisterWorkflowRawRecordRow, error)
 	GetCurrentBrregWorkflowRawRecord(ctx context.Context, organizationNumber string) (GetCurrentBrregWorkflowRawRecordRow, error)
 	GetCurrentCVRWorkflowRawRecord(ctx context.Context, cvrNumber string) (GetCurrentCVRWorkflowRawRecordRow, error)
+	GetCurrentFinlandPRHYTJRawRecord(ctx context.Context, businessID string) (GetCurrentFinlandPRHYTJRawRecordRow, error)
 	GetCurrentFranceWorkflowRawEstablishment(ctx context.Context, siret string) (GetCurrentFranceWorkflowRawEstablishmentRow, error)
 	GetCurrentFranceWorkflowRawLegalUnit(ctx context.Context, siren string) (GetCurrentFranceWorkflowRawLegalUnitRow, error)
 	GetDomainByID(ctx context.Context, id uuid.UUID) (GetDomainByIDRow, error)
@@ -193,6 +194,7 @@ type Querier interface {
 	PrepareAriregisterTranslationQueue(ctx context.Context, arg PrepareAriregisterTranslationQueueParams) (PrepareAriregisterTranslationQueueRow, error)
 	PrepareBrregTranslationQueue(ctx context.Context, arg PrepareBrregTranslationQueueParams) (PrepareBrregTranslationQueueRow, error)
 	RecordAriregisterSourceFile(ctx context.Context, arg RecordAriregisterSourceFileParams) (uuid.UUID, error)
+	RecordFinlandPRHYTJDownloadRun(ctx context.Context, arg RecordFinlandPRHYTJDownloadRunParams) (uuid.UUID, error)
 	// RecordFranceSourceFile relies on UNIQUE (bulk_snapshot_id, dataset_key) from the migration.
 	RecordFranceSourceFile(ctx context.Context, arg RecordFranceSourceFileParams) (uuid.UUID, error)
 	RecoverStaleBrregWorkflowRuns(ctx context.Context, arg RecoverStaleBrregWorkflowRunsParams) (RecoverStaleBrregWorkflowRunsRow, error)
@@ -211,6 +213,7 @@ type Querier interface {
 	SupersedeCurrentAriregisterWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentAriregisterWorkflowRawRecordParams) error
 	SupersedeCurrentBrregWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentBrregWorkflowRawRecordParams) error
 	SupersedeCurrentCVRWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentCVRWorkflowRawRecordParams) error
+	SupersedeCurrentFinlandPRHYTJRawRecord(ctx context.Context, arg SupersedeCurrentFinlandPRHYTJRawRecordParams) error
 	SupersedeCurrentFranceWorkflowRawEstablishment(ctx context.Context, arg SupersedeCurrentFranceWorkflowRawEstablishmentParams) error
 	SupersedeCurrentFranceWorkflowRawLegalUnit(ctx context.Context, arg SupersedeCurrentFranceWorkflowRawLegalUnitParams) error
 	SupersedeFranceSourceCompaniesForLegalUnits(ctx context.Context, rawLegalUnitIds []uuid.UUID) error
@@ -219,6 +222,7 @@ type Querier interface {
 	UpdateCompanyEnrichment(ctx context.Context, arg UpdateCompanyEnrichmentParams) (Company, error)
 	UpdateCompanyInfo(ctx context.Context, arg UpdateCompanyInfoParams) (Company, error)
 	UpdateCompanyRegistryProfile(ctx context.Context, arg UpdateCompanyRegistryProfileParams) (Company, error)
+	UpdateFinlandPRHYTJDownloadProcessStats(ctx context.Context, arg UpdateFinlandPRHYTJDownloadProcessStatsParams) error
 	UpdateImportBatchCompleted(ctx context.Context, arg UpdateImportBatchCompletedParams) error
 	UpdateImportBatchRiverJob(ctx context.Context, arg UpdateImportBatchRiverJobParams) error
 	UpdateImportBatchStarted(ctx context.Context, arg UpdateImportBatchStartedParams) error
@@ -258,6 +262,8 @@ type Querier interface {
 	UpsertDownloadedNACESourceFile(ctx context.Context, arg UpsertDownloadedNACESourceFileParams) (NaceSourceFile, error)
 	UpsertExchangeRate(ctx context.Context, arg UpsertExchangeRateParams) (ExchangeRate, error)
 	UpsertExchangeRateSheet(ctx context.Context, arg UpsertExchangeRateSheetParams) (ExchangeRateSheet, error)
+	UpsertFinlandPRHYTJRawRecord(ctx context.Context, arg UpsertFinlandPRHYTJRawRecordParams) (uuid.UUID, error)
+	UpsertFinlandPRHYTJSource(ctx context.Context, arg UpsertFinlandPRHYTJSourceParams) (uuid.UUID, error)
 	UpsertFranceSourceAddresses(ctx context.Context, arg UpsertFranceSourceAddressesParams) (int32, error)
 	UpsertFranceSourceCompanies(ctx context.Context, arg UpsertFranceSourceCompaniesParams) (int32, error)
 	UpsertFranceSourceEstablishments(ctx context.Context, arg UpsertFranceSourceEstablishmentsParams) (int32, error)
