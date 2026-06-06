@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 RecordStatus = Literal["succeeded", "failed", "skipped"]
 BatchStatus = Literal["succeeded", "partial", "failed"]
+JetStreamResultStatus = Literal["succeeded", "partial", "failed"]
 TermResultStatus = Literal["succeeded"]
 TermFailureStatus = Literal["failed_retryable", "failed_terminal"]
 TERM_KEY_PATTERN = r"^[0-9a-f]{64}$"
@@ -131,6 +132,63 @@ class TermTranslationResponse(BaseModel):
     prompt_version: str
     results: list[TermTranslationResultItem] = Field(default_factory=list)
     failures: list[TermTranslationFailureResult] = Field(default_factory=list)
+
+
+class JetStreamTranslationJobTerm(BaseModel):
+    term_key: str = Field(pattern=TERM_KEY_PATTERN)
+    source_text: str = Field(min_length=1)
+    source_text_normalized: str = Field(min_length=1)
+
+
+class JetStreamTranslationJob(BaseModel):
+    job_id: str = Field(min_length=1)
+    batch_id: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    source_lang: str = Field(min_length=2)
+    target_lang: str = Field(min_length=2)
+    provider: str = Field(min_length=1)
+    model: str | None = None
+    prompt_version: str = Field(min_length=1)
+    company_ids: list[str]
+    terms: list[JetStreamTranslationJobTerm] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def reject_duplicate_term_keys(self) -> "JetStreamTranslationJob":
+        term_keys = [term.term_key for term in self.terms]
+        if len(set(term_keys)) != len(term_keys):
+            raise ValueError("terms must not contain duplicate term_key values")
+        return self
+
+
+class JetStreamTranslationResultItem(BaseModel):
+    term_key: str = Field(pattern=TERM_KEY_PATTERN)
+    source_text: str = Field(min_length=1)
+    source_text_normalized: str = Field(min_length=1)
+    translated_text: str
+    status: TermResultStatus = "succeeded"
+
+
+class JetStreamTranslationFailureItem(BaseModel):
+    term_key: str = Field(pattern=TERM_KEY_PATTERN)
+    source_text: str = Field(min_length=1)
+    source_text_normalized: str = Field(min_length=1)
+    status: TermFailureStatus
+    error_code: str | None = None
+    error: str | None = None
+
+
+class JetStreamTranslationResult(BaseModel):
+    job_id: str = Field(min_length=1)
+    batch_id: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    status: JetStreamResultStatus
+    provider: str = Field(min_length=1)
+    model: str | None = None
+    prompt_version: str = Field(min_length=1)
+    company_ids: list[str]
+    duration_ms: int = Field(ge=0)
+    results: list[JetStreamTranslationResultItem] = Field(default_factory=list)
+    failures: list[JetStreamTranslationFailureItem] = Field(default_factory=list)
 
 
 class BrregRecordTranslationResult(BaseModel):
