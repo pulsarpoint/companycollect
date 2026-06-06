@@ -348,20 +348,22 @@ func (a *CompanyTranslationActions) TranslateBrregTranslationWorksetBatch(
 	ctx context.Context,
 	input TranslateBrregTranslationWorksetBatchInput,
 ) (TranslateBrregTranslationWorksetBatchResult, error) {
-	if a == nil || a.store == nil {
-		return TranslateBrregTranslationWorksetBatchResult{}, errors.New("brreg companydata store not available")
-	}
 	if input.PromptVersion == "" {
 		input.PromptVersion = defaultTranslationPromptVersion
 	}
 	if input.Provider == "" {
 		input.Provider = "default"
 	}
+	input.SourceLang = strings.TrimSpace(input.SourceLang)
+	input.TargetLang = strings.TrimSpace(input.TargetLang)
 	if input.SourceLang == "" {
-		input.SourceLang = "no"
+		return TranslateBrregTranslationWorksetBatchResult{}, errors.New("brreg translation queue batch source_lang is required")
 	}
 	if input.TargetLang == "" {
-		input.TargetLang = "en"
+		return TranslateBrregTranslationWorksetBatchResult{}, errors.New("brreg translation queue batch target_lang is required")
+	}
+	if a == nil || a.store == nil {
+		return TranslateBrregTranslationWorksetBatchResult{}, errors.New("brreg companydata store not available")
 	}
 	companyIDs := compactActionTextValues(input.CompanyIDs)
 	if len(companyIDs) == 0 {

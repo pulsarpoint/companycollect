@@ -348,20 +348,22 @@ func (a *CompanyTranslationActions) TranslateAriregisterTranslationWorksetBatch(
 	ctx context.Context,
 	input TranslateAriregisterTranslationWorksetBatchInput,
 ) (TranslateAriregisterTranslationWorksetBatchResult, error) {
-	if a == nil || a.store == nil {
-		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.New("ariregister companydata store not available")
-	}
 	if input.PromptVersion == "" {
 		input.PromptVersion = defaultTranslationPromptVersion
 	}
 	if input.Provider == "" {
 		input.Provider = "default"
 	}
+	input.SourceLang = strings.TrimSpace(input.SourceLang)
+	input.TargetLang = strings.TrimSpace(input.TargetLang)
 	if input.SourceLang == "" {
-		input.SourceLang = "et"
+		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.New("ariregister translation queue batch source_lang is required")
 	}
 	if input.TargetLang == "" {
-		input.TargetLang = "en"
+		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.New("ariregister translation queue batch target_lang is required")
+	}
+	if a == nil || a.store == nil {
+		return TranslateAriregisterTranslationWorksetBatchResult{}, errors.New("ariregister companydata store not available")
 	}
 	companyIDs := compactActionTextValues(input.CompanyIDs)
 	if len(companyIDs) == 0 {
