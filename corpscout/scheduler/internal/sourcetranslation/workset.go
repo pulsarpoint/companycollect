@@ -113,7 +113,7 @@ func BuildWorkset(
 	if err != nil {
 		return BuildWorksetResult{}, errors.Wrap(err, "load missing source translation fields")
 	}
-	rows, err := buildWorksetRowsFromMissingFields(ctx, store, command.PromptVersion, missingFields)
+	rows, err := buildWorksetRowsFromMissingFields(ctx, store, config, command.PromptVersion, missingFields)
 	if err != nil {
 		return BuildWorksetResult{}, err
 	}
@@ -353,6 +353,10 @@ func ApplyWorkset(
 	}
 	defer db.Close()
 
+	metadata, err := loadWorksetMetadata(ctx, db)
+	if err != nil {
+		return ApplyWorksetResult{}, err
+	}
 	terms, err := loadWorksetTermResults(ctx, db, command.PromptVersion)
 	if err != nil {
 		return ApplyWorksetResult{}, err
@@ -361,6 +365,8 @@ func ApplyWorkset(
 	if len(terms) > 0 {
 		saved, err := store.SaveTranslationTerms(ctx, SaveTermsCommand{
 			PromptVersion: command.PromptVersion,
+			SourceLang:    metadata.SourceLang,
+			TargetLang:    metadata.TargetLang,
 			Terms:         terms,
 		})
 		if err != nil {
@@ -496,9 +502,11 @@ func normalizedWorksetFilters(filters map[string]string) map[string]string {
 func buildWorksetRowsFromMissingFields(
 	ctx context.Context,
 	store SourceStore,
+	config SourceConfig,
 	promptVersion string,
 	missingFields []MissingField,
 ) ([]worksetRow, error) {
+	config = normalizeSourceConfig(config)
 	rows := make([]worksetRow, 0, len(missingFields))
 	termKeys := make([]string, 0, len(missingFields))
 	seenTermKeys := make(map[string]struct{})
@@ -518,6 +526,8 @@ func buildWorksetRowsFromMissingFields(
 	}
 	cachedTerms, err := store.LoadCachedTranslationTerms(ctx, LoadCachedTermsCommand{
 		PromptVersion: promptVersion,
+		SourceLang:    config.SourceLang,
+		TargetLang:    config.TargetLang,
 		TermKeys:      termKeys,
 	})
 	if err != nil {
@@ -889,6 +899,36 @@ ORDER BY updated_at, term_key
 		return nil, errors.Wrap(err, "iterate translation workset terms")
 	}
 	return results, nil
+}
+
+func loadWorksetMetadata(ctx context.Context, db *sql.DB) (worksetMetadata, error) {
+	rows, err := db.QueryContext(ctx, `
+SELECT key, value
+FROM workset_metadata
+`)
+	if err != nil {
+		return worksetMetadata{}, errors.Wrap(err, "load translation workset metadata")
+	}
+	defer rows.Close()
+
+	values := make(map[string]string)
+	for rows.Next() {
+		var key string
+		var value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return worksetMetadata{}, errors.Wrap(err, "scan translation workset metadata")
+		}
+		values[key] = value
+	}
+	if err := rows.Err(); err != nil {
+		return worksetMetadata{}, errors.Wrap(err, "iterate translation workset metadata")
+	}
+	return normalizeWorksetMetadata(worksetMetadata{
+		Source:        values["source"],
+		SourceLang:    values["source_lang"],
+		TargetLang:    values["target_lang"],
+		PromptVersion: values["prompt_version"],
+	}), nil
 }
 
 func loadWorksetBindings(ctx context.Context, db *sql.DB) ([]TranslationBinding, error) {

@@ -266,6 +266,14 @@ func (s *Store) SaveTranslationTerms(
 	upsertCommand := brregdb.UpsertTranslationTermsCommand{
 		Terms: make([]brregdb.TranslationTermResult, 0, len(terms)),
 	}
+	sourceLang := strings.TrimSpace(command.SourceLang)
+	if sourceLang == "" {
+		sourceLang = defaultTranslationWorksetSourceLang
+	}
+	targetLang := strings.TrimSpace(command.TargetLang)
+	if targetLang == "" {
+		targetLang = defaultTranslationWorksetTargetLang
+	}
 	for _, term := range terms {
 		promptVersion := strings.TrimSpace(term.PromptVersion)
 		if promptVersion == "" {
@@ -279,8 +287,8 @@ func (s *Store) SaveTranslationTerms(
 			normalizedText = sourcetranslation.NormalizeText(term.SourceText)
 		}
 		upsertCommand.Terms = append(upsertCommand.Terms, brregdb.TranslationTermResult{
-			SourceLang:           defaultTranslationWorksetSourceLang,
-			TargetLang:           defaultTranslationWorksetTargetLang,
+			SourceLang:           sourceLang,
+			TargetLang:           targetLang,
 			SourceTextNormalized: normalizedText,
 			SourceText:           term.SourceText,
 			TermKey:              term.TermKey,

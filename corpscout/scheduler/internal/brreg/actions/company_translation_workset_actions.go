@@ -15,6 +15,8 @@ import (
 
 type BuildBrregTranslationWorksetInput struct {
 	Path          string            `json:"path"`
+	Provider      string            `json:"provider,omitempty"`
+	Model         string            `json:"model,omitempty"`
 	PromptVersion string            `json:"prompt_version,omitempty"`
 	IDs           []string          `json:"ids,omitempty"`
 	Filters       map[string]string `json:"filters,omitempty"`
@@ -37,6 +39,8 @@ type ClaimBrregTranslationWorksetBatchInput struct {
 	BatchID             string `json:"batch_id,omitempty"`
 	MaxRequestChars     int32  `json:"max_request_chars,omitempty"`
 	MaxTerms            int32  `json:"max_terms,omitempty"`
+	MaxSourceRunning    int32  `json:"max_source_running,omitempty"`
+	MaxGlobalRunning    int32  `json:"max_global_running,omitempty"`
 	MaxAttempts         int32  `json:"max_attempts,omitempty"`
 	StaleRunningSeconds int32  `json:"stale_running_seconds,omitempty"`
 }
@@ -47,6 +51,8 @@ type ClaimBrregTranslationWorksetBatchResult = companydata.ClaimTranslationQueue
 type TranslateBrregTranslationWorksetBatchInput struct {
 	BatchID       string   `json:"batch_id"`
 	CompanyIDs    []string `json:"company_ids"`
+	SourceLang    string   `json:"source_lang,omitempty"`
+	TargetLang    string   `json:"target_lang,omitempty"`
 	Provider      string   `json:"provider,omitempty"`
 	Model         string   `json:"model,omitempty"`
 	PromptVersion string   `json:"prompt_version,omitempty"`
@@ -107,12 +113,17 @@ func (a *CompanyTranslationActions) BuildBrregTranslationWorkset(
 		"filters_count", len(input.Filters),
 		"company_limit", input.CompanyLimit,
 		"field_limit", input.FieldLimit,
+		"provider", input.Provider,
+		"model", input.Model,
 		"prompt_version", input.PromptVersion,
 	)
 	prepared, err := a.store.PrepareTranslationQueue(ctx, companydata.PrepareTranslationQueueCommand{
-		IDs:          input.IDs,
-		Filters:      input.Filters,
-		CompanyLimit: input.CompanyLimit,
+		IDs:           input.IDs,
+		Filters:       input.Filters,
+		CompanyLimit:  input.CompanyLimit,
+		Provider:      input.Provider,
+		Model:         input.Model,
+		PromptVersion: input.PromptVersion,
 	})
 	if err != nil {
 		return BuildBrregTranslationWorksetResult{}, errors.Wrap(err, "prepare brreg translation queue")
@@ -150,6 +161,7 @@ func (a *CompanyTranslationActions) ClaimBrregTranslationWorksetBatch(
 		BatchID:          input.BatchID,
 		MaxCandidateRows: input.MaxTerms,
 		MaxRequestChars:  input.MaxRequestChars,
+		MaxSourceRunning: effectiveMaxSourceRunning(input.MaxSourceRunning, input.MaxGlobalRunning),
 	})
 	if err != nil {
 		return ClaimBrregTranslationWorksetBatchResult{}, errors.Wrap(err, "claim brreg translation queue batch")
@@ -160,8 +172,19 @@ func (a *CompanyTranslationActions) ClaimBrregTranslationWorksetBatch(
 		"batch_id", result.BatchID,
 		"companies", len(result.CompanyIDs),
 		"estimated_chars", result.EstimatedChars,
+		"max_source_running", effectiveMaxSourceRunning(input.MaxSourceRunning, input.MaxGlobalRunning),
 	)
 	return result, nil
+}
+
+func (a *CompanyTranslationActions) RefreshBrregTranslationStatus(ctx context.Context) error {
+	if a == nil || a.store == nil {
+		return errors.New("brreg companydata store not available")
+	}
+	if err := a.store.RefreshTranslationStatus(ctx); err != nil {
+		return errors.Wrap(err, "refresh brreg translation status")
+	}
+	return nil
 }
 
 func (a *CompanyTranslationActions) TranslateBrregTranslationWorksetBatch(
@@ -176,6 +199,12 @@ func (a *CompanyTranslationActions) TranslateBrregTranslationWorksetBatch(
 	}
 	if input.Provider == "" {
 		input.Provider = "default"
+	}
+	if input.SourceLang == "" {
+		input.SourceLang = "no"
+	}
+	if input.TargetLang == "" {
+		input.TargetLang = "en"
 	}
 	companyIDs := compactActionTextValues(input.CompanyIDs)
 	if len(companyIDs) == 0 {
@@ -193,14 +222,13 @@ func (a *CompanyTranslationActions) TranslateBrregTranslationWorksetBatch(
 		FieldsSeen:         int32(len(fields)),
 	}
 	if len(fields) == 0 {
-		if err := a.store.RefreshTranslationStatus(ctx); err != nil {
-			return TranslateBrregTranslationWorksetBatchResult{}, errors.Wrap(err, "refresh brreg translation status after empty queue batch")
-		}
 		return result, nil
 	}
 	termKeys := sourcetranslation.TranslationTermKeys(fields)
 	cachedTerms, err := a.store.LoadCachedTranslationTerms(ctx, sourcetranslation.LoadCachedTermsCommand{
 		PromptVersion: input.PromptVersion,
+		SourceLang:    input.SourceLang,
+		TargetLang:    input.TargetLang,
 		TermKeys:      termKeys,
 	})
 	if err != nil {
@@ -220,6 +248,8 @@ func (a *CompanyTranslationActions) TranslateBrregTranslationWorksetBatch(
 		result.TermsSucceeded, result.TermsFailed = countTranslationTermResults(translated)
 		saved, err := a.store.SaveTranslationTerms(ctx, sourcetranslation.SaveTermsCommand{
 			PromptVersion: input.PromptVersion,
+			SourceLang:    input.SourceLang,
+			TargetLang:    input.TargetLang,
 			Terms:         translated,
 		})
 		if err != nil {
@@ -238,9 +268,6 @@ func (a *CompanyTranslationActions) TranslateBrregTranslationWorksetBatch(
 		return TranslateBrregTranslationWorksetBatchResult{}, err
 	}
 	result.BindingsApplied = appliedCached + appliedResults
-	if err := a.store.RefreshTranslationStatus(ctx); err != nil {
-		return TranslateBrregTranslationWorksetBatchResult{}, errors.Wrap(err, "refresh brreg translation status after queue batch")
-	}
 	return result, nil
 }
 
@@ -252,8 +279,8 @@ func (a *CompanyTranslationActions) translateUncachedBrregQueueTerms(
 	request := translationclient.TermTranslationRequest{
 		RequestID:     uuid.NewString(),
 		Source:        "brreg",
-		SourceLang:    "no",
-		TargetLang:    "en",
+		SourceLang:    input.SourceLang,
+		TargetLang:    input.TargetLang,
 		Provider:      input.Provider,
 		Model:         input.Model,
 		PromptVersion: input.PromptVersion,
@@ -271,6 +298,8 @@ func (a *CompanyTranslationActions) translateUncachedBrregQueueTerms(
 		"terms", len(request.Terms),
 		"provider", request.Provider,
 		"model", request.Model,
+		"source_lang", request.SourceLang,
+		"target_lang", request.TargetLang,
 		"prompt_version", request.PromptVersion,
 	)
 	response, err := a.translator.TranslateBrregTerms(ctx, request)
@@ -450,4 +479,11 @@ func compactActionTextValues(values []string) []string {
 		}
 	}
 	return compact
+}
+
+func effectiveMaxSourceRunning(maxSourceRunning int32, legacyMaxGlobalRunning int32) int32 {
+	if maxSourceRunning > 0 {
+		return maxSourceRunning
+	}
+	return legacyMaxGlobalRunning
 }

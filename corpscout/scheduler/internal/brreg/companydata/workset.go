@@ -233,6 +233,14 @@ func (s *Store) LoadCachedTranslationTerms(
 	if promptVersion == "" {
 		promptVersion = defaultPromptVersion
 	}
+	sourceLang := strings.TrimSpace(command.SourceLang)
+	if sourceLang == "" {
+		sourceLang = defaultTranslationWorksetSourceLang
+	}
+	targetLang := strings.TrimSpace(command.TargetLang)
+	if targetLang == "" {
+		targetLang = defaultTranslationWorksetTargetLang
+	}
 	termKeys := normalizedTextValues(command.TermKeys)
 	if len(termKeys) == 0 {
 		return map[string]sourcetranslation.CachedTerm{}, nil
@@ -248,8 +256,8 @@ WHERE source = $1
   AND status = 'succeeded'
   AND nullif(btrim(translated_text), '') IS NOT NULL
 `, defaultTranslationWorksetSource,
-		defaultTranslationWorksetSourceLang,
-		defaultTranslationWorksetTargetLang,
+		sourceLang,
+		targetLang,
 		promptVersion,
 		termKeys,
 	)

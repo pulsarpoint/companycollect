@@ -13,13 +13,19 @@ import (
 const (
 	defaultTranslationQueueMaxCandidateRows = 100
 	defaultTranslationQueueMaxRequestChars  = 10000
+	defaultTranslationQueueMaxSourceRunning = 2
 	defaultTranslationQueueStaleSeconds     = 3600
 )
 
 type PrepareTranslationQueueCommand struct {
-	IDs          []string
-	Filters      map[string]string
-	CompanyLimit int32
+	IDs           []string
+	Filters       map[string]string
+	CompanyLimit  int32
+	Provider      string
+	Model         string
+	PromptVersion string
+	SourceLang    string
+	TargetLang    string
 }
 
 type PrepareTranslationQueueResult struct {
@@ -33,6 +39,7 @@ type ClaimTranslationQueueBatchCommand struct {
 	BatchID          string
 	MaxCandidateRows int32
 	MaxRequestChars  int32
+	MaxSourceRunning int32
 }
 
 type ClaimTranslationQueueBatchResult struct {
@@ -40,6 +47,11 @@ type ClaimTranslationQueueBatchResult struct {
 	BatchID        string
 	CompanyIDs     []string
 	EstimatedChars int32
+	Provider       string
+	Model          string
+	PromptVersion  string
+	SourceLang     string
+	TargetLang     string
 }
 
 type TranslationQueueBatchResult struct {
@@ -56,6 +68,7 @@ func (s *Store) PrepareTranslationQueue(
 	if err := s.RefreshTranslationStatus(ctx); err != nil {
 		return PrepareTranslationQueueResult{}, errors.Wrap(err, "refresh ariregister translation status before preparing queue")
 	}
+	command = normalizePrepareTranslationQueueCommand(command, "et")
 	companyIDs, err := parseTranslationQueueCompanyIDs(command.IDs)
 	if err != nil {
 		return PrepareTranslationQueueResult{}, err
@@ -68,6 +81,11 @@ func (s *Store) PrepareTranslationQueue(
 		TranslationStatus:  optionalTranslationQueueFilter(command.Filters, "translation_status"),
 		WebsiteStatus:      optionalTranslationQueueFilter(command.Filters, "website_status"),
 		CompanyLimit:       command.CompanyLimit,
+		Provider:           command.Provider,
+		Model:              command.Model,
+		PromptVersion:      command.PromptVersion,
+		SourceLang:         command.SourceLang,
+		TargetLang:         command.TargetLang,
 	})
 	if err != nil {
 		return PrepareTranslationQueueResult{}, errors.Wrap(err, "prepare ariregister translation queue")
@@ -97,7 +115,8 @@ func (s *Store) ClaimTranslationQueueBatch(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Serialize claims across all source queues so the local LLM receives one batch at a time.
+	// Serialize claim decisions across source queues so capacity checks and row
+	// claims stay stable when multiple workers try to dispatch at the same time.
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(2036710597, 1869898593)"); err != nil {
 		return ClaimTranslationQueueBatchResult{}, errors.Wrap(err, "lock global source translation queue")
 	}
@@ -105,11 +124,11 @@ func (s *Store) ClaimTranslationQueueBatch(
 		return ClaimTranslationQueueBatchResult{}, errors.Wrap(err, "lock ariregister translation queue")
 	}
 	queries := db.New(tx)
-	runningCount, err := countRunningSourceTranslationQueueEntries(ctx, tx)
+	runningCounts, err := countRunningSourceTranslationQueueEntries(ctx, tx)
 	if err != nil {
 		return ClaimTranslationQueueBatchResult{}, errors.Wrap(err, "count running source translation queue entries")
 	}
-	if runningCount > 0 {
+	if !canClaimTranslationQueueBatch(runningCounts, command) {
 		if err := tx.Commit(ctx); err != nil {
 			return ClaimTranslationQueueBatchResult{}, errors.Wrap(err, "commit blocked ariregister translation queue claim")
 		}
@@ -134,7 +153,14 @@ func (s *Store) ClaimTranslationQueueBatch(
 		BatchID:    command.BatchID,
 		CompanyIDs: make([]string, 0, len(rows)),
 	}
-	for _, row := range rows {
+	for index, row := range rows {
+		if index == 0 {
+			result.Provider = row.Provider
+			result.Model = row.Model
+			result.PromptVersion = row.PromptVersion
+			result.SourceLang = row.SourceLang
+			result.TargetLang = row.TargetLang
+		}
 		result.CompanyIDs = append(result.CompanyIDs, row.CompanyID.String())
 		result.EstimatedChars += row.NumOfCharacters
 	}
@@ -239,6 +265,30 @@ func optionalTranslationQueueFilter(filters map[string]string, key string) *stri
 	return &value
 }
 
+func normalizePrepareTranslationQueueCommand(
+	command PrepareTranslationQueueCommand,
+	defaultSourceLang string,
+) PrepareTranslationQueueCommand {
+	command.Provider = strings.TrimSpace(command.Provider)
+	if command.Provider == "" {
+		command.Provider = "default"
+	}
+	command.Model = strings.TrimSpace(command.Model)
+	command.PromptVersion = strings.TrimSpace(command.PromptVersion)
+	if command.PromptVersion == "" {
+		command.PromptVersion = "v1"
+	}
+	command.SourceLang = strings.TrimSpace(command.SourceLang)
+	if command.SourceLang == "" {
+		command.SourceLang = defaultSourceLang
+	}
+	command.TargetLang = strings.TrimSpace(command.TargetLang)
+	if command.TargetLang == "" {
+		command.TargetLang = "en"
+	}
+	return command
+}
+
 func normalizeClaimTranslationQueueBatchCommand(
 	command ClaimTranslationQueueBatchCommand,
 ) ClaimTranslationQueueBatchCommand {
@@ -249,19 +299,31 @@ func normalizeClaimTranslationQueueBatchCommand(
 	if command.MaxRequestChars <= 0 {
 		command.MaxRequestChars = defaultTranslationQueueMaxRequestChars
 	}
+	if command.MaxSourceRunning <= 0 {
+		command.MaxSourceRunning = defaultTranslationQueueMaxSourceRunning
+	}
 	return command
 }
 
-func countRunningSourceTranslationQueueEntries(ctx context.Context, tx db.DBTX) (int32, error) {
-	var runningCount int32
+type translationQueueRunningCounts struct {
+	SourceRunning int32
+}
+
+func canClaimTranslationQueueBatch(
+	counts translationQueueRunningCounts,
+	command ClaimTranslationQueueBatchCommand,
+) bool {
+	return counts.SourceRunning < command.MaxSourceRunning
+}
+
+func countRunningSourceTranslationQueueEntries(ctx context.Context, tx db.DBTX) (translationQueueRunningCounts, error) {
+	var counts translationQueueRunningCounts
 	err := tx.QueryRow(ctx, `
-SELECT (
-  (SELECT count(*) FROM brreg_source.translation_queue_entries WHERE status = 'running') +
-  (SELECT count(*) FROM ariregister_source.translation_queue_entries WHERE status = 'running')
-)::integer AS running_count
-`).Scan(&runningCount)
+SELECT
+  (SELECT count(*) FROM source_translation.running_queue_batches WHERE source = 'ariregister')::integer AS source_running
+`).Scan(&counts.SourceRunning)
 	if err != nil {
-		return 0, errors.Wrap(err, "count source translation queue running entries")
+		return translationQueueRunningCounts{}, errors.Wrap(err, "count source translation queue running entries")
 	}
-	return runningCount, nil
+	return counts, nil
 }

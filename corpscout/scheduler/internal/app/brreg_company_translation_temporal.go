@@ -45,6 +45,10 @@ func registerBrregCompanyTranslationWorker(worker temporalworker.Worker, resourc
 		activity.RegisterOptions{Name: "ApplyBrregTranslationWorkset"},
 	)
 	worker.RegisterActivityWithOptions(
+		resources.companyTranslation.RefreshBrregTranslationStatus,
+		activity.RegisterOptions{Name: "RefreshBrregTranslationStatus"},
+	)
+	worker.RegisterActivityWithOptions(
 		resources.companyTranslation.CompleteBrregTranslationQueueBatch,
 		activity.RegisterOptions{Name: "CompleteBrregTranslationQueueBatch"},
 	)

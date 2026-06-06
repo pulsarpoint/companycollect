@@ -425,6 +425,8 @@ func (s *fakeSourceStore) LoadCachedTranslationTerms(
 ) (map[string]CachedTerm, error) {
 	s.loadCachedCommand = LoadCachedTermsCommand{
 		PromptVersion: command.PromptVersion,
+		SourceLang:    command.SourceLang,
+		TargetLang:    command.TargetLang,
 		TermKeys:      append([]string(nil), command.TermKeys...),
 	}
 	terms := make(map[string]CachedTerm)
@@ -442,6 +444,8 @@ func (s *fakeSourceStore) SaveTranslationTerms(
 ) (SaveTermsResult, error) {
 	s.savedTerms = append(s.savedTerms, SaveTermsCommand{
 		PromptVersion: command.PromptVersion,
+		SourceLang:    command.SourceLang,
+		TargetLang:    command.TargetLang,
 		Terms:         append([]TranslationTermResult(nil), command.Terms...),
 	})
 	return SaveTermsResult{TermsSaved: int32(len(command.Terms))}, nil

@@ -206,6 +206,14 @@ func (s *Store) LoadCachedTranslationTerms(
 	if promptVersion == "" {
 		promptVersion = defaultPromptVersion
 	}
+	sourceLangValue := strings.TrimSpace(command.SourceLang)
+	if sourceLangValue == "" {
+		sourceLangValue = sourceLang
+	}
+	targetLangValue := strings.TrimSpace(command.TargetLang)
+	if targetLangValue == "" {
+		targetLangValue = targetLang
+	}
 	termKeys := normalizedTextValues(command.TermKeys)
 	if len(termKeys) == 0 {
 		return map[string]sourcetranslation.CachedTerm{}, nil
@@ -220,7 +228,7 @@ WHERE source = $1
   AND term_key = ANY($5::text[])
   AND status = 'succeeded'
   AND nullif(btrim(translated_text), '') IS NOT NULL
-`, sourceName, sourceLang, targetLang, promptVersion, termKeys)
+`, sourceName, sourceLangValue, targetLangValue, promptVersion, termKeys)
 	if err != nil {
 		return nil, errors.Wrap(err, "load ariregister cached translation terms")
 	}
@@ -254,6 +262,14 @@ func (s *Store) SaveTranslationTerms(
 	upsertCommand := ariregisterdb.UpsertTranslationTermsCommand{
 		Terms: make([]ariregisterdb.TranslationTermResult, 0, len(terms)),
 	}
+	sourceLangValue := strings.TrimSpace(command.SourceLang)
+	if sourceLangValue == "" {
+		sourceLangValue = sourceLang
+	}
+	targetLangValue := strings.TrimSpace(command.TargetLang)
+	if targetLangValue == "" {
+		targetLangValue = targetLang
+	}
 	for _, term := range terms {
 		promptVersion := strings.TrimSpace(term.PromptVersion)
 		if promptVersion == "" {
@@ -271,8 +287,8 @@ func (s *Store) SaveTranslationTerms(
 			termKey = sourcetranslation.TermKey(term.SourceText)
 		}
 		upsertCommand.Terms = append(upsertCommand.Terms, ariregisterdb.TranslationTermResult{
-			SourceLang:           sourceLang,
-			TargetLang:           targetLang,
+			SourceLang:           sourceLangValue,
+			TargetLang:           targetLangValue,
 			SourceTextNormalized: normalizedText,
 			SourceText:           term.SourceText,
 			TermKey:              termKey,

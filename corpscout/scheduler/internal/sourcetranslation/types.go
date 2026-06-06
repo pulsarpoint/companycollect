@@ -35,6 +35,8 @@ type MissingField struct {
 // LoadCachedTermsCommand requests already translated terms for one source/language/prompt combination.
 type LoadCachedTermsCommand struct {
 	PromptVersion string
+	SourceLang    string
+	TargetLang    string
 	TermKeys      []string
 }
 
@@ -69,6 +71,8 @@ type TranslationTermResult struct {
 // SaveTermsCommand persists translated terms; PromptVersion is the fallback for results with a blank PromptVersion.
 type SaveTermsCommand struct {
 	PromptVersion string
+	SourceLang    string
+	TargetLang    string
 	Terms         []TranslationTermResult
 }
 

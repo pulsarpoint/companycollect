@@ -32,6 +32,7 @@ func TestTranslateBrregSourceCompaniesCompletesQueueBatch(t *testing.T) {
 		require.Empty(t, input.Path)
 		require.EqualValues(t, 6000, input.MaxRequestChars)
 		require.EqualValues(t, 25, input.MaxTerms)
+		require.EqualValues(t, 2, input.MaxSourceRunning)
 		require.EqualValues(t, 8, input.MaxAttempts)
 		require.EqualValues(t, 3600, input.StaleRunningSeconds)
 		if claimCalls == 1 {
@@ -41,6 +42,8 @@ func TestTranslateBrregSourceCompaniesCompletesQueueBatch(t *testing.T) {
 				BatchID:        input.BatchID,
 				CompanyIDs:     []string{"company-a", "company-b"},
 				EstimatedChars: 32,
+				SourceLang:     "nb",
+				TargetLang:     "de",
 			}, nil
 		}
 		return ClaimBrregTranslationWorksetBatchResult{Status: "drained"}, nil
@@ -49,6 +52,8 @@ func TestTranslateBrregSourceCompaniesCompletesQueueBatch(t *testing.T) {
 	env.RegisterActivityWithOptions(func(input TranslateBrregTranslationWorksetBatchInput) (TranslateBrregTranslationWorksetBatchResult, error) {
 		require.Contains(t, input.BatchID, "/batch/000001")
 		require.Equal(t, []string{"company-a", "company-b"}, input.CompanyIDs)
+		require.Equal(t, "nb", input.SourceLang)
+		require.Equal(t, "de", input.TargetLang)
 		require.Equal(t, "deepseek", input.Provider)
 		require.Equal(t, "deepseek-chat", input.Model)
 		require.Equal(t, "v1", input.PromptVersion)
@@ -67,6 +72,12 @@ func TestTranslateBrregSourceCompaniesCompletesQueueBatch(t *testing.T) {
 		return TranslationQueueBatchResult{RowsAffected: 2}, nil
 	}, activity.RegisterOptions{Name: completeBrregTranslationQueueBatchActivity})
 
+	var refreshCalls int
+	env.RegisterActivityWithOptions(func() error {
+		refreshCalls++
+		return nil
+	}, activity.RegisterOptions{Name: "RefreshBrregTranslationStatus"})
+
 	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{
 		Provider: "deepseek",
 		Model:    "deepseek-chat",
@@ -74,9 +85,12 @@ func TestTranslateBrregSourceCompaniesCompletesQueueBatch(t *testing.T) {
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())
+	require.Equal(t, "deepseek", buildInput.Provider)
+	require.Equal(t, "deepseek-chat", buildInput.Model)
 	require.Equal(t, "v1", buildInput.PromptVersion)
 	require.EqualValues(t, 10, buildInput.CompanyLimit)
 	require.Equal(t, 2, claimCalls)
+	require.Equal(t, 1, refreshCalls)
 
 	var result TranslateBrregSourceCompaniesResult
 	require.NoError(t, env.GetWorkflowResult(&result))
@@ -123,6 +137,9 @@ func TestTranslateBrregSourceCompaniesWaitsWhenQueueIsBlocked(t *testing.T) {
 	env.RegisterActivityWithOptions(func(CompleteBrregTranslationQueueBatchInput) (TranslationQueueBatchResult, error) {
 		return TranslationQueueBatchResult{RowsAffected: 1}, nil
 	}, activity.RegisterOptions{Name: completeBrregTranslationQueueBatchActivity})
+	env.RegisterActivityWithOptions(func() error {
+		return nil
+	}, activity.RegisterOptions{Name: "RefreshBrregTranslationStatus"})
 
 	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{})
 
@@ -160,13 +177,13 @@ func TestTranslateBrregSourceCompaniesReleasesQueueBatchAfterTranslationFailure(
 	require.Contains(t, releasedBatchID, "/batch/000001")
 }
 
-func TestTranslateBrregSourceCompaniesAllRecordsContinuesAfterFullQueueChunk(t *testing.T) {
+func TestTranslateBrregSourceCompaniesAllRecordsPreparesUnboundedQueueBeforeBatchContinuation(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.RegisterWorkflow(TranslateBrregSourceCompanies)
 
 	env.RegisterActivityWithOptions(func(input BuildBrregTranslationWorksetInput) (BuildBrregTranslationWorksetResult, error) {
-		require.EqualValues(t, 25, input.CompanyLimit)
+		require.EqualValues(t, 0, input.CompanyLimit)
 		return BuildBrregTranslationWorksetResult{
 			FieldsExported:    25,
 			CompaniesExported: 25,
@@ -183,14 +200,49 @@ func TestTranslateBrregSourceCompaniesAllRecordsContinuesAfterFullQueueChunk(t *
 		return TranslationQueueBatchResult{RowsAffected: 25}, nil
 	}, activity.RegisterOptions{Name: completeBrregTranslationQueueBatchActivity})
 
+	var refreshCalls int
+	env.RegisterActivityWithOptions(func() error {
+		refreshCalls++
+		return nil
+	}, activity.RegisterOptions{Name: "RefreshBrregTranslationStatus"})
+
 	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{
-		AllRecords:           true,
-		MaxCompaniesPerBatch: 25,
-		MaxBatches:           1,
+		AllRecords: true,
+		MaxBatches: 1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.ErrorContains(t, env.GetWorkflowError(), "continue as new")
+	require.Zero(t, refreshCalls)
+}
+
+func TestTranslateBrregSourceCompaniesRefreshesStatusWhenContinuedQueueDrains(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterWorkflow(TranslateBrregSourceCompanies)
+
+	env.RegisterActivityWithOptions(func(ClaimBrregTranslationWorksetBatchInput) (ClaimBrregTranslationWorksetBatchResult, error) {
+		return ClaimBrregTranslationWorksetBatchResult{Status: "drained"}, nil
+	}, activity.RegisterOptions{Name: claimBrregTranslationWorksetBatchActivity})
+
+	var refreshCalls int
+	env.RegisterActivityWithOptions(func() error {
+		refreshCalls++
+		return nil
+	}, activity.RegisterOptions{Name: "RefreshBrregTranslationStatus"})
+
+	env.ExecuteWorkflow(TranslateBrregSourceCompanies, TranslateBrregSourceCompaniesInput{
+		QueuePrepared:           true,
+		CarriedBatchesProcessed: 1,
+		CarriedFieldsSeen:       1,
+		CarriedFieldsApplied:    1,
+		CarriedTermsClaimed:     1,
+		CarriedTermsSucceeded:   1,
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	require.Equal(t, 1, refreshCalls)
 }
 
 func TestTranslateBrregSourceCompaniesDrainsWhenNothingPrepared(t *testing.T) {

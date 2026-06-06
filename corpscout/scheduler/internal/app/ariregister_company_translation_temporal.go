@@ -45,6 +45,10 @@ func registerAriregisterCompanyTranslationWorker(worker temporalworker.Worker, r
 		activity.RegisterOptions{Name: "ApplyAriregisterTranslationWorkset"},
 	)
 	worker.RegisterActivityWithOptions(
+		resources.ariregisterCompanyTranslation.RefreshAriregisterTranslationStatus,
+		activity.RegisterOptions{Name: "RefreshAriregisterTranslationStatus"},
+	)
+	worker.RegisterActivityWithOptions(
 		resources.ariregisterCompanyTranslation.CompleteAriregisterTranslationQueueBatch,
 		activity.RegisterOptions{Name: "CompleteAriregisterTranslationQueueBatch"},
 	)

@@ -12,13 +12,26 @@ import (
 )
 
 const claimBrregTranslationQueueBatch = `-- name: ClaimBrregTranslationQueueBatch :many
-WITH locked AS (
-  SELECT id, company_id, num_of_characters, status_changed_at
+WITH first_config AS (
+  SELECT provider, model, prompt_version, source_lang, target_lang
   FROM brreg_source.translation_queue_entries
   WHERE status = 'pending'
   ORDER BY status_changed_at ASC, company_id ASC
-  FOR UPDATE SKIP LOCKED
+  LIMIT 1
+),
+pending AS (
+  SELECT pending.id, pending.company_id, pending.num_of_characters, pending.status_changed_at
+  FROM brreg_source.translation_queue_entries pending
+  JOIN first_config
+    ON pending.provider = first_config.provider
+   AND pending.model = first_config.model
+   AND pending.prompt_version = first_config.prompt_version
+   AND pending.source_lang = first_config.source_lang
+   AND pending.target_lang = first_config.target_lang
+  WHERE pending.status = 'pending'
+  ORDER BY pending.status_changed_at ASC, pending.company_id ASC
   LIMIT GREATEST($1::integer, 1)
+  FOR UPDATE SKIP LOCKED
 ),
 ranked AS (
   SELECT
@@ -27,7 +40,7 @@ ranked AS (
     num_of_characters,
     sum(num_of_characters) OVER (ORDER BY status_changed_at ASC, company_id ASC) AS running_chars,
     row_number() OVER (ORDER BY status_changed_at ASC, company_id ASC) AS row_number
-  FROM locked
+  FROM pending
 ),
 selected AS (
   SELECT id
@@ -43,9 +56,9 @@ updated AS (
       updated_at = now()
   FROM selected
   WHERE queue.id = selected.id
-  RETURNING queue.company_id, queue.num_of_characters
+  RETURNING queue.company_id, queue.num_of_characters, queue.provider, queue.model, queue.prompt_version, queue.source_lang, queue.target_lang
 )
-SELECT company_id, num_of_characters
+SELECT company_id, num_of_characters, provider, model, prompt_version, source_lang, target_lang
 FROM updated
 ORDER BY company_id ASC
 `
@@ -59,6 +72,11 @@ type ClaimBrregTranslationQueueBatchParams struct {
 type ClaimBrregTranslationQueueBatchRow struct {
 	CompanyID       uuid.UUID `json:"company_id"`
 	NumOfCharacters int32     `json:"num_of_characters"`
+	Provider        string    `json:"provider"`
+	Model           string    `json:"model"`
+	PromptVersion   string    `json:"prompt_version"`
+	SourceLang      string    `json:"source_lang"`
+	TargetLang      string    `json:"target_lang"`
 }
 
 func (q *Queries) ClaimBrregTranslationQueueBatch(ctx context.Context, arg ClaimBrregTranslationQueueBatchParams) ([]ClaimBrregTranslationQueueBatchRow, error) {
@@ -70,7 +88,15 @@ func (q *Queries) ClaimBrregTranslationQueueBatch(ctx context.Context, arg Claim
 	var items []ClaimBrregTranslationQueueBatchRow
 	for rows.Next() {
 		var i ClaimBrregTranslationQueueBatchRow
-		if err := rows.Scan(&i.CompanyID, &i.NumOfCharacters); err != nil {
+		if err := rows.Scan(
+			&i.CompanyID,
+			&i.NumOfCharacters,
+			&i.Provider,
+			&i.Model,
+			&i.PromptVersion,
+			&i.SourceLang,
+			&i.TargetLang,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -138,9 +164,11 @@ func (q *Queries) FailBrregTranslationQueueBatch(ctx context.Context, batchID st
 
 const prepareBrregTranslationQueue = `-- name: PrepareBrregTranslationQueue :one
 WITH selected_companies AS (
-  SELECT translation_status.company_id
+  SELECT
+    translation_status.company_id,
+    LEAST(GREATEST(translation_status.translation_missing_count, 0), 2147483647)::integer AS missing_field_count,
+    LEAST(GREATEST(translation_status.estimated_missing_chars, 0), 2147483647)::integer AS num_of_characters
   FROM brreg_source.mv_company_translation_status translation_status
-  JOIN brreg_source.companies company ON company.id = translation_status.company_id
   LEFT JOIN brreg_source.mv_company_explorer entry ON entry.company_id = translation_status.company_id
   WHERE translation_status.translation_missing_count > 0
     AND (
@@ -149,14 +177,14 @@ WITH selected_companies AS (
     )
     AND (
       $2::text IS NULL
-      OR company.organization_name ILIKE '%' || $2::text || '%'
-      OR company.organization_number ILIKE '%' || $2::text || '%'
+      OR translation_status.organization_name ILIKE '%' || $2::text || '%'
+      OR translation_status.organization_number ILIKE '%' || $2::text || '%'
       OR coalesce(entry.primary_industry_label, '') ILIKE '%' || $2::text || '%'
       OR coalesce(entry.city, '') ILIKE '%' || $2::text || '%'
       OR coalesce(entry.municipality, '') ILIKE '%' || $2::text || '%'
     )
-    AND ($3::text IS NULL OR company.lifecycle_status = $3::text)
-    AND ($4::text IS NULL OR company.registration_status = $4::text)
+    AND ($3::text IS NULL OR translation_status.lifecycle_status = $3::text)
+    AND ($4::text IS NULL OR translation_status.registration_status = $4::text)
     AND ($5::text IS NULL OR $5::text = 'missing')
     AND (
       $6::text IS NULL
@@ -165,46 +193,43 @@ WITH selected_companies AS (
     )
   ORDER BY translation_status.min_missing_priority ASC,
     coalesce(entry.updated_at, translation_status.updated_at) DESC,
-    company.organization_number ASC,
+    translation_status.organization_number ASC,
     translation_status.company_id ASC
   LIMIT NULLIF(GREATEST($7::integer, 0), 0)
 ),
-estimated AS (
-  SELECT
-    missing.company_id,
-    count(*)::integer AS missing_field_count,
-    GREATEST(sum(length(btrim(missing.source_text)))::integer, 0) AS num_of_characters
-  FROM brreg_source.v_missing_translations missing
-  JOIN selected_companies selected ON selected.company_id = missing.company_id
-  WHERE nullif(btrim(missing.source_text), '') IS NOT NULL
-  GROUP BY missing.company_id
-),
 deleted_terminal AS (
   DELETE FROM brreg_source.translation_queue_entries queue
-  USING estimated
-  WHERE queue.company_id = estimated.company_id
+  USING selected_companies selected
+  WHERE queue.company_id = selected.company_id
     AND queue.status IN ('succeeded', 'failed')
   RETURNING queue.id
 ),
 inserted AS (
   INSERT INTO brreg_source.translation_queue_entries (
-    company_id, status, num_of_characters, batch_id, status_changed_at, created_at, updated_at
+    company_id, status, num_of_characters, batch_id,
+    provider, model, prompt_version, source_lang, target_lang,
+    status_changed_at, created_at, updated_at
   )
   SELECT
-    estimated.company_id,
+    selected.company_id,
     'pending',
-    estimated.num_of_characters,
+    selected.num_of_characters,
     NULL,
+    COALESCE(NULLIF($8::text, ''), 'default'),
+    COALESCE($9::text, ''),
+    COALESCE(NULLIF($10::text, ''), 'v1'),
+    COALESCE(NULLIF($11::text, ''), 'no'),
+    COALESCE(NULLIF($12::text, ''), 'en'),
     now(),
     now(),
     now()
-  FROM estimated
+  FROM selected_companies selected
   ON CONFLICT DO NOTHING
   RETURNING id
 )
 SELECT
-  (SELECT count(*)::integer FROM estimated) AS companies_seen,
-  coalesce((SELECT sum(missing_field_count) FROM estimated), 0)::integer AS fields_seen,
+  (SELECT count(*)::integer FROM selected_companies) AS companies_seen,
+  coalesce((SELECT sum(missing_field_count) FROM selected_companies), 0)::integer AS fields_seen,
   (SELECT count(*)::integer FROM inserted) AS companies_queued,
   (SELECT count(*)::integer FROM deleted_terminal) AS terminal_rows_deleted
 `
@@ -217,6 +242,11 @@ type PrepareBrregTranslationQueueParams struct {
 	TranslationStatus  *string     `json:"translation_status"`
 	WebsiteStatus      *string     `json:"website_status"`
 	CompanyLimit       int32       `json:"company_limit"`
+	Provider           string      `json:"provider"`
+	Model              string      `json:"model"`
+	PromptVersion      string      `json:"prompt_version"`
+	SourceLang         string      `json:"source_lang"`
+	TargetLang         string      `json:"target_lang"`
 }
 
 type PrepareBrregTranslationQueueRow struct {
@@ -235,6 +265,11 @@ func (q *Queries) PrepareBrregTranslationQueue(ctx context.Context, arg PrepareB
 		arg.TranslationStatus,
 		arg.WebsiteStatus,
 		arg.CompanyLimit,
+		arg.Provider,
+		arg.Model,
+		arg.PromptVersion,
+		arg.SourceLang,
+		arg.TargetLang,
 	)
 	var i PrepareBrregTranslationQueueRow
 	err := row.Scan(

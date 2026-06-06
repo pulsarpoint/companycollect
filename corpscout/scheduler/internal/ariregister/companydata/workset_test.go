@@ -154,8 +154,11 @@ func TestStoreTranslationQueuePreparesClaimsAndCompletesAriregisterCompanies(t *
 	store := New(tx)
 
 	prepared, err := store.PrepareTranslationQueue(t.Context(), PrepareTranslationQueueCommand{
-		IDs:          []string{first.CompanyID.String(), second.CompanyID.String()},
-		CompanyLimit: 10,
+		IDs:           []string{first.CompanyID.String(), second.CompanyID.String()},
+		CompanyLimit:  10,
+		Provider:      "deepseek",
+		Model:         "deepseek-chat",
+		PromptVersion: "v2",
 	})
 	require.NoError(t, err)
 	require.EqualValues(t, 2, prepared.CompaniesSeen)
@@ -173,16 +176,23 @@ func TestStoreTranslationQueuePreparesClaimsAndCompletesAriregisterCompanies(t *
 		BatchID:          "ariregister-test-batch-1",
 		MaxCandidateRows: 10,
 		MaxRequestChars:  10000,
+		MaxSourceRunning: 1,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "claimed", claimed.Status)
 	require.ElementsMatch(t, []string{first.CompanyID.String(), second.CompanyID.String()}, claimed.CompanyIDs)
 	require.Greater(t, claimed.EstimatedChars, int32(0))
+	require.Equal(t, "deepseek", claimed.Provider)
+	require.Equal(t, "deepseek-chat", claimed.Model)
+	require.Equal(t, "v2", claimed.PromptVersion)
+	require.Equal(t, "et", claimed.SourceLang)
+	require.Equal(t, "en", claimed.TargetLang)
 
 	blocked, err := store.ClaimTranslationQueueBatch(t.Context(), ClaimTranslationQueueBatchCommand{
 		BatchID:          "ariregister-test-batch-2",
 		MaxCandidateRows: 10,
 		MaxRequestChars:  10000,
+		MaxSourceRunning: 1,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "blocked", blocked.Status)
@@ -198,6 +208,20 @@ func TestStoreTranslationQueuePreparesClaimsAndCompletesAriregisterCompanies(t *
 	})
 	require.NoError(t, err)
 	require.Equal(t, "drained", drained.Status)
+}
+
+func TestTranslationQueueCapacityAllowsUpToConfiguredSourceRunningBatches(t *testing.T) {
+	command := normalizeClaimTranslationQueueBatchCommand(ClaimTranslationQueueBatchCommand{
+		BatchID:          "ariregister-capacity-batch",
+		MaxSourceRunning: 2,
+	})
+
+	require.True(t, canClaimTranslationQueueBatch(translationQueueRunningCounts{
+		SourceRunning: 1,
+	}, command))
+	require.False(t, canClaimTranslationQueueBatch(translationQueueRunningCounts{
+		SourceRunning: 2,
+	}, command))
 }
 
 func TestStoreResetStaleTranslationQueueEntriesReleasesAriregisterRunningBatch(t *testing.T) {
