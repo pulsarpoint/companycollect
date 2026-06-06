@@ -1,0 +1,91 @@
+{
+  "country": "United States",
+  "country_slug": "united_states",
+  "source_slug": "sam_gov_entity",
+  "source_identity": "united_states_sam_gov_entity",
+  "source_package": "samgoventity",
+  "env_prefix": "SAM_GOV_ENTITY",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "SAM.gov Entity Management (System for Award Management)",
+    "source_type": "official_registry",
+    "organization": "U.S. General Services Administration (GSA)",
+    "source_url": "https://open.gsa.gov/api/entity-api/",
+    "license": "Public extract released under FOIA (Public sensitivity level only)",
+    "access": "authenticated",
+    "data_freshness": "daily / monthly extracts",
+    "attribution": null
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["SAM_GOV_ENTITY_API_KEY"],
+    "credential_note": "Free SAM.gov account + System Account API key with 'Read Public' permission. Use ONLY the FOIA-releasable Public extract; never request/store FOUO/Sensitive sensitivity levels."
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://api.sam.gov/entity-information/v3/entities",
+    "download_url": "https://open.gsa.gov/api/sam-entity-extracts-api/",
+    "download_url_note": "Bulk Entity Extracts API (daily/monthly) also exists for Public extract.",
+    "http_method": "GET",
+    "headers_required": [],
+    "query_params_required": [
+      {"name": "api_key", "value_hint": "from SAM_GOV_ENTITY_API_KEY", "mandatory": true},
+      {"name": "samRegistered", "value_hint": "Yes", "mandatory": false}
+    ],
+    "formats": ["json", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "entityData",
+    "record_path_note": "Documented-but-unverified; confirm exact response envelope and record path against a live response before implementing.",
+    "total_results_path": "totalRecords",
+    "pagination": {
+      "type": "page_number",
+      "page_param": "page",
+      "page_start": 0,
+      "page_size": 100,
+      "page_size_param": "size",
+      "next_page_path": null,
+      "note": "Extract API caps at max 1,000,000 records; pagination params documented-but-unverified."
+    },
+    "rate_limit": "unknown (API key tiered)"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "SamEntityRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "note": "All field paths (entityRegistration.*, coreData.*, assertions.naicsList) are documented from public docs only and NOT verified against a stored sample."
+  },
+  "keys": {
+    "primary_keys": ["entityRegistration.ueiSAM"],
+    "join_keys": ["entityRegistration.ueiSAM", "entityRegistration.cageCode", "EIN (usually redacted in public extract)"],
+    "dedupe_keys": ["entityRegistration.ueiSAM"]
+  },
+  "mapping_rules": {
+    "legal_name": "entityRegistration.legalBusinessName.",
+    "status": "entityRegistration.registrationStatus -> status.sam_registration_status (federal eligibility, NOT corporate standing).",
+    "identifier": "ueiSAM -> identifiers.uei_sam; cageCode -> identifiers.cage_code.",
+    "activity": "assertions.goodsAndServices.naicsList -> activity.naics_codes (NAICS).",
+    "tax_id": "EIN/TIN is sensitive and typically redacted in the Public extract; do not assume availability."
+  },
+  "fixture_requirements": [
+    "PLANNING-ONLY: no raw fixtures permitted until a license/access-cleared sample is captured under the Public extract terms"
+  ],
+  "live_test_plan": {
+    "smoke": "BLOCKED until a SAM_GOV_ENTITY_API_KEY is provisioned; then GET 1 page with size=1 and verify the response envelope/record path.",
+    "full": "Behind explicit env gates and key; Public extract only."
+  },
+  "blockers": [
+    "Requires authenticated SAM.gov API key (SAM_GOV_ENTITY_API_KEY) not provisioned.",
+    "Response envelope, record_path, and pagination params are documented-but-unverified.",
+    "Field schema cataloged from public docs only; no raw sample stored (planning-only).",
+    "EIN/TIN typically redacted in the Public (FOIA) extract."
+  ]
+}

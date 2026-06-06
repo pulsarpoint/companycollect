@@ -1,6 +1,6 @@
 ---
 name: company-country-data-model-analysis
-description: Use when analyzing a completed country company open-data investigation to document source-specific company fields, field meanings, per-source JSON catalogs, and a country-specific combined company data object.
+description: Use when analyzing a completed country company open-data investigation to document source-specific company fields, field meanings, per-source JSON catalogs, country profiles, and countrydata implementation handoffs.
 ---
 
 # Company Country Data Model Analysis
@@ -18,6 +18,8 @@ analysis and data folders under:
 The goal is to analyze what company information can actually be obtained for
 that country, source by source, then propose a country-specific combined JSON
 object that represents the richest practical company profile for that country.
+For each implementable source, also produce a machine-readable handoff file for
+the Go `corpscout/countrydata` source implementation skill.
 
 Do not force countries into one shared global schema. Country registers differ
 too much in identifiers, legal concepts, filings, ownership, financial data,
@@ -35,6 +37,8 @@ Use this skill when the task asks for any of the following:
 - Combine multiple sources for one country into a proposed company profile.
 - Document join keys, source precedence, freshness, missing fields, and license
   constraints for country company data.
+- Prepare source naming, transport, parsing, fixture, and mapping details for a
+  later Go `corpscout/countrydata` implementation.
 
 Do not use this skill to discover sources from scratch. Use
 `company-open-data-discovery` first when the country analysis folder, country
@@ -104,6 +108,7 @@ data_model/
     {source_slug}/
       source_field_catalog.json
       source_field_catalog.md
+      countrydata_implementation_handoff.json
       sample_record.json  # optional when safe
   country_company_profile.schema.json
   country_company_profile.example.json
@@ -121,6 +126,20 @@ apr_financial_statements
 apr_ngo
 offeneregister_companies_jsonl
 ```
+
+The source slug is a stable implementation input. If `source_inventory.json`
+already has a `source_slug`, reuse it exactly. If it does not, choose one safe
+ASCII slug and use it consistently in every output file.
+
+Also define these implementation names per source and write them to
+`countrydata_implementation_handoff.json`:
+
+- `source_identity`: globally unique source id, usually
+  `{country_slug}_{source_slug}`.
+- `source_package`: Go package folder name, lowercase ASCII, concise, and
+  valid as a Go package name. Avoid underscores where practical.
+- `env_prefix`: uppercase environment prefix for the source, for example
+  `PRH_YTJ` or `APR_COMPANIES`.
 
 ## Source Selection
 
@@ -333,6 +352,137 @@ Rules:
   `sample_record.json` and document the reason in `source_field_catalog.md`.
 - Restricted, paid, authenticated, or license-uncertain sources must not have raw sample records
   unless the license/access terms explicitly allow that use.
+
+## Countrydata Implementation Handoff
+
+For every selected source, write:
+
+```text
+data_model/sources/{source_slug}/countrydata_implementation_handoff.json
+```
+
+This file is the machine-readable contract consumed by the later Go
+`company-countrydata-source-implementation` skill. It should remove guesswork
+about package names, env prefixes, transport shape, snapshot strategy, parsing
+rules, required fixtures, and mapping rules.
+
+Do not invent facts to complete the handoff. Use `null`, `"unknown"`, or a
+specific blocker in `blockers` when transport, license, access, or schema details
+are unclear.
+
+Use this shape:
+
+```json
+{
+  "country": "Serbia",
+  "country_slug": "serbia",
+  "source_slug": "apr_companies",
+  "source_identity": "serbia_apr_companies",
+  "source_package": "aprcompanies",
+  "env_prefix": "APR_COMPANIES",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "APR companies",
+    "source_type": "official_registry",
+    "organization": "Agencija za privredne registre",
+    "source_url": "https://example.test",
+    "license": "public_domain",
+    "access": "public",
+    "data_freshness": "monthly",
+    "attribution": null
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://example.test/api/companies",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "companies",
+    "total_results_path": "totalResults",
+    "pagination": {
+      "type": "page_number",
+      "page_param": "page",
+      "page_start": 1,
+      "page_size": 100,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "CompanyRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["businessId.value"],
+    "join_keys": ["businessId.value"],
+    "dedupe_keys": ["businessId.value"]
+  },
+  "mapping_rules": {
+    "legal_name": "Use the current primary legal name documented in the field catalog.",
+    "status": "Use the source status field documented in the field catalog."
+  },
+  "fixture_requirements": [
+    "representative active record",
+    "missing optional fields",
+    "historical or ended record",
+    "malformed individual row or line"
+  ],
+  "live_test_plan": {
+    "smoke": "Download a bounded small sample and process it in chunks.",
+    "full": "Download and process the complete source only behind explicit env gates."
+  },
+  "blockers": []
+}
+```
+
+`implementation_status` should be one of:
+
+```text
+ready
+blocked_license
+blocked_authentication
+blocked_payment
+insufficient_transport_info
+sample_only
+planning_only
+```
+
+Use `transport.access_mode` values such as:
+
+```text
+bulk_file
+paginated_json_api
+single_json_api
+csv_file
+xml_file
+zip_archive
+gzip_file
+ndjson_file
+local_sample_only
+unknown
+```
+
+For blocked, restricted, paid, authenticated, sample-only, or license-uncertain
+sources, still write the handoff when the source is selected. Set
+`implementation_status` and `blockers` clearly so the Go implementation skill
+can stop instead of inferring unsafe behavior.
 
 ## Country-Specific Combined Profile
 
@@ -575,6 +725,12 @@ Short country-specific conclusion.
 ## Source catalogs created
 
 List each `data_model/sources/{source_slug}/source_field_catalog.json`.
+
+## Countrydata implementation handoffs
+
+List each
+`data_model/sources/{source_slug}/countrydata_implementation_handoff.json` and
+its `implementation_status`.
 
 ## Combined profile files
 

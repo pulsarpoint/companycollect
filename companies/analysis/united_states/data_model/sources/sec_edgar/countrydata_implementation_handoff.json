@@ -1,0 +1,91 @@
+{
+  "country": "United States",
+  "country_slug": "united_states",
+  "source_slug": "sec_edgar",
+  "source_identity": "united_states_sec_edgar",
+  "source_package": "secedgar",
+  "env_prefix": "SEC_EDGAR",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "SEC EDGAR (Electronic Data Gathering, Analysis, and Retrieval)",
+    "source_type": "official_regulator",
+    "organization": "U.S. Securities and Exchange Commission",
+    "source_url": "https://www.sec.gov/files/company_tickers.json",
+    "license": "U.S. Government work / public domain",
+    "access": "public",
+    "data_freshness": "near real-time (submissions <1s, XBRL <1 min); ticker map refreshed regularly",
+    "attribution": null
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://www.sec.gov/files/company_tickers.json",
+    "download_url": "https://www.sec.gov/files/company_tickers.json",
+    "http_method": "GET",
+    "headers_required": [
+      {
+        "name": "User-Agent",
+        "value_hint": "descriptive app name + contact email, e.g. 'corpscout/1.0 (contact@example.com)'",
+        "mandatory": true,
+        "note": "Missing or generic User-Agent returns HTTP 403."
+      }
+    ],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "",
+    "record_path_note": "Top-level JSON is an object keyed by sequential integer index ('0','1',...); each value is one company {cik_str,ticker,title}. Iterate over object values, not an array.",
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "10 requests/second/IP"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true,
+    "note": "Flatten the index-keyed object into one NDJSON line per company on ingest."
+  },
+  "parsing": {
+    "record_type_hint": "SecTickerRecord",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": ["cik_str is an integer; zero-pad to 10 digits for the canonical CIK identifier"],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["cik_str"],
+    "join_keys": ["cik_str", "ticker"],
+    "dedupe_keys": ["cik_str"]
+  },
+  "mapping_rules": {
+    "legal_name": "Use 'title'; normalize inconsistent casing for display.",
+    "status": "Not present in company_tickers.json; leave null (status requires the submissions API, planning-only).",
+    "identifier": "Zero-pad cik_str to 10 digits (CIK0000000000) for identifiers.cik and primary_id when public."
+  },
+  "fixture_requirements": [
+    "representative record (e.g. cik_str+ticker+title)",
+    "all-caps name variant",
+    "mixed-case name variant",
+    "malformed/missing ticker value"
+  ],
+  "live_test_plan": {
+    "smoke": "GET company_tickers.json with a valid User-Agent; parse first N object values.",
+    "full": "Process the full ticker map (~10,405 records); enrichment via data.sec.gov submissions/companyfacts only behind explicit env gates."
+  },
+  "blockers": [],
+  "planning_only_enrichment": {
+    "submissions_api": "https://data.sec.gov/submissions/CIK##########.json — adds addresses, SIC, state of incorporation, EIN, former names, filings. Documented, NOT downloaded; verify shape before implementing.",
+    "companyfacts_api": "https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json — XBRL financials; large per-company payloads; on-demand only."
+  }
+}

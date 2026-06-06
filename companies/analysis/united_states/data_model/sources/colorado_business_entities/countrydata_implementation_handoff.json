@@ -1,0 +1,99 @@
+{
+  "country": "United States",
+  "country_slug": "united_states",
+  "source_slug": "colorado_business_entities",
+  "source_identity": "united_states_colorado_business_entities",
+  "source_package": "coloradoentities",
+  "env_prefix": "COLORADO_BUSINESS_ENTITIES",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Colorado Business Entities (state registry, open data)",
+    "source_type": "official_registry_state",
+    "organization": "Colorado Secretary of State / Colorado Information Marketplace (Socrata)",
+    "source_url": "https://data.colorado.gov/Business/Business-Entities-in-Colorado/4ykn-tg5h",
+    "license": "Open data (Socrata); verify Colorado open-data terms",
+    "access": "public",
+    "data_freshness": "regularly updated; 1M+ entities back to the 1800s",
+    "attribution": "Attribution to Colorado Secretary of State / Colorado Information Marketplace recommended; verify terms before commercial redistribution."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": ["COLORADO_BUSINESS_ENTITIES_APP_TOKEN"],
+    "credential_note": "Socrata app token is OPTIONAL (recommended for higher rate limits at high volume), not required."
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://data.colorado.gov/resource/4ykn-tg5h.json",
+    "download_url": "https://data.colorado.gov/api/views/4ykn-tg5h/rows.csv?accessType=DOWNLOAD",
+    "download_url_note": "A full CSV bulk export also exists; the JSON SODA API is preferred for incremental/paged ingest.",
+    "http_method": "GET",
+    "headers_required": [
+      {
+        "name": "X-App-Token",
+        "value_hint": "Socrata app token (optional)",
+        "mandatory": false
+      }
+    ],
+    "formats": ["json", "csv", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "",
+    "record_path_note": "SODA returns a top-level JSON array of entity objects.",
+    "total_results_path": null,
+    "pagination": {
+      "type": "limit_offset",
+      "page_param": "$offset",
+      "page_start": 0,
+      "page_size": 1000,
+      "page_size_param": "$limit",
+      "next_page_path": null,
+      "note": "Use $limit + $offset; optionally $order=entityid for stable paging and $where for incremental windows."
+    },
+    "rate_limit": "Socrata SODA; throttled per-IP without app token"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "ColoradoEntityRecord",
+    "date_formats": [],
+    "datetime_formats": ["2006-01-02T15:04:05.000"],
+    "number_formats": [
+      "entityid: keep as opaque string (leading digits encode year but treat as id)",
+      "principalzipcode/mailingzipcode: keep as string"
+    ],
+    "field_name_caveats": [
+      "jurisdictonofformation is MISSPELLED in the source (missing an 'i') — preserve the exact key."
+    ],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["entityid"],
+    "join_keys": ["entityid"],
+    "dedupe_keys": ["entityid"],
+    "global_key_rule": "Prefix with state code: 'CO:' + entityid (entityid unique only within Colorado)."
+  },
+  "mapping_rules": {
+    "legal_name": "Use entityname; strip appended delinquency annotations (e.g. ', Delinquent May 1, 2016') and keep the raw value in alternate_names as source_variant.",
+    "status": "Map entitystatus ('Good Standing' -> active; 'Delinquent'/others -> inactive/at-risk).",
+    "legal_form": "Map entitytype code (DLLC, FPC, ...) to a human legal form.",
+    "incorporation_date": "Use entityformdate (date portion) — most reliable incorporation date across US sources.",
+    "registered_agent": "Build a person-or-organization agent object from agentfirstname/middlename/lastname OR agentorganizationname + agentprincipal* address. Agent is NOT an owner.",
+    "jurisdiction": "jurisdictonofformation: 'CO' = domestic; other state code = foreign entity registered in CO."
+  },
+  "fixture_requirements": [
+    "Good Standing domestic LLC (DLLC) with principal address only",
+    "Delinquent record with mailing address and name carrying a status annotation",
+    "foreign entity (jurisdictonofformation != CO, entitytype FPC) with organization registered agent",
+    "record with individual registered agent (first/middle/last)",
+    "malformed/partial JSON object"
+  ],
+  "live_test_plan": {
+    "smoke": "GET ?$limit=5 and parse the array.",
+    "full": "Page with $limit=1000 & $order=entityid behind explicit env gates; consider $where on entityformdate for incremental loads."
+  },
+  "blockers": []
+}

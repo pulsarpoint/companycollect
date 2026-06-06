@@ -1,0 +1,81 @@
+{
+  "country": "United States",
+  "country_slug": "united_states",
+  "source_slug": "state_sos_registries",
+  "source_identity": "united_states_state_sos_registries",
+  "source_package": "statesos",
+  "env_prefix": "STATE_SOS",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "State Secretary of State business registries (50 states + DC)",
+    "source_type": "official_registry_state",
+    "organization": "Individual state Secretary of State offices",
+    "source_url": "https://www.nass.org/can-i-vote/business-services",
+    "license": "varies by state (per-state legal review required)",
+    "access": "public search free; bulk often paid/authenticated/per-state-agreement",
+    "data_freshness": "varies by state",
+    "attribution": "varies by state"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": true,
+    "credential_env_vars": [],
+    "credential_note": "Access model differs per jurisdiction; many bulk feeds require a paid per-state agreement."
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": null,
+    "download_url": null,
+    "http_method": null,
+    "headers_required": [],
+    "formats": ["varies", "csv", "ftp", "api"],
+    "compression": null,
+    "encoding": "unknown",
+    "record_path": null,
+    "record_path_note": "No common transport. Each of 51 jurisdictions is a separate source; implement per-state as its own countrydata source (Colorado is already split out as colorado_business_entities).",
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "unknown",
+    "file_extension": null,
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": null,
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["state_entity_id (per state)"],
+    "join_keys": ["state_code + state_entity_id"],
+    "dedupe_keys": ["state_code + state_entity_id"]
+  },
+  "mapping_rules": {
+    "legal_name": "Per-state entity name field (varies).",
+    "status": "Per-state status vocabulary (varies).",
+    "note": "Generic class — define concrete mapping per state when an individual state is implemented."
+  },
+  "fixture_requirements": [
+    "GENERIC: no fixtures; implement each state as a dedicated source with its own handoff"
+  ],
+  "live_test_plan": {
+    "smoke": "Not applicable to the generic class.",
+    "full": "Not applicable; per-state implementation required."
+  },
+  "blockers": [
+    "No common schema or transport across 51 jurisdictions.",
+    "Most bulk feeds are paid or require per-state legal agreements (e.g. AZ $2,000+/yr, SC $12,000/yr UCC, NC $750 setup + $250/yr).",
+    "Each state must be implemented as its own countrydata source with a dedicated handoff (open exemplars: Colorado, reportedly Oregon, Connecticut, Iowa, Minnesota)."
+  ]
+}

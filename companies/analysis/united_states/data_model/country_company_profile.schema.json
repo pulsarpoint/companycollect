@@ -1,0 +1,295 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pulsarpoint/companycollect/united_states/country_company_profile.schema.json",
+  "title": "United States Company Profile",
+  "description": "Country-specific combined company profile for the United States. The US has NO national company register: federal sources cover only slices (public companies via SEC, nonprofits via IRS, federal contractors via SAM), and the authoritative register for private companies is per-state. This profile therefore models the company as a set of source layers keyed by whichever identifiers are present (CIK, EIN, ueiSAM, state entity id), rather than a single registration. Each entity may legitimately appear in multiple layers.",
+  "type": "object",
+  "required": ["country", "country_slug", "identifiers", "legal_name", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "United States" },
+    "country_slug": { "type": "string", "const": "united_states" },
+    "country_profile_version": {
+      "type": "string",
+      "description": "Date version of this profile shape, e.g. 2026-06-06."
+    },
+    "identifiers": {
+      "type": "object",
+      "description": "All known US identifiers for the entity. None is universal; at least one must be present. Used as join keys.",
+      "minProperties": 1,
+      "properties": {
+        "primary_id": {
+          "type": "string",
+          "description": "Chosen canonical id: CIK (10-digit) if public; else 'EIN:'+ein; else 'UEI:'+ueiSAM; else state_code+':'+state_entity_id.",
+          "x-join-key": true
+        },
+        "cik": {
+          "type": ["string", "null"],
+          "description": "SEC Central Index Key, zero-padded to 10 digits.",
+          "x-source": "sec_edgar",
+          "x-source-path": "<index>.cik_str",
+          "x-join-key": true
+        },
+        "ticker": {
+          "type": ["string", "null"],
+          "description": "Primary stock ticker.",
+          "x-source": "sec_edgar",
+          "x-source-path": "<index>.ticker"
+        },
+        "ein": {
+          "type": ["string", "null"],
+          "description": "IRS Employer Identification Number, 9-digit zero-padded string. Strongest cross-source join key when present.",
+          "x-source": "irs_eo_bmf",
+          "x-source-path": "EIN",
+          "x-join-key": true
+        },
+        "uei_sam": {
+          "type": ["string", "null"],
+          "description": "SAM.gov Unique Entity ID (12-char). PLANNING-ONLY (authenticated source).",
+          "x-source": "sam_gov_entity",
+          "x-source-path": "entityRegistration.ueiSAM",
+          "x-access": "authenticated",
+          "x-join-key": true
+        },
+        "cage_code": {
+          "type": ["string", "null"],
+          "description": "CAGE code. PLANNING-ONLY.",
+          "x-source": "sam_gov_entity",
+          "x-source-path": "entityRegistration.cageCode",
+          "x-access": "authenticated"
+        },
+        "state_registrations": {
+          "type": "array",
+          "description": "One entry per state register the entity appears in. Authoritative source for private companies.",
+          "items": {
+            "type": "object",
+            "required": ["state_code", "state_entity_id"],
+            "properties": {
+              "state_code": { "type": "string", "description": "USPS state code, e.g. CO." },
+              "state_entity_id": {
+                "type": "string",
+                "description": "Entity id within that state.",
+                "x-source": "colorado_business_entities",
+                "x-source-path": "entityid",
+                "x-join-key": true
+              },
+              "global_key": {
+                "type": "string",
+                "description": "state_code + ':' + state_entity_id, e.g. CO:20251665680."
+              }
+            }
+          }
+        }
+      }
+    },
+    "legal_name": {
+      "type": "string",
+      "description": "Best available legal/registered name. Precedence: state register > SEC title > IRS NAME.",
+      "x-source": "colorado_business_entities|sec_edgar|irs_eo_bmf"
+    },
+    "alternate_names": {
+      "type": "array",
+      "description": "Other names: SEC former names, IRS SORT_NAME (chapter), name variants across sources.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "name_type": { "type": "string", "description": "former_name | sort_name | source_variant" },
+          "x-source": { "type": "string" }
+        }
+      }
+    },
+    "entity_classification": {
+      "type": "object",
+      "description": "Legal form and what kind of entity this is.",
+      "properties": {
+        "is_public_company": { "type": "boolean", "description": "True if present in SEC EDGAR." },
+        "is_nonprofit": { "type": "boolean", "description": "True if present in IRS EO BMF." },
+        "is_federal_registrant": { "type": "boolean", "description": "True if present in SAM.gov (planning-only)." },
+        "state_entity_type": {
+          "type": ["string", "null"],
+          "description": "State legal-form code, e.g. DLLC, FPC.",
+          "x-source": "colorado_business_entities",
+          "x-source-path": "entitytype"
+        },
+        "irs_organization_structure": {
+          "type": ["string", "null"],
+          "description": "IRS structure code (1=Corp,2=Trust,5=Association).",
+          "x-source": "irs_eo_bmf",
+          "x-source-path": "ORGANIZATION"
+        },
+        "irs_subsection": {
+          "type": ["string", "null"],
+          "description": "501(c) subsection code, e.g. 03 = 501(c)(3).",
+          "x-source": "irs_eo_bmf",
+          "x-source-path": "SUBSECTION",
+          "x-code-list": "IRS Pub 5926"
+        },
+        "irs_foundation_code": {
+          "type": ["string", "null"],
+          "x-source": "irs_eo_bmf",
+          "x-source-path": "FOUNDATION",
+          "x-code-list": "IRS Pub 5926"
+        }
+      }
+    },
+    "status": {
+      "type": "object",
+      "description": "Standing. State and federal statuses mean different things and are kept separate.",
+      "properties": {
+        "state_status": {
+          "type": ["string", "null"],
+          "description": "e.g. Good Standing, Delinquent.",
+          "x-source": "colorado_business_entities",
+          "x-source-path": "entitystatus"
+        },
+        "irs_exempt_status": {
+          "type": ["string", "null"],
+          "description": "IRS STATUS code, 01 = active exemption.",
+          "x-source": "irs_eo_bmf",
+          "x-source-path": "STATUS"
+        },
+        "sam_registration_status": {
+          "type": ["string", "null"],
+          "description": "PLANNING-ONLY. Federal-award eligibility, not corporate standing.",
+          "x-source": "sam_gov_entity",
+          "x-access": "authenticated"
+        }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "description": "Industry/purpose classification. Different sources use different taxonomies; preserve each.",
+      "properties": {
+        "sic_code": {
+          "type": ["string", "null"],
+          "description": "SEC SIC code (planning-only, via submissions API).",
+          "x-source": "sec_edgar",
+          "x-source-path": "submissions:sic",
+          "x-code-list": "SIC"
+        },
+        "naics_codes": {
+          "type": "array",
+          "description": "NAICS codes. PLANNING-ONLY (SAM.gov).",
+          "items": { "type": "string" },
+          "x-source": "sam_gov_entity",
+          "x-code-list": "NAICS",
+          "x-access": "authenticated"
+        },
+        "ntee_code": {
+          "type": ["string", "null"],
+          "description": "Nonprofit purpose taxonomy.",
+          "x-source": "irs_eo_bmf",
+          "x-source-path": "NTEE_CD",
+          "x-code-list": "NTEE"
+        }
+      }
+    },
+    "addresses": {
+      "type": "array",
+      "description": "All known addresses across sources.",
+      "items": {
+        "type": "object",
+        "required": ["address_role"],
+        "properties": {
+          "address_role": { "type": "string", "description": "principal | mailing | physical | irs_mailing" },
+          "line1": { "type": ["string", "null"] },
+          "city": { "type": ["string", "null"] },
+          "state": { "type": ["string", "null"] },
+          "zip": { "type": ["string", "null"] },
+          "country": { "type": ["string", "null"] },
+          "x-source": { "type": "string" }
+        }
+      }
+    },
+    "registered_agent": {
+      "type": ["object", "null"],
+      "description": "State registered agent for service of process (person OR commercial organization). NOT an owner/officer.",
+      "x-source": "colorado_business_entities",
+      "properties": {
+        "agent_type": { "type": "string", "description": "person | organization" },
+        "name": { "type": "string" },
+        "address": { "type": ["object", "null"] }
+      }
+    },
+    "dates": {
+      "type": "object",
+      "description": "Key dates. Note differing semantics per source.",
+      "properties": {
+        "formation_date": {
+          "type": ["string", "null"],
+          "description": "State formation/registration date — the most reliable incorporation date.",
+          "x-source": "colorado_business_entities",
+          "x-source-path": "entityformdate"
+        },
+        "irs_ruling_date": {
+          "type": ["string", "null"],
+          "description": "IRS exemption ruling YYYYMM — recognition date, NOT formation. Approximate proxy.",
+          "x-source": "irs_eo_bmf",
+          "x-source-path": "RULING"
+        }
+      }
+    },
+    "jurisdiction": {
+      "type": "object",
+      "properties": {
+        "jurisdiction_of_formation": {
+          "type": ["string", "null"],
+          "description": "US state where formed (CO for domestic CO; another state for foreign).",
+          "x-source": "colorado_business_entities",
+          "x-source-path": "jurisdictonofformation"
+        },
+        "state_of_incorporation": {
+          "type": ["string", "null"],
+          "description": "SEC state of incorporation (planning-only, submissions API).",
+          "x-source": "sec_edgar",
+          "x-source-path": "submissions:stateOfIncorporation"
+        }
+      }
+    },
+    "nonprofit_financials": {
+      "type": ["object", "null"],
+      "description": "IRS EO BMF latest-return financial snapshot (nonprofits only). Whole USD; sparse.",
+      "x-source": "irs_eo_bmf",
+      "properties": {
+        "tax_period": { "type": ["string", "null"], "x-source-path": "TAX_PERIOD", "description": "YYYYMM" },
+        "asset_amount": { "type": ["integer", "null"], "x-source-path": "ASSET_AMT" },
+        "income_amount": { "type": ["integer", "null"], "x-source-path": "INCOME_AMT" },
+        "revenue_amount": { "type": ["integer", "null"], "x-source-path": "REVENUE_AMT" },
+        "filing_requirement": { "type": ["string", "null"], "x-source-path": "FILING_REQ_CD" }
+      }
+    },
+    "public_company_financials": {
+      "type": "array",
+      "description": "PLANNING-ONLY. XBRL financial facts (revenue/assets/net income) per period via SEC companyfacts API; public companies only.",
+      "x-source": "sec_edgar",
+      "x-source-path": "companyfacts:facts.us-gaap.*",
+      "items": {
+        "type": "object",
+        "properties": {
+          "concept": { "type": "string" },
+          "period": { "type": "string" },
+          "value": { "type": "number" },
+          "unit": { "type": "string" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "One entry per source contributing to this profile.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "source_name", "retrieved_at"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "source_name": { "type": "string" },
+          "source_url": { "type": "string" },
+          "retrieved_at": { "type": "string" },
+          "license": { "type": "string" },
+          "access": { "type": "string", "description": "public | authenticated | restricted" },
+          "planning_only": { "type": "boolean" },
+          "join_key_used": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

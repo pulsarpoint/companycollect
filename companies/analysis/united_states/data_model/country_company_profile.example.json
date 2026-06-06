@@ -1,0 +1,101 @@
+{
+  "_note": "Illustrative profile built from a REAL observed Colorado open-data record (state layer). Federal layers (SEC/IRS/SAM) are marked absent because this entity does not appear in them; a nonprofit would populate entity_classification.is_nonprofit + nonprofit_financials from IRS, and a public company would populate cik/ticker + public_company_financials from SEC. Planning-only federal sections are left empty/null.",
+  "country": "United States",
+  "country_slug": "united_states",
+  "country_profile_version": "2026-06-06",
+  "identifiers": {
+    "primary_id": "CO:19871342214",
+    "cik": null,
+    "ticker": null,
+    "ein": null,
+    "uei_sam": null,
+    "cage_code": null,
+    "state_registrations": [
+      {
+        "state_code": "CO",
+        "state_entity_id": "19871342214",
+        "global_key": "CO:19871342214"
+      }
+    ]
+  },
+  "legal_name": "SOUTHWEST CONTRACTING, LLC",
+  "alternate_names": [
+    {
+      "name": "SOUTHWEST CONTRACTING, LLC, Delinquent May 1, 2016",
+      "name_type": "source_variant",
+      "x-source": "colorado_business_entities"
+    }
+  ],
+  "entity_classification": {
+    "is_public_company": false,
+    "is_nonprofit": false,
+    "is_federal_registrant": false,
+    "state_entity_type": "DLLC",
+    "irs_organization_structure": null,
+    "irs_subsection": null,
+    "irs_foundation_code": null
+  },
+  "status": {
+    "state_status": "Delinquent",
+    "irs_exempt_status": null,
+    "sam_registration_status": null
+  },
+  "activity": {
+    "sic_code": null,
+    "naics_codes": [],
+    "ntee_code": null
+  },
+  "addresses": [
+    {
+      "address_role": "principal",
+      "line1": "22989 COUNTY RD F",
+      "city": "CORTEZ",
+      "state": "CO",
+      "zip": "81321",
+      "country": "US",
+      "x-source": "colorado_business_entities"
+    },
+    {
+      "address_role": "mailing",
+      "line1": "PO BOX 719",
+      "city": "CORTEZ",
+      "state": "CO",
+      "zip": "81321",
+      "country": "US",
+      "x-source": "colorado_business_entities"
+    }
+  ],
+  "registered_agent": {
+    "agent_type": "person",
+    "name": "Steven G Franchini",
+    "address": {
+      "line1": "22989 COUNTY RD F",
+      "city": "CORTEZ",
+      "state": "CO",
+      "zip": "81321",
+      "country": "US"
+    }
+  },
+  "dates": {
+    "formation_date": "1978-02-28",
+    "irs_ruling_date": null
+  },
+  "jurisdiction": {
+    "jurisdiction_of_formation": "CO",
+    "state_of_incorporation": null
+  },
+  "nonprofit_financials": null,
+  "public_company_financials": [],
+  "source_provenance": [
+    {
+      "source_slug": "colorado_business_entities",
+      "source_name": "Colorado Business Entities (data.colorado.gov, Socrata)",
+      "source_url": "https://data.colorado.gov/resource/4ykn-tg5h.json",
+      "retrieved_at": "2026-06-06T00:00:00Z",
+      "license": "Open data (Socrata); verify Colorado open-data terms",
+      "access": "public",
+      "planning_only": false,
+      "join_key_used": "entityid"
+    }
+  ]
+}

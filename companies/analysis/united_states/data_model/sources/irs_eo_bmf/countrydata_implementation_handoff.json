@@ -1,0 +1,97 @@
+{
+  "country": "United States",
+  "country_slug": "united_states",
+  "source_slug": "irs_eo_bmf",
+  "source_identity": "united_states_irs_eo_bmf",
+  "source_package": "irseobmf",
+  "env_prefix": "IRS_EO_BMF",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "IRS Exempt Organizations Business Master File (EO BMF)",
+    "source_type": "official_tax_authority",
+    "organization": "U.S. Internal Revenue Service",
+    "source_url": "https://www.irs.gov/charities-non-profits/exempt-organizations-business-master-file-extract-eo-bmf",
+    "license": "U.S. Government work / public domain",
+    "access": "public",
+    "data_freshness": "monthly (2nd Tuesday)",
+    "attribution": null
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://www.irs.gov/pub/irs-soi/",
+    "download_url": [
+      "https://www.irs.gov/pub/irs-soi/eo1.csv",
+      "https://www.irs.gov/pub/irs-soi/eo2.csv",
+      "https://www.irs.gov/pub/irs-soi/eo3.csv",
+      "https://www.irs.gov/pub/irs-soi/eo4.csv"
+    ],
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "record_path_note": "Four regional CSV files, comma-delimited, header row present. Concatenate eo1..eo4 for national coverage.",
+    "total_results_path": null,
+    "pagination": {
+      "type": "multi_file",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null,
+      "files": ["eo1.csv", "eo2.csv", "eo3.csv", "eo4.csv"]
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true,
+    "note": "Convert each CSV row to one NDJSON record keyed by EIN; keep all 28 columns."
+  },
+  "parsing": {
+    "record_type_hint": "IrsEoBmfRecord",
+    "csv_header": "EIN,NAME,ICO,STREET,CITY,STATE,ZIP,GROUP,SUBSECTION,AFFILIATION,CLASSIFICATION,RULING,DEDUCTIBILITY,FOUNDATION,ACTIVITY,ORGANIZATION,STATUS,TAX_PERIOD,ASSET_CD,INCOME_CD,FILING_REQ_CD,PF_FILING_REQ_CD,ACCT_PD,ASSET_AMT,INCOME_AMT,REVENUE_AMT,NTEE_CD,SORT_NAME",
+    "date_formats": ["200601"],
+    "datetime_formats": [],
+    "number_formats": [
+      "EIN: keep as 9-char zero-padded string, never parse to int",
+      "ZIP: keep as string (leading zeros, ZIP+4)",
+      "RULING/TAX_PERIOD: YYYYMM string",
+      "ASSET_AMT/INCOME_AMT/REVENUE_AMT: integer whole USD, may be blank"
+    ],
+    "code_list_reference": "IRS Publication 5926: https://www.irs.gov/pub/irs-pdf/p5926.pdf",
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["EIN"],
+    "join_keys": ["EIN"],
+    "dedupe_keys": ["EIN"]
+  },
+  "mapping_rules": {
+    "legal_name": "Use NAME (uppercase). SORT_NAME is a secondary/chapter name -> alternate_names.",
+    "status": "Map STATUS '01' to active exempt status; this is tax-exempt status, not corporate standing.",
+    "identifier": "EIN -> identifiers.ein (9-char zero-padded string); strongest cross-source join key.",
+    "activity": "Prefer NTEE_CD over legacy ACTIVITY for classification.",
+    "incorporation_date": "Do NOT map RULING as incorporation_date; it is a YYYYMM recognition date -> dates.irs_ruling_date (approximate).",
+    "financials": "ASSET_AMT/INCOME_AMT/REVENUE_AMT with period TAX_PERIOD -> nonprofit_financials (sparse)."
+  },
+  "fixture_requirements": [
+    "representative active nonprofit with financials populated",
+    "record with blank financial amounts (990-N filer)",
+    "record with NTEE_CD populated and one with NTEE_CD blank",
+    "group-ruling member (GROUP != 0000) with SORT_NAME",
+    "malformed CSV row"
+  ],
+  "live_test_plan": {
+    "smoke": "HTTP range request first ~4KB of eo1.csv to confirm header and field shape.",
+    "full": "Download and stream-parse eo1..eo4 only behind explicit env gates; do not load whole files into memory."
+  },
+  "blockers": []
+}

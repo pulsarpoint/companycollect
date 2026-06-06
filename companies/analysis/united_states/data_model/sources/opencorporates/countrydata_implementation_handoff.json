@@ -1,0 +1,86 @@
+{
+  "country": "United States",
+  "country_slug": "united_states",
+  "source_slug": "opencorporates",
+  "source_identity": "united_states_opencorporates",
+  "source_package": "opencorporates",
+  "env_prefix": "OPENCORPORATES",
+  "implementation_status": "blocked_license",
+  "source": {
+    "source_name": "OpenCorporates",
+    "source_type": "third_party_aggregator",
+    "organization": "OpenCorporates Ltd",
+    "source_url": "https://api.opencorporates.com/",
+    "license": "Restricted; commercial/bulk requires a paid license; some data carries share-alike obligations",
+    "access": "partial public API (free tier with key); bulk/commercial requires payment",
+    "data_freshness": "varies (mirrors underlying state registers)",
+    "attribution": "OpenCorporates attribution + share-alike obligations may apply."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["OPENCORPORATES_API_TOKEN"],
+    "credential_note": "Free-tier API token exists but bulk/commercial ingestion requires a paid license. Do not bulk-ingest without a license."
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://api.opencorporates.com/v0.4/companies/search",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "query_params_required": [
+      {"name": "api_token", "value_hint": "from OPENCORPORATES_API_TOKEN", "mandatory": true}
+    ],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "results.companies",
+    "record_path_note": "Documented-but-unverified; confirm against a live response within free-tier terms before implementing.",
+    "total_results_path": "results.total_count",
+    "pagination": {
+      "type": "page_number",
+      "page_param": "page",
+      "page_start": 1,
+      "page_size": 30,
+      "page_size_param": "per_page",
+      "next_page_path": null
+    },
+    "rate_limit": "API key tiered"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "OpenCorporatesCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["company_number", "jurisdiction_code"],
+    "join_keys": ["company_number", "jurisdiction_code"],
+    "dedupe_keys": ["jurisdiction_code + company_number"]
+  },
+  "mapping_rules": {
+    "legal_name": "name.",
+    "status": "current_status (normalized cross-state vocabulary).",
+    "incorporation_date": "incorporation_date.",
+    "note": "Use only as comparison/fallback/dedup against authoritative state sources; not authoritative."
+  },
+  "fixture_requirements": [
+    "PLANNING-ONLY: no raw fixtures until a license permits storing OpenCorporates records"
+  ],
+  "live_test_plan": {
+    "smoke": "BLOCKED for bulk; free-tier single lookups only within terms.",
+    "full": "Requires a paid license; do not implement bulk ingestion without one."
+  },
+  "blockers": [
+    "Bulk/commercial use requires a paid OpenCorporates license; status blocked_by_license_uncertainty.",
+    "Some data carries share-alike obligations.",
+    "Aggregator, not authoritative — prefer underlying state sources.",
+    "Field schema documented from public docs only; no raw sample stored (planning-only)."
+  ]
+}
