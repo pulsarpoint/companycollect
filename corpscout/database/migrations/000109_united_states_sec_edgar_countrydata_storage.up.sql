@@ -164,7 +164,7 @@ VALUES (
   'united_states_sec_edgar',
   'United States SEC EDGAR',
   'U.S. public company CIK/ticker map from the SEC EDGAR company_tickers.json file',
-  'regulator',
+  'registry',
   'countrydata_united_states_sec_edgar.raw_records',
   (SELECT id FROM countries WHERE iso_alpha2 = 'US'),
   false,
