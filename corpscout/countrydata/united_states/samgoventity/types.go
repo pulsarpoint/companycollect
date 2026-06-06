@@ -19,6 +19,12 @@ type SamEntityRecord struct {
 	EntityRegistration EntityRegistration `json:"entityRegistration"`
 	CoreData           CoreData           `json:"coreData"`
 	Assertions         Assertions         `json:"assertions"`
+
+	// RawPayload is the exact source NDJSON line the record was decoded from and
+	// PayloadHash is its SHA-256, both populated by Process for raw storage. They
+	// are not part of the source JSON.
+	RawPayload  []byte `json:"-"`
+	PayloadHash string `json:"-"`
 }
 
 type EntityRegistration struct {

@@ -26,6 +26,7 @@ type UnitedStatesSamGovEntityImportInput struct {
 	RequestTimeout time.Duration
 	UserAgent      string
 	MetadataStore  countryimport.MetadataStore
+	StoreFunc      func(context.Context, []samgoventity.SamEntityRecord) (countryimport.StoreResult, error)
 }
 
 type UnitedStatesSamGovEntityImportResult struct {
@@ -46,6 +47,7 @@ func (i UnitedStatesSamGovEntityImporter) Run(ctx context.Context, input UnitedS
 		HTTPClient:     i.HTTPClient,
 		MetadataStore:  input.MetadataStore,
 	})
+	source.StoreFunc = input.StoreFunc
 
 	download, err := source.Download(ctx, countryimport.DownloadOptions{
 		MaxPages:       input.MaxPages,

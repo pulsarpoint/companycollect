@@ -92,6 +92,7 @@ type Querier interface {
 	GetCurrentFranceWorkflowRawLegalUnit(ctx context.Context, siren string) (GetCurrentFranceWorkflowRawLegalUnitRow, error)
 	GetCurrentUSColoradoEntitiesRawRecord(ctx context.Context, entityID string) (GetCurrentUSColoradoEntitiesRawRecordRow, error)
 	GetCurrentUSIRSEoBmfRawRecord(ctx context.Context, ein string) (GetCurrentUSIRSEoBmfRawRecordRow, error)
+	GetCurrentUSSamGovEntityRawRecord(ctx context.Context, ueiSam string) (GetCurrentUSSamGovEntityRawRecordRow, error)
 	GetDomainByID(ctx context.Context, id uuid.UUID) (GetDomainByIDRow, error)
 	GetExchangeRateSyncRunByWorkflowID(ctx context.Context, temporalWorkflowID string) (ExchangeRateSyncRun, error)
 	GetLLMProviderBySlugForUse(ctx context.Context, slug string) (LlmProvider, error)
@@ -201,6 +202,7 @@ type Querier interface {
 	RecordFranceSourceFile(ctx context.Context, arg RecordFranceSourceFileParams) (uuid.UUID, error)
 	RecordUSColoradoEntitiesDownloadRun(ctx context.Context, arg RecordUSColoradoEntitiesDownloadRunParams) (uuid.UUID, error)
 	RecordUSIRSEoBmfDownloadRun(ctx context.Context, arg RecordUSIRSEoBmfDownloadRunParams) (uuid.UUID, error)
+	RecordUSSamGovEntityDownloadRun(ctx context.Context, arg RecordUSSamGovEntityDownloadRunParams) (uuid.UUID, error)
 	RecoverStaleBrregWorkflowRuns(ctx context.Context, arg RecoverStaleBrregWorkflowRunsParams) (RecoverStaleBrregWorkflowRunsRow, error)
 	RefreshAriregisterSourceCompanyExplorer(ctx context.Context) error
 	RefreshAriregisterSourceCompanyTranslationStatus(ctx context.Context) error
@@ -222,6 +224,7 @@ type Querier interface {
 	SupersedeCurrentFranceWorkflowRawLegalUnit(ctx context.Context, arg SupersedeCurrentFranceWorkflowRawLegalUnitParams) error
 	SupersedeCurrentUSColoradoEntitiesRawRecord(ctx context.Context, arg SupersedeCurrentUSColoradoEntitiesRawRecordParams) error
 	SupersedeCurrentUSIRSEoBmfRawRecord(ctx context.Context, arg SupersedeCurrentUSIRSEoBmfRawRecordParams) error
+	SupersedeCurrentUSSamGovEntityRawRecord(ctx context.Context, arg SupersedeCurrentUSSamGovEntityRawRecordParams) error
 	SupersedeFranceSourceCompaniesForLegalUnits(ctx context.Context, rawLegalUnitIds []uuid.UUID) error
 	SupersedeFranceSourceEstablishmentsForLegalUnits(ctx context.Context, rawLegalUnitIds []uuid.UUID) error
 	// ── enrichment update ─────────────────────────────────────────────────────────
@@ -243,6 +246,7 @@ type Querier interface {
 	UpdateTemporalScheduleMetadata(ctx context.Context, arg UpdateTemporalScheduleMetadataParams) (TemporalScheduleMetadatum, error)
 	UpdateUSColoradoEntitiesDownloadProcessStats(ctx context.Context, arg UpdateUSColoradoEntitiesDownloadProcessStatsParams) error
 	UpdateUSIRSEoBmfDownloadProcessStats(ctx context.Context, arg UpdateUSIRSEoBmfDownloadProcessStatsParams) error
+	UpdateUSSamGovEntityDownloadProcessStats(ctx context.Context, arg UpdateUSSamGovEntityDownloadProcessStatsParams) error
 	UpsertAriregisterTranslationTermResult(ctx context.Context, arg UpsertAriregisterTranslationTermResultParams) error
 	UpsertAriregisterWorkflowRawRecord(ctx context.Context, arg UpsertAriregisterWorkflowRawRecordParams) (UpsertAriregisterWorkflowRawRecordRow, error)
 	UpsertBrregSourceFinancialStatement(ctx context.Context, arg UpsertBrregSourceFinancialStatementParams) (uuid.UUID, error)
@@ -284,6 +288,8 @@ type Querier interface {
 	UpsertUSColoradoEntitiesSource(ctx context.Context, arg UpsertUSColoradoEntitiesSourceParams) (uuid.UUID, error)
 	UpsertUSIRSEoBmfRawRecord(ctx context.Context, arg UpsertUSIRSEoBmfRawRecordParams) (uuid.UUID, error)
 	UpsertUSIRSEoBmfSource(ctx context.Context, arg UpsertUSIRSEoBmfSourceParams) (uuid.UUID, error)
+	UpsertUSSamGovEntityRawRecord(ctx context.Context, arg UpsertUSSamGovEntityRawRecordParams) (uuid.UUID, error)
+	UpsertUSSamGovEntitySource(ctx context.Context, arg UpsertUSSamGovEntitySourceParams) (uuid.UUID, error)
 }
 
 var _ Querier = (*Queries)(nil)
