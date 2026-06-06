@@ -40,6 +40,10 @@ This plan implements only Finland PRH YTJ raw source storage. It does not migrat
   - Allow callers to provide a typed PRH YTJ store function.
 - Modify: `corpscout/scheduler/internal/countrydata/finland_prhytj_test.go`
   - Verify importer uses the injected typed store function.
+- Create: `corpscout/scheduler/cmd/finland-prhytj-sync/main.go`
+  - One-shot Corpscout DB-backed sync command for manual full-flow testing after migrations.
+- Create: `corpscout/scheduler/cmd/finland-prhytj-sync/main_test.go`
+  - CLI parsing and configuration tests for the sync command.
 
 ---
 
@@ -1378,7 +1382,274 @@ git commit -m "feat: wire finland prh ytj importer store function"
 
 ---
 
-### Task 7: Run Full Focused Verification
+### Task 7: Add A DB-Backed One-Shot Sync Command
+
+**Files:**
+- Create: `corpscout/scheduler/cmd/finland-prhytj-sync/main.go`
+- Create: `corpscout/scheduler/cmd/finland-prhytj-sync/main_test.go`
+
+This command intentionally lives in `corpscout/scheduler`, not in
+`corpscout/countrydata`, because it needs Corpscout database access, sqlc, and
+the scheduler-owned DB store. The existing `corpscout/countrydata/cmd/prhytj-import`
+command remains the standalone no-DB source command.
+
+- [ ] **Step 1: Write CLI parsing tests**
+
+Create `corpscout/scheduler/cmd/finland-prhytj-sync/main_test.go`:
+
+```go
+package main
+
+import (
+	"testing"
+	"time"
+)
+
+func TestParseArgsUsesFullSyncDefaults(t *testing.T) {
+	cfg, err := parseArgs([]string{
+		"--database-url", "postgres://example",
+		"--data-dir", "/tmp/prh",
+	})
+	if err != nil {
+		t.Fatalf("parse args: %v", err)
+	}
+	if cfg.databaseURL != "postgres://example" {
+		t.Fatalf("database url mismatch: %q", cfg.databaseURL)
+	}
+	if cfg.dataDir != "/tmp/prh" {
+		t.Fatalf("data dir mismatch: %q", cfg.dataDir)
+	}
+	if cfg.maxPages != 0 {
+		t.Fatalf("max pages should default to full sync, got %d", cfg.maxPages)
+	}
+	if cfg.chunkSize != 500 {
+		t.Fatalf("chunk size mismatch: %d", cfg.chunkSize)
+	}
+}
+
+func TestParseArgsSupportsSmokeSyncFlags(t *testing.T) {
+	cfg, err := parseArgs([]string{
+		"--env", ".env",
+		"--base-url", "http://localhost:8080/companies",
+		"--database-url", "postgres://example",
+		"--data-dir", "/tmp/prh",
+		"--max-pages", "2",
+		"--chunk-size", "100",
+		"--page-delay-ms", "25",
+	})
+	if err != nil {
+		t.Fatalf("parse args: %v", err)
+	}
+	if cfg.envPath != ".env" {
+		t.Fatalf("env path mismatch: %q", cfg.envPath)
+	}
+	if cfg.baseURL != "http://localhost:8080/companies" {
+		t.Fatalf("base url mismatch: %q", cfg.baseURL)
+	}
+	if cfg.maxPages != 2 {
+		t.Fatalf("max pages mismatch: %d", cfg.maxPages)
+	}
+	if cfg.chunkSize != 100 {
+		t.Fatalf("chunk size mismatch: %d", cfg.chunkSize)
+	}
+	if cfg.pageDelay != 25*time.Millisecond {
+		t.Fatalf("page delay mismatch: %s", cfg.pageDelay)
+	}
+}
+```
+
+- [ ] **Step 2: Run command tests and verify they fail**
+
+Run:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./cmd/finland-prhytj-sync -count=1 -v
+```
+
+Expected: FAIL because the command package does not exist.
+
+- [ ] **Step 3: Implement the sync command**
+
+Create `corpscout/scheduler/cmd/finland-prhytj-sync/main.go`:
+
+```go
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"time"
+
+	"github.com/cockroachdb/errors"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	schedcountrydata "github.com/pulsarpoint/corpscout/scheduler/internal/countrydata"
+	countryimport "github.com/pulsarpoint/corpscout/countrydata/import"
+)
+
+type cliConfig struct {
+	envPath     string
+	baseURL     string
+	databaseURL string
+	dataDir     string
+	maxPages    int
+	chunkSize   int
+	pageDelay   time.Duration
+}
+
+func main() {
+	cfg, err := parseArgs(os.Args[1:])
+	if err != nil {
+		slog.Error("parse Finland PRH YTJ sync command", "error", err)
+		os.Exit(2)
+	}
+	if err := run(context.Background(), cfg); err != nil {
+		slog.Error("run Finland PRH YTJ sync command",
+			"error_kind", countryimport.Classify(err),
+			"error", err,
+		)
+		os.Exit(1)
+	}
+}
+
+func parseArgs(args []string) (cliConfig, error) {
+	flags := flag.NewFlagSet("finland-prhytj-sync", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	var pageDelayMS int
+	cfg := cliConfig{chunkSize: countryimport.DefaultChunkSize}
+	flags.StringVar(&cfg.envPath, "env", "", "path to env file")
+	flags.StringVar(&cfg.baseURL, "base-url", "", "override PRH YTJ API base URL")
+	flags.StringVar(&cfg.databaseURL, "database-url", "", "Postgres database URL; defaults to DATABASE_URL or CORPSCOUT_DATABASE_URL")
+	flags.StringVar(&cfg.dataDir, "data-dir", "", "PRH YTJ local data directory")
+	flags.IntVar(&cfg.maxPages, "max-pages", 0, "maximum pages to download; 0 means full sync")
+	flags.IntVar(&cfg.chunkSize, "chunk-size", countryimport.DefaultChunkSize, "records per processing chunk")
+	flags.IntVar(&pageDelayMS, "page-delay-ms", 0, "delay between PRH API pages in milliseconds")
+
+	if err := flags.Parse(args); err != nil {
+		return cliConfig{}, err
+	}
+	if pageDelayMS > 0 {
+		cfg.pageDelay = time.Duration(pageDelayMS) * time.Millisecond
+	}
+	if cfg.databaseURL == "" {
+		cfg.databaseURL = firstEnv("DATABASE_URL", "CORPSCOUT_DATABASE_URL")
+	}
+	if cfg.databaseURL == "" {
+		return cliConfig{}, fmt.Errorf("database url is required via --database-url, DATABASE_URL, or CORPSCOUT_DATABASE_URL")
+	}
+	return cfg, nil
+}
+
+func run(ctx context.Context, cfg cliConfig) error {
+	if cfg.envPath != "" {
+		if err := countryimport.LoadEnvFile(cfg.envPath); err != nil {
+			return errors.Wrapf(err, "load env file %s", cfg.envPath)
+		}
+	}
+
+	pool, err := pgxpool.New(ctx, cfg.databaseURL)
+	if err != nil {
+		return errors.Wrap(err, "open Postgres pool")
+	}
+	defer pool.Close()
+
+	store := schedcountrydata.NewFinlandPRHYTJDBStore(pool)
+	importer := schedcountrydata.FinlandPRHYTJImporter{}
+	result, err := importer.Run(ctx, schedcountrydata.FinlandPRHYTJImportInput{
+		BaseURL:       cfg.baseURL,
+		DataDir:       cfg.dataDir,
+		MaxPages:      cfg.maxPages,
+		ChunkSize:     cfg.chunkSize,
+		PageDelay:     cfg.pageDelay,
+		MetadataStore: store,
+		StoreFunc:     store.StoreCompanies,
+	})
+	if err != nil {
+		return errors.Wrap(err, "sync Finland PRH YTJ")
+	}
+
+	slog.Info("synced Finland PRH YTJ",
+		"snapshot_path", result.Download.SnapshotPath,
+		"pages_downloaded", result.Download.PagesDownloaded,
+		"records_downloaded", result.Download.RecordsSeen,
+		"records_processed", result.Process.RecordsProcessed,
+		"records_stored", result.Process.RecordsStored,
+		"decode_errors", result.Process.DecodeErrors,
+		"snapshot_sha256", result.Download.SHA256,
+	)
+	return nil
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+```
+
+- [ ] **Step 4: Run command tests**
+
+Run:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./cmd/finland-prhytj-sync -count=1 -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Run a bounded manual sync after migrations are applied**
+
+Run this only against a migrated development database:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+DATABASE_URL="$DATABASE_URL" GOWORK=off go run ./cmd/finland-prhytj-sync \
+  --env ../.env \
+  --data-dir ../data/countrydata/finland/prhytj \
+  --max-pages 2 \
+  --chunk-size 100
+```
+
+Expected: command exits `0`, logs a snapshot path, downloads two PRH pages, and
+stores roughly 200 raw records into `countrydata_finland_prh_ytj.raw_records`.
+
+- [ ] **Step 6: Run a full manual sync after the bounded sync succeeds**
+
+Run this only against a migrated development database when a full PRH pull is
+acceptable:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+DATABASE_URL="$DATABASE_URL" GOWORK=off go run ./cmd/finland-prhytj-sync \
+  --env ../.env \
+  --data-dir ../data/countrydata/finland/prhytj \
+  --chunk-size 500
+```
+
+Expected: command exits `0`, downloads the full PRH snapshot, stores records in
+chunks, and logs pages, records, decode errors, and snapshot SHA-256. Do not run
+this in normal CI.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add corpscout/scheduler/cmd/finland-prhytj-sync
+git commit -m "feat: add finland prh ytj sync command"
+```
+
+---
+
+### Task 8: Run Full Focused Verification
 
 **Files:**
 - No file edits.
@@ -1453,6 +1724,7 @@ Expected: only intentional committed changes are present. Existing unrelated unt
   - Row payload hash: Task 1 sets per-record hash; Task 3 stores `payload_hash`.
   - Full raw data JSONB: Task 3 stores `raw_payload JSONB NOT NULL`.
   - Name/key scalar columns: Task 3 stores `business_id`, `business_id_digits`, `vat_id`, `euid`, and `legal_name`.
+  - Manual full sync command: Task 7 adds `go run ./cmd/finland-prhytj-sync` with bounded and full-run verification.
 - Boundary coverage:
   - `corpscout/countrydata` remains independent from scheduler/sqlc.
   - `scheduler/internal/countrydata` owns the DB-backed adapter.
