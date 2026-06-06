@@ -2,6 +2,9 @@ package coloradoentities
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -126,6 +129,47 @@ func TestProcessStopsWhenContextIsCanceled(t *testing.T) {
 	}
 	if result.RecordsProcessed != 1 {
 		t.Fatalf("RecordsProcessed = %d, want 1", result.RecordsProcessed)
+	}
+}
+
+func TestProcessSetsRawPayloadAndPayloadHash(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	snapshotPath := filepath.Join(dir, "snapshot.ndjson")
+	line := `{"entityid":"19871234567","entityname":"Example LLC","entitystatus":"Good Standing","entitytype":"DLLC"}`
+	if err := os.WriteFile(snapshotPath, []byte(line+"\n"), 0o600); err != nil {
+		t.Fatalf("write snapshot: %v", err)
+	}
+
+	var stored []ColoradoEntityRecord
+	source := NewSource(Config{})
+	source.StoreFunc = func(ctx context.Context, records []ColoradoEntityRecord) (countryimport.StoreResult, error) {
+		stored = append(stored, records...)
+		return countryimport.StoreResult{
+			RecordsReceived: int64(len(records)),
+			RecordsStored:   int64(len(records)),
+		}, nil
+	}
+
+	result, err := source.Process(ctx, countryimport.ProcessOptions{
+		SnapshotPath: snapshotPath,
+		ChunkSize:    1,
+	})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.RecordsProcessed != 1 {
+		t.Fatalf("RecordsProcessed = %d, want 1", result.RecordsProcessed)
+	}
+	if len(stored) != 1 {
+		t.Fatalf("stored records = %d, want 1", len(stored))
+	}
+	if got := string(stored[0].RawPayload); got != line {
+		t.Fatalf("RawPayload = %q, want %q", got, line)
+	}
+	sum := sha256.Sum256([]byte(line))
+	if want := hex.EncodeToString(sum[:]); stored[0].PayloadHash != want {
+		t.Fatalf("PayloadHash = %q, want %q", stored[0].PayloadHash, want)
 	}
 }
 

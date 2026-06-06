@@ -52,4 +52,10 @@ type ColoradoEntityRecord struct {
 	AgentMailingCountry  string `json:"agentmailingcountry,omitempty"`
 
 	EntityFormDate string `json:"entityformdate,omitempty"`
+
+	// RawPayload is the exact source NDJSON line the record was decoded from and
+	// PayloadHash is its SHA-256, both populated by Process for raw storage. They
+	// are not part of the source JSON.
+	RawPayload  []byte `json:"-"`
+	PayloadHash string `json:"-"`
 }
