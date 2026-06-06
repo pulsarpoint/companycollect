@@ -3,6 +3,8 @@ package prhytj
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -100,8 +102,9 @@ func (s *Source) Process(ctx context.Context, opts countryimport.ProcessOptions)
 		lineNumber++
 		result.RecordsSeen++
 
+		rawLine := append([]byte(nil), scanner.Bytes()...)
 		var record CompanyRecord
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+		if err := json.Unmarshal(rawLine, &record); err != nil {
 			result.DecodeErrors++
 			slog.WarnContext(ctx, "decode PRH YTJ snapshot line",
 				"source", SourceSlug,
@@ -110,6 +113,9 @@ func (s *Source) Process(ctx context.Context, opts countryimport.ProcessOptions)
 			)
 			continue
 		}
+		record.RawPayload = rawLine
+		payloadHash := sha256.Sum256(rawLine)
+		record.PayloadHash = hex.EncodeToString(payloadHash[:])
 
 		records = append(records, record)
 		result.RecordsProcessed++
