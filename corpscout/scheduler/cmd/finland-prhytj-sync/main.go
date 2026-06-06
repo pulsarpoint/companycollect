@@ -19,6 +19,8 @@ import (
 	schedcountrydata "github.com/pulsarpoint/corpscout/scheduler/internal/countrydata"
 )
 
+const defaultSyncTimeout = 8 * time.Hour
+
 type config struct {
 	DatabaseURL    string
 	EnvFile        string
@@ -65,7 +67,7 @@ func run(args []string, output io.Writer) error {
 		return errors.New("DATABASE_URL or CORPSCOUT_DATABASE_URL is required")
 	}
 	if cfg.Timeout <= 0 {
-		cfg.Timeout = 30 * time.Minute
+		cfg.Timeout = defaultSyncTimeout
 	}
 	if cfg.ChunkSize <= 0 {
 		cfg.ChunkSize = countryimport.DefaultChunkSize
@@ -134,7 +136,7 @@ func run(args []string, output io.Writer) error {
 func parseConfig(args []string) (config, error) {
 	cfg := config{
 		EnvFile: defaultEnvFile(),
-		Timeout: 30 * time.Minute,
+		Timeout: defaultSyncTimeout,
 	}
 	fs := flag.NewFlagSet("finland-prhytj-sync", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

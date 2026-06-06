@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -190,6 +191,63 @@ func TestDownloadRequestTimeoutOverrideControlsDefaultClient(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Download returned error: %v", err)
+	}
+}
+
+func TestDownloadRetriesTransientPageTimeout(t *testing.T) {
+	var mu sync.Mutex
+	pageAttempts := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		if page == "" {
+			page = "1"
+		}
+		mu.Lock()
+		pageAttempts[page]++
+		attempt := pageAttempts[page]
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		switch page {
+		case "1":
+			_, _ = w.Write([]byte(`{"companies":[{"businessId":{"value":"0100002-9"}}]}`))
+		case "2":
+			if attempt == 1 {
+				time.Sleep(50 * time.Millisecond)
+			}
+			_, _ = w.Write([]byte(`{"companies":[{"businessId":{"value":"0112038-9"}}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"companies":[]}`))
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	source := NewSource(Config{
+		BaseURL:        server.URL,
+		DataDir:        t.TempDir(),
+		HTTPClient:     server.Client(),
+		RequestTimeout: 10 * time.Millisecond,
+	})
+
+	result, err := source.Download(context.Background(), countryimport.DownloadOptions{
+		MaxPages:  3,
+		PageDelay: time.Nanosecond,
+	})
+	if err != nil {
+		t.Fatalf("Download returned error: %v", err)
+	}
+
+	if result.PagesDownloaded != 2 {
+		t.Fatalf("PagesDownloaded = %d, want 2", result.PagesDownloaded)
+	}
+	if result.RecordsSeen != 2 {
+		t.Fatalf("RecordsSeen = %d, want 2", result.RecordsSeen)
+	}
+	mu.Lock()
+	pageTwoAttempts := pageAttempts["2"]
+	mu.Unlock()
+	if pageTwoAttempts != 2 {
+		t.Fatalf("page 2 attempts = %d, want 2", pageTwoAttempts)
 	}
 }
 

@@ -19,6 +19,11 @@ import (
 	countryimport "github.com/pulsarpoint/corpscout/countrydata/import"
 )
 
+const (
+	defaultFetchAttempts = 3
+	fetchRetryDelay      = 100 * time.Millisecond
+)
+
 type downloadEnvelope struct {
 	TotalResults *int64            `json:"totalResults"`
 	Companies    []json.RawMessage `json:"companies"`
@@ -136,7 +141,7 @@ func (s *Source) Download(ctx context.Context, opts countryimport.DownloadOption
 			)
 		}
 
-		envelope, status, err := s.fetchPage(ctx, pageURL, userAgent, requestTimeout)
+		envelope, status, err := s.fetchPageWithRetries(ctx, pageURL, userAgent, requestTimeout)
 		if status != 0 {
 			httpStatuses[strconv.Itoa(currentPage)] = status
 		}
@@ -290,6 +295,31 @@ func (s *Source) Download(ctx context.Context, opts countryimport.DownloadOption
 	return result, nil
 }
 
+func (s *Source) fetchPageWithRetries(ctx context.Context, pageURL string, userAgent string, requestTimeout time.Duration) (downloadEnvelope, int, error) {
+	var lastEnvelope downloadEnvelope
+	var lastStatus int
+	var lastErr error
+
+	for attempt := 1; attempt <= defaultFetchAttempts; attempt++ {
+		envelope, status, err := s.fetchPage(ctx, pageURL, userAgent, requestTimeout)
+		if err == nil {
+			return envelope, status, nil
+		}
+		lastEnvelope = envelope
+		lastStatus = status
+		lastErr = err
+
+		if ctx.Err() != nil || attempt == defaultFetchAttempts || !isRetryableFetchError(err, status) {
+			return lastEnvelope, lastStatus, lastErr
+		}
+		if err := waitFetchRetryDelay(ctx, pageURL); err != nil {
+			return lastEnvelope, lastStatus, err
+		}
+	}
+
+	return lastEnvelope, lastStatus, lastErr
+}
+
 func (s *Source) fetchPage(ctx context.Context, pageURL string, userAgent string, requestTimeout time.Duration) (downloadEnvelope, int, error) {
 	requestCtx := ctx
 	cancel := func() {}
@@ -357,6 +387,21 @@ func (s *Source) fetchPage(ctx context.Context, pageURL string, userAgent string
 	return envelope, resp.StatusCode, nil
 }
 
+func isRetryableFetchError(err error, status int) bool {
+	if err == nil {
+		return false
+	}
+	if countryimport.Classify(err) == countryimport.ErrorKindTimeout {
+		return true
+	}
+	switch status {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
 func buildPageURL(baseURL string, page int, includeTotalResults bool) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil {
@@ -398,6 +443,25 @@ func waitPageDelay(ctx context.Context, pageDelay time.Duration) error {
 			"",
 			0,
 			errors.Wrap(ctx.Err(), "wait between PRH pages"),
+		)
+	case <-timer.C:
+		return nil
+	}
+}
+
+func waitFetchRetryDelay(ctx context.Context, pageURL string) error {
+	timer := time.NewTimer(fetchRetryDelay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return countryimport.WrapSourceError(
+			countryimport.Classify(ctx.Err()),
+			SourceSlug,
+			pageURL,
+			"",
+			0,
+			errors.Wrap(ctx.Err(), "wait before retrying PRH page"),
 		)
 	case <-timer.C:
 		return nil

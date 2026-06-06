@@ -51,6 +51,17 @@ func TestParseConfigReadsFinlandPRHYTJSyncFlags(t *testing.T) {
 	}
 }
 
+func TestParseConfigDefaultsToFullSyncTimeout(t *testing.T) {
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+
+	if cfg.Timeout != 8*time.Hour {
+		t.Fatalf("Timeout = %s, want 8h", cfg.Timeout)
+	}
+}
+
 func TestConfigWithEnvDefaultsResolvesDatabaseAndSourceSettings(t *testing.T) {
 	values := map[string]string{
 		"CORPSCOUT_DATABASE_URL":          "postgres://env",
