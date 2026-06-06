@@ -129,7 +129,12 @@ func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
 			StaleRunningSeconds: cfg.TranslationBatchLeaseSeconds,
 		})
 		collector := translationqueue.NewResultCollector(registry)
-		translationQueueService = translationqueue.NewService(dispatcher, collector, cfg.TranslationDispatchInterval)
+		translationQueueService = translationqueue.NewServiceWithResultConsumer(
+			dispatcher,
+			collector,
+			translationQueueClient,
+			cfg.TranslationDispatchInterval,
+		)
 		translationQueueService.Start(ctx)
 		slog.Debug("scheduler translation jetstream buffer service started",
 			"source_buffer_target", cfg.TranslationSourceBufferTarget,

@@ -14,9 +14,19 @@ type jetStreamPublisher interface {
 	Publish(context.Context, string, []byte) error
 }
 
+type ResultMessage interface {
+	Result() TranslationResult
+	Ack(context.Context) error
+}
+
+type ResultConsumer interface {
+	FetchResults(context.Context, int) ([]ResultMessage, error)
+}
+
 type JetStreamClient struct {
-	publisher jetStreamPublisher
-	conn      *nats.Conn
+	publisher      jetStreamPublisher
+	resultConsumer ResultConsumer
+	conn           *nats.Conn
 }
 
 func NewJetStreamClient(ctx context.Context, url string) (*JetStreamClient, error) {
@@ -33,7 +43,21 @@ func NewJetStreamClient(ctx context.Context, url string) (*JetStreamClient, erro
 		conn.Close()
 		return nil, err
 	}
-	return &JetStreamClient{publisher: natsJetStreamPublisher{js: js}, conn: conn}, nil
+	resultSub, err := js.PullSubscribe(
+		ResultsSubject,
+		"scheduler-source-translation-results",
+		nats.BindStream(StreamName),
+		nats.ManualAck(),
+	)
+	if err != nil {
+		conn.Close()
+		return nil, errors.Wrap(err, "create translation result pull subscription")
+	}
+	return &JetStreamClient{
+		publisher:      natsJetStreamPublisher{js: js},
+		resultConsumer: natsResultConsumer{sub: resultSub},
+		conn:           conn,
+	}, nil
 }
 
 func NewJetStreamClientFromPublisher(publisher jetStreamPublisher) *JetStreamClient {
@@ -52,6 +76,13 @@ func (c *JetStreamClient) PublishJob(ctx context.Context, job TranslationJob) er
 		return errors.Wrap(err, "publish translation jetstream job")
 	}
 	return nil
+}
+
+func (c *JetStreamClient) FetchResults(ctx context.Context, batch int) ([]ResultMessage, error) {
+	if c == nil || c.resultConsumer == nil {
+		return nil, errors.New("translation result consumer is required")
+	}
+	return c.resultConsumer.FetchResults(ctx, batch)
 }
 
 func encodeTranslationJob(job TranslationJob) ([]byte, error) {
@@ -96,4 +127,47 @@ type natsJetStreamPublisher struct {
 func (p natsJetStreamPublisher) Publish(ctx context.Context, subject string, payload []byte) error {
 	_, err := p.js.Publish(subject, payload, nats.Context(ctx))
 	return err
+}
+
+type natsResultConsumer struct {
+	sub *nats.Subscription
+}
+
+func (c natsResultConsumer) FetchResults(ctx context.Context, batch int) ([]ResultMessage, error) {
+	if c.sub == nil {
+		return nil, errors.New("translation result pull subscription is required")
+	}
+	if batch <= 0 {
+		batch = 1
+	}
+	messages, err := c.sub.Fetch(batch, nats.Context(ctx), nats.MaxWait(time.Second))
+	if err != nil {
+		if errors.Is(err, nats.ErrTimeout) {
+			return nil, nil
+		}
+		return nil, errors.Wrap(err, "fetch translation result messages")
+	}
+	results := make([]ResultMessage, 0, len(messages))
+	for _, message := range messages {
+		var decoded TranslationResult
+		if err := json.Unmarshal(message.Data, &decoded); err != nil {
+			_ = message.Ack()
+			continue
+		}
+		results = append(results, natsResultMessage{message: message, result: decoded})
+	}
+	return results, nil
+}
+
+type natsResultMessage struct {
+	message *nats.Msg
+	result  TranslationResult
+}
+
+func (m natsResultMessage) Result() TranslationResult {
+	return m.result
+}
+
+func (m natsResultMessage) Ack(context.Context) error {
+	return errors.Wrap(m.message.Ack(), "ack translation result message")
 }
