@@ -82,6 +82,7 @@ type ReleaseAriregisterTranslationQueueBatchInput struct {
 }
 
 type TranslationQueueBatchResult = companydata.TranslationQueueBatchResult
+type GetAriregisterTranslationQueueStatusResult = companydata.TranslationQueueStatusResult
 
 type SaveAriregisterTranslationWorksetBatchInput struct {
 	Path          string                         `json:"path"`
@@ -199,6 +200,19 @@ func (a *CompanyTranslationActions) ResetStale(
 		return translationqueue.QueueBatchResult{}, errors.Wrap(err, "reset stale ariregister translation queue entries")
 	}
 	return translationqueue.QueueBatchResult{RowsAffected: result.RowsAffected}, nil
+}
+
+func (a *CompanyTranslationActions) GetAriregisterTranslationQueueStatus(
+	ctx context.Context,
+) (GetAriregisterTranslationQueueStatusResult, error) {
+	if a == nil || a.store == nil {
+		return GetAriregisterTranslationQueueStatusResult{}, errors.New("ariregister companydata store not available")
+	}
+	result, err := a.store.GetTranslationQueueStatus(ctx)
+	if err != nil {
+		return GetAriregisterTranslationQueueStatusResult{}, errors.Wrap(err, "get ariregister translation queue status")
+	}
+	return result, nil
 }
 
 func (a *CompanyTranslationActions) LoadMissingFields(

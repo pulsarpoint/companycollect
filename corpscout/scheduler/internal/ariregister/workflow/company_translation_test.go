@@ -2,13 +2,14 @@ package workflow
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/testsuite"
 )
 
-func TestTranslateAriregisterSourceCompaniesPreparesQueueAndReturnsQueued(t *testing.T) {
+func TestTranslateAriregisterSourceCompaniesPreparesQueueAndWaitsForDrain(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.RegisterWorkflow(TranslateAriregisterSourceCompanies)
@@ -24,10 +25,22 @@ func TestTranslateAriregisterSourceCompaniesPreparesQueueAndReturnsQueued(t *tes
 		}, nil
 	}, activity.RegisterOptions{Name: buildAriregisterTranslationWorksetActivity})
 
+	var statusCalls int
+	statusTimes := make([]time.Time, 0, 2)
+	env.RegisterActivityWithOptions(func() (GetAriregisterTranslationQueueStatusResult, error) {
+		statusCalls++
+		statusTimes = append(statusTimes, env.Now())
+		if statusCalls == 1 {
+			return GetAriregisterTranslationQueueStatusResult{Pending: 2}, nil
+		}
+		return GetAriregisterTranslationQueueStatusResult{Succeeded: 2}, nil
+	}, activity.RegisterOptions{Name: getAriregisterTranslationQueueStatusActivity})
+
 	env.ExecuteWorkflow(TranslateAriregisterSourceCompanies, TranslateAriregisterSourceCompaniesInput{
-		Provider:      "deepseek",
-		Model:         "deepseek-chat",
-		PromptVersion: "v1",
+		Provider:          "deepseek",
+		Model:             "deepseek-chat",
+		PromptVersion:     "v1",
+		BatchDelaySeconds: 5,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -39,10 +52,14 @@ func TestTranslateAriregisterSourceCompaniesPreparesQueueAndReturnsQueued(t *tes
 
 	var result TranslateAriregisterSourceCompaniesResult
 	require.NoError(t, env.GetWorkflowResult(&result))
-	require.Equal(t, "queued", result.Status)
+	require.Equal(t, "succeeded", result.Status)
 	require.EqualValues(t, 2, result.StatusRowsInserted)
+	require.EqualValues(t, 2, result.CompaniesSucceeded)
 	require.EqualValues(t, 3, result.FieldsSeen)
 	require.Zero(t, result.BatchesProcessed)
+	require.Equal(t, 2, statusCalls)
+	require.Len(t, statusTimes, 2)
+	require.GreaterOrEqual(t, statusTimes[1].Sub(statusTimes[0]), 5*time.Second)
 }
 
 func TestTranslateAriregisterSourceCompaniesAllRecordsPreparesUnboundedQueue(t *testing.T) {
@@ -60,13 +77,17 @@ func TestTranslateAriregisterSourceCompaniesAllRecordsPreparesUnboundedQueue(t *
 		}, nil
 	}, activity.RegisterOptions{Name: buildAriregisterTranslationWorksetActivity})
 
+	env.RegisterActivityWithOptions(func() (GetAriregisterTranslationQueueStatusResult, error) {
+		return GetAriregisterTranslationQueueStatusResult{}, nil
+	}, activity.RegisterOptions{Name: getAriregisterTranslationQueueStatusActivity})
+
 	env.ExecuteWorkflow(TranslateAriregisterSourceCompanies, TranslateAriregisterSourceCompaniesInput{AllRecords: true})
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())
 	var result TranslateAriregisterSourceCompaniesResult
 	require.NoError(t, env.GetWorkflowResult(&result))
-	require.Equal(t, "queued", result.Status)
+	require.Equal(t, "succeeded", result.Status)
 	require.EqualValues(t, 25, result.StatusRowsInserted)
 	require.EqualValues(t, 25, result.FieldsSeen)
 }

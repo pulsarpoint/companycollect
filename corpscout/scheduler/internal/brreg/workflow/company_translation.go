@@ -15,7 +15,8 @@ const (
 	TranslateBrregSourceCompaniesTaskQueue    = "brreg-company-translation"
 	TranslateBrregSourceCompaniesWorkflowName = "TranslateBrregSourceCompanies"
 
-	buildBrregTranslationWorksetActivity = "BuildBrregTranslationWorkset"
+	buildBrregTranslationWorksetActivity   = "BuildBrregTranslationWorkset"
+	getBrregTranslationQueueStatusActivity = "GetBrregTranslationQueueStatus"
 
 	defaultCompanyTranslationBatchSize        = 10
 	defaultCompanyTranslationMaxParallelTasks = 2
@@ -27,12 +28,14 @@ const (
 	defaultCompanyTranslationMaxBatches       = 200
 	defaultCompanyTranslationPromptVersion    = "v1"
 	defaultCompanyTranslationTrigger          = "manual"
+	defaultCompanyTranslationQueuePollDelay   = 30
 	companyTranslationClaimModeAuto           = "auto"
 	companyTranslationClaimModeFixed          = "fixed"
 )
 
 type BuildBrregTranslationWorksetInput = actions.BuildBrregTranslationWorksetInput
 type BuildBrregTranslationWorksetResult = actions.BuildBrregTranslationWorksetResult
+type GetBrregTranslationQueueStatusResult = actions.GetBrregTranslationQueueStatusResult
 
 type TranslateBrregSourceCompaniesInput struct {
 	AllRecords        bool              `json:"all_records,omitempty"`
@@ -175,12 +178,35 @@ func TranslateBrregSourceCompanies(
 		input.WorksetCompanies = prepared.CompaniesExported
 		input.CarriedStatusRowsInserted = result.StatusRowsInserted
 		input.CarriedFieldsSeen = result.FieldsSeen
-		result.Status = "queued"
-		return result, nil
 	}
 
-	result.Status = "queued"
+	if err := waitForBrregTranslationQueueDrain(ctx, input, &result); err != nil {
+		return result, err
+	}
 	return result, nil
+}
+
+func waitForBrregTranslationQueueDrain(
+	ctx temporalworkflow.Context,
+	input TranslateBrregSourceCompaniesInput,
+	result *TranslateBrregSourceCompaniesResult,
+) error {
+	for {
+		var status GetBrregTranslationQueueStatusResult
+		if err := temporalworkflow.ExecuteActivity(ctx, getBrregTranslationQueueStatusActivity).Get(ctx, &status); err != nil {
+			return errors.Wrap(err, "get brreg translation queue status")
+		}
+		result.CompaniesSucceeded = status.Succeeded
+		result.CompaniesFailed = status.Failed
+		if status.Pending == 0 && status.Running == 0 {
+			result.Status = completedTranslationQueueWorkflowStatus(status.Succeeded, status.Failed)
+			return nil
+		}
+		result.Status = activeTranslationQueueWorkflowStatus(status.Pending, status.Running)
+		if err := temporalworkflow.Sleep(ctx, companyTranslationQueuePollInterval(input.BatchDelaySeconds)); err != nil {
+			return errors.Wrap(err, "wait for brreg translation queue drain")
+		}
+	}
 }
 
 func normalizeTranslateBrregSourceCompaniesInput(input TranslateBrregSourceCompaniesInput) TranslateBrregSourceCompaniesInput {
@@ -245,6 +271,37 @@ func companyTranslationRetryInitialInterval(batchDelaySeconds int) time.Duration
 		return 10 * time.Minute
 	}
 	return interval
+}
+
+func companyTranslationQueuePollInterval(batchDelaySeconds int) time.Duration {
+	interval := time.Duration(batchDelaySeconds) * time.Second
+	if interval < 5*time.Second {
+		return 5 * time.Second
+	}
+	if interval > time.Duration(defaultCompanyTranslationQueuePollDelay)*time.Second {
+		return time.Duration(defaultCompanyTranslationQueuePollDelay) * time.Second
+	}
+	return interval
+}
+
+func activeTranslationQueueWorkflowStatus(pending int32, running int32) string {
+	if running > 0 {
+		return "running"
+	}
+	if pending > 0 {
+		return "queued"
+	}
+	return "succeeded"
+}
+
+func completedTranslationQueueWorkflowStatus(succeeded int32, failed int32) string {
+	if failed > 0 && succeeded == 0 {
+		return "failed"
+	}
+	if failed > 0 {
+		return "partial"
+	}
+	return "succeeded"
 }
 
 func compactTextValues(values []string) []string {

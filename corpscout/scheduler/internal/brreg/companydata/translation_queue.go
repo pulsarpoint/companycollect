@@ -58,6 +58,13 @@ type TranslationQueueBatchResult struct {
 	RowsAffected int32
 }
 
+type TranslationQueueStatusResult struct {
+	Pending   int32
+	Running   int32
+	Succeeded int32
+	Failed    int32
+}
+
 func (s *Store) PrepareTranslationQueue(
 	ctx context.Context,
 	command PrepareTranslationQueueCommand,
@@ -241,6 +248,25 @@ func (s *Store) FailTranslationQueueBatch(
 		return TranslationQueueBatchResult{}, errors.Wrap(err, "fail brreg translation queue batch")
 	}
 	return TranslationQueueBatchResult{RowsAffected: rowsAffected}, nil
+}
+
+func (s *Store) GetTranslationQueueStatus(ctx context.Context) (TranslationQueueStatusResult, error) {
+	if s == nil || s.pool == nil {
+		return TranslationQueueStatusResult{}, errors.New("brreg companydata database not available")
+	}
+	var result TranslationQueueStatusResult
+	err := s.pool.QueryRow(ctx, `
+SELECT
+  count(*) FILTER (WHERE status = 'pending')::integer AS pending,
+  count(*) FILTER (WHERE status = 'running')::integer AS running,
+  count(*) FILTER (WHERE status = 'succeeded')::integer AS succeeded,
+  count(*) FILTER (WHERE status = 'failed')::integer AS failed
+FROM brreg_source.translation_queue_entries
+`).Scan(&result.Pending, &result.Running, &result.Succeeded, &result.Failed)
+	if err != nil {
+		return TranslationQueueStatusResult{}, errors.Wrap(err, "get brreg translation queue status")
+	}
+	return result, nil
 }
 
 func parseTranslationQueueCompanyIDs(values []string) ([]uuid.UUID, error) {

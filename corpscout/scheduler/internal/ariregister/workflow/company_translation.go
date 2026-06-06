@@ -15,7 +15,8 @@ const (
 	TranslateAriregisterSourceCompaniesTaskQueue    = "ariregister-company-translation"
 	TranslateAriregisterSourceCompaniesWorkflowName = "TranslateAriregisterSourceCompanies"
 
-	buildAriregisterTranslationWorksetActivity = "BuildAriregisterTranslationWorkset"
+	buildAriregisterTranslationWorksetActivity   = "BuildAriregisterTranslationWorkset"
+	getAriregisterTranslationQueueStatusActivity = "GetAriregisterTranslationQueueStatus"
 
 	defaultCompanyTranslationBatchSize        = 10
 	defaultCompanyTranslationMaxParallelTasks = 2
@@ -27,12 +28,14 @@ const (
 	defaultCompanyTranslationMaxBatches       = 200
 	defaultCompanyTranslationPromptVersion    = "v1"
 	defaultCompanyTranslationTrigger          = "manual"
+	defaultCompanyTranslationQueuePollDelay   = 30
 	companyTranslationClaimModeAuto           = "auto"
 	companyTranslationClaimModeFixed          = "fixed"
 )
 
 type BuildAriregisterTranslationWorksetInput = actions.BuildAriregisterTranslationWorksetInput
 type BuildAriregisterTranslationWorksetResult = actions.BuildAriregisterTranslationWorksetResult
+type GetAriregisterTranslationQueueStatusResult = actions.GetAriregisterTranslationQueueStatusResult
 
 type TranslateAriregisterSourceCompaniesInput struct {
 	AllRecords        bool              `json:"all_records,omitempty"`
@@ -175,12 +178,35 @@ func TranslateAriregisterSourceCompanies(
 		input.WorksetCompanies = prepared.CompaniesExported
 		input.CarriedStatusRowsInserted = result.StatusRowsInserted
 		input.CarriedFieldsSeen = result.FieldsSeen
-		result.Status = "queued"
-		return result, nil
 	}
 
-	result.Status = "queued"
+	if err := waitForAriregisterTranslationQueueDrain(ctx, input, &result); err != nil {
+		return result, err
+	}
 	return result, nil
+}
+
+func waitForAriregisterTranslationQueueDrain(
+	ctx temporalworkflow.Context,
+	input TranslateAriregisterSourceCompaniesInput,
+	result *TranslateAriregisterSourceCompaniesResult,
+) error {
+	for {
+		var status GetAriregisterTranslationQueueStatusResult
+		if err := temporalworkflow.ExecuteActivity(ctx, getAriregisterTranslationQueueStatusActivity).Get(ctx, &status); err != nil {
+			return errors.Wrap(err, "get ariregister translation queue status")
+		}
+		result.CompaniesSucceeded = status.Succeeded
+		result.CompaniesFailed = status.Failed
+		if status.Pending == 0 && status.Running == 0 {
+			result.Status = completedTranslationQueueWorkflowStatus(status.Succeeded, status.Failed)
+			return nil
+		}
+		result.Status = activeTranslationQueueWorkflowStatus(status.Pending, status.Running)
+		if err := temporalworkflow.Sleep(ctx, companyTranslationQueuePollInterval(input.BatchDelaySeconds)); err != nil {
+			return errors.Wrap(err, "wait for ariregister translation queue drain")
+		}
+	}
 }
 
 func normalizeTranslateAriregisterSourceCompaniesInput(input TranslateAriregisterSourceCompaniesInput) TranslateAriregisterSourceCompaniesInput {
@@ -245,6 +271,37 @@ func companyTranslationRetryInitialInterval(batchDelaySeconds int) time.Duration
 		return 10 * time.Minute
 	}
 	return interval
+}
+
+func companyTranslationQueuePollInterval(batchDelaySeconds int) time.Duration {
+	interval := time.Duration(batchDelaySeconds) * time.Second
+	if interval < 5*time.Second {
+		return 5 * time.Second
+	}
+	if interval > time.Duration(defaultCompanyTranslationQueuePollDelay)*time.Second {
+		return time.Duration(defaultCompanyTranslationQueuePollDelay) * time.Second
+	}
+	return interval
+}
+
+func activeTranslationQueueWorkflowStatus(pending int32, running int32) string {
+	if running > 0 {
+		return "running"
+	}
+	if pending > 0 {
+		return "queued"
+	}
+	return "succeeded"
+}
+
+func completedTranslationQueueWorkflowStatus(succeeded int32, failed int32) string {
+	if failed > 0 && succeeded == 0 {
+		return "failed"
+	}
+	if failed > 0 {
+		return "partial"
+	}
+	return "succeeded"
 }
 
 func compactTextValues(values []string) []string {

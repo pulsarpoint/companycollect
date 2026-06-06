@@ -82,6 +82,7 @@ type ReleaseBrregTranslationQueueBatchInput struct {
 }
 
 type TranslationQueueBatchResult = companydata.TranslationQueueBatchResult
+type GetBrregTranslationQueueStatusResult = companydata.TranslationQueueStatusResult
 
 type SaveBrregTranslationWorksetBatchInput struct {
 	Path          string                         `json:"path"`
@@ -199,6 +200,19 @@ func (a *CompanyTranslationActions) ResetStale(
 		return translationqueue.QueueBatchResult{}, errors.Wrap(err, "reset stale brreg translation queue entries")
 	}
 	return translationqueue.QueueBatchResult{RowsAffected: result.RowsAffected}, nil
+}
+
+func (a *CompanyTranslationActions) GetBrregTranslationQueueStatus(
+	ctx context.Context,
+) (GetBrregTranslationQueueStatusResult, error) {
+	if a == nil || a.store == nil {
+		return GetBrregTranslationQueueStatusResult{}, errors.New("brreg companydata store not available")
+	}
+	result, err := a.store.GetTranslationQueueStatus(ctx)
+	if err != nil {
+		return GetBrregTranslationQueueStatusResult{}, errors.Wrap(err, "get brreg translation queue status")
+	}
+	return result, nil
 }
 
 func (a *CompanyTranslationActions) LoadMissingFields(
