@@ -1,26 +1,11 @@
 package main
 
-// Simple open-data collector for the France company-source investigation.
-//
-// Supports:
-//   - "bulk":     direct file download (e.g. Sirene stock zip/parquet)
-//   - "api_page": page/offset-stepped JSON API download (Recherche, BODACC)
-//
-// It writes raw files under <country-root>/raw/{bulk,api}/, a per-file
-// .metadata.json (with SHA-256), and is safe to run repeatedly.
-//
-// Usage:
-//   go run downloader.go \
-//     --country-root /Users/graovic/pulsarpoint/ppoint/companycollect/companies/france \
-//     --sources      ./sources.example.json
-
 import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,43 +39,11 @@ type DownloadMeta struct {
 	SHA256        string    `json:"sha256"`
 }
 
-func main() {
-	countryRoot := flag.String("country-root", "", "absolute path to the country folder")
-	sourcesPath := flag.String("sources", "", "path to a sources JSON file")
-	flag.Parse()
-
-	if *countryRoot == "" || *sourcesPath == "" {
-		fmt.Fprintln(os.Stderr, "usage: downloader --country-root <dir> --sources <file>")
-		os.Exit(2)
-	}
-
-	raw, err := os.ReadFile(*sourcesPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "read sources:", err)
-		os.Exit(1)
-	}
-	var sources []Source
-	if err := json.Unmarshal(raw, &sources); err != nil {
-		fmt.Fprintln(os.Stderr, "parse sources:", err)
-		os.Exit(1)
-	}
-
-	ctx := context.Background()
-	client := &http.Client{Timeout: 10 * time.Minute}
-	for _, src := range sources {
-		fmt.Printf("==> %s (%s)\n", src.Name, src.Type)
-		if err := CollectSource(ctx, client, *countryRoot, src); err != nil {
-			fmt.Fprintf(os.Stderr, "    error: %v\n", err)
-			continue
-		}
-		fmt.Println("    done")
-	}
-}
-
-func CollectSource(ctx context.Context, client *http.Client, countryRoot string, src Source) error {
+func CollectSource(ctx context.Context, client *http.Client, dataRoot string, src Source) error {
 	if client == nil {
 		client = &http.Client{Timeout: 60 * time.Second}
 	}
+
 	if src.Slug == "" {
 		src.Slug = safeSlug(src.Name)
 	}
@@ -100,23 +53,26 @@ func CollectSource(ctx context.Context, client *http.Client, countryRoot string,
 
 	switch src.Type {
 	case "bulk":
-		out := filepath.Join(countryRoot, "raw", "bulk", src.Slug+extensionFromURL(src.URL))
+		out := filepath.Join(dataRoot, "raw", "bulk", src.Slug+extensionFromURL(src.URL))
 		return downloadOne(ctx, client, src, src.URL, out)
 
 	case "api_page":
 		if src.PageParam == "" {
 			return errors.New("api_page source requires page_param")
 		}
+		if src.PageStart == 0 {
+			src.PageStart = 1
+		}
 		if src.MaxPages <= 0 {
 			src.MaxPages = 1
 		}
-		for i := 0; i < src.MaxPages; i++ {
-			page := src.PageStart + i
+
+		for page := src.PageStart; page < src.PageStart+src.MaxPages; page++ {
 			u, err := addQueryParam(src.URL, src.PageParam, fmt.Sprintf("%d", page))
 			if err != nil {
 				return err
 			}
-			out := filepath.Join(countryRoot, "raw", "api", fmt.Sprintf("%s_%s_%d.json", src.Slug, src.PageParam, page))
+			out := filepath.Join(dataRoot, "raw", "api", fmt.Sprintf("%s_page_%d.json", src.Slug, page))
 			if err := downloadOne(ctx, client, src, u, out); err != nil {
 				return err
 			}
@@ -133,6 +89,7 @@ func downloadOne(ctx context.Context, client *http.Client, src Source, sourceURL
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return err
 	}
+
 	req, err := http.NewRequestWithContext(ctx, src.Method, sourceURL, nil)
 	if err != nil {
 		return err
@@ -149,6 +106,7 @@ func downloadOne(ctx context.Context, client *http.Client, src Source, sourceURL
 		return err
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("download failed: %s returned HTTP %d", sourceURL, resp.StatusCode)
 	}
@@ -175,6 +133,7 @@ func downloadOne(ctx context.Context, client *http.Client, src Source, sourceURL
 		SavedAs:       outPath,
 		SHA256:        hex.EncodeToString(h.Sum(nil)),
 	}
+
 	metaBytes, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err

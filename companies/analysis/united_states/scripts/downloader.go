@@ -39,15 +39,7 @@ type DownloadMeta struct {
 	SHA256        string    `json:"sha256"`
 }
 
-// CollectSource fetches a bulk file or a bounded number of API pages and
-// writes the raw payload plus a sidecar metadata JSON under countryRoot.
-//
-// For Finland the canonical source is the PRH YTJ v3 API
-// (https://avoindata.prh.fi/opendata-ytj-api/v3/companies). It is paginated with
-// a fixed page size of 100 records; iterate with page=1..N (~8191 pages for the
-// full register). License: CC-BY-4.0 (attribute the Finnish Patent and
-// Registration Office / YTJ).
-func CollectSource(ctx context.Context, client *http.Client, countryRoot string, src Source) error {
+func CollectSource(ctx context.Context, client *http.Client, dataRoot string, src Source) error {
 	if client == nil {
 		client = &http.Client{Timeout: 60 * time.Second}
 	}
@@ -61,7 +53,7 @@ func CollectSource(ctx context.Context, client *http.Client, countryRoot string,
 
 	switch src.Type {
 	case "bulk":
-		out := filepath.Join(countryRoot, "raw", "bulk", src.Slug+extensionFromURL(src.URL))
+		out := filepath.Join(dataRoot, "raw", "bulk", src.Slug+extensionFromURL(src.URL))
 		return downloadOne(ctx, client, src, src.URL, out)
 
 	case "api_page":
@@ -80,7 +72,7 @@ func CollectSource(ctx context.Context, client *http.Client, countryRoot string,
 			if err != nil {
 				return err
 			}
-			out := filepath.Join(countryRoot, "raw", "api", fmt.Sprintf("%s_page_%d.json", src.Slug, page))
+			out := filepath.Join(dataRoot, "raw", "api", fmt.Sprintf("%s_page_%d.json", src.Slug, page))
 			if err := downloadOne(ctx, client, src, u, out); err != nil {
 				return err
 			}

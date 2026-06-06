@@ -1,3 +1,8 @@
+---
+name: company-open-data-discovery
+description: Use when investigating official or reliable public company registry data sources for a country, including APIs, open data portals, bulk downloads, licenses, source inventories, and separated analysis/data artifacts.
+---
+
 # Company Open Data Discovery Skill
 
 ## Purpose
@@ -9,7 +14,8 @@ The goal is to discover official or reliable sources for company data, document 
 This skill is designed for a project folder like:
 
 ```text
-/Users/graovic/pulsarpoint/ppoint/companycollect/companies/{country_name}
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/{country_name}
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}
 ```
 
 Where `{country_name}` should be a safe folder slug, for example:
@@ -63,7 +69,7 @@ If optional inputs are missing, make reasonable defaults:
 For every country investigation, create this folder structure:
 
 ```text
-/Users/graovic/pulsarpoint/ppoint/companycollect/companies/{country_name}/
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/{country_name}/
   README.md
   investigation.md
   search_attempts.md
@@ -71,8 +77,12 @@ For every country investigation, create this folder structure:
   source_inventory.md
   license_notes.md
   schema_notes.md
-  run.log
+  scripts/
+    downloader.go
+    sources.example.json
 
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}/
+  run.log
   raw/
     bulk/
     api/
@@ -82,11 +92,9 @@ For every country investigation, create this folder structure:
   normalized/
     companies.sample.jsonl
     companies.sample.csv
-
-  scripts/
-    downloader.go
-    sources.example.json
 ```
+
+The `analysis/` tree should contain tracked investigation notes and reproducible source definitions. The `data/` tree should contain downloaded artifacts, raw API responses, normalized samples, metadata JSON, and run logs. The full `companies/data/` directory can be added to `.gitignore`.
 
 ### File purpose
 
@@ -168,6 +176,8 @@ Example:
 ]
 ```
 
+`downloaded_files` paths are relative to `/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}` unless explicitly marked otherwise.
+
 #### `license_notes.md`
 
 Record license, terms of use, redistribution restrictions, attribution requirements, and uncertainty.
@@ -203,12 +213,13 @@ raw_record
 
 ## Required research process
 
-### 1. Prepare the country folder
+### 1. Prepare the country folders
 
 Create the folder before downloading anything:
 
 ```bash
-mkdir -p /Users/graovic/pulsarpoint/ppoint/companycollect/companies/{country_name}/{raw/bulk,raw/api,raw/pages,raw/samples,normalized,scripts}
+mkdir -p /Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/{country_name}/scripts
+mkdir -p /Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}/{raw/bulk,raw/api,raw/pages,raw/samples,normalized}
 ```
 
 Use a safe slug for `{country_name}`:
@@ -329,7 +340,7 @@ sample record
 Save relevant HTML pages or API documentation pages under:
 
 ```text
-raw/pages/
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}/raw/pages/
 ```
 
 ### 6. Decide source status
@@ -359,7 +370,7 @@ Use `recommended` only when:
 
 When a public bulk file exists and downloading is allowed:
 
-- Save it under `raw/bulk/`
+- Save it under `/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}/raw/bulk/`
 - Preserve the original filename where possible
 - Save response metadata
 - Record source URL and retrieval timestamp
@@ -389,14 +400,14 @@ When an API exists:
 - If pagination is clear, download a small bounded sample first
 - Do not crawl unbounded APIs without a limit
 - Respect rate limits
-- Save raw API responses under `raw/api/`
+- Save raw API responses under `/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}/raw/api/`
 
 Recommended naming:
 
 ```text
-raw/api/{source_slug}_page_1.json
-raw/api/{source_slug}_page_2.json
-raw/api/{source_slug}_sample_company.json
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}/raw/api/{source_slug}_page_1.json
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}/raw/api/{source_slug}_page_2.json
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}/raw/api/{source_slug}_sample_company.json
 ```
 
 ### 9. Create normalized sample
@@ -406,8 +417,8 @@ Create a small normalized sample only after raw data is saved.
 Write to:
 
 ```text
-normalized/companies.sample.jsonl
-normalized/companies.sample.csv
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}/normalized/companies.sample.jsonl
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}/normalized/companies.sample.csv
 ```
 
 Each normalized record should preserve the raw source reference:
@@ -447,9 +458,10 @@ Summarized search strategy and important queries.
 
 ## Data saved
 
-List files saved under:
+List files saved under both roots:
 
-/Users/graovic/pulsarpoint/ppoint/companycollect/companies/{country_name}
+- Analysis: /Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/{country_name}
+- Data: /Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}
 
 ## Recommended ingestion approach
 
@@ -479,7 +491,7 @@ Mention license uncertainty, missing fields, rate limits, or unreliable data.
 Create this file under:
 
 ```text
-scripts/sources.example.json
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/{country_name}/scripts/sources.example.json
 ```
 
 Example:
@@ -516,7 +528,7 @@ Example:
 Create this file under:
 
 ```text
-scripts/downloader.go
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/{country_name}/scripts/downloader.go
 ```
 
 This is intentionally simple. It supports:
@@ -525,7 +537,7 @@ This is intentionally simple. It supports:
 - basic page-number API download
 - metadata file creation
 - SHA-256 hashing
-- safe output under the country folder
+- safe output under the country data folder
 
 ```go
 package main
@@ -569,7 +581,7 @@ type DownloadMeta struct {
 	SHA256        string    `json:"sha256"`
 }
 
-func CollectSource(ctx context.Context, client *http.Client, countryRoot string, src Source) error {
+func CollectSource(ctx context.Context, client *http.Client, dataRoot string, src Source) error {
 	if client == nil {
 		client = &http.Client{Timeout: 60 * time.Second}
 	}
@@ -583,7 +595,7 @@ func CollectSource(ctx context.Context, client *http.Client, countryRoot string,
 
 	switch src.Type {
 	case "bulk":
-		out := filepath.Join(countryRoot, "raw", "bulk", src.Slug+extensionFromURL(src.URL))
+		out := filepath.Join(dataRoot, "raw", "bulk", src.Slug+extensionFromURL(src.URL))
 		return downloadOne(ctx, client, src, src.URL, out)
 
 	case "api_page":
@@ -602,7 +614,7 @@ func CollectSource(ctx context.Context, client *http.Client, countryRoot string,
 			if err != nil {
 				return err
 			}
-			out := filepath.Join(countryRoot, "raw", "api", fmt.Sprintf("%s_page_%d.json", src.Slug, page))
+			out := filepath.Join(dataRoot, "raw", "api", fmt.Sprintf("%s_page_%d.json", src.Slug, page))
 			if err := downloadOne(ctx, client, src, u, out); err != nil {
 				return err
 			}
@@ -720,7 +732,7 @@ Example usage from another Go file:
 ctx := context.Background()
 client := &http.Client{Timeout: 2 * time.Minute}
 
-countryRoot := "/Users/graovic/pulsarpoint/ppoint/companycollect/companies/serbia"
+dataRoot := "/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/serbia"
 
 src := Source{
     Name: "Example bulk company register",
@@ -729,7 +741,7 @@ src := Source{
     URL:  "https://example.gov/data/companies.zip",
 }
 
-if err := CollectSource(ctx, client, countryRoot, src); err != nil {
+if err := CollectSource(ctx, client, dataRoot, src); err != nil {
     panic(err)
 }
 ```
@@ -750,7 +762,7 @@ src := Source{
     },
 }
 
-if err := CollectSource(ctx, client, countryRoot, src); err != nil {
+if err := CollectSource(ctx, client, dataRoot, src); err != nil {
     panic(err)
 }
 ```
@@ -759,25 +771,27 @@ if err := CollectSource(ctx, client, countryRoot, src); err != nil {
 
 If a CLI is needed later, create a small command that:
 
-1. Reads `scripts/sources.example.json`
+1. Reads `/Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/{country_name}/scripts/sources.example.json`
 2. Loops through sources
 3. Calls `CollectSource`
-4. Writes `run.log`
-5. Updates `source_inventory.json`
+4. Writes `/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_name}/run.log`
+5. Updates `/Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/{country_name}/source_inventory.json`
 
 Suggested command shape:
 
 ```bash
 go run ./scripts/downloader.go \
-  --country-root /Users/graovic/pulsarpoint/ppoint/companycollect/companies/serbia \
-  --sources /Users/graovic/pulsarpoint/ppoint/companycollect/companies/serbia/scripts/sources.example.json
+  --analysis-root /Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/serbia \
+  --data-root /Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/serbia \
+  --sources /Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/serbia/scripts/sources.example.json
 ```
 
 ## Quality checklist
 
 Before finishing, verify:
 
-- [ ] Country folder exists
+- [ ] Country analysis folder exists
+- [ ] Country data folder exists
 - [ ] Search attempts are documented
 - [ ] Official sources were checked first
 - [ ] Local-language searches were attempted

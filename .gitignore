@@ -13,6 +13,7 @@
 # Local runtime data and generated artifacts.
 data/
 **/data/
+companies/data/
 **/nats-data/
 **/node_modules/
 **/.venv/

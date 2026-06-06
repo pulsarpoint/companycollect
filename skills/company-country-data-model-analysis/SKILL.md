@@ -7,11 +7,12 @@ description: Use when analyzing a completed country company open-data investigat
 
 ## Purpose
 
-Use this skill after `company-open-data-discovery` has produced a country folder
-under:
+Use this skill after `company-open-data-discovery` has produced country
+analysis and data folders under:
 
 ```text
-/Users/graovic/pulsarpoint/ppoint/companycollect/companies/{country_slug}
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/{country_slug}
+/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_slug}
 ```
 
 The goal is to analyze what company information can actually be obtained for
@@ -36,40 +37,52 @@ Use this skill when the task asks for any of the following:
   constraints for country company data.
 
 Do not use this skill to discover sources from scratch. Use
-`company-open-data-discovery` first when the country folder or source inventory
-does not exist.
+`company-open-data-discovery` first when the country analysis folder, country
+data folder, or source inventory does not exist.
 
 ## Required Input
 
-The user should provide at least one of:
+The user should provide either `country_slug` or both explicit folder paths:
 
 ```text
 country_slug: serbia
-country_folder: /Users/graovic/pulsarpoint/ppoint/companycollect/companies/serbia
+analysis_folder: /Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/serbia
+data_folder: /Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/serbia
 ```
 
 If only `country_slug` is provided, resolve it under:
 
 ```text
-/Users/graovic/pulsarpoint/ppoint/companycollect/companies/{country_slug}
+analysis_folder: /Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/{country_slug}
+data_folder: /Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/{country_slug}
 ```
 
-Required files or directories:
+Required files in `analysis_folder`:
 
 ```text
 source_inventory.json
 schema_notes.md
 license_notes.md
+```
+
+Required directories in `data_folder`:
+
+```text
 raw/
 normalized/
 ```
 
-Useful optional files:
+Useful optional files in `analysis_folder`:
 
 ```text
 source_inventory.md
 investigation.md
 search_attempts.md
+```
+
+Useful optional files in `data_folder`:
+
+```text
 raw/api/*
 raw/bulk/*
 raw/samples/*
@@ -82,10 +95,10 @@ invent source fields.
 
 ## Output Directory Structure
 
-Create all output under the country folder:
+Create all output under `analysis_folder/data_model`:
 
 ```text
-analysis/
+data_model/
   company_data_analysis.md
   sources/
     {source_slug}/
@@ -98,7 +111,8 @@ analysis/
   common_field_mapping_suggestions.md
 ```
 
-Each relevant source gets its own folder under `analysis/sources/{source_slug}`.
+Each relevant source gets its own folder under
+`data_model/sources/{source_slug}`.
 Use a safe ASCII slug derived from the source name, for example:
 
 ```text
@@ -110,7 +124,8 @@ offeneregister_companies_jsonl
 
 ## Source Selection
 
-Read `source_inventory.json` first. Analyze sources with statuses such as:
+Read `analysis_folder/source_inventory.json` first. Analyze sources with
+statuses such as:
 
 ```text
 recommended
@@ -145,10 +160,12 @@ unless the user explicitly asks to include them.
 
 For each selected source:
 
-1. Read the source entry in `source_inventory.json`.
-2. Read relevant sections in `schema_notes.md`, `license_notes.md`, and
-   `investigation.md` if present.
-3. Inspect downloaded files listed in `downloaded_files`.
+1. Read the source entry in `analysis_folder/source_inventory.json`.
+2. Read relevant sections in `analysis_folder/schema_notes.md`,
+   `analysis_folder/license_notes.md`, and `analysis_folder/investigation.md`
+   if present.
+3. Inspect downloaded files listed in `downloaded_files`. Resolve relative
+   paths against `data_folder`.
 4. Prefer small files, metadata files, headers, existing samples, and bounded
    samples.
 5. If a raw file is large, inspect only a safe sample. Do not parse an entire
@@ -159,9 +176,9 @@ For each selected source:
 Safe sampling examples:
 
 ```bash
-head -n 5 raw/samples/example.jsonl
-python3 -m json.tool raw/api/example_sample.json | sed -n '1,160p'
-bzcat raw/bulk/example.jsonl.bz2 | head -n 3
+head -n 5 "$data_folder/raw/samples/example.jsonl"
+python3 -m json.tool "$data_folder/raw/api/example_sample.json" | sed -n '1,160p'
+bzcat "$data_folder/raw/bulk/example.jsonl.bz2" | head -n 3
 ```
 
 Do not run unbounded reads over large compressed files.
@@ -171,7 +188,7 @@ Do not run unbounded reads over large compressed files.
 For every selected source, write:
 
 ```text
-analysis/sources/{source_slug}/source_field_catalog.json
+data_model/sources/{source_slug}/source_field_catalog.json
 ```
 
 Top-level object shape:
@@ -265,7 +282,7 @@ fit the list. Explain it in `source_field_catalog.md`.
 For every selected source, write:
 
 ```text
-analysis/sources/{source_slug}/source_field_catalog.md
+data_model/sources/{source_slug}/source_field_catalog.md
 ```
 
 Use this structure:
@@ -302,7 +319,7 @@ limitations, and any uncertainty.
 When safe, save one representative raw or lightly shortened record:
 
 ```text
-analysis/sources/{source_slug}/sample_record.json
+data_model/sources/{source_slug}/sample_record.json
 ```
 
 Rules:
@@ -322,19 +339,19 @@ Rules:
 Write:
 
 ```text
-analysis/country_company_profile.schema.json
-analysis/country_company_profile.example.json
+data_model/country_company_profile.schema.json
+data_model/country_company_profile.example.json
 ```
 
-`analysis/country_company_profile.schema.json` must be a JSON Schema document,
-not a data-shaped example record. Include standard JSON Schema fields such as
-`$schema`, `type`, `properties`, and `required`. Use `description`, custom
-`x-source`, `x-source-path`, `x-join-key`, `x-freshness`, `x-access`, or similar
-source/provenance annotations where useful.
+`data_model/country_company_profile.schema.json` must be a JSON Schema
+document, not a data-shaped example record. Include standard JSON Schema fields
+such as `$schema`, `type`, `properties`, and `required`. Use `description`,
+custom `x-source`, `x-source-path`, `x-join-key`, `x-freshness`, `x-access`, or
+similar source/provenance annotations where useful.
 
-`analysis/country_company_profile.example.json` must be a data-shaped example
-record that conforms to the schema and illustrates the richest practical company
-profile that can be built for that country from the analyzed sources.
+`data_model/country_company_profile.example.json` must be a data-shaped example
+record that conforms to the schema and illustrates the richest practical
+company profile that can be built for that country from the analyzed sources.
 
 The combined profile is country-specific. It should represent what can be built
 for that country from the analyzed sources.
@@ -421,7 +438,7 @@ United States should not be expected to share the same top-level sections.
 Write:
 
 ```text
-analysis/country_company_profile_mapping.md
+data_model/country_company_profile_mapping.md
 ```
 
 Include:
@@ -450,7 +467,7 @@ aggregators, stale mirrors, or restricted planning-only sources.
 Write:
 
 ```text
-analysis/common_field_mapping_suggestions.md
+data_model/common_field_mapping_suggestions.md
 ```
 
 This file is only a suggestion for a future cross-country mapper. It must state
@@ -484,7 +501,7 @@ country's public/open data.
 Write:
 
 ```text
-analysis/company_data_analysis.md
+data_model/company_data_analysis.md
 ```
 
 Use this structure:
@@ -557,16 +574,16 @@ Short country-specific conclusion.
 
 ## Source catalogs created
 
-List each `analysis/sources/{source_slug}/source_field_catalog.json`.
+List each `data_model/sources/{source_slug}/source_field_catalog.json`.
 
 ## Combined profile files
 
 List:
 
-- `analysis/country_company_profile.schema.json`
-- `analysis/country_company_profile.example.json`
-- `analysis/country_company_profile_mapping.md`
-- `analysis/common_field_mapping_suggestions.md`
+- `data_model/country_company_profile.schema.json`
+- `data_model/country_company_profile.example.json`
+- `data_model/country_company_profile_mapping.md`
+- `data_model/common_field_mapping_suggestions.md`
 
 ## Key modeling notes
 

@@ -16,6 +16,11 @@ import (
 	"time"
 )
 
+// Source describes one downloadable open-data source.
+//
+// For Serbia the relevant sources are the three APR OpenAPI endpoints, all of
+// type "bulk" (a single GET returns the whole dataset as JSON). See
+// sources.example.json.
 type Source struct {
 	Name      string            `json:"name"`
 	Slug      string            `json:"slug"`
@@ -39,9 +44,9 @@ type DownloadMeta struct {
 	SHA256        string    `json:"sha256"`
 }
 
-func CollectSource(ctx context.Context, client *http.Client, countryRoot string, src Source) error {
+func CollectSource(ctx context.Context, client *http.Client, dataRoot string, src Source) error {
 	if client == nil {
-		client = &http.Client{Timeout: 60 * time.Second}
+		client = &http.Client{Timeout: 5 * time.Minute}
 	}
 
 	if src.Slug == "" {
@@ -53,7 +58,11 @@ func CollectSource(ctx context.Context, client *http.Client, countryRoot string,
 
 	switch src.Type {
 	case "bulk":
-		out := filepath.Join(countryRoot, "raw", "bulk", src.Slug+extensionFromURL(src.URL))
+		out := filepath.Join(dataRoot, "raw", "bulk", src.Slug+extensionFromURL(src.URL))
+		// APR endpoints have no file extension; force .json for clarity.
+		if extensionFromURL(src.URL) == ".dat" {
+			out = filepath.Join(dataRoot, "raw", "api", src.Slug+".json")
+		}
 		return downloadOne(ctx, client, src, src.URL, out)
 
 	case "api_page":
@@ -72,7 +81,7 @@ func CollectSource(ctx context.Context, client *http.Client, countryRoot string,
 			if err != nil {
 				return err
 			}
-			out := filepath.Join(countryRoot, "raw", "api", fmt.Sprintf("%s_page_%d.json", src.Slug, page))
+			out := filepath.Join(dataRoot, "raw", "api", fmt.Sprintf("%s_page_%d.json", src.Slug, page))
 			if err := downloadOne(ctx, client, src, u, out); err != nil {
 				return err
 			}
@@ -181,4 +190,35 @@ func safeSlug(s string) string {
 		}
 	}
 	return strings.Trim(b.String(), "_")
+}
+
+// main reads sources.example.json and collects every source into the country
+// data folder. Usage:
+//
+//	go run ./scripts/downloader.go
+func main() {
+	dataRoot := "/Users/graovic/pulsarpoint/ppoint/companycollect/companies/data/serbia"
+	sourcesPath := "/Users/graovic/pulsarpoint/ppoint/companycollect/companies/analysis/serbia/scripts/sources.example.json"
+
+	raw, err := os.ReadFile(sourcesPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "read sources:", err)
+		os.Exit(1)
+	}
+	var sources []Source
+	if err := json.Unmarshal(raw, &sources); err != nil {
+		fmt.Fprintln(os.Stderr, "parse sources:", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	client := &http.Client{Timeout: 5 * time.Minute}
+	for _, src := range sources {
+		fmt.Printf("collecting %s ...\n", src.Name)
+		if err := CollectSource(ctx, client, dataRoot, src); err != nil {
+			fmt.Fprintf(os.Stderr, "  error: %v\n", err)
+			continue
+		}
+		fmt.Printf("  done: %s\n", src.Slug)
+	}
 }
