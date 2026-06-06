@@ -14,13 +14,15 @@ type FinlandPRHYTJImporter struct {
 }
 
 type FinlandPRHYTJImportInput struct {
-	BaseURL       string
-	DataDir       string
-	MaxPages      int
-	ChunkSize     int
-	PageDelay     time.Duration
-	MetadataStore countryimport.MetadataStore
-	StoreFunc     func(context.Context, []prhytj.CompanyRecord) (countryimport.StoreResult, error)
+	BaseURL        string
+	DataDir        string
+	MaxPages       int
+	ChunkSize      int
+	PageDelay      time.Duration
+	RequestTimeout time.Duration
+	UserAgent      string
+	MetadataStore  countryimport.MetadataStore
+	StoreFunc      func(context.Context, []prhytj.CompanyRecord) (countryimport.StoreResult, error)
 }
 
 type FinlandPRHYTJImportResult struct {
@@ -30,17 +32,21 @@ type FinlandPRHYTJImportResult struct {
 
 func (i FinlandPRHYTJImporter) Run(ctx context.Context, input FinlandPRHYTJImportInput) (FinlandPRHYTJImportResult, error) {
 	source := prhytj.NewSource(prhytj.Config{
-		BaseURL:       input.BaseURL,
-		DataDir:       input.DataDir,
-		PageDelay:     input.PageDelay,
-		HTTPClient:    i.HTTPClient,
-		MetadataStore: input.MetadataStore,
+		BaseURL:        input.BaseURL,
+		DataDir:        input.DataDir,
+		PageDelay:      input.PageDelay,
+		RequestTimeout: input.RequestTimeout,
+		UserAgent:      input.UserAgent,
+		HTTPClient:     i.HTTPClient,
+		MetadataStore:  input.MetadataStore,
 	})
 	source.StoreFunc = input.StoreFunc
 
 	download, err := source.Download(ctx, countryimport.DownloadOptions{
-		MaxPages:  input.MaxPages,
-		PageDelay: input.PageDelay,
+		MaxPages:       input.MaxPages,
+		PageDelay:      input.PageDelay,
+		RequestTimeout: input.RequestTimeout,
+		UserAgent:      input.UserAgent,
 	})
 	result := FinlandPRHYTJImportResult{Download: download}
 	if err != nil {
