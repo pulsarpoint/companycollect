@@ -7,7 +7,7 @@ const (
 )
 
 type Page struct {
-	TotalResults int             `json:"totalResults"`
+	TotalResults *int64          `json:"totalResults,omitempty"`
 	Companies    []CompanyRecord `json:"companies"`
 }
 

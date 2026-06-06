@@ -77,6 +77,39 @@ func TestProcessWithoutSnapshotReturnsNoSnapshotKind(t *testing.T) {
 	}
 }
 
+func TestProcessStopsWhenContextIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var storeCalls int
+	source := NewSource(Config{DataDir: t.TempDir()})
+	source.StoreFunc = func(ctx context.Context, records []CompanyRecord) (countryimport.StoreResult, error) {
+		storeCalls++
+		cancel()
+		return countryimport.StoreResult{
+			RecordsReceived: int64(len(records)),
+			RecordsStored:   int64(len(records)),
+		}, nil
+	}
+
+	result, err := source.Process(ctx, countryimport.ProcessOptions{
+		SnapshotPath: filepath.Join("testdata", "prh_snapshot_mixed.ndjson"),
+		ChunkSize:    1,
+	})
+	if err == nil {
+		t.Fatal("Process returned nil error, want cancellation")
+	}
+	if !countryimport.IsKind(err, countryimport.ErrorKindTimeout) {
+		t.Fatalf("Process error kind = %v, want %v; err=%v", countryimport.Classify(err), countryimport.ErrorKindTimeout, err)
+	}
+	if storeCalls != 1 {
+		t.Fatalf("Store calls = %d, want 1", storeCalls)
+	}
+	if result.RecordsProcessed != 1 {
+		t.Fatalf("RecordsProcessed = %d, want 1", result.RecordsProcessed)
+	}
+}
+
 type processRecordingMetadataStore struct {
 	processCalls int
 	process      countryimport.ProcessMetadata

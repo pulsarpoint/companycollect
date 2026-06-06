@@ -90,7 +90,13 @@ func (s *Source) Process(ctx context.Context, opts countryimport.ProcessOptions)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSnapshotLineBytes)
 
 	var lineNumber int64
-	for scanner.Scan() {
+	for {
+		if err := ctx.Err(); err != nil {
+			return result, processContextError(err, snapshotPath)
+		}
+		if !scanner.Scan() {
+			break
+		}
 		lineNumber++
 		result.RecordsSeen++
 
@@ -126,6 +132,9 @@ func (s *Source) Process(ctx context.Context, opts countryimport.ProcessOptions)
 			errors.Wrap(err, "scan PRH snapshot"),
 		)
 	}
+	if err := ctx.Err(); err != nil {
+		return result, processContextError(err, snapshotPath)
+	}
 	if err := flush(); err != nil {
 		return result, err
 	}
@@ -151,6 +160,17 @@ func (s *Source) Process(ctx context.Context, opts countryimport.ProcessOptions)
 	}
 
 	return result, nil
+}
+
+func processContextError(err error, snapshotPath string) error {
+	return countryimport.WrapSourceError(
+		countryimport.Classify(err),
+		SourceSlug,
+		"",
+		snapshotPath,
+		0,
+		errors.Wrap(err, "process PRH snapshot"),
+	)
 }
 
 func (s *Source) resolveProcessSnapshotPath(opts countryimport.ProcessOptions) (string, error) {

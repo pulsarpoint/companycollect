@@ -9,8 +9,8 @@ import (
 func TestPageDecodeAndProfileMappingUsesFinlandRules(t *testing.T) {
 	page := decodeTestPage(t, "testdata/prh_page_1.json")
 
-	if page.TotalResults != 3 {
-		t.Fatalf("totalResults = %d, want 3", page.TotalResults)
+	if page.TotalResults == nil || *page.TotalResults != 3 {
+		t.Fatalf("totalResults = %#v, want 3", page.TotalResults)
 	}
 	if len(page.Companies) != 2 {
 		t.Fatalf("companies length = %d, want 2", len(page.Companies))
