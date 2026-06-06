@@ -229,23 +229,32 @@ type establishmentParquetRow struct {
 }
 
 func StreamLegalUnitsFile(ctx context.Context, path string, limit int32, emit func(LegalUnitRecord) error) (StreamResult, error) {
+	return StreamLegalUnitsFileFromOffset(ctx, path, limit, 0, emit)
+}
+
+func StreamLegalUnitsFileFromOffset(ctx context.Context, path string, limit int32, offset int32, emit func(LegalUnitRecord) error) (StreamResult, error) {
 	if emit == nil {
 		return StreamResult{}, errors.New("emit callback is required")
 	}
-	return streamParquetFile(ctx, path, limit, legalUnitRecordFromRow, emit)
+	return streamParquetFile(ctx, path, limit, offset, legalUnitRecordFromRow, emit)
 }
 
 func StreamEstablishmentsFile(ctx context.Context, path string, limit int32, emit func(EstablishmentRecord) error) (StreamResult, error) {
+	return StreamEstablishmentsFileFromOffset(ctx, path, limit, 0, emit)
+}
+
+func StreamEstablishmentsFileFromOffset(ctx context.Context, path string, limit int32, offset int32, emit func(EstablishmentRecord) error) (StreamResult, error) {
 	if emit == nil {
 		return StreamResult{}, errors.New("emit callback is required")
 	}
-	return streamParquetFile(ctx, path, limit, establishmentRecordFromRow, emit)
+	return streamParquetFile(ctx, path, limit, offset, establishmentRecordFromRow, emit)
 }
 
 func streamParquetFile[T any, R any](
 	ctx context.Context,
 	path string,
 	limit int32,
+	offset int32,
 	convert func(T) (R, error),
 	emit func(R) error,
 ) (StreamResult, error) {
@@ -261,18 +270,34 @@ func streamParquetFile[T any, R any](
 	}
 	defer reader.Close()
 
-	rows := make([]T, defaultParquetReadBatchSize)
 	var result StreamResult
+	if offset < 0 {
+		offset = 0
+	}
+	if limit > 0 && offset >= limit {
+		return result, nil
+	}
+	if offset > 0 {
+		if int64(offset) >= reader.NumRows() {
+			return result, nil
+		}
+		if err := reader.SeekToRow(int64(offset)); err != nil {
+			return result, errors.Wrap(err, "seek france sirene parquet rows")
+		}
+	}
+
+	rows := make([]T, defaultParquetReadBatchSize)
+	sourceRowsSeen := offset
 	for {
 		if err := ctx.Err(); err != nil {
 			return result, errors.Wrap(err, "stream france sirene parquet records")
 		}
-		if limit > 0 && result.RowsSeen >= limit {
+		if limit > 0 && sourceRowsSeen >= limit {
 			return result, nil
 		}
 		requested := len(rows)
 		if limit > 0 {
-			remaining := int(limit - result.RowsSeen)
+			remaining := int(limit - sourceRowsSeen)
 			if remaining < requested {
 				requested = remaining
 			}
@@ -287,6 +312,7 @@ func streamParquetFile[T any, R any](
 				return result, err
 			}
 			result.RowsSeen++
+			sourceRowsSeen++
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {

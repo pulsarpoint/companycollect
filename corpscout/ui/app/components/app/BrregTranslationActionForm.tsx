@@ -7,10 +7,7 @@ import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Separator } from "~/components/ui/separator";
 import { api, errorMessage } from "~/lib/api";
-import type {
-  BrregCompanyTranslationRequest,
-  LLMProvider,
-} from "~/types/api";
+import type { BrregCompanyTranslationRequest, LLMProvider } from "~/types/api";
 
 type CompanyTranslationScope = "all" | "limited";
 
@@ -76,10 +73,9 @@ export function BrregTranslationActionForm({
   const [leaseSeconds, setLeaseSeconds] = useState("1800");
   const [maxAttempts, setMaxAttempts] = useState("8");
   const [batchDelaySeconds, setBatchDelaySeconds] = useState("60");
-  const [maxParallelTasks, setMaxParallelTasks] = useState("1");
+  const [maxParallelTasks, setMaxParallelTasks] = useState("2");
   const [maxRequestChars, setMaxRequestChars] = useState("6000");
   const [maxTerms, setMaxTerms] = useState("25");
-  const [maxCompaniesPerBatch, setMaxCompaniesPerBatch] = useState("100");
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [promptVersion, setPromptVersion] = useState("");
@@ -96,10 +92,9 @@ export function BrregTranslationActionForm({
     setLeaseSeconds("1800");
     setMaxAttempts("8");
     setBatchDelaySeconds("60");
-    setMaxParallelTasks("1");
+    setMaxParallelTasks("2");
     setMaxRequestChars("6000");
     setMaxTerms("25");
-    setMaxCompaniesPerBatch("100");
     setProvider("");
     setModel("");
     setPromptVersion("");
@@ -173,18 +168,13 @@ export function BrregTranslationActionForm({
         all_records: allSourceCompaniesSelected,
         ids: hasSelectedRows ? selectedIds : undefined,
         filters: hasSelectedRows ? undefined : filters,
-        limit: hasSelectedRows
-          ? selectedIds.length
-          : effectiveLimit,
+        limit: hasSelectedRows ? selectedIds.length : effectiveLimit,
         batch_size: allSourceCompaniesSelected ? undefined : effectiveLimit,
         claim_mode: useAutoClaim ? "auto" : "fixed",
         max_request_chars: useAutoClaim
           ? parseOptionalPositiveNumber(maxRequestChars)
           : undefined,
         max_terms: parseOptionalPositiveNumber(maxTerms),
-        max_companies_per_batch: useAutoClaim
-          ? parseOptionalPositiveNumber(maxCompaniesPerBatch)
-          : undefined,
         max_attempts: parseOptionalPositiveNumber(maxAttempts),
         batch_delay_seconds: parseOptionalPositiveNumber(batchDelaySeconds),
         max_parallel_tasks: parseOptionalPositiveNumber(maxParallelTasks),
@@ -341,8 +331,9 @@ export function BrregTranslationActionForm({
                     }
                   />
                   <FieldDescription>
-                    Kept for workflow compatibility. The queue admits one
-                    running translation batch per source.
+                    Global cap for running translation batches across all
+                    sources. Each source can still claim only one batch at a
+                    time.
                   </FieldDescription>
                 </div>
 
@@ -370,7 +361,9 @@ export function BrregTranslationActionForm({
                 )}
 
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor={`${formIdPrefix}-company-translation-max-terms`}>
+                  <Label
+                    htmlFor={`${formIdPrefix}-company-translation-max-terms`}
+                  >
                     Max claim candidates
                   </Label>
                   <Input
@@ -385,28 +378,6 @@ export function BrregTranslationActionForm({
                     character budget decides the final LLM batch size.
                   </FieldDescription>
                 </div>
-
-                {allSourceCompaniesSelected && (
-                  <div className="flex flex-col gap-2">
-                    <Label
-                      htmlFor={`${formIdPrefix}-company-translation-max-companies`}
-                    >
-                      Max companies per queue prep
-                    </Label>
-                    <Input
-                      id={`${formIdPrefix}-company-translation-max-companies`}
-                      min={1}
-                      type="number"
-                      value={maxCompaniesPerBatch}
-                      onChange={(event) =>
-                        setMaxCompaniesPerBatch(event.target.value)
-                      }
-                    />
-                    <FieldDescription>
-                      Safety cap for one all-records queue preparation pass.
-                    </FieldDescription>
-                  </div>
-                )}
 
                 <div className="flex flex-col gap-2">
                   <Label htmlFor={`${formIdPrefix}-translation-prompt`}>

@@ -65,7 +65,48 @@ func TestRunWithPeriodicHeartbeatRecordsWhileOperationIsRunning(t *testing.T) {
 	require.GreaterOrEqual(t, heartbeats.Load(), int32(2))
 }
 
-func TestNormalizeBatchSizeDefaultsToLargeFranceBulkBatch(t *testing.T) {
-	require.EqualValues(t, 5000, normalizeBatchSize(0))
-	require.EqualValues(t, 2500, normalizeBatchSize(2500))
+func TestNormalizeBatchSizeCapsFranceBulkDBBatch(t *testing.T) {
+	require.EqualValues(t, 500, normalizeBatchSize(0))
+	require.EqualValues(t, 250, normalizeBatchSize(250))
+	require.EqualValues(t, 500, normalizeBatchSize(5000))
+}
+
+func TestResolveInputUsesEffectiveFranceBulkDBBatch(t *testing.T) {
+	actions := NewBulkIngestActions(nil, nil, BulkIngestConfig{})
+
+	resolved := actions.resolveInput(StageFranceBulkRawFilesActivityInput{BatchSize: 5000})
+
+	require.EqualValues(t, 500, resolved.BatchSize)
+}
+
+func TestLegalUnitsProgressFromHeartbeatDetailsUsesCommittedRows(t *testing.T) {
+	result, offset, ok := legalUnitsProgressFromHeartbeatDetails(franceBulkProgressHeartbeat{
+		Phase:                       "ingesting_legal_units_batch",
+		LegalUnitsSeen:              970000,
+		LegalUnitsWritten:           970000,
+		LegalUnitsExistingUnchanged: 970000,
+		PendingBatchRecords:         5000,
+	})
+
+	require.True(t, ok)
+	require.EqualValues(t, 970000, offset)
+	require.EqualValues(t, 970000, result.RowsSeen)
+	require.EqualValues(t, 970000, result.RowsWritten)
+	require.EqualValues(t, 970000, result.RowsExistingUnchanged)
+}
+
+func TestEstablishmentsProgressFromHeartbeatDetailsUsesCommittedRows(t *testing.T) {
+	result, offset, ok := establishmentsProgressFromHeartbeatDetails(franceBulkProgressHeartbeat{
+		Phase:                           "ingesting_establishments_batch",
+		EstablishmentsSeen:              970000,
+		EstablishmentsWritten:           970000,
+		EstablishmentsExistingUnchanged: 970000,
+		PendingBatchRecords:             5000,
+	})
+
+	require.True(t, ok)
+	require.EqualValues(t, 970000, offset)
+	require.EqualValues(t, 970000, result.RowsSeen)
+	require.EqualValues(t, 970000, result.RowsWritten)
+	require.EqualValues(t, 970000, result.RowsExistingUnchanged)
 }

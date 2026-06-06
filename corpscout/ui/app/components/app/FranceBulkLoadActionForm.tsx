@@ -22,7 +22,7 @@ function parsePositiveNumber(value: string) {
 export function FranceBulkLoadActionForm({ onStarted, onClose }: Props) {
   const [mode, setMode] = useState<BulkLoadMode>("limit");
   const [limit, setLimit] = useState("1000");
-  const [batchSize, setBatchSize] = useState("5000");
+  const [batchSize, setBatchSize] = useState("500");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {

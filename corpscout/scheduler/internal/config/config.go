@@ -17,7 +17,7 @@ const defaultCVRDistributionScrollURL = "https://distribution.virk.dk/_search/sc
 const defaultCVRDistributionScroll = "1m"
 const defaultFranceLegalUnitsSourceURL = "https://www.data.gouv.fr/api/1/datasets/r/350182c9-148a-46e0-8389-76c2ec1374a3"
 const defaultFranceEstablishmentsSourceURL = "https://www.data.gouv.fr/api/1/datasets/r/a29c1297-1f92-4e2a-8f6b-8c902ce96c5f"
-const defaultSEHVDStagingRoot = "/tmp/corpscout-worksets/se-hvd"
+const defaultSEHVDStagingRoot = "/var/lib/corpscout/worksets/se-hvd"
 const defaultTranslationDispatchInterval = 2 * time.Second
 const defaultTranslationBatchLeaseSeconds int32 = 1800
 

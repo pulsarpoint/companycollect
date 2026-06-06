@@ -35,13 +35,12 @@ func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/brreg/company-translation", bytes.NewBufferString(`{
 		"all_records": true,
 		"ids": ["7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"],
-		"filters": {"translation_status": "missing", "q": "BORTIGARD"},
+		"filters": {"translation_status": "missing", "q": "BORTIGARD", "financial_status": "skipped"},
 		"limit": 25,
 		"batch_size": 10,
 		"claim_mode": "auto",
 		"max_request_chars": 16000,
 		"max_terms": 250,
-		"max_companies_per_batch": 250,
 		"max_batches": 50,
 		"max_parallel_tasks": 5,
 		"lease_seconds": 900,
@@ -65,13 +64,12 @@ func TestStartBrregCompanyTranslationWorkflowStartsTemporalWorkflow(t *testing.T
 	input := tc.args[0].(brregworkflow.TranslateBrregSourceCompaniesInput)
 	require.True(t, input.AllRecords)
 	require.Equal(t, []string{"7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"}, input.IDs)
-	require.Equal(t, map[string]string{"translation_status": "missing", "q": "BORTIGARD"}, input.Filters)
+	require.Equal(t, map[string]string{"translation_status": "missing", "query": "BORTIGARD"}, input.Filters)
 	require.Equal(t, 25, input.Limit)
 	require.Equal(t, 10, input.BatchSize)
 	require.Equal(t, "auto", input.ClaimMode)
 	require.Equal(t, 16000, input.MaxRequestChars)
 	require.Equal(t, 250, input.MaxTerms)
-	require.Equal(t, 250, input.MaxCompaniesPerBatch)
 	require.Equal(t, 50, input.MaxBatches)
 	require.Equal(t, 5, input.MaxParallelTasks)
 	require.Equal(t, 900, input.LeaseSeconds)
@@ -96,7 +94,6 @@ func TestStartAriregisterCompanyTranslationWorkflowStartsTemporalWorkflow(t *tes
 		"claim_mode": "auto",
 		"max_request_chars": 12000,
 		"max_terms": 250,
-		"max_companies_per_batch": 500,
 		"max_batches": 50,
 		"max_parallel_tasks": 5,
 		"lease_seconds": 900,
@@ -120,13 +117,12 @@ func TestStartAriregisterCompanyTranslationWorkflowStartsTemporalWorkflow(t *tes
 	input := tc.args[0].(ariregisterworkflow.TranslateAriregisterSourceCompaniesInput)
 	require.True(t, input.AllRecords)
 	require.Equal(t, []string{"7ffd5bf3-f96e-4907-9ef3-096eb4056ab8"}, input.IDs)
-	require.Equal(t, map[string]string{"translation_status": "missing", "q": "TALLINN"}, input.Filters)
+	require.Equal(t, map[string]string{"translation_status": "missing", "query": "TALLINN"}, input.Filters)
 	require.Equal(t, 25, input.Limit)
 	require.Equal(t, 10, input.BatchSize)
 	require.Equal(t, "auto", input.ClaimMode)
 	require.Equal(t, 12000, input.MaxRequestChars)
 	require.Equal(t, 250, input.MaxTerms)
-	require.Equal(t, 500, input.MaxCompaniesPerBatch)
 	require.Equal(t, 50, input.MaxBatches)
 	require.Equal(t, 5, input.MaxParallelTasks)
 	require.Equal(t, 900, input.LeaseSeconds)

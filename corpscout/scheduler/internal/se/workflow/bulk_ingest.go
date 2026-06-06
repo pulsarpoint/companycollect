@@ -28,6 +28,7 @@ type LoadSEBulkRawRecordsActivityInput = actions.LoadSEBulkRawRecordsActivityInp
 type LoadSEBulkRawRecordsActivityResult = actions.LoadSEBulkRawRecordsActivityResult
 type LoadSEBulkSourceFileResult = actions.LoadSEBulkSourceFileResult
 type LoadSEBulkDatasetLoadResult = actions.LoadSEBulkDatasetLoadResult
+type SEBulkProcessingIssue = actions.SEBulkProcessingIssue
 type VerifySEBulkSourceFilesActivityInput = actions.VerifySEBulkSourceFilesActivityInput
 type VerifySEBulkSourceFilesActivityResult = actions.VerifySEBulkSourceFilesActivityResult
 type VerifiedSEBulkSourceFile = actions.VerifiedSEBulkSourceFile
@@ -59,6 +60,7 @@ type LoadSEBulkRawRecordsResult struct {
 	SnapshotID            string                        `json:"snapshot_id,omitempty"`
 	SourceFiles           []LoadSEBulkSourceFileResult  `json:"source_files,omitempty"`
 	Datasets              []LoadSEBulkDatasetLoadResult `json:"datasets,omitempty"`
+	ProcessingIssues      []SEBulkProcessingIssue       `json:"processing_issues,omitempty"`
 }
 
 func LoadSEBulkRawRecords(
@@ -151,6 +153,7 @@ func LoadSEBulkRawRecords(
 		SnapshotID:            activityResult.SnapshotID,
 		SourceFiles:           activityResult.SourceFiles,
 		Datasets:              activityResult.Datasets,
+		ProcessingIssues:      activityResult.ProcessingIssues,
 	}, nil
 }
 

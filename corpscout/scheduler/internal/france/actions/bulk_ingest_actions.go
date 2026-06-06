@@ -25,7 +25,8 @@ import (
 )
 
 const (
-	defaultBulkIngestDBBatchSize     int32 = 5000
+	defaultBulkIngestDBBatchSize     int32 = 500
+	maxBulkIngestDBBatchSize         int32 = 500
 	franceBulkBatchHeartbeatInterval       = time.Minute
 	defaultFranceBulkStagingRoot           = "/var/lib/corpscout/worksets/france-sirene"
 	franceBulkRunType                      = "bulk_ingest"
@@ -369,13 +370,30 @@ type processSourceFileInput struct {
 	Metadata           []byte
 }
 
+type franceBulkProgressHeartbeat struct {
+	Phase                           string `json:"phase"`
+	LegalUnitsSeen                  int32  `json:"legal_units_seen,omitempty"`
+	LegalUnitsWritten               int32  `json:"legal_units_written,omitempty"`
+	LegalUnitsInsertedNew           int32  `json:"legal_units_inserted_new,omitempty"`
+	LegalUnitsExistingUnchanged     int32  `json:"legal_units_existing_unchanged,omitempty"`
+	LegalUnitsNewVersions           int32  `json:"legal_units_new_versions,omitempty"`
+	EstablishmentsSeen              int32  `json:"establishments_seen,omitempty"`
+	EstablishmentsWritten           int32  `json:"establishments_written,omitempty"`
+	EstablishmentsInsertedNew       int32  `json:"establishments_inserted_new,omitempty"`
+	EstablishmentsExistingUnchanged int32  `json:"establishments_existing_unchanged,omitempty"`
+	EstablishmentsNewVersions       int32  `json:"establishments_new_versions,omitempty"`
+	PendingBatchRecords             int32  `json:"pending_batch_records,omitempty"`
+	ConfiguredRecordLimit           int32  `json:"configured_record_limit"`
+	ConfiguredDatabaseBatchSize     int32  `json:"configured_database_batch_size"`
+}
+
 func (a *BulkIngestActions) processLegalUnits(
 	ctx context.Context,
 	input processSourceFileInput,
 ) (francedb.IngestRawRecordsResult, error) {
 	staged := stagedPayloadFromProcessInput(input)
 
-	var result francedb.IngestRawRecordsResult
+	result, resumeOffset := legalUnitsProgressFromActivityHeartbeat(ctx)
 	var batch []db.UpsertFranceWorkflowRawLegalUnitParams
 	sourceFileUUID := pgUUID(input.SourceFileID)
 	flush := func() error {
@@ -400,7 +418,7 @@ func (a *BulkIngestActions) processLegalUnits(
 		activity.RecordHeartbeat(ctx, legalUnitsHeartbeatDetails(input, result, 0, "ingesting_legal_units"))
 		return nil
 	}
-	streamed, err := francebulk.StreamLegalUnitsFile(ctx, input.SourcePath, input.Limit, func(record francebulk.LegalUnitRecord) error {
+	streamed, err := francebulk.StreamLegalUnitsFileFromOffset(ctx, input.SourcePath, input.Limit, resumeOffset, func(record francebulk.LegalUnitRecord) error {
 		batch = append(batch, record.UpsertParams(sourceFileUUID, input.Metadata))
 		if int32(len(batch)) >= input.BatchSize {
 			return flush()
@@ -415,7 +433,7 @@ func (a *BulkIngestActions) processLegalUnits(
 		_ = a.recordFailedSourceFile(ctx, input.SnapshotID, francebulk.LegalUnitsDatasetKey, francebulk.LegalUnitsResourceID, input.SourceURL, staged, err, input.Metadata)
 		return francedb.IngestRawRecordsResult{}, err
 	}
-	if streamed.RowsSeen != result.RowsSeen {
+	if resumeOffset+streamed.RowsSeen != result.RowsSeen {
 		err := errors.New("france legal unit stream row count mismatch")
 		_ = a.recordFailedSourceFile(ctx, input.SnapshotID, francebulk.LegalUnitsDatasetKey, francebulk.LegalUnitsResourceID, input.SourceURL, staged, err, input.Metadata)
 		return francedb.IngestRawRecordsResult{}, err
@@ -431,7 +449,7 @@ func (a *BulkIngestActions) processEstablishments(
 	input processSourceFileInput,
 ) (francedb.IngestRawRecordsResult, error) {
 	staged := stagedPayloadFromProcessInput(input)
-	var result francedb.IngestRawRecordsResult
+	result, resumeOffset := establishmentsProgressFromActivityHeartbeat(ctx)
 	var batch []db.UpsertFranceWorkflowRawEstablishmentParams
 	sourceFileUUID := pgUUID(input.SourceFileID)
 	flush := func() error {
@@ -456,7 +474,7 @@ func (a *BulkIngestActions) processEstablishments(
 		activity.RecordHeartbeat(ctx, establishmentsHeartbeatDetails(input, result, 0, "ingesting_establishments"))
 		return nil
 	}
-	streamed, err := francebulk.StreamEstablishmentsFile(ctx, input.SourcePath, input.Limit, func(record francebulk.EstablishmentRecord) error {
+	streamed, err := francebulk.StreamEstablishmentsFileFromOffset(ctx, input.SourcePath, input.Limit, resumeOffset, func(record francebulk.EstablishmentRecord) error {
 		batch = append(batch, record.UpsertParams(sourceFileUUID, input.Metadata))
 		if int32(len(batch)) >= input.BatchSize {
 			return flush()
@@ -471,7 +489,7 @@ func (a *BulkIngestActions) processEstablishments(
 		_ = a.recordFailedSourceFile(ctx, input.SnapshotID, francebulk.EstablishmentsDatasetKey, francebulk.EstablishmentsResourceID, input.SourceURL, staged, err, input.Metadata)
 		return francedb.IngestRawRecordsResult{}, err
 	}
-	if streamed.RowsSeen != result.RowsSeen {
+	if resumeOffset+streamed.RowsSeen != result.RowsSeen {
 		err := errors.New("france establishment stream row count mismatch")
 		_ = a.recordFailedSourceFile(ctx, input.SnapshotID, francebulk.EstablishmentsDatasetKey, francebulk.EstablishmentsResourceID, input.SourceURL, staged, err, input.Metadata)
 		return francedb.IngestRawRecordsResult{}, err
@@ -583,15 +601,11 @@ func (a *BulkIngestActions) recordFailedSourceFile(
 }
 
 func (a *BulkIngestActions) resolveInput(input StageFranceBulkRawFilesActivityInput) resolvedBulkInput {
-	batchSize := input.BatchSize
-	if batchSize <= 0 {
-		batchSize = defaultBulkIngestDBBatchSize
-	}
 	return resolvedBulkInput{
 		LegalUnitsURL:     firstNonEmpty(input.LegalUnitsURL, a.cfg.LegalUnitsURL, francebulk.DefaultLegalUnitsSourceURL),
 		EstablishmentsURL: firstNonEmpty(input.EstablishmentsURL, a.cfg.EstablishmentsURL, francebulk.DefaultEstablishmentsSourceURL),
 		Limit:             input.Limit,
-		BatchSize:         batchSize,
+		BatchSize:         normalizeBatchSize(input.BatchSize),
 	}
 }
 
@@ -777,35 +791,96 @@ func normalizeBatchSize(batchSize int32) int32 {
 	if batchSize <= 0 {
 		return defaultBulkIngestDBBatchSize
 	}
+	if batchSize > maxBulkIngestDBBatchSize {
+		return maxBulkIngestDBBatchSize
+	}
 	return batchSize
 }
 
-func legalUnitsHeartbeatDetails(input processSourceFileInput, result francedb.IngestRawRecordsResult, pendingBatchSize int32, phase string) map[string]any {
-	return map[string]any{
-		"phase":                          phase,
-		"legal_units_seen":               result.RowsSeen,
-		"legal_units_written":            result.RowsWritten,
-		"legal_units_inserted_new":       result.RowsInsertedNew,
-		"legal_units_existing_unchanged": result.RowsExistingUnchanged,
-		"legal_units_new_versions":       result.RowsNewVersions,
-		"pending_batch_records":          pendingBatchSize,
-		"configured_record_limit":        input.Limit,
-		"configured_database_batch_size": input.BatchSize,
+func legalUnitsHeartbeatDetails(input processSourceFileInput, result francedb.IngestRawRecordsResult, pendingBatchSize int32, phase string) franceBulkProgressHeartbeat {
+	return franceBulkProgressHeartbeat{
+		Phase:                       phase,
+		LegalUnitsSeen:              result.RowsSeen,
+		LegalUnitsWritten:           result.RowsWritten,
+		LegalUnitsInsertedNew:       result.RowsInsertedNew,
+		LegalUnitsExistingUnchanged: result.RowsExistingUnchanged,
+		LegalUnitsNewVersions:       result.RowsNewVersions,
+		PendingBatchRecords:         pendingBatchSize,
+		ConfiguredRecordLimit:       input.Limit,
+		ConfiguredDatabaseBatchSize: input.BatchSize,
 	}
 }
 
-func establishmentsHeartbeatDetails(input processSourceFileInput, result francedb.IngestRawRecordsResult, pendingBatchSize int32, phase string) map[string]any {
-	return map[string]any{
-		"phase":                             phase,
-		"establishments_seen":               result.RowsSeen,
-		"establishments_written":            result.RowsWritten,
-		"establishments_inserted_new":       result.RowsInsertedNew,
-		"establishments_existing_unchanged": result.RowsExistingUnchanged,
-		"establishments_new_versions":       result.RowsNewVersions,
-		"pending_batch_records":             pendingBatchSize,
-		"configured_record_limit":           input.Limit,
-		"configured_database_batch_size":    input.BatchSize,
+func establishmentsHeartbeatDetails(input processSourceFileInput, result francedb.IngestRawRecordsResult, pendingBatchSize int32, phase string) franceBulkProgressHeartbeat {
+	return franceBulkProgressHeartbeat{
+		Phase:                           phase,
+		EstablishmentsSeen:              result.RowsSeen,
+		EstablishmentsWritten:           result.RowsWritten,
+		EstablishmentsInsertedNew:       result.RowsInsertedNew,
+		EstablishmentsExistingUnchanged: result.RowsExistingUnchanged,
+		EstablishmentsNewVersions:       result.RowsNewVersions,
+		PendingBatchRecords:             pendingBatchSize,
+		ConfiguredRecordLimit:           input.Limit,
+		ConfiguredDatabaseBatchSize:     input.BatchSize,
 	}
+}
+
+func legalUnitsProgressFromActivityHeartbeat(ctx context.Context) (francedb.IngestRawRecordsResult, int32) {
+	if !activity.HasHeartbeatDetails(ctx) {
+		return francedb.IngestRawRecordsResult{}, 0
+	}
+	var details franceBulkProgressHeartbeat
+	if err := activity.GetHeartbeatDetails(ctx, &details); err != nil {
+		return francedb.IngestRawRecordsResult{}, 0
+	}
+	result, offset, ok := legalUnitsProgressFromHeartbeatDetails(details)
+	if !ok {
+		return francedb.IngestRawRecordsResult{}, 0
+	}
+	return result, offset
+}
+
+func establishmentsProgressFromActivityHeartbeat(ctx context.Context) (francedb.IngestRawRecordsResult, int32) {
+	if !activity.HasHeartbeatDetails(ctx) {
+		return francedb.IngestRawRecordsResult{}, 0
+	}
+	var details franceBulkProgressHeartbeat
+	if err := activity.GetHeartbeatDetails(ctx, &details); err != nil {
+		return francedb.IngestRawRecordsResult{}, 0
+	}
+	result, offset, ok := establishmentsProgressFromHeartbeatDetails(details)
+	if !ok {
+		return francedb.IngestRawRecordsResult{}, 0
+	}
+	return result, offset
+}
+
+func legalUnitsProgressFromHeartbeatDetails(details franceBulkProgressHeartbeat) (francedb.IngestRawRecordsResult, int32, bool) {
+	if details.LegalUnitsSeen <= 0 {
+		return francedb.IngestRawRecordsResult{}, 0, false
+	}
+	result := francedb.IngestRawRecordsResult{
+		RowsSeen:              details.LegalUnitsSeen,
+		RowsWritten:           details.LegalUnitsWritten,
+		RowsInsertedNew:       details.LegalUnitsInsertedNew,
+		RowsExistingUnchanged: details.LegalUnitsExistingUnchanged,
+		RowsNewVersions:       details.LegalUnitsNewVersions,
+	}
+	return result, result.RowsSeen, true
+}
+
+func establishmentsProgressFromHeartbeatDetails(details franceBulkProgressHeartbeat) (francedb.IngestRawRecordsResult, int32, bool) {
+	if details.EstablishmentsSeen <= 0 {
+		return francedb.IngestRawRecordsResult{}, 0, false
+	}
+	result := francedb.IngestRawRecordsResult{
+		RowsSeen:              details.EstablishmentsSeen,
+		RowsWritten:           details.EstablishmentsWritten,
+		RowsInsertedNew:       details.EstablishmentsInsertedNew,
+		RowsExistingUnchanged: details.EstablishmentsExistingUnchanged,
+		RowsNewVersions:       details.EstablishmentsNewVersions,
+	}
+	return result, result.RowsSeen, true
 }
 
 func runWithPeriodicHeartbeat(ctx context.Context, interval time.Duration, heartbeat func(), operation func() error) error {

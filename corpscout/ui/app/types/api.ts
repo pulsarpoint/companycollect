@@ -242,7 +242,6 @@ export interface BrregCompanyTranslationRequest {
   claim_mode?: "auto" | "fixed";
   max_request_chars?: number;
   max_terms?: number;
-  max_companies_per_batch?: number;
   max_parallel_tasks?: number;
   lease_seconds?: number;
   max_attempts?: number;

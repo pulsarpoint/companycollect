@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cockroachdb/errors"
 	"golang.org/x/text/encoding/charmap"
@@ -27,7 +28,14 @@ type StreamResult struct {
 	RowsSeen int32
 }
 
+type RecordIssue struct {
+	Code  string
+	Field string
+	Count int
+}
+
 type Record struct {
+	RowNumber           int32
 	OrganizationNumber  string
 	OrganizationName    string
 	RegistrationStatus  string
@@ -38,6 +46,7 @@ type Record struct {
 	PostalAddress       json.RawMessage
 	RawPayload          json.RawMessage
 	PayloadHash         string
+	Issues              []RecordIssue
 }
 
 type BolagsverketRecord struct {
@@ -59,6 +68,7 @@ type BolagsverketRecord struct {
 	PostalAddress                                     json.RawMessage
 	RawPayload                                        json.RawMessage
 	PayloadHash                                       string
+	Issues                                            []RecordIssue
 }
 
 type SCBRecord struct {
@@ -104,6 +114,7 @@ type SCBRecord struct {
 	PostalAddress      json.RawMessage
 	RawPayload         json.RawMessage
 	PayloadHash        string
+	Issues             []RecordIssue
 }
 
 type payload struct {
@@ -129,24 +140,36 @@ type orderedSniCode struct {
 }
 
 func StreamRecordsFile(ctx context.Context, path string, format string, limit int32, emit func(Record) error) (StreamResult, error) {
+	return StreamRecordsFileFromOffset(ctx, path, format, limit, 0, emit)
+}
+
+func StreamRecordsFileFromOffset(ctx context.Context, path string, format string, limit int32, skipRows int32, emit func(Record) error) (StreamResult, error) {
 	reader, err := openRecordsFile(path, format)
 	if err != nil {
 		return StreamResult{}, err
 	}
 	defer reader.Close()
-	return StreamRecords(ctx, reader, limit, emit)
+	return StreamRecordsFromOffset(ctx, reader, limit, skipRows, emit)
 }
 
 func StreamBolagsverketRecordsFile(ctx context.Context, path string, format string, limit int32, emit func(BolagsverketRecord) error) (StreamResult, error) {
+	return StreamBolagsverketRecordsFileFromOffset(ctx, path, format, limit, 0, emit)
+}
+
+func StreamBolagsverketRecordsFileFromOffset(ctx context.Context, path string, format string, limit int32, skipRows int32, emit func(BolagsverketRecord) error) (StreamResult, error) {
 	reader, err := openRecordsFile(path, format)
 	if err != nil {
 		return StreamResult{}, err
 	}
 	defer reader.Close()
-	return StreamBolagsverketRecords(ctx, reader, limit, emit)
+	return StreamBolagsverketRecordsFromOffset(ctx, reader, limit, skipRows, emit)
 }
 
 func StreamBolagsverketRecords(ctx context.Context, reader io.Reader, limit int32, emit func(BolagsverketRecord) error) (StreamResult, error) {
+	return StreamBolagsverketRecordsFromOffset(ctx, reader, limit, 0, emit)
+}
+
+func StreamBolagsverketRecordsFromOffset(ctx context.Context, reader io.Reader, limit int32, skipRows int32, emit func(BolagsverketRecord) error) (StreamResult, error) {
 	if emit == nil {
 		return StreamResult{}, errors.New("emit callback is required")
 	}
@@ -184,6 +207,9 @@ func StreamBolagsverketRecords(ctx context.Context, reader io.Reader, limit int3
 			return StreamResult{}, err
 		}
 		result.RowsSeen++
+		if result.RowsSeen <= skipRows {
+			continue
+		}
 		if err := emit(record); err != nil {
 			return StreamResult{}, err
 		}
@@ -193,6 +219,7 @@ func StreamBolagsverketRecords(ctx context.Context, reader io.Reader, limit int3
 
 func BolagsverketRecordFromRow(header []string, row []string, rowNumber int32) (BolagsverketRecord, bool, error) {
 	values := csvRowMap(header, row)
+	values, issues := sanitizeTextMap(values)
 	rawPayload, err := json.Marshal(values)
 	if err != nil {
 		return BolagsverketRecord{}, false, errors.Wrap(err, "encode Bolagsverket HVD raw payload")
@@ -229,19 +256,28 @@ func BolagsverketRecordFromRow(header []string, row []string, rowNumber int32) (
 		PostalAddress:          postalAddress,
 		RawPayload:             rawPayload,
 		PayloadHash:            hashBytes(rawPayload),
+		Issues:                 issues,
 	}, true, nil
 }
 
 func StreamSCBRecordsFile(ctx context.Context, path string, format string, limit int32, emit func(SCBRecord) error) (StreamResult, error) {
+	return StreamSCBRecordsFileFromOffset(ctx, path, format, limit, 0, emit)
+}
+
+func StreamSCBRecordsFileFromOffset(ctx context.Context, path string, format string, limit int32, skipRows int32, emit func(SCBRecord) error) (StreamResult, error) {
 	reader, err := openRecordsFile(path, format)
 	if err != nil {
 		return StreamResult{}, err
 	}
 	defer reader.Close()
-	return StreamSCBRecords(ctx, reader, limit, emit)
+	return StreamSCBRecordsFromOffset(ctx, reader, limit, skipRows, emit)
 }
 
 func StreamSCBRecords(ctx context.Context, reader io.Reader, limit int32, emit func(SCBRecord) error) (StreamResult, error) {
+	return StreamSCBRecordsFromOffset(ctx, reader, limit, 0, emit)
+}
+
+func StreamSCBRecordsFromOffset(ctx context.Context, reader io.Reader, limit int32, skipRows int32, emit func(SCBRecord) error) (StreamResult, error) {
 	if emit == nil {
 		return StreamResult{}, errors.New("emit callback is required")
 	}
@@ -279,6 +315,9 @@ func StreamSCBRecords(ctx context.Context, reader io.Reader, limit int32, emit f
 			return StreamResult{}, err
 		}
 		result.RowsSeen++
+		if result.RowsSeen <= skipRows {
+			continue
+		}
 		if err := emit(record); err != nil {
 			return StreamResult{}, err
 		}
@@ -288,6 +327,7 @@ func StreamSCBRecords(ctx context.Context, reader io.Reader, limit int32, emit f
 
 func SCBRecordFromRow(header []string, row []string, rowNumber int32) (SCBRecord, bool, error) {
 	values := csvRowMap(header, row)
+	values, issues := sanitizeTextMap(values)
 	rawPayload, err := json.Marshal(values)
 	if err != nil {
 		return SCBRecord{}, false, errors.Wrap(err, "encode SCB HVD raw payload")
@@ -368,10 +408,53 @@ func SCBRecordFromRow(header []string, row []string, rowNumber int32) (SCBRecord
 		PostalAddress:      postalAddress,
 		RawPayload:         rawPayload,
 		PayloadHash:        hashBytes(rawPayload),
+		Issues:             issues,
 	}, true, nil
 }
 
+func sanitizeTextMap(values map[string]string) (map[string]string, []RecordIssue) {
+	var sanitized map[string]string
+	var issues []RecordIssue
+	for field, value := range values {
+		nextValue, fieldIssues := sanitizeTextValue(field, value)
+		if len(fieldIssues) == 0 {
+			continue
+		}
+		if sanitized == nil {
+			sanitized = make(map[string]string, len(values))
+			for key, existing := range values {
+				sanitized[key] = existing
+			}
+		}
+		sanitized[field] = nextValue
+		issues = append(issues, fieldIssues...)
+	}
+	if sanitized == nil {
+		return values, nil
+	}
+	return sanitized, issues
+}
+
+func sanitizeTextValue(field string, value string) (string, []RecordIssue) {
+	sanitized := value
+	var issues []RecordIssue
+	if strings.Contains(sanitized, "\x00") {
+		count := strings.Count(sanitized, "\x00")
+		sanitized = strings.ReplaceAll(sanitized, "\x00", "")
+		issues = append(issues, RecordIssue{Code: "nul_bytes_removed", Field: field, Count: count})
+	}
+	if !utf8.ValidString(sanitized) {
+		sanitized = strings.ToValidUTF8(sanitized, "")
+		issues = append(issues, RecordIssue{Code: "invalid_utf8_removed", Field: field, Count: 1})
+	}
+	return sanitized, issues
+}
+
 func StreamRecords(ctx context.Context, reader io.Reader, limit int32, emit func(Record) error) (StreamResult, error) {
+	return StreamRecordsFromOffset(ctx, reader, limit, 0, emit)
+}
+
+func StreamRecordsFromOffset(ctx context.Context, reader io.Reader, limit int32, skipRows int32, emit func(Record) error) (StreamResult, error) {
 	if emit == nil {
 		return StreamResult{}, errors.New("emit callback is required")
 	}
@@ -395,6 +478,10 @@ func StreamRecords(ctx context.Context, reader io.Reader, limit int32, emit func
 			return err
 		}
 		result.RowsSeen++
+		record.RowNumber = result.RowsSeen
+		if result.RowsSeen <= skipRows {
+			return nil
+		}
 		return emit(record)
 	})
 	if err != nil {
@@ -409,6 +496,11 @@ func RecordFromRaw(rawRecord json.RawMessage) (Record, bool, error) {
 	decoder.UseNumber()
 	if err := decoder.Decode(&source); err != nil {
 		return Record{}, false, errors.Wrap(err, "decode sweden hvd record")
+	}
+	source, issues := sanitizeJSONMap(source)
+	sourceRecord, err := json.Marshal(source)
+	if err != nil {
+		return Record{}, false, errors.Wrap(err, "encode sanitized sweden hvd source record")
 	}
 
 	organizationNumber := normalizeOrganizationNumber(firstNonEmpty(
@@ -443,7 +535,7 @@ func RecordFromRaw(rawRecord json.RawMessage) (Record, bool, error) {
 		BusinessDescription: firstNonEmpty(stringValue(source, "business_description"), stringValue(source, "verksamhetsbeskrivning"), stringValue(source, "verksamhetstext")),
 		SNICodes:            sniCodes(source),
 		PostalAddress:       postalAddress,
-		SourceRecord:        cloneRaw(rawRecord),
+		SourceRecord:        sourceRecord,
 	}
 	rawPayload, err := json.Marshal(normalized)
 	if err != nil {
@@ -468,7 +560,85 @@ func RecordFromRaw(rawRecord json.RawMessage) (Record, bool, error) {
 		PostalAddress:       postalPayload,
 		RawPayload:          rawPayload,
 		PayloadHash:         hashBytes(rawPayload),
+		Issues:              issues,
 	}, true, nil
+}
+
+func sanitizeJSONMap(source map[string]any) (map[string]any, []RecordIssue) {
+	var sanitized map[string]any
+	var issues []RecordIssue
+	for key, value := range source {
+		nextValue, fieldIssues, changed := sanitizeJSONValue(key, value)
+		if !changed {
+			continue
+		}
+		if sanitized == nil {
+			sanitized = make(map[string]any, len(source))
+			for existingKey, existingValue := range source {
+				sanitized[existingKey] = existingValue
+			}
+		}
+		sanitized[key] = nextValue
+		issues = append(issues, fieldIssues...)
+	}
+	if sanitized == nil {
+		return source, nil
+	}
+	return sanitized, issues
+}
+
+func sanitizeJSONValue(path string, value any) (any, []RecordIssue, bool) {
+	switch typed := value.(type) {
+	case string:
+		sanitized, issues := sanitizeTextValue(path, typed)
+		return sanitized, issues, len(issues) > 0
+	case map[string]any:
+		sanitized, issues := sanitizeJSONMapWithPrefix(path, typed)
+		return sanitized, issues, len(issues) > 0
+	case []any:
+		var sanitized []any
+		var issues []RecordIssue
+		for index, item := range typed {
+			nextItem, itemIssues, changed := sanitizeJSONValue(path+"."+strconv.Itoa(index), item)
+			if !changed {
+				continue
+			}
+			if sanitized == nil {
+				sanitized = append([]any(nil), typed...)
+			}
+			sanitized[index] = nextItem
+			issues = append(issues, itemIssues...)
+		}
+		if sanitized == nil {
+			return value, nil, false
+		}
+		return sanitized, issues, true
+	default:
+		return value, nil, false
+	}
+}
+
+func sanitizeJSONMapWithPrefix(prefix string, source map[string]any) (map[string]any, []RecordIssue) {
+	var sanitized map[string]any
+	var issues []RecordIssue
+	for key, value := range source {
+		nextValue, fieldIssues, changed := sanitizeJSONValue(prefix+"."+key, value)
+		if !changed {
+			continue
+		}
+		if sanitized == nil {
+			sanitized = make(map[string]any, len(source))
+			for existingKey, existingValue := range source {
+				sanitized[existingKey] = existingValue
+			}
+		}
+		sanitized[key] = nextValue
+		issues = append(issues, fieldIssues...)
+	}
+	if sanitized == nil {
+		return source, nil
+	}
+	return sanitized, issues
 }
 
 func streamJSONRecords(ctx context.Context, reader io.Reader, wrapperFields []string, emit func(json.RawMessage) error) error {
@@ -846,14 +1016,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func cloneRaw(raw json.RawMessage) json.RawMessage {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
-		return nil
-	}
-	return append(json.RawMessage(nil), raw...)
 }
 
 func hashBytes(raw []byte) string {

@@ -64,6 +64,48 @@ func TestStreamLegalUnitsFileParsesSireneParquetRows(t *testing.T) {
 	require.Len(t, record.PayloadHash, 64)
 }
 
+func TestStreamLegalUnitsFileFromOffsetSkipsAlreadyProcessedRows(t *testing.T) {
+	path := t.TempDir() + "/StockUniteLegale.parquet"
+	err := parquet.WriteFile(path, []legalUnitParquetRow{
+		{Siren: strPtr("111111111"), DenominationUniteLegale: strPtr("FIRST")},
+		{Siren: strPtr("222222222"), DenominationUniteLegale: strPtr("SECOND")},
+		{Siren: strPtr("333333333"), DenominationUniteLegale: strPtr("THIRD")},
+	})
+	require.NoError(t, err)
+
+	var records []LegalUnitRecord
+	result, err := StreamLegalUnitsFileFromOffset(context.Background(), path, 0, 2, func(record LegalUnitRecord) error {
+		records = append(records, record)
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.EqualValues(t, 1, result.RowsSeen)
+	require.Len(t, records, 1)
+	require.Equal(t, "333333333", records[0].Siren)
+}
+
+func TestStreamLegalUnitsFileFromOffsetHonorsLimitFromOriginalStart(t *testing.T) {
+	path := t.TempDir() + "/StockUniteLegale.parquet"
+	err := parquet.WriteFile(path, []legalUnitParquetRow{
+		{Siren: strPtr("111111111"), DenominationUniteLegale: strPtr("FIRST")},
+		{Siren: strPtr("222222222"), DenominationUniteLegale: strPtr("SECOND")},
+		{Siren: strPtr("333333333"), DenominationUniteLegale: strPtr("THIRD")},
+	})
+	require.NoError(t, err)
+
+	var records []LegalUnitRecord
+	result, err := StreamLegalUnitsFileFromOffset(context.Background(), path, 2, 1, func(record LegalUnitRecord) error {
+		records = append(records, record)
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.EqualValues(t, 1, result.RowsSeen)
+	require.Len(t, records, 1)
+	require.Equal(t, "222222222", records[0].Siren)
+}
+
 func TestStreamEstablishmentsFileParsesSireneParquetRows(t *testing.T) {
 	path := t.TempDir() + "/StockEtablissement.parquet"
 	err := parquet.WriteFile(path, []establishmentParquetRow{

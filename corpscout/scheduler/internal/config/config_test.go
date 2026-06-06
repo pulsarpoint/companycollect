@@ -46,6 +46,9 @@ func TestLoad_defaults(t *testing.T) {
 	if cfg.AriregisterSourceURL != "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__yldandmed.json.zip" {
 		t.Errorf("want default Ariregister general data URL, got %s", cfg.AriregisterSourceURL)
 	}
+	if cfg.SEHVDStagingRoot != "/var/lib/corpscout/worksets/se-hvd" {
+		t.Errorf("want default SE HVD staging root on mounted workset volume, got %s", cfg.SEHVDStagingRoot)
+	}
 }
 
 func TestLoad_overrides(t *testing.T) {
@@ -101,6 +104,22 @@ func TestLoad_overrides(t *testing.T) {
 	}
 	if cfg.CVRPassword != "cvr-pass" {
 		t.Errorf("want override CVR password, got %s", cfg.CVRPassword)
+	}
+}
+
+func TestLoad_overridesSEHVDStagingRoot(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://test")
+	t.Setenv("CORPSCOUT_S3_ACCESS_KEY", "test-access")
+	t.Setenv("CORPSCOUT_S3_SECRET_KEY", "test-secret")
+	t.Setenv("CORPSCOUT_SE_HVD_STAGING_ROOT", "/custom/se-hvd")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.SEHVDStagingRoot != "/custom/se-hvd" {
+		t.Errorf("want SE HVD staging root override, got %s", cfg.SEHVDStagingRoot)
 	}
 }
 

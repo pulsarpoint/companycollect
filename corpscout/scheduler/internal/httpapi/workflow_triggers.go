@@ -43,24 +43,23 @@ type startWorkflowResponse struct {
 }
 
 type startBrregCompanyTranslationWorkflowRequest struct {
-	AllRecords           bool              `json:"all_records,omitempty"`
-	IDs                  []string          `json:"ids,omitempty"`
-	Filters              map[string]string `json:"filters,omitempty"`
-	Limit                int               `json:"limit,omitempty"`
-	BatchSize            int               `json:"batch_size,omitempty"`
-	ClaimMode            string            `json:"claim_mode,omitempty"`
-	MaxRequestChars      int               `json:"max_request_chars,omitempty"`
-	MaxTerms             int               `json:"max_terms,omitempty"`
-	MaxCompaniesPerBatch int               `json:"max_companies_per_batch,omitempty"`
-	MaxBatches           int               `json:"max_batches,omitempty"`
-	MaxParallelTasks     int               `json:"max_parallel_tasks,omitempty"`
-	LeaseSeconds         int               `json:"lease_seconds,omitempty"`
-	MaxAttempts          int               `json:"max_attempts,omitempty"`
-	BatchDelaySeconds    int               `json:"batch_delay_seconds,omitempty"`
-	Provider             string            `json:"provider,omitempty"`
-	Model                string            `json:"model,omitempty"`
-	PromptVersion        string            `json:"prompt_version,omitempty"`
-	Trigger              string            `json:"trigger,omitempty"`
+	AllRecords        bool              `json:"all_records,omitempty"`
+	IDs               []string          `json:"ids,omitempty"`
+	Filters           map[string]string `json:"filters,omitempty"`
+	Limit             int               `json:"limit,omitempty"`
+	BatchSize         int               `json:"batch_size,omitempty"`
+	ClaimMode         string            `json:"claim_mode,omitempty"`
+	MaxRequestChars   int               `json:"max_request_chars,omitempty"`
+	MaxTerms          int               `json:"max_terms,omitempty"`
+	MaxBatches        int               `json:"max_batches,omitempty"`
+	MaxParallelTasks  int               `json:"max_parallel_tasks,omitempty"`
+	LeaseSeconds      int               `json:"lease_seconds,omitempty"`
+	MaxAttempts       int               `json:"max_attempts,omitempty"`
+	BatchDelaySeconds int               `json:"batch_delay_seconds,omitempty"`
+	Provider          string            `json:"provider,omitempty"`
+	Model             string            `json:"model,omitempty"`
+	PromptVersion     string            `json:"prompt_version,omitempty"`
+	Trigger           string            `json:"trigger,omitempty"`
 }
 
 type startBrregDomainSearchWorkflowRequest struct {
@@ -128,24 +127,23 @@ type startAriregisterBulkRawIngestWorkflowRequest struct {
 }
 
 type startAriregisterCompanyTranslationWorkflowRequest struct {
-	AllRecords           bool              `json:"all_records,omitempty"`
-	IDs                  []string          `json:"ids,omitempty"`
-	Filters              map[string]string `json:"filters,omitempty"`
-	Limit                int               `json:"limit,omitempty"`
-	BatchSize            int               `json:"batch_size,omitempty"`
-	ClaimMode            string            `json:"claim_mode,omitempty"`
-	MaxRequestChars      int               `json:"max_request_chars,omitempty"`
-	MaxTerms             int               `json:"max_terms,omitempty"`
-	MaxCompaniesPerBatch int               `json:"max_companies_per_batch,omitempty"`
-	MaxBatches           int               `json:"max_batches,omitempty"`
-	MaxParallelTasks     int               `json:"max_parallel_tasks,omitempty"`
-	LeaseSeconds         int               `json:"lease_seconds,omitempty"`
-	MaxAttempts          int               `json:"max_attempts,omitempty"`
-	BatchDelaySeconds    int               `json:"batch_delay_seconds,omitempty"`
-	Provider             string            `json:"provider,omitempty"`
-	Model                string            `json:"model,omitempty"`
-	PromptVersion        string            `json:"prompt_version,omitempty"`
-	Trigger              string            `json:"trigger,omitempty"`
+	AllRecords        bool              `json:"all_records,omitempty"`
+	IDs               []string          `json:"ids,omitempty"`
+	Filters           map[string]string `json:"filters,omitempty"`
+	Limit             int               `json:"limit,omitempty"`
+	BatchSize         int               `json:"batch_size,omitempty"`
+	ClaimMode         string            `json:"claim_mode,omitempty"`
+	MaxRequestChars   int               `json:"max_request_chars,omitempty"`
+	MaxTerms          int               `json:"max_terms,omitempty"`
+	MaxBatches        int               `json:"max_batches,omitempty"`
+	MaxParallelTasks  int               `json:"max_parallel_tasks,omitempty"`
+	LeaseSeconds      int               `json:"lease_seconds,omitempty"`
+	MaxAttempts       int               `json:"max_attempts,omitempty"`
+	BatchDelaySeconds int               `json:"batch_delay_seconds,omitempty"`
+	Provider          string            `json:"provider,omitempty"`
+	Model             string            `json:"model,omitempty"`
+	PromptVersion     string            `json:"prompt_version,omitempty"`
+	Trigger           string            `json:"trigger,omitempty"`
 }
 
 type startAriregisterSourceProfileWorkflowRequest struct {
@@ -266,24 +264,23 @@ func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWri
 	}
 
 	input := brregworkflow.TranslateBrregSourceCompaniesInput{
-		AllRecords:           req.AllRecords,
-		IDs:                  req.IDs,
-		Filters:              req.Filters,
-		Limit:                req.Limit,
-		BatchSize:            req.BatchSize,
-		ClaimMode:            req.ClaimMode,
-		MaxRequestChars:      req.MaxRequestChars,
-		MaxTerms:             req.MaxTerms,
-		MaxCompaniesPerBatch: req.MaxCompaniesPerBatch,
-		MaxBatches:           req.MaxBatches,
-		MaxParallelTasks:     req.MaxParallelTasks,
-		LeaseSeconds:         req.LeaseSeconds,
-		MaxAttempts:          req.MaxAttempts,
-		BatchDelaySeconds:    req.BatchDelaySeconds,
-		Provider:             req.Provider,
-		Model:                req.Model,
-		PromptVersion:        req.PromptVersion,
-		Trigger:              req.Trigger,
+		AllRecords:        req.AllRecords,
+		IDs:               req.IDs,
+		Filters:           req.Filters,
+		Limit:             req.Limit,
+		BatchSize:         req.BatchSize,
+		ClaimMode:         req.ClaimMode,
+		MaxRequestChars:   req.MaxRequestChars,
+		MaxTerms:          req.MaxTerms,
+		MaxBatches:        req.MaxBatches,
+		MaxParallelTasks:  req.MaxParallelTasks,
+		LeaseSeconds:      req.LeaseSeconds,
+		MaxAttempts:       req.MaxAttempts,
+		BatchDelaySeconds: req.BatchDelaySeconds,
+		Provider:          req.Provider,
+		Model:             req.Model,
+		PromptVersion:     req.PromptVersion,
+		Trigger:           req.Trigger,
 	}
 	workflowID := newWorkflowID("brreg-company-translation")
 	slog.Debug("starting brreg company translation workflow",
@@ -297,7 +294,6 @@ func (h *Handlers) handleStartBrregCompanyTranslationWorkflow(w http.ResponseWri
 		"claim_mode", req.ClaimMode,
 		"max_request_chars", req.MaxRequestChars,
 		"max_terms", req.MaxTerms,
-		"max_companies_per_batch", req.MaxCompaniesPerBatch,
 		"max_batches", req.MaxBatches,
 		"max_parallel_tasks", req.MaxParallelTasks,
 		"lease_seconds", req.LeaseSeconds,
@@ -420,24 +416,23 @@ func (h *Handlers) handleStartAriregisterCompanyTranslationWorkflow(w http.Respo
 	}
 
 	input := ariregisterworkflow.TranslateAriregisterSourceCompaniesInput{
-		AllRecords:           req.AllRecords,
-		IDs:                  req.IDs,
-		Filters:              req.Filters,
-		Limit:                req.Limit,
-		BatchSize:            req.BatchSize,
-		ClaimMode:            req.ClaimMode,
-		MaxRequestChars:      req.MaxRequestChars,
-		MaxTerms:             req.MaxTerms,
-		MaxCompaniesPerBatch: req.MaxCompaniesPerBatch,
-		MaxBatches:           req.MaxBatches,
-		MaxParallelTasks:     req.MaxParallelTasks,
-		LeaseSeconds:         req.LeaseSeconds,
-		MaxAttempts:          req.MaxAttempts,
-		BatchDelaySeconds:    req.BatchDelaySeconds,
-		Provider:             req.Provider,
-		Model:                req.Model,
-		PromptVersion:        req.PromptVersion,
-		Trigger:              req.Trigger,
+		AllRecords:        req.AllRecords,
+		IDs:               req.IDs,
+		Filters:           req.Filters,
+		Limit:             req.Limit,
+		BatchSize:         req.BatchSize,
+		ClaimMode:         req.ClaimMode,
+		MaxRequestChars:   req.MaxRequestChars,
+		MaxTerms:          req.MaxTerms,
+		MaxBatches:        req.MaxBatches,
+		MaxParallelTasks:  req.MaxParallelTasks,
+		LeaseSeconds:      req.LeaseSeconds,
+		MaxAttempts:       req.MaxAttempts,
+		BatchDelaySeconds: req.BatchDelaySeconds,
+		Provider:          req.Provider,
+		Model:             req.Model,
+		PromptVersion:     req.PromptVersion,
+		Trigger:           req.Trigger,
 	}
 	workflowID := newWorkflowID("ariregister-company-translation")
 	slog.Debug("starting ariregister company translation workflow",
@@ -451,7 +446,6 @@ func (h *Handlers) handleStartAriregisterCompanyTranslationWorkflow(w http.Respo
 		"claim_mode", req.ClaimMode,
 		"max_request_chars", req.MaxRequestChars,
 		"max_terms", req.MaxTerms,
-		"max_companies_per_batch", req.MaxCompaniesPerBatch,
 		"max_batches", req.MaxBatches,
 		"max_parallel_tasks", req.MaxParallelTasks,
 		"lease_seconds", req.LeaseSeconds,
@@ -1343,7 +1337,7 @@ func decodeStartBrregCompanyTranslationWorkflowRequest(r *http.Request) (startBr
 	req.ClaimMode = strings.ToLower(strings.TrimSpace(req.ClaimMode))
 	req.Trigger = strings.TrimSpace(req.Trigger)
 	req.IDs = compactRequestStrings(req.IDs)
-	req.Filters = compactRequestFilters(req.Filters)
+	req.Filters = compactCompanyTranslationRequestFilters(req.Filters)
 	if req.Trigger == "" {
 		req.Trigger = "manual"
 	}
@@ -1366,9 +1360,6 @@ func decodeStartBrregCompanyTranslationWorkflowRequest(r *http.Request) (startBr
 	}
 	if req.MaxTerms < 0 {
 		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_terms cannot be negative")
-	}
-	if req.MaxCompaniesPerBatch < 0 {
-		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_companies_per_batch cannot be negative")
 	}
 	if req.MaxBatches < 0 {
 		return startBrregCompanyTranslationWorkflowRequest{}, errors.New("max_batches cannot be negative")
@@ -1401,7 +1392,7 @@ func decodeStartAriregisterCompanyTranslationWorkflowRequest(r *http.Request) (s
 	req.ClaimMode = strings.ToLower(strings.TrimSpace(req.ClaimMode))
 	req.Trigger = strings.TrimSpace(req.Trigger)
 	req.IDs = compactRequestStrings(req.IDs)
-	req.Filters = compactRequestFilters(req.Filters)
+	req.Filters = compactCompanyTranslationRequestFilters(req.Filters)
 	if req.Trigger == "" {
 		req.Trigger = "manual"
 	}
@@ -1424,9 +1415,6 @@ func decodeStartAriregisterCompanyTranslationWorkflowRequest(r *http.Request) (s
 	}
 	if req.MaxTerms < 0 {
 		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("max_terms cannot be negative")
-	}
-	if req.MaxCompaniesPerBatch < 0 {
-		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("max_companies_per_batch cannot be negative")
 	}
 	if req.MaxBatches < 0 {
 		return startAriregisterCompanyTranslationWorkflowRequest{}, errors.New("max_batches cannot be negative")
@@ -1466,6 +1454,32 @@ func compactRequestFilters(filters map[string]string) map[string]string {
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
 		if key != "" && value != "" {
+			compact[key] = value
+		}
+	}
+	if len(compact) == 0 {
+		return nil
+	}
+	return compact
+}
+
+func compactCompanyTranslationRequestFilters(filters map[string]string) map[string]string {
+	if len(filters) == 0 {
+		return nil
+	}
+	compact := make(map[string]string, len(filters))
+	for key, value := range filters {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		switch key {
+		case "q", "query":
+			compact["query"] = value
+		case "lifecycle_state", "lifecycle_status", "state":
+			compact["lifecycle_status"] = value
+		case "registration_status", "translation_status", "website_status":
 			compact[key] = value
 		}
 	}

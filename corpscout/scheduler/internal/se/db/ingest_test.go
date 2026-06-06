@@ -186,3 +186,49 @@ func TestGatewayIngestsSESourceSpecificRawRecords(t *testing.T) {
 	`).Scan(&scbCount))
 	require.Equal(t, 1, scbCount)
 }
+
+func TestGatewayPersistsSESourceFileProgress(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	gateway := New(tx)
+	ctx := context.Background()
+	metadata := json.RawMessage(`{"trigger":"test"}`)
+
+	workflowRunID, err := gateway.BeginWorkflowRun(ctx, BeginWorkflowRunParams{
+		OrchestratorRunID: "test-se-source-progress-" + time.Now().Format("20060102150405.000000000"),
+		RunType:           "bulk_ingest",
+		Metadata:          metadata,
+	})
+	require.NoError(t, err)
+
+	snapshotID, err := gateway.CreateBulkSnapshot(ctx, CreateBulkSnapshotParams{
+		WorkflowRunID: workflowRunID,
+		SnapshotKey:   "test-snapshot",
+		SnapshotDate:  time.Now(),
+		Metadata:      metadata,
+	})
+	require.NoError(t, err)
+
+	sourceFileID, err := gateway.RecordSourceFile(ctx, RecordSourceFileParams{
+		BulkSnapshotID: snapshotID,
+		DatasetKey:     "bolagsverket",
+		SourceURL:      "https://example.test/bolagsverket_bulkfil.zip",
+		FileFormat:     "zip",
+		Status:         "downloaded",
+		Metadata:       metadata,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, gateway.UpdateSourceFileProgress(ctx, UpdateSourceFileProgressParams{
+		ID:          sourceFileID,
+		RowsSeen:    250,
+		RowsWritten: 250,
+	}))
+
+	progress, ok, err := gateway.GetSourceFileProgress(ctx, sourceFileID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, sourceFileID, progress.ID)
+	require.Equal(t, "downloaded", progress.Status)
+	require.EqualValues(t, 250, progress.RowsSeen)
+	require.EqualValues(t, 250, progress.RowsWritten)
+}

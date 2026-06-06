@@ -92,6 +92,31 @@ func TestStreamBolagsverketRecordsAllowsBareQuotesInQuotedFields(t *testing.T) {
 	require.Equal(t, `Ensillre Väglyseförening "Ljuspunkten" med firma Ljuspunkten.`, records[0].OrganizationName)
 }
 
+func TestStreamBolagsverketRecordsSanitizesNULBytes(t *testing.T) {
+	raw := strings.Join([]string{
+		`organisationsidentitet;namnskyddslopnummer;registreringsland;organisationsnamn;organisationsform;avregistreringsdatum;avregistreringsorsak;pagandeAvvecklingsEllerOmstruktureringsforfarande;registreringsdatum;verksamhetsbeskrivning;postadress`,
+		"\"5566778899$ORGNR-IDORG\";\"1\";\"SE-LAND\";\"Exempel\x00 Sverige AB$FORETAGSNAMN-ORGNAM$2020-01-02\";\"AB-ORGFO\";\"\";\"\";\"\";\"2020-01-02\";\"Konsultverksamhet\";\"Box 1$$STOCKHOLM$11122$SE-LAND\"",
+	}, "\n")
+
+	var records []BolagsverketRecord
+	result, err := StreamBolagsverketRecords(context.Background(), strings.NewReader(raw), 0, func(record BolagsverketRecord) error {
+		records = append(records, record)
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.EqualValues(t, 1, result.RowsSeen)
+	require.Len(t, records, 1)
+	require.Equal(t, "Exempel Sverige AB", records[0].OrganizationName)
+	require.NotContains(t, records[0].Organisationsnamn, "\x00")
+	require.NotContains(t, string(records[0].RawPayload), "\u0000")
+	require.Equal(t, []RecordIssue{{
+		Code:  "nul_bytes_removed",
+		Field: "organisationsnamn",
+		Count: 1,
+	}}, records[0].Issues)
+}
+
 func TestStreamBolagsverketRecordsStopsReadingAtLimit(t *testing.T) {
 	reader := &errorAfterChunksReader{chunks: []string{
 		`organisationsidentitet;namnskyddslopnummer;registreringsland;organisationsnamn;organisationsform;avregistreringsdatum;avregistreringsorsak;pagandeAvvecklingsEllerOmstruktureringsforfarande;registreringsdatum;verksamhetsbeskrivning;postadress`,
@@ -108,6 +133,27 @@ func TestStreamBolagsverketRecordsStopsReadingAtLimit(t *testing.T) {
 	require.EqualValues(t, 1, result.RowsSeen)
 	require.Len(t, records, 1)
 	require.Equal(t, "5566778899", records[0].OrganizationNumber)
+}
+
+func TestStreamBolagsverketRecordsSkipsAlreadySeenRows(t *testing.T) {
+	raw := strings.Join([]string{
+		`organisationsidentitet;namnskyddslopnummer;registreringsland;organisationsnamn;organisationsform;avregistreringsdatum;avregistreringsorsak;pagandeAvvecklingsEllerOmstruktureringsforfarande;registreringsdatum;verksamhetsbeskrivning;postadress`,
+		`"1111111111$ORGNR-IDORG";"1";"SE-LAND";"First Sverige AB$FORETAGSNAMN-ORGNAM$2020-01-02";"AB-ORGFO";"";"";"";"2020-01-02";"";""`,
+		`"2222222222$ORGNR-IDORG";"1";"SE-LAND";"Second Sverige AB$FORETAGSNAMN-ORGNAM$2020-01-02";"AB-ORGFO";"";"";"";"2020-01-02";"";""`,
+		`"3333333333$ORGNR-IDORG";"1";"SE-LAND";"Third Sverige AB$FORETAGSNAMN-ORGNAM$2020-01-02";"AB-ORGFO";"";"";"";"2020-01-02";"";""`,
+	}, "\n")
+
+	var records []BolagsverketRecord
+	result, err := StreamBolagsverketRecordsFromOffset(context.Background(), strings.NewReader(raw), 3, 2, func(record BolagsverketRecord) error {
+		records = append(records, record)
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.EqualValues(t, 3, result.RowsSeen)
+	require.Len(t, records, 1)
+	require.Equal(t, "3333333333", records[0].OrganizationNumber)
+	require.EqualValues(t, 3, records[0].RowNumber)
 }
 
 func TestStreamSCBRecordsExtractsISO88591TabRows(t *testing.T) {

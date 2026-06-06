@@ -4,9 +4,13 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -196,6 +200,12 @@ func TestResolveInputCapsSEBulkDatabaseBatchSize(t *testing.T) {
 	require.EqualValues(t, maxBulkIngestDBBatchSize, resolved.BatchSize)
 }
 
+func TestBulkIngestConfigDefaultsToMountedWorksetRoot(t *testing.T) {
+	actions := NewBulkIngestActions(nil, nil, BulkIngestConfig{})
+
+	require.Equal(t, "/var/lib/corpscout/worksets/se-hvd", actions.cfg.StagingRoot)
+}
+
 func TestLoadSEBulkRawRecordsDownloadsBothRealHVDZipDatasets(t *testing.T) {
 	tx := testdb.BeginTx(t)
 	gateway := sedb.New(tx)
@@ -270,6 +280,293 @@ func TestLoadSEBulkRawRecordsDownloadsBothRealHVDZipDatasets(t *testing.T) {
 		  AND is_current
 	`).Scan(&scbCount))
 	require.Equal(t, 1, scbCount)
+}
+
+func TestProcessSEBulkRawRecordsResumesBolagsverketSourceFileProgress(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	gateway := sedb.New(tx)
+	ctx := context.Background()
+	metadata := []byte(`{"trigger":"test"}`)
+
+	workflowRunID, err := gateway.BeginWorkflowRun(ctx, sedb.BeginWorkflowRunParams{
+		OrchestratorRunID: "test-se-resume-" + time.Now().Format("20060102150405.000000000"),
+		RunType:           "bulk_ingest",
+		Metadata:          metadata,
+	})
+	require.NoError(t, err)
+	snapshotID, err := gateway.CreateBulkSnapshot(ctx, sedb.CreateBulkSnapshotParams{
+		WorkflowRunID: workflowRunID,
+		SnapshotKey:   "test-se-resume",
+		SnapshotDate:  time.Now(),
+		Metadata:      metadata,
+	})
+	require.NoError(t, err)
+	sourceURL := "https://example.test/bolagsverket_bulkfil.zip"
+	sourceFileID, err := gateway.RecordSourceFile(ctx, sedb.RecordSourceFileParams{
+		BulkSnapshotID: snapshotID,
+		DatasetKey:     "bolagsverket",
+		SourceURL:      sourceURL,
+		FileFormat:     "zip",
+		Status:         "downloaded",
+		Metadata:       metadata,
+	})
+	require.NoError(t, err)
+
+	_, err = gateway.IngestBolagsverketRawRecords(ctx, []sedb.BolagsverketRawRecord{{
+		SourceFileID:           sourceFileID,
+		SourceRecordKey:        "1111111111|1",
+		RowNumber:              1,
+		Organisationsidentitet: "1111111111$ORGNR-IDORG",
+		OrganizationNumber:     "1111111111",
+		Namnskyddslopnummer:    "1",
+		Registreringsland:      "SE-LAND",
+		Organisationsnamn:      "First Sverige AB$FORETAGSNAMN-ORGNAM$2020-01-02",
+		OrganizationName:       "First Sverige AB",
+		Organisationsform:      "AB-ORGFO",
+		Registreringsdatum:     "2020-01-02",
+		RawPayload:             []byte(`{"organisationsidentitet":"1111111111$ORGNR-IDORG"}`),
+		PayloadHash:            "first-row-hash",
+		RunID:                  "test-se-resume",
+		Metadata:               metadata,
+	}})
+	require.NoError(t, err)
+	require.NoError(t, gateway.UpdateSourceFileProgress(ctx, sedb.UpdateSourceFileProgressParams{
+		ID:          sourceFileID,
+		RowsSeen:    1,
+		RowsWritten: 1,
+	}))
+
+	sourcePath := filepath.Join(t.TempDir(), "bolagsverket_bulkfil.zip")
+	require.NoError(t, os.WriteFile(sourcePath, zipBytes(t, "bolagsverket_bulkfil.txt", []byte(strings.Join([]string{
+		`organisationsidentitet;namnskyddslopnummer;registreringsland;organisationsnamn;organisationsform;avregistreringsdatum;avregistreringsorsak;pagandeAvvecklingsEllerOmstruktureringsforfarande;registreringsdatum;verksamhetsbeskrivning;postadress`,
+		`"1111111111$ORGNR-IDORG";"1";"SE-LAND";"First Sverige AB$FORETAGSNAMN-ORGNAM$2020-01-02";"AB-ORGFO";"";"";"";"2020-01-02";"";""`,
+		`"2222222222$ORGNR-IDORG";"1";"SE-LAND";"Second Sverige AB$FORETAGSNAMN-ORGNAM$2020-01-02";"AB-ORGFO";"";"";"";"2020-01-02";"";""`,
+		"",
+	}, "\n"))), 0o600))
+
+	actions := NewBulkIngestActions(gateway, nil, BulkIngestConfig{})
+	result, err := actions.ProcessSEBulkRawRecords(ctx, ProcessSEBulkRawRecordsActivityInput{
+		WorkflowRunID:      workflowRunID.String(),
+		SnapshotID:         snapshotID.String(),
+		TemporalWorkflowID: "test-se-resume",
+		BatchSize:          1,
+		Metadata:           metadata,
+		SourceFiles: []DownloadedSEBulkSourceFile{{
+			ComparedSEBulkSourceFile: ComparedSEBulkSourceFile{
+				VerifiedSEBulkSourceFile: VerifiedSEBulkSourceFile{
+					Dataset:    "bolagsverket",
+					SourceURL:  sourceURL,
+					FileFormat: "zip",
+				},
+			},
+			SourceFileID: sourceFileID.String(),
+			SourcePath:   sourcePath,
+			Status:       "downloaded",
+		}},
+	})
+
+	require.NoError(t, err)
+	require.EqualValues(t, 2, result.RowsSeen)
+	require.EqualValues(t, 2, result.RowsWritten)
+
+	var count int
+	require.NoError(t, tx.QueryRow(ctx, `
+		SELECT count(*)::integer
+		FROM se_workflow.bolagsverket_raw_records
+		WHERE source_file_id = $1
+	`, sourceFileID).Scan(&count))
+	require.Equal(t, 2, count)
+}
+
+func TestProcessSEBulkRawRecordsReportsSanitizedBolagsverketNULBytes(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	gateway := sedb.New(tx)
+	ctx := context.Background()
+	metadata := []byte(`{"trigger":"test"}`)
+
+	workflowRunID, err := gateway.BeginWorkflowRun(ctx, sedb.BeginWorkflowRunParams{
+		OrchestratorRunID: "test-se-sanitize-nul-" + time.Now().Format("20060102150405.000000000"),
+		RunType:           "bulk_ingest",
+		Metadata:          metadata,
+	})
+	require.NoError(t, err)
+	snapshotID, err := gateway.CreateBulkSnapshot(ctx, sedb.CreateBulkSnapshotParams{
+		WorkflowRunID: workflowRunID,
+		SnapshotKey:   "test-se-sanitize-nul",
+		SnapshotDate:  time.Now(),
+		Metadata:      metadata,
+	})
+	require.NoError(t, err)
+	sourceURL := "https://example.test/bolagsverket_bulkfil.zip"
+	sourceFileID, err := gateway.RecordSourceFile(ctx, sedb.RecordSourceFileParams{
+		BulkSnapshotID: snapshotID,
+		DatasetKey:     "bolagsverket",
+		SourceURL:      sourceURL,
+		FileFormat:     "zip",
+		Status:         "downloaded",
+		Metadata:       metadata,
+	})
+	require.NoError(t, err)
+
+	sourcePath := filepath.Join(t.TempDir(), "bolagsverket_bulkfil.zip")
+	require.NoError(t, os.WriteFile(sourcePath, zipBytes(t, "bolagsverket_bulkfil.txt", []byte(strings.Join([]string{
+		`organisationsidentitet;namnskyddslopnummer;registreringsland;organisationsnamn;organisationsform;avregistreringsdatum;avregistreringsorsak;pagandeAvvecklingsEllerOmstruktureringsforfarande;registreringsdatum;verksamhetsbeskrivning;postadress`,
+		"\"5566778899$ORGNR-IDORG\";\"1\";\"SE-LAND\";\"Exempel\x00 Sverige AB$FORETAGSNAMN-ORGNAM$2020-01-02\";\"AB-ORGFO\";\"\";\"\";\"\";\"2020-01-02\";\"Konsultverksamhet\";\"Box 1$$STOCKHOLM$11122$SE-LAND\"",
+		"",
+	}, "\n"))), 0o600))
+
+	actions := NewBulkIngestActions(gateway, nil, BulkIngestConfig{})
+	result, err := actions.ProcessSEBulkRawRecords(ctx, ProcessSEBulkRawRecordsActivityInput{
+		WorkflowRunID:      workflowRunID.String(),
+		SnapshotID:         snapshotID.String(),
+		TemporalWorkflowID: "test-se-sanitize-nul",
+		BatchSize:          1,
+		Metadata:           metadata,
+		SourceFiles: []DownloadedSEBulkSourceFile{{
+			ComparedSEBulkSourceFile: ComparedSEBulkSourceFile{
+				VerifiedSEBulkSourceFile: VerifiedSEBulkSourceFile{
+					Dataset:    "bolagsverket",
+					SourceURL:  sourceURL,
+					FileFormat: "zip",
+				},
+			},
+			SourceFileID: sourceFileID.String(),
+			SourcePath:   sourcePath,
+			Status:       "downloaded",
+		}},
+	})
+
+	require.NoError(t, err)
+	require.EqualValues(t, 1, result.RowsSeen)
+	require.EqualValues(t, 1, result.RowsWritten)
+	require.Equal(t, []SEBulkProcessingIssue{{
+		Dataset:      "bolagsverket",
+		Code:         "nul_bytes_removed",
+		RowsAffected: 1,
+		Fields:       []string{"organisationsnamn"},
+		SampleRows:   []int32{1},
+	}}, result.ProcessingIssues)
+
+	var organizationName string
+	require.NoError(t, tx.QueryRow(ctx, `
+		SELECT organization_name
+		FROM se_workflow.bolagsverket_raw_records
+		WHERE source_file_id = $1
+	`, sourceFileID).Scan(&organizationName))
+	require.Equal(t, "Exempel Sverige AB", organizationName)
+}
+
+func TestDownloadSEBulkSourceFilesReusesPartialSourceFileForSameHash(t *testing.T) {
+	tx := testdb.BeginTx(t)
+	gateway := sedb.New(tx)
+	ctx := context.Background()
+	metadata := []byte(`{"trigger":"test"}`)
+	payload := zipBytes(t, "bolagsverket_bulkfil.txt", []byte(strings.Join([]string{
+		`organisationsidentitet;namnskyddslopnummer;registreringsland;organisationsnamn;organisationsform;avregistreringsdatum;avregistreringsorsak;pagandeAvvecklingsEllerOmstruktureringsforfarande;registreringsdatum;verksamhetsbeskrivning;postadress`,
+		`"1111111111$ORGNR-IDORG";"1";"SE-LAND";"First Sverige AB$FORETAGSNAMN-ORGNAM$2020-01-02";"AB-ORGFO";"";"";"";"2020-01-02";"";""`,
+		`"2222222222$ORGNR-IDORG";"1";"SE-LAND";"Second Sverige AB$FORETAGSNAMN-ORGNAM$2020-01-02";"AB-ORGFO";"";"";"";"2020-01-02";"";""`,
+		"",
+	}, "\n")))
+	hash := sha256.Sum256(payload)
+	payloadHash := hex.EncodeToString(hash[:])
+
+	oldWorkflowRunID, err := gateway.BeginWorkflowRun(ctx, sedb.BeginWorkflowRunParams{
+		OrchestratorRunID: "test-se-old-partial-" + time.Now().Format("20060102150405.000000000"),
+		RunType:           "bulk_ingest",
+		Metadata:          metadata,
+	})
+	require.NoError(t, err)
+	oldSnapshotID, err := gateway.CreateBulkSnapshot(ctx, sedb.CreateBulkSnapshotParams{
+		WorkflowRunID: oldWorkflowRunID,
+		SnapshotKey:   "old-partial",
+		SnapshotDate:  time.Now(),
+		Metadata:      metadata,
+	})
+	require.NoError(t, err)
+	sourceURL := "https://example.test/bolagsverket_bulkfil.zip"
+	oldSourceFileID, err := gateway.RecordSourceFile(ctx, sedb.RecordSourceFileParams{
+		BulkSnapshotID: oldSnapshotID,
+		DatasetKey:     "bolagsverket",
+		SourceURL:      sourceURL,
+		FileFormat:     "zip",
+		PayloadHash:    &payloadHash,
+		Status:         "failed",
+		Metadata:       metadata,
+	})
+	require.NoError(t, err)
+	_, err = gateway.IngestBolagsverketRawRecords(ctx, []sedb.BolagsverketRawRecord{{
+		SourceFileID:           oldSourceFileID,
+		SourceRecordKey:        "1111111111|1",
+		RowNumber:              1,
+		Organisationsidentitet: "1111111111$ORGNR-IDORG",
+		OrganizationNumber:     "1111111111",
+		Namnskyddslopnummer:    "1",
+		Registreringsland:      "SE-LAND",
+		Organisationsnamn:      "First Sverige AB$FORETAGSNAMN-ORGNAM$2020-01-02",
+		OrganizationName:       "First Sverige AB",
+		Organisationsform:      "AB-ORGFO",
+		Registreringsdatum:     "2020-01-02",
+		RawPayload:             []byte(`{"organisationsidentitet":"1111111111$ORGNR-IDORG"}`),
+		PayloadHash:            "first-row-hash",
+		RunID:                  "old-partial",
+		Metadata:               metadata,
+	}})
+	require.NoError(t, err)
+
+	newWorkflowRunID, err := gateway.BeginWorkflowRun(ctx, sedb.BeginWorkflowRunParams{
+		OrchestratorRunID: "test-se-new-resume-" + time.Now().Format("20060102150405.000000000"),
+		RunType:           "bulk_ingest",
+		Metadata:          metadata,
+	})
+	require.NoError(t, err)
+	newSnapshotID, err := gateway.CreateBulkSnapshot(ctx, sedb.CreateBulkSnapshotParams{
+		WorkflowRunID: newWorkflowRunID,
+		SnapshotKey:   "new-resume",
+		SnapshotDate:  time.Now(),
+		Metadata:      metadata,
+	})
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Length", fmt.Sprint(len(payload)))
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+
+	actions := NewBulkIngestActions(gateway, server.Client(), BulkIngestConfig{StagingRoot: t.TempDir()})
+	result, err := actions.DownloadSEBulkSourceFiles(ctx, DownloadSEBulkSourceFilesActivityInput{
+		WorkflowRunID: newWorkflowRunID.String(),
+		SnapshotID:    newSnapshotID.String(),
+		BatchSize:     1,
+		Metadata:      metadata,
+		SourceFiles: []ComparedSEBulkSourceFile{{
+			VerifiedSEBulkSourceFile: VerifiedSEBulkSourceFile{
+				Dataset:    "bolagsverket",
+				SourceURL:  server.URL + "/bolagsverket_bulkfil.zip",
+				FileFormat: "zip",
+			},
+			NeedsDownload: true,
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.SourceFiles, 1)
+	require.Equal(t, oldSourceFileID.String(), result.SourceFiles[0].SourceFileID)
+	require.Equal(t, "downloaded", result.SourceFiles[0].Status)
+
+	progress, ok, err := gateway.GetSourceFileProgress(ctx, oldSourceFileID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "downloaded", progress.Status)
+	require.EqualValues(t, 1, progress.RowsSeen)
+
+	var rowSnapshot string
+	require.NoError(t, tx.QueryRow(ctx, `
+		SELECT bulk_snapshot_id::text
+		FROM se_workflow.bolagsverket_raw_records
+		WHERE source_file_id = $1
+	`, oldSourceFileID).Scan(&rowSnapshot))
+	require.Equal(t, newSnapshotID.String(), rowSnapshot)
 }
 
 func TestLoadSEBulkRawRecordsResolvesConfiguredMetadataDataset(t *testing.T) {
