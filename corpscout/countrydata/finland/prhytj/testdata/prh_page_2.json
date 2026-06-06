@@ -1,0 +1,79 @@
+{
+  "companies": [
+    {
+      "businessId": {
+        "value": "2222222-2",
+        "registrationDate": "2020-01-01",
+        "source": "3"
+      },
+      "euId": {
+        "value": "FIFPRO.2222222-2",
+        "source": "1"
+      },
+      "unexpectedLiveField": {
+        "kept": true
+      },
+      "names": [
+        {
+          "name": "Older Primary Oy",
+          "type": "1",
+          "version": 1,
+          "registrationDate": "2020-01-01",
+          "endDate": ""
+        },
+        {
+          "name": "Newest Primary Oy",
+          "type": "1",
+          "version": 2,
+          "registrationDate": "2024-02-15",
+          "endDate": ""
+        },
+        {
+          "name": "Ended Primary Oy",
+          "type": "1",
+          "version": 3,
+          "registrationDate": "2025-01-01",
+          "endDate": "2025-12-31"
+        }
+      ],
+      "mainBusinessLine": {
+        "type": "63110",
+        "typeCodeSet": "TOL2008",
+        "registrationDate": "2020-01-01",
+        "source": "3",
+        "descriptions": [
+          {
+            "languageCode": "3",
+            "description": "Data processing, hosting and related activities"
+          }
+        ]
+      },
+      "website": {
+        "url": ""
+      },
+      "companyForms": [
+        {
+          "type": "11",
+          "version": 1,
+          "registrationDate": "2020-01-01",
+          "endDate": "",
+          "source": "3",
+          "descriptions": [
+            {
+              "languageCode": "3",
+              "description": "Limited liability company"
+            }
+          ]
+        }
+      ],
+      "companySituations": [],
+      "registeredEntries": [],
+      "addresses": [],
+      "tradeRegisterStatus": "1",
+      "status": "1",
+      "registrationDate": "2020-01-01",
+      "endDate": "",
+      "lastModified": "2026-05-22T09:00:00Z"
+    }
+  ]
+}
