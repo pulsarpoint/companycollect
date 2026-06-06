@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Finland Company Profile",
+  "description": "Country-specific company profile built from Finnish open data. Primary source: PRH Open Data YTJ API v3 (Business Information System), CC-BY-4.0, daily. Structured around Finnish registry concepts: Business ID (Y-tunnus), Trade Register status, and the Tax Administration sub-registers (VAT, employer, prepayment) exposed via registeredEntries.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "x-primary-source": "prh_ytj_v3",
+  "x-license": "cc-by-4.0",
+  "properties": {
+    "country": { "type": "string", "const": "Finland" },
+    "country_slug": { "type": "string", "const": "finland" },
+    "country_profile_version": {
+      "type": "string",
+      "description": "Date the profile shape was defined (YYYY-MM-DD)."
+    },
+
+    "registration": {
+      "type": "object",
+      "description": "National identifiers.",
+      "required": ["business_id"],
+      "properties": {
+        "business_id": {
+          "type": "string",
+          "description": "Finnish Business ID (Y-tunnus), format NNNNNNN-N. Primary key and tax number.",
+          "x-source": "prh_ytj_v3",
+          "x-source-path": "businessId.value",
+          "x-join-key": true
+        },
+        "business_id_registration_date": {
+          "type": ["string", "null"], "format": "date",
+          "x-source": "prh_ytj_v3", "x-source-path": "businessId.registrationDate"
+        },
+        "eu_id": {
+          "type": ["string", "null"],
+          "description": "BRIS European unique identifier (e.g. FIFPRO.<business_id>).",
+          "x-source": "prh_ytj_v3", "x-source-path": "euId.value", "x-join-key": true
+        },
+        "vat_id": {
+          "type": ["string", "null"],
+          "description": "Derived Finnish VAT number: 'FI' + business_id digits without dash. Registration confirmed via tax_registrations.vat.",
+          "x-derived-from": "businessId.value"
+        }
+      }
+    },
+
+    "legal_identity": {
+      "type": "object",
+      "description": "Current name/form plus full history.",
+      "properties": {
+        "legal_name": {
+          "type": ["string", "null"],
+          "description": "Current primary name (names[] where type=1 and endDate is null).",
+          "x-source": "prh_ytj_v3", "x-source-path": "names[?type=1 && endDate=null].name"
+        },
+        "auxiliary_names": {
+          "type": "array",
+          "description": "Auxiliary/parallel trade names (names[] type 2/3) currently valid.",
+          "items": { "type": "string" },
+          "x-source": "prh_ytj_v3", "x-source-path": "names[?type in (2,3)].name"
+        },
+        "name_history": {
+          "type": "array",
+          "x-source": "prh_ytj_v3", "x-source-path": "names[]",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "type_code": { "type": "string" },
+              "registration_date": { "type": ["string", "null"], "format": "date" },
+              "end_date": { "type": ["string", "null"], "format": "date" }
+            }
+          }
+        },
+        "legal_form": {
+          "type": "object",
+          "description": "Current legal form (companyForms[] with null endDate).",
+          "x-source": "prh_ytj_v3", "x-source-path": "companyForms[?endDate=null]",
+          "properties": {
+            "code": { "type": ["string", "null"] },
+            "label_en": { "type": ["string", "null"] },
+            "label_fi": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+
+    "status": {
+      "type": "object",
+      "description": "Liveness derived from tradeRegisterStatus + endDate. NOTE: the raw `status` field is constant '2' and must NOT be used.",
+      "properties": {
+        "is_active": {
+          "type": "boolean",
+          "description": "true when trade_register_status_code == '1' (and endDate is null).",
+          "x-derived-from": "tradeRegisterStatus + endDate"
+        },
+        "trade_register_status_code": {
+          "type": "string",
+          "description": "1=active, 4=ceased, 3=intermediate.",
+          "x-source": "prh_ytj_v3", "x-source-path": "tradeRegisterStatus"
+        },
+        "raw_status_code": {
+          "type": ["string", "null"],
+          "description": "Raw PRH `status` field, kept verbatim; constant '2' in observed data, meaning unclear.",
+          "x-source": "prh_ytj_v3", "x-source-path": "status"
+        },
+        "incorporation_date": {
+          "type": ["string", "null"], "format": "date",
+          "x-source": "prh_ytj_v3", "x-source-path": "registrationDate"
+        },
+        "dissolution_date": {
+          "type": ["string", "null"], "format": "date",
+          "x-source": "prh_ytj_v3", "x-source-path": "endDate"
+        },
+        "special_situations": {
+          "type": "array",
+          "description": "Bankruptcy/liquidation/restructuring entries (companySituations[]). Empty in sample; sub-schema unconfirmed.",
+          "items": { "type": "object" },
+          "x-source": "prh_ytj_v3", "x-source-path": "companySituations[]",
+          "x-confidence": "low"
+        }
+      }
+    },
+
+    "activity": {
+      "type": "object",
+      "description": "Main line of business (TOL/NACE).",
+      "x-source": "prh_ytj_v3", "x-source-path": "mainBusinessLine",
+      "properties": {
+        "code": { "type": ["string", "null"] },
+        "code_set": { "type": ["string", "null"], "description": "TOL vintage, e.g. TOIMI4." },
+        "label_en": { "type": ["string", "null"] },
+        "label_fi": { "type": ["string", "null"] }
+      }
+    },
+
+    "addresses": {
+      "type": "array",
+      "description": "Registered addresses; address_type 1=visiting, 2=postal.",
+      "x-source": "prh_ytj_v3", "x-source-path": "addresses[]",
+      "items": {
+        "type": "object",
+        "properties": {
+          "address_type_code": { "type": "integer", "description": "1=visiting, 2=postal." },
+          "street": { "type": ["string", "null"] },
+          "building_number": { "type": ["string", "null"] },
+          "post_code": { "type": ["string", "null"] },
+          "post_office_box": { "type": ["string", "null"] },
+          "city": { "type": ["string", "null"], "description": "Primary city (languageCode 1=fi)." },
+          "city_sv": { "type": ["string", "null"] },
+          "municipality_code": { "type": ["string", "null"], "description": "Statistics Finland municipality code; geography join key.", "x-join-key": true },
+          "registration_date": { "type": ["string", "null"], "format": "date" }
+        }
+      }
+    },
+
+    "tax_registrations": {
+      "type": "object",
+      "description": "Derived from registeredEntries[]. Active = entry in the given register with null endDate.",
+      "x-source": "prh_ytj_v3", "x-source-path": "registeredEntries[]",
+      "properties": {
+        "vat": {
+          "type": "object",
+          "description": "Register 6.",
+          "properties": {
+            "registered": { "type": "boolean" },
+            "type_code": { "type": ["string", "null"], "description": "80=VAT-liable, 82=VAT on property rights, 83=agri/forestry, V80=liability group." },
+            "registration_date": { "type": ["string", "null"], "format": "date" }
+          }
+        },
+        "employer": {
+          "type": "object",
+          "description": "Register 5.",
+          "properties": {
+            "registered": { "type": "boolean" },
+            "registration_date": { "type": ["string", "null"], "format": "date" }
+          }
+        },
+        "prepayment_register": {
+          "type": "object",
+          "description": "Register 7 (ennakkoperintärekisteri).",
+          "properties": {
+            "registered": { "type": "boolean" },
+            "registration_date": { "type": ["string", "null"], "format": "date" }
+          }
+        }
+      }
+    },
+
+    "register_entries": {
+      "type": "array",
+      "description": "Full raw register-entry history (Trade Register + tax sub-registers), preserved verbatim.",
+      "x-source": "prh_ytj_v3", "x-source-path": "registeredEntries[]",
+      "items": {
+        "type": "object",
+        "properties": {
+          "register_code": { "type": "string" },
+          "type_code": { "type": "string" },
+          "label_en": { "type": ["string", "null"] },
+          "authority_code": { "type": ["string", "null"] },
+          "registration_date": { "type": ["string", "null"], "format": "date" },
+          "end_date": { "type": ["string", "null"], "format": "date" }
+        }
+      }
+    },
+
+    "online_presence": {
+      "type": "object",
+      "description": "Only contact-type data available (no email/phone in open data).",
+      "properties": {
+        "website": {
+          "type": ["string", "null"],
+          "x-source": "prh_ytj_v3", "x-source-path": "website.url"
+        },
+        "website_registration_date": {
+          "type": ["string", "null"], "format": "date",
+          "x-source": "prh_ytj_v3", "x-source-path": "website.registrationDate"
+        }
+      }
+    },
+
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Not in the companies endpoint. Available from the separate PRH digital financial statement API (CC-BY-4.0) — not yet fetched.",
+      "items": { "type": "object" },
+      "x-source": "prh_financial_statements",
+      "x-status": "planning-only"
+    },
+
+    "record_metadata": {
+      "type": "object",
+      "properties": {
+        "last_modified": {
+          "type": ["string", "null"], "format": "date-time",
+          "description": "PRH record last-updated timestamp (no timezone; assume Europe/Helsinki). Delta-crawl key.",
+          "x-source": "prh_ytj_v3", "x-source-path": "lastModified"
+        }
+      }
+    },
+
+    "source_provenance": {
+      "type": "array",
+      "description": "Which source supplied the data and when it was retrieved.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "source_url", "retrieved_at"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "source_name": { "type": "string" },
+          "source_url": { "type": "string" },
+          "license": { "type": "string" },
+          "freshness": { "type": "string" },
+          "retrieved_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

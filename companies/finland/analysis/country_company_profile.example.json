@@ -1,0 +1,220 @@
+{
+  "country": "Finland",
+  "country_slug": "finland",
+  "country_profile_version": "2026-06-06",
+  "registration": {
+    "business_id": "0100130-4",
+    "business_id_registration_date": "1978-03-15",
+    "eu_id": "FIFPRO.0100130-4",
+    "vat_id": "FI01001304"
+  },
+  "legal_identity": {
+    "legal_name": "Dynava Oy",
+    "auxiliary_names": [
+      "EDS Media",
+      "Eniro",
+      "Sentraali",
+      "Kotitele",
+      "Eniro DS",
+      "Direktia",
+      "Eniro Sentraali",
+      "Ikioma"
+    ],
+    "name_history": [
+      {
+        "name": "Dynava Oy",
+        "type_code": "1",
+        "registration_date": "2022-01-21",
+        "end_date": null
+      },
+      {
+        "name": "Oy Eniro Finland Ab",
+        "type_code": "1",
+        "registration_date": "2000-09-22",
+        "end_date": "2022-01-21"
+      },
+      {
+        "name": "EDS Media",
+        "type_code": "3",
+        "registration_date": "2009-11-30",
+        "end_date": null
+      },
+      {
+        "name": "Eniro",
+        "type_code": "3",
+        "registration_date": "2000-10-11",
+        "end_date": null
+      },
+      {
+        "name": "Sentraali",
+        "type_code": "3",
+        "registration_date": "2013-12-31",
+        "end_date": null
+      },
+      {
+        "name": "Kotitele",
+        "type_code": "3",
+        "registration_date": "1989-08-16",
+        "end_date": null
+      },
+      {
+        "name": "Eniro DS",
+        "type_code": "3",
+        "registration_date": "2006-09-30",
+        "end_date": null
+      },
+      {
+        "name": "Direktia",
+        "type_code": "3",
+        "registration_date": "2006-09-30",
+        "end_date": null
+      },
+      {
+        "name": "Eniro Sentraali",
+        "type_code": "3",
+        "registration_date": "2013-12-31",
+        "end_date": null
+      },
+      {
+        "name": "Ikioma",
+        "type_code": "3",
+        "registration_date": "1989-08-16",
+        "end_date": null
+      }
+    ],
+    "legal_form": {
+      "code": "16",
+      "label_en": "Limited company",
+      "label_fi": "Osakeyhtiö"
+    }
+  },
+  "status": {
+    "is_active": true,
+    "trade_register_status_code": "1",
+    "raw_status_code": "2",
+    "incorporation_date": "1973-08-10",
+    "dissolution_date": null,
+    "special_situations": []
+  },
+  "activity": {
+    "code": "82200",
+    "code_set": "TOIMI4",
+    "label_en": "Activities of call centres",
+    "label_fi": "Puhelinpalvelukeskusten toiminta"
+  },
+  "addresses": [
+    {
+      "address_type_code": 1,
+      "street": "Valimotie",
+      "building_number": "17-19",
+      "post_code": "00380",
+      "post_office_box": null,
+      "city": "HELSINKI",
+      "city_sv": "HELSINGFORS",
+      "municipality_code": "091",
+      "registration_date": "2025-09-29"
+    },
+    {
+      "address_type_code": 2,
+      "street": "Valimotie",
+      "building_number": "17-19",
+      "post_code": "00380",
+      "post_office_box": null,
+      "city": "HELSINKI",
+      "city_sv": "HELSINGFORS",
+      "municipality_code": "091",
+      "registration_date": "2025-09-29"
+    }
+  ],
+  "tax_registrations": {
+    "vat": {
+      "registered": true,
+      "type_code": "80",
+      "registration_date": "1994-06-01"
+    },
+    "employer": {
+      "registered": true,
+      "registration_date": "1995-03-01"
+    },
+    "prepayment_register": {
+      "registered": true,
+      "registration_date": "1998-03-01"
+    }
+  },
+  "register_entries": [
+    {
+      "register_code": "1",
+      "type_code": "1",
+      "label_en": "Registered",
+      "authority_code": "2",
+      "registration_date": "1973-08-10",
+      "end_date": null
+    },
+    {
+      "register_code": "4",
+      "type_code": "1",
+      "label_en": "Registered",
+      "authority_code": "1",
+      "registration_date": "1978-03-15",
+      "end_date": null
+    },
+    {
+      "register_code": "5",
+      "type_code": "55",
+      "label_en": "Registered",
+      "authority_code": "1",
+      "registration_date": "1995-03-01",
+      "end_date": null
+    },
+    {
+      "register_code": "6",
+      "type_code": "80",
+      "label_en": "VAT-liable for business activity",
+      "authority_code": "1",
+      "registration_date": "1994-06-01",
+      "end_date": null
+    },
+    {
+      "register_code": "6",
+      "type_code": "82",
+      "label_en": "VAT-obliged for the transfer of rights to use immovable property",
+      "authority_code": "1",
+      "registration_date": "2004-03-03",
+      "end_date": null
+    },
+    {
+      "register_code": "7",
+      "type_code": "41",
+      "label_en": "Registered",
+      "authority_code": "1",
+      "registration_date": "1998-03-01",
+      "end_date": null
+    },
+    {
+      "register_code": "7",
+      "type_code": "41",
+      "label_en": "Registered",
+      "authority_code": "1",
+      "registration_date": "1987-01-01",
+      "end_date": "1995-12-31"
+    }
+  ],
+  "online_presence": {
+    "website": "www.dynava.fi",
+    "website_registration_date": "2025-09-29"
+  },
+  "financial_statements": [],
+  "record_metadata": {
+    "last_modified": "2026-04-20T12:09:25"
+  },
+  "source_provenance": [
+    {
+      "source_slug": "prh_ytj_v3",
+      "source_name": "PRH Open Data — YTJ API v3 (companies)",
+      "source_url": "https://avoindata.prh.fi/opendata-ytj-api/v3/companies?businessId=0100130-4",
+      "license": "cc-by-4.0",
+      "freshness": "daily",
+      "retrieved_at": "2026-06-06T13:41:48Z"
+    }
+  ]
+}
