@@ -47,10 +47,12 @@ class NatsMessage(Protocol):
     async def respond(self, payload: bytes) -> None: ...
 
 
-class BrregTranslationService(Protocol):
+class BrregRecordTranslationService(Protocol):
     async def translate_brreg_records(self, request: BrregTranslateRequest) -> BrregTranslateResponse: ...
 
-    async def translate_brreg_terms(self, request: TermTranslationRequest) -> TermTranslationResponse: ...
+
+class SourceTermTranslationService(Protocol):
+    async def translate_source_terms(self, request: TermTranslationRequest) -> TermTranslationResponse: ...
 
 
 class ResultPublisher(Protocol):
@@ -59,7 +61,7 @@ class ResultPublisher(Protocol):
 
 async def handle_brreg_translation_message(
     message: NatsMessage,
-    service: BrregTranslationService,
+    service: BrregRecordTranslationService,
 ) -> None:
     try:
         payload = json.loads(message.data.decode("utf-8"))
@@ -77,9 +79,9 @@ async def handle_brreg_translation_message(
     await _respond(message, response)
 
 
-async def handle_brreg_term_translation_message(
+async def handle_source_term_translation_message(
     message: NatsMessage,
-    service: BrregTranslationService,
+    service: SourceTermTranslationService,
 ) -> None:
     payload: Any | None = None
     try:
@@ -89,21 +91,24 @@ async def handle_brreg_term_translation_message(
         response = _failed_term_response_from_payload(payload, exc)
         if response is not None:
             await _respond_if_supported(message, response)
-        LOGGER.exception("Invalid BRREG term translation NATS payload")
+        LOGGER.exception("Invalid source term translation NATS payload")
         return
 
     try:
-        response = await service.translate_brreg_terms(request)
+        response = await service.translate_source_terms(request)
     except Exception as exc:  # noqa: BLE001 - boundary handler must return structured failures.
-        LOGGER.exception("BRREG term translation NATS handler failed")
+        LOGGER.exception("Source term translation NATS handler failed")
         response = _failed_term_response(request, "translation_worker_error", str(exc))
 
     await _respond_if_supported(message, response)
 
 
+handle_brreg_term_translation_message = handle_source_term_translation_message
+
+
 async def handle_jetstream_translation_job(
     message: Any,
-    service: BrregTranslationService,
+    service: SourceTermTranslationService,
     publisher: ResultPublisher,
 ) -> None:
     try:
@@ -135,7 +140,7 @@ async def handle_jetstream_translation_job(
     )
 
     try:
-        response = await service.translate_brreg_terms(request)
+        response = await service.translate_source_terms(request)
         result = JetStreamTranslationResult(
             job_id=job.job_id,
             batch_id=job.batch_id,
@@ -209,7 +214,7 @@ class JetStreamResultPublisher:
 
 async def run_jetstream_translation_loop(
     pull_subscription: Any,
-    service: BrregTranslationService,
+    service: SourceTermTranslationService,
     publisher: ResultPublisher,
     *,
     semaphore: asyncio.Semaphore,
@@ -257,7 +262,7 @@ async def run_worker() -> None:
 
     async def term_callback(message: Any) -> None:
         async with semaphore:
-            await handle_brreg_term_translation_message(message, service)
+            await handle_source_term_translation_message(message, service)
 
     jetstream_task: asyncio.Task[None] | None = None
     try:

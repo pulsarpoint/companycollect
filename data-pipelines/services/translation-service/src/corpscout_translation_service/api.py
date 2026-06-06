@@ -71,7 +71,7 @@ def create_app(*, translation_service: TranslationService | None = None) -> Fast
         return await service.translate_terms(request)
 
     @app.post("/v1/terms/translate")
-    async def translate_brreg_terms(
+    async def translate_source_terms(
         request: TermTranslationRequest,
         provider: Annotated[str | None, Query(min_length=1)] = None,
         model: Annotated[str | None, Query(min_length=1)] = None,
@@ -86,7 +86,7 @@ def create_app(*, translation_service: TranslationService | None = None) -> Fast
             updates["prompt_version"] = prompt_version
         if updates:
             request = request.model_copy(update=updates)
-        return await service.translate_brreg_terms(request)
+        return await service.translate_source_terms(request)
 
     return app
 

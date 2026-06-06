@@ -181,7 +181,7 @@ class TranslationService:
             duration_ms=_elapsed_ms(started),
         )
 
-    async def translate_brreg_terms(self, request: TermTranslationRequest) -> TermTranslationResponse:
+    async def translate_source_terms(self, request: TermTranslationRequest) -> TermTranslationResponse:
         provider = request.provider if request.provider != "default" else default_provider()
         model = request.model if request.model and request.model != "default" else provider_model(provider)
         terms_by_key = {term.term_key: term for term in request.terms}
@@ -192,7 +192,7 @@ class TranslationService:
             source_lang=request.source_lang,
             target_lang=request.target_lang,
             items=[
-                LLMTranslationItem(id=term.term_key, category="brreg_term", text=term.source_text)
+                LLMTranslationItem(id=term.term_key, category=f"{request.source}_term", text=term.source_text)
                 for term in request.terms
             ],
         )
@@ -200,7 +200,7 @@ class TranslationService:
         try:
             llm_response = await self.translate_terms(llm_request)
         except Exception as exc:
-            logger.exception("BRREG term translation request failed")
+            logger.exception("Source term translation request failed", extra={"source": request.source})
             return TermTranslationResponse(
                 request_id=request.request_id,
                 source=request.source,
@@ -251,6 +251,9 @@ class TranslationService:
             results=results,
             failures=failures,
         )
+
+    async def translate_brreg_terms(self, request: TermTranslationRequest) -> TermTranslationResponse:
+        return await self.translate_source_terms(request)
 
     async def _translate_unique_items(
         self,

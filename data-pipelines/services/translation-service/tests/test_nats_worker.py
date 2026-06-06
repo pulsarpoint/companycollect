@@ -12,9 +12,9 @@ from corpscout_translation_service.models import (
     TermTranslationResultItem,
 )
 from corpscout_translation_service.nats_worker import (
-    handle_brreg_term_translation_message,
     handle_brreg_translation_message,
     handle_jetstream_translation_job,
+    handle_source_term_translation_message,
     run_jetstream_translation_loop,
 )
 
@@ -142,10 +142,11 @@ async def test_term_nats_handler_replies_with_result_response_without_core_nats_
         }
     )
 
-    await handle_brreg_term_translation_message(message, service)
+    await handle_source_term_translation_message(message, service)
 
     assert message.ack_count == 0
     assert service.requests[0]["request_id"] == "request-1"
+    assert service.requests[0]["source"] == "brreg"
     assert service.requests[0]["terms"][0]["term_key"] == TERM_KEY_1
     assert len(message.replies) == 1
     body = json.loads(message.replies[0].decode("utf-8"))
@@ -187,7 +188,7 @@ async def test_term_nats_handler_drops_invalid_term_key_without_core_nats_ack() 
         }
     )
 
-    await handle_brreg_term_translation_message(message, service)
+    await handle_source_term_translation_message(message, service)
 
     assert message.ack_count == 0
     assert service.requests == []
@@ -231,7 +232,7 @@ async def test_term_nats_handler_deduplicates_invalid_payload_failures_by_term_k
         }
     )
 
-    await handle_brreg_term_translation_message(message, service)
+    await handle_source_term_translation_message(message, service)
 
     assert message.ack_count == 0
     assert service.requests == []
@@ -242,15 +243,17 @@ async def test_term_nats_handler_deduplicates_invalid_payload_failures_by_term_k
 
 @pytest.mark.asyncio
 async def test_jetstream_translation_job_acks_before_publishing_result() -> None:
-    message = FakeJetStreamMessage(_jetstream_job_payload(job_id="job-1", batch_id="batch-1"))
+    message = FakeJetStreamMessage(_jetstream_job_payload(job_id="job-1", batch_id="batch-1", source="ariregister"))
     publisher = FakeResultPublisher()
-    service = FakeJetStreamTermService(translated_text="Limited liability company", assert_message_acked=message)
+    service = FakeSourceTermTranslationService(translated_text="Limited liability company", assert_message_acked=message)
 
     await handle_jetstream_translation_job(message, service, publisher)
 
+    assert service.requests[0]["source"] == "ariregister"
     assert message.ack_count == 1
     assert publisher.results[0]["job_id"] == "job-1"
     assert publisher.results[0]["batch_id"] == "batch-1"
+    assert publisher.results[0]["source"] == "ariregister"
     assert publisher.results[0]["status"] == "succeeded"
     assert publisher.results[0]["company_ids"] == ["company-a"]
     assert publisher.results[0]["results"][0]["translated_text"] == "Limited liability company"
@@ -262,7 +265,7 @@ async def test_jetstream_translation_loop_fetches_one_message_at_a_time() -> Non
     second = FakeJetStreamMessage(_jetstream_job_payload(job_id="job-2", batch_id="batch-2"))
     subscription = FakePullSubscription([first, second])
     publisher = FakeResultPublisher()
-    service = FakeJetStreamTermService(translated_text="Translated")
+    service = FakeSourceTermTranslationService(translated_text="Translated")
 
     with pytest.raises(asyncio.CancelledError):
         await run_jetstream_translation_loop(
@@ -296,7 +299,7 @@ class FakeTermTranslationService:
         self.response = response
         self.requests: list[dict[str, Any]] = []
 
-    async def translate_brreg_terms(self, request: Any) -> TermTranslationResponse:
+    async def translate_source_terms(self, request: Any) -> TermTranslationResponse:
         self.requests.append(request.model_dump(mode="json"))
         return self.response
 
@@ -354,7 +357,7 @@ class FakeResultPublisher:
         self.results.append(result.model_dump(exclude_none=True))
 
 
-class FakeJetStreamTermService:
+class FakeSourceTermTranslationService:
     def __init__(
         self,
         *,
@@ -364,15 +367,17 @@ class FakeJetStreamTermService:
         self.translated_text = translated_text
         self.assert_message_acked = assert_message_acked
         self.request_ids: list[str] = []
+        self.requests: list[dict[str, Any]] = []
         self.active_requests = 0
         self.max_active_requests = 0
 
-    async def translate_brreg_terms(self, request: Any) -> TermTranslationResponse:
+    async def translate_source_terms(self, request: Any) -> TermTranslationResponse:
         if self.assert_message_acked is not None:
             assert self.assert_message_acked.ack_count == 1
         self.active_requests += 1
         self.max_active_requests = max(self.max_active_requests, self.active_requests)
         self.request_ids.append(request.request_id)
+        self.requests.append(request.model_dump(mode="json"))
         await asyncio.sleep(0)
         self.active_requests -= 1
         return TermTranslationResponse(
@@ -394,11 +399,11 @@ class FakeJetStreamTermService:
         )
 
 
-def _jetstream_job_payload(*, job_id: str, batch_id: str) -> dict[str, Any]:
+def _jetstream_job_payload(*, job_id: str, batch_id: str, source: str = "brreg") -> dict[str, Any]:
     return {
         "job_id": job_id,
         "batch_id": batch_id,
-        "source": "brreg",
+        "source": source,
         "source_lang": "no",
         "target_lang": "en",
         "provider": "default",

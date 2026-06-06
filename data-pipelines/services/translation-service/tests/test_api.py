@@ -169,16 +169,17 @@ def test_api_translates_term_batch_and_accepts_llm_query_selection() -> None:
     assert body["error"] is None
 
 
-def test_api_translates_brreg_term_contract() -> None:
-    app = create_app(translation_service=TranslationService(llm_client=FakeLLMClient()))
+def test_api_translates_source_term_contract() -> None:
+    fake_llm = FakeLLMClient()
+    app = create_app(translation_service=TranslationService(llm_client=fake_llm))
     client = TestClient(app)
 
     response = client.post(
         "/v1/terms/translate?provider=fake&model=fake-fast",
         json={
             "request_id": "request-1",
-            "source": "brreg",
-            "source_lang": "no",
+            "source": "ariregister",
+            "source_lang": "et",
             "target_lang": "en",
             "provider": "default",
             "prompt_version": "v1",
@@ -195,6 +196,8 @@ def test_api_translates_brreg_term_contract() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["request_id"] == "request-1"
+    assert body["source"] == "ariregister"
+    assert body["source_lang"] == "et"
     assert body["provider"] == "fake"
     assert body["model"] == "fake-fast"
     assert body["results"] == [
@@ -207,6 +210,7 @@ def test_api_translates_brreg_term_contract() -> None:
         }
     ]
     assert body["failures"] == []
+    assert fake_llm.calls[0].items[0].category == "ariregister_term"
 
 
 def test_health_endpoint_reports_service_status() -> None:
