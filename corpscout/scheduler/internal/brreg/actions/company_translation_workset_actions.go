@@ -11,6 +11,7 @@ import (
 	"github.com/pulsarpoint/corpscout/scheduler/internal/brreg/companydata"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/sourcetranslation"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/translationclient"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/translationqueue"
 )
 
 type BuildBrregTranslationWorksetInput struct {
@@ -99,6 +100,162 @@ type ApplyBrregTranslationWorksetInput struct {
 }
 
 type ApplyBrregTranslationWorksetResult = companydata.ApplyTranslationWorksetResult
+
+var _ translationqueue.SourceQueue = (*CompanyTranslationActions)(nil)
+
+func (a *CompanyTranslationActions) Name() string {
+	return "brreg"
+}
+
+func (a *CompanyTranslationActions) PrepareQueue(
+	ctx context.Context,
+	command translationqueue.PrepareQueueCommand,
+) error {
+	if a == nil || a.store == nil {
+		return errors.New("brreg companydata store not available")
+	}
+	_, err := a.store.PrepareTranslationQueue(ctx, companydata.PrepareTranslationQueueCommand{
+		IDs:           command.IDs,
+		Filters:       command.Filters,
+		CompanyLimit:  command.CompanyLimit,
+		Provider:      command.Provider,
+		Model:         command.Model,
+		PromptVersion: command.PromptVersion,
+		SourceLang:    command.SourceLang,
+		TargetLang:    command.TargetLang,
+	})
+	if err != nil {
+		return errors.Wrap(err, "prepare brreg translation queue")
+	}
+	return nil
+}
+
+func (a *CompanyTranslationActions) ClaimBatch(
+	ctx context.Context,
+	command translationqueue.ClaimBatchCommand,
+) (translationqueue.ClaimBatchResult, error) {
+	if a == nil || a.store == nil {
+		return translationqueue.ClaimBatchResult{}, errors.New("brreg companydata store not available")
+	}
+	result, err := a.store.ClaimTranslationQueueBatch(ctx, companydata.ClaimTranslationQueueBatchCommand{
+		BatchID:          command.BatchID,
+		MaxCandidateRows: command.MaxCandidateRows,
+		MaxRequestChars:  command.MaxRequestChars,
+		MaxSourceRunning: command.MaxSourceRunning,
+	})
+	if err != nil {
+		return translationqueue.ClaimBatchResult{}, errors.Wrap(err, "claim brreg translation queue batch")
+	}
+	return translationqueue.ClaimBatchResult{
+		Status:         result.Status,
+		BatchID:        result.BatchID,
+		CompanyIDs:     result.CompanyIDs,
+		EstimatedChars: result.EstimatedChars,
+		Provider:       result.Provider,
+		Model:          result.Model,
+		PromptVersion:  result.PromptVersion,
+		SourceLang:     result.SourceLang,
+		TargetLang:     result.TargetLang,
+	}, nil
+}
+
+func (a *CompanyTranslationActions) ReleaseBatch(
+	ctx context.Context,
+	batchID string,
+) (translationqueue.QueueBatchResult, error) {
+	if a == nil || a.store == nil {
+		return translationqueue.QueueBatchResult{}, errors.New("brreg companydata store not available")
+	}
+	result, err := a.store.ReleaseTranslationQueueBatch(ctx, batchID)
+	if err != nil {
+		return translationqueue.QueueBatchResult{}, errors.Wrap(err, "release brreg translation queue batch")
+	}
+	return translationqueue.QueueBatchResult{RowsAffected: result.RowsAffected}, nil
+}
+
+func (a *CompanyTranslationActions) CompleteBatch(
+	ctx context.Context,
+	batchID string,
+) (translationqueue.QueueBatchResult, error) {
+	if a == nil || a.store == nil {
+		return translationqueue.QueueBatchResult{}, errors.New("brreg companydata store not available")
+	}
+	result, err := a.store.CompleteTranslationQueueBatch(ctx, batchID)
+	if err != nil {
+		return translationqueue.QueueBatchResult{}, errors.Wrap(err, "complete brreg translation queue batch")
+	}
+	return translationqueue.QueueBatchResult{RowsAffected: result.RowsAffected}, nil
+}
+
+func (a *CompanyTranslationActions) ResetStale(
+	ctx context.Context,
+	staleRunningSeconds int32,
+) (translationqueue.QueueBatchResult, error) {
+	if a == nil || a.store == nil {
+		return translationqueue.QueueBatchResult{}, errors.New("brreg companydata store not available")
+	}
+	result, err := a.store.ResetStaleTranslationQueueEntries(ctx, staleRunningSeconds)
+	if err != nil {
+		return translationqueue.QueueBatchResult{}, errors.Wrap(err, "reset stale brreg translation queue entries")
+	}
+	return translationqueue.QueueBatchResult{RowsAffected: result.RowsAffected}, nil
+}
+
+func (a *CompanyTranslationActions) LoadMissingFields(
+	ctx context.Context,
+	command sourcetranslation.LoadMissingFieldsCommand,
+) ([]sourcetranslation.MissingField, error) {
+	if a == nil || a.store == nil {
+		return nil, errors.New("brreg companydata store not available")
+	}
+	fields, err := a.store.LoadMissingTranslationFields(ctx, command)
+	if err != nil {
+		return nil, errors.Wrap(err, "load brreg missing translation fields")
+	}
+	return fields, nil
+}
+
+func (a *CompanyTranslationActions) LoadCachedTerms(
+	ctx context.Context,
+	command sourcetranslation.LoadCachedTermsCommand,
+) (map[string]sourcetranslation.CachedTerm, error) {
+	if a == nil || a.store == nil {
+		return nil, errors.New("brreg companydata store not available")
+	}
+	terms, err := a.store.LoadCachedTranslationTerms(ctx, command)
+	if err != nil {
+		return nil, errors.Wrap(err, "load cached brreg translation terms")
+	}
+	return terms, nil
+}
+
+func (a *CompanyTranslationActions) SaveTerms(
+	ctx context.Context,
+	command sourcetranslation.SaveTermsCommand,
+) (sourcetranslation.SaveTermsResult, error) {
+	if a == nil || a.store == nil {
+		return sourcetranslation.SaveTermsResult{}, errors.New("brreg companydata store not available")
+	}
+	result, err := a.store.SaveTranslationTerms(ctx, command)
+	if err != nil {
+		return sourcetranslation.SaveTermsResult{}, errors.Wrap(err, "save brreg translation terms")
+	}
+	return result, nil
+}
+
+func (a *CompanyTranslationActions) ApplyTranslations(
+	ctx context.Context,
+	command sourcetranslation.ApplyCompanyTranslationsCommand,
+) (sourcetranslation.ApplyCompanyTranslationsResult, error) {
+	if a == nil || a.store == nil {
+		return sourcetranslation.ApplyCompanyTranslationsResult{}, errors.New("brreg companydata store not available")
+	}
+	result, err := a.store.ApplyCompanyTranslations(ctx, command)
+	if err != nil {
+		return sourcetranslation.ApplyCompanyTranslationsResult{}, errors.Wrap(err, "apply brreg company translations")
+	}
+	return result, nil
+}
 
 func (a *CompanyTranslationActions) BuildBrregTranslationWorkset(
 	ctx context.Context,
