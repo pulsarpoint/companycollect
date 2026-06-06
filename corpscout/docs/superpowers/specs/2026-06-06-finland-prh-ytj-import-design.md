@@ -71,8 +71,8 @@ companycollect/corpscout/countrydata/
     source.go
     options.go
     metadata.go
+    metadata_store.go
     errors.go
-    local_state.go
     env.go
   finland/
     prhytj/
@@ -121,7 +121,6 @@ type BulkSource[T any] interface {
     Download(ctx context.Context, opts DownloadOptions) (DownloadResult, error)
     Process(ctx context.Context, opts ProcessOptions) (ProcessResult, error)
     Store(ctx context.Context, records []T) (StoreResult, error)
-    Save(ctx context.Context) error
 }
 ```
 
@@ -129,14 +128,12 @@ Finland implements this as:
 
 ```go
 type Source struct {
-    // PRH-specific state, config, HTTP client, local metadata store, and
-    // optional future DB store live here.
+    // PRH-specific state, config, HTTP client, and metadata store live here.
 }
 
 func (s *Source) Download(ctx context.Context, opts countryimport.DownloadOptions) (countryimport.DownloadResult, error)
 func (s *Source) Process(ctx context.Context, opts countryimport.ProcessOptions) (countryimport.ProcessResult, error)
 func (s *Source) Store(ctx context.Context, records []CompanyRecord) (countryimport.StoreResult, error)
-func (s *Source) Save(ctx context.Context) error
 ```
 
 This keeps the triggerable method names and option/result shapes consistent while
@@ -162,7 +159,6 @@ type DownloadOptions struct {
 type DownloadResult struct {
     SourceSlug      string
     SnapshotPath    string
-    MetadataPath    string
     BytesDownloaded int64
     RecordsSeen     int64
     PagesDownloaded int
@@ -252,18 +248,13 @@ Download flow:
 8. Compute SHA-256 while writing.
 9. Atomically rename the temporary file to a stable snapshot path.
 10. Store download metadata in memory.
-11. Call `Save` to persist metadata to a local state file when no DB store exists.
+11. Call a private `saveDownloadMetadata(ctx, metadata)` helper that persists
+    the metadata through the configured metadata store.
 
 Snapshot path format:
 
 ```text
 {data_dir}/snapshots/prh_ytj_v3_companies_{UTC_TIMESTAMP}.ndjson
-```
-
-Metadata sidecar path:
-
-```text
-{snapshot_path}.metadata.json
 ```
 
 The metadata should include:
@@ -274,8 +265,6 @@ The metadata should include:
   "source_name": "PRH Open Data YTJ API v3 companies",
   "base_url": "https://avoindata.prh.fi/opendata-ytj-api/v3/companies",
   "snapshot_path": "...",
-  "metadata_path": "...",
-  "state_path": "...",
   "started_at": "...",
   "finished_at": "...",
   "duration_ms": 0,
@@ -303,7 +292,8 @@ is set.
 
 Process flow:
 
-1. Find the latest successful snapshot from in-memory metadata or local state.
+1. Find the latest successful snapshot from explicit input or in-memory download
+   metadata.
 2. Fail with `ErrorKindNoSnapshot` when no file can be processed.
 3. Open the NDJSON snapshot.
 4. Read line by line.
@@ -313,7 +303,8 @@ Process flow:
 7. Add successfully decoded records to a chunk.
 8. When the chunk reaches `ChunkSize`, call `Store`.
 9. Flush the final partial chunk.
-10. Save process metadata to local state.
+10. Call a private `saveProcessMetadata(ctx, metadata)` helper that persists
+    process metadata through the configured metadata store.
 
 The parser must preserve source-native data that matters for later mapping:
 
@@ -364,35 +355,32 @@ A future DB store can be added as an optional dependency on `Source`. The source
 package should not import Corpscout scheduler sqlc types. Corpscout scheduler can
 provide an adapter later if needed.
 
-## Save And Local State
+## Metadata Store Boundary
 
-`Save` persists local state only when no database metadata store is configured.
-With no DB, it writes JSON to `PRH_YTJ_STATE_FILE` or the default state path under
-the data directory.
+Metadata persistence is internal to `Download` and `Process`. Callers should not
+need to remember a separate public persistence call.
 
-State shape:
+The shared package defines this source-neutral contract:
 
-```json
-{
-  "source_slug": "finland_prh_ytj_v3",
-  "latest_snapshot_path": "...",
-  "latest_snapshot_sha256": "...",
-  "latest_download": {},
-  "latest_process": {},
-  "snapshots": []
+```go
+type MetadataStore interface {
+    SaveDownload(ctx context.Context, metadata DownloadMetadata) error
+    SaveProcess(ctx context.Context, metadata ProcessMetadata) error
 }
 ```
 
-`Save` should be atomic:
+`prhytj.Source` has private helpers:
 
-1. write to `{state_path}.tmp`
-2. fsync or close cleanly
-3. rename to `{state_path}`
+```go
+func (s *Source) saveDownloadMetadata(ctx context.Context, metadata countryimport.DownloadMetadata) error
+func (s *Source) saveProcessMetadata(ctx context.Context, metadata countryimport.ProcessMetadata) error
+```
 
-If a DB store is later configured, `Save` should write to the DB store and local
-state can be disabled or kept as an optional sidecar. In this first version,
-there is no DB store, so local state is the source of truth for latest snapshot
-metadata.
+The first implementation can use a no-op metadata store when running without a
+database. Corpscout scheduler should provide a database-backed implementation
+when the database metadata tables are added. Tests should verify that `Download`
+and `Process` call the metadata store with the expected path, hash, size, page
+count, record count, duration, and source identity.
 
 ## Error Handling
 
@@ -442,7 +430,7 @@ Behavior:
 - non-2xx HTTP response returns `ErrorKindHTTPStatus`
 - invalid PRH page envelope returns `ErrorKindRemoteDecode`
 - bad NDJSON line increments decode stats, logs a warning, and continues
-- local state write failure returns `ErrorKindState`
+- metadata store write failure returns `ErrorKindState`
 
 Logs must use `log/slog`. The CLI and scheduler adapter are the boundary layers
 that log operation-level errors. `Process` may log bad individual data lines
@@ -470,8 +458,11 @@ prhytj-import run --env .env
 `run` performs:
 
 ```text
-Download -> Process -> Save
+Download -> Process
 ```
+
+Metadata persistence happens inside `Download` and `Process`; the command does
+not call a separate public save method.
 
 CLI rules:
 
@@ -490,7 +481,7 @@ The adapter should:
 
 - import `github.com/pulsarpoint/corpscout/countrydata/finland/prhytj`
 - construct the concrete `prhytj.Source`
-- call `Download`, `Process`, and `Save`
+- call `Download` and `Process`
 - translate results into scheduler/Temporal result structs when needed
 - log once at scheduler activity or worker boundary
 
@@ -537,15 +528,15 @@ Default tests should assert:
 - profile mapping follows Finland rules
 - badly formed NDJSON line increments decode error count and processing continues
 - missing snapshot returns `ErrorKindNoSnapshot`
-- local state `Save` writes and reloads latest snapshot metadata
-- hash, byte count, page count, and record count are saved
+- `Download` calls the metadata store with path, hash, byte count, page count,
+  and record count
 
 ### Layer 2: Local Full-Flow Tests
 
 Use `httptest.Server` to serve captured PRH-style pages. Test:
 
 ```text
-Download -> Save -> Process -> Store
+Download -> Process -> Store
 ```
 
 The local full-flow test should verify:
