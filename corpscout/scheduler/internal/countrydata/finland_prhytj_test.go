@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/pulsarpoint/corpscout/countrydata/finland/prhytj"
+	countryimport "github.com/pulsarpoint/corpscout/countrydata/import"
 )
 
 func TestFinlandPRHYTJImporterRunUsesSharedSourceMethods(t *testing.T) {
@@ -24,6 +27,7 @@ func TestFinlandPRHYTJImporterRunUsesSharedSourceMethods(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	importer := FinlandPRHYTJImporter{HTTPClient: server.Client()}
+	var recordsStored int
 
 	result, err := importer.Run(context.Background(), FinlandPRHYTJImportInput{
 		BaseURL:   server.URL,
@@ -31,6 +35,13 @@ func TestFinlandPRHYTJImporterRunUsesSharedSourceMethods(t *testing.T) {
 		MaxPages:  2,
 		ChunkSize: 1,
 		PageDelay: time.Nanosecond,
+		StoreFunc: func(ctx context.Context, records []prhytj.CompanyRecord) (countryimport.StoreResult, error) {
+			recordsStored += len(records)
+			return countryimport.StoreResult{
+				RecordsReceived: int64(len(records)),
+				RecordsStored:   int64(len(records)),
+			}, nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
@@ -41,5 +52,8 @@ func TestFinlandPRHYTJImporterRunUsesSharedSourceMethods(t *testing.T) {
 	}
 	if result.Process.RecordsProcessed != 1 {
 		t.Fatalf("Process.RecordsProcessed = %d, want 1", result.Process.RecordsProcessed)
+	}
+	if recordsStored != 1 {
+		t.Fatalf("records stored via StoreFunc = %d, want 1", recordsStored)
 	}
 }

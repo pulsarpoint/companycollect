@@ -20,6 +20,7 @@ type FinlandPRHYTJImportInput struct {
 	ChunkSize     int
 	PageDelay     time.Duration
 	MetadataStore countryimport.MetadataStore
+	StoreFunc     func(context.Context, []prhytj.CompanyRecord) (countryimport.StoreResult, error)
 }
 
 type FinlandPRHYTJImportResult struct {
@@ -35,6 +36,7 @@ func (i FinlandPRHYTJImporter) Run(ctx context.Context, input FinlandPRHYTJImpor
 		HTTPClient:    i.HTTPClient,
 		MetadataStore: input.MetadataStore,
 	})
+	source.StoreFunc = input.StoreFunc
 
 	download, err := source.Download(ctx, countryimport.DownloadOptions{
 		MaxPages:  input.MaxPages,
