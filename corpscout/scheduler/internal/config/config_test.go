@@ -104,6 +104,34 @@ func TestLoad_overrides(t *testing.T) {
 	}
 }
 
+func TestLoadReadsTranslationJetStreamBufferConfig(t *testing.T) {
+	t.Setenv("CORPSCOUT_DATABASE_URL", "postgres://example")
+	t.Setenv("CORPSCOUT_S3_ACCESS_KEY", "access")
+	t.Setenv("CORPSCOUT_S3_SECRET_KEY", "secret")
+	t.Setenv("CORPSCOUT_NATS_URL", "nats://companycollect:4222")
+	t.Setenv("CORPSCOUT_TRANSLATION_JETSTREAM_ENABLED", "true")
+	t.Setenv("CORPSCOUT_TRANSLATION_SOURCE_BUFFER_TARGET", "2")
+	t.Setenv("CORPSCOUT_TRANSLATION_DISPATCH_INTERVAL_SECONDS", "3")
+	t.Setenv("CORPSCOUT_TRANSLATION_BATCH_LEASE_SECONDS", "1800")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.TranslationJetStreamEnabled {
+		t.Fatal("expected translation jetstream to be enabled")
+	}
+	if cfg.TranslationSourceBufferTarget != 2 {
+		t.Fatalf("want source buffer target 2, got %d", cfg.TranslationSourceBufferTarget)
+	}
+	if cfg.TranslationDispatchInterval != 3*time.Second {
+		t.Fatalf("want dispatch interval 3s, got %s", cfg.TranslationDispatchInterval)
+	}
+	if cfg.TranslationBatchLeaseSeconds != 1800 {
+		t.Fatalf("want lease 1800s, got %d", cfg.TranslationBatchLeaseSeconds)
+	}
+}
+
 func TestLoad_rejectsInvalidNATSRequestTimeout(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://test")
 	t.Setenv("CORPSCOUT_S3_ACCESS_KEY", "test-access")

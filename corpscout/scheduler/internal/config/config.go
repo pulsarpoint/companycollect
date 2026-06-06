@@ -18,38 +18,44 @@ const defaultCVRDistributionScroll = "1m"
 const defaultFranceLegalUnitsSourceURL = "https://www.data.gouv.fr/api/1/datasets/r/350182c9-148a-46e0-8389-76c2ec1374a3"
 const defaultFranceEstablishmentsSourceURL = "https://www.data.gouv.fr/api/1/datasets/r/a29c1297-1f92-4e2a-8f6b-8c902ce96c5f"
 const defaultSEHVDStagingRoot = "/tmp/corpscout-worksets/se-hvd"
+const defaultTranslationDispatchInterval = 2 * time.Second
+const defaultTranslationBatchLeaseSeconds int32 = 1800
 
 type Config struct {
-	DatabaseURL             string
-	ListenAddr              string
-	PostgRESTURL            string
-	S3Endpoint              string
-	S3AccessKey             string
-	S3SecretKey             string
-	S3Bucket                string
-	CrawlServiceURL         string
-	NATSURL                 string
-	NATSRequestTimeout      time.Duration
-	TemporalHost            string
-	TemporalUIURL           string
-	LogLevel                string
-	LLMProviderKey          string
-	NACESourceURL           string
-	BRREGBulkSourceURL      string
-	BRREGFinancialURL       string
-	AriregisterSourceURL    string
-	CVRSourceURL            string
-	CVRScrollURL            string
-	CVRScroll               string
-	CVRUsername             string
-	CVRPassword             string
-	CVRBearerToken          string
-	CVRAPIKey               string
-	FranceLegalUnitsURL     string
-	FranceEstablishmentsURL string
-	SEHVDDatasetsJSON       string
-	SEHVDStagingRoot        string
-	FXECBSourceURL          string
+	DatabaseURL                   string
+	ListenAddr                    string
+	PostgRESTURL                  string
+	S3Endpoint                    string
+	S3AccessKey                   string
+	S3SecretKey                   string
+	S3Bucket                      string
+	CrawlServiceURL               string
+	NATSURL                       string
+	NATSRequestTimeout            time.Duration
+	TemporalHost                  string
+	TemporalUIURL                 string
+	LogLevel                      string
+	LLMProviderKey                string
+	NACESourceURL                 string
+	BRREGBulkSourceURL            string
+	BRREGFinancialURL             string
+	AriregisterSourceURL          string
+	CVRSourceURL                  string
+	CVRScrollURL                  string
+	CVRScroll                     string
+	CVRUsername                   string
+	CVRPassword                   string
+	CVRBearerToken                string
+	CVRAPIKey                     string
+	FranceLegalUnitsURL           string
+	FranceEstablishmentsURL       string
+	SEHVDDatasetsJSON             string
+	SEHVDStagingRoot              string
+	FXECBSourceURL                string
+	TranslationJetStreamEnabled   bool
+	TranslationSourceBufferTarget int32
+	TranslationDispatchInterval   time.Duration
+	TranslationBatchLeaseSeconds  int32
 }
 
 func Load() (Config, error) {
@@ -73,37 +79,63 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	translationJetStreamEnabled, err := parseBoolEnv("CORPSCOUT_TRANSLATION_JETSTREAM_ENABLED", true)
+	if err != nil {
+		return Config{}, err
+	}
+	translationSourceBufferTarget, err := parseInt32Env("CORPSCOUT_TRANSLATION_SOURCE_BUFFER_TARGET", 2)
+	if err != nil {
+		return Config{}, err
+	}
+	translationDispatchInterval, err := parseSecondsEnv(
+		"CORPSCOUT_TRANSLATION_DISPATCH_INTERVAL_SECONDS",
+		defaultTranslationDispatchInterval,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	translationBatchLeaseSeconds, err := parseInt32Env(
+		"CORPSCOUT_TRANSLATION_BATCH_LEASE_SECONDS",
+		defaultTranslationBatchLeaseSeconds,
+	)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
-		DatabaseURL:             databaseURL,
-		ListenAddr:              getEnv("CORPSCOUT_LISTEN_ADDR", ":8090"),
-		PostgRESTURL:            getEnv("CORPSCOUT_POSTGREST_URL", "http://localhost:3000"),
-		S3Endpoint:              getEnv("CORPSCOUT_S3_ENDPOINT", "http://localhost:9000"),
-		S3AccessKey:             s3AccessKey,
-		S3SecretKey:             s3SecretKey,
-		S3Bucket:                getEnv("CORPSCOUT_S3_BUCKET", "crawls"),
-		CrawlServiceURL:         getEnv("CORPSCOUT_CRAWL_SERVICE_URL", "http://localhost:8096"),
-		NATSURL:                 getEnv("CORPSCOUT_NATS_URL", ""),
-		NATSRequestTimeout:      natsRequestTimeout,
-		TemporalHost:            getEnv("CORPSCOUT_TEMPORAL_HOST", "localhost:7233"),
-		TemporalUIURL:           getEnv("CORPSCOUT_TEMPORAL_UI_URL", "http://localhost:8089"),
-		LogLevel:                logLevel,
-		LLMProviderKey:          getEnv("CORPSCOUT_LLM_PROVIDER_KEY_ENCRYPTION_KEY", ""),
-		NACESourceURL:           getEnv("CORPSCOUT_NACE_REV21_SOURCE_URL", ""),
-		BRREGBulkSourceURL:      getEnv("CORPSCOUT_BRREG_BULK_SOURCE_URL", "https://data.brreg.no/enhetsregisteret/api/enheter/lastned"),
-		BRREGFinancialURL:       getEnv("CORPSCOUT_BRREG_FINANCIAL_BASE_URL", "https://data.brreg.no"),
-		AriregisterSourceURL:    getEnv("CORPSCOUT_ARIREGISTER_BULK_SOURCE_URL", defaultAriregisterBulkSourceURL),
-		CVRSourceURL:            getEnv("CORPSCOUT_CVR_DISTRIBUTION_SOURCE_URL", defaultCVRDistributionSourceURL),
-		CVRScrollURL:            getEnv("CORPSCOUT_CVR_DISTRIBUTION_SCROLL_URL", defaultCVRDistributionScrollURL),
-		CVRScroll:               getEnv("CORPSCOUT_CVR_DISTRIBUTION_SCROLL", defaultCVRDistributionScroll),
-		CVRUsername:             getEnv("CORPSCOUT_CVR_DISTRIBUTION_USERNAME", ""),
-		CVRPassword:             getEnv("CORPSCOUT_CVR_DISTRIBUTION_PASSWORD", ""),
-		CVRBearerToken:          getEnv("CORPSCOUT_CVR_DISTRIBUTION_BEARER_TOKEN", ""),
-		CVRAPIKey:               getEnv("CORPSCOUT_CVR_DISTRIBUTION_API_KEY", ""),
-		FranceLegalUnitsURL:     getEnv("CORPSCOUT_FRANCE_LEGAL_UNITS_SOURCE_URL", defaultFranceLegalUnitsSourceURL),
-		FranceEstablishmentsURL: getEnv("CORPSCOUT_FRANCE_ESTABLISHMENTS_SOURCE_URL", defaultFranceEstablishmentsSourceURL),
-		SEHVDDatasetsJSON:       getEnv("CORPSCOUT_SE_HVD_DATASETS_JSON", os.Getenv("SE_HVD_DATASETS_JSON")),
-		SEHVDStagingRoot:        getEnv("CORPSCOUT_SE_HVD_STAGING_ROOT", defaultSEHVDStagingRoot),
-		FXECBSourceURL:          getEnv("CORPSCOUT_FX_ECB_DAILY_URL", defaultFXECBDailyURL),
+		DatabaseURL:                   databaseURL,
+		ListenAddr:                    getEnv("CORPSCOUT_LISTEN_ADDR", ":8090"),
+		PostgRESTURL:                  getEnv("CORPSCOUT_POSTGREST_URL", "http://localhost:3000"),
+		S3Endpoint:                    getEnv("CORPSCOUT_S3_ENDPOINT", "http://localhost:9000"),
+		S3AccessKey:                   s3AccessKey,
+		S3SecretKey:                   s3SecretKey,
+		S3Bucket:                      getEnv("CORPSCOUT_S3_BUCKET", "crawls"),
+		CrawlServiceURL:               getEnv("CORPSCOUT_CRAWL_SERVICE_URL", "http://localhost:8096"),
+		NATSURL:                       getEnv("CORPSCOUT_NATS_URL", ""),
+		NATSRequestTimeout:            natsRequestTimeout,
+		TemporalHost:                  getEnv("CORPSCOUT_TEMPORAL_HOST", "localhost:7233"),
+		TemporalUIURL:                 getEnv("CORPSCOUT_TEMPORAL_UI_URL", "http://localhost:8089"),
+		LogLevel:                      logLevel,
+		LLMProviderKey:                getEnv("CORPSCOUT_LLM_PROVIDER_KEY_ENCRYPTION_KEY", ""),
+		NACESourceURL:                 getEnv("CORPSCOUT_NACE_REV21_SOURCE_URL", ""),
+		BRREGBulkSourceURL:            getEnv("CORPSCOUT_BRREG_BULK_SOURCE_URL", "https://data.brreg.no/enhetsregisteret/api/enheter/lastned"),
+		BRREGFinancialURL:             getEnv("CORPSCOUT_BRREG_FINANCIAL_BASE_URL", "https://data.brreg.no"),
+		AriregisterSourceURL:          getEnv("CORPSCOUT_ARIREGISTER_BULK_SOURCE_URL", defaultAriregisterBulkSourceURL),
+		CVRSourceURL:                  getEnv("CORPSCOUT_CVR_DISTRIBUTION_SOURCE_URL", defaultCVRDistributionSourceURL),
+		CVRScrollURL:                  getEnv("CORPSCOUT_CVR_DISTRIBUTION_SCROLL_URL", defaultCVRDistributionScrollURL),
+		CVRScroll:                     getEnv("CORPSCOUT_CVR_DISTRIBUTION_SCROLL", defaultCVRDistributionScroll),
+		CVRUsername:                   getEnv("CORPSCOUT_CVR_DISTRIBUTION_USERNAME", ""),
+		CVRPassword:                   getEnv("CORPSCOUT_CVR_DISTRIBUTION_PASSWORD", ""),
+		CVRBearerToken:                getEnv("CORPSCOUT_CVR_DISTRIBUTION_BEARER_TOKEN", ""),
+		CVRAPIKey:                     getEnv("CORPSCOUT_CVR_DISTRIBUTION_API_KEY", ""),
+		FranceLegalUnitsURL:           getEnv("CORPSCOUT_FRANCE_LEGAL_UNITS_SOURCE_URL", defaultFranceLegalUnitsSourceURL),
+		FranceEstablishmentsURL:       getEnv("CORPSCOUT_FRANCE_ESTABLISHMENTS_SOURCE_URL", defaultFranceEstablishmentsSourceURL),
+		SEHVDDatasetsJSON:             getEnv("CORPSCOUT_SE_HVD_DATASETS_JSON", os.Getenv("SE_HVD_DATASETS_JSON")),
+		SEHVDStagingRoot:              getEnv("CORPSCOUT_SE_HVD_STAGING_ROOT", defaultSEHVDStagingRoot),
+		FXECBSourceURL:                getEnv("CORPSCOUT_FX_ECB_DAILY_URL", defaultFXECBDailyURL),
+		TranslationJetStreamEnabled:   translationJetStreamEnabled,
+		TranslationSourceBufferTarget: translationSourceBufferTarget,
+		TranslationDispatchInterval:   translationDispatchInterval,
+		TranslationBatchLeaseSeconds:  translationBatchLeaseSeconds,
 	}, nil
 }
 
@@ -131,6 +163,33 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func parseBoolEnv(key string, fallback bool) (bool, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	switch strings.ToLower(value) {
+	case "true", "1", "yes":
+		return true, nil
+	case "false", "0", "no":
+		return false, nil
+	default:
+		return false, errors.Newf("%s must be true or false", key)
+	}
+}
+
+func parseInt32Env(key string, fallback int32) (int32, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 32)
+	if err != nil || parsed <= 0 {
+		return 0, errors.Newf("%s must be a positive integer", key)
+	}
+	return int32(parsed), nil
 }
 
 func parseSecondsEnv(key string, fallback time.Duration) (time.Duration, error) {

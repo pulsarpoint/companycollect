@@ -15,9 +15,10 @@ type JobPublisher interface {
 }
 
 type DispatcherConfig struct {
-	SourceBufferTarget int32
-	MaxCandidateRows   int32
-	MaxRequestChars    int32
+	SourceBufferTarget  int32
+	MaxCandidateRows    int32
+	MaxRequestChars     int32
+	StaleRunningSeconds int32
 }
 
 type Dispatcher struct {
@@ -35,6 +36,9 @@ func NewDispatcher(registry SourceRegistry, publisher JobPublisher, config Dispa
 	}
 	if config.MaxRequestChars <= 0 {
 		config.MaxRequestChars = 6000
+	}
+	if config.StaleRunningSeconds <= 0 {
+		config.StaleRunningSeconds = 1800
 	}
 	return &Dispatcher{registry: registry, publisher: publisher, config: config}
 }
@@ -57,6 +61,9 @@ func (d *Dispatcher) RefillSource(ctx context.Context, source SourceQueue) error
 	}
 	if source == nil {
 		return errors.New("translation source queue is required")
+	}
+	if _, err := source.ResetStale(ctx, d.config.StaleRunningSeconds); err != nil {
+		return errors.Wrap(err, "reset stale translation batches")
 	}
 	for attempts := int32(0); attempts < d.config.SourceBufferTarget; attempts++ {
 		shouldContinue, err := d.refillSourceBatch(ctx, source)

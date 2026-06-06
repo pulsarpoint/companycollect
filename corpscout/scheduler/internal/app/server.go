@@ -19,15 +19,18 @@ import (
 	"github.com/pulsarpoint/corpscout/scheduler/internal/httpapi"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/llmproviders"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/s3client"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/translationqueue"
 )
 
 type Server struct {
-	http            *http.Server
-	pool            *pgxpool.Pool
-	river           *river.Client[pgx.Tx]
-	temporal        client.Client
-	temporalWorkers []temporalworker.Worker
-	temporalDeps    *temporalWorkerResources
+	http                   *http.Server
+	pool                   *pgxpool.Pool
+	river                  *river.Client[pgx.Tx]
+	temporal               client.Client
+	temporalWorkers        []temporalworker.Worker
+	temporalDeps           *temporalWorkerResources
+	translationQueue       *translationqueue.Service
+	translationQueueClient *translationqueue.JetStreamClient
 }
 
 func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
@@ -103,6 +106,38 @@ func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
 	}
 	slog.Debug("scheduler temporal workers started", "worker_count", len(temporalWorkers))
 
+	var translationQueueService *translationqueue.Service
+	var translationQueueClient *translationqueue.JetStreamClient
+	if cfg.TranslationJetStreamEnabled {
+		translationQueueClient, err = translationqueue.NewJetStreamClient(ctx, cfg.NATSURL)
+		if err != nil {
+			stopTemporalWorkers(temporalWorkers)
+			temporalClient.Close()
+			temporalDeps.Close()
+			_ = riverClient.Stop(ctx)
+			pool.Close()
+			return nil, errors.Wrap(err, "create translation jetstream client")
+		}
+		registry := translationqueue.NewSourceRegistry(
+			temporalDeps.companyTranslation,
+			temporalDeps.ariregisterCompanyTranslation,
+		)
+		dispatcher := translationqueue.NewDispatcher(registry, translationQueueClient, translationqueue.DispatcherConfig{
+			SourceBufferTarget:  cfg.TranslationSourceBufferTarget,
+			MaxCandidateRows:    25,
+			MaxRequestChars:     6000,
+			StaleRunningSeconds: cfg.TranslationBatchLeaseSeconds,
+		})
+		collector := translationqueue.NewResultCollector(registry)
+		translationQueueService = translationqueue.NewService(dispatcher, collector, cfg.TranslationDispatchInterval)
+		translationQueueService.Start(ctx)
+		slog.Debug("scheduler translation jetstream buffer service started",
+			"source_buffer_target", cfg.TranslationSourceBufferTarget,
+			"dispatch_interval", cfg.TranslationDispatchInterval.String(),
+			"batch_lease_seconds", cfg.TranslationBatchLeaseSeconds,
+		)
+	}
+
 	router := chi.NewRouter()
 	api := httpapi.NewHandlers(queries, riverClient, pool, s3, cfg.PostgRESTURL, temporalClient, cfg.TemporalUIURL)
 	api.ConfigureLLMProviders(
@@ -113,12 +148,14 @@ func NewServer(ctx context.Context, cfg config.Config) (*Server, error) {
 	slog.Debug("scheduler http routes registered")
 
 	return &Server{
-		http:            &http.Server{Addr: cfg.ListenAddr, Handler: router},
-		pool:            pool,
-		river:           riverClient,
-		temporal:        temporalClient,
-		temporalWorkers: temporalWorkers,
-		temporalDeps:    temporalDeps,
+		http:                   &http.Server{Addr: cfg.ListenAddr, Handler: router},
+		pool:                   pool,
+		river:                  riverClient,
+		temporal:               temporalClient,
+		temporalWorkers:        temporalWorkers,
+		temporalDeps:           temporalDeps,
+		translationQueue:       translationQueueService,
+		translationQueueClient: translationQueueClient,
 	}, nil
 }
 
@@ -141,6 +178,12 @@ func (s *Server) ListenAndServe() error {
 
 func (s *Server) Shutdown(ctx context.Context) {
 	slog.Debug("scheduler shutdown started")
+	if s.translationQueue != nil {
+		s.translationQueue.Stop()
+	}
+	if s.translationQueueClient != nil {
+		s.translationQueueClient.Close()
+	}
 	if s.http != nil {
 		_ = s.http.Shutdown(ctx)
 	}

@@ -118,6 +118,20 @@ func TestDispatcherRefillsUntilSourceBufferTarget(t *testing.T) {
 	require.Equal(t, int32(2), source.claimCommands[0].MaxSourceRunning)
 }
 
+func TestDispatcherResetsStaleBatchesBeforeClaiming(t *testing.T) {
+	source := &dispatcherSourceStub{name: "brreg"}
+	publisher := &dispatcherJobPublisherStub{}
+	dispatcher := NewDispatcher(SourceRegistry{}, publisher, DispatcherConfig{
+		SourceBufferTarget:  1,
+		StaleRunningSeconds: 900,
+	})
+
+	err := dispatcher.RefillSource(context.Background(), source)
+	require.NoError(t, err)
+	require.Equal(t, []int32{900}, source.resetStaleSeconds)
+	require.Len(t, source.claimCommands, 1)
+}
+
 func TestDispatcherReleasesClaimedBatchWhenPublishFails(t *testing.T) {
 	source := &dispatcherSourceStub{
 		name: "brreg",
@@ -156,18 +170,19 @@ func dispatcherMissingField(companyID, termKey, sourceText string) sourcetransla
 
 type dispatcherSourceStub struct {
 	SourceQueue
-	name             string
-	claim            ClaimBatchResult
-	claims           []ClaimBatchResult
-	claimCommands    []ClaimBatchCommand
-	fields           []sourcetranslation.MissingField
-	fieldsByCompany  map[string][]sourcetranslation.MissingField
-	cached           map[string]sourcetranslation.CachedTerm
-	applied          int32
-	appliedCommands  []sourcetranslation.ApplyCompanyTranslationsCommand
-	completed        int32
-	released         int32
-	releasedBatchIDs []string
+	name              string
+	claim             ClaimBatchResult
+	claims            []ClaimBatchResult
+	claimCommands     []ClaimBatchCommand
+	resetStaleSeconds []int32
+	fields            []sourcetranslation.MissingField
+	fieldsByCompany   map[string][]sourcetranslation.MissingField
+	cached            map[string]sourcetranslation.CachedTerm
+	applied           int32
+	appliedCommands   []sourcetranslation.ApplyCompanyTranslationsCommand
+	completed         int32
+	released          int32
+	releasedBatchIDs  []string
 }
 
 func (s *dispatcherSourceStub) Name() string {
@@ -190,6 +205,11 @@ func (s *dispatcherSourceStub) ClaimBatch(_ context.Context, command ClaimBatchC
 		result.BatchID = command.BatchID
 	}
 	return result, nil
+}
+
+func (s *dispatcherSourceStub) ResetStale(_ context.Context, staleRunningSeconds int32) (QueueBatchResult, error) {
+	s.resetStaleSeconds = append(s.resetStaleSeconds, staleRunningSeconds)
+	return QueueBatchResult{}, nil
 }
 
 func (s *dispatcherSourceStub) LoadMissingFields(
