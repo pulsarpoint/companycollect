@@ -88,6 +88,22 @@ func TestFinlandPRHYTJRawRecordParamsExtractsProfileColumns(t *testing.T) {
 	}
 }
 
+func TestFinlandPRHYTJRawRecordParamsAcceptsTimestampWithoutTimezone(t *testing.T) {
+	sourceID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	rawPayload := []byte(`{"businessId":{"value":"0658654-0"},"lastModified":"2025-12-31T07:39:20"}`)
+
+	params, err := finlandPRHYTJRawRecordParams(sourceID, nil, prhytj.CompanyRecord{
+		BusinessID:   prhytj.Identifier{Value: "0658654-0"},
+		LastModified: "2025-12-31T07:39:20",
+		RawPayload:   rawPayload,
+		PayloadHash:  "payload-hash",
+	})
+	require.NoError(t, err)
+
+	require.True(t, params.SourceUpdatedAt.Valid)
+	require.Equal(t, "2025-12-31T07:39:20Z", params.SourceUpdatedAt.Time.UTC().Format(time.RFC3339))
+}
+
 func TestFinlandPRHYTJDBStoreWithoutDBReturnsStateError(t *testing.T) {
 	store := NewFinlandPRHYTJDBStore(nil)
 

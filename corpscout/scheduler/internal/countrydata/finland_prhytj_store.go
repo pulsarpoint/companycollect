@@ -396,13 +396,19 @@ func optionalPRHTimestamp(value string) (pgtype.Timestamptz, error) {
 		return pgtype.Timestamptz{}, nil
 	}
 	if parsed, err := time.Parse(time.RFC3339Nano, trimmed); err == nil {
-		return pgtype.Timestamptz{Time: parsed, Valid: true}, nil
+		return pgtype.Timestamptz{Time: parsed.UTC(), Valid: true}, nil
+	}
+	if parsed, err := time.Parse("2006-01-02T15:04:05.999999999", trimmed); err == nil {
+		return pgtype.Timestamptz{Time: parsed.UTC(), Valid: true}, nil
+	}
+	if parsed, err := time.Parse("2006-01-02T15:04:05", trimmed); err == nil {
+		return pgtype.Timestamptz{Time: parsed.UTC(), Valid: true}, nil
 	}
 	parsed, err := time.Parse(time.DateOnly, trimmed)
 	if err != nil {
 		return pgtype.Timestamptz{}, err
 	}
-	return pgtype.Timestamptz{Time: parsed, Valid: true}, nil
+	return pgtype.Timestamptz{Time: parsed.UTC(), Valid: true}, nil
 }
 
 func optionalTimestamp(value time.Time) pgtype.Timestamptz {
