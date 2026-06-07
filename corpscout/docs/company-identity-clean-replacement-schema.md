@@ -10,6 +10,8 @@ and company tables. The new model must support:
 - deterministic merging of multiple source records for the same registered entity
 - companies registered in many countries
 - brands as first-class identities
+- domains and websites that can connect to many companies, legal entities, brands,
+  and source records
 - parent/child and ownership relationships at company, legal-entity, and brand
   levels
 - source-by-source evidence on company and brand detail pages
@@ -20,7 +22,7 @@ implementation should not require Neo4j, Memgraph, Kuzu, or similar infrastructu
 
 ## Core Decision
 
-Use four durable layers:
+Use five durable layers:
 
 ```text
 registry
@@ -38,6 +40,10 @@ entities
 identity
   central companies, brands, and graph-shaped relationships between companies,
   legal entities, and brands
+
+web
+  domains, websites, URLs, and evidence-backed links between web properties and
+  companies, legal entities, brands, and source records
 ```
 
 This is intentionally not country-schema-first. Country is a strong filter and
@@ -70,6 +76,11 @@ entities.legal_entity_source_links
 identity.companies
 identity.brands
 identity.relationships
+      |
+      | web presence links
+      v
+web.domains
+web.websites
 ```
 
 Source binaries own source-specific download, parsing, and export logic. Corpscout
@@ -461,6 +472,110 @@ UNIQUE (company_id, legal_entity_id, link_type)
 
 This is how one company can connect to registered companies in many countries.
 
+## Web Presence Schema
+
+Domains and websites are first-class records. A domain can be used by many legal
+entities, companies, and brands over time. A website can represent a specific URL
+or site surface on a domain. Source records may assert web properties, but source
+assertions should link to shared web records instead of being copied only as text.
+
+```sql
+CREATE SCHEMA web;
+```
+
+### `web.domains`
+
+```sql
+id UUID PRIMARY KEY
+domain TEXT UNIQUE NOT NULL
+registrable_domain TEXT
+public_suffix TEXT
+normalized_domain TEXT UNIQUE NOT NULL
+first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+last_seen_at TIMESTAMPTZ
+metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+Examples:
+
+- `volkswagen.com`
+- `vw.com`
+- `volkswagen.fi`
+- `audi.com`
+
+### `web.websites`
+
+One row per normalized website URL or site surface.
+
+```sql
+id UUID PRIMARY KEY
+domain_id UUID NOT NULL REFERENCES web.domains(id) ON DELETE CASCADE
+url TEXT UNIQUE NOT NULL
+normalized_url TEXT UNIQUE NOT NULL
+url_kind TEXT NOT NULL DEFAULT 'website'
+  CHECK (url_kind IN ('website', 'landing_page', 'support', 'investor_relations', 'careers', 'social_profile', 'other'))
+title TEXT
+language_code TEXT
+first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+last_seen_at TIMESTAMPTZ
+metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+`web.domains` answers ownership and domain-level questions. `web.websites`
+answers page/site-level questions. A company can have multiple websites on the
+same domain, and a domain can host many related brands or country-specific legal
+entities.
+
+### Web Link Tables
+
+Use separate FK-backed link tables for the important targets:
+
+```text
+web.company_website_links
+web.legal_entity_website_links
+web.brand_website_links
+web.source_record_website_links
+```
+
+Recommended columns for company links:
+
+```sql
+id UUID PRIMARY KEY
+company_id UUID NOT NULL REFERENCES identity.companies(id) ON DELETE CASCADE
+website_id UUID NOT NULL REFERENCES web.websites(id) ON DELETE CASCADE
+domain_id UUID NOT NULL REFERENCES web.domains(id) ON DELETE CASCADE
+relationship_type TEXT NOT NULL
+  CHECK (relationship_type IN ('official_site', 'brand_site', 'country_site', 'investor_site', 'careers_site', 'support_site', 'candidate', 'old_site', 'other'))
+status TEXT NOT NULL DEFAULT 'needs_review'
+  CHECK (status IN ('active', 'needs_review', 'rejected', 'superseded'))
+confidence REAL CHECK (confidence IS NULL OR confidence BETWEEN 0 AND 1)
+source_id UUID REFERENCES registry.sources(id)
+valid_from DATE
+valid_to DATE
+evidence JSONB NOT NULL DEFAULT '{}'::jsonb
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+UNIQUE (company_id, website_id, relationship_type)
+```
+
+`web.legal_entity_website_links`, `web.brand_website_links`, and
+`web.source_record_website_links` use the same shape with their target FK:
+
+```text
+legal_entity_id -> entities.legal_entities(id)
+brand_id -> identity.brands(id)
+source_company_id -> source_records.companies(id)
+```
+
+Source-record links preserve the exact website assertion from a source. Company,
+legal-entity, and brand links are resolved web presence. This lets the detail API
+show both “PRH says this is the website” and “Corpscout resolved this as the
+official brand site.”
+
 ### `identity.brands`
 
 A brand is a market-facing identity. It can be owned by a company, operated by a
@@ -569,6 +684,9 @@ Recommended explicit tables:
 identity.company_relationships
 identity.brand_relationships
 entities.legal_entity_relationships
+web.company_website_links
+web.legal_entity_website_links
+web.brand_website_links
 ```
 
 Recommended generic table:
@@ -577,11 +695,11 @@ Recommended generic table:
 CREATE TABLE identity.relationship_edges (
   id UUID PRIMARY KEY,
   subject_type TEXT NOT NULL
-    CHECK (subject_type IN ('company', 'brand', 'legal_entity', 'source_record')),
+    CHECK (subject_type IN ('company', 'brand', 'legal_entity', 'source_record', 'domain', 'website')),
   subject_id UUID NOT NULL,
   predicate TEXT NOT NULL,
   object_type TEXT NOT NULL
-    CHECK (object_type IN ('company', 'brand', 'legal_entity', 'source_record')),
+    CHECK (object_type IN ('company', 'brand', 'legal_entity', 'source_record', 'domain', 'website')),
   object_id UUID NOT NULL,
   source_id UUID REFERENCES registry.sources(id),
   confidence REAL CHECK (confidence IS NULL OR confidence BETWEEN 0 AND 1),
@@ -618,6 +736,8 @@ Response shape:
   "company": {},
   "brands": [],
   "legal_entities": [],
+  "websites": [],
+  "domains": [],
   "relationships": [],
   "source_coverage": [],
   "resolved_profile": {},
@@ -631,10 +751,12 @@ Load order:
 2. Load linked `entities.legal_entities`.
 3. Load legal-entity relationships and central company relationships.
 4. Load linked brands and brand relationships.
-5. Load source records through `entities.legal_entity_source_links`.
-6. Compute source coverage by field family.
-7. Produce `resolved_profile` from deterministic precedence rules.
-8. Include original normalized and raw source payload references.
+5. Load linked websites and domains for the company, legal entities, brands, and
+   source records.
+6. Load source records through `entities.legal_entity_source_links`.
+7. Compute source coverage by field family.
+8. Produce `resolved_profile` from deterministic precedence rules.
+9. Include original normalized and raw source payload references.
 
 The resolved profile should be evidence-backed. It should not erase source
 conflicts. Conflicting source values should appear in the source panels and in a
@@ -657,6 +779,8 @@ Response shape:
   "operators": [],
   "related_brands": [],
   "legal_entities_using_brand": [],
+  "websites": [],
+  "domains": [],
   "source_records": []
 }
 ```
