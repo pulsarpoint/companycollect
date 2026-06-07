@@ -241,9 +241,16 @@ country_id UUID REFERENCES countries(id)
 jurisdiction_code TEXT
 registration_number TEXT
 legal_name TEXT
+legal_name_en TEXT
 legal_name_normalized TEXT
 lifecycle_status TEXT
 is_active BOOLEAN
+legal_form_code TEXT
+legal_form_label TEXT
+legal_form_label_en TEXT
+primary_industry_code TEXT
+primary_industry_label TEXT
+primary_industry_label_en TEXT
 primary_website TEXT
 source_updated_at TIMESTAMPTZ
 source_payload_hash TEXT
@@ -251,6 +258,16 @@ record_hash TEXT NOT NULL
 raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb
 normalized_payload JSONB NOT NULL DEFAULT '{}'::jsonb
 evidence JSONB NOT NULL DEFAULT '{}'::jsonb
+translation_source_hash TEXT
+is_translated BOOLEAN NOT NULL DEFAULT false
+translation_required_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+untranslated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translation_status TEXT NOT NULL DEFAULT 'not_required'
+  CHECK (translation_status IN ('not_required', 'pending', 'partial', 'translated', 'failed'))
+translated_at TIMESTAMPTZ
+translation_version TEXT
+translation_error TEXT
 first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -262,6 +279,55 @@ UNIQUE (source_id, source_record_id)
 For global sources that describe a multinational group rather than a registered
 entity, `country_id` may be null and the record can link directly to an identity
 company or brand.
+
+### Source Translation Columns
+
+Every source-record column that may need English text should have an explicit
+`_en` companion column in the same table. Do not hide translated text only inside
+JSONB.
+
+Examples:
+
+```text
+legal_name -> legal_name_en
+legal_form_label -> legal_form_label_en
+primary_industry_label -> primary_industry_label_en
+address_type_label -> address_type_label_en
+city -> city_en
+country_label -> country_label_en
+register_label -> register_label_en
+description -> description_en
+```
+
+The source importer package should compute translation metadata when inserting or
+upserting source records:
+
+- `translation_required_fields`: all source text fields that require English
+  output for this source company and its child rows
+- `translated_fields`: required fields that currently have accepted translations
+- `untranslated_fields`: required fields that are still missing or stale
+- `translation_source_hash`: hash of source text inputs that feed translation
+- `is_translated`: true only when every required field has an accepted translation
+- `translation_status`: aggregate state for the source company
+
+When a source text input changes and `translation_source_hash` changes, the
+upsert package should set `is_translated = false`, update
+`untranslated_fields`, clear `translated_at`, and set `translation_status` to
+`pending` or `partial`.
+
+This makes translation work cheap to find:
+
+```sql
+SELECT id
+FROM source_records.companies
+WHERE translation_status IN ('pending', 'partial', 'failed')
+ORDER BY updated_at
+LIMIT $1;
+```
+
+Child tables may also carry row-level translation columns where useful, but
+`source_records.companies` owns the aggregate status for the full source company
+record.
 
 ### Source Child Tables
 
@@ -286,6 +352,14 @@ source_export_id UUID REFERENCES registry.source_exports(id)
 source_item_hash TEXT NOT NULL
 raw_item_payload JSONB NOT NULL DEFAULT '{}'::jsonb
 evidence JSONB NOT NULL DEFAULT '{}'::jsonb
+translation_source_hash TEXT
+is_translated BOOLEAN NOT NULL DEFAULT false
+translation_required_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+untranslated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_at TIMESTAMPTZ
+translation_version TEXT
+translation_error TEXT
 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
@@ -958,6 +1032,9 @@ Preserve the field families these tables already proved useful:
 - source-native identifiers
 - country and jurisdiction codes
 - legal names and normalized names
+- `_en` companion columns for every source text field that needs English output
+- aggregate source-company translation state, including required, translated, and
+  untranslated field lists
 - lifecycle/status fields
 - legal forms
 - addresses and geocode state
