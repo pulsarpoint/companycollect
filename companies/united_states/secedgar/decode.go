@@ -41,9 +41,15 @@ func DecodeCompanyTickers(data []byte) ([]CompanyTickerRecord, error) {
 	records := make([]CompanyTickerRecord, 0, len(keys))
 	for _, index := range keys {
 		raw := rawByIndex[index]
+		if !isJSONObject(raw) {
+			return nil, errors.Errorf("decode SEC EDGAR company ticker record %d: expected object", index)
+		}
 
 		var payload companyTickerPayload
 		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, errors.Wrapf(err, "decode SEC EDGAR company ticker record %d", index)
+		}
+		if err := validateCompanyTickerPayload(payload); err != nil {
 			return nil, errors.Wrapf(err, "decode SEC EDGAR company ticker record %d", index)
 		}
 
@@ -63,4 +69,22 @@ func DecodeCompanyTickers(data []byte) ([]CompanyTickerRecord, error) {
 	}
 
 	return records, nil
+}
+
+func isJSONObject(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return strings.HasPrefix(trimmed, "{")
+}
+
+func validateCompanyTickerPayload(payload companyTickerPayload) error {
+	if payload.CIK <= 0 {
+		return errors.New("missing or zero cik_str")
+	}
+	if strings.TrimSpace(payload.Ticker) == "" {
+		return errors.New("empty ticker")
+	}
+	if strings.TrimSpace(payload.Title) == "" {
+		return errors.New("empty title")
+	}
+	return nil
 }

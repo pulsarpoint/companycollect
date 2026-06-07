@@ -60,6 +60,12 @@ func TestDecodeCompanyTickersRejectsBadShape(t *testing.T) {
 	}{
 		{name: "array", data: badShape},
 		{name: "record array", data: []byte(`{"0":[{"cik_str":320193,"ticker":"AAPL","title":"Apple Inc."}]}`)},
+		{name: "null record", data: []byte(`{"0":null}`)},
+		{name: "empty record", data: []byte(`{"0":{}}`)},
+		{name: "missing cik", data: []byte(`{"0":{"ticker":"AAPL","title":"Apple Inc."}}`)},
+		{name: "zero cik", data: []byte(`{"0":{"cik_str":0,"ticker":"AAPL","title":"Apple Inc."}}`)},
+		{name: "empty ticker", data: []byte(`{"0":{"cik_str":320193,"ticker":"","title":"Apple Inc."}}`)},
+		{name: "empty title", data: []byte(`{"0":{"cik_str":320193,"ticker":"AAPL","title":""}}`)},
 	}
 
 	for _, tt := range tests {
