@@ -3,7 +3,9 @@
 ## Purpose
 
 Use this skill to create or extend a complete standalone Go country package for
-company data collection and export.
+company data collection and export. This guide is the single implementation
+entry point: use it both for a brand-new country package and for adding one
+analyzed source package to an existing country module.
 
 The package must live under:
 
@@ -192,6 +194,18 @@ companies/{country_slug}/cmd/{country_slug}-countrydata/
 
 The final country export combines the source exports. Source sync operations
 remain source-specific.
+
+When extending an existing country package with a new source:
+
+- add only the new `companies/{country_slug}/{source_package}` package;
+- reuse the existing country `go.mod`, `paths.go`, status code, and CLI;
+- add CLI dispatch for the new concrete source instead of creating a new binary;
+- update final export logic only where the data-model mapping says the new
+  source contributes to final country tables;
+- add source-specific README, fixtures, gated live tests, and source parquet
+  tests;
+- keep existing source packages independent unless the data-model analysis
+  defines join or precedence rules.
 
 ## Runtime Data Layout
 
@@ -454,6 +468,12 @@ request bodies in errors or manifests.
 - latest download metadata
 - optional store callback
 
+Metadata persistence must stay internal to `Download`, `Process`, and `Export`
+through private helpers such as `saveDownloadMetadata` and
+`saveProcessMetadata`. If no metadata store is configured, use the shared no-op
+store. If no DB/store callback exists, `Store` should still validate and count
+records so parser and fixture tests can run outside Corpscout.
+
 Do not add a generic source registry unless the country already has multiple
 real sources and the CLI needs source dispatch.
 
@@ -641,8 +661,12 @@ Required tests:
   page/file count, and metadata
 - failed download removes temp snapshot
 - missing snapshot returns `ErrorKindNoSnapshot`
+- local missing file returns `ErrorKindNotFound`
 - process continues after malformed line/row
 - process flushes chunks and final partial chunk
+- process respects context cancellation during long scans
+- metadata store failures return `ErrorKindState`
+- no-store `Store` validates and counts typed records
 - source export writes all expected parquet files and manifest
 - source export skips bad lines and counts decode errors
 - source export uses latest snapshot when explicit path is blank

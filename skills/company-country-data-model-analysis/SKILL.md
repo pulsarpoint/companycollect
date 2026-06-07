@@ -19,7 +19,7 @@ The goal is to analyze what company information can actually be obtained for
 that country, source by source, then propose a country-specific combined JSON
 object that represents the richest practical company profile for that country.
 For each implementable source, also produce a machine-readable handoff file for
-the Go country module source implementation skill under
+the Go countrydata package implementation skill under
 `companies/{country_slug}`.
 
 Do not force countries into one shared global schema. Country registers differ
@@ -363,7 +363,7 @@ data_model/sources/{source_slug}/countrydata_implementation_handoff.json
 ```
 
 This file is the machine-readable contract consumed by the later Go
-`company-countrydata-source-implementation` skill. It should remove guesswork
+`company-countrydata-package-implementation` skill. It should remove guesswork
 about package names, env prefixes, transport shape, snapshot strategy, parsing
 rules, required fixtures, and mapping rules.
 

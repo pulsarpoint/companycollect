@@ -1,6 +1,6 @@
 ---
 name: company-countrydata-package-implementation
-description: Use when creating a standalone Go countrydata package under companycollect/companies/{country_slug} from companies/analysis artifacts, including per-country go.mod, source packages, country CLI, source/final parquet exports, manifests, and runtime data layout.
+description: Use when creating or extending a standalone Go countrydata package under companycollect/companies/{country_slug} from companies/analysis artifacts, including source packages, country CLI, source/final parquet exports, manifests, and runtime data layout.
 ---
 
 # Company Countrydata Package Implementation
@@ -8,7 +8,8 @@ description: Use when creating a standalone Go countrydata package under company
 ## Purpose
 
 Use this skill to create or extend a complete standalone Go country package for
-company data collection and export.
+company data collection and export. This is also the skill to use when adding
+one analyzed source to an existing country package.
 
 The country package lives under:
 
@@ -34,9 +35,9 @@ After loading this skill, read:
 skills/company-countrydata-package-implementation/references/implementation-guide.md
 ```
 
-That guide contains the exact preflight gates, package layout, public API,
-runtime data layout, CLI contract, source/final export rules, tests, verification
-commands, and Finland execution lessons.
+That guide contains the exact preflight gates, package layout, public source
+API, runtime data layout, CLI contract, source/final export rules, tests,
+verification commands, and Finland execution lessons.
 
 ## Non-Negotiable Rules
 
