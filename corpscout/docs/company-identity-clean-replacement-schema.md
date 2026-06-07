@@ -850,49 +850,342 @@ later. If traversal becomes central to the product, project Postgres relationshi
 to a graph database. The graph database should be rebuildable and not become the
 first source of truth.
 
-## `corpscout_db` Objects To Preserve
+## Existing Corpscout Migration Tables To Preserve
 
-`/Users/graovic/pulsarpoint/ppoint/corpscout_db` is not an application schema
-repository. It manages the shared Postgres server bootstrap only:
-
-```text
-bootstrap/001_roles.sql
-bootstrap/002_databases.sql
-bootstrap/003_database_grants.sql
-docker-compose.yml
-Makefile
-verify.sql
-```
-
-There are no company, source, domain, website, brand, legal-entity, or evidence
-tables in `corpscout_db` to preserve during the clean replacement.
-
-Preserve the cluster ownership boundary:
+This section refers to the current Corpscout application migrations:
 
 ```text
-corpscout             Corpscout application database
-temporal              Temporal persistence database
-temporal_visibility   Temporal visibility database
+/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/database/migrations
 ```
 
-Do not place Temporal tables inside the `corpscout` database. Do not move
-Corpscout application migrations into `corpscout_db`; they belong in the
-application migration package.
+These migrations contain several generations of POC tables. The clean replacement
+should preserve durable concepts and data contracts, not old table names where the
+model has changed.
 
-Preserve or intentionally replace these bootstrap objects:
+### Preserve Mostly As-Is
 
-- `corpscout` login/admin/app-owner role as currently codified
-- `temporal` login role with no superuser/admin permissions
-- `corpscout`, `temporal`, and `temporal_visibility` databases
-- database ownership assignments
-- `CONNECT`, `TEMPORARY`, and `CREATE` grants for the owning roles
-- revocation of public access on Temporal databases
-- verification of roles, databases, extensions, and schema grants
+These tables are useful reference or service configuration data and do not depend
+on the old company identity model:
 
-The clean replacement should add new Corpscout schemas through Corpscout
-application migrations, not through `corpscout_db` bootstrap SQL. `corpscout_db`
-should only change if the replacement needs a different cluster-level role,
-database, or ownership model.
+```text
+countries
+nace_classifications
+nace_codes
+nace_code_aliases
+nace_source_files
+nace_import_runs
+exchange_rate_source_files
+exchange_rate_sheets
+exchange_rates
+exchange_rate_sync_runs
+llm_providers
+temporal_schedule_metadata
+```
+
+`countries` remains the shared country reference. NACE remains the industry
+taxonomy reference used by source records and legal entities. Exchange rates
+remain useful for normalized financials. `llm_providers` and
+`temporal_schedule_metadata` are scheduler/service configuration tables and can
+stay outside identity resolution.
+
+The implementation may move these into clearer schemas later, for example
+`reference.*`, `finance.*`, or `scheduler.*`, but their data model should be
+preserved.
+
+### Replace With `registry.*`
+
+The old source registry and run tables should be replaced by the new registry
+schema:
+
+```text
+data_sources
+source_pull_runs
+source_processor_states
+source_sync_checkpoints
+temporal_executions
+```
+
+Preserve these concepts:
+
+- enabled source definitions
+- source coverage and capabilities
+- schedule settings
+- last started/success/failed timestamps
+- source markers/checkpoints
+- Temporal workflow IDs and run status
+- run counts, errors, and metadata
+
+Do not preserve the old `data_sources.input_table_name`,
+`pull_task_type`, or `processor_task_type` model as the primary contract. The new
+contract is executable source producers plus Parquet manifests:
+
+```text
+registry.sources
+registry.source_countries
+registry.source_runs
+registry.source_exports
+registry.source_export_files
+```
+
+### Replace With `source_records.*`
+
+The old source-specific raw/profile tables should be folded into the shared source
+record model:
+
+```text
+gleif_company_raw_inputs
+companies_house_company_raw_inputs
+brreg_company_raw_inputs
+ai_company_profile_raw_inputs
+domain_discovery_raw_inputs
+cvr_company_raw_inputs
+ariregister_company_raw_inputs
+brreg_enhanced_raw_inputs
+
+brreg_source.*
+ariregister_source.*
+france_source.*
+
+countrydata_finland_prh_ytj.*
+countrydata_united_states_colorado_entities.*
+countrydata_united_states_irs_eo_bmf.*
+countrydata_united_states_sam_gov_entity.*
+countrydata_united_states_sec_edgar.*
+```
+
+Preserve the field families these tables already proved useful:
+
+- source-native identifiers
+- country and jurisdiction codes
+- legal names and normalized names
+- lifecycle/status fields
+- legal forms
+- addresses and geocode state
+- contacts
+- websites and domains
+- industries and NACE mappings
+- capital, annual reports, financial statements, and financial periods
+- people, organizations, roles, and shareholdings where sources provide them
+- establishments/branches for France-like datasets
+- raw payloads, normalized payloads, payload hashes, source item hashes, evidence,
+  metadata, first/last seen timestamps, and row status
+
+The new shared target should be:
+
+```text
+source_records.companies
+source_records.company_names
+source_records.identifiers
+source_records.addresses
+source_records.contacts
+source_records.industries
+source_records.websites
+source_records.source_evidence
+```
+
+Add optional capability tables only when imported Parquet needs them:
+
+```text
+source_records.establishments
+source_records.financial_statements
+source_records.financial_periods
+source_records.capital
+source_records.people
+source_records.roles
+source_records.shareholdings
+source_records.filings
+```
+
+### Replace With Generic Workflow/Import Audit
+
+The old source-specific workflow schemas are useful, but should not remain
+source-specific:
+
+```text
+brreg_workflow.*
+ariregister_workflow.*
+cvr_workflow.*
+france_workflow.*
+se_workflow.*
+```
+
+Preserve these workflow concepts:
+
+- workflow/import runs
+- source files and bulk snapshots
+- raw records with current-row tracking
+- task attempts
+- per-record task states
+- translation/domain/financial result summaries
+- retry metadata, error category, error code, and result summaries
+
+In the clean replacement, the source binary owns source-specific download and
+normalization. Corpscout only needs generic execution/import audit:
+
+```text
+registry.source_runs
+registry.source_exports
+registry.source_export_files
+registry.import_runs
+registry.import_run_files
+```
+
+If Corpscout later needs per-record background tasks again, add a generic task
+state table keyed by `source_records.companies.id`, not a source-specific workflow
+schema.
+
+### Replace Central Company Tables With `entities.*`, `identity.*`, And `web.*`
+
+The old central company model should not be preserved as-is because `companies`
+contains `country_id` directly and therefore models one country per central
+company:
+
+```text
+companies
+company_aliases
+company_locations
+company_addresses
+company_phones
+company_emails
+company_industries
+company_markets
+company_services
+company_financials
+domains
+company_domains
+company_domain_reviews
+company_relationships
+```
+
+Preserve the concepts, but move them to the new layers:
+
+```text
+entities.legal_entities
+entities.legal_entity_source_links
+entities.legal_entity_relationships
+
+identity.companies
+identity.company_legal_entity_links
+identity.company_relationships
+identity.brands
+identity.brand_company_links
+identity.brand_legal_entity_links
+identity.brand_relationships
+
+web.domains
+web.websites
+web.company_website_links
+web.legal_entity_website_links
+web.brand_website_links
+web.source_record_website_links
+```
+
+Do not keep `companies.country_id` in the central identity table. Country belongs
+on legal entities and source records. A central company can link to many legal
+entities across countries.
+
+### Preserve Review Workflow Concepts
+
+The current suggestion tables contain useful review mechanics:
+
+```text
+suggestions
+suggestion_source_links
+suggestion_company_profiles
+suggestion_company_domains
+suggestion_company_locations
+suggestion_company_emails
+suggestion_company_phones
+suggestion_company_financials
+suggestion_company_industries
+suggestion_company_markets
+suggestion_company_services
+suggestion_company_relationships
+
+company_suggestions
+organization_suggestions
+open_source_project_suggestions
+company_domain_suggestions
+company_contact_suggestions
+company_location_suggestions
+company_status_suggestions
+company_relationship_suggestions
+```
+
+Do not preserve both generations. Preserve one review model with:
+
+- source link to the record or evidence that caused the suggestion
+- target type and target ID
+- operation: add, update, remove, replace, merge, split
+- pending/applied/rejected/superseded status
+- confidence
+- reviewer, reviewed timestamp, and review note
+- proposed JSON payload and optional field-level proposed rows
+
+The new review model should target the new tables: legal entities, identity
+companies, brands, web links, and relationships.
+
+### Optional Or Product-Specific
+
+These tables are not part of the core company identity replacement. Keep only if
+the product still needs those features:
+
+```text
+organizations
+open_source_projects
+cpe_entity_link_suggestions
+cpe_entity_links
+cve_entity_link_suggestions
+cve_entity_links
+companies_house_sic_codes
+domain_import_batches
+domain_crawl_jobs
+domain_crawl_job_pages
+translation_cache
+source_translation.*
+brreg_source.translation_terms
+ariregister_source.translation_terms
+brreg_source.translation_queue_entries
+ariregister_source.translation_queue_entries
+brreg_source.action_tasks
+ariregister_source.action_tasks
+france_source.action_tasks
+```
+
+For the clean replacement, translation and action queues should be generic or
+source-record based rather than hard-coded per source.
+
+### Views And Materialized Views
+
+Most current views are tied to old table shapes:
+
+```text
+v_companies
+v_company_sources
+v_company_domains
+v_domains
+v_resolved_entities
+v_company_locations
+v_company_phones
+v_company_emails
+v_company_industries
+v_company_markets
+v_company_services
+brreg_source.mv_company_explorer
+ariregister_source.mv_company_explorer
+france_source views
+```
+
+Rebuild views after the new base tables exist. Preserve the product surfaces, not
+the old SQL definitions:
+
+- source list and source detail
+- country-filtered source records
+- legal entity detail
+- central company detail
+- brand detail
+- source coverage summaries
+- unresolved duplicate/review queues
 
 ## Migration Stance
 
