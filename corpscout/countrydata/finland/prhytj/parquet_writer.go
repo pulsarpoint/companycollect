@@ -12,13 +12,27 @@ func WriteParquetRows[T any](path string, rows []T) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return errors.Wrap(err, "create parquet directory")
 	}
-	tempPath := path + ".tmp"
-	if err := parquet.WriteFile(tempPath, rows); err != nil {
+	tempFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return errors.Wrap(err, "create temporary parquet file")
+	}
+	tempPath := tempFile.Name()
+	removeTemp := func() {
 		_ = os.Remove(tempPath)
-		return errors.Wrap(err, "write parquet file")
+	}
+
+	writeErr := parquet.Write(tempFile, rows)
+	closeErr := tempFile.Close()
+	if writeErr != nil {
+		removeTemp()
+		return errors.Wrap(errors.CombineErrors(writeErr, closeErr), "write parquet file")
+	}
+	if closeErr != nil {
+		removeTemp()
+		return errors.Wrap(closeErr, "close parquet file")
 	}
 	if err := os.Rename(tempPath, path); err != nil {
-		_ = os.Remove(tempPath)
+		removeTemp()
 		return errors.Wrap(err, "rename parquet file")
 	}
 	return nil
