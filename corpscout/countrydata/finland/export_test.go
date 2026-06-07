@@ -43,12 +43,25 @@ func TestBuildFinalExportFromPRHSourceManifest(t *testing.T) {
 	if companiesFile.RowCount != 1 {
 		t.Fatalf("companies row count = %d, want 1", companiesFile.RowCount)
 	}
+	expectedSchemaHashes := map[string]string{
+		"companies":       schemaHashForRows[FinalCompanyRow](),
+		"company_names":   schemaHashForRows[FinalCompanyNameRow](),
+		"identifiers":     schemaHashForRows[FinalIdentifierRow](),
+		"addresses":       schemaHashForRows[FinalAddressRow](),
+		"industries":      schemaHashForRows[FinalIndustryRow](),
+		"websites":        schemaHashForRows[FinalWebsiteRow](),
+		"source_evidence": schemaHashForRows[FinalSourceEvidenceRow](),
+	}
 	for _, file := range manifest.Files {
 		if file.SHA256 == "" {
 			t.Fatalf("%s SHA256 is empty", file.Name)
 		}
-		if file.SchemaHash == "" {
-			t.Fatalf("%s schema hash is empty", file.Name)
+		expectedSchemaHash, ok := expectedSchemaHashes[file.Name]
+		if !ok {
+			t.Fatalf("unexpected export file %q", file.Name)
+		}
+		if file.SchemaHash != expectedSchemaHash {
+			t.Fatalf("%s schema hash = %q, want %q", file.Name, file.SchemaHash, expectedSchemaHash)
 		}
 		path := filepath.Join(manifestDir, file.Path)
 		info, err := os.Stat(path)
@@ -105,27 +118,81 @@ func TestBuildFinalExportFromPRHSourceManifest(t *testing.T) {
 }
 
 func TestBuildFinalExportRejectsInvalidSourceManifestIdentity(t *testing.T) {
-	dataDir := t.TempDir()
-	sourceResult := buildFinalExportSource(t, dataDir)
-	manifest, err := countryimport.LoadExportManifest(sourceResult.ManifestPath)
-	if err != nil {
-		t.Fatalf("load source manifest: %v", err)
-	}
-	manifest.ExportKind = "final"
-	if err := countryimport.SaveExportManifest(sourceResult.ManifestPath, manifest); err != nil {
-		t.Fatalf("rewrite source manifest: %v", err)
+	tests := []struct {
+		name           string
+		mutateManifest func(*countryimport.ExportManifest)
+		wantError      string
+	}{
+		{
+			name: "manifest version wrong",
+			mutateManifest: func(manifest *countryimport.ExportManifest) {
+				manifest.ManifestVersion = "countrydata.export.v0"
+			},
+			wantError: "invalid manifest version",
+		},
+		{
+			name: "export kind wrong",
+			mutateManifest: func(manifest *countryimport.ExportManifest) {
+				manifest.ExportKind = "final"
+			},
+			wantError: "invalid export kind",
+		},
+		{
+			name: "country wrong",
+			mutateManifest: func(manifest *countryimport.ExportManifest) {
+				manifest.CountryISO2 = "SE"
+			},
+			wantError: "invalid country",
+		},
+		{
+			name: "source slug wrong",
+			mutateManifest: func(manifest *countryimport.ExportManifest) {
+				sourceSlug := "wrong_source"
+				manifest.SourceSlug = &sourceSlug
+			},
+			wantError: "invalid source slug",
+		},
+		{
+			name: "source slug nil",
+			mutateManifest: func(manifest *countryimport.ExportManifest) {
+				manifest.SourceSlug = nil
+			},
+			wantError: "invalid source slug",
+		},
+		{
+			name: "schema version wrong",
+			mutateManifest: func(manifest *countryimport.ExportManifest) {
+				manifest.SchemaVersion = "finland.prhytj.source.v0"
+			},
+			wantError: "invalid schema version",
+		},
 	}
 
-	_, err = BuildFinalExport(t.Context(), BuildExportOptions{
-		DataDir:             dataDir,
-		RunID:               "final-run-invalid-manifest",
-		SourceManifestPaths: map[string]string{SourcePRHYTJ: sourceResult.ManifestPath},
-	})
-	if err == nil {
-		t.Fatal("build final export succeeded, want invalid source manifest error")
-	}
-	if !strings.Contains(err.Error(), "invalid export kind") {
-		t.Fatalf("error = %v, want invalid export kind", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			sourceResult := buildFinalExportSource(t, dataDir)
+			manifest, err := countryimport.LoadExportManifest(sourceResult.ManifestPath)
+			if err != nil {
+				t.Fatalf("load source manifest: %v", err)
+			}
+			tt.mutateManifest(&manifest)
+			if err := countryimport.SaveExportManifest(sourceResult.ManifestPath, manifest); err != nil {
+				t.Fatalf("rewrite source manifest: %v", err)
+			}
+
+			_, err = BuildFinalExport(t.Context(), BuildExportOptions{
+				DataDir:             dataDir,
+				RunID:               "final-run-invalid-manifest",
+				SourceManifestPaths: map[string]string{SourcePRHYTJ: sourceResult.ManifestPath},
+			})
+			if err == nil {
+				t.Fatal("build final export succeeded, want invalid source manifest error")
+			}
+			if !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("error = %v, want %s", err, tt.wantError)
+			}
+		})
 	}
 }
 
