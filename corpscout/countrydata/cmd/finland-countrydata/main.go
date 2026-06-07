@@ -243,7 +243,7 @@ func sourceResultMap(command string, result prhytj.ExportResult, extra map[strin
 	response := map[string]any{
 		"command":              command,
 		"country_iso2":         finland.CountryISO2,
-		"source":               result.SourceSlug,
+		"source":               finland.SourcePRHYTJ,
 		"status":               "ok",
 		"run_id":               result.RunID,
 		"manifest_path":        result.ManifestPath,
