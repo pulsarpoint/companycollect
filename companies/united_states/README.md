@@ -95,7 +95,7 @@ SEC EDGAR configuration can be set with environment variables:
 
 | Variable | Purpose |
 | --- | --- |
-| `USA_SEC_EDGAR_DATA_DIR` | Source data directory override. CLI `--data-dir` resolves to `sources/secedgar` and is preferred for normal runs. |
+| `USA_SEC_EDGAR_DATA_DIR` | Direct source-package data directory override. CLI users should prefer `--data-dir`; the CLI resolves that country data directory to `sources/secedgar`. |
 | `USA_SEC_EDGAR_DOWNLOAD_URL` | SEC company tickers JSON URL override. Defaults to `https://www.sec.gov/files/company_tickers.json`. |
 | `USA_SEC_EDGAR_USER_AGENT` | HTTP User-Agent for SEC requests. Set a real production contact string before live syncs. |
 | `USA_SEC_EDGAR_REQUEST_TIMEOUT` | Request timeout as a Go duration such as `30s`, or seconds as an integer. |

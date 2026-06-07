@@ -66,7 +66,7 @@ exports/<run-id>/manifest.json
 
 | Variable | Purpose |
 | --- | --- |
-| `USA_SEC_EDGAR_DATA_DIR` | Source data directory override. |
+| `USA_SEC_EDGAR_DATA_DIR` | Direct source-package data directory override. CLI users should prefer `--data-dir`; the CLI resolves that country data directory to `sources/secedgar`. |
 | `USA_SEC_EDGAR_DOWNLOAD_URL` | Download URL override. Defaults to SEC `company_tickers.json`. |
 | `USA_SEC_EDGAR_USER_AGENT` | User-Agent sent to SEC. Use a real organization/contact string in production. |
 | `USA_SEC_EDGAR_REQUEST_TIMEOUT` | Request timeout, for example `30s` or `30`. |
