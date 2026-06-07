@@ -32,6 +32,9 @@ func TestSourceExportWritesParquetFilesAndManifest(t *testing.T) {
 	if manifest.ExportKind != "source" || manifest.RecordsExported != 1 {
 		t.Fatalf("manifest = %#v", manifest)
 	}
+	if manifest.SourceSlug == nil || *manifest.SourceSlug != "prhytj" {
+		t.Fatalf("manifest source slug = %v, want prhytj", manifest.SourceSlug)
+	}
 	for _, name := range []string{"companies", "company_names", "legal_forms", "industries", "addresses", "registered_entries", "tax_registrations", "websites"} {
 		if exportFileByName(manifest.Files, name) == nil {
 			t.Fatalf("missing export file %s", name)

@@ -96,7 +96,7 @@ func (s *Source) Export(ctx context.Context, opts ExportOptions) (ExportResult, 
 		)
 	}
 
-	sourceSlug := SourceSlug
+	sourceSlug := "prhytj"
 	manifestPath := filepath.Join(exportDir, "manifest.json")
 	manifest := countryimport.ExportManifest{
 		ManifestVersion: countryimport.ExportManifestVersion,
