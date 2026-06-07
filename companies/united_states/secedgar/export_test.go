@@ -3,6 +3,7 @@ package secedgar
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/parquet-go/parquet-go"
@@ -93,6 +94,37 @@ func TestExportWritesParquetFilesAndManifest(t *testing.T) {
 		}
 		assertParquetRowCount(t, exportPath, tt.rows)
 	}
+
+	companyRows := readParquetRows[CompanyExportRow](t, filepath.Join(manifestDir, exportFileByName(manifest.Files, "companies").Path))
+	if len(companyRows) != 2 {
+		t.Fatalf("company rows len = %d, want 2", len(companyRows))
+	}
+	firstCompany := companyRows[0]
+	if firstCompany.SourceSlug != SourceSlug || firstCompany.CIK10 != "0000320193" ||
+		firstCompany.Ticker != "AAPL" || firstCompany.LegalName != "Apple Inc." {
+		t.Fatalf("first company row = %#v", firstCompany)
+	}
+
+	identifierRows := readParquetRows[IdentifierExportRow](t, filepath.Join(manifestDir, exportFileByName(manifest.Files, "identifiers").Path))
+	if len(identifierRows) != 4 {
+		t.Fatalf("identifier rows len = %d, want 4", len(identifierRows))
+	}
+	if !hasIdentifierRow(identifierRows, "0000320193", "cik10", "0000320193") {
+		t.Fatalf("missing AAPL CIK10 identifier: %#v", identifierRows)
+	}
+	if !hasIdentifierRow(identifierRows, "0000320193", "ticker", "AAPL") {
+		t.Fatalf("missing AAPL ticker identifier: %#v", identifierRows)
+	}
+
+	evidenceRows := readParquetRows[SourceEvidenceExportRow](t, filepath.Join(manifestDir, exportFileByName(manifest.Files, "source_evidence").Path))
+	if len(evidenceRows) != 2 {
+		t.Fatalf("source evidence rows len = %d, want 2", len(evidenceRows))
+	}
+	firstEvidence := evidenceRows[0]
+	if firstEvidence.SourceSlug != SourceSlug || firstEvidence.CIK10 != "0000320193" ||
+		firstEvidence.SourcePayloadHash == "" || !strings.Contains(firstEvidence.Evidence, `"ticker":"AAPL"`) {
+		t.Fatalf("first source evidence row = %#v", firstEvidence)
+	}
 }
 
 func TestExportHonorsLimit(t *testing.T) {
@@ -144,6 +176,36 @@ func assertParquetRowCount(t *testing.T, path string, want int64) {
 	if file.NumRows() != want {
 		t.Fatalf("%s NumRows = %d, want %d", path, file.NumRows(), want)
 	}
+}
+
+func readParquetRows[T any](t *testing.T, path string) []T {
+	t.Helper()
+	handle, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open parquet handle: %v", err)
+	}
+	defer handle.Close()
+	info, err := handle.Stat()
+	if err != nil {
+		t.Fatalf("stat parquet handle: %v", err)
+	}
+	rows, err := parquet.Read[T](handle, info.Size())
+	if err != nil {
+		t.Fatalf("read parquet rows: %v", err)
+	}
+	return rows
+}
+
+func hasIdentifierRow(rows []IdentifierExportRow, cik10 string, identifierType string, identifierValue string) bool {
+	for _, row := range rows {
+		if row.SourceSlug == SourceSlug &&
+			row.CIK10 == cik10 &&
+			row.IdentifierType == identifierType &&
+			row.IdentifierValue == identifierValue {
+			return true
+		}
+	}
+	return false
 }
 
 func exportFileByName(files []countryimport.ExportFile, name string) *countryimport.ExportFile {

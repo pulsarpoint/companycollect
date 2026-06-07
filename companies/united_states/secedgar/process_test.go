@@ -36,7 +36,7 @@ func TestProcessReadsSnapshotInChunksUsesLatestAndHonorsLimit(t *testing.T) {
 		DataDir:       dataDir,
 		MetadataStore: metadataStore,
 	})
-	source.StoreFunc = func(ctx context.Context, records []CompanyTickerRecord) (countryimport.StoreResult, error) {
+	source.storeFunc = func(ctx context.Context, records []CompanyTickerRecord) (countryimport.StoreResult, error) {
 		chunkSizes = append(chunkSizes, len(records))
 		stored = append(stored, records...)
 		return countryimport.StoreResult{
@@ -82,6 +82,31 @@ func TestProcessReadsSnapshotInChunksUsesLatestAndHonorsLimit(t *testing.T) {
 	}
 	if source.latestProcess == nil || source.latestProcess.SnapshotPath != newerPath {
 		t.Fatalf("latestProcess = %#v, want newer snapshot", source.latestProcess)
+	}
+}
+
+func TestProcessLatestSnapshotTieBreaksByLexicographicallyLargestPath(t *testing.T) {
+	dataDir := t.TempDir()
+	firstPath := filepath.Join(dataDir, "snapshots", "sec_edgar_company_tickers_20260101T120000.000000000Z.json")
+	secondPath := filepath.Join(dataDir, "snapshots", "sec_edgar_company_tickers_20260101T120001.000000000Z.json")
+	writeSECTestFile(t, firstPath, []byte(`{"0":{"cik_str":1,"ticker":"ONE","title":"One Inc."}}`))
+	writeSECTestFile(t, secondPath, []byte(`{"0":{"cik_str":2,"ticker":"TWO","title":"Two Inc."}}`))
+
+	sameTime := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(firstPath, sameTime, sameTime); err != nil {
+		t.Fatalf("set first snapshot time: %v", err)
+	}
+	if err := os.Chtimes(secondPath, sameTime, sameTime); err != nil {
+		t.Fatalf("set second snapshot time: %v", err)
+	}
+
+	source := NewSource(Config{DataDir: dataDir})
+	result, err := source.Process(context.Background(), countryimport.ProcessOptions{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("Process returned error: %v", err)
+	}
+	if result.SnapshotPath != secondPath {
+		t.Fatalf("SnapshotPath = %q, want lexicographically largest %q", result.SnapshotPath, secondPath)
 	}
 }
 

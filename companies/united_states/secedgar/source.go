@@ -14,7 +14,7 @@ type Source struct {
 	metadataStore  countryimport.MetadataStore
 	latestDownload *countryimport.DownloadMetadata
 	latestProcess  *countryimport.ProcessMetadata
-	StoreFunc      func(context.Context, []CompanyTickerRecord) (countryimport.StoreResult, error)
+	storeFunc      func(context.Context, []CompanyTickerRecord) (countryimport.StoreResult, error)
 }
 
 func NewSource(cfg Config) *Source {

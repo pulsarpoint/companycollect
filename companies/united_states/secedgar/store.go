@@ -8,8 +8,8 @@ import (
 )
 
 func (s *Source) Store(ctx context.Context, records []CompanyTickerRecord) (countryimport.StoreResult, error) {
-	if s != nil && s.StoreFunc != nil {
-		return s.StoreFunc(ctx, records)
+	if s != nil && s.storeFunc != nil {
+		return s.storeFunc(ctx, records)
 	}
 	if err := ctx.Err(); err != nil {
 		return countryimport.StoreResult{}, countryimport.WrapSourceError(

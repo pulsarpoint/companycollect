@@ -197,8 +197,10 @@ func latestSnapshotPath(snapshotsDir string) (string, error) {
 				errors.Wrap(err, "stat SEC EDGAR snapshot"),
 			)
 		}
-		if latestPath == "" || info.ModTime().After(latestModTime) {
-			latestPath = filepath.Join(snapshotsDir, entry.Name())
+		path := filepath.Join(snapshotsDir, entry.Name())
+		if latestPath == "" || info.ModTime().After(latestModTime) ||
+			(info.ModTime().Equal(latestModTime) && path > latestPath) {
+			latestPath = path
 			latestModTime = info.ModTime()
 		}
 	}
