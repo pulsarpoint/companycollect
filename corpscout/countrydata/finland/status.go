@@ -65,5 +65,18 @@ func latestManifestPath(exportsDir string) (string, error) {
 		return "", os.ErrNotExist
 	}
 	sort.Strings(runDirs)
-	return filepath.Join(exportsDir, runDirs[len(runDirs)-1], "manifest.json"), nil
+	for i := len(runDirs) - 1; i >= 0; i-- {
+		manifestPath := filepath.Join(exportsDir, runDirs[i], "manifest.json")
+		info, err := os.Stat(manifestPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", errors.Wrap(err, "stat export manifest")
+		}
+		if !info.IsDir() {
+			return manifestPath, nil
+		}
+	}
+	return "", os.ErrNotExist
 }
