@@ -121,10 +121,10 @@ Create `companies/united_states/go.mod`:
 ```go
 module github.com/pulsarpoint/companycollect/companies/united_states
 
-go 1.26
+go 1.26.1
 
 require (
-	github.com/cockroachdb/errors v1.12.0
+	github.com/cockroachdb/errors v1.13.0
 	github.com/parquet-go/parquet-go v0.30.1
 	github.com/pulsarpoint/companycollect/companies/common v0.0.0
 )
@@ -180,7 +180,7 @@ func (l Layout) FinalExportsDir() string {
 
 Create `companies/united_states/README.md`:
 
-```markdown
+````markdown
 # United States Country Data
 
 Standalone Go module for United States company data collection and export.
@@ -200,7 +200,7 @@ GOWORK=off go run ./cmd/united-states-countrydata build-export --data-dir ../dat
 ```
 
 When `--data-dir` is omitted, the CLI uses `../data/united_states/countrydata`.
-```
+````
 
 - [ ] **Step 6: Run layout tests to verify GREEN**
 
@@ -2074,7 +2074,7 @@ git commit -m "feat: add United States countrydata CLI"
 
 Create `companies/united_states/secedgar/README.md`:
 
-```markdown
+````markdown
 # SEC EDGAR Countrydata Source
 
 Source: `https://www.sec.gov/files/company_tickers.json`
@@ -2100,7 +2100,7 @@ Gated live test:
 ```bash
 COUNTRYDATA_SEC_EDGAR_LIVE=1 GOWORK=off go test -tags=integration ./secedgar -run TestLive -count=1 -v
 ```
-```
+````
 
 - [ ] **Step 2: Add gated live test**
 
@@ -2148,7 +2148,7 @@ func TestLiveDownloadAndExport(t *testing.T) {
 
 Modify `companies/united_states/README.md` to include:
 
-```markdown
+````markdown
 SEC EDGAR source sync:
 
 ```bash
@@ -2157,7 +2157,7 @@ GOWORK=off go run ./cmd/united-states-countrydata sync-source --source secedgar 
 GOWORK=off go run ./cmd/united-states-countrydata status-source --source secedgar --data-dir ../data/united_states/countrydata
 GOWORK=off go run ./cmd/united-states-countrydata build-export --data-dir ../data/united_states/countrydata
 ```
-```
+````
 
 - [ ] **Step 4: Run full package tests**
 
