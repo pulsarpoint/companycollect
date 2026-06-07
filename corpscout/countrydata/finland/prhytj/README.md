@@ -18,6 +18,28 @@ The live integration tests are also skipped by default, even when the `integrati
 GOWORK=off go test -tags=integration ./finland/prhytj/... -run TestLivePRHYTJ -count=1
 ```
 
+## Finland countrydata CLI
+
+The source can be run through the country-level CLI:
+
+```bash
+GOWORK=off go run ./cmd/finland-countrydata sync-source --source prhytj --data-dir ./data/countrydata/finland --max-pages 2
+GOWORK=off go run ./cmd/finland-countrydata status-source --source prhytj --data-dir ./data/countrydata/finland
+GOWORK=off go run ./cmd/finland-countrydata build-export --data-dir ./data/countrydata/finland
+```
+
+Source exports are written under:
+
+```text
+./data/countrydata/finland/sources/prhytj/exports/<run-id>/
+```
+
+Final country exports are written under:
+
+```text
+./data/countrydata/finland/final/exports/<run-id>/
+```
+
 ## Live Smoke Test
 
 The smoke test downloads two live pages into a temporary data directory, then processes the snapshot with a chunk size of 100:
