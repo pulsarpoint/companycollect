@@ -1,28 +1,38 @@
 ---
 name: company-countrydata-source-database-implementation
-description: Use when adding Corpscout Postgres storage, sqlc queries, DB store adapters, and DB-backed sync commands for an already implemented Go countrydata source.
+description: Legacy workflow for adding Corpscout Postgres raw storage to old scheduler-owned countrydata sources. Do not use for new country modules; use country parquet exports and a central parquet loader design instead.
 ---
 
 # Company Countrydata Source Database Implementation
 
 ## Purpose
 
-Use this skill to add Corpscout database storage for one existing Go
-`corpscout/countrydata` source. The result should persist source metadata,
-download/process audit metadata, and source-native raw records into Postgres
-while keeping the source package itself independent from scheduler/sqlc.
+This skill documents the old scheduler-owned raw Postgres storage workflow.
+Do not use it for new country modules.
 
-Use the Finland PRH YTJ implementation as the worked reference:
+New implementations live in country-owned modules such as:
 
 ```text
-corpscout/database/migrations/000105_finland_prh_ytj_countrydata_storage.*.sql
-corpscout/database/queries/countrydata_finland_prh_ytj.sql
-corpscout/scheduler/internal/countrydata/finland_prhytj_store.go
-corpscout/scheduler/cmd/finland-prhytj-sync/
+companies/{country_slug}/go.mod
+companies/{country_slug}/cmd/{country_slug}-countrydata/
+companies/{country_slug}/{source_package}/
+companies/common/countryimport/
 ```
 
-Do not use this skill to discover sources, analyze source fields, or implement
-the source downloader/parser. Those must already be complete.
+They should produce source and final parquet exports plus manifests. Corpscout
+or another central orchestrator should run the country binary/container and load
+the parquet outputs through a central loader. It should not import country
+modules or add scheduler DB-backed source sync commands.
+
+If the user asks to add database storage for a new source, stop and say:
+
+```text
+The old scheduler DB-backed source storage workflow is deprecated. Use the
+country module binary/parquet export architecture instead: implement or update
+companies/{country_slug}, then create a central parquet loader/import design.
+```
+
+The remaining sections are historical reference only for existing legacy code.
 
 ## Required Preflight Gate
 
@@ -62,13 +72,13 @@ Go source implementation output from
 `company-countrydata-source-implementation`:
 
 ```text
-corpscout/countrydata/{country_slug}/{source_package}/config.go
-corpscout/countrydata/{country_slug}/{source_package}/source.go
-corpscout/countrydata/{country_slug}/{source_package}/types.go
-corpscout/countrydata/{country_slug}/{source_package}/download.go
-corpscout/countrydata/{country_slug}/{source_package}/process.go
-corpscout/countrydata/{country_slug}/{source_package}/store.go
-corpscout/countrydata/{country_slug}/{source_package}/*_test.go
+companies/{country_slug}/{source_package}/config.go
+companies/{country_slug}/{source_package}/source.go
+companies/{country_slug}/{source_package}/types.go
+companies/{country_slug}/{source_package}/download.go
+companies/{country_slug}/{source_package}/process.go
+companies/{country_slug}/{source_package}/store.go
+companies/{country_slug}/{source_package}/*_test.go
 ```
 
 If discovery files are missing, stop and say:

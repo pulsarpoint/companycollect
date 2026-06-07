@@ -19,7 +19,8 @@ The goal is to analyze what company information can actually be obtained for
 that country, source by source, then propose a country-specific combined JSON
 object that represents the richest practical company profile for that country.
 For each implementable source, also produce a machine-readable handoff file for
-the Go `corpscout/countrydata` source implementation skill.
+the Go country module source implementation skill under
+`companies/{country_slug}`.
 
 Do not force countries into one shared global schema. Country registers differ
 too much in identifiers, legal concepts, filings, ownership, financial data,
@@ -38,7 +39,7 @@ Use this skill when the task asks for any of the following:
 - Document join keys, source precedence, freshness, missing fields, and license
   constraints for country company data.
 - Prepare source naming, transport, parsing, fixture, and mapping details for a
-  later Go `corpscout/countrydata` implementation.
+  later Go `companies/{country_slug}` implementation.
 
 Do not use this skill to discover sources from scratch. Use
 `company-open-data-discovery` first when the country analysis folder, country

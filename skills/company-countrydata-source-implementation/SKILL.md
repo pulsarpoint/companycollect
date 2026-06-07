@@ -1,6 +1,6 @@
 ---
 name: company-countrydata-source-implementation
-description: Use when implementing a Go countrydata source in companycollect/corpscout/countrydata from completed company source discovery and country data-model analysis artifacts.
+description: Use when implementing a Go countrydata source in a country-owned module under companycollect/companies/{country_slug} from completed company source discovery and country data-model analysis artifacts.
 ---
 
 # Company Countrydata Source Implementation
@@ -20,10 +20,10 @@ companycollect/companies/analysis/{country_slug}
 ```
 
 The goal is to implement one analyzed data source as a standalone Go source
-package under:
+package inside the country-owned Go module under:
 
 ```text
-companycollect/corpscout/countrydata/{country_slug}/{source_package}
+companycollect/companies/{country_slug}/{source_package}
 ```
 
 Do not use this skill to discover new sources, research licenses, or generate
@@ -105,8 +105,10 @@ rules, or sample records to bypass this gate.
 
 ## Architecture Rules
 
-- Keep source logic in `corpscout/countrydata`, not `scheduler/internal`.
-- Reuse `github.com/pulsarpoint/corpscout/countrydata/import` for shared
+- Keep source logic in `companies/{country_slug}`, not `corpscout` or
+  `scheduler/internal`.
+- Each country owns its own `go.mod` and builds its own country-level binary.
+- Reuse `github.com/pulsarpoint/companycollect/companies/common/countryimport` for shared
   options, results, metadata, env loading, and classified errors.
 - Implement a concrete source package. Do not add a source registry or local
   interface unless there are multiple real implementations that need it.
@@ -136,7 +138,7 @@ For a source like `finland_prh_ytj_v3`, follow the existing Finland package as
 the reference pattern:
 
 ```text
-corpscout/countrydata/{country_slug}/{source_package}/
+companies/{country_slug}/{source_package}/
   README.md
   config.go
   source.go
@@ -153,17 +155,13 @@ corpscout/countrydata/{country_slug}/{source_package}/
 Also add a standalone CLI when the source should run outside scheduler:
 
 ```text
-corpscout/countrydata/cmd/{source_package}-import/main.go
+companies/{country_slug}/cmd/{country_slug}-countrydata/main.go
 ```
 
-Add a scheduler adapter only when Corpscout needs to call the source:
-
-```text
-corpscout/scheduler/internal/countrydata/{country_slug}_{source_package}.go
-```
-
-The adapter should construct the concrete source and call `Download`,
-`Process`, or both. Keep Temporal registration direct in scheduler app wiring.
+The country CLI should construct concrete sources and call `Download`,
+`Process`, source export, status, and final export methods. Corpscout should run
+the country binary or container and consume produced manifests/parquet files; do
+not import country modules into scheduler for new implementations.
 
 Use this as a structural template, not as copy-paste source code:
 
@@ -317,21 +315,24 @@ Keep initial storage source-local and direct:
 - when adding DB persistence later, inject it as a concrete dependency or store
   callback owned by the source package
 
-Do not import scheduler sqlc types into `corpscout/countrydata`.
+Do not import scheduler sqlc types into `companies/{country_slug}`.
 
-### 7. Add CLI
+### 7. Add Country CLI
 
 The CLI should support:
 
 ```text
-{source_package}-import download --env .env
-{source_package}-import process --env .env
-{source_package}-import run --env .env
+{country_slug}-countrydata sync-source --source {source_package} --env .env
+{country_slug}-countrydata status-source --source {source_package} --env .env
+{country_slug}-countrydata export-source --source {source_package} --env .env
+{country_slug}-countrydata status --env .env
+{country_slug}-countrydata build-export --env .env
+{country_slug}-countrydata sync --source {source_package} --build-export --env .env
 ```
 
-The CLI loads `.env`, constructs the source, calls the same public methods used
-by scheduler, logs once with `slog`, and exits non-zero on classified source
-failures.
+The CLI loads `.env`, constructs concrete sources, calls the same public methods
+used by tests and source packages, logs once with `slog`, writes JSON results to
+stdout, and exits non-zero on classified source failures.
 
 ### 8. Add Gated Live Tests
 
@@ -342,10 +343,10 @@ Use a build tag and env gates:
 
 ```sh
 COUNTRYDATA_{SOURCE_PREFIX}_LIVE=1 \
-GOWORK=off go test -tags=integration ./{country_slug}/{source_package}/... -run TestLive -count=1 -v
+GOWORK=off go test -tags=integration ./{source_package}/... -run TestLive -count=1 -v
 
 COUNTRYDATA_{SOURCE_PREFIX}_LIVE_FULL=1 \
-GOWORK=off go test -tags=integration ./{country_slug}/{source_package}/... -run TestLive -count=1 -v
+GOWORK=off go test -tags=integration ./{source_package}/... -run TestLive -count=1 -v
 ```
 
 Live smoke tests should download a bounded subset and process it. Full live
@@ -355,17 +356,19 @@ turn it into a default regression test.
 
 ## Verification
 
-Run from `companycollect/corpscout/countrydata`:
+Run shared helper tests from `companycollect/companies/common`:
 
 ```sh
 GOWORK=off go test ./... -count=1
-GOWORK=off go test -tags=integration ./{country_slug}/{source_package}/... -run TestLive -count=1 -v
 ```
 
-If a scheduler adapter was added, also run from `companycollect/corpscout/scheduler`:
+Run source and country CLI tests from `companycollect/companies/{country_slug}`:
 
 ```sh
-GOWORK=off go test ./internal/countrydata -count=1 -v
+GOWORK=off go test ./... -count=1
+GOWORK=off go build -o ./bin/{country_slug}-countrydata ./cmd/{country_slug}-countrydata
+rm -f ./bin/{country_slug}-countrydata
+GOWORK=off go test -tags=integration ./{source_package}/... -run TestLive -count=1 -v
 ```
 
 Report when live tests are skipped because env gates are not set. Do not claim a
@@ -376,14 +379,14 @@ full live source run passed unless it actually ran.
 Use these files as the concrete reference implementation:
 
 ```text
-companycollect/corpscout/countrydata/import/
-companycollect/corpscout/countrydata/finland/prhytj/
-companycollect/corpscout/countrydata/cmd/prhytj-import/
-companycollect/corpscout/scheduler/internal/countrydata/finland_prhytj.go
+companycollect/companies/common/countryimport/
+companycollect/companies/finland/prhytj/
+companycollect/companies/finland/cmd/finland-countrydata/
 ```
 
 Finland PRH YTJ is real, tested, and complete enough to guide the next source:
-it includes shared import use, source config, typed source records, mapping,
+it includes shared common helper use, source config, typed source records, mapping,
 download, process, store, metadata persistence, fixture tests, gated live tests,
-a standalone CLI, and a scheduler adapter. Copy structure and behavior, not
-Finland-specific field names or PRH-specific pagination assumptions.
+a country-level standalone CLI, source parquet export, and final country parquet
+export. Copy structure and behavior, not Finland-specific field names or
+PRH-specific pagination assumptions.
