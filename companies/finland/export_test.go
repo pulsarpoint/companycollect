@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/parquet-go/parquet-go"
-	"github.com/pulsarpoint/companycollect/companies/finland/prhytj"
 	countryimport "github.com/pulsarpoint/companycollect/companies/common/countryimport"
+	"github.com/pulsarpoint/companycollect/companies/finland/prhytj"
 )
 
 func TestBuildFinalExportFromPRHSourceManifest(t *testing.T) {
@@ -42,6 +42,10 @@ func TestBuildFinalExportFromPRHSourceManifest(t *testing.T) {
 	companiesFile := requireExportFile(t, manifest.Files, "companies")
 	if companiesFile.RowCount != 1 {
 		t.Fatalf("companies row count = %d, want 1", companiesFile.RowCount)
+	}
+	addressesFile := requireExportFile(t, manifest.Files, "addresses")
+	if addressesFile.RowCount != 1 {
+		t.Fatalf("addresses row count = %d, want 1", addressesFile.RowCount)
 	}
 	expectedSchemaHashes := map[string]string{
 		"companies":       schemaHashForRows[FinalCompanyRow](),
@@ -111,6 +115,24 @@ func TestBuildFinalExportFromPRHSourceManifest(t *testing.T) {
 	}
 	if !hasIdentifier(identifiers, "FI:0100130-4", "business_id", "0100130-4") {
 		t.Fatalf("missing business ID identifier in %#v", identifiers)
+	}
+
+	addresses, err := parquet.ReadFile[FinalAddressRow](filepath.Join(manifestDir, addressesFile.Path))
+	if err != nil {
+		t.Fatalf("read addresses parquet: %v", err)
+	}
+	if len(addresses) != 1 {
+		t.Fatalf("addresses len = %d, want 1", len(addresses))
+	}
+	address := addresses[0]
+	if address.CountryCompanyID != "FI:0100130-4" ||
+		address.AddressType != "visiting" ||
+		address.Street != "Testikatu 1" ||
+		address.PostCode != "00100" ||
+		address.City != "Helsinki" ||
+		address.Country != "FI" ||
+		!address.IsPrimary {
+		t.Fatalf("address row = %#v", address)
 	}
 
 	sourceEvidenceFile := requireExportFile(t, manifest.Files, "source_evidence")
@@ -255,7 +277,7 @@ func buildFinalExportSource(t *testing.T, dataDir string) prhytj.ExportResult {
 	sourceDataDir := filepath.Join(dataDir, "sources", SourcePRHYTJ)
 	source := prhytj.NewSource(prhytj.Config{DataDir: sourceDataDir})
 	snapshotPath := filepath.Join(sourceDataDir, "snapshots", "sample.ndjson")
-	writeTestFile(t, snapshotPath, []byte(`{"businessId":{"value":"0100130-4"},"names":[{"name":"Dynava Oy","type":"1"}],"tradeRegisterStatus":"1","status":"2"}`+"\n"))
+	writeTestFile(t, snapshotPath, []byte(`{"businessId":{"value":"0100130-4"},"names":[{"name":"Dynava Oy","type":"1"}],"addresses":[{"type":1,"street":"Testikatu 1","postCode":"00100","country":"FI","postOffices":[{"languageCode":"1","city":"Helsinki","municipalityCode":"091"}]}],"tradeRegisterStatus":"1","status":"2"}`+"\n"))
 	sourceResult, err := source.Export(t.Context(), prhytj.ExportOptions{
 		DataDir:      sourceDataDir,
 		SnapshotPath: snapshotPath,

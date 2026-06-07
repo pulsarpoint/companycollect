@@ -12,8 +12,8 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/parquet-go/parquet-go"
-	"github.com/pulsarpoint/companycollect/companies/finland/prhytj"
 	countryimport "github.com/pulsarpoint/companycollect/companies/common/countryimport"
+	"github.com/pulsarpoint/companycollect/companies/finland/prhytj"
 )
 
 type BuildExportOptions struct {
@@ -96,7 +96,30 @@ func BuildFinalExport(ctx context.Context, opts BuildExportOptions) (BuildExport
 		return BuildExportResult{}, err
 	}
 
-	rows := mapPRHCompaniesToFinal(companies)
+	addressesFile, err := sourceManifestFile(sourceManifest, "addresses")
+	if err != nil {
+		return BuildExportResult{}, errors.Wrap(err, "find PRH YTJ addresses file in source manifest")
+	}
+	addressesPath, err := resolveManifestFilePath(filepath.Dir(prhManifestPath), addressesFile.Path)
+	if err != nil {
+		return BuildExportResult{}, errors.Wrap(err, "resolve PRH YTJ addresses file path")
+	}
+	addressesSHA, _, err := countryimport.HashFileSHA256(addressesPath)
+	if err != nil {
+		return BuildExportResult{}, errors.Wrap(err, "hash PRH YTJ addresses parquet")
+	}
+	if addressesSHA != addressesFile.SHA256 {
+		return BuildExportResult{}, errors.Errorf("PRH YTJ addresses parquet SHA256 mismatch: manifest has %s, actual is %s", addressesFile.SHA256, addressesSHA)
+	}
+	addresses, err := parquet.ReadFile[prhytj.AddressExportRow](addressesPath)
+	if err != nil {
+		return BuildExportResult{}, errors.Wrap(err, "read PRH YTJ addresses parquet")
+	}
+	if err := ctx.Err(); err != nil {
+		return BuildExportResult{}, err
+	}
+
+	rows := mapPRHCompaniesToFinal(companies, addresses)
 	exportDir := filepath.Join(layout.FinalExportsDir(), runID)
 	files, err := writeFinalCoreFiles(ctx, exportDir, rows)
 	if err != nil {
@@ -177,19 +200,22 @@ func resolveManifestFilePath(manifestDir string, manifestFilePath string) (strin
 	return filepath.Join(manifestDir, manifestFilePath), nil
 }
 
-func mapPRHCompaniesToFinal(companies []prhytj.CompanyExportRow) finalRows {
+func mapPRHCompaniesToFinal(companies []prhytj.CompanyExportRow, addresses []prhytj.AddressExportRow) finalRows {
 	rows := finalRows{
 		Companies:      make([]FinalCompanyRow, 0, len(companies)),
 		CompanyNames:   make([]FinalCompanyNameRow, 0, len(companies)),
 		Identifiers:    make([]FinalIdentifierRow, 0, len(companies)*3),
+		Addresses:      make([]FinalAddressRow, 0, len(addresses)),
 		Industries:     make([]FinalIndustryRow, 0, len(companies)),
 		Websites:       make([]FinalWebsiteRow, 0, len(companies)),
 		SourceEvidence: make([]FinalSourceEvidenceRow, 0, len(companies)),
 	}
 	exportedAt := time.Now().UTC().Format(time.RFC3339)
+	companyIDs := make(map[string]struct{}, len(companies))
 	for _, company := range companies {
 		businessID := strings.TrimSpace(company.BusinessID)
 		countryCompanyID := "FI:" + businessID
+		companyIDs[businessID] = struct{}{}
 		finalCompany := FinalCompanyRow{
 			CountryCompanyID:      countryCompanyID,
 			CountryISO2:           CountryISO2,
@@ -266,7 +292,39 @@ func mapPRHCompaniesToFinal(companies []prhytj.CompanyExportRow) finalRows {
 			MergeRuleVersion:  MergeRuleVersionV1,
 		})
 	}
+	primaryAddressSet := make(map[string]struct{}, len(companies))
+	for _, address := range addresses {
+		businessID := strings.TrimSpace(address.BusinessID)
+		if _, ok := companyIDs[businessID]; !ok {
+			continue
+		}
+		countryCompanyID := "FI:" + businessID
+		isPrimary := false
+		if _, ok := primaryAddressSet[countryCompanyID]; !ok {
+			isPrimary = true
+			primaryAddressSet[countryCompanyID] = struct{}{}
+		}
+		rows.Addresses = append(rows.Addresses, FinalAddressRow{
+			CountryCompanyID: countryCompanyID,
+			CountryISO2:      CountryISO2,
+			SourceSlug:       SourcePRHYTJ,
+			SourceRecordID:   address.SourceRecordID,
+			AddressType:      address.AddressType,
+			Street:           address.Street,
+			PostCode:         address.PostCode,
+			City:             preferredAddressCity(address),
+			Country:          address.Country,
+			IsPrimary:        isPrimary,
+		})
+	}
 	return rows
+}
+
+func preferredAddressCity(address prhytj.AddressExportRow) string {
+	if strings.TrimSpace(address.CityFi) != "" {
+		return address.CityFi
+	}
+	return address.CitySv
 }
 
 func appendIdentifier(rows []FinalIdentifierRow, countryCompanyID string, sourceRecordID string, identifierType string, value string, isPrimary bool) []FinalIdentifierRow {
