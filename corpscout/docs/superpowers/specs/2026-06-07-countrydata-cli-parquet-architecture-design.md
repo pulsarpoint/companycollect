@@ -186,7 +186,7 @@ use shared names wherever possible.
 The final country export is the country-level product contract. It combines all
 source exports for a country and applies merge rules.
 
-Required final export files:
+Required final core files:
 
 - `companies.parquet`
 - `company_names.parquet`
@@ -196,6 +196,28 @@ Required final export files:
 - `websites.parquet`
 - `source_evidence.parquet`
 - `manifest.json`
+
+Every country final export must include these files, even when a file has zero
+rows. This keeps the central Corpscout importer generic.
+
+Countries may also emit optional capability files declared in `manifest.json`,
+for example:
+
+- `financial_statements.parquet`
+- `officers.parquet`
+- `beneficial_owners.parquet`
+- `filings.parquet`
+- `branches.parquet`
+- `licenses.parquet`
+- `tax_registrations.parquet`
+- `capital.parquet`
+- `contacts.parquet`
+- `employment.parquet`
+
+Central Corpscout imports core files through one generic importer. Optional
+capability files are imported only when central has a generic handler for that
+capability. Unknown optional files are recorded in import audit metadata and are
+not required for product queries.
 
 Every final company row must have:
 
@@ -226,8 +248,45 @@ is_translated
 exported_at
 ```
 
+Company identity is country-scoped. Central uniqueness is based on the country
+registration, not a global company name:
+
+```text
+unique(country_iso2, country_company_id)
+unique(country_iso2, primary_registry_id)
+```
+
 The final export should not hide lineage. Field-level source evidence belongs in
 `source_evidence.parquet`.
+
+Company groups, headquarters roles, and direct company relationships are future
+central enrichment outputs. They are not required in the v1 final country export.
+Country/source modules may export explicit registry-provided relationship facts
+as optional capability files when available.
+
+## Augmentation Boundary
+
+Source modules perform augmentation that is required to understand the source:
+
+- parse source-specific fields
+- map local status codes into common lifecycle values
+- map local legal form and industry codes into source export fields
+- preserve source-provided English labels when available
+- compute source hashes, lineage, and confidence
+
+Central Corpscout performs augmentation that must be consistent across countries:
+
+- machine translation
+- currency conversion
+- global search indexing
+- cross-country deduplication
+- shared enrichment datasets
+- company group and relationship inference
+- product scoring and analytics
+
+Source modules export untranslated text, source-provided English text, original
+amounts, original currencies, and translation/source hashes. Central enrichment
+decides how to translate and convert values for product use.
 
 ## Merge Rules
 
@@ -363,7 +422,8 @@ The central importer should:
 5. Store import audit metadata.
 
 Central tables should be generic across countries. They should not duplicate each
-country/source raw schema.
+country/source raw schema, and they should be partitioned by `country_iso2` when
+row counts justify it.
 
 Source-specific exports may be imported into central audit/debug storage later,
 but they are not required for product queries.
