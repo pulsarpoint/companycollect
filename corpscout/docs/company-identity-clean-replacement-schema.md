@@ -345,42 +345,41 @@ source_records.company_names
 source_records.identifiers
 source_records.legal_forms
 source_records.addresses
+source_records.contacts
 source_records.industries
 source_records.websites
 source_records.source_evidence
 ```
 
-Examples of child-owned fields:
+Every child table should include source lineage, item hashing, evidence, and row
+timestamps. Child tables that contain source text needing English output should
+also include row-level translation state.
 
-```text
-source_records.company_names
-  name, name_en, name_type, is_primary, valid_from, valid_to
+### `source_records.company_names`
 
-source_records.identifiers
-  identifier_type, identifier_value, issuing_country_id, is_primary
-
-source_records.legal_forms
-  legal_form_code, legal_form_label, legal_form_label_en, valid_from, valid_to
-
-source_records.addresses
-  address_type, street, street_en, city, city_en, region, postal_code,
-  country_id, formatted_address, formatted_address_en, geocode state
-
-source_records.industries
-  source_code, source_label, source_label_en, mapped_nace_code,
-  nace_code_id, mapping_method, is_primary
-
-source_records.websites
-  url, normalized_url, host, website_type, is_primary, title, title_en
-```
-
-Each child row should include:
+Stores legal names, trade names, former names, aliases, and source-specific name
+types.
 
 ```sql
 id UUID PRIMARY KEY
 source_company_id UUID NOT NULL REFERENCES source_records.companies(id) ON DELETE CASCADE
 source_id UUID NOT NULL REFERENCES registry.sources(id)
 source_export_id UUID REFERENCES registry.source_exports(id)
+
+name TEXT NOT NULL
+name_en TEXT
+name_normalized TEXT
+name_type TEXT NOT NULL DEFAULT 'unknown'
+source_name_type_code TEXT
+source_name_type_label TEXT
+source_name_type_label_en TEXT
+language_code TEXT
+is_primary BOOLEAN NOT NULL DEFAULT false
+is_current BOOLEAN NOT NULL DEFAULT true
+valid_from DATE
+valid_to DATE
+source_position INTEGER
+
 source_item_hash TEXT NOT NULL
 raw_item_payload JSONB NOT NULL DEFAULT '{}'::jsonb
 evidence JSONB NOT NULL DEFAULT '{}'::jsonb
@@ -390,6 +389,378 @@ translation_required_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
 translated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
 untranslated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
 translated_at TIMESTAMPTZ
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+
+UNIQUE (source_company_id, source_item_hash)
+```
+
+Recommended `name_type` values:
+
+```text
+legal_name
+trade_name
+former_name
+alias
+short_name
+translated_name
+unknown
+```
+
+### `source_records.identifiers`
+
+Stores registration numbers, tax IDs, VAT IDs, LEIs, EUIDs, source IDs, and other
+stable identifiers.
+
+```sql
+id UUID PRIMARY KEY
+source_company_id UUID NOT NULL REFERENCES source_records.companies(id) ON DELETE CASCADE
+source_id UUID NOT NULL REFERENCES registry.sources(id)
+source_export_id UUID REFERENCES registry.source_exports(id)
+
+identifier_type TEXT NOT NULL
+identifier_value TEXT NOT NULL
+identifier_value_normalized TEXT
+issuing_country_id UUID REFERENCES countries(id)
+issuing_jurisdiction_code TEXT
+scheme TEXT
+scheme_uri TEXT
+is_primary BOOLEAN NOT NULL DEFAULT false
+is_current BOOLEAN NOT NULL DEFAULT true
+valid_from DATE
+valid_to DATE
+source_position INTEGER
+
+source_item_hash TEXT NOT NULL
+raw_item_payload JSONB NOT NULL DEFAULT '{}'::jsonb
+evidence JSONB NOT NULL DEFAULT '{}'::jsonb
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+
+UNIQUE (source_company_id, identifier_type, identifier_value_normalized)
+```
+
+Recommended `identifier_type` values:
+
+```text
+registration_number
+source_native_id
+tax_id
+vat_id
+lei
+euid
+cik
+duns
+sam_uei
+other
+```
+
+### `source_records.legal_forms`
+
+Stores current and historical legal forms and source-provided labels.
+
+```sql
+id UUID PRIMARY KEY
+source_company_id UUID NOT NULL REFERENCES source_records.companies(id) ON DELETE CASCADE
+source_id UUID NOT NULL REFERENCES registry.sources(id)
+source_export_id UUID REFERENCES registry.source_exports(id)
+
+legal_form_code TEXT
+legal_form_label TEXT
+legal_form_label_en TEXT
+legal_form_label_normalized TEXT
+legal_form_family TEXT
+language_code TEXT
+is_current BOOLEAN NOT NULL DEFAULT true
+valid_from DATE
+valid_to DATE
+source_position INTEGER
+
+source_item_hash TEXT NOT NULL
+raw_item_payload JSONB NOT NULL DEFAULT '{}'::jsonb
+evidence JSONB NOT NULL DEFAULT '{}'::jsonb
+translation_source_hash TEXT
+is_translated BOOLEAN NOT NULL DEFAULT false
+translation_required_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+untranslated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_at TIMESTAMPTZ
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+
+UNIQUE (source_company_id, source_item_hash)
+```
+
+### `source_records.addresses`
+
+Stores registered, visiting, postal, headquarters, establishment, and other
+source-provided addresses.
+
+```sql
+id UUID PRIMARY KEY
+source_company_id UUID NOT NULL REFERENCES source_records.companies(id) ON DELETE CASCADE
+source_id UUID NOT NULL REFERENCES registry.sources(id)
+source_export_id UUID REFERENCES registry.source_exports(id)
+
+address_type TEXT NOT NULL DEFAULT 'unknown'
+address_rank INTEGER NOT NULL DEFAULT 1
+is_primary BOOLEAN NOT NULL DEFAULT false
+is_current BOOLEAN NOT NULL DEFAULT true
+
+street TEXT
+street_en TEXT
+street_lines TEXT[] NOT NULL DEFAULT '{}'::text[]
+street_lines_en TEXT[] NOT NULL DEFAULT '{}'::text[]
+building_number TEXT
+unit TEXT
+post_office_box TEXT
+care_of TEXT
+care_of_en TEXT
+postal_code TEXT
+city TEXT
+city_en TEXT
+region TEXT
+region_en TEXT
+municipality_code TEXT
+municipality TEXT
+municipality_en TEXT
+country_id UUID REFERENCES countries(id)
+country_code TEXT
+country_label TEXT
+country_label_en TEXT
+formatted_address TEXT
+formatted_address_en TEXT
+
+latitude NUMERIC(10, 7)
+longitude NUMERIC(10, 7)
+coordinate_system TEXT
+geocode_status TEXT NOT NULL DEFAULT 'not_attempted'
+geocode_provider TEXT
+geocode_provider_place_id TEXT
+geocode_confidence REAL
+geocode_precision TEXT
+geocoded_at TIMESTAMPTZ
+geocode_payload JSONB NOT NULL DEFAULT '{}'::jsonb
+
+valid_from DATE
+valid_to DATE
+source_position INTEGER
+
+source_item_hash TEXT NOT NULL
+raw_item_payload JSONB NOT NULL DEFAULT '{}'::jsonb
+evidence JSONB NOT NULL DEFAULT '{}'::jsonb
+translation_source_hash TEXT
+is_translated BOOLEAN NOT NULL DEFAULT false
+translation_required_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+untranslated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_at TIMESTAMPTZ
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+
+UNIQUE (source_company_id, source_item_hash)
+```
+
+Recommended `address_type` values:
+
+```text
+registered
+visiting
+postal
+headquarters
+establishment
+mailing
+other
+unknown
+```
+
+### `source_records.industries`
+
+Stores source industry classifications and optional NACE mappings.
+
+```sql
+id UUID PRIMARY KEY
+source_company_id UUID NOT NULL REFERENCES source_records.companies(id) ON DELETE CASCADE
+source_id UUID NOT NULL REFERENCES registry.sources(id)
+source_export_id UUID REFERENCES registry.source_exports(id)
+nace_code_id UUID REFERENCES nace_codes(id) ON DELETE RESTRICT
+
+classification_type TEXT NOT NULL DEFAULT 'industry'
+source_code TEXT
+source_code_set TEXT
+source_label TEXT
+source_label_en TEXT
+source_label_normalized TEXT
+mapped_nace_code TEXT
+nace_revision TEXT
+nace_title TEXT
+nace_title_en TEXT
+mapping_method TEXT
+mapping_confidence REAL
+is_primary BOOLEAN NOT NULL DEFAULT false
+is_current BOOLEAN NOT NULL DEFAULT true
+valid_from DATE
+valid_to DATE
+source_position INTEGER
+
+source_item_hash TEXT NOT NULL
+raw_item_payload JSONB NOT NULL DEFAULT '{}'::jsonb
+evidence JSONB NOT NULL DEFAULT '{}'::jsonb
+translation_source_hash TEXT
+is_translated BOOLEAN NOT NULL DEFAULT false
+translation_required_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+untranslated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_at TIMESTAMPTZ
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+
+UNIQUE (source_company_id, classification_type, source_position)
+```
+
+Recommended `classification_type` values:
+
+```text
+industry
+primary_activity
+secondary_activity
+institutional_sector
+helper_unit
+other
+```
+
+### `source_records.contacts`
+
+Stores source-provided phone numbers, email addresses, fax numbers, and other
+contact points. Domains extracted from contact emails can later support
+`web.*` links, but this table preserves the source assertion.
+
+```sql
+id UUID PRIMARY KEY
+source_company_id UUID NOT NULL REFERENCES source_records.companies(id) ON DELETE CASCADE
+source_id UUID NOT NULL REFERENCES registry.sources(id)
+source_export_id UUID REFERENCES registry.source_exports(id)
+
+contact_type TEXT NOT NULL
+contact_value TEXT NOT NULL
+contact_value_normalized TEXT
+label TEXT
+label_en TEXT
+language_code TEXT
+is_primary BOOLEAN NOT NULL DEFAULT false
+is_current BOOLEAN NOT NULL DEFAULT true
+confidence REAL
+valid_from DATE
+valid_to DATE
+source_position INTEGER
+
+source_item_hash TEXT NOT NULL
+raw_item_payload JSONB NOT NULL DEFAULT '{}'::jsonb
+evidence JSONB NOT NULL DEFAULT '{}'::jsonb
+translation_source_hash TEXT
+is_translated BOOLEAN NOT NULL DEFAULT false
+translation_required_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+untranslated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_at TIMESTAMPTZ
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+
+UNIQUE (source_company_id, contact_type, contact_value_normalized)
+```
+
+Recommended `contact_type` values:
+
+```text
+email
+phone
+fax
+contact_page
+support
+sales
+other
+```
+
+### `source_records.websites`
+
+Stores source-asserted websites, social profiles, directory profiles, and other
+URLs. Resolved shared domains/websites live in `web.*`; this table preserves what
+the source asserted.
+
+```sql
+id UUID PRIMARY KEY
+source_company_id UUID NOT NULL REFERENCES source_records.companies(id) ON DELETE CASCADE
+source_id UUID NOT NULL REFERENCES registry.sources(id)
+source_export_id UUID REFERENCES registry.source_exports(id)
+
+url TEXT NOT NULL
+normalized_url TEXT NOT NULL
+host TEXT
+path TEXT
+website_type TEXT NOT NULL DEFAULT 'unknown'
+source_url_kind TEXT
+title TEXT
+title_en TEXT
+description TEXT
+description_en TEXT
+language_code TEXT
+is_primary BOOLEAN NOT NULL DEFAULT false
+is_current BOOLEAN NOT NULL DEFAULT true
+confidence REAL
+status TEXT NOT NULL DEFAULT 'active'
+first_seen_at TIMESTAMPTZ
+last_seen_at TIMESTAMPTZ
+
+source_item_hash TEXT NOT NULL
+raw_item_payload JSONB NOT NULL DEFAULT '{}'::jsonb
+evidence JSONB NOT NULL DEFAULT '{}'::jsonb
+translation_source_hash TEXT
+is_translated BOOLEAN NOT NULL DEFAULT false
+translation_required_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+untranslated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
+translated_at TIMESTAMPTZ
+created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+
+UNIQUE (source_company_id, normalized_url)
+```
+
+Recommended `website_type` values:
+
+```text
+official_site
+brand_site
+country_site
+social_profile
+directory_profile
+contact_page
+filing_page
+other
+unknown
+```
+
+### `source_records.source_evidence`
+
+Stores field-level and record-level evidence so every resolved value can be traced
+back to source files, payload paths, and import decisions.
+
+```sql
+id UUID PRIMARY KEY
+source_company_id UUID NOT NULL REFERENCES source_records.companies(id) ON DELETE CASCADE
+source_id UUID NOT NULL REFERENCES registry.sources(id)
+source_export_id UUID REFERENCES registry.source_exports(id)
+
+target_table TEXT NOT NULL
+target_row_id UUID
+field_name TEXT
+evidence_kind TEXT NOT NULL
+source_path TEXT
+source_value JSONB
+normalized_value JSONB
+confidence REAL
+notes TEXT
+metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
@@ -1083,6 +1454,7 @@ The new shared target should be:
 source_records.companies
 source_records.company_names
 source_records.identifiers
+source_records.legal_forms
 source_records.addresses
 source_records.contacts
 source_records.industries
