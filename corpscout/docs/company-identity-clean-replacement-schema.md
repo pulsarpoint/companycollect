@@ -245,12 +245,6 @@ legal_name_en TEXT
 legal_name_normalized TEXT
 lifecycle_status TEXT
 is_active BOOLEAN
-legal_form_code TEXT
-legal_form_label TEXT
-legal_form_label_en TEXT
-primary_industry_code TEXT
-primary_industry_label TEXT
-primary_industry_label_en TEXT
 primary_website TEXT
 source_updated_at TIMESTAMPTZ
 source_payload_hash TEXT
@@ -266,8 +260,6 @@ untranslated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
 translation_status TEXT NOT NULL DEFAULT 'not_required'
   CHECK (translation_status IN ('not_required', 'pending', 'partial', 'translated', 'failed'))
 translated_at TIMESTAMPTZ
-translation_version TEXT
-translation_error TEXT
 first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -279,6 +271,16 @@ UNIQUE (source_id, source_record_id)
 For global sources that describe a multinational group rather than a registered
 entity, `country_id` may be null and the record can link directly to an identity
 company or brand.
+
+`source_records.companies` is not a catch-all source profile table. It should hold
+only company-level identity summary fields, source lineage, raw/normalized
+payload references, and aggregate translation state. Names, identifiers, legal
+forms, addresses, industries, websites, contacts, financials, people, roles, and
+source evidence belong in child tables.
+
+Selected primary denormalized fields may be added only when they are deliberate
+list/search accelerators. They must duplicate a child row with clear derivation in
+`evidence`; they must not become the only storage location for that fact.
 
 ### Source Translation Columns
 
@@ -329,6 +331,11 @@ Child tables may also carry row-level translation columns where useful, but
 `source_records.companies` owns the aggregate status for the full source company
 record.
 
+Translation provider, model/prompt version, failure details, retry state, and raw
+translation errors should live in translation job/result tables. Do not store
+free-form `translation_error` or `translation_version` columns on every source
+record row unless product queries need them directly.
+
 ### Source Child Tables
 
 Core source facts should use shared child tables:
@@ -336,10 +343,35 @@ Core source facts should use shared child tables:
 ```text
 source_records.company_names
 source_records.identifiers
+source_records.legal_forms
 source_records.addresses
 source_records.industries
 source_records.websites
 source_records.source_evidence
+```
+
+Examples of child-owned fields:
+
+```text
+source_records.company_names
+  name, name_en, name_type, is_primary, valid_from, valid_to
+
+source_records.identifiers
+  identifier_type, identifier_value, issuing_country_id, is_primary
+
+source_records.legal_forms
+  legal_form_code, legal_form_label, legal_form_label_en, valid_from, valid_to
+
+source_records.addresses
+  address_type, street, street_en, city, city_en, region, postal_code,
+  country_id, formatted_address, formatted_address_en, geocode state
+
+source_records.industries
+  source_code, source_label, source_label_en, mapped_nace_code,
+  nace_code_id, mapping_method, is_primary
+
+source_records.websites
+  url, normalized_url, host, website_type, is_primary, title, title_en
 ```
 
 Each child row should include:
@@ -358,8 +390,6 @@ translation_required_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
 translated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
 untranslated_fields TEXT[] NOT NULL DEFAULT '{}'::text[]
 translated_at TIMESTAMPTZ
-translation_version TEXT
-translation_error TEXT
 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
