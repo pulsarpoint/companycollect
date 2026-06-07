@@ -52,6 +52,12 @@ func TestBuildFinalExportFromPRHSourceManifest(t *testing.T) {
 		"websites":        schemaHashForRows[FinalWebsiteRow](),
 		"source_evidence": schemaHashForRows[FinalSourceEvidenceRow](),
 	}
+	if len(manifest.Files) != len(expectedSchemaHashes) {
+		t.Fatalf("manifest files len = %d, want %d", len(manifest.Files), len(expectedSchemaHashes))
+	}
+	for name := range expectedSchemaHashes {
+		requireExportFile(t, manifest.Files, name)
+	}
 	for _, file := range manifest.Files {
 		if file.SHA256 == "" {
 			t.Fatalf("%s SHA256 is empty", file.Name)
