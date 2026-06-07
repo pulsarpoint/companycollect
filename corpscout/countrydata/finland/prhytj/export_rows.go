@@ -114,10 +114,16 @@ type AddressExportRow struct {
 	AddressTypeCode  int32  `parquet:"address_type_code"`
 	AddressType      string `parquet:"address_type"`
 	Street           string `parquet:"street"`
+	BuildingNumber   string `parquet:"building_number"`
+	Entrance         string `parquet:"entrance"`
+	ApartmentNumber  string `parquet:"apartment_number"`
+	PostOfficeBox    string `parquet:"post_office_box"`
+	CO               string `parquet:"co"`
 	PostCode         string `parquet:"post_code"`
 	CityFi           string `parquet:"city_fi"`
 	CitySv           string `parquet:"city_sv"`
 	MunicipalityCode string `parquet:"municipality_code"`
+	Country          string `parquet:"country"`
 	RegisteredOn     string `parquet:"registered_on"`
 }
 
@@ -130,6 +136,7 @@ type RegisteredEntryExportRow struct {
 	BusinessID       string `parquet:"business_id"`
 	RegisterCode     string `parquet:"register_code"`
 	RegisterLabel    string `parquet:"register_label"`
+	Authority        string `parquet:"authority"`
 	EntryTypeCode    string `parquet:"entry_type_code"`
 	EntryTypeLabel   string `parquet:"entry_type_label"`
 	EntryTypeLabelEn string `parquet:"entry_type_label_en"`
@@ -217,7 +224,7 @@ func ProjectExportRows(record CompanyRecord, runID string) ExportRows {
 	rows.Industries = projectIndustryRows(record, runID, sourceRecordID)
 	rows.Addresses = projectAddressRows(record, runID, sourceRecordID)
 	rows.RegisteredEntries = projectRegisteredEntryRows(record, runID, sourceRecordID)
-	rows.TaxRegistrations = projectTaxRegistrationRows(runID, sourceRecordID, profile.TaxRegistrations)
+	rows.TaxRegistrations = projectTaxRegistrationRows(record, runID, sourceRecordID, profile.TaxRegistrations)
 	rows.Websites = projectWebsiteRows(record, runID, sourceRecordID, profile.Website, websiteHost, websitePath)
 	return rows
 }
@@ -383,10 +390,16 @@ func projectAddressRows(record CompanyRecord, runID string, businessID string) [
 			AddressTypeCode:  int32(address.Type),
 			AddressType:      addressTypeLabel(address.Type),
 			Street:           address.Street,
+			BuildingNumber:   address.BuildingNumber,
+			Entrance:         address.Entrance,
+			ApartmentNumber:  address.ApartmentNumber,
+			PostOfficeBox:    address.PostOfficeBox,
+			CO:               address.CO,
 			PostCode:         address.PostCode,
 			CityFi:           postOfficeCity(address.PostOffices, "1"),
 			CitySv:           postOfficeCity(address.PostOffices, "2"),
 			MunicipalityCode: postOfficeMunicipalityCode(address.PostOffices),
+			Country:          address.Country,
 			RegisteredOn:     address.RegistrationDate,
 		})
 	}
@@ -408,6 +421,7 @@ func projectRegisteredEntryRows(record CompanyRecord, runID string, businessID s
 			BusinessID:       businessID,
 			RegisterCode:     entry.Register,
 			RegisterLabel:    registerLabel(entry.Register),
+			Authority:        entry.Authority,
 			EntryTypeCode:    entry.Type,
 			EntryTypeLabel:   preferredDescription(entry.Descriptions),
 			EntryTypeLabelEn: descriptionByLanguage(entry.Descriptions, "3"),
@@ -419,7 +433,7 @@ func projectRegisteredEntryRows(record CompanyRecord, runID string, businessID s
 	return rows
 }
 
-func projectTaxRegistrationRows(runID string, businessID string, registrations TaxRegistrations) []TaxRegistrationExportRow {
+func projectTaxRegistrationRows(record CompanyRecord, runID string, businessID string, registrations TaxRegistrations) []TaxRegistrationExportRow {
 	taxRows := []struct {
 		Type         string
 		RegisterCode string
@@ -431,21 +445,48 @@ func projectTaxRegistrationRows(runID string, businessID string, registrations T
 	}
 	rows := make([]TaxRegistrationExportRow, 0, len(taxRows))
 	for _, taxRow := range taxRows {
+		firstRegisteredOn := taxRow.Registration.RegistrationDate
+		if earliestActive := earliestActiveRegisteredEntryDate(record.RegisteredEntries, taxRow.RegisterCode); earliestActive != "" {
+			firstRegisteredOn = earliestActive
+		}
 		rows = append(rows, TaxRegistrationExportRow{
-			CountryISO2:       "FI",
-			SourceSlug:        SourceSlug,
-			SourceRunID:       runID,
-			SourceRecordID:    businessID,
-			SourceItemHash:    sourceItemHash("tax_registration", businessID, taxRow),
+			CountryISO2:    "FI",
+			SourceSlug:     SourceSlug,
+			SourceRunID:    runID,
+			SourceRecordID: businessID,
+			SourceItemHash: sourceItemHash("tax_registration", businessID, struct {
+				Type              string          `json:"type"`
+				RegisterCode      string          `json:"register_code"`
+				Registration      TaxRegistration `json:"registration"`
+				FirstRegisteredOn string          `json:"first_registered_on"`
+			}{
+				Type:              taxRow.Type,
+				RegisterCode:      taxRow.RegisterCode,
+				Registration:      taxRow.Registration,
+				FirstRegisteredOn: firstRegisteredOn,
+			}),
 			BusinessID:        businessID,
 			RegistrationType:  taxRow.Type,
 			RegisterCode:      taxRow.RegisterCode,
 			CurrentRegistered: taxRow.Registration.Registered,
-			FirstRegisteredOn: taxRow.Registration.RegistrationDate,
+			FirstRegisteredOn: firstRegisteredOn,
 			EndedOn:           taxRow.Registration.EndDate,
 		})
 	}
 	return rows
+}
+
+func earliestActiveRegisteredEntryDate(entries []RegisteredEntry, registerCode string) string {
+	earliest := ""
+	for _, entry := range entries {
+		if entry.Register != registerCode || entry.EndDate != "" || entry.RegistrationDate == "" {
+			continue
+		}
+		if earliest == "" || entry.RegistrationDate < earliest {
+			earliest = entry.RegistrationDate
+		}
+	}
+	return earliest
 }
 
 func projectWebsiteRows(record CompanyRecord, runID string, businessID string, normalizedWebsite string, websiteHost string, websitePath string) []WebsiteExportRow {
