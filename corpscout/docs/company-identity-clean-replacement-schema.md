@@ -850,6 +850,155 @@ later. If traversal becomes central to the product, project Postgres relationshi
 to a graph database. The graph database should be rebuildable and not become the
 first source of truth.
 
+## Adjacent Tables To Preserve Conceptually
+
+Several nearby projects contain useful table patterns. The clean replacement
+should not copy them wholesale, but it should preserve the capabilities that are
+already proven useful.
+
+### Company Index
+
+`companyindex` has a ClickHouse read model:
+
+```text
+company_index.companies
+company_index.company_search
+```
+
+Preserve this as a downstream read model, not as the Postgres source of truth.
+Corpscout should own the normalized source records, legal entities, identities,
+brands, and web links in Postgres. Company Index can be rebuilt from those tables
+for fast public/API search.
+
+The read-model contract should expand beyond the current MVP columns:
+
+```text
+company_id
+display_name
+country_codes
+industries
+websites
+brands
+employee_count
+revenue_usd
+updated_at
+```
+
+### Company Index Control Plane
+
+`companyindex` also has product control-plane tables:
+
+```text
+app_users
+organizations
+organization_membership_cache
+api_keys
+plans
+organization_entitlements
+stripe_customers
+usage_counters
+stripe_events
+workos_events
+audit_events
+```
+
+These are not company-identity tables. Keep them in Company Index or a product
+control-plane schema. Do not mix billing/auth/API-key state into Corpscout company
+identity schemas.
+
+### Evidence Control
+
+`evidence-control` has simple evidence link and crawl tracking tables:
+
+```text
+evidence_vendor_links
+evidence_product_links
+evidence_crawl_batches
+evidence_crawl_batch_items
+```
+
+Preserve these ideas in Corpscout:
+
+- candidate/approved/rejected evidence status
+- confidence on external links
+- link kind
+- source method
+- crawl batches and per-link crawl items
+- raw HTML, markdown, metadata, content hash, HTTP status, and error paths
+
+In the new model this belongs under source and web evidence, for example:
+
+```text
+web.website_evidence_links
+web.evidence_crawl_batches
+web.evidence_crawl_items
+```
+
+Those tables should reference `web.websites`, `web.domains`, and the resolved
+target link when available. They should also allow unresolved candidate evidence
+for a company, legal entity, brand, or source record.
+
+### Security Product Domain And Web Tables
+
+`pulsarprotectsqlc` has mature scanner-owned tables for domains, hostnames, DNS,
+WHOIS, certificates, web applications, web pages, HTTP exchanges, and technology
+observations.
+
+Useful concepts to preserve:
+
+```text
+domains
+hostnames
+dns_*_records
+whois_domain
+certs
+certs_domain
+web_applications
+web_app_instances
+web_pages
+web_page_http_exchanges
+web_app_technology_observations
+```
+
+Do not copy these tables directly into Corpscout. They are organization-scoped and
+scanner-operational, while Corpscout needs public company identity and evidence.
+
+Instead, preserve them as optional enrichment/read-model concepts:
+
+```text
+web.domains
+web.hostnames
+web.dns_records
+web.whois_observations
+web.certificate_observations
+web.websites
+web.web_pages
+web.http_observations
+web.technology_observations
+```
+
+Keep these tables separate from core identity resolution. A company can be
+resolved without DNS or HTTP scan data. DNS, WHOIS, certificate, and page data
+should strengthen or challenge web-presence links with evidence.
+
+Important scanner patterns to keep:
+
+- normalized domain/hostname uniqueness
+- parent domain and owned-domain relationships
+- `first_seen_at`, `last_seen_at`, `removed_at`, and history tables for changing
+  web observations
+- DNS record provenance with `source`, `task_id`, parent/root record references,
+  wildcard flags, CDN/anycast metadata, and owner domain links
+- WHOIS raw payload hashes and parsed registrar, nameserver, created, and expiry
+  fields
+- certificate SANs, fingerprints, validity dates, issuer fields, and domain links
+- web page URL/path uniqueness, content hashes, titles, technologies, HTTP
+  exchanges, and response history
+
+The first Corpscout implementation should only include `web.domains`,
+`web.websites`, and link/evidence tables. Add DNS, WHOIS, certificate, page, and
+technology observation tables when the product needs them.
+
 ## Migration Stance
 
 This is a clean replacement target. The current POC tables can be dropped or
