@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -44,13 +45,13 @@ func (s *Source) Export(ctx context.Context, opts ExportOptions) (ExportResult, 
 		)
 	}
 
-	runID := opts.RunID
+	runID := strings.TrimSpace(opts.RunID)
 	if runID == "" {
 		runID = time.Now().UTC().Format("20060102T150405Z") + "-prhytj"
 	}
 
 	dataDir := resolveString(opts.DataDir, s.cfg.DataDir, defaultDataDir)
-	snapshotPath := opts.SnapshotPath
+	snapshotPath := strings.TrimSpace(opts.SnapshotPath)
 	if snapshotPath == "" {
 		var err error
 		snapshotPath, err = latestSnapshotPath(filepath.Join(dataDir, "snapshots"))
@@ -70,10 +71,16 @@ func (s *Source) Export(ctx context.Context, opts ExportOptions) (ExportResult, 
 	if err != nil {
 		return result, err
 	}
+	if err := ctx.Err(); err != nil {
+		return result, processContextError(err, snapshotPath)
+	}
 
 	exportDir := filepath.Join(dataDir, "exports", runID)
-	files, err := writeSourceExportFiles(exportDir, rows)
+	files, err := writeSourceExportFiles(ctx, exportDir, rows)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return result, processContextError(ctxErr, exportDir)
+		}
 		return result, countryimport.WrapSourceError(
 			countryimport.ErrorKindFileIO,
 			SourceSlug,
@@ -82,6 +89,9 @@ func (s *Source) Export(ctx context.Context, opts ExportOptions) (ExportResult, 
 			0,
 			errors.Wrap(err, "write PRH source export files"),
 		)
+	}
+	if err := ctx.Err(); err != nil {
+		return result, processContextError(err, snapshotPath)
 	}
 
 	snapshotSHA, _, err := countryimport.HashFileSHA256(snapshotPath)
@@ -114,6 +124,9 @@ func (s *Source) Export(ctx context.Context, opts ExportOptions) (ExportResult, 
 		RecordsSeen:     recordsSeen,
 		RecordsExported: recordsExported,
 		DecodeErrors:    decodeErrors,
+	}
+	if err := ctx.Err(); err != nil {
+		return result, processContextError(err, manifestPath)
 	}
 	if err := countryimport.SaveExportManifest(manifestPath, manifest); err != nil {
 		return result, countryimport.WrapSourceError(
@@ -222,27 +235,51 @@ func appendExportRows(dst *ExportRows, src ExportRows) {
 	dst.Websites = append(dst.Websites, src.Websites...)
 }
 
-func writeSourceExportFiles(exportDir string, rows ExportRows) ([]countryimport.ExportFile, error) {
+func writeSourceExportFiles(ctx context.Context, exportDir string, rows ExportRows) ([]countryimport.ExportFile, error) {
 	files := make([]countryimport.ExportFile, 0, 8)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := addExportFile(&files, exportDir, "companies", rows.Companies); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := addExportFile(&files, exportDir, "company_names", rows.CompanyNames); err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := addExportFile(&files, exportDir, "legal_forms", rows.LegalForms); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := addExportFile(&files, exportDir, "industries", rows.Industries); err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := addExportFile(&files, exportDir, "addresses", rows.Addresses); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := addExportFile(&files, exportDir, "registered_entries", rows.RegisteredEntries); err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := addExportFile(&files, exportDir, "tax_registrations", rows.TaxRegistrations); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := addExportFile(&files, exportDir, "websites", rows.Websites); err != nil {
@@ -272,7 +309,25 @@ func addExportFile[T any](files *[]countryimport.ExportFile, exportDir string, n
 }
 
 func schemaHashForRows[T any]() string {
-	typeName := reflect.TypeFor[T]().String()
-	hash := sha256.Sum256([]byte(typeName))
-	return hex.EncodeToString(hash[:])
+	rowType := reflect.TypeFor[T]()
+	hasher := sha256.New()
+	if rowType.Kind() != reflect.Struct {
+		hasher.Write([]byte(rowType.String()))
+		return hex.EncodeToString(hasher.Sum(nil))
+	}
+
+	hasher.Write([]byte("struct"))
+	for i := 0; i < rowType.NumField(); i++ {
+		field := rowType.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		hasher.Write([]byte{0})
+		hasher.Write([]byte(field.Name))
+		hasher.Write([]byte{0})
+		hasher.Write([]byte(field.Type.String()))
+		hasher.Write([]byte{0})
+		hasher.Write([]byte(field.Tag.Get("parquet")))
+	}
+	return hex.EncodeToString(hasher.Sum(nil))
 }
