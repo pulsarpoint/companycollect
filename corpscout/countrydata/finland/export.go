@@ -65,11 +65,29 @@ func BuildFinalExport(ctx context.Context, opts BuildExportOptions) (BuildExport
 	if err != nil {
 		return BuildExportResult{}, errors.Wrap(err, "load PRH YTJ source export manifest")
 	}
+	if err := validatePRHSourceManifest(sourceManifest); err != nil {
+		return BuildExportResult{}, errors.Wrap(err, "validate PRH YTJ source export manifest")
+	}
 	if err := ctx.Err(); err != nil {
 		return BuildExportResult{}, err
 	}
 
-	companiesPath := filepath.Join(filepath.Dir(prhManifestPath), "companies.parquet")
+	companiesFile, err := sourceManifestFile(sourceManifest, "companies")
+	if err != nil {
+		return BuildExportResult{}, errors.Wrap(err, "find PRH YTJ companies file in source manifest")
+	}
+	companiesPath, err := resolveManifestFilePath(filepath.Dir(prhManifestPath), companiesFile.Path)
+	if err != nil {
+		return BuildExportResult{}, errors.Wrap(err, "resolve PRH YTJ companies file path")
+	}
+	companiesSHA, _, err := countryimport.HashFileSHA256(companiesPath)
+	if err != nil {
+		return BuildExportResult{}, errors.Wrap(err, "hash PRH YTJ companies parquet")
+	}
+	if companiesSHA != companiesFile.SHA256 {
+		return BuildExportResult{}, errors.Errorf("PRH YTJ companies parquet SHA256 mismatch: manifest has %s, actual is %s", companiesFile.SHA256, companiesSHA)
+	}
+
 	companies, err := parquet.ReadFile[prhytj.CompanyExportRow](companiesPath)
 	if err != nil {
 		return BuildExportResult{}, errors.Wrap(err, "read PRH YTJ companies parquet")
@@ -80,7 +98,7 @@ func BuildFinalExport(ctx context.Context, opts BuildExportOptions) (BuildExport
 
 	rows := mapPRHCompaniesToFinal(companies)
 	exportDir := filepath.Join(layout.FinalExportsDir(), runID)
-	files, err := writeFinalCoreFiles(exportDir, rows)
+	files, err := writeFinalCoreFiles(ctx, exportDir, rows)
 	if err != nil {
 		return BuildExportResult{}, errors.Wrap(err, "write Finland final export files")
 	}
@@ -116,6 +134,47 @@ func BuildFinalExport(ctx context.Context, opts BuildExportOptions) (BuildExport
 		ManifestPath:    manifestPath,
 		RecordsExported: int64(len(rows.Companies)),
 	}, nil
+}
+
+func validatePRHSourceManifest(manifest countryimport.ExportManifest) error {
+	if manifest.ManifestVersion != countryimport.ExportManifestVersion {
+		return errors.Errorf("invalid manifest version %q, want %q", manifest.ManifestVersion, countryimport.ExportManifestVersion)
+	}
+	if manifest.ExportKind != "source" {
+		return errors.Errorf("invalid export kind %q, want source", manifest.ExportKind)
+	}
+	if manifest.CountryISO2 != CountryISO2 {
+		return errors.Errorf("invalid country %q, want %q", manifest.CountryISO2, CountryISO2)
+	}
+	if manifest.SourceSlug == nil || *manifest.SourceSlug != SourcePRHYTJ {
+		return errors.Errorf("invalid source slug %v, want %q", manifest.SourceSlug, SourcePRHYTJ)
+	}
+	if manifest.SchemaVersion != prhytj.SourceExportSchemaVersion {
+		return errors.Errorf("invalid schema version %q, want %q", manifest.SchemaVersion, prhytj.SourceExportSchemaVersion)
+	}
+	return nil
+}
+
+func sourceManifestFile(manifest countryimport.ExportManifest, name string) (countryimport.ExportFile, error) {
+	for _, file := range manifest.Files {
+		if file.Name == name {
+			return file, nil
+		}
+	}
+	return countryimport.ExportFile{}, errors.Errorf("missing %q file", name)
+}
+
+func resolveManifestFilePath(manifestDir string, manifestFilePath string) (string, error) {
+	if strings.TrimSpace(manifestFilePath) == "" {
+		return "", errors.New("manifest file path is empty")
+	}
+	if filepath.IsAbs(manifestFilePath) {
+		return "", errors.Errorf("manifest file path must be relative: %q", manifestFilePath)
+	}
+	if !filepath.IsLocal(manifestFilePath) {
+		return "", errors.Errorf("manifest file path escapes manifest directory: %q", manifestFilePath)
+	}
+	return filepath.Join(manifestDir, manifestFilePath), nil
 }
 
 func mapPRHCompaniesToFinal(companies []prhytj.CompanyExportRow) finalRows {
@@ -226,24 +285,45 @@ func appendIdentifier(rows []FinalIdentifierRow, countryCompanyID string, source
 	})
 }
 
-func writeFinalCoreFiles(exportDir string, rows finalRows) ([]countryimport.ExportFile, error) {
+func writeFinalCoreFiles(ctx context.Context, exportDir string, rows finalRows) ([]countryimport.ExportFile, error) {
 	files := make([]countryimport.ExportFile, 0, 7)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := addFinalExportFile(&files, exportDir, "companies", rows.Companies); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := addFinalExportFile(&files, exportDir, "company_names", rows.CompanyNames); err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := addFinalExportFile(&files, exportDir, "identifiers", rows.Identifiers); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := addFinalExportFile(&files, exportDir, "addresses", rows.Addresses); err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := addFinalExportFile(&files, exportDir, "industries", rows.Industries); err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := addFinalExportFile(&files, exportDir, "websites", rows.Websites); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := addFinalExportFile(&files, exportDir, "source_evidence", rows.SourceEvidence); err != nil {
