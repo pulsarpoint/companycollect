@@ -27,16 +27,18 @@ The package produces a country binary that downloads source data, writes source
 parquet exports, writes final country parquet exports, and reports status
 without importing Corpscout scheduler code.
 
-## Required Detailed Guide
+## Required Project Docs
 
-After loading this skill, read:
+After loading this skill, read these project docs before planning or editing:
 
 ```text
-skills/company-countrydata-package-implementation/references/implementation-guide.md
+companies/docs/countrydata-architecture.md
+companies/docs/countrydata-package-implementation-guide.md
 ```
 
-That guide contains the exact preflight gates, package layout, public source
-API, runtime data layout, CLI contract, source/final export rules, tests,
+The architecture doc explains the country package boundary and data flow. The
+implementation guide contains the exact preflight gates, package layout, public
+source API, runtime data layout, CLI contract, source/final export rules, tests,
 verification commands, and Finland execution lessons.
 
 ## Non-Negotiable Rules

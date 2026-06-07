@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Use this skill to create or extend a complete standalone Go country package for
+Use this guide to create or extend a complete standalone Go country package for
 company data collection and export. This guide is the single implementation
-entry point: use it both for a brand-new country package and for adding one
+reference: use it both for a brand-new country package and for adding one
 analyzed source package to an existing country module.
 
 The package must live under:
