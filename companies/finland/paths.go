@@ -8,7 +8,7 @@ import (
 const (
 	CountryISO2    = "FI"
 	SourcePRHYTJ   = "prhytj"
-	defaultDataDir = "./data/countrydata/finland"
+	defaultDataDir = "../data/finland/countrydata"
 )
 
 type Layout struct {

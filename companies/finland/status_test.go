@@ -19,6 +19,16 @@ func TestLayoutForDataDir(t *testing.T) {
 	}
 }
 
+func TestLayoutForDataDirUsesCompaniesDataDefault(t *testing.T) {
+	layout := LayoutForDataDir("")
+	if layout.DataDir != filepath.Join("..", "data", "finland", "countrydata") {
+		t.Fatalf("data dir = %q", layout.DataDir)
+	}
+	if layout.SourceDir(SourcePRHYTJ) != filepath.Join("..", "data", "finland", "countrydata", "sources", SourcePRHYTJ) {
+		t.Fatalf("source dir = %q", layout.SourceDir(SourcePRHYTJ))
+	}
+}
+
 func TestSourceStatusFromMissingManifest(t *testing.T) {
 	status, err := SourceStatusFromLatestManifest(t.TempDir(), SourcePRHYTJ)
 	if err != nil {

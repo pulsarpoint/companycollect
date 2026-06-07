@@ -23,9 +23,9 @@ GOWORK=off go test -tags=integration ./prhytj/... -run TestLivePRHYTJ -count=1
 The source can be run through the country-level CLI:
 
 ```bash
-GOWORK=off go run ./cmd/finland-countrydata sync-source --source prhytj --data-dir ./data/countrydata/finland --max-pages 2
-GOWORK=off go run ./cmd/finland-countrydata status-source --source prhytj --data-dir ./data/countrydata/finland
-GOWORK=off go run ./cmd/finland-countrydata build-export --data-dir ./data/countrydata/finland
+GOWORK=off go run ./cmd/finland-countrydata sync-source --source prhytj --data-dir ../data/finland/countrydata --max-pages 2
+GOWORK=off go run ./cmd/finland-countrydata status-source --source prhytj --data-dir ../data/finland/countrydata
+GOWORK=off go run ./cmd/finland-countrydata build-export --data-dir ../data/finland/countrydata
 ```
 
 Build the standalone Finland binary with:
@@ -37,13 +37,13 @@ GOWORK=off go build -o ./bin/finland-countrydata ./cmd/finland-countrydata
 Source exports are written under:
 
 ```text
-./data/countrydata/finland/sources/prhytj/exports/<run-id>/
+../data/finland/countrydata/sources/prhytj/exports/<run-id>/
 ```
 
 Final country exports are written under:
 
 ```text
-./data/countrydata/finland/final/exports/<run-id>/
+../data/finland/countrydata/final/exports/<run-id>/
 ```
 
 ## Live Smoke Test

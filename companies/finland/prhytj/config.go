@@ -10,7 +10,7 @@ import (
 	countryimport "github.com/pulsarpoint/companycollect/companies/common/countryimport"
 )
 
-const defaultDataDir = "./data/countrydata/finland/prhytj"
+const defaultDataDir = "../data/finland/countrydata/sources/prhytj"
 
 type Config struct {
 	BaseURL        string

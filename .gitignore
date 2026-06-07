@@ -14,6 +14,7 @@
 data/
 **/data/
 companies/data/
+companies/data/*/countrydata/
 **/nats-data/
 **/node_modules/
 **/.venv/
@@ -27,5 +28,6 @@ corpscout/ui/.react-router/
 
 # Go build outputs.
 **/bin/
+companies/*/bin/
 *.test
 coverage.out
