@@ -28,16 +28,20 @@ func run() error {
 	var sourceExportID string
 	var exportDir string
 	var configPath string
+	var composeFile string
+	var clickHouseImage string
+	var dockerMount string
 	flag.StringVar(&clickhouseURL, "clickhouse-url", "", "ClickHouse HTTP URL")
 	flag.StringVar(&database, "database", "", "ClickHouse database override")
 	flag.StringVar(&sourceExportID, "source-export-id", "", "Postgres registry source export UUID")
 	flag.StringVar(&exportDir, "export-dir", "", "source export directory")
 	flag.StringVar(&configPath, "config", "", "source config YAML")
+	flag.StringVar(&composeFile, "compose-file", "../docker-compose.yml", "Docker Compose file used to reach the ClickHouse service")
+	flag.StringVar(&clickHouseImage, "clickhouse-image", defaultClickHouseImage, "ClickHouse image used for clickhouse-local")
+	flag.StringVar(&dockerMount, "docker-mount", "", "host path mounted into the clickhouse-local container")
 	flag.Parse()
 
-	if clickhouseURL == "" {
-		return errors.New("clickhouse-url is required")
-	}
+	_ = clickhouseURL
 	if sourceExportID == "" {
 		return errors.New("source-export-id is required")
 	}
@@ -74,19 +78,15 @@ func run() error {
 		if table.Table == "" {
 			return errors.Errorf("table %s table name is required", name)
 		}
-		sql, err := buildInsertSQL(cfg.Database, table, sourceExportID)
-		if err != nil {
-			return err
-		}
-		structure, err := fetchExternalTableStructure(clickhouseURL, cfg.Database, table.Table, table.InjectColumns)
-		if err != nil {
-			return errors.Wrapf(err, "prepare import table %s", table.Table)
-		}
-		importURL, err := withExternalTableStructure(clickhouseURL, structure)
-		if err != nil {
-			return err
-		}
-		if err := executeParquetImport(importURL, sql, filepath.Join(exportDir, table.Parquet)); err != nil {
+		if err := executeNativeImport(NativeImportOptions{
+			Database:        cfg.Database,
+			Table:           table,
+			ParquetPath:     filepath.Join(exportDir, table.Parquet),
+			SourceExportID:  sourceExportID,
+			ComposeFile:     composeFile,
+			DockerMount:     dockerMount,
+			ClickHouseImage: clickHouseImage,
+		}); err != nil {
 			return errors.Wrapf(err, "import table %s", table.Table)
 		}
 	}

@@ -1,18 +1,13 @@
 package main
 
 import (
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildInsertSQL(t *testing.T) {
+func TestBuildNativeSelectSQL(t *testing.T) {
 	table := TableConfig{
 		Parquet: "companies.parquet",
 		Table:   "fi_prhytj_companies",
@@ -22,16 +17,15 @@ func TestBuildInsertSQL(t *testing.T) {
 		},
 	}
 
-	sql, err := buildInsertSQL("corpscout_sources", table, "11111111-1111-1111-1111-111111111111")
+	sql, err := buildNativeSelectSQL(table, "/exports/companies.parquet", "11111111-1111-1111-1111-111111111111")
 	require.NoError(t, err)
 
-	require.Contains(t, sql, "INSERT INTO `corpscout_sources`.`fi_prhytj_companies`")
 	require.Contains(t, sql, "SELECT *, now64(3) AS `ingested_at`, toUUID('11111111-1111-1111-1111-111111111111') AS `source_export_id`")
-	require.Contains(t, sql, "FROM input_file")
-	require.NotContains(t, strings.ToLower(sql), "file(")
+	require.Contains(t, sql, "FROM file('/exports/companies.parquet', Parquet)")
+	require.Contains(t, sql, "FORMAT Native")
 }
 
-func TestBuildInsertSQLRejectsUnknownInjectedColumn(t *testing.T) {
+func TestBuildNativeSelectSQLRejectsUnknownInjectedColumn(t *testing.T) {
 	table := TableConfig{
 		Table: "fi_prhytj_companies",
 		InjectColumns: map[string]string{
@@ -40,60 +34,37 @@ func TestBuildInsertSQLRejectsUnknownInjectedColumn(t *testing.T) {
 		},
 	}
 
-	_, err := buildInsertSQL("corpscout_sources", table, "11111111-1111-1111-1111-111111111111")
+	_, err := buildNativeSelectSQL(table, "/exports/companies.parquet", "11111111-1111-1111-1111-111111111111")
 	require.EqualError(t, err, "table fi_prhytj_companies unknown injected column unexpected")
 }
 
-func TestExecuteParquetImportPostsMultipartExternalTable(t *testing.T) {
-	dir := t.TempDir()
-	parquetPath := filepath.Join(dir, "companies.parquet")
-	require.NoError(t, os.WriteFile(parquetPath, []byte("fake parquet"), 0o600))
-
-	const sql = "INSERT INTO `corpscout_sources`.`fi_prhytj_companies` SELECT * FROM input_file"
-	var sawRequest bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawRequest = true
-		require.Equal(t, http.MethodPost, r.Method)
-		require.Contains(t, r.Header.Get("Content-Type"), "multipart/form-data")
-		require.Equal(t, "Parquet", r.URL.Query().Get("input_file_format"))
-		require.Equal(t, "auto", r.URL.Query().Get("input_file_structure"))
-		require.Equal(t, "10737418240", r.URL.Query().Get("http_max_multipart_form_data_size"))
-
-		require.NoError(t, r.ParseMultipartForm(1<<20))
-		require.Equal(t, []string{sql}, r.MultipartForm.Value["query"])
-
-		files := r.MultipartForm.File["input_file"]
-		require.Len(t, files, 1)
-		require.Equal(t, "companies.parquet", files[0].Filename)
-
-		file, err := files[0].Open()
-		require.NoError(t, err)
-		defer file.Close()
-		body, err := io.ReadAll(file)
-		require.NoError(t, err)
-		require.Equal(t, "fake parquet", string(body))
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	require.NoError(t, executeParquetImport(server.URL, sql, parquetPath))
-	require.True(t, sawRequest)
+func TestBuildNativeInsertSQL(t *testing.T) {
+	require.Equal(
+		t,
+		"INSERT INTO `corpscout_sources`.`fi_prhytj_companies` FORMAT Native",
+		buildNativeInsertSQL("corpscout_sources", "fi_prhytj_companies"),
+	)
 }
 
-func TestExecuteParquetImportReportsClickHouseStatusAndBody(t *testing.T) {
-	dir := t.TempDir()
-	parquetPath := filepath.Join(dir, "companies.parquet")
-	require.NoError(t, os.WriteFile(parquetPath, []byte("fake parquet"), 0o600))
+func TestDockerMountRoot(t *testing.T) {
+	require.Equal(t, "/Users", dockerMountRoot("/Users/graovic/export/companies.parquet"))
+	require.Equal(t, "/", dockerMountRoot("/var/tmp/export/companies.parquet"))
+}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("bad external table"))
-	}))
-	defer server.Close()
+func TestClickHouseEscaping(t *testing.T) {
+	require.Equal(t, "`odd\\\\\\`name`", quoteIdent("odd\\`name"))
+	require.Equal(t, "'/exports/odd\\\\path\\'s.parquet'", clickHouseStringLiteral("/exports/odd\\path's.parquet"))
+}
 
-	err := executeParquetImport(server.URL, "SELECT * FROM input_file", parquetPath)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "status=400 Bad Request")
-	require.Contains(t, err.Error(), "bad external table")
+func TestNativeSelectSQLDoesNotUseServerSideTableFunctionForInsert(t *testing.T) {
+	table := TableConfig{
+		Table: "fi_prhytj_raw_records",
+		InjectColumns: map[string]string{
+			"source_export_id": "UUID",
+		},
+	}
+
+	sql, err := buildNativeSelectSQL(table, "/exports/raw_records.parquet", "00000000-0000-0000-0000-000000000000")
+	require.NoError(t, err)
+	require.True(t, strings.HasSuffix(sql, "FORMAT Native"))
 }
