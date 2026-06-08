@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const SourceExportSchemaVersion = "finland.prhytj.source.v1"
+const SourceExportSchemaVersion = "finland.prhytj.source.v2"
 
 type ExportRows struct {
 	RawRecords        []RawRecordExportRow
@@ -193,9 +193,12 @@ type WebsiteExportRow struct {
 }
 
 func ProjectExportRows(record CompanyRecord, runID string) ExportRows {
+	return ProjectExportRowsAt(record, runID, time.Now().UTC().Format(time.RFC3339))
+}
+
+func ProjectExportRowsAt(record CompanyRecord, runID string, exportedAt string) ExportRows {
 	profile := record.ToProfile()
 	sourceRecordID := strings.TrimSpace(record.BusinessID.Value)
-	exportedAt := time.Now().UTC().Format(time.RFC3339)
 	websiteHost, websitePath := websiteParts(profile.Website)
 	primaryNACECode := mappedNACECode(record.MainBusinessLine.Type)
 	primaryNACERevision := ""

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"github.com/parquet-go/parquet-go"
 	countryimport "github.com/pulsarpoint/companycollect/companies/common/countryimport"
 )
 
@@ -72,7 +73,8 @@ func (s *Source) Export(ctx context.Context, opts ExportOptions) (ExportResult, 
 		)
 	}
 
-	rows, recordsSeen, recordsExported, decodeErrors, err := readExportRows(ctx, snapshotPath, snapshotSHA, runID, opts.Limit)
+	exportedAt := time.Now().UTC().Format(time.RFC3339)
+	rows, recordsSeen, recordsExported, decodeErrors, err := readExportRows(ctx, snapshotPath, runID, exportedAt, opts.Limit)
 	result := ExportResult{
 		SourceSlug:      SourceSlug,
 		RunID:           runID,
@@ -88,7 +90,7 @@ func (s *Source) Export(ctx context.Context, opts ExportOptions) (ExportResult, 
 	}
 
 	exportDir := filepath.Join(dataDir, "exports", runID)
-	files, err := writeSourceExportFiles(ctx, exportDir, rows)
+	files, err := writeSourceExportFiles(ctx, exportDir, rows, snapshotPath, snapshotSHA, runID, exportedAt, opts.Limit)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return result, processContextError(ctxErr, exportDir)
@@ -143,7 +145,7 @@ func (s *Source) Export(ctx context.Context, opts ExportOptions) (ExportResult, 
 	return result, nil
 }
 
-func readExportRows(ctx context.Context, snapshotPath string, snapshotSHA256 string, runID string, limit int64) (ExportRows, int64, int64, int64, error) {
+func readExportRows(ctx context.Context, snapshotPath string, runID string, exportedAt string, limit int64) (ExportRows, int64, int64, int64, error) {
 	var rows ExportRows
 	file, err := os.Open(snapshotPath)
 	if err != nil {
@@ -201,9 +203,7 @@ func readExportRows(ctx context.Context, snapshotPath string, snapshotSHA256 str
 		payloadHash := sha256.Sum256(rawLine)
 		record.PayloadHash = hex.EncodeToString(payloadHash[:])
 
-		exportedAt := time.Now().UTC().Format(time.RFC3339)
-		projected := ProjectExportRows(record, runID)
-		projected.RawRecords = append(projected.RawRecords, ProjectRawRecordExportRow(record, runID, snapshotPath, snapshotSHA256, lineNumber, exportedAt))
+		projected := ProjectExportRowsAt(record, runID, exportedAt)
 		appendExportRows(&rows, projected)
 		recordsExported++
 		if limit > 0 && recordsExported >= limit {
@@ -239,12 +239,12 @@ func appendExportRows(dst *ExportRows, src ExportRows) {
 	dst.Websites = append(dst.Websites, src.Websites...)
 }
 
-func writeSourceExportFiles(ctx context.Context, exportDir string, rows ExportRows) ([]countryimport.ExportFile, error) {
+func writeSourceExportFiles(ctx context.Context, exportDir string, rows ExportRows, snapshotPath string, snapshotSHA256 string, runID string, exportedAt string, limit int64) ([]countryimport.ExportFile, error) {
 	files := make([]countryimport.ExportFile, 0, 9)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := addExportFile(&files, exportDir, "raw_records", rows.RawRecords); err != nil {
+	if err := addRawRecordsExportFile(ctx, &files, exportDir, snapshotPath, snapshotSHA256, runID, exportedAt, limit); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -316,6 +316,118 @@ func addExportFile[T any](files *[]countryimport.ExportFile, exportDir string, n
 		SchemaHash: schemaHashForRows[T](),
 	})
 	return nil
+}
+
+func addRawRecordsExportFile(ctx context.Context, files *[]countryimport.ExportFile, exportDir string, snapshotPath string, snapshotSHA256 string, runID string, exportedAt string, limit int64) error {
+	path := filepath.Join(exportDir, "raw_records.parquet")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return errors.Wrap(err, "create raw records parquet directory")
+	}
+	tempFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return errors.Wrap(err, "create raw records temporary parquet file")
+	}
+	tempPath := tempFile.Name()
+	removeTemp := func() {
+		_ = os.Remove(tempPath)
+	}
+
+	writer := parquet.NewGenericWriter[RawRecordExportRow](tempFile)
+	rowCount, writeErr := writeRawRecordsRows(ctx, writer, snapshotPath, snapshotSHA256, runID, exportedAt, limit)
+	closeWriterErr := writer.Close()
+	closeFileErr := tempFile.Close()
+	if writeErr != nil {
+		removeTemp()
+		return errors.Wrap(errors.CombineErrors(writeErr, errors.CombineErrors(closeWriterErr, closeFileErr)), "write raw records parquet")
+	}
+	if closeWriterErr != nil {
+		removeTemp()
+		return errors.Wrap(errors.CombineErrors(closeWriterErr, closeFileErr), "close raw records parquet writer")
+	}
+	if closeFileErr != nil {
+		removeTemp()
+		return errors.Wrap(closeFileErr, "close raw records parquet file")
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		removeTemp()
+		return errors.Wrap(err, "rename raw records parquet file")
+	}
+
+	hash, _, err := countryimport.HashFileSHA256(path)
+	if err != nil {
+		return errors.Wrap(err, "hash raw records parquet")
+	}
+	*files = append(*files, countryimport.ExportFile{
+		Name:       "raw_records",
+		Path:       filepath.Base(path),
+		RowCount:   rowCount,
+		SHA256:     hash,
+		SchemaHash: schemaHashForRows[RawRecordExportRow](),
+	})
+	return nil
+}
+
+func writeRawRecordsRows(ctx context.Context, writer *parquet.GenericWriter[RawRecordExportRow], snapshotPath string, snapshotSHA256 string, runID string, exportedAt string, limit int64) (int64, error) {
+	file, err := os.Open(snapshotPath)
+	if err != nil {
+		return 0, countryimport.WrapSourceError(
+			countryimport.ErrorKindFileIO,
+			SourceSlug,
+			"",
+			snapshotPath,
+			0,
+			errors.Wrap(err, "open PRH snapshot for raw export"),
+		)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxSnapshotLineBytes)
+
+	var rowCount int64
+	var lineNumber int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return rowCount, processContextError(err, snapshotPath)
+		}
+		if !scanner.Scan() {
+			break
+		}
+		lineNumber++
+
+		rawLine := append([]byte(nil), scanner.Bytes()...)
+		var record CompanyRecord
+		if err := json.Unmarshal(rawLine, &record); err != nil {
+			continue
+		}
+		record.RawPayload = rawLine
+		payloadHash := sha256.Sum256(rawLine)
+		record.PayloadHash = hex.EncodeToString(payloadHash[:])
+
+		row := ProjectRawRecordExportRow(record, runID, snapshotPath, snapshotSHA256, lineNumber, exportedAt)
+		written, err := writer.Write([]RawRecordExportRow{row})
+		if err != nil {
+			return rowCount, errors.Wrap(err, "write raw records parquet row")
+		}
+		if written != 1 {
+			return rowCount, errors.Errorf("write raw records parquet row wrote %d rows", written)
+		}
+		rowCount++
+		if limit > 0 && rowCount >= limit {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return rowCount, countryimport.WrapSourceError(
+			countryimport.ErrorKindFileIO,
+			SourceSlug,
+			"",
+			snapshotPath,
+			0,
+			errors.Wrap(err, "scan PRH snapshot for raw export"),
+		)
+	}
+	return rowCount, nil
 }
 
 func schemaHashForRows[T any]() string {
