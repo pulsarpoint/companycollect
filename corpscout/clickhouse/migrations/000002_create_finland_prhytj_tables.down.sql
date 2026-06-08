@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_addresses`;
+DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_companies`;
+DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_company_names`;
+DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_industries`;
+DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_legal_forms`;
+DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_raw_records`;
+DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_registered_entries`;
+DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_tax_registrations`;
+DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_websites`;
