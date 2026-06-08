@@ -21,12 +21,18 @@ services:
       - "9002:9000"
     volumes:
       - ./data/clickhouse:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
 
   clickhouse-migrate:
     image: migrate/migrate:v4.17.0
     depends_on:
       clickhouse:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./clickhouse/migrations:/clickhouse-migrations
     command:
