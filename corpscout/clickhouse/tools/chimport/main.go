@@ -23,7 +23,6 @@ func main() {
 }
 
 func run() error {
-	var clickhouseURL string
 	var database string
 	var sourceExportID string
 	var exportDir string
@@ -31,7 +30,6 @@ func run() error {
 	var composeFile string
 	var clickHouseImage string
 	var dockerMount string
-	flag.StringVar(&clickhouseURL, "clickhouse-url", "", "ClickHouse HTTP URL")
 	flag.StringVar(&database, "database", "", "ClickHouse database override")
 	flag.StringVar(&sourceExportID, "source-export-id", "", "Postgres registry source export UUID")
 	flag.StringVar(&exportDir, "export-dir", "", "source export directory")
@@ -41,7 +39,6 @@ func run() error {
 	flag.StringVar(&dockerMount, "docker-mount", "", "host path mounted into the clickhouse-local container")
 	flag.Parse()
 
-	_ = clickhouseURL
 	if sourceExportID == "" {
 		return errors.New("source-export-id is required")
 	}
@@ -77,6 +74,9 @@ func run() error {
 		}
 		if table.Table == "" {
 			return errors.Errorf("table %s table name is required", name)
+		}
+		if err := truncateTargetTable(composeFile, cfg.Database, table.Table); err != nil {
+			return errors.Wrapf(err, "truncate table %s", table.Table)
 		}
 		if err := executeNativeImport(NativeImportOptions{
 			Database:        cfg.Database,

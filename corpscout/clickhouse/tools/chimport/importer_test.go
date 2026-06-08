@@ -1,8 +1,11 @@
 package main
 
 import (
+	"io"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -44,6 +47,36 @@ func TestBuildNativeInsertSQL(t *testing.T) {
 		"INSERT INTO `corpscout_sources`.`fi_prhytj_companies` FORMAT Native",
 		buildNativeInsertSQL("corpscout_sources", "fi_prhytj_companies"),
 	)
+}
+
+func TestBuildTruncateSQL(t *testing.T) {
+	require.Equal(
+		t,
+		"TRUNCATE TABLE `corpscout_sources`.`fi_prhytj_companies`",
+		buildTruncateSQL("corpscout_sources", "fi_prhytj_companies"),
+	)
+}
+
+func TestRunNativePipelineReturnsClientErrorWhenClientExitsEarly(t *testing.T) {
+	reader, writer := io.Pipe()
+	localCmd := exec.Command("sh", "-c", "yes | head -c 10000000")
+	clientCmd := exec.Command("sh", "-c", "echo client failed >&2; exit 7")
+	localCmd.Stdout = writer
+	clientCmd.Stdin = reader
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runNativePipeline(localCmd, clientCmd, reader, writer)
+	}()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "clickhouse-client import failed")
+		require.Contains(t, err.Error(), "client failed")
+	case <-time.After(5 * time.Second):
+		t.Fatal("pipeline did not return after client exited")
+	}
 }
 
 func TestDockerMountRoot(t *testing.T) {

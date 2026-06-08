@@ -60,6 +60,40 @@ func buildNativeInsertSQL(database string, table string) string {
 	return "INSERT INTO " + quoteIdent(database) + "." + quoteIdent(table) + " FORMAT Native"
 }
 
+func buildTruncateSQL(database string, table string) string {
+	return "TRUNCATE TABLE " + quoteIdent(database) + "." + quoteIdent(table)
+}
+
+func executeComposeQuery(composeFile string, query string) error {
+	composeFile = strings.TrimSpace(composeFile)
+	if composeFile == "" {
+		composeFile = "../docker-compose.yml"
+	}
+
+	cmd := exec.Command(
+		"docker", "compose", "-f", composeFile,
+		"exec", "-T", "clickhouse",
+		"clickhouse-client",
+		"--query", query,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return errors.Wrapf(err, "run clickhouse query stderr=%s", strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func truncateTargetTable(composeFile string, database string, table string) error {
+	if database == "" {
+		return errors.New("database is required")
+	}
+	if table == "" {
+		return errors.New("table name is required")
+	}
+	return executeComposeQuery(composeFile, buildTruncateSQL(database, table))
+}
+
 func executeNativeImport(opts NativeImportOptions) error {
 	if opts.Database == "" {
 		return errors.New("database is required")
@@ -103,14 +137,18 @@ func executeNativeImport(opts NativeImportOptions) error {
 		"--query", buildNativeInsertSQL(opts.Database, opts.Table.Table),
 	)
 
+	reader, writer := io.Pipe()
+	localCmd.Stdout = writer
+	clientCmd.Stdin = reader
+
+	return runNativePipeline(localCmd, clientCmd, reader, writer)
+}
+
+func runNativePipeline(localCmd *exec.Cmd, clientCmd *exec.Cmd, reader *io.PipeReader, writer *io.PipeWriter) error {
 	var localStderr bytes.Buffer
 	var clientStderr bytes.Buffer
 	localCmd.Stderr = &localStderr
 	clientCmd.Stderr = &clientStderr
-
-	reader, writer := io.Pipe()
-	localCmd.Stdout = writer
-	clientCmd.Stdin = reader
 
 	if err := clientCmd.Start(); err != nil {
 		_ = reader.Close()
@@ -124,20 +162,48 @@ func executeNativeImport(opts NativeImportOptions) error {
 		return errors.Wrap(err, "start clickhouse-local parquet reader")
 	}
 
-	localErr := localCmd.Wait()
-	if localErr != nil {
-		_ = writer.CloseWithError(localErr)
-	} else {
-		_ = writer.Close()
+	type processResult struct {
+		err    error
+		stderr string
 	}
-	clientErr := clientCmd.Wait()
-	_ = reader.Close()
 
-	if localErr != nil {
-		return errors.Wrapf(localErr, "clickhouse-local parquet reader failed stderr=%s", strings.TrimSpace(localStderr.String()))
+	localDone := make(chan processResult, 1)
+	clientDone := make(chan processResult, 1)
+
+	go func() {
+		err := localCmd.Wait()
+		if err != nil {
+			_ = writer.CloseWithError(err)
+		} else {
+			_ = writer.Close()
+		}
+		localDone <- processResult{
+			err:    err,
+			stderr: strings.TrimSpace(localStderr.String()),
+		}
+	}()
+
+	go func() {
+		err := clientCmd.Wait()
+		if err != nil {
+			_ = reader.CloseWithError(err)
+		} else {
+			_ = reader.Close()
+		}
+		clientDone <- processResult{
+			err:    err,
+			stderr: strings.TrimSpace(clientStderr.String()),
+		}
+	}()
+
+	clientResult := <-clientDone
+	localResult := <-localDone
+
+	if clientResult.err != nil {
+		return errors.Wrapf(clientResult.err, "clickhouse-client import failed stderr=%s", clientResult.stderr)
 	}
-	if clientErr != nil {
-		return errors.Wrapf(clientErr, "clickhouse-client import failed stderr=%s", strings.TrimSpace(clientStderr.String()))
+	if localResult.err != nil {
+		return errors.Wrapf(localResult.err, "clickhouse-local parquet reader failed stderr=%s", localResult.stderr)
 	}
 	return nil
 }
