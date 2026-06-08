@@ -314,6 +314,91 @@ Avoid Atlas for the first implementation. Atlas can manage ClickHouse schemas,
 but it adds more process and licensing/plan considerations than needed while the
 source table shapes are still being learned.
 
+### Parquet DDL Generator
+
+Do not hand-write every source-specific ClickHouse table. Build a small
+deterministic generator that reads source export Parquet schemas and produces
+reviewable `golang-migrate` SQL files.
+
+Create:
+
+```text
+corpscout/clickhouse/tools/parquetddl
+corpscout/clickhouse/sources/finland_prhytj.yaml
+```
+
+Example command:
+
+```text
+go run ./clickhouse/tools/parquetddl \
+  --source finland_prhytj \
+  --database corpscout_sources \
+  --export-dir ../companies/data/finland/countrydata/sources/prhytj/exports/20260607T205519Z-prhytj \
+  --config clickhouse/sources/finland_prhytj.yaml \
+  --out clickhouse/migrations/000002_create_finland_prhytj_tables.up.sql
+```
+
+The generator must produce deterministic output:
+
+- stable table ordering
+- stable column ordering
+- stable type mapping
+- stable injected metadata columns
+- stable `ENGINE`, `ORDER BY`, and optional partition settings from config
+
+Use ClickHouse schema inference instead of a custom Parquet parser when possible.
+The equivalent inspection query is:
+
+```sql
+DESCRIBE TABLE file('/absolute/path/to/companies.parquet', Parquet);
+```
+
+The source config supplies decisions that Parquet cannot infer:
+
+```yaml
+database: corpscout_sources
+source_prefix: fi_prhytj
+tables:
+  companies:
+    parquet: companies.parquet
+    table: fi_prhytj_companies
+    engine: ReplacingMergeTree
+    order_by:
+      - business_id
+      - source_run_id
+    inject_columns:
+      source_export_id: UUID
+      ingested_at: "DateTime64(3, 'UTC')"
+  registered_entries:
+    parquet: registered_entries.parquet
+    table: fi_prhytj_registered_entries
+    engine: ReplacingMergeTree
+    order_by:
+      - business_id
+      - register_code
+      - entry_type_code
+      - registered_on
+      - source_item_hash
+    inject_columns:
+      source_export_id: UUID
+      ingested_at: "DateTime64(3, 'UTC')"
+```
+
+Generation workflow:
+
+```text
+Parquet export
+  -> parquetddl reads schemas
+  -> parquetddl applies source config
+  -> migration SQL is generated
+  -> migration is reviewed and committed
+  -> golang-migrate applies DDL
+  -> importer loads Parquet data
+```
+
+The generator is allowed to generate `CREATE TABLE` DDL and matching `DROP TABLE`
+down migrations. It must not import data.
+
 ### Finland PRH YTJ Source Tables
 
 Create the first source-specific tables for the Finland PRH YTJ export:
