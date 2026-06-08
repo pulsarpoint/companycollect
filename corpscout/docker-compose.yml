@@ -10,36 +10,6 @@ services:
       - "-database=${DATABASE_URL:-postgres://corpscout:change-me@companycollect:5432/corpscout?sslmode=disable}"
       - "up"
 
-  clickhouse:
-    image: clickhouse/clickhouse-server:25.5
-    environment:
-      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-corpscout_sources}
-      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-change-me}
-    ports:
-      - "8123:8123"
-      - "9002:9000"
-    volumes:
-      - ./data/clickhouse:/var/lib/clickhouse
-    healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 10s
-
-  clickhouse-migrate:
-    image: migrate/migrate:v4.17.0
-    depends_on:
-      clickhouse:
-        condition: service_healthy
-    volumes:
-      - ./clickhouse/migrations:/clickhouse-migrations
-    command:
-      - "-path=/clickhouse-migrations"
-      - "-database=${CLICKHOUSE_MIGRATE_URL:-clickhouse://clickhouse:9000?username=default&password=change-me&database=corpscout_sources&x-multi-statement=true}"
-      - "up"
-
   postgrest:
     image: postgrest/postgrest:v12.2.3
     extra_hosts:

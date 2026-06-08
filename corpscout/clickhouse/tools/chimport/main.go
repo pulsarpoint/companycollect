@@ -27,14 +27,14 @@ func run() error {
 	var sourceExportID string
 	var exportDir string
 	var configPath string
-	var composeFile string
+	var nativeURL string
 	var clickHouseImage string
 	var dockerMount string
 	flag.StringVar(&database, "database", "", "ClickHouse database override")
 	flag.StringVar(&sourceExportID, "source-export-id", "", "Postgres registry source export UUID")
 	flag.StringVar(&exportDir, "export-dir", "", "source export directory")
 	flag.StringVar(&configPath, "config", "", "source config YAML")
-	flag.StringVar(&composeFile, "compose-file", "../docker-compose.yml", "Docker Compose file used to reach the ClickHouse service")
+	flag.StringVar(&nativeURL, "clickhouse-native-url", "", "ClickHouse native URL")
 	flag.StringVar(&clickHouseImage, "clickhouse-image", defaultClickHouseImage, "ClickHouse image used for clickhouse-local")
 	flag.StringVar(&dockerMount, "docker-mount", "", "host path mounted into the clickhouse-local container")
 	flag.Parse()
@@ -47,6 +47,9 @@ func run() error {
 	}
 	if configPath == "" {
 		return errors.New("config is required")
+	}
+	if nativeURL == "" {
+		return errors.New("clickhouse-native-url is required")
 	}
 
 	body, err := os.ReadFile(configPath)
@@ -75,7 +78,7 @@ func run() error {
 		if table.Table == "" {
 			return errors.Errorf("table %s table name is required", name)
 		}
-		if err := truncateTargetTable(composeFile, cfg.Database, table.Table); err != nil {
+		if err := truncateTargetTable(nativeURL, clickHouseImage, cfg.Database, table.Table); err != nil {
 			return errors.Wrapf(err, "truncate table %s", table.Table)
 		}
 		if err := executeNativeImport(NativeImportOptions{
@@ -83,7 +86,7 @@ func run() error {
 			Table:           table,
 			ParquetPath:     filepath.Join(exportDir, table.Parquet),
 			SourceExportID:  sourceExportID,
-			ComposeFile:     composeFile,
+			NativeURL:       nativeURL,
 			DockerMount:     dockerMount,
 			ClickHouseImage: clickHouseImage,
 		}); err != nil {

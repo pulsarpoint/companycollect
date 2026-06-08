@@ -57,6 +57,57 @@ func TestBuildTruncateSQL(t *testing.T) {
 	)
 }
 
+func TestParseClickHouseNativeURLWithQueryCredentials(t *testing.T) {
+	target, err := parseClickHouseNativeURL("clickhouse://host.docker.internal:9002?username=default&password=change-me&database=corpscout_sources")
+	require.NoError(t, err)
+	require.Equal(t, ClickHouseTarget{
+		Host:     "host.docker.internal",
+		Port:     "9002",
+		Username: "default",
+		Password: "change-me",
+		Database: "corpscout_sources",
+	}, target)
+}
+
+func TestParseClickHouseNativeURLWithUserInfoAndPathDatabase(t *testing.T) {
+	target, err := parseClickHouseNativeURL("clickhouse://analytics:secret@clickhouse.example.com/corpscout_sources")
+	require.NoError(t, err)
+	require.Equal(t, ClickHouseTarget{
+		Host:     "clickhouse.example.com",
+		Port:     "9000",
+		Username: "analytics",
+		Password: "secret",
+		Database: "corpscout_sources",
+	}, target)
+}
+
+func TestClickHouseClientDockerArgs(t *testing.T) {
+	args := clickHouseClientDockerArgs(
+		"clickhouse/clickhouse-server:25.5",
+		ClickHouseTarget{
+			Host:     "host.docker.internal",
+			Port:     "9002",
+			Username: "default",
+			Password: "change-me",
+			Database: "corpscout_sources",
+		},
+		"SELECT 1",
+	)
+
+	require.Equal(t, []string{
+		"run", "--rm", "-i",
+		"--add-host", "host.docker.internal:host-gateway",
+		"clickhouse/clickhouse-server:25.5",
+		"clickhouse-client",
+		"--host", "host.docker.internal",
+		"--port", "9002",
+		"--user", "default",
+		"--database", "corpscout_sources",
+		"--password", "change-me",
+		"--query", "SELECT 1",
+	}, args)
+}
+
 func TestRunNativePipelineReturnsClientErrorWhenClientExitsEarly(t *testing.T) {
 	reader, writer := io.Pipe()
 	localCmd := exec.Command("sh", "-c", "yes | head -c 10000000")

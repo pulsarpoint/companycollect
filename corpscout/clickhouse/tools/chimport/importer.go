@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -24,9 +25,17 @@ type NativeImportOptions struct {
 	Table           TableConfig
 	ParquetPath     string
 	SourceExportID  string
-	ComposeFile     string
+	NativeURL       string
 	DockerMount     string
 	ClickHouseImage string
+}
+
+type ClickHouseTarget struct {
+	Host     string
+	Port     string
+	Username string
+	Password string
+	Database string
 }
 
 func buildNativeSelectSQL(table TableConfig, parquetPath string, sourceExportID string) (string, error) {
@@ -64,17 +73,81 @@ func buildTruncateSQL(database string, table string) string {
 	return "TRUNCATE TABLE " + quoteIdent(database) + "." + quoteIdent(table)
 }
 
-func executeComposeQuery(composeFile string, query string) error {
-	composeFile = strings.TrimSpace(composeFile)
-	if composeFile == "" {
-		composeFile = "../docker-compose.yml"
+func parseClickHouseNativeURL(rawURL string) (ClickHouseTarget, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ClickHouseTarget{}, errors.New("clickhouse-native-url is required")
 	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ClickHouseTarget{}, errors.Wrap(err, "parse clickhouse native url")
+	}
+	if parsed.Scheme != "clickhouse" {
+		return ClickHouseTarget{}, errors.Errorf("clickhouse native url must use clickhouse scheme, got %q", parsed.Scheme)
+	}
+	target := ClickHouseTarget{
+		Host:     parsed.Hostname(),
+		Port:     parsed.Port(),
+		Username: parsed.Query().Get("username"),
+		Password: parsed.Query().Get("password"),
+		Database: parsed.Query().Get("database"),
+	}
+	if parsed.User != nil {
+		if target.Username == "" {
+			target.Username = parsed.User.Username()
+		}
+		if password, ok := parsed.User.Password(); ok && target.Password == "" {
+			target.Password = password
+		}
+	}
+	if target.Port == "" {
+		target.Port = "9000"
+	}
+	if target.Database == "" {
+		target.Database = strings.TrimPrefix(parsed.EscapedPath(), "/")
+	}
+	if target.Host == "" {
+		return ClickHouseTarget{}, errors.New("clickhouse native url host is required")
+	}
+	if target.Username == "" {
+		target.Username = "default"
+	}
+	if target.Database == "" {
+		return ClickHouseTarget{}, errors.New("clickhouse native url database is required")
+	}
+	return target, nil
+}
 
-	cmd := exec.Command(
-		"docker", "compose", "-f", composeFile,
-		"exec", "-T", "clickhouse",
+func clickHouseClientDockerArgs(image string, target ClickHouseTarget, query string) []string {
+	args := []string{
+		"run", "--rm", "-i",
+		"--add-host", "host.docker.internal:host-gateway",
+		image,
 		"clickhouse-client",
+		"--host", target.Host,
+		"--port", target.Port,
+		"--user", target.Username,
+		"--database", target.Database,
 		"--query", query,
+	}
+	if target.Password != "" {
+		args = append(args[:len(args)-2], "--password", target.Password, args[len(args)-2], args[len(args)-1])
+	}
+	return args
+}
+
+func executeClickHouseQuery(nativeURL string, image string, query string) error {
+	target, err := parseClickHouseNativeURL(nativeURL)
+	if err != nil {
+		return err
+	}
+	image = strings.TrimSpace(image)
+	if image == "" {
+		image = defaultClickHouseImage
+	}
+	cmd := exec.Command(
+		"docker",
+		clickHouseClientDockerArgs(image, target, query)...,
 	)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -84,14 +157,14 @@ func executeComposeQuery(composeFile string, query string) error {
 	return nil
 }
 
-func truncateTargetTable(composeFile string, database string, table string) error {
+func truncateTargetTable(nativeURL string, image string, database string, table string) error {
 	if database == "" {
 		return errors.New("database is required")
 	}
 	if table == "" {
 		return errors.New("table name is required")
 	}
-	return executeComposeQuery(composeFile, buildTruncateSQL(database, table))
+	return executeClickHouseQuery(nativeURL, image, buildTruncateSQL(database, table))
 }
 
 func executeNativeImport(opts NativeImportOptions) error {
@@ -118,9 +191,9 @@ func executeNativeImport(opts NativeImportOptions) error {
 	if mount == "" {
 		mount = dockerMountRoot(absolutePath)
 	}
-	composeFile := strings.TrimSpace(opts.ComposeFile)
-	if composeFile == "" {
-		composeFile = "../docker-compose.yml"
+	target, err := parseClickHouseNativeURL(opts.NativeURL)
+	if err != nil {
+		return err
 	}
 
 	localCmd := exec.Command(
@@ -131,10 +204,8 @@ func executeNativeImport(opts NativeImportOptions) error {
 		"--query", selectSQL,
 	)
 	clientCmd := exec.Command(
-		"docker", "compose", "-f", composeFile,
-		"exec", "-T", "clickhouse",
-		"clickhouse-client",
-		"--query", buildNativeInsertSQL(opts.Database, opts.Table.Table),
+		"docker",
+		clickHouseClientDockerArgs(image, target, buildNativeInsertSQL(opts.Database, opts.Table.Table))...,
 	)
 
 	reader, writer := io.Pipe()
