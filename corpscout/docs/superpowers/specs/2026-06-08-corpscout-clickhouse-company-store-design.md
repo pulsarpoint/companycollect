@@ -246,6 +246,68 @@ lets operators split or merge groups without rewriting the curated identity row.
 Use ClickHouse tables for wide, append-friendly, source-owned data and derived
 read models.
 
+## ClickHouse Schema Migrations
+
+Use `golang-migrate` for ClickHouse schema migrations, matching the migration
+tool already used by Corpscout PostgreSQL.
+
+Keep PostgreSQL and ClickHouse migrations in separate directories:
+
+```text
+corpscout/database/migrations
+  PostgreSQL migrations for registry, workflow, identity, brands, and curated
+  relationships
+
+corpscout/clickhouse/migrations
+  ClickHouse migrations for source-specific fact tables and projection tables
+```
+
+Example ClickHouse migration files:
+
+```text
+000001_create_sources_database.up.sql
+000001_create_sources_database.down.sql
+000002_create_finland_prhytj_tables.up.sql
+000002_create_finland_prhytj_tables.down.sql
+000003_create_company_projection_tables.up.sql
+000003_create_company_projection_tables.down.sql
+```
+
+ClickHouse migrations are for DDL only:
+
+- create databases
+- create source-specific tables
+- create projection tables
+- create materialized views when needed
+- add schema indexes/order keys
+
+They must not load large Parquet exports. Data import is a separate idempotent
+job executed after the table schema exists.
+
+The first Makefile/API shape should be:
+
+```text
+make clickhouse-migrate-up
+make clickhouse-migrate-down
+```
+
+The ClickHouse DSN should be configured separately from `DATABASE_URL`, for
+example:
+
+```text
+CLICKHOUSE_URL=clickhouse://default:password@localhost:9000/corpscout_sources
+```
+
+Use the `golang-migrate` ClickHouse database driver:
+
+```text
+github.com/golang-migrate/migrate/v4/database/clickhouse
+```
+
+Avoid Atlas for the first implementation. Atlas can manage ClickHouse schemas,
+but it adds more process and licensing/plan considerations than needed while the
+source table shapes are still being learned.
+
 ### `source_company_records`
 
 One row per company-like record asserted by one source export.
@@ -479,4 +541,3 @@ Its useful parts remain:
 
 Its large `source_records`, `entities`, and web fact tables should move to
 ClickHouse projections or be reduced to small Postgres link/curation tables.
-
