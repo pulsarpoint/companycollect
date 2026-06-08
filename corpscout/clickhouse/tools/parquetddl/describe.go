@@ -27,7 +27,7 @@ func (d ClickHouseLocalDescriber) Describe(path string) ([]Column, error) {
 	if binary == "" {
 		binary = "clickhouse-local"
 	}
-	query := "DESCRIBE TABLE file('" + strings.ReplaceAll(path, "'", "\\'") + "', Parquet) FORMAT JSONEachRow"
+	query := "DESCRIBE TABLE file(" + clickHouseStringLiteral(path) + ", Parquet) FORMAT JSONEachRow"
 	cmd := exec.Command(binary, "--query", query)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -52,4 +52,12 @@ func (d ClickHouseLocalDescriber) Describe(path string) ([]Column, error) {
 		columns = append(columns, Column{Name: row.Name, Type: row.Type})
 	}
 	return columns, nil
+}
+
+func clickHouseStringLiteral(value string) string {
+	escaped := strings.NewReplacer(
+		`\`, `\\`,
+		`'`, `\'`,
+	).Replace(value)
+	return "'" + escaped + "'"
 }

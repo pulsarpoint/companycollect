@@ -48,3 +48,59 @@ func TestGenerateMigrationIsDeterministic(t *testing.T) {
 	require.Contains(t, down, "DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_companies`;")
 	require.Equal(t, up, strings.TrimSuffix(up, "\n")+"\n")
 }
+
+func TestGenerateMigrationEscapesWeirdIdentifier(t *testing.T) {
+	weirdColumn := "odd\\`name"
+	cfg := Config{
+		Database: "corpscout_sources",
+		Tables: map[string]TableConfig{
+			"companies": {
+				Parquet: "companies.parquet",
+				Table:   "fi_prhytj_companies",
+				Engine:  "ReplacingMergeTree",
+				OrderBy: []string{weirdColumn},
+			},
+		},
+	}
+	describer := fakeDescriber{
+		"/exports/companies.parquet": {
+			{Name: weirdColumn, Type: "String"},
+		},
+	}
+
+	up, _, err := generateMigrations(cfg, "/exports", describer)
+	require.NoError(t, err)
+	expectedColumn := "`odd" + "\\\\" + "\\`" + "name`"
+	require.Contains(t, up, expectedColumn+" String")
+	require.Contains(t, up, "ORDER BY ("+expectedColumn+")")
+}
+
+func TestGenerateMigrationRejectsInjectedColumnDuplicate(t *testing.T) {
+	cfg := Config{
+		Database: "corpscout_sources",
+		Tables: map[string]TableConfig{
+			"companies": {
+				Parquet: "companies.parquet",
+				Table:   "fi_prhytj_companies",
+				Engine:  "ReplacingMergeTree",
+				OrderBy: []string{"business_id"},
+				InjectColumns: map[string]string{
+					"source_export_id": "UUID",
+				},
+			},
+		},
+	}
+	describer := fakeDescriber{
+		"/exports/companies.parquet": {
+			{Name: "business_id", Type: "String"},
+			{Name: "source_export_id", Type: "String"},
+		},
+	}
+
+	_, _, err := generateMigrations(cfg, "/exports", describer)
+	require.EqualError(t, err, "table companies injected column source_export_id duplicates parquet column")
+}
+
+func TestClickHouseStringLiteralEscapesPath(t *testing.T) {
+	require.Equal(t, "'/exports/odd\\\\path\\'s.parquet'", clickHouseStringLiteral("/exports/odd\\path's.parquet"))
+}

@@ -21,6 +21,15 @@ func generateMigrations(cfg Config, exportDir string, describer Describer) (stri
 		if len(columns) == 0 {
 			return "", "", errors.Errorf("table %s has no columns", name)
 		}
+		parquetColumns := make(map[string]struct{}, len(columns))
+		for _, column := range columns {
+			parquetColumns[column.Name] = struct{}{}
+		}
+		for _, injected := range sortedKeys(table.InjectColumns) {
+			if _, ok := parquetColumns[injected]; ok {
+				return "", "", errors.Errorf("table %s injected column %s duplicates parquet column", name, injected)
+			}
+		}
 
 		up.WriteString("CREATE TABLE IF NOT EXISTS ")
 		up.WriteString(quoteIdent(cfg.Database))
@@ -60,7 +69,11 @@ func generateMigrations(cfg Config, exportDir string, describer Describer) (stri
 }
 
 func quoteIdent(value string) string {
-	return "`" + strings.ReplaceAll(value, "`", "``") + "`"
+	escaped := strings.NewReplacer(
+		`\`, `\\`,
+		"`", "\\`",
+	).Replace(value)
+	return "`" + escaped + "`"
 }
 
 func joinQuoted(values []string) string {
