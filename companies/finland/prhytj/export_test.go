@@ -56,7 +56,7 @@ func TestSourceExportWritesParquetFilesAndManifest(t *testing.T) {
 	}
 
 	manifestDir := filepath.Dir(result.ManifestPath)
-	for _, name := range []string{"companies", "company_names", "legal_forms", "industries", "addresses", "registered_entries", "tax_registrations", "websites"} {
+	for _, name := range []string{"raw_records", "companies", "company_names", "legal_forms", "industries", "addresses", "registered_entries", "tax_registrations", "websites"} {
 		exportFile := exportFileByName(manifest.Files, name)
 		if exportFile == nil {
 			t.Fatalf("missing export file %s", name)

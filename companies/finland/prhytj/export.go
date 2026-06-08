@@ -60,7 +60,19 @@ func (s *Source) Export(ctx context.Context, opts ExportOptions) (ExportResult, 
 		}
 	}
 
-	rows, recordsSeen, recordsExported, decodeErrors, err := readExportRows(ctx, snapshotPath, runID, opts.Limit)
+	snapshotSHA, _, err := countryimport.HashFileSHA256(snapshotPath)
+	if err != nil {
+		return ExportResult{}, countryimport.WrapSourceError(
+			countryimport.ErrorKindFileIO,
+			SourceSlug,
+			"",
+			snapshotPath,
+			0,
+			errors.Wrap(err, "hash PRH snapshot"),
+		)
+	}
+
+	rows, recordsSeen, recordsExported, decodeErrors, err := readExportRows(ctx, snapshotPath, snapshotSHA, runID, opts.Limit)
 	result := ExportResult{
 		SourceSlug:      SourceSlug,
 		RunID:           runID,
@@ -92,18 +104,6 @@ func (s *Source) Export(ctx context.Context, opts ExportOptions) (ExportResult, 
 	}
 	if err := ctx.Err(); err != nil {
 		return result, processContextError(err, snapshotPath)
-	}
-
-	snapshotSHA, _, err := countryimport.HashFileSHA256(snapshotPath)
-	if err != nil {
-		return result, countryimport.WrapSourceError(
-			countryimport.ErrorKindFileIO,
-			SourceSlug,
-			"",
-			snapshotPath,
-			0,
-			errors.Wrap(err, "hash PRH snapshot"),
-		)
 	}
 
 	sourceSlug := "prhytj"
@@ -143,7 +143,7 @@ func (s *Source) Export(ctx context.Context, opts ExportOptions) (ExportResult, 
 	return result, nil
 }
 
-func readExportRows(ctx context.Context, snapshotPath string, runID string, limit int64) (ExportRows, int64, int64, int64, error) {
+func readExportRows(ctx context.Context, snapshotPath string, snapshotSHA256 string, runID string, limit int64) (ExportRows, int64, int64, int64, error) {
 	var rows ExportRows
 	file, err := os.Open(snapshotPath)
 	if err != nil {
@@ -201,7 +201,10 @@ func readExportRows(ctx context.Context, snapshotPath string, runID string, limi
 		payloadHash := sha256.Sum256(rawLine)
 		record.PayloadHash = hex.EncodeToString(payloadHash[:])
 
-		appendExportRows(&rows, ProjectExportRows(record, runID))
+		exportedAt := time.Now().UTC().Format(time.RFC3339)
+		projected := ProjectExportRows(record, runID)
+		projected.RawRecords = append(projected.RawRecords, ProjectRawRecordExportRow(record, runID, snapshotPath, snapshotSHA256, lineNumber, exportedAt))
+		appendExportRows(&rows, projected)
 		recordsExported++
 		if limit > 0 && recordsExported >= limit {
 			break
@@ -225,6 +228,7 @@ func readExportRows(ctx context.Context, snapshotPath string, runID string, limi
 }
 
 func appendExportRows(dst *ExportRows, src ExportRows) {
+	dst.RawRecords = append(dst.RawRecords, src.RawRecords...)
 	dst.Companies = append(dst.Companies, src.Companies...)
 	dst.CompanyNames = append(dst.CompanyNames, src.CompanyNames...)
 	dst.LegalForms = append(dst.LegalForms, src.LegalForms...)
@@ -236,7 +240,13 @@ func appendExportRows(dst *ExportRows, src ExportRows) {
 }
 
 func writeSourceExportFiles(ctx context.Context, exportDir string, rows ExportRows) ([]countryimport.ExportFile, error) {
-	files := make([]countryimport.ExportFile, 0, 8)
+	files := make([]countryimport.ExportFile, 0, 9)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := addExportFile(&files, exportDir, "raw_records", rows.RawRecords); err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

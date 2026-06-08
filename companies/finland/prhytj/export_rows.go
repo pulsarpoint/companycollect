@@ -12,6 +12,7 @@ import (
 const SourceExportSchemaVersion = "finland.prhytj.source.v1"
 
 type ExportRows struct {
+	RawRecords        []RawRecordExportRow
 	Companies         []CompanyExportRow
 	CompanyNames      []CompanyNameExportRow
 	LegalForms        []LegalFormExportRow
@@ -20,6 +21,21 @@ type ExportRows struct {
 	RegisteredEntries []RegisteredEntryExportRow
 	TaxRegistrations  []TaxRegistrationExportRow
 	Websites          []WebsiteExportRow
+}
+
+type RawRecordExportRow struct {
+	CountryISO2        string `parquet:"country_iso2"`
+	SourceSlug         string `parquet:"source_slug"`
+	SourceRunID        string `parquet:"source_run_id"`
+	SourceRecordID     string `parquet:"source_record_id"`
+	BusinessID         string `parquet:"business_id"`
+	SourcePayloadHash  string `parquet:"source_payload_hash"`
+	SnapshotPath       string `parquet:"snapshot_path"`
+	SnapshotSHA256     string `parquet:"snapshot_sha256"`
+	SnapshotLineNumber int64  `parquet:"snapshot_line_number"`
+	RawPayloadJSON     string `parquet:"raw_payload_json"`
+	SchemaVersion      string `parquet:"schema_version"`
+	ExportedAt         string `parquet:"exported_at"`
 }
 
 type CompanyExportRow struct {
@@ -227,6 +243,24 @@ func ProjectExportRows(record CompanyRecord, runID string) ExportRows {
 	rows.TaxRegistrations = projectTaxRegistrationRows(record, runID, sourceRecordID, profile.TaxRegistrations)
 	rows.Websites = projectWebsiteRows(record, runID, sourceRecordID, profile.Website, websiteHost, websitePath)
 	return rows
+}
+
+func ProjectRawRecordExportRow(record CompanyRecord, runID string, snapshotPath string, snapshotSHA256 string, lineNumber int64, exportedAt string) RawRecordExportRow {
+	businessID := strings.TrimSpace(record.BusinessID.Value)
+	return RawRecordExportRow{
+		CountryISO2:        "FI",
+		SourceSlug:         SourceSlug,
+		SourceRunID:        runID,
+		SourceRecordID:     businessID,
+		BusinessID:         businessID,
+		SourcePayloadHash:  record.PayloadHash,
+		SnapshotPath:       snapshotPath,
+		SnapshotSHA256:     snapshotSHA256,
+		SnapshotLineNumber: lineNumber,
+		RawPayloadJSON:     string(record.RawPayload),
+		SchemaVersion:      SourceExportSchemaVersion,
+		ExportedAt:         exportedAt,
+	}
 }
 
 func sourceItemHash(kind string, businessID string, value any) string {

@@ -107,6 +107,51 @@ func TestProjectExportRowsFromRealSample(t *testing.T) {
 	}
 }
 
+func TestProjectRawRecordExportRowPreservesPayload(t *testing.T) {
+	raw := []byte(`{"businessId":{"value":"1234567-8"},"extra":{"field":"kept"}}`)
+	record := CompanyRecord{
+		BusinessID:  Identifier{Value: "1234567-8"},
+		RawPayload:  raw,
+		PayloadHash: "hash",
+	}
+
+	row := ProjectRawRecordExportRow(record, "run-1", "/snap.ndjson", "snapshot-hash", 42, "2026-06-08T00:00:00Z")
+
+	if row.CountryISO2 != "FI" {
+		t.Fatalf("country ISO2 = %q, want FI", row.CountryISO2)
+	}
+	if row.SourceSlug != SourceSlug {
+		t.Fatalf("source slug = %q, want %q", row.SourceSlug, SourceSlug)
+	}
+	if row.SourceRunID != "run-1" {
+		t.Fatalf("source run ID = %q, want run-1", row.SourceRunID)
+	}
+	if row.SourceRecordID != "1234567-8" || row.BusinessID != "1234567-8" {
+		t.Fatalf("record IDs = source %q business %q, want 1234567-8", row.SourceRecordID, row.BusinessID)
+	}
+	if row.SourcePayloadHash != "hash" {
+		t.Fatalf("source payload hash = %q, want hash", row.SourcePayloadHash)
+	}
+	if row.SnapshotPath != "/snap.ndjson" {
+		t.Fatalf("snapshot path = %q, want /snap.ndjson", row.SnapshotPath)
+	}
+	if row.SnapshotSHA256 != "snapshot-hash" {
+		t.Fatalf("snapshot sha = %q, want snapshot-hash", row.SnapshotSHA256)
+	}
+	if row.SnapshotLineNumber != 42 {
+		t.Fatalf("snapshot line number = %d, want 42", row.SnapshotLineNumber)
+	}
+	if row.RawPayloadJSON != string(raw) {
+		t.Fatalf("raw payload = %q, want exact payload %q", row.RawPayloadJSON, string(raw))
+	}
+	if row.SchemaVersion != SourceExportSchemaVersion {
+		t.Fatalf("schema version = %q, want %q", row.SchemaVersion, SourceExportSchemaVersion)
+	}
+	if row.ExportedAt != "2026-06-08T00:00:00Z" {
+		t.Fatalf("exported at = %q, want 2026-06-08T00:00:00Z", row.ExportedAt)
+	}
+}
+
 func taxRegistrationRow(rows []TaxRegistrationExportRow, registrationType string) *TaxRegistrationExportRow {
 	for i := range rows {
 		if rows[i].RegistrationType == registrationType {
