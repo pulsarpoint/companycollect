@@ -246,6 +246,12 @@ lets operators split or merge groups without rewriting the curated identity row.
 Use ClickHouse tables for wide, append-friendly, source-owned data and derived
 read models.
 
+Do not start with one unified source-record schema. The first ClickHouse source
+tables should be source-specific, because Corpscout needs to ingest roughly 20
+country/source exports before deciding which structures are truly common. The
+generic read projections can exist from the beginning, but they are derived from
+source-specific tables.
+
 ## ClickHouse Schema Migrations
 
 Use `golang-migrate` for ClickHouse schema migrations, matching the migration
@@ -308,65 +314,315 @@ Avoid Atlas for the first implementation. Atlas can manage ClickHouse schemas,
 but it adds more process and licensing/plan considerations than needed while the
 source table shapes are still being learned.
 
-### `source_company_records`
+### Finland PRH YTJ Source Tables
 
-One row per company-like record asserted by one source export.
-
-Important columns:
+Create the first source-specific tables for the Finland PRH YTJ export:
 
 ```text
+corpscout_sources.fi_prhytj_raw_records
+corpscout_sources.fi_prhytj_companies
+corpscout_sources.fi_prhytj_company_names
+corpscout_sources.fi_prhytj_legal_forms
+corpscout_sources.fi_prhytj_industries
+corpscout_sources.fi_prhytj_addresses
+corpscout_sources.fi_prhytj_registered_entries
+corpscout_sources.fi_prhytj_tax_registrations
+corpscout_sources.fi_prhytj_websites
+```
+
+These tables mirror:
+
+```text
+companies/data/finland/countrydata/sources/prhytj/exports/<run_id>/*.parquet
+```
+
+The current pilot export is:
+
+```text
+companies/data/finland/countrydata/sources/prhytj/exports/20260607T205519Z-prhytj
+```
+
+#### `fi_prhytj_raw_records`
+
+One full-fidelity row per PRH YTJ API company response. This table is required
+because the normalized Parquet files currently keep `source_payload_hash`, but
+not the full API payload.
+
+```text
+country_iso2
 source_slug
+source_run_id
+source_export_id
+source_record_id
+business_id
+source_payload_hash
+snapshot_path
+snapshot_sha256
+snapshot_line_number
+raw_payload_json
+schema_version
+exported_at
+ingested_at
+```
+
+Suggested engine:
+
+```text
+ReplacingMergeTree
+ORDER BY (source_run_id, business_id, source_payload_hash)
+```
+
+#### `fi_prhytj_companies`
+
+One row per company record from `companies.parquet`.
+
+```text
+country_iso2
+source_slug
+source_run_id
 source_export_id
 source_record_id
 source_native_id
-country_iso2
-jurisdiction_code
-registration_number
+source_payload_hash
+source_updated_at
+exported_at
+schema_version
+business_id
+vat_id
+euid
 legal_name
-legal_name_en
 legal_name_normalized
 lifecycle_status
 is_active
-primary_website
-source_updated_at
-source_payload_hash
-record_hash
-raw_payload_ref
-raw_payload_json
-normalized_payload_json
-translation_status
-translation_required_fields
-translated_fields
-untranslated_fields
-first_seen_at
-last_seen_at
+legal_form_code
+legal_form_label
+legal_form_label_en
+primary_industry_code
+primary_industry_code_set
+primary_industry_label
+primary_industry_label_en
+primary_nace_code
+primary_nace_revision
+website_url
+website_normalized_url
+website_host
 ingested_at
 ```
 
-The primary query dimensions are country, source, registration number, normalized
-name, activity status, website/domain, and import time.
-
-### `source_company_attributes`
-
-Optional long/narrow attribute table for values that are sparse or repeated.
-
-Important columns:
+Suggested engine:
 
 ```text
-source_slug
-source_record_id
+ReplacingMergeTree
+ORDER BY (business_id, source_run_id)
+```
+
+#### `fi_prhytj_company_names`
+
+One row per source name from `company_names.parquet`.
+
+```text
 country_iso2
-attribute_type
-attribute_key
-attribute_value
-attribute_value_en
-attribute_value_normalized
-evidence_json
+source_slug
+source_run_id
+source_export_id
+source_record_id
+source_item_hash
+business_id
+source_position
+name
+name_type_code
+registered_on
+ended_on
+is_current
+is_primary
 ingested_at
 ```
 
-This table covers source names, identifiers, addresses, contacts, industries,
-websites, and source evidence when wide columns are not enough.
+Suggested engine:
+
+```text
+ReplacingMergeTree
+ORDER BY (business_id, source_position, source_item_hash)
+```
+
+#### `fi_prhytj_legal_forms`
+
+```text
+country_iso2
+source_slug
+source_run_id
+source_export_id
+source_record_id
+source_item_hash
+business_id
+legal_form_code
+legal_form_label
+legal_form_label_en
+legal_form_label_fi
+legal_form_label_sv
+registered_on
+ended_on
+ingested_at
+```
+
+Suggested engine:
+
+```text
+ReplacingMergeTree
+ORDER BY (business_id, registered_on, legal_form_code, source_item_hash)
+```
+
+#### `fi_prhytj_industries`
+
+```text
+country_iso2
+source_slug
+source_run_id
+source_export_id
+source_record_id
+source_item_hash
+business_id
+source_industry_code
+source_industry_code_set
+source_industry_label
+source_industry_label_en
+source_industry_label_fi
+source_industry_label_sv
+mapped_nace_code
+nace_revision
+is_primary
+ingested_at
+```
+
+Suggested engine:
+
+```text
+ReplacingMergeTree
+ORDER BY (business_id, source_industry_code, source_item_hash)
+```
+
+#### `fi_prhytj_addresses`
+
+```text
+country_iso2
+source_slug
+source_run_id
+source_export_id
+source_record_id
+source_item_hash
+business_id
+source_position
+address_type_code
+address_type
+street
+building_number
+entrance
+apartment_number
+post_office_box
+co
+post_code
+city_fi
+city_sv
+municipality_code
+country
+registered_on
+ingested_at
+```
+
+Suggested engine:
+
+```text
+ReplacingMergeTree
+ORDER BY (business_id, address_type_code, source_position, source_item_hash)
+```
+
+#### `fi_prhytj_registered_entries`
+
+```text
+country_iso2
+source_slug
+source_run_id
+source_export_id
+source_record_id
+source_item_hash
+business_id
+register_code
+register_label
+authority
+entry_type_code
+entry_type_label
+entry_type_label_en
+registered_on
+ended_on
+is_current
+ingested_at
+```
+
+Suggested engine:
+
+```text
+ReplacingMergeTree
+ORDER BY (business_id, register_code, entry_type_code, registered_on, source_item_hash)
+```
+
+#### `fi_prhytj_tax_registrations`
+
+```text
+country_iso2
+source_slug
+source_run_id
+source_export_id
+source_record_id
+source_item_hash
+business_id
+registration_type
+register_code
+current_registered
+first_registered_on
+ended_on
+ingested_at
+```
+
+Suggested engine:
+
+```text
+ReplacingMergeTree
+ORDER BY (business_id, registration_type, register_code, source_item_hash)
+```
+
+#### `fi_prhytj_websites`
+
+```text
+country_iso2
+source_slug
+source_run_id
+source_export_id
+source_record_id
+source_item_hash
+business_id
+url
+normalized_url
+host
+path
+registered_on
+ended_on
+is_current
+is_primary
+ingested_at
+```
+
+Suggested engine:
+
+```text
+ReplacingMergeTree
+ORDER BY (host, business_id, source_item_hash)
+```
+
+### Future Source Consolidation
+
+After roughly 20 country/source imports, revisit whether source-specific tables
+should feed a shared fact schema. Until then, avoid premature universal tables
+such as `source_company_records` or `source_company_attributes`.
 
 ### `company_search_projection`
 
@@ -434,7 +690,7 @@ Parquet export + manifest
   v
 ClickHouse import
   |
-  | source records and attributes inserted
+  | source-specific Finland PRH YTJ tables inserted
   v
 ClickHouse resolver/projection job
   |
@@ -523,7 +779,7 @@ Initial tests should cover:
 
 - PostgreSQL migration creates only control-plane and identity graph tables
 - old POC company/source-record tables are dropped
-- ClickHouse DDL creates source record and projection tables
+- ClickHouse DDL creates Finland PRH YTJ source tables and projection tables
 - Parquet import maps Finland source export rows into ClickHouse records
 - search queries filter by country, source, name, registration number, and domain
 - company detail composition merges Postgres identity graph and ClickHouse
