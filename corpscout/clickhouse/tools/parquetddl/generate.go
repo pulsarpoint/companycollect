@@ -56,7 +56,8 @@ func generateMigrations(cfg Config, exportDir string, describer Describer) (stri
 		}
 		up.WriteString("ORDER BY (")
 		up.WriteString(joinQuoted(table.OrderBy))
-		up.WriteString(");\n\n")
+		up.WriteString(")\n")
+		up.WriteString("SETTINGS allow_nullable_key = 1;\n\n")
 
 		down.WriteString("DROP TABLE IF EXISTS ")
 		down.WriteString(quoteIdent(cfg.Database))

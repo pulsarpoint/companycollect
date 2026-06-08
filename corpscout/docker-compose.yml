@@ -37,7 +37,7 @@ services:
       - ./clickhouse/migrations:/clickhouse-migrations
     command:
       - "-path=/clickhouse-migrations"
-      - "-database=${CLICKHOUSE_MIGRATE_URL:-clickhouse://default:change-me@clickhouse:9000/corpscout_sources?x-multi-statement=true}"
+      - "-database=${CLICKHOUSE_MIGRATE_URL:-clickhouse://clickhouse:9000?username=default&password=change-me&database=corpscout_sources&x-multi-statement=true}"
       - "up"
 
   postgrest:

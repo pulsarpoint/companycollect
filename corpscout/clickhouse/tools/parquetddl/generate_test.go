@@ -45,6 +45,7 @@ func TestGenerateMigrationIsDeterministic(t *testing.T) {
 	require.Contains(t, up, "`ingested_at` DateTime64(3, 'UTC')")
 	require.Contains(t, up, "ENGINE = ReplacingMergeTree")
 	require.Contains(t, up, "ORDER BY (`business_id`, `source_run_id`)")
+	require.Contains(t, up, "SETTINGS allow_nullable_key = 1;")
 	require.Contains(t, down, "DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_companies`;")
 	require.Equal(t, up, strings.TrimSuffix(up, "\n")+"\n")
 }

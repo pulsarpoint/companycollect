@@ -2,7 +2,7 @@
 
 DATABASE_URL := $(or $(DATABASE_URL),$(shell sed -n 's/^DATABASE_URL=//p' .env 2>/dev/null | tail -n 1),postgres://corpscout:change-me@companycollect:5432/corpscout?sslmode=disable)
 CORPSCOUT_TEST_DATABASE_URL := $(or $(CORPSCOUT_TEST_DATABASE_URL),$(shell sed -n 's/^CORPSCOUT_TEST_DATABASE_URL=//p' .env 2>/dev/null | tail -n 1),$(shell sed -n 's/^DATABASE_URL=//p' .env 2>/dev/null | tail -n 1 | sed 's|/corpscout?|/corpscout_test?|'),postgres://corpscout:change-me@companycollect:5432/corpscout_test?sslmode=disable)
-CLICKHOUSE_MIGRATE_URL := $(or $(CLICKHOUSE_MIGRATE_URL),$(shell sed -n 's/^CLICKHOUSE_MIGRATE_URL=//p' .env 2>/dev/null | tail -n 1),clickhouse://default:change-me@clickhouse:9000/corpscout_sources?x-multi-statement=true)
+CLICKHOUSE_MIGRATE_URL := $(or $(CLICKHOUSE_MIGRATE_URL),$(shell sed -n 's/^CLICKHOUSE_MIGRATE_URL=//p' .env 2>/dev/null | tail -n 1),clickhouse://clickhouse:9000?username=default&password=change-me&database=corpscout_sources&x-multi-statement=true)
 CLICKHOUSE_HTTP_URL := $(or $(CLICKHOUSE_HTTP_URL),$(shell sed -n 's/^CLICKHOUSE_HTTP_URL=//p' .env 2>/dev/null | tail -n 1),http://default:change-me@localhost:8123)
 FINLAND_PRHYTJ_EXPORT_DIR ?= ../companies/data/finland/countrydata/sources/prhytj/exports/20260607T205519Z-prhytj
 FINLAND_PRHYTJ_SOURCE_EXPORT_ID ?= 00000000-0000-0000-0000-000000000000
