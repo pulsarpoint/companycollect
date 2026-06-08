@@ -84,5 +84,5 @@ Tests use local fixtures and `httptest`; they do not make real network calls.
 ## Limitations
 
 This source exports SEC EDGAR company ticker records only. The final USA export
-that combines SEC EDGAR with future sources such as `irseobmf` and
-`coloradoentities` is intentionally not implemented yet.
+that combines SEC EDGAR with the other implemented sources (`irseobmf` and
+`coloradoentities`) is intentionally not implemented yet.

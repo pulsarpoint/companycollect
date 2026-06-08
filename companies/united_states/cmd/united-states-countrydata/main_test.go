@@ -25,10 +25,28 @@ func TestParseArgsRejectsUnknownSource(t *testing.T) {
 	}
 }
 
-func TestParseArgsRejectsFutureSourceForRunnableSourceCommand(t *testing.T) {
-	_, err := parseArgs([]string{"export-source", "--source", "irseobmf"})
+func TestParseArgsAcceptsAllImplementedSources(t *testing.T) {
+	for _, source := range []string{"secedgar", "irseobmf", "coloradoentities"} {
+		if _, err := parseArgs([]string{"export-source", "--source", source}); err != nil {
+			t.Fatalf("parse args for %s: %v", source, err)
+		}
+	}
+}
+
+func TestParseArgsRejectsUnimplementedSourceForRunnableSourceCommand(t *testing.T) {
+	_, err := parseArgs([]string{"export-source", "--source", "samgoventity"})
 	if err == nil {
 		t.Fatal("parse args returned nil error")
+	}
+}
+
+func TestParseArgsAcceptsMaxPages(t *testing.T) {
+	cfg, err := parseArgs([]string{"sync-source", "--source", "coloradoentities", "--max-pages", "3"})
+	if err != nil {
+		t.Fatalf("parse args: %v", err)
+	}
+	if cfg.maxPages != 3 {
+		t.Fatalf("maxPages = %d, want 3", cfg.maxPages)
 	}
 }
 
@@ -80,7 +98,7 @@ func TestRunStatusSourceReportsPublicSourceKey(t *testing.T) {
 	requireNonEmptyStringResult(t, result, "source_manifest_path")
 }
 
-func TestRunStatusReportsSecEdgar(t *testing.T) {
+func TestRunStatusReportsAllSources(t *testing.T) {
 	result, err := run(t.Context(), cliConfig{
 		command: "status",
 		dataDir: t.TempDir(),
@@ -94,9 +112,66 @@ func TestRunStatusReportsSecEdgar(t *testing.T) {
 	if !ok {
 		t.Fatalf("sources = %#v, want map[string]any", result["sources"])
 	}
-	if _, ok := sources["secedgar"]; !ok {
-		t.Fatalf("sources missing secedgar: %#v", sources)
+	for _, slug := range []string{"secedgar", "irseobmf", "coloradoentities"} {
+		if _, ok := sources[slug]; !ok {
+			t.Fatalf("sources missing %s: %#v", slug, sources)
+		}
 	}
+}
+
+func TestRunExportSourceIRSEOBMF(t *testing.T) {
+	dataDir := t.TempDir()
+	snapshotPath := filepath.Join(dataDir, "sources", "irseobmf", "snapshots", "snap.ndjson")
+	writeCLITestFile(t, snapshotPath, []byte(`{"EIN":"010011694","NAME":"ALPHA NONPROFIT INC","STATUS":"01","STREET":"1 MAIN ST","CITY":"DENVER","STATE":"CO","ZIP":"80014","SUBSECTION":"03","NTEE_CD":"S19","TAX_PERIOD":"202412","ASSET_AMT":"1000"}`+"\n"))
+
+	result, err := run(t.Context(), cliConfig{
+		command:      "export-source",
+		source:       "irseobmf",
+		dataDir:      dataDir,
+		snapshotPath: snapshotPath,
+		runID:        "irs-run-1",
+	})
+	if err != nil {
+		t.Fatalf("run export-source: %v", err)
+	}
+	requireStringResult(t, result, "source", "irseobmf")
+	requireStringResult(t, result, "status", "ok")
+	requireStringResult(t, result, "run_id", "irs-run-1")
+	requireNonEmptyStringResult(t, result, "source_manifest_path")
+}
+
+func TestRunExportSourceColorado(t *testing.T) {
+	dataDir := t.TempDir()
+	snapshotPath := filepath.Join(dataDir, "sources", "coloradoentities", "snapshots", "snap.ndjson")
+	writeCLITestFile(t, snapshotPath, []byte(`{"entityid":"20251665680","entityname":"KYLDERON MIST VALLEY LLC","entitystatus":"Good Standing","jurisdictonofformation":"CO","entitytype":"DLLC","entityformdate":"2025-06-16T00:00:00.000"}`+"\n"))
+
+	result, err := run(t.Context(), cliConfig{
+		command:      "export-source",
+		source:       "coloradoentities",
+		dataDir:      dataDir,
+		snapshotPath: snapshotPath,
+		runID:        "co-run-1",
+	})
+	if err != nil {
+		t.Fatalf("run export-source: %v", err)
+	}
+	requireStringResult(t, result, "source", "coloradoentities")
+	requireStringResult(t, result, "status", "ok")
+	requireStringResult(t, result, "run_id", "co-run-1")
+	requireNonEmptyStringResult(t, result, "source_manifest_path")
+}
+
+func TestRunStatusSourceColoradoMissing(t *testing.T) {
+	result, err := run(t.Context(), cliConfig{
+		command: "status-source",
+		source:  "coloradoentities",
+		dataDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("run status-source: %v", err)
+	}
+	requireStringResult(t, result, "source", "coloradoentities")
+	requireStringResult(t, result, "status", "missing")
 }
 
 func TestRunSyncSourceDownloadsProcessesAndExportsFromLocalServer(t *testing.T) {

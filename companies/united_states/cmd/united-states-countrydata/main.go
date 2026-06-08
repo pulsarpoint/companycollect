@@ -12,6 +12,8 @@ import (
 	"github.com/cockroachdb/errors"
 	countryimport "github.com/pulsarpoint/companycollect/companies/common/countryimport"
 	unitedstates "github.com/pulsarpoint/companycollect/companies/united_states"
+	"github.com/pulsarpoint/companycollect/companies/united_states/coloradoentities"
+	"github.com/pulsarpoint/companycollect/companies/united_states/irseobmf"
 	"github.com/pulsarpoint/companycollect/companies/united_states/secedgar"
 )
 
@@ -23,6 +25,24 @@ type cliConfig struct {
 	runID        string
 	snapshotPath string
 	chunkSize    int
+	maxPages     int
+}
+
+// supportedSources are the source slugs the CLI can sync, export, and report.
+var supportedSources = map[string]bool{
+	unitedstates.SourceSECEdgar:         true,
+	unitedstates.SourceIRSEOBMF:         true,
+	unitedstates.SourceColoradoEntities: true,
+}
+
+// sourceExport is a source-agnostic view of a source parquet export result.
+type sourceExport struct {
+	source          string
+	runID           string
+	manifestPath    string
+	recordsSeen     int64
+	recordsExported int64
+	decodeErrors    int64
 }
 
 func main() {
@@ -65,6 +85,7 @@ func parseArgs(args []string) (cliConfig, error) {
 	flags.StringVar(&cfg.runID, "run-id", "", "export run ID")
 	flags.StringVar(&cfg.snapshotPath, "snapshot-path", "", "source snapshot path")
 	flags.IntVar(&cfg.chunkSize, "chunk-size", 0, "records per chunk")
+	flags.IntVar(&cfg.maxPages, "max-pages", 0, "bounded remote sync page/file count")
 
 	if err := flags.Parse(args[1:]); err != nil {
 		return cliConfig{}, err
@@ -74,10 +95,10 @@ func parseArgs(args []string) (cliConfig, error) {
 		if cfg.source == "" {
 			return cliConfig{}, fmt.Errorf("missing --source")
 		}
-		if cfg.source != unitedstates.SourceSECEdgar {
-			return cliConfig{}, fmt.Errorf("source %q is not implemented for United States countrydata CLI source commands; supported source: %q", cfg.source, unitedstates.SourceSECEdgar)
+		if !supportedSources[cfg.source] {
+			return cliConfig{}, fmt.Errorf("source %q is not implemented for United States countrydata CLI source commands", cfg.source)
 		}
-	} else if cfg.source != "" && cfg.source != unitedstates.SourceSECEdgar {
+	} else if cfg.source != "" && !supportedSources[cfg.source] {
 		return cliConfig{}, fmt.Errorf("unknown source %q", cfg.source)
 	}
 
@@ -92,7 +113,7 @@ func run(ctx context.Context, cfg cliConfig) (map[string]any, error) {
 	}
 
 	switch cfg.command {
-	case "sync-source":
+	case "sync-source", "sync":
 		return runSyncSource(ctx, cfg)
 	case "export-source":
 		return runExportSource(ctx, cfg)
@@ -102,59 +123,118 @@ func run(ctx context.Context, cfg cliConfig) (map[string]any, error) {
 		return runStatus(cfg)
 	case "build-export":
 		return runBuildExport(ctx, cfg)
-	case "sync":
-		return runSyncSource(ctx, cfg)
 	default:
 		return nil, fmt.Errorf("unknown command %q", cfg.command)
 	}
 }
 
 func runSyncSource(ctx context.Context, cfg cliConfig) (map[string]any, error) {
-	source := newSECEDGARSource()
 	sourceDataDir := sourceDataDir(cfg)
-	downloadResult, err := source.Download(ctx, countryimport.DownloadOptions{
-		DataDir: sourceDataDir,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "download SEC EDGAR snapshot")
+	downloadOpts := countryimport.DownloadOptions{DataDir: sourceDataDir, MaxPages: cfg.maxPages}
+	processOpts := countryimport.ProcessOptions{DataDir: sourceDataDir, ChunkSize: cfg.chunkSize}
+
+	var snapshotPath string
+	var recordsDownloaded int64
+	var recordsProcessed int64
+	var export sourceExport
+
+	switch cfg.source {
+	case unitedstates.SourceSECEdgar:
+		src := secedgar.NewSource(secedgar.ConfigFromEnv())
+		download, err := src.Download(ctx, downloadOpts)
+		if err != nil {
+			return nil, errors.Wrap(err, "download SEC EDGAR snapshot")
+		}
+		processOpts.SnapshotPath = download.SnapshotPath
+		process, err := src.Process(ctx, processOpts)
+		if err != nil {
+			return nil, errors.Wrap(err, "process SEC EDGAR snapshot")
+		}
+		result, err := src.Export(ctx, secedgar.ExportOptions{DataDir: sourceDataDir, SnapshotPath: download.SnapshotPath, RunID: cfg.runID})
+		if err != nil {
+			return nil, errors.Wrap(err, "export SEC EDGAR source")
+		}
+		snapshotPath, recordsDownloaded, recordsProcessed = download.SnapshotPath, download.RecordsSeen, process.RecordsProcessed
+		export = secExport(result)
+	case unitedstates.SourceIRSEOBMF:
+		src := irseobmf.NewSource(irseobmf.ConfigFromEnv())
+		download, err := src.Download(ctx, downloadOpts)
+		if err != nil {
+			return nil, errors.Wrap(err, "download IRS EO BMF snapshot")
+		}
+		processOpts.SnapshotPath = download.SnapshotPath
+		process, err := src.Process(ctx, processOpts)
+		if err != nil {
+			return nil, errors.Wrap(err, "process IRS EO BMF snapshot")
+		}
+		result, err := src.Export(ctx, irseobmf.ExportOptions{DataDir: sourceDataDir, SnapshotPath: download.SnapshotPath, RunID: cfg.runID})
+		if err != nil {
+			return nil, errors.Wrap(err, "export IRS EO BMF source")
+		}
+		snapshotPath, recordsDownloaded, recordsProcessed = download.SnapshotPath, download.RecordsSeen, process.RecordsProcessed
+		export = irsExport(result)
+	case unitedstates.SourceColoradoEntities:
+		src := coloradoentities.NewSource(coloradoentities.ConfigFromEnv())
+		download, err := src.Download(ctx, downloadOpts)
+		if err != nil {
+			return nil, errors.Wrap(err, "download Colorado snapshot")
+		}
+		processOpts.SnapshotPath = download.SnapshotPath
+		process, err := src.Process(ctx, processOpts)
+		if err != nil {
+			return nil, errors.Wrap(err, "process Colorado snapshot")
+		}
+		result, err := src.Export(ctx, coloradoentities.ExportOptions{DataDir: sourceDataDir, SnapshotPath: download.SnapshotPath, RunID: cfg.runID})
+		if err != nil {
+			return nil, errors.Wrap(err, "export Colorado source")
+		}
+		snapshotPath, recordsDownloaded, recordsProcessed = download.SnapshotPath, download.RecordsSeen, process.RecordsProcessed
+		export = coloradoExport(result)
+	default:
+		return nil, fmt.Errorf("unsupported source %q", cfg.source)
 	}
 
-	processResult, err := source.Process(ctx, countryimport.ProcessOptions{
-		DataDir:      sourceDataDir,
-		SnapshotPath: downloadResult.SnapshotPath,
-		ChunkSize:    cfg.chunkSize,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "process SEC EDGAR snapshot")
-	}
-
-	exportResult, err := source.Export(ctx, secedgar.ExportOptions{
-		DataDir:      sourceDataDir,
-		SnapshotPath: downloadResult.SnapshotPath,
-		RunID:        cfg.runID,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "export SEC EDGAR source")
-	}
-
-	return sourceResultMap(cfg.command, exportResult, map[string]any{
-		"snapshot_path":      downloadResult.SnapshotPath,
-		"records_downloaded": downloadResult.RecordsSeen,
-		"records_processed":  processResult.RecordsProcessed,
+	return sourceResultMap(cfg.command, export, map[string]any{
+		"snapshot_path":      snapshotPath,
+		"records_downloaded": recordsDownloaded,
+		"records_processed":  recordsProcessed,
 	}), nil
 }
 
 func runExportSource(ctx context.Context, cfg cliConfig) (map[string]any, error) {
-	result, err := newSECEDGARSource().Export(ctx, secedgar.ExportOptions{
-		DataDir:      sourceDataDir(cfg),
-		SnapshotPath: cfg.snapshotPath,
-		RunID:        cfg.runID,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "export SEC EDGAR source")
+	sourceDataDir := sourceDataDir(cfg)
+	var export sourceExport
+
+	switch cfg.source {
+	case unitedstates.SourceSECEdgar:
+		result, err := secedgar.NewSource(secedgar.ConfigFromEnv()).Export(ctx, secedgar.ExportOptions{
+			DataDir: sourceDataDir, SnapshotPath: cfg.snapshotPath, RunID: cfg.runID,
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "export SEC EDGAR source")
+		}
+		export = secExport(result)
+	case unitedstates.SourceIRSEOBMF:
+		result, err := irseobmf.NewSource(irseobmf.ConfigFromEnv()).Export(ctx, irseobmf.ExportOptions{
+			DataDir: sourceDataDir, SnapshotPath: cfg.snapshotPath, RunID: cfg.runID,
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "export IRS EO BMF source")
+		}
+		export = irsExport(result)
+	case unitedstates.SourceColoradoEntities:
+		result, err := coloradoentities.NewSource(coloradoentities.ConfigFromEnv()).Export(ctx, coloradoentities.ExportOptions{
+			DataDir: sourceDataDir, SnapshotPath: cfg.snapshotPath, RunID: cfg.runID,
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "export Colorado source")
+		}
+		export = coloradoExport(result)
+	default:
+		return nil, fmt.Errorf("unsupported source %q", cfg.source)
 	}
 
-	return sourceResultMap(cfg.command, result, map[string]any{
+	return sourceResultMap(cfg.command, export, map[string]any{
 		"snapshot_path": cfg.snapshotPath,
 	}), nil
 }
@@ -162,7 +242,7 @@ func runExportSource(ctx context.Context, cfg cliConfig) (map[string]any, error)
 func runStatusSource(cfg cliConfig) (map[string]any, error) {
 	status, err := unitedstates.SourceStatusFromLatestManifest(cfg.dataDir, cfg.source)
 	if err != nil {
-		return nil, errors.Wrap(err, "load SEC EDGAR source status")
+		return nil, errors.Wrapf(err, "load %s source status", cfg.source)
 	}
 
 	return map[string]any{
@@ -176,27 +256,24 @@ func runStatusSource(cfg cliConfig) (map[string]any, error) {
 }
 
 func runStatus(cfg cliConfig) (map[string]any, error) {
-	secStatus, err := unitedstates.SourceStatusFromLatestManifest(cfg.dataDir, unitedstates.SourceSECEdgar)
-	if err != nil {
-		return nil, errors.Wrap(err, "load SEC EDGAR source status")
+	sources := map[string]any{}
+	for _, slug := range []string{
+		unitedstates.SourceSECEdgar,
+		unitedstates.SourceIRSEOBMF,
+		unitedstates.SourceColoradoEntities,
+	} {
+		status, err := unitedstates.SourceStatusFromLatestManifest(cfg.dataDir, slug)
+		if err != nil {
+			return nil, errors.Wrapf(err, "load %s source status", slug)
+		}
+		sources[slug] = status
 	}
 
 	return map[string]any{
-		"command":                       cfg.command,
-		"country_iso2":                  unitedstates.CountryISO2,
-		"status":                        "ok",
-		"secedgar_source_manifest_path": secStatus.LastExportManifestPath,
-		"sources": map[string]any{
-			unitedstates.SourceSECEdgar: secStatus,
-			unitedstates.SourceIRSEOBMF: unitedstates.SourceStatus{
-				SourceSlug: unitedstates.SourceIRSEOBMF,
-				Status:     "not_implemented",
-			},
-			unitedstates.SourceColoradoEntities: unitedstates.SourceStatus{
-				SourceSlug: unitedstates.SourceColoradoEntities,
-				Status:     "not_implemented",
-			},
-		},
+		"command":      cfg.command,
+		"country_iso2": unitedstates.CountryISO2,
+		"status":       "ok",
+		"sources":      sources,
 	}, nil
 }
 
@@ -216,26 +293,55 @@ func requiresSource(command string) bool {
 	}
 }
 
-func newSECEDGARSource() *secedgar.Source {
-	return secedgar.NewSource(secedgar.ConfigFromEnv())
-}
-
 func sourceDataDir(cfg cliConfig) string {
-	return unitedstates.LayoutForDataDir(cfg.dataDir).SourceDir(unitedstates.SourceSECEdgar)
+	return unitedstates.LayoutForDataDir(cfg.dataDir).SourceDir(cfg.source)
 }
 
-func sourceResultMap(command string, result secedgar.ExportResult, extra map[string]any) map[string]any {
+func secExport(result secedgar.ExportResult) sourceExport {
+	return sourceExport{
+		source:          unitedstates.SourceSECEdgar,
+		runID:           result.RunID,
+		manifestPath:    result.ManifestPath,
+		recordsSeen:     result.RecordsSeen,
+		recordsExported: result.RecordsExported,
+		decodeErrors:    result.DecodeErrors,
+	}
+}
+
+func irsExport(result irseobmf.ExportResult) sourceExport {
+	return sourceExport{
+		source:          unitedstates.SourceIRSEOBMF,
+		runID:           result.RunID,
+		manifestPath:    result.ManifestPath,
+		recordsSeen:     result.RecordsSeen,
+		recordsExported: result.RecordsExported,
+		decodeErrors:    result.DecodeErrors,
+	}
+}
+
+func coloradoExport(result coloradoentities.ExportResult) sourceExport {
+	return sourceExport{
+		source:          unitedstates.SourceColoradoEntities,
+		runID:           result.RunID,
+		manifestPath:    result.ManifestPath,
+		recordsSeen:     result.RecordsSeen,
+		recordsExported: result.RecordsExported,
+		decodeErrors:    result.DecodeErrors,
+	}
+}
+
+func sourceResultMap(command string, export sourceExport, extra map[string]any) map[string]any {
 	response := map[string]any{
 		"command":              command,
 		"country_iso2":         unitedstates.CountryISO2,
-		"source":               unitedstates.SourceSECEdgar,
+		"source":               export.source,
 		"status":               "ok",
-		"run_id":               result.RunID,
-		"manifest_path":        result.ManifestPath,
-		"source_manifest_path": result.ManifestPath,
-		"records_seen":         result.RecordsSeen,
-		"records_exported":     result.RecordsExported,
-		"decode_errors":        result.DecodeErrors,
+		"run_id":               export.runID,
+		"manifest_path":        export.manifestPath,
+		"source_manifest_path": export.manifestPath,
+		"records_seen":         export.recordsSeen,
+		"records_exported":     export.recordsExported,
+		"decode_errors":        export.decodeErrors,
 	}
 	for key, value := range extra {
 		response[key] = value

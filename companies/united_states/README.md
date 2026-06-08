@@ -4,17 +4,22 @@ Standalone Go module for United States company data collection and source
 exports. It does not require corpscout. It has its own `go.mod` and should be
 built, tested, and run from `companies/united_states` with `GOWORK=off`.
 
-The current implementation supports source-level SEC EDGAR collection only.
-The final United States export that combines multiple sources is intentionally
-not implemented yet.
+The current implementation supports source-level collection for three fully
+open sources: SEC EDGAR, IRS EO BMF, and Colorado Business Entities. The final
+United States export that combines multiple sources is intentionally not
+implemented yet.
 
 ## Source status
 
 | Source | Status | Notes |
 | --- | --- | --- |
-| `secedgar` | implemented | Downloads SEC `company_tickers.json`, processes it, and writes source Parquet exports. |
-| `irseobmf` | planned | Not implemented yet. |
-| `coloradoentities` | planned | Not implemented yet. |
+| `secedgar` | implemented | Downloads SEC `company_tickers.json`, processes it, and writes source Parquet exports. See [secedgar/README.md](secedgar/README.md). |
+| `irseobmf` | implemented | Downloads the IRS EO BMF CSV extracts (`eo1`..`eo4`), converts to NDJSON, and writes source Parquet exports. See [irseobmf/README.md](irseobmf/README.md). |
+| `coloradoentities` | implemented | Pages the Colorado SODA endpoint to NDJSON and writes source Parquet exports. See [coloradoentities/README.md](coloradoentities/README.md). |
+
+The remaining analyzed sources (`sam_gov_entity`, `state_sos_registries`,
+`opencorporates`) are planning-only or access-restricted and are intentionally
+not implemented.
 
 ## Data layout
 
@@ -68,13 +73,26 @@ GOWORK=off go run ./cmd/united-states-countrydata sync-source --source secedgar 
 GOWORK=off go run ./cmd/united-states-countrydata sync --source secedgar --data-dir ../data/united_states/countrydata --chunk-size 500
 ```
 
+The same commands work for `irseobmf` and `coloradoentities`. For the paginated
+or multi-file sources, `--max-pages` bounds a smoke run (CSV files for
+`irseobmf`, SODA pages for `coloradoentities`):
+
+```bash
+GOWORK=off go run ./cmd/united-states-countrydata sync-source --source irseobmf --data-dir ../data/united_states/countrydata --max-pages 1
+GOWORK=off go run ./cmd/united-states-countrydata sync-source --source coloradoentities --data-dir ../data/united_states/countrydata --max-pages 2
+```
+
+See the per-source READMEs for source-specific mapping notes and environment
+variables: [secedgar](secedgar/README.md), [irseobmf](irseobmf/README.md),
+[coloradoentities](coloradoentities/README.md).
+
 Export from an existing snapshot:
 
 ```bash
 GOWORK=off go run ./cmd/united-states-countrydata export-source --source secedgar --data-dir ../data/united_states/countrydata --snapshot-path <path>
 ```
 
-Show SEC EDGAR source status:
+Show a single source status (`secedgar`, `irseobmf`, or `coloradoentities`):
 
 ```bash
 GOWORK=off go run ./cmd/united-states-countrydata status-source --source secedgar --data-dir ../data/united_states/countrydata
@@ -91,31 +109,34 @@ currently returns a not-implemented error.
 
 ## Configuration
 
-SEC EDGAR configuration can be set with environment variables:
+Each source is configured with its own environment-variable prefix:
 
-| Variable | Purpose |
-| --- | --- |
-| `USA_SEC_EDGAR_DATA_DIR` | Direct source-package data directory override. CLI users should prefer `--data-dir`; the CLI resolves that country data directory to `sources/secedgar`. |
-| `USA_SEC_EDGAR_DOWNLOAD_URL` | SEC company tickers JSON URL override. Defaults to `https://www.sec.gov/files/company_tickers.json`. |
-| `USA_SEC_EDGAR_USER_AGENT` | HTTP User-Agent for SEC requests. Set a real production contact string before live syncs. |
-| `USA_SEC_EDGAR_REQUEST_TIMEOUT` | Request timeout as a Go duration such as `30s`, or seconds as an integer. |
+- SEC EDGAR: `USA_SEC_EDGAR_*` (see [secedgar/README.md](secedgar/README.md)).
+- IRS EO BMF: `IRS_EO_BMF_*` (see [irseobmf/README.md](irseobmf/README.md)).
+- Colorado: `COLORADO_BUSINESS_ENTITIES_*` (see
+  [coloradoentities/README.md](coloradoentities/README.md)).
 
-Do not put secrets, tokens, or cookies in these values. SEC EDGAR download does
-not require a secret.
+CLI users should prefer `--data-dir`; the CLI resolves it to the per-source
+`sources/<slug>` directory. The optional Colorado Socrata app token
+(`COLORADO_BUSINESS_ENTITIES_APP_TOKEN`) is the only credential any source
+accepts, and it is never logged or written to manifests. No source requires a
+secret to run.
 
 ## Testing
 
-Unit tests use fixtures and `httptest`; they do not call the live SEC endpoint.
+Unit tests use fixtures and `httptest`; they do not call live endpoints.
 
 ```bash
 GOWORK=off go test ./... -count=1
 ```
 
-Manual sync is the only path that downloads live SEC EDGAR data.
+Live tests are gated behind build tags and per-source env vars; see each source
+README. Manual sync is the only default path that downloads live data.
 
 ## Limitations
 
-- SEC EDGAR is the only implemented source.
-- IRS EO BMF and Colorado entities are listed in status output as
-  `not_implemented`.
-- Final USA export across multiple sources is not implemented yet.
+- SEC EDGAR, IRS EO BMF, and Colorado Business Entities are implemented.
+- `sam_gov_entity`, `state_sos_registries`, and `opencorporates` are
+  planning-only or access-restricted and are not implemented.
+- The final USA export across multiple sources (`build-export`) is not
+  implemented yet.
