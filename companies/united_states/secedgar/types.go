@@ -7,6 +7,12 @@ const (
 	SourceSlug         = "united_states_sec_edgar"
 	SourceName         = "SEC EDGAR company tickers"
 	DefaultDownloadURL = "https://www.sec.gov/files/company_tickers.json"
+
+	// DefaultUserAgent is sent to SEC EDGAR when no override is configured.
+	// SEC's fair-access policy rejects generic User-Agents with HTTP 403 and
+	// requires a descriptive identifier that includes a contact email.
+	// See https://www.sec.gov/os/webmaster-faq#developers
+	DefaultUserAgent = "CorpScout CountryData/1.0 (+https://pulsarpoint.com; goran.raovic@gmail.com)"
 )
 
 type CompanyTickerRecord struct {

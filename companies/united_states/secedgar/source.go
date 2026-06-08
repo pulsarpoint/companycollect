@@ -25,7 +25,7 @@ func NewSource(cfg Config) *Source {
 		cfg.DownloadURL = DefaultDownloadURL
 	}
 	if strings.TrimSpace(cfg.UserAgent) == "" {
-		cfg.UserAgent = countryimport.DefaultUserAgent
+		cfg.UserAgent = DefaultUserAgent
 	}
 	if cfg.RequestTimeout == 0 {
 		cfg.RequestTimeout = countryimport.DefaultRequestTimeout

@@ -43,7 +43,7 @@ func (s *Source) Download(ctx context.Context, opts countryimport.DownloadOption
 
 	downloadURL := resolveString(s.cfg.DownloadURL, DefaultDownloadURL)
 	requestTimeout := resolveDuration(opts.RequestTimeout, s.cfg.RequestTimeout, countryimport.DefaultRequestTimeout)
-	userAgent := resolveString(opts.UserAgent, s.cfg.UserAgent, countryimport.DefaultUserAgent)
+	userAgent := resolveString(opts.UserAgent, s.cfg.UserAgent, DefaultUserAgent)
 
 	requestCtx := ctx
 	cancel := func() {}

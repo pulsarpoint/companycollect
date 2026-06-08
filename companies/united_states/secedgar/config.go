@@ -27,7 +27,7 @@ func ConfigFromEnv() Config {
 	return Config{
 		DataDir:        envOr("USA_SEC_EDGAR_DATA_DIR", defaultDataDir),
 		DownloadURL:    envOr("USA_SEC_EDGAR_DOWNLOAD_URL", DefaultDownloadURL),
-		UserAgent:      envOr("USA_SEC_EDGAR_USER_AGENT", countryimport.DefaultUserAgent),
+		UserAgent:      envOr("USA_SEC_EDGAR_USER_AGENT", DefaultUserAgent),
 		RequestTimeout: envDuration("USA_SEC_EDGAR_REQUEST_TIMEOUT", countryimport.DefaultRequestTimeout),
 		SourceSlug:     SourceSlug,
 	}

@@ -10,7 +10,12 @@ The United States package is standalone. Run these commands from
 
 ## Full source sync
 
-Set a real production User-Agent before a live SEC request:
+SEC EDGAR enforces a fair-access policy and rejects generic User-Agents with
+HTTP 403. Requests must send a descriptive identifier that includes a contact
+email. The source ships a compliant default
+(`CorpScout CountryData/1.0 (+https://pulsarpoint.com; goran.raovic@gmail.com)`),
+so the sync works out of the box. Override it with your own organization and
+contact email before a live SEC request:
 
 ```bash
 export USA_SEC_EDGAR_USER_AGENT="<organization name and contact email>"
@@ -68,7 +73,7 @@ exports/<run-id>/manifest.json
 | --- | --- |
 | `USA_SEC_EDGAR_DATA_DIR` | Direct source-package data directory override. CLI users should prefer `--data-dir`; the CLI resolves that country data directory to `sources/secedgar`. |
 | `USA_SEC_EDGAR_DOWNLOAD_URL` | Download URL override. Defaults to SEC `company_tickers.json`. |
-| `USA_SEC_EDGAR_USER_AGENT` | User-Agent sent to SEC. Use a real organization/contact string in production. |
+| `USA_SEC_EDGAR_USER_AGENT` | User-Agent sent to SEC. Defaults to a compliant contact string; SEC rejects generic agents with HTTP 403. Override with your own organization/contact string in production. |
 | `USA_SEC_EDGAR_REQUEST_TIMEOUT` | Request timeout, for example `30s` or `30`. |
 
 No secret or token is required.

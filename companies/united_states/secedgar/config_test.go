@@ -24,8 +24,8 @@ func TestConfigFromEnvUsesDefaults(t *testing.T) {
 	if cfg.DownloadURL != DefaultDownloadURL {
 		t.Fatalf("DownloadURL = %q, want %q", cfg.DownloadURL, DefaultDownloadURL)
 	}
-	if cfg.UserAgent != countryimport.DefaultUserAgent {
-		t.Fatalf("UserAgent = %q, want %q", cfg.UserAgent, countryimport.DefaultUserAgent)
+	if cfg.UserAgent != DefaultUserAgent {
+		t.Fatalf("UserAgent = %q, want %q", cfg.UserAgent, DefaultUserAgent)
 	}
 	if cfg.RequestTimeout != countryimport.DefaultRequestTimeout {
 		t.Fatalf("RequestTimeout = %s, want %s", cfg.RequestTimeout, countryimport.DefaultRequestTimeout)
