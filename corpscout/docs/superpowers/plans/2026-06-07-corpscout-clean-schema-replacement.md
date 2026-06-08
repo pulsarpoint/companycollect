@@ -1,3 +1,13 @@
+> **Status: Retired**
+>
+> Do not execute this all-Postgres company/source-record replacement plan.
+> Corpscout now uses PostgreSQL for source registry, workflow metadata, central
+> identity, brands, and curated relationships, while ClickHouse stores
+> high-volume source-specific company facts and projections.
+>
+> Replacement plan:
+> `companycollect/corpscout/docs/superpowers/plans/2026-06-08-finland-prhytj-clickhouse-pilot.md`
+
 # Corpscout Clean Schema Replacement Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
