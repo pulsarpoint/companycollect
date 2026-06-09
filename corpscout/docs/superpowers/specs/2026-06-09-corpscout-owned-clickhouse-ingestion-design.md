@@ -3,10 +3,10 @@
 ## Purpose
 
 Corpscout should own the full source-to-ClickHouse path: source modules,
-source input parsing, ClickHouse schema definitions, migrations, direct imports,
-scheduling, and APIs. Keeping these pieces in one application gives us one
-place to understand the exact source schema and one place to evolve storage when
-the source changes.
+source input parsing, manual ClickHouse migrations, direct imports, scheduling,
+and APIs. Keeping these pieces in one application gives us one place to
+understand the exact source format and one place to evolve storage when the
+source changes.
 
 This replaces the earlier direction where `companies/companysource` exported
 Parquet and Corpscout generated ClickHouse schema from those files.
@@ -20,14 +20,13 @@ Parquet stage.
 corpscout source module
   download raw source snapshot
   parse raw input with source-specific Go structs
-  expose source-specific ClickHouse schema structs
+  map parsed records to ClickHouse insert rows
   stream/chunk mapped rows directly into ClickHouse
 
-corpscout clickhouse migration generator
-  read registered Go SourceSchema definitions
-  compare against schema.lock.yaml
-  write deterministic versioned migrations
-  reject unsafe schema changes that need manual migration
+corpscout clickhouse migrations
+  keep manual source-specific CREATE/ALTER SQL
+  keep explicit down migrations where safe
+  apply migrations with golang-migrate
 
 corpscout scheduler/API
   trigger downloads/imports
@@ -44,14 +43,14 @@ This is the simplest architecture that still preserves the controls we need:
 
 - source code, parser structs, ClickHouse schema, and importer live together
 - schema changes are explicit Go changes reviewed with the source code
-- migrations can be generated deterministically from structured schema objects
+- migrations are explicit SQL files, so there is no hidden schema generator
 - imports do not write and reread large Parquet intermediates
 - raw downloaded files remain replayable for debugging and reimport
 - Corpscout owns storage and query behavior without a separate companysource
   lifecycle
 
-Atlas is not needed in the first implementation. We only need a conservative
-schema generator for our own Go schema model.
+Atlas, sqlc, and custom ClickHouse schema generation are not needed in the first
+implementation.
 
 ## Source Module Contract
 
@@ -71,7 +70,7 @@ Each source module owns:
 - raw download logic
 - raw input structs and parser
 - source-specific row mapping
-- ClickHouse `SourceSchema`
+- table names and insert column lists matching manual migrations
 - chunked import implementation
 - focused parser/import tests
 
@@ -86,7 +85,6 @@ type Source struct {
 
 func (s *Source) Key() companysources.Key
 func (s *Source) Download(ctx context.Context, opts DownloadOptions) (DownloadResult, error)
-func (s *Source) Schema() clickhouse.SourceSchema
 func (s *Source) Import(ctx context.Context, opts ImportOptions, writer *clickhouse.Writer) (ImportResult, error)
 ```
 
@@ -146,96 +144,32 @@ raw file/page -> decode record -> map to row batch -> insert batch -> continue
 The importer should not load a full country source into memory. Batch size should
 be configurable per source, with safe defaults.
 
-## ClickHouse Schema Model
+## ClickHouse Migrations
 
-ClickHouse schema is defined as structured Go data:
-
-```go
-type SourceSchema struct {
-    Country  string
-    Source   string
-    Database string
-    Prefix   string
-    Tables   []Table
-}
-
-type Table struct {
-    Name        string
-    Engine      string
-    Columns     []Column
-    OrderBy     []string
-    PartitionBy string
-}
-
-type Column struct {
-    Name string
-    Type string
-}
-```
-
-Each source's `Schema()` method returns its current storage contract:
-
-```go
-func (s *Source) Schema() clickhouse.SourceSchema {
-    return clickhouse.SourceSchema{
-        Country:  "finland",
-        Source:   "prhytj",
-        Database: "corpscout_sources",
-        Prefix:   "fi_prhytj",
-        Tables: []clickhouse.Table{
-            {
-                Name:   "fi_prhytj_companies",
-                Engine: "ReplacingMergeTree",
-                Columns: []clickhouse.Column{
-                    {Name: "business_id", Type: "String"},
-                    {Name: "legal_name", Type: "String"},
-                    {Name: "source_run_id", Type: "String"},
-                    {Name: "source_payload_hash", Type: "String"},
-                    {Name: "ingested_at", Type: "DateTime64(3, 'UTC')"},
-                },
-                OrderBy: []string{"business_id", "source_run_id"},
-            },
-        },
-    }
-}
-```
-
-The schema model should render deterministic SQL. Rendering rules:
-
-- sort sources by country/source
-- preserve table order as returned by the source
-- preserve column order inside each table
-- render quoted identifiers
-- render stable formatting
-- validate `ORDER BY` columns exist
-- reject duplicate table and column names
-
-## Migration Generation
-
-Corpscout should generate migrations from current registered source schemas and a
-schema lock:
+ClickHouse schema is defined by manual migration SQL under:
 
 ```text
-corpscout/clickhouse/schema.lock.yaml
+corpscout/clickhouse/migrations/
 ```
 
-The lock stores the last generated schema hash and table definitions per source.
-Migration versions are schema versions, not source run versions.
+Each source adds explicit migrations:
 
-Generator behavior:
+```text
+000002_create_finland_prhytj_tables.up.sql
+000002_create_finland_prhytj_tables.down.sql
+000003_create_us_secedgar_tables.up.sql
+000003_create_us_secedgar_tables.down.sql
+```
 
-- New source: generate `CREATE TABLE` statements.
-- New table: generate `CREATE TABLE`.
-- Added column: generate `ALTER TABLE ... ADD COLUMN`.
-- No schema change: write nothing.
-- Removed column: reject and require manual migration.
-- Renamed column: reject and require manual migration.
-- Changed column type: reject and require manual migration.
-- Changed `ORDER BY`: reject and require manual migration.
-- Changed engine or partitioning: reject and require manual migration.
+Migration SQL is the storage source of truth. The source package's importer must
+match those table and column names.
 
-This keeps automatic migration generation small and auditable. We can add a more
-capable diff tool later if real schema evolution requires it.
+For a new source, create the initial `CREATE TABLE` migration manually. For a
+source schema change, create a manual `ALTER TABLE` migration. This keeps schema
+review explicit and avoids premature generator complexity.
+
+Migrations should be small and source-specific where possible. Shared database
+creation remains in `000001_create_databases`.
 
 ## Import Flow
 
@@ -271,21 +205,18 @@ Targeted commands:
 
 ```bash
 corpscout-source download --country finland --source prhytj
-corpscout-source generate-migration --country finland --source prhytj
 corpscout-source import-run --country finland --source prhytj --run-dir ...
 ```
 
 Bulk commands:
 
 ```bash
-corpscout-source generate-migrations --all --changed-only
 corpscout-source import-runs --runs-root corpscout/data/sources --changed-only
 ```
 
 Corpscout should maintain:
 
 ```text
-corpscout/clickhouse/schema.lock.yaml
 corpscout/clickhouse/run-index.lock.yaml
 ```
 
@@ -300,13 +231,11 @@ The run index records:
 
 Processing rules:
 
-- If the Go source schema hash is unchanged, skip migration generation.
 - If a run manifest and raw file hashes are unchanged, skip reimport unless
   forced.
 - If multiple runs exist for one source, choose the latest completed manifest by
   default, with `--run-id` available for pinning a specific run.
 - `--force-rescan` recalculates hashes and import eligibility.
-- `--force-migration-check` reruns schema diff even when the schema hash matches.
 
 ## Removing Premature Projection Database
 
@@ -330,8 +259,6 @@ Commands:
 ```bash
 corpscout-source list-sources
 corpscout-source download --country finland --source prhytj
-corpscout-source generate-migration --country finland --source prhytj
-corpscout-source generate-migrations --all --changed-only
 corpscout-source migrate-up
 corpscout-source import-run --country finland --source prhytj --run-dir ...
 corpscout-source import-runs --runs-root corpscout/data/sources --changed-only
@@ -342,8 +269,6 @@ Make targets can wrap these commands:
 ```bash
 make source-list
 make source-download COUNTRY=finland SOURCE=prhytj
-make clickhouse-generate-migration COUNTRY=finland SOURCE=prhytj
-make clickhouse-generate-migrations
 make clickhouse-migrate-up
 make source-import-run COUNTRY=finland SOURCE=prhytj RUN_DIR=...
 make source-import-changed
@@ -371,13 +296,12 @@ not define the new ingestion contract.
 Use `finland/prhytj` as the first end-to-end source:
 
 1. Remove `corpscout_projection` from ClickHouse migrations.
-2. Add shared Corpscout ClickHouse schema structs and SQL renderer.
-3. Add schema lock comparison and conservative migration generation.
-4. Move Finland PRH YTJ source code into Corpscout.
-5. Replace Parquet export/import with raw download plus direct chunked import.
-6. Generate migrations from the Finland source's Go `SourceSchema`.
-7. Import one existing raw Finland run without downloading again.
-8. Remove Finland ClickHouse generation/import code from `companysource`.
+2. Keep or rewrite the Finland PRH YTJ ClickHouse migration manually in
+   `corpscout/clickhouse/migrations`.
+3. Move Finland PRH YTJ source code into Corpscout.
+4. Replace Parquet export/import with raw download plus direct chunked import.
+5. Import one existing raw Finland run without downloading again.
+6. Remove Finland ClickHouse generation/import code from `companysource`.
 
 After that, migrate the existing United States sources.
 
@@ -387,12 +311,7 @@ Unit tests should cover:
 
 - source registry lookup
 - source input parser behavior using real small fixtures
-- schema validation
-- deterministic SQL rendering
-- schema lock comparison
-- generated `CREATE TABLE` migrations for new sources
-- generated additive `ALTER TABLE` migrations
-- rejection of unsafe schema changes
+- importer column lists matching expected migration table columns
 - ClickHouse writer command/connection construction
 - run-root discovery and latest-run selection
 - unchanged manifest skipping
