@@ -12,6 +12,9 @@ func TestListSourcesCommand(t *testing.T) {
 	err := run([]string{"list-sources"}, &output)
 	require.NoError(t, err)
 	require.Contains(t, output.String(), "finland/prhytj")
+	require.Contains(t, output.String(), "united_states/coloradoentities")
+	require.Contains(t, output.String(), "united_states/irseobmf")
+	require.Contains(t, output.String(), "united_states/secedgar")
 }
 
 func TestUnknownCommandFails(t *testing.T) {

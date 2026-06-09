@@ -12,6 +12,9 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/finland/prhytj"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/unitedstates/coloradoentities"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/unitedstates/irseobmf"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/unitedstates/secedgar"
 )
 
 func main() {
@@ -77,7 +80,12 @@ func run(args []string, output io.Writer) error {
 }
 
 func defaultRegistry() companysources.Registry {
-	return companysources.NewRegistry(prhytj.Source{})
+	return companysources.NewRegistry(
+		prhytj.Source{},
+		coloradoentities.Source{},
+		irseobmf.Source{},
+		secedgar.Source{},
+	)
 }
 
 type importRunConfig struct {
