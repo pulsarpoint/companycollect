@@ -21,14 +21,10 @@ func TestParseExportParquet(t *testing.T) {
 	require.Equal(t, "export-parquet", cfg.Command)
 }
 
-func TestImportRequiresNativeURL(t *testing.T) {
-	_, err := parseArgs([]string{
-		"import-clickhouse",
-		"--country", "finland",
-		"--source", "prhytj",
-		"--run-dir", "/runs/fi",
-		"--database", "corpscout_sources",
-		"--source-export-id", "00000000-0000-0000-0000-000000000000",
-	})
-	require.EqualError(t, err, "missing --clickhouse-native-url")
+func TestParseRejectsClickHouseCommands(t *testing.T) {
+	_, err := parseArgs([]string{"generate-clickhouse-migration", "--country", "finland", "--source", "prhytj"})
+	require.EqualError(t, err, "unknown command \"generate-clickhouse-migration\"")
+
+	_, err = parseArgs([]string{"import-clickhouse", "--country", "finland", "--source", "prhytj"})
+	require.EqualError(t, err, "unknown command \"import-clickhouse\"")
 }

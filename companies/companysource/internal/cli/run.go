@@ -37,15 +37,6 @@ func Run(ctx context.Context, args []string) (any, error) {
 		return selectedSource.ExportParquet(ctx, source.ExportParquetOptions{
 			RunDir: cfg.RunDir, Limit: cfg.Limit,
 		})
-	case "generate-clickhouse-migration":
-		return selectedSource.GenerateClickHouseMigration(ctx, source.ClickHouseMigrationOptions{
-			RunDir: cfg.RunDir, Database: cfg.Database, Out: cfg.Out, DownOut: cfg.DownOut,
-		})
-	case "import-clickhouse":
-		return selectedSource.ImportClickHouse(ctx, source.ClickHouseImportOptions{
-			RunDir: cfg.RunDir, Database: cfg.Database, ClickHouseNativeURL: cfg.ClickHouseNativeURL,
-			SourceExportID: cfg.SourceExportID, ClickHouseImage: cfg.ClickHouseImage, DockerMount: cfg.DockerMount,
-		})
 	case "status":
 		return selectedSource.Status(ctx, cfg.RunDir)
 	default:

@@ -2,7 +2,6 @@ package secedgar
 
 import (
 	"context"
-	_ "embed"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,12 +9,8 @@ import (
 
 	"github.com/cockroachdb/errors"
 	countryimport "github.com/pulsarpoint/companycollect/companies/companysource/common/countryimport"
-	chimport "github.com/pulsarpoint/companycollect/companies/companysource/internal/clickhouse"
 	sourcespec "github.com/pulsarpoint/companycollect/companies/companysource/internal/source"
 )
-
-//go:embed clickhouse.yaml
-var clickHouseConfigYAML []byte
 
 type Source struct {
 	cfg        Config
@@ -54,36 +49,6 @@ func (s *Source) Key() sourcespec.Key {
 
 func (s *Source) DisplayName() string {
 	return SourceName
-}
-
-func (s *Source) GenerateClickHouseMigration(ctx context.Context, opts sourcespec.ClickHouseMigrationOptions) (sourcespec.ClickHouseMigrationResult, error) {
-	result, err := chimport.GenerateMigrationFiles(chimport.MigrationOptions{
-		RunDir:     opts.RunDir,
-		Database:   opts.Database,
-		Out:        opts.Out,
-		DownOut:    opts.DownOut,
-		ConfigYAML: clickHouseConfigYAML,
-	})
-	if err != nil {
-		return sourcespec.ClickHouseMigrationResult{}, errors.Wrap(err, "generate united_states/secedgar ClickHouse migration")
-	}
-	return sourcespec.ClickHouseMigrationResult{UpPath: result.UpPath, DownPath: result.DownPath}, nil
-}
-
-func (s *Source) ImportClickHouse(ctx context.Context, opts sourcespec.ClickHouseImportOptions) (sourcespec.ClickHouseImportResult, error) {
-	result, err := chimport.ImportRun(chimport.ImportOptions{
-		RunDir:              opts.RunDir,
-		Database:            opts.Database,
-		ClickHouseNativeURL: opts.ClickHouseNativeURL,
-		SourceExportID:      opts.SourceExportID,
-		ClickHouseImage:     opts.ClickHouseImage,
-		DockerMount:         opts.DockerMount,
-		ConfigYAML:          clickHouseConfigYAML,
-	})
-	if err != nil {
-		return sourcespec.ClickHouseImportResult{}, errors.Wrap(err, "import united_states/secedgar ClickHouse tables")
-	}
-	return sourcespec.ClickHouseImportResult{ImportedTables: result.ImportedTables, Tables: result.Tables}, nil
 }
 
 func (s *Source) Status(ctx context.Context, runDir string) (sourcespec.StatusResult, error) {
