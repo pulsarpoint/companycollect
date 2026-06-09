@@ -1,0 +1,270 @@
+package prhytj
+
+import (
+	"context"
+	"net/url"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/clickhouseclient"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
+)
+
+const database = "corpscout_sources"
+const rawRecordsTable = "fi_prhytj_raw_records"
+const companiesTable = "fi_prhytj_companies"
+const sourceExportSchemaVersion = "v1"
+
+var rawRecordColumns = []string{
+	"country_iso2",
+	"source_slug",
+	"source_run_id",
+	"source_record_id",
+	"business_id",
+	"source_payload_hash",
+	"snapshot_path",
+	"snapshot_sha256",
+	"snapshot_line_number",
+	"raw_payload_json",
+	"schema_version",
+	"exported_at",
+	"source_export_id",
+	"ingested_at",
+}
+
+var companyColumns = []string{
+	"country_iso2",
+	"source_slug",
+	"source_run_id",
+	"source_record_id",
+	"source_payload_hash",
+	"source_updated_at",
+	"business_id",
+	"vat_id",
+	"euid",
+	"legal_name",
+	"legal_name_normalized",
+	"lifecycle_status",
+	"is_active",
+	"legal_form_code",
+	"legal_form_label",
+	"legal_form_label_en",
+	"primary_industry_code",
+	"primary_industry_code_set",
+	"primary_industry_label",
+	"primary_industry_label_en",
+	"primary_nace_code",
+	"primary_nace_revision",
+	"website_url",
+	"website_normalized_url",
+	"website_host",
+	"source_export_id",
+	"ingested_at",
+}
+
+type Source struct{}
+
+func (s Source) Key() companysources.Key {
+	return companysources.Key{Country: "finland", Source: SourceKey}
+}
+
+func (s Source) DisplayName() string {
+	return SourceName
+}
+
+func (s Source) Import(ctx context.Context, opts companysources.ImportOptions) (companysources.ImportResult, error) {
+	if opts.RunDir == "" {
+		return companysources.ImportResult{}, errors.New("run dir is required")
+	}
+	if opts.ClickHouseNativeURL == "" {
+		return companysources.ImportResult{}, errors.New("clickhouse native url is required")
+	}
+
+	batchSize := opts.BatchSize
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
+	sourceExportID := uuid.NewString()
+	runID := filepath.Base(opts.RunDir)
+	snapshotPath := filepath.Join(opts.RunDir, "source.ndjson")
+	rawRows := make([]map[string]any, 0, batchSize)
+	companyRows := make([]map[string]any, 0, batchSize)
+	var imported int64
+	var lineNumber int64
+
+	err := ParseSnapshot(ctx, snapshotPath, func(record CompanyRecord) error {
+		if opts.Limit > 0 && imported >= opts.Limit {
+			return nil
+		}
+
+		lineNumber++
+		ingestedAt := time.Now().UTC().Format("2006-01-02 15:04:05.000")
+		rawRow := rawRecordRow(runID, snapshotPath, "", lineNumber, record)
+		rawRow["source_export_id"] = sourceExportID
+		rawRow["ingested_at"] = ingestedAt
+		companyRow := companyRow(runID, record)
+		companyRow["source_export_id"] = sourceExportID
+		companyRow["ingested_at"] = ingestedAt
+		rawRows = append(rawRows, rawRow)
+		companyRows = append(companyRows, companyRow)
+		imported++
+
+		if len(companyRows) < batchSize {
+			return nil
+		}
+		if err := flushRows(ctx, opts, rawRecordsTable, rawRecordColumns, rawRows); err != nil {
+			return err
+		}
+		if err := flushRows(ctx, opts, companiesTable, companyColumns, companyRows); err != nil {
+			return err
+		}
+		rawRows = rawRows[:0]
+		companyRows = companyRows[:0]
+		return nil
+	})
+	if err != nil {
+		return companysources.ImportResult{}, err
+	}
+
+	if len(companyRows) > 0 {
+		if err := flushRows(ctx, opts, rawRecordsTable, rawRecordColumns, rawRows); err != nil {
+			return companysources.ImportResult{}, err
+		}
+		if err := flushRows(ctx, opts, companiesTable, companyColumns, companyRows); err != nil {
+			return companysources.ImportResult{}, err
+		}
+	}
+
+	return companysources.ImportResult{
+		RunDir:         opts.RunDir,
+		ImportedTables: []string{rawRecordsTable, companiesTable},
+		ImportedRows:   imported,
+	}, nil
+}
+
+func flushRows(ctx context.Context, opts companysources.ImportOptions, table string, columns []string, rows []map[string]any) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	return clickhouseclient.ExecuteInsert(ctx, opts.ClickHouseNativeURL, opts.ClickHouseImage, clickhouseclient.Insert{
+		Database: database,
+		Table:    table,
+		Columns:  columns,
+		Rows:     rows,
+	})
+}
+
+func rawRecordRow(runID string, snapshotPath string, snapshotSHA256 string, lineNumber int64, record CompanyRecord) map[string]any {
+	return map[string]any{
+		"country_iso2":         "FI",
+		"source_slug":          SourceKey,
+		"source_run_id":        runID,
+		"source_record_id":     record.BusinessID.Value,
+		"business_id":          record.BusinessID.Value,
+		"source_payload_hash":  record.PayloadHash,
+		"snapshot_path":        snapshotPath,
+		"snapshot_sha256":      snapshotSHA256,
+		"snapshot_line_number": lineNumber,
+		"raw_payload_json":     string(record.RawPayload),
+		"schema_version":       sourceExportSchemaVersion,
+		"exported_at":          time.Now().UTC().Format("2006-01-02 15:04:05.000"),
+	}
+}
+
+func companyRow(runID string, record CompanyRecord) map[string]any {
+	legalName := primaryName(record)
+	websiteURL := strings.TrimSpace(record.Website.URL)
+	status := lifecycleStatus(record)
+	return map[string]any{
+		"country_iso2":              "FI",
+		"source_slug":               SourceKey,
+		"source_run_id":             runID,
+		"source_record_id":          record.BusinessID.Value,
+		"source_payload_hash":       record.PayloadHash,
+		"source_updated_at":         record.LastModified,
+		"business_id":               record.BusinessID.Value,
+		"vat_id":                    identifierValue(record.Identifiers, "VAT"),
+		"euid":                      identifierPointerValue(record.EUID),
+		"legal_name":                legalName,
+		"legal_name_normalized":     strings.ToLower(legalName),
+		"lifecycle_status":          status,
+		"is_active":                 status == "active",
+		"legal_form_code":           firstCompanyFormCode(record),
+		"legal_form_label":          firstCompanyFormLabel(record, "1"),
+		"legal_form_label_en":       firstCompanyFormLabel(record, "3"),
+		"primary_industry_code":     record.MainBusinessLine.Type,
+		"primary_industry_code_set": record.MainBusinessLine.TypeCodeSet,
+		"primary_industry_label":    description(record.MainBusinessLine.Descriptions, "1"),
+		"primary_industry_label_en": description(record.MainBusinessLine.Descriptions, "3"),
+		"primary_nace_code":         "",
+		"primary_nace_revision":     "",
+		"website_url":               websiteURL,
+		"website_normalized_url":    websiteURL,
+		"website_host":              websiteHost(websiteURL),
+	}
+}
+
+func primaryName(record CompanyRecord) string {
+	if len(record.Names) == 0 {
+		return ""
+	}
+	return record.Names[0].Name
+}
+
+func identifierValue(values []Identifier, idType string) string {
+	for _, value := range values {
+		if strings.EqualFold(value.Type, idType) {
+			return value.Value
+		}
+	}
+	return ""
+}
+
+func identifierPointerValue(value *Identifier) string {
+	if value == nil {
+		return ""
+	}
+	return value.Value
+}
+
+func lifecycleStatus(record CompanyRecord) string {
+	if record.EndDate != "" || record.TradeRegisterStatus == "3" {
+		return "ceased"
+	}
+	return "active"
+}
+
+func firstCompanyFormCode(record CompanyRecord) string {
+	if len(record.CompanyForms) == 0 {
+		return ""
+	}
+	return record.CompanyForms[0].Type
+}
+
+func firstCompanyFormLabel(record CompanyRecord, language string) string {
+	if len(record.CompanyForms) == 0 {
+		return ""
+	}
+	return description(record.CompanyForms[0].Descriptions, language)
+}
+
+func description(values []Description, language string) string {
+	for _, value := range values {
+		if value.LanguageCode == language {
+			return value.Description
+		}
+	}
+	return ""
+}
+
+func websiteHost(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return parsed.Hostname()
+}
