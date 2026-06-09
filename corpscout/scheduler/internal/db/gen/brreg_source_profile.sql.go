@@ -779,7 +779,7 @@ ORDER BY
   CASE WHEN $7::text = 'updated_at' AND $8::text = 'desc' THEN entry.updated_at END DESC NULLS LAST,
   entry.updated_at DESC,
   entry.organization_number ASC
-LIMIT GREATEST($10::integer, 1)
+LIMIT NULLIF($10::integer, 0)
 OFFSET GREATEST($9::integer, 0)
 `
 

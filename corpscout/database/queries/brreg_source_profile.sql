@@ -275,7 +275,7 @@ ORDER BY
   CASE WHEN sqlc.arg('sort_by')::text = 'updated_at' AND sqlc.arg('sort_dir')::text = 'desc' THEN entry.updated_at END DESC NULLS LAST,
   entry.updated_at DESC,
   entry.organization_number ASC
-LIMIT GREATEST(sqlc.arg('limit')::integer, 1)
+LIMIT NULLIF(sqlc.arg('limit')::integer, 0)
 OFFSET GREATEST(sqlc.arg('offset')::integer, 0);
 
 -- name: GetBrregSourceCompanyExplorerRefreshSummary :one
