@@ -155,6 +155,72 @@ Generation should fail when:
 - an injected column duplicates a Parquet column
 - Parquet inspection returns no columns
 
+## Run Discovery And Incremental Processing
+
+Corpscout should support both targeted and bulk operation. With more than 200
+sources, every command must avoid scanning and describing every Parquet file on
+every run.
+
+Targeted mode processes exactly one source run:
+
+```bash
+corpscout-clickhouse generate-schema --country finland --source prhytj --run-dir ...
+corpscout-clickhouse diff-migration --country finland --source prhytj --run-dir ...
+corpscout-clickhouse import-run --country finland --source prhytj --run-dir ...
+```
+
+Bulk mode points at a root directory and discovers source runs:
+
+```bash
+corpscout-clickhouse scan-runs --runs-root ../companies/data
+corpscout-clickhouse diff-migrations --runs-root ../companies/data
+corpscout-clickhouse import-runs --runs-root ../companies/data --changed-only
+```
+
+The expected data layout is:
+
+```text
+<runs-root>/<country>/sources/<source>/runs/<run-id>/
+  manifest.json
+  *.parquet
+```
+
+Bulk commands should not blindly inspect every Parquet file. They should first
+read manifests and maintain a local Corpscout ingestion index:
+
+```text
+corpscout/clickhouse/run-index.lock.yaml
+```
+
+The index records:
+
+- country/source
+- latest selected run ID
+- manifest hash
+- Parquet file hashes from the manifest
+- computed schema hash
+- generated desired schema hash
+- latest generated migration version
+- latest imported source export ID
+
+Processing rules:
+
+- If manifest hash and Parquet file hashes are unchanged, skip Parquet
+  inspection.
+- If file hashes changed but the computed schema hash is unchanged, skip
+  migration generation and allow import.
+- If schema hash changed, generate a migration candidate for that source only.
+- If no Corpscout source config exists for a discovered source, report it as
+  unconfigured and skip it unless convention mode is explicitly enabled.
+- If multiple runs exist for one source, choose the latest completed manifest by
+  default, with `--run-id` available for pinning a specific run.
+
+This keeps daily workflows cheap while still allowing an explicit full rebuild:
+
+```bash
+corpscout-clickhouse diff-migrations --runs-root ../companies/data --force-rescan
+```
+
 ## Atlas Migration Flow
 
 Atlas should own schema diffing. Corpscout should not maintain a custom
@@ -237,6 +303,9 @@ corpscout-clickhouse inspect-run --country finland --source prhytj --run-dir ...
 corpscout-clickhouse generate-schema --country finland --source prhytj --run-dir ... --out ...
 corpscout-clickhouse diff-migration --country finland --source prhytj --run-dir ...
 corpscout-clickhouse import-run --country finland --source prhytj --run-dir ...
+corpscout-clickhouse scan-runs --runs-root ...
+corpscout-clickhouse diff-migrations --runs-root ... --changed-only
+corpscout-clickhouse import-runs --runs-root ... --changed-only
 ```
 
 Make targets can wrap these commands:
@@ -246,6 +315,9 @@ make clickhouse-generate-schema COUNTRY=finland SOURCE=prhytj RUN_DIR=...
 make clickhouse-diff-source COUNTRY=finland SOURCE=prhytj RUN_DIR=...
 make clickhouse-migrate-up
 make clickhouse-import-run COUNTRY=finland SOURCE=prhytj RUN_DIR=...
+make clickhouse-scan-runs RUNS_ROOT=../companies/data
+make clickhouse-diff-changed RUNS_ROOT=../companies/data
+make clickhouse-import-changed RUNS_ROOT=../companies/data
 ```
 
 ## Decommissioning Companysource ClickHouse Logic
@@ -287,6 +359,8 @@ After that, apply the same path to the existing United States sources.
 Unit tests should cover:
 
 - source config parsing
+- run-root discovery and latest-run selection
+- unchanged manifest skipping
 - table naming conventions
 - Parquet inspection result conversion into canonical table definitions
 - stable desired SQL rendering
