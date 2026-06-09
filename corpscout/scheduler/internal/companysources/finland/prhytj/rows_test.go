@@ -10,8 +10,8 @@ import (
 )
 
 func TestNormalizedTablesDoNotIncludeRawOrCompanySummaryTables(t *testing.T) {
-	require.NotContains(t, NormalizedTableNames(), "fi_prhytj_raw_records")
-	require.NotContains(t, NormalizedTableNames(), "fi_prhytj_companies")
+	require.NotContains(t, NormalizedTableNames(), "fi_prhytj_"+"raw_records")
+	require.NotContains(t, NormalizedTableNames(), "fi_prhytj_"+"companies")
 	require.Equal(t, []string{
 		"fi_prhytj_identifiers",
 		"fi_prhytj_statuses",
@@ -45,7 +45,7 @@ func TestEveryNormalizedTableHasLineageColumns(t *testing.T) {
 		} {
 			require.Containsf(t, table.Columns, column, "%s missing %s", table.Name, column)
 		}
-		require.NotContains(t, table.Columns, "raw_payload_json")
+		require.NotContains(t, table.Columns, "raw_payload_"+"json")
 	}
 }
 

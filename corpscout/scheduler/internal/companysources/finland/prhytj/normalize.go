@@ -280,3 +280,22 @@ func normalizedURLParts(raw string) (normalized string, host string, path string
 func intString(value int) string {
 	return strconv.Itoa(value)
 }
+
+func normalizeWebsite(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err == nil && parsed.Scheme != "" {
+		return trimmed
+	}
+	return "https://" + trimmed
+}
+
+func lifecycleStatus(record CompanyRecord) string {
+	if record.EndDate != "" || record.TradeRegisterStatus == "3" {
+		return "ceased"
+	}
+	return "active"
+}
