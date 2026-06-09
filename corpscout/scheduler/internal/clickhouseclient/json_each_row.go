@@ -2,11 +2,17 @@ package clickhouseclient
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/cockroachdb/errors"
 )
+
+const DefaultClickHouseImage = "clickhouse/clickhouse-server:26.5"
+const DefaultCompanycollectHostIP = "100.85.212.113"
 
 type Insert struct {
 	Database string
@@ -34,6 +40,55 @@ func EncodeJSONEachRow(rows []map[string]any) ([]byte, error) {
 		body.WriteByte('\n')
 	}
 	return body.Bytes(), nil
+}
+
+func ExecuteInsert(ctx context.Context, nativeURL string, image string, insert Insert) error {
+	target, err := ParseNativeURL(nativeURL)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(image) == "" {
+		image = DefaultClickHouseImage
+	}
+
+	body, err := EncodeJSONEachRow(insert.Rows)
+	if err != nil {
+		return err
+	}
+
+	query := BuildInsertQuery(insert.Database, insert.Table, insert.Columns)
+	cmd := exec.CommandContext(ctx, "docker", clickHouseClientDockerArgs(image, target, query)...)
+	cmd.Stdin = bytes.NewReader(body)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return errors.Wrapf(err, "run clickhouse insert stderr=%s", strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func clickHouseClientDockerArgs(image string, target Target, query string) []string {
+	args := []string{"run", "--rm", "-i", "--add-host", "host.docker.internal:host-gateway"}
+	if target.Host == "companycollect" {
+		hostIP := strings.TrimSpace(os.Getenv("COMPANYCOLLECT_HOST_IP"))
+		if hostIP == "" {
+			hostIP = DefaultCompanycollectHostIP
+		}
+		args = append(args, "--add-host", "companycollect:"+hostIP)
+	}
+	args = append(args,
+		image,
+		"clickhouse-client",
+		"--host", target.Host,
+		"--port", target.Port,
+		"--user", target.Username,
+		"--database", target.Database,
+	)
+	if target.Password != "" {
+		args = append(args, "--password", target.Password)
+	}
+	args = append(args, "--query", query)
+	return args
 }
 
 func quoteIdent(value string) string {

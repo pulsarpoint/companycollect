@@ -35,3 +35,20 @@ func TestEncodeJSONEachRow(t *testing.T) {
 	require.JSONEq(t, `{"business_id":"0100130-4","legal_name":"Dynava Oy"}`, lines[0])
 	require.JSONEq(t, `{"business_id":"0112038-9","legal_name":"Example"}`, lines[1])
 }
+
+func TestClickHouseClientDockerArgsAddsCompanycollectHost(t *testing.T) {
+	t.Setenv("COMPANYCOLLECT_HOST_IP", "203.0.113.10")
+	args := clickHouseClientDockerArgs("clickhouse/clickhouse-server:26.5", Target{
+		Host:     "companycollect",
+		Port:     "9002",
+		Username: "default",
+		Password: "secret",
+		Database: "corpscout_sources",
+	}, "INSERT INTO `corpscout_sources`.`fi_prhytj_companies` FORMAT JSONEachRow")
+
+	require.Contains(t, args, "companycollect:203.0.113.10")
+	require.Contains(t, args, "clickhouse-client")
+	require.Contains(t, args, "--password")
+	require.Contains(t, args, "secret")
+	require.Contains(t, args, "--query")
+}
