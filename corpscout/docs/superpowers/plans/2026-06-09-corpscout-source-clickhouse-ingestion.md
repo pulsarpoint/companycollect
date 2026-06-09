@@ -18,12 +18,15 @@ This plan implements the approved first slice:
 - keep manual ClickHouse migration SQL as the schema authority
 - add shared Corpscout source run manifest and run index helpers
 - add shared ClickHouse JSONEachRow batch insert helper
+- add reusable Go import orchestration that CLI and Temporal activities can call
 - add `corpscout-source` CLI inside the scheduler module
 - move Finland PRH YTJ raw parsing and direct import into Corpscout
 - import an existing raw run from `companies/data/finland/sources/prhytj/runs/20260608T201348Z-prhytj/source.ndjson`
 - remove obsolete companysource ClickHouse generation/import wiring for Finland
 
 This plan does not migrate all existing United States sources. It leaves them as a follow-up after Finland proves the path.
+
+The CLI must remain a wrapper around `internal/companysources` orchestration. Temporal activities should call `companysources.ImportRun` or `companysources.ImportChangedRuns` directly instead of shelling out to `corpscout-source`.
 
 ## File Structure
 
@@ -55,6 +58,10 @@ Create or modify these files:
   - Concrete source registry.
 - Create: `corpscout/scheduler/internal/companysources/registry_test.go`
   - Registry lookup tests.
+- Create: `corpscout/scheduler/internal/companysources/importer.go`
+  - Reusable import-run and import-runs orchestration for CLI and Temporal.
+- Create: `corpscout/scheduler/internal/companysources/importer_test.go`
+  - Unit tests for orchestration and changed-only skipping.
 - Create: `corpscout/scheduler/internal/companysources/finland/prhytj/types.go`
   - Raw PRH YTJ input structs copied/adapted from the current companysource package.
 - Create: `corpscout/scheduler/internal/companysources/finland/prhytj/parser.go`
@@ -823,6 +830,8 @@ git commit -m "feat: add clickhouse JSONEachRow writer"
 - Create: `corpscout/scheduler/internal/companysources/source.go`
 - Create: `corpscout/scheduler/internal/companysources/registry.go`
 - Create: `corpscout/scheduler/internal/companysources/registry_test.go`
+- Create: `corpscout/scheduler/internal/companysources/importer.go`
+- Create: `corpscout/scheduler/internal/companysources/importer_test.go`
 - Create: `corpscout/scheduler/cmd/corpscout-source/main.go`
 - Create: `corpscout/scheduler/cmd/corpscout-source/main_test.go`
 
@@ -899,6 +908,37 @@ type ImportResult struct {
 	ImportedTables []string
 	ImportedRows   int64
 }
+
+type ImportRunRequest struct {
+	Country             string
+	Source              string
+	RunDir              string
+	ClickHouseNativeURL string
+	ClickHouseImage     string
+	BatchSize           int
+	Limit               int64
+}
+
+type ImportChangedRunsRequest struct {
+	RunsRoot            string
+	RunIndexPath        string
+	ClickHouseNativeURL string
+	ClickHouseImage     string
+	BatchSize           int
+	Limit               int64
+	ChangedOnly         bool
+}
+
+type ImportChangedRunsResult struct {
+	Sources []ImportChangedSourceResult
+}
+
+type ImportChangedSourceResult struct {
+	Source       string
+	RunID        string
+	Status       string
+	ImportedRows int64
+}
 ```
 
 Create `corpscout/scheduler/internal/companysources/registry.go`:
@@ -944,7 +984,175 @@ func (r Registry) Keys() []string {
 }
 ```
 
-- [ ] **Step 3: Run registry tests**
+- [ ] **Step 3: Add reusable import orchestration tests**
+
+Create `corpscout/scheduler/internal/companysources/importer_test.go`:
+
+```go
+package companysources
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/runindex"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/runmanifest"
+	"github.com/stretchr/testify/require"
+)
+
+type importingSource struct {
+	key Key
+}
+
+func (s importingSource) Key() Key { return s.key }
+func (s importingSource) DisplayName() string { return "Importing Source" }
+func (s importingSource) Import(ctx context.Context, opts ImportOptions) (ImportResult, error) {
+	return ImportResult{RunDir: opts.RunDir, ImportedTables: []string{"table"}, ImportedRows: 12}, nil
+}
+
+func TestImportRunCallsRegisteredSource(t *testing.T) {
+	registry := NewRegistry(importingSource{key: Key{Country: "finland", Source: "prhytj"}})
+
+	result, err := ImportRun(context.Background(), registry, ImportRunRequest{
+		Country:             "finland",
+		Source:              "prhytj",
+		RunDir:              "/tmp/run",
+		ClickHouseNativeURL: "clickhouse://companycollect:9002?username=default&database=corpscout_sources",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(12), result.ImportedRows)
+}
+
+func TestImportChangedRunsSkipsUnchangedRun(t *testing.T) {
+	root := t.TempDir()
+	runDir := filepath.Join(root, "finland", "prhytj", "runs", "20260609T120000Z-prhytj")
+	manifest := runmanifest.Manifest{
+		Country: "finland",
+		Source:  "prhytj",
+		RunID:   "20260609T120000Z-prhytj",
+		Files:   []runmanifest.File{{Path: "raw/source.ndjson", Kind: "ndjson", Rows: 1, SHA256: "file-a"}},
+	}
+	require.NoError(t, runmanifest.Write(runDir, manifest))
+	manifestHash, err := runmanifest.Hash(runDir)
+	require.NoError(t, err)
+	indexPath := filepath.Join(root, "run-index.lock.yaml")
+	index := runindex.Index{}
+	index.MarkImported(runindex.Entry{
+		Country:       "finland",
+		Source:        "prhytj",
+		RunID:         manifest.RunID,
+		ManifestHash:  manifestHash,
+		RawFileHashes: []string{"file-a"},
+		ImportedAt:    time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC),
+		Status:        "imported",
+	})
+	require.NoError(t, runindex.Save(indexPath, index))
+
+	registry := NewRegistry(importingSource{key: Key{Country: "finland", Source: "prhytj"}})
+	result, err := ImportChangedRuns(context.Background(), registry, ImportChangedRunsRequest{
+		RunsRoot:            root,
+		RunIndexPath:        indexPath,
+		ClickHouseNativeURL: "clickhouse://companycollect:9002?username=default&database=corpscout_sources",
+		ChangedOnly:         true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []ImportChangedSourceResult{{Source: "finland/prhytj", RunID: manifest.RunID, Status: "skipped"}}, result.Sources)
+}
+```
+
+- [ ] **Step 4: Implement reusable import orchestration**
+
+Create `corpscout/scheduler/internal/companysources/importer.go`:
+
+```go
+package companysources
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"github.com/cockroachdb/errors"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/runindex"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/runmanifest"
+)
+
+func ImportRun(ctx context.Context, registry Registry, req ImportRunRequest) (ImportResult, error) {
+	source, err := registry.Get(req.Country, req.Source)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	return source.Import(ctx, ImportOptions{
+		RunDir:              req.RunDir,
+		ClickHouseNativeURL: req.ClickHouseNativeURL,
+		ClickHouseImage:     req.ClickHouseImage,
+		BatchSize:           req.BatchSize,
+		Limit:               req.Limit,
+	})
+}
+
+func ImportChangedRuns(ctx context.Context, registry Registry, req ImportChangedRunsRequest) (ImportChangedRunsResult, error) {
+	index, err := runindex.Load(req.RunIndexPath)
+	if err != nil {
+		return ImportChangedRunsResult{}, err
+	}
+	var summaries []ImportChangedSourceResult
+	for _, key := range registry.Keys() {
+		country, sourceKey, ok := strings.Cut(key, "/")
+		if !ok {
+			return ImportChangedRunsResult{}, errors.Errorf("invalid source key %s", key)
+		}
+		runDir, manifest, err := runmanifest.LatestCompletedRun(req.RunsRoot, country, sourceKey)
+		if err != nil {
+			return ImportChangedRunsResult{}, err
+		}
+		manifestHash, err := runmanifest.Hash(runDir)
+		if err != nil {
+			return ImportChangedRunsResult{}, err
+		}
+		rawHashes := make([]string, 0, len(manifest.Files))
+		for _, file := range manifest.Files {
+			rawHashes = append(rawHashes, file.SHA256)
+		}
+		if req.ChangedOnly && !index.ShouldImport(country, sourceKey, manifest.RunID, manifestHash, rawHashes) {
+			summaries = append(summaries, ImportChangedSourceResult{Source: key, RunID: manifest.RunID, Status: "skipped"})
+			continue
+		}
+		result, err := ImportRun(ctx, registry, ImportRunRequest{
+			Country:             country,
+			Source:              sourceKey,
+			RunDir:              runDir,
+			ClickHouseNativeURL: req.ClickHouseNativeURL,
+			ClickHouseImage:     req.ClickHouseImage,
+			BatchSize:           req.BatchSize,
+			Limit:               req.Limit,
+		})
+		if err != nil {
+			return ImportChangedRunsResult{}, err
+		}
+		index.MarkImported(runindex.Entry{
+			Country:       country,
+			Source:        sourceKey,
+			RunID:         manifest.RunID,
+			ManifestHash:  manifestHash,
+			RawFileHashes: rawHashes,
+			ImportedAt:    time.Now().UTC(),
+			Status:        "imported",
+		})
+		summaries = append(summaries, ImportChangedSourceResult{Source: key, RunID: manifest.RunID, Status: "imported", ImportedRows: result.ImportedRows})
+	}
+	if err := runindex.Save(req.RunIndexPath, index); err != nil {
+		return ImportChangedRunsResult{}, err
+	}
+	return ImportChangedRunsResult{Sources: summaries}, nil
+}
+```
+
+- [ ] **Step 5: Run registry and orchestration tests**
 
 Run:
 
@@ -955,7 +1163,7 @@ GOWORK=off go test ./internal/companysources -count=1 -v
 
 Expected: PASS.
 
-- [ ] **Step 4: Add CLI skeleton tests**
+- [ ] **Step 6: Add CLI skeleton tests**
 
 Create `corpscout/scheduler/cmd/corpscout-source/main_test.go`:
 
@@ -983,7 +1191,7 @@ func TestUnknownCommandFails(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5: Implement CLI skeleton**
+- [ ] **Step 7: Implement CLI skeleton**
 
 Create `corpscout/scheduler/cmd/corpscout-source/main.go`:
 
@@ -1048,7 +1256,7 @@ Add the missing import to `main.go`:
 import "context"
 ```
 
-- [ ] **Step 6: Run CLI tests**
+- [ ] **Step 8: Run CLI tests**
 
 Run:
 
@@ -1059,7 +1267,7 @@ GOWORK=off go test ./cmd/corpscout-source ./internal/companysources -count=1 -v
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
@@ -1651,11 +1859,9 @@ case "import-run":
 	if err != nil {
 		return err
 	}
-	source, err := registry.Get(cfg.Country, cfg.Source)
-	if err != nil {
-		return err
-	}
-	result, err := source.Import(context.Background(), companysources.ImportOptions{
+	result, err := companysources.ImportRun(context.Background(), registry, companysources.ImportRunRequest{
+		Country:             cfg.Country,
+		Source:              cfg.Source,
 		RunDir:              cfg.RunDir,
 		ClickHouseNativeURL: cfg.ClickHouseNativeURL,
 		ClickHouseImage:     cfg.ClickHouseImage,
@@ -1671,7 +1877,19 @@ case "import-runs":
 	if err != nil {
 		return err
 	}
-	return runBulkImport(context.Background(), registry, cfg, output)
+	result, err := companysources.ImportChangedRuns(context.Background(), registry, companysources.ImportChangedRunsRequest{
+		RunsRoot:            cfg.RunsRoot,
+		RunIndexPath:        cfg.RunIndexPath,
+		ClickHouseNativeURL: cfg.ClickHouseNativeURL,
+		ClickHouseImage:     cfg.ClickHouseImage,
+		BatchSize:           cfg.BatchSize,
+		Limit:               cfg.Limit,
+		ChangedOnly:         cfg.ChangedOnly,
+	})
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(result)
 ```
 
 Add helper types/functions:
@@ -1748,70 +1966,6 @@ func parseImportRuns(args []string) (importRunsConfig, error) {
 	}
 	return cfg, nil
 }
-
-func runBulkImport(ctx context.Context, registry companysources.Registry, cfg importRunsConfig, output io.Writer) error {
-	index, err := runindex.Load(cfg.RunIndexPath)
-	if err != nil {
-		return err
-	}
-	type sourceSummary struct {
-		Source       string `json:"source"`
-		RunID        string `json:"run_id"`
-		Status       string `json:"status"`
-		ImportedRows int64  `json:"imported_rows"`
-	}
-	var summaries []sourceSummary
-	for _, key := range registry.Keys() {
-		country, sourceKey, ok := strings.Cut(key, "/")
-		if !ok {
-			return errors.Errorf("invalid source key %s", key)
-		}
-		runDir, manifest, err := runmanifest.LatestCompletedRun(cfg.RunsRoot, country, sourceKey)
-		if err != nil {
-			return err
-		}
-		manifestHash, err := runmanifest.Hash(runDir)
-		if err != nil {
-			return err
-		}
-		rawHashes := make([]string, 0, len(manifest.Files))
-		for _, file := range manifest.Files {
-			rawHashes = append(rawHashes, file.SHA256)
-		}
-		if cfg.ChangedOnly && !index.ShouldImport(country, sourceKey, manifest.RunID, manifestHash, rawHashes) {
-			summaries = append(summaries, sourceSummary{Source: key, RunID: manifest.RunID, Status: "skipped"})
-			continue
-		}
-		source, err := registry.Get(country, sourceKey)
-		if err != nil {
-			return err
-		}
-		result, err := source.Import(ctx, companysources.ImportOptions{
-			RunDir:              runDir,
-			ClickHouseNativeURL: cfg.ClickHouseNativeURL,
-			ClickHouseImage:     cfg.ClickHouseImage,
-			BatchSize:           cfg.BatchSize,
-			Limit:               cfg.Limit,
-		})
-		if err != nil {
-			return err
-		}
-		index.MarkImported(runindex.Entry{
-			Country:       country,
-			Source:        sourceKey,
-			RunID:         manifest.RunID,
-			ManifestHash:  manifestHash,
-			RawFileHashes: rawHashes,
-			ImportedAt:    time.Now().UTC(),
-			Status:        "imported",
-		})
-		summaries = append(summaries, sourceSummary{Source: key, RunID: manifest.RunID, Status: "imported", ImportedRows: result.ImportedRows})
-	}
-	if err := runindex.Save(cfg.RunIndexPath, index); err != nil {
-		return err
-	}
-	return json.NewEncoder(output).Encode(summaries)
-}
 ```
 
 Add imports:
@@ -1821,11 +1975,6 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"strings"
-	"time"
-
-	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/runindex"
-	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/runmanifest"
 )
 ```
 
