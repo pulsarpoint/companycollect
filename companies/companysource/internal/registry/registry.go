@@ -6,6 +6,9 @@ import (
 
 	"github.com/pulsarpoint/companycollect/companies/companysource/internal/source"
 	"github.com/pulsarpoint/companycollect/companies/companysource/sources/finland/prhytj"
+	"github.com/pulsarpoint/companycollect/companies/companysource/sources/unitedstates/coloradoentities"
+	"github.com/pulsarpoint/companycollect/companies/companysource/sources/unitedstates/irseobmf"
+	"github.com/pulsarpoint/companycollect/companies/companysource/sources/unitedstates/secedgar"
 )
 
 type Registry struct {
@@ -15,6 +18,9 @@ type Registry struct {
 func Default() Registry {
 	return New(
 		prhytj.NewSource(prhytj.ConfigFromEnv()),
+		coloradoentities.NewSource(coloradoentities.ConfigFromEnv()),
+		irseobmf.NewSource(irseobmf.ConfigFromEnv()),
+		secedgar.NewSource(secedgar.ConfigFromEnv()),
 	)
 }
 
