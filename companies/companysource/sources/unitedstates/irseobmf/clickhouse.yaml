@@ -1,0 +1,47 @@
+database: corpscout_sources
+source_prefix: us_irseobmf
+tables:
+  companies:
+    parquet: companies.parquet
+    table: us_irseobmf_companies
+    engine: ReplacingMergeTree
+    order_by: [ein, source_run_id]
+    inject_columns: &ingest_columns
+      source_export_id: UUID
+      ingested_at: "DateTime64(3, 'UTC')"
+  company_names:
+    parquet: company_names.parquet
+    table: us_irseobmf_company_names
+    engine: ReplacingMergeTree
+    order_by: [ein, name_type, source_item_hash]
+    inject_columns: *ingest_columns
+  addresses:
+    parquet: addresses.parquet
+    table: us_irseobmf_addresses
+    engine: ReplacingMergeTree
+    order_by: [ein, address_role, source_item_hash]
+    inject_columns: *ingest_columns
+  classifications:
+    parquet: classifications.parquet
+    table: us_irseobmf_classifications
+    engine: ReplacingMergeTree
+    order_by: [ein, subsection_code, classification_code, source_item_hash]
+    inject_columns: *ingest_columns
+  financials:
+    parquet: financials.parquet
+    table: us_irseobmf_financials
+    engine: ReplacingMergeTree
+    order_by: [ein, tax_period, source_item_hash]
+    inject_columns: *ingest_columns
+  identifiers:
+    parquet: identifiers.parquet
+    table: us_irseobmf_identifiers
+    engine: ReplacingMergeTree
+    order_by: [ein, identifier_type, identifier_value, source_item_hash]
+    inject_columns: *ingest_columns
+  source_evidence:
+    parquet: source_evidence.parquet
+    table: us_irseobmf_source_evidence
+    engine: ReplacingMergeTree
+    order_by: [ein, source_payload_hash]
+    inject_columns: *ingest_columns

@@ -1,0 +1,29 @@
+database: corpscout_sources
+source_prefix: us_secedgar
+tables:
+  companies:
+    parquet: companies.parquet
+    table: us_secedgar_companies
+    engine: ReplacingMergeTree
+    order_by: [cik10, source_run_id]
+    inject_columns: &ingest_columns
+      source_export_id: UUID
+      ingested_at: "DateTime64(3, 'UTC')"
+  company_names:
+    parquet: company_names.parquet
+    table: us_secedgar_company_names
+    engine: ReplacingMergeTree
+    order_by: [cik10, source_item_hash]
+    inject_columns: *ingest_columns
+  identifiers:
+    parquet: identifiers.parquet
+    table: us_secedgar_identifiers
+    engine: ReplacingMergeTree
+    order_by: [cik10, identifier_type, identifier_value, source_item_hash]
+    inject_columns: *ingest_columns
+  source_evidence:
+    parquet: source_evidence.parquet
+    table: us_secedgar_source_evidence
+    engine: ReplacingMergeTree
+    order_by: [cik10, source_payload_hash]
+    inject_columns: *ingest_columns
