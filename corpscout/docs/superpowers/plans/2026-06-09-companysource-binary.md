@@ -27,6 +27,7 @@
 - Do not add `build-export`, `sync`, `process`, or country-level final export commands to `companysource`.
 - Do not produce reduced/company-only final Parquet as the main artifact.
 - Preserve as much source information as possible in source-specific Parquet tables.
+- Reuse existing downloaded source files and source Parquet exports by copying them into the new flat run-folder layout. Do not redownload Finland PRH YTJ or existing US sources just to adopt the new layout.
 - Each source run uses one flat folder:
 
 ```text
@@ -64,6 +65,7 @@ The exact Parquet file list is source-specific, but all files for the run live i
 - Modify `corpscout/clickhouse`: expose deterministic migration generation and native import as reusable packages.
 - Modify `corpscout/Makefile`: use `companysource` for ClickHouse generation/import.
 - Modify docs in `companies/docs` to describe the new source run layout.
+- Local data cleanup: copy existing ignored files from `companies/data/*/countrydata/sources/*/{snapshots,exports}` into `companies/data/<country>/sources/<source>/runs/<run_id>/`.
 
 ## New Source Contract
 
@@ -227,7 +229,146 @@ git add companies/common/companysource companies/common/go.mod companies/common/
 git commit -m "feat: add companysource run folder helpers"
 ```
 
-## Task 2: Create `companies/companysource` Module and CLI Parser
+## Task 2: Clean Up Existing Downloaded Data Into Flat Run Folders
+
+**Files:**
+- Local ignored data only; no committed data files expected.
+
+This task preserves current local source downloads and current source-specific Parquet outputs. It deliberately ignores country-level final exports under `companies/data/finland/countrydata/final`.
+
+- [ ] **Step 1: Relayout Finland PRH YTJ latest source export**
+
+Run:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+
+OLD_EXPORT="companies/data/finland/countrydata/sources/prhytj/exports/20260608T201348Z-prhytj"
+RUN_ID="$(basename "$OLD_EXPORT")"
+NEW_RUN="companies/data/finland/sources/prhytj/runs/$RUN_ID"
+SOURCE_PATH="$(jq -r '.inputs[0].path' "$OLD_EXPORT/manifest.json")"
+
+mkdir -p "$NEW_RUN"
+cp "$SOURCE_PATH" "$NEW_RUN/source.ndjson"
+cp "$OLD_EXPORT"/*.parquet "$NEW_RUN/"
+cp "$OLD_EXPORT/manifest.json" "$NEW_RUN/manifest.legacy.json"
+```
+
+Expected flat folder:
+
+```text
+companies/data/finland/sources/prhytj/runs/20260608T201348Z-prhytj/
+  source.ndjson
+  raw_records.parquet
+  companies.parquet
+  company_names.parquet
+  legal_forms.parquet
+  industries.parquet
+  addresses.parquet
+  registered_entries.parquet
+  tax_registrations.parquet
+  websites.parquet
+  manifest.legacy.json
+```
+
+The rewritten `ExportParquet` command will later regenerate `manifest.json` in this same folder. Keep `manifest.legacy.json` for traceability to the old artifact layout.
+
+- [ ] **Step 2: Relayout US SEC EDGAR latest source export**
+
+Run:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+
+OLD_EXPORT="companies/data/united_states/countrydata/sources/secedgar/exports/20260608T203500Z-secedgar"
+RUN_ID="$(basename "$OLD_EXPORT")"
+NEW_RUN="companies/data/united_states/sources/secedgar/runs/$RUN_ID"
+SOURCE_PATH="$(jq -r '.inputs[0].path' "$OLD_EXPORT/manifest.json")"
+
+mkdir -p "$NEW_RUN"
+cp "$SOURCE_PATH" "$NEW_RUN/source.json"
+cp "$OLD_EXPORT"/*.parquet "$NEW_RUN/"
+cp "$OLD_EXPORT/manifest.json" "$NEW_RUN/manifest.legacy.json"
+```
+
+Expected: `source.json`, the source-specific Parquet files, and `manifest.legacy.json` are all in one folder.
+
+- [ ] **Step 3: Relayout US IRS EO BMF latest source export**
+
+Run:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+
+OLD_EXPORT="companies/data/united_states/countrydata/sources/irseobmf/exports/20260608T203550Z-irseobmf"
+RUN_ID="$(basename "$OLD_EXPORT")"
+NEW_RUN="companies/data/united_states/sources/irseobmf/runs/$RUN_ID"
+SOURCE_PATH="$(jq -r '.inputs[0].path' "$OLD_EXPORT/manifest.json")"
+
+mkdir -p "$NEW_RUN"
+cp "$SOURCE_PATH" "$NEW_RUN/source.ndjson"
+cp "$OLD_EXPORT"/*.parquet "$NEW_RUN/"
+cp "$OLD_EXPORT/manifest.json" "$NEW_RUN/manifest.legacy.json"
+```
+
+The currently available full IRS source snapshot is NDJSON. Do not invent a CSV source file for this legacy run if the full downloaded CSV is not present locally. The rewritten downloader can use `source.csv` for future IRS runs.
+
+- [ ] **Step 4: Relayout US Colorado entities latest source export**
+
+Run:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+
+OLD_EXPORT="companies/data/united_states/countrydata/sources/coloradoentities/exports/20260608T233837Z-coloradoentities"
+RUN_ID="$(basename "$OLD_EXPORT")"
+NEW_RUN="companies/data/united_states/sources/coloradoentities/runs/$RUN_ID"
+SOURCE_PATH="$(jq -r '.inputs[0].path' "$OLD_EXPORT/manifest.json")"
+
+mkdir -p "$NEW_RUN"
+cp "$SOURCE_PATH" "$NEW_RUN/source.ndjson"
+cp "$OLD_EXPORT"/*.parquet "$NEW_RUN/"
+cp "$OLD_EXPORT/manifest.json" "$NEW_RUN/manifest.legacy.json"
+```
+
+- [ ] **Step 5: Verify the new folders are flat**
+
+Run:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+
+find companies/data/finland/sources/prhytj/runs/20260608T201348Z-prhytj -mindepth 2 -print
+find companies/data/united_states/sources/secedgar/runs/20260608T203500Z-secedgar -mindepth 2 -print
+find companies/data/united_states/sources/irseobmf/runs/20260608T203550Z-irseobmf -mindepth 2 -print
+find companies/data/united_states/sources/coloradoentities/runs/20260608T233837Z-coloradoentities -mindepth 2 -print
+```
+
+Expected: no output. If any command prints nested files, the layout is not flat and must be fixed before continuing.
+
+- [ ] **Step 6: Verify old final exports are not copied**
+
+Run:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+find companies/data -path '*final*' -path '*sources/*/runs/*' -print
+```
+
+Expected: no output.
+
+- [ ] **Step 7: Check git status**
+
+Run:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+git status --short
+```
+
+Expected: no new tracked files from `companies/data`, because `companies/data/` is ignored. The data relayout is local runtime cleanup, not a repository commit.
+
+## Task 3: Create `companies/companysource` Module and CLI Parser
 
 **Files:**
 - Create: `companies/companysource/go.mod`
@@ -386,7 +527,7 @@ git add companies/companysource
 git commit -m "feat: add companysource cli skeleton"
 ```
 
-## Task 3: Rewrite Finland PRH YTJ Source to Flat Download and Parquet Export
+## Task 4: Rewrite Finland PRH YTJ Source to Flat Download and Parquet Export
 
 **Files:**
 - Modify: `companies/finland/prhytj/download.go`
@@ -454,7 +595,7 @@ git add companies/finland
 git commit -m "feat: rewrite finland prhytj flat parquet export"
 ```
 
-## Task 4: Rewrite United States Sources to Flat Download and Parquet Export
+## Task 5: Rewrite United States Sources to Flat Download and Parquet Export
 
 **Files:**
 - Modify: `companies/united_states/irseobmf/*`
@@ -513,7 +654,7 @@ git add companies/united_states
 git commit -m "feat: rewrite united states flat parquet exports"
 ```
 
-## Task 5: Add Registry and Source Adapters
+## Task 6: Add Registry and Source Adapters
 
 **Files:**
 - Create: `companies/companysource/internal/registry/registry.go`
@@ -560,7 +701,7 @@ export-parquet -> adapter.ExportParquet
 status -> adapter.Status
 ```
 
-ClickHouse methods can return explicit unsupported errors until Task 6.
+ClickHouse methods can return explicit unsupported errors until Task 7.
 
 - [ ] **Step 5: Verify companysource tests**
 
@@ -578,7 +719,7 @@ git add companies/companysource
 git commit -m "feat: register companysource adapters"
 ```
 
-## Task 6: Expose ClickHouse Generation and Import as Reusable Packages
+## Task 7: Expose ClickHouse Generation and Import as Reusable Packages
 
 **Files:**
 - Create: `corpscout/clickhouse/parquetddl`
@@ -651,7 +792,7 @@ git add corpscout/clickhouse companies/companysource
 git commit -m "feat: expose clickhouse source import packages"
 ```
 
-## Task 7: Update Corpscout Make Targets
+## Task 8: Update Corpscout Make Targets
 
 **Files:**
 - Modify: `corpscout/Makefile`
@@ -696,7 +837,7 @@ git add corpscout/Makefile corpscout/.env.example
 git commit -m "chore: use companysource for clickhouse source targets"
 ```
 
-## Task 8: Remove or Deprecate Old Country CLIs
+## Task 9: Remove or Deprecate Old Country CLIs
 
 **Files:**
 - Modify: `companies/finland/cmd/finland-countrydata/main.go`
@@ -723,7 +864,7 @@ git add companies/finland/cmd companies/united_states/cmd companies/docs
 git commit -m "chore: deprecate old countrydata clis"
 ```
 
-## Task 9: Add US ClickHouse Source Configs After Rewrites
+## Task 10: Add US ClickHouse Source Configs After Rewrites
 
 **Files:**
 - Create: `corpscout/clickhouse/sources/united_states_irseobmf.yaml`
@@ -760,7 +901,7 @@ git add corpscout/clickhouse/sources corpscout/clickhouse/migrations companies/c
 git commit -m "feat: add clickhouse support for united states sources"
 ```
 
-## Task 10: End-to-End Verification
+## Task 11: End-to-End Verification
 
 **Files:**
 - No source edits expected.
