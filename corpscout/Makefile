@@ -1,4 +1,4 @@
-.PHONY: up down logs rebuild rebuild-local scheduler-local-bin migrate-up migrate-down migrate-test-up migrate-test-down clickhouse-migrate-up clickhouse-migrate-down clickhouse-generate-finland-prhytj clickhouse-import-finland-prhytj sqlc-generate test test-db
+.PHONY: up down logs rebuild rebuild-local scheduler-local-bin migrate-up migrate-down migrate-test-up migrate-test-down clickhouse-migrate-up clickhouse-migrate-down source-list source-import-run source-import-changed sqlc-generate test test-db
 
 DATABASE_URL := $(or $(DATABASE_URL),$(shell sed -n 's/^DATABASE_URL=//p' .env 2>/dev/null | tail -n 1),postgres://corpscout:change-me@companycollect:5432/corpscout?sslmode=disable)
 CORPSCOUT_TEST_DATABASE_URL := $(or $(CORPSCOUT_TEST_DATABASE_URL),$(shell sed -n 's/^CORPSCOUT_TEST_DATABASE_URL=//p' .env 2>/dev/null | tail -n 1),$(shell sed -n 's/^DATABASE_URL=//p' .env 2>/dev/null | tail -n 1 | sed 's|/corpscout?|/corpscout_test?|'),postgres://corpscout:change-me@companycollect:5432/corpscout_test?sslmode=disable)
@@ -6,8 +6,11 @@ CLICKHOUSE_MIGRATE_URL := $(or $(CLICKHOUSE_MIGRATE_URL),$(shell sed -n 's/^CLIC
 CLICKHOUSE_NATIVE_URL := $(or $(CLICKHOUSE_NATIVE_URL),$(shell sed -n 's/^CLICKHOUSE_NATIVE_URL=//p' .env 2>/dev/null | tail -n 1),clickhouse://companycollect:9002?username=default&password=change-me&database=corpscout_sources)
 COMPANYCOLLECT_HOST_IP := $(or $(COMPANYCOLLECT_HOST_IP),$(shell sed -n 's/^COMPANYCOLLECT_HOST_IP=//p' .env 2>/dev/null | tail -n 1),100.85.212.113)
 CLICKHOUSE_MIGRATE_DOCKER_ARGS ?= --add-host companycollect:$(COMPANYCOLLECT_HOST_IP)
-FINLAND_PRHYTJ_RUN_DIR ?= $(abspath ../companies/data/finland/sources/prhytj/runs/20260608T201348Z-prhytj)
-FINLAND_PRHYTJ_SOURCE_EXPORT_ID ?= 00000000-0000-0000-0000-000000000000
+SOURCE_COUNTRY ?= finland
+SOURCE_KEY ?= prhytj
+SOURCE_RUN_DIR ?= $(abspath ../companies/data/finland/sources/prhytj/runs/20260608T201348Z-prhytj)
+SOURCE_BATCH_SIZE ?= 1000
+SOURCE_LIMIT ?= 0
 SCHEDULER_GOOS ?= linux
 SCHEDULER_GOARCH ?= $(shell go env GOARCH)
 
@@ -47,23 +50,23 @@ clickhouse-migrate-up:
 clickhouse-migrate-down:
 	@docker run --rm $(CLICKHOUSE_MIGRATE_DOCKER_ARGS) -v "$(CURDIR)/clickhouse/migrations:/clickhouse-migrations:ro" migrate/migrate:v4.17.0 -path=/clickhouse-migrations -database="$(CLICKHOUSE_MIGRATE_URL)" down 1
 
-clickhouse-generate-finland-prhytj:
-	cd ../companies/companysource && GOWORK=off go run ./cmd/companysource generate-clickhouse-migration \
-		--country finland \
-		--source prhytj \
-		--database corpscout_sources \
-		--run-dir "$(FINLAND_PRHYTJ_RUN_DIR)" \
-		--out "../../corpscout/clickhouse/migrations/000002_create_finland_prhytj_tables.up.sql" \
-		--down-out "../../corpscout/clickhouse/migrations/000002_create_finland_prhytj_tables.down.sql"
+source-list:
+	cd scheduler && GOWORK=off go run ./cmd/corpscout-source list-sources
 
-clickhouse-import-finland-prhytj:
-	cd ../companies/companysource && GOWORK=off go run ./cmd/companysource import-clickhouse \
-		--country finland \
-		--source prhytj \
-		--database corpscout_sources \
+source-import-run:
+	cd scheduler && GOWORK=off go run ./cmd/corpscout-source import-run \
+		--country "$(SOURCE_COUNTRY)" \
+		--source "$(SOURCE_KEY)" \
+		--run-dir "$(SOURCE_RUN_DIR)" \
 		--clickhouse-native-url "$(CLICKHOUSE_NATIVE_URL)" \
-		--source-export-id "$(FINLAND_PRHYTJ_SOURCE_EXPORT_ID)" \
-		--run-dir "$(FINLAND_PRHYTJ_RUN_DIR)"
+		--batch-size "$(SOURCE_BATCH_SIZE)" \
+		--limit "$(SOURCE_LIMIT)"
+
+source-import-changed:
+	cd scheduler && GOWORK=off go run ./cmd/corpscout-source import-runs \
+		--runs-root "$(abspath data/sources)" \
+		--clickhouse-native-url "$(CLICKHOUSE_NATIVE_URL)" \
+		--changed-only
 
 sqlc-generate:
 	cd scheduler && GOWORK=off sqlc generate -f ../database/sqlc.yaml
