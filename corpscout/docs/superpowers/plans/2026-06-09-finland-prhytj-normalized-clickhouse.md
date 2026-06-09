@@ -616,26 +616,18 @@ func TestNormalizeParsedRecordCoversAllPRHStructures(t *testing.T) {
 	require.NotEmpty(t, entry.Names[0].SourceItemHash)
 }
 
-func TestFlattenNormalizedEntriesPreservesOneEntryPerSourceRecordBeforeFlattening(t *testing.T) {
-	entries := []NormalizedEntry{
-		{
-			Identifiers: []IdentifierRow{{BusinessID: "0100130-4"}, {BusinessID: "0100130-4"}},
-			Status:      &StatusRow{BusinessID: "0100130-4"},
-			Names:       []NameRow{{BusinessID: "0100130-4"}},
-		},
-		{
-			Identifiers: []IdentifierRow{{BusinessID: "0111111-1"}},
-			Status:      &StatusRow{BusinessID: "0111111-1"},
-			Names:       []NameRow{{BusinessID: "0111111-1"}, {BusinessID: "0111111-1"}},
-		},
+func TestNormalizedEntryKeepsRowsGroupedBySourceRecord(t *testing.T) {
+	entry := NormalizedEntry{
+		Identifiers: []IdentifierRow{{BusinessID: "0100130-4"}, {BusinessID: "0100130-4"}},
+		Status:      &StatusRow{BusinessID: "0100130-4"},
+		Names:       []NameRow{{BusinessID: "0100130-4"}},
 	}
 
-	batch := FlattenNormalizedEntries(entries)
-
-	require.Len(t, entries, 2)
-	require.Len(t, batch.Identifiers, 3)
-	require.Len(t, batch.Statuses, 2)
-	require.Len(t, batch.Names, 3)
+	require.Len(t, entry.Identifiers, 2)
+	require.NotNil(t, entry.Status)
+	require.Equal(t, "0100130-4", entry.Status.BusinessID)
+	require.Len(t, entry.Names, 1)
+	require.Equal(t, "0100130-4", entry.Names[0].BusinessID)
 }
 ```
 
@@ -643,10 +635,10 @@ func TestFlattenNormalizedEntriesPreservesOneEntryPerSourceRecordBeforeFlattenin
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-GOWORK=off go test ./internal/companysources/finland/prhytj -run 'TestNormalizeParsedRecordCoversAllPRHStructures|TestFlattenNormalizedEntriesPreservesOneEntryPerSourceRecordBeforeFlattening' -count=1 -v
+GOWORK=off go test ./internal/companysources/finland/prhytj -run 'TestNormalizeParsedRecordCoversAllPRHStructures|TestNormalizedEntryKeepsRowsGroupedBySourceRecord' -count=1 -v
 ```
 
-Expected: FAIL because `NormalizeParsedRecord`, `NormalizedEntry`, `FlattenNormalizedEntries`, `RunContext`, and `NormalizedBatch` do not exist.
+Expected: FAIL because `NormalizeParsedRecord`, `NormalizedEntry`, and `RunContext` do not exist.
 
 - [ ] **Step 3: Implement normalizer**
 
@@ -687,23 +679,6 @@ type NormalizedEntry struct {
 	AddressPostOffices []AddressPostOfficeRow
 }
 
-type NormalizedBatch struct {
-	Identifiers []IdentifierRow
-	Statuses []StatusRow
-	Names []NameRow
-	BusinessLines []BusinessLineRow
-	BusinessLineDescriptions []BusinessLineDescriptionRow
-	Websites []WebsiteRow
-	CompanyForms []CompanyFormRow
-	CompanyFormDescriptions []CompanyFormDescriptionRow
-	CompanySituations []CompanySituationRow
-	CompanySituationDescriptions []CompanySituationDescriptionRow
-	RegisteredEntries []RegisteredEntryRow
-	RegisteredEntryDescriptions []RegisteredEntryDescriptionRow
-	Addresses []AddressRow
-	AddressPostOffices []AddressPostOfficeRow
-}
-
 func NormalizeParsedRecord(run RunContext, parsed ParsedRecord) NormalizedEntry {
 	record := parsed.Record
 	businessID := record.BusinessID.Value
@@ -712,33 +687,6 @@ func NormalizeParsedRecord(run RunContext, parsed ParsedRecord) NormalizedEntry 
 	// Use common lineage on every row:
 	// FI, SourceKey, run.RunID, businessID, parsed.LineNumber, parsed.PayloadHash, clickHouseTimestamp(run.IngestedAt), run.SourceExportID.
 	return NormalizedEntry{}
-}
-
-func FlattenNormalizedEntries(entries []NormalizedEntry) NormalizedBatch {
-	var batch NormalizedBatch
-	for _, entry := range entries {
-		batch.Identifiers = append(batch.Identifiers, entry.Identifiers...)
-		if entry.Status != nil {
-			batch.Statuses = append(batch.Statuses, *entry.Status)
-		}
-		batch.Names = append(batch.Names, entry.Names...)
-		if entry.BusinessLine != nil {
-			batch.BusinessLines = append(batch.BusinessLines, *entry.BusinessLine)
-		}
-		batch.BusinessLineDescriptions = append(batch.BusinessLineDescriptions, entry.BusinessLineDescriptions...)
-		if entry.Website != nil {
-			batch.Websites = append(batch.Websites, *entry.Website)
-		}
-		batch.CompanyForms = append(batch.CompanyForms, entry.CompanyForms...)
-		batch.CompanyFormDescriptions = append(batch.CompanyFormDescriptions, entry.CompanyFormDescriptions...)
-		batch.CompanySituations = append(batch.CompanySituations, entry.CompanySituations...)
-		batch.CompanySituationDescriptions = append(batch.CompanySituationDescriptions, entry.CompanySituationDescriptions...)
-		batch.RegisteredEntries = append(batch.RegisteredEntries, entry.RegisteredEntries...)
-		batch.RegisteredEntryDescriptions = append(batch.RegisteredEntryDescriptions, entry.RegisteredEntryDescriptions...)
-		batch.Addresses = append(batch.Addresses, entry.Addresses...)
-		batch.AddressPostOffices = append(batch.AddressPostOffices, entry.AddressPostOffices...)
-	}
-	return batch
 }
 ```
 
@@ -790,7 +738,7 @@ func intString(value int) string {
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-GOWORK=off go test ./internal/companysources/finland/prhytj -run 'TestNormalizeParsedRecordCoversAllPRHStructures|TestFlattenNormalizedEntriesPreservesOneEntryPerSourceRecordBeforeFlattening' -count=1 -v
+GOWORK=off go test ./internal/companysources/finland/prhytj -run 'TestNormalizeParsedRecordCoversAllPRHStructures|TestNormalizedEntryKeepsRowsGroupedBySourceRecord' -count=1 -v
 ```
 
 Expected: PASS.
@@ -1131,8 +1079,7 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 		if len(entries) == 0 {
 			return nil
 		}
-		batch := FlattenNormalizedEntries(entries)
-		if err := flushNormalizedBatch(ctx, writer, batch); err != nil {
+		if err := flushNormalizedEntries(ctx, writer, entries); err != nil {
 			return err
 		}
 		entries = entries[:0]
@@ -1165,25 +1112,56 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 }
 ```
 
-Add `flushNormalizedBatch` that calls `writer.Insert` once for each non-empty
-row slice. Convert typed rows to `[]map[string]any` using each row's
-`ClickHouseRow()`.
+Add `flushNormalizedEntries` that receives `[]NormalizedEntry`, builds one
+`chwriter.Insert` per table, and calls `writer.Insert` for each non-empty table
+insert. Do not introduce a `NormalizedBatch` struct.
 
 Use this signature:
 
 ```go
-func flushNormalizedBatch(ctx context.Context, writer *chwriter.Writer, batch NormalizedBatch) error
+func flushNormalizedEntries(ctx context.Context, writer *chwriter.Writer, entries []NormalizedEntry) error
 ```
 
-For each table, call:
+Inside `flushNormalizedEntries`, build table rows directly from entries:
 
 ```go
-return writer.Insert(ctx, chwriter.Insert{
-	Table:   identifiersTable,
-	Columns: identifierColumns,
-	Rows:    identifierRows,
-})
+identifierRows := make([]map[string]any, 0)
+for _, entry := range entries {
+	for _, row := range entry.Identifiers {
+		identifierRows = append(identifierRows, row.ClickHouseRow())
+	}
+}
+if len(identifierRows) > 0 {
+	if err := writer.Insert(ctx, chwriter.Insert{
+		Table:   identifiersTable,
+		Columns: identifierColumns,
+		Rows:    identifierRows,
+	}); err != nil {
+		return err
+	}
+}
 ```
+
+Repeat that direct per-table extraction for every row group in `NormalizedEntry`:
+
+- `Identifiers`
+- `Status` when non-nil
+- `Names`
+- `BusinessLine` when non-nil
+- `BusinessLineDescriptions`
+- `Website` when non-nil
+- `CompanyForms`
+- `CompanyFormDescriptions`
+- `CompanySituations`
+- `CompanySituationDescriptions`
+- `RegisteredEntries`
+- `RegisteredEntryDescriptions`
+- `Addresses`
+- `AddressPostOffices`
+
+The only structure crossing from normalization to import should be
+`[]NormalizedEntry`.
+
 
 Do not call `clickhouseclient.ExecuteInsert` anywhere in the PRH package.
 
