@@ -19,7 +19,7 @@ func TestGenerateMigrationIsDeterministic(t *testing.T) {
 		Tables: map[string]TableConfig{
 			"companies": {
 				Parquet: "companies.parquet",
-				Table:   "fi_prhytj_companies",
+				Table:   "example_source_companies",
 				Engine:  "ReplacingMergeTree",
 				OrderBy: []string{"business_id", "source_run_id"},
 				InjectColumns: map[string]string{
@@ -40,13 +40,13 @@ func TestGenerateMigrationIsDeterministic(t *testing.T) {
 
 	up, down, err := generateMigrations(cfg, "/exports", describer)
 	require.NoError(t, err)
-	require.Contains(t, up, "CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prhytj_companies`")
+	require.Contains(t, up, "CREATE TABLE IF NOT EXISTS `corpscout_sources`.`example_source_companies`")
 	require.Contains(t, up, "`source_export_id` UUID")
 	require.Contains(t, up, "`ingested_at` DateTime64(3, 'UTC')")
 	require.Contains(t, up, "ENGINE = ReplacingMergeTree")
 	require.Contains(t, up, "ORDER BY (`business_id`, `source_run_id`)")
 	require.Contains(t, up, "SETTINGS allow_nullable_key = 1;")
-	require.Contains(t, down, "DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_companies`;")
+	require.Contains(t, down, "DROP TABLE IF EXISTS `corpscout_sources`.`example_source_companies`;")
 	require.Equal(t, up, strings.TrimSuffix(up, "\n")+"\n")
 }
 
@@ -57,7 +57,7 @@ func TestGenerateMigrationEscapesWeirdIdentifier(t *testing.T) {
 		Tables: map[string]TableConfig{
 			"companies": {
 				Parquet: "companies.parquet",
-				Table:   "fi_prhytj_companies",
+				Table:   "example_source_companies",
 				Engine:  "ReplacingMergeTree",
 				OrderBy: []string{weirdColumn},
 			},
@@ -82,7 +82,7 @@ func TestGenerateMigrationRejectsInjectedColumnDuplicate(t *testing.T) {
 		Tables: map[string]TableConfig{
 			"companies": {
 				Parquet: "companies.parquet",
-				Table:   "fi_prhytj_companies",
+				Table:   "example_source_companies",
 				Engine:  "ReplacingMergeTree",
 				OrderBy: []string{"business_id"},
 				InjectColumns: map[string]string{

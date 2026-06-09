@@ -9,11 +9,11 @@ import (
 func TestParseConfig(t *testing.T) {
 	cfg, err := parseConfig([]byte(`
 database: corpscout_sources
-source_prefix: fi_prhytj
+source_prefix: example_source
 tables:
   companies:
     parquet: companies.parquet
-    table: fi_prhytj_companies
+    table: example_source_companies
     engine: ReplacingMergeTree
     order_by: [business_id, source_run_id]
     inject_columns:
@@ -22,7 +22,7 @@ tables:
 `))
 	require.NoError(t, err)
 	require.Equal(t, "corpscout_sources", cfg.Database)
-	require.Equal(t, "fi_prhytj", cfg.SourcePrefix)
+	require.Equal(t, "example_source", cfg.SourcePrefix)
 	require.Equal(t, "companies.parquet", cfg.Tables["companies"].Parquet)
 	require.Equal(t, []string{"business_id", "source_run_id"}, cfg.Tables["companies"].OrderBy)
 	require.Equal(t, "UUID", cfg.Tables["companies"].InjectColumns["source_export_id"])
