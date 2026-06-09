@@ -1,6 +1,7 @@
 package runindex
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -26,4 +27,22 @@ func TestShouldImportWhenRunIsMissingOrChanged(t *testing.T) {
 	require.False(t, index.ShouldImport("finland", "prhytj", "run-1", "manifest-a", []string{"file-a"}))
 	require.True(t, index.ShouldImport("finland", "prhytj", "run-1", "manifest-a", []string{"file-b"}))
 	require.True(t, index.ShouldImport("finland", "prhytj", "run-2", "manifest-b", []string{"file-a"}))
+}
+
+func TestSaveAndLoadIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-index.lock.yaml")
+	index := Index{}
+	index.MarkImported(Entry{
+		Country:       "finland",
+		Source:        "prhytj",
+		RunID:         "run-1",
+		ManifestHash:  "manifest-a",
+		RawFileHashes: []string{"file-a", "file-b"},
+		Status:        StatusImported,
+	})
+
+	require.NoError(t, Save(path, index))
+	loaded, err := Load(path)
+	require.NoError(t, err)
+	require.False(t, loaded.ShouldImport("finland", "prhytj", "run-1", "manifest-a", []string{"file-b", "file-a"}))
 }
