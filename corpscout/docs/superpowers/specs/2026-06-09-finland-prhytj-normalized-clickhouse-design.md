@@ -19,10 +19,17 @@ remain the replay/audit boundary for original source payloads.
 - Keep original JSON only in the source run folder, not duplicated in ClickHouse.
 - Add a replacement migration that creates only normalized PRH YTJ tables.
 - Keep manual ClickHouse SQL migrations as the schema authority.
-- Keep Go row definitions and column lists source-specific and tested against the
-  migration column names.
-- Build the importer around batches of parsed PRH records so Temporal and CLI
+- Keep Go row definitions, column lists, and ClickHouse type definitions
+  source-specific and tested against the migration schema.
+- Use one `NormalizedEntry` per parsed source record so all rows derived from
+  that source record stay grouped until the insert boundary.
+- Build the importer around batches of `[]NormalizedEntry` so Temporal and CLI
   paths can call the same Go API.
+- Use native Go ClickHouse insertion through `clickhouse-go/v2`; do not keep the
+  old Docker/clickhouse-local importer as an active ingestion path.
+- Delete stale pilot config/tooling that targets the old tables:
+  `corpscout/clickhouse/sources/finland_prhytj.yaml` and
+  `corpscout/clickhouse/tools/chimport`.
 
 Because `000002_create_finland_prhytj_tables` has already been applied to the
 remote ClickHouse server, implementation should add a new migration rather than
@@ -346,27 +353,27 @@ normalize.go      CompanyRecord -> normalized table row groups
 import.go         batch import orchestration
 ```
 
-The main normalization API should work on batches:
+The main normalization API should preserve source-record boundaries:
 
 ```go
-type NormalizedBatch struct {
-    Identifiers                     []IdentifierRow
-    Statuses                        []StatusRow
-    Names                           []NameRow
-    BusinessLines                   []BusinessLineRow
-    BusinessLineDescriptions        []BusinessLineDescriptionRow
-    Websites                        []WebsiteRow
-    CompanyForms                    []CompanyFormRow
-    CompanyFormDescriptions         []CompanyFormDescriptionRow
-    CompanySituations               []CompanySituationRow
-    CompanySituationDescriptions    []CompanySituationDescriptionRow
-    RegisteredEntries               []RegisteredEntryRow
-    RegisteredEntryDescriptions     []RegisteredEntryDescriptionRow
-    Addresses                       []AddressRow
-    AddressPostOffices              []AddressPostOfficeRow
+type NormalizedEntry struct {
+    Identifiers                  []IdentifierRow
+    Status                       *StatusRow
+    Names                        []NameRow
+    BusinessLine                 *BusinessLineRow
+    BusinessLineDescriptions     []BusinessLineDescriptionRow
+    Website                      *WebsiteRow
+    CompanyForms                 []CompanyFormRow
+    CompanyFormDescriptions      []CompanyFormDescriptionRow
+    CompanySituations            []CompanySituationRow
+    CompanySituationDescriptions []CompanySituationDescriptionRow
+    RegisteredEntries            []RegisteredEntryRow
+    RegisteredEntryDescriptions  []RegisteredEntryDescriptionRow
+    Addresses                    []AddressRow
+    AddressPostOffices           []AddressPostOfficeRow
 }
 
-func NormalizeRecords(run RunContext, records []ParsedRecord) NormalizedBatch
+func NormalizeParsedRecord(run RunContext, record ParsedRecord) NormalizedEntry
 ```
 
 `ParsedRecord` should contain the typed PRH record plus line-level lineage:
@@ -379,28 +386,33 @@ type ParsedRecord struct {
 }
 ```
 
-The importer should stream `source.ndjson`, collect up to `BatchSize` parsed
-records, normalize the batch, and insert each non-empty table batch into
-ClickHouse.
+The importer should stream `source.ndjson`, normalize each parsed record into one
+`NormalizedEntry`, collect up to `BatchSize` entries, flatten entries to table
+row arrays only inside the insert function, and insert each non-empty table batch
+into ClickHouse.
 
 ## Insert Contract
 
-The ClickHouse writer can continue using JSONEachRow, but each normalized table
-should expose explicit columns from the source package:
+The ClickHouse writer should use native `clickhouse-go/v2` batches. Each
+normalized table should expose explicit columns and matching ClickHouse type
+metadata from the source package:
 
 ```go
 var IdentifierColumns = []string{...}
+var IdentifierColumnTypes = map[string]string{...}
 func (r IdentifierRow) ClickHouseRow() map[string]any
 ```
 
 Tests should assert:
 
-- column lists match the corresponding migration table columns
+- column lists and ClickHouse type definitions match the corresponding migration
+  table columns
 - every non-empty PRH nested structure produces at least one row
 - all description arrays preserve every language entry
 - no importer references `fi_prhytj_raw_records`
 - no importer references `fi_prhytj_companies`
 - `source_payload_hash` and `source_line_number` are present on every row
+- no `NormalizedBatch` shape is introduced between normalization and import
 
 ## Import Result
 
@@ -447,7 +459,7 @@ Implementation should verify:
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-GOWORK=off go test ./internal/companysources/finland/prhytj ./internal/clickhouseclient ./cmd/corpscout-source -count=1
+GOWORK=off go test ./internal/companysources/finland/prhytj ./internal/clickhouse ./cmd/corpscout-source -count=1
 
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
 make -n clickhouse-migrate-up

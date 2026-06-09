@@ -6,7 +6,7 @@
 
 **Architecture:** Keep PRH raw JSON only in the downloaded run folder. Corpscout parses `source.ndjson`, attaches line/hash lineage, normalizes every known PRH structure into source-specific ClickHouse tables, and imports those tables in batches. Because `000002_create_finland_prhytj_tables` has already been applied remotely, add `000004_replace_finland_prhytj_normalized_tables` to drop old PRH tables and create the new normalized schema.
 
-**Tech Stack:** Go 1.26, `github.com/cockroachdb/errors`, `github.com/ClickHouse/clickhouse-go/v2`, ClickHouse SQL migrations, existing Corpscout Makefile.
+**Tech Stack:** Go 1.26.1, `github.com/cockroachdb/errors`, `github.com/ClickHouse/clickhouse-go/v2`, ClickHouse SQL migrations, existing Corpscout Makefile.
 
 ---
 
@@ -72,6 +72,26 @@ Do not touch unrelated dirty workspace files. Stage only files listed in each ta
   - Batch parser/normalizer/importer orchestration through the native ClickHouse writer. Remove old raw/company row builders.
 - `corpscout/scheduler/internal/companysources/finland/prhytj/import_test.go`
   - Import result/table-name tests updated for normalized tables.
+- `corpscout/scheduler/internal/companysources/unitedstates/coloradoentities/import.go`
+  - Switch existing U.S. Colorado importer from Docker client to native writer.
+- `corpscout/scheduler/internal/companysources/unitedstates/irseobmf/import.go`
+  - Switch existing IRS EO BMF importer from Docker client to native writer.
+- `corpscout/scheduler/internal/companysources/unitedstates/secedgar/import.go`
+  - Switch existing SEC EDGAR importer from Docker client to native writer.
+- `corpscout/scheduler/internal/companysources/source.go`
+  - Remove `ClickHouseImage` from source import request/options structs.
+- `corpscout/scheduler/internal/companysources/importer.go`
+  - Stop passing `ClickHouseImage`.
+- `corpscout/scheduler/cmd/corpscout-source/main.go`
+  - Remove `--clickhouse-image` CLI flags and config fields.
+- `corpscout/clickhouse/sources/finland_prhytj.yaml`
+  - Delete stale pilot config that still points at old PRH raw/company tables.
+- `corpscout/clickhouse/tools/chimport/main.go`
+  - Delete stale Docker/clickhouse-local import CLI.
+- `corpscout/clickhouse/tools/chimport/importer.go`
+  - Delete stale Docker/clickhouse-local import implementation.
+- `corpscout/clickhouse/tools/chimport/importer_test.go`
+  - Delete stale Docker/clickhouse-local import tests.
 
 ## Task 1: Add ClickHouse Migration Contract Test
 
@@ -282,8 +302,9 @@ func TestParseSnapshotReturnsLineageForEachRecord(t *testing.T) {
 	payload, err := os.ReadFile(filepath.Join("testdata", "prh_snapshot_mixed.ndjson"))
 	require.NoError(t, err)
 	sourcePath := filepath.Join(t.TempDir(), "source.ndjson")
-	firstLine := strings.SplitN(string(payload), "\n", 2)[0] + "\n"
-	require.NoError(t, os.WriteFile(sourcePath, []byte(firstLine), 0o644))
+	firstPayloadLine := strings.SplitN(string(payload), "\n", 2)[0]
+	sourceLine := "  " + firstPayloadLine + "  \n"
+	require.NoError(t, os.WriteFile(sourcePath, []byte(sourceLine), 0o644))
 
 	var records []ParsedRecord
 	err = ParseSnapshot(context.Background(), sourcePath, func(record ParsedRecord) error {
@@ -294,9 +315,17 @@ func TestParseSnapshotReturnsLineageForEachRecord(t *testing.T) {
 	require.Len(t, records, 1)
 	require.Equal(t, int64(1), records[0].LineNumber)
 	require.Len(t, records[0].PayloadHash, 64)
+	expectedHash := sha256.Sum256([]byte(strings.TrimSuffix(sourceLine, "\n")))
+	require.Equal(t, hex.EncodeToString(expectedHash[:]), records[0].PayloadHash)
 	require.NotEmpty(t, records[0].Record.BusinessID.Value)
 }
 ```
+
+Add `crypto/sha256` and `encoding/hex` to the test imports if they are not
+already present. The test intentionally wraps the JSON line in spaces so hashing
+`bytes.TrimSpace(scanner.Bytes())` fails; lineage must hash the physical scanner
+line bytes as read from `source.ndjson`, excluding only the newline consumed by
+`bufio.Scanner`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -334,17 +363,17 @@ for scanner.Scan() {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	raw := bytes.TrimSpace(scanner.Bytes())
-	if len(raw) == 0 {
+	rawLine := append([]byte(nil), scanner.Bytes()...)
+	trimmed := bytes.TrimSpace(rawLine)
+	if len(trimmed) == 0 {
 		continue
 	}
-	raw = append([]byte(nil), raw...)
 	var record CompanyRecord
-	if err := json.Unmarshal(raw, &record); err != nil {
+	if err := json.Unmarshal(trimmed, &record); err != nil {
 		return errors.Wrap(err, "decode PRH YTJ record")
 	}
-	sum := sha256.Sum256(raw)
-	record.RawPayload = raw
+	sum := sha256.Sum256(rawLine)
+	record.RawPayload = trimmed
 	record.PayloadHash = hex.EncodeToString(sum[:])
 	if err := handle(ParsedRecord{
 		LineNumber:  lineNumber,
@@ -390,6 +419,9 @@ Create `rows_test.go`:
 package prhytj
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -434,13 +466,82 @@ func TestEveryNormalizedTableHasLineageColumns(t *testing.T) {
 		require.NotContains(t, table.Columns, "raw_payload_json")
 	}
 }
+
+func TestClickHouseRowsMatchDeclaredColumns(t *testing.T) {
+	require.ElementsMatch(t, identifierColumns, mapKeys(IdentifierRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, statusColumns, mapKeys(StatusRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, nameColumns, mapKeys(NameRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, businessLineColumns, mapKeys(BusinessLineRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, businessLineDescriptionColumns, mapKeys(BusinessLineDescriptionRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, websiteColumns, mapKeys(WebsiteRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, companyFormColumns, mapKeys(CompanyFormRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, companyFormDescriptionColumns, mapKeys(CompanyFormDescriptionRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, companySituationColumns, mapKeys(CompanySituationRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, companySituationDescriptionColumns, mapKeys(CompanySituationDescriptionRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, registeredEntryColumns, mapKeys(RegisteredEntryRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, registeredEntryDescriptionColumns, mapKeys(RegisteredEntryDescriptionRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, addressColumns, mapKeys(AddressRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, addressPostOfficeColumns, mapKeys(AddressPostOfficeRow{}.ClickHouseRow()))
+}
+
+func TestMigrationColumnsAndTypesMatchDeclaredSchema(t *testing.T) {
+	migrationPath := filepath.Join("..", "..", "..", "..", "..", "clickhouse", "migrations", "000004_replace_finland_prhytj_normalized_tables.up.sql")
+	body, err := os.ReadFile(migrationPath)
+	require.NoError(t, err)
+	columnsByTable := migrationColumnsAndTypes(string(body))
+
+	for _, table := range NormalizedTables() {
+		actual := columnsByTable[table.Name]
+		require.NotEmpty(t, actual, table.Name)
+		require.ElementsMatch(t, table.Columns, mapKeys(actual), table.Name)
+		require.Equal(t, table.ColumnTypes, actual, table.Name)
+	}
+}
+
+func mapKeys[T any](row map[string]T) []string {
+	keys := make([]string, 0, len(row))
+	for key := range row {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func migrationColumnsAndTypes(sql string) map[string]map[string]string {
+	result := map[string]map[string]string{}
+	var currentTable string
+	for _, line := range strings.Split(sql, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prhytj_") {
+			parts := strings.Split(trimmed, "`")
+			if len(parts) >= 4 {
+				currentTable = parts[3]
+				result[currentTable] = map[string]string{}
+			}
+			continue
+		}
+		if currentTable == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, ")") {
+			currentTable = ""
+			continue
+		}
+		if strings.HasPrefix(trimmed, "`") {
+			parts := strings.Split(trimmed, "`")
+			if len(parts) >= 2 {
+				result[currentTable][parts[1]] = strings.TrimSuffix(strings.TrimSpace(parts[2]), ",")
+			}
+		}
+	}
+	return result
+}
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-GOWORK=off go test ./internal/companysources/finland/prhytj -run 'TestNormalizedTables|TestEveryNormalizedTable' -count=1 -v
+GOWORK=off go test ./internal/companysources/finland/prhytj -run 'TestNormalizedTables|TestEveryNormalizedTable|TestClickHouseRowsMatchDeclaredColumns|TestMigrationColumnsAndTypesMatchDeclaredSchema' -count=1 -v
 ```
 
 Expected: FAIL because `NormalizedTableNames` and `NormalizedTables` do not exist.
@@ -453,8 +554,9 @@ Create `rows.go` with:
 package prhytj
 
 type NormalizedTable struct {
-	Name    string
-	Columns []string
+	Name        string
+	Columns     []string
+	ColumnTypes map[string]string
 }
 
 const (
@@ -489,22 +591,28 @@ var registeredEntryDescriptionColumns = []string{"country_iso2", "source_slug", 
 var addressColumns = []string{"country_iso2", "source_slug", "source_run_id", "source_record_id", "business_id", "source_line_number", "source_payload_hash", "source_item_hash", "source_position", "address_type_code", "street", "post_code", "building_number", "entrance", "apartment_number", "post_office_box", "co", "country", "registered_on", "source", "ingested_at", "source_export_id"}
 var addressPostOfficeColumns = []string{"country_iso2", "source_slug", "source_run_id", "source_record_id", "business_id", "source_line_number", "source_payload_hash", "source_item_hash", "address_item_hash", "source_position", "language_code", "city", "municipality_code", "ingested_at", "source_export_id"}
 
+var identifierColumnTypes = map[string]string{"country_iso2": "String", "source_slug": "String", "source_run_id": "String", "source_record_id": "String", "business_id": "String", "source_line_number": "Int64", "source_payload_hash": "String", "source_item_hash": "String", "source_position": "Int32", "identifier_scope": "String", "identifier_type": "String", "identifier_value": "String", "registered_on": "Nullable(Date)", "ended_on": "Nullable(Date)", "source": "String", "is_primary_business_id": "Bool", "ingested_at": "DateTime64(3, 'UTC')", "source_export_id": "UUID"}
+
+// Add one ColumnTypes map per normalized table. The map values must exactly
+// match the ClickHouse migration type fragments, for example
+// "DateTime64(3, 'UTC')", "Nullable(Date)", "Int32", "UUID", "Bool".
+
 func NormalizedTables() []NormalizedTable {
 	return []NormalizedTable{
-		{Name: identifiersTable, Columns: identifierColumns},
-		{Name: statusesTable, Columns: statusColumns},
-		{Name: namesTable, Columns: nameColumns},
-		{Name: businessLinesTable, Columns: businessLineColumns},
-		{Name: businessLineDescriptionsTable, Columns: businessLineDescriptionColumns},
-		{Name: websitesTable, Columns: websiteColumns},
-		{Name: companyFormsTable, Columns: companyFormColumns},
-		{Name: companyFormDescriptionsTable, Columns: companyFormDescriptionColumns},
-		{Name: companySituationsTable, Columns: companySituationColumns},
-		{Name: companySituationDescriptionsTable, Columns: companySituationDescriptionColumns},
-		{Name: registeredEntriesTable, Columns: registeredEntryColumns},
-		{Name: registeredEntryDescriptionsTable, Columns: registeredEntryDescriptionColumns},
-		{Name: addressesTable, Columns: addressColumns},
-		{Name: addressPostOfficesTable, Columns: addressPostOfficeColumns},
+		{Name: identifiersTable, Columns: identifierColumns, ColumnTypes: identifierColumnTypes},
+		{Name: statusesTable, Columns: statusColumns, ColumnTypes: statusColumnTypes},
+		{Name: namesTable, Columns: nameColumns, ColumnTypes: nameColumnTypes},
+		{Name: businessLinesTable, Columns: businessLineColumns, ColumnTypes: businessLineColumnTypes},
+		{Name: businessLineDescriptionsTable, Columns: businessLineDescriptionColumns, ColumnTypes: businessLineDescriptionColumnTypes},
+		{Name: websitesTable, Columns: websiteColumns, ColumnTypes: websiteColumnTypes},
+		{Name: companyFormsTable, Columns: companyFormColumns, ColumnTypes: companyFormColumnTypes},
+		{Name: companyFormDescriptionsTable, Columns: companyFormDescriptionColumns, ColumnTypes: companyFormDescriptionColumnTypes},
+		{Name: companySituationsTable, Columns: companySituationColumns, ColumnTypes: companySituationColumnTypes},
+		{Name: companySituationDescriptionsTable, Columns: companySituationDescriptionColumns, ColumnTypes: companySituationDescriptionColumnTypes},
+		{Name: registeredEntriesTable, Columns: registeredEntryColumns, ColumnTypes: registeredEntryColumnTypes},
+		{Name: registeredEntryDescriptionsTable, Columns: registeredEntryDescriptionColumns, ColumnTypes: registeredEntryDescriptionColumnTypes},
+		{Name: addressesTable, Columns: addressColumns, ColumnTypes: addressColumnTypes},
+		{Name: addressPostOfficesTable, Columns: addressPostOfficeColumns, ColumnTypes: addressPostOfficeColumnTypes},
 	}
 }
 
@@ -562,6 +670,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -588,7 +697,7 @@ func TestNormalizeParsedRecordCoversAllPRHStructures(t *testing.T) {
 
 	entry := NormalizeParsedRecord(RunContext{
 		RunID:          "run-1",
-		SourceExportID: "00000000-0000-0000-0000-000000000001",
+		SourceExportID: uuid.MustParse("00000000-0000-0000-0000-000000000001"),
 		IngestedAt:     time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC),
 	}, ParsedRecord{
 		LineNumber:  7,
@@ -654,11 +763,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type RunContext struct {
 	RunID          string
-	SourceExportID string
+	SourceExportID uuid.UUID
 	IngestedAt     time.Time
 }
 
@@ -777,8 +888,12 @@ Create `corpscout/scheduler/internal/clickhouse/writer_test.go`:
 package clickhouse
 
 import (
+	"context"
+	"os"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -806,13 +921,46 @@ func TestInsertValuesFollowColumnOrder(t *testing.T) {
 	})
 	require.Equal(t, []any{"0100130-4", "FI01001304"}, values)
 }
+
+func TestWriterInsertRoundTrip(t *testing.T) {
+	rawURL := os.Getenv("CLICKHOUSE_TEST_NATIVE_URL")
+	if rawURL == "" {
+		t.Skip("CLICKHOUSE_TEST_NATIVE_URL not set")
+	}
+
+	ctx := context.Background()
+	writer, err := Open(ctx, rawURL)
+	require.NoError(t, err)
+	defer writer.Close()
+
+	table := "writer_insert_round_trip"
+	require.NoError(t, writer.conn.Exec(ctx, "DROP TABLE IF EXISTS "+quoteIdent(writer.database)+"."+quoteIdent(table)))
+	require.NoError(t, writer.conn.Exec(ctx, "CREATE TABLE "+quoteIdent(writer.database)+"."+quoteIdent(table)+" (`business_id` String, `source_export_id` UUID, `ingested_at` DateTime64(3, 'UTC')) ENGINE = Memory"))
+	defer writer.conn.Exec(ctx, "DROP TABLE IF EXISTS "+quoteIdent(writer.database)+"."+quoteIdent(table))
+
+	exportID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	ingestedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, writer.Insert(ctx, Insert{
+		Table:   table,
+		Columns: []string{"business_id", "source_export_id", "ingested_at"},
+		Rows: []map[string]any{{
+			"business_id":       "0100130-4",
+			"source_export_id":  exportID,
+			"ingested_at":       ingestedAt,
+		}},
+	}))
+
+	var count uint64
+	require.NoError(t, writer.conn.QueryRow(ctx, "SELECT count() FROM "+quoteIdent(writer.database)+"."+quoteIdent(table)).Scan(&count))
+	require.Equal(t, uint64(1), count)
+}
 ```
 
 - [ ] **Step 3: Run tests to verify they fail**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-GOWORK=off go test ./internal/clickhouse -run 'TestParseNativeURL|TestBuildInsertQuery|TestInsertValuesFollowColumnOrder' -count=1 -v
+GOWORK=off go test ./internal/clickhouse -run 'TestParseNativeURL|TestBuildInsertQuery|TestInsertValuesFollowColumnOrder|TestWriterInsertRoundTrip' -count=1 -v
 ```
 
 Expected: FAIL because package `internal/clickhouse` does not exist.
@@ -1062,7 +1210,7 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 		batchSize = 1000
 	}
 
-	sourceExportID := uuid.NewString()
+	sourceExportID := uuid.New()
 	runID := filepath.Base(opts.RunDir)
 	snapshotPath := filepath.Join(opts.RunDir, "source.ndjson")
 	run := RunContext{RunID: runID, SourceExportID: sourceExportID, IngestedAt: time.Now().UTC()}
@@ -1183,7 +1331,170 @@ git add corpscout/scheduler/internal/companysources/finland/prhytj/import.go \
 git commit -m "feat: import finland prhytj normalized tables"
 ```
 
-## Task 8: Remove Docker ClickHouse Client Package
+## Task 8: Migrate Existing U.S. Importers To Native Writer And Remove Docker Option
+
+**Files:**
+- Modify: `corpscout/scheduler/internal/companysources/source.go`
+- Modify: `corpscout/scheduler/internal/companysources/importer.go`
+- Modify: `corpscout/scheduler/cmd/corpscout-source/main.go`
+- Modify: `corpscout/scheduler/internal/companysources/unitedstates/coloradoentities/import.go`
+- Modify: `corpscout/scheduler/internal/companysources/unitedstates/irseobmf/import.go`
+- Modify: `corpscout/scheduler/internal/companysources/unitedstates/secedgar/import.go`
+
+- [ ] **Step 1: Write failing guard for stale Docker option**
+
+Add this test to `corpscout/scheduler/cmd/corpscout-source/main_test.go`:
+
+```go
+func TestImportRunRejectsClickHouseImageFlag(t *testing.T) {
+	var output bytes.Buffer
+	err := run([]string{
+		"import-run",
+		"--country", "finland",
+		"--source", "prhytj",
+		"--run-dir", "/tmp/run",
+		"--clickhouse-native-url", "clickhouse://companycollect:9002?username=default&database=corpscout_sources",
+		"--clickhouse-image", "clickhouse/clickhouse-server:26.5",
+	}, &output)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "flag provided but not defined")
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./cmd/corpscout-source -run TestImportRunRejectsClickHouseImageFlag -count=1 -v
+```
+
+Expected: FAIL because `--clickhouse-image` is still accepted.
+
+- [ ] **Step 3: Remove `ClickHouseImage` from shared request/options**
+
+In `corpscout/scheduler/internal/companysources/source.go`, remove:
+
+```go
+ClickHouseImage string
+```
+
+from:
+
+- `ImportOptions`
+- `ImportRunRequest`
+- `ImportChangedRunsRequest`
+
+In `corpscout/scheduler/internal/companysources/importer.go`, remove all
+assignments of `ClickHouseImage:`.
+
+In `corpscout/scheduler/cmd/corpscout-source/main.go`, remove:
+
+- `ClickHouseImage string` from `importRunConfig`
+- `ClickHouseImage string` from `importRunsConfig`
+- both `fs.StringVar(&cfg.ClickHouseImage, "clickhouse-image", "", "ClickHouse Docker image")` lines
+- `ClickHouseImage: cfg.ClickHouseImage` in `ImportRunRequest`
+- `ClickHouseImage: cfg.ClickHouseImage` in `ImportChangedRunsRequest`
+
+- [ ] **Step 4: Migrate U.S. importers to native writer**
+
+In each file:
+
+- `corpscout/scheduler/internal/companysources/unitedstates/coloradoentities/import.go`
+- `corpscout/scheduler/internal/companysources/unitedstates/irseobmf/import.go`
+- `corpscout/scheduler/internal/companysources/unitedstates/secedgar/import.go`
+
+replace:
+
+```go
+"github.com/pulsarpoint/corpscout/scheduler/internal/clickhouseclient"
+```
+
+with:
+
+```go
+chwriter "github.com/pulsarpoint/corpscout/scheduler/internal/clickhouse"
+```
+
+Open a native writer once near the start of `Import`, after validating
+`ClickHouseNativeURL`:
+
+```go
+writer, err := chwriter.Open(ctx, opts.ClickHouseNativeURL)
+if err != nil {
+	return companysources.ImportResult{}, err
+}
+defer writer.Close()
+```
+
+Change `flushRows` signature from:
+
+```go
+func flushRows(ctx context.Context, opts companysources.ImportOptions, table string, columns []string, rows []map[string]any) error
+```
+
+to:
+
+```go
+func flushRows(ctx context.Context, writer *chwriter.Writer, table string, columns []string, rows []map[string]any) error
+```
+
+and implement:
+
+```go
+func flushRows(ctx context.Context, writer *chwriter.Writer, table string, columns []string, rows []map[string]any) error {
+	return writer.Insert(ctx, chwriter.Insert{
+		Table:   table,
+		Columns: columns,
+		Rows:    rows,
+	})
+}
+```
+
+Update every call from:
+
+```go
+flushRows(ctx, opts, rawRecordsTable, rawRecordColumns, rawRows)
+```
+
+to:
+
+```go
+flushRows(ctx, writer, rawRecordsTable, rawRecordColumns, rawRows)
+```
+
+- [ ] **Step 5: Run focused tests**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./cmd/corpscout-source ./internal/companysources ./internal/companysources/unitedstates/... -count=1
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Verify no `ClickHouseImage` references remain**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+rg "ClickHouseImage|clickhouse-image" corpscout/scheduler
+```
+
+Expected: no matches.
+
+- [ ] **Step 7: Commit native migration of remaining importers**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+git add corpscout/scheduler/internal/companysources/source.go \
+        corpscout/scheduler/internal/companysources/importer.go \
+        corpscout/scheduler/cmd/corpscout-source/main.go \
+        corpscout/scheduler/cmd/corpscout-source/main_test.go \
+        corpscout/scheduler/internal/companysources/unitedstates/coloradoentities/import.go \
+        corpscout/scheduler/internal/companysources/unitedstates/irseobmf/import.go \
+        corpscout/scheduler/internal/companysources/unitedstates/secedgar/import.go
+git commit -m "refactor: use native clickhouse writer for source imports"
+```
+
+## Task 9: Remove Docker ClickHouse Client Package
 
 **Files:**
 - Delete: `corpscout/scheduler/internal/clickhouseclient/json_each_row.go`
@@ -1234,7 +1545,64 @@ git add -u corpscout/scheduler/internal/clickhouseclient
 git commit -m "refactor: remove docker clickhouse client"
 ```
 
-## Task 9: Apply Migration And Verify Limited Remote Import
+## Task 10: Remove Stale ClickHouse Pilot Import Config And Tool
+
+**Files:**
+- Delete: `corpscout/clickhouse/sources/finland_prhytj.yaml`
+- Delete: `corpscout/clickhouse/tools/chimport/main.go`
+- Delete: `corpscout/clickhouse/tools/chimport/importer.go`
+- Delete: `corpscout/clickhouse/tools/chimport/importer_test.go`
+
+- [ ] **Step 1: Verify the stale config/tool still carries old table names**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+rg "fi_prhytj_raw_records|fi_prhytj_companies|ClickHouseImage|clickhouse-image" corpscout/clickhouse/sources corpscout/clickhouse/tools/chimport
+```
+
+Expected before cleanup: matches in `finland_prhytj.yaml` and `tools/chimport`.
+
+- [ ] **Step 2: Delete the stale pilot import path**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+rm corpscout/clickhouse/sources/finland_prhytj.yaml \
+   corpscout/clickhouse/tools/chimport/main.go \
+   corpscout/clickhouse/tools/chimport/importer.go \
+   corpscout/clickhouse/tools/chimport/importer_test.go
+```
+
+Do not delete ClickHouse migrations. The old applied migration remains history;
+the replacement migration is responsible for dropping old active tables.
+
+- [ ] **Step 3: Verify no live stale config/tool references remain**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+rg "fi_prhytj_raw_records|fi_prhytj_companies|ClickHouseImage|clickhouse-image" corpscout/clickhouse corpscout/scheduler/internal/companysources/finland/prhytj -g '!migrations/**' -g '!docs/**'
+```
+
+Expected: no matches.
+
+- [ ] **Step 4: Run remaining ClickHouse tool tests**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/clickhouse
+GOWORK=off go test ./... -count=1
+```
+
+Expected: PASS for remaining packages.
+
+- [ ] **Step 5: Commit stale pilot cleanup**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+git add -u corpscout/clickhouse/sources/finland_prhytj.yaml \
+           corpscout/clickhouse/tools/chimport
+git commit -m "refactor: remove stale clickhouse parquet import pilot"
+```
+
+## Task 11: Apply Migration And Verify Limited Remote Import
 
 **Files:**
 - No planned source edits.
@@ -1244,6 +1612,9 @@ git commit -m "refactor: remove docker clickhouse client"
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
 GOWORK=off go test ./internal/db ./internal/clickhouse ./internal/companysources/finland/prhytj ./cmd/corpscout-source -count=1
+CLICKHOUSE_NATIVE_URL="${CLICKHOUSE_NATIVE_URL:-$(sed -n 's/^CLICKHOUSE_NATIVE_URL=//p' ../.env 2>/dev/null | tail -n 1)}"
+test -n "$CLICKHOUSE_NATIVE_URL"
+CLICKHOUSE_TEST_NATIVE_URL="$CLICKHOUSE_NATIVE_URL" GOWORK=off go test ./internal/clickhouse -run TestWriterInsertRoundTrip -count=1 -v
 ```
 
 Expected: PASS.
@@ -1308,7 +1679,7 @@ git commit -m "fix: complete finland prhytj normalized import"
 
 If no files changed, do not create an empty commit.
 
-## Task 10: Final Verification
+## Task 12: Final Verification
 
 **Files:**
 - No planned source edits.
@@ -1322,11 +1693,11 @@ GOWORK=off go test ./internal/db ./internal/clickhouse ./internal/companysources
 
 Expected: PASS.
 
-- [ ] **Step 2: Verify old names do not appear in PRH importer code**
+- [ ] **Step 2: Verify old names do not appear in live PRH import code or stale pilot tooling**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
-rg "fi_prhytj_raw_records|fi_prhytj_companies|raw_payload_json|rawRecordRow|companyRow|rawRecordColumns|companyColumns|clickhouseclient" corpscout/scheduler/internal/companysources/finland/prhytj
+rg "fi_prhytj_raw_records|fi_prhytj_companies|raw_payload_json|rawRecordRow|companyRow|rawRecordColumns|companyColumns|clickhouseclient|NormalizedBatch|ClickHouseImage|clickhouse-image" corpscout/clickhouse corpscout/scheduler/internal/companysources/finland/prhytj -g '!migrations/**' -g '!docs/**'
 ```
 
 Expected: no matches.
