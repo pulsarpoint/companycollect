@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/pulsarpoint/companycollect/companies/companysource/internal/source"
+	"github.com/pulsarpoint/companycollect/companies/companysource/sources/finland/prhytj"
 )
 
 type Registry struct {
@@ -12,7 +13,9 @@ type Registry struct {
 }
 
 func Default() Registry {
-	return New()
+	return New(
+		prhytj.NewSource(prhytj.ConfigFromEnv()),
+	)
 }
 
 func New(adapters ...source.Adapter) Registry {
