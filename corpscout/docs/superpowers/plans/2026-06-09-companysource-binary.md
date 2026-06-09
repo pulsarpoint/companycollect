@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build one `companysource` CLI and rewrite the existing Finland/US source modules so each `{country, source}` downloads source files, preserves source data into Parquet, generates ClickHouse migrations, and imports directly to ClickHouse.
+**Goal:** Build one `companysource` module that owns the CLI and all active `{country, source}` company source implementations, then rewrite/move the existing Finland/US source code into it.
 
-**Architecture:** The new active ingestion path has only two source data stages: `download` and `export-parquet`. Each run is one flat folder that contains the downloaded source file(s), source-specific Parquet files, and one manifest. There is no country-level final export, reduced projection export, separate snapshot folder, separate processed folder, or hidden process/transformation stage.
+**Architecture:** `companies/companysource` becomes the single home for active company source code: CLI, registry, shared source helpers, and concrete country/source packages. The new active ingestion path has only two source data stages: `download` and `export-parquet`. Each run is one flat folder that contains the downloaded source file(s), source-specific Parquet files, and one manifest. There is no country-level final export, reduced projection export, separate snapshot folder, separate processed folder, or hidden process/transformation stage.
 
 **Tech Stack:** Go 1.26, `log/slog`, `github.com/cockroachdb/errors`, `parquet-go`, existing `companies/common/countryimport`, Dockerized `clickhouse-local`, Dockerized `clickhouse-client`, deterministic ClickHouse migration generation from Parquet.
 
@@ -13,6 +13,8 @@
 ## Hard Requirements
 
 - Rewrite existing source modules to the new contract instead of wrapping the old multi-stage CLIs.
+- Move active Finland and US source implementation code into `companies/companysource/sources/...`; do not leave active source logic split across `companies/finland` and `companies/united_states`.
+- After moved code is verified, remove old country source implementations. Keep only a tiny deprecated CLI shim if an external caller still needs the old binary name temporarily; do not keep source logic there.
 - Source modules expose only:
   - `Download`
   - `ExportParquet`
@@ -49,19 +51,19 @@ The exact Parquet file list is source-specific, but all files for the run live i
 - Create `companies/companysource/cmd/companysource/main.go`: CLI entry point and boundary logging.
 - Create `companies/companysource/internal/cli/config.go`: flag parsing.
 - Create `companies/companysource/internal/cli/run.go`: command dispatch.
-- Create `companies/companysource/internal/source/source.go`: source adapter contract.
+- Create `companies/companysource/internal/source/source.go`: source package contract.
 - Create `companies/companysource/internal/source/result.go`: shared result types.
 - Create `companies/companysource/internal/registry/registry.go`: concrete registry keyed by `{country, source}`.
-- Create `companies/companysource/internal/adapters/finland/prhytj.go`: rewritten Finland PRH YTJ adapter.
-- Create `companies/companysource/internal/adapters/unitedstates/irseobmf.go`: rewritten IRS EO BMF adapter.
-- Create `companies/companysource/internal/adapters/unitedstates/secedgar.go`: rewritten SEC EDGAR adapter.
-- Create `companies/companysource/internal/adapters/unitedstates/coloradoentities.go`: rewritten Colorado entities adapter.
+- Create `companies/companysource/sources/finland/prhytj`: rewritten Finland PRH YTJ source package.
+- Create `companies/companysource/sources/unitedstates/irseobmf`: rewritten IRS EO BMF source package.
+- Create `companies/companysource/sources/unitedstates/secedgar`: rewritten SEC EDGAR source package.
+- Create `companies/companysource/sources/unitedstates/coloradoentities`: rewritten Colorado entities source package.
 - Create `companies/common/companysource/runfolder.go`: shared run folder naming and manifest helpers.
 - Create `companies/common/companysource/runfolder_test.go`: run folder tests.
-- Modify `companies/finland/prhytj`: replace old snapshot/export/final flow with flat run folder download/export.
-- Modify `companies/united_states/irseobmf`: replace old download/process/export flow with flat run folder download/export.
-- Modify `companies/united_states/secedgar`: replace old download/process/export flow with flat run folder download/export.
-- Modify `companies/united_states/coloradoentities`: replace old download/process/export flow with flat run folder download/export.
+- Move useful code from `companies/finland/prhytj` into `companies/companysource/sources/finland/prhytj`, rewritten to the flat run folder contract.
+- Move useful code from `companies/united_states/irseobmf` into `companies/companysource/sources/unitedstates/irseobmf`, rewritten to the flat run folder contract.
+- Move useful code from `companies/united_states/secedgar` into `companies/companysource/sources/unitedstates/secedgar`, rewritten to the flat run folder contract.
+- Move useful code from `companies/united_states/coloradoentities` into `companies/companysource/sources/unitedstates/coloradoentities`, rewritten to the flat run folder contract.
 - Modify `corpscout/clickhouse`: expose deterministic migration generation and native import as reusable packages.
 - Modify `corpscout/Makefile`: use `companysource` for ClickHouse generation/import.
 - Modify docs in `companies/docs` to describe the new source run layout.
@@ -117,7 +119,7 @@ type Adapter interface {
 }
 ```
 
-This interface is justified because `companysource` has multiple real source implementations. Do not add extra interfaces inside source packages unless there are multiple real implementations.
+This interface is justified because `companysource` has multiple real source implementations registered behind one CLI. Do not add extra interfaces inside source packages unless there are multiple real implementations.
 
 ## CLI Shape
 
@@ -390,15 +392,12 @@ go 1.26.1
 
 require (
 	github.com/cockroachdb/errors v1.13.0
+	github.com/parquet-go/parquet-go v0.30.1
 	github.com/pulsarpoint/companycollect/companies/common v0.0.0
-	github.com/pulsarpoint/companycollect/companies/finland v0.0.0
-	github.com/pulsarpoint/companycollect/companies/united_states v0.0.0
 	github.com/pulsarpoint/corpscout/clickhouse v0.0.0
 )
 
 replace github.com/pulsarpoint/companycollect/companies/common => ../common
-replace github.com/pulsarpoint/companycollect/companies/finland => ../finland
-replace github.com/pulsarpoint/companycollect/companies/united_states => ../united_states
 replace github.com/pulsarpoint/corpscout/clickhouse => ../../corpscout/clickhouse
 ```
 
@@ -527,20 +526,21 @@ git add companies/companysource
 git commit -m "feat: add companysource cli skeleton"
 ```
 
-## Task 4: Rewrite Finland PRH YTJ Source to Flat Download and Parquet Export
+## Task 4: Move and Rewrite Finland PRH YTJ Source
 
 **Files:**
-- Modify: `companies/finland/prhytj/download.go`
-- Modify: `companies/finland/prhytj/export.go`
-- Modify: `companies/finland/prhytj/export_rows.go`
-- Modify: `companies/finland/prhytj/parquet_writer.go`
-- Modify: `companies/finland/prhytj/export_test.go`
-- Modify: `companies/finland/prhytj/download_test.go`
-- Remove active dependency from: `companies/finland/export.go`
+- Create: `companies/companysource/sources/finland/prhytj/download.go`
+- Create: `companies/companysource/sources/finland/prhytj/export.go`
+- Create: `companies/companysource/sources/finland/prhytj/export_rows.go`
+- Create: `companies/companysource/sources/finland/prhytj/parquet_writer.go`
+- Create: `companies/companysource/sources/finland/prhytj/source.go`
+- Create: `companies/companysource/sources/finland/prhytj/types.go`
+- Create: `companies/companysource/sources/finland/prhytj/*_test.go`
+- Later remove old implementation code from: `companies/finland`
 
 - [ ] **Step 1: Change download output**
 
-Rewrite PRH YTJ download so it writes the API snapshot directly into:
+Move the useful PRH YTJ code from `companies/finland/prhytj` into `companies/companysource/sources/finland/prhytj`, then rewrite download so it writes the API snapshot directly into:
 
 ```text
 <run-dir>/source.ndjson
@@ -577,12 +577,12 @@ Keep `raw_records.parquet` as the complete source payload table with payload has
 
 - [ ] **Step 4: Remove final export from active path**
 
-Do not call `finland.BuildFinalExport` from any new `companysource` path. Mark the old country final export command as deprecated in the old CLI only if it remains for compatibility.
+Do not call `finland.BuildFinalExport` from any new `companysource` path. The moved PRH YTJ package should not import `companies/finland`.
 
 - [ ] **Step 5: Verify Finland tests**
 
 ```bash
-cd /Users/graovic/pulsarpoint/ppoint/companycollect/companies/finland
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/companies/companysource
 GOWORK=off go test ./...
 ```
 
@@ -591,22 +591,21 @@ Expected: pass.
 - [ ] **Step 6: Commit Finland rewrite**
 
 ```bash
-git add companies/finland
-git commit -m "feat: rewrite finland prhytj flat parquet export"
+git add companies/companysource/sources/finland
+git commit -m "feat: move finland prhytj into companysource"
 ```
 
-## Task 5: Rewrite United States Sources to Flat Download and Parquet Export
+## Task 5: Move and Rewrite United States Sources
 
 **Files:**
-- Modify: `companies/united_states/irseobmf/*`
-- Modify: `companies/united_states/secedgar/*`
-- Modify: `companies/united_states/coloradoentities/*`
-- Modify: `companies/united_states/cmd/united-states-countrydata/main.go`
-- Modify: `companies/united_states/*_test.go`
+- Create: `companies/companysource/sources/unitedstates/irseobmf/*`
+- Create: `companies/companysource/sources/unitedstates/secedgar/*`
+- Create: `companies/companysource/sources/unitedstates/coloradoentities/*`
+- Later remove old implementation code from: `companies/united_states`
 
 - [ ] **Step 1: Rewrite IRS EO BMF**
 
-Write the downloaded IRS source file into:
+Move useful code from `companies/united_states/irseobmf` into `companies/companysource/sources/unitedstates/irseobmf`, then write the downloaded IRS source file into:
 
 ```text
 <run-dir>/source.csv
@@ -616,7 +615,7 @@ Export preserved Parquet files into the same folder. Remove active use of `Proce
 
 - [ ] **Step 2: Rewrite SEC EDGAR**
 
-Write the downloaded SEC EDGAR source file into:
+Move useful code from `companies/united_states/secedgar` into `companies/companysource/sources/unitedstates/secedgar`, then write the downloaded SEC EDGAR source file into:
 
 ```text
 <run-dir>/source.json
@@ -626,7 +625,7 @@ Export preserved Parquet files into the same folder. Remove active use of `Proce
 
 - [ ] **Step 3: Rewrite Colorado entities**
 
-Write the downloaded Colorado source file into:
+Move useful code from `companies/united_states/coloradoentities` into `companies/companysource/sources/unitedstates/coloradoentities`, then write the downloaded Colorado source file into:
 
 ```text
 <run-dir>/source.ndjson
@@ -641,7 +640,7 @@ Each US source export must include a `raw_records.parquet` or equivalent table w
 - [ ] **Step 5: Verify US tests**
 
 ```bash
-cd /Users/graovic/pulsarpoint/ppoint/companycollect/companies/united_states
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/companies/companysource
 GOWORK=off go test ./...
 ```
 
@@ -650,19 +649,19 @@ Expected: pass.
 - [ ] **Step 6: Commit US rewrite**
 
 ```bash
-git add companies/united_states
-git commit -m "feat: rewrite united states flat parquet exports"
+git add companies/companysource/sources/unitedstates
+git commit -m "feat: move united states sources into companysource"
 ```
 
-## Task 6: Add Registry and Source Adapters
+## Task 6: Add Registry and Register Source Packages
 
 **Files:**
 - Create: `companies/companysource/internal/registry/registry.go`
 - Create: `companies/companysource/internal/registry/registry_test.go`
-- Create: `companies/companysource/internal/adapters/finland/prhytj.go`
-- Create: `companies/companysource/internal/adapters/unitedstates/irseobmf.go`
-- Create: `companies/companysource/internal/adapters/unitedstates/secedgar.go`
-- Create: `companies/companysource/internal/adapters/unitedstates/coloradoentities.go`
+- Modify: `companies/companysource/sources/finland/prhytj/source.go`
+- Modify: `companies/companysource/sources/unitedstates/irseobmf/source.go`
+- Modify: `companies/companysource/sources/unitedstates/secedgar/source.go`
+- Modify: `companies/companysource/sources/unitedstates/coloradoentities/source.go`
 - Modify: `companies/companysource/internal/cli/run.go`
 
 - [ ] **Step 1: Add registry tests**
@@ -678,27 +677,27 @@ united_states/coloradoentities
 
 - [ ] **Step 2: Implement registry**
 
-`registry.Default()` returns concrete adapters for the four current sources. `Get(country, source)` returns `unknown company source <country>/<source>` for missing keys.
+`registry.Default()` returns concrete source implementations from `companies/companysource/sources/...` for the four current sources. `Get(country, source)` returns `unknown company source <country>/<source>` for missing keys.
 
-- [ ] **Step 3: Implement adapters**
+- [ ] **Step 3: Make source packages implement the contract**
 
-Each adapter calls the rewritten source package methods:
+Each source package should implement the `source.Adapter` contract directly, or expose a concrete `Source` type with these methods:
 
 ```go
 Download(ctx, RunDir)
 ExportParquet(ctx, RunDir)
 ```
 
-Adapters should not call old `Process`, `BuildFinalExport`, or country final export APIs.
+These sources should not call old `Process`, `BuildFinalExport`, or country final export APIs.
 
 - [ ] **Step 4: Wire CLI dispatch**
 
 `cli.Run` should dispatch:
 
 ```text
-download -> adapter.Download
-export-parquet -> adapter.ExportParquet
-status -> adapter.Status
+download -> selectedSource.Download
+export-parquet -> selectedSource.ExportParquet
+status -> selectedSource.Status
 ```
 
 ClickHouse methods can return explicit unsupported errors until Task 7.
@@ -712,11 +711,11 @@ GOWORK=off go test ./...
 
 Expected: pass.
 
-- [ ] **Step 6: Commit adapters**
+- [ ] **Step 6: Commit registry**
 
 ```bash
 git add companies/companysource
-git commit -m "feat: register companysource adapters"
+git commit -m "feat: register companysource sources"
 ```
 
 ## Task 7: Expose ClickHouse Generation and Import as Reusable Packages
@@ -726,7 +725,7 @@ git commit -m "feat: register companysource adapters"
 - Create: `corpscout/clickhouse/chimport`
 - Modify: `corpscout/clickhouse/tools/parquetddl`
 - Modify: `corpscout/clickhouse/tools/chimport`
-- Modify: `companies/companysource/internal/adapters/*`
+- Modify: `companies/companysource/sources/*`
 
 - [ ] **Step 1: Extract migration generation package**
 
@@ -769,7 +768,7 @@ The package imports Parquet files directly from `RunDir`.
 
 - [ ] **Step 4: Wire Finland ClickHouse methods**
 
-Finland adapter calls:
+Finland source package calls:
 
 ```go
 parquetddl.Generate(ctx, parquetddl.GenerateOptions{Source: "finland_prhytj", RunDir: opts.RunDir, Database: opts.Database, Config: ".../corpscout/clickhouse/sources/finland_prhytj.yaml", Out: opts.Out, DownOut: opts.DownOut})
@@ -840,14 +839,15 @@ git commit -m "chore: use companysource for clickhouse source targets"
 ## Task 9: Remove or Deprecate Old Country CLIs
 
 **Files:**
-- Modify: `companies/finland/cmd/finland-countrydata/main.go`
-- Modify: `companies/united_states/cmd/united-states-countrydata/main.go`
+- Delete or deprecate: `companies/finland/cmd/finland-countrydata/main.go`
+- Delete or deprecate: `companies/united_states/cmd/united-states-countrydata/main.go`
+- Delete source implementation packages under `companies/finland` and `companies/united_states` after moved sources pass tests.
 - Modify: `companies/docs/countrydata-architecture.md`
 - Modify: `companies/docs/countrydata-package-implementation-guide.md`
 
 - [ ] **Step 1: Deprecate old CLIs**
 
-Old country CLIs should print an error directing users to `companysource`. They should not continue implementing old `sync`, `process`, `build-export`, or final export behavior.
+Old country CLIs should print an error directing users to `companysource`, or be deleted if no Corpscout code still references their binary paths. They should not continue implementing old `sync`, `process`, `build-export`, final export behavior, or source-specific parsing/export logic.
 
 - [ ] **Step 2: Update docs**
 
@@ -860,8 +860,8 @@ Each source run is one flat folder containing downloaded source file(s), source-
 - [ ] **Step 3: Commit old CLI deprecation**
 
 ```bash
-git add companies/finland/cmd companies/united_states/cmd companies/docs
-git commit -m "chore: deprecate old countrydata clis"
+git add companies/finland companies/united_states companies/docs
+git commit -m "chore: retire old countrydata modules"
 ```
 
 ## Task 10: Add US ClickHouse Source Configs After Rewrites
@@ -871,7 +871,7 @@ git commit -m "chore: deprecate old countrydata clis"
 - Create: `corpscout/clickhouse/sources/united_states_secedgar.yaml`
 - Create: `corpscout/clickhouse/sources/united_states_coloradoentities.yaml`
 - Create: generated migrations under `corpscout/clickhouse/migrations`
-- Modify: US adapters to enable ClickHouse generation/import.
+- Modify: US source packages in `companies/companysource/sources/unitedstates` to enable ClickHouse generation/import.
 
 - [ ] **Step 1: Export rewritten US run folders**
 
@@ -897,7 +897,7 @@ Generate migrations using `companysource generate-clickhouse-migration` against 
 - [ ] **Step 4: Commit US ClickHouse support**
 
 ```bash
-git add corpscout/clickhouse/sources corpscout/clickhouse/migrations companies/companysource/internal/adapters/unitedstates
+git add corpscout/clickhouse/sources corpscout/clickhouse/migrations companies/companysource/sources/unitedstates
 git commit -m "feat: add clickhouse support for united states sources"
 ```
 
@@ -910,12 +910,6 @@ git commit -m "feat: add clickhouse support for united states sources"
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/companies/common
-GOWORK=off go test ./...
-
-cd /Users/graovic/pulsarpoint/ppoint/companycollect/companies/finland
-GOWORK=off go test ./...
-
-cd /Users/graovic/pulsarpoint/ppoint/companycollect/companies/united_states
 GOWORK=off go test ./...
 
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/companies/companysource
@@ -954,7 +948,7 @@ If the existing BRREG SQL text assertion still fails, record it as unrelated. Do
 
 ## Self-Review Notes
 
-- The plan now requires rewriting existing modules instead of wrapping old flows.
+- The plan now requires moving active source code into `companies/companysource`, not wrapping old modules.
 - The plan has no active `process`, `sync`, `build-export`, reduced export, or country final export path.
 - The plan uses one flat run folder per source run.
 - The plan keeps Parquet as the durable source handoff and ClickHouse as the query/import store.
