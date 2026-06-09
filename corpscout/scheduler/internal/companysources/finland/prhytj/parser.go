@@ -12,7 +12,13 @@ import (
 	"github.com/cockroachdb/errors"
 )
 
-func ParseSnapshot(ctx context.Context, path string, handle func(CompanyRecord) error) error {
+type ParsedRecord struct {
+	LineNumber  int64
+	PayloadHash string
+	Record      CompanyRecord
+}
+
+func ParseSnapshot(ctx context.Context, path string, handle func(ParsedRecord) error) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return errors.Wrap(err, "open PRH YTJ snapshot")
@@ -21,23 +27,29 @@ func ParseSnapshot(ctx context.Context, path string, handle func(CompanyRecord) 
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	var lineNumber int64
 	for scanner.Scan() {
+		lineNumber++
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		raw := bytes.TrimSpace(scanner.Bytes())
-		if len(raw) == 0 {
+		rawLine := append([]byte(nil), scanner.Bytes()...)
+		trimmed := bytes.TrimSpace(rawLine)
+		if len(trimmed) == 0 {
 			continue
 		}
-		raw = append([]byte(nil), raw...)
 		var record CompanyRecord
-		if err := json.Unmarshal(raw, &record); err != nil {
+		if err := json.Unmarshal(trimmed, &record); err != nil {
 			return errors.Wrap(err, "decode PRH YTJ record")
 		}
-		sum := sha256.Sum256(raw)
-		record.RawPayload = raw
+		sum := sha256.Sum256(rawLine)
+		record.RawPayload = trimmed
 		record.PayloadHash = hex.EncodeToString(sum[:])
-		if err := handle(record); err != nil {
+		if err := handle(ParsedRecord{
+			LineNumber:  lineNumber,
+			PayloadHash: record.PayloadHash,
+			Record:      record,
+		}); err != nil {
 			return err
 		}
 	}

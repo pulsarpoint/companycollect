@@ -96,17 +96,16 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 	rawRows := make([]map[string]any, 0, batchSize)
 	companyRows := make([]map[string]any, 0, batchSize)
 	var seen int64
-	var lineNumber int64
 
-	err := ParseSnapshot(ctx, snapshotPath, func(record CompanyRecord) error {
-		lineNumber++
+	err := ParseSnapshot(ctx, snapshotPath, func(parsed ParsedRecord) error {
 		if opts.Limit > 0 && seen >= opts.Limit {
 			return nil
 		}
+		record := parsed.Record
 		seen++
 		ingestedAt := clickHouseTimestamp(time.Now().UTC())
 
-		rawRow := rawRecordRow(filepath.Base(opts.RunDir), snapshotPath, "", lineNumber, record)
+		rawRow := rawRecordRow(filepath.Base(opts.RunDir), snapshotPath, "", parsed.LineNumber, record)
 		rawRow["source_export_id"] = sourceExportID
 		rawRow["ingested_at"] = ingestedAt
 		companyRow := companyRow(filepath.Base(opts.RunDir), record)
