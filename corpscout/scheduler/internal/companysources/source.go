@@ -16,7 +16,6 @@ type Source interface {
 type ImportOptions struct {
 	RunDir              string
 	ClickHouseNativeURL string
-	ClickHouseImage     string
 	BatchSize           int
 	Limit               int64
 	Truncate            bool
@@ -33,7 +32,6 @@ type ImportRunRequest struct {
 	Source              string
 	RunDir              string
 	ClickHouseNativeURL string
-	ClickHouseImage     string
 	BatchSize           int
 	Limit               int64
 	Truncate            bool
@@ -43,7 +41,6 @@ type ImportChangedRunsRequest struct {
 	RunsRoot            string
 	RunIndexPath        string
 	ClickHouseNativeURL string
-	ClickHouseImage     string
 	BatchSize           int
 	Limit               int64
 	ChangedOnly         bool

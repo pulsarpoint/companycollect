@@ -8,7 +8,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
-	"github.com/pulsarpoint/corpscout/scheduler/internal/clickhouseclient"
+	chwriter "github.com/pulsarpoint/corpscout/scheduler/internal/clickhouse"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
 )
 
@@ -84,14 +84,20 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 		batchSize = 1000
 	}
 
-	sourceExportID := uuid.NewString()
+	writer, err := chwriter.Open(ctx, opts.ClickHouseNativeURL)
+	if err != nil {
+		return companysources.ImportResult{}, err
+	}
+	defer writer.Close()
+
+	sourceExportID := uuid.New()
 	snapshotPath := filepath.Join(opts.RunDir, "source.ndjson")
 	rawRows := make([]map[string]any, 0, batchSize)
 	companyRows := make([]map[string]any, 0, batchSize)
 	var seen int64
 	var lineNumber int64
 
-	err := ParseSnapshot(ctx, snapshotPath, func(record ColoradoEntityRecord) error {
+	err = ParseSnapshot(ctx, snapshotPath, func(record ColoradoEntityRecord) error {
 		lineNumber++
 		if opts.Limit > 0 && seen >= opts.Limit {
 			return nil
@@ -112,10 +118,10 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 		if len(companyRows) < batchSize {
 			return nil
 		}
-		if err := flushRows(ctx, opts, rawRecordsTable, rawRecordColumns, rawRows); err != nil {
+		if err := flushRows(ctx, writer, rawRecordsTable, rawRecordColumns, rawRows); err != nil {
 			return err
 		}
-		if err := flushRows(ctx, opts, companiesTable, companyColumns, companyRows); err != nil {
+		if err := flushRows(ctx, writer, companiesTable, companyColumns, companyRows); err != nil {
 			return err
 		}
 		rawRows = rawRows[:0]
@@ -126,10 +132,10 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 		return companysources.ImportResult{}, err
 	}
 	if len(companyRows) > 0 {
-		if err := flushRows(ctx, opts, rawRecordsTable, rawRecordColumns, rawRows); err != nil {
+		if err := flushRows(ctx, writer, rawRecordsTable, rawRecordColumns, rawRows); err != nil {
 			return companysources.ImportResult{}, err
 		}
-		if err := flushRows(ctx, opts, companiesTable, companyColumns, companyRows); err != nil {
+		if err := flushRows(ctx, writer, companiesTable, companyColumns, companyRows); err != nil {
 			return companysources.ImportResult{}, err
 		}
 	}
@@ -141,12 +147,11 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 	}, nil
 }
 
-func flushRows(ctx context.Context, opts companysources.ImportOptions, table string, columns []string, rows []map[string]any) error {
-	return clickhouseclient.ExecuteInsert(ctx, opts.ClickHouseNativeURL, opts.ClickHouseImage, clickhouseclient.Insert{
-		Database: databaseName,
-		Table:    table,
-		Columns:  columns,
-		Rows:     rows,
+func flushRows(ctx context.Context, writer *chwriter.Writer, table string, columns []string, rows []map[string]any) error {
+	return writer.Insert(ctx, chwriter.Insert{
+		Table:   table,
+		Columns: columns,
+		Rows:    rows,
 	})
 }
 

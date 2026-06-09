@@ -30,6 +30,20 @@ func TestImportRunRequiresClickHouseURL(t *testing.T) {
 	require.EqualError(t, err, "clickhouse native url is required")
 }
 
+func TestImportRunRejectsDockerImageFlag(t *testing.T) {
+	var output bytes.Buffer
+	err := run([]string{
+		"import-run",
+		"--country", "finland",
+		"--source", "prhytj",
+		"--run-dir", "/tmp/run",
+		"--clickhouse-native-url", "clickhouse://companycollect:9002?username=default&database=corpscout_sources",
+		"--clickhouse-" + "image", "clickhouse/clickhouse-server:26.5",
+	}, &output)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "flag provided but not defined")
+}
+
 func TestImportRunsRequiresRunsRoot(t *testing.T) {
 	t.Setenv("CLICKHOUSE_NATIVE_URL", "")
 	var output bytes.Buffer

@@ -48,7 +48,6 @@ func run(args []string, output io.Writer) error {
 			Source:              cfg.Source,
 			RunDir:              cfg.RunDir,
 			ClickHouseNativeURL: cfg.ClickHouseNativeURL,
-			ClickHouseImage:     cfg.ClickHouseImage,
 			BatchSize:           cfg.BatchSize,
 			Limit:               cfg.Limit,
 		})
@@ -65,7 +64,6 @@ func run(args []string, output io.Writer) error {
 			RunsRoot:            cfg.RunsRoot,
 			RunIndexPath:        cfg.RunIndexPath,
 			ClickHouseNativeURL: cfg.ClickHouseNativeURL,
-			ClickHouseImage:     cfg.ClickHouseImage,
 			BatchSize:           cfg.BatchSize,
 			Limit:               cfg.Limit,
 			ChangedOnly:         cfg.ChangedOnly,
@@ -93,7 +91,6 @@ type importRunConfig struct {
 	Source              string
 	RunDir              string
 	ClickHouseNativeURL string
-	ClickHouseImage     string
 	BatchSize           int
 	Limit               int64
 }
@@ -102,7 +99,6 @@ type importRunsConfig struct {
 	RunsRoot            string
 	RunIndexPath        string
 	ClickHouseNativeURL string
-	ClickHouseImage     string
 	BatchSize           int
 	ChangedOnly         bool
 	Limit               int64
@@ -116,7 +112,6 @@ func parseImportRun(args []string) (importRunConfig, error) {
 	fs.StringVar(&cfg.Source, "source", "", "source key")
 	fs.StringVar(&cfg.RunDir, "run-dir", "", "raw source run directory")
 	fs.StringVar(&cfg.ClickHouseNativeURL, "clickhouse-native-url", os.Getenv("CLICKHOUSE_NATIVE_URL"), "ClickHouse native URL")
-	fs.StringVar(&cfg.ClickHouseImage, "clickhouse-image", "", "ClickHouse Docker image")
 	fs.IntVar(&cfg.BatchSize, "batch-size", 1000, "rows per ClickHouse insert batch")
 	fs.Int64Var(&cfg.Limit, "limit", 0, "maximum records to import")
 	if err := fs.Parse(args); err != nil {
@@ -144,7 +139,6 @@ func parseImportRuns(args []string) (importRunsConfig, error) {
 	fs.StringVar(&cfg.RunsRoot, "runs-root", "", "root directory containing raw source runs")
 	fs.StringVar(&cfg.RunIndexPath, "run-index", "../clickhouse/run-index.lock.yaml", "run import index path")
 	fs.StringVar(&cfg.ClickHouseNativeURL, "clickhouse-native-url", os.Getenv("CLICKHOUSE_NATIVE_URL"), "ClickHouse native URL")
-	fs.StringVar(&cfg.ClickHouseImage, "clickhouse-image", "", "ClickHouse Docker image")
 	fs.IntVar(&cfg.BatchSize, "batch-size", 1000, "rows per ClickHouse insert batch")
 	fs.BoolVar(&cfg.ChangedOnly, "changed-only", false, "skip runs already imported with the same manifest and file hashes")
 	fs.Int64Var(&cfg.Limit, "limit", 0, "maximum records to import per source")
