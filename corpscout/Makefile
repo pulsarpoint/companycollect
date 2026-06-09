@@ -40,10 +40,10 @@ migrate-test-down:
 	@docker compose run --rm migrate -path=/migrations -database="$(CORPSCOUT_TEST_DATABASE_URL)" down 1
 
 clickhouse-migrate-up:
-	@docker run --rm --add-host host.docker.internal:host-gateway -v "$(CURDIR)/clickhouse/migrations:/clickhouse-migrations:ro" migrate/migrate:v4.17.0 -path=/clickhouse-migrations -database="$(CLICKHOUSE_MIGRATE_URL)" up
+	@docker run --rm -v "$(CURDIR)/clickhouse/migrations:/clickhouse-migrations:ro" migrate/migrate:v4.17.0 -path=/clickhouse-migrations -database="$(CLICKHOUSE_MIGRATE_URL)" up
 
 clickhouse-migrate-down:
-	@docker run --rm --add-host host.docker.internal:host-gateway -v "$(CURDIR)/clickhouse/migrations:/clickhouse-migrations:ro" migrate/migrate:v4.17.0 -path=/clickhouse-migrations -database="$(CLICKHOUSE_MIGRATE_URL)" down 1
+	@docker run --rm -v "$(CURDIR)/clickhouse/migrations:/clickhouse-migrations:ro" migrate/migrate:v4.17.0 -path=/clickhouse-migrations -database="$(CLICKHOUSE_MIGRATE_URL)" down 1
 
 clickhouse-generate-finland-prhytj:
 	cd ../companies/companysource && GOWORK=off go run ./cmd/companysource generate-clickhouse-migration \
