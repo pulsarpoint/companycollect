@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -12,7 +13,8 @@ import (
 	"github.com/cockroachdb/errors"
 )
 
-const defaultClickHouseImage = "clickhouse/clickhouse-server:25.5"
+const defaultClickHouseImage = "clickhouse/clickhouse-server:26.5"
+const defaultCompanycollectHostIP = "100.85.212.113"
 
 type TableConfig struct {
 	Parquet       string            `yaml:"parquet"`
@@ -122,6 +124,15 @@ func clickHouseClientDockerArgs(image string, target ClickHouseTarget, query str
 	args := []string{
 		"run", "--rm", "-i",
 		"--add-host", "host.docker.internal:host-gateway",
+	}
+	if target.Host == "companycollect" {
+		hostIP := strings.TrimSpace(os.Getenv("COMPANYCOLLECT_HOST_IP"))
+		if hostIP == "" {
+			hostIP = defaultCompanycollectHostIP
+		}
+		args = append(args, "--add-host", "companycollect:"+hostIP)
+	}
+	args = append(args,
 		image,
 		"clickhouse-client",
 		"--host", target.Host,
@@ -129,7 +140,7 @@ func clickHouseClientDockerArgs(image string, target ClickHouseTarget, query str
 		"--user", target.Username,
 		"--database", target.Database,
 		"--query", query,
-	}
+	)
 	if target.Password != "" {
 		args = append(args[:len(args)-2], "--password", target.Password, args[len(args)-2], args[len(args)-1])
 	}

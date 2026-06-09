@@ -1,6 +1,6 @@
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:25.5
+    image: clickhouse/clickhouse-server:26.5
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-corpscout_sources}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}

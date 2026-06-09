@@ -83,7 +83,7 @@ func TestParseClickHouseNativeURLWithUserInfoAndPathDatabase(t *testing.T) {
 
 func TestClickHouseClientDockerArgs(t *testing.T) {
 	args := clickHouseClientDockerArgs(
-		"clickhouse/clickhouse-server:25.5",
+		"clickhouse/clickhouse-server:26.5",
 		ClickHouseTarget{
 			Host:     "host.docker.internal",
 			Port:     "9002",
@@ -97,9 +97,39 @@ func TestClickHouseClientDockerArgs(t *testing.T) {
 	require.Equal(t, []string{
 		"run", "--rm", "-i",
 		"--add-host", "host.docker.internal:host-gateway",
-		"clickhouse/clickhouse-server:25.5",
+		"clickhouse/clickhouse-server:26.5",
 		"clickhouse-client",
 		"--host", "host.docker.internal",
+		"--port", "9002",
+		"--user", "default",
+		"--database", "corpscout_sources",
+		"--password", "change-me",
+		"--query", "SELECT 1",
+	}, args)
+}
+
+func TestClickHouseClientDockerArgsMapsCompanycollectRemoteHost(t *testing.T) {
+	t.Setenv("COMPANYCOLLECT_HOST_IP", "203.0.113.10")
+
+	args := clickHouseClientDockerArgs(
+		defaultClickHouseImage,
+		ClickHouseTarget{
+			Host:     "companycollect",
+			Port:     "9002",
+			Username: "default",
+			Password: "change-me",
+			Database: "corpscout_sources",
+		},
+		"SELECT 1",
+	)
+
+	require.Equal(t, []string{
+		"run", "--rm", "-i",
+		"--add-host", "host.docker.internal:host-gateway",
+		"--add-host", "companycollect:203.0.113.10",
+		"clickhouse/clickhouse-server:26.5",
+		"clickhouse-client",
+		"--host", "companycollect",
 		"--port", "9002",
 		"--user", "default",
 		"--database", "corpscout_sources",
