@@ -24,6 +24,12 @@ as practical in source-specific Parquet tables.
 Run from `companies/companysource`:
 
 ```bash
+make test
+make build
+make list-sources
+```
+
+```bash
 GOWORK=off go run ./cmd/companysource list-sources
 
 GOWORK=off go run ./cmd/companysource download \

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
-	countryimport "github.com/pulsarpoint/companycollect/companies/common/countryimport"
+	countryimport "github.com/pulsarpoint/companycollect/companies/companysource/common/countryimport"
 	sourcespec "github.com/pulsarpoint/companycollect/companies/companysource/internal/source"
 )
 

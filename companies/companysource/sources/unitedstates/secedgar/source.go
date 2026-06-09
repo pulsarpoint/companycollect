@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/cockroachdb/errors"
-	countryimport "github.com/pulsarpoint/companycollect/companies/common/countryimport"
+	countryimport "github.com/pulsarpoint/companycollect/companies/companysource/common/countryimport"
 	chimport "github.com/pulsarpoint/companycollect/companies/companysource/internal/clickhouse"
 	sourcespec "github.com/pulsarpoint/companycollect/companies/companysource/internal/source"
 )

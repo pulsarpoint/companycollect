@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"os"
 
-	countryimport "github.com/pulsarpoint/companycollect/companies/common/countryimport"
+	countryimport "github.com/pulsarpoint/companycollect/companies/companysource/common/countryimport"
 	"github.com/pulsarpoint/companycollect/companies/companysource/internal/cli"
 )
 

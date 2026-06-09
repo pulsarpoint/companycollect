@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	countryimport "github.com/pulsarpoint/companycollect/companies/common/countryimport"
+	countryimport "github.com/pulsarpoint/companycollect/companies/companysource/common/countryimport"
 )
 
 // Config holds Colorado Business Entities source configuration. The Socrata app

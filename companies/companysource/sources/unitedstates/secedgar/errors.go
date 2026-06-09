@@ -2,7 +2,7 @@ package secedgar
 
 import (
 	"github.com/cockroachdb/errors"
-	countryimport "github.com/pulsarpoint/companycollect/companies/common/countryimport"
+	countryimport "github.com/pulsarpoint/companycollect/companies/companysource/common/countryimport"
 )
 
 func secContextError(err error, sourcePath string) error {

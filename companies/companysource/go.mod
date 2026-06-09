@@ -5,8 +5,8 @@ go 1.26.1
 require (
 	github.com/cockroachdb/errors v1.13.0
 	github.com/parquet-go/parquet-go v0.30.1
-	github.com/pulsarpoint/companycollect/companies/common v0.0.0
 	github.com/stretchr/testify v1.9.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -30,9 +30,6 @@ require (
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/pulsarpoint/companycollect/companies/common => ../common
 
 replace github.com/pulsarpoint/corpscout/clickhouse => ../../corpscout/clickhouse
