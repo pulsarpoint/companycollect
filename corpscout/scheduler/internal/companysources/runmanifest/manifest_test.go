@@ -37,3 +37,16 @@ func TestWriteReadAndHashManifest(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, hash1, hash2)
 }
+
+func TestLatestCompletedRunChoosesNewestManifest(t *testing.T) {
+	root := t.TempDir()
+	first := filepath.Join(root, "finland", "prhytj", "runs", "20260608T201348Z-prhytj")
+	second := filepath.Join(root, "finland", "prhytj", "runs", "20260609T120000Z-prhytj")
+	require.NoError(t, Write(first, Manifest{Country: "finland", Source: "prhytj", RunID: filepath.Base(first)}))
+	require.NoError(t, Write(second, Manifest{Country: "finland", Source: "prhytj", RunID: filepath.Base(second)}))
+
+	runDir, manifest, err := LatestCompletedRun(root, "finland", "prhytj")
+	require.NoError(t, err)
+	require.Equal(t, second, runDir)
+	require.Equal(t, "20260609T120000Z-prhytj", manifest.RunID)
+}

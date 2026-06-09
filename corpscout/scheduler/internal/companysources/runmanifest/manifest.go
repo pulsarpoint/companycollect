@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -62,4 +63,33 @@ func Hash(runDir string) (string, error) {
 	}
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func LatestCompletedRun(root string, country string, source string) (string, Manifest, error) {
+	runsDir := filepath.Join(root, country, source, "runs")
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		return "", Manifest{}, errors.Wrap(err, "read source runs directory")
+	}
+
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			names = append(names, entry.Name())
+		}
+	}
+	sort.Strings(names)
+
+	for i := len(names) - 1; i >= 0; i-- {
+		runDir := filepath.Join(runsDir, names[i])
+		manifest, err := Read(runDir)
+		if err == nil {
+			return runDir, manifest, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", Manifest{}, err
+		}
+	}
+
+	return "", Manifest{}, errors.Errorf("no completed run for %s/%s under %s", country, source, root)
 }
