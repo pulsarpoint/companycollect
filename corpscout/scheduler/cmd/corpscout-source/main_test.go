@@ -19,3 +19,17 @@ func TestUnknownCommandFails(t *testing.T) {
 	err := run([]string{"unknown"}, &output)
 	require.EqualError(t, err, "unknown command unknown")
 }
+
+func TestImportRunRequiresClickHouseURL(t *testing.T) {
+	t.Setenv("CLICKHOUSE_NATIVE_URL", "")
+	var output bytes.Buffer
+	err := run([]string{"import-run", "--country", "finland", "--source", "prhytj", "--run-dir", "/tmp/run"}, &output)
+	require.EqualError(t, err, "clickhouse native url is required")
+}
+
+func TestImportRunsRequiresRunsRoot(t *testing.T) {
+	t.Setenv("CLICKHOUSE_NATIVE_URL", "")
+	var output bytes.Buffer
+	err := run([]string{"import-runs", "--clickhouse-native-url", "clickhouse://companycollect:9002?username=default&database=corpscout_sources"}, &output)
+	require.EqualError(t, err, "runs root is required")
+}
