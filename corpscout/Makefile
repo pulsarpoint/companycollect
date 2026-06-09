@@ -4,7 +4,7 @@ DATABASE_URL := $(or $(DATABASE_URL),$(shell sed -n 's/^DATABASE_URL=//p' .env 2
 CORPSCOUT_TEST_DATABASE_URL := $(or $(CORPSCOUT_TEST_DATABASE_URL),$(shell sed -n 's/^CORPSCOUT_TEST_DATABASE_URL=//p' .env 2>/dev/null | tail -n 1),$(shell sed -n 's/^DATABASE_URL=//p' .env 2>/dev/null | tail -n 1 | sed 's|/corpscout?|/corpscout_test?|'),postgres://corpscout:change-me@companycollect:5432/corpscout_test?sslmode=disable)
 CLICKHOUSE_MIGRATE_URL := $(or $(CLICKHOUSE_MIGRATE_URL),$(shell sed -n 's/^CLICKHOUSE_MIGRATE_URL=//p' .env 2>/dev/null | tail -n 1),clickhouse://host.docker.internal:9002?username=default&password=change-me&database=corpscout_sources&x-multi-statement=true)
 CLICKHOUSE_NATIVE_URL := $(or $(CLICKHOUSE_NATIVE_URL),$(shell sed -n 's/^CLICKHOUSE_NATIVE_URL=//p' .env 2>/dev/null | tail -n 1),clickhouse://host.docker.internal:9002?username=default&password=change-me&database=corpscout_sources)
-FINLAND_PRHYTJ_EXPORT_DIR ?= ../companies/data/finland/countrydata/sources/prhytj/exports/20260607T205519Z-prhytj
+FINLAND_PRHYTJ_RUN_DIR ?= $(abspath ../companies/data/finland/sources/prhytj/runs/20260608T201348Z-prhytj)
 FINLAND_PRHYTJ_SOURCE_EXPORT_ID ?= 00000000-0000-0000-0000-000000000000
 SCHEDULER_GOOS ?= linux
 SCHEDULER_GOARCH ?= $(shell go env GOARCH)
@@ -46,25 +46,22 @@ clickhouse-migrate-down:
 	@docker run --rm --add-host host.docker.internal:host-gateway -v "$(CURDIR)/clickhouse/migrations:/clickhouse-migrations:ro" migrate/migrate:v4.17.0 -path=/clickhouse-migrations -database="$(CLICKHOUSE_MIGRATE_URL)" down 1
 
 clickhouse-generate-finland-prhytj:
-	@test -f clickhouse/sources/finland_prhytj.yaml || { echo "clickhouse-generate-finland-prhytj requires clickhouse/sources/finland_prhytj.yaml; run the Finland PRH YTJ ClickHouse source config task first." >&2; exit 1; }
-	@test -d clickhouse/tools/parquetddl || { echo "clickhouse-generate-finland-prhytj requires clickhouse/tools/parquetddl; run the Parquet DDL generator task first." >&2; exit 1; }
-	cd clickhouse && GOWORK=off go run ./tools/parquetddl \
-		--source finland_prhytj \
+	cd ../companies/companysource && GOWORK=off go run ./cmd/companysource generate-clickhouse-migration \
+		--country finland \
+		--source prhytj \
 		--database corpscout_sources \
-		--export-dir "$(FINLAND_PRHYTJ_EXPORT_DIR)" \
-		--config sources/finland_prhytj.yaml \
-		--out migrations/000002_create_finland_prhytj_tables.up.sql \
-		--down-out migrations/000002_create_finland_prhytj_tables.down.sql
+		--run-dir "$(FINLAND_PRHYTJ_RUN_DIR)" \
+		--out "../../corpscout/clickhouse/migrations/000002_create_finland_prhytj_tables.up.sql" \
+		--down-out "../../corpscout/clickhouse/migrations/000002_create_finland_prhytj_tables.down.sql"
 
 clickhouse-import-finland-prhytj:
-	@test -f clickhouse/sources/finland_prhytj.yaml || { echo "clickhouse-import-finland-prhytj requires clickhouse/sources/finland_prhytj.yaml; run the Finland PRH YTJ ClickHouse source config task first." >&2; exit 1; }
-	@test -d clickhouse/tools/chimport || { echo "clickhouse-import-finland-prhytj requires clickhouse/tools/chimport; run the ClickHouse import tool task first." >&2; exit 1; }
-	cd clickhouse && GOWORK=off go run ./tools/chimport \
+	cd ../companies/companysource && GOWORK=off go run ./cmd/companysource import-clickhouse \
+		--country finland \
+		--source prhytj \
 		--database corpscout_sources \
 		--clickhouse-native-url "$(CLICKHOUSE_NATIVE_URL)" \
 		--source-export-id "$(FINLAND_PRHYTJ_SOURCE_EXPORT_ID)" \
-		--export-dir "$(FINLAND_PRHYTJ_EXPORT_DIR)" \
-		--config sources/finland_prhytj.yaml
+		--run-dir "$(FINLAND_PRHYTJ_RUN_DIR)"
 
 sqlc-generate:
 	cd scheduler && GOWORK=off sqlc generate -f ../database/sqlc.yaml
