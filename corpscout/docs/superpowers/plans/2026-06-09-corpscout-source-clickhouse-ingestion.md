@@ -28,6 +28,467 @@ This plan does not migrate all existing United States sources. It leaves them as
 
 The CLI must remain a wrapper around `internal/companysources` orchestration. Temporal activities should call `companysources.ImportRun` or `companysources.ImportChangedRuns` directly instead of shelling out to `corpscout-source`.
 
+## Small Execution Task Breakdown
+
+Execute the implementation in these smaller commits. The larger task sections
+below contain the concrete code snippets and test commands; this section is the
+authoritative execution order.
+
+### Task 1: Add ClickHouse Migration Shape Test
+
+**Files:**
+- Create: `corpscout/scheduler/internal/db/clickhouse_migrations_test.go`
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/db -run TestClickHouseInitialMigrationOnlyCreatesSourcesDatabase -count=1 -v
+```
+
+Expected before Task 2: FAIL because `corpscout_projection` still exists.
+
+**Commit:** Do not commit yet; commit with Task 2.
+
+### Task 2: Remove Projection Database From Initial ClickHouse Migration
+
+**Files:**
+- Modify: `corpscout/clickhouse/migrations/000001_create_databases.up.sql`
+- Modify: `corpscout/clickhouse/migrations/000001_create_databases.down.sql`
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/db -run TestClickHouseInitialMigrationOnlyCreatesSourcesDatabase -count=1 -v
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
+make -n clickhouse-migrate-up
+```
+
+Expected: test passes; dry-run still targets remote `companycollect`.
+
+**Commit:** `fix: remove unused clickhouse projection database`
+
+### Task 3: Add Run Manifest Read/Write/Hash
+
+**Files:**
+- Create: `corpscout/scheduler/internal/companysources/runmanifest/manifest.go`
+- Create: `corpscout/scheduler/internal/companysources/runmanifest/manifest_test.go`
+
+**Scope:** Only `Manifest`, `File`, `Write`, `Read`, and `Hash`.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/companysources/runmanifest -run 'TestWriteReadAndHashManifest' -count=1 -v
+```
+
+**Commit:** `feat: add source run manifest IO`
+
+### Task 4: Add Latest Run Discovery
+
+**Files:**
+- Modify: `corpscout/scheduler/internal/companysources/runmanifest/manifest.go`
+- Modify: `corpscout/scheduler/internal/companysources/runmanifest/manifest_test.go`
+
+**Scope:** Add `LatestCompletedRun` only.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/companysources/runmanifest -run 'TestLatestCompletedRunChoosesNewestManifest' -count=1 -v
+```
+
+**Commit:** `feat: discover latest source run manifests`
+
+### Task 5: Add Run Index Model And Import Decision
+
+**Files:**
+- Create: `corpscout/scheduler/internal/companysources/runindex/index.go`
+- Create: `corpscout/scheduler/internal/companysources/runindex/index_test.go`
+
+**Scope:** Add `Index`, `Entry`, `ShouldImport`, and `MarkImported`.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/companysources/runindex -run 'TestShouldImportWhenRunIsMissingOrChanged' -count=1 -v
+```
+
+**Commit:** `feat: decide changed source imports`
+
+### Task 6: Add Run Index Persistence
+
+**Files:**
+- Modify: `corpscout/scheduler/internal/companysources/runindex/index.go`
+- Modify: `corpscout/scheduler/internal/companysources/runindex/index_test.go`
+
+**Scope:** Add `Load` and `Save`.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/companysources/runindex -run 'TestSaveAndLoadIndex' -count=1 -v
+```
+
+**Commit:** `feat: persist source import run index`
+
+### Task 7: Add ClickHouse Native URL Parsing
+
+**Files:**
+- Create: `corpscout/scheduler/internal/clickhouseclient/url.go`
+- Create: `corpscout/scheduler/internal/clickhouseclient/json_each_row_test.go`
+
+**Scope:** Add `Target` and `ParseNativeURL`.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/clickhouseclient -run 'TestParseNativeURL' -count=1 -v
+```
+
+**Commit:** `feat: parse clickhouse native URLs`
+
+### Task 8: Add ClickHouse Insert Query And JSONEachRow Encoding
+
+**Files:**
+- Create: `corpscout/scheduler/internal/clickhouseclient/json_each_row.go`
+- Modify: `corpscout/scheduler/internal/clickhouseclient/json_each_row_test.go`
+
+**Scope:** Add `BuildInsertQuery`, `EncodeJSONEachRow`, `Insert`, and identifier quoting.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/clickhouseclient -run 'TestBuildInsertQuery|TestEncodeJSONEachRow' -count=1 -v
+```
+
+**Commit:** `feat: encode clickhouse JSONEachRow inserts`
+
+### Task 9: Add ClickHouse Docker Client Execution
+
+**Files:**
+- Modify: `corpscout/scheduler/internal/clickhouseclient/json_each_row.go`
+- Modify: `corpscout/scheduler/internal/clickhouseclient/json_each_row_test.go`
+
+**Scope:** Add `ExecuteInsert` and remote `companycollect` host mapping.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/clickhouseclient -count=1 -v
+```
+
+**Commit:** `feat: run clickhouse insert client`
+
+### Task 10: Add Company Source Interface And Registry
+
+**Files:**
+- Create: `corpscout/scheduler/internal/companysources/source.go`
+- Create: `corpscout/scheduler/internal/companysources/registry.go`
+- Create: `corpscout/scheduler/internal/companysources/registry_test.go`
+
+**Scope:** Add `Source`, `Key`, import request/result structs, `Registry`.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/companysources -run 'TestRegistryLookupAndKeys' -count=1 -v
+```
+
+**Commit:** `feat: add company source registry`
+
+### Task 11: Add Single-Run Go Import Orchestration
+
+**Files:**
+- Create: `corpscout/scheduler/internal/companysources/importer.go`
+- Create: `corpscout/scheduler/internal/companysources/importer_test.go`
+
+**Scope:** Add `ImportRun` only.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/companysources -run 'TestImportRunCallsRegisteredSource' -count=1 -v
+```
+
+**Commit:** `feat: add source import orchestration`
+
+### Task 12: Add Changed-Runs Go Import Orchestration
+
+**Files:**
+- Modify: `corpscout/scheduler/internal/companysources/source.go`
+- Modify: `corpscout/scheduler/internal/companysources/importer.go`
+- Modify: `corpscout/scheduler/internal/companysources/importer_test.go`
+
+**Scope:** Add `ImportChangedRuns` and changed-only skipping through `runindex`.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/companysources -run 'TestImportChangedRunsSkipsUnchangedRun' -count=1 -v
+```
+
+**Commit:** `feat: orchestrate changed source imports`
+
+### Task 13: Add `corpscout-source list-sources`
+
+**Files:**
+- Create: `corpscout/scheduler/cmd/corpscout-source/main.go`
+- Create: `corpscout/scheduler/cmd/corpscout-source/main_test.go`
+
+**Scope:** CLI skeleton with `list-sources` only and a temporary Finland registry entry.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./cmd/corpscout-source -run 'TestListSourcesCommand|TestUnknownCommandFails' -count=1 -v
+```
+
+**Commit:** `feat: add corpscout source CLI skeleton`
+
+### Task 14: Copy Finland PRH YTJ Types And Fixtures
+
+**Files:**
+- Create: `corpscout/scheduler/internal/companysources/finland/prhytj/types.go`
+- Create: `corpscout/scheduler/internal/companysources/finland/prhytj/testdata/prh_snapshot_mixed.ndjson`
+
+**Scope:** Copy raw input structs and one small fixture only.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/companysources/finland/prhytj -run '^$' -count=1
+```
+
+**Commit:** `feat: add Finland PRH YTJ source types`
+
+### Task 15: Add Finland PRH YTJ Snapshot Parser
+
+**Files:**
+- Create: `corpscout/scheduler/internal/companysources/finland/prhytj/parser.go`
+- Create: `corpscout/scheduler/internal/companysources/finland/prhytj/parser_test.go`
+
+**Scope:** Stream `source.ndjson`, decode records, preserve raw payload and payload hash.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/companysources/finland/prhytj -run 'TestParseSnapshotPreservesRawPayloadAndHash' -count=1 -v
+```
+
+**Commit:** `feat: parse Finland PRH YTJ snapshots`
+
+### Task 16: Add Finland Raw Record Row Mapping
+
+**Files:**
+- Create: `corpscout/scheduler/internal/companysources/finland/prhytj/import.go`
+- Create: `corpscout/scheduler/internal/companysources/finland/prhytj/import_test.go`
+
+**Scope:** Add `rawRecordColumns` and `rawRecordRow`; do not insert yet.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/companysources/finland/prhytj -run 'TestRawRecord' -count=1 -v
+```
+
+**Commit:** `feat: map Finland PRH raw records`
+
+### Task 17: Add Finland Company Row Mapping
+
+**Files:**
+- Modify: `corpscout/scheduler/internal/companysources/finland/prhytj/import.go`
+- Modify: `corpscout/scheduler/internal/companysources/finland/prhytj/import_test.go`
+
+**Scope:** Add `companyColumns`, `companyRow`, and mapping helpers; do not insert yet.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/companysources/finland/prhytj -run 'TestCompany' -count=1 -v
+```
+
+**Commit:** `feat: map Finland PRH company rows`
+
+### Task 18: Add Finland Direct Import Implementation
+
+**Files:**
+- Modify: `corpscout/scheduler/internal/companysources/finland/prhytj/import.go`
+- Modify: `corpscout/scheduler/internal/companysources/finland/prhytj/import_test.go`
+
+**Scope:** Add `Source` methods, batching, `flushRows`, and direct ClickHouse inserts.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/companysources/finland/prhytj -count=1 -v
+```
+
+**Commit:** `feat: import Finland PRH rows into clickhouse`
+
+### Task 19: Wire Finland Source Into Registry
+
+**Files:**
+- Modify: `corpscout/scheduler/cmd/corpscout-source/main.go`
+- Modify: `corpscout/scheduler/cmd/corpscout-source/main_test.go`
+
+**Scope:** Replace temporary registry entry with `prhytj.Source{}`.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./cmd/corpscout-source ./internal/companysources/finland/prhytj -count=1 -v
+```
+
+**Commit:** `feat: register Finland PRH source in corpscout`
+
+### Task 20: Add `corpscout-source import-run`
+
+**Files:**
+- Modify: `corpscout/scheduler/cmd/corpscout-source/main.go`
+- Modify: `corpscout/scheduler/cmd/corpscout-source/main_test.go`
+
+**Scope:** Parse flags and call `companysources.ImportRun`.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./cmd/corpscout-source -run 'TestImportRunRequiresClickHouseURL' -count=1 -v
+```
+
+**Commit:** `feat: add source import-run CLI`
+
+### Task 21: Add `corpscout-source import-runs`
+
+**Files:**
+- Modify: `corpscout/scheduler/cmd/corpscout-source/main.go`
+- Modify: `corpscout/scheduler/cmd/corpscout-source/main_test.go`
+
+**Scope:** Parse flags and call `companysources.ImportChangedRuns`.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./cmd/corpscout-source -run 'TestImportRunsRequiresRunsRoot' -count=1 -v
+```
+
+**Commit:** `feat: add source import-runs CLI`
+
+### Task 22: Add Make Targets For Corpscout Source Imports
+
+**Files:**
+- Modify: `corpscout/Makefile`
+
+**Scope:** Add `source-list`, `source-import-run`, `source-import-changed`; remove obsolete Finland Parquet ClickHouse Make targets.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
+make -n source-list
+make -n source-import-run
+make source-list
+```
+
+**Commit:** `chore: route source imports through corpscout`
+
+### Task 23: Verify Remote Limited Finland Import
+
+**Files:**
+- No planned source edits.
+
+**Scope:** Run `make source-import-run SOURCE_LIMIT=100 SOURCE_BATCH_SIZE=50` against remote ClickHouse and verify counts.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
+make clickhouse-migrate-up
+make source-import-run SOURCE_LIMIT=100 SOURCE_BATCH_SIZE=50
+```
+
+Then query remote counts as described in the detailed Task 10 section.
+
+**Commit:** Only commit if verification requires code changes.
+
+### Task 24: Remove Companysource ClickHouse CLI Commands
+
+**Files:**
+- Modify: `companies/companysource/internal/cli/config.go`
+- Modify: `companies/companysource/internal/cli/config_test.go`
+- Modify: `companies/companysource/internal/cli/run.go`
+- Modify: `companies/companysource/internal/source/source.go`
+
+**Scope:** Remove `generate-clickhouse-migration` and `import-clickhouse` from the companysource CLI and adapter contract.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/companies/companysource
+GOWORK=off go test ./internal/cli ./internal/registry -count=1 -v
+```
+
+**Commit:** `refactor: remove companysource clickhouse CLI commands`
+
+### Task 25: Remove Finland Companysource ClickHouse Glue
+
+**Files:**
+- Modify: `companies/companysource/sources/finland/prhytj/source.go`
+- Delete: `companies/companysource/sources/finland/prhytj/clickhouse.yaml`
+
+**Scope:** Remove embedded ClickHouse YAML and Finland `GenerateClickHouseMigration` / `ImportClickHouse` methods.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/companies/companysource
+GOWORK=off go test ./sources/finland/prhytj ./... -count=1
+```
+
+**Commit:** `refactor: remove Finland companysource clickhouse glue`
+
+### Task 26: Final Verification
+
+**Files:**
+- No planned source edits.
+
+**Verify:**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./cmd/corpscout-source ./internal/clickhouseclient ./internal/companysources/... ./internal/db -count=1
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/companies/companysource
+GOWORK=off go test ./... -count=1
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
+make -n clickhouse-migrate-up
+make -n source-list
+make -n source-import-run
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+git status --short -uall
+```
+
+Expected: tests pass, Makefile dry-runs are correct, worktree is clean.
+
 ## File Structure
 
 Create or modify these files:
