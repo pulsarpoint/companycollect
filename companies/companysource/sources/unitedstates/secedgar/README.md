@@ -1,12 +1,10 @@
 # SEC EDGAR Source
 
-SEC EDGAR is the first implemented United States countrydata source. It
-downloads `https://www.sec.gov/files/company_tickers.json`, validates and
-processes the snapshot, and writes source-level exports that can later feed a
-final United States multi-source export.
+SEC EDGAR downloads `https://www.sec.gov/files/company_tickers.json`,
+validates the source file, and writes source-level Parquet exports into the
+same run folder.
 
-The United States package is standalone. Run these commands from
-`companies/united_states` with `GOWORK=off`.
+Run these commands from `companies/companysource` with `GOWORK=off`.
 
 ## Full source sync
 
@@ -24,10 +22,9 @@ export USA_SEC_EDGAR_USER_AGENT="<organization name and contact email>"
 Run the source sync:
 
 ```bash
-GOWORK=off go run ./cmd/united-states-countrydata sync-source --source secedgar --data-dir ../data/united_states/countrydata --chunk-size 500
+GOWORK=off go run ./cmd/companysource download --country united_states --source secedgar --run-dir ../data/united_states/sources/secedgar/runs/<run-id>
+GOWORK=off go run ./cmd/companysource export-parquet --country united_states --source secedgar --run-dir ../data/united_states/sources/secedgar/runs/<run-id>
 ```
-
-The `sync --source secedgar` command is an alias for `sync-source`.
 
 ## Export an existing snapshot
 
@@ -35,43 +32,34 @@ Use this when a snapshot already exists and only the source export should be
 rebuilt:
 
 ```bash
-GOWORK=off go run ./cmd/united-states-countrydata export-source --source secedgar --data-dir ../data/united_states/countrydata --snapshot-path <path>
+GOWORK=off go run ./cmd/companysource export-parquet --country united_states --source secedgar --run-dir ../data/united_states/sources/secedgar/runs/<run-id>
 ```
 
-If `--snapshot-path` is omitted, the exporter uses the latest JSON snapshot in
-the SEC EDGAR snapshots directory.
+The exporter reads `source.json` from the run folder.
 
 ## Status
 
 ```bash
-GOWORK=off go run ./cmd/united-states-countrydata status-source --source secedgar --data-dir ../data/united_states/countrydata
-GOWORK=off go run ./cmd/united-states-countrydata status --data-dir ../data/united_states/countrydata
+GOWORK=off go run ./cmd/companysource status --country united_states --source secedgar --run-dir ../data/united_states/sources/secedgar/runs/<run-id>
 ```
 
 ## Data layout
 
-With the default data directory, SEC EDGAR files are written under:
-
-```text
-../data/united_states/countrydata/sources/secedgar
-```
-
 Generated outputs:
 
 ```text
-snapshots/*.json
-exports/<run-id>/companies.parquet
-exports/<run-id>/company_names.parquet
-exports/<run-id>/identifiers.parquet
-exports/<run-id>/source_evidence.parquet
-exports/<run-id>/manifest.json
+source.json
+companies.parquet
+company_names.parquet
+identifiers.parquet
+source_evidence.parquet
+manifest.json
 ```
 
 ## Environment
 
 | Variable | Purpose |
 | --- | --- |
-| `USA_SEC_EDGAR_DATA_DIR` | Direct source-package data directory override. CLI users should prefer `--data-dir`; the CLI resolves that country data directory to `sources/secedgar`. |
 | `USA_SEC_EDGAR_DOWNLOAD_URL` | Download URL override. Defaults to SEC `company_tickers.json`. |
 | `USA_SEC_EDGAR_USER_AGENT` | User-Agent sent to SEC. Defaults to a compliant contact string; SEC rejects generic agents with HTTP 403. Override with your own organization/contact string in production. |
 | `USA_SEC_EDGAR_REQUEST_TIMEOUT` | Request timeout, for example `30s` or `30`. |

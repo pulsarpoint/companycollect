@@ -1,63 +1,54 @@
 # IRS EO BMF Source
 
 IRS Exempt Organizations Business Master File (EO BMF) is a United States
-countrydata source covering tax-exempt nonprofits, national and EIN-keyed. It
+companysource covering tax-exempt nonprofits, national and EIN-keyed. It
 downloads the four regional CSV extracts (`eo1.csv`..`eo4.csv`), converts each
-row to one NDJSON record keyed by EIN, processes the snapshot, and writes
-source-level Parquet exports.
+row to one NDJSON source file keyed by EIN, and writes source-level Parquet
+exports into the same run folder.
 
-The United States package is standalone. Run these commands from
-`companies/united_states` with `GOWORK=off`.
+Run these commands from `companies/companysource` with `GOWORK=off`.
 
 ## Full source sync
 
 ```bash
-GOWORK=off go run ./cmd/united-states-countrydata sync-source --source irseobmf --data-dir ../data/united_states/countrydata --chunk-size 1000
+GOWORK=off go run ./cmd/companysource download --country united_states --source irseobmf --run-dir ../data/united_states/sources/irseobmf/runs/<run-id>
+GOWORK=off go run ./cmd/companysource export-parquet --country united_states --source irseobmf --run-dir ../data/united_states/sources/irseobmf/runs/<run-id>
 ```
-
-`sync --source irseobmf` is an alias for `sync-source`.
 
 For a quick smoke run that only fetches the first CSV file:
 
 ```bash
-GOWORK=off go run ./cmd/united-states-countrydata sync-source --source irseobmf --data-dir ../data/united_states/countrydata --max-pages 1
+GOWORK=off go run ./cmd/companysource download --country united_states --source irseobmf --run-dir ../data/united_states/sources/irseobmf/runs/<run-id> --max-pages 1
 ```
 
 ## Export an existing snapshot
 
 ```bash
-GOWORK=off go run ./cmd/united-states-countrydata export-source --source irseobmf --data-dir ../data/united_states/countrydata --snapshot-path <path>
+GOWORK=off go run ./cmd/companysource export-parquet --country united_states --source irseobmf --run-dir ../data/united_states/sources/irseobmf/runs/<run-id>
 ```
 
-If `--snapshot-path` is omitted, the exporter uses the latest NDJSON snapshot in
-the IRS EO BMF snapshots directory.
+The exporter reads `source.ndjson` from the run folder.
 
 ## Status
 
 ```bash
-GOWORK=off go run ./cmd/united-states-countrydata status-source --source irseobmf --data-dir ../data/united_states/countrydata
+GOWORK=off go run ./cmd/companysource status --country united_states --source irseobmf --run-dir ../data/united_states/sources/irseobmf/runs/<run-id>
 ```
 
 ## Data layout
 
-With the default data directory, IRS EO BMF files are written under:
-
-```text
-../data/united_states/countrydata/sources/irseobmf
-```
-
 Generated outputs:
 
 ```text
-snapshots/*.ndjson
-exports/<run-id>/companies.parquet
-exports/<run-id>/company_names.parquet
-exports/<run-id>/addresses.parquet
-exports/<run-id>/classifications.parquet
-exports/<run-id>/financials.parquet
-exports/<run-id>/identifiers.parquet
-exports/<run-id>/source_evidence.parquet
-exports/<run-id>/manifest.json
+source.ndjson
+companies.parquet
+company_names.parquet
+addresses.parquet
+classifications.parquet
+financials.parquet
+identifiers.parquet
+source_evidence.parquet
+manifest.json
 ```
 
 ## Mapping notes
@@ -82,7 +73,6 @@ See IRS Publication 5926 for the coded-field data dictionary:
 
 | Variable | Purpose |
 | --- | --- |
-| `IRS_EO_BMF_DATA_DIR` | Direct source-package data directory override. CLI users should prefer `--data-dir`. |
 | `IRS_EO_BMF_BASE_URL` | Base URL for the EO BMF CSV files. Defaults to `https://www.irs.gov/pub/irs-soi/`. |
 | `IRS_EO_BMF_FILES` | Comma-separated CSV file list. Defaults to `eo1.csv,eo2.csv,eo3.csv,eo4.csv`. |
 | `IRS_EO_BMF_USER_AGENT` | HTTP User-Agent for IRS requests. |
@@ -94,7 +84,7 @@ works.
 ## Testing
 
 ```bash
-GOWORK=off go test ./irseobmf/... -count=1
+GOWORK=off go test ./sources/unitedstates/irseobmf -count=1
 ```
 
 Default tests use local CSV/NDJSON fixtures and `httptest`; they do not make

@@ -1,62 +1,53 @@
 # Colorado Business Entities Source
 
-Colorado Business Entities is a United States countrydata source and the state
+Colorado Business Entities is a United States companysource and the state
 exemplar for private companies. It pages the Socrata SODA endpoint for the
 Colorado Information Marketplace dataset `4ykn-tg5h`, writing one NDJSON record
-per entity, then processes the snapshot and writes source-level Parquet exports.
+per entity, then writes source-level Parquet exports into the same run folder.
 
-The United States package is standalone. Run these commands from
-`companies/united_states` with `GOWORK=off`.
+Run these commands from `companies/companysource` with `GOWORK=off`.
 
 ## Full source sync
 
 ```bash
-GOWORK=off go run ./cmd/united-states-countrydata sync-source --source coloradoentities --data-dir ../data/united_states/countrydata --chunk-size 1000
+GOWORK=off go run ./cmd/companysource download --country united_states --source coloradoentities --run-dir ../data/united_states/sources/coloradoentities/runs/<run-id>
+GOWORK=off go run ./cmd/companysource export-parquet --country united_states --source coloradoentities --run-dir ../data/united_states/sources/coloradoentities/runs/<run-id>
 ```
-
-`sync --source coloradoentities` is an alias for `sync-source`.
 
 For a quick smoke run that only fetches the first two pages:
 
 ```bash
-GOWORK=off go run ./cmd/united-states-countrydata sync-source --source coloradoentities --data-dir ../data/united_states/countrydata --max-pages 2
+GOWORK=off go run ./cmd/companysource download --country united_states --source coloradoentities --run-dir ../data/united_states/sources/coloradoentities/runs/<run-id> --max-pages 2
 ```
 
 ## Export an existing snapshot
 
 ```bash
-GOWORK=off go run ./cmd/united-states-countrydata export-source --source coloradoentities --data-dir ../data/united_states/countrydata --snapshot-path <path>
+GOWORK=off go run ./cmd/companysource export-parquet --country united_states --source coloradoentities --run-dir ../data/united_states/sources/coloradoentities/runs/<run-id>
 ```
 
-If `--snapshot-path` is omitted, the exporter uses the latest NDJSON snapshot in
-the Colorado snapshots directory.
+The exporter reads `source.ndjson` from the run folder.
 
 ## Status
 
 ```bash
-GOWORK=off go run ./cmd/united-states-countrydata status-source --source coloradoentities --data-dir ../data/united_states/countrydata
+GOWORK=off go run ./cmd/companysource status --country united_states --source coloradoentities --run-dir ../data/united_states/sources/coloradoentities/runs/<run-id>
 ```
 
 ## Data layout
 
-With the default data directory, Colorado files are written under:
-
-```text
-../data/united_states/countrydata/sources/coloradoentities
-```
-
 Generated outputs:
 
 ```text
-snapshots/*.ndjson
-exports/<run-id>/companies.parquet
-exports/<run-id>/company_names.parquet
-exports/<run-id>/legal_forms.parquet
-exports/<run-id>/addresses.parquet
-exports/<run-id>/registered_agents.parquet
-exports/<run-id>/identifiers.parquet
-exports/<run-id>/source_evidence.parquet
-exports/<run-id>/manifest.json
+source.ndjson
+companies.parquet
+company_names.parquet
+legal_forms.parquet
+addresses.parquet
+registered_agents.parquet
+identifiers.parquet
+source_evidence.parquet
+manifest.json
 ```
 
 ## Mapping notes
@@ -80,7 +71,6 @@ exports/<run-id>/manifest.json
 
 | Variable | Purpose |
 | --- | --- |
-| `COLORADO_BUSINESS_ENTITIES_DATA_DIR` | Direct source-package data directory override. CLI users should prefer `--data-dir`. |
 | `COLORADO_BUSINESS_ENTITIES_BASE_URL` | SODA JSON endpoint. Defaults to `https://data.colorado.gov/resource/4ykn-tg5h.json`. |
 | `COLORADO_BUSINESS_ENTITIES_PAGE_SIZE` | SODA `$limit` per request. Defaults to 1000. |
 | `COLORADO_BUSINESS_ENTITIES_PAGE_DELAY_MS` | Delay between pages in milliseconds. |
@@ -94,7 +84,7 @@ written to manifests.
 ## Testing
 
 ```bash
-GOWORK=off go test ./coloradoentities/... -count=1
+GOWORK=off go test ./sources/unitedstates/coloradoentities -count=1
 ```
 
 Default tests use a local NDJSON fixture and a paginated `httptest` server; they
