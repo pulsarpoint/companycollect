@@ -6,7 +6,7 @@
 
 **Architecture:** Keep PRH raw JSON only in the downloaded run folder. Corpscout parses `source.ndjson`, attaches line/hash lineage, normalizes every known PRH structure into source-specific ClickHouse tables, and imports those tables in batches. Because `000002_create_finland_prhytj_tables` has already been applied remotely, add `000004_replace_finland_prhytj_normalized_tables` to drop old PRH tables and create the new normalized schema.
 
-**Tech Stack:** Go 1.26, `github.com/cockroachdb/errors`, ClickHouse SQL migrations, JSONEachRow inserts through the existing `internal/clickhouseclient`, existing Corpscout Makefile.
+**Tech Stack:** Go 1.26, `github.com/cockroachdb/errors`, `github.com/ClickHouse/clickhouse-go/v2`, ClickHouse SQL migrations, existing Corpscout Makefile.
 
 ---
 
@@ -58,8 +58,18 @@ Do not touch unrelated dirty workspace files. Stage only files listed in each ta
   - `CompanyRecord` to normalized row batch mapping.
 - `corpscout/scheduler/internal/companysources/finland/prhytj/normalize_test.go`
   - Tests for every PRH nested structure.
+- `corpscout/scheduler/internal/clickhouse/writer.go`
+  - Native Go ClickHouse writer using `github.com/ClickHouse/clickhouse-go/v2`.
+- `corpscout/scheduler/internal/clickhouse/writer_test.go`
+  - URL/query/insert-shape tests for the native writer without requiring a live server.
+- `corpscout/scheduler/internal/clickhouseclient/json_each_row.go`
+  - Delete after PRH importer stops using it.
+- `corpscout/scheduler/internal/clickhouseclient/json_each_row_test.go`
+  - Delete after native writer tests exist.
+- `corpscout/scheduler/internal/clickhouseclient/url.go`
+  - Delete after native writer owns ClickHouse URL parsing.
 - `corpscout/scheduler/internal/companysources/finland/prhytj/import.go`
-  - Batch parser/normalizer/importer orchestration. Remove old raw/company row builders.
+  - Batch parser/normalizer/importer orchestration through the native ClickHouse writer. Remove old raw/company row builders.
 - `corpscout/scheduler/internal/companysources/finland/prhytj/import_test.go`
   - Import result/table-name tests updated for normalized tables.
 
@@ -555,7 +565,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNormalizeParsedRecordsCoversAllPRHStructures(t *testing.T) {
+func TestNormalizeParsedRecordCoversAllPRHStructures(t *testing.T) {
 	raw := []byte(`{
 		"businessId":{"type":"BusinessId","value":"0100130-4","registrationDate":"1981-05-12","source":"3"},
 		"euId":{"type":"EUID","value":"FIFPRO.0100130-4"},
@@ -576,34 +586,56 @@ func TestNormalizeParsedRecordsCoversAllPRHStructures(t *testing.T) {
 	var record CompanyRecord
 	require.NoError(t, json.Unmarshal(raw, &record))
 
-	batch := NormalizeParsedRecords(RunContext{
+	entry := NormalizeParsedRecord(RunContext{
 		RunID:          "run-1",
 		SourceExportID: "00000000-0000-0000-0000-000000000001",
 		IngestedAt:     time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC),
-	}, []ParsedRecord{{
+	}, ParsedRecord{
 		LineNumber:  7,
 		PayloadHash: "payload-hash",
 		Record:      record,
-	}})
+	})
 
+	require.Len(t, entry.Identifiers, 3)
+	require.NotNil(t, entry.Status)
+	require.Len(t, entry.Names, 1)
+	require.NotNil(t, entry.BusinessLine)
+	require.Len(t, entry.BusinessLineDescriptions, 2)
+	require.NotNil(t, entry.Website)
+	require.Len(t, entry.CompanyForms, 1)
+	require.Len(t, entry.CompanyFormDescriptions, 2)
+	require.Len(t, entry.CompanySituations, 1)
+	require.Len(t, entry.CompanySituationDescriptions, 1)
+	require.Len(t, entry.RegisteredEntries, 1)
+	require.Len(t, entry.RegisteredEntryDescriptions, 1)
+	require.Len(t, entry.Addresses, 1)
+	require.Len(t, entry.AddressPostOffices, 2)
+
+	require.Equal(t, int64(7), entry.Names[0].SourceLineNumber)
+	require.Equal(t, "payload-hash", entry.Names[0].SourcePayloadHash)
+	require.NotEmpty(t, entry.Names[0].SourceItemHash)
+}
+
+func TestFlattenNormalizedEntriesPreservesOneEntryPerSourceRecordBeforeFlattening(t *testing.T) {
+	entries := []NormalizedEntry{
+		{
+			Identifiers: []IdentifierRow{{BusinessID: "0100130-4"}, {BusinessID: "0100130-4"}},
+			Status:      &StatusRow{BusinessID: "0100130-4"},
+			Names:       []NameRow{{BusinessID: "0100130-4"}},
+		},
+		{
+			Identifiers: []IdentifierRow{{BusinessID: "0111111-1"}},
+			Status:      &StatusRow{BusinessID: "0111111-1"},
+			Names:       []NameRow{{BusinessID: "0111111-1"}, {BusinessID: "0111111-1"}},
+		},
+	}
+
+	batch := FlattenNormalizedEntries(entries)
+
+	require.Len(t, entries, 2)
 	require.Len(t, batch.Identifiers, 3)
-	require.Len(t, batch.Statuses, 1)
-	require.Len(t, batch.Names, 1)
-	require.Len(t, batch.BusinessLines, 1)
-	require.Len(t, batch.BusinessLineDescriptions, 2)
-	require.Len(t, batch.Websites, 1)
-	require.Len(t, batch.CompanyForms, 1)
-	require.Len(t, batch.CompanyFormDescriptions, 2)
-	require.Len(t, batch.CompanySituations, 1)
-	require.Len(t, batch.CompanySituationDescriptions, 1)
-	require.Len(t, batch.RegisteredEntries, 1)
-	require.Len(t, batch.RegisteredEntryDescriptions, 1)
-	require.Len(t, batch.Addresses, 1)
-	require.Len(t, batch.AddressPostOffices, 2)
-
-	require.Equal(t, int64(7), batch.Names[0].SourceLineNumber)
-	require.Equal(t, "payload-hash", batch.Names[0].SourcePayloadHash)
-	require.NotEmpty(t, batch.Names[0].SourceItemHash)
+	require.Len(t, batch.Statuses, 2)
+	require.Len(t, batch.Names, 3)
 }
 ```
 
@@ -611,10 +643,10 @@ func TestNormalizeParsedRecordsCoversAllPRHStructures(t *testing.T) {
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-GOWORK=off go test ./internal/companysources/finland/prhytj -run TestNormalizeParsedRecordsCoversAllPRHStructures -count=1 -v
+GOWORK=off go test ./internal/companysources/finland/prhytj -run 'TestNormalizeParsedRecordCoversAllPRHStructures|TestFlattenNormalizedEntriesPreservesOneEntryPerSourceRecordBeforeFlattening' -count=1 -v
 ```
 
-Expected: FAIL because `NormalizeParsedRecords`, `RunContext`, and `NormalizedBatch` do not exist.
+Expected: FAIL because `NormalizeParsedRecord`, `NormalizedEntry`, `FlattenNormalizedEntries`, `RunContext`, and `NormalizedBatch` do not exist.
 
 - [ ] **Step 3: Implement normalizer**
 
@@ -638,6 +670,23 @@ type RunContext struct {
 	IngestedAt     time.Time
 }
 
+type NormalizedEntry struct {
+	Identifiers []IdentifierRow
+	Status *StatusRow
+	Names []NameRow
+	BusinessLine *BusinessLineRow
+	BusinessLineDescriptions []BusinessLineDescriptionRow
+	Website *WebsiteRow
+	CompanyForms []CompanyFormRow
+	CompanyFormDescriptions []CompanyFormDescriptionRow
+	CompanySituations []CompanySituationRow
+	CompanySituationDescriptions []CompanySituationDescriptionRow
+	RegisteredEntries []RegisteredEntryRow
+	RegisteredEntryDescriptions []RegisteredEntryDescriptionRow
+	Addresses []AddressRow
+	AddressPostOffices []AddressPostOfficeRow
+}
+
 type NormalizedBatch struct {
 	Identifiers []IdentifierRow
 	Statuses []StatusRow
@@ -655,14 +704,39 @@ type NormalizedBatch struct {
 	AddressPostOffices []AddressPostOfficeRow
 }
 
-func NormalizeParsedRecords(run RunContext, records []ParsedRecord) NormalizedBatch {
+func NormalizeParsedRecord(run RunContext, parsed ParsedRecord) NormalizedEntry {
+	record := parsed.Record
+	businessID := record.BusinessID.Value
+	// Return one entry for this one source record.
+	// Put all rows derived from this source record under this entry.
+	// Use common lineage on every row:
+	// FI, SourceKey, run.RunID, businessID, parsed.LineNumber, parsed.PayloadHash, clickHouseTimestamp(run.IngestedAt), run.SourceExportID.
+	return NormalizedEntry{}
+}
+
+func FlattenNormalizedEntries(entries []NormalizedEntry) NormalizedBatch {
 	var batch NormalizedBatch
-	for _, parsed := range records {
-		record := parsed.Record
-		businessID := record.BusinessID.Value
-		// Append one row per top-level/nested PRH structure.
-		// Use common lineage on every row:
-		// FI, SourceKey, run.RunID, businessID, parsed.LineNumber, parsed.PayloadHash, clickHouseTimestamp(run.IngestedAt), run.SourceExportID.
+	for _, entry := range entries {
+		batch.Identifiers = append(batch.Identifiers, entry.Identifiers...)
+		if entry.Status != nil {
+			batch.Statuses = append(batch.Statuses, *entry.Status)
+		}
+		batch.Names = append(batch.Names, entry.Names...)
+		if entry.BusinessLine != nil {
+			batch.BusinessLines = append(batch.BusinessLines, *entry.BusinessLine)
+		}
+		batch.BusinessLineDescriptions = append(batch.BusinessLineDescriptions, entry.BusinessLineDescriptions...)
+		if entry.Website != nil {
+			batch.Websites = append(batch.Websites, *entry.Website)
+		}
+		batch.CompanyForms = append(batch.CompanyForms, entry.CompanyForms...)
+		batch.CompanyFormDescriptions = append(batch.CompanyFormDescriptions, entry.CompanyFormDescriptions...)
+		batch.CompanySituations = append(batch.CompanySituations, entry.CompanySituations...)
+		batch.CompanySituationDescriptions = append(batch.CompanySituationDescriptions, entry.CompanySituationDescriptions...)
+		batch.RegisteredEntries = append(batch.RegisteredEntries, entry.RegisteredEntries...)
+		batch.RegisteredEntryDescriptions = append(batch.RegisteredEntryDescriptions, entry.RegisteredEntryDescriptions...)
+		batch.Addresses = append(batch.Addresses, entry.Addresses...)
+		batch.AddressPostOffices = append(batch.AddressPostOffices, entry.AddressPostOffices...)
 	}
 	return batch
 }
@@ -716,7 +790,7 @@ func intString(value int) string {
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-GOWORK=off go test ./internal/companysources/finland/prhytj -run TestNormalizeParsedRecordsCoversAllPRHStructures -count=1 -v
+GOWORK=off go test ./internal/companysources/finland/prhytj -run 'TestNormalizeParsedRecordCoversAllPRHStructures|TestFlattenNormalizedEntriesPreservesOneEntryPerSourceRecordBeforeFlattening' -count=1 -v
 ```
 
 Expected: PASS.
@@ -730,7 +804,243 @@ git add corpscout/scheduler/internal/companysources/finland/prhytj/normalize.go 
 git commit -m "feat: normalize finland prhytj source records"
 ```
 
-## Task 6: Refactor Importer To Write Normalized Tables Only
+## Task 6: Add Native Go ClickHouse Writer
+
+**Files:**
+- Modify: `corpscout/scheduler/go.mod`
+- Modify: `corpscout/scheduler/go.sum`
+- Create: `corpscout/scheduler/internal/clickhouse/writer.go`
+- Create: `corpscout/scheduler/internal/clickhouse/writer_test.go`
+
+- [ ] **Step 1: Add ClickHouse Go driver dependency**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go get github.com/ClickHouse/clickhouse-go/v2@latest
+```
+
+Expected: `go.mod` includes `github.com/ClickHouse/clickhouse-go/v2`.
+
+- [ ] **Step 2: Write failing native writer tests**
+
+Create `corpscout/scheduler/internal/clickhouse/writer_test.go`:
+
+```go
+package clickhouse
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestParseNativeURL(t *testing.T) {
+	target, err := ParseNativeURL("clickhouse://companycollect:9002?username=default&password=change-me&database=corpscout_sources")
+	require.NoError(t, err)
+	require.Equal(t, Target{
+		Host:     "companycollect",
+		Port:     "9002",
+		Username: "default",
+		Password: "change-me",
+		Database: "corpscout_sources",
+	}, target)
+}
+
+func TestBuildInsertQuery(t *testing.T) {
+	query := BuildInsertQuery("corpscout_sources", "fi_prhytj_identifiers", []string{"business_id", "identifier_value"})
+	require.Equal(t, "INSERT INTO `corpscout_sources`.`fi_prhytj_identifiers` (`business_id`, `identifier_value`)", query)
+}
+
+func TestInsertValuesFollowColumnOrder(t *testing.T) {
+	values := insertValues([]string{"business_id", "identifier_value"}, map[string]any{
+		"identifier_value": "FI01001304",
+		"business_id":      "0100130-4",
+	})
+	require.Equal(t, []any{"0100130-4", "FI01001304"}, values)
+}
+```
+
+- [ ] **Step 3: Run tests to verify they fail**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/clickhouse -run 'TestParseNativeURL|TestBuildInsertQuery|TestInsertValuesFollowColumnOrder' -count=1 -v
+```
+
+Expected: FAIL because package `internal/clickhouse` does not exist.
+
+- [ ] **Step 4: Implement native writer**
+
+Create `corpscout/scheduler/internal/clickhouse/writer.go`:
+
+```go
+package clickhouse
+
+import (
+	"context"
+	"net"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/cockroachdb/errors"
+)
+
+type Target struct {
+	Host     string
+	Port     string
+	Username string
+	Password string
+	Database string
+}
+
+type Insert struct {
+	Table   string
+	Columns []string
+	Rows    []map[string]any
+}
+
+type Writer struct {
+	conn     driver.Conn
+	database string
+}
+
+func Open(ctx context.Context, rawURL string) (*Writer, error) {
+	target, err := ParseNativeURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := clickhouse.Open(&clickhouse.Options{
+		Addr: []string{net.JoinHostPort(target.Host, target.Port)},
+		Auth: clickhouse.Auth{
+			Database: target.Database,
+			Username: target.Username,
+			Password: target.Password,
+		},
+		DialTimeout: 10 * time.Second,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "open clickhouse connection")
+	}
+	if err := conn.Ping(ctx); err != nil {
+		return nil, errors.Wrap(err, "ping clickhouse")
+	}
+	return &Writer{conn: conn, database: target.Database}, nil
+}
+
+func (w *Writer) Close() error {
+	if w == nil || w.conn == nil {
+		return nil
+	}
+	return w.conn.Close()
+}
+
+func (w *Writer) Insert(ctx context.Context, insert Insert) error {
+	if len(insert.Rows) == 0 {
+		return nil
+	}
+	query := BuildInsertQuery(w.database, insert.Table, insert.Columns)
+	batch, err := w.conn.PrepareBatch(ctx, query)
+	if err != nil {
+		return errors.Wrap(err, "prepare clickhouse insert batch")
+	}
+	for _, row := range insert.Rows {
+		if err := batch.Append(insertValues(insert.Columns, row)...); err != nil {
+			return errors.Wrap(err, "append clickhouse insert row")
+		}
+	}
+	if err := batch.Send(); err != nil {
+		return errors.Wrap(err, "send clickhouse insert batch")
+	}
+	return nil
+}
+
+func ParseNativeURL(rawURL string) (Target, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return Target{}, errors.Wrap(err, "parse clickhouse native url")
+	}
+	if parsed.Scheme != "clickhouse" {
+		return Target{}, errors.Errorf("clickhouse native url must use clickhouse scheme, got %q", parsed.Scheme)
+	}
+	target := Target{
+		Host:     parsed.Hostname(),
+		Port:     parsed.Port(),
+		Username: parsed.Query().Get("username"),
+		Password: parsed.Query().Get("password"),
+		Database: parsed.Query().Get("database"),
+	}
+	if parsed.User != nil {
+		if target.Username == "" {
+			target.Username = parsed.User.Username()
+		}
+		if password, ok := parsed.User.Password(); ok && target.Password == "" {
+			target.Password = password
+		}
+	}
+	if target.Port == "" {
+		target.Port = "9000"
+	}
+	if target.Username == "" {
+		target.Username = "default"
+	}
+	if target.Database == "" {
+		target.Database = strings.TrimPrefix(parsed.EscapedPath(), "/")
+	}
+	if target.Host == "" {
+		return Target{}, errors.New("clickhouse native url host is required")
+	}
+	if target.Database == "" {
+		return Target{}, errors.New("clickhouse native url database is required")
+	}
+	return target, nil
+}
+
+func BuildInsertQuery(database string, table string, columns []string) string {
+	quotedColumns := make([]string, 0, len(columns))
+	for _, column := range columns {
+		quotedColumns = append(quotedColumns, quoteIdent(column))
+	}
+	return "INSERT INTO " + quoteIdent(database) + "." + quoteIdent(table) + " (" + strings.Join(quotedColumns, ", ") + ")"
+}
+
+func insertValues(columns []string, row map[string]any) []any {
+	values := make([]any, 0, len(columns))
+	for _, column := range columns {
+		values = append(values, row[column])
+	}
+	return values
+}
+
+func quoteIdent(value string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, "`", "\\`").Replace(value)
+	return "`" + escaped + "`"
+}
+```
+
+- [ ] **Step 5: Run native writer tests**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/clickhouse -count=1 -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit native writer**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+git add corpscout/scheduler/go.mod \
+        corpscout/scheduler/go.sum \
+        corpscout/scheduler/internal/clickhouse/writer.go \
+        corpscout/scheduler/internal/clickhouse/writer_test.go
+git commit -m "feat: add native clickhouse writer"
+```
+
+## Task 7: Refactor Importer To Write Normalized Tables Only
 
 **Files:**
 - Modify: `corpscout/scheduler/internal/companysources/finland/prhytj/import.go`
@@ -781,6 +1091,12 @@ In `import.go`:
 - remove `rawRecordRow`
 - remove `companyRow`
 - remove helper code only used by those row builders if unused after `normalize.go`
+- remove the import of `github.com/pulsarpoint/corpscout/scheduler/internal/clickhouseclient`
+- add an import alias for the native writer:
+
+```go
+chwriter "github.com/pulsarpoint/corpscout/scheduler/internal/clickhouse"
+```
 
 Change `Import` to:
 
@@ -802,18 +1118,24 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 	runID := filepath.Base(opts.RunDir)
 	snapshotPath := filepath.Join(opts.RunDir, "source.ndjson")
 	run := RunContext{RunID: runID, SourceExportID: sourceExportID, IngestedAt: time.Now().UTC()}
-	records := make([]ParsedRecord, 0, batchSize)
+	writer, err := chwriter.Open(ctx, opts.ClickHouseNativeURL)
+	if err != nil {
+		return companysources.ImportResult{}, err
+	}
+	defer writer.Close()
+
+	entries := make([]NormalizedEntry, 0, batchSize)
 	var seen int64
 
 	flush := func() error {
-		if len(records) == 0 {
+		if len(entries) == 0 {
 			return nil
 		}
-		batch := NormalizeParsedRecords(run, records)
-		if err := flushNormalizedBatch(ctx, opts, batch); err != nil {
+		batch := FlattenNormalizedEntries(entries)
+		if err := flushNormalizedBatch(ctx, writer, batch); err != nil {
 			return err
 		}
-		records = records[:0]
+		entries = entries[:0]
 		return nil
 	}
 
@@ -821,9 +1143,9 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 		if opts.Limit > 0 && seen >= opts.Limit {
 			return nil
 		}
-		records = append(records, record)
+		entries = append(entries, NormalizeParsedRecord(run, record))
 		seen++
-		if len(records) < batchSize {
+		if len(entries) < batchSize {
 			return nil
 		}
 		return flush()
@@ -843,7 +1165,27 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 }
 ```
 
-Add `flushNormalizedBatch` that calls `flushRows` once for each non-empty row slice. Convert typed rows to `[]map[string]any` using each row's `ClickHouseRow()`.
+Add `flushNormalizedBatch` that calls `writer.Insert` once for each non-empty
+row slice. Convert typed rows to `[]map[string]any` using each row's
+`ClickHouseRow()`.
+
+Use this signature:
+
+```go
+func flushNormalizedBatch(ctx context.Context, writer *chwriter.Writer, batch NormalizedBatch) error
+```
+
+For each table, call:
+
+```go
+return writer.Insert(ctx, chwriter.Insert{
+	Table:   identifiersTable,
+	Columns: identifierColumns,
+	Rows:    identifierRows,
+})
+```
+
+Do not call `clickhouseclient.ExecuteInsert` anywhere in the PRH package.
 
 - [ ] **Step 4: Run PRH package tests**
 
@@ -863,7 +1205,58 @@ git add corpscout/scheduler/internal/companysources/finland/prhytj/import.go \
 git commit -m "feat: import finland prhytj normalized tables"
 ```
 
-## Task 7: Apply Migration And Verify Limited Remote Import
+## Task 8: Remove Docker ClickHouse Client Package
+
+**Files:**
+- Delete: `corpscout/scheduler/internal/clickhouseclient/json_each_row.go`
+- Delete: `corpscout/scheduler/internal/clickhouseclient/json_each_row_test.go`
+- Delete: `corpscout/scheduler/internal/clickhouseclient/url.go`
+
+- [ ] **Step 1: Verify no production imports remain**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+rg "internal/clickhouseclient|clickhouseclient\\." corpscout/scheduler
+```
+
+Expected before deletion: only files under `corpscout/scheduler/internal/clickhouseclient` match.
+
+- [ ] **Step 2: Delete old package files**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+rm corpscout/scheduler/internal/clickhouseclient/json_each_row.go \
+   corpscout/scheduler/internal/clickhouseclient/json_each_row_test.go \
+   corpscout/scheduler/internal/clickhouseclient/url.go
+```
+
+- [ ] **Step 3: Verify no references remain**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+rg "internal/clickhouseclient|clickhouseclient\\." corpscout/scheduler
+```
+
+Expected: no matches.
+
+- [ ] **Step 4: Run focused tests**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/clickhouse ./internal/companysources/finland/prhytj ./cmd/corpscout-source -count=1
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit old client removal**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+git add -u corpscout/scheduler/internal/clickhouseclient
+git commit -m "refactor: remove docker clickhouse client"
+```
+
+## Task 9: Apply Migration And Verify Limited Remote Import
 
 **Files:**
 - No planned source edits.
@@ -872,7 +1265,7 @@ git commit -m "feat: import finland prhytj normalized tables"
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-GOWORK=off go test ./internal/db ./internal/clickhouseclient ./internal/companysources/finland/prhytj ./cmd/corpscout-source -count=1
+GOWORK=off go test ./internal/db ./internal/clickhouse ./internal/companysources/finland/prhytj ./cmd/corpscout-source -count=1
 ```
 
 Expected: PASS.
@@ -937,7 +1330,7 @@ git commit -m "fix: complete finland prhytj normalized import"
 
 If no files changed, do not create an empty commit.
 
-## Task 8: Final Verification
+## Task 10: Final Verification
 
 **Files:**
 - No planned source edits.
@@ -946,7 +1339,7 @@ If no files changed, do not create an empty commit.
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-GOWORK=off go test ./internal/db ./internal/clickhouseclient ./internal/companysources/... ./cmd/corpscout-source -count=1
+GOWORK=off go test ./internal/db ./internal/clickhouse ./internal/companysources/... ./cmd/corpscout-source -count=1
 ```
 
 Expected: PASS.
@@ -955,7 +1348,7 @@ Expected: PASS.
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
-rg "fi_prhytj_raw_records|fi_prhytj_companies|raw_payload_json|rawRecordRow|companyRow|rawRecordColumns|companyColumns" corpscout/scheduler/internal/companysources/finland/prhytj
+rg "fi_prhytj_raw_records|fi_prhytj_companies|raw_payload_json|rawRecordRow|companyRow|rawRecordColumns|companyColumns|clickhouseclient" corpscout/scheduler/internal/companysources/finland/prhytj
 ```
 
 Expected: no matches.
