@@ -55,8 +55,8 @@ independently from country pages.
 
 ```text
 source binary
-  e.g. companies/finland/cmd/finland-countrydata
-        sync-source --source prhytj --build-export --data-dir ...
+  e.g. companies/companysource/cmd/companysource
+        export-parquet --country finland --source prhytj --run-dir ...
       |
       | Temporal activity executes configured binary
       v

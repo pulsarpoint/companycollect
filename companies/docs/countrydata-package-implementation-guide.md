@@ -1,5 +1,10 @@
 # Countrydata Package Implementation Guide
 
+> Superseded for new company source work. Use
+> `companycollect/corpscout/docs/companysource.md` and
+> `companies/companysource` instead. This document is retained only as
+> historical context for the old standalone countrydata proof of concept.
+
 ## Purpose
 
 Use this guide to create or extend a complete standalone Go country package for
