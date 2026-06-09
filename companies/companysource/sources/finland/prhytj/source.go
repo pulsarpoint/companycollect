@@ -2,6 +2,7 @@ package prhytj
 
 import (
 	"context"
+	_ "embed"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,8 +10,12 @@ import (
 
 	"github.com/cockroachdb/errors"
 	countryimport "github.com/pulsarpoint/companycollect/companies/common/countryimport"
+	chimport "github.com/pulsarpoint/companycollect/companies/companysource/internal/clickhouse"
 	sourcespec "github.com/pulsarpoint/companycollect/companies/companysource/internal/source"
 )
+
+//go:embed clickhouse.yaml
+var clickHouseConfigYAML []byte
 
 type Source struct {
 	cfg        Config
@@ -52,11 +57,33 @@ func (s *Source) DisplayName() string {
 }
 
 func (s *Source) GenerateClickHouseMigration(ctx context.Context, opts sourcespec.ClickHouseMigrationOptions) (sourcespec.ClickHouseMigrationResult, error) {
-	return sourcespec.ClickHouseMigrationResult{}, errors.New("ClickHouse migration generation is not wired for finland/prhytj")
+	result, err := chimport.GenerateMigrationFiles(chimport.MigrationOptions{
+		RunDir:     opts.RunDir,
+		Database:   opts.Database,
+		Out:        opts.Out,
+		DownOut:    opts.DownOut,
+		ConfigYAML: clickHouseConfigYAML,
+	})
+	if err != nil {
+		return sourcespec.ClickHouseMigrationResult{}, errors.Wrap(err, "generate finland/prhytj ClickHouse migration")
+	}
+	return sourcespec.ClickHouseMigrationResult{UpPath: result.UpPath, DownPath: result.DownPath}, nil
 }
 
 func (s *Source) ImportClickHouse(ctx context.Context, opts sourcespec.ClickHouseImportOptions) (sourcespec.ClickHouseImportResult, error) {
-	return sourcespec.ClickHouseImportResult{}, errors.New("ClickHouse import is not wired for finland/prhytj")
+	result, err := chimport.ImportRun(chimport.ImportOptions{
+		RunDir:              opts.RunDir,
+		Database:            opts.Database,
+		ClickHouseNativeURL: opts.ClickHouseNativeURL,
+		SourceExportID:      opts.SourceExportID,
+		ClickHouseImage:     opts.ClickHouseImage,
+		DockerMount:         opts.DockerMount,
+		ConfigYAML:          clickHouseConfigYAML,
+	})
+	if err != nil {
+		return sourcespec.ClickHouseImportResult{}, errors.Wrap(err, "import finland/prhytj ClickHouse tables")
+	}
+	return sourcespec.ClickHouseImportResult{ImportedTables: result.ImportedTables, Tables: result.Tables}, nil
 }
 
 func (s *Source) Status(ctx context.Context, runDir string) (sourcespec.StatusResult, error) {
