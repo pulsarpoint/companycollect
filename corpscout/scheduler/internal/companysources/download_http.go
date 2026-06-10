@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 )
@@ -19,7 +20,7 @@ const DownloadUserAgent = "Corpscout Company Source Downloader"
 type DirectFileDownload struct {
 	URL               string
 	RunDir            string
-	SourceFileName    string
+	RelativePath      string
 	UserAgentRequired bool
 }
 
@@ -40,11 +41,16 @@ func DownloadDirectFile(ctx context.Context, client *http.Client, req DirectFile
 	if req.RunDir == "" {
 		return FileWriteResult{}, errors.New("run dir is required")
 	}
-	if req.SourceFileName == "" {
-		return FileWriteResult{}, errors.New("source file name is required")
+	if req.RelativePath == "" {
+		return FileWriteResult{}, errors.New("relative path is required")
 	}
-	if err := os.MkdirAll(req.RunDir, 0o755); err != nil {
-		return FileWriteResult{}, errors.Wrap(err, "create source run directory")
+	cleanRelativePath := filepath.Clean(req.RelativePath)
+	if filepath.IsAbs(req.RelativePath) || cleanRelativePath == ".." || strings.HasPrefix(cleanRelativePath, ".."+string(filepath.Separator)) {
+		return FileWriteResult{}, errors.Errorf("relative path %q is outside run dir", req.RelativePath)
+	}
+	path := filepath.Join(req.RunDir, req.RelativePath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return FileWriteResult{}, errors.Wrap(err, "create source file directory")
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, req.URL, nil)
@@ -64,7 +70,6 @@ func DownloadDirectFile(ctx context.Context, client *http.Client, req DirectFile
 		return FileWriteResult{}, errors.Errorf("download source file: status %d", resp.StatusCode)
 	}
 
-	path := filepath.Join(req.RunDir, req.SourceFileName)
 	file, err := os.Create(path)
 	if err != nil {
 		return FileWriteResult{}, errors.Wrap(err, "create source file")
@@ -83,6 +88,38 @@ func DownloadDirectFile(ctx context.Context, client *http.Client, req DirectFile
 		ContentLengthBytes: written,
 		RecordsWritten:     0,
 	}, nil
+}
+
+func DownloadJSONArray(ctx context.Context, client *http.Client, url string, userAgentRequired bool) ([]json.RawMessage, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	if url == "" {
+		return nil, errors.New("source url is required")
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, errors.Wrap(err, "create source download request")
+	}
+	if userAgentRequired {
+		httpReq.Header.Set("User-Agent", DownloadUserAgent)
+	}
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, errors.Wrap(err, "download source json array")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, errors.Errorf("download source json array: status %d", resp.StatusCode)
+	}
+
+	var records []json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&records); err != nil {
+		return nil, errors.Wrap(err, "decode source json array")
+	}
+	return records, nil
 }
 
 func WriteRawMessagesAsNDJSON(path string, records []json.RawMessage) (FileWriteResult, error) {

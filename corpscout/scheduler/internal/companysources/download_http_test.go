@@ -24,12 +24,12 @@ func TestDownloadDirectFileWritesSourceFileAndHash(t *testing.T) {
 	result, err := DownloadDirectFile(context.Background(), http.DefaultClient, DirectFileDownload{
 		URL:               server.URL,
 		RunDir:            runDir,
-		SourceFileName:    "source.json",
+		RelativePath:      "raw/source.json",
 		UserAgentRequired: true,
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(runDir, "source.json"), result.SourceFilePath)
+	require.Equal(t, filepath.Join(runDir, "raw/source.json"), result.SourceFilePath)
 	require.Equal(t, int64(len(`{"ok":true}`)), result.ContentLengthBytes)
 	require.Len(t, result.ContentSHA256, 64)
 	body, err := os.ReadFile(result.SourceFilePath)

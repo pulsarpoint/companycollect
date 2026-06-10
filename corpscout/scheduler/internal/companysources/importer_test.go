@@ -19,6 +19,9 @@ func (s importingSource) Key() Key { return s.key }
 func (s importingSource) DisplayName() string {
 	return "Importing Source"
 }
+func (s importingSource) DownloadFile(context.Context, DownloadFileOptions) (DownloadedFile, error) {
+	return DownloadedFile{}, nil
+}
 func (s importingSource) Import(ctx context.Context, opts ImportOptions) (ImportResult, error) {
 	return ImportResult{RunDir: opts.RunDir, ImportedTables: []string{"table"}, ImportedRows: 12}, nil
 }

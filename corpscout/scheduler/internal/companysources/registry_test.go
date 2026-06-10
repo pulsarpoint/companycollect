@@ -15,6 +15,9 @@ func (s registrySource) Key() Key { return s.key }
 func (s registrySource) DisplayName() string {
 	return "Registry Source"
 }
+func (s registrySource) DownloadFile(context.Context, DownloadFileOptions) (DownloadedFile, error) {
+	return DownloadedFile{}, nil
+}
 func (s registrySource) Import(context.Context, ImportOptions) (ImportResult, error) {
 	return ImportResult{}, nil
 }
