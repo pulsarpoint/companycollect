@@ -78,7 +78,46 @@ func TestDownloadStatementXMLWritesHashAndSize(t *testing.T) {
 	require.Equal(t, server.URL+"/opendata-xbrl-api/v3/financial?businessId=0100130-4&financialDate=2024-12-31", result.SourceURL)
 }
 
+func TestDownloadStatementXMLRetriesRateLimitedResponse(t *testing.T) {
+	withFastStatementXMLRetries(t)
+
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/opendata-xbrl-api/v3/financial", r.URL.Path)
+		require.Equal(t, "0718938-7", r.URL.Query().Get("businessId"))
+		require.Equal(t, "2026-01-31", r.URL.Query().Get("financialDate"))
+		require.Equal(t, companysources.DownloadUserAgent, r.Header.Get("User-Agent"))
+		if requestCount.Add(1) == 1 {
+			w.Header().Set("Retry-After", "0")
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "text/xml")
+		_, _ = w.Write([]byte(`<xbrl><fact>retry-ok</fact></xbrl>`))
+	}))
+	defer server.Close()
+
+	var lastRequestAt time.Time
+	result, err := downloadStatementXMLWithRetry(
+		context.Background(),
+		server.Client(),
+		server.URL+"/opendata-xbrl-api/v3",
+		"0718938-7",
+		"2026-01-31",
+		t.TempDir(),
+		true,
+		&lastRequestAt,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, int32(2), requestCount.Load())
+	require.FileExists(t, result.Path)
+	require.Equal(t, int64(len(`<xbrl><fact>retry-ok</fact></xbrl>`)), result.SizeBytes)
+}
+
 func TestDownloadWritesManifestAndReturnsErrorWhenStatementXMLFails(t *testing.T) {
+	withFastStatementXMLRetries(t)
+
 	mock, err := pgxmock.NewPool()
 	require.NoError(t, err)
 	defer mock.Close()
@@ -533,4 +572,23 @@ func stringPtr(value string) *string {
 
 func int64Ptr(value int64) *int64 {
 	return &value
+}
+
+func withFastStatementXMLRetries(t *testing.T) {
+	t.Helper()
+
+	originalRequestInterval := statementXMLRequestInterval
+	originalRateLimitBackoff := statementXMLRateLimitBackoff
+	originalInitialRetryDelay := statementXMLInitialRetryDelay
+	originalMaxRetryDelay := statementXMLMaxRetryDelay
+	statementXMLRequestInterval = 0
+	statementXMLRateLimitBackoff = 0
+	statementXMLInitialRetryDelay = 0
+	statementXMLMaxRetryDelay = 0
+	t.Cleanup(func() {
+		statementXMLRequestInterval = originalRequestInterval
+		statementXMLRateLimitBackoff = originalRateLimitBackoff
+		statementXMLInitialRetryDelay = originalInitialRetryDelay
+		statementXMLMaxRetryDelay = originalMaxRetryDelay
+	})
 }

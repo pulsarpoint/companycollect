@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,7 +22,17 @@ import (
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
 )
 
-const defaultMaxStatements = 50
+const (
+	defaultMaxStatements    = 50
+	statementXMLMaxAttempts = 5
+)
+
+var (
+	statementXMLRequestInterval   = 1500 * time.Millisecond
+	statementXMLRateLimitBackoff  = 30 * time.Second
+	statementXMLInitialRetryDelay = 2 * time.Second
+	statementXMLMaxRetryDelay     = 30 * time.Second
+)
 
 type DownloadOptions struct {
 	Queries              *db.Queries
@@ -263,6 +274,7 @@ func downloadClaimedStatementArtifacts(ctx context.Context, opts DownloadOptions
 	}
 
 	result := statementDownloadResult{}
+	var lastStatementXMLRequestAt time.Time
 	for _, artifact := range artifacts {
 		claimed, err := opts.Queries.MarkFinlandPRHXBRLStatementArtifactDownloading(ctx, db.MarkFinlandPRHXBRLStatementArtifactDownloadingParams{
 			LatestActionRunID:   pgUUID(opts.ActionRunID),
@@ -280,7 +292,7 @@ func downloadClaimedStatementArtifacts(ctx context.Context, opts DownloadOptions
 		}
 
 		financialDate := pgDateString(claimed.FinancialDate)
-		xml, err := downloadStatementXML(ctx, opts.HTTPClient, sourceURL, claimed.BusinessID, financialDate, opts.RunDir, opts.UserAgentRequired)
+		xml, err := downloadStatementXMLWithRetry(ctx, opts.HTTPClient, sourceURL, claimed.BusinessID, financialDate, opts.RunDir, opts.UserAgentRequired, &lastStatementXMLRequestAt)
 		if err != nil {
 			downloadErr := errors.Wrapf(err, "download PRH XBRL statement XML artifact_id=%s business_id=%s financial_date=%s", claimed.ID, claimed.BusinessID, financialDate)
 			_, markErr := markClaimedStatementArtifactFailed(ctx, opts, claimed, downloadErr)
@@ -431,7 +443,7 @@ func downloadStatementXML(ctx context.Context, client *http.Client, baseURL stri
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return StatementXMLDownload{}, errors.Errorf("download PRH XBRL statement XML: status %d", resp.StatusCode)
+		return StatementXMLDownload{}, newHTTPStatusError("download PRH XBRL statement XML", resp.StatusCode, resp.Header.Get("Retry-After"), time.Now())
 	}
 
 	file, err := os.Create(outputPath)
@@ -451,6 +463,135 @@ func downloadStatementXML(ctx context.Context, client *http.Client, baseURL stri
 		SizeBytes: size,
 		SourceURL: statementURL,
 	}, nil
+}
+
+type httpStatusError struct {
+	operation       string
+	statusCode      int
+	retryAfter      time.Duration
+	retryAfterFound bool
+}
+
+func (err *httpStatusError) Error() string {
+	return err.operation + ": status " + strconv.Itoa(err.statusCode)
+}
+
+func newHTTPStatusError(operation string, statusCode int, retryAfter string, now time.Time) error {
+	delay, found := parseRetryAfter(retryAfter, now)
+	return &httpStatusError{
+		operation:       operation,
+		statusCode:      statusCode,
+		retryAfter:      delay,
+		retryAfterFound: found,
+	}
+}
+
+func downloadStatementXMLWithRetry(ctx context.Context, client *http.Client, baseURL string, businessID string, financialDate string, runDir string, userAgentRequired bool, lastRequestAt *time.Time) (StatementXMLDownload, error) {
+	var lastErr error
+	for attempt := 1; attempt <= statementXMLMaxAttempts; attempt++ {
+		if err := waitForStatementXMLRequestSlot(ctx, lastRequestAt); err != nil {
+			if lastErr != nil {
+				return StatementXMLDownload{}, errors.WithSecondaryError(err, lastErr)
+			}
+			return StatementXMLDownload{}, err
+		}
+
+		downloaded, err := downloadStatementXML(ctx, client, baseURL, businessID, financialDate, runDir, userAgentRequired)
+		if err == nil {
+			return downloaded, nil
+		}
+		lastErr = err
+		if attempt == statementXMLMaxAttempts || !isRetryableStatementXMLDownloadError(err) {
+			return StatementXMLDownload{}, err
+		}
+
+		if err := waitContext(ctx, statementXMLRetryDelay(err, attempt)); err != nil {
+			return StatementXMLDownload{}, errors.WithSecondaryError(err, lastErr)
+		}
+	}
+	return StatementXMLDownload{}, lastErr
+}
+
+func waitForStatementXMLRequestSlot(ctx context.Context, lastRequestAt *time.Time) error {
+	if lastRequestAt == nil {
+		return nil
+	}
+	now := time.Now()
+	if !lastRequestAt.IsZero() {
+		nextRequestAt := lastRequestAt.Add(statementXMLRequestInterval)
+		if now.Before(nextRequestAt) {
+			if err := waitContext(ctx, nextRequestAt.Sub(now)); err != nil {
+				return errors.Wrap(err, "wait before PRH XBRL statement XML request")
+			}
+		}
+	}
+	*lastRequestAt = time.Now()
+	return nil
+}
+
+func isRetryableStatementXMLDownloadError(err error) bool {
+	var statusErr *httpStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	return statusErr.statusCode == http.StatusTooManyRequests || statusErr.statusCode >= http.StatusInternalServerError
+}
+
+func statementXMLRetryDelay(err error, attempt int) time.Duration {
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) {
+		if statusErr.statusCode == http.StatusTooManyRequests {
+			if statusErr.retryAfterFound {
+				return statusErr.retryAfter
+			}
+			return statementXMLRateLimitBackoff
+		}
+	}
+
+	delay := statementXMLInitialRetryDelay
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if delay >= statementXMLMaxRetryDelay {
+			return statementXMLMaxRetryDelay
+		}
+	}
+	return delay
+}
+
+func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, false
+	}
+	seconds, err := strconv.Atoi(trimmed)
+	if err == nil {
+		if seconds < 0 {
+			return 0, true
+		}
+		return time.Duration(seconds) * time.Second, true
+	}
+	retryAt, err := http.ParseTime(trimmed)
+	if err != nil {
+		return 0, false
+	}
+	if retryAt.Before(now) {
+		return 0, true
+	}
+	return retryAt.Sub(now), true
+}
+
+func waitContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func validateStatementPathSegment(name string, value string) error {
