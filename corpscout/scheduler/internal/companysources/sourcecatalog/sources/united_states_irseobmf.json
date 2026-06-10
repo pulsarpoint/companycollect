@@ -23,7 +23,7 @@
     {
       "file_key": "source",
       "display_name": "IRS EO BMF source snapshot",
-      "description": "Normalized NDJSON tax-exempt organization records downloaded from the IRS EO BMF extract.",
+      "description": "Normalized NDJSON tax-exempt organization records converted from the IRS EO BMF regional CSV files eo1.csv through eo4.csv.",
       "kind": "source_snapshot",
       "required": true,
       "relative_path": "source.ndjson",

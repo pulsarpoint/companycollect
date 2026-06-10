@@ -48,6 +48,28 @@ func TestLoadEmbeddedSpecsIncludesSourceFiles(t *testing.T) {
 	requireFileKeys(t, sec.Files, []string{"source"})
 }
 
+func TestFileSpecRejectsUnsafeRelativePath(t *testing.T) {
+	base := FileSpec{
+		FileKey:      "source",
+		DisplayName:  "Source",
+		Kind:         "source_snapshot",
+		RelativePath: "source.ndjson",
+	}
+	require.NoError(t, base.Validate())
+
+	for _, relativePath := range []string{"../source.ndjson", "/tmp/source.ndjson", "."} {
+		t.Run(relativePath, func(t *testing.T) {
+			spec := base
+			spec.RelativePath = relativePath
+
+			err := spec.Validate()
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "outside run dir")
+		})
+	}
+}
+
 func requireFileKeys(t *testing.T, files []FileSpec, expected []string) {
 	t.Helper()
 	got := make([]string, 0, len(files))

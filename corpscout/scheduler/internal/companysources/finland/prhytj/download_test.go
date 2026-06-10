@@ -15,7 +15,8 @@ import (
 
 func TestDownloadWritesPRHCompaniesAsNDJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"companies":[{"businessId":{"type":"businessId","value":"1234567-8"}},{"businessId":{"type":"businessId","value":"2345678-9"}}]}`))
+		require.Equal(t, "1", r.URL.Query().Get("page"))
+		_, _ = w.Write([]byte(`{"totalResults":2,"companies":[{"businessId":{"type":"businessId","value":"1234567-8"}},{"businessId":{"type":"businessId","value":"2345678-9"}}]}`))
 	}))
 	defer server.Close()
 
@@ -36,6 +37,39 @@ func TestDownloadWritesPRHCompaniesAsNDJSON(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"1234567-8"`)
 	require.Equal(t, 2, strings.Count(string(body), "\n"))
+}
+
+func TestDownloadWritesAllPRHCompanyPages(t *testing.T) {
+	var pages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		pages = append(pages, page)
+		switch page {
+		case "1":
+			_, _ = w.Write([]byte(`{"totalResults":3,"companies":[{"businessId":{"type":"businessId","value":"1234567-8"}},{"businessId":{"type":"businessId","value":"2345678-9"}}]}`))
+		case "2":
+			_, _ = w.Write([]byte(`{"totalResults":3,"companies":[{"businessId":{"type":"businessId","value":"3456789-0"}}]}`))
+		default:
+			http.Error(w, "unexpected page", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	runDir := t.TempDir()
+	result, err := Source{}.DownloadFile(context.Background(), companysources.DownloadFileOptions{
+		FileKind:     "source_snapshot",
+		RunDir:       runDir,
+		SourceURL:    server.URL,
+		RelativePath: "source.ndjson",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3), result.RecordsWritten)
+	require.Equal(t, []string{"1", "2"}, pages)
+	body, err := os.ReadFile(filepath.Join(runDir, "source.ndjson"))
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"3456789-0"`)
+	require.Equal(t, 3, strings.Count(string(body), "\n"))
 }
 
 func TestDownloadFileRoutesPRHCodeListDescription(t *testing.T) {

@@ -1,6 +1,7 @@
 package sourcecatalog
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -112,8 +113,16 @@ func (f FileSpec) Validate() error {
 
 	switch f.Kind {
 	case "source_snapshot", "code_list", "reference_data", "archive":
-		return nil
+		return validateRelativePath(f.RelativePath)
 	default:
 		return errors.Errorf("source file spec kind %q is not supported", f.Kind)
 	}
+}
+
+func validateRelativePath(relativePath string) error {
+	cleanRelativePath := filepath.Clean(relativePath)
+	if filepath.IsAbs(relativePath) || cleanRelativePath == "." || cleanRelativePath == ".." || strings.HasPrefix(cleanRelativePath, ".."+string(filepath.Separator)) {
+		return errors.Errorf("source file spec relative path %q is outside run dir", relativePath)
+	}
+	return nil
 }

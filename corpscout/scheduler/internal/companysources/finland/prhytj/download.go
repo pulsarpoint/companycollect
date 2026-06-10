@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/cockroachdb/errors"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
 )
+
+const defaultCompaniesPageSize = 100
 
 func (Source) DownloadFile(ctx context.Context, opts companysources.DownloadFileOptions) (companysources.DownloadedFile, error) {
 	switch opts.FileKind {
@@ -35,13 +38,13 @@ func downloadSourceSnapshot(ctx context.Context, opts companysources.DownloadFil
 		sourceURL = DefaultBaseURL
 	}
 
-	page, err := downloadPage(ctx, http.DefaultClient, sourceURL, opts.UserAgentRequired)
+	companies, err := downloadAllCompanyPages(ctx, sourceURL, opts.UserAgentRequired)
 	if err != nil {
 		return companysources.DownloadedFile{}, err
 	}
 
-	records := make([]json.RawMessage, 0, len(page.Companies))
-	for _, company := range page.Companies {
+	records := make([]json.RawMessage, 0, len(companies))
+	for _, company := range companies {
 		raw, err := json.Marshal(company)
 		if err != nil {
 			return companysources.DownloadedFile{}, errors.Wrap(err, "encode PRH YTJ company")
@@ -62,6 +65,45 @@ func downloadSourceSnapshot(ctx context.Context, opts companysources.DownloadFil
 		ContentLengthBytes: written.ContentLengthBytes,
 		RecordsWritten:     written.RecordsWritten,
 	}, nil
+}
+
+func downloadAllCompanyPages(ctx context.Context, sourceURL string, userAgentRequired bool) ([]CompanyRecord, error) {
+	var companies []CompanyRecord
+	var totalResults *int64
+	for pageNumber := 1; ; pageNumber++ {
+		pageURL, err := companyPageURL(sourceURL, pageNumber)
+		if err != nil {
+			return nil, err
+		}
+		page, err := downloadPage(ctx, http.DefaultClient, pageURL, userAgentRequired)
+		if err != nil {
+			return nil, err
+		}
+		if page.TotalResults != nil {
+			totalResults = page.TotalResults
+		}
+		companies = append(companies, page.Companies...)
+		if totalResults != nil && int64(len(companies)) >= *totalResults {
+			return companies, nil
+		}
+		if len(page.Companies) == 0 {
+			return companies, nil
+		}
+		if totalResults == nil && len(page.Companies) < defaultCompaniesPageSize {
+			return companies, nil
+		}
+	}
+}
+
+func companyPageURL(sourceURL string, pageNumber int) (string, error) {
+	parsed, err := url.Parse(sourceURL)
+	if err != nil {
+		return "", errors.Wrap(err, "parse PRH YTJ companies url")
+	}
+	query := parsed.Query()
+	query.Set("page", strconv.Itoa(pageNumber))
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }
 
 func downloadCodeList(ctx context.Context, opts companysources.DownloadFileOptions) (companysources.DownloadedFile, error) {
