@@ -145,7 +145,7 @@ func TestParseSourceExplorerStringListSplitsAndDeduplicates(t *testing.T) {
 }
 
 func TestParseSourceExplorerSourceIndustriesSkipsInvalidValues(t *testing.T) {
-	got := parseSourceExplorerSourceIndustries([]string{"TOIMI4:68203", "bad", "TOIMI3:64190"}, 10)
+	got := parseSourceExplorerSourceIndustries([]string{" toimi4 : 68203 ", "bad", "TOIMI4:68203:bad", "TOIMI3:64190"}, 10)
 	want := []sourceExplorerSourceIndustryFilter{
 		{CodeSet: "TOIMI4", Code: "68203"},
 		{CodeSet: "TOIMI3", Code: "64190"},
@@ -179,9 +179,18 @@ func TestBuildSourceExplorerIndustryFilterOptionsQueryUsesNACEAndSourceIndustryO
 		"main_business_line_code_set",
 		"company_count",
 		"UNION ALL",
+		"concat('nace:division:', cache.code)",
 	} {
 		if !strings.Contains(query, needle) {
 			t.Fatalf("buildSourceExplorerIndustryFilterOptionsQuery() = %q, missing %q", query, needle)
+		}
+	}
+	for _, needle := range []string{
+		"concat('nace:', cache.revision",
+		"concat('nace:', revision",
+	} {
+		if strings.Contains(query, needle) {
+			t.Fatalf("buildSourceExplorerIndustryFilterOptionsQuery() = %q, should not build NACE ids with %q", query, needle)
 		}
 	}
 }

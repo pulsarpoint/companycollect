@@ -341,10 +341,10 @@ func buildSourceExplorerIndustryFilterOptionsQuery(table string) string {
   search_text
 FROM (
   SELECT
-    concat('nace:', cache.revision, ':section:', cache.code) AS id,
+    concat('nace:section:', cache.code) AS id,
     'nace' AS kind,
     cache.code AS filter_value,
-    cache.revision AS revision,
+    '' AS revision,
     'section' AS level_name,
     cache.code AS code,
     '' AS code_set,
@@ -355,26 +355,30 @@ FROM (
     concat(cache.code, ' ', ifNull(nace_ref.title, cache.code)) AS search_text
   FROM (
     SELECT
-      ifNull(nace_revision, '') AS revision,
       ifNull(nace_section_code, '') AS code,
       count() AS company_count
     FROM ` + table + `
-    WHERE ifNull(nace_revision, '') != ''
-      AND ifNull(nace_section_code, '') != ''
-    GROUP BY revision, code
+    WHERE ifNull(nace_section_code, '') != ''
+    GROUP BY code
   ) AS cache
-  LEFT JOIN ` + naceReferenceTable + ` AS nace_ref
-    ON nace_ref.revision = cache.revision
-   AND nace_ref.level_name = 'section'
-   AND nace_ref.code = cache.code
+  LEFT JOIN (
+    SELECT
+      code,
+      argMax(title, revision) AS title
+    FROM ` + naceReferenceTable + `
+    WHERE level_name = 'section'
+      AND active = true
+    GROUP BY code
+  ) AS nace_ref
+    ON nace_ref.code = cache.code
 
   UNION ALL
 
   SELECT
-    concat('nace:', cache.revision, ':division:', cache.code) AS id,
+    concat('nace:division:', cache.code) AS id,
     'nace' AS kind,
     cache.code AS filter_value,
-    cache.revision AS revision,
+    '' AS revision,
     'division' AS level_name,
     cache.code AS code,
     '' AS code_set,
@@ -385,26 +389,30 @@ FROM (
     concat(cache.code, ' ', ifNull(nace_ref.title, cache.code)) AS search_text
   FROM (
     SELECT
-      ifNull(nace_revision, '') AS revision,
       ifNull(nace_division_code, '') AS code,
       count() AS company_count
     FROM ` + table + `
-    WHERE ifNull(nace_revision, '') != ''
-      AND ifNull(nace_division_code, '') != ''
-    GROUP BY revision, code
+    WHERE ifNull(nace_division_code, '') != ''
+    GROUP BY code
   ) AS cache
-  LEFT JOIN ` + naceReferenceTable + ` AS nace_ref
-    ON nace_ref.revision = cache.revision
-   AND nace_ref.level_name = 'division'
-   AND nace_ref.code = cache.code
+  LEFT JOIN (
+    SELECT
+      code,
+      argMax(title, revision) AS title
+    FROM ` + naceReferenceTable + `
+    WHERE level_name = 'division'
+      AND active = true
+    GROUP BY code
+  ) AS nace_ref
+    ON nace_ref.code = cache.code
 
   UNION ALL
 
   SELECT
-    concat('nace:', cache.revision, ':group:', cache.code) AS id,
+    concat('nace:group:', cache.code) AS id,
     'nace' AS kind,
     cache.code AS filter_value,
-    cache.revision AS revision,
+    '' AS revision,
     'group' AS level_name,
     cache.code AS code,
     '' AS code_set,
@@ -415,26 +423,30 @@ FROM (
     concat(cache.code, ' ', ifNull(nace_ref.title, cache.code)) AS search_text
   FROM (
     SELECT
-      ifNull(nace_revision, '') AS revision,
       ifNull(nace_group_code, '') AS code,
       count() AS company_count
     FROM ` + table + `
-    WHERE ifNull(nace_revision, '') != ''
-      AND ifNull(nace_group_code, '') != ''
-    GROUP BY revision, code
+    WHERE ifNull(nace_group_code, '') != ''
+    GROUP BY code
   ) AS cache
-  LEFT JOIN ` + naceReferenceTable + ` AS nace_ref
-    ON nace_ref.revision = cache.revision
-   AND nace_ref.level_name = 'group'
-   AND nace_ref.code = cache.code
+  LEFT JOIN (
+    SELECT
+      code,
+      argMax(title, revision) AS title
+    FROM ` + naceReferenceTable + `
+    WHERE level_name = 'group'
+      AND active = true
+    GROUP BY code
+  ) AS nace_ref
+    ON nace_ref.code = cache.code
 
   UNION ALL
 
   SELECT
-    concat('nace:', revision, ':class:', code) AS id,
+    concat('nace:class:', code) AS id,
     'nace' AS kind,
     code AS filter_value,
-    revision,
+    '' AS revision,
     'class' AS level_name,
     code,
     '' AS code_set,
@@ -445,14 +457,12 @@ FROM (
     concat(code, ' ', title) AS search_text
   FROM (
     SELECT
-      ifNull(nace_revision, '') AS revision,
       ifNull(nace_class_code, '') AS code,
       argMax(ifNull(nace_title_en, ''), latest_ingested_at) AS title,
       count() AS company_count
     FROM ` + table + `
-    WHERE ifNull(nace_revision, '') != ''
-      AND ifNull(nace_class_code, '') != ''
-    GROUP BY revision, code
+    WHERE ifNull(nace_class_code, '') != ''
+    GROUP BY code
   ) AS class_cache
 
   UNION ALL
@@ -630,11 +640,14 @@ func parseSourceExplorerSourceIndustries(values []string, maxItems int) []source
 			if trimmed == "" {
 				continue
 			}
+			if strings.Count(trimmed, ":") != 1 {
+				continue
+			}
 			codeSet, code, ok := strings.Cut(trimmed, ":")
 			if !ok {
 				continue
 			}
-			codeSet = strings.TrimSpace(codeSet)
+			codeSet = strings.ToUpper(strings.TrimSpace(codeSet))
 			code = strings.TrimSpace(code)
 			if codeSet == "" || code == "" {
 				continue
