@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -28,4 +29,81 @@ func TestFinancialXBRLQueriesShape(t *testing.T) {
 	} {
 		require.Contains(t, sql, needle)
 	}
+
+	upsertWindow := querySection(t, sql, "UpsertFinlandPRHXBRLDiscoveryWindow")
+	for _, needle := range []string{
+		"ON CONFLICT (source_id, registered_date_start, registered_date_end) DO UPDATE SET",
+		"action_run_id = EXCLUDED.action_run_id",
+		"temporal_workflow_id = EXCLUDED.temporal_workflow_id",
+		"temporal_run_id = EXCLUDED.temporal_run_id",
+		"total_results = 0",
+		"pages_discovered = 0",
+		"statements_discovered = 0",
+		"last_completed_page = 0",
+		"completed_at = NULL",
+	} {
+		require.Contains(t, upsertWindow, needle)
+	}
+
+	markDownloading := querySection(t, sql, "MarkFinlandPRHXBRLStatementArtifactDownloading")
+	for _, needle := range []string{
+		"-- name: MarkFinlandPRHXBRLStatementArtifactDownloading :one",
+		"WHERE id = sqlc.arg(id)",
+		"AND source_id = sqlc.arg(source_id)",
+		"download_status = 'pending'",
+		"download_status = 'failed' AND sqlc.arg(retry_failed)::boolean",
+	} {
+		require.Contains(t, markDownloading, needle)
+	}
+
+	markSucceeded := querySection(t, sql, "MarkFinlandPRHXBRLStatementArtifactSucceeded")
+	for _, needle := range []string{
+		"xml_path = sqlc.arg(xml_path)::text",
+		"xml_sha256 = sqlc.arg(xml_sha256)::text",
+		"xml_size_bytes = sqlc.arg(xml_size_bytes)::bigint",
+	} {
+		require.Contains(t, markSucceeded, needle)
+	}
+
+	generatedBytes, err := os.ReadFile("gen/financial_xbrl.sql.go")
+	require.NoError(t, err)
+	generated := string(generatedBytes)
+
+	downloadingParams := structSection(t, generated, "MarkFinlandPRHXBRLStatementArtifactDownloadingParams")
+	require.Contains(t, downloadingParams, "SourceID          uuid.UUID")
+	require.Contains(t, downloadingParams, "RetryFailed       bool")
+
+	succeededParams := structSection(t, generated, "MarkFinlandPRHXBRLStatementArtifactSucceededParams")
+	require.Contains(t, succeededParams, "XmlPath           string")
+	require.Contains(t, succeededParams, "XmlSha256         string")
+	require.Contains(t, succeededParams, "XmlSizeBytes      int64")
+	require.NotContains(t, succeededParams, "XmlPath           *string")
+	require.NotContains(t, succeededParams, "XmlSha256         *string")
+	require.NotContains(t, succeededParams, "XmlSizeBytes      *int64")
+}
+
+func querySection(t *testing.T, sql string, name string) string {
+	t.Helper()
+
+	marker := "-- name: " + name + " "
+	start := strings.Index(sql, marker)
+	require.NotEqual(t, -1, start)
+
+	end := strings.Index(sql[start+len(marker):], "\n-- name: ")
+	if end == -1 {
+		return sql[start:]
+	}
+	return sql[start : start+len(marker)+end]
+}
+
+func structSection(t *testing.T, goSource string, name string) string {
+	t.Helper()
+
+	marker := "type " + name + " struct {"
+	start := strings.Index(goSource, marker)
+	require.NotEqual(t, -1, start)
+
+	end := strings.Index(goSource[start:], "\n}\n")
+	require.NotEqual(t, -1, end)
+	return goSource[start : start+end+3]
 }

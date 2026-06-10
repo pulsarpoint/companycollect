@@ -18,6 +18,11 @@ ON CONFLICT (source_id, registered_date_start, registered_date_end) DO UPDATE SE
   action_run_id = EXCLUDED.action_run_id,
   temporal_workflow_id = EXCLUDED.temporal_workflow_id,
   temporal_run_id = EXCLUDED.temporal_run_id,
+  total_results = 0,
+  pages_discovered = 0,
+  statements_discovered = 0,
+  last_completed_page = 0,
+  completed_at = NULL,
   updated_at = now()
 RETURNING *;
 
@@ -90,15 +95,20 @@ SET
   last_error_message = NULL,
   updated_at = now()
 WHERE id = sqlc.arg(id)
+  AND source_id = sqlc.arg(source_id)
+  AND (
+    download_status = 'pending'
+    OR (download_status = 'failed' AND sqlc.arg(retry_failed)::boolean)
+  )
 RETURNING *;
 
 -- name: MarkFinlandPRHXBRLStatementArtifactSucceeded :one
 UPDATE financial_xbrl.finland_prh_xbrl_statement_artifacts
 SET
   download_status = 'succeeded',
-  xml_path = sqlc.arg(xml_path),
-  xml_sha256 = sqlc.arg(xml_sha256),
-  xml_size_bytes = sqlc.arg(xml_size_bytes),
+  xml_path = sqlc.arg(xml_path)::text,
+  xml_sha256 = sqlc.arg(xml_sha256)::text,
+  xml_size_bytes = sqlc.arg(xml_size_bytes)::bigint,
   downloaded_at = now(),
   latest_action_run_id = sqlc.narg(latest_action_run_id),
   last_error_message = NULL,

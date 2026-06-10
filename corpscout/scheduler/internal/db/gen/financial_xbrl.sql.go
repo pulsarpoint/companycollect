@@ -128,16 +128,28 @@ SET
   last_error_message = NULL,
   updated_at = now()
 WHERE id = $2
+  AND source_id = $3
+  AND (
+    download_status = 'pending'
+    OR (download_status = 'failed' AND $4::boolean)
+  )
 RETURNING id, source_id, business_id, financial_date, registration_date, source_url, xml_path, xml_sha256, xml_size_bytes, download_status, attempts, last_attempt_at, downloaded_at, last_error_message, first_discovered_run_id, latest_action_run_id, created_at, updated_at
 `
 
 type MarkFinlandPRHXBRLStatementArtifactDownloadingParams struct {
 	LatestActionRunID pgtype.UUID `json:"latest_action_run_id"`
 	ID                uuid.UUID   `json:"id"`
+	SourceID          uuid.UUID   `json:"source_id"`
+	RetryFailed       bool        `json:"retry_failed"`
 }
 
 func (q *Queries) MarkFinlandPRHXBRLStatementArtifactDownloading(ctx context.Context, arg MarkFinlandPRHXBRLStatementArtifactDownloadingParams) (FinancialXbrlFinlandPrhXbrlStatementArtifact, error) {
-	row := q.db.QueryRow(ctx, markFinlandPRHXBRLStatementArtifactDownloading, arg.LatestActionRunID, arg.ID)
+	row := q.db.QueryRow(ctx, markFinlandPRHXBRLStatementArtifactDownloading,
+		arg.LatestActionRunID,
+		arg.ID,
+		arg.SourceID,
+		arg.RetryFailed,
+	)
 	var i FinancialXbrlFinlandPrhXbrlStatementArtifact
 	err := row.Scan(
 		&i.ID,
@@ -209,9 +221,9 @@ const markFinlandPRHXBRLStatementArtifactSucceeded = `-- name: MarkFinlandPRHXBR
 UPDATE financial_xbrl.finland_prh_xbrl_statement_artifacts
 SET
   download_status = 'succeeded',
-  xml_path = $1,
-  xml_sha256 = $2,
-  xml_size_bytes = $3,
+  xml_path = $1::text,
+  xml_sha256 = $2::text,
+  xml_size_bytes = $3::bigint,
   downloaded_at = now(),
   latest_action_run_id = $4,
   last_error_message = NULL,
@@ -221,9 +233,9 @@ RETURNING id, source_id, business_id, financial_date, registration_date, source_
 `
 
 type MarkFinlandPRHXBRLStatementArtifactSucceededParams struct {
-	XmlPath           *string     `json:"xml_path"`
-	XmlSha256         *string     `json:"xml_sha256"`
-	XmlSizeBytes      *int64      `json:"xml_size_bytes"`
+	XmlPath           string      `json:"xml_path"`
+	XmlSha256         string      `json:"xml_sha256"`
+	XmlSizeBytes      int64       `json:"xml_size_bytes"`
 	LatestActionRunID pgtype.UUID `json:"latest_action_run_id"`
 	ID                uuid.UUID   `json:"id"`
 }
@@ -328,6 +340,11 @@ ON CONFLICT (source_id, registered_date_start, registered_date_end) DO UPDATE SE
   action_run_id = EXCLUDED.action_run_id,
   temporal_workflow_id = EXCLUDED.temporal_workflow_id,
   temporal_run_id = EXCLUDED.temporal_run_id,
+  total_results = 0,
+  pages_discovered = 0,
+  statements_discovered = 0,
+  last_completed_page = 0,
+  completed_at = NULL,
   updated_at = now()
 RETURNING id, source_id, registered_date_start, registered_date_end, action_run_id, temporal_workflow_id, temporal_run_id, total_results, pages_discovered, statements_discovered, last_completed_page, completed_at, created_at, updated_at
 `
