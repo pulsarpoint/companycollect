@@ -161,6 +161,42 @@ func TestRefreshSourceExplorerCacheRunsActivity(t *testing.T) {
 	require.Equal(t, "corpscout_sources.fi_prhytj_company_explorer_cache", result.CacheTable)
 }
 
+func TestMapSourceIndustriesToNACERunsActivity(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.RegisterWorkflowWithOptions(MapSourceIndustriesToNACE, workflow.RegisterOptions{Name: MapSourceIndustriesToNACEWorkflowName})
+	env.RegisterActivityWithOptions(func(input MapSourceIndustriesToNACEInput) (MapSourceIndustriesToNACEResult, error) {
+		require.Equal(t, MapSourceIndustriesToNACEInput{
+			ActionRunID: "action-run-1",
+			SourceName:  "finland_prhytj",
+			Trigger:     "manual",
+		}, input)
+		return MapSourceIndustriesToNACEResult{
+			ActionRunID:  "action-run-1",
+			SourceName:   "finland_prhytj",
+			MappingTable: "corpscout_sources.fi_prhytj_industry_nace_mappings",
+			Rows:         3,
+			MappedRows:   2,
+			UnmappedRows: 1,
+			MappedAt:     "2026-06-10T10:00:00Z",
+		}, nil
+	}, activity.RegisterOptions{Name: MapSourceIndustriesToNACEActivityName})
+
+	env.ExecuteWorkflow(MapSourceIndustriesToNACEWorkflowName, MapSourceIndustriesToNACEInput{
+		ActionRunID: "action-run-1",
+		SourceName:  "finland_prhytj",
+		Trigger:     "manual",
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	var result MapSourceIndustriesToNACEResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	require.Equal(t, uint64(2), result.MappedRows)
+	require.Equal(t, "corpscout_sources.fi_prhytj_industry_nace_mappings", result.MappingTable)
+}
+
 func TestDownloadSourceRejectsPreparedActionRunMismatch(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()

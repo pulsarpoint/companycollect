@@ -310,6 +310,8 @@ func sourceActionWorkflowName(action string, configuredWorkflow string) (string,
 		return nonEmptyString(configuredWorkflow, companysourceworkflows.ImportSourceToClickHouseWorkflowName), nil
 	case companysourceworkflows.ActionRefreshExplorerCache:
 		return nonEmptyString(configuredWorkflow, companysourceworkflows.RefreshSourceExplorerCacheWorkflowName), nil
+	case companysourceworkflows.ActionMapIndustriesToNACE:
+		return nonEmptyString(configuredWorkflow, companysourceworkflows.MapSourceIndustriesToNACEWorkflowName), nil
 	default:
 		return "", errors.New("unsupported source action")
 	}
@@ -337,6 +339,12 @@ func sourceActionWorkflowInput(action string, sourceName string, actionRunID str
 		}, nil
 	case companysourceworkflows.ActionRefreshExplorerCache:
 		return companysourceworkflows.RefreshSourceExplorerCacheInput{
+			ActionRunID: actionRunID,
+			SourceName:  sourceName,
+			Trigger:     req.Trigger,
+		}, nil
+	case companysourceworkflows.ActionMapIndustriesToNACE:
+		return companysourceworkflows.MapSourceIndustriesToNACEInput{
 			ActionRunID: actionRunID,
 			SourceName:  sourceName,
 			Trigger:     req.Trigger,

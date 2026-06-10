@@ -82,6 +82,10 @@ func newCompanySourcesTemporalWorker(temporalClient client.Client, resources *te
 		companysourceworkflows.RefreshSourceExplorerCache,
 		workflow.RegisterOptions{Name: companysourceworkflows.RefreshSourceExplorerCacheWorkflowName},
 	)
+	worker.RegisterWorkflowWithOptions(
+		companysourceworkflows.MapSourceIndustriesToNACE,
+		workflow.RegisterOptions{Name: companysourceworkflows.MapSourceIndustriesToNACEWorkflowName},
+	)
 	worker.RegisterActivityWithOptions(
 		resources.companySourceActions.PrepareSourceDownloadActivity,
 		activity.RegisterOptions{Name: companysourceworkflows.PrepareSourceDownloadActivityName},
@@ -101,6 +105,10 @@ func newCompanySourcesTemporalWorker(temporalClient client.Client, resources *te
 	worker.RegisterActivityWithOptions(
 		resources.companySourceActions.RefreshSourceExplorerCacheActivity,
 		activity.RegisterOptions{Name: companysourceworkflows.RefreshSourceExplorerCacheActivityName},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.companySourceActions.MapSourceIndustriesToNACEActivity,
+		activity.RegisterOptions{Name: companysourceworkflows.MapSourceIndustriesToNACEActivityName},
 	)
 	return worker
 }

@@ -24,12 +24,14 @@ import (
 type SyncSourceDownloadInput = sourceworkflow.SyncSourceDownloadInput
 type ImportSourceToClickHouseInput = sourceworkflow.ImportSourceToClickHouseInput
 type RefreshSourceExplorerCacheInput = sourceworkflow.RefreshSourceExplorerCacheInput
+type MapSourceIndustriesToNACEInput = sourceworkflow.MapSourceIndustriesToNACEInput
 type DownloadSourceFileInput = sourceworkflow.DownloadSourceFileInput
 type FinishSourceDownloadInput = sourceworkflow.FinishSourceDownloadInput
 type PrepareSourceDownloadResult = sourceworkflow.PrepareSourceDownloadResult
 type DownloadSourceFileResult = sourceworkflow.DownloadSourceFileResult
 type ImportSourceToClickHouseResult = sourceworkflow.ImportSourceToClickHouseResult
 type RefreshSourceExplorerCacheResult = sourceworkflow.RefreshSourceExplorerCacheResult
+type MapSourceIndustriesToNACEResult = sourceworkflow.MapSourceIndustriesToNACEResult
 
 type Actions struct {
 	pool                *pgxpool.Pool
@@ -392,12 +394,88 @@ func (a *Actions) RefreshSourceExplorerCacheActivity(ctx context.Context, input 
 	return result, nil
 }
 
+func (a *Actions) MapSourceIndustriesToNACEActivity(ctx context.Context, input MapSourceIndustriesToNACEInput) (MapSourceIndustriesToNACEResult, error) {
+	if a == nil || a.pool == nil {
+		return MapSourceIndustriesToNACEResult{}, errors.New("company source database is not available")
+	}
+	actionRunID, err := uuid.Parse(input.ActionRunID)
+	if err != nil {
+		return MapSourceIndustriesToNACEResult{}, errors.Wrap(err, "parse action run id")
+	}
+
+	queries := db.New(a.pool)
+	workflowID, runID := workflowExecutionFromContext(ctx)
+
+	actionRun, err := queries.GetSourceActionRun(ctx, actionRunID)
+	if err != nil {
+		return MapSourceIndustriesToNACEResult{}, errors.Wrap(err, "load industry NACE mapping action run")
+	}
+	if actionRun.Action != sourceworkflow.ActionMapIndustriesToNACE {
+		return MapSourceIndustriesToNACEResult{}, errors.Errorf("action run %s has action %q", actionRun.ID, actionRun.Action)
+	}
+	action, err := queries.GetSourceActionByName(ctx, db.GetSourceActionByNameParams{
+		Name:   input.SourceName,
+		Action: sourceworkflow.ActionMapIndustriesToNACE,
+	})
+	if err != nil {
+		return MapSourceIndustriesToNACEResult{}, errors.Wrap(err, "load industry NACE mapping action")
+	}
+	if actionRun.SourceID != action.SourceID || actionRun.ActionID != action.ID {
+		return MapSourceIndustriesToNACEResult{}, errors.Errorf("action run %s does not belong to %s industry NACE mapping action", actionRun.ID, input.SourceName)
+	}
+	if err := validateStoredWorkflowID(actionRun.TemporalWorkflowID, workflowID, "source action run", actionRun.ID); err != nil {
+		return MapSourceIndustriesToNACEResult{}, err
+	}
+	if runID != "" {
+		if err := queries.UpdateSourceActionRunTemporalRunID(ctx, db.UpdateSourceActionRunTemporalRunIDParams{
+			TemporalRunID: optionalStringPointer(runID),
+			ID:            actionRunID,
+		}); err != nil {
+			return MapSourceIndustriesToNACEResult{}, errors.Wrap(err, "update industry NACE mapping action temporal run id")
+		}
+	}
+
+	result := MapSourceIndustriesToNACEResult{
+		ActionRunID: actionRun.ID.String(),
+		SourceName:  input.SourceName,
+	}
+	mapped, err := a.mapSourceIndustriesToNACE(ctx, input.SourceName)
+	if err != nil {
+		finishErr := a.finishActionRunFailed(actionRun.ID, err)
+		return result, combineWithFinishError(errors.Wrap(err, "map source industries to NACE"), finishErr)
+	}
+	result.MappingTable = mapped.MappingTable
+	result.Rows = mapped.Rows
+	result.MappedRows = mapped.MappedRows
+	result.UnmappedRows = mapped.UnmappedRows
+	result.MappedAt = mapped.MappedAt.Format(time.RFC3339Nano)
+
+	if _, err := queries.FinishSourceActionRun(ctx, db.FinishSourceActionRunParams{
+		Status:       sourceworkflow.StatusSucceeded,
+		Result:       marshalActionResult(result),
+		ErrorMessage: "",
+		ID:           actionRun.ID,
+	}); err != nil {
+		return result, errors.Wrap(err, "finish industry NACE mapping action run")
+	}
+	return result, nil
+}
+
 func (a *Actions) refreshSourceExplorerCache(ctx context.Context, sourceName string) (prhytj.CompanyExplorerCacheRefreshResult, error) {
 	switch sourceName {
 	case "finland_prhytj":
 		return prhytj.RefreshCompanyExplorerCache(ctx, a.clickHouseNativeURL)
 	default:
 		return prhytj.CompanyExplorerCacheRefreshResult{}, errors.Errorf("source explorer cache refresh is not implemented for %s", sourceName)
+	}
+}
+
+func (a *Actions) mapSourceIndustriesToNACE(ctx context.Context, sourceName string) (prhytj.IndustryNACEMappingRefreshResult, error) {
+	switch sourceName {
+	case "finland_prhytj":
+		return prhytj.RefreshIndustryNACEMappings(ctx, a.clickHouseNativeURL)
+	default:
+		return prhytj.IndustryNACEMappingRefreshResult{}, errors.Errorf("source industry nace mapping is not implemented for %s", sourceName)
 	}
 }
 

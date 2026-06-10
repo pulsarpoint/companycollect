@@ -16,16 +16,19 @@ const (
 	ImportSourceToClickHouseWorkflowName   = "CompanySourceClickHouseImportWorkflow"
 	SyncSourceToClickHouseWorkflowName     = "CompanySourceSyncClickHouseWorkflow"
 	RefreshSourceExplorerCacheWorkflowName = "CompanySourceExplorerCacheRefreshWorkflow"
+	MapSourceIndustriesToNACEWorkflowName  = "CompanySourceIndustryNACEMappingWorkflow"
 
 	PrepareSourceDownloadActivityName      = "PrepareSourceDownloadActivity"
 	FinishSourceDownloadActivityName       = "FinishSourceDownloadActivity"
 	DownloadSourceFileActivityName         = "DownloadSourceFileActivity"
 	ImportSourceToClickHouseActivityName   = "ImportSourceToClickHouseActivity"
 	RefreshSourceExplorerCacheActivityName = "RefreshSourceExplorerCacheActivity"
+	MapSourceIndustriesToNACEActivityName  = "MapSourceIndustriesToNACEActivity"
 
 	ActionPullSource           = "pull_source"
 	ActionImportClickHouse     = "import_clickhouse"
 	ActionRefreshExplorerCache = "refresh_explorer_cache"
+	ActionMapIndustriesToNACE  = "map_industries_to_nace"
 	StatusSucceeded            = "succeeded"
 	StatusFailed               = "failed"
 )
@@ -97,6 +100,12 @@ type RefreshSourceExplorerCacheInput struct {
 	Trigger     string `json:"trigger"`
 }
 
+type MapSourceIndustriesToNACEInput struct {
+	ActionRunID string `json:"action_run_id"`
+	SourceName  string `json:"source_name"`
+	Trigger     string `json:"trigger"`
+}
+
 type SyncSourceToClickHouseInput struct {
 	DownloadActionRunID string `json:"download_action_run_id,omitempty"`
 	ImportActionRunID   string `json:"import_action_run_id,omitempty"`
@@ -123,6 +132,16 @@ type RefreshSourceExplorerCacheResult struct {
 	CacheTable  string `json:"cache_table"`
 	Rows        uint64 `json:"rows"`
 	RefreshedAt string `json:"refreshed_at"`
+}
+
+type MapSourceIndustriesToNACEResult struct {
+	ActionRunID  string `json:"action_run_id"`
+	SourceName   string `json:"source_name"`
+	MappingTable string `json:"mapping_table"`
+	Rows         uint64 `json:"rows"`
+	MappedRows   uint64 `json:"mapped_rows"`
+	UnmappedRows uint64 `json:"unmapped_rows"`
+	MappedAt     string `json:"mapped_at"`
 }
 
 type SyncSourceToClickHouseResult struct {
@@ -210,6 +229,15 @@ func RefreshSourceExplorerCache(ctx workflow.Context, input RefreshSourceExplore
 	var result RefreshSourceExplorerCacheResult
 	if err := workflow.ExecuteActivity(ctx, RefreshSourceExplorerCacheActivityName, input).Get(ctx, &result); err != nil {
 		return RefreshSourceExplorerCacheResult{}, errors.Wrap(err, "refresh source explorer cache activity")
+	}
+	return result, nil
+}
+
+func MapSourceIndustriesToNACE(ctx workflow.Context, input MapSourceIndustriesToNACEInput) (MapSourceIndustriesToNACEResult, error) {
+	ctx = withSourceActivityOptions(ctx, 30*time.Minute)
+	var result MapSourceIndustriesToNACEResult
+	if err := workflow.ExecuteActivity(ctx, MapSourceIndustriesToNACEActivityName, input).Get(ctx, &result); err != nil {
+		return MapSourceIndustriesToNACEResult{}, errors.Wrap(err, "map source industries to NACE activity")
 	}
 	return result, nil
 }

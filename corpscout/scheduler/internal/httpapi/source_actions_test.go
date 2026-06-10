@@ -159,6 +159,62 @@ func TestTriggerSourceExplorerCacheActionStartsTemporalWorkflow(t *testing.T) {
 	}}, tc.args)
 }
 
+func TestTriggerSourceIndustryNACEMappingActionStartsTemporalWorkflow(t *testing.T) {
+	q := &stubQuerier{}
+	sourceID := uuid.New()
+	actionID := uuid.New()
+	q.On("GetSourceActionByName", mock.Anything, db.GetSourceActionByNameParams{
+		Name: "finland_prhytj", Action: companysourceworkflows.ActionMapIndustriesToNACE,
+	}).Return(db.GetSourceActionByNameRow{
+		ID:                   actionID,
+		SourceID:             sourceID,
+		SourceName:           "finland_prhytj",
+		Country:              "finland",
+		Source:               "prhytj",
+		RegistryKey:          "finland/prhytj",
+		Action:               companysourceworkflows.ActionMapIndustriesToNACE,
+		DisplayName:          "Map industries to NACE",
+		TemporalWorkflowType: companysourceworkflows.MapSourceIndustriesToNACEWorkflowName,
+		TemporalTaskQueue:    ptrString(companysourceworkflows.SourceTaskQueue),
+		Enabled:              true,
+		Config:               json.RawMessage(`{}`),
+	}, nil)
+	var createdActionRunID uuid.UUID
+	q.On("CreateSourceActionRun", mock.Anything, mock.MatchedBy(func(arg db.CreateSourceActionRunParams) bool {
+		createdActionRunID = arg.ID
+		return arg.ActionID == actionID &&
+			arg.TemporalWorkflowID != nil &&
+			*arg.TemporalWorkflowID == companysourceworkflows.ActionRunWorkflowID(arg.ID.String()) &&
+			json.Valid(arg.Input)
+	})).Return(func(_ context.Context, arg db.CreateSourceActionRunParams) db.DataSourceActionRun {
+		return db.DataSourceActionRun{
+			ID:       arg.ID,
+			SourceID: sourceID,
+			ActionID: actionID,
+			Action:   companysourceworkflows.ActionMapIndustriesToNACE,
+			Status:   "running",
+		}
+	}, nil)
+
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", tc, ""))
+	body := strings.NewReader(`{"trigger":"manual"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sources/finland_prhytj/actions/map_industries_to_nace/trigger", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Equal(t, companysourceworkflows.SourceTaskQueue, tc.options.TaskQueue)
+	require.Equal(t, companysourceworkflows.MapSourceIndustriesToNACEWorkflowName, tc.workflow)
+	require.Equal(t, companysourceworkflows.ActionRunWorkflowID(createdActionRunID.String()), tc.options.ID)
+	require.Equal(t, []interface{}{companysourceworkflows.MapSourceIndustriesToNACEInput{
+		ActionRunID: createdActionRunID.String(),
+		SourceName:  "finland_prhytj",
+		Trigger:     "manual",
+	}}, tc.args)
+}
+
 func TestListSourceActionRunsClampsLimit(t *testing.T) {
 	q := &stubQuerier{}
 	q.On("ListSourceActionRuns", mock.Anything, db.ListSourceActionRunsParams{
