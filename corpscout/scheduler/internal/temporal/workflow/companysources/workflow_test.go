@@ -122,6 +122,79 @@ func TestDownloadSourceRunsPreparedFileWorkflows(t *testing.T) {
 	}, result.Files)
 }
 
+func TestDownloadSourcePropagatesFinancialXBRLWindowInput(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.RegisterWorkflowWithOptions(DownloadSourceFile, workflow.RegisterOptions{Name: DownloadSourceFileWorkflowName})
+
+	prepared := PrepareSourceDownloadResult{
+		ActionRunID: "action-1",
+		Files: []DownloadSourceFileInput{{
+			FileRunID:         "file-1",
+			SourceName:        "finland_prh_xbrl",
+			FileKey:           "statements_manifest",
+			Trigger:           "manual",
+			ParentActionRunID: "action-1",
+		}},
+	}
+
+	env.RegisterActivityWithOptions(func(input SyncSourceDownloadInput) (PrepareSourceDownloadResult, error) {
+		require.Equal(t, SyncSourceDownloadInput{
+			ActionRunID:         "action-1",
+			SourceName:          "finland_prh_xbrl",
+			Trigger:             "manual",
+			RegisteredDateStart: "2026-06-01",
+			RegisteredDateEnd:   "2026-06-03",
+			MaxStatements:       50,
+			RetryFailed:         true,
+		}, input)
+		return prepared, nil
+	}, activity.RegisterOptions{Name: PrepareSourceDownloadActivityName})
+	env.RegisterActivityWithOptions(func(input FinishSourceDownloadInput) error {
+		require.Equal(t, FinishSourceDownloadInput{
+			ActionRunID: "action-1",
+			Status:      StatusSucceeded,
+			Files: []DownloadedSourceFileSummary{
+				{FileKey: "statements_manifest", FileRunID: "file-1", Path: "/tmp/statements.ndjson", RecordsWritten: 1},
+			},
+		}, input)
+		return nil
+	}, activity.RegisterOptions{Name: FinishSourceDownloadActivityName})
+	env.OnWorkflow(DownloadSourceFileWorkflowName, mock.Anything, DownloadSourceFileInput{
+		FileRunID:           "file-1",
+		SourceName:          "finland_prh_xbrl",
+		FileKey:             "statements_manifest",
+		Trigger:             "manual",
+		ParentActionRunID:   "action-1",
+		RegisteredDateStart: "2026-06-01",
+		RegisteredDateEnd:   "2026-06-03",
+		MaxStatements:       50,
+		RetryFailed:         true,
+	}).Return(DownloadSourceFileResult{
+		FileRunID:          "file-1",
+		SourceName:         "finland_prh_xbrl",
+		FileKey:            "statements_manifest",
+		Path:               "/tmp/statements.ndjson",
+		ContentSHA256:      "abc",
+		ContentLengthBytes: 12,
+		RecordsWritten:     1,
+	}, nil)
+
+	env.ExecuteWorkflow(DownloadSource, SyncSourceDownloadInput{
+		ActionRunID:         "action-1",
+		SourceName:          "finland_prh_xbrl",
+		Trigger:             "manual",
+		RegisteredDateStart: "2026-06-01",
+		RegisteredDateEnd:   "2026-06-03",
+		MaxStatements:       50,
+		RetryFailed:         true,
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+}
+
 func TestSourceWorkflowIDHelpersUseRunIDs(t *testing.T) {
 	require.Equal(t, "company-source-action-run-action-run-1", ActionRunWorkflowID("action-run-1"))
 	require.Equal(t, "company-source-file-run-file-run-1", FileRunWorkflowID("file-run-1"))

@@ -42,17 +42,25 @@ func FileRunWorkflowID(fileRunID string) string {
 }
 
 type SyncSourceDownloadInput struct {
-	ActionRunID string `json:"action_run_id"`
-	SourceName  string `json:"source_name"`
-	Trigger     string `json:"trigger"`
+	ActionRunID         string `json:"action_run_id"`
+	SourceName          string `json:"source_name"`
+	Trigger             string `json:"trigger"`
+	RegisteredDateStart string `json:"registered_date_start,omitempty"`
+	RegisteredDateEnd   string `json:"registered_date_end,omitempty"`
+	MaxStatements       int32  `json:"max_statements,omitempty"`
+	RetryFailed         bool   `json:"retry_failed,omitempty"`
 }
 
 type DownloadSourceFileInput struct {
-	FileRunID         string `json:"file_run_id"`
-	SourceName        string `json:"source_name"`
-	FileKey           string `json:"file_key"`
-	Trigger           string `json:"trigger"`
-	ParentActionRunID string `json:"parent_action_run_id,omitempty"`
+	FileRunID           string `json:"file_run_id"`
+	SourceName          string `json:"source_name"`
+	FileKey             string `json:"file_key"`
+	Trigger             string `json:"trigger"`
+	ParentActionRunID   string `json:"parent_action_run_id,omitempty"`
+	RegisteredDateStart string `json:"registered_date_start,omitempty"`
+	RegisteredDateEnd   string `json:"registered_date_end,omitempty"`
+	MaxStatements       int32  `json:"max_statements,omitempty"`
+	RetryFailed         bool   `json:"retry_failed,omitempty"`
 }
 
 type DownloadSourceFileResult struct {
@@ -169,6 +177,10 @@ func DownloadSource(ctx workflow.Context, input SyncSourceDownloadInput) (Downlo
 	summaries := make([]DownloadedSourceFileSummary, 0, len(prepared.Files))
 	var runErr error
 	for _, file := range prepared.Files {
+		file.RegisteredDateStart = input.RegisteredDateStart
+		file.RegisteredDateEnd = input.RegisteredDateEnd
+		file.MaxStatements = input.MaxStatements
+		file.RetryFailed = input.RetryFailed
 		childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
 			WorkflowID: FileRunWorkflowID(file.FileRunID),
 		})

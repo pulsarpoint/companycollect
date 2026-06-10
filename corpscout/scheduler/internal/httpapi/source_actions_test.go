@@ -103,6 +103,78 @@ func TestTriggerSourceActionStartsTemporalWorkflow(t *testing.T) {
 	}}, tc.args)
 }
 
+func TestDecodeSourceActionTriggerRequestIncludesFinancialXBRLWindow(t *testing.T) {
+	q := &stubQuerier{}
+	sourceID := uuid.New()
+	actionID := uuid.New()
+	q.On("GetSourceActionByName", mock.Anything, db.GetSourceActionByNameParams{
+		Name: "finland_prh_xbrl", Action: companysourceworkflows.ActionPullSource,
+	}).Return(db.GetSourceActionByNameRow{
+		ID:                   actionID,
+		SourceID:             sourceID,
+		SourceName:           "finland_prh_xbrl",
+		Country:              "finland",
+		Source:               "prh_xbrl",
+		RegistryKey:          "finland/prh_xbrl",
+		SourceUrl:            "https://avoindata.prh.fi/opendata-xbrl-api/v3",
+		SourceFileName:       "statements.ndjson",
+		Action:               companysourceworkflows.ActionPullSource,
+		DisplayName:          "Download statements",
+		TemporalWorkflowType: companysourceworkflows.DownloadSourceWorkflowName,
+		TemporalTaskQueue:    ptrString(companysourceworkflows.SourceTaskQueue),
+		Enabled:              true,
+		Config:               json.RawMessage(`{}`),
+	}, nil)
+	var createdActionRunID uuid.UUID
+	q.On("CreateSourceActionRun", mock.Anything, mock.MatchedBy(func(arg db.CreateSourceActionRunParams) bool {
+		createdActionRunID = arg.ID
+		var input companysourceworkflows.SyncSourceDownloadInput
+		if err := json.Unmarshal(arg.Input, &input); err != nil {
+			return false
+		}
+		return arg.ActionID == actionID &&
+			input.SourceName == "finland_prh_xbrl" &&
+			input.Trigger == "manual" &&
+			input.RegisteredDateStart == "2026-06-01" &&
+			input.RegisteredDateEnd == "2026-06-03" &&
+			input.MaxStatements == 50 &&
+			input.RetryFailed
+	})).Return(func(_ context.Context, arg db.CreateSourceActionRunParams) db.DataSourceActionRun {
+		return db.DataSourceActionRun{
+			ID:       arg.ID,
+			SourceID: sourceID,
+			ActionID: actionID,
+			Action:   companysourceworkflows.ActionPullSource,
+			Status:   "running",
+		}
+	}, nil)
+
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", tc, ""))
+	body := strings.NewReader(`{
+		"trigger": " manual ",
+		"registered_date_start": " 2026-06-01 ",
+		"registered_date_end": " 2026-06-03 ",
+		"max_statements": 50,
+		"retry_failed": true
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sources/finland_prh_xbrl/actions/pull_source/trigger", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Equal(t, []interface{}{companysourceworkflows.SyncSourceDownloadInput{
+		ActionRunID:         createdActionRunID.String(),
+		SourceName:          "finland_prh_xbrl",
+		Trigger:             "manual",
+		RegisteredDateStart: "2026-06-01",
+		RegisteredDateEnd:   "2026-06-03",
+		MaxStatements:       50,
+		RetryFailed:         true,
+	}}, tc.args)
+}
+
 func TestTriggerSourceExplorerCacheActionStartsTemporalWorkflow(t *testing.T) {
 	q := &stubQuerier{}
 	sourceID := uuid.New()

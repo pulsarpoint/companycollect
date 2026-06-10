@@ -27,6 +27,10 @@ type sourceActionTriggerRequest struct {
 	DownloadActionRunID string `json:"download_action_run_id,omitempty"`
 	BatchSize           int    `json:"batch_size,omitempty"`
 	Limit               int64  `json:"limit,omitempty"`
+	RegisteredDateStart string `json:"registered_date_start,omitempty"`
+	RegisteredDateEnd   string `json:"registered_date_end,omitempty"`
+	MaxStatements       int32  `json:"max_statements,omitempty"`
+	RetryFailed         bool   `json:"retry_failed,omitempty"`
 }
 
 type sourceActionRunResponse struct {
@@ -296,6 +300,8 @@ func decodeSourceActionTriggerRequest(r *http.Request) (sourceActionTriggerReque
 	}
 	req.Trigger = strings.TrimSpace(req.Trigger)
 	req.DownloadActionRunID = strings.TrimSpace(req.DownloadActionRunID)
+	req.RegisteredDateStart = strings.TrimSpace(req.RegisteredDateStart)
+	req.RegisteredDateEnd = strings.TrimSpace(req.RegisteredDateEnd)
 	if req.Trigger == "" {
 		req.Trigger = "manual"
 	}
@@ -321,9 +327,13 @@ func sourceActionWorkflowInput(action string, sourceName string, actionRunID str
 	switch action {
 	case companysourceworkflows.ActionPullSource:
 		return companysourceworkflows.SyncSourceDownloadInput{
-			ActionRunID: actionRunID,
-			SourceName:  sourceName,
-			Trigger:     req.Trigger,
+			ActionRunID:         actionRunID,
+			SourceName:          sourceName,
+			Trigger:             req.Trigger,
+			RegisteredDateStart: req.RegisteredDateStart,
+			RegisteredDateEnd:   req.RegisteredDateEnd,
+			MaxStatements:       req.MaxStatements,
+			RetryFailed:         req.RetryFailed,
 		}, nil
 	case companysourceworkflows.ActionImportClickHouse:
 		if req.BatchSize <= 0 {
