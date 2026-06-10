@@ -62,6 +62,7 @@ type Querier interface {
 	ListExchangeRateSyncRuns(ctx context.Context, limit int32) ([]VExchangeRateSyncRun, error)
 	ListExchangeRateSyncState(ctx context.Context) ([]VExchangeRateSyncState, error)
 	ListFinlandPRHXBRLStatementArtifactsToDownload(ctx context.Context, arg ListFinlandPRHXBRLStatementArtifactsToDownloadParams) ([]FinancialXbrlFinlandPrhXbrlStatementArtifact, error)
+	ListFinlandPRHXBRLStatementManifestArtifacts(ctx context.Context, arg ListFinlandPRHXBRLStatementManifestArtifactsParams) ([]FinancialXbrlFinlandPrhXbrlStatementArtifact, error)
 	ListLLMProviders(ctx context.Context) ([]ListLLMProvidersRow, error)
 	ListLatestSuccessfulRequiredSourceFileRuns(ctx context.Context, name string) ([]ListLatestSuccessfulRequiredSourceFileRunsRow, error)
 	ListNACEClassificationsForClickHouse(ctx context.Context) ([]ListNACEClassificationsForClickHouseRow, error)

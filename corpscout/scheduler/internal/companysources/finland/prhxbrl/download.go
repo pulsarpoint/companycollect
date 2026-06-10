@@ -122,8 +122,15 @@ func Download(ctx context.Context, opts DownloadOptions) (companysources.Downloa
 		return companysources.DownloadedFile{}, errors.Wrap(err, "complete PRH XBRL discovery window")
 	}
 
-	claimed, err := downloadClaimedStatementArtifacts(ctx, opts, sourceURL, startDate, endDate, maxStatements)
+	result, err := downloadClaimedStatementArtifacts(ctx, opts, sourceURL, startDate, endDate, maxStatements)
 	if err != nil {
+		return companysources.DownloadedFile{}, err
+	}
+	manifestRows, err := listStatementManifestRows(ctx, opts, startDate, endDate)
+	if err != nil {
+		if result.downloadErr != nil {
+			return companysources.DownloadedFile{}, errors.WithSecondaryError(err, result.downloadErr)
+		}
 		return companysources.DownloadedFile{}, err
 	}
 
@@ -131,15 +138,15 @@ func Download(ctx context.Context, opts DownloadOptions) (companysources.Downloa
 	if err != nil {
 		return companysources.DownloadedFile{}, err
 	}
-	written, err := writeStatementsManifest(manifestPath, claimed.rows)
+	written, err := writeStatementsManifest(manifestPath, manifestRows)
 	if err != nil {
-		if claimed.downloadErr != nil {
-			return companysources.DownloadedFile{}, errors.WithSecondaryError(err, claimed.downloadErr)
+		if result.downloadErr != nil {
+			return companysources.DownloadedFile{}, errors.WithSecondaryError(err, result.downloadErr)
 		}
 		return companysources.DownloadedFile{}, err
 	}
-	if claimed.downloadErr != nil {
-		return companysources.DownloadedFile{}, claimed.downloadErr
+	if result.downloadErr != nil {
+		return companysources.DownloadedFile{}, result.downloadErr
 	}
 	return companysources.DownloadedFile{
 		FileKey:            "statements_manifest",
@@ -153,19 +160,18 @@ func Download(ctx context.Context, opts DownloadOptions) (companysources.Downloa
 	}, nil
 }
 
-type claimedStatementArtifacts struct {
-	rows                 []ManifestStatement
+type statementDownloadResult struct {
 	downloadFailureCount int
 	firstDownloadFailure error
 	downloadErr          error
 }
 
-func (claimed *claimedStatementArtifacts) addDownloadFailure(err error) {
-	claimed.downloadFailureCount++
-	if claimed.firstDownloadFailure == nil {
-		claimed.firstDownloadFailure = err
+func (result *statementDownloadResult) addDownloadFailure(err error) {
+	result.downloadFailureCount++
+	if result.firstDownloadFailure == nil {
+		result.firstDownloadFailure = err
 	}
-	claimed.downloadErr = errors.Wrapf(claimed.firstDownloadFailure, "%d PRH XBRL statement XML downloads failed", claimed.downloadFailureCount)
+	result.downloadErr = errors.Wrapf(result.firstDownloadFailure, "%d PRH XBRL statement XML downloads failed", result.downloadFailureCount)
 }
 
 func discoverStatementArtifacts(ctx context.Context, opts DownloadOptions, windowID uuid.UUID, sourceURL string, registeredDateStart string, registeredDateEnd string, maxStatements int32) (int64, int32, int64, int32, error) {
@@ -243,7 +249,7 @@ func discoverStatementArtifacts(ctx context.Context, opts DownloadOptions, windo
 	return totalResults, pagesDiscovered, statementsDiscovered, lastCompletedPage, nil
 }
 
-func downloadClaimedStatementArtifacts(ctx context.Context, opts DownloadOptions, sourceURL string, registeredDateStart pgtype.Date, registeredDateEnd pgtype.Date, maxStatements int32) (claimedStatementArtifacts, error) {
+func downloadClaimedStatementArtifacts(ctx context.Context, opts DownloadOptions, sourceURL string, registeredDateStart pgtype.Date, registeredDateEnd pgtype.Date, maxStatements int32) (statementDownloadResult, error) {
 	artifacts, err := opts.Queries.ListFinlandPRHXBRLStatementArtifactsToDownload(ctx, db.ListFinlandPRHXBRLStatementArtifactsToDownloadParams{
 		SourceID:            opts.SourceID,
 		RegisteredDateStart: registeredDateStart,
@@ -253,12 +259,10 @@ func downloadClaimedStatementArtifacts(ctx context.Context, opts DownloadOptions
 		RowLimit:            maxStatements,
 	})
 	if err != nil {
-		return claimedStatementArtifacts{}, errors.Wrap(err, "list PRH XBRL statement artifacts to download")
+		return statementDownloadResult{}, errors.Wrap(err, "list PRH XBRL statement artifacts to download")
 	}
 
-	claimedArtifacts := claimedStatementArtifacts{
-		rows: make([]ManifestStatement, 0, len(artifacts)),
-	}
+	result := statementDownloadResult{}
 	for _, artifact := range artifacts {
 		claimed, err := opts.Queries.MarkFinlandPRHXBRLStatementArtifactDownloading(ctx, db.MarkFinlandPRHXBRLStatementArtifactDownloadingParams{
 			LatestActionRunID:   pgUUID(opts.ActionRunID),
@@ -272,45 +276,51 @@ func downloadClaimedStatementArtifacts(ctx context.Context, opts DownloadOptions
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
-			return claimedArtifacts, errors.Wrapf(err, "claim PRH XBRL statement artifact id=%s business_id=%s financial_date=%s", artifact.ID, artifact.BusinessID, pgDateString(artifact.FinancialDate))
+			return result, errors.Wrapf(err, "claim PRH XBRL statement artifact id=%s business_id=%s financial_date=%s", artifact.ID, artifact.BusinessID, pgDateString(artifact.FinancialDate))
 		}
 
-		row := manifestRowFromArtifact(claimed)
 		financialDate := pgDateString(claimed.FinancialDate)
 		xml, err := downloadStatementXML(ctx, opts.HTTPClient, sourceURL, claimed.BusinessID, financialDate, opts.RunDir, opts.UserAgentRequired)
 		if err != nil {
 			downloadErr := errors.Wrapf(err, "download PRH XBRL statement XML artifact_id=%s business_id=%s financial_date=%s", claimed.ID, claimed.BusinessID, financialDate)
-			failed, markErr := markClaimedStatementArtifactFailed(ctx, opts, claimed, downloadErr)
+			_, markErr := markClaimedStatementArtifactFailed(ctx, opts, claimed, downloadErr)
 			if markErr != nil {
-				return claimedArtifacts, markErr
+				return result, markErr
 			}
-			row.SourceURL = failed.SourceUrl
-			row.DownloadStatus = failed.DownloadStatus
-			row.ErrorMessage = downloadErr.Error()
-			claimedArtifacts.rows = append(claimedArtifacts.rows, row)
-			claimedArtifacts.addDownloadFailure(downloadErr)
+			result.addDownloadFailure(downloadErr)
 			continue
 		}
 
-		succeeded, err := opts.Queries.MarkFinlandPRHXBRLStatementArtifactSucceeded(ctx, db.MarkFinlandPRHXBRLStatementArtifactSucceededParams{
+		if _, err := opts.Queries.MarkFinlandPRHXBRLStatementArtifactSucceeded(ctx, db.MarkFinlandPRHXBRLStatementArtifactSucceededParams{
 			XmlPath:           xml.Path,
 			XmlSha256:         xml.SHA256,
 			XmlSizeBytes:      xml.SizeBytes,
 			LatestActionRunID: pgUUID(opts.ActionRunID),
 			ID:                claimed.ID,
 			SourceID:          opts.SourceID,
-		})
-		if err != nil {
-			return claimedArtifacts, errors.Wrapf(err, "mark PRH XBRL statement artifact succeeded id=%s business_id=%s financial_date=%s", claimed.ID, claimed.BusinessID, financialDate)
+		}); err != nil {
+			return result, errors.Wrapf(err, "mark PRH XBRL statement artifact succeeded id=%s business_id=%s financial_date=%s", claimed.ID, claimed.BusinessID, financialDate)
 		}
-		row.SourceURL = xml.SourceURL
-		row.DownloadStatus = succeeded.DownloadStatus
-		row.XMLPath = xml.Path
-		row.XMLSHA256 = xml.SHA256
-		row.XMLSizeBytes = xml.SizeBytes
-		claimedArtifacts.rows = append(claimedArtifacts.rows, row)
 	}
-	return claimedArtifacts, nil
+	return result, nil
+}
+
+func listStatementManifestRows(ctx context.Context, opts DownloadOptions, registeredDateStart pgtype.Date, registeredDateEnd pgtype.Date) ([]ManifestStatement, error) {
+	artifacts, err := opts.Queries.ListFinlandPRHXBRLStatementManifestArtifacts(ctx, db.ListFinlandPRHXBRLStatementManifestArtifactsParams{
+		SourceID:            opts.SourceID,
+		RegisteredDateStart: registeredDateStart,
+		RegisteredDateEnd:   registeredDateEnd,
+		LatestActionRunID:   pgUUID(opts.ActionRunID),
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "list PRH XBRL statement manifest artifacts")
+	}
+
+	rows := make([]ManifestStatement, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		rows = append(rows, manifestRowFromArtifact(artifact))
+	}
+	return rows, nil
 }
 
 func markClaimedStatementArtifactFailed(ctx context.Context, opts DownloadOptions, artifact db.FinancialXbrlFinlandPrhXbrlStatementArtifact, failure error) (db.FinancialXbrlFinlandPrhXbrlStatementArtifact, error) {
@@ -364,13 +374,26 @@ func pgDateString(value pgtype.Date) string {
 }
 
 func manifestRowFromArtifact(artifact db.FinancialXbrlFinlandPrhXbrlStatementArtifact) ManifestStatement {
-	return ManifestStatement{
+	row := ManifestStatement{
 		BusinessID:       artifact.BusinessID,
 		FinancialDate:    pgDateString(artifact.FinancialDate),
 		RegistrationDate: pgDateString(artifact.RegistrationDate),
 		SourceURL:        artifact.SourceUrl,
 		DownloadStatus:   artifact.DownloadStatus,
 	}
+	if artifact.XmlPath != nil {
+		row.XMLPath = *artifact.XmlPath
+	}
+	if artifact.XmlSha256 != nil {
+		row.XMLSHA256 = *artifact.XmlSha256
+	}
+	if artifact.XmlSizeBytes != nil {
+		row.XMLSizeBytes = *artifact.XmlSizeBytes
+	}
+	if artifact.LastErrorMessage != nil {
+		row.ErrorMessage = *artifact.LastErrorMessage
+	}
+	return row
 }
 
 func downloadStatementXML(ctx context.Context, client *http.Client, baseURL string, businessID string, financialDate string, runDir string, userAgentRequired bool) (StatementXMLDownload, error) {

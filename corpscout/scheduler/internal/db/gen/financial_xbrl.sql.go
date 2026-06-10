@@ -131,6 +131,76 @@ func (q *Queries) ListFinlandPRHXBRLStatementArtifactsToDownload(ctx context.Con
 	return items, nil
 }
 
+const listFinlandPRHXBRLStatementManifestArtifacts = `-- name: ListFinlandPRHXBRLStatementManifestArtifacts :many
+SELECT statement_artifacts.id, statement_artifacts.source_id, statement_artifacts.business_id, statement_artifacts.financial_date, statement_artifacts.registration_date, statement_artifacts.source_url, statement_artifacts.xml_path, statement_artifacts.xml_sha256, statement_artifacts.xml_size_bytes, statement_artifacts.download_status, statement_artifacts.attempts, statement_artifacts.last_attempt_at, statement_artifacts.downloaded_at, statement_artifacts.last_error_message, statement_artifacts.first_discovered_run_id, statement_artifacts.latest_action_run_id, statement_artifacts.created_at, statement_artifacts.updated_at
+FROM financial_xbrl.finland_prh_xbrl_statement_artifacts AS statement_artifacts
+LEFT JOIN data_source_action_runs AS action_run
+  ON action_run.id = $1
+WHERE statement_artifacts.source_id = $2
+  AND statement_artifacts.registration_date >= $3
+  AND statement_artifacts.registration_date <= $4
+  AND (
+    statement_artifacts.download_status = 'succeeded'
+    OR (
+      statement_artifacts.download_status = 'failed'
+      AND statement_artifacts.latest_action_run_id = $1
+      AND statement_artifacts.last_attempt_at >= action_run.started_at
+    )
+  )
+ORDER BY statement_artifacts.registration_date NULLS LAST, statement_artifacts.business_id, statement_artifacts.financial_date
+`
+
+type ListFinlandPRHXBRLStatementManifestArtifactsParams struct {
+	LatestActionRunID   pgtype.UUID `json:"latest_action_run_id"`
+	SourceID            uuid.UUID   `json:"source_id"`
+	RegisteredDateStart pgtype.Date `json:"registered_date_start"`
+	RegisteredDateEnd   pgtype.Date `json:"registered_date_end"`
+}
+
+func (q *Queries) ListFinlandPRHXBRLStatementManifestArtifacts(ctx context.Context, arg ListFinlandPRHXBRLStatementManifestArtifactsParams) ([]FinancialXbrlFinlandPrhXbrlStatementArtifact, error) {
+	rows, err := q.db.Query(ctx, listFinlandPRHXBRLStatementManifestArtifacts,
+		arg.LatestActionRunID,
+		arg.SourceID,
+		arg.RegisteredDateStart,
+		arg.RegisteredDateEnd,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FinancialXbrlFinlandPrhXbrlStatementArtifact
+	for rows.Next() {
+		var i FinancialXbrlFinlandPrhXbrlStatementArtifact
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.BusinessID,
+			&i.FinancialDate,
+			&i.RegistrationDate,
+			&i.SourceUrl,
+			&i.XmlPath,
+			&i.XmlSha256,
+			&i.XmlSizeBytes,
+			&i.DownloadStatus,
+			&i.Attempts,
+			&i.LastAttemptAt,
+			&i.DownloadedAt,
+			&i.LastErrorMessage,
+			&i.FirstDiscoveredRunID,
+			&i.LatestActionRunID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markFinlandPRHXBRLStatementArtifactDownloading = `-- name: MarkFinlandPRHXBRLStatementArtifactDownloading :one
 UPDATE financial_xbrl.finland_prh_xbrl_statement_artifacts
 SET
@@ -203,6 +273,8 @@ SET
   updated_at = now()
 WHERE id = $3
   AND source_id = $4
+  AND latest_action_run_id = $1
+  AND download_status = 'downloading'
 RETURNING id, source_id, business_id, financial_date, registration_date, source_url, xml_path, xml_sha256, xml_size_bytes, download_status, attempts, last_attempt_at, downloaded_at, last_error_message, first_discovered_run_id, latest_action_run_id, created_at, updated_at
 `
 
@@ -257,6 +329,8 @@ SET
   updated_at = now()
 WHERE id = $5
   AND source_id = $6
+  AND latest_action_run_id = $4
+  AND download_status = 'downloading'
 RETURNING id, source_id, business_id, financial_date, registration_date, source_url, xml_path, xml_sha256, xml_size_bytes, download_status, attempts, last_attempt_at, downloaded_at, last_error_message, first_discovered_run_id, latest_action_run_id, created_at, updated_at
 `
 

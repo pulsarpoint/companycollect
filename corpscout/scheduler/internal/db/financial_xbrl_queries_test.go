@@ -19,6 +19,7 @@ func TestFinancialXBRLQueriesShape(t *testing.T) {
 		"-- name: CompleteFinlandPRHXBRLDiscoveryWindow :one",
 		"-- name: UpsertFinlandPRHXBRLStatementArtifact :one",
 		"-- name: ListFinlandPRHXBRLStatementArtifactsToDownload :many",
+		"-- name: ListFinlandPRHXBRLStatementManifestArtifacts :many",
 		"-- name: MarkFinlandPRHXBRLStatementArtifactDownloading :one",
 		"-- name: MarkFinlandPRHXBRLStatementArtifactSucceeded :one",
 		"-- name: MarkFinlandPRHXBRLStatementArtifactFailed :one",
@@ -56,6 +57,20 @@ func TestFinancialXBRLQueriesShape(t *testing.T) {
 		require.Contains(t, listToDownload, needle)
 	}
 
+	listManifestArtifacts := querySection(t, sql, "ListFinlandPRHXBRLStatementManifestArtifacts")
+	for _, needle := range []string{
+		"LEFT JOIN data_source_action_runs AS action_run",
+		"registration_date >= sqlc.arg(registered_date_start)",
+		"registration_date <= sqlc.arg(registered_date_end)",
+		"download_status = 'succeeded'",
+		"statement_artifacts.download_status = 'failed'",
+		"statement_artifacts.latest_action_run_id = sqlc.narg(latest_action_run_id)",
+		"statement_artifacts.last_attempt_at >= action_run.started_at",
+	} {
+		require.Contains(t, listManifestArtifacts, needle)
+	}
+	require.NotContains(t, listManifestArtifacts, "LIMIT sqlc.arg(row_limit)")
+
 	markDownloading := querySection(t, sql, "MarkFinlandPRHXBRLStatementArtifactDownloading")
 	for _, needle := range []string{
 		"-- name: MarkFinlandPRHXBRLStatementArtifactDownloading :one",
@@ -75,8 +90,22 @@ func TestFinancialXBRLQueriesShape(t *testing.T) {
 		"xml_path = sqlc.arg(xml_path)::text",
 		"xml_sha256 = sqlc.arg(xml_sha256)::text",
 		"xml_size_bytes = sqlc.arg(xml_size_bytes)::bigint",
+		"WHERE id = sqlc.arg(id)",
+		"AND source_id = sqlc.arg(source_id)",
+		"AND latest_action_run_id = sqlc.narg(latest_action_run_id)",
+		"AND download_status = 'downloading'",
 	} {
 		require.Contains(t, markSucceeded, needle)
+	}
+
+	markFailed := querySection(t, sql, "MarkFinlandPRHXBRLStatementArtifactFailed")
+	for _, needle := range []string{
+		"WHERE id = sqlc.arg(id)",
+		"AND source_id = sqlc.arg(source_id)",
+		"AND latest_action_run_id = sqlc.narg(latest_action_run_id)",
+		"AND download_status = 'downloading'",
+	} {
+		require.Contains(t, markFailed, needle)
 	}
 
 	generatedBytes, err := os.ReadFile("gen/financial_xbrl.sql.go")
@@ -89,13 +118,21 @@ func TestFinancialXBRLQueriesShape(t *testing.T) {
 	require.Contains(t, downloadingParams, "RegisteredDateEnd   pgtype.Date")
 	require.Contains(t, downloadingParams, "RetryFailed         bool")
 
+	manifestParams := structSection(t, generated, "ListFinlandPRHXBRLStatementManifestArtifactsParams")
+	require.Contains(t, manifestParams, "SourceID            uuid.UUID")
+	require.Contains(t, manifestParams, "RegisteredDateStart pgtype.Date")
+	require.Contains(t, manifestParams, "RegisteredDateEnd   pgtype.Date")
+	require.Contains(t, manifestParams, "LatestActionRunID   pgtype.UUID")
+
 	failedParams := structSection(t, generated, "MarkFinlandPRHXBRLStatementArtifactFailedParams")
 	require.Contains(t, failedParams, "SourceID          uuid.UUID")
+	require.Contains(t, failedParams, "LatestActionRunID pgtype.UUID")
 
 	succeededParams := structSection(t, generated, "MarkFinlandPRHXBRLStatementArtifactSucceededParams")
 	require.Contains(t, succeededParams, "XmlPath           string")
 	require.Contains(t, succeededParams, "XmlSha256         string")
 	require.Contains(t, succeededParams, "XmlSizeBytes      int64")
+	require.Contains(t, succeededParams, "LatestActionRunID pgtype.UUID")
 	require.NotContains(t, succeededParams, "XmlPath           *string")
 	require.NotContains(t, succeededParams, "XmlSha256         *string")
 	require.NotContains(t, succeededParams, "XmlSizeBytes      *int64")

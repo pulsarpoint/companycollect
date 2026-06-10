@@ -88,6 +88,24 @@ WHERE source_id = sqlc.arg(source_id)
 ORDER BY registration_date NULLS LAST, business_id, financial_date
 LIMIT sqlc.arg(row_limit);
 
+-- name: ListFinlandPRHXBRLStatementManifestArtifacts :many
+SELECT statement_artifacts.*
+FROM financial_xbrl.finland_prh_xbrl_statement_artifacts AS statement_artifacts
+LEFT JOIN data_source_action_runs AS action_run
+  ON action_run.id = sqlc.narg(latest_action_run_id)
+WHERE statement_artifacts.source_id = sqlc.arg(source_id)
+  AND statement_artifacts.registration_date >= sqlc.arg(registered_date_start)
+  AND statement_artifacts.registration_date <= sqlc.arg(registered_date_end)
+  AND (
+    statement_artifacts.download_status = 'succeeded'
+    OR (
+      statement_artifacts.download_status = 'failed'
+      AND statement_artifacts.latest_action_run_id = sqlc.narg(latest_action_run_id)
+      AND statement_artifacts.last_attempt_at >= action_run.started_at
+    )
+  )
+ORDER BY statement_artifacts.registration_date NULLS LAST, statement_artifacts.business_id, statement_artifacts.financial_date;
+
 -- name: MarkFinlandPRHXBRLStatementArtifactDownloading :one
 UPDATE financial_xbrl.finland_prh_xbrl_statement_artifacts
 SET
@@ -121,6 +139,8 @@ SET
   updated_at = now()
 WHERE id = sqlc.arg(id)
   AND source_id = sqlc.arg(source_id)
+  AND latest_action_run_id = sqlc.narg(latest_action_run_id)
+  AND download_status = 'downloading'
 RETURNING *;
 
 -- name: MarkFinlandPRHXBRLStatementArtifactFailed :one
@@ -132,4 +152,6 @@ SET
   updated_at = now()
 WHERE id = sqlc.arg(id)
   AND source_id = sqlc.arg(source_id)
+  AND latest_action_run_id = sqlc.narg(latest_action_run_id)
+  AND download_status = 'downloading'
 RETURNING *;
