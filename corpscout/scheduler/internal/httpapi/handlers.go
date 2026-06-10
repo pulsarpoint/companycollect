@@ -97,6 +97,7 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 		r.Get("/sources", h.handleListSources)
 		r.Get("/sources/{name}", h.handleGetSource)
 		r.Patch("/sources/{name}", h.handlePatchSource)
+		r.Get("/sources/{name}/explorer/filter-options", h.handleListSourceExplorerFilterOptions)
 		r.Get("/sources/{name}/explorer/companies", h.handleListSourceExplorerCompanies)
 		r.Get("/sources/{name}/actions", h.handleListSourceActions)
 		r.Get("/sources/{name}/action-runs", h.handleListSourceActionRuns)

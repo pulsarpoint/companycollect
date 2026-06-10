@@ -50,3 +50,46 @@ func TestBuildSourceExplorerCompanyListQueryUsesSearchAndActiveFilters(t *testin
 		t.Fatalf("buildSourceExplorerCompanyListQuery() args length = %d, want 7", len(args))
 	}
 }
+
+func TestBuildSourceExplorerCompanyListQueryUsesCompanyFormFilters(t *testing.T) {
+	query, args, err := buildSourceExplorerCompanyListQuery("`corpscout_sources`.`fi_prhytj_company_explorer_cache`", sourceExplorerCompanyQuery{
+		Limit:            50,
+		CompanyFormCodes: []string{"16", "26"},
+		Sort:             "name",
+		Direction:        "asc",
+	})
+	if err != nil {
+		t.Fatalf("buildSourceExplorerCompanyListQuery() error = %v", err)
+	}
+	if !strings.Contains(query, "ifNull(company_form_code, '') IN (?, ?)") {
+		t.Fatalf("buildSourceExplorerCompanyListQuery() query = %q, want form predicate", query)
+	}
+	if len(args) != 4 {
+		t.Fatalf("buildSourceExplorerCompanyListQuery() args length = %d, want 4", len(args))
+	}
+	if args[0] != "16" || args[1] != "26" {
+		t.Fatalf("buildSourceExplorerCompanyListQuery() args = %#v, want form codes first", args)
+	}
+}
+
+func TestParseSourceExplorerStringListSplitsAndDeduplicates(t *testing.T) {
+	got := parseSourceExplorerStringList([]string{"16, 26", "16", "", "  35  "}, 10)
+	want := []string{"16", "26", "35"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("parseSourceExplorerStringList() = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildSourceExplorerFilterOptionsQueryUsesCacheTable(t *testing.T) {
+	query := buildSourceExplorerFilterOptionsQuery("`corpscout_sources`.`fi_prhytj_company_explorer_cache`")
+	for _, needle := range []string{
+		"company_form_code",
+		"company_form_description_en",
+		"GROUP BY form_code",
+		"FROM `corpscout_sources`.`fi_prhytj_company_explorer_cache`",
+	} {
+		if !strings.Contains(query, needle) {
+			t.Fatalf("buildSourceExplorerFilterOptionsQuery() = %q, missing %q", query, needle)
+		}
+	}
+}

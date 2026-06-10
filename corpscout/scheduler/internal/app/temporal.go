@@ -78,6 +78,10 @@ func newCompanySourcesTemporalWorker(temporalClient client.Client, resources *te
 		companysourceworkflows.SyncSourceToClickHouse,
 		workflow.RegisterOptions{Name: companysourceworkflows.SyncSourceToClickHouseWorkflowName},
 	)
+	worker.RegisterWorkflowWithOptions(
+		companysourceworkflows.RefreshSourceExplorerCache,
+		workflow.RegisterOptions{Name: companysourceworkflows.RefreshSourceExplorerCacheWorkflowName},
+	)
 	worker.RegisterActivityWithOptions(
 		resources.companySourceActions.PrepareSourceDownloadActivity,
 		activity.RegisterOptions{Name: companysourceworkflows.PrepareSourceDownloadActivityName},
@@ -93,6 +97,10 @@ func newCompanySourcesTemporalWorker(temporalClient client.Client, resources *te
 	worker.RegisterActivityWithOptions(
 		resources.companySourceActions.ImportSourceToClickHouseActivity,
 		activity.RegisterOptions{Name: companysourceworkflows.ImportSourceToClickHouseActivityName},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.companySourceActions.RefreshSourceExplorerCacheActivity,
+		activity.RegisterOptions{Name: companysourceworkflows.RefreshSourceExplorerCacheActivityName},
 	)
 	return worker
 }

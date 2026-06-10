@@ -45,6 +45,7 @@ import type {
   SourceFileRunListResponse,
   SourceRunTemporalStatus,
   SourceExplorerCompanyListResponse,
+  SourceExplorerFilterOptionsResponse,
   LatestSuccessfulSourceDownloadResponse,
 } from "~/types/api";
 
@@ -491,7 +492,7 @@ export const api = {
 
   triggerSourceAction: (
     name: string,
-    action: "pull_source" | "import_clickhouse",
+    action: "pull_source" | "import_clickhouse" | "refresh_explorer_cache",
     body: {
       trigger?: "manual";
       download_action_run_id?: string;
@@ -543,6 +544,7 @@ export const api = {
       q?: string;
       active?: "true" | "false";
       lifecycle_status?: string;
+      form?: string[];
       sort?: string;
       dir?: "asc" | "desc";
     } = {},
@@ -553,6 +555,9 @@ export const api = {
     if (params.q) qs.set("q", params.q);
     if (params.active) qs.set("active", params.active);
     if (params.lifecycle_status) qs.set("lifecycle_status", params.lifecycle_status);
+    for (const form of params.form ?? []) {
+      if (form) qs.append("form", form);
+    }
     if (params.sort) qs.set("sort", params.sort);
     if (params.dir) qs.set("dir", params.dir);
     const query = qs.toString();
@@ -560,6 +565,11 @@ export const api = {
       `/sources/${name}/explorer/companies${query ? `?${query}` : ""}`,
     );
   },
+
+  getSourceExplorerFilterOptions: (name: string) =>
+    get<SourceExplorerFilterOptionsResponse>(
+      `/sources/${name}/explorer/filter-options`,
+    ),
 
   getBrregTaskState: () =>
     get<BrregTaskStateResponse>("/sources/brreg/task-state"),

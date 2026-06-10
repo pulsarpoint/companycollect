@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
-import { Search } from "lucide-react";
+import { Filter, Search } from "lucide-react";
 import { type ColumnDef, type SortingState } from "@tanstack/react-table";
 
 import { api, errorMessage } from "~/lib/api";
 import { formatDate } from "~/lib/utils";
-import type { DataSource, SourceExplorerCompany } from "~/types/api";
+import type {
+  DataSource,
+  SourceExplorerCompany,
+  SourceExplorerFormFilterOption,
+} from "~/types/api";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
-import { Checkbox } from "~/components/ui/checkbox";
 import { DataTable } from "~/components/ui/data-table";
 import { Input } from "~/components/ui/input";
+import { SourceExplorerFiltersSheet } from "~/components/app/source-detail/SourceExplorerFiltersSheet";
 
 const PAGE_SIZE = 50;
 
@@ -35,19 +39,49 @@ function countSummary(company: SourceExplorerCompany): string {
   ].join(" / ");
 }
 
+function paramList(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of values) {
+    for (const value of raw.split(",")) {
+      const trimmed = value.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      result.push(trimmed);
+    }
+  }
+  return result;
+}
+
+function setRepeatedParam(params: URLSearchParams, key: string, values: string[]) {
+  params.delete(key);
+  for (const value of values) {
+    if (value) params.append(key, value);
+  }
+}
+
 export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [companies, setCompanies] = useState<SourceExplorerCompany[]>([]);
+  const [formOptions, setFormOptions] = useState<SourceExplorerFormFilterOption[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingFilters, setLoadingFilters] = useState(true);
   const [error, setError] = useState<string>();
+  const [filterError, setFilterError] = useState<string>();
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const page = Math.max(1, Number(searchParams.get("page") ?? 1));
   const q = searchParams.get("q") ?? "";
   const activeOnly = searchParams.get("active") === "true";
+  const formCodes = useMemo(
+    () => paramList(searchParams.getAll("form")),
+    [searchParams],
+  );
   const sortKey = searchParams.get("sort") ?? "name";
   const sortDir = (searchParams.get("dir") ?? "asc") as "asc" | "desc";
   const [searchInput, setSearchInput] = useState(q);
+  const activeFilterCount = (activeOnly ? 1 : 0) + formCodes.length;
 
   const sorting: SortingState = useMemo(
     () => [{ id: sortKey, desc: sortDir === "desc" }],
@@ -175,6 +209,7 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
         limit: PAGE_SIZE,
         q: q || undefined,
         active: activeOnly ? "true" : undefined,
+        form: formCodes,
         sort: sortKey,
         dir: sortDir,
       });
@@ -187,11 +222,34 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
     } finally {
       setLoading(false);
     }
-  }, [activeOnly, page, q, sortDir, sortKey, source.name]);
+  }, [activeOnly, formCodes, page, q, sortDir, sortKey, source.name]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    let ignore = false;
+    setLoadingFilters(true);
+    setFilterError(undefined);
+    api
+      .getSourceExplorerFilterOptions(source.name)
+      .then((res) => {
+        if (!ignore) setFormOptions(Array.isArray(res.forms) ? res.forms : []);
+      })
+      .catch((err) => {
+        if (!ignore) {
+          setFormOptions([]);
+          setFilterError(errorMessage(err, "Failed to load filter options."));
+        }
+      })
+      .finally(() => {
+        if (!ignore) setLoadingFilters(false);
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [source.name]);
 
   useEffect(() => {
     setSearchInput(q);
@@ -216,6 +274,16 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
     const next = new URLSearchParams(searchParams);
     next.delete("q");
     next.delete("active");
+    next.delete("form");
+    next.delete("page");
+    setSearchParams(next, { replace: true });
+  }
+
+  function applyFilters(value: { activeOnly: boolean; formCodes: string[] }) {
+    const next = new URLSearchParams(searchParams);
+    if (value.activeOnly) next.set("active", "true");
+    else next.delete("active");
+    setRepeatedParam(next, "form", value.formCodes);
     next.delete("page");
     setSearchParams(next, { replace: true });
   }
@@ -240,16 +308,18 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
           <Search data-icon="inline-start" />
           Search
         </Button>
-        <label className="flex h-8 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm">
-          <Checkbox
-            checked={activeOnly}
-            onCheckedChange={(checked) =>
-              setParam({ active: checked === true ? "true" : "" })
-            }
-          />
-          Active only
-        </label>
-        {(q || activeOnly) ? (
+        <Button
+          size="sm"
+          variant={activeFilterCount > 0 ? "secondary" : "outline"}
+          onClick={() => setFiltersOpen(true)}
+        >
+          <Filter data-icon="inline-start" />
+          Filters
+          {activeFilterCount > 0 ? (
+            <Badge variant="outline">{activeFilterCount}</Badge>
+          ) : null}
+        </Button>
+        {(q || activeOnly || formCodes.length > 0) ? (
           <Button size="sm" variant="ghost" onClick={clearFilters}>
             Clear
           </Button>
@@ -277,6 +347,17 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
         }}
         onPageChange={(nextPage) => setParam({ page: String(nextPage) })}
         loading={loading}
+      />
+
+      <SourceExplorerFiltersSheet
+        open={filtersOpen}
+        onOpenChange={setFiltersOpen}
+        forms={formOptions}
+        value={{ activeOnly, formCodes }}
+        loading={loadingFilters}
+        error={filterError}
+        onApply={applyFilters}
+        onClear={clearFilters}
       />
     </div>
   );

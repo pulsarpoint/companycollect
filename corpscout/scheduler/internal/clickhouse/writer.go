@@ -70,6 +70,24 @@ func (w *Writer) Close() error {
 	return w.conn.Close()
 }
 
+func (w *Writer) Database() string {
+	if w == nil {
+		return ""
+	}
+	return w.database
+}
+
+func (w *Writer) Exec(ctx context.Context, query string, args ...any) error {
+	if err := w.conn.Exec(ctx, query, args...); err != nil {
+		return errors.Wrap(err, "execute clickhouse query")
+	}
+	return nil
+}
+
+func (w *Writer) QueryRow(ctx context.Context, query string, args ...any) driver.Row {
+	return w.conn.QueryRow(ctx, query, args...)
+}
+
 func (w *Writer) Insert(ctx context.Context, insert Insert) error {
 	return w.InsertInto(ctx, w.database, insert)
 }

@@ -251,7 +251,7 @@ export interface SourceAction {
   id: string;
   source_id: string;
   source_name: string;
-  action: "pull_source" | "import_clickhouse";
+  action: "pull_source" | "import_clickhouse" | "refresh_explorer_cache";
   display_name: string;
   temporal_workflow_type: string;
   temporal_task_queue: string | null;
@@ -266,7 +266,7 @@ export interface SourceActionRun {
   source_id: string;
   source_name: string;
   action_id: string;
-  action: "pull_source" | "import_clickhouse";
+  action: "pull_source" | "import_clickhouse" | "refresh_explorer_cache";
   status: SourceRunStatus;
   temporal_workflow_id: string | null;
   temporal_run_id: string | null;
@@ -383,6 +383,16 @@ export interface SourceExplorerCompany {
 export interface SourceExplorerCompanyListResponse {
   items: SourceExplorerCompany[];
   total: number;
+}
+
+export interface SourceExplorerFormFilterOption {
+  code: string;
+  description: string;
+  count: number;
+}
+
+export interface SourceExplorerFilterOptionsResponse {
+  forms: SourceExplorerFormFilterOption[];
 }
 
 export interface BrregCompanyTranslationRequest {

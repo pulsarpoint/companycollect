@@ -127,6 +127,40 @@ func TestSourceWorkflowIDHelpersUseRunIDs(t *testing.T) {
 	require.Equal(t, "company-source-file-run-file-run-1", FileRunWorkflowID("file-run-1"))
 }
 
+func TestRefreshSourceExplorerCacheRunsActivity(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.RegisterWorkflowWithOptions(RefreshSourceExplorerCache, workflow.RegisterOptions{Name: RefreshSourceExplorerCacheWorkflowName})
+	env.RegisterActivityWithOptions(func(input RefreshSourceExplorerCacheInput) (RefreshSourceExplorerCacheResult, error) {
+		require.Equal(t, RefreshSourceExplorerCacheInput{
+			ActionRunID: "action-run-1",
+			SourceName:  "finland_prhytj",
+			Trigger:     "manual",
+		}, input)
+		return RefreshSourceExplorerCacheResult{
+			ActionRunID: "action-run-1",
+			SourceName:  "finland_prhytj",
+			CacheTable:  "corpscout_sources.fi_prhytj_company_explorer_cache",
+			Rows:        2,
+			RefreshedAt: "2026-06-10T10:00:00Z",
+		}, nil
+	}, activity.RegisterOptions{Name: RefreshSourceExplorerCacheActivityName})
+
+	env.ExecuteWorkflow(RefreshSourceExplorerCacheWorkflowName, RefreshSourceExplorerCacheInput{
+		ActionRunID: "action-run-1",
+		SourceName:  "finland_prhytj",
+		Trigger:     "manual",
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	var result RefreshSourceExplorerCacheResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	require.Equal(t, uint64(2), result.Rows)
+	require.Equal(t, "corpscout_sources.fi_prhytj_company_explorer_cache", result.CacheTable)
+}
+
 func TestDownloadSourceRejectsPreparedActionRunMismatch(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()

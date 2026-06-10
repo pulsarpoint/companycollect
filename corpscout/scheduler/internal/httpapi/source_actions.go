@@ -308,6 +308,8 @@ func sourceActionWorkflowName(action string, configuredWorkflow string) (string,
 		return nonEmptyString(configuredWorkflow, companysourceworkflows.DownloadSourceWorkflowName), nil
 	case companysourceworkflows.ActionImportClickHouse:
 		return nonEmptyString(configuredWorkflow, companysourceworkflows.ImportSourceToClickHouseWorkflowName), nil
+	case companysourceworkflows.ActionRefreshExplorerCache:
+		return nonEmptyString(configuredWorkflow, companysourceworkflows.RefreshSourceExplorerCacheWorkflowName), nil
 	default:
 		return "", errors.New("unsupported source action")
 	}
@@ -332,6 +334,12 @@ func sourceActionWorkflowInput(action string, sourceName string, actionRunID str
 			DownloadActionRunID: req.DownloadActionRunID,
 			BatchSize:           req.BatchSize,
 			Limit:               req.Limit,
+		}, nil
+	case companysourceworkflows.ActionRefreshExplorerCache:
+		return companysourceworkflows.RefreshSourceExplorerCacheInput{
+			ActionRunID: actionRunID,
+			SourceName:  sourceName,
+			Trigger:     req.Trigger,
 		}, nil
 	default:
 		return nil, errors.New("unsupported source action")

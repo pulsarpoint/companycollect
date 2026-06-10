@@ -16,17 +16,20 @@ import (
 	"go.temporal.io/sdk/activity"
 
 	sourcecore "github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/finland/prhytj"
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
 	sourceworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/companysources"
 )
 
 type SyncSourceDownloadInput = sourceworkflow.SyncSourceDownloadInput
 type ImportSourceToClickHouseInput = sourceworkflow.ImportSourceToClickHouseInput
+type RefreshSourceExplorerCacheInput = sourceworkflow.RefreshSourceExplorerCacheInput
 type DownloadSourceFileInput = sourceworkflow.DownloadSourceFileInput
 type FinishSourceDownloadInput = sourceworkflow.FinishSourceDownloadInput
 type PrepareSourceDownloadResult = sourceworkflow.PrepareSourceDownloadResult
 type DownloadSourceFileResult = sourceworkflow.DownloadSourceFileResult
 type ImportSourceToClickHouseResult = sourceworkflow.ImportSourceToClickHouseResult
+type RefreshSourceExplorerCacheResult = sourceworkflow.RefreshSourceExplorerCacheResult
 
 type Actions struct {
 	pool                *pgxpool.Pool
@@ -322,6 +325,80 @@ func (a *Actions) ImportSourceToClickHouseActivity(ctx context.Context, input Im
 		return result, errors.Wrap(err, "finish import clickhouse action run")
 	}
 	return result, nil
+}
+
+func (a *Actions) RefreshSourceExplorerCacheActivity(ctx context.Context, input RefreshSourceExplorerCacheInput) (RefreshSourceExplorerCacheResult, error) {
+	if a == nil || a.pool == nil {
+		return RefreshSourceExplorerCacheResult{}, errors.New("company source database is not available")
+	}
+	actionRunID, err := uuid.Parse(input.ActionRunID)
+	if err != nil {
+		return RefreshSourceExplorerCacheResult{}, errors.Wrap(err, "parse action run id")
+	}
+
+	queries := db.New(a.pool)
+	workflowID, runID := workflowExecutionFromContext(ctx)
+
+	actionRun, err := queries.GetSourceActionRun(ctx, actionRunID)
+	if err != nil {
+		return RefreshSourceExplorerCacheResult{}, errors.Wrap(err, "load explorer cache action run")
+	}
+	if actionRun.Action != sourceworkflow.ActionRefreshExplorerCache {
+		return RefreshSourceExplorerCacheResult{}, errors.Errorf("action run %s has action %q", actionRun.ID, actionRun.Action)
+	}
+	action, err := queries.GetSourceActionByName(ctx, db.GetSourceActionByNameParams{
+		Name:   input.SourceName,
+		Action: sourceworkflow.ActionRefreshExplorerCache,
+	})
+	if err != nil {
+		return RefreshSourceExplorerCacheResult{}, errors.Wrap(err, "load explorer cache action")
+	}
+	if actionRun.SourceID != action.SourceID || actionRun.ActionID != action.ID {
+		return RefreshSourceExplorerCacheResult{}, errors.Errorf("action run %s does not belong to %s explorer cache action", actionRun.ID, input.SourceName)
+	}
+	if err := validateStoredWorkflowID(actionRun.TemporalWorkflowID, workflowID, "source action run", actionRun.ID); err != nil {
+		return RefreshSourceExplorerCacheResult{}, err
+	}
+	if runID != "" {
+		if err := queries.UpdateSourceActionRunTemporalRunID(ctx, db.UpdateSourceActionRunTemporalRunIDParams{
+			TemporalRunID: optionalStringPointer(runID),
+			ID:            actionRunID,
+		}); err != nil {
+			return RefreshSourceExplorerCacheResult{}, errors.Wrap(err, "update explorer cache action temporal run id")
+		}
+	}
+
+	result := RefreshSourceExplorerCacheResult{
+		ActionRunID: actionRun.ID.String(),
+		SourceName:  input.SourceName,
+	}
+	refreshed, err := a.refreshSourceExplorerCache(ctx, input.SourceName)
+	if err != nil {
+		finishErr := a.finishActionRunFailed(actionRun.ID, err)
+		return result, combineWithFinishError(errors.Wrap(err, "refresh source explorer cache"), finishErr)
+	}
+	result.CacheTable = refreshed.CacheTable
+	result.Rows = refreshed.Rows
+	result.RefreshedAt = refreshed.RefreshedAt.Format(time.RFC3339Nano)
+
+	if _, err := queries.FinishSourceActionRun(ctx, db.FinishSourceActionRunParams{
+		Status:       sourceworkflow.StatusSucceeded,
+		Result:       marshalActionResult(result),
+		ErrorMessage: "",
+		ID:           actionRun.ID,
+	}); err != nil {
+		return result, errors.Wrap(err, "finish explorer cache action run")
+	}
+	return result, nil
+}
+
+func (a *Actions) refreshSourceExplorerCache(ctx context.Context, sourceName string) (prhytj.CompanyExplorerCacheRefreshResult, error) {
+	switch sourceName {
+	case "finland_prhytj":
+		return prhytj.RefreshCompanyExplorerCache(ctx, a.clickHouseNativeURL)
+	default:
+		return prhytj.CompanyExplorerCacheRefreshResult{}, errors.Errorf("source explorer cache refresh is not implemented for %s", sourceName)
+	}
 }
 
 func (a *Actions) selectedImportFiles(ctx context.Context, queries *db.Queries, input ImportSourceToClickHouseInput, sourceID uuid.UUID) ([]sourcecore.SelectedSourceFile, error) {

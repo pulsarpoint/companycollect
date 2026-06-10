@@ -30,7 +30,7 @@ interface ActionsTabProps {
   source: DataSource;
 }
 
-type TriggerKey = "pull_source" | "import_clickhouse" | "sync";
+type TriggerKey = "pull_source" | "import_clickhouse" | "refresh_explorer_cache" | "sync";
 
 async function loadSourceActionData(sourceName: string, selectedFileKey?: string) {
   const [loadedActions, loadedRuns, loadedFiles] = await Promise.all([
@@ -78,6 +78,8 @@ function actionLabel(action: SourceAction["action"]): string {
       return "Download";
     case "import_clickhouse":
       return "Import";
+    case "refresh_explorer_cache":
+      return "Explorer cache";
   }
 }
 
@@ -97,6 +99,9 @@ function resultValue(run: SourceActionRun): string {
       return `${run.result.files.length.toLocaleString()} files`;
     }
     return String(run.result.records_written ?? "-");
+  }
+  if (run.action === "refresh_explorer_cache") {
+    return `${Number(run.result.rows ?? 0).toLocaleString()} rows`;
   }
   return String(run.result.imported_rows ?? "-");
 }
@@ -193,6 +198,8 @@ export function ActionsTab({ source }: ActionsTabProps) {
   );
   const downloadEnabled = actionsByKey.get("pull_source")?.enabled ?? false;
   const importEnabled = actionsByKey.get("import_clickhouse")?.enabled ?? false;
+  const explorerRefreshEnabled =
+    actionsByKey.get("refresh_explorer_cache")?.enabled ?? false;
   const busy = Boolean(triggering || triggeringFileKey || importingFileKey);
 
   async function runAndRefresh(key: TriggerKey, runner: () => Promise<unknown>) {
@@ -235,6 +242,14 @@ export function ActionsTab({ source }: ActionsTabProps) {
       api.triggerSourceSyncClickHouse(source.name, {
         trigger: "manual",
         batch_size: 1000,
+      }),
+    );
+  }
+
+  function triggerExplorerRefresh() {
+    void runAndRefresh("refresh_explorer_cache", () =>
+      api.triggerSourceAction(source.name, "refresh_explorer_cache", {
+        trigger: "manual",
       }),
     );
   }
@@ -367,6 +382,17 @@ export function ActionsTab({ source }: ActionsTabProps) {
           <RefreshCw className="size-4" />
           Download and import
         </Button>
+        {actionsByKey.has("refresh_explorer_cache") ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={triggerExplorerRefresh}
+            disabled={busy || loading || !explorerRefreshEnabled}
+          >
+            <RefreshCw className="size-4" />
+            Refresh explorer
+          </Button>
+        ) : null}
         <Button
           size="sm"
           variant="ghost"

@@ -11,20 +11,23 @@ import (
 const (
 	SourceTaskQueue = "corpscout-company-sources"
 
-	DownloadSourceWorkflowName           = "CompanySourceDownloadWorkflow"
-	DownloadSourceFileWorkflowName       = "CompanySourceDownloadFileWorkflow"
-	ImportSourceToClickHouseWorkflowName = "CompanySourceClickHouseImportWorkflow"
-	SyncSourceToClickHouseWorkflowName   = "CompanySourceSyncClickHouseWorkflow"
+	DownloadSourceWorkflowName             = "CompanySourceDownloadWorkflow"
+	DownloadSourceFileWorkflowName         = "CompanySourceDownloadFileWorkflow"
+	ImportSourceToClickHouseWorkflowName   = "CompanySourceClickHouseImportWorkflow"
+	SyncSourceToClickHouseWorkflowName     = "CompanySourceSyncClickHouseWorkflow"
+	RefreshSourceExplorerCacheWorkflowName = "CompanySourceExplorerCacheRefreshWorkflow"
 
-	PrepareSourceDownloadActivityName    = "PrepareSourceDownloadActivity"
-	FinishSourceDownloadActivityName     = "FinishSourceDownloadActivity"
-	DownloadSourceFileActivityName       = "DownloadSourceFileActivity"
-	ImportSourceToClickHouseActivityName = "ImportSourceToClickHouseActivity"
+	PrepareSourceDownloadActivityName      = "PrepareSourceDownloadActivity"
+	FinishSourceDownloadActivityName       = "FinishSourceDownloadActivity"
+	DownloadSourceFileActivityName         = "DownloadSourceFileActivity"
+	ImportSourceToClickHouseActivityName   = "ImportSourceToClickHouseActivity"
+	RefreshSourceExplorerCacheActivityName = "RefreshSourceExplorerCacheActivity"
 
-	ActionPullSource       = "pull_source"
-	ActionImportClickHouse = "import_clickhouse"
-	StatusSucceeded        = "succeeded"
-	StatusFailed           = "failed"
+	ActionPullSource           = "pull_source"
+	ActionImportClickHouse     = "import_clickhouse"
+	ActionRefreshExplorerCache = "refresh_explorer_cache"
+	StatusSucceeded            = "succeeded"
+	StatusFailed               = "failed"
 )
 
 func ActionRunWorkflowID(actionRunID string) string {
@@ -88,6 +91,12 @@ type ImportSourceToClickHouseInput struct {
 	Limit               int64    `json:"limit"`
 }
 
+type RefreshSourceExplorerCacheInput struct {
+	ActionRunID string `json:"action_run_id"`
+	SourceName  string `json:"source_name"`
+	Trigger     string `json:"trigger"`
+}
+
 type SyncSourceToClickHouseInput struct {
 	DownloadActionRunID string `json:"download_action_run_id,omitempty"`
 	ImportActionRunID   string `json:"import_action_run_id,omitempty"`
@@ -106,6 +115,14 @@ type ImportSourceToClickHouseResult struct {
 	ActionRunID    string   `json:"action_run_id"`
 	ImportedTables []string `json:"imported_tables"`
 	ImportedRows   int64    `json:"imported_rows"`
+}
+
+type RefreshSourceExplorerCacheResult struct {
+	ActionRunID string `json:"action_run_id"`
+	SourceName  string `json:"source_name"`
+	CacheTable  string `json:"cache_table"`
+	Rows        uint64 `json:"rows"`
+	RefreshedAt string `json:"refreshed_at"`
 }
 
 type SyncSourceToClickHouseResult struct {
@@ -184,6 +201,15 @@ func ImportSourceToClickHouse(ctx workflow.Context, input ImportSourceToClickHou
 	var result ImportSourceToClickHouseResult
 	if err := workflow.ExecuteActivity(ctx, ImportSourceToClickHouseActivityName, input).Get(ctx, &result); err != nil {
 		return ImportSourceToClickHouseResult{}, errors.Wrap(err, "import source to clickhouse activity")
+	}
+	return result, nil
+}
+
+func RefreshSourceExplorerCache(ctx workflow.Context, input RefreshSourceExplorerCacheInput) (RefreshSourceExplorerCacheResult, error) {
+	ctx = withSourceActivityOptions(ctx, 30*time.Minute)
+	var result RefreshSourceExplorerCacheResult
+	if err := workflow.ExecuteActivity(ctx, RefreshSourceExplorerCacheActivityName, input).Get(ctx, &result); err != nil {
+		return RefreshSourceExplorerCacheResult{}, errors.Wrap(err, "refresh source explorer cache activity")
 	}
 	return result, nil
 }

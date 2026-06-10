@@ -16,6 +16,7 @@ import (
 const (
 	defaultSourceExplorerLimit = 50
 	maxSourceExplorerLimit     = 200
+	finlandPRHYTJExplorerTable = "fi_prhytj_company_explorer_cache"
 )
 
 type sourceExplorerCompany struct {
@@ -48,14 +49,25 @@ type sourceExplorerCompanyListResponse struct {
 	Total uint64                  `json:"total"`
 }
 
+type sourceExplorerFormFilterOption struct {
+	Code        string `json:"code"`
+	Description string `json:"description"`
+	Count       uint64 `json:"count"`
+}
+
+type sourceExplorerFilterOptionsResponse struct {
+	Forms []sourceExplorerFormFilterOption `json:"forms"`
+}
+
 type sourceExplorerCompanyQuery struct {
-	Limit           int
-	Offset          int
-	Search          string
-	Active          string
-	LifecycleStatus string
-	Sort            string
-	Direction       string
+	Limit            int
+	Offset           int
+	Search           string
+	Active           string
+	LifecycleStatus  string
+	CompanyFormCodes []string
+	Sort             string
+	Direction        string
 }
 
 func (h *Handlers) handleListSourceExplorerCompanies(w http.ResponseWriter, r *http.Request) {
@@ -78,8 +90,8 @@ func (h *Handlers) handleListSourceExplorerCompanies(w http.ResponseWriter, r *h
 	defer reader.Close()
 
 	params := parseSourceExplorerCompanyQuery(r)
-	view := ch.QualifiedTable(reader.Database(), "fi_prhytj_company_explorer")
-	countQuery, countArgs := buildSourceExplorerCompanyCountQuery(view, params)
+	table := ch.QualifiedTable(reader.Database(), finlandPRHYTJExplorerTable)
+	countQuery, countArgs := buildSourceExplorerCompanyCountQuery(table, params)
 	var total uint64
 	if err := reader.QueryRow(r.Context(), countQuery, countArgs...).Scan(&total); err != nil {
 		slog.ErrorContext(r.Context(), "count source explorer companies", "source", sourceName, "error", err)
@@ -87,7 +99,7 @@ func (h *Handlers) handleListSourceExplorerCompanies(w http.ResponseWriter, r *h
 		return
 	}
 
-	listQuery, listArgs, err := buildSourceExplorerCompanyListQuery(view, params)
+	listQuery, listArgs, err := buildSourceExplorerCompanyListQuery(table, params)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -142,6 +154,53 @@ func (h *Handlers) handleListSourceExplorerCompanies(w http.ResponseWriter, r *h
 	writeJSON(w, http.StatusOK, sourceExplorerCompanyListResponse{Items: items, Total: total})
 }
 
+func (h *Handlers) handleListSourceExplorerFilterOptions(w http.ResponseWriter, r *http.Request) {
+	sourceName := chi.URLParam(r, "name")
+	if sourceName != "finland_prhytj" {
+		writeError(w, http.StatusNotFound, "source explorer not available")
+		return
+	}
+	if strings.TrimSpace(h.clickHouseURL) == "" {
+		writeError(w, http.StatusServiceUnavailable, "clickhouse is not configured")
+		return
+	}
+
+	reader, err := ch.OpenReader(r.Context(), h.clickHouseURL)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "open clickhouse source explorer filters", "source", sourceName, "error", err)
+		writeError(w, http.StatusServiceUnavailable, "clickhouse unavailable")
+		return
+	}
+	defer reader.Close()
+
+	table := ch.QualifiedTable(reader.Database(), finlandPRHYTJExplorerTable)
+	rows, err := reader.Query(r.Context(), buildSourceExplorerFilterOptionsQuery(table))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "list source explorer filter options", "source", sourceName, "error", err)
+		writeError(w, http.StatusInternalServerError, "list source explorer filter options failed")
+		return
+	}
+	defer rows.Close()
+
+	options := make([]sourceExplorerFormFilterOption, 0)
+	for rows.Next() {
+		var option sourceExplorerFormFilterOption
+		if err := rows.Scan(&option.Code, &option.Description, &option.Count); err != nil {
+			slog.ErrorContext(r.Context(), "scan source explorer filter option", "source", sourceName, "error", err)
+			writeError(w, http.StatusInternalServerError, "scan source explorer filter options failed")
+			return
+		}
+		options = append(options, option)
+	}
+	if err := rows.Err(); err != nil {
+		slog.ErrorContext(r.Context(), "read source explorer filter options", "source", sourceName, "error", err)
+		writeError(w, http.StatusInternalServerError, "read source explorer filter options failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sourceExplorerFilterOptionsResponse{Forms: options})
+}
+
 func parseSourceExplorerCompanyQuery(r *http.Request) sourceExplorerCompanyQuery {
 	query := r.URL.Query()
 	limit := parseBoundedLimit(query.Get("limit"), defaultSourceExplorerLimit, maxSourceExplorerLimit)
@@ -154,14 +213,33 @@ func parseSourceExplorerCompanyQuery(r *http.Request) sourceExplorerCompanyQuery
 		direction = "asc"
 	}
 	return sourceExplorerCompanyQuery{
-		Limit:           limit,
-		Offset:          offset,
-		Search:          strings.TrimSpace(query.Get("q")),
-		Active:          strings.ToLower(strings.TrimSpace(query.Get("active"))),
-		LifecycleStatus: strings.ToLower(strings.TrimSpace(query.Get("lifecycle_status"))),
-		Sort:            strings.TrimSpace(query.Get("sort")),
-		Direction:       direction,
+		Limit:            limit,
+		Offset:           offset,
+		Search:           strings.TrimSpace(query.Get("q")),
+		Active:           strings.ToLower(strings.TrimSpace(query.Get("active"))),
+		LifecycleStatus:  strings.ToLower(strings.TrimSpace(query.Get("lifecycle_status"))),
+		CompanyFormCodes: parseSourceExplorerStringList(query["form"], 100),
+		Sort:             strings.TrimSpace(query.Get("sort")),
+		Direction:        direction,
 	}
+}
+
+func buildSourceExplorerFilterOptionsQuery(table string) string {
+	return `SELECT
+  form_code,
+  argMax(description, latest_ingested_at) AS description,
+  count() AS company_count
+FROM (
+  SELECT
+    ifNull(company_form_code, '') AS form_code,
+    ifNull(company_form_description_en, '') AS description,
+    latest_ingested_at
+  FROM ` + table + `
+  WHERE ifNull(company_form_code, '') != ''
+)
+GROUP BY form_code
+ORDER BY lowerUTF8(description), form_code
+LIMIT 1000`
 }
 
 func buildSourceExplorerCompanyCountQuery(view string, params sourceExplorerCompanyQuery) (string, []any) {
@@ -177,7 +255,7 @@ func buildSourceExplorerCompanyListQuery(view string, params sourceExplorerCompa
 	where, args := sourceExplorerCompanyWhere(params)
 	args = append(args, params.Limit, params.Offset)
 	query := `SELECT
-  business_id,
+  ifNull(business_id, ''),
   ifNull(country_iso2, ''),
   ifNull(source_slug, ''),
   ifNull(source_run_id, ''),
@@ -222,10 +300,52 @@ func sourceExplorerCompanyWhere(params sourceExplorerCompanyQuery) (string, []an
 		clauses = append(clauses, "ifNull(lifecycle_status, '') = ?")
 		args = append(args, params.LifecycleStatus)
 	}
+	if len(params.CompanyFormCodes) > 0 {
+		clauses = append(clauses, "ifNull(company_form_code, '') IN ("+queryPlaceholders(len(params.CompanyFormCodes))+")")
+		for _, code := range params.CompanyFormCodes {
+			args = append(args, code)
+		}
+	}
 	if len(clauses) == 0 {
 		return "", args
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func parseSourceExplorerStringList(values []string, maxItems int) []string {
+	if maxItems <= 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, raw := range values {
+		for _, value := range strings.Split(raw, ",") {
+			trimmed := strings.TrimSpace(value)
+			if trimmed == "" {
+				continue
+			}
+			if _, ok := seen[trimmed]; ok {
+				continue
+			}
+			seen[trimmed] = struct{}{}
+			result = append(result, trimmed)
+			if len(result) >= maxItems {
+				return result
+			}
+		}
+	}
+	return result
+}
+
+func queryPlaceholders(count int) string {
+	if count <= 0 {
+		return ""
+	}
+	parts := make([]string, count)
+	for i := range parts {
+		parts[i] = "?"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func sourceExplorerCompanyOrderBy(sort string) (string, error) {
