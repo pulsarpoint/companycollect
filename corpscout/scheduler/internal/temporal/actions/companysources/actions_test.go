@@ -107,6 +107,17 @@ func TestValidatePRHXBRLWindowInputRequiresDates(t *testing.T) {
 	require.Contains(t, err.Error(), "registered_date_start is required")
 }
 
+func TestValidatePRHXBRLWindowInputRequiresEndDate(t *testing.T) {
+	_, err := validatePRHXBRLWindowInput(DownloadSourceFileInput{
+		SourceName:          "finland_prh_xbrl",
+		FileKey:             "statements_manifest",
+		RegisteredDateStart: "2026-06-01",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "registered_date_end is required")
+}
+
 func TestValidatePRHXBRLWindowInputRejectsInvertedDates(t *testing.T) {
 	_, err := validatePRHXBRLWindowInput(DownloadSourceFileInput{
 		SourceName:          "finland_prh_xbrl",
@@ -129,6 +140,19 @@ func TestValidatePRHXBRLWindowInputDefaultsMaxStatements(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, int32(50), got.MaxStatements)
+}
+
+func TestValidatePRHXBRLWindowInputRejectsLargeMaxStatements(t *testing.T) {
+	_, err := validatePRHXBRLWindowInput(DownloadSourceFileInput{
+		SourceName:          "finland_prh_xbrl",
+		FileKey:             "statements_manifest",
+		RegisteredDateStart: "2026-06-01",
+		RegisteredDateEnd:   "2026-06-03",
+		MaxStatements:       1001,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "max_statements must be 1000 or less")
 }
 
 func TestDeterministicSourceFileRunIDIsStable(t *testing.T) {
