@@ -4,7 +4,7 @@
 
 **Goal:** Add a Temporal-backed `Sync to CH` path that mirrors Postgres NACE taxonomy into ClickHouse reference tables.
 
-**Architecture:** Postgres remains the authoritative NACE store. A new workflow reads Postgres NACE rows through sqlc queries and writes a full snapshot into `corpscout_reference` ClickHouse tables. The existing NACE taxonomy workflow also starts this sync after successful or skipped Postgres imports.
+**Architecture:** Postgres remains the authoritative NACE store. NACE Temporal workflow contracts live in `scheduler/internal/temporal/workflow/nace`, and activity implementations live in `scheduler/internal/temporal/actions/nace`. This follows the existing singular `scheduler/internal/temporal/workflow/companysources` convention. A new workflow reads Postgres NACE rows through sqlc queries and writes a full snapshot into `corpscout_reference` ClickHouse tables, and the existing NACE taxonomy workflow starts this sync after successful or skipped Postgres imports.
 
 **Tech Stack:** Go, Temporal SDK, sqlc, pgx, ClickHouse native driver, React Router, shadcn/ui, TypeScript.
 
@@ -18,11 +18,12 @@
 - Modify generated sqlc files with `make sqlc-generate`.
 - Modify `scheduler/internal/clickhouse/writer.go`: Adds database-specific insert/truncate helpers.
 - Modify `scheduler/internal/clickhouse/writer_test.go`: Tests new helpers.
-- Create `scheduler/internal/nacetaxonomy/clickhouse_sync.go`: ClickHouse sync activity logic and hierarchy derivation.
-- Create `scheduler/internal/nacetaxonomy/clickhouse_sync_test.go`: Unit tests for hierarchy derivation and row building.
-- Modify `scheduler/internal/nacetaxonomy/workflow.go`: Adds workflow names/types and automatic child workflow trigger.
-- Modify `scheduler/internal/nacetaxonomy/workflow_test.go`: Tests standalone workflow and child workflow trigger from taxonomy sync.
-- Modify `scheduler/internal/nacetaxonomy/actions.go`: Adds ClickHouse URL to `Actions`.
+- Move `scheduler/internal/nacetaxonomy/workflow.go` to `scheduler/internal/temporal/workflow/nace/workflow.go`: NACE Temporal workflow names, task queue names, workflow contracts, and workflow functions.
+- Move `scheduler/internal/nacetaxonomy/workflow_test.go` to `scheduler/internal/temporal/workflow/nace/workflow_test.go`: Existing workflow tests plus new ClickHouse child workflow coverage.
+- Move `scheduler/internal/nacetaxonomy/actions.go` to `scheduler/internal/temporal/actions/nace/actions.go`: NACE Temporal activities, with non-Temporal parser/download helpers imported from `scheduler/internal/nacetaxonomy`.
+- Move `scheduler/internal/nacetaxonomy/actions_test.go` to `scheduler/internal/temporal/actions/nace/actions_test.go`: Existing activity tests.
+- Create `scheduler/internal/temporal/actions/nace/clickhouse_sync.go`: ClickHouse sync activity logic and hierarchy derivation.
+- Create `scheduler/internal/temporal/actions/nace/clickhouse_sync_test.go`: Unit tests for hierarchy derivation and row building.
 - Modify `scheduler/internal/app/temporal.go`: Passes ClickHouse URL to NACE actions.
 - Modify `scheduler/internal/app/nace_taxonomy_temporal.go`: Registers the new workflow/activity directly.
 - Modify `scheduler/internal/httpapi/workflow_triggers.go`: Adds manual start/list handlers.
@@ -392,19 +393,317 @@ git commit -m "feat: support clickhouse reference database writes"
 
 ---
 
-### Task 4: Implement NACE ClickHouse Sync Activity Logic
+### Task 4: Move NACE Temporal Code Under Temporal Packages
 
 **Files:**
-- Modify: `scheduler/internal/nacetaxonomy/actions.go`
-- Create: `scheduler/internal/nacetaxonomy/clickhouse_sync.go`
-- Create: `scheduler/internal/nacetaxonomy/clickhouse_sync_test.go`
+- Modify: `scheduler/internal/temporal/workflow/nace/workflow.go`
+- Modify: `scheduler/internal/temporal/workflow/nace/workflow_test.go`
+- Move: `scheduler/internal/nacetaxonomy/workflow.go` to `scheduler/internal/temporal/workflow/nace/workflow.go`
+- Move: `scheduler/internal/nacetaxonomy/workflow_test.go` to `scheduler/internal/temporal/workflow/nace/workflow_test.go`
+- Modify: `scheduler/internal/temporal/actions/nace/actions.go`
+- Modify: `scheduler/internal/temporal/actions/nace/actions_test.go`
+- Move: `scheduler/internal/nacetaxonomy/actions.go` to `scheduler/internal/temporal/actions/nace/actions.go`
+- Move: `scheduler/internal/nacetaxonomy/actions_test.go` to `scheduler/internal/temporal/actions/nace/actions_test.go`
+- Modify: `scheduler/internal/app/temporal.go`
+- Modify: `scheduler/internal/app/nace_taxonomy_temporal.go`
 
-- [ ] **Step 1: Write failing hierarchy derivation test**
+- [ ] **Step 1: Move existing NACE workflows and activities into Temporal packages**
 
-Create `scheduler/internal/nacetaxonomy/clickhouse_sync_test.go`:
+Run:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
+mkdir -p scheduler/internal/temporal/workflow/nace
+mkdir -p scheduler/internal/temporal/actions/nace
+mv scheduler/internal/nacetaxonomy/workflow.go scheduler/internal/temporal/workflow/nace/workflow.go
+mv scheduler/internal/nacetaxonomy/workflow_test.go scheduler/internal/temporal/workflow/nace/workflow_test.go
+mv scheduler/internal/nacetaxonomy/actions.go scheduler/internal/temporal/actions/nace/actions.go
+mv scheduler/internal/nacetaxonomy/actions_test.go scheduler/internal/temporal/actions/nace/actions_test.go
+```
+
+Change the package declaration in all moved files:
 
 ```go
-package nacetaxonomy
+package nace
+```
+
+In `scheduler/internal/temporal/workflow/nace/workflow.go`, import the domain package for default revision normalization:
+
+```go
+domainnace "github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
+```
+
+Replace default revision references:
+
+```go
+DefaultRevision -> domainnace.DefaultRevision
+```
+
+In `scheduler/internal/temporal/actions/nace/actions.go`, import the domain package and workflow contract package:
+
+```go
+domainnace "github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
+naceworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/nace"
+```
+
+Alias workflow contracts near the top of the moved action file:
+
+```go
+type SyncNACETaxonomyActivityInput = naceworkflow.SyncNACETaxonomyActivityInput
+type SyncNACETaxonomyActivityResult = naceworkflow.SyncNACETaxonomyActivityResult
+```
+
+Replace domain helper references in the moved activity file:
+
+```go
+DefaultRevision -> domainnace.DefaultRevision
+DefaultMaxSourceFileBytes -> domainnace.DefaultMaxSourceFileBytes
+DownloadSourceFile -> domainnace.DownloadSourceFile
+ParseRDFXMLNACECodes -> domainnace.ParseRDFXMLNACECodes
+NormalizeCode -> domainnace.NormalizeCode
+ParsedCode -> domainnace.ParsedCode
+```
+
+Replace status constant references:
+
+```go
+SyncStatusSucceeded -> naceworkflow.SyncStatusSucceeded
+SyncStatusSkipped -> naceworkflow.SyncStatusSkipped
+SyncStatusFailed -> naceworkflow.SyncStatusFailed
+```
+
+- [ ] **Step 2: Write failing standalone workflow test**
+
+In `scheduler/internal/temporal/workflow/nace/workflow_test.go`, add this standalone workflow test:
+
+```go
+func TestSyncNACEToClickHouseWorkflowRunsActivity(t *testing.T) {
+	env := testsuite.WorkflowTestSuite{}.NewTestWorkflowEnvironment()
+	env.RegisterWorkflowWithOptions(SyncNACEToClickHouse, workflow.RegisterOptions{Name: SyncToClickHouseWorkflowName})
+	env.RegisterActivityWithOptions(func(context.Context, SyncNACEToClickHouseActivityInput) (SyncNACEToClickHouseActivityResult, error) {
+		return SyncNACEToClickHouseActivityResult{Status: SyncStatusSucceeded, CodesSynced: 4}, nil
+	}, activity.RegisterOptions{Name: SyncNACEToClickHouseActivityName})
+	env.ExecuteWorkflow(SyncNACEToClickHouse, SyncNACEToClickHouseInput{Trigger: "manual"})
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	var result SyncNACEToClickHouseResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	require.Equal(t, SyncStatusSucceeded, result.Status)
+	require.Equal(t, 4, result.CodesSynced)
+}
+```
+
+The test file needs these imports if they are not already present:
+
+```go
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/workflow"
+)
+```
+
+- [ ] **Step 3: Add workflow constants and types**
+
+In `scheduler/internal/temporal/workflow/nace/workflow.go`, add:
+
+```go
+const (
+	SyncWorkflowName             = "SyncNACETaxonomy"
+	SyncToClickHouseWorkflowName = "SyncNACEToClickHouse"
+	SyncTaskQueue                = "nace-taxonomy-sync"
+
+	SyncNACETaxonomyActivityName     = "SyncNACETaxonomyActivity"
+	SyncNACEToClickHouseActivityName = "SyncNACEToClickHouseActivity"
+
+	SyncStatusSucceeded = "succeeded"
+	SyncStatusSkipped   = "skipped"
+	SyncStatusFailed    = "failed"
+)
+
+type SyncNACETaxonomyInput struct {
+	Revision       string `json:"revision,omitempty"`
+	SourceURL      string `json:"source_url,omitempty"`
+	Trigger        string `json:"trigger,omitempty"`
+	ForceReprocess bool   `json:"force_reprocess,omitempty"`
+}
+
+type SyncNACETaxonomyActivityInput struct {
+	TemporalWorkflowID string `json:"temporal_workflow_id"`
+	Revision           string `json:"revision"`
+	SourceURL          string `json:"source_url"`
+	Trigger            string `json:"trigger"`
+	ForceReprocess     bool   `json:"force_reprocess"`
+}
+
+type SyncNACETaxonomyActivityResult struct {
+	Status             string `json:"status"`
+	ImportRunID        string `json:"import_run_id"`
+	SourceFileID       string `json:"source_file_id"`
+	ContentSHA256      string `json:"content_sha256"`
+	RecordsSeen        int32  `json:"records_seen"`
+	RecordsImported    int32  `json:"records_imported"`
+	RecordsDeactivated int32  `json:"records_deactivated"`
+	Message            string `json:"message"`
+}
+
+type SyncNACETaxonomyResult = SyncNACETaxonomyActivityResult
+
+type SyncNACEToClickHouseInput struct {
+	Trigger string `json:"trigger,omitempty"`
+}
+
+type SyncNACEToClickHouseActivityInput struct {
+	TemporalWorkflowID string `json:"temporal_workflow_id"`
+	Trigger            string `json:"trigger"`
+}
+
+type SyncNACEToClickHouseActivityResult struct {
+	Status                string `json:"status"`
+	ClassificationsSynced int    `json:"classifications_synced"`
+	CodesSynced           int    `json:"codes_synced"`
+	AliasesSynced         int    `json:"aliases_synced"`
+	Message               string `json:"message"`
+}
+
+type SyncNACEToClickHouseResult = SyncNACEToClickHouseActivityResult
+```
+
+- [ ] **Step 4: Add standalone workflow**
+
+```go
+func SyncNACEToClickHouse(ctx temporalworkflow.Context, input SyncNACEToClickHouseInput) (SyncNACEToClickHouseResult, error) {
+	if input.Trigger == "" {
+		input.Trigger = "manual"
+	}
+	info := temporalworkflow.GetInfo(ctx)
+	ctx = temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
+		StartToCloseTimeout: 10 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    10 * time.Second,
+			BackoffCoefficient: 2,
+			MaximumInterval:    2 * time.Minute,
+			MaximumAttempts:    3,
+		},
+	})
+	var result SyncNACEToClickHouseActivityResult
+	if err := temporalworkflow.ExecuteActivity(ctx, SyncNACEToClickHouseActivityName, SyncNACEToClickHouseActivityInput{
+		TemporalWorkflowID: info.WorkflowExecution.ID,
+		Trigger:            input.Trigger,
+	}).Get(ctx, &result); err != nil {
+		return SyncNACEToClickHouseResult{}, errors.Wrap(err, "sync nace taxonomy to clickhouse activity")
+	}
+	return result, nil
+}
+```
+
+- [ ] **Step 5: Register existing NACE taxonomy workflow and activity from the new packages**
+
+In `scheduler/internal/app/nace_taxonomy_temporal.go`:
+
+```go
+worker.RegisterWorkflow(naceworkflow.SyncNACETaxonomy)
+worker.RegisterActivityWithOptions(
+	resources.naceTaxonomyActions.SyncNACETaxonomyActivity,
+	activity.RegisterOptions{Name: naceworkflow.SyncNACETaxonomyActivityName},
+)
+```
+
+In `scheduler/internal/app/temporal.go`, update construction:
+
+```go
+naceTaxonomyActions: naceactions.NewActions(pool, http.DefaultClient),
+```
+
+Use these imports in app wiring:
+
+```go
+naceactions "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/actions/nace"
+naceworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/nace"
+```
+
+- [ ] **Step 6: Run workflow/action/app tests**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+gofmt -w internal/temporal/workflow/nace/workflow.go internal/temporal/workflow/nace/workflow_test.go internal/temporal/actions/nace/actions.go internal/temporal/actions/nace/actions_test.go internal/app/temporal.go internal/app/nace_taxonomy_temporal.go
+GOWORK=off go test ./internal/temporal/workflow/nace ./internal/temporal/actions/nace ./internal/app -count=1
+```
+
+Expected: pass.
+
+- [ ] **Step 7: Commit**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
+git add scheduler/internal/temporal/workflow/nace/workflow.go scheduler/internal/temporal/workflow/nace/workflow_test.go scheduler/internal/temporal/actions/nace/actions.go scheduler/internal/temporal/actions/nace/actions_test.go scheduler/internal/app/temporal.go scheduler/internal/app/nace_taxonomy_temporal.go
+git commit -m "refactor: move nace temporal code under temporal packages"
+```
+
+---
+
+### Task 5: Implement NACE ClickHouse Sync Activity Logic
+
+**Files:**
+- Modify: `scheduler/internal/temporal/actions/nace/actions.go`
+- Modify: `scheduler/internal/temporal/workflow/nace/workflow.go`
+- Modify: `scheduler/internal/temporal/workflow/nace/workflow_test.go`
+- Modify: `scheduler/internal/app/temporal.go`
+- Modify: `scheduler/internal/app/nace_taxonomy_temporal.go`
+- Create: `scheduler/internal/temporal/actions/nace/clickhouse_sync.go`
+- Create: `scheduler/internal/temporal/actions/nace/clickhouse_sync_test.go`
+
+- [ ] **Step 1: Write failing child workflow trigger test**
+
+In `scheduler/internal/temporal/workflow/nace/workflow_test.go`, add:
+
+```go
+func TestSyncNACETaxonomyStartsClickHouseSyncAfterSuccessfulImport(t *testing.T) {
+	env := testsuite.WorkflowTestSuite{}.NewTestWorkflowEnvironment()
+	env.RegisterWorkflowWithOptions(SyncNACETaxonomy, workflow.RegisterOptions{Name: SyncWorkflowName})
+	env.RegisterWorkflowWithOptions(SyncNACEToClickHouse, workflow.RegisterOptions{Name: SyncToClickHouseWorkflowName})
+	env.RegisterActivityWithOptions(func(context.Context, SyncNACETaxonomyActivityInput) (SyncNACETaxonomyActivityResult, error) {
+		return SyncNACETaxonomyActivityResult{
+			Status:          SyncStatusSucceeded,
+			ImportRunID:     "import-run-1",
+			SourceFileID:    "source-file-1",
+			ContentSHA256:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			RecordsSeen:     4,
+			RecordsImported: 4,
+			Message:         "nace taxonomy imported",
+		}, nil
+	}, activity.RegisterOptions{Name: SyncNACETaxonomyActivityName})
+	env.OnWorkflow(SyncToClickHouseWorkflowName, mock.Anything, SyncNACEToClickHouseInput{
+		Trigger: "nace_taxonomy_sync",
+	}).Return(SyncNACEToClickHouseResult{
+		Status:      SyncStatusSucceeded,
+		CodesSynced: 4,
+	}, nil)
+
+	env.ExecuteWorkflow(SyncNACETaxonomy, SyncNACETaxonomyInput{
+		Revision:  "2.1",
+		SourceURL: "https://example.test/nace.rdf",
+		Trigger:   "manual",
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	env.AssertExpectations(t)
+}
+```
+
+Add `github.com/stretchr/testify/mock` to the test imports if missing.
+
+- [ ] **Step 2: Write failing hierarchy derivation test**
+
+Create `scheduler/internal/temporal/actions/nace/clickhouse_sync_test.go`:
+
+```go
+package nace
 
 import (
 	"testing"
@@ -449,18 +748,19 @@ func testSyncTime() time.Time {
 
 Include `time` in imports after adding `testSyncTime`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 3: Run test to verify it fails**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-GOWORK=off go test ./internal/nacetaxonomy -run TestNACEClickHouseCodeRowsDeriveHierarchy -count=1
+GOWORK=off go test ./internal/temporal/workflow/nace -run TestSyncNACETaxonomyStartsClickHouseSyncAfterSuccessfulImport -count=1
+GOWORK=off go test ./internal/temporal/actions/nace -run TestNACEClickHouseCodeRowsDeriveHierarchy -count=1
 ```
 
-Expected: fail because `buildNACECodeClickHouseRows` is undefined.
+Expected: the workflow test fails because the child workflow trigger is missing, and the action test fails because `buildNACECodeClickHouseRows` is undefined.
 
-- [ ] **Step 3: Extend `Actions` constructor**
+- [ ] **Step 4: Extend `Actions` constructor**
 
-In `scheduler/internal/nacetaxonomy/actions.go`, change the struct and constructor:
+In `scheduler/internal/temporal/actions/nace/actions.go`, change the struct and constructor:
 
 ```go
 type Actions struct {
@@ -477,14 +777,21 @@ func NewActions(pool *pgxpool.Pool, httpClient *http.Client, clickHouseNativeURL
 }
 ```
 
-This file already imports `strings`, so keep the import.
-
-- [ ] **Step 4: Add sync types and activity**
-
-Create `scheduler/internal/nacetaxonomy/clickhouse_sync.go`:
+Add ClickHouse activity aliases near the existing workflow contract aliases:
 
 ```go
-package nacetaxonomy
+type SyncNACEToClickHouseActivityInput = naceworkflow.SyncNACEToClickHouseActivityInput
+type SyncNACEToClickHouseActivityResult = naceworkflow.SyncNACEToClickHouseActivityResult
+```
+
+This file already imports `strings`, so keep the import.
+
+- [ ] **Step 5: Add sync activity**
+
+Create `scheduler/internal/temporal/actions/nace/clickhouse_sync.go`:
+
+```go
+package nace
 
 import (
 	"context"
@@ -496,22 +803,10 @@ import (
 
 	chwriter "github.com/pulsarpoint/corpscout/scheduler/internal/clickhouse"
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
+	naceworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/nace"
 )
 
 const clickHouseReferenceDatabase = "corpscout_reference"
-
-type SyncNACEToClickHouseActivityInput struct {
-	TemporalWorkflowID string `json:"temporal_workflow_id"`
-	Trigger            string `json:"trigger"`
-}
-
-type SyncNACEToClickHouseActivityResult struct {
-	Status                string `json:"status"`
-	ClassificationsSynced int    `json:"classifications_synced"`
-	CodesSynced           int    `json:"codes_synced"`
-	AliasesSynced         int    `json:"aliases_synced"`
-	Message               string `json:"message"`
-}
 
 func (a *Actions) SyncNACEToClickHouseActivity(ctx context.Context, input SyncNACEToClickHouseActivityInput) (SyncNACEToClickHouseActivityResult, error) {
 	if a == nil || a.pool == nil {
@@ -568,7 +863,7 @@ func (a *Actions) SyncNACEToClickHouseActivity(ctx context.Context, input SyncNA
 	}
 
 	return SyncNACEToClickHouseActivityResult{
-		Status:                SyncStatusSucceeded,
+		Status:                naceworkflow.SyncStatusSucceeded,
 		ClassificationsSynced: len(classifications),
 		CodesSynced:           len(codes),
 		AliasesSynced:         len(aliases),
@@ -577,7 +872,7 @@ func (a *Actions) SyncNACEToClickHouseActivity(ctx context.Context, input SyncNA
 }
 ```
 
-- [ ] **Step 5: Add row builders**
+- [ ] **Step 6: Add row builders**
 
 In the same file, add:
 
@@ -699,155 +994,9 @@ func pgDateValue(value pgtype.Date) any {
 }
 ```
 
-- [ ] **Step 6: Run tests**
+- [ ] **Step 7: Trigger ClickHouse sync from the taxonomy workflow and register the new activity**
 
-```bash
-cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-gofmt -w internal/nacetaxonomy/actions.go internal/nacetaxonomy/clickhouse_sync.go internal/nacetaxonomy/clickhouse_sync_test.go
-GOWORK=off go test ./internal/nacetaxonomy -run TestNACEClickHouseCodeRowsDeriveHierarchy -count=1
-```
-
-Expected: pass.
-
-- [ ] **Step 7: Commit**
-
-```bash
-cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
-git add scheduler/internal/nacetaxonomy/actions.go scheduler/internal/nacetaxonomy/clickhouse_sync.go scheduler/internal/nacetaxonomy/clickhouse_sync_test.go
-git commit -m "feat: add nace clickhouse sync activity"
-```
-
----
-
-### Task 5: Add and Register NACE ClickHouse Temporal Workflow
-
-**Files:**
-- Modify: `scheduler/internal/nacetaxonomy/workflow.go`
-- Modify: `scheduler/internal/nacetaxonomy/workflow_test.go`
-- Modify: `scheduler/internal/app/temporal.go`
-- Modify: `scheduler/internal/app/nace_taxonomy_temporal.go`
-
-- [ ] **Step 1: Write failing workflow tests**
-
-In `scheduler/internal/nacetaxonomy/workflow_test.go`, add this standalone workflow test:
-
-```go
-func TestSyncNACEToClickHouseWorkflowRunsActivity(t *testing.T) {
-	env := testsuite.WorkflowTestSuite{}.NewTestWorkflowEnvironment()
-	env.RegisterWorkflowWithOptions(SyncNACEToClickHouse, workflow.RegisterOptions{Name: SyncToClickHouseWorkflowName})
-	env.RegisterActivityWithOptions(func(context.Context, SyncNACEToClickHouseActivityInput) (SyncNACEToClickHouseActivityResult, error) {
-		return SyncNACEToClickHouseActivityResult{Status: SyncStatusSucceeded, CodesSynced: 4}, nil
-	}, activity.RegisterOptions{Name: syncNACEToClickHouseActivity})
-	env.ExecuteWorkflow(SyncNACEToClickHouse, SyncNACEToClickHouseInput{Trigger: "manual"})
-	require.True(t, env.IsWorkflowCompleted())
-	require.NoError(t, env.GetWorkflowError())
-	var result SyncNACEToClickHouseResult
-	require.NoError(t, env.GetWorkflowResult(&result))
-	require.Equal(t, SyncStatusSucceeded, result.Status)
-	require.Equal(t, 4, result.CodesSynced)
-}
-```
-
-Add this child-workflow test in the same file:
-
-```go
-func TestSyncNACETaxonomyStartsClickHouseSyncAfterSuccessfulImport(t *testing.T) {
-	env := testsuite.WorkflowTestSuite{}.NewTestWorkflowEnvironment()
-	env.RegisterWorkflowWithOptions(SyncNACETaxonomy, workflow.RegisterOptions{Name: SyncWorkflowName})
-	env.RegisterWorkflowWithOptions(SyncNACEToClickHouse, workflow.RegisterOptions{Name: SyncToClickHouseWorkflowName})
-	env.RegisterActivityWithOptions(func(context.Context, SyncNACETaxonomyActivityInput) (SyncNACETaxonomyActivityResult, error) {
-		return SyncNACETaxonomyActivityResult{
-			Status:          SyncStatusSucceeded,
-			ImportRunID:     "import-run-1",
-			SourceFileID:    "source-file-1",
-			ContentSHA256:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			RecordsSeen:     4,
-			RecordsImported: 4,
-			Message:         "nace taxonomy imported",
-		}, nil
-	}, activity.RegisterOptions{Name: syncNACETaxonomyActivity})
-	env.OnWorkflow(SyncToClickHouseWorkflowName, mock.Anything, SyncNACEToClickHouseInput{
-		Trigger: "nace_taxonomy_sync",
-	}).Return(SyncNACEToClickHouseResult{
-		Status:      SyncStatusSucceeded,
-		CodesSynced: 4,
-	}, nil)
-
-	env.ExecuteWorkflow(SyncNACETaxonomy, SyncNACETaxonomyInput{
-		Revision:  "2.1",
-		SourceURL: "https://example.test/nace.rdf",
-		Trigger:   "manual",
-	})
-
-	require.True(t, env.IsWorkflowCompleted())
-	require.NoError(t, env.GetWorkflowError())
-	env.AssertExpectations(t)
-}
-```
-
-The test file needs these imports if they are not already present:
-
-```go
-import (
-	"context"
-	"testing"
-
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
-	"go.temporal.io/sdk/activity"
-	"go.temporal.io/sdk/testsuite"
-	"go.temporal.io/sdk/workflow"
-)
-```
-
-- [ ] **Step 2: Add workflow constants and types**
-
-In `scheduler/internal/nacetaxonomy/workflow.go`, add:
-
-```go
-const (
-	SyncToClickHouseWorkflowName = "SyncNACEToClickHouse"
-	syncNACEToClickHouseActivity = "SyncNACEToClickHouseActivity"
-)
-
-type SyncNACEToClickHouseInput struct {
-	Trigger string `json:"trigger,omitempty"`
-}
-
-type SyncNACEToClickHouseResult = SyncNACEToClickHouseActivityResult
-```
-
-- [ ] **Step 3: Add standalone workflow**
-
-```go
-func SyncNACEToClickHouse(ctx temporalworkflow.Context, input SyncNACEToClickHouseInput) (SyncNACEToClickHouseResult, error) {
-	if input.Trigger == "" {
-		input.Trigger = "manual"
-	}
-	info := temporalworkflow.GetInfo(ctx)
-	ctx = temporalworkflow.WithActivityOptions(ctx, temporalworkflow.ActivityOptions{
-		StartToCloseTimeout: 10 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    10 * time.Second,
-			BackoffCoefficient: 2,
-			MaximumInterval:    2 * time.Minute,
-			MaximumAttempts:    3,
-		},
-	})
-	var result SyncNACEToClickHouseActivityResult
-	if err := temporalworkflow.ExecuteActivity(ctx, syncNACEToClickHouseActivity, SyncNACEToClickHouseActivityInput{
-		TemporalWorkflowID: info.WorkflowExecution.ID,
-		Trigger:            input.Trigger,
-	}).Get(ctx, &result); err != nil {
-		return SyncNACEToClickHouseResult{}, errors.Wrap(err, "sync nace taxonomy to clickhouse activity")
-	}
-	return result, nil
-}
-```
-
-- [ ] **Step 4: Extend existing taxonomy workflow**
-
-After `SyncNACETaxonomyActivity` returns, if `result.Status` is `succeeded` or `skipped`, execute a child workflow:
+In `scheduler/internal/temporal/workflow/nace/workflow.go`, after `SyncNACETaxonomyActivity` returns, if `result.Status` is `succeeded` or `skipped`, execute a child workflow:
 
 ```go
 if result.Status == SyncStatusSucceeded || result.Status == SyncStatusSkipped {
@@ -867,40 +1016,38 @@ if result.Status == SyncStatusSucceeded || result.Status == SyncStatusSkipped {
 
 Keep the public result compatible unless tests intentionally update it. The child workflow can complete without being embedded in the HTTP start response.
 
-- [ ] **Step 5: Register workflow and activity**
-
-In `scheduler/internal/app/nace_taxonomy_temporal.go`:
+In `scheduler/internal/app/nace_taxonomy_temporal.go`, register the ClickHouse workflow and activity:
 
 ```go
-worker.RegisterWorkflow(nacetaxonomy.SyncNACEToClickHouse)
+worker.RegisterWorkflow(naceworkflow.SyncNACEToClickHouse)
 worker.RegisterActivityWithOptions(
 	resources.naceTaxonomyActions.SyncNACEToClickHouseActivity,
-	activity.RegisterOptions{Name: "SyncNACEToClickHouseActivity"},
+	activity.RegisterOptions{Name: naceworkflow.SyncNACEToClickHouseActivityName},
 )
 ```
 
-In `scheduler/internal/app/temporal.go`, update construction:
+In `scheduler/internal/app/temporal.go`, pass the ClickHouse native URL into the NACE action constructor:
 
 ```go
-naceTaxonomyActions: nacetaxonomy.NewActions(pool, http.DefaultClient, cfg.ClickHouseNativeURL),
+naceTaxonomyActions: naceactions.NewActions(pool, http.DefaultClient, cfg.ClickHouseNativeURL),
 ```
 
-- [ ] **Step 6: Run workflow/app tests**
+- [ ] **Step 8: Run tests**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-gofmt -w internal/nacetaxonomy/workflow.go internal/nacetaxonomy/workflow_test.go internal/app/temporal.go internal/app/nace_taxonomy_temporal.go
-GOWORK=off go test ./internal/nacetaxonomy ./internal/app -count=1
+gofmt -w internal/temporal/workflow/nace/workflow.go internal/temporal/workflow/nace/workflow_test.go internal/temporal/actions/nace/actions.go internal/temporal/actions/nace/actions_test.go internal/temporal/actions/nace/clickhouse_sync.go internal/temporal/actions/nace/clickhouse_sync_test.go internal/app/temporal.go internal/app/nace_taxonomy_temporal.go
+GOWORK=off go test ./internal/temporal/workflow/nace ./internal/temporal/actions/nace ./internal/app -count=1
 ```
 
 Expected: pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout
-git add scheduler/internal/nacetaxonomy/workflow.go scheduler/internal/nacetaxonomy/workflow_test.go scheduler/internal/app/temporal.go scheduler/internal/app/nace_taxonomy_temporal.go
-git commit -m "feat: add nace clickhouse sync workflow"
+git add scheduler/internal/temporal/workflow/nace/workflow.go scheduler/internal/temporal/workflow/nace/workflow_test.go scheduler/internal/temporal/actions/nace/actions.go scheduler/internal/temporal/actions/nace/actions_test.go scheduler/internal/temporal/actions/nace/clickhouse_sync.go scheduler/internal/temporal/actions/nace/clickhouse_sync_test.go scheduler/internal/app/temporal.go scheduler/internal/app/nace_taxonomy_temporal.go
+git commit -m "feat: add nace clickhouse sync activity"
 ```
 
 ---
@@ -928,12 +1075,12 @@ func TestStartNACEClickHouseSyncWorkflow(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusAccepted, w.Code)
-	require.Equal(t, nacetaxonomy.SyncTaskQueue, tc.options.TaskQueue)
-	require.Equal(t, nacetaxonomy.SyncNACEToClickHouse, tc.workflow)
-	require.Equal(t, []interface{}{nacetaxonomy.SyncNACEToClickHouseInput{
+	require.Equal(t, naceworkflow.SyncTaskQueue, tc.options.TaskQueue)
+	require.Equal(t, naceworkflow.SyncNACEToClickHouse, tc.workflow)
+	require.Equal(t, []interface{}{naceworkflow.SyncNACEToClickHouseInput{
 		Trigger: "manual",
 	}}, tc.args)
-	require.Contains(t, w.Body.String(), nacetaxonomy.SyncToClickHouseWorkflowName)
+	require.Contains(t, w.Body.String(), naceworkflow.SyncToClickHouseWorkflowName)
 }
 ```
 
@@ -949,7 +1096,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/pulsarpoint/corpscout/scheduler/internal/httpapi"
-	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
+	naceworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/nace"
 )
 ```
 
@@ -994,9 +1141,9 @@ func (h *Handlers) handleStartNACEClickHouseSyncWorkflow(w http.ResponseWriter, 
 	workflowID := newWorkflowID("nace-clickhouse-sync")
 	run, err := h.temporal.ExecuteWorkflow(
 		r.Context(),
-		client.StartWorkflowOptions{ID: workflowID, TaskQueue: nacetaxonomy.SyncTaskQueue},
-		nacetaxonomy.SyncNACEToClickHouse,
-		nacetaxonomy.SyncNACEToClickHouseInput{Trigger: req.Trigger},
+		client.StartWorkflowOptions{ID: workflowID, TaskQueue: naceworkflow.SyncTaskQueue},
+		naceworkflow.SyncNACEToClickHouse,
+		naceworkflow.SyncNACEToClickHouseInput{Trigger: req.Trigger},
 	)
 	if err != nil {
 		slog.Error("start nace clickhouse sync workflow", "error", err)
@@ -1005,8 +1152,8 @@ func (h *Handlers) handleStartNACEClickHouseSyncWorkflow(w http.ResponseWriter, 
 	}
 	writeJSON(w, http.StatusAccepted, startWorkflowResponse{
 		Status:        "started",
-		Workflow:      nacetaxonomy.SyncToClickHouseWorkflowName,
-		TaskQueue:     nacetaxonomy.SyncTaskQueue,
+		Workflow:      naceworkflow.SyncToClickHouseWorkflowName,
+		TaskQueue:     naceworkflow.SyncTaskQueue,
 		WorkflowID:    workflowID,
 		WorkflowRunID: run.GetRunID(),
 	})

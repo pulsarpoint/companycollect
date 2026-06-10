@@ -55,6 +55,15 @@ It runs on the existing `nace-taxonomy-sync` task queue and calls a new activity
 
 The existing `SyncNACETaxonomy` workflow should trigger the new workflow after a successful or skipped Postgres taxonomy sync. A skipped import still represents a valid Postgres taxonomy state, and ClickHouse may be empty or stale.
 
+Temporal code should live under the Temporal package tree:
+
+- `scheduler/internal/temporal/workflow/nace` owns workflow names, task queue names, workflow input/result contracts, and workflow functions.
+- `scheduler/internal/temporal/actions/nace` owns activity implementations and imports the workflow package for activity input/result contracts.
+
+Use the existing singular `workflow` directory convention already used by `scheduler/internal/temporal/workflow/companysources`; do not create a parallel `workflows` tree.
+
+The existing `scheduler/internal/nacetaxonomy` package should remain for non-Temporal domain code such as NACE code normalization, source download helpers, and RDF parsing.
+
 Manual sync is also exposed from the settings UI through:
 
 - `POST /api/v1/workflows/nace/clickhouse-sync`
