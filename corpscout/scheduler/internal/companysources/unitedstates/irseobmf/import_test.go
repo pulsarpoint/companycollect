@@ -1,11 +1,24 @@
 package irseobmf
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
 	"github.com/stretchr/testify/require"
 )
+
+func TestImportRequiresSelectedSourceFile(t *testing.T) {
+	_, err := Source{}.Import(context.Background(), companysources.ImportOptions{
+		RunDir:              t.TempDir(),
+		Files:               []companysources.SelectedSourceFile{{FileKey: "metadata", Path: "/tmp/metadata.json"}},
+		ClickHouseNativeURL: "clickhouse://companycollect:9002?username=default&database=corpscout_sources",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "selected source file is required")
+}
 
 func TestCompanyRowMapping(t *testing.T) {
 	raw := []byte(`{

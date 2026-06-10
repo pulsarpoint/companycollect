@@ -1,6 +1,10 @@
 package companysources
 
-import "context"
+import (
+	"context"
+
+	"github.com/cockroachdb/errors"
+)
 
 type Key struct {
 	Country string
@@ -49,10 +53,56 @@ type DownloadFileRequest struct {
 
 type ImportOptions struct {
 	RunDir              string
+	Files               []SelectedSourceFile
 	ClickHouseNativeURL string
 	BatchSize           int
 	Limit               int64
 	Truncate            bool
+}
+
+type SelectedSourceFile struct {
+	FileKey      string
+	Path         string
+	RelativePath string
+}
+
+func (o ImportOptions) FilePath(fileKey string) (string, bool) {
+	path, ok, err := o.resolveFilePath(fileKey)
+	if err != nil {
+		return "", false
+	}
+	return path, ok
+}
+
+func (o ImportOptions) RequireFilePath(fileKey string) (string, error) {
+	path, ok, err := o.resolveFilePath(fileKey)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", errors.Errorf("selected %s file is required", fileKey)
+	}
+	return path, nil
+}
+
+func (o ImportOptions) resolveFilePath(fileKey string) (string, bool, error) {
+	for _, file := range o.Files {
+		if file.FileKey != fileKey {
+			continue
+		}
+		if file.Path != "" {
+			return file.Path, true, nil
+		}
+		if file.RelativePath == "" {
+			return "", false, nil
+		}
+		path, err := SafeRunRelativePath(o.RunDir, file.RelativePath)
+		if err != nil {
+			return "", false, errors.Wrapf(err, "resolve selected %s file", fileKey)
+		}
+		return path, true, nil
+	}
+	return "", false, nil
 }
 
 type ImportResult struct {
@@ -65,6 +115,7 @@ type ImportRunRequest struct {
 	Country             string
 	Source              string
 	RunDir              string
+	Files               []SelectedSourceFile
 	ClickHouseNativeURL string
 	BatchSize           int
 	Limit               int64

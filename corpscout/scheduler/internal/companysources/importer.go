@@ -17,6 +17,7 @@ func ImportRun(ctx context.Context, registry Registry, req ImportRunRequest) (Im
 	}
 	return source.Import(ctx, ImportOptions{
 		RunDir:              req.RunDir,
+		Files:               req.Files,
 		ClickHouseNativeURL: req.ClickHouseNativeURL,
 		BatchSize:           req.BatchSize,
 		Limit:               req.Limit,

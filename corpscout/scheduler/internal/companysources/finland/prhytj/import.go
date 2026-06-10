@@ -34,6 +34,11 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 		batchSize = 1000
 	}
 
+	snapshotPath, err := opts.RequireFilePath("source")
+	if err != nil {
+		return companysources.ImportResult{}, err
+	}
+
 	writer, err := chwriter.Open(ctx, opts.ClickHouseNativeURL)
 	if err != nil {
 		return companysources.ImportResult{}, err
@@ -46,7 +51,6 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 		SourceExportID: uuid.New(),
 		IngestedAt:     time.Now().UTC(),
 	}
-	snapshotPath := filepath.Join(opts.RunDir, "source.ndjson")
 	entries := make([]NormalizedEntry, 0, batchSize)
 	var seen int64
 
