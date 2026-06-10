@@ -47,3 +47,20 @@ func TestCreateSourceActionRunAcceptsDeterministicID(t *testing.T) {
 	require.Contains(t, createQuery, "sqlc.arg(temporal_workflow_id)")
 	require.Contains(t, createQuery, "sqlc.arg(temporal_run_id)")
 }
+
+func TestCreateSourceFileRunRequiresParentActionSameSource(t *testing.T) {
+	body, err := os.ReadFile("../../../database/queries/sources.sql")
+	require.NoError(t, err)
+	sql := string(body)
+
+	start := strings.Index(sql, "-- name: CreateSourceFileRun :one")
+	require.NotEqual(t, -1, start)
+	createQuery := sql[start:]
+	end := strings.Index(createQuery, "-- name: UpdateSourceFileRunTemporalRunID :exec")
+	require.NotEqual(t, -1, end)
+	createQuery = createQuery[:end]
+
+	require.Contains(t, createQuery, "LEFT JOIN data_source_action_runs parent")
+	require.Contains(t, createQuery, "parent.source_id = f.source_id")
+	require.Contains(t, createQuery, "OR parent.id IS NOT NULL")
+}

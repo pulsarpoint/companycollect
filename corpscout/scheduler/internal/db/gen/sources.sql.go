@@ -97,7 +97,14 @@ SELECT
   $4,
   '[]'::jsonb
 FROM data_source_files f
+LEFT JOIN data_source_action_runs parent
+  ON parent.id = $2::uuid
+ AND parent.source_id = f.source_id
 WHERE f.id = $5
+  AND (
+    $2::uuid IS NULL
+    OR parent.id IS NOT NULL
+  )
 RETURNING id, source_id, source_file_id, parent_action_run_id, status, temporal_workflow_id, temporal_run_id, started_at, finished_at, path, content_sha256, content_length_bytes, records_written, error_message, log, created_at
 `
 

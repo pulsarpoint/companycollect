@@ -386,7 +386,14 @@ SELECT
   sqlc.narg(temporal_run_id),
   '[]'::jsonb
 FROM data_source_files f
+LEFT JOIN data_source_action_runs parent
+  ON parent.id = sqlc.narg(parent_action_run_id)::uuid
+ AND parent.source_id = f.source_id
 WHERE f.id = sqlc.arg(source_file_id)
+  AND (
+    sqlc.narg(parent_action_run_id)::uuid IS NULL
+    OR parent.id IS NOT NULL
+  )
 RETURNING *;
 
 -- name: UpdateSourceFileRunTemporalRunID :exec
