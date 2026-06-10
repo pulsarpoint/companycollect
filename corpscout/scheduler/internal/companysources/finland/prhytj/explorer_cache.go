@@ -47,6 +47,16 @@ var companyExplorerCacheColumns = []string{
 	"addresses",
 	"source_payload_hash",
 	"latest_ingested_at",
+	"nace_revision",
+	"nace_code",
+	"nace_normalized_code",
+	"nace_section_code",
+	"nace_division_code",
+	"nace_group_code",
+	"nace_class_code",
+	"nace_title_en",
+	"nace_mapping_method",
+	"nace_mapping_status",
 	"refreshed_at",
 }
 
@@ -115,15 +125,29 @@ func buildCompanyExplorerCacheInsertQuery(database string, table string, view st
 	selectColumns := make([]string, 0, len(companyExplorerCacheColumns))
 	for _, column := range companyExplorerCacheColumns {
 		quotedColumns = append(quotedColumns, ch.QuoteIdent(column))
-		if column == "refreshed_at" {
-			selectColumns = append(selectColumns, clickHouseDateTime64Literal(refreshedAt)+" AS "+ch.QuoteIdent(column))
-			continue
-		}
-		selectColumns = append(selectColumns, ch.QuoteIdent(column))
+		selectColumns = append(selectColumns, companyExplorerCacheSelectExpression(column, refreshedAt))
 	}
 	return "INSERT INTO " + ch.QualifiedTable(database, table) + " (" + strings.Join(quotedColumns, ", ") + ")\n" +
 		"SELECT " + strings.Join(selectColumns, ", ") + "\n" +
-		"FROM " + view
+		"FROM " + view + " AS explorer\n" +
+		"LEFT JOIN " + ch.QualifiedTable(database, IndustryNACEMappingTable) + " AS industry_mapping\n" +
+		"  ON ifNull(industry_mapping.source_code_set, '') = ifNull(explorer.main_business_line_code_set, '')\n" +
+		" AND ifNull(industry_mapping.source_code, '') = ifNull(explorer.main_business_line_code, '')"
+}
+
+func companyExplorerCacheSelectExpression(column string, refreshedAt time.Time) string {
+	switch column {
+	case "refreshed_at":
+		return clickHouseDateTime64Literal(refreshedAt) + " AS " + ch.QuoteIdent(column)
+	case "nace_revision", "nace_code", "nace_normalized_code", "nace_section_code", "nace_division_code", "nace_group_code", "nace_class_code", "nace_title_en":
+		return "industry_mapping." + ch.QuoteIdent(column) + " AS " + ch.QuoteIdent(column)
+	case "nace_mapping_method":
+		return "industry_mapping.mapping_method AS " + ch.QuoteIdent(column)
+	case "nace_mapping_status":
+		return "industry_mapping.mapping_status AS " + ch.QuoteIdent(column)
+	default:
+		return "explorer." + ch.QuoteIdent(column) + " AS " + ch.QuoteIdent(column)
+	}
 }
 
 func clickHouseDateTime64Literal(value time.Time) string {
