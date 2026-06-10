@@ -4,151 +4,95 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cockroachdb/errors"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	temporalworker "go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
-	ariregisteractions "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/actions"
-	ariregistercompanydata "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/companydata"
-	ariregisterdb "github.com/pulsarpoint/corpscout/scheduler/internal/ariregister/db"
-	brregactions "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/actions"
-	"github.com/pulsarpoint/corpscout/scheduler/internal/brreg/companydata"
-	brregdb "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/db"
-	"github.com/pulsarpoint/corpscout/scheduler/internal/brreg/financial"
+	companysources "github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/finland/prhytj"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/unitedstates/coloradoentities"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/unitedstates/irseobmf"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/unitedstates/secedgar"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/config"
-	"github.com/pulsarpoint/corpscout/scheduler/internal/crawlclient"
-	cvractions "github.com/pulsarpoint/corpscout/scheduler/internal/cvr/actions"
-	cvrdb "github.com/pulsarpoint/corpscout/scheduler/internal/cvr/db"
-	franceactions "github.com/pulsarpoint/corpscout/scheduler/internal/france/actions"
-	francedb "github.com/pulsarpoint/corpscout/scheduler/internal/france/db"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/llmproviders"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/s3client"
-	seactions "github.com/pulsarpoint/corpscout/scheduler/internal/se/actions"
-	sedb "github.com/pulsarpoint/corpscout/scheduler/internal/se/db"
-	"github.com/pulsarpoint/corpscout/scheduler/internal/translationclient"
+	companysourceactions "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/actions/companysources"
+	companysourceworkflows "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/companysources"
 )
 
 type temporalWorkerResources struct {
-	translationClient             *translationclient.Client
-	companyTranslation            *brregactions.CompanyTranslationActions
-	crawlClient                   *crawlclient.Client
-	domainSearchActions           *brregactions.DomainSearchActions
-	bulkIngestActions             *brregactions.BulkIngestActions
-	sourceProfileActions          *brregactions.SourceProfileActions
-	sourceCapitalFX               *brregactions.SourceCapitalFXActions
-	sourceFinancial               *brregactions.SourceFinancialActions
-	ariregisterCompanyTranslation *ariregisteractions.CompanyTranslationActions
-	ariregisterBulkIngest         *ariregisteractions.BulkIngestActions
-	ariregisterSourceProfile      *ariregisteractions.SourceProfileActions
-	cvrRawIngest                  *cvractions.RawIngestActions
-	franceBulkIngest              *franceactions.BulkIngestActions
-	franceSourceProfile           *franceactions.SourceProfileActions
-	seBulkIngest                  *seactions.BulkIngestActions
-	naceTaxonomyActions           *nacetaxonomy.Actions
-	fxActions                     *fx.Actions
+	naceTaxonomyActions  *nacetaxonomy.Actions
+	fxActions            *fx.Actions
+	companySourceActions *companysourceactions.Actions
 }
 
 func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore *llmproviders.Store, s3 *s3client.Client) (*temporalWorkerResources, error) {
 	slog.Debug("creating temporal worker resources")
-	if cfg.NATSURL == "" {
-		return nil, errors.New("CORPSCOUT_NATS_URL is required for temporal translation actions")
-	}
-	translator, err := translationclient.NewNATSWithRequestTimeout(cfg.NATSURL, cfg.NATSRequestTimeout)
-	if err != nil {
-		return nil, errors.Wrap(err, "create brreg translation nats client")
-	}
-	slog.Debug("created brreg translation nats client",
-		"subject", translationclient.DefaultBrregTranslationSubject,
-		"request_timeout", cfg.NATSRequestTimeout.String(),
+	_ = llmStore
+	_ = s3
+	sourceRegistry := companysources.NewRegistry(
+		prhytj.Source{},
+		coloradoentities.Source{},
+		irseobmf.Source{},
+		secedgar.Source{},
 	)
-	crawler, err := crawlclient.NewNATSWithRequestTimeout(cfg.NATSURL, cfg.NATSRequestTimeout)
-	if err != nil {
-		translator.Close()
-		return nil, errors.Wrap(err, "create brreg crawl nats client")
-	}
-	slog.Debug("created brreg crawl nats client",
-		"search_fetch_subject", crawlclient.DefaultSearchFetchSubject,
-		"search_analyze_subject", crawlclient.DefaultSearchAnalyzeSubject,
-		"page_crawl_subject", crawlclient.DefaultPageCrawlSubject,
-		"page_analyze_subject", crawlclient.DefaultPageAnalyzeSubject,
-		"request_timeout", cfg.NATSRequestTimeout.String(),
-	)
-	gateway := brregdb.New(pool)
-	brregCompanyData := companydata.New(pool)
-	financialClient := financial.NewClient(cfg.BRREGFinancialURL, http.DefaultClient)
-	ariregisterGateway := ariregisterdb.New(pool)
-	ariregisterCompanyData := ariregistercompanydata.New(pool)
-	cvrGateway := cvrdb.New(pool)
-	franceGateway := francedb.New(pool)
-	seGateway := sedb.New(pool)
 	return &temporalWorkerResources{
-		translationClient:             translator,
-		companyTranslation:            brregactions.NewCompanyTranslationActions(brregCompanyData, translator),
-		crawlClient:                   crawler,
-		domainSearchActions:           brregactions.NewDomainSearchActions(gateway, crawler, llmStore, s3),
-		bulkIngestActions:             brregactions.NewBulkIngestActions(gateway, http.DefaultClient, cfg.BRREGBulkSourceURL),
-		sourceProfileActions:          brregactions.NewSourceProfileActions(gateway),
-		sourceCapitalFX:               brregactions.NewSourceCapitalFXActions(gateway),
-		sourceFinancial:               brregactions.NewSourceFinancialActions(gateway, financialClient),
-		ariregisterCompanyTranslation: ariregisteractions.NewCompanyTranslationActions(ariregisterCompanyData, translator),
-		ariregisterBulkIngest:         ariregisteractions.NewBulkIngestActions(ariregisterGateway, http.DefaultClient, cfg.AriregisterSourceURL),
-		ariregisterSourceProfile:      ariregisteractions.NewSourceProfileActions(ariregisterGateway),
-		cvrRawIngest: cvractions.NewRawIngestActions(cvrGateway, http.DefaultClient, cvractions.RawIngestConfig{
-			SourceURL:   cfg.CVRSourceURL,
-			ScrollURL:   cfg.CVRScrollURL,
-			Scroll:      cfg.CVRScroll,
-			Username:    cfg.CVRUsername,
-			Password:    cfg.CVRPassword,
-			BearerToken: cfg.CVRBearerToken,
-			APIKey:      cfg.CVRAPIKey,
-		}),
-		franceBulkIngest: franceactions.NewBulkIngestActions(franceGateway, http.DefaultClient, franceactions.BulkIngestConfig{
-			LegalUnitsURL:     cfg.FranceLegalUnitsURL,
-			EstablishmentsURL: cfg.FranceEstablishmentsURL,
-		}),
-		franceSourceProfile: franceactions.NewSourceProfileActions(franceGateway),
-		seBulkIngest: seactions.NewBulkIngestActions(seGateway, http.DefaultClient, seactions.BulkIngestConfig{
-			DatasetsJSON: cfg.SEHVDDatasetsJSON,
-			StagingRoot:  cfg.SEHVDStagingRoot,
-		}),
-		naceTaxonomyActions: nacetaxonomy.NewActions(pool, http.DefaultClient),
-		fxActions:           fx.NewActions(pool, http.DefaultClient, cfg.FXECBSourceURL),
+		naceTaxonomyActions:  nacetaxonomy.NewActions(pool, http.DefaultClient),
+		fxActions:            fx.NewActions(pool, http.DefaultClient, cfg.FXECBSourceURL),
+		companySourceActions: companysourceactions.NewActions(pool, sourceRegistry, cfg.SourceRunsRoot, cfg.ClickHouseNativeURL),
 	}, nil
 }
 
 func (r *temporalWorkerResources) Close() {
-	if r != nil && r.translationClient != nil {
-		slog.Debug("closing brreg translation nats client")
-		r.translationClient.Close()
-	}
-	if r != nil && r.crawlClient != nil {
-		slog.Debug("closing brreg crawl nats client")
-		r.crawlClient.Close()
-	}
 }
 
 func newTemporalWorkers(temporalClient client.Client, resources *temporalWorkerResources) []temporalworker.Worker {
 	slog.Debug("creating temporal workers")
 	return []temporalworker.Worker{
-		newBrregCompanyTranslationTemporalWorker(temporalClient, resources),
-		newBrregDomainSearchTemporalWorker(temporalClient, resources),
-		newBrregBulkIngestTemporalWorker(temporalClient, resources),
-		newBrregSourceProfileTemporalWorker(temporalClient, resources),
-		newBrregSourceExplorerRefreshTemporalWorker(temporalClient, resources),
-		newBrregSourceCapitalFXTemporalWorker(temporalClient, resources),
-		newBrregSourceFinancialTemporalWorker(temporalClient, resources),
-		newAriregisterCompanyTranslationTemporalWorker(temporalClient, resources),
-		newAriregisterBulkIngestTemporalWorker(temporalClient, resources),
-		newAriregisterSourceProfileTemporalWorker(temporalClient, resources),
-		newAriregisterSourceExplorerRefreshTemporalWorker(temporalClient, resources),
-		newCVRRawIngestTemporalWorker(temporalClient, resources),
-		newFranceBulkIngestTemporalWorker(temporalClient, resources),
-		newFranceSourceProfileTemporalWorker(temporalClient, resources),
-		newSEBulkIngestTemporalWorker(temporalClient, resources),
 		newNACETaxonomyTemporalWorker(temporalClient, resources),
 		newFXTemporalWorker(temporalClient, resources),
+		newCompanySourcesTemporalWorker(temporalClient, resources),
 	}
+}
+
+func newCompanySourcesTemporalWorker(temporalClient client.Client, resources *temporalWorkerResources) temporalworker.Worker {
+	slog.Debug("creating company sources temporal worker", "task_queue", companysourceworkflows.SourceTaskQueue)
+	worker := temporalworker.New(temporalClient, companysourceworkflows.SourceTaskQueue, temporalworker.Options{})
+	worker.RegisterWorkflowWithOptions(
+		companysourceworkflows.DownloadSource,
+		workflow.RegisterOptions{Name: companysourceworkflows.DownloadSourceWorkflowName},
+	)
+	worker.RegisterWorkflowWithOptions(
+		companysourceworkflows.DownloadSourceFile,
+		workflow.RegisterOptions{Name: companysourceworkflows.DownloadSourceFileWorkflowName},
+	)
+	worker.RegisterWorkflowWithOptions(
+		companysourceworkflows.ImportSourceToClickHouse,
+		workflow.RegisterOptions{Name: companysourceworkflows.ImportSourceToClickHouseWorkflowName},
+	)
+	worker.RegisterWorkflowWithOptions(
+		companysourceworkflows.SyncSourceToClickHouse,
+		workflow.RegisterOptions{Name: companysourceworkflows.SyncSourceToClickHouseWorkflowName},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.companySourceActions.PrepareSourceDownloadActivity,
+		activity.RegisterOptions{Name: companysourceworkflows.PrepareSourceDownloadActivityName},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.companySourceActions.FinishSourceDownloadActivity,
+		activity.RegisterOptions{Name: companysourceworkflows.FinishSourceDownloadActivityName},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.companySourceActions.DownloadSourceFileActivity,
+		activity.RegisterOptions{Name: companysourceworkflows.DownloadSourceFileActivityName},
+	)
+	worker.RegisterActivityWithOptions(
+		resources.companySourceActions.ImportSourceToClickHouseActivity,
+		activity.RegisterOptions{Name: companysourceworkflows.ImportSourceToClickHouseActivityName},
+	)
+	return worker
 }

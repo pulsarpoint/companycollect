@@ -1,15 +1,16 @@
 package app
 
 import (
-	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/client"
 
 	"github.com/pulsarpoint/corpscout/scheduler/internal/config"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/companysources"
 )
 
-func TestNewTemporalWorkersCreatesBrregWorkers(t *testing.T) {
+func TestNewTemporalWorkersCreatesReferenceDataWorkers(t *testing.T) {
 	temporalClient, err := client.NewLazyClient(client.Options{
 		HostPort:  "localhost:7233",
 		Namespace: "corpscout",
@@ -19,21 +20,36 @@ func TestNewTemporalWorkersCreatesBrregWorkers(t *testing.T) {
 	}
 	defer temporalClient.Close()
 
-	workers := newTemporalWorkers(temporalClient, &temporalWorkerResources{})
+	resources, err := newTemporalWorkerResources(config.Config{
+		SourceRunsRoot:      t.TempDir(),
+		ClickHouseNativeURL: "clickhouse://localhost:9000?database=test",
+	}, nil, nil, nil)
+	require.NoError(t, err)
+
+	workers := newTemporalWorkers(temporalClient, resources)
 	defer stopTemporalWorkers(workers)
 
-	if len(workers) != 17 {
-		t.Fatalf("expected 17 temporal workers, got %d", len(workers))
+	if len(workers) != 3 {
+		t.Fatalf("expected 3 temporal workers, got %d", len(workers))
 	}
 }
 
-func TestNewTemporalWorkerResourcesRequiresNATSURL(t *testing.T) {
-	_, err := newTemporalWorkerResources(config.Config{}, nil, nil, nil)
+func TestNewCompanySourcesTemporalWorkerRegistersDirectly(t *testing.T) {
+	temporalClient, err := client.NewLazyClient(client.Options{
+		HostPort:  "localhost:7233",
+		Namespace: "corpscout",
+	})
+	require.NoError(t, err)
+	defer temporalClient.Close()
 
-	if err == nil {
-		t.Fatal("expected missing nats url error")
-	}
-	if !strings.Contains(err.Error(), "CORPSCOUT_NATS_URL is required") {
-		t.Fatalf("expected nats url error, got %v", err)
-	}
+	resources, err := newTemporalWorkerResources(config.Config{
+		SourceRunsRoot:      t.TempDir(),
+		ClickHouseNativeURL: "clickhouse://localhost:9000?database=test",
+	}, nil, nil, nil)
+	require.NoError(t, err)
+
+	worker := newCompanySourcesTemporalWorker(temporalClient, resources)
+	defer worker.Stop()
+	require.NotNil(t, worker)
+	require.Equal(t, companysources.SourceTaskQueue, "corpscout-company-sources")
 }
