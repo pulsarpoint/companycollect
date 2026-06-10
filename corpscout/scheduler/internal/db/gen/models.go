@@ -183,6 +183,44 @@ type ExchangeRateSyncRun struct {
 	Metadata           json.RawMessage    `json:"metadata"`
 }
 
+type FinancialXbrlFinlandPrhXbrlDiscoveryWindow struct {
+	ID                   uuid.UUID          `json:"id"`
+	SourceID             uuid.UUID          `json:"source_id"`
+	RegisteredDateStart  pgtype.Date        `json:"registered_date_start"`
+	RegisteredDateEnd    pgtype.Date        `json:"registered_date_end"`
+	ActionRunID          pgtype.UUID        `json:"action_run_id"`
+	TemporalWorkflowID   *string            `json:"temporal_workflow_id"`
+	TemporalRunID        *string            `json:"temporal_run_id"`
+	TotalResults         int64              `json:"total_results"`
+	PagesDiscovered      int32              `json:"pages_discovered"`
+	StatementsDiscovered int64              `json:"statements_discovered"`
+	LastCompletedPage    int32              `json:"last_completed_page"`
+	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt            time.Time          `json:"created_at"`
+	UpdatedAt            time.Time          `json:"updated_at"`
+}
+
+type FinancialXbrlFinlandPrhXbrlStatementArtifact struct {
+	ID                   uuid.UUID          `json:"id"`
+	SourceID             uuid.UUID          `json:"source_id"`
+	BusinessID           string             `json:"business_id"`
+	FinancialDate        pgtype.Date        `json:"financial_date"`
+	RegistrationDate     pgtype.Date        `json:"registration_date"`
+	SourceUrl            string             `json:"source_url"`
+	XmlPath              *string            `json:"xml_path"`
+	XmlSha256            *string            `json:"xml_sha256"`
+	XmlSizeBytes         *int64             `json:"xml_size_bytes"`
+	DownloadStatus       string             `json:"download_status"`
+	Attempts             int32              `json:"attempts"`
+	LastAttemptAt        pgtype.Timestamptz `json:"last_attempt_at"`
+	DownloadedAt         pgtype.Timestamptz `json:"downloaded_at"`
+	LastErrorMessage     *string            `json:"last_error_message"`
+	FirstDiscoveredRunID pgtype.UUID        `json:"first_discovered_run_id"`
+	LatestActionRunID    pgtype.UUID        `json:"latest_action_run_id"`
+	CreatedAt            time.Time          `json:"created_at"`
+	UpdatedAt            time.Time          `json:"updated_at"`
+}
+
 type LlmProvider struct {
 	ID               uuid.UUID       `json:"id"`
 	Slug             string          `json:"slug"`

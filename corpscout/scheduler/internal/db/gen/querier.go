@@ -16,6 +16,7 @@ type Querier interface {
 	BeginNACEImportRun(ctx context.Context, arg BeginNACEImportRunParams) (NaceImportRun, error)
 	ClearDefaultLLMProvider(ctx context.Context) error
 	ClearRootNACECodeParents(ctx context.Context, classificationID uuid.UUID) error
+	CompleteFinlandPRHXBRLDiscoveryWindow(ctx context.Context, arg CompleteFinlandPRHXBRLDiscoveryWindowParams) (FinancialXbrlFinlandPrhXbrlDiscoveryWindow, error)
 	CountDomains(ctx context.Context, arg CountDomainsParams) (int64, error)
 	CreateLLMProvider(ctx context.Context, arg CreateLLMProviderParams) (CreateLLMProviderRow, error)
 	CreateSourceActionRun(ctx context.Context, arg CreateSourceActionRunParams) (DataSourceActionRun, error)
@@ -60,6 +61,7 @@ type Querier interface {
 	ListEnabledLLMProviders(ctx context.Context) ([]ListEnabledLLMProvidersRow, error)
 	ListExchangeRateSyncRuns(ctx context.Context, limit int32) ([]VExchangeRateSyncRun, error)
 	ListExchangeRateSyncState(ctx context.Context) ([]VExchangeRateSyncState, error)
+	ListFinlandPRHXBRLStatementArtifactsToDownload(ctx context.Context, arg ListFinlandPRHXBRLStatementArtifactsToDownloadParams) ([]FinancialXbrlFinlandPrhXbrlStatementArtifact, error)
 	ListLLMProviders(ctx context.Context) ([]ListLLMProvidersRow, error)
 	ListLatestSuccessfulRequiredSourceFileRuns(ctx context.Context, name string) ([]ListLatestSuccessfulRequiredSourceFileRunsRow, error)
 	ListNACEClassificationsForClickHouse(ctx context.Context) ([]ListNACEClassificationsForClickHouseRow, error)
@@ -80,6 +82,9 @@ type Querier interface {
 	MarkExchangeRateSourceFileFailed(ctx context.Context, arg MarkExchangeRateSourceFileFailedParams) (ExchangeRateSourceFile, error)
 	MarkExchangeRateSourceFileProcessed(ctx context.Context, id uuid.UUID) (ExchangeRateSourceFile, error)
 	MarkExchangeRateSourceFileProcessing(ctx context.Context, id uuid.UUID) (ExchangeRateSourceFile, error)
+	MarkFinlandPRHXBRLStatementArtifactDownloading(ctx context.Context, arg MarkFinlandPRHXBRLStatementArtifactDownloadingParams) (FinancialXbrlFinlandPrhXbrlStatementArtifact, error)
+	MarkFinlandPRHXBRLStatementArtifactFailed(ctx context.Context, arg MarkFinlandPRHXBRLStatementArtifactFailedParams) (FinancialXbrlFinlandPrhXbrlStatementArtifact, error)
+	MarkFinlandPRHXBRLStatementArtifactSucceeded(ctx context.Context, arg MarkFinlandPRHXBRLStatementArtifactSucceededParams) (FinancialXbrlFinlandPrhXbrlStatementArtifact, error)
 	MarkNACESourceFileFailed(ctx context.Context, arg MarkNACESourceFileFailedParams) (NaceSourceFile, error)
 	MarkNACESourceFileProcessed(ctx context.Context, arg MarkNACESourceFileProcessedParams) (NaceSourceFile, error)
 	MarkNACESourceFileProcessing(ctx context.Context, id uuid.UUID) (NaceSourceFile, error)
@@ -88,6 +93,7 @@ type Querier interface {
 	ReviewCompanyDomain(ctx context.Context, arg ReviewCompanyDomainParams) error
 	SetDefaultLLMProvider(ctx context.Context, id uuid.UUID) (SetDefaultLLMProviderRow, error)
 	UpdateCompanyRegistryProfile(ctx context.Context, arg UpdateCompanyRegistryProfileParams) (Company, error)
+	UpdateFinlandPRHXBRLDiscoveryProgress(ctx context.Context, arg UpdateFinlandPRHXBRLDiscoveryProgressParams) (FinancialXbrlFinlandPrhXbrlDiscoveryWindow, error)
 	UpdateLLMProvider(ctx context.Context, arg UpdateLLMProviderParams) (UpdateLLMProviderRow, error)
 	UpdateSourceActionRunTemporalRunID(ctx context.Context, arg UpdateSourceActionRunTemporalRunIDParams) error
 	UpdateSourceFileRunTemporalRunID(ctx context.Context, arg UpdateSourceFileRunTemporalRunIDParams) error
@@ -103,6 +109,8 @@ type Querier interface {
 	UpsertDownloadedNACESourceFile(ctx context.Context, arg UpsertDownloadedNACESourceFileParams) (NaceSourceFile, error)
 	UpsertExchangeRate(ctx context.Context, arg UpsertExchangeRateParams) (ExchangeRate, error)
 	UpsertExchangeRateSheet(ctx context.Context, arg UpsertExchangeRateSheetParams) (ExchangeRateSheet, error)
+	UpsertFinlandPRHXBRLDiscoveryWindow(ctx context.Context, arg UpsertFinlandPRHXBRLDiscoveryWindowParams) (FinancialXbrlFinlandPrhXbrlDiscoveryWindow, error)
+	UpsertFinlandPRHXBRLStatementArtifact(ctx context.Context, arg UpsertFinlandPRHXBRLStatementArtifactParams) (FinancialXbrlFinlandPrhXbrlStatementArtifact, error)
 	UpsertNACEClassification(ctx context.Context, arg UpsertNACEClassificationParams) (NaceClassification, error)
 	UpsertNACECode(ctx context.Context, arg UpsertNACECodeParams) (NaceCode, error)
 	UpsertNACECodeAlias(ctx context.Context, arg UpsertNACECodeAliasParams) error
