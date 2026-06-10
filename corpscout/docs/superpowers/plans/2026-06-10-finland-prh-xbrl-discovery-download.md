@@ -101,6 +101,7 @@ func TestLoadEmbeddedSpecsIncludesFinlandPRHXBRL(t *testing.T) {
 	require.Equal(t, "pull_source", spec.Actions[0].Action)
 	require.Equal(t, "CompanySourceDownloadWorkflow", spec.Actions[0].TemporalWorkflowType)
 	require.Equal(t, "corpscout-company-sources", spec.Actions[0].TemporalTaskQueue)
+	require.False(t, spec.Actions[0].Enabled)
 }
 
 func TestSourceSpecAllowsStatementManifestFile(t *testing.T) {
@@ -135,7 +136,7 @@ func TestSourceSpecAllowsStatementManifestFile(t *testing.T) {
 			DisplayName:          "Download statements",
 			TemporalWorkflowType: "CompanySourceDownloadWorkflow",
 			TemporalTaskQueue:    "corpscout-company-sources",
-			Enabled:              true,
+			Enabled:              false,
 		}},
 	}
 
@@ -288,7 +289,7 @@ Create `corpscout/scheduler/internal/companysources/sourcecatalog/sources/finlan
       "display_name": "Download statements",
       "temporal_workflow_type": "CompanySourceDownloadWorkflow",
       "temporal_task_queue": "corpscout-company-sources",
-      "enabled": true,
+      "enabled": false,
       "config": {}
     }
   ]
@@ -396,13 +397,17 @@ require.ElementsMatch(t, []string{
 	"united_states/secedgar",
 }, store.pruned)
 var prhXBRLAction db.UpsertDataSourceActionFromCatalogParams
+var foundPRHXBRLAction bool
 for _, action := range store.actionUpserts {
 	if action.RegistryKey == "finland/prh_xbrl" {
 		prhXBRLAction = action
+		foundPRHXBRLAction = true
 	}
 }
+require.True(t, foundPRHXBRLAction)
 require.Equal(t, "pull_source", prhXBRLAction.Action)
 require.Equal(t, "CompanySourceDownloadWorkflow", prhXBRLAction.TemporalWorkflowType)
+require.False(t, prhXBRLAction.Enabled)
 ```
 
 - [ ] **Step 6: Add the source package stub**
@@ -1524,6 +1529,9 @@ git commit -m "feat: add prh xbrl download client"
 
 **Files:**
 - Modify: `corpscout/scheduler/internal/companysources/finland/prhxbrl/download.go`
+- Modify: `corpscout/scheduler/internal/companysources/sourcecatalog/sources/finland_prh_xbrl.json`
+- Modify: `corpscout/scheduler/internal/companysources/sourcecatalog/catalog_test.go`
+- Modify: `corpscout/scheduler/internal/companysources/sourcecatalog/sync_test.go`
 - Modify: `corpscout/scheduler/internal/temporal/actions/companysources/actions.go`
 - Modify: `corpscout/scheduler/internal/temporal/actions/companysources/actions_test.go`
 
@@ -1791,22 +1799,41 @@ func validatePRHXBRLWindowInput(input DownloadSourceFileInput) (prhxbrlWindowInp
 }
 ```
 
-- [ ] **Step 5: Run focused tests**
+- [ ] **Step 5: Enable the catalog action**
+
+In `corpscout/scheduler/internal/companysources/sourcecatalog/sources/finland_prh_xbrl.json`, set the `pull_source` action `"enabled"` value to `true`.
+
+In `corpscout/scheduler/internal/companysources/sourcecatalog/catalog_test.go`, change the `finland_prh_xbrl` action assertions to:
+
+```go
+require.True(t, spec.Actions[0].Enabled)
+```
+
+In `corpscout/scheduler/internal/companysources/sourcecatalog/sync_test.go`, change the PRH XBRL action assertion to:
+
+```go
+require.True(t, prhXBRLAction.Enabled)
+```
+
+- [ ] **Step 6: Run focused tests**
 
 Run:
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
-GOWORK=off go test ./internal/companysources/finland/prhxbrl ./internal/temporal/actions/companysources -count=1
+GOWORK=off go test ./internal/companysources/finland/prhxbrl ./internal/companysources/sourcecatalog ./internal/temporal/actions/companysources -count=1
 ```
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
 git add corpscout/scheduler/internal/companysources/finland/prhxbrl \
+  corpscout/scheduler/internal/companysources/sourcecatalog/sources/finland_prh_xbrl.json \
+  corpscout/scheduler/internal/companysources/sourcecatalog/catalog_test.go \
+  corpscout/scheduler/internal/companysources/sourcecatalog/sync_test.go \
   corpscout/scheduler/internal/temporal/actions/companysources/actions.go \
   corpscout/scheduler/internal/temporal/actions/companysources/actions_test.go
 git commit -m "feat: download finland prh xbrl statements"

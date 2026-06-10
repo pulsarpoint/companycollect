@@ -71,6 +71,7 @@ func TestLoadEmbeddedSpecsIncludesFinlandPRHXBRL(t *testing.T) {
 	require.Equal(t, "pull_source", spec.Actions[0].Action)
 	require.Equal(t, "CompanySourceDownloadWorkflow", spec.Actions[0].TemporalWorkflowType)
 	require.Equal(t, "corpscout-company-sources", spec.Actions[0].TemporalTaskQueue)
+	require.False(t, spec.Actions[0].Enabled)
 }
 
 func TestSourceSpecAllowsStatementManifestFile(t *testing.T) {
@@ -105,7 +106,7 @@ func TestSourceSpecAllowsStatementManifestFile(t *testing.T) {
 			DisplayName:          "Download statements",
 			TemporalWorkflowType: "CompanySourceDownloadWorkflow",
 			TemporalTaskQueue:    "corpscout-company-sources",
-			Enabled:              true,
+			Enabled:              false,
 		}},
 	}
 

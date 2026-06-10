@@ -69,11 +69,15 @@ func TestSyncUpsertsAndPrunesCatalogSources(t *testing.T) {
 	require.Equal(t, "corpscout_sources", store.upserts[0].ClickhouseDatabase)
 
 	var prhXBRLAction db.UpsertDataSourceActionFromCatalogParams
+	var foundPRHXBRLAction bool
 	for _, action := range store.actionUpserts {
 		if action.RegistryKey == "finland/prh_xbrl" {
 			prhXBRLAction = action
+			foundPRHXBRLAction = true
 		}
 	}
+	require.True(t, foundPRHXBRLAction)
 	require.Equal(t, "pull_source", prhXBRLAction.Action)
 	require.Equal(t, "CompanySourceDownloadWorkflow", prhXBRLAction.TemporalWorkflowType)
+	require.False(t, prhXBRLAction.Enabled)
 }
