@@ -60,6 +60,8 @@ func TestClickHouseFinlandPRHYTJIndustryNACEMappingMigrationShape(t *testing.T) 
 		"`nace_class_code` Nullable(String)",
 		"`mapping_status` LowCardinality(String)",
 		"ENGINE = ReplacingMergeTree(`mapped_at`)",
+		"ORDER BY (`source_code_set`, `source_code`)",
+		"SETTINGS allow_nullable_key = 1",
 		"ADD COLUMN IF NOT EXISTS `nace_revision` Nullable(String)",
 		"ADD COLUMN IF NOT EXISTS `nace_mapping_status` Nullable(String)",
 	} {
