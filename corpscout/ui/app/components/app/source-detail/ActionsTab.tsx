@@ -20,6 +20,13 @@ import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import {
+  Sheet,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "~/components/ui/sheet";
 import { Skeleton } from "~/components/ui/skeleton";
 import {
   Table,
@@ -127,6 +134,10 @@ function resultValue(run: SourceActionRun): string {
   return String(run.result.imported_rows ?? "-");
 }
 
+function recentPullRuns(runs: SourceActionRun[]): SourceActionRun[] {
+  return runs.filter((run) => run.action === "pull_source").slice(0, 5);
+}
+
 function fileState(file: SourceFileStatus): SourceRunStatus | "missing" | "disabled" {
   if (!file.enabled) return "disabled";
   if (file.latest_status === "running") return "running";
@@ -165,19 +176,24 @@ function clampMaxStatements(value: string): number {
 }
 
 export function ActionsTab({ source }: ActionsTabProps) {
+  const isFinlandPRHYTJ = source.name === finlandPRHYTJSourceName;
+  const isFinlandPRHXBRL = source.name === finlandPRHXBRLSourceName;
   const [actions, setActions] = useState<SourceAction[]>([]);
   const [runs, setRuns] = useState<SourceActionRun[]>([]);
+  const [financialRuns, setFinancialRuns] = useState<SourceActionRun[]>([]);
   const [files, setFiles] = useState<SourceFileStatus[]>([]);
   const [selectedFileKey, setSelectedFileKey] = useState<string>();
   const [fileRuns, setFileRuns] = useState<SourceFileRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingFileRuns, setLoadingFileRuns] = useState(false);
+  const [loadingFinancialRuns, setLoadingFinancialRuns] = useState(false);
   const [triggering, setTriggering] = useState<TriggerKey>();
   const [triggeringFileKey, setTriggeringFileKey] = useState<string>();
   const [importingFileKey, setImportingFileKey] = useState<string>();
   const [checkingRunID, setCheckingRunID] = useState<string>();
   const [temporalStatuses, setTemporalStatuses] = useState<Record<string, SourceRunTemporalStatus>>({});
   const [error, setError] = useState<string>();
+  const [financialSheetOpen, setFinancialSheetOpen] = useState(false);
   const [prhRegisteredDateStart, setPrhRegisteredDateStart] = useState("");
   const [prhRegisteredDateEnd, setPrhRegisteredDateEnd] = useState("");
   const [prhMaxStatements, setPrhMaxStatements] = useState("50");
@@ -190,6 +206,17 @@ export function ActionsTab({ source }: ActionsTabProps) {
     setFiles(loaded.files);
     setSelectedFileKey(loaded.selectedFileKey);
     setFileRuns(loaded.fileRuns);
+  }
+
+  async function refreshFinancialRuns() {
+    if (!isFinlandPRHYTJ) return;
+    setLoadingFinancialRuns(true);
+    try {
+      const loaded = await api.getSourceActionRuns(finlandPRHXBRLSourceName, 20);
+      setFinancialRuns(recentPullRuns(loaded.items));
+    } finally {
+      setLoadingFinancialRuns(false);
+    }
   }
 
   useEffect(() => {
@@ -219,6 +246,34 @@ export function ActionsTab({ source }: ActionsTabProps) {
     };
   }, [source.name]);
 
+  useEffect(() => {
+    if (!isFinlandPRHYTJ) {
+      setFinancialRuns([]);
+      setLoadingFinancialRuns(false);
+      return;
+    }
+
+    let ignore = false;
+    setLoadingFinancialRuns(true);
+    api
+      .getSourceActionRuns(finlandPRHXBRLSourceName, 20)
+      .then((loaded) => {
+        if (!ignore) setFinancialRuns(recentPullRuns(loaded.items));
+      })
+      .catch((err) => {
+        if (!ignore) {
+          setError(errorMessage(err, "Failed to load financial data pulls."));
+        }
+      })
+      .finally(() => {
+        if (!ignore) setLoadingFinancialRuns(false);
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [isFinlandPRHYTJ]);
+
   const actionsByKey = useMemo(
     () => new Map(actions.map((action) => [action.action, action])),
     [actions],
@@ -234,8 +289,6 @@ export function ActionsTab({ source }: ActionsTabProps) {
   const industryMappingEnabled =
     actionsByKey.get("map_industries_to_nace")?.enabled ?? false;
   const busy = Boolean(triggering || triggeringFileKey || importingFileKey);
-  const isFinlandPRHYTJ = source.name === finlandPRHYTJSourceName;
-  const isFinlandPRHXBRL = source.name === finlandPRHXBRLSourceName;
   const prhDateWindowMissing =
     !prhRegisteredDateStart.trim() || !prhRegisteredDateEnd.trim();
   const downloadDisabled =
@@ -385,13 +438,22 @@ export function ActionsTab({ source }: ActionsTabProps) {
   }
 
   function triggerFinancialDownload() {
-    void runAndRefresh("pull_financial_source", () =>
-      api.triggerSourceAction(
+    setTriggering("pull_financial_source");
+    api
+      .triggerSourceAction(
         finlandPRHXBRLSourceName,
         "pull_source",
         prhXBRLDownloadInput(),
-      ),
-    );
+      )
+      .then(() => {
+        setFinancialSheetOpen(false);
+        toast.success("Financial data workflow started.");
+        return refreshFinancialRuns();
+      })
+      .catch((err) => {
+        toast.error(errorMessage(err, "Failed to start financial data workflow."));
+      })
+      .finally(() => setTriggering(undefined));
   }
 
   function triggerExplorerRefresh() {
@@ -413,7 +475,9 @@ export function ActionsTab({ source }: ActionsTabProps) {
   function triggerRefresh() {
     setLoading(true);
     setError(undefined);
-    refresh()
+    const tasks = [refresh()];
+    if (isFinlandPRHYTJ) tasks.push(refreshFinancialRuns());
+    Promise.all(tasks)
       .catch((err) => {
         setError(errorMessage(err, "Failed to load source actions."));
       })
@@ -575,29 +639,6 @@ export function ActionsTab({ source }: ActionsTabProps) {
           <RefreshCw className="size-4" />
           Refresh
         </Button>
-        {isFinlandPRHYTJ ? (
-          <div className="flex w-full flex-wrap items-end gap-2 border-t pt-3">
-            <div className="flex h-8 items-center text-sm font-medium">
-              Financial statements
-            </div>
-            {renderPRHXBRLWindowFields("finland-prhytj-financial")}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={triggerFinancialDownload}
-              disabled={financialDownloadDisabled}
-            >
-              <Download className="size-4" />
-              Download financial data
-            </Button>
-            <Button size="sm" variant="ghost" asChild>
-              <Link to={`/sources/${finlandPRHXBRLSourceName}/actions`}>
-                <ExternalLink className="size-4" />
-                Financial runs
-              </Link>
-            </Button>
-          </div>
-        ) : null}
       </div>
 
       <section className="space-y-2">
@@ -761,6 +802,116 @@ export function ActionsTab({ source }: ActionsTabProps) {
           </TableBody>
         </Table>
       </section>
+
+      {isFinlandPRHYTJ ? (
+        <section className="space-y-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="mr-2">
+              <h2 className="text-sm font-medium">Financial data</h2>
+              <div className="text-xs text-muted-foreground">
+                Last {financialRuns.length.toLocaleString()} pulls from PRH XBRL
+              </div>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => setFinancialSheetOpen(true)}
+              disabled={busy || loading}
+            >
+              <Download className="size-4" />
+              Download
+            </Button>
+            <Button size="sm" variant="outline" asChild>
+              <Link to={`/sources/${finlandPRHXBRLSourceName}/actions`}>
+                <ExternalLink className="size-4" />
+                Financial runs
+              </Link>
+            </Button>
+          </div>
+          {loadingFinancialRuns ? (
+            <Skeleton className="h-32 w-full" />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Started</TableHead>
+                  <TableHead>Finished</TableHead>
+                  <TableHead>Result</TableHead>
+                  <TableHead>Workflow</TableHead>
+                  <TableHead className="text-right">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {financialRuns.map((run) => {
+                  const temporalStatus = temporalStatusLabel(temporalStatuses[run.id]);
+                  return (
+                    <TableRow key={run.id}>
+                      <TableCell>
+                        <Badge className={statusBadgeClass(run.status)} variant="outline">
+                          {run.status}
+                        </Badge>
+                        {temporalStatus ? (
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {temporalStatus}
+                          </div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell>{formattedDate(run.started_at)}</TableCell>
+                      <TableCell>{formattedDate(run.finished_at)}</TableCell>
+                      <TableCell className="max-w-80 whitespace-normal font-mono text-xs">
+                        {resultValue(run)}
+                      </TableCell>
+                      <TableCell className="max-w-64 truncate font-mono text-xs">
+                        {run.temporal_workflow_id ?? "-"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => checkTemporalStatus("action", run.id)}
+                            disabled={checkingRunID === run.id}
+                            aria-label="Check financial data run Temporal status"
+                            title="Check Temporal status"
+                          >
+                            <RefreshCw className="size-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {financialRuns.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="h-16 text-muted-foreground">
+                      No financial data pulls found.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          )}
+          <Sheet open={financialSheetOpen} onOpenChange={setFinancialSheetOpen}>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Download financial data</SheetTitle>
+              </SheetHeader>
+              <div className="flex flex-col gap-4 px-4">
+                {renderPRHXBRLWindowFields("finland-prhytj-financial-sheet")}
+              </div>
+              <SheetFooter>
+                <Button
+                  onClick={triggerFinancialDownload}
+                  disabled={financialDownloadDisabled}
+                >
+                  <Download className="size-4" />
+                  Download financial data
+                </Button>
+              </SheetFooter>
+            </SheetContent>
+          </Sheet>
+        </section>
+      ) : null}
 
       <section className="space-y-2">
         <div className="flex items-center justify-between gap-3">
