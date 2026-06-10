@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
@@ -69,6 +70,60 @@ func TestDownloadStatementXMLWritesHashAndSize(t *testing.T) {
 	require.NotEmpty(t, result.SHA256)
 	require.Equal(t, int64(len(`<xbrl><fact>100</fact></xbrl>`)), result.SizeBytes)
 	require.Equal(t, server.URL+"/opendata-xbrl-api/v3/financial?businessId=0100130-4&financialDate=2024-12-31", result.SourceURL)
+}
+
+func TestValidateStatementPathSegment(t *testing.T) {
+	for _, value := range []string{"0100130-4", "2024-12-31"} {
+		t.Run("valid "+value, func(t *testing.T) {
+			require.NoError(t, validateStatementPathSegment("field", value))
+		})
+	}
+
+	for _, value := range []string{"", ".", "..", "/0100130-4", `C:\0100130-4`, "0100130-4/2024", `0100130-4\2024`, "0100130-4/."} {
+		t.Run("invalid "+value, func(t *testing.T) {
+			require.Error(t, validateStatementPathSegment("field", value))
+		})
+	}
+}
+
+func TestDownloadStatementXMLRejectsUnsafePathSegmentsWithoutSideEffects(t *testing.T) {
+	tests := []struct {
+		name          string
+		businessID    string
+		financialDate string
+	}{
+		{
+			name:          "business id parent segment",
+			businessID:    "..",
+			financialDate: "2024-12-31",
+		},
+		{
+			name:          "financial date separator",
+			businessID:    "0100130-4",
+			financialDate: "../2024-12-31",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requestCount atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requestCount.Add(1)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			tmp := t.TempDir()
+			_, err := downloadStatementXML(context.Background(), server.Client(), server.URL+"/opendata-xbrl-api/v3", tt.businessID, tt.financialDate, tmp, true)
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "safe path segment")
+			require.Zero(t, requestCount.Load())
+			entries, readErr := os.ReadDir(tmp)
+			require.NoError(t, readErr)
+			require.Empty(t, entries)
+		})
+	}
 }
 
 func TestWriteStatementsManifest(t *testing.T) {

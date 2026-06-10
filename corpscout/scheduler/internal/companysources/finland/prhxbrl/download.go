@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
@@ -43,6 +44,12 @@ func (Source) DownloadFile(ctx context.Context, opts companysources.DownloadFile
 func downloadStatementXML(ctx context.Context, client *http.Client, baseURL string, businessID string, financialDate string, runDir string, userAgentRequired bool) (StatementXMLDownload, error) {
 	if client == nil {
 		client = http.DefaultClient
+	}
+	if err := validateStatementPathSegment("business id", businessID); err != nil {
+		return StatementXMLDownload{}, err
+	}
+	if err := validateStatementPathSegment("financial date", financialDate); err != nil {
+		return StatementXMLDownload{}, err
 	}
 	statementURL, err := buildFinancialStatementURL(baseURL, businessID, financialDate)
 	if err != nil {
@@ -89,6 +96,16 @@ func downloadStatementXML(ctx context.Context, client *http.Client, baseURL stri
 		SizeBytes: size,
 		SourceURL: statementURL,
 	}, nil
+}
+
+func validateStatementPathSegment(name string, value string) error {
+	if value == "" {
+		return errors.Errorf("PRH XBRL statement %s is required", name)
+	}
+	if filepath.IsAbs(value) || value == "." || value == ".." || strings.ContainsAny(value, `/\`) || filepath.Clean(value) != value {
+		return errors.Errorf("PRH XBRL statement %s %q is not a safe path segment", name, value)
+	}
+	return nil
 }
 
 func writeStatementsManifest(path string, rows []ManifestStatement) (companysources.FileWriteResult, error) {
