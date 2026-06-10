@@ -158,6 +158,42 @@ func TestTriggerSourceFileDownloadStartsTemporalWorkflow(t *testing.T) {
 	q.AssertExpectations(t)
 }
 
+func TestTriggerFinlandPRHXBRLManifestDownloadRejectsDirectFileRun(t *testing.T) {
+	q := &stubQuerier{}
+	sourceID := uuid.New()
+	fileID := uuid.New()
+	q.On("GetSourceFileBySourceNameAndKey", mock.Anything, db.GetSourceFileBySourceNameAndKeyParams{
+		Name:    "finland_prh_xbrl",
+		FileKey: "statements_manifest",
+	}).Return(db.GetSourceFileBySourceNameAndKeyRow{
+		ID:           fileID,
+		SourceID:     sourceID,
+		FileKey:      "statements_manifest",
+		DisplayName:  "Statements manifest",
+		Kind:         "source_manifest",
+		Required:     true,
+		RelativePath: "statements.ndjson",
+		Enabled:      true,
+		SourceName:   "finland_prh_xbrl",
+		Country:      "finland",
+		Source:       "prh_xbrl",
+		RegistryKey:  "finland/prh_xbrl",
+	}, nil)
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sources/finland_prh_xbrl/files/statements_manifest/download", strings.NewReader(`{"trigger":"manual"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), "must be started through pull_source")
+	require.Nil(t, tc.workflow)
+	q.AssertNotCalled(t, "CreateSourceFileRun", mock.Anything, mock.Anything)
+	q.AssertExpectations(t)
+}
+
 func TestTriggerSourceFileImportStartsTemporalWorkflow(t *testing.T) {
 	q := &stubQuerier{}
 	sourceID := uuid.New()

@@ -45,13 +45,27 @@ func TestFinancialXBRLQueriesShape(t *testing.T) {
 		require.Contains(t, upsertWindow, needle)
 	}
 
+	listToDownload := querySection(t, sql, "ListFinlandPRHXBRLStatementArtifactsToDownload")
+	for _, needle := range []string{
+		"registration_date >= sqlc.arg(registered_date_start)",
+		"registration_date <= sqlc.arg(registered_date_end)",
+		"download_status = 'pending'",
+		"download_status = 'failed' AND sqlc.arg(retry_failed)::boolean",
+		"download_status = 'downloading' AND latest_action_run_id = sqlc.narg(latest_action_run_id)",
+	} {
+		require.Contains(t, listToDownload, needle)
+	}
+
 	markDownloading := querySection(t, sql, "MarkFinlandPRHXBRLStatementArtifactDownloading")
 	for _, needle := range []string{
 		"-- name: MarkFinlandPRHXBRLStatementArtifactDownloading :one",
 		"WHERE id = sqlc.arg(id)",
 		"AND source_id = sqlc.arg(source_id)",
+		"registration_date >= sqlc.arg(registered_date_start)",
+		"registration_date <= sqlc.arg(registered_date_end)",
 		"download_status = 'pending'",
 		"download_status = 'failed' AND sqlc.arg(retry_failed)::boolean",
+		"download_status = 'downloading' AND latest_action_run_id = sqlc.narg(latest_action_run_id)",
 	} {
 		require.Contains(t, markDownloading, needle)
 	}
@@ -70,8 +84,13 @@ func TestFinancialXBRLQueriesShape(t *testing.T) {
 	generated := string(generatedBytes)
 
 	downloadingParams := structSection(t, generated, "MarkFinlandPRHXBRLStatementArtifactDownloadingParams")
-	require.Contains(t, downloadingParams, "SourceID          uuid.UUID")
-	require.Contains(t, downloadingParams, "RetryFailed       bool")
+	require.Contains(t, downloadingParams, "SourceID            uuid.UUID")
+	require.Contains(t, downloadingParams, "RegisteredDateStart pgtype.Date")
+	require.Contains(t, downloadingParams, "RegisteredDateEnd   pgtype.Date")
+	require.Contains(t, downloadingParams, "RetryFailed         bool")
+
+	failedParams := structSection(t, generated, "MarkFinlandPRHXBRLStatementArtifactFailedParams")
+	require.Contains(t, failedParams, "SourceID          uuid.UUID")
 
 	succeededParams := structSection(t, generated, "MarkFinlandPRHXBRLStatementArtifactSucceededParams")
 	require.Contains(t, succeededParams, "XmlPath           string")

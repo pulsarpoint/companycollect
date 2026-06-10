@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.temporal.io/sdk/client"
 
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/finland/prhxbrl"
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
 	companysourceworkflows "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/companysources"
 )
@@ -124,6 +125,10 @@ func (h *Handlers) handleTriggerSourceAction(w http.ResponseWriter, r *http.Requ
 	}
 	if !action.Enabled {
 		writeError(w, http.StatusUnprocessableEntity, "source action is disabled")
+		return
+	}
+	if err := validateSourceActionTrigger(sourceName, action.Action, req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -362,6 +367,43 @@ func sourceActionWorkflowInput(action string, sourceName string, actionRunID str
 	default:
 		return nil, errors.New("unsupported source action")
 	}
+}
+
+func validateSourceActionTrigger(sourceName string, action string, req sourceActionTriggerRequest) error {
+	if sourceName != prhxbrl.SourceName || action != companysourceworkflows.ActionPullSource {
+		return nil
+	}
+	return validatePRHXBRLWindowTrigger(req)
+}
+
+func validatePRHXBRLWindowTrigger(req sourceActionTriggerRequest) error {
+	start := strings.TrimSpace(req.RegisteredDateStart)
+	end := strings.TrimSpace(req.RegisteredDateEnd)
+	if start == "" {
+		return errors.New("registered_date_start is required")
+	}
+	if end == "" {
+		return errors.New("registered_date_end is required")
+	}
+	startDate, err := time.Parse(time.DateOnly, start)
+	if err != nil {
+		return errors.New("registered_date_start must be YYYY-MM-DD")
+	}
+	endDate, err := time.Parse(time.DateOnly, end)
+	if err != nil {
+		return errors.New("registered_date_end must be YYYY-MM-DD")
+	}
+	if startDate.After(endDate) {
+		return errors.New("registered_date_start must be on or before registered_date_end")
+	}
+	if req.MaxStatements > 1000 {
+		return errors.New("max_statements must be 1000 or less")
+	}
+	return nil
+}
+
+func isPRHXBRLStatementsManifest(sourceName string, fileKey string) bool {
+	return sourceName == prhxbrl.SourceName && fileKey == "statements_manifest"
 }
 
 func parseSourceActionRunsLimit(r *http.Request) (int32, error) {

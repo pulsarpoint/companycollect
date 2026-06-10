@@ -175,6 +175,35 @@ func TestDecodeSourceActionTriggerRequestIncludesFinancialXBRLWindow(t *testing.
 	}}, tc.args)
 }
 
+func TestTriggerFinlandPRHXBRLActionRequiresWindowBeforeRunCreation(t *testing.T) {
+	q := &stubQuerier{}
+	sourceID := uuid.New()
+	actionID := uuid.New()
+	q.On("GetSourceActionByName", mock.Anything, db.GetSourceActionByNameParams{
+		Name: "finland_prh_xbrl", Action: companysourceworkflows.ActionPullSource,
+	}).Return(db.GetSourceActionByNameRow{
+		ID:                   actionID,
+		SourceID:             sourceID,
+		SourceName:           "finland_prh_xbrl",
+		Action:               companysourceworkflows.ActionPullSource,
+		TemporalWorkflowType: companysourceworkflows.DownloadSourceWorkflowName,
+		Enabled:              true,
+	}, nil)
+
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", tc, ""))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sources/finland_prh_xbrl/actions/pull_source/trigger", strings.NewReader(`{"trigger":"manual"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), "registered_date_start is required")
+	require.Nil(t, tc.workflow)
+	q.AssertNotCalled(t, "CreateSourceActionRun", mock.Anything, mock.Anything)
+	q.AssertExpectations(t)
+}
+
 func TestTriggerSourceExplorerCacheActionStartsTemporalWorkflow(t *testing.T) {
 	q := &stubQuerier{}
 	sourceID := uuid.New()

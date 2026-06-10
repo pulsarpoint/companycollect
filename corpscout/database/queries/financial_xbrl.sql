@@ -78,9 +78,12 @@ RETURNING *;
 SELECT *
 FROM financial_xbrl.finland_prh_xbrl_statement_artifacts
 WHERE source_id = sqlc.arg(source_id)
+  AND registration_date >= sqlc.arg(registered_date_start)
+  AND registration_date <= sqlc.arg(registered_date_end)
   AND (
     download_status = 'pending'
     OR (download_status = 'failed' AND sqlc.arg(retry_failed)::boolean)
+    OR (download_status = 'downloading' AND latest_action_run_id = sqlc.narg(latest_action_run_id))
   )
 ORDER BY registration_date NULLS LAST, business_id, financial_date
 LIMIT sqlc.arg(row_limit);
@@ -96,9 +99,12 @@ SET
   updated_at = now()
 WHERE id = sqlc.arg(id)
   AND source_id = sqlc.arg(source_id)
+  AND registration_date >= sqlc.arg(registered_date_start)
+  AND registration_date <= sqlc.arg(registered_date_end)
   AND (
     download_status = 'pending'
     OR (download_status = 'failed' AND sqlc.arg(retry_failed)::boolean)
+    OR (download_status = 'downloading' AND latest_action_run_id = sqlc.narg(latest_action_run_id))
   )
 RETURNING *;
 
@@ -114,6 +120,7 @@ SET
   last_error_message = NULL,
   updated_at = now()
 WHERE id = sqlc.arg(id)
+  AND source_id = sqlc.arg(source_id)
 RETURNING *;
 
 -- name: MarkFinlandPRHXBRLStatementArtifactFailed :one
@@ -124,4 +131,5 @@ SET
   last_error_message = NULLIF(sqlc.arg(last_error_message)::text, ''),
   updated_at = now()
 WHERE id = sqlc.arg(id)
+  AND source_id = sqlc.arg(source_id)
 RETURNING *;

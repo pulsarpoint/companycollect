@@ -65,22 +65,35 @@ const listFinlandPRHXBRLStatementArtifactsToDownload = `-- name: ListFinlandPRHX
 SELECT id, source_id, business_id, financial_date, registration_date, source_url, xml_path, xml_sha256, xml_size_bytes, download_status, attempts, last_attempt_at, downloaded_at, last_error_message, first_discovered_run_id, latest_action_run_id, created_at, updated_at
 FROM financial_xbrl.finland_prh_xbrl_statement_artifacts
 WHERE source_id = $1
+  AND registration_date >= $2
+  AND registration_date <= $3
   AND (
     download_status = 'pending'
-    OR (download_status = 'failed' AND $2::boolean)
+    OR (download_status = 'failed' AND $4::boolean)
+    OR (download_status = 'downloading' AND latest_action_run_id = $5)
   )
 ORDER BY registration_date NULLS LAST, business_id, financial_date
-LIMIT $3
+LIMIT $6
 `
 
 type ListFinlandPRHXBRLStatementArtifactsToDownloadParams struct {
-	SourceID    uuid.UUID `json:"source_id"`
-	RetryFailed bool      `json:"retry_failed"`
-	RowLimit    int32     `json:"row_limit"`
+	SourceID            uuid.UUID   `json:"source_id"`
+	RegisteredDateStart pgtype.Date `json:"registered_date_start"`
+	RegisteredDateEnd   pgtype.Date `json:"registered_date_end"`
+	RetryFailed         bool        `json:"retry_failed"`
+	LatestActionRunID   pgtype.UUID `json:"latest_action_run_id"`
+	RowLimit            int32       `json:"row_limit"`
 }
 
 func (q *Queries) ListFinlandPRHXBRLStatementArtifactsToDownload(ctx context.Context, arg ListFinlandPRHXBRLStatementArtifactsToDownloadParams) ([]FinancialXbrlFinlandPrhXbrlStatementArtifact, error) {
-	rows, err := q.db.Query(ctx, listFinlandPRHXBRLStatementArtifactsToDownload, arg.SourceID, arg.RetryFailed, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listFinlandPRHXBRLStatementArtifactsToDownload,
+		arg.SourceID,
+		arg.RegisteredDateStart,
+		arg.RegisteredDateEnd,
+		arg.RetryFailed,
+		arg.LatestActionRunID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -129,18 +142,23 @@ SET
   updated_at = now()
 WHERE id = $2
   AND source_id = $3
+  AND registration_date >= $4
+  AND registration_date <= $5
   AND (
     download_status = 'pending'
-    OR (download_status = 'failed' AND $4::boolean)
+    OR (download_status = 'failed' AND $6::boolean)
+    OR (download_status = 'downloading' AND latest_action_run_id = $1)
   )
 RETURNING id, source_id, business_id, financial_date, registration_date, source_url, xml_path, xml_sha256, xml_size_bytes, download_status, attempts, last_attempt_at, downloaded_at, last_error_message, first_discovered_run_id, latest_action_run_id, created_at, updated_at
 `
 
 type MarkFinlandPRHXBRLStatementArtifactDownloadingParams struct {
-	LatestActionRunID pgtype.UUID `json:"latest_action_run_id"`
-	ID                uuid.UUID   `json:"id"`
-	SourceID          uuid.UUID   `json:"source_id"`
-	RetryFailed       bool        `json:"retry_failed"`
+	LatestActionRunID   pgtype.UUID `json:"latest_action_run_id"`
+	ID                  uuid.UUID   `json:"id"`
+	SourceID            uuid.UUID   `json:"source_id"`
+	RegisteredDateStart pgtype.Date `json:"registered_date_start"`
+	RegisteredDateEnd   pgtype.Date `json:"registered_date_end"`
+	RetryFailed         bool        `json:"retry_failed"`
 }
 
 func (q *Queries) MarkFinlandPRHXBRLStatementArtifactDownloading(ctx context.Context, arg MarkFinlandPRHXBRLStatementArtifactDownloadingParams) (FinancialXbrlFinlandPrhXbrlStatementArtifact, error) {
@@ -148,6 +166,8 @@ func (q *Queries) MarkFinlandPRHXBRLStatementArtifactDownloading(ctx context.Con
 		arg.LatestActionRunID,
 		arg.ID,
 		arg.SourceID,
+		arg.RegisteredDateStart,
+		arg.RegisteredDateEnd,
 		arg.RetryFailed,
 	)
 	var i FinancialXbrlFinlandPrhXbrlStatementArtifact
@@ -182,6 +202,7 @@ SET
   last_error_message = NULLIF($2::text, ''),
   updated_at = now()
 WHERE id = $3
+  AND source_id = $4
 RETURNING id, source_id, business_id, financial_date, registration_date, source_url, xml_path, xml_sha256, xml_size_bytes, download_status, attempts, last_attempt_at, downloaded_at, last_error_message, first_discovered_run_id, latest_action_run_id, created_at, updated_at
 `
 
@@ -189,10 +210,16 @@ type MarkFinlandPRHXBRLStatementArtifactFailedParams struct {
 	LatestActionRunID pgtype.UUID `json:"latest_action_run_id"`
 	LastErrorMessage  string      `json:"last_error_message"`
 	ID                uuid.UUID   `json:"id"`
+	SourceID          uuid.UUID   `json:"source_id"`
 }
 
 func (q *Queries) MarkFinlandPRHXBRLStatementArtifactFailed(ctx context.Context, arg MarkFinlandPRHXBRLStatementArtifactFailedParams) (FinancialXbrlFinlandPrhXbrlStatementArtifact, error) {
-	row := q.db.QueryRow(ctx, markFinlandPRHXBRLStatementArtifactFailed, arg.LatestActionRunID, arg.LastErrorMessage, arg.ID)
+	row := q.db.QueryRow(ctx, markFinlandPRHXBRLStatementArtifactFailed,
+		arg.LatestActionRunID,
+		arg.LastErrorMessage,
+		arg.ID,
+		arg.SourceID,
+	)
 	var i FinancialXbrlFinlandPrhXbrlStatementArtifact
 	err := row.Scan(
 		&i.ID,
@@ -229,6 +256,7 @@ SET
   last_error_message = NULL,
   updated_at = now()
 WHERE id = $5
+  AND source_id = $6
 RETURNING id, source_id, business_id, financial_date, registration_date, source_url, xml_path, xml_sha256, xml_size_bytes, download_status, attempts, last_attempt_at, downloaded_at, last_error_message, first_discovered_run_id, latest_action_run_id, created_at, updated_at
 `
 
@@ -238,6 +266,7 @@ type MarkFinlandPRHXBRLStatementArtifactSucceededParams struct {
 	XmlSizeBytes      int64       `json:"xml_size_bytes"`
 	LatestActionRunID pgtype.UUID `json:"latest_action_run_id"`
 	ID                uuid.UUID   `json:"id"`
+	SourceID          uuid.UUID   `json:"source_id"`
 }
 
 func (q *Queries) MarkFinlandPRHXBRLStatementArtifactSucceeded(ctx context.Context, arg MarkFinlandPRHXBRLStatementArtifactSucceededParams) (FinancialXbrlFinlandPrhXbrlStatementArtifact, error) {
@@ -247,6 +276,7 @@ func (q *Queries) MarkFinlandPRHXBRLStatementArtifactSucceeded(ctx context.Conte
 		arg.XmlSizeBytes,
 		arg.LatestActionRunID,
 		arg.ID,
+		arg.SourceID,
 	)
 	var i FinancialXbrlFinlandPrhXbrlStatementArtifact
 	err := row.Scan(

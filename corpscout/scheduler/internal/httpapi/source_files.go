@@ -109,6 +109,10 @@ func (h *Handlers) handleTriggerSourceFileDownload(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusInternalServerError, "get source file failed")
 		return
 	}
+	if isPRHXBRLStatementsManifest(file.SourceName, file.FileKey) {
+		writeError(w, http.StatusBadRequest, "finland_prh_xbrl statements_manifest downloads must be started through pull_source with registered_date_start and registered_date_end")
+		return
+	}
 
 	fileRunID := uuid.New()
 	workflowID := companysourceworkflows.FileRunWorkflowID(fileRunID.String())
