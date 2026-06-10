@@ -115,11 +115,15 @@ func (a *Actions) PrepareSourceDownloadActivity(ctx context.Context, input SyncS
 			return PrepareSourceDownloadResult{}, errors.Wrapf(err, "create file run %s", file.FileKey)
 		}
 		result.Files = append(result.Files, sourceworkflow.DownloadSourceFileInput{
-			FileRunID:         fileRunID.String(),
-			SourceName:        input.SourceName,
-			FileKey:           file.FileKey,
-			Trigger:           input.Trigger,
-			ParentActionRunID: input.ActionRunID,
+			FileRunID:           fileRunID.String(),
+			SourceName:          input.SourceName,
+			FileKey:             file.FileKey,
+			Trigger:             input.Trigger,
+			ParentActionRunID:   input.ActionRunID,
+			RegisteredDateStart: input.RegisteredDateStart,
+			RegisteredDateEnd:   input.RegisteredDateEnd,
+			MaxStatements:       input.MaxStatements,
+			RetryFailed:         input.RetryFailed,
 		})
 	}
 	return result, nil

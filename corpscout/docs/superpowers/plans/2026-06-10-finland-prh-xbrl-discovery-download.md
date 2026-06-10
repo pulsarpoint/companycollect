@@ -998,6 +998,7 @@ git commit -m "feat: add finland prh xbrl ledger queries"
 **Files:**
 - Modify: `corpscout/scheduler/internal/temporal/workflow/companysources/workflow.go`
 - Modify: `corpscout/scheduler/internal/temporal/workflow/companysources/workflow_test.go`
+- Modify: `corpscout/scheduler/internal/temporal/actions/companysources/actions.go`
 - Modify: `corpscout/scheduler/internal/httpapi/source_actions.go`
 - Modify: `corpscout/scheduler/internal/httpapi/source_actions_test.go`
 
@@ -1166,6 +1167,7 @@ Expected: PASS.
 cd /Users/graovic/pulsarpoint/ppoint/companycollect
 git add corpscout/scheduler/internal/temporal/workflow/companysources/workflow.go \
   corpscout/scheduler/internal/temporal/workflow/companysources/workflow_test.go \
+  corpscout/scheduler/internal/temporal/actions/companysources/actions.go \
   corpscout/scheduler/internal/httpapi/source_actions.go \
   corpscout/scheduler/internal/httpapi/source_actions_test.go
 git commit -m "feat: pass finland prh xbrl download window input"
