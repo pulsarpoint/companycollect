@@ -8,294 +8,99 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
-	ApproveCompanyFinancial(ctx context.Context, arg ApproveCompanyFinancialParams) error
-	BeginAriregisterWorkflowRun(ctx context.Context, arg BeginAriregisterWorkflowRunParams) (uuid.UUID, error)
-	BeginBrregWorkflowRun(ctx context.Context, arg BeginBrregWorkflowRunParams) (uuid.UUID, error)
-	BeginCVRWorkflowRun(ctx context.Context, arg BeginCVRWorkflowRunParams) (uuid.UUID, error)
 	BeginExchangeRateSyncRun(ctx context.Context, arg BeginExchangeRateSyncRunParams) (ExchangeRateSyncRun, error)
-	BeginFranceWorkflowRun(ctx context.Context, arg BeginFranceWorkflowRunParams) (uuid.UUID, error)
 	BeginNACEImportRun(ctx context.Context, arg BeginNACEImportRunParams) (NaceImportRun, error)
-	BulkUpdateCompanyFinancialStatus(ctx context.Context, arg BulkUpdateCompanyFinancialStatusParams) error
-	ClaimAriregisterTranslationQueueBatch(ctx context.Context, arg ClaimAriregisterTranslationQueueBatchParams) ([]ClaimAriregisterTranslationQueueBatchRow, error)
-	ClaimBrregCompanyCurrencyBatch(ctx context.Context, arg ClaimBrregCompanyCurrencyBatchParams) ([]ClaimBrregCompanyCurrencyBatchRow, error)
-	ClaimBrregCompanyFinancialBatch(ctx context.Context, arg ClaimBrregCompanyFinancialBatchParams) ([]ClaimBrregCompanyFinancialBatchRow, error)
-	ClaimBrregCompanyTranslationBatch(ctx context.Context, arg ClaimBrregCompanyTranslationBatchParams) ([]ClaimBrregCompanyTranslationBatchRow, error)
-	ClaimBrregTranslationQueueBatch(ctx context.Context, arg ClaimBrregTranslationQueueBatchParams) ([]ClaimBrregTranslationQueueBatchRow, error)
-	ClaimBrregWorkflowTaskSelectionBatch(ctx context.Context, arg ClaimBrregWorkflowTaskSelectionBatchParams) ([]ClaimBrregWorkflowTaskSelectionBatchRow, error)
 	ClearDefaultLLMProvider(ctx context.Context) error
 	ClearRootNACECodeParents(ctx context.Context, classificationID uuid.UUID) error
-	CompleteAriregisterTranslationQueueBatch(ctx context.Context, batchID string) (int32, error)
-	CompleteBrregTranslationQueueBatch(ctx context.Context, batchID string) (int32, error)
-	ConvertBrregSourceCapitalToUSD(ctx context.Context, arg ConvertBrregSourceCapitalToUSDParams) (ConvertBrregSourceCapitalToUSDRow, error)
-	CountAriregisterSourceEntries(ctx context.Context, arg CountAriregisterSourceEntriesParams) (int64, error)
-	CountBrregSourceEntries(ctx context.Context, arg CountBrregSourceEntriesParams) (int64, error)
-	CountBrregWorkflowRawRecords(ctx context.Context, arg CountBrregWorkflowRawRecordsParams) (int64, error)
-	CountCompanySuggestionReviews(ctx context.Context, arg CountCompanySuggestionReviewsParams) (int32, error)
 	CountDomains(ctx context.Context, arg CountDomainsParams) (int64, error)
-	CountPendingCompanyFinancials(ctx context.Context) (int32, error)
-	CountRunningAriregisterTranslationQueueEntries(ctx context.Context) (int32, error)
-	CountRunningBrregTranslationQueueEntries(ctx context.Context) (int32, error)
-	CountSuggestionReviewItemStatuses(ctx context.Context, suggestionID uuid.UUID) (CountSuggestionReviewItemStatusesRow, error)
-	CreateAriregisterBulkSnapshot(ctx context.Context, arg CreateAriregisterBulkSnapshotParams) (uuid.UUID, error)
-	CreateBrregDomainActionAttempt(ctx context.Context, arg CreateBrregDomainActionAttemptParams) (uuid.UUID, error)
-	CreateBrregWorkflowTaskSelection(ctx context.Context, arg CreateBrregWorkflowTaskSelectionParams) (CreateBrregWorkflowTaskSelectionRow, error)
-	CreateCVRScrollSession(ctx context.Context, arg CreateCVRScrollSessionParams) (uuid.UUID, error)
-	CreateCompanyFinancial(ctx context.Context, arg CreateCompanyFinancialParams) (CompanyFinancial, error)
-	CreateFranceBulkSnapshot(ctx context.Context, arg CreateFranceBulkSnapshotParams) (uuid.UUID, error)
 	CreateLLMProvider(ctx context.Context, arg CreateLLMProviderParams) (CreateLLMProviderRow, error)
+	CreateSourceActionRun(ctx context.Context, arg CreateSourceActionRunParams) (DataSourceActionRun, error)
+	CreateSourceFileRun(ctx context.Context, arg CreateSourceFileRunParams) (DataSourceFileRun, error)
 	CreateTemporalScheduleMetadata(ctx context.Context, arg CreateTemporalScheduleMetadataParams) (TemporalScheduleMetadatum, error)
 	DeactivateMissingNACECodes(ctx context.Context, arg DeactivateMissingNACECodesParams) (int32, error)
 	DeleteExchangeRatesNotInCurrencies(ctx context.Context, arg DeleteExchangeRatesNotInCurrenciesParams) (int32, error)
-	DeleteFranceSourceIndustriesForLegalUnits(ctx context.Context, rawLegalUnitIds []uuid.UUID) error
 	DeleteTemporalScheduleMetadata(ctx context.Context, temporalScheduleID string) error
-	DemoteFranceSourceHeadquartersForLegalUnits(ctx context.Context, rawLegalUnitIds []uuid.UUID) error
-	EnsureBrregCompanyFinancialProcessStatuses(ctx context.Context, limit int32) (int32, error)
-	EnsureBrregCompanyProcessStatuses(ctx context.Context, limit int32) (int32, error)
-	FailAriregisterTranslationQueueBatch(ctx context.Context, batchID string) (int32, error)
-	FailBrregTranslationQueueBatch(ctx context.Context, batchID string) (int32, error)
-	FailFranceWorkflowRunByOrchestrator(ctx context.Context, arg FailFranceWorkflowRunByOrchestratorParams) error
-	FailRunningBrregWorkflowTasksForRun(ctx context.Context, arg FailRunningBrregWorkflowTasksForRunParams) (int32, error)
-	FinishAriregisterWorkflowRunWithStats(ctx context.Context, arg FinishAriregisterWorkflowRunWithStatsParams) (uuid.UUID, error)
-	FinishBrregDomainActionAttempt(ctx context.Context, arg FinishBrregDomainActionAttemptParams) error
-	FinishBrregWorkflowRun(ctx context.Context, arg FinishBrregWorkflowRunParams) (uuid.UUID, error)
-	FinishBrregWorkflowRunWithStats(ctx context.Context, arg FinishBrregWorkflowRunWithStatsParams) (uuid.UUID, error)
-	FinishBrregWorkflowTaskAttempt(ctx context.Context, arg FinishBrregWorkflowTaskAttemptParams) error
-	FinishCVRScrollSession(ctx context.Context, arg FinishCVRScrollSessionParams) (uuid.UUID, error)
-	FinishCVRWorkflowRunWithStats(ctx context.Context, arg FinishCVRWorkflowRunWithStatsParams) (uuid.UUID, error)
+	DisableDataSourceFilesNotInCatalog(ctx context.Context, arg DisableDataSourceFilesNotInCatalogParams) error
 	FinishExchangeRateSyncRun(ctx context.Context, arg FinishExchangeRateSyncRunParams) (ExchangeRateSyncRun, error)
-	FinishFranceWorkflowRunWithStats(ctx context.Context, arg FinishFranceWorkflowRunWithStatsParams) (uuid.UUID, error)
 	FinishNACEImportRun(ctx context.Context, arg FinishNACEImportRunParams) (NaceImportRun, error)
-	GetAriregisterSourceCompanyDetail(ctx context.Context, companyID uuid.UUID) (AriregisterSourceVCompanyDetail, error)
-	GetAriregisterSourceCompanyExplorerRefreshSummary(ctx context.Context) (GetAriregisterSourceCompanyExplorerRefreshSummaryRow, error)
-	GetAriregisterSourceResultTableCounts(ctx context.Context) (GetAriregisterSourceResultTableCountsRow, error)
-	GetAriregisterSourceTranslationAssetState(ctx context.Context) (GetAriregisterSourceTranslationAssetStateRow, error)
-	GetBrregCompanyProcessStatus(ctx context.Context, companyID uuid.UUID) (BrregSourceCompanyProcessStatus, error)
-	GetBrregCompanyProcessStatusSummary(ctx context.Context) (GetBrregCompanyProcessStatusSummaryRow, error)
-	GetBrregSourceCompanyDetail(ctx context.Context, companyID uuid.UUID) (BrregSourceVCompanyDetail, error)
-	GetBrregSourceCompanyExplorerRefreshSummary(ctx context.Context) (GetBrregSourceCompanyExplorerRefreshSummaryRow, error)
-	GetBrregSourceDomainAssetState(ctx context.Context) (GetBrregSourceDomainAssetStateRow, error)
-	GetBrregSourceFinancialAssetState(ctx context.Context) (GetBrregSourceFinancialAssetStateRow, error)
-	GetBrregSourceResultTableCounts(ctx context.Context) (GetBrregSourceResultTableCountsRow, error)
-	GetBrregSourceTranslationAssetState(ctx context.Context) (GetBrregSourceTranslationAssetStateRow, error)
-	GetBrregWorkflowRawRecordDetail(ctx context.Context, id uuid.UUID) (BrregWorkflowVRawRecordDetail, error)
+	FinishSourceActionRun(ctx context.Context, arg FinishSourceActionRunParams) (DataSourceActionRun, error)
+	FinishSourceFileRun(ctx context.Context, arg FinishSourceFileRunParams) (DataSourceFileRun, error)
 	GetCompany(ctx context.Context, id uuid.UUID) (Company, error)
 	GetCompanyByExactName(ctx context.Context, lower string) (Company, error)
 	GetCompanyBySlug(ctx context.Context, canonicalSlug string) (Company, error)
-	GetCurrentAriregisterWorkflowRawRecord(ctx context.Context, registryCode string) (GetCurrentAriregisterWorkflowRawRecordRow, error)
-	GetCurrentBrregWorkflowRawRecord(ctx context.Context, organizationNumber string) (GetCurrentBrregWorkflowRawRecordRow, error)
-	GetCurrentCVRWorkflowRawRecord(ctx context.Context, cvrNumber string) (GetCurrentCVRWorkflowRawRecordRow, error)
-	GetCurrentFinlandPRHYTJRawRecord(ctx context.Context, businessID string) (GetCurrentFinlandPRHYTJRawRecordRow, error)
-	GetCurrentFranceWorkflowRawEstablishment(ctx context.Context, siret string) (GetCurrentFranceWorkflowRawEstablishmentRow, error)
-	GetCurrentFranceWorkflowRawLegalUnit(ctx context.Context, siren string) (GetCurrentFranceWorkflowRawLegalUnitRow, error)
-	GetCurrentUSColoradoEntitiesRawRecord(ctx context.Context, entityID string) (GetCurrentUSColoradoEntitiesRawRecordRow, error)
-	GetCurrentUSIRSEoBmfRawRecord(ctx context.Context, ein string) (GetCurrentUSIRSEoBmfRawRecordRow, error)
-	GetCurrentUSSECEDGARRawRecord(ctx context.Context, cik string) (GetCurrentUSSECEDGARRawRecordRow, error)
-	GetCurrentUSSamGovEntityRawRecord(ctx context.Context, ueiSam string) (GetCurrentUSSamGovEntityRawRecordRow, error)
 	GetDomainByID(ctx context.Context, id uuid.UUID) (GetDomainByIDRow, error)
 	GetExchangeRateSyncRunByWorkflowID(ctx context.Context, temporalWorkflowID string) (ExchangeRateSyncRun, error)
 	GetLLMProviderBySlugForUse(ctx context.Context, slug string) (LlmProvider, error)
 	GetLLMProviderForUse(ctx context.Context, id uuid.UUID) (LlmProvider, error)
+	GetLatestSuccessfulSourceActionRun(ctx context.Context, arg GetLatestSuccessfulSourceActionRunParams) (DataSourceActionRun, error)
 	GetNACEClassificationByRevision(ctx context.Context, revision string) (NaceClassification, error)
 	GetNACECodeByRevisionAndCode(ctx context.Context, arg GetNACECodeByRevisionAndCodeParams) (NaceCode, error)
 	GetNACEImportRunByWorkflowID(ctx context.Context, temporalWorkflowID string) (NaceImportRun, error)
 	GetProcessedExchangeRateSourceFileByHash(ctx context.Context, arg GetProcessedExchangeRateSourceFileByHashParams) (ExchangeRateSourceFile, error)
 	GetProcessedNACESourceFileByHash(ctx context.Context, arg GetProcessedNACESourceFileByHashParams) (NaceSourceFile, error)
-	GetSourceByName(ctx context.Context, name string) (DataSource, error)
-	GetSourcesWithCapabilities(ctx context.Context) ([]DataSource, error)
+	GetSourceActionByName(ctx context.Context, arg GetSourceActionByNameParams) (GetSourceActionByNameRow, error)
+	GetSourceActionRun(ctx context.Context, id uuid.UUID) (DataSourceActionRun, error)
+	GetSourceByName(ctx context.Context, name string) (GetSourceByNameRow, error)
+	GetSourceFileBySourceNameAndKey(ctx context.Context, arg GetSourceFileBySourceNameAndKeyParams) (GetSourceFileBySourceNameAndKeyRow, error)
+	GetSourceFileRunWithDefinition(ctx context.Context, id uuid.UUID) (GetSourceFileRunWithDefinitionRow, error)
+	GetSourcesWithCapabilities(ctx context.Context) ([]GetSourcesWithCapabilitiesRow, error)
 	GetStats(ctx context.Context) (GetStatsRow, error)
-	GetSuggestionByID(ctx context.Context, id uuid.UUID) (Suggestion, error)
-	GetSuggestionCompanyDomainByID(ctx context.Context, id uuid.UUID) (SuggestionCompanyDomain, error)
-	GetSuggestionCompanyEmailByID(ctx context.Context, id uuid.UUID) (SuggestionCompanyEmail, error)
-	GetSuggestionCompanyFinancialByID(ctx context.Context, id uuid.UUID) (SuggestionCompanyFinancial, error)
-	GetSuggestionCompanyIndustryByID(ctx context.Context, id uuid.UUID) (SuggestionCompanyIndustry, error)
-	GetSuggestionCompanyLocationByID(ctx context.Context, id uuid.UUID) (SuggestionCompanyLocation, error)
-	GetSuggestionCompanyMarketByID(ctx context.Context, id uuid.UUID) (SuggestionCompanyMarket, error)
-	GetSuggestionCompanyPhoneByID(ctx context.Context, id uuid.UUID) (SuggestionCompanyPhone, error)
-	GetSuggestionCompanyProfileByID(ctx context.Context, id uuid.UUID) (SuggestionCompanyProfile, error)
-	GetSuggestionCompanyRelationshipByID(ctx context.Context, id uuid.UUID) (SuggestionCompanyRelationship, error)
-	GetSuggestionCompanyServiceByID(ctx context.Context, id uuid.UUID) (SuggestionCompanyService, error)
 	GetSyncCheckpoint(ctx context.Context, sourceName string) (SourceSyncCheckpoint, error)
 	GetTemporalScheduleMetadata(ctx context.Context, temporalScheduleID string) (TemporalScheduleMetadatum, error)
-	InsertBrregDomainActionArtifact(ctx context.Context, arg InsertBrregDomainActionArtifactParams) error
-	InsertBrregWorkflowDomainResult(ctx context.Context, arg InsertBrregWorkflowDomainResultParams) error
-	InsertBrregWorkflowFinancialResult(ctx context.Context, arg InsertBrregWorkflowFinancialResultParams) error
-	InsertBrregWorkflowTranslationResult(ctx context.Context, arg InsertBrregWorkflowTranslationResultParams) error
 	InsertCompany(ctx context.Context, arg InsertCompanyParams) (Company, error)
 	InsertCompanyFromRawInput(ctx context.Context, arg InsertCompanyFromRawInputParams) (Company, error)
-	InsertFranceSourceIndustries(ctx context.Context, arg InsertFranceSourceIndustriesParams) (int32, error)
-	InsertImportBatch(ctx context.Context, arg InsertImportBatchParams) (DomainImportBatch, error)
-	InsertSuggestion(ctx context.Context, arg InsertSuggestionParams) (Suggestion, error)
-	InsertSuggestionCompanyFinancial(ctx context.Context, arg InsertSuggestionCompanyFinancialParams) (SuggestionCompanyFinancial, error)
 	LinkNACECodeParents(ctx context.Context, classificationID uuid.UUID) error
-	ListAriregisterSourceEntries(ctx context.Context, arg ListAriregisterSourceEntriesParams) ([]AriregisterSourceMvCompanyExplorer, error)
-	ListBrregSourceEntries(ctx context.Context, arg ListBrregSourceEntriesParams) ([]ListBrregSourceEntriesRow, error)
-	ListBrregWorkflowDomainSearchEvidenceByRawRecord(ctx context.Context, rawRecordID uuid.UUID) ([]BrregWorkflowVDomainSearchEvidence, error)
-	ListBrregWorkflowEnhancedReadyRecords(ctx context.Context) ([]BrregWorkflowVEnhancedReadyRecord, error)
-	ListBrregWorkflowNACEMappingsByRawRecord(ctx context.Context, rawRecordID uuid.UUID) ([]BrregWorkflowVNaceMapping, error)
-	ListBrregWorkflowRawRecords(ctx context.Context, arg ListBrregWorkflowRawRecordsParams) ([]BrregWorkflowVRawRecordList, error)
-	ListCompanyFinancials(ctx context.Context, companyID uuid.UUID) ([]CompanyFinancial, error)
-	ListCompanySuggestionReviewIDs(ctx context.Context) ([]uuid.UUID, error)
-	ListCompanySuggestionReviews(ctx context.Context, arg ListCompanySuggestionReviewsParams) ([]ListCompanySuggestionReviewsRow, error)
 	ListCountries(ctx context.Context) ([]Country, error)
 	ListDomains(ctx context.Context, arg ListDomainsParams) ([]ListDomainsRow, error)
 	ListEnabledLLMProviders(ctx context.Context) ([]ListEnabledLLMProvidersRow, error)
 	ListExchangeRateSyncRuns(ctx context.Context, limit int32) ([]VExchangeRateSyncRun, error)
 	ListExchangeRateSyncState(ctx context.Context) ([]VExchangeRateSyncState, error)
 	ListLLMProviders(ctx context.Context) ([]ListLLMProvidersRow, error)
+	ListLatestSuccessfulRequiredSourceFileRuns(ctx context.Context, name string) ([]ListLatestSuccessfulRequiredSourceFileRunsRow, error)
 	ListNACECodeChildren(ctx context.Context, arg ListNACECodeChildrenParams) ([]ListNACECodeChildrenRow, error)
 	ListNACECodeTree(ctx context.Context, revision string) ([]VNaceCodeTree, error)
 	ListNACESourceFileImports(ctx context.Context, arg ListNACESourceFileImportsParams) ([]VNaceSourceFileImport, error)
 	ListNACETaxonomyState(ctx context.Context) ([]VNaceTaxonomyState, error)
-	ListPendingCompanyFinancialIDs(ctx context.Context) ([]uuid.UUID, error)
-	ListPendingCompanyFinancials(ctx context.Context, arg ListPendingCompanyFinancialsParams) ([]ListPendingCompanyFinancialsRow, error)
-	ListPendingCompanySuggestionReviewItems(ctx context.Context, suggestionID uuid.UUID) ([]ListPendingCompanySuggestionReviewItemsRow, error)
 	ListReviewCandidateIDs(ctx context.Context, arg ListReviewCandidateIDsParams) ([]uuid.UUID, error)
-	ListSources(ctx context.Context) ([]DataSource, error)
+	ListSourceActionRuns(ctx context.Context, arg ListSourceActionRunsParams) ([]ListSourceActionRunsRow, error)
+	ListSourceActions(ctx context.Context, name string) ([]ListSourceActionsRow, error)
+	ListSourceFileRuns(ctx context.Context, arg ListSourceFileRunsParams) ([]ListSourceFileRunsRow, error)
+	ListSourceFilesWithLatestRun(ctx context.Context, name string) ([]ListSourceFilesWithLatestRunRow, error)
+	ListSources(ctx context.Context) ([]ListSourcesRow, error)
+	ListSuccessfulSourceFileRunsForAction(ctx context.Context, parentActionRunID pgtype.UUID) ([]ListSuccessfulSourceFileRunsForActionRow, error)
 	ListTemporalScheduleMetadata(ctx context.Context, arg ListTemporalScheduleMetadataParams) ([]TemporalScheduleMetadatum, error)
-	MarkAriregisterBulkSnapshotParsed(ctx context.Context, arg MarkAriregisterBulkSnapshotParsedParams) error
-	MarkBrregCompanyCurrencyDirty(ctx context.Context, arg MarkBrregCompanyCurrencyDirtyParams) (BrregSourceCompanyProcessStatus, error)
-	MarkBrregCompanyCurrencyFailed(ctx context.Context, arg MarkBrregCompanyCurrencyFailedParams) (BrregSourceCompanyProcessStatus, error)
-	MarkBrregCompanyCurrencySkipped(ctx context.Context, arg MarkBrregCompanyCurrencySkippedParams) (BrregSourceCompanyProcessStatus, error)
-	MarkBrregCompanyCurrencySucceeded(ctx context.Context, arg MarkBrregCompanyCurrencySucceededParams) (BrregSourceCompanyProcessStatus, error)
-	MarkBrregCompanyFinancialDirty(ctx context.Context, arg MarkBrregCompanyFinancialDirtyParams) (BrregSourceCompanyProcessStatus, error)
-	MarkBrregCompanyFinancialFailed(ctx context.Context, arg MarkBrregCompanyFinancialFailedParams) (BrregSourceCompanyProcessStatus, error)
-	MarkBrregCompanyFinancialSkipped(ctx context.Context, arg MarkBrregCompanyFinancialSkippedParams) (BrregSourceCompanyProcessStatus, error)
-	MarkBrregCompanyFinancialSucceeded(ctx context.Context, arg MarkBrregCompanyFinancialSucceededParams) (BrregSourceCompanyProcessStatus, error)
-	MarkBrregCompanyTranslationDirty(ctx context.Context, arg MarkBrregCompanyTranslationDirtyParams) (BrregSourceCompanyProcessStatus, error)
-	MarkBrregCompanyTranslationFailed(ctx context.Context, arg MarkBrregCompanyTranslationFailedParams) (BrregSourceCompanyProcessStatus, error)
-	MarkBrregCompanyTranslationSkipped(ctx context.Context, arg MarkBrregCompanyTranslationSkippedParams) (BrregSourceCompanyProcessStatus, error)
-	MarkBrregCompanyTranslationSucceeded(ctx context.Context, arg MarkBrregCompanyTranslationSucceededParams) (BrregSourceCompanyProcessStatus, error)
 	MarkExchangeRateSourceFileFailed(ctx context.Context, arg MarkExchangeRateSourceFileFailedParams) (ExchangeRateSourceFile, error)
 	MarkExchangeRateSourceFileProcessed(ctx context.Context, id uuid.UUID) (ExchangeRateSourceFile, error)
 	MarkExchangeRateSourceFileProcessing(ctx context.Context, id uuid.UUID) (ExchangeRateSourceFile, error)
-	MarkFranceBulkSnapshotParsed(ctx context.Context, arg MarkFranceBulkSnapshotParsedParams) error
 	MarkNACESourceFileFailed(ctx context.Context, arg MarkNACESourceFileFailedParams) (NaceSourceFile, error)
 	MarkNACESourceFileProcessed(ctx context.Context, arg MarkNACESourceFileProcessedParams) (NaceSourceFile, error)
 	MarkNACESourceFileProcessing(ctx context.Context, id uuid.UUID) (NaceSourceFile, error)
-	MarkSuggestionCompanyDomainApplied(ctx context.Context, arg MarkSuggestionCompanyDomainAppliedParams) error
-	MarkSuggestionCompanyDomainRejected(ctx context.Context, arg MarkSuggestionCompanyDomainRejectedParams) error
-	MarkSuggestionCompanyEmailApplied(ctx context.Context, arg MarkSuggestionCompanyEmailAppliedParams) error
-	MarkSuggestionCompanyEmailRejected(ctx context.Context, arg MarkSuggestionCompanyEmailRejectedParams) error
-	MarkSuggestionCompanyFinancialApplied(ctx context.Context, arg MarkSuggestionCompanyFinancialAppliedParams) error
-	MarkSuggestionCompanyFinancialRejected(ctx context.Context, arg MarkSuggestionCompanyFinancialRejectedParams) error
-	MarkSuggestionCompanyIndustryApplied(ctx context.Context, arg MarkSuggestionCompanyIndustryAppliedParams) error
-	MarkSuggestionCompanyIndustryRejected(ctx context.Context, arg MarkSuggestionCompanyIndustryRejectedParams) error
-	MarkSuggestionCompanyLocationApplied(ctx context.Context, arg MarkSuggestionCompanyLocationAppliedParams) error
-	MarkSuggestionCompanyLocationRejected(ctx context.Context, arg MarkSuggestionCompanyLocationRejectedParams) error
-	MarkSuggestionCompanyMarketApplied(ctx context.Context, arg MarkSuggestionCompanyMarketAppliedParams) error
-	MarkSuggestionCompanyMarketRejected(ctx context.Context, arg MarkSuggestionCompanyMarketRejectedParams) error
-	MarkSuggestionCompanyPhoneApplied(ctx context.Context, arg MarkSuggestionCompanyPhoneAppliedParams) error
-	MarkSuggestionCompanyPhoneRejected(ctx context.Context, arg MarkSuggestionCompanyPhoneRejectedParams) error
-	MarkSuggestionCompanyProfileApplied(ctx context.Context, arg MarkSuggestionCompanyProfileAppliedParams) error
-	MarkSuggestionCompanyProfileRejected(ctx context.Context, arg MarkSuggestionCompanyProfileRejectedParams) error
-	MarkSuggestionCompanyRelationshipApplied(ctx context.Context, arg MarkSuggestionCompanyRelationshipAppliedParams) error
-	MarkSuggestionCompanyRelationshipRejected(ctx context.Context, arg MarkSuggestionCompanyRelationshipRejectedParams) error
-	MarkSuggestionCompanyServiceApplied(ctx context.Context, arg MarkSuggestionCompanyServiceAppliedParams) error
-	MarkSuggestionCompanyServiceRejected(ctx context.Context, arg MarkSuggestionCompanyServiceRejectedParams) error
-	PrepareAriregisterTranslationQueue(ctx context.Context, arg PrepareAriregisterTranslationQueueParams) (PrepareAriregisterTranslationQueueRow, error)
-	PrepareBrregTranslationQueue(ctx context.Context, arg PrepareBrregTranslationQueueParams) (PrepareBrregTranslationQueueRow, error)
-	RecordAriregisterSourceFile(ctx context.Context, arg RecordAriregisterSourceFileParams) (uuid.UUID, error)
-	RecordFinlandPRHYTJDownloadRun(ctx context.Context, arg RecordFinlandPRHYTJDownloadRunParams) (uuid.UUID, error)
-	// RecordFranceSourceFile relies on UNIQUE (bulk_snapshot_id, dataset_key) from the migration.
-	RecordFranceSourceFile(ctx context.Context, arg RecordFranceSourceFileParams) (uuid.UUID, error)
-	RecordUSColoradoEntitiesDownloadRun(ctx context.Context, arg RecordUSColoradoEntitiesDownloadRunParams) (uuid.UUID, error)
-	RecordUSIRSEoBmfDownloadRun(ctx context.Context, arg RecordUSIRSEoBmfDownloadRunParams) (uuid.UUID, error)
-	RecordUSSECEDGARDownloadRun(ctx context.Context, arg RecordUSSECEDGARDownloadRunParams) (uuid.UUID, error)
-	RecordUSSamGovEntityDownloadRun(ctx context.Context, arg RecordUSSamGovEntityDownloadRunParams) (uuid.UUID, error)
-	RecoverStaleBrregWorkflowRuns(ctx context.Context, arg RecoverStaleBrregWorkflowRunsParams) (RecoverStaleBrregWorkflowRunsRow, error)
-	RefreshAriregisterSourceCompanyExplorer(ctx context.Context) error
-	RefreshAriregisterSourceCompanyTranslationStatus(ctx context.Context) error
-	RejectCompanyFinancial(ctx context.Context, arg RejectCompanyFinancialParams) error
-	ReleaseAriregisterTranslationQueueBatch(ctx context.Context, batchID string) (int32, error)
-	ReleaseBrregCompanyTranslationClaim(ctx context.Context, arg ReleaseBrregCompanyTranslationClaimParams) (BrregSourceCompanyProcessStatus, error)
-	ReleaseBrregTranslationQueueBatch(ctx context.Context, batchID string) (int32, error)
-	ResetStaleAriregisterTranslationQueueEntries(ctx context.Context, staleRunningSeconds int32) (int32, error)
-	ResetStaleBrregTranslationQueueEntries(ctx context.Context, staleRunningSeconds int32) (int32, error)
+	PruneDataSourcesNotInCatalog(ctx context.Context, dollar_1 []string) error
 	ResolveNACECodeAlias(ctx context.Context, arg ResolveNACECodeAliasParams) (NaceCode, error)
 	ReviewCompanyDomain(ctx context.Context, arg ReviewCompanyDomainParams) error
-	SelectFranceSourceProfileLegalUnitIDs(ctx context.Context, arg SelectFranceSourceProfileLegalUnitIDsParams) ([]uuid.UUID, error)
 	SetDefaultLLMProvider(ctx context.Context, id uuid.UUID) (SetDefaultLLMProviderRow, error)
-	SupersedeCurrentAriregisterWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentAriregisterWorkflowRawRecordParams) error
-	SupersedeCurrentBrregWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentBrregWorkflowRawRecordParams) error
-	SupersedeCurrentCVRWorkflowRawRecord(ctx context.Context, arg SupersedeCurrentCVRWorkflowRawRecordParams) error
-	SupersedeCurrentFinlandPRHYTJRawRecord(ctx context.Context, arg SupersedeCurrentFinlandPRHYTJRawRecordParams) error
-	SupersedeCurrentFranceWorkflowRawEstablishment(ctx context.Context, arg SupersedeCurrentFranceWorkflowRawEstablishmentParams) error
-	SupersedeCurrentFranceWorkflowRawLegalUnit(ctx context.Context, arg SupersedeCurrentFranceWorkflowRawLegalUnitParams) error
-	SupersedeCurrentUSColoradoEntitiesRawRecord(ctx context.Context, arg SupersedeCurrentUSColoradoEntitiesRawRecordParams) error
-	SupersedeCurrentUSIRSEoBmfRawRecord(ctx context.Context, arg SupersedeCurrentUSIRSEoBmfRawRecordParams) error
-	SupersedeCurrentUSSECEDGARRawRecord(ctx context.Context, arg SupersedeCurrentUSSECEDGARRawRecordParams) error
-	SupersedeCurrentUSSamGovEntityRawRecord(ctx context.Context, arg SupersedeCurrentUSSamGovEntityRawRecordParams) error
-	SupersedeFranceSourceCompaniesForLegalUnits(ctx context.Context, rawLegalUnitIds []uuid.UUID) error
-	SupersedeFranceSourceEstablishmentsForLegalUnits(ctx context.Context, rawLegalUnitIds []uuid.UUID) error
-	// ── enrichment update ─────────────────────────────────────────────────────────
-	UpdateCompanyEnrichment(ctx context.Context, arg UpdateCompanyEnrichmentParams) (Company, error)
-	UpdateCompanyInfo(ctx context.Context, arg UpdateCompanyInfoParams) (Company, error)
 	UpdateCompanyRegistryProfile(ctx context.Context, arg UpdateCompanyRegistryProfileParams) (Company, error)
-	UpdateFinlandPRHYTJDownloadProcessStats(ctx context.Context, arg UpdateFinlandPRHYTJDownloadProcessStatsParams) error
-	UpdateImportBatchCompleted(ctx context.Context, arg UpdateImportBatchCompletedParams) error
-	UpdateImportBatchRiverJob(ctx context.Context, arg UpdateImportBatchRiverJobParams) error
-	UpdateImportBatchStarted(ctx context.Context, arg UpdateImportBatchStartedParams) error
 	UpdateLLMProvider(ctx context.Context, arg UpdateLLMProviderParams) (UpdateLLMProviderRow, error)
-	UpdateSourceConfig(ctx context.Context, arg UpdateSourceConfigParams) error
-	UpdateSourceEnabled(ctx context.Context, arg UpdateSourceEnabledParams) error
-	UpdateSourceSchedule(ctx context.Context, arg UpdateSourceScheduleParams) error
-	UpdateSourceScheduleEnabled(ctx context.Context, arg UpdateSourceScheduleEnabledParams) error
-	UpdateSourceStarted(ctx context.Context, name string) error
-	UpdateSuggestionAggregateStatus(ctx context.Context, arg UpdateSuggestionAggregateStatusParams) error
-	UpdateSuggestionCreatedCompany(ctx context.Context, arg UpdateSuggestionCreatedCompanyParams) error
+	UpdateSourceActionRunTemporalRunID(ctx context.Context, arg UpdateSourceActionRunTemporalRunIDParams) error
+	UpdateSourceFileRunTemporalRunID(ctx context.Context, arg UpdateSourceFileRunTemporalRunIDParams) error
 	UpdateTemporalScheduleMetadata(ctx context.Context, arg UpdateTemporalScheduleMetadataParams) (TemporalScheduleMetadatum, error)
-	UpdateUSColoradoEntitiesDownloadProcessStats(ctx context.Context, arg UpdateUSColoradoEntitiesDownloadProcessStatsParams) error
-	UpdateUSIRSEoBmfDownloadProcessStats(ctx context.Context, arg UpdateUSIRSEoBmfDownloadProcessStatsParams) error
-	UpdateUSSECEDGARDownloadProcessStats(ctx context.Context, arg UpdateUSSECEDGARDownloadProcessStatsParams) error
-	UpdateUSSamGovEntityDownloadProcessStats(ctx context.Context, arg UpdateUSSamGovEntityDownloadProcessStatsParams) error
-	UpsertAriregisterTranslationTermResult(ctx context.Context, arg UpsertAriregisterTranslationTermResultParams) error
-	UpsertAriregisterWorkflowRawRecord(ctx context.Context, arg UpsertAriregisterWorkflowRawRecordParams) (UpsertAriregisterWorkflowRawRecordRow, error)
-	UpsertBrregSourceFinancialStatement(ctx context.Context, arg UpsertBrregSourceFinancialStatementParams) (uuid.UUID, error)
-	UpsertBrregTranslationTermResult(ctx context.Context, arg UpsertBrregTranslationTermResultParams) error
-	UpsertBrregWorkflowNACEMappingsForRawRecord(ctx context.Context, arg UpsertBrregWorkflowNACEMappingsForRawRecordParams) ([]UpsertBrregWorkflowNACEMappingsForRawRecordRow, error)
-	UpsertBrregWorkflowRawRecord(ctx context.Context, arg UpsertBrregWorkflowRawRecordParams) (UpsertBrregWorkflowRawRecordRow, error)
-	UpsertCVRWorkflowRawRecord(ctx context.Context, arg UpsertCVRWorkflowRawRecordParams) (UpsertCVRWorkflowRawRecordRow, error)
 	UpsertCompanyDomain(ctx context.Context, arg UpsertCompanyDomainParams) (CompanyDomain, error)
-	// ── emails ────────────────────────────────────────────────────────────────────
-	UpsertCompanyEmail(ctx context.Context, arg UpsertCompanyEmailParams) (CompanyEmail, error)
-	// ── industries ────────────────────────────────────────────────────────────────
-	UpsertCompanyIndustry(ctx context.Context, arg UpsertCompanyIndustryParams) (CompanyIndustry, error)
-	// ── locations ─────────────────────────────────────────────────────────────────
-	UpsertCompanyLocation(ctx context.Context, arg UpsertCompanyLocationParams) (CompanyLocation, error)
-	// ── markets ───────────────────────────────────────────────────────────────────
-	UpsertCompanyMarket(ctx context.Context, arg UpsertCompanyMarketParams) (CompanyMarket, error)
-	// ── phones ────────────────────────────────────────────────────────────────────
-	UpsertCompanyPhone(ctx context.Context, arg UpsertCompanyPhoneParams) (CompanyPhone, error)
 	UpsertCompanyRelationship(ctx context.Context, arg UpsertCompanyRelationshipParams) (CompanyRelationship, error)
-	// ── services ──────────────────────────────────────────────────────────────────
-	UpsertCompanyService(ctx context.Context, arg UpsertCompanyServiceParams) (CompanyService, error)
+	UpsertDataSourceFileFromCatalog(ctx context.Context, arg UpsertDataSourceFileFromCatalogParams) error
+	UpsertDataSourceFromCatalog(ctx context.Context, arg UpsertDataSourceFromCatalogParams) error
 	UpsertDomain(ctx context.Context, domain string) (Domain, error)
 	UpsertDomainWithSource(ctx context.Context, arg UpsertDomainWithSourceParams) (Domain, error)
 	UpsertDownloadedExchangeRateSourceFile(ctx context.Context, arg UpsertDownloadedExchangeRateSourceFileParams) (ExchangeRateSourceFile, error)
 	UpsertDownloadedNACESourceFile(ctx context.Context, arg UpsertDownloadedNACESourceFileParams) (NaceSourceFile, error)
 	UpsertExchangeRate(ctx context.Context, arg UpsertExchangeRateParams) (ExchangeRate, error)
 	UpsertExchangeRateSheet(ctx context.Context, arg UpsertExchangeRateSheetParams) (ExchangeRateSheet, error)
-	UpsertFinlandPRHYTJRawRecord(ctx context.Context, arg UpsertFinlandPRHYTJRawRecordParams) (uuid.UUID, error)
-	UpsertFinlandPRHYTJSource(ctx context.Context, arg UpsertFinlandPRHYTJSourceParams) (uuid.UUID, error)
-	UpsertFranceSourceAddresses(ctx context.Context, arg UpsertFranceSourceAddressesParams) (int32, error)
-	UpsertFranceSourceCompanies(ctx context.Context, arg UpsertFranceSourceCompaniesParams) (int32, error)
-	UpsertFranceSourceEstablishments(ctx context.Context, arg UpsertFranceSourceEstablishmentsParams) (int32, error)
-	UpsertFranceWorkflowRawEstablishment(ctx context.Context, arg UpsertFranceWorkflowRawEstablishmentParams) (UpsertFranceWorkflowRawEstablishmentRow, error)
-	UpsertFranceWorkflowRawLegalUnit(ctx context.Context, arg UpsertFranceWorkflowRawLegalUnitParams) (UpsertFranceWorkflowRawLegalUnitRow, error)
 	UpsertNACEClassification(ctx context.Context, arg UpsertNACEClassificationParams) (NaceClassification, error)
 	UpsertNACECode(ctx context.Context, arg UpsertNACECodeParams) (NaceCode, error)
 	UpsertNACECodeAlias(ctx context.Context, arg UpsertNACECodeAliasParams) error
-	UpsertUSColoradoEntitiesRawRecord(ctx context.Context, arg UpsertUSColoradoEntitiesRawRecordParams) (uuid.UUID, error)
-	UpsertUSColoradoEntitiesSource(ctx context.Context, arg UpsertUSColoradoEntitiesSourceParams) (uuid.UUID, error)
-	UpsertUSIRSEoBmfRawRecord(ctx context.Context, arg UpsertUSIRSEoBmfRawRecordParams) (uuid.UUID, error)
-	UpsertUSIRSEoBmfSource(ctx context.Context, arg UpsertUSIRSEoBmfSourceParams) (uuid.UUID, error)
-	UpsertUSSECEDGARRawRecord(ctx context.Context, arg UpsertUSSECEDGARRawRecordParams) (uuid.UUID, error)
-	UpsertUSSECEDGARSource(ctx context.Context, arg UpsertUSSECEDGARSourceParams) (uuid.UUID, error)
-	UpsertUSSamGovEntityRawRecord(ctx context.Context, arg UpsertUSSamGovEntityRawRecordParams) (uuid.UUID, error)
-	UpsertUSSamGovEntitySource(ctx context.Context, arg UpsertUSSamGovEntitySourceParams) (uuid.UUID, error)
 }
 
 var _ Querier = (*Queries)(nil)

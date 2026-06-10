@@ -8,84 +8,1158 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getSourceByName = `-- name: GetSourceByName :one
-SELECT id, name, display_name, description, source_group, input_table_name, enabled, schedule_kind, schedule_expression, config, last_started_at, last_success_at, last_failed_at, last_source_marker_type, last_source_marker, last_source_modified_at, last_error, consecutive_failures, created_at, updated_at, schedule_enabled, country_id, capabilities, requires_translation FROM data_sources WHERE name = $1
+const createSourceActionRun = `-- name: CreateSourceActionRun :one
+INSERT INTO data_source_action_runs (
+  id,
+  source_id,
+  action_id,
+  action,
+  status,
+  temporal_workflow_id,
+  temporal_run_id,
+  input,
+  result
+)
+SELECT
+  $1,
+  a.source_id,
+  a.id,
+  a.action,
+  'running',
+  $2,
+  $3,
+  $4,
+  '{}'::jsonb
+FROM data_source_actions a
+WHERE a.id = $5
+RETURNING id, source_id, action_id, action, status, temporal_workflow_id, temporal_run_id, started_at, finished_at, input, result, error_message, created_at
 `
 
-func (q *Queries) GetSourceByName(ctx context.Context, name string) (DataSource, error) {
+type CreateSourceActionRunParams struct {
+	ID                 uuid.UUID       `json:"id"`
+	TemporalWorkflowID *string         `json:"temporal_workflow_id"`
+	TemporalRunID      *string         `json:"temporal_run_id"`
+	Input              json.RawMessage `json:"input"`
+	ActionID           uuid.UUID       `json:"action_id"`
+}
+
+func (q *Queries) CreateSourceActionRun(ctx context.Context, arg CreateSourceActionRunParams) (DataSourceActionRun, error) {
+	row := q.db.QueryRow(ctx, createSourceActionRun,
+		arg.ID,
+		arg.TemporalWorkflowID,
+		arg.TemporalRunID,
+		arg.Input,
+		arg.ActionID,
+	)
+	var i DataSourceActionRun
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.ActionID,
+		&i.Action,
+		&i.Status,
+		&i.TemporalWorkflowID,
+		&i.TemporalRunID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Input,
+		&i.Result,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createSourceFileRun = `-- name: CreateSourceFileRun :one
+INSERT INTO data_source_file_runs (
+  id,
+  source_id,
+  source_file_id,
+  parent_action_run_id,
+  status,
+  temporal_workflow_id,
+  temporal_run_id,
+  log
+)
+SELECT
+  $1,
+  f.source_id,
+  f.id,
+  $2,
+  'running',
+  $3,
+  $4,
+  '[]'::jsonb
+FROM data_source_files f
+WHERE f.id = $5
+RETURNING id, source_id, source_file_id, parent_action_run_id, status, temporal_workflow_id, temporal_run_id, started_at, finished_at, path, content_sha256, content_length_bytes, records_written, error_message, log, created_at
+`
+
+type CreateSourceFileRunParams struct {
+	ID                 uuid.UUID   `json:"id"`
+	ParentActionRunID  pgtype.UUID `json:"parent_action_run_id"`
+	TemporalWorkflowID *string     `json:"temporal_workflow_id"`
+	TemporalRunID      *string     `json:"temporal_run_id"`
+	SourceFileID       uuid.UUID   `json:"source_file_id"`
+}
+
+func (q *Queries) CreateSourceFileRun(ctx context.Context, arg CreateSourceFileRunParams) (DataSourceFileRun, error) {
+	row := q.db.QueryRow(ctx, createSourceFileRun,
+		arg.ID,
+		arg.ParentActionRunID,
+		arg.TemporalWorkflowID,
+		arg.TemporalRunID,
+		arg.SourceFileID,
+	)
+	var i DataSourceFileRun
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.SourceFileID,
+		&i.ParentActionRunID,
+		&i.Status,
+		&i.TemporalWorkflowID,
+		&i.TemporalRunID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Path,
+		&i.ContentSha256,
+		&i.ContentLengthBytes,
+		&i.RecordsWritten,
+		&i.ErrorMessage,
+		&i.Log,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const disableDataSourceFilesNotInCatalog = `-- name: DisableDataSourceFilesNotInCatalog :exec
+UPDATE data_source_files f
+SET enabled = false, updated_at = now()
+FROM data_sources s
+WHERE s.id = f.source_id
+  AND s.registry_key = $1
+  AND NOT (f.file_key = ANY($2::text[]))
+`
+
+type DisableDataSourceFilesNotInCatalogParams struct {
+	RegistryKey string   `json:"registry_key"`
+	FileKeys    []string `json:"file_keys"`
+}
+
+func (q *Queries) DisableDataSourceFilesNotInCatalog(ctx context.Context, arg DisableDataSourceFilesNotInCatalogParams) error {
+	_, err := q.db.Exec(ctx, disableDataSourceFilesNotInCatalog, arg.RegistryKey, arg.FileKeys)
+	return err
+}
+
+const finishSourceActionRun = `-- name: FinishSourceActionRun :one
+UPDATE data_source_action_runs
+SET
+  status = $1,
+  finished_at = now(),
+  result = $2,
+  error_message = NULLIF($3::text, '')
+WHERE id = $4
+RETURNING id, source_id, action_id, action, status, temporal_workflow_id, temporal_run_id, started_at, finished_at, input, result, error_message, created_at
+`
+
+type FinishSourceActionRunParams struct {
+	Status       string          `json:"status"`
+	Result       json.RawMessage `json:"result"`
+	ErrorMessage string          `json:"error_message"`
+	ID           uuid.UUID       `json:"id"`
+}
+
+func (q *Queries) FinishSourceActionRun(ctx context.Context, arg FinishSourceActionRunParams) (DataSourceActionRun, error) {
+	row := q.db.QueryRow(ctx, finishSourceActionRun,
+		arg.Status,
+		arg.Result,
+		arg.ErrorMessage,
+		arg.ID,
+	)
+	var i DataSourceActionRun
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.ActionID,
+		&i.Action,
+		&i.Status,
+		&i.TemporalWorkflowID,
+		&i.TemporalRunID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Input,
+		&i.Result,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const finishSourceFileRun = `-- name: FinishSourceFileRun :one
+UPDATE data_source_file_runs
+SET
+  status = $1,
+  finished_at = now(),
+  path = NULLIF($2::text, ''),
+  content_sha256 = NULLIF($3::text, ''),
+  content_length_bytes = $4,
+  records_written = $5,
+  error_message = NULLIF($6::text, ''),
+  log = $7
+WHERE id = $8
+RETURNING id, source_id, source_file_id, parent_action_run_id, status, temporal_workflow_id, temporal_run_id, started_at, finished_at, path, content_sha256, content_length_bytes, records_written, error_message, log, created_at
+`
+
+type FinishSourceFileRunParams struct {
+	Status             string          `json:"status"`
+	Path               string          `json:"path"`
+	ContentSha256      string          `json:"content_sha256"`
+	ContentLengthBytes *int64          `json:"content_length_bytes"`
+	RecordsWritten     *int64          `json:"records_written"`
+	ErrorMessage       string          `json:"error_message"`
+	Log                json.RawMessage `json:"log"`
+	ID                 uuid.UUID       `json:"id"`
+}
+
+func (q *Queries) FinishSourceFileRun(ctx context.Context, arg FinishSourceFileRunParams) (DataSourceFileRun, error) {
+	row := q.db.QueryRow(ctx, finishSourceFileRun,
+		arg.Status,
+		arg.Path,
+		arg.ContentSha256,
+		arg.ContentLengthBytes,
+		arg.RecordsWritten,
+		arg.ErrorMessage,
+		arg.Log,
+		arg.ID,
+	)
+	var i DataSourceFileRun
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.SourceFileID,
+		&i.ParentActionRunID,
+		&i.Status,
+		&i.TemporalWorkflowID,
+		&i.TemporalRunID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Path,
+		&i.ContentSha256,
+		&i.ContentLengthBytes,
+		&i.RecordsWritten,
+		&i.ErrorMessage,
+		&i.Log,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getLatestSuccessfulSourceActionRun = `-- name: GetLatestSuccessfulSourceActionRun :one
+SELECT r.id, r.source_id, r.action_id, r.action, r.status, r.temporal_workflow_id, r.temporal_run_id, r.started_at, r.finished_at, r.input, r.result, r.error_message, r.created_at
+FROM data_source_action_runs r
+JOIN data_source_actions a ON a.id = r.action_id
+JOIN data_sources s ON s.id = r.source_id
+WHERE s.name = $1
+  AND r.action = $2
+  AND r.status = 'succeeded'
+ORDER BY r.finished_at DESC
+LIMIT 1
+`
+
+type GetLatestSuccessfulSourceActionRunParams struct {
+	Name   string `json:"name"`
+	Action string `json:"action"`
+}
+
+func (q *Queries) GetLatestSuccessfulSourceActionRun(ctx context.Context, arg GetLatestSuccessfulSourceActionRunParams) (DataSourceActionRun, error) {
+	row := q.db.QueryRow(ctx, getLatestSuccessfulSourceActionRun, arg.Name, arg.Action)
+	var i DataSourceActionRun
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.ActionID,
+		&i.Action,
+		&i.Status,
+		&i.TemporalWorkflowID,
+		&i.TemporalRunID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Input,
+		&i.Result,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getSourceActionByName = `-- name: GetSourceActionByName :one
+SELECT
+  a.id,
+  a.source_id,
+  s.name AS source_name,
+  s.country,
+  s.source,
+  s.registry_key,
+  COALESCE(s.source_url, '') AS source_url,
+  COALESCE(s.source_file_name, '') AS source_file_name,
+  s.user_agent_required,
+  a.action,
+  a.display_name,
+  a.temporal_workflow_type,
+  a.temporal_task_queue,
+  a.enabled,
+  a.config
+FROM data_source_actions a
+JOIN data_sources s ON s.id = a.source_id
+WHERE s.name = $1
+  AND a.action = $2
+`
+
+type GetSourceActionByNameParams struct {
+	Name   string `json:"name"`
+	Action string `json:"action"`
+}
+
+type GetSourceActionByNameRow struct {
+	ID                   uuid.UUID       `json:"id"`
+	SourceID             uuid.UUID       `json:"source_id"`
+	SourceName           string          `json:"source_name"`
+	Country              string          `json:"country"`
+	Source               string          `json:"source"`
+	RegistryKey          string          `json:"registry_key"`
+	SourceUrl            string          `json:"source_url"`
+	SourceFileName       string          `json:"source_file_name"`
+	UserAgentRequired    bool            `json:"user_agent_required"`
+	Action               string          `json:"action"`
+	DisplayName          string          `json:"display_name"`
+	TemporalWorkflowType string          `json:"temporal_workflow_type"`
+	TemporalTaskQueue    *string         `json:"temporal_task_queue"`
+	Enabled              bool            `json:"enabled"`
+	Config               json.RawMessage `json:"config"`
+}
+
+func (q *Queries) GetSourceActionByName(ctx context.Context, arg GetSourceActionByNameParams) (GetSourceActionByNameRow, error) {
+	row := q.db.QueryRow(ctx, getSourceActionByName, arg.Name, arg.Action)
+	var i GetSourceActionByNameRow
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.SourceName,
+		&i.Country,
+		&i.Source,
+		&i.RegistryKey,
+		&i.SourceUrl,
+		&i.SourceFileName,
+		&i.UserAgentRequired,
+		&i.Action,
+		&i.DisplayName,
+		&i.TemporalWorkflowType,
+		&i.TemporalTaskQueue,
+		&i.Enabled,
+		&i.Config,
+	)
+	return i, err
+}
+
+const getSourceActionRun = `-- name: GetSourceActionRun :one
+SELECT id, source_id, action_id, action, status, temporal_workflow_id, temporal_run_id, started_at, finished_at, input, result, error_message, created_at FROM data_source_action_runs WHERE id = $1
+`
+
+func (q *Queries) GetSourceActionRun(ctx context.Context, id uuid.UUID) (DataSourceActionRun, error) {
+	row := q.db.QueryRow(ctx, getSourceActionRun, id)
+	var i DataSourceActionRun
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.ActionID,
+		&i.Action,
+		&i.Status,
+		&i.TemporalWorkflowID,
+		&i.TemporalRunID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Input,
+		&i.Result,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getSourceByName = `-- name: GetSourceByName :one
+SELECT
+  id,
+  name,
+  country,
+  source,
+  registry_key,
+  display_name,
+  description,
+  source_group,
+  input_table_name,
+  enabled,
+  auth_required,
+  storage_kind,
+  clickhouse_database,
+  clickhouse_table_prefix,
+  COALESCE(source_url, '') AS source_url,
+  COALESCE(docs_url, '') AS docs_url,
+  COALESCE(raw_source_retention, '') AS raw_source_retention,
+  COALESCE(source_file_name, '') AS source_file_name,
+  user_agent_required,
+  config,
+  capabilities,
+  requires_translation,
+  created_at,
+  updated_at
+FROM data_sources
+WHERE name = $1
+`
+
+type GetSourceByNameRow struct {
+	ID                    uuid.UUID       `json:"id"`
+	Name                  string          `json:"name"`
+	Country               string          `json:"country"`
+	Source                string          `json:"source"`
+	RegistryKey           string          `json:"registry_key"`
+	DisplayName           *string         `json:"display_name"`
+	Description           *string         `json:"description"`
+	SourceGroup           string          `json:"source_group"`
+	InputTableName        string          `json:"input_table_name"`
+	Enabled               bool            `json:"enabled"`
+	AuthRequired          bool            `json:"auth_required"`
+	StorageKind           string          `json:"storage_kind"`
+	ClickhouseDatabase    string          `json:"clickhouse_database"`
+	ClickhouseTablePrefix string          `json:"clickhouse_table_prefix"`
+	SourceUrl             string          `json:"source_url"`
+	DocsUrl               string          `json:"docs_url"`
+	RawSourceRetention    string          `json:"raw_source_retention"`
+	SourceFileName        string          `json:"source_file_name"`
+	UserAgentRequired     bool            `json:"user_agent_required"`
+	Config                json.RawMessage `json:"config"`
+	Capabilities          []string        `json:"capabilities"`
+	RequiresTranslation   bool            `json:"requires_translation"`
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
+}
+
+func (q *Queries) GetSourceByName(ctx context.Context, name string) (GetSourceByNameRow, error) {
 	row := q.db.QueryRow(ctx, getSourceByName, name)
-	var i DataSource
+	var i GetSourceByNameRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
+		&i.Country,
+		&i.Source,
+		&i.RegistryKey,
 		&i.DisplayName,
 		&i.Description,
 		&i.SourceGroup,
 		&i.InputTableName,
 		&i.Enabled,
-		&i.ScheduleKind,
-		&i.ScheduleExpression,
+		&i.AuthRequired,
+		&i.StorageKind,
+		&i.ClickhouseDatabase,
+		&i.ClickhouseTablePrefix,
+		&i.SourceUrl,
+		&i.DocsUrl,
+		&i.RawSourceRetention,
+		&i.SourceFileName,
+		&i.UserAgentRequired,
 		&i.Config,
-		&i.LastStartedAt,
-		&i.LastSuccessAt,
-		&i.LastFailedAt,
-		&i.LastSourceMarkerType,
-		&i.LastSourceMarker,
-		&i.LastSourceModifiedAt,
-		&i.LastError,
-		&i.ConsecutiveFailures,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ScheduleEnabled,
-		&i.CountryID,
 		&i.Capabilities,
 		&i.RequiresTranslation,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSourceFileBySourceNameAndKey = `-- name: GetSourceFileBySourceNameAndKey :one
+SELECT
+  f.id, f.source_id, f.file_key, f.display_name, f.description, f.kind, f.required, f.relative_path, f.enabled, f.sort_order, f.config, f.created_at, f.updated_at,
+  s.name AS source_name,
+  s.country,
+  s.source,
+  s.registry_key,
+  COALESCE(s.source_url, '') AS source_url,
+  s.user_agent_required
+FROM data_source_files f
+JOIN data_sources s ON s.id = f.source_id
+WHERE s.name = $1
+  AND f.file_key = $2
+  AND f.enabled = true
+`
+
+type GetSourceFileBySourceNameAndKeyParams struct {
+	Name    string `json:"name"`
+	FileKey string `json:"file_key"`
+}
+
+type GetSourceFileBySourceNameAndKeyRow struct {
+	ID                uuid.UUID       `json:"id"`
+	SourceID          uuid.UUID       `json:"source_id"`
+	FileKey           string          `json:"file_key"`
+	DisplayName       string          `json:"display_name"`
+	Description       *string         `json:"description"`
+	Kind              string          `json:"kind"`
+	Required          bool            `json:"required"`
+	RelativePath      string          `json:"relative_path"`
+	Enabled           bool            `json:"enabled"`
+	SortOrder         int32           `json:"sort_order"`
+	Config            json.RawMessage `json:"config"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
+	SourceName        string          `json:"source_name"`
+	Country           string          `json:"country"`
+	Source            string          `json:"source"`
+	RegistryKey       string          `json:"registry_key"`
+	SourceUrl         string          `json:"source_url"`
+	UserAgentRequired bool            `json:"user_agent_required"`
+}
+
+func (q *Queries) GetSourceFileBySourceNameAndKey(ctx context.Context, arg GetSourceFileBySourceNameAndKeyParams) (GetSourceFileBySourceNameAndKeyRow, error) {
+	row := q.db.QueryRow(ctx, getSourceFileBySourceNameAndKey, arg.Name, arg.FileKey)
+	var i GetSourceFileBySourceNameAndKeyRow
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.FileKey,
+		&i.DisplayName,
+		&i.Description,
+		&i.Kind,
+		&i.Required,
+		&i.RelativePath,
+		&i.Enabled,
+		&i.SortOrder,
+		&i.Config,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SourceName,
+		&i.Country,
+		&i.Source,
+		&i.RegistryKey,
+		&i.SourceUrl,
+		&i.UserAgentRequired,
+	)
+	return i, err
+}
+
+const getSourceFileRunWithDefinition = `-- name: GetSourceFileRunWithDefinition :one
+SELECT
+  r.id, r.source_id, r.source_file_id, r.parent_action_run_id, r.status, r.temporal_workflow_id, r.temporal_run_id, r.started_at, r.finished_at, r.path, r.content_sha256, r.content_length_bytes, r.records_written, r.error_message, r.log, r.created_at,
+  f.file_key,
+  f.kind,
+  f.relative_path,
+  f.required,
+  f.config,
+  s.name AS source_name,
+  s.country,
+  s.source,
+  COALESCE(s.source_url, '') AS source_url,
+  s.user_agent_required
+FROM data_source_file_runs r
+JOIN data_source_files f ON f.id = r.source_file_id
+JOIN data_sources s ON s.id = r.source_id
+WHERE r.id = $1
+`
+
+type GetSourceFileRunWithDefinitionRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	SourceID           uuid.UUID          `json:"source_id"`
+	SourceFileID       uuid.UUID          `json:"source_file_id"`
+	ParentActionRunID  pgtype.UUID        `json:"parent_action_run_id"`
+	Status             string             `json:"status"`
+	TemporalWorkflowID *string            `json:"temporal_workflow_id"`
+	TemporalRunID      *string            `json:"temporal_run_id"`
+	StartedAt          time.Time          `json:"started_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	Path               *string            `json:"path"`
+	ContentSha256      *string            `json:"content_sha256"`
+	ContentLengthBytes *int64             `json:"content_length_bytes"`
+	RecordsWritten     *int64             `json:"records_written"`
+	ErrorMessage       *string            `json:"error_message"`
+	Log                json.RawMessage    `json:"log"`
+	CreatedAt          time.Time          `json:"created_at"`
+	FileKey            string             `json:"file_key"`
+	Kind               string             `json:"kind"`
+	RelativePath       string             `json:"relative_path"`
+	Required           bool               `json:"required"`
+	Config             json.RawMessage    `json:"config"`
+	SourceName         string             `json:"source_name"`
+	Country            string             `json:"country"`
+	Source             string             `json:"source"`
+	SourceUrl          string             `json:"source_url"`
+	UserAgentRequired  bool               `json:"user_agent_required"`
+}
+
+func (q *Queries) GetSourceFileRunWithDefinition(ctx context.Context, id uuid.UUID) (GetSourceFileRunWithDefinitionRow, error) {
+	row := q.db.QueryRow(ctx, getSourceFileRunWithDefinition, id)
+	var i GetSourceFileRunWithDefinitionRow
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.SourceFileID,
+		&i.ParentActionRunID,
+		&i.Status,
+		&i.TemporalWorkflowID,
+		&i.TemporalRunID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Path,
+		&i.ContentSha256,
+		&i.ContentLengthBytes,
+		&i.RecordsWritten,
+		&i.ErrorMessage,
+		&i.Log,
+		&i.CreatedAt,
+		&i.FileKey,
+		&i.Kind,
+		&i.RelativePath,
+		&i.Required,
+		&i.Config,
+		&i.SourceName,
+		&i.Country,
+		&i.Source,
+		&i.SourceUrl,
+		&i.UserAgentRequired,
 	)
 	return i, err
 }
 
 const getSourcesWithCapabilities = `-- name: GetSourcesWithCapabilities :many
-SELECT id, name, display_name, description, source_group, input_table_name, enabled, schedule_kind, schedule_expression, config, last_started_at, last_success_at, last_failed_at, last_source_marker_type, last_source_marker, last_source_modified_at, last_error, consecutive_failures, created_at, updated_at, schedule_enabled, country_id, capabilities, requires_translation FROM data_sources
+SELECT
+  id,
+  name,
+  country,
+  source,
+  registry_key,
+  display_name,
+  description,
+  source_group,
+  input_table_name,
+  enabled,
+  auth_required,
+  storage_kind,
+  clickhouse_database,
+  clickhouse_table_prefix,
+  COALESCE(source_url, '') AS source_url,
+  COALESCE(docs_url, '') AS docs_url,
+  COALESCE(raw_source_retention, '') AS raw_source_retention,
+  COALESCE(source_file_name, '') AS source_file_name,
+  user_agent_required,
+  config,
+  capabilities,
+  requires_translation,
+  created_at,
+  updated_at
+FROM data_sources
 WHERE array_length(capabilities, 1) > 0
 ORDER BY name
 `
 
-func (q *Queries) GetSourcesWithCapabilities(ctx context.Context) ([]DataSource, error) {
+type GetSourcesWithCapabilitiesRow struct {
+	ID                    uuid.UUID       `json:"id"`
+	Name                  string          `json:"name"`
+	Country               string          `json:"country"`
+	Source                string          `json:"source"`
+	RegistryKey           string          `json:"registry_key"`
+	DisplayName           *string         `json:"display_name"`
+	Description           *string         `json:"description"`
+	SourceGroup           string          `json:"source_group"`
+	InputTableName        string          `json:"input_table_name"`
+	Enabled               bool            `json:"enabled"`
+	AuthRequired          bool            `json:"auth_required"`
+	StorageKind           string          `json:"storage_kind"`
+	ClickhouseDatabase    string          `json:"clickhouse_database"`
+	ClickhouseTablePrefix string          `json:"clickhouse_table_prefix"`
+	SourceUrl             string          `json:"source_url"`
+	DocsUrl               string          `json:"docs_url"`
+	RawSourceRetention    string          `json:"raw_source_retention"`
+	SourceFileName        string          `json:"source_file_name"`
+	UserAgentRequired     bool            `json:"user_agent_required"`
+	Config                json.RawMessage `json:"config"`
+	Capabilities          []string        `json:"capabilities"`
+	RequiresTranslation   bool            `json:"requires_translation"`
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
+}
+
+func (q *Queries) GetSourcesWithCapabilities(ctx context.Context) ([]GetSourcesWithCapabilitiesRow, error) {
 	rows, err := q.db.Query(ctx, getSourcesWithCapabilities)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []DataSource
+	var items []GetSourcesWithCapabilitiesRow
 	for rows.Next() {
-		var i DataSource
+		var i GetSourcesWithCapabilitiesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
+			&i.Country,
+			&i.Source,
+			&i.RegistryKey,
 			&i.DisplayName,
 			&i.Description,
 			&i.SourceGroup,
 			&i.InputTableName,
 			&i.Enabled,
-			&i.ScheduleKind,
-			&i.ScheduleExpression,
+			&i.AuthRequired,
+			&i.StorageKind,
+			&i.ClickhouseDatabase,
+			&i.ClickhouseTablePrefix,
+			&i.SourceUrl,
+			&i.DocsUrl,
+			&i.RawSourceRetention,
+			&i.SourceFileName,
+			&i.UserAgentRequired,
 			&i.Config,
-			&i.LastStartedAt,
-			&i.LastSuccessAt,
-			&i.LastFailedAt,
-			&i.LastSourceMarkerType,
-			&i.LastSourceMarker,
-			&i.LastSourceModifiedAt,
-			&i.LastError,
-			&i.ConsecutiveFailures,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ScheduleEnabled,
-			&i.CountryID,
 			&i.Capabilities,
 			&i.RequiresTranslation,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLatestSuccessfulRequiredSourceFileRuns = `-- name: ListLatestSuccessfulRequiredSourceFileRuns :many
+WITH latest AS (
+  SELECT DISTINCT ON (f.id)
+    r.id, r.source_id, r.source_file_id, r.parent_action_run_id, r.status, r.temporal_workflow_id, r.temporal_run_id, r.started_at, r.finished_at, r.path, r.content_sha256, r.content_length_bytes, r.records_written, r.error_message, r.log, r.created_at,
+    f.file_key,
+    f.relative_path,
+    f.required
+  FROM data_source_files f
+  JOIN data_sources s ON s.id = f.source_id
+  LEFT JOIN data_source_file_runs r
+    ON r.source_file_id = f.id
+   AND r.status = 'succeeded'
+  WHERE s.name = $1
+    AND f.enabled = true
+    AND f.required = true
+  ORDER BY f.id, r.finished_at DESC NULLS LAST, r.started_at DESC
+)
+SELECT id, source_id, source_file_id, parent_action_run_id, status, temporal_workflow_id, temporal_run_id, started_at, finished_at, path, content_sha256, content_length_bytes, records_written, error_message, log, created_at, file_key, relative_path, required
+FROM latest
+ORDER BY file_key
+`
+
+type ListLatestSuccessfulRequiredSourceFileRunsRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	SourceID           pgtype.UUID        `json:"source_id"`
+	SourceFileID       pgtype.UUID        `json:"source_file_id"`
+	ParentActionRunID  pgtype.UUID        `json:"parent_action_run_id"`
+	Status             *string            `json:"status"`
+	TemporalWorkflowID *string            `json:"temporal_workflow_id"`
+	TemporalRunID      *string            `json:"temporal_run_id"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	Path               *string            `json:"path"`
+	ContentSha256      *string            `json:"content_sha256"`
+	ContentLengthBytes *int64             `json:"content_length_bytes"`
+	RecordsWritten     *int64             `json:"records_written"`
+	ErrorMessage       *string            `json:"error_message"`
+	Log                []byte             `json:"log"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	FileKey            string             `json:"file_key"`
+	RelativePath       string             `json:"relative_path"`
+	Required           bool               `json:"required"`
+}
+
+func (q *Queries) ListLatestSuccessfulRequiredSourceFileRuns(ctx context.Context, name string) ([]ListLatestSuccessfulRequiredSourceFileRunsRow, error) {
+	rows, err := q.db.Query(ctx, listLatestSuccessfulRequiredSourceFileRuns, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLatestSuccessfulRequiredSourceFileRunsRow
+	for rows.Next() {
+		var i ListLatestSuccessfulRequiredSourceFileRunsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.SourceFileID,
+			&i.ParentActionRunID,
+			&i.Status,
+			&i.TemporalWorkflowID,
+			&i.TemporalRunID,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Path,
+			&i.ContentSha256,
+			&i.ContentLengthBytes,
+			&i.RecordsWritten,
+			&i.ErrorMessage,
+			&i.Log,
+			&i.CreatedAt,
+			&i.FileKey,
+			&i.RelativePath,
+			&i.Required,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSourceActionRuns = `-- name: ListSourceActionRuns :many
+SELECT
+  r.id,
+  r.source_id,
+  s.name AS source_name,
+  r.action_id,
+  r.action,
+  r.status,
+  r.temporal_workflow_id,
+  r.temporal_run_id,
+  r.started_at,
+  r.finished_at,
+  r.input,
+  r.result,
+  r.error_message,
+  r.created_at
+FROM data_source_action_runs r
+JOIN data_sources s ON s.id = r.source_id
+WHERE s.name = $1
+ORDER BY r.started_at DESC
+LIMIT $2
+`
+
+type ListSourceActionRunsParams struct {
+	Name  string `json:"name"`
+	Limit int32  `json:"limit"`
+}
+
+type ListSourceActionRunsRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	SourceID           uuid.UUID          `json:"source_id"`
+	SourceName         string             `json:"source_name"`
+	ActionID           uuid.UUID          `json:"action_id"`
+	Action             string             `json:"action"`
+	Status             string             `json:"status"`
+	TemporalWorkflowID *string            `json:"temporal_workflow_id"`
+	TemporalRunID      *string            `json:"temporal_run_id"`
+	StartedAt          time.Time          `json:"started_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	Input              json.RawMessage    `json:"input"`
+	Result             json.RawMessage    `json:"result"`
+	ErrorMessage       *string            `json:"error_message"`
+	CreatedAt          time.Time          `json:"created_at"`
+}
+
+func (q *Queries) ListSourceActionRuns(ctx context.Context, arg ListSourceActionRunsParams) ([]ListSourceActionRunsRow, error) {
+	rows, err := q.db.Query(ctx, listSourceActionRuns, arg.Name, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSourceActionRunsRow
+	for rows.Next() {
+		var i ListSourceActionRunsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.SourceName,
+			&i.ActionID,
+			&i.Action,
+			&i.Status,
+			&i.TemporalWorkflowID,
+			&i.TemporalRunID,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Input,
+			&i.Result,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSourceActions = `-- name: ListSourceActions :many
+SELECT
+  a.id,
+  a.source_id,
+  s.name AS source_name,
+  a.action,
+  a.display_name,
+  a.temporal_workflow_type,
+  a.temporal_task_queue,
+  a.enabled,
+  a.config,
+  a.created_at,
+  a.updated_at
+FROM data_source_actions a
+JOIN data_sources s ON s.id = a.source_id
+WHERE s.name = $1
+ORDER BY a.action
+`
+
+type ListSourceActionsRow struct {
+	ID                   uuid.UUID       `json:"id"`
+	SourceID             uuid.UUID       `json:"source_id"`
+	SourceName           string          `json:"source_name"`
+	Action               string          `json:"action"`
+	DisplayName          string          `json:"display_name"`
+	TemporalWorkflowType string          `json:"temporal_workflow_type"`
+	TemporalTaskQueue    *string         `json:"temporal_task_queue"`
+	Enabled              bool            `json:"enabled"`
+	Config               json.RawMessage `json:"config"`
+	CreatedAt            time.Time       `json:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at"`
+}
+
+func (q *Queries) ListSourceActions(ctx context.Context, name string) ([]ListSourceActionsRow, error) {
+	rows, err := q.db.Query(ctx, listSourceActions, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSourceActionsRow
+	for rows.Next() {
+		var i ListSourceActionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.SourceName,
+			&i.Action,
+			&i.DisplayName,
+			&i.TemporalWorkflowType,
+			&i.TemporalTaskQueue,
+			&i.Enabled,
+			&i.Config,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSourceFileRuns = `-- name: ListSourceFileRuns :many
+SELECT
+  r.id, r.source_id, r.source_file_id, r.parent_action_run_id, r.status, r.temporal_workflow_id, r.temporal_run_id, r.started_at, r.finished_at, r.path, r.content_sha256, r.content_length_bytes, r.records_written, r.error_message, r.log, r.created_at,
+  f.file_key,
+  f.display_name,
+  s.name AS source_name
+FROM data_source_file_runs r
+JOIN data_source_files f ON f.id = r.source_file_id
+JOIN data_sources s ON s.id = r.source_id
+WHERE s.name = $1
+  AND f.file_key = $2
+ORDER BY r.started_at DESC
+LIMIT $3
+`
+
+type ListSourceFileRunsParams struct {
+	SourceName string `json:"source_name"`
+	FileKey    string `json:"file_key"`
+	RowLimit   int32  `json:"row_limit"`
+}
+
+type ListSourceFileRunsRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	SourceID           uuid.UUID          `json:"source_id"`
+	SourceFileID       uuid.UUID          `json:"source_file_id"`
+	ParentActionRunID  pgtype.UUID        `json:"parent_action_run_id"`
+	Status             string             `json:"status"`
+	TemporalWorkflowID *string            `json:"temporal_workflow_id"`
+	TemporalRunID      *string            `json:"temporal_run_id"`
+	StartedAt          time.Time          `json:"started_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	Path               *string            `json:"path"`
+	ContentSha256      *string            `json:"content_sha256"`
+	ContentLengthBytes *int64             `json:"content_length_bytes"`
+	RecordsWritten     *int64             `json:"records_written"`
+	ErrorMessage       *string            `json:"error_message"`
+	Log                json.RawMessage    `json:"log"`
+	CreatedAt          time.Time          `json:"created_at"`
+	FileKey            string             `json:"file_key"`
+	DisplayName        string             `json:"display_name"`
+	SourceName         string             `json:"source_name"`
+}
+
+func (q *Queries) ListSourceFileRuns(ctx context.Context, arg ListSourceFileRunsParams) ([]ListSourceFileRunsRow, error) {
+	rows, err := q.db.Query(ctx, listSourceFileRuns, arg.SourceName, arg.FileKey, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSourceFileRunsRow
+	for rows.Next() {
+		var i ListSourceFileRunsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.SourceFileID,
+			&i.ParentActionRunID,
+			&i.Status,
+			&i.TemporalWorkflowID,
+			&i.TemporalRunID,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Path,
+			&i.ContentSha256,
+			&i.ContentLengthBytes,
+			&i.RecordsWritten,
+			&i.ErrorMessage,
+			&i.Log,
+			&i.CreatedAt,
+			&i.FileKey,
+			&i.DisplayName,
+			&i.SourceName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSourceFilesWithLatestRun = `-- name: ListSourceFilesWithLatestRun :many
+WITH latest AS (
+  SELECT DISTINCT ON (r.source_file_id)
+    r.id, r.source_id, r.source_file_id, r.parent_action_run_id, r.status, r.temporal_workflow_id, r.temporal_run_id, r.started_at, r.finished_at, r.path, r.content_sha256, r.content_length_bytes, r.records_written, r.error_message, r.log, r.created_at
+  FROM data_source_file_runs r
+  ORDER BY r.source_file_id, r.started_at DESC
+),
+latest_success AS (
+  SELECT DISTINCT ON (r.source_file_id)
+    r.id, r.source_id, r.source_file_id, r.parent_action_run_id, r.status, r.temporal_workflow_id, r.temporal_run_id, r.started_at, r.finished_at, r.path, r.content_sha256, r.content_length_bytes, r.records_written, r.error_message, r.log, r.created_at
+  FROM data_source_file_runs r
+  WHERE r.status = 'succeeded'
+  ORDER BY r.source_file_id, r.finished_at DESC NULLS LAST, r.started_at DESC
+)
+SELECT
+  f.id,
+  f.source_id,
+  s.name AS source_name,
+  f.file_key,
+  f.display_name,
+  f.description,
+  f.kind,
+  f.required,
+  f.relative_path,
+  f.enabled,
+  f.sort_order,
+  f.config,
+  f.created_at,
+  f.updated_at,
+  latest.id AS latest_run_id,
+  latest.status AS latest_status,
+  latest.started_at AS latest_started_at,
+  latest.finished_at AS latest_finished_at,
+  latest.path AS latest_path,
+  latest.content_sha256 AS latest_content_sha256,
+  latest.content_length_bytes AS latest_content_length_bytes,
+  latest.records_written AS latest_records_written,
+  latest.error_message AS latest_error_message,
+  latest_success.id AS latest_successful_run_id,
+  latest_success.path AS latest_successful_path
+FROM data_source_files f
+JOIN data_sources s ON s.id = f.source_id
+LEFT JOIN latest ON latest.source_file_id = f.id
+LEFT JOIN latest_success ON latest_success.source_file_id = f.id
+WHERE s.name = $1
+ORDER BY f.sort_order, f.file_key
+`
+
+type ListSourceFilesWithLatestRunRow struct {
+	ID                       uuid.UUID          `json:"id"`
+	SourceID                 uuid.UUID          `json:"source_id"`
+	SourceName               string             `json:"source_name"`
+	FileKey                  string             `json:"file_key"`
+	DisplayName              string             `json:"display_name"`
+	Description              *string            `json:"description"`
+	Kind                     string             `json:"kind"`
+	Required                 bool               `json:"required"`
+	RelativePath             string             `json:"relative_path"`
+	Enabled                  bool               `json:"enabled"`
+	SortOrder                int32              `json:"sort_order"`
+	Config                   json.RawMessage    `json:"config"`
+	CreatedAt                time.Time          `json:"created_at"`
+	UpdatedAt                time.Time          `json:"updated_at"`
+	LatestRunID              pgtype.UUID        `json:"latest_run_id"`
+	LatestStatus             *string            `json:"latest_status"`
+	LatestStartedAt          pgtype.Timestamptz `json:"latest_started_at"`
+	LatestFinishedAt         pgtype.Timestamptz `json:"latest_finished_at"`
+	LatestPath               *string            `json:"latest_path"`
+	LatestContentSha256      *string            `json:"latest_content_sha256"`
+	LatestContentLengthBytes *int64             `json:"latest_content_length_bytes"`
+	LatestRecordsWritten     *int64             `json:"latest_records_written"`
+	LatestErrorMessage       *string            `json:"latest_error_message"`
+	LatestSuccessfulRunID    pgtype.UUID        `json:"latest_successful_run_id"`
+	LatestSuccessfulPath     *string            `json:"latest_successful_path"`
+}
+
+func (q *Queries) ListSourceFilesWithLatestRun(ctx context.Context, name string) ([]ListSourceFilesWithLatestRunRow, error) {
+	rows, err := q.db.Query(ctx, listSourceFilesWithLatestRun, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSourceFilesWithLatestRunRow
+	for rows.Next() {
+		var i ListSourceFilesWithLatestRunRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.SourceName,
+			&i.FileKey,
+			&i.DisplayName,
+			&i.Description,
+			&i.Kind,
+			&i.Required,
+			&i.RelativePath,
+			&i.Enabled,
+			&i.SortOrder,
+			&i.Config,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LatestRunID,
+			&i.LatestStatus,
+			&i.LatestStartedAt,
+			&i.LatestFinishedAt,
+			&i.LatestPath,
+			&i.LatestContentSha256,
+			&i.LatestContentLengthBytes,
+			&i.LatestRecordsWritten,
+			&i.LatestErrorMessage,
+			&i.LatestSuccessfulRunID,
+			&i.LatestSuccessfulPath,
 		); err != nil {
 			return nil, err
 		}
@@ -98,43 +1172,96 @@ func (q *Queries) GetSourcesWithCapabilities(ctx context.Context) ([]DataSource,
 }
 
 const listSources = `-- name: ListSources :many
-SELECT id, name, display_name, description, source_group, input_table_name, enabled, schedule_kind, schedule_expression, config, last_started_at, last_success_at, last_failed_at, last_source_marker_type, last_source_marker, last_source_modified_at, last_error, consecutive_failures, created_at, updated_at, schedule_enabled, country_id, capabilities, requires_translation FROM data_sources ORDER BY name
+SELECT
+  id,
+  name,
+  country,
+  source,
+  registry_key,
+  display_name,
+  description,
+  source_group,
+  input_table_name,
+  enabled,
+  auth_required,
+  storage_kind,
+  clickhouse_database,
+  clickhouse_table_prefix,
+  COALESCE(source_url, '') AS source_url,
+  COALESCE(docs_url, '') AS docs_url,
+  COALESCE(raw_source_retention, '') AS raw_source_retention,
+  COALESCE(source_file_name, '') AS source_file_name,
+  user_agent_required,
+  config,
+  capabilities,
+  requires_translation,
+  created_at,
+  updated_at
+FROM data_sources
+ORDER BY name
 `
 
-func (q *Queries) ListSources(ctx context.Context) ([]DataSource, error) {
+type ListSourcesRow struct {
+	ID                    uuid.UUID       `json:"id"`
+	Name                  string          `json:"name"`
+	Country               string          `json:"country"`
+	Source                string          `json:"source"`
+	RegistryKey           string          `json:"registry_key"`
+	DisplayName           *string         `json:"display_name"`
+	Description           *string         `json:"description"`
+	SourceGroup           string          `json:"source_group"`
+	InputTableName        string          `json:"input_table_name"`
+	Enabled               bool            `json:"enabled"`
+	AuthRequired          bool            `json:"auth_required"`
+	StorageKind           string          `json:"storage_kind"`
+	ClickhouseDatabase    string          `json:"clickhouse_database"`
+	ClickhouseTablePrefix string          `json:"clickhouse_table_prefix"`
+	SourceUrl             string          `json:"source_url"`
+	DocsUrl               string          `json:"docs_url"`
+	RawSourceRetention    string          `json:"raw_source_retention"`
+	SourceFileName        string          `json:"source_file_name"`
+	UserAgentRequired     bool            `json:"user_agent_required"`
+	Config                json.RawMessage `json:"config"`
+	Capabilities          []string        `json:"capabilities"`
+	RequiresTranslation   bool            `json:"requires_translation"`
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
+}
+
+func (q *Queries) ListSources(ctx context.Context) ([]ListSourcesRow, error) {
 	rows, err := q.db.Query(ctx, listSources)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []DataSource
+	var items []ListSourcesRow
 	for rows.Next() {
-		var i DataSource
+		var i ListSourcesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
+			&i.Country,
+			&i.Source,
+			&i.RegistryKey,
 			&i.DisplayName,
 			&i.Description,
 			&i.SourceGroup,
 			&i.InputTableName,
 			&i.Enabled,
-			&i.ScheduleKind,
-			&i.ScheduleExpression,
+			&i.AuthRequired,
+			&i.StorageKind,
+			&i.ClickhouseDatabase,
+			&i.ClickhouseTablePrefix,
+			&i.SourceUrl,
+			&i.DocsUrl,
+			&i.RawSourceRetention,
+			&i.SourceFileName,
+			&i.UserAgentRequired,
 			&i.Config,
-			&i.LastStartedAt,
-			&i.LastSuccessAt,
-			&i.LastFailedAt,
-			&i.LastSourceMarkerType,
-			&i.LastSourceMarker,
-			&i.LastSourceModifiedAt,
-			&i.LastError,
-			&i.ConsecutiveFailures,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ScheduleEnabled,
-			&i.CountryID,
 			&i.Capabilities,
 			&i.RequiresTranslation,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -146,70 +1273,287 @@ func (q *Queries) ListSources(ctx context.Context) ([]DataSource, error) {
 	return items, nil
 }
 
-const updateSourceConfig = `-- name: UpdateSourceConfig :exec
-UPDATE data_sources SET config = $2, updated_at = now() WHERE name = $1
+const listSuccessfulSourceFileRunsForAction = `-- name: ListSuccessfulSourceFileRunsForAction :many
+SELECT
+  r.id, r.source_id, r.source_file_id, r.parent_action_run_id, r.status, r.temporal_workflow_id, r.temporal_run_id, r.started_at, r.finished_at, r.path, r.content_sha256, r.content_length_bytes, r.records_written, r.error_message, r.log, r.created_at,
+  f.file_key,
+  f.relative_path,
+  f.required
+FROM data_source_file_runs r
+JOIN data_source_files f ON f.id = r.source_file_id
+WHERE r.parent_action_run_id = $1
+  AND r.status = 'succeeded'
+ORDER BY f.sort_order, f.file_key
 `
 
-type UpdateSourceConfigParams struct {
-	Name   string          `json:"name"`
-	Config json.RawMessage `json:"config"`
+type ListSuccessfulSourceFileRunsForActionRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	SourceID           uuid.UUID          `json:"source_id"`
+	SourceFileID       uuid.UUID          `json:"source_file_id"`
+	ParentActionRunID  pgtype.UUID        `json:"parent_action_run_id"`
+	Status             string             `json:"status"`
+	TemporalWorkflowID *string            `json:"temporal_workflow_id"`
+	TemporalRunID      *string            `json:"temporal_run_id"`
+	StartedAt          time.Time          `json:"started_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	Path               *string            `json:"path"`
+	ContentSha256      *string            `json:"content_sha256"`
+	ContentLengthBytes *int64             `json:"content_length_bytes"`
+	RecordsWritten     *int64             `json:"records_written"`
+	ErrorMessage       *string            `json:"error_message"`
+	Log                json.RawMessage    `json:"log"`
+	CreatedAt          time.Time          `json:"created_at"`
+	FileKey            string             `json:"file_key"`
+	RelativePath       string             `json:"relative_path"`
+	Required           bool               `json:"required"`
 }
 
-func (q *Queries) UpdateSourceConfig(ctx context.Context, arg UpdateSourceConfigParams) error {
-	_, err := q.db.Exec(ctx, updateSourceConfig, arg.Name, arg.Config)
+func (q *Queries) ListSuccessfulSourceFileRunsForAction(ctx context.Context, parentActionRunID pgtype.UUID) ([]ListSuccessfulSourceFileRunsForActionRow, error) {
+	rows, err := q.db.Query(ctx, listSuccessfulSourceFileRunsForAction, parentActionRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSuccessfulSourceFileRunsForActionRow
+	for rows.Next() {
+		var i ListSuccessfulSourceFileRunsForActionRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.SourceFileID,
+			&i.ParentActionRunID,
+			&i.Status,
+			&i.TemporalWorkflowID,
+			&i.TemporalRunID,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Path,
+			&i.ContentSha256,
+			&i.ContentLengthBytes,
+			&i.RecordsWritten,
+			&i.ErrorMessage,
+			&i.Log,
+			&i.CreatedAt,
+			&i.FileKey,
+			&i.RelativePath,
+			&i.Required,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pruneDataSourcesNotInCatalog = `-- name: PruneDataSourcesNotInCatalog :exec
+DELETE FROM data_sources
+WHERE NOT (registry_key = ANY($1::text[]))
+`
+
+func (q *Queries) PruneDataSourcesNotInCatalog(ctx context.Context, dollar_1 []string) error {
+	_, err := q.db.Exec(ctx, pruneDataSourcesNotInCatalog, dollar_1)
 	return err
 }
 
-const updateSourceEnabled = `-- name: UpdateSourceEnabled :exec
-UPDATE data_sources SET enabled = $2, updated_at = now() WHERE name = $1
+const updateSourceActionRunTemporalRunID = `-- name: UpdateSourceActionRunTemporalRunID :exec
+UPDATE data_source_action_runs
+SET temporal_run_id = $1
+WHERE id = $2
 `
 
-type UpdateSourceEnabledParams struct {
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
+type UpdateSourceActionRunTemporalRunIDParams struct {
+	TemporalRunID *string   `json:"temporal_run_id"`
+	ID            uuid.UUID `json:"id"`
 }
 
-func (q *Queries) UpdateSourceEnabled(ctx context.Context, arg UpdateSourceEnabledParams) error {
-	_, err := q.db.Exec(ctx, updateSourceEnabled, arg.Name, arg.Enabled)
+func (q *Queries) UpdateSourceActionRunTemporalRunID(ctx context.Context, arg UpdateSourceActionRunTemporalRunIDParams) error {
+	_, err := q.db.Exec(ctx, updateSourceActionRunTemporalRunID, arg.TemporalRunID, arg.ID)
 	return err
 }
 
-const updateSourceSchedule = `-- name: UpdateSourceSchedule :exec
-UPDATE data_sources
-SET schedule_kind = $2, schedule_expression = $3, updated_at = now()
-WHERE name = $1
+const updateSourceFileRunTemporalRunID = `-- name: UpdateSourceFileRunTemporalRunID :exec
+UPDATE data_source_file_runs
+SET temporal_run_id = $1
+WHERE id = $2
 `
 
-type UpdateSourceScheduleParams struct {
-	Name               string  `json:"name"`
-	ScheduleKind       string  `json:"schedule_kind"`
-	ScheduleExpression *string `json:"schedule_expression"`
+type UpdateSourceFileRunTemporalRunIDParams struct {
+	TemporalRunID *string   `json:"temporal_run_id"`
+	ID            uuid.UUID `json:"id"`
 }
 
-func (q *Queries) UpdateSourceSchedule(ctx context.Context, arg UpdateSourceScheduleParams) error {
-	_, err := q.db.Exec(ctx, updateSourceSchedule, arg.Name, arg.ScheduleKind, arg.ScheduleExpression)
+func (q *Queries) UpdateSourceFileRunTemporalRunID(ctx context.Context, arg UpdateSourceFileRunTemporalRunIDParams) error {
+	_, err := q.db.Exec(ctx, updateSourceFileRunTemporalRunID, arg.TemporalRunID, arg.ID)
 	return err
 }
 
-const updateSourceScheduleEnabled = `-- name: UpdateSourceScheduleEnabled :exec
-UPDATE data_sources SET schedule_enabled = $2, updated_at = now() WHERE name = $1
+const upsertDataSourceFileFromCatalog = `-- name: UpsertDataSourceFileFromCatalog :exec
+INSERT INTO data_source_files (
+  source_id,
+  file_key,
+  display_name,
+  description,
+  kind,
+  required,
+  relative_path,
+  enabled,
+  sort_order,
+  config
+)
+SELECT
+  s.id,
+  $1,
+  $2,
+  NULLIF($3::text, ''),
+  $4,
+  $5,
+  $6,
+  $7,
+  $8,
+  $9
+FROM data_sources s
+WHERE s.registry_key = $10
+ON CONFLICT (source_id, file_key) DO UPDATE SET
+  display_name = EXCLUDED.display_name,
+  description = EXCLUDED.description,
+  kind = EXCLUDED.kind,
+  required = EXCLUDED.required,
+  relative_path = EXCLUDED.relative_path,
+  enabled = EXCLUDED.enabled,
+  sort_order = EXCLUDED.sort_order,
+  config = EXCLUDED.config,
+  updated_at = now()
 `
 
-type UpdateSourceScheduleEnabledParams struct {
-	Name            string `json:"name"`
-	ScheduleEnabled bool   `json:"schedule_enabled"`
+type UpsertDataSourceFileFromCatalogParams struct {
+	FileKey      string          `json:"file_key"`
+	DisplayName  string          `json:"display_name"`
+	Description  string          `json:"description"`
+	Kind         string          `json:"kind"`
+	Required     bool            `json:"required"`
+	RelativePath string          `json:"relative_path"`
+	Enabled      bool            `json:"enabled"`
+	SortOrder    int32           `json:"sort_order"`
+	Config       json.RawMessage `json:"config"`
+	RegistryKey  string          `json:"registry_key"`
 }
 
-func (q *Queries) UpdateSourceScheduleEnabled(ctx context.Context, arg UpdateSourceScheduleEnabledParams) error {
-	_, err := q.db.Exec(ctx, updateSourceScheduleEnabled, arg.Name, arg.ScheduleEnabled)
+func (q *Queries) UpsertDataSourceFileFromCatalog(ctx context.Context, arg UpsertDataSourceFileFromCatalogParams) error {
+	_, err := q.db.Exec(ctx, upsertDataSourceFileFromCatalog,
+		arg.FileKey,
+		arg.DisplayName,
+		arg.Description,
+		arg.Kind,
+		arg.Required,
+		arg.RelativePath,
+		arg.Enabled,
+		arg.SortOrder,
+		arg.Config,
+		arg.RegistryKey,
+	)
 	return err
 }
 
-const updateSourceStarted = `-- name: UpdateSourceStarted :exec
-UPDATE data_sources SET last_started_at = now(), updated_at = now() WHERE name = $1
+const upsertDataSourceFromCatalog = `-- name: UpsertDataSourceFromCatalog :exec
+INSERT INTO data_sources (
+  name,
+  country,
+  source,
+  registry_key,
+  display_name,
+  description,
+  source_group,
+  input_table_name,
+  enabled,
+  auth_required,
+  storage_kind,
+  clickhouse_database,
+  clickhouse_table_prefix,
+  source_url,
+  docs_url,
+  raw_source_retention,
+  source_file_name,
+  user_agent_required,
+  capabilities,
+  requires_translation,
+  config
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+  '{}'::jsonb
+)
+ON CONFLICT (name) DO UPDATE SET
+  country = EXCLUDED.country,
+  source = EXCLUDED.source,
+  registry_key = EXCLUDED.registry_key,
+  display_name = EXCLUDED.display_name,
+  description = EXCLUDED.description,
+  source_group = EXCLUDED.source_group,
+  input_table_name = EXCLUDED.input_table_name,
+  enabled = EXCLUDED.enabled,
+  auth_required = EXCLUDED.auth_required,
+  storage_kind = EXCLUDED.storage_kind,
+  clickhouse_database = EXCLUDED.clickhouse_database,
+  clickhouse_table_prefix = EXCLUDED.clickhouse_table_prefix,
+  source_url = EXCLUDED.source_url,
+  docs_url = EXCLUDED.docs_url,
+  raw_source_retention = EXCLUDED.raw_source_retention,
+  source_file_name = EXCLUDED.source_file_name,
+  user_agent_required = EXCLUDED.user_agent_required,
+  capabilities = EXCLUDED.capabilities,
+  requires_translation = EXCLUDED.requires_translation,
+  config = '{}'::jsonb,
+  updated_at = now()
 `
 
-func (q *Queries) UpdateSourceStarted(ctx context.Context, name string) error {
-	_, err := q.db.Exec(ctx, updateSourceStarted, name)
+type UpsertDataSourceFromCatalogParams struct {
+	Name                  string   `json:"name"`
+	Country               string   `json:"country"`
+	Source                string   `json:"source"`
+	RegistryKey           string   `json:"registry_key"`
+	DisplayName           *string  `json:"display_name"`
+	Description           *string  `json:"description"`
+	SourceGroup           string   `json:"source_group"`
+	InputTableName        string   `json:"input_table_name"`
+	Enabled               bool     `json:"enabled"`
+	AuthRequired          bool     `json:"auth_required"`
+	StorageKind           string   `json:"storage_kind"`
+	ClickhouseDatabase    string   `json:"clickhouse_database"`
+	ClickhouseTablePrefix string   `json:"clickhouse_table_prefix"`
+	SourceUrl             *string  `json:"source_url"`
+	DocsUrl               *string  `json:"docs_url"`
+	RawSourceRetention    *string  `json:"raw_source_retention"`
+	SourceFileName        *string  `json:"source_file_name"`
+	UserAgentRequired     bool     `json:"user_agent_required"`
+	Capabilities          []string `json:"capabilities"`
+	RequiresTranslation   bool     `json:"requires_translation"`
+}
+
+func (q *Queries) UpsertDataSourceFromCatalog(ctx context.Context, arg UpsertDataSourceFromCatalogParams) error {
+	_, err := q.db.Exec(ctx, upsertDataSourceFromCatalog,
+		arg.Name,
+		arg.Country,
+		arg.Source,
+		arg.RegistryKey,
+		arg.DisplayName,
+		arg.Description,
+		arg.SourceGroup,
+		arg.InputTableName,
+		arg.Enabled,
+		arg.AuthRequired,
+		arg.StorageKind,
+		arg.ClickhouseDatabase,
+		arg.ClickhouseTablePrefix,
+		arg.SourceUrl,
+		arg.DocsUrl,
+		arg.RawSourceRetention,
+		arg.SourceFileName,
+		arg.UserAgentRequired,
+		arg.Capabilities,
+		arg.RequiresTranslation,
+	)
 	return err
 }
