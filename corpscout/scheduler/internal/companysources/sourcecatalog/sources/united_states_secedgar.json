@@ -1,0 +1,34 @@
+{
+  "name": "united_states_secedgar",
+  "country": "united_states",
+  "source": "secedgar",
+  "registry_key": "united_states/secedgar",
+  "display_name": "SEC EDGAR Company Tickers",
+  "description": "U.S. public company CIK/ticker map from the SEC EDGAR company_tickers.json file",
+  "source_group": "registry",
+  "input_table_name": "corpscout_sources.us_secedgar_*",
+  "enabled": true,
+  "auth_required": false,
+  "storage_kind": "clickhouse",
+  "clickhouse_database": "corpscout_sources",
+  "clickhouse_table_prefix": "us_secedgar",
+  "source_url": "https://www.sec.gov/files/company_tickers.json",
+  "docs_url": "https://www.sec.gov/os/webmaster-faq#developers",
+  "raw_source_retention": "filesystem_run_directory",
+  "source_file_name": "source.json",
+  "user_agent_required": true,
+  "capabilities": ["company_import", "clickhouse", "source_download"],
+  "requires_translation": false,
+  "files": [
+    {
+      "file_key": "source",
+      "display_name": "SEC EDGAR company tickers source snapshot",
+      "description": "Raw JSON company ticker records downloaded from the SEC EDGAR company_tickers.json file.",
+      "kind": "source_snapshot",
+      "required": true,
+      "relative_path": "source.json",
+      "enabled": true,
+      "sort_order": 10
+    }
+  ]
+}

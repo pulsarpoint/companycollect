@@ -1,0 +1,111 @@
+{
+  "name": "finland_prhytj",
+  "country": "finland",
+  "source": "prhytj",
+  "registry_key": "finland/prhytj",
+  "display_name": "Finland PRH YTJ",
+  "description": "Finnish company registry data from PRH Open Data YTJ API v3",
+  "source_group": "registry",
+  "input_table_name": "corpscout_sources.fi_prhytj_*",
+  "enabled": true,
+  "auth_required": false,
+  "storage_kind": "clickhouse",
+  "clickhouse_database": "corpscout_sources",
+  "clickhouse_table_prefix": "fi_prhytj",
+  "source_url": "https://avoindata.prh.fi/opendata-ytj-api/v3/companies",
+  "docs_url": "https://www.prh.fi/en/kaupparekisteri/tietopalvelut/open_data.html",
+  "raw_source_retention": "filesystem_run_directory",
+  "source_file_name": "source.ndjson",
+  "user_agent_required": false,
+  "capabilities": ["company_import", "clickhouse", "source_download"],
+  "requires_translation": false,
+  "files": [
+    {
+      "file_key": "source",
+      "display_name": "PRH YTJ company source snapshot",
+      "description": "Normalized NDJSON company records downloaded from the PRH YTJ API.",
+      "kind": "source_snapshot",
+      "required": true,
+      "relative_path": "source.ndjson",
+      "enabled": true,
+      "sort_order": 10
+    },
+    {
+      "file_key": "codelist_REK_en",
+      "display_name": "Register code list",
+      "description": "English register code reference data for PRH YTJ company records.",
+      "kind": "code_list",
+      "required": true,
+      "relative_path": "codelists/REK.en.tsv",
+      "enabled": true,
+      "sort_order": 20,
+      "config": { "code": "REK", "lang": "en" }
+    },
+    {
+      "file_key": "codelist_REK_KDI_en",
+      "display_name": "Registration status code list",
+      "description": "English registration status reference data for PRH YTJ company records.",
+      "kind": "code_list",
+      "required": true,
+      "relative_path": "codelists/REK_KDI.en.tsv",
+      "enabled": true,
+      "sort_order": 30,
+      "config": { "code": "REK_KDI", "lang": "en" }
+    },
+    {
+      "file_key": "codelist_VIRANOM_en",
+      "display_name": "Authority code list",
+      "description": "English authority reference data for PRH YTJ company records.",
+      "kind": "code_list",
+      "required": true,
+      "relative_path": "codelists/VIRANOM.en.tsv",
+      "enabled": true,
+      "sort_order": 40,
+      "config": { "code": "VIRANOM", "lang": "en" }
+    },
+    {
+      "file_key": "codelist_TLAJI_en",
+      "display_name": "Company type code list",
+      "description": "English company type reference data for PRH YTJ company records.",
+      "kind": "code_list",
+      "required": true,
+      "relative_path": "codelists/TLAJI.en.tsv",
+      "enabled": true,
+      "sort_order": 50,
+      "config": { "code": "TLAJI", "lang": "en" }
+    },
+    {
+      "file_key": "codelist_YRMU_en",
+      "display_name": "Company form code list",
+      "description": "English company form reference data for PRH YTJ company records.",
+      "kind": "code_list",
+      "required": true,
+      "relative_path": "codelists/YRMU.en.tsv",
+      "enabled": true,
+      "sort_order": 60,
+      "config": { "code": "YRMU", "lang": "en" }
+    },
+    {
+      "file_key": "codelist_STATUS3_en",
+      "display_name": "Company status code list",
+      "description": "English company status reference data for PRH YTJ company records.",
+      "kind": "code_list",
+      "required": true,
+      "relative_path": "codelists/STATUS3.en.tsv",
+      "enabled": true,
+      "sort_order": 70,
+      "config": { "code": "STATUS3", "lang": "en" }
+    },
+    {
+      "file_key": "codelist_KIELI_en",
+      "display_name": "Language code list",
+      "description": "English language reference data for PRH YTJ company records.",
+      "kind": "code_list",
+      "required": true,
+      "relative_path": "codelists/KIELI.en.tsv",
+      "enabled": true,
+      "sort_order": 80,
+      "config": { "code": "KIELI", "lang": "en" }
+    }
+  ]
+}
