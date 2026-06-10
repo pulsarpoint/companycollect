@@ -115,6 +115,7 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 		r.Patch("/llm-providers/{id}", h.handleUpdateLLMProvider)
 		r.Post("/llm-providers/{id}/default", h.handleSetDefaultLLMProvider)
 		r.Post("/llm-providers/{id}/test", h.handleTestLLMProvider)
+		r.Get("/reference/nace", h.handleListReferenceNACE)
 		r.Get("/nace/revisions", h.handleListNACERevisions)
 		r.Get("/nace/codes", h.handleListNACECodeChildren)
 		r.Post("/workflows/nace/taxonomy-sync", h.handleStartNACETaxonomySyncWorkflow)
