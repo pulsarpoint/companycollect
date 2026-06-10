@@ -10,6 +10,7 @@ import (
 )
 
 type Store interface {
+	UpsertDataSourceActionFromCatalog(ctx context.Context, arg db.UpsertDataSourceActionFromCatalogParams) error
 	UpsertDataSourceFromCatalog(ctx context.Context, arg db.UpsertDataSourceFromCatalogParams) error
 	UpsertDataSourceFileFromCatalog(ctx context.Context, arg db.UpsertDataSourceFileFromCatalogParams) error
 	DisableDataSourceFilesNotInCatalog(ctx context.Context, arg db.DisableDataSourceFilesNotInCatalogParams) error
@@ -86,6 +87,29 @@ func Sync(ctx context.Context, store Store, specs []Spec) error {
 				return errors.Wrapf(err, "upsert source file catalog spec %s/%s", spec.RegistryKey, file.FileKey)
 			}
 			fileKeys = append(fileKeys, file.FileKey)
+		}
+
+		for _, action := range spec.Actions {
+			config := action.Config
+			if config == nil {
+				config = map[string]any{}
+			}
+			configData, err := json.Marshal(config)
+			if err != nil {
+				return errors.Wrapf(err, "marshal source action config %s/%s", spec.RegistryKey, action.Action)
+			}
+			temporalTaskQueue := action.TemporalTaskQueue
+			if err := store.UpsertDataSourceActionFromCatalog(ctx, db.UpsertDataSourceActionFromCatalogParams{
+				Action:               action.Action,
+				DisplayName:          action.DisplayName,
+				TemporalWorkflowType: action.TemporalWorkflowType,
+				TemporalTaskQueue:    &temporalTaskQueue,
+				Enabled:              action.Enabled,
+				Config:               configData,
+				RegistryKey:          spec.RegistryKey,
+			}); err != nil {
+				return errors.Wrapf(err, "upsert source action catalog spec %s/%s", spec.RegistryKey, action.Action)
+			}
 		}
 
 		if err := store.DisableDataSourceFilesNotInCatalog(ctx, db.DisableDataSourceFilesNotInCatalogParams{

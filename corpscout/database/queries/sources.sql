@@ -291,6 +291,34 @@ ON CONFLICT (source_id, file_key) DO UPDATE SET
   config = EXCLUDED.config,
   updated_at = now();
 
+-- name: UpsertDataSourceActionFromCatalog :exec
+INSERT INTO data_source_actions (
+  source_id,
+  action,
+  display_name,
+  temporal_workflow_type,
+  temporal_task_queue,
+  enabled,
+  config
+)
+SELECT
+  s.id,
+  sqlc.arg(action),
+  sqlc.arg(display_name),
+  sqlc.arg(temporal_workflow_type),
+  sqlc.arg(temporal_task_queue),
+  sqlc.arg(enabled),
+  sqlc.arg(config)
+FROM data_sources s
+WHERE s.registry_key = sqlc.arg(registry_key)
+ON CONFLICT (source_id, action) DO UPDATE SET
+  display_name = EXCLUDED.display_name,
+  temporal_workflow_type = EXCLUDED.temporal_workflow_type,
+  temporal_task_queue = EXCLUDED.temporal_task_queue,
+  enabled = EXCLUDED.enabled,
+  config = EXCLUDED.config,
+  updated_at = now();
+
 -- name: DisableDataSourceFilesNotInCatalog :exec
 UPDATE data_source_files f
 SET enabled = false, updated_at = now()

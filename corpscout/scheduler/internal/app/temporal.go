@@ -11,6 +11,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	companysources "github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/finland/prhxbrl"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/finland/prhytj"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/unitedstates/coloradoentities"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/unitedstates/irseobmf"
@@ -36,6 +37,7 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 	_ = s3
 	sourceRegistry := companysources.NewRegistry(
 		prhytj.Source{},
+		prhxbrl.Source{},
 		coloradoentities.Source{},
 		irseobmf.Source{},
 		secedgar.Source{},

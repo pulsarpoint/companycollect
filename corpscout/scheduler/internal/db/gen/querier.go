@@ -94,6 +94,7 @@ type Querier interface {
 	UpdateTemporalScheduleMetadata(ctx context.Context, arg UpdateTemporalScheduleMetadataParams) (TemporalScheduleMetadatum, error)
 	UpsertCompanyDomain(ctx context.Context, arg UpsertCompanyDomainParams) (CompanyDomain, error)
 	UpsertCompanyRelationship(ctx context.Context, arg UpsertCompanyRelationshipParams) (CompanyRelationship, error)
+	UpsertDataSourceActionFromCatalog(ctx context.Context, arg UpsertDataSourceActionFromCatalogParams) error
 	UpsertDataSourceFileFromCatalog(ctx context.Context, arg UpsertDataSourceFileFromCatalogParams) error
 	UpsertDataSourceFromCatalog(ctx context.Context, arg UpsertDataSourceFromCatalogParams) error
 	UpsertDomain(ctx context.Context, domain string) (Domain, error)

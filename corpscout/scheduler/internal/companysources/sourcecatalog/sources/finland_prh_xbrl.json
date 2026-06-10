@@ -1,0 +1,44 @@
+{
+  "name": "finland_prh_xbrl",
+  "country": "finland",
+  "source": "prh_xbrl",
+  "registry_key": "finland/prh_xbrl",
+  "display_name": "Finland PRH financial XBRL",
+  "description": "Digital financial statement information from PRH Open Data XBRL API.",
+  "source_group": "financial_statements",
+  "input_table_name": "financial_xbrl.finland_prh_xbrl_*",
+  "enabled": true,
+  "auth_required": false,
+  "storage_kind": "clickhouse",
+  "clickhouse_database": "corpscout_sources",
+  "clickhouse_table_prefix": "fi_prh_xbrl",
+  "source_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3",
+  "docs_url": "https://avoindata.prh.fi/en",
+  "raw_source_retention": "filesystem_run_directory",
+  "source_file_name": "statements.ndjson",
+  "user_agent_required": false,
+  "capabilities": ["source_download", "financial_statements"],
+  "requires_translation": false,
+  "files": [
+    {
+      "file_key": "statements_manifest",
+      "display_name": "PRH XBRL statements manifest",
+      "description": "NDJSON manifest generated from PRH XBRL financial statement discovery and raw XML download results.",
+      "kind": "source_manifest",
+      "required": true,
+      "relative_path": "statements.ndjson",
+      "enabled": true,
+      "sort_order": 10
+    }
+  ],
+  "actions": [
+    {
+      "action": "pull_source",
+      "display_name": "Download statements",
+      "temporal_workflow_type": "CompanySourceDownloadWorkflow",
+      "temporal_task_queue": "corpscout-company-sources",
+      "enabled": true,
+      "config": {}
+    }
+  ]
+}

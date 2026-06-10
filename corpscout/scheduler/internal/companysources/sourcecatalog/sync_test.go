@@ -10,10 +10,16 @@ import (
 )
 
 type fakeStore struct {
-	upserts     []db.UpsertDataSourceFromCatalogParams
-	fileUpserts []db.UpsertDataSourceFileFromCatalogParams
-	disabled    map[string][]string
-	pruned      []string
+	upserts       []db.UpsertDataSourceFromCatalogParams
+	fileUpserts   []db.UpsertDataSourceFileFromCatalogParams
+	actionUpserts []db.UpsertDataSourceActionFromCatalogParams
+	disabled      map[string][]string
+	pruned        []string
+}
+
+func (s *fakeStore) UpsertDataSourceActionFromCatalog(ctx context.Context, arg db.UpsertDataSourceActionFromCatalogParams) error {
+	s.actionUpserts = append(s.actionUpserts, arg)
+	return nil
 }
 
 func (s *fakeStore) UpsertDataSourceFromCatalog(ctx context.Context, arg db.UpsertDataSourceFromCatalogParams) error {
@@ -46,15 +52,28 @@ func TestSyncUpsertsAndPrunesCatalogSources(t *testing.T) {
 	store := &fakeStore{}
 	require.NoError(t, Sync(context.Background(), store, specs))
 
-	require.Len(t, store.upserts, 4)
+	require.Len(t, store.upserts, 5)
 	require.NotEmpty(t, store.fileUpserts)
+	require.NotEmpty(t, store.actionUpserts)
 	require.Contains(t, store.disabled, "finland/prhytj")
 	require.Contains(t, store.disabled["finland/prhytj"], "source")
+	require.Contains(t, store.disabled, "finland/prh_xbrl")
+	require.Contains(t, store.disabled["finland/prh_xbrl"], "statements_manifest")
 	require.ElementsMatch(t, []string{
 		"finland/prhytj",
+		"finland/prh_xbrl",
 		"united_states/coloradoentities",
 		"united_states/irseobmf",
 		"united_states/secedgar",
 	}, store.pruned)
 	require.Equal(t, "corpscout_sources", store.upserts[0].ClickhouseDatabase)
+
+	var prhXBRLAction db.UpsertDataSourceActionFromCatalogParams
+	for _, action := range store.actionUpserts {
+		if action.RegistryKey == "finland/prh_xbrl" {
+			prhXBRLAction = action
+		}
+	}
+	require.Equal(t, "pull_source", prhXBRLAction.Action)
+	require.Equal(t, "CompanySourceDownloadWorkflow", prhXBRLAction.TemporalWorkflowType)
 }

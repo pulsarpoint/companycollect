@@ -1501,6 +1501,58 @@ func (q *Queries) UpdateSourceFileRunTemporalRunID(ctx context.Context, arg Upda
 	return err
 }
 
+const upsertDataSourceActionFromCatalog = `-- name: UpsertDataSourceActionFromCatalog :exec
+INSERT INTO data_source_actions (
+  source_id,
+  action,
+  display_name,
+  temporal_workflow_type,
+  temporal_task_queue,
+  enabled,
+  config
+)
+SELECT
+  s.id,
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6
+FROM data_sources s
+WHERE s.registry_key = $7
+ON CONFLICT (source_id, action) DO UPDATE SET
+  display_name = EXCLUDED.display_name,
+  temporal_workflow_type = EXCLUDED.temporal_workflow_type,
+  temporal_task_queue = EXCLUDED.temporal_task_queue,
+  enabled = EXCLUDED.enabled,
+  config = EXCLUDED.config,
+  updated_at = now()
+`
+
+type UpsertDataSourceActionFromCatalogParams struct {
+	Action               string          `json:"action"`
+	DisplayName          string          `json:"display_name"`
+	TemporalWorkflowType string          `json:"temporal_workflow_type"`
+	TemporalTaskQueue    *string         `json:"temporal_task_queue"`
+	Enabled              bool            `json:"enabled"`
+	Config               json.RawMessage `json:"config"`
+	RegistryKey          string          `json:"registry_key"`
+}
+
+func (q *Queries) UpsertDataSourceActionFromCatalog(ctx context.Context, arg UpsertDataSourceActionFromCatalogParams) error {
+	_, err := q.db.Exec(ctx, upsertDataSourceActionFromCatalog,
+		arg.Action,
+		arg.DisplayName,
+		arg.TemporalWorkflowType,
+		arg.TemporalTaskQueue,
+		arg.Enabled,
+		arg.Config,
+		arg.RegistryKey,
+	)
+	return err
+}
+
 const upsertDataSourceFileFromCatalog = `-- name: UpsertDataSourceFileFromCatalog :exec
 INSERT INTO data_source_files (
   source_id,
