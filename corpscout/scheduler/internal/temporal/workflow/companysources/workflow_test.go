@@ -56,6 +56,56 @@ func TestSyncSourceToClickHouseRunsDownloadThenImport(t *testing.T) {
 	require.Equal(t, "import-run-1", result.Import.ActionRunID)
 }
 
+func TestSyncSourceToClickHousePropagatesFinancialXBRLWindowInput(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+
+	env.RegisterWorkflowWithOptions(DownloadSource, workflow.RegisterOptions{Name: DownloadSourceWorkflowName})
+	env.RegisterWorkflowWithOptions(ImportSourceToClickHouse, workflow.RegisterOptions{Name: ImportSourceToClickHouseWorkflowName})
+	env.RegisterWorkflowWithOptions(SyncSourceToClickHouse, workflow.RegisterOptions{Name: SyncSourceToClickHouseWorkflowName})
+
+	env.OnWorkflow(DownloadSourceWorkflowName, mock.Anything, SyncSourceDownloadInput{
+		ActionRunID:         "download-run-1",
+		SourceName:          "finland_prh_xbrl",
+		Trigger:             "manual",
+		RegisteredDateStart: "2026-06-01",
+		RegisteredDateEnd:   "2026-06-03",
+		MaxStatements:       50,
+		RetryFailed:         true,
+	}).Return(DownloadSourceResult{
+		ActionRunID: "download-run-1",
+		Files: []DownloadedSourceFileSummary{
+			{FileKey: "statements_manifest", FileRunID: "file-run-1", Path: "/tmp/statements.ndjson", RecordsWritten: 2},
+		},
+	}, nil)
+	env.OnWorkflow(ImportSourceToClickHouseWorkflowName, mock.Anything, ImportSourceToClickHouseInput{
+		ActionRunID:         "import-run-1",
+		SourceName:          "finland_prh_xbrl",
+		Trigger:             "manual",
+		DownloadActionRunID: "download-run-1",
+		FileRunIDs:          []string{"file-run-1"},
+		BatchSize:           1000,
+	}).Return(ImportSourceToClickHouseResult{
+		ActionRunID:  "import-run-1",
+		ImportedRows: 2,
+	}, nil)
+
+	env.ExecuteWorkflow(SyncSourceToClickHouseWorkflowName, SyncSourceToClickHouseInput{
+		DownloadActionRunID: "download-run-1",
+		ImportActionRunID:   "import-run-1",
+		SourceName:          "finland_prh_xbrl",
+		Trigger:             "manual",
+		BatchSize:           1000,
+		RegisteredDateStart: "2026-06-01",
+		RegisteredDateEnd:   "2026-06-03",
+		MaxStatements:       50,
+		RetryFailed:         true,
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+}
+
 func TestDownloadSourceRunsPreparedFileWorkflows(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()

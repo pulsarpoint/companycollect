@@ -200,6 +200,10 @@ func (h *Handlers) handleTriggerSourceSyncClickHouse(w http.ResponseWriter, r *h
 	if req.BatchSize <= 0 {
 		req.BatchSize = 1000
 	}
+	if err := validateSourceActionTrigger(sourceName, companysourceworkflows.ActionPullSource, req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	downloadAction, err := h.db.GetSourceActionByName(r.Context(), db.GetSourceActionByNameParams{
 		Name:   sourceName,
@@ -239,6 +243,10 @@ func (h *Handlers) handleTriggerSourceSyncClickHouse(w http.ResponseWriter, r *h
 		Trigger:             req.Trigger,
 		BatchSize:           req.BatchSize,
 		Limit:               req.Limit,
+		RegisteredDateStart: req.RegisteredDateStart,
+		RegisteredDateEnd:   req.RegisteredDateEnd,
+		MaxStatements:       req.MaxStatements,
+		RetryFailed:         req.RetryFailed,
 	}
 	downloadActionRun, err := h.db.CreateSourceActionRun(r.Context(), db.CreateSourceActionRunParams{
 		ID:                 downloadActionRunID,

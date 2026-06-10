@@ -16,6 +16,9 @@ import type {
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
+import { Input } from "~/components/ui/input";
+import { Label } from "~/components/ui/label";
 import { Skeleton } from "~/components/ui/skeleton";
 import {
   Table,
@@ -150,6 +153,12 @@ function temporalStatusLabel(status?: SourceRunTemporalStatus): string | undefin
   return status.temporal_status_error ?? status.temporal_status;
 }
 
+function clampMaxStatements(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return 50;
+  return Math.min(1000, Math.max(1, parsed));
+}
+
 export function ActionsTab({ source }: ActionsTabProps) {
   const [actions, setActions] = useState<SourceAction[]>([]);
   const [runs, setRuns] = useState<SourceActionRun[]>([]);
@@ -164,6 +173,10 @@ export function ActionsTab({ source }: ActionsTabProps) {
   const [checkingRunID, setCheckingRunID] = useState<string>();
   const [temporalStatuses, setTemporalStatuses] = useState<Record<string, SourceRunTemporalStatus>>({});
   const [error, setError] = useState<string>();
+  const [prhRegisteredDateStart, setPrhRegisteredDateStart] = useState("");
+  const [prhRegisteredDateEnd, setPrhRegisteredDateEnd] = useState("");
+  const [prhMaxStatements, setPrhMaxStatements] = useState("50");
+  const [prhRetryFailed, setPrhRetryFailed] = useState(false);
 
   async function refresh() {
     const loaded = await loadSourceActionData(source.name, selectedFileKey);
@@ -216,6 +229,17 @@ export function ActionsTab({ source }: ActionsTabProps) {
   const industryMappingEnabled =
     actionsByKey.get("map_industries_to_nace")?.enabled ?? false;
   const busy = Boolean(triggering || triggeringFileKey || importingFileKey);
+  const isFinlandPRHXBRL = source.name === "finland_prh_xbrl";
+  const prhDateWindowMissing =
+    !prhRegisteredDateStart.trim() || !prhRegisteredDateEnd.trim();
+  const downloadDisabled =
+    busy || loading || !downloadEnabled || (isFinlandPRHXBRL && prhDateWindowMissing);
+  const syncDisabled =
+    busy ||
+    loading ||
+    !downloadEnabled ||
+    !importEnabled ||
+    (isFinlandPRHXBRL && prhDateWindowMissing);
 
   async function runAndRefresh(key: TriggerKey, runner: () => Promise<unknown>) {
     setTriggering(key);
@@ -238,6 +262,19 @@ export function ActionsTab({ source }: ActionsTabProps) {
   }
 
   function triggerDownload() {
+    if (isFinlandPRHXBRL) {
+      void runAndRefresh("pull_source", () =>
+        api.triggerSourceAction(source.name, "pull_source", {
+          trigger: "manual",
+          registered_date_start: prhRegisteredDateStart.trim(),
+          registered_date_end: prhRegisteredDateEnd.trim(),
+          max_statements: clampMaxStatements(prhMaxStatements),
+          retry_failed: prhRetryFailed,
+        }),
+      );
+      return;
+    }
+
     void runAndRefresh("pull_source", () =>
       api.triggerSourceAction(source.name, "pull_source", { trigger: "manual" }),
     );
@@ -253,6 +290,20 @@ export function ActionsTab({ source }: ActionsTabProps) {
   }
 
   function triggerSync() {
+    if (isFinlandPRHXBRL) {
+      void runAndRefresh("sync", () =>
+        api.triggerSourceSyncClickHouse(source.name, {
+          trigger: "manual",
+          batch_size: 1000,
+          registered_date_start: prhRegisteredDateStart.trim(),
+          registered_date_end: prhRegisteredDateEnd.trim(),
+          max_statements: clampMaxStatements(prhMaxStatements),
+          retry_failed: prhRetryFailed,
+        }),
+      );
+      return;
+    }
+
     void runAndRefresh("sync", () =>
       api.triggerSourceSyncClickHouse(source.name, {
         trigger: "manual",
@@ -379,10 +430,72 @@ export function ActionsTab({ source }: ActionsTabProps) {
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2 border-b pb-4">
+        {isFinlandPRHXBRL ? (
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="flex flex-col gap-1">
+              <Label
+                htmlFor="finland-prh-xbrl-registered-date-start"
+                className="text-xs"
+              >
+                Registered from
+              </Label>
+              <Input
+                id="finland-prh-xbrl-registered-date-start"
+                type="date"
+                value={prhRegisteredDateStart}
+                onChange={(event) => setPrhRegisteredDateStart(event.target.value)}
+                className="h-8 w-36"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label
+                htmlFor="finland-prh-xbrl-registered-date-end"
+                className="text-xs"
+              >
+                Registered to
+              </Label>
+              <Input
+                id="finland-prh-xbrl-registered-date-end"
+                type="date"
+                value={prhRegisteredDateEnd}
+                onChange={(event) => setPrhRegisteredDateEnd(event.target.value)}
+                className="h-8 w-36"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label
+                htmlFor="finland-prh-xbrl-max-statements"
+                className="text-xs"
+              >
+                Max statements
+              </Label>
+              <Input
+                id="finland-prh-xbrl-max-statements"
+                type="number"
+                min={1}
+                max={1000}
+                value={prhMaxStatements}
+                onChange={(event) => setPrhMaxStatements(event.target.value)}
+                className="h-8 w-28"
+              />
+            </div>
+            <label
+              htmlFor="finland-prh-xbrl-retry-failed"
+              className="flex h-8 items-center gap-2 text-sm"
+            >
+              <Checkbox
+                id="finland-prh-xbrl-retry-failed"
+                checked={prhRetryFailed}
+                onCheckedChange={(checked) => setPrhRetryFailed(checked === true)}
+              />
+              Retry failed
+            </label>
+          </div>
+        ) : null}
         <Button
           size="sm"
           onClick={triggerDownload}
-          disabled={busy || loading || !downloadEnabled}
+          disabled={downloadDisabled}
         >
           <Download className="size-4" />
           Download
@@ -400,7 +513,7 @@ export function ActionsTab({ source }: ActionsTabProps) {
           size="sm"
           variant="outline"
           onClick={triggerSync}
-          disabled={busy || loading || !downloadEnabled || !importEnabled}
+          disabled={syncDisabled}
         >
           <RefreshCw className="size-4" />
           Download and import

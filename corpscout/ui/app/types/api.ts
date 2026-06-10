@@ -292,6 +292,17 @@ export interface SourceActionRunListResponse {
   items: SourceActionRun[];
 }
 
+export interface SourceActionTriggerRequest {
+  trigger?: string;
+  download_action_run_id?: string;
+  batch_size?: number;
+  limit?: number;
+  registered_date_start?: string;
+  registered_date_end?: string;
+  max_statements?: number;
+  retry_failed?: boolean;
+}
+
 export type LatestSuccessfulSourceDownloadResponse = SourceActionRun;
 
 export interface SourceFileStatus {

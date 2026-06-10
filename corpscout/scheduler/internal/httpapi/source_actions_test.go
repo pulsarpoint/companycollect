@@ -425,4 +425,76 @@ func TestTriggerSourceSyncStartsCompositeWorkflow(t *testing.T) {
 	require.NotEmpty(t, input.ImportActionRunID)
 }
 
+func TestTriggerSourceSyncCarriesFinlandPRHXBRLWindowInput(t *testing.T) {
+	q := &stubQuerier{}
+	sourceID := uuid.New()
+	pullActionID := uuid.New()
+	importActionID := uuid.New()
+	q.On("GetSourceActionByName", mock.Anything, db.GetSourceActionByNameParams{
+		Name: "finland_prh_xbrl", Action: companysourceworkflows.ActionPullSource,
+	}).Return(db.GetSourceActionByNameRow{
+		ID:                   pullActionID,
+		SourceID:             sourceID,
+		SourceName:           "finland_prh_xbrl",
+		Action:               companysourceworkflows.ActionPullSource,
+		TemporalWorkflowType: companysourceworkflows.DownloadSourceWorkflowName,
+		Enabled:              true,
+	}, nil)
+	q.On("GetSourceActionByName", mock.Anything, db.GetSourceActionByNameParams{
+		Name: "finland_prh_xbrl", Action: companysourceworkflows.ActionImportClickHouse,
+	}).Return(db.GetSourceActionByNameRow{
+		ID:                   importActionID,
+		SourceID:             sourceID,
+		SourceName:           "finland_prh_xbrl",
+		Action:               companysourceworkflows.ActionImportClickHouse,
+		TemporalWorkflowType: companysourceworkflows.ImportSourceToClickHouseWorkflowName,
+		Enabled:              true,
+	}, nil)
+	q.On("CreateSourceActionRun", mock.Anything, mock.AnythingOfType("db.CreateSourceActionRunParams")).Return(func(_ context.Context, arg db.CreateSourceActionRunParams) db.DataSourceActionRun {
+		return db.DataSourceActionRun{ID: arg.ID, SourceID: sourceID, ActionID: arg.ActionID, Status: "running"}
+	}, nil)
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", tc, ""))
+
+	body := strings.NewReader(`{
+		"trigger":"manual",
+		"batch_size":1000,
+		"registered_date_start":"2026-06-01",
+		"registered_date_end":"2026-06-03",
+		"max_statements":50,
+		"retry_failed":true
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sources/finland_prh_xbrl/sync-clickhouse", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	input := tc.args[0].(companysourceworkflows.SyncSourceToClickHouseInput)
+	require.Equal(t, "finland_prh_xbrl", input.SourceName)
+	require.Equal(t, "2026-06-01", input.RegisteredDateStart)
+	require.Equal(t, "2026-06-03", input.RegisteredDateEnd)
+	require.EqualValues(t, 50, input.MaxStatements)
+	require.True(t, input.RetryFailed)
+	require.NotEmpty(t, input.DownloadActionRunID)
+	require.NotEmpty(t, input.ImportActionRunID)
+}
+
+func TestTriggerSourceSyncRejectsFinlandPRHXBRLWithoutWindow(t *testing.T) {
+	q := &stubQuerier{}
+	tc := &temporalExecuteRecorder{}
+	r := routerFor(httpapi.NewHandlers(q, nil, nil, nil, "", tc, ""))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sources/finland_prh_xbrl/sync-clickhouse", strings.NewReader(`{"trigger":"manual"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), "registered_date_start is required")
+	q.AssertNotCalled(t, "GetSourceActionByName", mock.Anything, mock.Anything)
+	q.AssertNotCalled(t, "CreateSourceActionRun", mock.Anything, mock.Anything)
+	require.Empty(t, tc.workflow)
+}
+
 var _ client.Client = (*temporalExecuteRecorder)(nil)

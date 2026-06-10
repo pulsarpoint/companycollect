@@ -121,6 +121,10 @@ type SyncSourceToClickHouseInput struct {
 	Trigger             string `json:"trigger"`
 	BatchSize           int    `json:"batch_size"`
 	Limit               int64  `json:"limit"`
+	RegisteredDateStart string `json:"registered_date_start,omitempty"`
+	RegisteredDateEnd   string `json:"registered_date_end,omitempty"`
+	MaxStatements       int32  `json:"max_statements,omitempty"`
+	RetryFailed         bool   `json:"retry_failed,omitempty"`
 }
 
 type DownloadSourceResult struct {
@@ -273,9 +277,13 @@ func SyncSourceToClickHouse(ctx workflow.Context, input SyncSourceToClickHouseIn
 		WorkflowID: ActionRunWorkflowID(input.DownloadActionRunID),
 	})
 	if err := workflow.ExecuteChildWorkflow(downloadCtx, DownloadSourceWorkflowName, SyncSourceDownloadInput{
-		ActionRunID: input.DownloadActionRunID,
-		SourceName:  input.SourceName,
-		Trigger:     input.Trigger,
+		ActionRunID:         input.DownloadActionRunID,
+		SourceName:          input.SourceName,
+		Trigger:             input.Trigger,
+		RegisteredDateStart: input.RegisteredDateStart,
+		RegisteredDateEnd:   input.RegisteredDateEnd,
+		MaxStatements:       input.MaxStatements,
+		RetryFailed:         input.RetryFailed,
 	}).Get(ctx, &downloaded); err != nil {
 		return SyncSourceToClickHouseResult{}, errors.Wrap(err, "download source child workflow")
 	}

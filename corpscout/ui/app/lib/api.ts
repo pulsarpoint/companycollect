@@ -40,6 +40,7 @@ import type {
   NACERevisionListResponse,
   StartWorkflowResponse,
   SourceActionName,
+  SourceActionTriggerRequest,
   SourceActionListResponse,
   SourceActionRunListResponse,
   SourceFileListResponse,
@@ -494,12 +495,7 @@ export const api = {
   triggerSourceAction: (
     name: string,
     action: SourceActionName,
-    body: {
-      trigger?: "manual";
-      download_action_run_id?: string;
-      batch_size?: number;
-      limit?: number;
-    } = {},
+    body: SourceActionTriggerRequest = {},
   ) =>
     post<StartWorkflowResponse>(
       `/sources/${name}/actions/${action}/trigger`,
@@ -508,7 +504,7 @@ export const api = {
 
   triggerSourceSyncClickHouse: (
     name: string,
-    body: { trigger?: "manual"; batch_size?: number; limit?: number } = {},
+    body: SourceActionTriggerRequest = {},
   ) => post<StartWorkflowResponse>(`/sources/${name}/sync-clickhouse`, body),
 
   triggerSourceFileDownload: (
