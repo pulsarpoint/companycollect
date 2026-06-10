@@ -12,7 +12,6 @@ import (
 
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/s3client"
-	"github.com/pulsarpoint/corpscout/scheduler/internal/workers"
 )
 
 func setupRiver(ctx context.Context, pool *pgxpool.Pool, q db.Querier, s3 *s3client.Client) (*river.Client[pgx.Tx], error) {
@@ -28,17 +27,18 @@ func setupRiver(ctx context.Context, pool *pgxpool.Pool, q db.Querier, s3 *s3cli
 		slog.Info("river migration applied", "version", v.Version, "direction", "up")
 	}
 
-	domainImportWorker := workers.NewDomainImportWorker(q, s3)
-	financialEnrichWorker := workers.NewFinancialEnrichWorker(q)
+	_ = q
+	_ = s3
 
-	w := river.NewWorkers()
-	river.AddWorker(w, domainImportWorker)
-	river.AddWorker(w, financialEnrichWorker)
+	w, enabled := newRiverWorkers()
+	if !enabled {
+		slog.Info("river client disabled; no workers registered")
+		return nil, nil
+	}
 
 	riverCfg := &river.Config{
 		Queues: map[string]river.QueueConfig{
-			"domain_import":     {MaxWorkers: 2},
-			"enrich_financials": {MaxWorkers: 2},
+			"default": {MaxWorkers: 1},
 		},
 		Workers: w,
 	}
@@ -48,4 +48,8 @@ func setupRiver(ctx context.Context, pool *pgxpool.Pool, q db.Querier, s3 *s3cli
 		return nil, err
 	}
 	return rc, nil
+}
+
+func newRiverWorkers() (*river.Workers, bool) {
+	return nil, false
 }

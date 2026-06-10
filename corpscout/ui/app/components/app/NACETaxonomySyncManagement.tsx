@@ -46,8 +46,13 @@ export function NACETaxonomySyncManagement() {
     defaultNACETaxonomySyncFormValue,
   );
   const [running, setRunning] = useState(false);
+  const [syncingClickHouse, setSyncingClickHouse] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [clickHouseError, setClickHouseError] = useState<string | null>(null);
+  const [clickHouseMessage, setClickHouseMessage] = useState<string | null>(
+    null,
+  );
   const [workflowRuns, setWorkflowRuns] = useState<NACETaxonomyWorkflowRun[]>(
     [],
   );
@@ -95,6 +100,22 @@ export function NACETaxonomySyncManagement() {
     }
   }
 
+  async function syncToClickHouse() {
+    setSyncingClickHouse(true);
+    setClickHouseError(null);
+    setClickHouseMessage(null);
+    try {
+      const response = await api.startNACEClickHouseSync({
+        trigger: "manual",
+      });
+      setClickHouseMessage(`Started ${response.workflow_id}`);
+    } catch (err) {
+      setClickHouseError(errorMessage(err, "Failed to start NACE ClickHouse sync"));
+    } finally {
+      setSyncingClickHouse(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -118,6 +139,14 @@ export function NACETaxonomySyncManagement() {
               Schedules
             </Link>
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => void syncToClickHouse()}
+            disabled={syncingClickHouse}
+          >
+            <RefreshCw className="size-4" />
+            {syncingClickHouse ? "Starting..." : "Sync to CH"}
+          </Button>
         </div>
       </div>
 
@@ -129,6 +158,16 @@ export function NACETaxonomySyncManagement() {
       {message && (
         <Alert>
           <AlertDescription>{message}</AlertDescription>
+        </Alert>
+      )}
+      {clickHouseError && (
+        <Alert variant="destructive">
+          <AlertDescription>{clickHouseError}</AlertDescription>
+        </Alert>
+      )}
+      {clickHouseMessage && (
+        <Alert>
+          <AlertDescription>{clickHouseMessage}</AlertDescription>
         </Alert>
       )}
 

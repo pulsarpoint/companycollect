@@ -64,6 +64,7 @@ func TestClickHouseRowsMatchDeclaredColumns(t *testing.T) {
 	require.ElementsMatch(t, registeredEntryDescriptionColumns, mapKeys(RegisteredEntryDescriptionRow{}.ClickHouseRow()))
 	require.ElementsMatch(t, addressColumns, mapKeys(AddressRow{}.ClickHouseRow()))
 	require.ElementsMatch(t, addressPostOfficeColumns, mapKeys(AddressPostOfficeRow{}.ClickHouseRow()))
+	require.ElementsMatch(t, codeListColumns, mapKeys(CodeListRow{}.ClickHouseRow()))
 }
 
 func TestMigrationColumnsAndTypesMatchDeclaredSchema(t *testing.T) {
@@ -77,6 +78,55 @@ func TestMigrationColumnsAndTypesMatchDeclaredSchema(t *testing.T) {
 		require.NotEmpty(t, actual, table.Name)
 		require.ElementsMatch(t, table.Columns, mapKeys(actual), table.Name)
 		require.Equal(t, table.ColumnTypes, actual, table.Name)
+	}
+}
+
+func TestCodeListMigrationColumnsAndTypesMatchDeclaredSchema(t *testing.T) {
+	migrationPath := filepath.Join("..", "..", "..", "..", "..", "clickhouse", "migrations", "000005_create_finland_prhytj_code_lists.up.sql")
+	body, err := os.ReadFile(migrationPath)
+	require.NoError(t, err)
+	columnsByTable := migrationColumnsAndTypes(string(body))
+
+	for _, table := range CodeListTables() {
+		actual := columnsByTable[table.Name]
+		require.NotEmpty(t, actual, table.Name)
+		require.ElementsMatch(t, table.Columns, mapKeys(actual), table.Name)
+		require.Equal(t, table.ColumnTypes, actual, table.Name)
+	}
+}
+
+func TestCompanyExplorerViewMigrationShape(t *testing.T) {
+	migrationPath := filepath.Join("..", "..", "..", "..", "..", "clickhouse", "migrations", "000006_create_finland_prhytj_company_explorer.up.sql")
+	body, err := os.ReadFile(migrationPath)
+	require.NoError(t, err)
+	sql := string(body)
+
+	require.Contains(t, sql, "CREATE OR REPLACE VIEW `corpscout_sources`.`fi_prhytj_company_explorer`")
+	for _, column := range []string{
+		"business_id",
+		"name",
+		"registration_date",
+		"end_date",
+		"status_description",
+		"trade_register_status_description",
+		"main_business_line_description_en",
+		"name_history",
+		"registered_entries",
+		"addresses",
+	} {
+		require.Contains(t, sql, " AS "+column)
+	}
+	for _, tupleField := range []string{
+		"register_name Nullable(String)",
+		"entry_status Nullable(String)",
+		"authority_name Nullable(String)",
+		"description_en Nullable(String)",
+		"municipality_code Nullable(String)",
+	} {
+		require.Contains(t, sql, tupleField)
+	}
+	for _, codeList := range []string{"'STATUS3'", "'REK'", "'REK_KDI'", "'VIRANOM'"} {
+		require.Contains(t, sql, codeList)
 	}
 }
 

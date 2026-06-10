@@ -1,0 +1,2 @@
+-- Irreversible cleanup: legacy POC data_sources are removed because the source
+-- registry is now defined by active company source importers.

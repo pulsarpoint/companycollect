@@ -6,9 +6,9 @@ import (
 
 	"github.com/cockroachdb/errors"
 
-	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
+	naceworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/nace"
 )
 
 type Definition struct {
@@ -26,7 +26,6 @@ func Definitions() []Definition {
 	return []Definition{
 		naceTaxonomySyncDefinition(),
 		fxRateSyncDefinition(),
-		brregSourceExplorerRefreshDefinition(),
 	}
 }
 
@@ -43,8 +42,8 @@ func DefinitionByKey(key string) (Definition, bool) {
 func naceTaxonomySyncDefinition() Definition {
 	return Definition{
 		Key:                "nace_taxonomy_sync",
-		WorkflowName:       nacetaxonomy.SyncWorkflowName,
-		TaskQueue:          nacetaxonomy.SyncTaskQueue,
+		WorkflowName:       naceworkflow.SyncWorkflowName,
+		TaskQueue:          naceworkflow.SyncTaskQueue,
 		Domain:             "taxonomy",
 		Purpose:            "nace_taxonomy_sync",
 		DefaultDisplayName: "NACE taxonomy sync",
@@ -54,7 +53,7 @@ func naceTaxonomySyncDefinition() Definition {
 }
 
 func decodeNACETaxonomySyncInput(raw json.RawMessage) (any, error) {
-	var input nacetaxonomy.SyncNACETaxonomyInput
+	var input naceworkflow.SyncNACETaxonomyInput
 	if len(raw) > 0 && strings.TrimSpace(string(raw)) != "null" {
 		if err := json.Unmarshal(raw, &input); err != nil {
 			return nil, errors.New("invalid nace taxonomy sync action input")
@@ -115,36 +114,6 @@ func decodeFXRateSyncInput(raw json.RawMessage) (any, error) {
 	}
 	if input.Trigger != "schedule" && input.Trigger != "manual" {
 		return nil, errors.New("fx rate sync trigger must be schedule or manual")
-	}
-	return input, nil
-}
-
-func brregSourceExplorerRefreshDefinition() Definition {
-	return Definition{
-		Key:                "brreg_source_explorer_refresh",
-		WorkflowName:       brregworkflow.RefreshBrregSourceExplorerWorkflowName,
-		TaskQueue:          brregworkflow.RefreshBrregSourceExplorerTaskQueue,
-		Domain:             "brreg",
-		Purpose:            "source_explorer_refresh",
-		DefaultDisplayName: "BRREG source explorer refresh",
-		DefaultDescription: "Refreshes the indexed BRREG source explorer materialized view used by the source entries table.",
-		DecodeActionInput:  decodeBrregSourceExplorerRefreshInput,
-	}
-}
-
-func decodeBrregSourceExplorerRefreshInput(raw json.RawMessage) (any, error) {
-	var input brregworkflow.RefreshBrregSourceExplorerInput
-	if len(raw) > 0 && strings.TrimSpace(string(raw)) != "null" {
-		if err := json.Unmarshal(raw, &input); err != nil {
-			return nil, errors.New("invalid brreg source explorer refresh action input")
-		}
-	}
-	input.Trigger = strings.TrimSpace(input.Trigger)
-	if input.Trigger == "" {
-		input.Trigger = "schedule"
-	}
-	if input.Trigger != "schedule" && input.Trigger != "manual" {
-		return nil, errors.New("brreg source explorer refresh trigger must be schedule or manual")
 	}
 	return input, nil
 }

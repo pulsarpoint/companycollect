@@ -2,38 +2,45 @@ package db_test
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
 
-func TestCompanySuggestionReviewModelMigrationDefinesParentAndSectionTables(t *testing.T) {
-	body, err := os.ReadFile("../../../database/migrations/000046_company_suggestion_review_model.up.sql")
+func TestCompanyPayloadCleanupMigrationDropsRetiredStorage(t *testing.T) {
+	body, err := os.ReadFile("../../../database/migrations/000110_remove_postgres_company_payload_storage.up.sql")
 	if err != nil {
 		t.Fatalf("read migration: %v", err)
 	}
 	sql := string(body)
 
 	required := []string{
-		"CREATE TABLE suggestions",
-		"target_company_id UUID REFERENCES companies",
-		"created_company_id UUID REFERENCES companies",
-		"FOREIGN KEY (source_id, source_type) REFERENCES data_sources(id, name)",
-		"CREATE TABLE suggestion_company_profiles",
-		"CREATE TABLE suggestion_company_domains",
-		"CREATE TABLE suggestion_company_locations",
-		"CREATE TABLE suggestion_company_emails",
-		"CREATE TABLE suggestion_company_phones",
-		"CREATE TABLE suggestion_company_financials",
-		"CREATE TABLE suggestion_company_industries",
-		"CREATE TABLE suggestion_company_markets",
-		"CREATE TABLE suggestion_company_services",
-		"CREATE TABLE suggestion_company_relationships",
-		"status IN ('pending', 'applied', 'rejected', 'superseded')",
+		"DROP SCHEMA IF EXISTS brreg_source CASCADE",
+		"DROP SCHEMA IF EXISTS ariregister_source CASCADE",
+		"DROP SCHEMA IF EXISTS france_source CASCADE",
+		"DROP SCHEMA IF EXISTS countrydata_finland_prh_ytj CASCADE",
+		"DROP TABLE IF EXISTS suggestion_company_profiles CASCADE",
+		"DROP TABLE IF EXISTS company_financials CASCADE",
+		"DROP TABLE IF EXISTS companies_house_company_raw_inputs CASCADE",
 	}
 
 	for _, needle := range required {
 		if !strings.Contains(sql, needle) {
 			t.Fatalf("migration missing %q", needle)
+		}
+	}
+
+	preserved := []string{
+		"DROP TABLE IF EXISTS companies",
+		"DROP TABLE IF EXISTS domains",
+		"DROP TABLE IF EXISTS company_domains",
+		"DROP TABLE IF EXISTS company_relationships",
+		"DROP TABLE IF EXISTS data_sources",
+	}
+	for _, needle := range preserved {
+		pattern := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(needle) + `(?:\s|;)`)
+		if pattern.FindStringIndex(sql) != nil {
+			t.Fatalf("cleanup migration should not drop preserved anchor %q", needle)
 		}
 	}
 }

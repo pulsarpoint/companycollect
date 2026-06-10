@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useParams } from "react-router";
 import { ChevronLeft } from "lucide-react";
-import { toast } from "sonner";
-import { api, errorMessage } from "~/lib/api";
+import { api } from "~/lib/api";
 import type { DataSource } from "~/types/api";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -10,118 +9,28 @@ import { SourceHeader } from "~/components/app/source-detail/SourceHeader";
 import { sourceDetailTabs } from "~/components/app/source-detail/sourceDetailUtils";
 import { cn } from "~/lib/utils";
 
-type SourcePatch = Parameters<typeof api.patchSource>[1];
-
 export interface SourceDetailContext {
   source: DataSource;
-  saving: boolean;
-  triggering: boolean;
-  onPatch: (patch: SourcePatch) => Promise<void>;
-  onTrigger: () => Promise<void>;
 }
 
 export default function SourceDetailLayout() {
   const { name } = useParams<{ name: string }>();
-  const latestNameRef = useRef<string | undefined>(undefined);
   const [source, setSource] = useState<DataSource>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
-  const [saving, setSaving] = useState(false);
-  const [triggering, setTriggering] = useState(false);
 
   useEffect(() => {
     if (!name) return;
-    latestNameRef.current = name;
     let ignore = false;
     setSource(undefined);
     setLoading(true);
     setError(undefined);
-    setSaving(false);
-    setTriggering(false);
     api.getSource(name)
       .then((loadedSource) => { if (!ignore) setSource(loadedSource); })
       .catch(() => { if (!ignore) setError("Source not found."); })
       .finally(() => { if (!ignore) setLoading(false); });
     return () => { ignore = true; };
   }, [name]);
-
-  async function refreshSource(sourceName: string) {
-    const refreshed = await api.getSource(sourceName);
-    if (latestNameRef.current === sourceName) setSource(refreshed);
-  }
-
-  async function handlePatch(patch: SourcePatch) {
-    const sourceName = source?.name;
-    if (!sourceName) return;
-    setSaving(true);
-    try {
-      await api.patchSource(sourceName, patch);
-      await refreshSource(sourceName);
-      toast.success("Source updated.");
-    } catch (err) {
-      toast.error(errorMessage(err, "Failed to update source."));
-    } finally {
-      if (latestNameRef.current === sourceName) setSaving(false);
-    }
-  }
-
-  async function handleTrigger() {
-    const sourceName = source?.name;
-    if (!sourceName) return;
-    if (sourceName === "ariregister") {
-      setTriggering(true);
-      try {
-        await api.loadAriregisterBulkRawRecords({ trigger: "manual" });
-        await refreshSource(sourceName);
-        toast.success("Ariregister bulk ingest workflow started.");
-      } catch (err) {
-        toast.error(errorMessage(err, "Failed to start Ariregister bulk ingest."));
-      } finally {
-        if (latestNameRef.current === sourceName) setTriggering(false);
-      }
-      return;
-    }
-    if (sourceName === "cvr") {
-      setTriggering(true);
-      try {
-        await api.loadCVRRawRecords({ limit: 100, trigger: "manual" });
-        await refreshSource(sourceName);
-        toast.success("CVR raw ingest workflow started.");
-      } catch (err) {
-        toast.error(errorMessage(err, "Failed to start CVR raw ingest."));
-      } finally {
-        if (latestNameRef.current === sourceName) setTriggering(false);
-      }
-      return;
-    }
-    if (sourceName === "france") {
-      setTriggering(true);
-      try {
-        await api.loadFranceBulkRawRecords({ trigger: "manual" });
-        await refreshSource(sourceName);
-        toast.success("France SIRENE bulk ingest workflow started.");
-      } catch (err) {
-        toast.error(errorMessage(err, "Failed to start France SIRENE bulk ingest."));
-      } finally {
-        if (latestNameRef.current === sourceName) setTriggering(false);
-      }
-      return;
-    }
-    if (sourceName === "se") {
-      setTriggering(true);
-      try {
-        await api.loadSEBulkRawRecords({ trigger: "manual" });
-        await refreshSource(sourceName);
-        toast.success("Sweden HVD bulk ingest workflow started.");
-      } catch (err) {
-        toast.error(errorMessage(err, "Failed to start Sweden HVD bulk ingest."));
-      } finally {
-        if (latestNameRef.current === sourceName) setTriggering(false);
-      }
-      return;
-    }
-    toast.error(`Manual trigger is not available for ${sourceName}.`);
-  }
 
   if (loading) return <Skeleton className="h-64 w-full" />;
   if (error || !source) {
@@ -134,7 +43,7 @@ export default function SourceDetailLayout() {
 
   const tabs = sourceDetailTabs(source);
 
-  const context: SourceDetailContext = { source, saving, triggering, onPatch: handlePatch, onTrigger: handleTrigger };
+  const context: SourceDetailContext = { source };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-6">

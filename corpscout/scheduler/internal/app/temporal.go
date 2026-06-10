@@ -18,14 +18,14 @@ import (
 	"github.com/pulsarpoint/corpscout/scheduler/internal/config"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/fx"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/llmproviders"
-	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/s3client"
 	companysourceactions "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/actions/companysources"
+	naceactions "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/actions/nace"
 	companysourceworkflows "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/companysources"
 )
 
 type temporalWorkerResources struct {
-	naceTaxonomyActions  *nacetaxonomy.Actions
+	naceTaxonomyActions  *naceactions.Actions
 	fxActions            *fx.Actions
 	companySourceActions *companysourceactions.Actions
 }
@@ -41,7 +41,7 @@ func newTemporalWorkerResources(cfg config.Config, pool *pgxpool.Pool, llmStore 
 		secedgar.Source{},
 	)
 	return &temporalWorkerResources{
-		naceTaxonomyActions:  nacetaxonomy.NewActions(pool, http.DefaultClient),
+		naceTaxonomyActions:  naceactions.NewActions(pool, http.DefaultClient, cfg.ClickHouseNativeURL),
 		fxActions:            fx.NewActions(pool, http.DefaultClient, cfg.FXECBSourceURL),
 		companySourceActions: companysourceactions.NewActions(pool, sourceRegistry, cfg.SourceRunsRoot, cfg.ClickHouseNativeURL),
 	}, nil

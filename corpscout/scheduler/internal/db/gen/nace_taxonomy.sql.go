@@ -333,6 +333,108 @@ func (q *Queries) LinkNACECodeParents(ctx context.Context, classificationID uuid
 	return err
 }
 
+const listNACEClassificationsForClickHouse = `-- name: ListNACEClassificationsForClickHouse :many
+SELECT
+  nclass.revision,
+  nclass.name,
+  nclass.valid_from,
+  nclass.valid_to,
+  nclass.source_url,
+  count(ncodes.id) FILTER (WHERE ncodes.active) AS active_codes,
+  count(ncodes.id) FILTER (WHERE NOT ncodes.active) AS inactive_codes
+FROM nace_classifications nclass
+LEFT JOIN nace_codes ncodes ON ncodes.classification_id = nclass.id
+WHERE nclass.code_system = 'NACE'
+GROUP BY nclass.id
+ORDER BY nclass.revision
+`
+
+type ListNACEClassificationsForClickHouseRow struct {
+	Revision      string      `json:"revision"`
+	Name          string      `json:"name"`
+	ValidFrom     pgtype.Date `json:"valid_from"`
+	ValidTo       pgtype.Date `json:"valid_to"`
+	SourceUrl     *string     `json:"source_url"`
+	ActiveCodes   int64       `json:"active_codes"`
+	InactiveCodes int64       `json:"inactive_codes"`
+}
+
+func (q *Queries) ListNACEClassificationsForClickHouse(ctx context.Context) ([]ListNACEClassificationsForClickHouseRow, error) {
+	rows, err := q.db.Query(ctx, listNACEClassificationsForClickHouse)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNACEClassificationsForClickHouseRow
+	for rows.Next() {
+		var i ListNACEClassificationsForClickHouseRow
+		if err := rows.Scan(
+			&i.Revision,
+			&i.Name,
+			&i.ValidFrom,
+			&i.ValidTo,
+			&i.SourceUrl,
+			&i.ActiveCodes,
+			&i.InactiveCodes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNACECodeAliasesForClickHouse = `-- name: ListNACECodeAliasesForClickHouse :many
+SELECT
+  nclass.revision,
+  ncodes.code,
+  aliases.alias_type,
+  aliases.alias_code,
+  aliases.normalized_alias_code
+FROM nace_code_aliases aliases
+JOIN nace_codes ncodes ON ncodes.id = aliases.nace_code_id
+JOIN nace_classifications nclass ON nclass.id = ncodes.classification_id
+WHERE nclass.code_system = 'NACE'
+ORDER BY nclass.revision, aliases.alias_type, aliases.normalized_alias_code, ncodes.code
+`
+
+type ListNACECodeAliasesForClickHouseRow struct {
+	Revision            string `json:"revision"`
+	Code                string `json:"code"`
+	AliasType           string `json:"alias_type"`
+	AliasCode           string `json:"alias_code"`
+	NormalizedAliasCode string `json:"normalized_alias_code"`
+}
+
+func (q *Queries) ListNACECodeAliasesForClickHouse(ctx context.Context) ([]ListNACECodeAliasesForClickHouseRow, error) {
+	rows, err := q.db.Query(ctx, listNACECodeAliasesForClickHouse)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNACECodeAliasesForClickHouseRow
+	for rows.Next() {
+		var i ListNACECodeAliasesForClickHouseRow
+		if err := rows.Scan(
+			&i.Revision,
+			&i.Code,
+			&i.AliasType,
+			&i.AliasCode,
+			&i.NormalizedAliasCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listNACECodeChildren = `-- name: ListNACECodeChildren :many
 SELECT
   ncodes.id,
@@ -465,6 +567,75 @@ func (q *Queries) ListNACECodeTree(ctx context.Context, revision string) ([]VNac
 			&i.Active,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNACECodesForClickHouse = `-- name: ListNACECodesForClickHouse :many
+SELECT
+  nclass.revision,
+  ncodes.id,
+  ncodes.code,
+  ncodes.normalized_code,
+  ncodes.level,
+  ncodes.level_name,
+  ncodes.parent_code,
+  parent.normalized_code AS parent_normalized_code,
+  ncodes.parent_id,
+  ncodes.title,
+  ncodes.description,
+  ncodes.active
+FROM nace_codes ncodes
+JOIN nace_classifications nclass ON nclass.id = ncodes.classification_id
+LEFT JOIN nace_codes parent ON parent.id = ncodes.parent_id
+WHERE nclass.code_system = 'NACE'
+ORDER BY nclass.revision, ncodes.level, ncodes.code
+`
+
+type ListNACECodesForClickHouseRow struct {
+	Revision             string      `json:"revision"`
+	ID                   uuid.UUID   `json:"id"`
+	Code                 string      `json:"code"`
+	NormalizedCode       string      `json:"normalized_code"`
+	Level                int16       `json:"level"`
+	LevelName            string      `json:"level_name"`
+	ParentCode           *string     `json:"parent_code"`
+	ParentNormalizedCode *string     `json:"parent_normalized_code"`
+	ParentID             pgtype.UUID `json:"parent_id"`
+	Title                string      `json:"title"`
+	Description          *string     `json:"description"`
+	Active               bool        `json:"active"`
+}
+
+func (q *Queries) ListNACECodesForClickHouse(ctx context.Context) ([]ListNACECodesForClickHouseRow, error) {
+	rows, err := q.db.Query(ctx, listNACECodesForClickHouse)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNACECodesForClickHouseRow
+	for rows.Next() {
+		var i ListNACECodesForClickHouseRow
+		if err := rows.Scan(
+			&i.Revision,
+			&i.ID,
+			&i.Code,
+			&i.NormalizedCode,
+			&i.Level,
+			&i.LevelName,
+			&i.ParentCode,
+			&i.ParentNormalizedCode,
+			&i.ParentID,
+			&i.Title,
+			&i.Description,
+			&i.Active,
 		); err != nil {
 			return nil, err
 		}

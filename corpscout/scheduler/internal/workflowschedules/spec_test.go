@@ -7,16 +7,16 @@ import (
 	"github.com/stretchr/testify/require"
 	enumspb "go.temporal.io/api/enums/v1"
 
-	brregworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/brreg/workflow"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/nacetaxonomy"
+	naceworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/nace"
 )
 
 func TestWorkflowDefinitionsIncludeNACETaxonomySync(t *testing.T) {
 	def, ok := DefinitionByKey("nace_taxonomy_sync")
 	require.True(t, ok)
 	require.Equal(t, "nace_taxonomy_sync", def.Key)
-	require.Equal(t, nacetaxonomy.SyncWorkflowName, def.WorkflowName)
-	require.Equal(t, nacetaxonomy.SyncTaskQueue, def.TaskQueue)
+	require.Equal(t, naceworkflow.SyncWorkflowName, def.WorkflowName)
+	require.Equal(t, naceworkflow.SyncTaskQueue, def.TaskQueue)
 	require.Equal(t, "taxonomy", def.Domain)
 	require.Equal(t, "nace_taxonomy_sync", def.Purpose)
 }
@@ -33,7 +33,7 @@ func TestBuildNACEScheduleActionInput(t *testing.T) {
 	}`))
 	require.NoError(t, err)
 
-	typed, ok := input.(nacetaxonomy.SyncNACETaxonomyInput)
+	typed, ok := input.(naceworkflow.SyncNACETaxonomyInput)
 	require.True(t, ok)
 	require.Equal(t, "NACE Rev. 2.1", typed.Revision)
 	require.Equal(t, "https://example.test/nace.rdf", typed.SourceURL)
@@ -48,7 +48,7 @@ func TestBuildNACEScheduleActionInputDefaults(t *testing.T) {
 	input, err := def.DecodeActionInput(json.RawMessage(`{"source_url":"https://example.test/nace.rdf"}`))
 	require.NoError(t, err)
 
-	typed, ok := input.(nacetaxonomy.SyncNACETaxonomyInput)
+	typed, ok := input.(naceworkflow.SyncNACETaxonomyInput)
 	require.True(t, ok)
 	require.Equal(t, nacetaxonomy.DefaultRevision, typed.Revision)
 	require.Equal(t, "schedule", typed.Trigger)
@@ -61,28 +61,6 @@ func TestBuildNACEScheduleActionInputRequiresSourceURL(t *testing.T) {
 
 	_, err := def.DecodeActionInput(nil)
 	require.ErrorContains(t, err, "nace source url is required")
-}
-
-func TestWorkflowDefinitionsIncludeBrregSourceExplorerRefresh(t *testing.T) {
-	def, ok := DefinitionByKey("brreg_source_explorer_refresh")
-	require.True(t, ok)
-	require.Equal(t, "brreg_source_explorer_refresh", def.Key)
-	require.Equal(t, brregworkflow.RefreshBrregSourceExplorerWorkflowName, def.WorkflowName)
-	require.Equal(t, brregworkflow.RefreshBrregSourceExplorerTaskQueue, def.TaskQueue)
-	require.Equal(t, "brreg", def.Domain)
-	require.Equal(t, "source_explorer_refresh", def.Purpose)
-}
-
-func TestBuildBrregSourceExplorerRefreshScheduleActionInputDefaults(t *testing.T) {
-	def, ok := DefinitionByKey("brreg_source_explorer_refresh")
-	require.True(t, ok)
-
-	input, err := def.DecodeActionInput(json.RawMessage(`{}`))
-	require.NoError(t, err)
-
-	typed, ok := input.(brregworkflow.RefreshBrregSourceExplorerInput)
-	require.True(t, ok)
-	require.Equal(t, "schedule", typed.Trigger)
 }
 
 func TestBuildScheduleSpecValidatesCron(t *testing.T) {

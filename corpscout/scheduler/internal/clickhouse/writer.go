@@ -36,6 +36,14 @@ func Open(ctx context.Context, rawURL string) (*Writer, error) {
 	if err != nil {
 		return nil, err
 	}
+	conn, err := openConn(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	return &Writer{conn: conn, database: target.Database}, nil
+}
+
+func openConn(ctx context.Context, target Target) (driver.Conn, error) {
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{net.JoinHostPort(target.Host, target.Port)},
 		Auth: clickhouse.Auth{
@@ -52,7 +60,7 @@ func Open(ctx context.Context, rawURL string) (*Writer, error) {
 		_ = conn.Close()
 		return nil, errors.Wrap(err, "ping clickhouse")
 	}
-	return &Writer{conn: conn, database: target.Database}, nil
+	return conn, nil
 }
 
 func (w *Writer) Close() error {
@@ -63,10 +71,14 @@ func (w *Writer) Close() error {
 }
 
 func (w *Writer) Insert(ctx context.Context, insert Insert) error {
+	return w.InsertInto(ctx, w.database, insert)
+}
+
+func (w *Writer) InsertInto(ctx context.Context, database string, insert Insert) error {
 	if len(insert.Rows) == 0 {
 		return nil
 	}
-	query := BuildInsertQuery(w.database, insert.Table, insert.Columns)
+	query := BuildInsertQuery(database, insert.Table, insert.Columns)
 	batch, err := w.conn.PrepareBatch(ctx, query)
 	if err != nil {
 		return errors.Wrap(err, "prepare clickhouse insert batch")
@@ -86,6 +98,22 @@ func (w *Writer) Insert(ctx context.Context, insert Insert) error {
 		return errors.Wrap(err, "send clickhouse insert batch")
 	}
 	sent = true
+	return nil
+}
+
+func (w *Writer) TruncateTables(ctx context.Context, tables []string) error {
+	return w.TruncateTablesIn(ctx, w.database, tables)
+}
+
+func (w *Writer) TruncateTablesIn(ctx context.Context, database string, tables []string) error {
+	for _, table := range tables {
+		if strings.TrimSpace(table) == "" {
+			continue
+		}
+		if err := w.conn.Exec(ctx, BuildTruncateQuery(database, table)); err != nil {
+			return errors.Wrapf(err, "truncate clickhouse table %s.%s", database, table)
+		}
+	}
 	return nil
 }
 
@@ -133,9 +161,13 @@ func ParseNativeURL(rawURL string) (Target, error) {
 func BuildInsertQuery(database string, table string, columns []string) string {
 	quotedColumns := make([]string, 0, len(columns))
 	for _, column := range columns {
-		quotedColumns = append(quotedColumns, quoteIdent(column))
+		quotedColumns = append(quotedColumns, QuoteIdent(column))
 	}
-	return "INSERT INTO " + quoteIdent(database) + "." + quoteIdent(table) + " (" + strings.Join(quotedColumns, ", ") + ")"
+	return "INSERT INTO " + QualifiedTable(database, table) + " (" + strings.Join(quotedColumns, ", ") + ")"
+}
+
+func BuildTruncateQuery(database string, table string) string {
+	return "TRUNCATE TABLE IF EXISTS " + QualifiedTable(database, table)
 }
 
 func insertValues(columns []string, row map[string]any) []any {
@@ -146,7 +178,11 @@ func insertValues(columns []string, row map[string]any) []any {
 	return values
 }
 
-func quoteIdent(value string) string {
+func QualifiedTable(database string, table string) string {
+	return QuoteIdent(database) + "." + QuoteIdent(table)
+}
+
+func QuoteIdent(value string) string {
 	escaped := strings.NewReplacer(`\`, `\\`, "`", "\\`").Replace(value)
 	return "`" + escaped + "`"
 }

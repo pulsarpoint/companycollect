@@ -16,7 +16,7 @@ func TestImportRequiresSelectedSourceFile(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "selected source file is required")
+	require.Contains(t, err.Error(), "selected source or code list file is required")
 }
 
 func TestImportedTablesAreNormalizedOnly(t *testing.T) {

@@ -311,3 +311,51 @@ FROM v_nace_source_file_imports
 WHERE revision = COALESCE(sqlc.narg('revision')::text, revision)
 ORDER BY started_at DESC
 LIMIT sqlc.arg('limit')::integer;
+
+-- name: ListNACEClassificationsForClickHouse :many
+SELECT
+  nclass.revision,
+  nclass.name,
+  nclass.valid_from,
+  nclass.valid_to,
+  nclass.source_url,
+  count(ncodes.id) FILTER (WHERE ncodes.active) AS active_codes,
+  count(ncodes.id) FILTER (WHERE NOT ncodes.active) AS inactive_codes
+FROM nace_classifications nclass
+LEFT JOIN nace_codes ncodes ON ncodes.classification_id = nclass.id
+WHERE nclass.code_system = 'NACE'
+GROUP BY nclass.id
+ORDER BY nclass.revision;
+
+-- name: ListNACECodesForClickHouse :many
+SELECT
+  nclass.revision,
+  ncodes.id,
+  ncodes.code,
+  ncodes.normalized_code,
+  ncodes.level,
+  ncodes.level_name,
+  ncodes.parent_code,
+  parent.normalized_code AS parent_normalized_code,
+  ncodes.parent_id,
+  ncodes.title,
+  ncodes.description,
+  ncodes.active
+FROM nace_codes ncodes
+JOIN nace_classifications nclass ON nclass.id = ncodes.classification_id
+LEFT JOIN nace_codes parent ON parent.id = ncodes.parent_id
+WHERE nclass.code_system = 'NACE'
+ORDER BY nclass.revision, ncodes.level, ncodes.code;
+
+-- name: ListNACECodeAliasesForClickHouse :many
+SELECT
+  nclass.revision,
+  ncodes.code,
+  aliases.alias_type,
+  aliases.alias_code,
+  aliases.normalized_alias_code
+FROM nace_code_aliases aliases
+JOIN nace_codes ncodes ON ncodes.id = aliases.nace_code_id
+JOIN nace_classifications nclass ON nclass.id = ncodes.classification_id
+WHERE nclass.code_system = 'NACE'
+ORDER BY nclass.revision, aliases.alias_type, aliases.normalized_alias_code, ncodes.code;

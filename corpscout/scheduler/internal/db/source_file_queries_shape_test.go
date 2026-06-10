@@ -22,6 +22,7 @@ func TestSourceFileQueriesExist(t *testing.T) {
 		"-- name: UpdateSourceFileRunTemporalRunID :exec",
 		"-- name: FinishSourceFileRun :one",
 		"-- name: ListSourceFileRuns :many",
+		"-- name: GetLatestSuccessfulSourceFileRun :one",
 		"-- name: ListSuccessfulSourceFileRunsForAction :many",
 		"-- name: ListLatestSuccessfulRequiredSourceFileRuns :many",
 		"-- name: GetSourceFileRunWithDefinition :one",

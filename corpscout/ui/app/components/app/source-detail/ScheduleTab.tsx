@@ -1,311 +1,173 @@
-import { useEffect, useState } from "react";
-import { Play, Save } from "lucide-react";
-import type { DataSource } from "~/types/api";
-import { cn, formatDate, timeAgo } from "~/lib/utils";
-import { validateCronExpression, validateDuration } from "~/components/app/source-detail/sourceDetailUtils";
-import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import { useEffect, useMemo, useState } from "react";
+import { api, errorMessage } from "~/lib/api";
+import type { DataSource, WorkflowSchedule } from "~/types/api";
+import { formatDate } from "~/lib/utils";
+import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
-import { Button } from "~/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
-import { Input } from "~/components/ui/input";
-import { Label } from "~/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "~/components/ui/radio-group";
-import { Separator } from "~/components/ui/separator";
-import { Switch } from "~/components/ui/switch";
-
-type SourcePatch = Parameters<typeof import("~/lib/api").api.patchSource>[1];
+import { Skeleton } from "~/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "~/components/ui/table";
 
 interface ScheduleTabProps {
   source: DataSource;
-  saving: boolean;
-  triggering: boolean;
-  onPatch: (patch: SourcePatch) => Promise<void>;
-  onTrigger: () => Promise<void>;
 }
 
-const DEFAULT_INTERVAL = "24h";
-const DEFAULT_CRON = "0 4 * * *";
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
 
-function nextRunText(source: DataSource): string {
-  if (source.next_scheduled_at) return formatDate(source.next_scheduled_at);
-  if (!source.enabled || !source.schedule_enabled) return "Paused";
-  if (source.schedule_kind === "interval" && source.schedule_expression && !source.last_started_at) {
-    return "Next scheduler check";
+function scheduleMatchesSource(schedule: WorkflowSchedule, source: DataSource): boolean {
+  const actionInput = schedule.action_input ?? {};
+  const metadata = schedule.metadata ?? {};
+  const candidates = new Set([
+    source.name,
+    source.registry_key,
+    source.country,
+    source.source,
+  ]);
+
+  const values = [
+    stringValue(metadata.source),
+    stringValue(metadata.source_name),
+    stringValue(metadata.data_source),
+    stringValue(metadata.registry_key),
+    stringValue(actionInput.source),
+    stringValue(actionInput.source_name),
+    stringValue(actionInput.data_source),
+    stringValue(actionInput.registry_key),
+    stringValue(actionInput.country),
+    stringValue(actionInput.country_source),
+    ...schedule.tags,
+  ];
+
+  return values.some((value) => candidates.has(value));
+}
+
+function temporalState(schedule: WorkflowSchedule): { label: string; className: string } {
+  if (!schedule.temporal.exists) {
+    return { label: "Missing", className: "border-red-200 bg-red-100 text-red-800" };
   }
-  return "Not scheduled";
+  if (schedule.temporal.paused || !schedule.enabled) {
+    return { label: "Paused", className: "border-amber-200 bg-amber-100 text-amber-800" };
+  }
+  return { label: "Active", className: "border-green-200 bg-green-100 text-green-800" };
 }
 
-export function ScheduleTab({
-  source,
-  saving,
-  triggering,
-  onPatch,
-  onTrigger,
-}: ScheduleTabProps) {
-  const [duration, setDuration] = useState(source.schedule_expression ?? "");
-  const [durationError, setDurationError] = useState<string>();
-  const [cronExpression, setCronExpression] = useState(source.schedule_kind === "cron" ? source.schedule_expression ?? "" : "");
-  const [cronError, setCronError] = useState<string>();
-  const scheduleMode = source.schedule_kind === "cron" ? "cron" : "interval";
-  const manualOnlyTemporalSource =
-    source.name === "ariregister" || source.name === "cvr" || source.name === "france" || source.name === "se";
-  const autoSchedulingAvailable =
-    source.download_workflow_registered && !manualOnlyTemporalSource;
-  const manualTriggerAvailable = source.manual_trigger_available;
-  const autoSchedulingEnabled =
-    autoSchedulingAvailable &&
-    source.enabled &&
-    source.schedule_enabled &&
-    (source.schedule_kind === "interval" || source.schedule_kind === "cron");
-  const schedulingMessage = manualOnlyTemporalSource
-    ? "Manual Temporal workflow actions are available. Automatic scheduling is not configured for this source."
-    : autoSchedulingAvailable
-    ? autoSchedulingEnabled
-      ? "This source can be queued automatically. Manual actions remain available."
-      : "Automatic scheduling is off. Manual actions remain available."
-    : source.name === "brreg"
-      ? "BRREG uses workflow actions instead of source scheduling."
-      : "No download workflow is registered for this source.";
+export function ScheduleTab({ source }: ScheduleTabProps) {
+  const [schedules, setSchedules] = useState<WorkflowSchedule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>();
 
   useEffect(() => {
-    if (source.schedule_kind === "interval") {
-      setDuration(source.schedule_expression ?? "");
-    }
-    if (source.schedule_kind === "cron") {
-      setCronExpression(source.schedule_expression ?? "");
-    }
-    setDurationError(undefined);
-    setCronError(undefined);
-  }, [source.schedule_expression, source.schedule_kind]);
-
-  const nextRun = nextRunText(source);
-  async function saveDuration() {
-    const error = validateDuration(duration);
-    setDurationError(error);
-    if (error) return;
-
-    await onPatch({
-      enabled: true,
-      schedule_enabled: true,
-      schedule_kind: "interval",
-      schedule_expression: duration.trim(),
-    });
-  }
-
-  async function saveCronExpression() {
-    const error = validateCronExpression(cronExpression);
-    setCronError(error);
-    if (error) return;
-
-    await onPatch({
-      enabled: true,
-      schedule_enabled: true,
-      schedule_kind: "cron",
-      schedule_expression: cronExpression.trim(),
-    });
-  }
-
-  async function setAutoScheduling(enabled: boolean) {
-    if (!enabled) {
-      await onPatch({ enabled: false, schedule_enabled: false });
-      return;
-    }
-
-    if (source.schedule_kind === "cron") {
-      const expression = cronExpression.trim() || DEFAULT_CRON;
-      const error = validateCronExpression(expression);
-      setCronError(error);
-      if (error) return;
-      await onPatch({
-        enabled: true,
-        schedule_enabled: true,
-        schedule_kind: "cron",
-        schedule_expression: expression,
+    let ignore = false;
+    setLoading(true);
+    setError(undefined);
+    api.getWorkflowSchedules()
+      .then((response) => {
+        if (!ignore) setSchedules(response.items);
+      })
+      .catch((err) => {
+        if (!ignore) setError(errorMessage(err, "Failed to load Temporal schedules."));
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
       });
-      return;
-    }
+    return () => {
+      ignore = true;
+    };
+  }, [source.name]);
 
-    const expression = duration.trim() || DEFAULT_INTERVAL;
-    const error = validateDuration(expression);
-    setDurationError(error);
-    if (error) return;
-    await onPatch({
-      enabled: true,
-      schedule_enabled: true,
-      schedule_kind: "interval",
-      schedule_expression: expression,
-    });
+  const sourceSchedules = useMemo(
+    () => schedules.filter((schedule) => scheduleMatchesSource(schedule, source)),
+    [schedules, source],
+  );
+
+  if (loading) {
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: 3 }).map((_, index) => (
+          <Skeleton key={index} className="h-16 w-full" />
+        ))}
+      </div>
+    );
   }
 
-  async function selectScheduleMode(mode: string) {
-    if (mode === "cron") {
-      const expression = cronExpression.trim() || DEFAULT_CRON;
-      const error = validateCronExpression(expression);
-      setCronError(error);
-      if (error) return;
-      await onPatch({
-        enabled: true,
-        schedule_enabled: true,
-        schedule_kind: "cron",
-        schedule_expression: expression,
-      });
-      return;
-    }
+  if (error) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription>{error}</AlertDescription>
+      </Alert>
+    );
+  }
 
-    const expression = duration.trim() || DEFAULT_INTERVAL;
-    const error = validateDuration(expression);
-    setDurationError(error);
-    if (error) return;
-    await onPatch({
-      enabled: true,
-      schedule_enabled: true,
-      schedule_kind: "interval",
-      schedule_expression: expression,
-    });
+  if (sourceSchedules.length === 0) {
+    return (
+      <Alert>
+        <AlertDescription>No Temporal schedules found for this source.</AlertDescription>
+      </Alert>
+    );
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <Alert>
-        <AlertTitle>Auto scheduling</AlertTitle>
-        <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <span>{schedulingMessage}</span>
-          <Switch
-            checked={autoSchedulingEnabled}
-            disabled={!autoSchedulingAvailable || saving}
-            onCheckedChange={setAutoScheduling}
-          />
-        </AlertDescription>
-      </Alert>
-
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
-        <div className="flex flex-col gap-4">
-          <RadioGroup
-            className="grid gap-4 md:grid-cols-2"
-            value={scheduleMode}
-            onValueChange={selectScheduleMode}
-          >
-            <Card className={cn(scheduleMode === "interval" && "border-primary")}>
-              <CardHeader>
-                <div className="flex items-start gap-3">
-                  <RadioGroupItem id="schedule-mode-interval" value="interval" disabled={!autoSchedulingAvailable || saving} />
-                  <div className="flex flex-col gap-1">
-                    <Label htmlFor="schedule-mode-interval" className="font-medium">Interval</Label>
-                    <CardDescription>Run again after a fixed delay from the last start.</CardDescription>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Schedule</TableHead>
+          <TableHead>Workflow</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Cron</TableHead>
+          <TableHead>Next run</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {sourceSchedules.map((schedule) => {
+          const state = temporalState(schedule);
+          return (
+            <TableRow key={schedule.temporal_schedule_id}>
+              <TableCell className="min-w-[18rem]">
+                <div className="font-medium">{schedule.display_name}</div>
+                <div className="font-mono text-xs text-muted-foreground">
+                  {schedule.temporal_schedule_id}
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="space-y-1 text-sm">
+                  <div>{schedule.workflow_name}</div>
+                  <div className="font-mono text-xs text-muted-foreground">
+                    {schedule.task_queue}
                   </div>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="schedule-duration">Duration</Label>
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <Input
-                      id="schedule-duration"
-                      value={duration}
-                      disabled={!autoSchedulingAvailable || !autoSchedulingEnabled || scheduleMode !== "interval" || saving}
-                      onChange={(event) => {
-                        setDuration(event.target.value);
-                        setDurationError(undefined);
-                      }}
-                      placeholder={DEFAULT_INTERVAL}
-                      aria-invalid={Boolean(durationError)}
-                    />
-                    <Button disabled={!autoSchedulingAvailable || !autoSchedulingEnabled || scheduleMode !== "interval" || saving} onClick={saveDuration}>
-                      <Save data-icon="inline-start" />
-                      Save
-                    </Button>
-                  </div>
-                  {durationError && <p className="text-sm text-destructive">{durationError}</p>}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className={cn(scheduleMode === "cron" && "border-primary")}>
-              <CardHeader>
-                <div className="flex items-start gap-3">
-                  <RadioGroupItem id="schedule-mode-cron" value="cron" disabled={!autoSchedulingAvailable || saving} />
-                  <div className="flex flex-col gap-1">
-                    <Label htmlFor="schedule-mode-cron" className="font-medium">Cron</Label>
-                    <CardDescription>Run at a fixed clock schedule.</CardDescription>
+              </TableCell>
+              <TableCell>
+                <Badge className={state.className} variant="outline">
+                  {state.label}
+                </Badge>
+              </TableCell>
+              <TableCell>
+                <div className="space-y-1 text-sm">
+                  <div className="font-mono">{schedule.spec.cron_expression}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {schedule.spec.timezone}
                   </div>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="schedule-cron">Expression</Label>
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <Input
-                      id="schedule-cron"
-                      value={cronExpression}
-                      disabled={!autoSchedulingAvailable || !autoSchedulingEnabled || scheduleMode !== "cron" || saving}
-                      onChange={(event) => {
-                        setCronExpression(event.target.value);
-                        setCronError(undefined);
-                      }}
-                      placeholder={DEFAULT_CRON}
-                      aria-invalid={Boolean(cronError)}
-                    />
-                    <Button disabled={!autoSchedulingAvailable || !autoSchedulingEnabled || scheduleMode !== "cron" || saving} onClick={saveCronExpression}>
-                      <Save data-icon="inline-start" />
-                      Save
-                    </Button>
-                  </div>
-                  {cronError && <p className="text-sm text-destructive">{cronError}</p>}
-                </div>
-              </CardContent>
-            </Card>
-          </RadioGroup>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Manual actions</CardTitle>
-              <CardDescription>Queue work without changing the automatic schedule.</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex flex-col gap-1 text-sm">
-                <span className="text-muted-foreground">Next scheduled</span>
-                <span className="font-medium">{nextRun}</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button disabled={!manualTriggerAvailable || triggering} onClick={onTrigger} variant="outline">
-                  <Play data-icon="inline-start" />
-                  {triggering ? "Queuing..." : manualTriggerAvailable ? "Trigger now" : "No trigger available"}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Last run</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1">
-              <p className="text-xs uppercase text-muted-foreground">Last started</p>
-              <p className="text-sm">{source.last_started_at ? timeAgo(source.last_started_at) : "Never"}</p>
-            </div>
-            <Separator />
-            <div className="flex flex-col gap-1">
-              <p className="text-xs uppercase text-muted-foreground">Last success</p>
-              <p className="text-sm">{source.last_success_at ? formatDate(source.last_success_at) : "-"}</p>
-            </div>
-            <div className="flex flex-col gap-1">
-              <p className="text-xs uppercase text-muted-foreground">Last failure</p>
-              <p className="text-sm">{source.last_failed_at ? formatDate(source.last_failed_at) : "-"}</p>
-            </div>
-            <div className="flex flex-col gap-1">
-              <p className="text-xs uppercase text-muted-foreground">Consecutive failures</p>
-              <Badge variant="outline">{source.consecutive_failures}</Badge>
-            </div>
-            {source.last_error && (
-              <p className="whitespace-pre-wrap rounded-md bg-muted p-3 text-sm text-destructive">
-                {source.last_error}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+              </TableCell>
+              <TableCell>
+                <span className="text-sm">
+                  {schedule.temporal.next_run_at
+                    ? formatDate(schedule.temporal.next_run_at)
+                    : "-"}
+                </span>
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }

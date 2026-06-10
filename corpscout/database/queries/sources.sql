@@ -429,12 +429,37 @@ WHERE s.name = sqlc.arg(source_name)
 ORDER BY r.started_at DESC
 LIMIT sqlc.arg(row_limit);
 
+-- name: GetLatestSuccessfulSourceFileRun :one
+SELECT
+  r.*,
+  f.file_key,
+  f.kind,
+  f.relative_path,
+  f.required,
+  f.config,
+  s.name AS source_name,
+  s.country,
+  s.source,
+  COALESCE(s.source_url, '') AS source_url,
+  s.user_agent_required
+FROM data_source_file_runs r
+JOIN data_source_files f ON f.id = r.source_file_id
+JOIN data_sources s ON s.id = r.source_id
+WHERE s.name = sqlc.arg(source_name)
+  AND f.file_key = sqlc.arg(file_key)
+  AND r.status = 'succeeded'
+  AND r.path IS NOT NULL
+ORDER BY r.finished_at DESC NULLS LAST, r.started_at DESC
+LIMIT 1;
+
 -- name: ListSuccessfulSourceFileRunsForAction :many
 SELECT
   r.*,
   f.file_key,
+  f.kind,
   f.relative_path,
-  f.required
+  f.required,
+  f.config
 FROM data_source_file_runs r
 JOIN data_source_files f ON f.id = r.source_file_id
 WHERE r.parent_action_run_id = $1
@@ -446,8 +471,10 @@ WITH latest AS (
   SELECT DISTINCT ON (f.id)
     r.*,
     f.file_key,
+    f.kind,
     f.relative_path,
-    f.required
+    f.required,
+    f.config
   FROM data_source_files f
   JOIN data_sources s ON s.id = f.source_id
   LEFT JOIN data_source_file_runs r

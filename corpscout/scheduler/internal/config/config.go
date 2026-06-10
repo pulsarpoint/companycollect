@@ -18,6 +18,7 @@ const defaultCVRDistributionScroll = "1m"
 const defaultFranceLegalUnitsSourceURL = "https://www.data.gouv.fr/api/1/datasets/r/350182c9-148a-46e0-8389-76c2ec1374a3"
 const defaultFranceEstablishmentsSourceURL = "https://www.data.gouv.fr/api/1/datasets/r/a29c1297-1f92-4e2a-8f6b-8c902ce96c5f"
 const defaultSEHVDStagingRoot = "/var/lib/corpscout/worksets/se-hvd"
+const defaultSourceRunsRoot = "/var/lib/corpscout/source-runs"
 const defaultTranslationDispatchInterval = 2 * time.Second
 const defaultTranslationBatchLeaseSeconds int32 = 1800
 
@@ -51,6 +52,8 @@ type Config struct {
 	FranceEstablishmentsURL       string
 	SEHVDDatasetsJSON             string
 	SEHVDStagingRoot              string
+	SourceRunsRoot                string
+	ClickHouseNativeURL           string
 	FXECBSourceURL                string
 	TranslationJetStreamEnabled   bool
 	TranslationSourceBufferTarget int32
@@ -131,6 +134,8 @@ func Load() (Config, error) {
 		FranceEstablishmentsURL:       getEnv("CORPSCOUT_FRANCE_ESTABLISHMENTS_SOURCE_URL", defaultFranceEstablishmentsSourceURL),
 		SEHVDDatasetsJSON:             getEnv("CORPSCOUT_SE_HVD_DATASETS_JSON", os.Getenv("SE_HVD_DATASETS_JSON")),
 		SEHVDStagingRoot:              getEnv("CORPSCOUT_SE_HVD_STAGING_ROOT", defaultSEHVDStagingRoot),
+		SourceRunsRoot:                getEnv("CORPSCOUT_SOURCE_RUNS_ROOT", defaultSourceRunsRoot),
+		ClickHouseNativeURL:           getEnv("CORPSCOUT_CLICKHOUSE_NATIVE_URL", os.Getenv("CLICKHOUSE_NATIVE_URL")),
 		FXECBSourceURL:                getEnv("CORPSCOUT_FX_ECB_DAILY_URL", defaultFXECBDailyURL),
 		TranslationJetStreamEnabled:   translationJetStreamEnabled,
 		TranslationSourceBufferTarget: translationSourceBufferTarget,

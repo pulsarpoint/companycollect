@@ -32,11 +32,20 @@ import type {
   WorkflowScheduleListResponse,
   ExchangeRateSyncRequest,
   ExchangeRateWorkflowRunListResponse,
+  NACEClickHouseSyncRequest,
+  NACEClickHouseWorkflowRunListResponse,
   NACETaxonomySyncRequest,
   NACETaxonomyWorkflowRunListResponse,
   NACECodeListResponse,
   NACERevisionListResponse,
   StartWorkflowResponse,
+  SourceActionListResponse,
+  SourceActionRunListResponse,
+  SourceFileListResponse,
+  SourceFileRunListResponse,
+  SourceRunTemporalStatus,
+  SourceExplorerCompanyListResponse,
+  LatestSuccessfulSourceDownloadResponse,
 } from "~/types/api";
 
 const BASE = "/api/v1";
@@ -396,6 +405,14 @@ export const api = {
       `/workflows/nace/taxonomy-sync/runs?limit=${limit}`,
     ),
 
+  startNACEClickHouseSync: (body: NACEClickHouseSyncRequest = {}) =>
+    post<StartWorkflowResponse>("/workflows/nace/clickhouse-sync", body),
+
+  getNACEClickHouseSyncRuns: (limit = 10) =>
+    get<NACEClickHouseWorkflowRunListResponse>(
+      `/workflows/nace/clickhouse-sync/runs?limit=${limit}`,
+    ),
+
   startExchangeRateSync: (body: ExchangeRateSyncRequest = {}) =>
     post<StartWorkflowResponse>("/workflows/fx/rate-sync", body),
 
@@ -451,19 +468,101 @@ export const api = {
 
   getSource: (name: string) => get<DataSource>(`/sources/${name}`),
 
+  getSourceActions: (name: string) =>
+    get<SourceActionListResponse>(`/sources/${name}/actions`),
+
+  getSourceActionRuns: (name: string, limit = 20) =>
+    get<SourceActionRunListResponse>(
+      `/sources/${name}/action-runs?limit=${limit}`,
+    ),
+
+  getSourceFiles: (name: string) =>
+    get<SourceFileListResponse>(`/sources/${name}/files`),
+
+  getSourceFileRuns: (name: string, fileKey: string, limit = 20) =>
+    get<SourceFileRunListResponse>(
+      `/sources/${name}/files/${encodeURIComponent(fileKey)}/runs?limit=${limit}`,
+    ),
+
+  getLatestSuccessfulSourceDownload: (name: string) =>
+    get<LatestSuccessfulSourceDownloadResponse>(
+      `/sources/${name}/latest-successful-download`,
+    ),
+
+  triggerSourceAction: (
+    name: string,
+    action: "pull_source" | "import_clickhouse",
+    body: {
+      trigger?: "manual";
+      download_action_run_id?: string;
+      batch_size?: number;
+      limit?: number;
+    } = {},
+  ) =>
+    post<StartWorkflowResponse>(
+      `/sources/${name}/actions/${action}/trigger`,
+      body,
+    ),
+
+  triggerSourceSyncClickHouse: (
+    name: string,
+    body: { trigger?: "manual"; batch_size?: number; limit?: number } = {},
+  ) => post<StartWorkflowResponse>(`/sources/${name}/sync-clickhouse`, body),
+
+  triggerSourceFileDownload: (
+    name: string,
+    fileKey: string,
+    body: { trigger?: "manual" } = {},
+  ) =>
+    post<StartWorkflowResponse>(
+      `/sources/${name}/files/${encodeURIComponent(fileKey)}/download`,
+      body,
+    ),
+
+  triggerSourceFileImport: (
+    name: string,
+    fileKey: string,
+    body: { trigger?: "manual"; batch_size?: number; limit?: number } = {},
+  ) =>
+    post<StartWorkflowResponse>(
+      `/sources/${name}/files/${encodeURIComponent(fileKey)}/import`,
+      body,
+    ),
+
+  getSourceActionRunTemporalStatus: (id: string) =>
+    get<SourceRunTemporalStatus>(`/source-action-runs/${id}/temporal-status`),
+
+  getSourceFileRunTemporalStatus: (id: string) =>
+    get<SourceRunTemporalStatus>(`/source-file-runs/${id}/temporal-status`),
+
+  getSourceExplorerCompanies: (
+    name: string,
+    params: {
+      offset?: number;
+      limit?: number;
+      q?: string;
+      active?: "true" | "false";
+      lifecycle_status?: string;
+      sort?: string;
+      dir?: "asc" | "desc";
+    } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.offset != null) qs.set("offset", String(params.offset));
+    if (params.limit != null) qs.set("limit", String(params.limit));
+    if (params.q) qs.set("q", params.q);
+    if (params.active) qs.set("active", params.active);
+    if (params.lifecycle_status) qs.set("lifecycle_status", params.lifecycle_status);
+    if (params.sort) qs.set("sort", params.sort);
+    if (params.dir) qs.set("dir", params.dir);
+    const query = qs.toString();
+    return get<SourceExplorerCompanyListResponse>(
+      `/sources/${name}/explorer/companies${query ? `?${query}` : ""}`,
+    );
+  },
+
   getBrregTaskState: () =>
     get<BrregTaskStateResponse>("/sources/brreg/task-state"),
-
-  patchSource: (
-    name: string,
-    body: {
-      enabled?: boolean;
-      schedule_enabled?: boolean;
-      schedule_kind?: DataSource["schedule_kind"];
-      schedule_expression?: string | null;
-      config?: Record<string, unknown>;
-    },
-  ) => patch<{ status: string }>(`/sources/${name}`, body),
 
   translateBrregSourceCompanies: (body: BrregCompanyTranslationRequest = {}) =>
     post<StartWorkflowResponse>("/workflows/brreg/company-translation", body),

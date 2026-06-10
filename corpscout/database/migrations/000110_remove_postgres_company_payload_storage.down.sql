@@ -1,0 +1,3 @@
+-- Irreversible cleanup: old Postgres company payload storage was retired in favor of
+-- source-owned parsers and ClickHouse source tables. Restoring these POC tables from
+-- migration history would recreate obsolete storage without its removed application code.

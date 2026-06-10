@@ -20,6 +20,28 @@ source catalog -> Postgres -> Temporal -> HTTP API -> UI
 
 The ClickHouse import schema itself does not change. Source-specific importers only change how they receive raw source file paths.
 
+## Implementation Status
+
+Completed through the HTTP and UI layers:
+
+- Postgres source-file catalog and file-run storage are implemented.
+- Source catalog JSON sync now persists file definitions.
+- Temporal has source download, one-file download, import, and combined sync workflows.
+- HTTP triggers create deterministic action/file run rows before starting workflows.
+- `/sources/:name/actions` now exposes action triggers and run history.
+- `/sources/:name/files` now exposes required file status, missing detection, file-run history, one-file download triggers, and one-file ClickHouse import triggers.
+- The Actions tab now shows source actions, expected source files, selected file run history, per-file download/import buttons, import/sync buttons, and on-demand persisted/Temporal status checks.
+
+Verified:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/scheduler
+GOWORK=off go test ./internal/httpapi ./internal/temporal/workflow/companysources ./internal/temporal/actions/companysources ./internal/app -count=1
+
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/ui
+npm run typecheck
+```
+
 ## File Structure
 
 ### Database

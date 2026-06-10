@@ -47,6 +47,7 @@ type Handlers struct {
 	llmProbe      *llmproviders.ProbeClient
 	naceSourceURL string
 	fxSourceURL   string
+	clickHouseURL string
 }
 
 // NewHandlers constructs Handlers. pool, rv, s3 and temporal may be nil in tests.
@@ -71,6 +72,11 @@ func (h *Handlers) ConfigureFX(sourceURL string) *Handlers {
 	return h
 }
 
+func (h *Handlers) ConfigureClickHouse(nativeURL string) *Handlers {
+	h.clickHouseURL = nativeURL
+	return h
+}
+
 // RegisterRoutes mounts all /api/v1 routes on the router.
 func (h *Handlers) RegisterRoutes(r chi.Router) {
 	if h.postgrestURL != "" {
@@ -86,16 +92,23 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 	}
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/stats", h.handleStats)
-		r.Get("/companies/{id}/enrichment-sources", h.handleGetCompanyEnrichmentSources)
-		r.Post("/companies/{id}/enrich-from-source", h.handleEnrichCompanyFromSource)
-		r.Patch("/companies/{id}", h.handlePatchCompany)
-		r.Patch("/companies/{id}/financials", h.handlePatchCompanyFinancials)
-		r.Post("/domains/import", h.handleImportDomains)
 		r.Get("/domains/{id:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}}", h.handleGetDomain)
 		r.Get("/countries", h.handleListCountries)
 		r.Get("/sources", h.handleListSources)
 		r.Get("/sources/{name}", h.handleGetSource)
 		r.Patch("/sources/{name}", h.handlePatchSource)
+		r.Get("/sources/{name}/explorer/companies", h.handleListSourceExplorerCompanies)
+		r.Get("/sources/{name}/actions", h.handleListSourceActions)
+		r.Get("/sources/{name}/action-runs", h.handleListSourceActionRuns)
+		r.Get("/sources/{name}/latest-successful-download", h.handleGetLatestSuccessfulSourceDownload)
+		r.Post("/sources/{name}/actions/{action}/trigger", h.handleTriggerSourceAction)
+		r.Post("/sources/{name}/sync-clickhouse", h.handleTriggerSourceSyncClickHouse)
+		r.Get("/sources/{name}/files", h.handleListSourceFiles)
+		r.Get("/sources/{name}/files/{file_key}/runs", h.handleListSourceFileRuns)
+		r.Post("/sources/{name}/files/{file_key}/download", h.handleTriggerSourceFileDownload)
+		r.Post("/sources/{name}/files/{file_key}/import", h.handleTriggerSourceFileImport)
+		r.Get("/source-action-runs/{id}/temporal-status", h.handleGetSourceActionRunTemporalStatus)
+		r.Get("/source-file-runs/{id}/temporal-status", h.handleGetSourceFileRunTemporalStatus)
 		r.Get("/llm-providers", h.handleListLLMProviders)
 		r.Post("/llm-providers", h.handleCreateLLMProvider)
 		r.Patch("/llm-providers/{id}", h.handleUpdateLLMProvider)
@@ -103,28 +116,10 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 		r.Post("/llm-providers/{id}/test", h.handleTestLLMProvider)
 		r.Get("/nace/revisions", h.handleListNACERevisions)
 		r.Get("/nace/codes", h.handleListNACECodeChildren)
-		r.Get("/sources/brreg/task-state", h.handleGetBrregTaskState)
-		r.Get("/sources/brreg/companies/{id}", h.handleGetBrregSourceCompanyDetail)
-		r.Get("/sources/ariregister/companies/{id}", h.handleGetAriregisterSourceCompanyDetail)
-		r.Get("/brreg/source-entries", h.handleListBrregSourceEntries)
-		r.Get("/ariregister/source-entries", h.handleListAriregisterSourceEntries)
-		r.Post("/workflows/brreg/company-translation", h.handleStartBrregCompanyTranslationWorkflow)
-		r.Post("/workflows/brreg/domain-search", h.handleStartBrregDomainSearchWorkflow)
-		r.Post("/workflows/brreg/bulk-raw-ingest", h.handleStartBrregBulkRawIngestWorkflow)
-		r.Post("/workflows/brreg/source-profile-normalization", h.handleStartBrregSourceProfileNormalizationWorkflow)
-		r.Post("/workflows/brreg/source-explorer-refresh", h.handleStartBrregSourceExplorerRefreshWorkflow)
-		r.Post("/workflows/brreg/source-capital-fx", h.handleStartBrregSourceCapitalFXWorkflow)
-		r.Post("/workflows/brreg/source-financials", h.handleStartBrregSourceFinancialWorkflow)
-		r.Get("/workflows/brreg/runs", h.handleListBrregWorkflowRuns)
-		r.Post("/workflows/ariregister/company-translation", h.handleStartAriregisterCompanyTranslationWorkflow)
-		r.Post("/workflows/ariregister/bulk-raw-ingest", h.handleStartAriregisterBulkRawIngestWorkflow)
-		r.Post("/workflows/ariregister/source-profile", h.handleStartAriregisterSourceProfileWorkflow)
-		r.Post("/workflows/cvr/raw-ingest", h.handleStartCVRRawIngestWorkflow)
-		r.Post("/workflows/france/bulk-raw-ingest", h.handleStartFranceBulkRawIngestWorkflow)
-		r.Post("/workflows/france/source-profile", h.handleStartFranceSourceProfileWorkflow)
-		r.Post("/workflows/se/bulk-raw-ingest", h.handleStartSEBulkRawIngestWorkflow)
 		r.Post("/workflows/nace/taxonomy-sync", h.handleStartNACETaxonomySyncWorkflow)
 		r.Get("/workflows/nace/taxonomy-sync/runs", h.handleListNACETaxonomySyncWorkflowRuns)
+		r.Post("/workflows/nace/clickhouse-sync", h.handleStartNACEClickHouseSyncWorkflow)
+		r.Get("/workflows/nace/clickhouse-sync/runs", h.handleListNACEClickHouseSyncWorkflowRuns)
 		r.Post("/workflows/fx/rate-sync", h.handleStartExchangeRateSyncWorkflow)
 		r.Get("/workflows/fx/rate-sync/runs", h.handleListExchangeRateSyncWorkflowRuns)
 		r.Get("/workflow-schedules", h.handleListWorkflowSchedules)
@@ -135,24 +130,8 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 		r.Post("/workflow-schedules/{schedule_id}/pause", h.handlePauseWorkflowSchedule)
 		r.Post("/workflow-schedules/{schedule_id}/resume", h.handleResumeWorkflowSchedule)
 		r.Delete("/workflow-schedules/{schedule_id}", h.handleDeleteWorkflowSchedule)
-		r.Get("/brreg/raw-records", h.handleListBrregRawRecords)
-		r.Get("/brreg/raw-records/{id}", h.handleGetBrregRawRecord)
 		r.Post("/jobs/cancel-bulk", h.handleCancelBulk)
 		r.Post("/jobs/{id}/cancel", h.handleCancelJob)
-		r.Get("/review", h.handleListReview)
-		r.Get("/review/ids", h.handleListReviewIDs)
-		r.Post("/review/bulk", h.handleBulkReview)
-		r.Post("/review/{id}/reviews", h.handleCreateReview)
-		r.Get("/financials/review", h.handleListPendingFinancials)
-		r.Get("/financials/review/ids", h.handleListPendingFinancialIDs)
-		r.Post("/financials/review/bulk", h.handleBulkReviewFinancials)
-		r.Get("/companies/{id}/financials", h.handleListCompanyFinancials)
-		r.Post("/financials/{id}/review", h.handleReviewFinancial)
-		r.Get("/raw-inputs", h.handleListRawInputs)
-		r.Get("/raw-inputs/{source}/{id}", h.handleGetRawInput)
-		r.Get("/suggestions/companies", h.handleListCompanySuggestions)
-		r.Get("/suggestions/companies/ids", h.handleListCompanySuggestionIDs)
-		r.Post("/suggestions/companies/bulk", h.handleBulkCompanySuggestions)
 	})
 }
 

@@ -87,6 +87,13 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 	}
 	defer writer.Close()
 
+	importedTables := []string{rawRecordsTable, companiesTable}
+	if opts.Truncate {
+		if err := writer.TruncateTables(ctx, importedTables); err != nil {
+			return companysources.ImportResult{}, err
+		}
+	}
+
 	sourceExportID := uuid.New()
 	rawRows := make([]map[string]any, 0, batchSize)
 	companyRows := make([]map[string]any, 0, batchSize)
@@ -136,7 +143,7 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 
 	return companysources.ImportResult{
 		RunDir:         opts.RunDir,
-		ImportedTables: []string{rawRecordsTable, companiesTable},
+		ImportedTables: importedTables,
 		ImportedRows:   seen,
 	}, nil
 }

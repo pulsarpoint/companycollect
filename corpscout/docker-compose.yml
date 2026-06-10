@@ -65,6 +65,8 @@ services:
       CORPSCOUT_FRANCE_ESTABLISHMENTS_SOURCE_URL: ${CORPSCOUT_FRANCE_ESTABLISHMENTS_SOURCE_URL:-https://www.data.gouv.fr/api/1/datasets/r/a29c1297-1f92-4e2a-8f6b-8c902ce96c5f}
       CORPSCOUT_NACE_REV21_SOURCE_URL: ${CORPSCOUT_NACE_REV21_SOURCE_URL:-https://op.europa.eu/o/opportal-service/euvoc-download-handler?cellarURI=http%3A%2F%2Fpublications.europa.eu%2Fresource%2Fcellar%2Fbeb2efec-da9a-11ed-a05c-01aa75ed71a1.0001.02%2FDOC_1&fileName=ESTAT-NACE2.1.rdf}
       CORPSCOUT_FX_ECB_DAILY_URL: ${CORPSCOUT_FX_ECB_DAILY_URL:-https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml}
+      CORPSCOUT_SOURCE_RUNS_ROOT: /var/lib/corpscout/source-runs
+      CORPSCOUT_CLICKHOUSE_NATIVE_URL: ${CLICKHOUSE_NATIVE_URL:-clickhouse://companycollect:9002?username=default&password=change-me&database=corpscout_sources}
       CORPSCOUT_S3_ENDPOINT: http://rustfs:9000
       CORPSCOUT_S3_ACCESS_KEY: ${CORPSCOUT_S3_ACCESS_KEY:?CORPSCOUT_S3_ACCESS_KEY is required}
       CORPSCOUT_S3_SECRET_KEY: ${CORPSCOUT_S3_SECRET_KEY:?CORPSCOUT_S3_SECRET_KEY is required}
@@ -75,6 +77,8 @@ services:
       - "8092:8090"
     volumes:
       - ./data/scheduler-worksets:/var/lib/corpscout/worksets
+      - ./data/source-runs:/var/lib/corpscout/source-runs
+      - ../companies/data:/var/lib/corpscout/company-source-fixtures:ro
     restart: unless-stopped
 
   ui:

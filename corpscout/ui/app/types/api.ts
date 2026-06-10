@@ -140,6 +140,16 @@ export interface NACETaxonomyWorkflowRunListResponse {
   items: NACETaxonomyWorkflowRun[];
 }
 
+export interface NACEClickHouseSyncRequest {
+  trigger?: "manual" | "nace_taxonomy_sync";
+}
+
+export type NACEClickHouseWorkflowRun = NACETaxonomyWorkflowRun;
+
+export interface NACEClickHouseWorkflowRunListResponse {
+  items: NACEClickHouseWorkflowRun[];
+}
+
 export interface ExchangeRateSyncRequest {
   provider?: "ecb";
   source_url?: string;
@@ -229,8 +239,150 @@ export interface NACECodeListResponse {
 export interface StartWorkflowResponse {
   status: string;
   workflow: string;
+  task_queue?: string;
   workflow_id: string;
   workflow_run_id: string;
+  run_id?: string;
+}
+
+export type SourceRunStatus = "running" | "succeeded" | "failed" | "cancelled";
+
+export interface SourceAction {
+  id: string;
+  source_id: string;
+  source_name: string;
+  action: "pull_source" | "import_clickhouse";
+  display_name: string;
+  temporal_workflow_type: string;
+  temporal_task_queue: string | null;
+  enabled: boolean;
+  config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SourceActionRun {
+  id: string;
+  source_id: string;
+  source_name: string;
+  action_id: string;
+  action: "pull_source" | "import_clickhouse";
+  status: SourceRunStatus;
+  temporal_workflow_id: string | null;
+  temporal_run_id: string | null;
+  started_at: string;
+  finished_at: string | null;
+  input: Record<string, unknown>;
+  result: Record<string, unknown>;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface SourceActionListResponse {
+  items: SourceAction[];
+}
+
+export interface SourceActionRunListResponse {
+  items: SourceActionRun[];
+}
+
+export type LatestSuccessfulSourceDownloadResponse = SourceActionRun;
+
+export interface SourceFileStatus {
+  id: string;
+  source_id: string;
+  source_name: string;
+  file_key: string;
+  display_name: string;
+  description: string | null;
+  kind: string;
+  required: boolean;
+  relative_path: string;
+  enabled: boolean;
+  sort_order: number;
+  latest_status: SourceRunStatus | null;
+  missing: boolean;
+  latest_run_id: string | null;
+  latest_started_at: string | null;
+  latest_finished_at: string | null;
+  latest_path: string | null;
+  latest_content_sha256: string | null;
+  latest_content_length_bytes: number | null;
+  latest_records_written: number | null;
+  latest_error_message: string | null;
+  latest_successful_run_id: string | null;
+  latest_successful_path: string | null;
+}
+
+export interface SourceFileRun {
+  id: string;
+  source_id: string;
+  source_file_id: string;
+  parent_action_run_id: string | null;
+  status: SourceRunStatus;
+  temporal_workflow_id: string | null;
+  temporal_run_id: string | null;
+  started_at: string;
+  finished_at: string | null;
+  path: string | null;
+  content_sha256: string | null;
+  content_length_bytes: number | null;
+  records_written: number | null;
+  error_message: string | null;
+  log: unknown;
+  created_at: string;
+  file_key: string;
+  display_name: string;
+  source_name: string;
+}
+
+export interface SourceFileListResponse {
+  items: SourceFileStatus[];
+}
+
+export interface SourceFileRunListResponse {
+  items: SourceFileRun[];
+}
+
+export interface SourceRunTemporalStatus {
+  id: string;
+  db_status: SourceRunStatus | string;
+  started_at: string;
+  finished_at: string | null;
+  workflow_id?: string;
+  workflow_run_id?: string;
+  temporal_status?: string;
+  temporal_status_error?: string;
+}
+
+export interface SourceExplorerCompany {
+  business_id: string;
+  country_iso2: string;
+  source_slug: string;
+  source_run_id: string;
+  source_record_id: string;
+  name: string;
+  registration_date: string;
+  end_date: string;
+  status_code: string;
+  status_description: string;
+  trade_register_status_code: string;
+  trade_register_status_description: string;
+  lifecycle_status: string;
+  is_active: boolean;
+  main_business_line_code: string;
+  main_business_line_description_en: string;
+  company_form_description_en: string;
+  website: string;
+  name_history_count: number;
+  registered_entry_count: number;
+  address_count: number;
+  latest_ingested_at: string;
+}
+
+export interface SourceExplorerCompanyListResponse {
+  items: SourceExplorerCompany[];
+  total: number;
 }
 
 export interface BrregCompanyTranslationRequest {
@@ -699,42 +851,29 @@ export interface CompanySuggestionListResponse {
   total: number;
 }
 
-type SourceConfig = Record<string, unknown>;
-
-interface SyncCheckpoint {
-  cursor: string;
-  last_completed_at?: string;
-  updated_at: string;
-  mode: "bulk" | "incremental" | "none";
-  bulk_date?: string;
-}
-
 export interface DataSource {
   id: string;
   name: string;
+  country: string;
+  source: string;
+  registry_key: string;
   display_name: string | null;
-  sync_checkpoint?: SyncCheckpoint;
   description: string | null;
   source_group: string;
   input_table_name: string;
   enabled: boolean;
-  schedule_enabled: boolean;
-  schedule_kind: "manual" | "interval" | "cron" | "event";
-  schedule_expression: string | null;
-  config: SourceConfig;
-  last_started_at: string | null;
-  last_success_at: string | null;
-  last_failed_at: string | null;
-  next_scheduled_at: string | null;
+  auth_required: boolean;
+  storage_kind: "clickhouse";
+  clickhouse_database: string;
+  clickhouse_table_prefix: string;
+  source_url: string;
+  docs_url: string;
+  raw_source_retention: string;
+  source_file_name: "source.ndjson" | "source.json" | "";
+  user_agent_required: boolean;
   download_workflow_registered: boolean;
   manual_trigger_available: boolean;
   source_entries_available: boolean;
-  last_source_marker_type: string | null;
-  last_source_marker: string | null;
-  last_source_modified_at: string | null;
-  last_error: string | null;
-  consecutive_failures: number;
-  country_id: string | null;
   capabilities: string[];
   requires_translation: boolean;
   created_at: string;

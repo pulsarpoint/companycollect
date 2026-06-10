@@ -61,9 +61,12 @@ type ImportOptions struct {
 }
 
 type SelectedSourceFile struct {
+	FileRunID    string
 	FileKey      string
+	Kind         string
 	Path         string
 	RelativePath string
+	Config       map[string]any
 }
 
 func (o ImportOptions) FilePath(fileKey string) (string, bool) {
@@ -120,25 +123,4 @@ type ImportRunRequest struct {
 	BatchSize           int
 	Limit               int64
 	Truncate            bool
-}
-
-type ImportChangedRunsRequest struct {
-	RunsRoot            string
-	RunIndexPath        string
-	ClickHouseNativeURL string
-	BatchSize           int
-	Limit               int64
-	ChangedOnly         bool
-	Truncate            bool
-}
-
-type ImportChangedRunsResult struct {
-	Sources []ImportChangedSourceResult
-}
-
-type ImportChangedSourceResult struct {
-	Source       string
-	RunID        string
-	Status       string
-	ImportedRows int64
 }

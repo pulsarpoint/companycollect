@@ -342,7 +342,7 @@ func (a *Actions) selectedImportFiles(ctx context.Context, queries *db.Queries, 
 			if row.SourceID != sourceID {
 				return nil, errors.Errorf("source file run %s does not belong to source %s", row.ID, sourceID)
 			}
-			file, err := selectedSourceFileFromRun(row.FileKey, row.RelativePath, row.Path, row.Status, row.ID.String())
+			file, err := selectedSourceFileFromRun(row.FileKey, row.Kind, row.RelativePath, row.Config, row.Path, row.Status, row.ID.String())
 			if err != nil {
 				return nil, err
 			}
@@ -396,7 +396,7 @@ func selectedSourceFilesFromActionRows(rows []db.ListSuccessfulSourceFileRunsFor
 	}
 	files := make([]sourcecore.SelectedSourceFile, 0, len(rows))
 	for _, row := range rows {
-		file, err := selectedSourceFileFromRun(row.FileKey, row.RelativePath, row.Path, row.Status, row.ID.String())
+		file, err := selectedSourceFileFromRun(row.FileKey, row.Kind, row.RelativePath, row.Config, row.Path, row.Status, row.ID.String())
 		if err != nil {
 			return nil, err
 		}
@@ -418,7 +418,7 @@ func selectedSourceFilesFromLatestRows(rows []db.ListLatestSuccessfulRequiredSou
 			return nil, errors.Errorf("required source file %s has no successful run", row.FileKey)
 		}
 		fileRunID := uuid.UUID(row.ID.Bytes).String()
-		file, err := selectedSourceFileFromRun(row.FileKey, row.RelativePath, row.Path, *row.Status, fileRunID)
+		file, err := selectedSourceFileFromRun(row.FileKey, row.Kind, row.RelativePath, row.Config, row.Path, *row.Status, fileRunID)
 		if err != nil {
 			return nil, err
 		}
@@ -443,7 +443,7 @@ func requireEnabledRequiredFiles(rows []db.ListSuccessfulSourceFileRunsForAction
 	return nil
 }
 
-func selectedSourceFileFromRun(fileKey string, relativePath string, path *string, status string, fileRunID string) (sourcecore.SelectedSourceFile, error) {
+func selectedSourceFileFromRun(fileKey string, kind string, relativePath string, config json.RawMessage, path *string, status string, fileRunID string) (sourcecore.SelectedSourceFile, error) {
 	if status != sourceworkflow.StatusSucceeded {
 		return sourcecore.SelectedSourceFile{}, errors.Errorf("source file run %s has status %q", fileRunID, status)
 	}
@@ -454,7 +454,25 @@ func selectedSourceFileFromRun(fileKey string, relativePath string, path *string
 	if _, err := os.Stat(cleanPath); err != nil {
 		return sourcecore.SelectedSourceFile{}, errors.Wrapf(err, "stat source file %s", cleanPath)
 	}
-	return sourcecore.SelectedSourceFile{FileKey: fileKey, Path: cleanPath, RelativePath: relativePath}, nil
+	return sourcecore.SelectedSourceFile{
+		FileRunID:    fileRunID,
+		FileKey:      fileKey,
+		Kind:         kind,
+		Path:         cleanPath,
+		RelativePath: relativePath,
+		Config:       sourceFileConfigMap(config),
+	}, nil
+}
+
+func sourceFileConfigMap(config json.RawMessage) map[string]any {
+	if len(config) == 0 {
+		return nil
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(config, &decoded); err != nil {
+		return nil
+	}
+	return decoded
 }
 
 func validateDownloadedFile(downloaded sourcecore.DownloadedFile, runDir string, relativePath string) error {

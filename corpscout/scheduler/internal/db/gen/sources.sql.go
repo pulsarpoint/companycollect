@@ -306,6 +306,98 @@ func (q *Queries) GetLatestSuccessfulSourceActionRun(ctx context.Context, arg Ge
 	return i, err
 }
 
+const getLatestSuccessfulSourceFileRun = `-- name: GetLatestSuccessfulSourceFileRun :one
+SELECT
+  r.id, r.source_id, r.source_file_id, r.parent_action_run_id, r.status, r.temporal_workflow_id, r.temporal_run_id, r.started_at, r.finished_at, r.path, r.content_sha256, r.content_length_bytes, r.records_written, r.error_message, r.log, r.created_at,
+  f.file_key,
+  f.kind,
+  f.relative_path,
+  f.required,
+  f.config,
+  s.name AS source_name,
+  s.country,
+  s.source,
+  COALESCE(s.source_url, '') AS source_url,
+  s.user_agent_required
+FROM data_source_file_runs r
+JOIN data_source_files f ON f.id = r.source_file_id
+JOIN data_sources s ON s.id = r.source_id
+WHERE s.name = $1
+  AND f.file_key = $2
+  AND r.status = 'succeeded'
+  AND r.path IS NOT NULL
+ORDER BY r.finished_at DESC NULLS LAST, r.started_at DESC
+LIMIT 1
+`
+
+type GetLatestSuccessfulSourceFileRunParams struct {
+	SourceName string `json:"source_name"`
+	FileKey    string `json:"file_key"`
+}
+
+type GetLatestSuccessfulSourceFileRunRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	SourceID           uuid.UUID          `json:"source_id"`
+	SourceFileID       uuid.UUID          `json:"source_file_id"`
+	ParentActionRunID  pgtype.UUID        `json:"parent_action_run_id"`
+	Status             string             `json:"status"`
+	TemporalWorkflowID *string            `json:"temporal_workflow_id"`
+	TemporalRunID      *string            `json:"temporal_run_id"`
+	StartedAt          time.Time          `json:"started_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	Path               *string            `json:"path"`
+	ContentSha256      *string            `json:"content_sha256"`
+	ContentLengthBytes *int64             `json:"content_length_bytes"`
+	RecordsWritten     *int64             `json:"records_written"`
+	ErrorMessage       *string            `json:"error_message"`
+	Log                json.RawMessage    `json:"log"`
+	CreatedAt          time.Time          `json:"created_at"`
+	FileKey            string             `json:"file_key"`
+	Kind               string             `json:"kind"`
+	RelativePath       string             `json:"relative_path"`
+	Required           bool               `json:"required"`
+	Config             json.RawMessage    `json:"config"`
+	SourceName         string             `json:"source_name"`
+	Country            string             `json:"country"`
+	Source             string             `json:"source"`
+	SourceUrl          string             `json:"source_url"`
+	UserAgentRequired  bool               `json:"user_agent_required"`
+}
+
+func (q *Queries) GetLatestSuccessfulSourceFileRun(ctx context.Context, arg GetLatestSuccessfulSourceFileRunParams) (GetLatestSuccessfulSourceFileRunRow, error) {
+	row := q.db.QueryRow(ctx, getLatestSuccessfulSourceFileRun, arg.SourceName, arg.FileKey)
+	var i GetLatestSuccessfulSourceFileRunRow
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.SourceFileID,
+		&i.ParentActionRunID,
+		&i.Status,
+		&i.TemporalWorkflowID,
+		&i.TemporalRunID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Path,
+		&i.ContentSha256,
+		&i.ContentLengthBytes,
+		&i.RecordsWritten,
+		&i.ErrorMessage,
+		&i.Log,
+		&i.CreatedAt,
+		&i.FileKey,
+		&i.Kind,
+		&i.RelativePath,
+		&i.Required,
+		&i.Config,
+		&i.SourceName,
+		&i.Country,
+		&i.Source,
+		&i.SourceUrl,
+		&i.UserAgentRequired,
+	)
+	return i, err
+}
+
 const getSourceActionByName = `-- name: GetSourceActionByName :one
 SELECT
   a.id,
@@ -749,8 +841,10 @@ WITH latest AS (
   SELECT DISTINCT ON (f.id)
     r.id, r.source_id, r.source_file_id, r.parent_action_run_id, r.status, r.temporal_workflow_id, r.temporal_run_id, r.started_at, r.finished_at, r.path, r.content_sha256, r.content_length_bytes, r.records_written, r.error_message, r.log, r.created_at,
     f.file_key,
+    f.kind,
     f.relative_path,
-    f.required
+    f.required,
+    f.config
   FROM data_source_files f
   JOIN data_sources s ON s.id = f.source_id
   LEFT JOIN data_source_file_runs r
@@ -761,7 +855,7 @@ WITH latest AS (
     AND f.required = true
   ORDER BY f.id, r.finished_at DESC NULLS LAST, r.started_at DESC
 )
-SELECT id, source_id, source_file_id, parent_action_run_id, status, temporal_workflow_id, temporal_run_id, started_at, finished_at, path, content_sha256, content_length_bytes, records_written, error_message, log, created_at, file_key, relative_path, required
+SELECT id, source_id, source_file_id, parent_action_run_id, status, temporal_workflow_id, temporal_run_id, started_at, finished_at, path, content_sha256, content_length_bytes, records_written, error_message, log, created_at, file_key, kind, relative_path, required, config
 FROM latest
 ORDER BY file_key
 `
@@ -784,8 +878,10 @@ type ListLatestSuccessfulRequiredSourceFileRunsRow struct {
 	Log                []byte             `json:"log"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	FileKey            string             `json:"file_key"`
+	Kind               string             `json:"kind"`
 	RelativePath       string             `json:"relative_path"`
 	Required           bool               `json:"required"`
+	Config             json.RawMessage    `json:"config"`
 }
 
 func (q *Queries) ListLatestSuccessfulRequiredSourceFileRuns(ctx context.Context, name string) ([]ListLatestSuccessfulRequiredSourceFileRunsRow, error) {
@@ -815,8 +911,10 @@ func (q *Queries) ListLatestSuccessfulRequiredSourceFileRuns(ctx context.Context
 			&i.Log,
 			&i.CreatedAt,
 			&i.FileKey,
+			&i.Kind,
 			&i.RelativePath,
 			&i.Required,
+			&i.Config,
 		); err != nil {
 			return nil, err
 		}
@@ -1284,8 +1382,10 @@ const listSuccessfulSourceFileRunsForAction = `-- name: ListSuccessfulSourceFile
 SELECT
   r.id, r.source_id, r.source_file_id, r.parent_action_run_id, r.status, r.temporal_workflow_id, r.temporal_run_id, r.started_at, r.finished_at, r.path, r.content_sha256, r.content_length_bytes, r.records_written, r.error_message, r.log, r.created_at,
   f.file_key,
+  f.kind,
   f.relative_path,
-  f.required
+  f.required,
+  f.config
 FROM data_source_file_runs r
 JOIN data_source_files f ON f.id = r.source_file_id
 WHERE r.parent_action_run_id = $1
@@ -1311,8 +1411,10 @@ type ListSuccessfulSourceFileRunsForActionRow struct {
 	Log                json.RawMessage    `json:"log"`
 	CreatedAt          time.Time          `json:"created_at"`
 	FileKey            string             `json:"file_key"`
+	Kind               string             `json:"kind"`
 	RelativePath       string             `json:"relative_path"`
 	Required           bool               `json:"required"`
+	Config             json.RawMessage    `json:"config"`
 }
 
 func (q *Queries) ListSuccessfulSourceFileRunsForAction(ctx context.Context, parentActionRunID pgtype.UUID) ([]ListSuccessfulSourceFileRunsForActionRow, error) {
@@ -1342,8 +1444,10 @@ func (q *Queries) ListSuccessfulSourceFileRunsForAction(ctx context.Context, par
 			&i.Log,
 			&i.CreatedAt,
 			&i.FileKey,
+			&i.Kind,
 			&i.RelativePath,
 			&i.Required,
+			&i.Config,
 		); err != nil {
 			return nil, err
 		}

@@ -27,6 +27,21 @@ func TestBuildInsertQuery(t *testing.T) {
 	require.Equal(t, "INSERT INTO `corpscout_sources`.`fi_prhytj_identifiers` (`business_id`, `identifier_value`)", query)
 }
 
+func TestBuildInsertQuerySupportsReferenceDatabase(t *testing.T) {
+	query := BuildInsertQuery("corpscout_reference", "nace_codes", []string{"revision", "code"})
+	require.Equal(t, "INSERT INTO `corpscout_reference`.`nace_codes` (`revision`, `code`)", query)
+}
+
+func TestBuildTruncateQuery(t *testing.T) {
+	query := BuildTruncateQuery("corpscout_sources", "fi_prhytj_identifiers")
+	require.Equal(t, "TRUNCATE TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_identifiers`", query)
+}
+
+func TestBuildTruncateQuerySupportsReferenceDatabase(t *testing.T) {
+	query := BuildTruncateQuery("corpscout_reference", "nace_codes")
+	require.Equal(t, "TRUNCATE TABLE IF EXISTS `corpscout_reference`.`nace_codes`", query)
+}
+
 func TestInsertValuesFollowColumnOrder(t *testing.T) {
 	values := insertValues([]string{"business_id", "identifier_value"}, map[string]any{
 		"identifier_value": "FI01001304",
@@ -47,9 +62,9 @@ func TestWriterInsertRoundTrip(t *testing.T) {
 	defer writer.Close()
 
 	table := "writer_insert_round_trip"
-	require.NoError(t, writer.conn.Exec(ctx, "DROP TABLE IF EXISTS "+quoteIdent(writer.database)+"."+quoteIdent(table)))
-	require.NoError(t, writer.conn.Exec(ctx, "CREATE TABLE "+quoteIdent(writer.database)+"."+quoteIdent(table)+" (`business_id` String, `source_export_id` UUID, `ingested_at` DateTime64(3, 'UTC')) ENGINE = Memory"))
-	defer writer.conn.Exec(ctx, "DROP TABLE IF EXISTS "+quoteIdent(writer.database)+"."+quoteIdent(table))
+	require.NoError(t, writer.conn.Exec(ctx, "DROP TABLE IF EXISTS "+QualifiedTable(writer.database, table)))
+	require.NoError(t, writer.conn.Exec(ctx, "CREATE TABLE "+QualifiedTable(writer.database, table)+" (`business_id` String, `source_export_id` UUID, `ingested_at` DateTime64(3, 'UTC')) ENGINE = Memory"))
+	defer writer.conn.Exec(ctx, "DROP TABLE IF EXISTS "+QualifiedTable(writer.database, table))
 
 	exportID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	ingestedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
@@ -64,6 +79,6 @@ func TestWriterInsertRoundTrip(t *testing.T) {
 	}))
 
 	var count uint64
-	require.NoError(t, writer.conn.QueryRow(ctx, "SELECT count() FROM "+quoteIdent(writer.database)+"."+quoteIdent(table)).Scan(&count))
+	require.NoError(t, writer.conn.QueryRow(ctx, "SELECT count() FROM "+QualifiedTable(writer.database, table)).Scan(&count))
 	require.Equal(t, uint64(1), count)
 }

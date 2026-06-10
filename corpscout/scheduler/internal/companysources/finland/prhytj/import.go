@@ -3,6 +3,7 @@ package prhytj
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -34,9 +35,10 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 		batchSize = 1000
 	}
 
-	snapshotPath, err := opts.RequireFilePath("source")
-	if err != nil {
-		return companysources.ImportResult{}, err
+	hasSourceSnapshot := hasSelectedSourceFile(opts.Files)
+	codeListFiles := selectedCodeListFiles(opts.Files)
+	if !hasSourceSnapshot && len(codeListFiles) == 0 {
+		return companysources.ImportResult{}, errors.New("selected source or code list file is required")
 	}
 
 	writer, err := chwriter.Open(ctx, opts.ClickHouseNativeURL)
@@ -45,7 +47,44 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 	}
 	defer writer.Close()
 
-	runID := filepath.Base(opts.RunDir)
+	importedTables := make([]string, 0)
+	var importedRows int64
+	if hasSourceSnapshot {
+		snapshotPath, err := opts.RequireFilePath("source")
+		if err != nil {
+			return companysources.ImportResult{}, err
+		}
+		if opts.Truncate {
+			if err := writer.TruncateTables(ctx, NormalizedTableNames()); err != nil {
+				return companysources.ImportResult{}, err
+			}
+		}
+		rows, err := importSourceSnapshot(ctx, writer, opts.RunDir, snapshotPath, batchSize, opts.Limit)
+		if err != nil {
+			return companysources.ImportResult{}, err
+		}
+		importedTables = append(importedTables, NormalizedTableNames()...)
+		importedRows += rows
+	}
+
+	if len(codeListFiles) > 0 {
+		rows, err := importCodeLists(ctx, writer, codeListFiles, opts.Truncate && hasSourceSnapshot, batchSize)
+		if err != nil {
+			return companysources.ImportResult{}, err
+		}
+		importedTables = append(importedTables, CodeListTableNames()...)
+		importedRows += rows
+	}
+
+	return companysources.ImportResult{
+		RunDir:         opts.RunDir,
+		ImportedTables: importedTables,
+		ImportedRows:   importedRows,
+	}, nil
+}
+
+func importSourceSnapshot(ctx context.Context, writer *chwriter.Writer, runDir string, snapshotPath string, batchSize int, limit int64) (int64, error) {
+	runID := filepath.Base(runDir)
 	run := RunContext{
 		RunID:          runID,
 		SourceExportID: uuid.New(),
@@ -65,8 +104,8 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 		return nil
 	}
 
-	err = ParseSnapshot(ctx, snapshotPath, func(record ParsedRecord) error {
-		if opts.Limit > 0 && seen >= opts.Limit {
+	err := ParseSnapshot(ctx, snapshotPath, func(record ParsedRecord) error {
+		if limit > 0 && seen >= limit {
 			return nil
 		}
 		entries = append(entries, NormalizeParsedRecord(run, record))
@@ -77,17 +116,31 @@ func (Source) Import(ctx context.Context, opts companysources.ImportOptions) (co
 		return flush()
 	})
 	if err != nil {
-		return companysources.ImportResult{}, err
+		return 0, err
 	}
 	if err := flush(); err != nil {
-		return companysources.ImportResult{}, err
+		return 0, err
 	}
+	return seen, nil
+}
 
-	return companysources.ImportResult{
-		RunDir:         opts.RunDir,
-		ImportedTables: NormalizedTableNames(),
-		ImportedRows:   seen,
-	}, nil
+func hasSelectedSourceFile(files []companysources.SelectedSourceFile) bool {
+	for _, file := range files {
+		if file.FileKey == "source" {
+			return true
+		}
+	}
+	return false
+}
+
+func selectedCodeListFiles(files []companysources.SelectedSourceFile) []companysources.SelectedSourceFile {
+	selected := make([]companysources.SelectedSourceFile, 0)
+	for _, file := range files {
+		if file.Kind == "code_list" || strings.HasPrefix(file.FileKey, "codelist_") {
+			selected = append(selected, file)
+		}
+	}
+	return selected
 }
 
 func flushNormalizedEntries(ctx context.Context, writer *chwriter.Writer, entries []NormalizedEntry) error {
