@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -72,6 +73,69 @@ func TestBuildSourceExplorerCompanyListQueryUsesCompanyFormFilters(t *testing.T)
 	}
 }
 
+func TestBuildSourceExplorerCompanyListQueryUsesIndustryNACEFilters(t *testing.T) {
+	query, args, err := buildSourceExplorerCompanyListQuery("`corpscout_sources`.`fi_prhytj_company_explorer_cache`", sourceExplorerCompanyQuery{
+		Limit:        50,
+		IndustryNACE: []string{"68", "68.20", "L"},
+		Sort:         "name",
+		Direction:    "asc",
+	})
+	if err != nil {
+		t.Fatalf("buildSourceExplorerCompanyListQuery() error = %v", err)
+	}
+	for _, needle := range []string{
+		"ifNull(nace_division_code, '') = ?",
+		"ifNull(nace_class_code, '') = ?",
+		"ifNull(nace_section_code, '') = ?",
+	} {
+		if !strings.Contains(query, needle) {
+			t.Fatalf("buildSourceExplorerCompanyListQuery() query = %q, missing %q", query, needle)
+		}
+	}
+	if !strings.Contains(query, " OR ") {
+		t.Fatalf("buildSourceExplorerCompanyListQuery() query = %q, want ORed NACE filters", query)
+	}
+	if len(args) != 5 {
+		t.Fatalf("buildSourceExplorerCompanyListQuery() args length = %d, want 5", len(args))
+	}
+	for index, want := range []any{"68", "68.20", "L"} {
+		if args[index] != want {
+			t.Fatalf("buildSourceExplorerCompanyListQuery() args[%d] = %#v, want %#v", index, args[index], want)
+		}
+	}
+}
+
+func TestBuildSourceExplorerCompanyListQueryUsesSourceIndustryFilters(t *testing.T) {
+	query, args, err := buildSourceExplorerCompanyListQuery("`corpscout_sources`.`fi_prhytj_company_explorer_cache`", sourceExplorerCompanyQuery{
+		Limit: 50,
+		SourceIndustries: []sourceExplorerSourceIndustryFilter{
+			{CodeSet: "TOIMI4", Code: "68203"},
+			{CodeSet: "TOIMI3", Code: "64190"},
+		},
+		Sort:      "name",
+		Direction: "asc",
+	})
+	if err != nil {
+		t.Fatalf("buildSourceExplorerCompanyListQuery() error = %v", err)
+	}
+	needle := "(ifNull(main_business_line_code_set, '') = ? AND ifNull(main_business_line_code, '') = ?)"
+	if !strings.Contains(query, needle) {
+		t.Fatalf("buildSourceExplorerCompanyListQuery() query = %q, missing %q", query, needle)
+	}
+	if !strings.Contains(query, " OR ") {
+		t.Fatalf("buildSourceExplorerCompanyListQuery() query = %q, want ORed source industry filters", query)
+	}
+	if len(args) != 6 {
+		t.Fatalf("buildSourceExplorerCompanyListQuery() args length = %d, want 6", len(args))
+	}
+	wantArgs := []any{"TOIMI4", "68203", "TOIMI3", "64190"}
+	for index, want := range wantArgs {
+		if args[index] != want {
+			t.Fatalf("buildSourceExplorerCompanyListQuery() args[%d] = %#v, want %#v", index, args[index], want)
+		}
+	}
+}
+
 func TestParseSourceExplorerStringListSplitsAndDeduplicates(t *testing.T) {
 	got := parseSourceExplorerStringList([]string{"16, 26", "16", "", "  35  "}, 10)
 	want := []string{"16", "26", "35"}
@@ -80,8 +144,19 @@ func TestParseSourceExplorerStringListSplitsAndDeduplicates(t *testing.T) {
 	}
 }
 
-func TestBuildSourceExplorerFilterOptionsQueryUsesCacheTable(t *testing.T) {
-	query := buildSourceExplorerFilterOptionsQuery("`corpscout_sources`.`fi_prhytj_company_explorer_cache`")
+func TestParseSourceExplorerSourceIndustriesSkipsInvalidValues(t *testing.T) {
+	got := parseSourceExplorerSourceIndustries([]string{"TOIMI4:68203", "bad", "TOIMI3:64190"}, 10)
+	want := []sourceExplorerSourceIndustryFilter{
+		{CodeSet: "TOIMI4", Code: "68203"},
+		{CodeSet: "TOIMI3", Code: "64190"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseSourceExplorerSourceIndustries() = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildSourceExplorerFormFilterOptionsQueryUsesCacheTable(t *testing.T) {
+	query := buildSourceExplorerFormFilterOptionsQuery("`corpscout_sources`.`fi_prhytj_company_explorer_cache`")
 	for _, needle := range []string{
 		"company_form_code",
 		"company_form_description_en",
@@ -89,7 +164,24 @@ func TestBuildSourceExplorerFilterOptionsQueryUsesCacheTable(t *testing.T) {
 		"FROM `corpscout_sources`.`fi_prhytj_company_explorer_cache`",
 	} {
 		if !strings.Contains(query, needle) {
-			t.Fatalf("buildSourceExplorerFilterOptionsQuery() = %q, missing %q", query, needle)
+			t.Fatalf("buildSourceExplorerFormFilterOptionsQuery() = %q, missing %q", query, needle)
+		}
+	}
+}
+
+func TestBuildSourceExplorerIndustryFilterOptionsQueryUsesNACEAndSourceIndustryOptions(t *testing.T) {
+	query := buildSourceExplorerIndustryFilterOptionsQuery("`corpscout_sources`.`fi_prhytj_company_explorer_cache`")
+	for _, needle := range []string{
+		"'nace' AS kind",
+		"'source_industry' AS kind",
+		"`corpscout_reference`.`nace_codes`",
+		"nace_division_code",
+		"main_business_line_code_set",
+		"company_count",
+		"UNION ALL",
+	} {
+		if !strings.Contains(query, needle) {
+			t.Fatalf("buildSourceExplorerIndustryFilterOptionsQuery() = %q, missing %q", query, needle)
 		}
 	}
 }

@@ -36,6 +36,15 @@ type sourceExplorerCompany struct {
 	IsActive                           bool      `json:"is_active"`
 	MainBusinessLineCode               string    `json:"main_business_line_code"`
 	MainBusinessLineDescriptionEnglish string    `json:"main_business_line_description_en"`
+	MainBusinessLineCodeSet            string    `json:"main_business_line_code_set"`
+	NACERevision                       string    `json:"nace_revision"`
+	NACECode                           string    `json:"nace_code"`
+	NACESectionCode                    string    `json:"nace_section_code"`
+	NACEDivisionCode                   string    `json:"nace_division_code"`
+	NACEGroupCode                      string    `json:"nace_group_code"`
+	NACEClassCode                      string    `json:"nace_class_code"`
+	NACETitleEnglish                   string    `json:"nace_title_en"`
+	NACEMappingStatus                  string    `json:"nace_mapping_status"`
 	CompanyFormDescriptionEnglish      string    `json:"company_form_description_en"`
 	Website                            string    `json:"website"`
 	NameHistoryCount                   uint64    `json:"name_history_count"`
@@ -55,8 +64,29 @@ type sourceExplorerFormFilterOption struct {
 	Count       uint64 `json:"count"`
 }
 
+type sourceExplorerIndustryFilterOption struct {
+	ID             string `json:"id"`
+	Kind           string `json:"kind"`
+	FilterValue    string `json:"filter_value"`
+	Revision       string `json:"revision"`
+	LevelName      string `json:"level_name"`
+	Code           string `json:"code"`
+	CodeSet        string `json:"code_set"`
+	Title          string `json:"title"`
+	Breadcrumb     string `json:"breadcrumb"`
+	MappedNACECode string `json:"mapped_nace_code"`
+	Count          uint64 `json:"count"`
+	SearchText     string `json:"search_text"`
+}
+
 type sourceExplorerFilterOptionsResponse struct {
-	Forms []sourceExplorerFormFilterOption `json:"forms"`
+	Forms           []sourceExplorerFormFilterOption     `json:"forms"`
+	IndustryOptions []sourceExplorerIndustryFilterOption `json:"industry_options"`
+}
+
+type sourceExplorerSourceIndustryFilter struct {
+	CodeSet string
+	Code    string
 }
 
 type sourceExplorerCompanyQuery struct {
@@ -66,6 +96,8 @@ type sourceExplorerCompanyQuery struct {
 	Active           string
 	LifecycleStatus  string
 	CompanyFormCodes []string
+	IndustryNACE     []string
+	SourceIndustries []sourceExplorerSourceIndustryFilter
 	Sort             string
 	Direction        string
 }
@@ -132,6 +164,15 @@ func (h *Handlers) handleListSourceExplorerCompanies(w http.ResponseWriter, r *h
 			&item.IsActive,
 			&item.MainBusinessLineCode,
 			&item.MainBusinessLineDescriptionEnglish,
+			&item.MainBusinessLineCodeSet,
+			&item.NACERevision,
+			&item.NACECode,
+			&item.NACESectionCode,
+			&item.NACEDivisionCode,
+			&item.NACEGroupCode,
+			&item.NACEClassCode,
+			&item.NACETitleEnglish,
+			&item.NACEMappingStatus,
 			&item.CompanyFormDescriptionEnglish,
 			&item.Website,
 			&item.NameHistoryCount,
@@ -174,31 +215,70 @@ func (h *Handlers) handleListSourceExplorerFilterOptions(w http.ResponseWriter, 
 	defer reader.Close()
 
 	table := ch.QualifiedTable(reader.Database(), finlandPRHYTJExplorerTable)
-	rows, err := reader.Query(r.Context(), buildSourceExplorerFilterOptionsQuery(table))
+	formRows, err := reader.Query(r.Context(), buildSourceExplorerFormFilterOptionsQuery(table))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "list source explorer filter options", "source", sourceName, "error", err)
 		writeError(w, http.StatusInternalServerError, "list source explorer filter options failed")
 		return
 	}
-	defer rows.Close()
 
-	options := make([]sourceExplorerFormFilterOption, 0)
-	for rows.Next() {
+	formOptions := make([]sourceExplorerFormFilterOption, 0)
+	for formRows.Next() {
 		var option sourceExplorerFormFilterOption
-		if err := rows.Scan(&option.Code, &option.Description, &option.Count); err != nil {
+		if err := formRows.Scan(&option.Code, &option.Description, &option.Count); err != nil {
+			formRows.Close()
 			slog.ErrorContext(r.Context(), "scan source explorer filter option", "source", sourceName, "error", err)
 			writeError(w, http.StatusInternalServerError, "scan source explorer filter options failed")
 			return
 		}
-		options = append(options, option)
+		formOptions = append(formOptions, option)
 	}
-	if err := rows.Err(); err != nil {
+	if err := formRows.Err(); err != nil {
+		formRows.Close()
 		slog.ErrorContext(r.Context(), "read source explorer filter options", "source", sourceName, "error", err)
 		writeError(w, http.StatusInternalServerError, "read source explorer filter options failed")
 		return
 	}
+	formRows.Close()
 
-	writeJSON(w, http.StatusOK, sourceExplorerFilterOptionsResponse{Forms: options})
+	industryRows, err := reader.Query(r.Context(), buildSourceExplorerIndustryFilterOptionsQuery(table))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "list source explorer industry filter options", "source", sourceName, "error", err)
+		writeError(w, http.StatusInternalServerError, "list source explorer industry filter options failed")
+		return
+	}
+	defer industryRows.Close()
+
+	industryOptions := make([]sourceExplorerIndustryFilterOption, 0)
+	for industryRows.Next() {
+		var option sourceExplorerIndustryFilterOption
+		if err := industryRows.Scan(
+			&option.ID,
+			&option.Kind,
+			&option.FilterValue,
+			&option.Revision,
+			&option.LevelName,
+			&option.Code,
+			&option.CodeSet,
+			&option.Title,
+			&option.Breadcrumb,
+			&option.MappedNACECode,
+			&option.Count,
+			&option.SearchText,
+		); err != nil {
+			slog.ErrorContext(r.Context(), "scan source explorer industry filter option", "source", sourceName, "error", err)
+			writeError(w, http.StatusInternalServerError, "scan source explorer industry filter options failed")
+			return
+		}
+		industryOptions = append(industryOptions, option)
+	}
+	if err := industryRows.Err(); err != nil {
+		slog.ErrorContext(r.Context(), "read source explorer industry filter options", "source", sourceName, "error", err)
+		writeError(w, http.StatusInternalServerError, "read source explorer industry filter options failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sourceExplorerFilterOptionsResponse{Forms: formOptions, IndustryOptions: industryOptions})
 }
 
 func parseSourceExplorerCompanyQuery(r *http.Request) sourceExplorerCompanyQuery {
@@ -219,12 +299,14 @@ func parseSourceExplorerCompanyQuery(r *http.Request) sourceExplorerCompanyQuery
 		Active:           strings.ToLower(strings.TrimSpace(query.Get("active"))),
 		LifecycleStatus:  strings.ToLower(strings.TrimSpace(query.Get("lifecycle_status"))),
 		CompanyFormCodes: parseSourceExplorerStringList(query["form"], 100),
+		IndustryNACE:     parseSourceExplorerStringList(query["industry_nace"], 100),
+		SourceIndustries: parseSourceExplorerSourceIndustries(query["source_industry"], 100),
 		Sort:             strings.TrimSpace(query.Get("sort")),
 		Direction:        direction,
 	}
 }
 
-func buildSourceExplorerFilterOptionsQuery(table string) string {
+func buildSourceExplorerFormFilterOptionsQuery(table string) string {
 	return `SELECT
   form_code,
   argMax(description, latest_ingested_at) AS description,
@@ -240,6 +322,170 @@ FROM (
 GROUP BY form_code
 ORDER BY lowerUTF8(description), form_code
 LIMIT 1000`
+}
+
+func buildSourceExplorerIndustryFilterOptionsQuery(table string) string {
+	naceReferenceTable := ch.QualifiedTable("corpscout_reference", "nace_codes")
+	return `SELECT
+  id,
+  kind,
+  filter_value,
+  revision,
+  level_name,
+  code,
+  code_set,
+  title,
+  breadcrumb,
+  mapped_nace_code,
+  company_count,
+  search_text
+FROM (
+  SELECT
+    concat('nace:', cache.revision, ':section:', cache.code) AS id,
+    'nace' AS kind,
+    cache.code AS filter_value,
+    cache.revision AS revision,
+    'section' AS level_name,
+    cache.code AS code,
+    '' AS code_set,
+    ifNull(nace_ref.title, cache.code) AS title,
+    ifNull(nace_ref.title, cache.code) AS breadcrumb,
+    cache.code AS mapped_nace_code,
+    cache.company_count AS company_count,
+    concat(cache.code, ' ', ifNull(nace_ref.title, cache.code)) AS search_text
+  FROM (
+    SELECT
+      ifNull(nace_revision, '') AS revision,
+      ifNull(nace_section_code, '') AS code,
+      count() AS company_count
+    FROM ` + table + `
+    WHERE ifNull(nace_revision, '') != ''
+      AND ifNull(nace_section_code, '') != ''
+    GROUP BY revision, code
+  ) AS cache
+  LEFT JOIN ` + naceReferenceTable + ` AS nace_ref
+    ON nace_ref.revision = cache.revision
+   AND nace_ref.level_name = 'section'
+   AND nace_ref.code = cache.code
+
+  UNION ALL
+
+  SELECT
+    concat('nace:', cache.revision, ':division:', cache.code) AS id,
+    'nace' AS kind,
+    cache.code AS filter_value,
+    cache.revision AS revision,
+    'division' AS level_name,
+    cache.code AS code,
+    '' AS code_set,
+    ifNull(nace_ref.title, cache.code) AS title,
+    ifNull(nace_ref.title, cache.code) AS breadcrumb,
+    cache.code AS mapped_nace_code,
+    cache.company_count AS company_count,
+    concat(cache.code, ' ', ifNull(nace_ref.title, cache.code)) AS search_text
+  FROM (
+    SELECT
+      ifNull(nace_revision, '') AS revision,
+      ifNull(nace_division_code, '') AS code,
+      count() AS company_count
+    FROM ` + table + `
+    WHERE ifNull(nace_revision, '') != ''
+      AND ifNull(nace_division_code, '') != ''
+    GROUP BY revision, code
+  ) AS cache
+  LEFT JOIN ` + naceReferenceTable + ` AS nace_ref
+    ON nace_ref.revision = cache.revision
+   AND nace_ref.level_name = 'division'
+   AND nace_ref.code = cache.code
+
+  UNION ALL
+
+  SELECT
+    concat('nace:', cache.revision, ':group:', cache.code) AS id,
+    'nace' AS kind,
+    cache.code AS filter_value,
+    cache.revision AS revision,
+    'group' AS level_name,
+    cache.code AS code,
+    '' AS code_set,
+    ifNull(nace_ref.title, cache.code) AS title,
+    ifNull(nace_ref.title, cache.code) AS breadcrumb,
+    cache.code AS mapped_nace_code,
+    cache.company_count AS company_count,
+    concat(cache.code, ' ', ifNull(nace_ref.title, cache.code)) AS search_text
+  FROM (
+    SELECT
+      ifNull(nace_revision, '') AS revision,
+      ifNull(nace_group_code, '') AS code,
+      count() AS company_count
+    FROM ` + table + `
+    WHERE ifNull(nace_revision, '') != ''
+      AND ifNull(nace_group_code, '') != ''
+    GROUP BY revision, code
+  ) AS cache
+  LEFT JOIN ` + naceReferenceTable + ` AS nace_ref
+    ON nace_ref.revision = cache.revision
+   AND nace_ref.level_name = 'group'
+   AND nace_ref.code = cache.code
+
+  UNION ALL
+
+  SELECT
+    concat('nace:', revision, ':class:', code) AS id,
+    'nace' AS kind,
+    code AS filter_value,
+    revision,
+    'class' AS level_name,
+    code,
+    '' AS code_set,
+    title,
+    title AS breadcrumb,
+    code AS mapped_nace_code,
+    company_count,
+    concat(code, ' ', title) AS search_text
+  FROM (
+    SELECT
+      ifNull(nace_revision, '') AS revision,
+      ifNull(nace_class_code, '') AS code,
+      argMax(ifNull(nace_title_en, ''), latest_ingested_at) AS title,
+      count() AS company_count
+    FROM ` + table + `
+    WHERE ifNull(nace_revision, '') != ''
+      AND ifNull(nace_class_code, '') != ''
+    GROUP BY revision, code
+  ) AS class_cache
+
+  UNION ALL
+
+  SELECT
+    concat('source_industry:', code_set, ':', code) AS id,
+    'source_industry' AS kind,
+    concat(code_set, ':', code) AS filter_value,
+    revision,
+    '' AS level_name,
+    code,
+    code_set,
+    title,
+    concat(code_set, ' ', code) AS breadcrumb,
+    mapped_nace_code,
+    company_count,
+    concat(code_set, ' ', code, ' ', title, ' ', mapped_nace_code) AS search_text
+  FROM (
+    SELECT
+      ifNull(main_business_line_code_set, '') AS code_set,
+      ifNull(main_business_line_code, '') AS code,
+      argMax(ifNull(main_business_line_description_en, ''), latest_ingested_at) AS title,
+      argMax(ifNull(nace_revision, ''), latest_ingested_at) AS revision,
+      argMax(ifNull(nace_code, ''), latest_ingested_at) AS mapped_nace_code,
+      count() AS company_count
+    FROM ` + table + `
+    WHERE ifNull(main_business_line_code_set, '') != ''
+      AND ifNull(main_business_line_code, '') != ''
+    GROUP BY code_set, code
+  ) AS source_cache
+) AS industry_options
+ORDER BY company_count DESC, lowerUTF8(title), code
+LIMIT 5000`
 }
 
 func buildSourceExplorerCompanyCountQuery(view string, params sourceExplorerCompanyQuery) (string, []any) {
@@ -271,6 +517,15 @@ func buildSourceExplorerCompanyListQuery(view string, params sourceExplorerCompa
   ifNull(is_active, false),
   ifNull(main_business_line_code, ''),
   ifNull(main_business_line_description_en, ''),
+  ifNull(main_business_line_code_set, ''),
+  ifNull(nace_revision, ''),
+  ifNull(nace_code, ''),
+  ifNull(nace_section_code, ''),
+  ifNull(nace_division_code, ''),
+  ifNull(nace_group_code, ''),
+  ifNull(nace_class_code, ''),
+  ifNull(nace_title_en, ''),
+  ifNull(nace_mapping_status, ''),
   ifNull(company_form_description_en, ''),
   ifNull(website, ''),
   length(ifNull(name_history, [])),
@@ -306,6 +561,32 @@ func sourceExplorerCompanyWhere(params sourceExplorerCompanyQuery) (string, []an
 			args = append(args, code)
 		}
 	}
+	if len(params.IndustryNACE) > 0 {
+		naceClauses := make([]string, 0, len(params.IndustryNACE))
+		for _, value := range params.IndustryNACE {
+			column, ok := sourceExplorerNACEFilterColumn(value)
+			if !ok {
+				continue
+			}
+			naceClauses = append(naceClauses, "ifNull("+column+", '') = ?")
+			if column == "nace_section_code" {
+				args = append(args, strings.ToUpper(value))
+				continue
+			}
+			args = append(args, value)
+		}
+		if len(naceClauses) > 0 {
+			clauses = append(clauses, "("+strings.Join(naceClauses, " OR ")+")")
+		}
+	}
+	if len(params.SourceIndustries) > 0 {
+		sourceIndustryClauses := make([]string, 0, len(params.SourceIndustries))
+		for _, filter := range params.SourceIndustries {
+			sourceIndustryClauses = append(sourceIndustryClauses, "(ifNull(main_business_line_code_set, '') = ? AND ifNull(main_business_line_code, '') = ?)")
+			args = append(args, filter.CodeSet, filter.Code)
+		}
+		clauses = append(clauses, "("+strings.Join(sourceIndustryClauses, " OR ")+")")
+	}
 	if len(clauses) == 0 {
 		return "", args
 	}
@@ -335,6 +616,76 @@ func parseSourceExplorerStringList(values []string, maxItems int) []string {
 		}
 	}
 	return result
+}
+
+func parseSourceExplorerSourceIndustries(values []string, maxItems int) []sourceExplorerSourceIndustryFilter {
+	if maxItems <= 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]sourceExplorerSourceIndustryFilter, 0, len(values))
+	for _, raw := range values {
+		for _, value := range strings.Split(raw, ",") {
+			trimmed := strings.TrimSpace(value)
+			if trimmed == "" {
+				continue
+			}
+			codeSet, code, ok := strings.Cut(trimmed, ":")
+			if !ok {
+				continue
+			}
+			codeSet = strings.TrimSpace(codeSet)
+			code = strings.TrimSpace(code)
+			if codeSet == "" || code == "" {
+				continue
+			}
+			key := codeSet + ":" + code
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			result = append(result, sourceExplorerSourceIndustryFilter{
+				CodeSet: codeSet,
+				Code:    code,
+			})
+			if len(result) >= maxItems {
+				return result
+			}
+		}
+	}
+	return result
+}
+
+func sourceExplorerNACEFilterColumn(value string) (string, bool) {
+	if len(value) == 1 {
+		char := value[0]
+		if (char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z') {
+			return "nace_section_code", true
+		}
+		return "", false
+	}
+	if len(value) == 2 && isASCIIInteger(value) {
+		return "nace_division_code", true
+	}
+	if len(value) == 4 && value[2] == '.' && isASCIIInteger(value[:2]) && isASCIIInteger(value[3:]) {
+		return "nace_group_code", true
+	}
+	if len(value) == 5 && value[2] == '.' && isASCIIInteger(value[:2]) && isASCIIInteger(value[3:]) {
+		return "nace_class_code", true
+	}
+	return "", false
+}
+
+func isASCIIInteger(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func queryPlaceholders(count int) string {
