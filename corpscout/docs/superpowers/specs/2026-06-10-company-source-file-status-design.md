@@ -72,11 +72,14 @@ embedded source catalog JSON
   -> data_source_files
 
 file download workflow
+  -> trigger boundary creates data_source_file_runs row
+  -> workflow id = company-source-file-run-<file_run_id>
   -> data_source_file_runs
   -> filesystem artifact path
 
 full source download workflow
-  -> data_source_action_runs row
+  -> trigger boundary creates data_source_action_runs row
+  -> workflow id = company-source-action-run-<action_run_id>
   -> one data_source_file_runs row per expected file
 
 ClickHouse import workflow
@@ -87,6 +90,43 @@ ClickHouse import workflow
 
 This makes status, history, missing-file detection, and targeted retry
 queryable without decoding action-run JSON.
+
+## Temporal Identity Model
+
+Postgres creates the product run identity before Temporal starts. Temporal
+workflow IDs are derived from that identity.
+
+```text
+data_source_action_runs.id
+  -> company-source-action-run-<action_run_id>
+
+data_source_file_runs.id
+  -> company-source-file-run-<file_run_id>
+```
+
+This lets the API describe Temporal execution by action or file run ID without
+searching Temporal:
+
+```text
+action_run_id -> workflow_id -> DescribeWorkflowExecution
+file_run_id   -> workflow_id -> DescribeWorkflowExecution
+```
+
+Postgres remains the product status store because it holds file paths,
+checksums, missing-file state, safe errors, and import metadata. Temporal is the
+runtime lifecycle source for queued/running/completed workflow state.
+
+Manual API triggers should create the run row before starting the workflow. If
+Temporal start fails, the API marks that row `failed` with a safe start error.
+Run creation queries must allow `temporal_workflow_id` to be set before
+Temporal starts and `temporal_run_id` to be filled after `ExecuteWorkflow`
+returns.
+
+Scheduled triggers should follow the same identity rule. If a Temporal schedule
+cannot create the action run before starting the real workflow, it should start a
+small launcher workflow whose only job is to create the product run row and then
+start the real child workflow with the deterministic workflow ID. The action run
+stored in Postgres points to the real child workflow, not the launcher.
 
 ## Alternatives Considered
 
@@ -374,6 +414,7 @@ Input:
 
 ```go
 type DownloadSourceFileInput struct {
+    FileRunID         string `json:"file_run_id"`
     SourceName        string `json:"source_name"`
     FileKey           string `json:"file_key"`
     Trigger           string `json:"trigger"`
@@ -397,12 +438,13 @@ type DownloadSourceFileResult struct {
 
 Activity behavior:
 
-1. Load source and file definition.
-2. Create `data_source_file_runs` with `running`.
-3. Create immutable file-run directory.
-4. Call source `DownloadFile`.
-5. Finish file run as `succeeded` with path, checksum, size, rows, and log.
-6. On error, finish file run as `failed` with safe error message and log.
+1. Load the existing `data_source_file_runs` row by `FileRunID`.
+2. Validate that it belongs to `SourceName` and `FileKey`.
+3. Load source and file definition.
+4. Create immutable file-run directory.
+5. Call source `DownloadFile`.
+6. Finish file run as `succeeded` with path, checksum, size, rows, and log.
+7. On error, finish file run as `failed` with safe error message and log.
 
 The activity wraps lower-level errors. The HTTP/worker boundary logs once.
 
@@ -411,14 +453,27 @@ The activity wraps lower-level errors. The HTTP/worker boundary logs once.
 The whole-source download workflow remains the target for the "Download all"
 button and scheduled source pulls.
 
+Input:
+
+```go
+type SyncSourceDownloadInput struct {
+    ActionRunID string `json:"action_run_id"`
+    SourceName  string `json:"source_name"`
+    Trigger     string `json:"trigger"`
+}
+```
+
 Behavior:
 
-1. Create one `data_source_action_runs` row for `pull_source`.
-2. Load enabled file definitions for the source.
-3. Download each required and enabled file by executing the file activity or
-   child workflow with `parent_action_run_id`.
-4. If any required file fails, finish the parent action run as `failed`.
-5. If all required files succeed, finish the parent action run as `succeeded`.
+1. Load the existing `data_source_action_runs` row by `ActionRunID`.
+2. Validate that it is the `pull_source` action for `SourceName`.
+3. Load enabled file definitions for the source.
+4. Call an activity to create one `data_source_file_runs` row for each enabled
+   file with `parent_action_run_id = ActionRunID`.
+5. Start one file workflow per file using
+   `company-source-file-run-<file_run_id>`.
+6. If any required file fails, finish the parent action run as `failed`.
+7. If all required files succeed, finish the parent action run as `succeeded`.
 
 The result stores file-level summary:
 
@@ -444,6 +499,7 @@ Input:
 
 ```go
 type ImportSourceToClickHouseInput struct {
+    ActionRunID         string   `json:"action_run_id"`
     SourceName          string   `json:"source_name"`
     Trigger             string   `json:"trigger"`
     DownloadActionRunID string   `json:"download_action_run_id,omitempty"`
@@ -459,6 +515,10 @@ Selection rules:
 2. Else if `DownloadActionRunID` is present, import successful file runs linked
    to that parent action run.
 3. Else select the latest successful run for every required enabled file.
+
+The import activity loads the existing `data_source_action_runs` row by
+`ActionRunID`, validates that it is the `import_clickhouse` action for
+`SourceName`, and finishes that same row when the import succeeds or fails.
 
 Before import, validate:
 
@@ -478,6 +538,13 @@ download all files
   -> import file runs from that parent download action
 ```
 
+For manual "download and import", the API should create the outer sync workflow
+with a deterministic workflow ID based on an action-run row only if we decide to
+persist sync as its own product run. In the first implementation, sync can remain
+an orchestration convenience that creates and starts a normal download action run
+and then a normal import action run. The durable product runs are still the
+download action run, the import action run, and the file runs.
+
 ## HTTP API
 
 Add file endpoints under the existing source API.
@@ -486,6 +553,38 @@ Add file endpoints under the existing source API.
 GET  /api/v1/sources/{name}/files
 GET  /api/v1/sources/{name}/files/{file_key}/runs?limit=50
 POST /api/v1/sources/{name}/files/{file_key}/download
+GET  /api/v1/source-action-runs/{id}/temporal-status
+GET  /api/v1/source-file-runs/{id}/temporal-status
+```
+
+Existing source action trigger endpoints should create the corresponding
+`data_source_action_runs` row before starting Temporal:
+
+```text
+POST /api/v1/sources/{name}/actions/pull_source/trigger
+  -> create action run
+  -> workflow id company-source-action-run-<action_run_id>
+  -> start CompanySourceDownloadWorkflow with action_run_id
+
+POST /api/v1/sources/{name}/actions/import_clickhouse/trigger
+  -> create action run
+  -> workflow id company-source-action-run-<action_run_id>
+  -> start CompanySourceClickHouseImportWorkflow with action_run_id
+```
+
+The Temporal status endpoints describe the workflow associated with the run ID
+and return both product and runtime status.
+
+```json
+{
+  "id": "...",
+  "db_status": "running",
+  "temporal_status": "RUNNING",
+  "workflow_id": "company-source-action-run-...",
+  "workflow_run_id": "...",
+  "started_at": "2026-06-10T12:00:00Z",
+  "finished_at": null
+}
 ```
 
 ### List Files Response
@@ -556,6 +655,10 @@ check the mounted filesystem directly.
 `POST /api/v1/sources/{name}/files/{file_key}/download` starts
 `CompanySourceDownloadFileWorkflow` and returns the existing workflow-start
 response shape.
+
+The handler first creates a `data_source_file_runs` row with `running`, derives
+the workflow ID from that row ID, starts Temporal, then stores the Temporal run
+ID on the row. If Temporal start fails, it marks the file run as `failed`.
 
 ```json
 {
@@ -686,7 +789,13 @@ HTTP API tests:
 - list files returns file definitions with latest status
 - list file runs clamps limit
 - trigger one file starts `CompanySourceDownloadFileWorkflow`
+- trigger one file creates a file run before starting Temporal
+- trigger one file uses `company-source-file-run-<file_run_id>` as workflow ID
 - trigger one file rejects unknown file key
+- trigger source action creates an action run before starting Temporal
+- trigger source action uses `company-source-action-run-<action_run_id>` as
+  workflow ID
+- Temporal status endpoint describes workflow execution by deterministic ID
 
 UI tests:
 
@@ -717,4 +826,3 @@ UI tests:
 - Import selects file runs explicitly and records selected IDs.
 - The existing `pull_source` action remains the user-facing "download all"
   action.
-
