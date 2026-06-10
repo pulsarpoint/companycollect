@@ -11,10 +11,34 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cockroachdb/errors"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
+	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
 )
+
+const defaultMaxStatements = 50
+
+type DownloadOptions struct {
+	Queries              *db.Queries
+	HTTPClient           *http.Client
+	SourceID             uuid.UUID
+	ActionRunID          uuid.UUID
+	TemporalWorkflowID   string
+	TemporalRunID        string
+	RunDir               string
+	ManifestRelativePath string
+	SourceURL            string
+	UserAgentRequired    bool
+	RegisteredDateStart  string
+	RegisteredDateEnd    string
+	MaxStatements        int32
+	RetryFailed          bool
+}
 
 type StatementXMLDownload struct {
 	Path      string
@@ -39,6 +63,270 @@ func (Source) DownloadFile(ctx context.Context, opts companysources.DownloadFile
 	_ = ctx
 	_ = opts
 	return companysources.DownloadedFile{}, errors.New("Finland PRH financial XBRL download requires the source-specific Temporal action")
+}
+
+func Download(ctx context.Context, opts DownloadOptions) (companysources.DownloadedFile, error) {
+	if opts.Queries == nil {
+		return companysources.DownloadedFile{}, errors.New("PRH XBRL queries are required")
+	}
+	maxStatements := opts.MaxStatements
+	if maxStatements <= 0 {
+		maxStatements = defaultMaxStatements
+	}
+	if maxStatements > 1000 {
+		return companysources.DownloadedFile{}, errors.New("max_statements must be 1000 or less")
+	}
+	sourceURL := strings.TrimSpace(opts.SourceURL)
+	if sourceURL == "" {
+		sourceURL = DefaultURL
+	}
+	manifestRelativePath := strings.TrimSpace(opts.ManifestRelativePath)
+	if manifestRelativePath == "" {
+		manifestRelativePath = "statements.ndjson"
+	}
+
+	startDate, err := parseDateToPgtype(opts.RegisteredDateStart)
+	if err != nil {
+		return companysources.DownloadedFile{}, err
+	}
+	endDate, err := parseDateToPgtype(opts.RegisteredDateEnd)
+	if err != nil {
+		return companysources.DownloadedFile{}, err
+	}
+	registeredDateStart := startDate.Time.Format(time.DateOnly)
+	registeredDateEnd := endDate.Time.Format(time.DateOnly)
+
+	window, err := opts.Queries.UpsertFinlandPRHXBRLDiscoveryWindow(ctx, db.UpsertFinlandPRHXBRLDiscoveryWindowParams{
+		SourceID:            opts.SourceID,
+		RegisteredDateStart: startDate,
+		RegisteredDateEnd:   endDate,
+		ActionRunID:         pgUUID(opts.ActionRunID),
+		TemporalWorkflowID:  optionalText(opts.TemporalWorkflowID),
+		TemporalRunID:       optionalText(opts.TemporalRunID),
+	})
+	if err != nil {
+		return companysources.DownloadedFile{}, errors.Wrap(err, "upsert PRH XBRL discovery window")
+	}
+
+	totalResults, pagesDiscovered, statementsDiscovered, lastCompletedPage, err := discoverStatementArtifacts(ctx, opts, window.ID, sourceURL, registeredDateStart, registeredDateEnd, maxStatements)
+	if err != nil {
+		return companysources.DownloadedFile{}, err
+	}
+	if _, err := opts.Queries.CompleteFinlandPRHXBRLDiscoveryWindow(ctx, db.CompleteFinlandPRHXBRLDiscoveryWindowParams{
+		TotalResults:         totalResults,
+		PagesDiscovered:      pagesDiscovered,
+		StatementsDiscovered: statementsDiscovered,
+		LastCompletedPage:    lastCompletedPage,
+		ID:                   window.ID,
+	}); err != nil {
+		return companysources.DownloadedFile{}, errors.Wrap(err, "complete PRH XBRL discovery window")
+	}
+
+	rows, err := downloadClaimedStatementArtifacts(ctx, opts, sourceURL, maxStatements)
+	if err != nil {
+		return companysources.DownloadedFile{}, err
+	}
+
+	manifestPath, err := companysources.SafeRunRelativePath(opts.RunDir, manifestRelativePath)
+	if err != nil {
+		return companysources.DownloadedFile{}, err
+	}
+	written, err := writeStatementsManifest(manifestPath, rows)
+	if err != nil {
+		return companysources.DownloadedFile{}, err
+	}
+	return companysources.DownloadedFile{
+		FileKey:            "statements_manifest",
+		Kind:               "source_manifest",
+		RunDir:             opts.RunDir,
+		Path:               written.SourceFilePath,
+		RelativePath:       manifestRelativePath,
+		ContentSHA256:      written.ContentSHA256,
+		ContentLengthBytes: written.ContentLengthBytes,
+		RecordsWritten:     written.RecordsWritten,
+	}, nil
+}
+
+func discoverStatementArtifacts(ctx context.Context, opts DownloadOptions, windowID uuid.UUID, sourceURL string, registeredDateStart string, registeredDateEnd string, maxStatements int32) (int64, int32, int64, int32, error) {
+	var totalResults int64
+	var pagesDiscovered int32
+	var statementsDiscovered int64
+	var lastCompletedPage int32
+
+	for pageNumber := 1; ; pageNumber++ {
+		page, err := downloadDiscoveryPage(ctx, opts.HTTPClient, sourceURL, registeredDateStart, registeredDateEnd, pageNumber, opts.UserAgentRequired)
+		if err != nil {
+			return 0, 0, 0, 0, errors.Wrapf(err, "download PRH XBRL discovery page %d", pageNumber)
+		}
+		if page.TotalResults > 0 {
+			totalResults = page.TotalResults
+		}
+		pagesDiscovered++
+		lastCompletedPage = int32(pageNumber)
+
+		for _, statement := range page.Financials {
+			if statementsDiscovered >= int64(maxStatements) {
+				break
+			}
+			businessID := strings.TrimSpace(statement.BusinessID)
+			if businessID == "" {
+				return 0, 0, 0, 0, errors.New("PRH XBRL statement business id is required")
+			}
+			financialDateValue := strings.TrimSpace(statement.FinancialDate)
+			financialDate, err := parseDateToPgtype(financialDateValue)
+			if err != nil {
+				return 0, 0, 0, 0, err
+			}
+			registrationDate, err := nullableDate(statement.RegistrationDate)
+			if err != nil {
+				return 0, 0, 0, 0, err
+			}
+			statementURL, err := buildFinancialStatementURL(sourceURL, businessID, financialDateValue)
+			if err != nil {
+				return 0, 0, 0, 0, err
+			}
+			if _, err := opts.Queries.UpsertFinlandPRHXBRLStatementArtifact(ctx, db.UpsertFinlandPRHXBRLStatementArtifactParams{
+				SourceID:             opts.SourceID,
+				BusinessID:           businessID,
+				FinancialDate:        financialDate,
+				RegistrationDate:     registrationDate,
+				SourceUrl:            statementURL,
+				FirstDiscoveredRunID: pgUUID(opts.ActionRunID),
+				LatestActionRunID:    pgUUID(opts.ActionRunID),
+			}); err != nil {
+				return 0, 0, 0, 0, errors.Wrap(err, "upsert PRH XBRL statement artifact")
+			}
+			statementsDiscovered++
+		}
+
+		if _, err := opts.Queries.UpdateFinlandPRHXBRLDiscoveryProgress(ctx, db.UpdateFinlandPRHXBRLDiscoveryProgressParams{
+			TotalResults:         totalResults,
+			PagesDiscovered:      pagesDiscovered,
+			StatementsDiscovered: statementsDiscovered,
+			LastCompletedPage:    lastCompletedPage,
+			ID:                   windowID,
+		}); err != nil {
+			return 0, 0, 0, 0, errors.Wrap(err, "update PRH XBRL discovery progress")
+		}
+
+		if len(page.Financials) == 0 {
+			break
+		}
+		if totalResults > 0 && statementsDiscovered >= totalResults {
+			break
+		}
+		if statementsDiscovered >= int64(maxStatements) && pagesDiscovered > 0 {
+			break
+		}
+	}
+	return totalResults, pagesDiscovered, statementsDiscovered, lastCompletedPage, nil
+}
+
+func downloadClaimedStatementArtifacts(ctx context.Context, opts DownloadOptions, sourceURL string, maxStatements int32) ([]ManifestStatement, error) {
+	artifacts, err := opts.Queries.ListFinlandPRHXBRLStatementArtifactsToDownload(ctx, db.ListFinlandPRHXBRLStatementArtifactsToDownloadParams{
+		SourceID:    opts.SourceID,
+		RetryFailed: opts.RetryFailed,
+		RowLimit:    maxStatements,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "list PRH XBRL statement artifacts to download")
+	}
+
+	rows := make([]ManifestStatement, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		claimed, err := opts.Queries.MarkFinlandPRHXBRLStatementArtifactDownloading(ctx, db.MarkFinlandPRHXBRLStatementArtifactDownloadingParams{
+			LatestActionRunID: pgUUID(opts.ActionRunID),
+			ID:                artifact.ID,
+			SourceID:          opts.SourceID,
+			RetryFailed:       opts.RetryFailed,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			return nil, errors.Wrap(err, "claim PRH XBRL statement artifact")
+		}
+
+		row := manifestRowFromArtifact(claimed)
+		financialDate := pgDateString(claimed.FinancialDate)
+		xml, err := downloadStatementXML(ctx, opts.HTTPClient, sourceURL, claimed.BusinessID, financialDate, opts.RunDir, opts.UserAgentRequired)
+		if err != nil {
+			failed, markErr := opts.Queries.MarkFinlandPRHXBRLStatementArtifactFailed(ctx, db.MarkFinlandPRHXBRLStatementArtifactFailedParams{
+				LatestActionRunID: pgUUID(opts.ActionRunID),
+				LastErrorMessage:  err.Error(),
+				ID:                claimed.ID,
+			})
+			if markErr != nil {
+				return nil, errors.WithSecondaryError(errors.Wrap(markErr, "mark PRH XBRL statement artifact failed"), err)
+			}
+			row.DownloadStatus = failed.DownloadStatus
+			row.ErrorMessage = err.Error()
+			rows = append(rows, row)
+			continue
+		}
+
+		succeeded, err := opts.Queries.MarkFinlandPRHXBRLStatementArtifactSucceeded(ctx, db.MarkFinlandPRHXBRLStatementArtifactSucceededParams{
+			XmlPath:           xml.Path,
+			XmlSha256:         xml.SHA256,
+			XmlSizeBytes:      xml.SizeBytes,
+			LatestActionRunID: pgUUID(opts.ActionRunID),
+			ID:                claimed.ID,
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "mark PRH XBRL statement artifact succeeded")
+		}
+		row.SourceURL = xml.SourceURL
+		row.DownloadStatus = succeeded.DownloadStatus
+		row.XMLPath = xml.Path
+		row.XMLSHA256 = xml.SHA256
+		row.XMLSizeBytes = xml.SizeBytes
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func parseDateToPgtype(value string) (pgtype.Date, error) {
+	parsed, err := time.Parse(time.DateOnly, strings.TrimSpace(value))
+	if err != nil {
+		return pgtype.Date{}, errors.Wrap(err, "parse PRH XBRL date")
+	}
+	return pgtype.Date{Time: parsed, Valid: true}, nil
+}
+
+func nullableDate(value string) (pgtype.Date, error) {
+	if strings.TrimSpace(value) == "" {
+		return pgtype.Date{}, nil
+	}
+	return parseDateToPgtype(value)
+}
+
+func pgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+func optionalText(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func pgDateString(value pgtype.Date) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.Time.Format(time.DateOnly)
+}
+
+func manifestRowFromArtifact(artifact db.FinancialXbrlFinlandPrhXbrlStatementArtifact) ManifestStatement {
+	return ManifestStatement{
+		BusinessID:       artifact.BusinessID,
+		FinancialDate:    pgDateString(artifact.FinancialDate),
+		RegistrationDate: pgDateString(artifact.RegistrationDate),
+		SourceURL:        artifact.SourceUrl,
+		DownloadStatus:   artifact.DownloadStatus,
+	}
 }
 
 func downloadStatementXML(ctx context.Context, client *http.Client, baseURL string, businessID string, financialDate string, runDir string, userAgentRequired bool) (StatementXMLDownload, error) {

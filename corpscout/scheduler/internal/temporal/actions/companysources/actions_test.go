@@ -97,6 +97,40 @@ func TestValidateDownloadedFileRequiresExpectedPath(t *testing.T) {
 	require.Contains(t, err.Error(), "does not match expected path")
 }
 
+func TestValidatePRHXBRLWindowInputRequiresDates(t *testing.T) {
+	_, err := validatePRHXBRLWindowInput(DownloadSourceFileInput{
+		SourceName: "finland_prh_xbrl",
+		FileKey:    "statements_manifest",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "registered_date_start is required")
+}
+
+func TestValidatePRHXBRLWindowInputRejectsInvertedDates(t *testing.T) {
+	_, err := validatePRHXBRLWindowInput(DownloadSourceFileInput{
+		SourceName:          "finland_prh_xbrl",
+		FileKey:             "statements_manifest",
+		RegisteredDateStart: "2026-06-03",
+		RegisteredDateEnd:   "2026-06-01",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "registered_date_start must be on or before registered_date_end")
+}
+
+func TestValidatePRHXBRLWindowInputDefaultsMaxStatements(t *testing.T) {
+	got, err := validatePRHXBRLWindowInput(DownloadSourceFileInput{
+		SourceName:          "finland_prh_xbrl",
+		FileKey:             "statements_manifest",
+		RegisteredDateStart: "2026-06-01",
+		RegisteredDateEnd:   "2026-06-03",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int32(50), got.MaxStatements)
+}
+
 func TestDeterministicSourceFileRunIDIsStable(t *testing.T) {
 	actionRunID := uuid.New()
 	sourceFileID := uuid.New()

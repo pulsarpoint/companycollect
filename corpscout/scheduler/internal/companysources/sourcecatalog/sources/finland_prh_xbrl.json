@@ -37,7 +37,7 @@
       "display_name": "Download statements",
       "temporal_workflow_type": "CompanySourceDownloadWorkflow",
       "temporal_task_queue": "corpscout-company-sources",
-      "enabled": false,
+      "enabled": true,
       "config": {}
     }
   ]

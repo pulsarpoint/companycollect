@@ -3,6 +3,7 @@ package companysources
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"go.temporal.io/sdk/activity"
 
 	sourcecore "github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
+	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/finland/prhxbrl"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/finland/prhytj"
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
 	sourceworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/companysources"
@@ -172,17 +174,47 @@ func (a *Actions) DownloadSourceFileActivity(ctx context.Context, input Download
 		return DownloadSourceFileResult{}, err
 	}
 	runDir := filepath.Join(a.sourceRunsRoot, fileRun.Country, fileRun.Source, "files", fileRun.FileKey, fileDir)
-	downloaded, err := sourcecore.DownloadFile(ctx, a.registry, sourcecore.DownloadFileRequest{
-		Country:           fileRun.Country,
-		Source:            fileRun.Source,
-		FileKey:           fileRun.FileKey,
-		FileKind:          fileRun.Kind,
-		RunDir:            runDir,
-		RelativePath:      fileRun.RelativePath,
-		SourceURL:         fileRun.SourceUrl,
-		UserAgentRequired: fileRun.UserAgentRequired,
-		Config:            decodeObject(fileRun.Config),
-	})
+
+	var downloaded sourcecore.DownloadedFile
+	if fileRun.SourceName == prhxbrl.SourceName && fileRun.FileKey == "statements_manifest" {
+		var windowInput prhxbrlWindowInput
+		windowInput, err = validatePRHXBRLWindowInput(input)
+		if err == nil {
+			parentActionRunID, parseErr := uuid.Parse(input.ParentActionRunID)
+			if parseErr != nil {
+				err = errors.Wrap(parseErr, "parse parent action run id")
+			} else {
+				downloaded, err = prhxbrl.Download(ctx, prhxbrl.DownloadOptions{
+					Queries:              queries,
+					HTTPClient:           http.DefaultClient,
+					SourceID:             fileRun.SourceID,
+					ActionRunID:          parentActionRunID,
+					TemporalWorkflowID:   workflowID,
+					TemporalRunID:        runID,
+					RunDir:               runDir,
+					ManifestRelativePath: fileRun.RelativePath,
+					SourceURL:            fileRun.SourceUrl,
+					UserAgentRequired:    fileRun.UserAgentRequired,
+					RegisteredDateStart:  windowInput.RegisteredDateStart,
+					RegisteredDateEnd:    windowInput.RegisteredDateEnd,
+					MaxStatements:        windowInput.MaxStatements,
+					RetryFailed:          windowInput.RetryFailed,
+				})
+			}
+		}
+	} else {
+		downloaded, err = sourcecore.DownloadFile(ctx, a.registry, sourcecore.DownloadFileRequest{
+			Country:           fileRun.Country,
+			Source:            fileRun.Source,
+			FileKey:           fileRun.FileKey,
+			FileKind:          fileRun.Kind,
+			RunDir:            runDir,
+			RelativePath:      fileRun.RelativePath,
+			SourceURL:         fileRun.SourceUrl,
+			UserAgentRequired: fileRun.UserAgentRequired,
+			Config:            decodeObject(fileRun.Config),
+		})
+	}
 	if err != nil {
 		finishErr := a.finishFileRunFailed(fileRun.ID, err)
 		return DownloadSourceFileResult{FileRunID: input.FileRunID, SourceName: input.SourceName, FileKey: input.FileKey}, combineWithFinishError(errors.Wrap(err, "download source file"), finishErr)
@@ -653,6 +685,48 @@ func validateDownloadedFile(downloaded sourcecore.DownloadedFile, runDir string,
 		return errors.Errorf("downloaded source file path %q is a directory", downloaded.Path)
 	}
 	return nil
+}
+
+type prhxbrlWindowInput struct {
+	RegisteredDateStart string
+	RegisteredDateEnd   string
+	MaxStatements       int32
+	RetryFailed         bool
+}
+
+func validatePRHXBRLWindowInput(input DownloadSourceFileInput) (prhxbrlWindowInput, error) {
+	start := strings.TrimSpace(input.RegisteredDateStart)
+	end := strings.TrimSpace(input.RegisteredDateEnd)
+	if start == "" {
+		return prhxbrlWindowInput{}, errors.New("registered_date_start is required")
+	}
+	if end == "" {
+		return prhxbrlWindowInput{}, errors.New("registered_date_end is required")
+	}
+	startDate, err := time.Parse(time.DateOnly, start)
+	if err != nil {
+		return prhxbrlWindowInput{}, errors.Wrap(err, "parse registered_date_start")
+	}
+	endDate, err := time.Parse(time.DateOnly, end)
+	if err != nil {
+		return prhxbrlWindowInput{}, errors.Wrap(err, "parse registered_date_end")
+	}
+	if startDate.After(endDate) {
+		return prhxbrlWindowInput{}, errors.New("registered_date_start must be on or before registered_date_end")
+	}
+	maxStatements := input.MaxStatements
+	if maxStatements <= 0 {
+		maxStatements = 50
+	}
+	if maxStatements > 1000 {
+		return prhxbrlWindowInput{}, errors.New("max_statements must be 1000 or less")
+	}
+	return prhxbrlWindowInput{
+		RegisteredDateStart: start,
+		RegisteredDateEnd:   end,
+		MaxStatements:       maxStatements,
+		RetryFailed:         input.RetryFailed,
+	}, nil
 }
 
 func selectedImportRunDir(files []sourcecore.SelectedSourceFile) (string, error) {

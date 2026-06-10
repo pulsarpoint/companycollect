@@ -79,5 +79,5 @@ func TestSyncUpsertsAndPrunesCatalogSources(t *testing.T) {
 	require.True(t, foundPRHXBRLAction)
 	require.Equal(t, "pull_source", prhXBRLAction.Action)
 	require.Equal(t, "CompanySourceDownloadWorkflow", prhXBRLAction.TemporalWorkflowType)
-	require.False(t, prhXBRLAction.Enabled)
+	require.True(t, prhXBRLAction.Enabled)
 }
