@@ -9,6 +9,7 @@ import type {
   DataSource,
   SourceExplorerCompany,
   SourceExplorerFormFilterOption,
+  SourceExplorerIndustryFilterOption,
 } from "~/types/api";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
@@ -39,6 +40,19 @@ function countSummary(company: SourceExplorerCompany): string {
   ].join(" / ");
 }
 
+function businessLineCode(company: SourceExplorerCompany): string {
+  const codeSet = company.main_business_line_code_set;
+  const code = company.main_business_line_code;
+  if (codeSet && code) return `${codeSet} ${code}`;
+  return codeSet || code || "-";
+}
+
+function naceLine(company: SourceExplorerCompany): string | undefined {
+  if (!company.nace_code) return undefined;
+  if (company.nace_title_en) return `${company.nace_code} ${company.nace_title_en}`;
+  return company.nace_code;
+}
+
 function paramList(values: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -64,6 +78,9 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
   const [searchParams, setSearchParams] = useSearchParams();
   const [companies, setCompanies] = useState<SourceExplorerCompany[]>([]);
   const [formOptions, setFormOptions] = useState<SourceExplorerFormFilterOption[]>([]);
+  const [industryOptions, setIndustryOptions] = useState<
+    SourceExplorerIndustryFilterOption[]
+  >([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingFilters, setLoadingFilters] = useState(true);
@@ -78,10 +95,22 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
     () => paramList(searchParams.getAll("form")),
     [searchParams],
   );
+  const industryNACE = useMemo(
+    () => paramList(searchParams.getAll("industry_nace")),
+    [searchParams],
+  );
+  const sourceIndustries = useMemo(
+    () => paramList(searchParams.getAll("source_industry")),
+    [searchParams],
+  );
   const sortKey = searchParams.get("sort") ?? "name";
   const sortDir = (searchParams.get("dir") ?? "asc") as "asc" | "desc";
   const [searchInput, setSearchInput] = useState(q);
-  const activeFilterCount = (activeOnly ? 1 : 0) + formCodes.length;
+  const activeFilterCount =
+    (activeOnly ? 1 : 0) +
+    formCodes.length +
+    industryNACE.length +
+    sourceIndustries.length;
 
   const sorting: SortingState = useMemo(
     () => [{ id: sortKey, desc: sortDir === "desc" }],
@@ -138,13 +167,31 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
         header: "Business Line",
         enableSorting: true,
         cell: ({ row }) => (
-          <div className="flex min-w-72 flex-col gap-1">
+          <div className="flex min-w-72 flex-col gap-1.5">
             <span className="text-sm">
               {emptyText(row.original.main_business_line_description_en)}
             </span>
-            <span className="font-mono text-xs text-muted-foreground">
-              {emptyText(row.original.main_business_line_code)}
-            </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant="outline" className="font-mono">
+                {businessLineCode(row.original)}
+              </Badge>
+              {row.original.nace_mapping_status ? (
+                <Badge
+                  variant={
+                    row.original.nace_mapping_status === "mapped"
+                      ? "secondary"
+                      : "outline"
+                  }
+                >
+                  {row.original.nace_mapping_status}
+                </Badge>
+              ) : null}
+            </div>
+            {naceLine(row.original) ? (
+              <span className="text-xs text-muted-foreground">
+                NACE {naceLine(row.original)}
+              </span>
+            ) : null}
           </div>
         ),
       },
@@ -210,6 +257,8 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
         q: q || undefined,
         active: activeOnly ? "true" : undefined,
         form: formCodes,
+        industry_nace: industryNACE,
+        source_industry: sourceIndustries,
         sort: sortKey,
         dir: sortDir,
       });
@@ -222,7 +271,17 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
     } finally {
       setLoading(false);
     }
-  }, [activeOnly, formCodes, page, q, sortDir, sortKey, source.name]);
+  }, [
+    activeOnly,
+    formCodes,
+    industryNACE,
+    page,
+    q,
+    sortDir,
+    sortKey,
+    source.name,
+    sourceIndustries,
+  ]);
 
   useEffect(() => {
     void load();
@@ -235,11 +294,17 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
     api
       .getSourceExplorerFilterOptions(source.name)
       .then((res) => {
-        if (!ignore) setFormOptions(Array.isArray(res.forms) ? res.forms : []);
+        if (!ignore) {
+          setFormOptions(Array.isArray(res.forms) ? res.forms : []);
+          setIndustryOptions(
+            Array.isArray(res.industry_options) ? res.industry_options : [],
+          );
+        }
       })
       .catch((err) => {
         if (!ignore) {
           setFormOptions([]);
+          setIndustryOptions([]);
           setFilterError(errorMessage(err, "Failed to load filter options."));
         }
       })
@@ -275,15 +340,24 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
     next.delete("q");
     next.delete("active");
     next.delete("form");
+    next.delete("industry_nace");
+    next.delete("source_industry");
     next.delete("page");
     setSearchParams(next, { replace: true });
   }
 
-  function applyFilters(value: { activeOnly: boolean; formCodes: string[] }) {
+  function applyFilters(value: {
+    activeOnly: boolean;
+    formCodes: string[];
+    industryNACE: string[];
+    sourceIndustries: string[];
+  }) {
     const next = new URLSearchParams(searchParams);
     if (value.activeOnly) next.set("active", "true");
     else next.delete("active");
     setRepeatedParam(next, "form", value.formCodes);
+    setRepeatedParam(next, "industry_nace", value.industryNACE);
+    setRepeatedParam(next, "source_industry", value.sourceIndustries);
     next.delete("page");
     setSearchParams(next, { replace: true });
   }
@@ -319,7 +393,11 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
             <Badge variant="outline">{activeFilterCount}</Badge>
           ) : null}
         </Button>
-        {(q || activeOnly || formCodes.length > 0) ? (
+        {(q ||
+          activeOnly ||
+          formCodes.length > 0 ||
+          industryNACE.length > 0 ||
+          sourceIndustries.length > 0) ? (
           <Button size="sm" variant="ghost" onClick={clearFilters}>
             Clear
           </Button>
@@ -353,7 +431,8 @@ export function FinlandPRHYTJExplorerTab({ source }: FinlandPRHYTJExplorerTabPro
         open={filtersOpen}
         onOpenChange={setFiltersOpen}
         forms={formOptions}
-        value={{ activeOnly, formCodes }}
+        industries={industryOptions}
+        value={{ activeOnly, formCodes, industryNACE, sourceIndustries }}
         loading={loadingFilters}
         error={filterError}
         onApply={applyFilters}
