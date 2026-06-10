@@ -36,3 +36,31 @@ func TestDownloadWritesSocrataArrayAsNDJSON(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, strings.Count(string(body), "\n"))
 }
+
+func TestDownloadRejectsUnsafeNDJSONRelativePath(t *testing.T) {
+	runDir := t.TempDir()
+	outsidePath := filepath.Join(filepath.Dir(runDir), "outside.ndjson")
+
+	_, err := Source{}.DownloadFile(context.Background(), companysources.DownloadFileOptions{
+		FileKind:     "source_snapshot",
+		RunDir:       runDir,
+		RelativePath: "../outside.ndjson",
+		SourceURL:    "https://example.test/source.json",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "outside run dir")
+	require.NoFileExists(t, outsidePath)
+}
+
+func TestDownloadRejectsUnsupportedFileKind(t *testing.T) {
+	_, err := Source{}.DownloadFile(context.Background(), companysources.DownloadFileOptions{
+		FileKind:     "code_list",
+		RunDir:       t.TempDir(),
+		RelativePath: "source.ndjson",
+		SourceURL:    "https://example.test/source.json",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported Colorado entities file kind")
+}

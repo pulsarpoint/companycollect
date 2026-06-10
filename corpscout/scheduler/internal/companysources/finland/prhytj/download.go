@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"path/filepath"
 
 	"github.com/cockroachdb/errors"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
@@ -27,6 +26,10 @@ func downloadSourceSnapshot(ctx context.Context, opts companysources.DownloadFil
 	if relativePath == "" {
 		relativePath = "source.ndjson"
 	}
+	path, err := companysources.SafeRunRelativePath(opts.RunDir, relativePath)
+	if err != nil {
+		return companysources.DownloadedFile{}, err
+	}
 	sourceURL := opts.SourceURL
 	if sourceURL == "" {
 		sourceURL = DefaultBaseURL
@@ -45,7 +48,6 @@ func downloadSourceSnapshot(ctx context.Context, opts companysources.DownloadFil
 		}
 		records = append(records, raw)
 	}
-	path := filepath.Join(opts.RunDir, relativePath)
 	written, err := companysources.WriteRawMessagesAsNDJSON(path, records)
 	if err != nil {
 		return companysources.DownloadedFile{}, err

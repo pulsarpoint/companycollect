@@ -38,17 +38,10 @@ func DownloadDirectFile(ctx context.Context, client *http.Client, req DirectFile
 	if req.URL == "" {
 		return FileWriteResult{}, errors.New("source url is required")
 	}
-	if req.RunDir == "" {
-		return FileWriteResult{}, errors.New("run dir is required")
+	path, err := SafeRunRelativePath(req.RunDir, req.RelativePath)
+	if err != nil {
+		return FileWriteResult{}, err
 	}
-	if req.RelativePath == "" {
-		return FileWriteResult{}, errors.New("relative path is required")
-	}
-	cleanRelativePath := filepath.Clean(req.RelativePath)
-	if filepath.IsAbs(req.RelativePath) || cleanRelativePath == ".." || strings.HasPrefix(cleanRelativePath, ".."+string(filepath.Separator)) {
-		return FileWriteResult{}, errors.Errorf("relative path %q is outside run dir", req.RelativePath)
-	}
-	path := filepath.Join(req.RunDir, req.RelativePath)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return FileWriteResult{}, errors.Wrap(err, "create source file directory")
 	}
@@ -88,6 +81,20 @@ func DownloadDirectFile(ctx context.Context, client *http.Client, req DirectFile
 		ContentLengthBytes: written,
 		RecordsWritten:     0,
 	}, nil
+}
+
+func SafeRunRelativePath(runDir string, relativePath string) (string, error) {
+	if runDir == "" {
+		return "", errors.New("run dir is required")
+	}
+	if relativePath == "" {
+		return "", errors.New("relative path is required")
+	}
+	cleanRelativePath := filepath.Clean(relativePath)
+	if filepath.IsAbs(relativePath) || cleanRelativePath == ".." || strings.HasPrefix(cleanRelativePath, ".."+string(filepath.Separator)) {
+		return "", errors.Errorf("relative path %q is outside run dir", relativePath)
+	}
+	return filepath.Join(runDir, cleanRelativePath), nil
 }
 
 func DownloadJSONArray(ctx context.Context, client *http.Client, url string, userAgentRequired bool) ([]json.RawMessage, error) {

@@ -4,10 +4,14 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/cockroachdb/errors"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
 )
 
 func (Source) DownloadFile(ctx context.Context, opts companysources.DownloadFileOptions) (companysources.DownloadedFile, error) {
+	if opts.FileKind != "" && opts.FileKind != "source_snapshot" {
+		return companysources.DownloadedFile{}, errors.Errorf("unsupported SEC EDGAR file kind %q", opts.FileKind)
+	}
 	relativePath := opts.RelativePath
 	if relativePath == "" {
 		relativePath = "source.json"

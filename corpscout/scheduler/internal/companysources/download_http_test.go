@@ -37,6 +37,22 @@ func TestDownloadDirectFileWritesSourceFileAndHash(t *testing.T) {
 	require.JSONEq(t, `{"ok":true}`, string(body))
 }
 
+func TestDownloadDirectFileRejectsUnsafeRelativePath(t *testing.T) {
+	runDir := t.TempDir()
+	for _, relativePath := range []string{"../source.json", filepath.Join(t.TempDir(), "source.json")} {
+		t.Run(relativePath, func(t *testing.T) {
+			_, err := DownloadDirectFile(context.Background(), http.DefaultClient, DirectFileDownload{
+				URL:          "https://example.test/source.json",
+				RunDir:       runDir,
+				RelativePath: relativePath,
+			})
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "outside run dir")
+		})
+	}
+}
+
 func TestWriteJSONArrayAsNDJSONPreservesEachObject(t *testing.T) {
 	runDir := t.TempDir()
 	path := filepath.Join(runDir, "source.ndjson")
