@@ -6,6 +6,7 @@
 | avoindata.suomi.fi dataset `yritykset` | Open data catalog | Public (CKAN API) | JSON | CC-BY-4.0 | Daily | useful_secondary |
 | avoindata.suomi.fi dataset `prh-avoin-data` | Open data catalog | Public (CKAN API) | JSON | CC-BY-4.0 | Daily | useful_secondary |
 | PRH digital financial statements API | Official registry API | Public, no auth | JSON | CC-BY-4.0 | Daily | useful_secondary |
+| Virre financial statements | Official register document service | Paid; user or contract client | PDF/document | PRH terms | On demand | paid_fallback |
 | Legacy `full_prh_data.csv` dump | Portal resource | — | CSV | CC-BY-4.0 | was monthly | **unavailable (404)** |
 
 ## Primary endpoint
@@ -33,3 +34,28 @@ Full backfill ≈ `page=1 … 8191`.
   services counties, tax partnerships.
 - **Portal note:** old `avoindata.fi` redirects to `avoindata.suomi.fi`; human pages
   403 to bots — use the CKAN action API for metadata.
+
+## Financial statements
+
+The YTJ company endpoint does not include financial statement figures. Financials
+should be modeled as separate Finland sources:
+
+- `finland/prhxbrl` — free PRH digital financial statement API. Public, CC-BY-4.0,
+  structured IXBRL/XML. PRH states this covers only about 5% of all financial
+  statements.
+- `finland/virre_financial_statements` — paid Virre fallback for statement documents
+  outside the digital API subset.
+
+Current Virre prices checked on 2026-06-10:
+
+| Product | Selling price |
+|---|---:|
+| Financial statements search | free |
+| Electronic financial statement | EUR 4.02 / document |
+| Electronic financial statement, contract client | EUR 2.01 / document |
+| Contract client start-up fee | EUR 125.50 |
+| Contract client annual fee per user name | EUR 27.61 |
+| Contract client invoicing charge | EUR 8.16 |
+
+See `financials_and_virre_pricing.md` for endpoints, pricing details, break-even
+math, and implementation notes.

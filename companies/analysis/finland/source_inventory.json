@@ -84,18 +84,76 @@
     "organization": "PRH",
     "url": "https://avoindata.prh.fi/en",
     "bulk_download_url": null,
-    "api_base_url": "https://avoindata.prh.fi/",
-    "formats": ["json"],
+    "api_base_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3",
+    "formats": ["json", "xml", "ixbrl"],
     "license": "CC-BY-4.0",
     "access": "public",
     "requires_authentication": false,
     "requires_payment": false,
     "rate_limits": null,
-    "fields_observed": ["financial statements (not fetched in this pass)"],
+    "fields_observed": [
+      "financial statement periods by business ID",
+      "digital financial statement XML",
+      "financial statements by financial date",
+      "financial statements by registered date range"
+    ],
     "data_freshness": "daily",
     "downloaded_files": [],
     "status": "useful_secondary_source",
-    "notes": "Financials to enrich the base register. Endpoints not exhaustively tested in this investigation."
+    "recommended_source_key": "prhxbrl",
+    "recommended_registry_key": "finland/prhxbrl",
+    "example_requests": [
+      "https://avoindata.prh.fi/opendata-xbrl-api/v3/financials?businessId=0100130-4",
+      "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial?businessId=0100130-4&financialDate=2024-12-31",
+      "https://avoindata.prh.fi/opendata-xbrl-api/v3/all_financials?financialDate=2024-12-31",
+      "https://avoindata.prh.fi/opendata-xbrl-api/v3/all_financial_statements?registeredDateStart=2025-01-01&registeredDateEnd=2025-01-31"
+    ],
+    "coverage_notes": "PRH says only about 5% of all financial statements are filed digitally in IXBRL; use Virre as paid fallback for broader document coverage.",
+    "notes": "Financials to enrich the base register. Treat as a separate Finland source, not as part of finland/prhytj. Store raw XML/source metadata first, then normalize common facts after sampling."
+  },
+  {
+    "country": "Finland",
+    "country_slug": "finland",
+    "source_name": "Virre financial statements",
+    "source_type": "official_register_document_service",
+    "organization": "PRH",
+    "url": "https://www.prh.fi/en/companiesandorganisations/tietopalvelut/virre.html",
+    "bulk_download_url": null,
+    "api_base_url": null,
+    "formats": ["pdf", "document"],
+    "license": "PRH terms",
+    "access": "paid",
+    "requires_authentication": true,
+    "requires_payment": true,
+    "rate_limits": null,
+    "fields_observed": ["financial statement documents"],
+    "data_freshness": "on_demand",
+    "downloaded_files": [],
+    "status": "paid_fallback_source",
+    "recommended_source_key": "virre_financial_statements",
+    "recommended_registry_key": "finland/virre_financial_statements",
+    "pricing_checked_at": "2026-06-10",
+    "price_list_latest_update": "2026-01-01",
+    "pricing": {
+      "normal_user": {
+        "company_search_eur": 0.0,
+        "financial_statements_search_eur": 0.0,
+        "electronic_financial_statement_eur": 4.02
+      },
+      "contract_client": {
+        "startup_fee_eur": 125.50,
+        "annual_fee_per_username_eur": 27.61,
+        "invoicing_charge_eur": 8.16,
+        "electronic_financial_statement_eur": 2.01
+      },
+      "selections": {
+        "portal_basic_fee_eur": 150.60,
+        "ordered_basic_fee_eur": 301.20,
+        "per_information_unit_eur": 0.15
+      },
+      "vat_rate_percent_for_chargeable_electronic_products": 25.5
+    },
+    "notes": "Paid fallback for financial statement documents not available through the free PRH digital financial statement API. Documents can be incomplete. Do not use as the primary open-data ingestion path."
   },
   {
     "country": "Finland",

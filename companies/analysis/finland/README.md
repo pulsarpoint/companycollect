@@ -34,9 +34,15 @@ after the portal migrated to avoindata.suomi.fi — the API is the current canon
 - Private traders / sole proprietors (*toiminimi*) — not in open data
 - Email addresses and phone numbers
 - Municipalities, wellbeing services counties, tax partnerships
+- Financial statement figures — available through separate PRH XBRL/open-data and
+  Virre paid-document sources, not in the YTJ company endpoint
 
 ## Next action
 
 Implement a paginated crawler against `…/v3/companies?page=N` to fetch the full
 register (~8,191 pages), then a daily delta job. Map the nested JSON to the internal
 company model (see `schema_notes.md`). Add "Source: PRH, CC-BY 4.0" attribution.
+
+For financial statements, see `financials_and_virre_pricing.md`. The recommended
+path is to add `finland/prhxbrl` for the free PRH digital financial statement API,
+then keep Virre as a paid fallback for missing PDF/document coverage.
