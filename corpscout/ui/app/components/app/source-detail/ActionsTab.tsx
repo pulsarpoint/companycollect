@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download, FileDown, RefreshCw, Search, Upload } from "lucide-react";
+import { Link } from "react-router";
+import { Download, ExternalLink, FileDown, RefreshCw, Search, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 import { api, errorMessage } from "~/lib/api";
@@ -29,12 +30,16 @@ import {
   TableRow,
 } from "~/components/ui/table";
 
+const finlandPRHYTJSourceName = "finland_prhytj";
+const finlandPRHXBRLSourceName = "finland_prh_xbrl";
+
 interface ActionsTabProps {
   source: DataSource;
 }
 
 type TriggerKey =
   | "pull_source"
+  | "pull_financial_source"
   | "import_clickhouse"
   | "refresh_explorer_cache"
   | "map_industries_to_nace"
@@ -229,7 +234,8 @@ export function ActionsTab({ source }: ActionsTabProps) {
   const industryMappingEnabled =
     actionsByKey.get("map_industries_to_nace")?.enabled ?? false;
   const busy = Boolean(triggering || triggeringFileKey || importingFileKey);
-  const isFinlandPRHXBRL = source.name === "finland_prh_xbrl";
+  const isFinlandPRHYTJ = source.name === finlandPRHYTJSourceName;
+  const isFinlandPRHXBRL = source.name === finlandPRHXBRLSourceName;
   const prhDateWindowMissing =
     !prhRegisteredDateStart.trim() || !prhRegisteredDateEnd.trim();
   const downloadDisabled =
@@ -240,6 +246,82 @@ export function ActionsTab({ source }: ActionsTabProps) {
     !downloadEnabled ||
     !importEnabled ||
     (isFinlandPRHXBRL && prhDateWindowMissing);
+  const financialDownloadDisabled = busy || loading || prhDateWindowMissing;
+
+  function prhXBRLDownloadInput() {
+    return {
+      trigger: "manual",
+      registered_date_start: prhRegisteredDateStart.trim(),
+      registered_date_end: prhRegisteredDateEnd.trim(),
+      max_statements: clampMaxStatements(prhMaxStatements),
+      retry_failed: prhRetryFailed,
+    };
+  }
+
+  function renderPRHXBRLWindowFields(idPrefix: string) {
+    return (
+      <>
+        <div className="flex flex-col gap-1">
+          <Label
+            htmlFor={`${idPrefix}-registered-date-start`}
+            className="text-xs"
+          >
+            Registered from
+          </Label>
+          <Input
+            id={`${idPrefix}-registered-date-start`}
+            type="date"
+            value={prhRegisteredDateStart}
+            onChange={(event) => setPrhRegisteredDateStart(event.target.value)}
+            className="h-8 w-36"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label
+            htmlFor={`${idPrefix}-registered-date-end`}
+            className="text-xs"
+          >
+            Registered to
+          </Label>
+          <Input
+            id={`${idPrefix}-registered-date-end`}
+            type="date"
+            value={prhRegisteredDateEnd}
+            onChange={(event) => setPrhRegisteredDateEnd(event.target.value)}
+            className="h-8 w-36"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label
+            htmlFor={`${idPrefix}-max-statements`}
+            className="text-xs"
+          >
+            Max statements
+          </Label>
+          <Input
+            id={`${idPrefix}-max-statements`}
+            type="number"
+            min={1}
+            max={1000}
+            value={prhMaxStatements}
+            onChange={(event) => setPrhMaxStatements(event.target.value)}
+            className="h-8 w-28"
+          />
+        </div>
+        <label
+          htmlFor={`${idPrefix}-retry-failed`}
+          className="flex h-8 items-center gap-2 text-sm"
+        >
+          <Checkbox
+            id={`${idPrefix}-retry-failed`}
+            checked={prhRetryFailed}
+            onCheckedChange={(checked) => setPrhRetryFailed(checked === true)}
+          />
+          Retry failed
+        </label>
+      </>
+    );
+  }
 
   async function runAndRefresh(key: TriggerKey, runner: () => Promise<unknown>) {
     setTriggering(key);
@@ -264,13 +346,7 @@ export function ActionsTab({ source }: ActionsTabProps) {
   function triggerDownload() {
     if (isFinlandPRHXBRL) {
       void runAndRefresh("pull_source", () =>
-        api.triggerSourceAction(source.name, "pull_source", {
-          trigger: "manual",
-          registered_date_start: prhRegisteredDateStart.trim(),
-          registered_date_end: prhRegisteredDateEnd.trim(),
-          max_statements: clampMaxStatements(prhMaxStatements),
-          retry_failed: prhRetryFailed,
-        }),
+        api.triggerSourceAction(source.name, "pull_source", prhXBRLDownloadInput()),
       );
       return;
     }
@@ -293,12 +369,8 @@ export function ActionsTab({ source }: ActionsTabProps) {
     if (isFinlandPRHXBRL) {
       void runAndRefresh("sync", () =>
         api.triggerSourceSyncClickHouse(source.name, {
-          trigger: "manual",
+          ...prhXBRLDownloadInput(),
           batch_size: 1000,
-          registered_date_start: prhRegisteredDateStart.trim(),
-          registered_date_end: prhRegisteredDateEnd.trim(),
-          max_statements: clampMaxStatements(prhMaxStatements),
-          retry_failed: prhRetryFailed,
         }),
       );
       return;
@@ -309,6 +381,16 @@ export function ActionsTab({ source }: ActionsTabProps) {
         trigger: "manual",
         batch_size: 1000,
       }),
+    );
+  }
+
+  function triggerFinancialDownload() {
+    void runAndRefresh("pull_financial_source", () =>
+      api.triggerSourceAction(
+        finlandPRHXBRLSourceName,
+        "pull_source",
+        prhXBRLDownloadInput(),
+      ),
     );
   }
 
@@ -432,64 +514,7 @@ export function ActionsTab({ source }: ActionsTabProps) {
       <div className="flex flex-wrap items-center gap-2 border-b pb-4">
         {isFinlandPRHXBRL ? (
           <div className="flex flex-wrap items-end gap-2">
-            <div className="flex flex-col gap-1">
-              <Label
-                htmlFor="finland-prh-xbrl-registered-date-start"
-                className="text-xs"
-              >
-                Registered from
-              </Label>
-              <Input
-                id="finland-prh-xbrl-registered-date-start"
-                type="date"
-                value={prhRegisteredDateStart}
-                onChange={(event) => setPrhRegisteredDateStart(event.target.value)}
-                className="h-8 w-36"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label
-                htmlFor="finland-prh-xbrl-registered-date-end"
-                className="text-xs"
-              >
-                Registered to
-              </Label>
-              <Input
-                id="finland-prh-xbrl-registered-date-end"
-                type="date"
-                value={prhRegisteredDateEnd}
-                onChange={(event) => setPrhRegisteredDateEnd(event.target.value)}
-                className="h-8 w-36"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label
-                htmlFor="finland-prh-xbrl-max-statements"
-                className="text-xs"
-              >
-                Max statements
-              </Label>
-              <Input
-                id="finland-prh-xbrl-max-statements"
-                type="number"
-                min={1}
-                max={1000}
-                value={prhMaxStatements}
-                onChange={(event) => setPrhMaxStatements(event.target.value)}
-                className="h-8 w-28"
-              />
-            </div>
-            <label
-              htmlFor="finland-prh-xbrl-retry-failed"
-              className="flex h-8 items-center gap-2 text-sm"
-            >
-              <Checkbox
-                id="finland-prh-xbrl-retry-failed"
-                checked={prhRetryFailed}
-                onCheckedChange={(checked) => setPrhRetryFailed(checked === true)}
-              />
-              Retry failed
-            </label>
+            {renderPRHXBRLWindowFields("finland-prh-xbrl")}
           </div>
         ) : null}
         <Button
@@ -550,6 +575,29 @@ export function ActionsTab({ source }: ActionsTabProps) {
           <RefreshCw className="size-4" />
           Refresh
         </Button>
+        {isFinlandPRHYTJ ? (
+          <div className="flex w-full flex-wrap items-end gap-2 border-t pt-3">
+            <div className="flex h-8 items-center text-sm font-medium">
+              Financial statements
+            </div>
+            {renderPRHXBRLWindowFields("finland-prhytj-financial")}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={triggerFinancialDownload}
+              disabled={financialDownloadDisabled}
+            >
+              <Download className="size-4" />
+              Download financial data
+            </Button>
+            <Button size="sm" variant="ghost" asChild>
+              <Link to={`/sources/${finlandPRHXBRLSourceName}/actions`}>
+                <ExternalLink className="size-4" />
+                Financial runs
+              </Link>
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <section className="space-y-2">
