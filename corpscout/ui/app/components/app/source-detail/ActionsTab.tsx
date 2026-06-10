@@ -110,6 +110,12 @@ function resultValue(run: SourceActionRun): string {
   if (run.action === "refresh_explorer_cache") {
     return `${Number(run.result.rows ?? 0).toLocaleString()} rows`;
   }
+  if (run.action === "map_industries_to_nace") {
+    const rows = Number(run.result.rows ?? 0).toLocaleString();
+    const mapped = Number(run.result.mapped_rows ?? 0).toLocaleString();
+    const unmapped = Number(run.result.unmapped_rows ?? 0).toLocaleString();
+    return `${rows} rows / ${mapped} mapped / ${unmapped} unmapped`;
+  }
   return String(run.result.imported_rows ?? "-");
 }
 
