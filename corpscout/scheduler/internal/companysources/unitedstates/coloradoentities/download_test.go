@@ -41,6 +41,7 @@ func TestDownloadWritesAllSocrataPages(t *testing.T) {
 	var offsets []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "2", r.URL.Query().Get("$limit"))
+		require.Equal(t, "entityid", r.URL.Query().Get("$order"))
 		offset := r.URL.Query().Get("$offset")
 		offsets = append(offsets, offset)
 		switch offset {

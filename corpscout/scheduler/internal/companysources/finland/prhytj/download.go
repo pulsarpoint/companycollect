@@ -1,10 +1,16 @@
 package prhytj
 
 import (
+	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/cockroachdb/errors"
@@ -38,20 +44,7 @@ func downloadSourceSnapshot(ctx context.Context, opts companysources.DownloadFil
 		sourceURL = DefaultBaseURL
 	}
 
-	companies, err := downloadAllCompanyPages(ctx, sourceURL, opts.UserAgentRequired)
-	if err != nil {
-		return companysources.DownloadedFile{}, err
-	}
-
-	records := make([]json.RawMessage, 0, len(companies))
-	for _, company := range companies {
-		raw, err := json.Marshal(company)
-		if err != nil {
-			return companysources.DownloadedFile{}, errors.Wrap(err, "encode PRH YTJ company")
-		}
-		records = append(records, raw)
-	}
-	written, err := companysources.WriteRawMessagesAsNDJSON(path, records)
+	written, err := downloadAllCompanyPagesAsNDJSON(ctx, sourceURL, opts.UserAgentRequired, path)
 	if err != nil {
 		return companysources.DownloadedFile{}, err
 	}
@@ -67,32 +60,65 @@ func downloadSourceSnapshot(ctx context.Context, opts companysources.DownloadFil
 	}, nil
 }
 
-func downloadAllCompanyPages(ctx context.Context, sourceURL string, userAgentRequired bool) ([]CompanyRecord, error) {
-	var companies []CompanyRecord
+func downloadAllCompanyPagesAsNDJSON(ctx context.Context, sourceURL string, userAgentRequired bool, outputPath string) (companysources.FileWriteResult, error) {
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return companysources.FileWriteResult{}, errors.Wrap(err, "create PRH YTJ snapshot directory")
+	}
+	file, err := os.Create(outputPath)
+	if err != nil {
+		return companysources.FileWriteResult{}, errors.Wrap(err, "create PRH YTJ snapshot")
+	}
+	defer file.Close()
+
+	hasher := sha256.New()
+	writer := bufio.NewWriter(io.MultiWriter(file, hasher))
 	var totalResults *int64
+	var bytesWritten int64
+	var recordsWritten int64
 	for pageNumber := 1; ; pageNumber++ {
 		pageURL, err := companyPageURL(sourceURL, pageNumber)
 		if err != nil {
-			return nil, err
+			return companysources.FileWriteResult{}, err
 		}
-		page, err := downloadPage(ctx, http.DefaultClient, pageURL, userAgentRequired)
+		page, err := downloadRawPage(ctx, http.DefaultClient, pageURL, userAgentRequired)
 		if err != nil {
-			return nil, err
+			return companysources.FileWriteResult{}, err
 		}
 		if page.TotalResults != nil {
 			totalResults = page.TotalResults
 		}
-		companies = append(companies, page.Companies...)
-		if totalResults != nil && int64(len(companies)) >= *totalResults {
-			return companies, nil
+		for _, company := range page.Companies {
+			n, err := writer.Write(company)
+			if err != nil {
+				return companysources.FileWriteResult{}, errors.Wrap(err, "write PRH YTJ company")
+			}
+			bytesWritten += int64(n)
+			n, err = writer.WriteString("\n")
+			if err != nil {
+				return companysources.FileWriteResult{}, errors.Wrap(err, "write PRH YTJ newline")
+			}
+			bytesWritten += int64(n)
+			recordsWritten++
+		}
+		if totalResults != nil && recordsWritten >= *totalResults {
+			break
 		}
 		if len(page.Companies) == 0 {
-			return companies, nil
+			break
 		}
 		if totalResults == nil && len(page.Companies) < defaultCompaniesPageSize {
-			return companies, nil
+			break
 		}
 	}
+	if err := writer.Flush(); err != nil {
+		return companysources.FileWriteResult{}, errors.Wrap(err, "flush PRH YTJ snapshot")
+	}
+	return companysources.FileWriteResult{
+		SourceFilePath:     outputPath,
+		ContentSHA256:      hex.EncodeToString(hasher.Sum(nil)),
+		ContentLengthBytes: bytesWritten,
+		RecordsWritten:     recordsWritten,
+	}, nil
 }
 
 func companyPageURL(sourceURL string, pageNumber int) (string, error) {
@@ -189,6 +215,42 @@ func downloadPage(ctx context.Context, client *http.Client, sourceURL string, us
 	var page Page
 	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
 		return Page{}, errors.Wrap(err, "decode PRH YTJ page")
+	}
+	return page, nil
+}
+
+type rawPage struct {
+	TotalResults *int64            `json:"totalResults,omitempty"`
+	Companies    []json.RawMessage `json:"companies"`
+}
+
+func downloadRawPage(ctx context.Context, client *http.Client, sourceURL string, userAgentRequired bool) (rawPage, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	if sourceURL == "" {
+		return rawPage{}, errors.New("source url is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return rawPage{}, errors.Wrap(err, "create PRH YTJ download request")
+	}
+	if userAgentRequired {
+		req.Header.Set("User-Agent", companysources.DownloadUserAgent)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return rawPage{}, errors.Wrap(err, "download PRH YTJ page")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return rawPage{}, errors.Errorf("download PRH YTJ page: status %d", resp.StatusCode)
+	}
+
+	var page rawPage
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return rawPage{}, errors.Wrap(err, "decode PRH YTJ page")
 	}
 	return page, nil
 }

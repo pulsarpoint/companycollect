@@ -12,6 +12,7 @@ import (
 )
 
 const defaultSocrataPageLimit = 50000
+const defaultSocrataOrder = "entityid"
 
 func (Source) DownloadFile(ctx context.Context, opts companysources.DownloadFileOptions) (companysources.DownloadedFile, error) {
 	if opts.FileKind != "" && opts.FileKind != "source_snapshot" {
@@ -75,6 +76,7 @@ func socrataPageURL(sourceURL string, limit int, offset int) (string, error) {
 	query := parsed.Query()
 	query.Set("$limit", strconv.Itoa(limit))
 	query.Set("$offset", strconv.Itoa(offset))
+	query.Set("$order", defaultSocrataOrder)
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
 }

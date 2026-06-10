@@ -16,7 +16,7 @@ import (
 func TestDownloadWritesPRHCompaniesAsNDJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "1", r.URL.Query().Get("page"))
-		_, _ = w.Write([]byte(`{"totalResults":2,"companies":[{"businessId":{"type":"businessId","value":"1234567-8"}},{"businessId":{"type":"businessId","value":"2345678-9"}}]}`))
+		_, _ = w.Write([]byte(`{"totalResults":2,"companies":[{"businessId":{"type":"businessId","value":"1234567-8"},"names":[{"name":"One","source":"raw-name-source"}],"unknownRawField":"preserved"},{"businessId":{"type":"businessId","value":"2345678-9"}}]}`))
 	}))
 	defer server.Close()
 
@@ -36,6 +36,8 @@ func TestDownloadWritesPRHCompaniesAsNDJSON(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(runDir, "source.ndjson"))
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"1234567-8"`)
+	require.Contains(t, string(body), `"source":"raw-name-source"`)
+	require.Contains(t, string(body), `"unknownRawField":"preserved"`)
 	require.Equal(t, 2, strings.Count(string(body), "\n"))
 }
 

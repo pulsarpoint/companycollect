@@ -77,3 +77,41 @@ func TestDownloadAggregatesIRSRegionalCSVFiles(t *testing.T) {
 	require.Equal(t, int64(2), result.RecordsWritten)
 	require.Equal(t, []string{"/base/eo1.csv", "/base/eo2.csv", "/base/eo3.csv", "/base/eo4.csv"}, requested)
 }
+
+func TestDownloadFailsOnMalformedIRSCSVRow(t *testing.T) {
+	header := strings.Join(csvColumns, ",")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(header + "\n010011694,ORG ONE\n"))
+	}))
+	defer server.Close()
+
+	_, err := Source{}.DownloadFile(context.Background(), companysources.DownloadFileOptions{
+		FileKind:     "source_snapshot",
+		RunDir:       t.TempDir(),
+		SourceURL:    server.URL,
+		RelativePath: "source.ndjson",
+		Config:       map[string]any{"download_urls": []string{server.URL + "/eo1.csv"}},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "malformed IRS EO BMF csv row")
+}
+
+func TestDownloadFailsOnMissingIRSCSVHeaderColumn(t *testing.T) {
+	header := strings.Join(csvColumns[:len(csvColumns)-1], ",")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(header + "\n"))
+	}))
+	defer server.Close()
+
+	_, err := Source{}.DownloadFile(context.Background(), companysources.DownloadFileOptions{
+		FileKind:     "source_snapshot",
+		RunDir:       t.TempDir(),
+		SourceURL:    server.URL,
+		RelativePath: "source.ndjson",
+		Config:       map[string]any{"download_urls": []string{server.URL + "/eo1.csv"}},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing column")
+}

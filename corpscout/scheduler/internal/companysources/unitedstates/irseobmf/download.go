@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -67,17 +66,26 @@ func downloadEOFilesAsNDJSON(ctx context.Context, client *http.Client, sourceURL
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return companysources.FileWriteResult{}, errors.Wrap(err, "create IRS EO BMF snapshot directory")
 	}
-	file, err := os.Create(outputPath)
+	tempFile, err := os.CreateTemp(filepath.Dir(outputPath), "."+filepath.Base(outputPath)+".*.tmp")
 	if err != nil {
-		return companysources.FileWriteResult{}, errors.Wrap(err, "create IRS EO BMF snapshot")
+		return companysources.FileWriteResult{}, errors.Wrap(err, "create temporary IRS EO BMF snapshot")
 	}
-	defer file.Close()
+	tempPath := tempFile.Name()
+	tempClosed := false
+	keepTemp := false
+	defer func() {
+		if !tempClosed {
+			_ = tempFile.Close()
+		}
+		if !keepTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
 
 	hasher := sha256.New()
-	writer := bufio.NewWriter(io.MultiWriter(file, hasher))
+	writer := bufio.NewWriter(io.MultiWriter(tempFile, hasher))
 	var bytesWritten int64
 	var recordsWritten int64
-	var skippedRows int64
 
 	emit := func(record IrsEoBmfRecord) error {
 		line, err := json.Marshal(record)
@@ -99,18 +107,22 @@ func downloadEOFilesAsNDJSON(ctx context.Context, client *http.Client, sourceURL
 	}
 
 	for _, fileURL := range urls {
-		skipped, err := downloadEOFile(ctx, client, fileURL, userAgentRequired, emit)
-		if err != nil {
+		if err := downloadEOFile(ctx, client, fileURL, userAgentRequired, emit); err != nil {
 			return companysources.FileWriteResult{}, err
 		}
-		skippedRows += skipped
-	}
-	if skippedRows > 0 {
-		slog.WarnContext(ctx, "skipped malformed IRS EO BMF rows", "skipped_rows", skippedRows)
 	}
 	if err := writer.Flush(); err != nil {
 		return companysources.FileWriteResult{}, errors.Wrap(err, "flush IRS EO BMF snapshot")
 	}
+	if err := tempFile.Close(); err != nil {
+		tempClosed = true
+		return companysources.FileWriteResult{}, errors.Wrap(err, "close temporary IRS EO BMF snapshot")
+	}
+	tempClosed = true
+	if err := os.Rename(tempPath, outputPath); err != nil {
+		return companysources.FileWriteResult{}, errors.Wrap(err, "rename IRS EO BMF snapshot")
+	}
+	keepTemp = true
 	return companysources.FileWriteResult{
 		SourceFilePath:     outputPath,
 		ContentSHA256:      hex.EncodeToString(hasher.Sum(nil)),
@@ -137,29 +149,29 @@ func eoDownloadURLs(sourceURL string, config map[string]any) ([]string, error) {
 	return urls, nil
 }
 
-func downloadEOFile(ctx context.Context, client *http.Client, fileURL string, userAgentRequired bool, emit func(IrsEoBmfRecord) error) (int64, error) {
+func downloadEOFile(ctx context.Context, client *http.Client, fileURL string, userAgentRequired bool, emit func(IrsEoBmfRecord) error) error {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
 	if err != nil {
-		return 0, errors.Wrap(err, "create IRS EO BMF request")
+		return errors.Wrap(err, "create IRS EO BMF request")
 	}
 	if userAgentRequired {
 		req.Header.Set("User-Agent", companysources.DownloadUserAgent)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, errors.Wrap(err, "download IRS EO BMF file")
+		return errors.Wrap(err, "download IRS EO BMF file")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return 0, errors.Errorf("download IRS EO BMF file: status %d", resp.StatusCode)
+		return errors.Errorf("download IRS EO BMF file: status %d", resp.StatusCode)
 	}
 	return streamEOCSV(ctx, resp.Body, fileURL, emit)
 }
 
-func streamEOCSV(ctx context.Context, body io.Reader, fileURL string, emit func(IrsEoBmfRecord) error) (int64, error) {
+func streamEOCSV(ctx context.Context, body io.Reader, fileURL string, emit func(IrsEoBmfRecord) error) error {
 	reader := csv.NewReader(body)
 	reader.FieldsPerRecord = -1
 	reader.LazyQuotes = true
@@ -167,34 +179,35 @@ func streamEOCSV(ctx context.Context, body io.Reader, fileURL string, emit func(
 
 	var header []string
 	var index map[string]int
-	var skipped int64
 	var rowNumber int64
 	for {
 		if err := ctx.Err(); err != nil {
-			return skipped, errors.Wrap(err, "stream IRS EO BMF csv")
+			return errors.Wrap(err, "stream IRS EO BMF csv")
 		}
 		row, readErr := reader.Read()
 		if errors.Is(readErr, io.EOF) {
-			return skipped, nil
+			if header == nil {
+				return errors.Errorf("IRS EO BMF csv %s is missing header", fileURL)
+			}
+			return nil
 		}
 		if readErr != nil {
-			skipped++
-			slog.WarnContext(ctx, "parse IRS EO BMF csv row", "url", fileURL, "error", readErr)
-			continue
+			return errors.Wrapf(readErr, "parse IRS EO BMF csv row in %s", fileURL)
 		}
 		if header == nil {
 			header = append([]string(nil), row...)
 			index = buildColumnIndex(header)
+			if err := validateCSVHeader(index); err != nil {
+				return errors.Wrapf(err, "validate IRS EO BMF csv header in %s", fileURL)
+			}
 			continue
 		}
 		rowNumber++
 		if len(row) != len(header) {
-			skipped++
-			slog.WarnContext(ctx, "skip malformed IRS EO BMF csv row", "url", fileURL, "row", rowNumber, "fields", len(row), "want", len(header))
-			continue
+			return errors.Errorf("malformed IRS EO BMF csv row in %s: row %d has %d fields, want %d", fileURL, rowNumber, len(row), len(header))
 		}
 		if err := emit(recordFromRow(row, index)); err != nil {
-			return skipped, err
+			return err
 		}
 	}
 }
@@ -244,6 +257,15 @@ func buildColumnIndex(header []string) map[string]int {
 		index[strings.TrimSpace(name)] = i
 	}
 	return index
+}
+
+func validateCSVHeader(index map[string]int) error {
+	for _, column := range csvColumns {
+		if _, ok := index[column]; !ok {
+			return errors.Errorf("missing column %q", column)
+		}
+	}
+	return nil
 }
 
 func joinURLPath(baseURL string, filename string) (string, error) {
