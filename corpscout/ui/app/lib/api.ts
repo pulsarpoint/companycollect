@@ -39,6 +39,7 @@ import type {
   NACECodeListResponse,
   NACERevisionListResponse,
   StartWorkflowResponse,
+  SourceActionName,
   SourceActionListResponse,
   SourceActionRunListResponse,
   SourceFileListResponse,
@@ -492,7 +493,7 @@ export const api = {
 
   triggerSourceAction: (
     name: string,
-    action: "pull_source" | "import_clickhouse" | "refresh_explorer_cache",
+    action: SourceActionName,
     body: {
       trigger?: "manual";
       download_action_run_id?: string;
@@ -545,6 +546,8 @@ export const api = {
       active?: "true" | "false";
       lifecycle_status?: string;
       form?: string[];
+      industry_nace?: string[];
+      source_industry?: string[];
       sort?: string;
       dir?: "asc" | "desc";
     } = {},
@@ -557,6 +560,12 @@ export const api = {
     if (params.lifecycle_status) qs.set("lifecycle_status", params.lifecycle_status);
     for (const form of params.form ?? []) {
       if (form) qs.append("form", form);
+    }
+    for (const industryNace of params.industry_nace ?? []) {
+      if (industryNace) qs.append("industry_nace", industryNace);
+    }
+    for (const sourceIndustry of params.source_industry ?? []) {
+      if (sourceIndustry) qs.append("source_industry", sourceIndustry);
     }
     if (params.sort) qs.set("sort", params.sort);
     if (params.dir) qs.set("dir", params.dir);

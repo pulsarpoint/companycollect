@@ -247,11 +247,17 @@ export interface StartWorkflowResponse {
 
 export type SourceRunStatus = "running" | "succeeded" | "failed" | "cancelled";
 
+export type SourceActionName =
+  | "pull_source"
+  | "import_clickhouse"
+  | "refresh_explorer_cache"
+  | "map_industries_to_nace";
+
 export interface SourceAction {
   id: string;
   source_id: string;
   source_name: string;
-  action: "pull_source" | "import_clickhouse" | "refresh_explorer_cache";
+  action: SourceActionName;
   display_name: string;
   temporal_workflow_type: string;
   temporal_task_queue: string | null;
@@ -266,7 +272,7 @@ export interface SourceActionRun {
   source_id: string;
   source_name: string;
   action_id: string;
-  action: "pull_source" | "import_clickhouse" | "refresh_explorer_cache";
+  action: SourceActionName;
   status: SourceRunStatus;
   temporal_workflow_id: string | null;
   temporal_run_id: string | null;
@@ -371,7 +377,16 @@ export interface SourceExplorerCompany {
   lifecycle_status: string;
   is_active: boolean;
   main_business_line_code: string;
+  main_business_line_code_set: string;
   main_business_line_description_en: string;
+  nace_revision: string;
+  nace_code: string;
+  nace_section_code: string;
+  nace_division_code: string;
+  nace_group_code: string;
+  nace_class_code: string;
+  nace_title_en: string;
+  nace_mapping_status: string;
   company_form_description_en: string;
   website: string;
   name_history_count: number;
@@ -391,8 +406,24 @@ export interface SourceExplorerFormFilterOption {
   count: number;
 }
 
+export interface SourceExplorerIndustryFilterOption {
+  id: string;
+  kind: "nace" | "source_industry";
+  filter_value: string;
+  revision: string;
+  level_name: string;
+  code: string;
+  code_set: string;
+  title: string;
+  breadcrumb: string;
+  mapped_nace_code: string;
+  count: number;
+  search_text: string;
+}
+
 export interface SourceExplorerFilterOptionsResponse {
   forms: SourceExplorerFormFilterOption[];
+  industry_options: SourceExplorerIndustryFilterOption[];
 }
 
 export interface BrregCompanyTranslationRequest {

@@ -30,7 +30,12 @@ interface ActionsTabProps {
   source: DataSource;
 }
 
-type TriggerKey = "pull_source" | "import_clickhouse" | "refresh_explorer_cache" | "sync";
+type TriggerKey =
+  | "pull_source"
+  | "import_clickhouse"
+  | "refresh_explorer_cache"
+  | "map_industries_to_nace"
+  | "sync";
 
 async function loadSourceActionData(sourceName: string, selectedFileKey?: string) {
   const [loadedActions, loadedRuns, loadedFiles] = await Promise.all([
@@ -80,6 +85,8 @@ function actionLabel(action: SourceAction["action"]): string {
       return "Import";
     case "refresh_explorer_cache":
       return "Explorer cache";
+    case "map_industries_to_nace":
+      return "Map industries";
   }
 }
 
@@ -200,6 +207,8 @@ export function ActionsTab({ source }: ActionsTabProps) {
   const importEnabled = actionsByKey.get("import_clickhouse")?.enabled ?? false;
   const explorerRefreshEnabled =
     actionsByKey.get("refresh_explorer_cache")?.enabled ?? false;
+  const industryMappingEnabled =
+    actionsByKey.get("map_industries_to_nace")?.enabled ?? false;
   const busy = Boolean(triggering || triggeringFileKey || importingFileKey);
 
   async function runAndRefresh(key: TriggerKey, runner: () => Promise<unknown>) {
@@ -249,6 +258,14 @@ export function ActionsTab({ source }: ActionsTabProps) {
   function triggerExplorerRefresh() {
     void runAndRefresh("refresh_explorer_cache", () =>
       api.triggerSourceAction(source.name, "refresh_explorer_cache", {
+        trigger: "manual",
+      }),
+    );
+  }
+
+  function triggerIndustryMapping() {
+    void runAndRefresh("map_industries_to_nace", () =>
+      api.triggerSourceAction(source.name, "map_industries_to_nace", {
         trigger: "manual",
       }),
     );
@@ -391,6 +408,17 @@ export function ActionsTab({ source }: ActionsTabProps) {
           >
             <RefreshCw className="size-4" />
             Refresh explorer
+          </Button>
+        ) : null}
+        {actionsByKey.has("map_industries_to_nace") ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={triggerIndustryMapping}
+            disabled={busy || loading || !industryMappingEnabled}
+          >
+            <RefreshCw className="size-4" />
+            Map industries
           </Button>
         ) : null}
         <Button
