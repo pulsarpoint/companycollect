@@ -193,6 +193,7 @@ export function ActionsTab({ source }: ActionsTabProps) {
   const [checkingRunID, setCheckingRunID] = useState<string>();
   const [temporalStatuses, setTemporalStatuses] = useState<Record<string, SourceRunTemporalStatus>>({});
   const [error, setError] = useState<string>();
+  const [xbrlSheetMode, setXBRLSheetMode] = useState<"download" | "sync">();
   const [financialSheetOpen, setFinancialSheetOpen] = useState(false);
   const [prhRegisteredDateStart, setPrhRegisteredDateStart] = useState("");
   const [prhRegisteredDateEnd, setPrhRegisteredDateEnd] = useState("");
@@ -291,14 +292,12 @@ export function ActionsTab({ source }: ActionsTabProps) {
   const busy = Boolean(triggering || triggeringFileKey || importingFileKey);
   const prhDateWindowMissing =
     !prhRegisteredDateStart.trim() || !prhRegisteredDateEnd.trim();
-  const downloadDisabled =
-    busy || loading || !downloadEnabled || (isFinlandPRHXBRL && prhDateWindowMissing);
-  const syncDisabled =
-    busy ||
-    loading ||
-    !downloadEnabled ||
-    !importEnabled ||
-    (isFinlandPRHXBRL && prhDateWindowMissing);
+  const downloadDisabled = busy || loading || !downloadEnabled;
+  const syncDisabled = busy || loading || !downloadEnabled || !importEnabled;
+  const xbrlDownloadSubmitDisabled =
+    busy || loading || !downloadEnabled || prhDateWindowMissing;
+  const xbrlSyncSubmitDisabled =
+    busy || loading || !downloadEnabled || !importEnabled || prhDateWindowMissing;
   const financialDownloadDisabled = busy || loading || prhDateWindowMissing;
 
   function prhXBRLDownloadInput() {
@@ -384,16 +383,18 @@ export function ActionsTab({ source }: ActionsTabProps) {
     } catch (err) {
       toast.error(errorMessage(err, "Failed to start workflow."));
       setTriggering(undefined);
-      return;
+      return false;
     }
     try {
       await refresh();
     } catch (err) {
       setError(errorMessage(err, "Workflow started, but refresh failed."));
       toast.error(errorMessage(err, "Workflow started, but refresh failed."));
+      return false;
     } finally {
       setTriggering(undefined);
     }
+    return true;
   }
 
   function triggerDownload() {
@@ -454,6 +455,26 @@ export function ActionsTab({ source }: ActionsTabProps) {
         toast.error(errorMessage(err, "Failed to start financial data workflow."));
       })
       .finally(() => setTriggering(undefined));
+  }
+
+  function triggerXBRLSheetAction() {
+    if (xbrlSheetMode === "sync") {
+      void runAndRefresh("sync", () =>
+        api.triggerSourceSyncClickHouse(source.name, {
+          ...prhXBRLDownloadInput(),
+          batch_size: 1000,
+        }),
+      ).then((started) => {
+        if (started) setXBRLSheetMode(undefined);
+      });
+      return;
+    }
+
+    void runAndRefresh("pull_source", () =>
+      api.triggerSourceAction(source.name, "pull_source", prhXBRLDownloadInput()),
+    ).then((started) => {
+      if (started) setXBRLSheetMode(undefined);
+    });
   }
 
   function triggerExplorerRefresh() {
@@ -576,14 +597,13 @@ export function ActionsTab({ source }: ActionsTabProps) {
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2 border-b pb-4">
-        {isFinlandPRHXBRL ? (
-          <div className="flex flex-wrap items-end gap-2">
-            {renderPRHXBRLWindowFields("finland-prh-xbrl")}
-          </div>
-        ) : null}
         <Button
           size="sm"
-          onClick={triggerDownload}
+          onClick={
+            isFinlandPRHXBRL
+              ? () => setXBRLSheetMode("download")
+              : triggerDownload
+          }
           disabled={downloadDisabled}
         >
           <Download className="size-4" />
@@ -601,7 +621,9 @@ export function ActionsTab({ source }: ActionsTabProps) {
         <Button
           size="sm"
           variant="outline"
-          onClick={triggerSync}
+          onClick={
+            isFinlandPRHXBRL ? () => setXBRLSheetMode("sync") : triggerSync
+          }
           disabled={syncDisabled}
         >
           <RefreshCw className="size-4" />
@@ -640,6 +662,47 @@ export function ActionsTab({ source }: ActionsTabProps) {
           Refresh
         </Button>
       </div>
+
+      {isFinlandPRHXBRL ? (
+        <Sheet
+          open={Boolean(xbrlSheetMode)}
+          onOpenChange={(open) => {
+            if (!open) setXBRLSheetMode(undefined);
+          }}
+        >
+          <SheetContent>
+            <SheetHeader>
+              <SheetTitle>
+                {xbrlSheetMode === "sync"
+                  ? "Download and import financial data"
+                  : "Download financial data"}
+              </SheetTitle>
+            </SheetHeader>
+            <div className="flex flex-col gap-4 px-4">
+              {renderPRHXBRLWindowFields("finland-prh-xbrl-sheet")}
+            </div>
+            <SheetFooter>
+              <Button
+                onClick={triggerXBRLSheetAction}
+                disabled={
+                  xbrlSheetMode === "sync"
+                    ? xbrlSyncSubmitDisabled
+                    : xbrlDownloadSubmitDisabled
+                }
+              >
+                {xbrlSheetMode === "sync" ? (
+                  <RefreshCw className="size-4" />
+                ) : (
+                  <Download className="size-4" />
+                )}
+                {xbrlSheetMode === "sync"
+                  ? "Download and import"
+                  : "Download financial data"}
+              </Button>
+            </SheetFooter>
+          </SheetContent>
+        </Sheet>
+      ) : null}
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium">Configured actions</h2>
@@ -735,8 +798,11 @@ export function ActionsTab({ source }: ActionsTabProps) {
                       {state}
                     </Badge>
                     {file.latest_error_message ? (
-                      <div className="mt-1 max-w-72 whitespace-normal text-xs text-red-700">
-                        {file.latest_error_message}
+                      <div
+                        className="mt-1 max-w-72 whitespace-normal text-xs text-red-700"
+                        title={file.latest_error_message}
+                      >
+                        {compactLog(file.latest_error_message)}
                       </div>
                     ) : null}
                   </TableCell>
@@ -858,8 +924,11 @@ export function ActionsTab({ source }: ActionsTabProps) {
                       </TableCell>
                       <TableCell>{formattedDate(run.started_at)}</TableCell>
                       <TableCell>{formattedDate(run.finished_at)}</TableCell>
-                      <TableCell className="max-w-80 whitespace-normal font-mono text-xs">
-                        {resultValue(run)}
+                      <TableCell
+                        className="max-w-80 whitespace-normal font-mono text-xs"
+                        title={resultValue(run)}
+                      >
+                        {compactLog(resultValue(run))}
                       </TableCell>
                       <TableCell className="max-w-64 truncate font-mono text-xs">
                         {run.temporal_workflow_id ?? "-"}
@@ -960,8 +1029,11 @@ export function ActionsTab({ source }: ActionsTabProps) {
                     <TableCell className="max-w-72 truncate font-mono text-xs">
                       {run.path ?? "-"}
                     </TableCell>
-                    <TableCell className="max-w-72 whitespace-normal font-mono text-xs">
-                      {fileRunResult(run)}
+                    <TableCell
+                      className="max-w-72 whitespace-normal font-mono text-xs"
+                      title={fileRunResult(run)}
+                    >
+                      {compactLog(fileRunResult(run))}
                     </TableCell>
                     <TableCell className="max-w-64 truncate font-mono text-xs">
                       {run.temporal_workflow_id ?? "-"}
@@ -1038,8 +1110,11 @@ export function ActionsTab({ source }: ActionsTabProps) {
                   <TableCell className="max-w-64 truncate font-mono text-xs">
                     {run.temporal_workflow_id ?? "-"}
                   </TableCell>
-                  <TableCell className="max-w-80 whitespace-normal font-mono text-xs">
-                    {resultValue(run)}
+                  <TableCell
+                    className="max-w-80 whitespace-normal font-mono text-xs"
+                    title={resultValue(run)}
+                  >
+                    {compactLog(resultValue(run))}
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end">
