@@ -361,6 +361,38 @@ export interface SourceFileRunListResponse {
   items: SourceFileRun[];
 }
 
+export interface ObjectStorageBucket {
+  name: string;
+  creation_date: string;
+}
+
+export interface ObjectStorageBucketListResponse {
+  items: ObjectStorageBucket[];
+}
+
+export interface ObjectStorageFolder {
+  prefix: string;
+  name: string;
+}
+
+export interface ObjectStorageObject {
+  key: string;
+  name: string;
+  size_bytes: number;
+  last_modified: string;
+  etag: string;
+  storage_class: string;
+}
+
+export interface ObjectStorageObjectListResponse {
+  bucket: string;
+  prefix: string;
+  delimiter: string;
+  next_cursor: string;
+  folders: ObjectStorageFolder[];
+  objects: ObjectStorageObject[];
+}
+
 export interface SourceRunTemporalStatus {
   id: string;
   db_status: SourceRunStatus | string;

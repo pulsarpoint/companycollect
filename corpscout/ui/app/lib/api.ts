@@ -45,6 +45,8 @@ import type {
   SourceActionRunListResponse,
   SourceFileListResponse,
   SourceFileRunListResponse,
+  ObjectStorageBucketListResponse,
+  ObjectStorageObjectListResponse,
   SourceRunTemporalStatus,
   SourceExplorerCompanyListResponse,
   SourceExplorerFilterOptionsResponse,
@@ -486,6 +488,29 @@ export const api = {
     get<SourceFileRunListResponse>(
       `/sources/${name}/files/${encodeURIComponent(fileKey)}/runs?limit=${limit}`,
     ),
+
+  getObjectStorageBuckets: () =>
+    get<ObjectStorageBucketListResponse>("/object-storage/buckets"),
+
+  getObjectStorageObjects: (
+    bucket: string,
+    params: {
+      prefix?: string;
+      delimiter?: string;
+      cursor?: string;
+      limit?: number;
+    } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.prefix) qs.set("prefix", params.prefix);
+    if (params.delimiter) qs.set("delimiter", params.delimiter);
+    if (params.cursor) qs.set("cursor", params.cursor);
+    if (params.limit != null) qs.set("limit", String(params.limit));
+    const query = qs.toString();
+    return get<ObjectStorageObjectListResponse>(
+      `/object-storage/buckets/${encodeURIComponent(bucket)}/objects${query ? `?${query}` : ""}`,
+    );
+  },
 
   getLatestSuccessfulSourceDownload: (name: string) =>
     get<LatestSuccessfulSourceDownloadResponse>(
