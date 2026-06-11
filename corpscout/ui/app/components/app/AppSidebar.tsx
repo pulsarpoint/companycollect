@@ -6,6 +6,7 @@ import {
   CircleDollarSign,
   Clock3,
   Globe,
+  HardDrive,
   ListTree,
   Server,
   Settings,
@@ -39,6 +40,7 @@ const SETTINGS_NAV_ITEMS = [
     icon: ListTree,
   },
   { title: "FX Rates", url: "/settings/fx-rates", icon: CircleDollarSign },
+  { title: "Object Storage", url: "/settings/object-storage", icon: HardDrive },
   { title: "Schedules", url: "/settings/workflow-schedules", icon: Clock3 },
 ] as const;
 
