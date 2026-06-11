@@ -204,6 +204,9 @@ worker fleet and the crawl-service is not involved in source pulls.
 
 ## Temporal Responsibilities
 
+All workflows below are hosted by the new slim Temporal worker binary (see
+Slim Temporal Worker section), not by the full scheduler process.
+
 ### Permanent, in Finland scope
 
 **PRH XBRL discovery + download** stays a Temporal workflow: hours of
@@ -336,9 +339,9 @@ exist (migrations 000001–000010).
 - `financial_xbrl.*` state tables: unchanged, still owned by the Temporal
   workflow.
 - `data_sources` remains the shared source catalog (see Purpose). The
-  Finland module's `spec.py` is synced into it on deploy, the same pattern as
-  today's `sourcecatalog` JSON sync, so the UI source list, bucket names, and
-  docs links keep one home.
+  Finland module's `spec.py` is synced into it by the Dagster code location
+  on startup (the scheduler no longer runs routinely, so the sync cannot
+  live there), keeping bucket names, ownership, and docs links in one home.
 - `data_source_files`, `data_source_actions`, `data_source_action_runs`,
   `data_source_file_runs`: unchanged during the parallel run. At cutover, the
   YTJ actions are disabled and the Dagster path does not write run rows —
@@ -346,39 +349,38 @@ exist (migrations 000001–000010).
   (non-migrated) sources and are revisited when those sources migrate.
 - No `source_package_catalog` table is created (superseded).
 
-## Scheduler and UI Status: Frozen, Not Deleted
+## Slim Temporal Worker; Scheduler and UI Parked
 
 The dataset-building phase needs neither scheduler nor React UI development.
-Both are frozen, not removed, because they run today at zero ongoing
-development cost and rebuilding later is more expensive than unfreezing.
+The Temporal hosting duty moves out of the scheduler into a small dedicated
+binary; the scheduler and UI stay in the repo as reference, runnable on
+demand, with no further work on them.
 
-**Scheduler — maintenance mode.** Its remaining live duties:
+**New slim Temporal worker binary** — a new cmd in the existing scheduler Go
+module (exact path decided in the implementation plan, e.g.
+`scheduler/cmd/temporalworker`), reusing the existing
+`internal/temporal/workflow/*` and `internal/temporal/actions/*` packages.
+It wires only what activities need (pgx pool, S3 client, Temporal client) —
+no Chi router, no River, no HTTP API. It registers:
 
-- Temporal worker host for the XBRL discovery/download workflow, the NACE
-  RDF -> Postgres import, and BRREG workflows whenever that work resumes
-- object storage browser backend
-- the `data_sources` catalog row sync (Dagster's `spec.py` sync writes into
-  it)
+- the XBRL discovery/download workflow (with the RustFS + manifest changes)
+- the NACE RDF -> Postgres import, and `SyncNACEToClickHouse` until cutover
+- the YTJ company-source workflows during the parallel-run window (removed
+  at cutover step 5)
+- BRREG workflows when that work resumes
 
-No new REST endpoints, no new workflow registrations beyond the XBRL RustFS
-change, no Dagster proxying. Extracting a slim Temporal worker binary from
-the scheduler is deliberately not done now — it buys nothing while the
-frozen scheduler runs fine (YAGNI; revisit only if the frozen binary gets in
-the way).
+Manual workflow triggering happens through the Temporal UI/CLI (workflow
+type + JSON input), not through scheduler REST endpoints.
 
-**React UI — frozen.** No explorer changes, no new source pages, and even
-the Dagster UI link-out is deferred. During this phase:
-
-- operations surface = the Dagster UI (runs, logs, lineage, triggers,
-  schedules)
-- data inspection = SQL against ClickHouse directly (`clickhouse-client` or
-  any client); the explorer cache asset is still built — it is the dataset
-  product — but its consumer is SQL until the data is worth showing to
-  someone else, which is the natural trigger to unfreeze the UI
-
-The explorer endpoints and pages keep working against
-`fi_prhytj_company_explorer_cache` (tables and shapes are unchanged); they
-are simply not developed or depended on this phase.
+**Scheduler REST API and React UI — parked as-is.** Not deployed or run
+routinely, not developed further; start them on demand if some stored
+information is easier to inspect through them. Object storage browsing in
+daily use is any S3 client; data inspection is SQL against ClickHouse
+(`clickhouse-client` or any client). The explorer cache asset is still built
+— it is the dataset product — but its consumer is SQL until the data is
+worth showing to someone else, which is the natural trigger to revive the
+UI. Explorer tables and shapes stay unchanged, so the parked pages remain
+correct whenever they are started.
 
 ## Deployment
 
@@ -401,6 +403,11 @@ Server (`companycollect`, `/home/graovic/dagster/`), docker compose:
   routine.
 - Local dev: `dagster dev` on the Mac against remote ClickHouse, RustFS, and
   Postgres via Tailscale.
+
+The slim Temporal worker deploys alongside the existing Temporal services on
+the server (own compose service, rsync + `docker compose up -d --build`,
+same `.env` conventions). Its env needs only the Temporal host, Postgres
+DSN, and RustFS credentials.
 
 ## Error Handling
 
@@ -452,7 +459,7 @@ Go (existing suites unchanged):
    content checksums (`sum(cityHash64(<ordered columns>))`), plus a diff of
    explorer cache output after mapping + refresh run on both sides.
 4. On pass: point Dagster at `corpscout_sources`, enable schedules and
-   automation conditions, disable YTJ Temporal actions in the catalog.
+   automation conditions, stop starting the YTJ Temporal workflows.
 5. After one clean scheduled cycle: delete the YTJ Temporal
    workflows/activities, the `SyncNACEToClickHouse` workflow, the YTJ entries
    from `sourcecatalog`, and the local-filesystem download path for Finland;
@@ -471,8 +478,7 @@ fully functional throughout.
 - any change to BRREG, crawl-service, or translation-service pipelines
 - Dagster GraphQL proxying through the scheduler API
 - any scheduler REST or React UI development, including the Dagster UI
-  link-out (both are frozen; see Scheduler and UI Status)
-- extracting a slim Temporal worker binary from the scheduler
+  link-out (both are parked; see Slim Temporal Worker section)
 - alerting/notification wiring for failed runs (Dagster UI is the visibility
   surface in this phase)
 
