@@ -103,6 +103,10 @@ export function ObjectStorageBrowser() {
 
   const updateLocation = useCallback(
     (bucket: string, prefix: string) => {
+      const currentBucket = searchParams.get("bucket") ?? "";
+      const currentPrefix = searchParams.get("prefix") ?? "";
+      if (currentBucket === bucket && currentPrefix === prefix) return;
+
       const next = new URLSearchParams(searchParams);
 
       if (bucket) next.set("bucket", bucket);
@@ -388,6 +392,7 @@ export function ObjectStorageBrowser() {
                 <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={prefixInput}
+                  aria-label="Prefix"
                   onChange={(event) => setPrefixInput(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") submitPrefix();
