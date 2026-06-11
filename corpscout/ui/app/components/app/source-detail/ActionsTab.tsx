@@ -156,6 +156,31 @@ function fileImportSupported(file: SourceFileStatus): boolean {
   return file.kind === "source_snapshot" || file.kind === "code_list";
 }
 
+function isPRHXBRLStatementsManifest(sourceName: string, file: SourceFileStatus): boolean {
+  return sourceName === finlandPRHXBRLSourceName && file.file_key === "statements_manifest";
+}
+
+function fileDownloadSupported(sourceName: string, file: SourceFileStatus): boolean {
+  if (!file.enabled || file.latest_status === "running") return false;
+  if (isPRHXBRLStatementsManifest(sourceName, file)) return false;
+  if (!file.missing && file.latest_status === "succeeded") return false;
+  return file.missing || file.latest_status === "failed" || file.latest_status === "cancelled";
+}
+
+function fileDownloadUnavailableLabel(sourceName: string, file: SourceFileStatus): string | undefined {
+  if (!file.enabled) return "Disabled";
+  if (file.latest_status === "running") return "Running";
+  if (!file.missing && file.latest_status === "succeeded") return "Downloaded";
+  if (isPRHXBRLStatementsManifest(sourceName, file)) return "Date window required";
+  return undefined;
+}
+
+function fileDownloadLabel(file: SourceFileStatus): string {
+  return file.latest_status === "failed" || file.latest_status === "cancelled"
+    ? "Retry"
+    : "Download";
+}
+
 function compactLog(value: unknown): string {
   if (value == null) return "-";
   if (Array.isArray(value) && value.length === 0) return "-";
@@ -771,6 +796,12 @@ export function ActionsTab({ source }: ActionsTabProps) {
             {files.map((file) => {
               const state = fileState(file);
               const isSelected = file.file_key === selectedFileKey;
+              const canDownloadFile =
+                downloadEnabled && fileDownloadSupported(source.name, file);
+              const downloadUnavailableLabel = fileDownloadUnavailableLabel(
+                source.name,
+                file,
+              );
               const canImportFile =
                 importEnabled &&
                 file.enabled &&
@@ -831,14 +862,20 @@ export function ActionsTab({ source }: ActionsTabProps) {
                         <Search className="size-4" />
                         Runs
                       </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => triggerFileDownload(file)}
-                        disabled={busy || loading || !downloadEnabled || !file.enabled}
-                      >
-                        <FileDown className="size-4" />
-                        {triggeringFileKey === file.file_key ? "Starting" : "Download"}
-                      </Button>
+                      {canDownloadFile ? (
+                        <Button
+                          size="sm"
+                          onClick={() => triggerFileDownload(file)}
+                          disabled={busy || loading}
+                        >
+                          <FileDown className="size-4" />
+                          {triggeringFileKey === file.file_key
+                            ? "Starting"
+                            : fileDownloadLabel(file)}
+                        </Button>
+                      ) : downloadUnavailableLabel ? (
+                        <Badge variant="outline">{downloadUnavailableLabel}</Badge>
+                      ) : null}
                       <Button
                         size="sm"
                         variant="outline"
