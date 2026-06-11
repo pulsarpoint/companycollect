@@ -1,0 +1,26 @@
+services:
+  dagster-code:
+    build: .
+    image: dagster-corpscout:latest
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    command: dagster api grpc -h 0.0.0.0 -p 4266 -m dagster_corpscout.definitions
+
+  dagster-webserver:
+    image: dagster-corpscout:latest
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    command: dagster-webserver -h 0.0.0.0 -p 3500 -w /opt/dagster/home/workspace.yaml
+    depends_on: [dagster-code]
+
+  dagster-daemon:
+    image: dagster-corpscout:latest
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: dagster-daemon run -w /opt/dagster/home/workspace.yaml
+    depends_on: [dagster-code]

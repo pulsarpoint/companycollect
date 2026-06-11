@@ -1,6 +1,6 @@
 # Corpscout Central Postgres
 
-This folder is the versioned bootstrap package for the shared Postgres server used by Corpscout and Temporal.
+This folder is the versioned bootstrap package for the shared Postgres server used by Corpscout, Temporal, and Dagster.
 
 It manages cluster-level objects only:
 
@@ -9,7 +9,7 @@ It manages cluster-level objects only:
 - login roles
 - database ownership and grants
 
-Corpscout schema migrations stay in `../database/migrations`. Those migrations own extensions, schemas, tables, views, `corpscout_anon`, and object grants. Temporal owns its own tables inside the `temporal` and `temporal_visibility` databases through Temporal auto-setup.
+Corpscout schema migrations stay in `../database/migrations`. Those migrations own extensions, schemas, tables, views, `corpscout_anon`, and object grants. Temporal owns its own tables inside the `temporal` and `temporal_visibility` databases through Temporal auto-setup. Dagster owns its own tables inside the `dagster` database through Dagster's storage migrations.
 
 ## Current Live Snapshot
 
@@ -38,6 +38,8 @@ The target cluster state added by these bootstrap files is:
 - `temporal` database, owner `temporal`
 - `temporal_visibility` database, owner `temporal`
 - `temporal` login role with no superuser/admin permissions
+- `dagster` database, owner `dagster`
+- `dagster` login role with no superuser/admin permissions
 
 ## Setup
 
@@ -82,6 +84,8 @@ Use this order for a clean server:
    - `POSTGRES_PWD=<TEMPORAL_PASSWORD>`
    - `DBNAME=temporal`
    - `VISIBILITY_DBNAME=temporal_visibility`
+6. start Dagster with:
+   - `DAGSTER_PG_URL=postgresql://dagster:<DAGSTER_PASSWORD>@companycollect:5432/dagster`
 
 For an existing server, `make bootstrap` is idempotent and can be run again after updating `.env`.
 
@@ -96,12 +100,15 @@ corpscout             Corpscout application data and migrations
 corpscout_test        Corpscout integration-test data and migrations
 temporal              Temporal persistence
 temporal_visibility   Temporal visibility persistence
+dagster               Dagster run, event, schedule, and asset storage
 ```
 
 Do not place Temporal tables in the `corpscout` database.
+Do not place Dagster tables in the `corpscout`, `temporal`, or
+`temporal_visibility` databases.
 Do not point `CORPSCOUT_TEST_DATABASE_URL` at `corpscout`, `temporal`,
-`temporal_visibility`, or `postgres`; scheduler test helpers refuse those
-database names.
+`temporal_visibility`, `dagster`, or `postgres`; scheduler test helpers refuse
+those database names.
 
 After bootstrap, migrate and run DB-backed scheduler tests from `../corpscout`:
 

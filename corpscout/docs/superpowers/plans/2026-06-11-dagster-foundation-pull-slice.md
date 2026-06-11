@@ -1143,8 +1143,8 @@ services:
 `.env.example`:
 
 ```bash
-# Postgres database for Dagster's own storage (create once: CREATE DATABASE dagster)
-DAGSTER_PG_URL=postgresql://corpscout:CHANGE_ME@localhost:5432/dagster
+# Postgres database for Dagster's own storage, created by corpscout_db/bootstrap.
+DAGSTER_PG_URL=postgresql://dagster:CHANGE_ME@localhost:5432/dagster
 # Image used by DockerRunLauncher for run containers
 DAGSTER_RUN_IMAGE=dagster-corpscout:latest
 # RustFS (S3-compatible) — on the server, localhost; from the Mac, companycollect
@@ -1227,15 +1227,18 @@ This is the spec's "First Implementation Step" pass-criteria gate. No code —
 exact commands and expected observations. Server: `companycollect`
 (`100.85.212.113`), SSH `graovic@100.85.212.113`.
 
-- [ ] **Step 1: Create the Dagster Postgres database (idempotent)**
+- [ ] **Step 1: Apply the Postgres bootstrap package**
 
 ```bash
-printf '%s\n' "SELECT 'CREATE DATABASE dagster OWNER corpscout' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'dagster')\gexec" | \
-  docker run --rm -i postgres:16-alpine psql \
-  "postgres://corpscout:<password>@100.85.212.113:5432/corpscout?sslmode=disable" -f -
+cd corpscout_db
+cp -n .env.example .env
+# Set DAGSTER_PASSWORD and the existing Postgres/Corpscout/Temporal passwords in .env.
+make bootstrap
 ```
 
-Expected: `CREATE DATABASE` on first run; no output and exit 0 on re-run.
+Expected: `bootstrap dagster database` appears in the output; `make verify`
+lists the `dagster` database owned by the `dagster` role. Re-runs are
+idempotent.
 
 - [ ] **Step 2: Create buckets (once)**
 

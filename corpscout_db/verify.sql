@@ -6,7 +6,14 @@ SELECT
   pg_encoding_to_char(encoding) AS encoding,
   datallowconn
 FROM pg_database
-WHERE datname IN (:'corpscout_db', :'corpscout_test_db', :'temporal_db', :'temporal_visibility_db', 'postgres')
+WHERE datname IN (
+  :'corpscout_db',
+  :'corpscout_test_db',
+  :'temporal_db',
+  :'temporal_visibility_db',
+  :'dagster_db',
+  'postgres'
+)
 ORDER BY datname;
 
 SELECT
@@ -19,7 +26,7 @@ SELECT
   rolreplication,
   rolbypassrls
 FROM pg_roles
-WHERE rolname IN (:'corpscout_user', :'corpscout_anon_role', :'temporal_user')
+WHERE rolname IN (:'corpscout_user', :'corpscout_anon_role', :'temporal_user', :'dagster_user')
 ORDER BY rolname;
 
 SELECT
@@ -31,7 +38,7 @@ SELECT
 FROM pg_auth_members auth
 JOIN pg_roles role ON role.oid = auth.roleid
 JOIN pg_roles member ON member.oid = auth.member
-WHERE member.rolname IN (:'corpscout_user', :'temporal_user')
+WHERE member.rolname IN (:'corpscout_user', :'temporal_user', :'dagster_user')
    OR role.rolname IN (:'corpscout_anon_role')
 ORDER BY member.rolname, role.rolname;
 

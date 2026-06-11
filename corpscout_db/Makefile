@@ -20,6 +20,8 @@ CORPSCOUT_ANON_ROLE ?= corpscout_anon
 TEMPORAL_DB ?= temporal
 TEMPORAL_VISIBILITY_DB ?= temporal_visibility
 TEMPORAL_USER ?= temporal
+DAGSTER_DB ?= dagster
+DAGSTER_USER ?= dagster
 
 ADMIN_DSN := host=$(POSTGRES_HOST) port=$(POSTGRES_PORT) dbname=$(POSTGRES_ADMIN_DB) user=$(POSTGRES_ADMIN_USER) sslmode=disable
 CORPSCOUT_DSN := host=$(POSTGRES_HOST) port=$(POSTGRES_PORT) dbname=$(CORPSCOUT_DB) user=$(POSTGRES_ADMIN_USER) sslmode=disable
@@ -45,9 +47,13 @@ bootstrap-cluster:
 		-v temporal_visibility_db="$(TEMPORAL_VISIBILITY_DB)" \
 		-v temporal_user="$(TEMPORAL_USER)" \
 		-v temporal_password="$${TEMPORAL_PASSWORD}" \
+		-v dagster_db="$(DAGSTER_DB)" \
+		-v dagster_user="$(DAGSTER_USER)" \
+		-v dagster_password="$${DAGSTER_PASSWORD}" \
 		-f bootstrap/001_roles.sql \
 		-f bootstrap/002_databases.sql \
-		-f bootstrap/003_database_grants.sql
+		-f bootstrap/003_database_grants.sql \
+		-f bootstrap/004_dagster.sql
 
 verify:
 	PGPASSWORD="$${POSTGRES_ADMIN_PASSWORD}" $(PSQL) "$(ADMIN_DSN)" \
@@ -56,9 +62,11 @@ verify:
 		-v corpscout_test_db="$(CORPSCOUT_TEST_DB)" \
 		-v temporal_db="$(TEMPORAL_DB)" \
 		-v temporal_visibility_db="$(TEMPORAL_VISIBILITY_DB)" \
+		-v dagster_db="$(DAGSTER_DB)" \
 		-v corpscout_user="$(CORPSCOUT_USER)" \
 		-v corpscout_anon_role="$(CORPSCOUT_ANON_ROLE)" \
 		-v temporal_user="$(TEMPORAL_USER)" \
+		-v dagster_user="$(DAGSTER_USER)" \
 		-f verify.sql
 
 psql:
