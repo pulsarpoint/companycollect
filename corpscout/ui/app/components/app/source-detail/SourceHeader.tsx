@@ -8,6 +8,7 @@ interface SourceHeaderProps {
 
 function triggerLabel(source: DataSource) {
   if (source.name === "brreg") return "BRREG task actions";
+  if (source.capabilities.includes("source_download")) return "Temporal actions";
   if (source.download_workflow_registered) return "Temporal download";
   return "No source trigger";
 }

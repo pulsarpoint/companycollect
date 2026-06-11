@@ -1,4 +1,5 @@
 import { ExternalLink } from "lucide-react";
+import { Link } from "react-router";
 import type { DataSource } from "~/types/api";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import {
@@ -22,18 +23,44 @@ function boolLabel(value: boolean): string {
   return value ? "Yes" : "No";
 }
 
+function relatedSourceRows(source: DataSource): MetadataRow[] {
+  switch (source.name) {
+    case "finland_prhytj":
+      return [
+        {
+          label: "Related financial source",
+          value: "finland_prh_xbrl",
+          href: "/sources/finland_prh_xbrl/actions",
+        },
+      ];
+    case "finland_prh_xbrl":
+      return [
+        {
+          label: "Related registry source",
+          value: "finland_prhytj",
+          href: "/sources/finland_prhytj/actions",
+        },
+      ];
+    default:
+      return [];
+  }
+}
+
 function metadataRows(source: DataSource): MetadataRow[] {
   return [
     { label: "Registry key", value: source.registry_key },
     { label: "Country", value: source.country },
     { label: "Source", value: source.source },
     { label: "Source group", value: source.source_group },
+    ...relatedSourceRows(source),
     { label: "Source URL", value: source.source_url, href: source.source_url },
     { label: "Documentation", value: source.docs_url, href: source.docs_url },
     { label: "Raw source retention", value: source.raw_source_retention },
-    { label: "Source file", value: source.source_file_name },
+    { label: "Primary output file", value: source.source_file_name },
     { label: "Authentication required", value: boolLabel(source.auth_required) },
     { label: "User-Agent required", value: boolLabel(source.user_agent_required) },
+    { label: "Capabilities", value: source.capabilities.join(", ") },
+    { label: "Requires translation", value: boolLabel(source.requires_translation) },
     { label: "Storage", value: source.storage_kind },
     { label: "ClickHouse database", value: source.clickhouse_database },
     { label: "ClickHouse table prefix", value: source.clickhouse_table_prefix },
@@ -46,6 +73,16 @@ function MetadataValue({ row }: { row: MetadataRow }) {
   }
   if (!row.href) {
     return <span className="font-mono text-xs">{row.value}</span>;
+  }
+  if (row.href.startsWith("/")) {
+    return (
+      <Link
+        to={row.href}
+        className="inline-flex min-w-0 items-center gap-1 font-mono text-xs text-primary hover:underline"
+      >
+        <span className="break-all">{row.value}</span>
+      </Link>
+    );
   }
   return (
     <a

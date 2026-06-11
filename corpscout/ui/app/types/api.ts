@@ -921,7 +921,7 @@ export interface DataSource {
   source_url: string;
   docs_url: string;
   raw_source_retention: string;
-  source_file_name: "source.ndjson" | "source.json" | "";
+  source_file_name: string;
   user_agent_required: boolean;
   download_workflow_registered: boolean;
   manual_trigger_available: boolean;
