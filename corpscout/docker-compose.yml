@@ -25,18 +25,6 @@ services:
       PGRST_SERVER_PORT: "3000"
     restart: unless-stopped
 
-  rustfs:
-    image: rustfs/rustfs:latest
-    environment:
-      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?RUSTFS_ACCESS_KEY is required}
-      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?RUSTFS_SECRET_KEY is required}
-      RUSTFS_VOLUMES: /data
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - ./data/rustfs:/data
-
   scheduler:
     build:
       context: .
@@ -67,7 +55,7 @@ services:
       CORPSCOUT_FX_ECB_DAILY_URL: ${CORPSCOUT_FX_ECB_DAILY_URL:-https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml}
       CORPSCOUT_SOURCE_RUNS_ROOT: /var/lib/corpscout/source-runs
       CORPSCOUT_CLICKHOUSE_NATIVE_URL: ${CLICKHOUSE_NATIVE_URL:-clickhouse://companycollect:9002?username=default&password=change-me&database=corpscout_sources}
-      CORPSCOUT_S3_ENDPOINT: http://rustfs:9000
+      CORPSCOUT_S3_ENDPOINT: http://companycollect:9000
       CORPSCOUT_S3_ACCESS_KEY: ${CORPSCOUT_S3_ACCESS_KEY:?CORPSCOUT_S3_ACCESS_KEY is required}
       CORPSCOUT_S3_SECRET_KEY: ${CORPSCOUT_S3_SECRET_KEY:?CORPSCOUT_S3_SECRET_KEY is required}
       CORPSCOUT_S3_BUCKET: crawls

@@ -15,7 +15,7 @@ The production direction is:
 - Remote servers pull prebuilt images from GHCR.
 - Remote servers do not build images.
 - Central Postgres remains outside the service compose.
-- NATS and enrichment services can run together in `deploy/services/docker-compose.yml`.
+- RustFS, NATS, and enrichment services run together in `deploy/services/docker-compose.yml`.
 
 ## Common Commands
 
