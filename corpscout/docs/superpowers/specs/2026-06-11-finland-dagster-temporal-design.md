@@ -346,17 +346,39 @@ exist (migrations 000001–000010).
   (non-migrated) sources and are revisited when those sources migrate.
 - No `source_package_catalog` table is created (superseded).
 
-## UI and API Integration
+## Scheduler and UI Status: Frozen, Not Deleted
 
-- **Explorer: zero change.** It reads `fi_prhytj_company_explorer_cache`
-  through the existing scheduler endpoints
-  (`/api/v1/sources/finland_prhytj/explorer/*`); tables and shapes are
-  identical.
-- **Operations: link out, no proxy.** New `CORPSCOUT_DAGSTER_UI_URL` env var
-  (e.g. `http://100.85.212.113:3500`); the source detail page links to the
-  Dagster UI the same way the Jobs page links to the Temporal UI. After
-  cutover, the YTJ actions/pipeline tabs point there instead of
-  `data_source_*` run history. No GraphQL proxy into Dagster in this phase.
+The dataset-building phase needs neither scheduler nor React UI development.
+Both are frozen, not removed, because they run today at zero ongoing
+development cost and rebuilding later is more expensive than unfreezing.
+
+**Scheduler — maintenance mode.** Its remaining live duties:
+
+- Temporal worker host for the XBRL discovery/download workflow, the NACE
+  RDF -> Postgres import, and BRREG workflows whenever that work resumes
+- object storage browser backend
+- the `data_sources` catalog row sync (Dagster's `spec.py` sync writes into
+  it)
+
+No new REST endpoints, no new workflow registrations beyond the XBRL RustFS
+change, no Dagster proxying. Extracting a slim Temporal worker binary from
+the scheduler is deliberately not done now — it buys nothing while the
+frozen scheduler runs fine (YAGNI; revisit only if the frozen binary gets in
+the way).
+
+**React UI — frozen.** No explorer changes, no new source pages, and even
+the Dagster UI link-out is deferred. During this phase:
+
+- operations surface = the Dagster UI (runs, logs, lineage, triggers,
+  schedules)
+- data inspection = SQL against ClickHouse directly (`clickhouse-client` or
+  any client); the explorer cache asset is still built — it is the dataset
+  product — but its consumer is SQL until the data is worth showing to
+  someone else, which is the natural trigger to unfreeze the UI
+
+The explorer endpoints and pages keep working against
+`fi_prhytj_company_explorer_cache` (tables and shapes are unchanged); they
+are simply not developed or depended on this phase.
 
 ## Deployment
 
@@ -434,8 +456,8 @@ Go (existing suites unchanged):
 5. After one clean scheduled cycle: delete the YTJ Temporal
    workflows/activities, the `SyncNACEToClickHouse` workflow, the YTJ entries
    from `sourcecatalog`, and the local-filesystem download path for Finland;
-   re-point the YTJ actions/pipeline UI tabs to the Dagster UI link; drop the
-   bake-off database.
+   drop the bake-off database. (No UI re-pointing — the React UI is frozen
+   this phase.)
 
 Rollback at any step before 5 is "keep using the Temporal path" — it remains
 fully functional throughout.
@@ -448,6 +470,9 @@ fully functional throughout.
 - other countries / sources, and asset factories for simple sources
 - any change to BRREG, crawl-service, or translation-service pipelines
 - Dagster GraphQL proxying through the scheduler API
+- any scheduler REST or React UI development, including the Dagster UI
+  link-out (both are frozen; see Scheduler and UI Status)
+- extracting a slim Temporal worker binary from the scheduler
 - alerting/notification wiring for failed runs (Dagster UI is the visibility
   surface in this phase)
 
