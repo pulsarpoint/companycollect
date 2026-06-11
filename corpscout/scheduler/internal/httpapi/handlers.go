@@ -108,6 +108,8 @@ func (h *Handlers) RegisterRoutes(r chi.Router) {
 		r.Get("/sources/{name}/files/{file_key}/runs", h.handleListSourceFileRuns)
 		r.Post("/sources/{name}/files/{file_key}/download", h.handleTriggerSourceFileDownload)
 		r.Post("/sources/{name}/files/{file_key}/import", h.handleTriggerSourceFileImport)
+		r.Get("/object-storage/buckets", h.handleListObjectStorageBuckets)
+		r.Get("/object-storage/buckets/{bucket}/objects", h.handleListObjectStorageObjects)
 		r.Get("/source-action-runs/{id}/temporal-status", h.handleGetSourceActionRunTemporalStatus)
 		r.Get("/source-file-runs/{id}/temporal-status", h.handleGetSourceFileRunTemporalStatus)
 		r.Get("/llm-providers", h.handleListLLMProviders)
