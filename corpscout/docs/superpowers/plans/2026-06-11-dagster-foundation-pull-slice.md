@@ -226,10 +226,13 @@ import hashlib
 from dagster_corpscout.lib.streaming import IterableReader, StreamStats, observe_chunks
 
 
-def test_iterable_reader_reads_all():
-    reader = IterableReader(iter([b"abc", b"def", b"gh"]))
-    assert reader.read() == b"abcdefgh"
-    assert reader.read() == b""
+def test_iterable_reader_rejects_unbounded_read():
+    reader = IterableReader(iter([b"abc"]))
+    try:
+        reader.read()
+        raise AssertionError("expected ValueError for unbounded read")
+    except ValueError:
+        pass
 
 
 def test_iterable_reader_reads_in_sizes():
@@ -240,11 +243,29 @@ def test_iterable_reader_reads_in_sizes():
     assert reader.read(10) == b""
 
 
+def test_iterable_reader_does_not_drain_iterator():
+    consumed = []
+
+    def chunks():
+        for chunk in [b"aaa", b"bbb", b"ccc", b"ddd"]:
+            consumed.append(chunk)
+            yield chunk
+
+    reader = IterableReader(chunks())
+    assert reader.read(4) == b"aaab"
+    # Only the chunks needed to satisfy the bounded read were pulled.
+    assert consumed == [b"aaa", b"bbb"]
+
+
 def test_observe_chunks_counts_and_hashes_once():
     stats = StreamStats()
-    chunks = observe_chunks(iter([b"hello ", b"world"]), stats)
-    reader = IterableReader(chunks)
-    data = reader.read()
+    reader = IterableReader(observe_chunks(iter([b"hello ", b"world"]), stats))
+    data = b""
+    while True:
+        piece = reader.read(4)
+        if not piece:
+            break
+        data += piece
     assert data == b"hello world"
     assert stats.bytes_read == 11
     assert stats.sha256_hex == hashlib.sha256(b"hello world").hexdigest()
@@ -292,7 +313,12 @@ def observe_chunks(chunks: Iterator[bytes], stats: StreamStats) -> Iterator[byte
 
 
 class IterableReader(io.RawIOBase):
-    """Read-only file-like object over an iterator of bytes chunks."""
+    """Read-only file-like object over an iterator of bytes chunks.
+
+    Bounded reads only: an unbounded read would buffer the whole payload in
+    memory, violating the streaming guarantee. boto3's transfer manager always
+    reads in bounded chunks, so this restriction is safe for upload_fileobj.
+    """
 
     def __init__(self, chunks: Iterator[bytes]) -> None:
         self._chunks = iter(chunks)
@@ -303,9 +329,10 @@ class IterableReader(io.RawIOBase):
 
     def read(self, size: int = -1) -> bytes:
         if size is None or size < 0:
-            data = self._buffer + b"".join(self._chunks)
-            self._buffer = b""
-            return data
+            raise ValueError(
+                "IterableReader only supports bounded reads; an unbounded read "
+                "would buffer the whole payload in memory"
+            )
         while len(self._buffer) < size:
             try:
                 self._buffer += next(self._chunks)
@@ -318,7 +345,7 @@ class IterableReader(io.RawIOBase):
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python -m pytest tests/test_streaming.py -v`
-Expected: 3 passed
+Expected: 4 passed
 
 - [ ] **Step 5: Commit**
 
@@ -500,6 +527,7 @@ import json
 
 import boto3
 from boto3.s3.transfer import TransferConfig
+from botocore.config import Config
 from collections.abc import Iterator
 from dagster import ConfigurableResource
 
@@ -507,6 +535,11 @@ from dagster_corpscout.lib.streaming import IterableReader, StreamStats, observe
 
 # 64 MiB parts: a few-GB object uploads in tens of parts with bounded memory.
 _TRANSFER_CONFIG = TransferConfig(multipart_chunksize=64 * 1024 * 1024)
+
+# Path-style addressing is required for RustFS/MinIO (virtual-hosted style
+# would resolve bucket.localhost). Mirrors UsePathStyle in the Go
+# scheduler/internal/s3client/client.go.
+_S3_CONFIG = Config(s3={"addressing_style": "path"})
 
 
 class RustFSResource(ConfigurableResource):
@@ -522,6 +555,7 @@ class RustFSResource(ConfigurableResource):
             aws_access_key_id=self.access_key,
             aws_secret_access_key=self.secret_key,
             region_name=self.region,
+            config=_S3_CONFIG,
         )
 
     def upload_stream(self, bucket: str, key: str, chunks: Iterator[bytes]) -> StreamStats:
@@ -826,7 +860,10 @@ from dagster_corpscout.sources.finland_prhytj.client import (
 )
 def raw_snapshot(context: dg.AssetExecutionContext, rustfs: RustFSResource) -> dg.MaterializeResult:
     """Pull the company snapshot + code lists from the PRH YTJ API into RustFS."""
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # Timestamp keeps prefixes human-sortable; the Dagster run-id suffix makes
+    # the prefix unique even if two launches/retries start in the same second.
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"{timestamp}-{context.run_id[:8]}"
     artifacts: list[Artifact] = []
 
     snapshot_key = spec.snapshot_object_key(run_id)
@@ -945,11 +982,11 @@ Expected: FAIL (asset not in defs / schedule missing)
 ```python
 import dagster as dg
 
-from dagster_corpscout.sources.finland_prhytj import spec
+from dagster_corpscout.sources.finland_prhytj.assets import raw_snapshot
 
 pull_job = dg.define_asset_job(
     name="finland_prhytj_pull",
-    selection=dg.AssetSelection.assets([spec.SOURCE_NAME, "raw_snapshot"]),
+    selection=[raw_snapshot],
 )
 
 pull_schedule = dg.ScheduleDefinition(
@@ -1124,6 +1161,7 @@ CORPSCOUT_S3_SECRET_KEY=CHANGE_ME
 import os
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 BUCKETS = ["source-finland-prhytj", "source-finland-prh-xbrl"]
@@ -1136,6 +1174,7 @@ def main() -> None:
         aws_access_key_id=os.environ["CORPSCOUT_S3_ACCESS_KEY"],
         aws_secret_access_key=os.environ["CORPSCOUT_S3_SECRET_KEY"],
         region_name="us-east-1",
+        config=Config(s3={"addressing_style": "path"}),
     )
     for bucket in BUCKETS:
         try:
@@ -1188,15 +1227,15 @@ This is the spec's "First Implementation Step" pass-criteria gate. No code —
 exact commands and expected observations. Server: `companycollect`
 (`100.85.212.113`), SSH `graovic@100.85.212.113`.
 
-- [ ] **Step 1: Create the Dagster Postgres database (once)**
+- [ ] **Step 1: Create the Dagster Postgres database (idempotent)**
 
 ```bash
-docker run --rm postgres:16-alpine psql \
-  "postgres://corpscout:<password>@100.85.212.113:5432/corpscout?sslmode=disable" \
-  -c "CREATE DATABASE dagster OWNER corpscout;"
+printf '%s\n' "SELECT 'CREATE DATABASE dagster OWNER corpscout' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'dagster')\gexec" | \
+  docker run --rm -i postgres:16-alpine psql \
+  "postgres://corpscout:<password>@100.85.212.113:5432/corpscout?sslmode=disable" -f -
 ```
 
-Expected: `CREATE DATABASE` (or "already exists" on re-run — fine).
+Expected: `CREATE DATABASE` on first run; no output and exit 0 on re-run.
 
 - [ ] **Step 2: Create buckets (once)**
 
