@@ -18,6 +18,12 @@ The following decisions from that document carry forward unchanged:
 - ClickHouse migrations stay central under `golang-migrate`
 - one module per source that owns its source-specific code
 
+"Supersedes" does not mean Dagster absorbs the source catalog. The existing
+`data_sources` table remains the shared metadata source — bucket names,
+ownership, docs URLs, enabled state — read by the UI, the scheduler, and
+Dagster asset code alike. Dagster's run storage is execution history only;
+it never becomes the catalog.
+
 ## Settled Decisions
 
 1. **Pull boundary — split by shape.** The PRH YTJ snapshot pull becomes a
@@ -155,6 +161,14 @@ refresh.** Re-running with the same upstream state must converge to the same
 table contents. Any future asset that violates this needs partitions or
 explicit dedup logic before joining the automation chain.
 
+**Standing rule for future sources: `eager()` is only for cheap idempotent
+refreshes.** At 300 sources, eager chains can create noisy recomputation.
+Expensive assets (large rebuilds, costly joins, anything beyond minutes of
+ClickHouse work) get a cron condition or a custom automation condition that
+batches upstream updates instead of reacting to each one. Every Finland
+chain asset qualifies as cheap today; this rule exists so the default does
+not silently scale into waste.
+
 Manual operation: in the Dagster UI, materialize `raw_snapshot` with
 "materialize all downstream" for a full Finland refresh, or materialize
 `company_explorer_cache` alone to rebuild the final table from current inputs.
@@ -239,6 +253,12 @@ Dagster sensor (60s interval) lists `runs/*/manifest.json` in the
 cursor, and records an `AssetMaterialization` for each new manifest with
 metadata from it (statement counts, bucket prefix, workflow id).
 
+The sensor deliberately records materializations, not `AssetObservation`
+events. Observations are metadata-only: they do not update the asset's
+materialized state and do not drive downstream automation conditions. The
+future XBRL import asset must auto-run when new statements land, which
+requires materialization events.
+
 Sensor pull is chosen over REST push from the Go workflow because it adds no
 Dagster dependency to the Temporal worker and loses no events if Dagster is
 down — the manifest in the bucket is the durable record; the sensor catches
@@ -315,12 +335,15 @@ exist (migrations 000001–000010).
   migrations touch it.
 - `financial_xbrl.*` state tables: unchanged, still owned by the Temporal
   workflow.
-- `data_sources`, `data_source_files`, `data_source_actions`,
-  `data_source_action_runs`, `data_source_file_runs`: unchanged during the
-  parallel run. At cutover, the YTJ actions are disabled and the Dagster path
-  does not write run rows — Dagster's own storage is the run history. The
-  tables stay for the remaining (non-migrated) sources and are revisited when
-  those sources migrate.
+- `data_sources` remains the shared source catalog (see Purpose). The
+  Finland module's `spec.py` is synced into it on deploy, the same pattern as
+  today's `sourcecatalog` JSON sync, so the UI source list, bucket names, and
+  docs links keep one home.
+- `data_source_files`, `data_source_actions`, `data_source_action_runs`,
+  `data_source_file_runs`: unchanged during the parallel run. At cutover, the
+  YTJ actions are disabled and the Dagster path does not write run rows —
+  Dagster's own storage is the run history. The tables stay for the remaining
+  (non-migrated) sources and are revisited when those sources migrate.
 - No `source_package_catalog` table is created (superseded).
 
 ## UI and API Integration
@@ -436,3 +459,9 @@ manifest, `normalized_tables` import into the bake-off database, and the
 parity comparison script. That slice exercises every architectural seam
 (run launcher, streaming, bucket layout, ClickHouse writes, schedule) before
 the remaining assets are filled in.
+
+The slice has explicit pass criteria for the execution model, checked before
+any further asset work: one `DockerRunLauncher` run container reaches
+ClickHouse, RustFS, and Postgres over the server network, streams a
+multi-gigabyte object to a bucket within its memory limit, and the daemon's
+schedule and run queue launch and bound runs as configured.
