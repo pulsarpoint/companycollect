@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/temporal"
 
 	sourcecore "github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
 	db "github.com/pulsarpoint/corpscout/scheduler/internal/db/gen"
@@ -180,4 +182,21 @@ func TestFileRunDirectoryNameRejectsUnsafeFileKey(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unsafe source file key")
+}
+
+func TestNonRetryableAfterSuccessfulFileRunFinishMarksTemporalErrorNonRetryable(t *testing.T) {
+	err := nonRetryableAfterSuccessfulFileRunFinish(errors.New("download failed"), nil)
+
+	var applicationErr *temporal.ApplicationError
+	require.ErrorAs(t, err, &applicationErr)
+	require.True(t, applicationErr.NonRetryable())
+	require.Equal(t, "SourceFileRunFailed", applicationErr.Type())
+}
+
+func TestNonRetryableAfterSuccessfulFileRunFinishKeepsFinishFailureRetryable(t *testing.T) {
+	err := nonRetryableAfterSuccessfulFileRunFinish(errors.New("download failed"), errors.New("finish failed"))
+
+	var applicationErr *temporal.ApplicationError
+	require.False(t, errors.As(err, &applicationErr))
+	require.Contains(t, err.Error(), "download failed")
 }

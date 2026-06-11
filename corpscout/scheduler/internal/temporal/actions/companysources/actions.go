@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
 
 	sourcecore "github.com/pulsarpoint/corpscout/scheduler/internal/companysources"
 	"github.com/pulsarpoint/corpscout/scheduler/internal/companysources/finland/prhxbrl"
@@ -155,7 +156,8 @@ func (a *Actions) DownloadSourceFileActivity(ctx context.Context, input Download
 		return DownloadSourceFileResult{}, errors.Errorf("file run %s does not match %s/%s", fileRunID, input.SourceName, input.FileKey)
 	}
 	if fileRun.Status != "running" {
-		return DownloadSourceFileResult{}, errors.Errorf("source file run %s has status %q", fileRun.ID, fileRun.Status)
+		err := errors.Errorf("source file run %s has status %q", fileRun.ID, fileRun.Status)
+		return DownloadSourceFileResult{FileRunID: input.FileRunID, SourceName: input.SourceName, FileKey: input.FileKey}, nonRetryableSourceFileRunFailed(err)
 	}
 	if err := validateStoredWorkflowID(fileRun.TemporalWorkflowID, workflowID, "source file run", fileRun.ID); err != nil {
 		return DownloadSourceFileResult{}, err
@@ -216,12 +218,14 @@ func (a *Actions) DownloadSourceFileActivity(ctx context.Context, input Download
 		})
 	}
 	if err != nil {
+		runErr := errors.Wrap(err, "download source file")
 		finishErr := a.finishFileRunFailed(fileRun.ID, err)
-		return DownloadSourceFileResult{FileRunID: input.FileRunID, SourceName: input.SourceName, FileKey: input.FileKey}, combineWithFinishError(errors.Wrap(err, "download source file"), finishErr)
+		return DownloadSourceFileResult{FileRunID: input.FileRunID, SourceName: input.SourceName, FileKey: input.FileKey}, nonRetryableAfterSuccessfulFileRunFinish(runErr, finishErr)
 	}
 	if err := validateDownloadedFile(downloaded, runDir, fileRun.RelativePath); err != nil {
+		runErr := errors.Wrap(err, "validate downloaded source file")
 		finishErr := a.finishFileRunFailed(fileRun.ID, err)
-		return DownloadSourceFileResult{FileRunID: input.FileRunID, SourceName: input.SourceName, FileKey: input.FileKey}, combineWithFinishError(errors.Wrap(err, "validate downloaded source file"), finishErr)
+		return DownloadSourceFileResult{FileRunID: input.FileRunID, SourceName: input.SourceName, FileKey: input.FileKey}, nonRetryableAfterSuccessfulFileRunFinish(runErr, finishErr)
 	}
 
 	contentLengthBytes := downloaded.ContentLengthBytes
@@ -855,4 +859,16 @@ func combineWithFinishError(runErr error, finishErr error) error {
 		return runErr
 	}
 	return errors.WithSecondaryError(runErr, finishErr)
+}
+
+func nonRetryableAfterSuccessfulFileRunFinish(runErr error, finishErr error) error {
+	combined := combineWithFinishError(runErr, finishErr)
+	if finishErr != nil {
+		return combined
+	}
+	return nonRetryableSourceFileRunFailed(combined)
+}
+
+func nonRetryableSourceFileRunFailed(err error) error {
+	return temporal.NewNonRetryableApplicationError(err.Error(), "SourceFileRunFailed", err)
 }
