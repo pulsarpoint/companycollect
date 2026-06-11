@@ -55,23 +55,32 @@ function formatObjectDate(value: string): string {
   }
 }
 
-function normalizePrefix(value: string): string {
-  const trimmed = value.trim().replace(/^\/+/, "");
-  if (!trimmed) return "";
-  return trimmed.endsWith("/") ? trimmed : `${trimmed}/`;
-}
-
 function prefixBreadcrumbs(prefix: string): Array<{
   label: string;
   prefix: string;
 }> {
-  const parts = prefix.split("/").filter(Boolean);
-  let current = "";
+  if (!prefix) return [];
 
-  return parts.map((part) => {
-    current += `${part}/`;
-    return { label: part, prefix: current };
-  });
+  const breadcrumbs: Array<{ label: string; prefix: string }> = [];
+  let segmentStart = 0;
+
+  while (segmentStart < prefix.length) {
+    const delimiterIndex = prefix.indexOf("/", segmentStart);
+    if (delimiterIndex === -1) {
+      const label = prefix.slice(segmentStart);
+      breadcrumbs.push({ label: label || "/", prefix });
+      break;
+    }
+
+    const label = prefix.slice(segmentStart, delimiterIndex);
+    breadcrumbs.push({
+      label: label || "/",
+      prefix: prefix.slice(0, delimiterIndex + 1),
+    });
+    segmentStart = delimiterIndex + 1;
+  }
+
+  return breadcrumbs;
 }
 
 export function ObjectStorageBrowser() {
@@ -203,9 +212,7 @@ export function ObjectStorageBrowser() {
   function submitPrefix() {
     if (!selectedBucket) return;
 
-    const prefix = normalizePrefix(prefixInput);
-    setPrefixInput(prefix);
-    updateLocation(selectedBucket, prefix);
+    updateLocation(selectedBucket, prefixInput);
   }
 
   function clearPrefix() {
