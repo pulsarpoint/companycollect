@@ -5,7 +5,7 @@
 This document refines the earlier source module architecture design. The core
 change is that each source package should own almost everything source-specific:
 configuration JSON, workflow definitions, actions, bucket layout, ClickHouse
-migrations, import/query code, and source UI.
+schema design, import/query code, and source UI.
 
 Central Corpscout should not understand source files, artifact positions,
 ClickHouse table shapes, or explorer table schemas. It should discover packages,
@@ -24,7 +24,7 @@ The package owns:
 - RustFS bucket name and object key layout
 - workflows and actions
 - child workflow dependency logic
-- ClickHouse migrations
+- ClickHouse schema design and migration SQL content
 - ClickHouse import and query code
 - package-specific UI components
 
@@ -37,6 +37,7 @@ Central Corpscout owns:
 - object storage browser
 - Temporal status by package workflow prefix
 - generic source list and source shell pages
+- existing `golang-migrate` execution for Postgres and ClickHouse migrations
 
 ## Why This Revision
 
@@ -52,7 +53,7 @@ dataset names, such as:
 
 That is unnecessary now. A package already declares what it stores through:
 
-- ClickHouse migration files
+- ClickHouse migration SQL content and schema tests
 - importer code
 - query code
 - package UI components
@@ -80,12 +81,7 @@ scheduler/internal/sourcepackages/
         download.go
         import.go
         queries.go
-        clickhouse/
-          migrations/
-            000001_tables.up.sql
-            000001_tables.down.sql
-            000002_explorer_cache.up.sql
-            000002_explorer_cache.down.sql
+        clickhouse_schema.md
       prhxbrl/
         source.json
         package.go
@@ -94,18 +90,14 @@ scheduler/internal/sourcepackages/
         download.go
         import.go
         queries.go
-        clickhouse/
-          migrations/
-            000001_tables.up.sql
-            000001_tables.down.sql
+        clickhouse_schema.md
   references/
     nace/
       source.json
       package.go
       workflows.go
       activities.go
-      clickhouse/
-        migrations/
+      clickhouse_schema.md
   projections/
     finland/
       companyexplorer/
@@ -114,13 +106,17 @@ scheduler/internal/sourcepackages/
         workflows.go
         activities.go
         queries.go
-        clickhouse/
-          migrations/
+        clickhouse_schema.md
 ```
 
 The exact top-level folder name can stay `companysources` if that is easier for
 incremental migration, but the conceptual boundary should be "source package",
 not "generic source handler".
+
+ClickHouse migration files stay in the existing central
+`clickhouse/migrations` directory and continue to run through `golang-migrate`.
+Package folders can keep schema notes, table constants, query code, and tests
+near the package, but they should not introduce a second migration runner.
 
 ## Package JSON
 
@@ -271,7 +267,7 @@ apply those defaults.
 
 Central Corpscout should not store normalized action/file run rows for every
 package. Workflow status should come from Temporal visibility/history using
-package workflow ID prefixes.
+package workflow ID prefixes and search attributes.
 
 Examples:
 
@@ -292,6 +288,26 @@ GET /api/v1/packages/{package}/workflows/{workflow_id}
 
 Those endpoints query Temporal by prefix and return summary status.
 
+Temporal is the source of truth for execution state. Pull, import, refresh,
+mapping, enrichment, and dependency sync should all be Temporal workflows. The
+central API should be a thin wrapper around Temporal start/list/describe calls
+and package-specific request validation.
+
+Workflows should set stable search attributes when the Temporal cluster supports
+them:
+
+```text
+PackageKey = "finland/prhytj"
+PackageName = "finland_prhytj"
+PackageAction = "pull"
+Country = "finland"
+RunID = "20260611T120000Z"
+```
+
+Temporal logs and history are enough for execution debugging, retries, timing,
+parent/child relationships, and failure inspection. They should not be treated as
+the durable artifact index.
+
 If Temporal retention later proves insufficient for product needs, add one small
 generic index table:
 
@@ -308,7 +324,9 @@ package_workflow_runs
 ```
 
 Do not add source file run or artifact tables unless there is a demonstrated
-need.
+need. If a product screen needs long-term workflow history beyond Temporal
+retention, prefer the `package_workflow_runs` index above over rebuilding the old
+normalized source action/file model.
 
 ## Postgres Model
 
@@ -352,6 +370,11 @@ key layout. If the package needs artifacts, it lists or reads its bucket.
 The object storage browser already gives humans a generic way to inspect bucket
 contents. Central Corpscout does not need duplicate artifact metadata.
 
+Every package workflow that creates artifacts should write a package-owned run
+manifest to RustFS. This manifest is the durable artifact ledger for that run.
+The central app may display the manifest as JSON, but it should not normalize it
+into source-specific Postgres tables.
+
 Example source bucket:
 
 ```text
@@ -360,6 +383,7 @@ keys:
   runs/{run_id}/source.ndjson
   runs/{run_id}/codelists/REK.en.tsv
   runs/{run_id}/codelists/YRMU.en.tsv
+  runs/{run_id}/manifest.json
   snapshots/latest/source.ndjson
   logs/{run_id}/download.json
 ```
@@ -371,14 +395,36 @@ bucket: source-finland-prh-xbrl
 keys:
   runs/{run_id}/statements.ndjson
   runs/{run_id}/xml/{business_id}/{financial_date}.xml
+  runs/{run_id}/manifest.json
   discovery/{window_id}/manifest.ndjson
 ```
 
 Central code only knows the package bucket name.
 
+Example manifest shape:
+
+```json
+{
+  "run_id": "20260611T120000Z",
+  "package_key": "finland/prhytj",
+  "workflow_id": "source.finland.prhytj.pull.20260611T120000Z",
+  "artifacts": [
+    {
+      "resource_key": "companies",
+      "object_key": "runs/20260611T120000Z/source.ndjson",
+      "content_sha256": "...",
+      "content_length_bytes": 123456,
+      "records_written": 1000
+    }
+  ]
+}
+```
+
 ## ClickHouse Model
 
-The source of truth for ClickHouse schema is the package migration folder.
+The source of truth for applied ClickHouse schema is the existing
+`clickhouse/migrations` directory, applied with the existing `golang-migrate`
+workflow. Do not build a custom package migration runner.
 
 The package owns:
 
@@ -387,29 +433,42 @@ The package owns:
 - refreshed/cache tables
 - dictionaries or source-specific reference tables
 - source-specific query code
+- schema design and migration SQL content
 
-Central migration runner discovers package migration folders and applies them.
-It does not need to understand what the tables mean.
+The migration files live centrally so `make clickhouse-migrate-up` remains the
+only execution path. Packages own the design conceptually, but migration
+execution stays in the existing app/tooling.
 
-Migration tracking should avoid one global sequence for all sources. Use package
-key plus local migration version:
+Use migration number ranges to encode dependency ordering:
 
 ```text
-package_key
-migration_version
-migration_name
-checksum
-applied_at
+000001-000009  global/base databases and shared infrastructure
+000010-000019  references, especially NACE
+000020-000089  source package tables and source-owned caches
+000100+        projections that depend on references and source tables
 ```
 
 Example:
 
 ```text
-finland/prhytj 000001 tables
-finland/prhytj 000002 explorer_cache
-finland/prh_xbrl 000001 tables
-reference/nace 000001 tables
+clickhouse/migrations/
+  000001_base_databases.up.sql
+  000001_base_databases.down.sql
+  000010_reference_nace_tables.up.sql
+  000010_reference_nace_tables.down.sql
+  000020_source_finland_prhytj_tables.up.sql
+  000020_source_finland_prhytj_tables.down.sql
+  000030_source_finland_prh_xbrl_tables.up.sql
+  000030_source_finland_prh_xbrl_tables.down.sql
+  000100_projection_finland_company_explorer.up.sql
+  000100_projection_finland_company_explorer.down.sql
 ```
+
+Reference packages should expose stable table or view contracts. For NACE, prefer
+contract names such as `ref_nace_codes` or `ref_nace_codes_v1`. Source and
+projection packages should depend on those contracts instead of reaching into
+unstable intermediate tables. If the contract changes incompatibly, add a new
+versioned view/table and migrate consumers deliberately.
 
 ## Source And Projection Packages
 
@@ -558,6 +617,27 @@ manual_only
 
 Central Corpscout only needs to show the config and start the package workflow.
 
+Dependency workflows should be idempotent and freshness-aware. A package that
+depends on NACE should check whether the NACE sync workflow completed
+successfully within the last day before starting a new sync. If a fresh
+successful run exists, skip the dependency. If no fresh run exists, start or wait
+for a deterministic dependency workflow.
+
+Recommended NACE dependency rule:
+
+```text
+dependency package: reference/nace
+dependency action: sync
+freshness window: 24h
+workflow id: reference.nace.sync.YYYYMMDD
+```
+
+If another package already started today's NACE sync, the dependent workflow
+should use the existing execution or wait for it instead of starting duplicate
+work. Optional dependencies may continue when they fail or are stale, but required
+dependencies must fail the parent workflow with a safe, package/action-scoped
+error.
+
 ## Error Handling And Logging
 
 Follow the Go project rules:
@@ -579,10 +659,14 @@ Package tests:
 - workflow registration registers expected workflow names
 - workflow ID prefixes are stable
 - download code maps resources to expected bucket keys
+- artifact-producing workflows write a valid `runs/{run_id}/manifest.json`
 - importer writes expected ClickHouse rows
-- migrations contain required tables/views for that package
+- central ClickHouse migrations contain required tables/views for that package
 - package HTTP routes return expected source-specific response shapes
 - child workflow dependencies are invoked when configured
+- freshness checks skip dependencies such as NACE when a recent successful run
+  exists
+- deterministic dependency workflow IDs avoid duplicate concurrent syncs
 
 Central tests:
 
@@ -590,8 +674,10 @@ Central tests:
 - central startup syncs package config JSON to Postgres
 - central Temporal worker loops packages and calls `RegisterTemporal`
 - central HTTP setup mounts package routes
-- workflow status API queries Temporal by package prefix
+- workflow status API queries Temporal by package prefix and/or search attributes
 - source list UI renders from synced package catalog
+- ClickHouse migration files remain in `clickhouse/migrations` and preserve the
+  agreed version ranges for base, reference, source, and projection migrations
 
 ## Incremental Migration Path
 
@@ -600,6 +686,7 @@ Central tests:
 - Add package registry and minimal package API.
 - Register existing source packages through the new registry.
 - Keep old generic source tables and actions temporarily.
+- Keep existing `golang-migrate` Postgres and ClickHouse migration execution.
 
 ### Phase 2: Add Package Catalog Table
 
@@ -618,11 +705,17 @@ Central tests:
 - Add PRH YTJ package-owned workflows and activities.
 - Trigger them through package API.
 - Remove PRH YTJ assumptions from generic source actions.
+- Write package-owned RustFS run manifests for artifact-producing workflows.
 
-### Phase 5: Move PRH YTJ ClickHouse Migrations
+### Phase 5: Standardize ClickHouse Migration Ownership
 
-- Move PRH YTJ ClickHouse migrations into package migration folder.
-- Add package-aware ClickHouse migration tracking.
+- Keep ClickHouse migration files in the existing `clickhouse/migrations`
+  directory.
+- Rename or add future migrations using the agreed ordering bands: base,
+  reference, source, then projection.
+- Add schema tests that tie each package to the central migration SQL it owns
+  conceptually.
+- Do not add a package-aware migration runner.
 
 ### Phase 6: Move PRH YTJ UI
 
@@ -631,13 +724,17 @@ Central tests:
 
 ### Phase 7: Migrate PRH XBRL
 
-- Move PRH XBRL JSON, workflows, bucket layout, and migrations into its package.
+- Move PRH XBRL JSON, workflows, and bucket layout into its package.
+- Keep PRH XBRL ClickHouse migrations in the central migration directory.
 - Validate child workflow usage from Finland projection workflows.
 
 ### Phase 8: Add Finland Company Explorer Projection Package
 
 - Create a projection package that combines PRH YTJ, PRH XBRL, and NACE data.
 - Move combined explorer table/cache/query/UI there.
+- Depend on stable NACE ClickHouse contracts such as `ref_nace_codes` or
+  `ref_nace_codes_v1`.
+- Use freshness-aware NACE sync dependency handling before refresh workflows.
 
 ### Phase 9: Migrate US Sources
 
@@ -657,7 +754,10 @@ The first implementation should prove:
 - central startup syncs that JSON
 - central Temporal setup calls package registration
 - one package workflow can be triggered
-- package status can be listed by Temporal prefix
+- package status can be listed by Temporal prefix and, where available, search
+  attributes
+- one artifact-producing workflow writes a RustFS run manifest
 - package UI can be selected by source name
+- existing `golang-migrate` ClickHouse migration execution remains unchanged
 
 After that, the rest of the system can migrate source by source.
