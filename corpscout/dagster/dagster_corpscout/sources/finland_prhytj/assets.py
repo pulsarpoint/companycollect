@@ -22,6 +22,9 @@ from dagster_corpscout.sources.finland_prhytj.explorer_cache import (
     refresh_company_explorer_cache,
 )
 from dagster_corpscout.sources.finland_prhytj.importer import import_normalized_snapshot
+from dagster_corpscout.sources.finland_prhytj.industry_mapping import (
+    refresh_industry_nace_mappings,
+)
 
 
 @dg.asset(
@@ -152,9 +155,40 @@ def code_lists(
 
 @dg.asset(
     key_prefix=[spec.SOURCE_NAME],
+    name="industry_nace_mappings",
+    group_name=spec.SOURCE_NAME,
+    deps=[normalized_tables],
+    retry_policy=dg.RetryPolicy(max_retries=2, delay=120, backoff=dg.Backoff.EXPONENTIAL),
+    op_tags={"dagster/concurrency_key": f"{spec.SOURCE_NAME}:clickhouse"},
+)
+def industry_nace_mappings(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickHouseResource,
+) -> dg.MaterializeResult:
+    """Refresh source industry codes mapped to reference NACE classes."""
+    result = refresh_industry_nace_mappings(clickhouse)
+    context.log.info(
+        "industry NACE mappings refreshed: %d rows, %d mapped, %d unmapped",
+        result.rows,
+        result.mapped_rows,
+        result.unmapped_rows,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "table": result.mapping_table,
+            "rows": result.rows,
+            "mapped_rows": result.mapped_rows,
+            "unmapped_rows": result.unmapped_rows,
+            "mapped_at": result.mapped_at.isoformat(),
+        }
+    )
+
+
+@dg.asset(
+    key_prefix=[spec.SOURCE_NAME],
     name="company_explorer_cache",
     group_name=spec.SOURCE_NAME,
-    deps=[normalized_tables, code_lists],
+    deps=[normalized_tables, code_lists, industry_nace_mappings],
     retry_policy=dg.RetryPolicy(max_retries=2, delay=120, backoff=dg.Backoff.EXPONENTIAL),
     op_tags={"dagster/concurrency_key": f"{spec.SOURCE_NAME}:clickhouse"},
 )

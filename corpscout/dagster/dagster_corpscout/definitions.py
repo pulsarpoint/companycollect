@@ -5,14 +5,20 @@ from dagster_corpscout.resources.rustfs import RustFSResource
 from dagster_corpscout.sources.finland_prhytj.assets import (
     code_lists,
     company_explorer_cache,
+    industry_nace_mappings,
     normalized_tables,
     raw_snapshot,
 )
-from dagster_corpscout.sources.finland_prhytj.schedules import pull_job, pull_schedule
+from dagster_corpscout.sources.finland_prhytj.checks import (
+    company_explorer_cache_matches_view,
+    industry_nace_mappings_rows_present,
+)
+from dagster_corpscout.sources.finland_prhytj.schedules import pipeline_job, pull_job, pull_schedule
 
 defs = dg.Definitions(
-    assets=[raw_snapshot, normalized_tables, code_lists, company_explorer_cache],
-    jobs=[pull_job],
+    assets=[raw_snapshot, normalized_tables, code_lists, industry_nace_mappings, company_explorer_cache],
+    asset_checks=[industry_nace_mappings_rows_present, company_explorer_cache_matches_view],
+    jobs=[pull_job, pipeline_job],
     schedules=[pull_schedule],
     resources={
         "rustfs": RustFSResource(
