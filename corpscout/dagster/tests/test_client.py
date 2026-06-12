@@ -2,9 +2,9 @@ import responses
 from requests.exceptions import ChunkedEncodingError
 
 from dagster_corpscout.lib.streaming import StreamStats
-from dagster_corpscout.sources.finland_prhytj import client
-from dagster_corpscout.sources.finland_prhytj import spec
-from dagster_corpscout.sources.finland_prhytj.client import (
+from dagster_corpscout.sources.finland.prh_ytj import client
+from dagster_corpscout.sources.finland.prh_ytj import spec
+from dagster_corpscout.sources.finland.prh_ytj.client import (
     fetch_code_list,
     iter_companies,
     ndjson_chunks,

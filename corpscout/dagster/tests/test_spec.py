@@ -1,4 +1,4 @@
-from dagster_corpscout.sources.finland_prhytj import spec
+from dagster_corpscout.sources.finland.prh_ytj import spec
 
 
 def test_constants():

@@ -8,7 +8,7 @@ from urllib.parse import urlsplit, urlunsplit
 import requests
 
 from dagster_corpscout.lib.streaming import StreamStats
-from dagster_corpscout.sources.finland_prhytj import spec
+from dagster_corpscout.sources.finland.prh_ytj import spec
 
 _TIMEOUT_SECONDS = 300
 _RETRY_DELAYS_SECONDS = [1, 2, 4, 8]

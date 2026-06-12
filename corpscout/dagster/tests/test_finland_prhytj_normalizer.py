@@ -1,12 +1,12 @@
 import uuid
 from datetime import datetime, timezone
 
-from dagster_corpscout.sources.finland_prhytj.normalizer import (
+from dagster_corpscout.sources.finland.prh_ytj.normalizer import (
     ImportRun,
     normalize_record,
     source_item_hash,
 )
-from dagster_corpscout.sources.finland_prhytj.parser import ParsedRecord
+from dagster_corpscout.sources.finland.prh_ytj.parser import ParsedRecord
 
 
 def make_run() -> ImportRun:

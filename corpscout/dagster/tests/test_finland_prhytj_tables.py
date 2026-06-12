@@ -1,4 +1,4 @@
-from dagster_corpscout.sources.finland_prhytj.tables import (
+from dagster_corpscout.sources.finland.prh_ytj.tables import (
     CODE_LIST_COLUMNS,
     CODE_LIST_TABLE,
     NORMALIZED_TABLES,

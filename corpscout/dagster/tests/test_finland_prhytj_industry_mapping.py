@@ -1,12 +1,15 @@
 from datetime import datetime, timezone
 
+import dagster as dg
 import pytest
 
-from dagster_corpscout.sources.finland_prhytj.industry_mapping import (
+from dagster_corpscout.sources.finland.prh_ytj.industry_mapping import (
     INDUSTRY_NACE_MAPPING_TABLE,
     build_industry_nace_mapping_insert_query,
     refresh_industry_nace_mappings,
 )
+
+SOURCE_PREFIX = ["sources", "finland", "prh_ytj"]
 
 
 class FakeQueryResult:
@@ -66,7 +69,7 @@ def test_refresh_industry_nace_mappings_uses_atomic_table_exchange(monkeypatch):
     fake = FakeClickHouse(mapping_counts=(17, 15, 2))
     mapped_at = datetime(2026, 6, 12, 8, 1, 2, tzinfo=timezone.utc)
     monkeypatch.setattr(
-        "dagster_corpscout.sources.finland_prhytj.industry_mapping._temp_table_name",
+        "dagster_corpscout.sources.finland.prh_ytj.industry_mapping._temp_table_name",
         lambda: "fi_prhytj_industry_nace_mappings_refresh_test",
     )
 
@@ -104,9 +107,7 @@ def test_refresh_industry_nace_mappings_requires_reference_nace_rows():
 
 
 def test_industry_nace_mappings_asset_is_registered():
-    import dagster as dg
-
     from dagster_corpscout.definitions import defs
 
-    assert defs.get_assets_def(dg.AssetKey(["finland_prhytj", "industry_nace_mappings"])) is not None
+    assert defs.get_assets_def(dg.AssetKey([*SOURCE_PREFIX, "industry_nace_mappings"])) is not None
     assert INDUSTRY_NACE_MAPPING_TABLE == "fi_prhytj_industry_nace_mappings"

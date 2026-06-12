@@ -1,10 +1,14 @@
 from datetime import datetime, timezone
 
-from dagster_corpscout.sources.finland_prhytj.explorer_cache import (
+import dagster as dg
+
+from dagster_corpscout.sources.finland.prh_ytj.explorer_cache import (
     COMPANY_EXPLORER_CACHE_TABLE,
     build_company_explorer_cache_insert_query,
     refresh_company_explorer_cache,
 )
+
+SOURCE_PREFIX = ["sources", "finland", "prh_ytj"]
 
 
 class FakeQueryResult:
@@ -53,7 +57,7 @@ def test_refresh_company_explorer_cache_uses_atomic_table_exchange(monkeypatch):
     fake = FakeClickHouse()
     refreshed_at = datetime(2026, 6, 12, 6, 0, tzinfo=timezone.utc)
     monkeypatch.setattr(
-        "dagster_corpscout.sources.finland_prhytj.explorer_cache._temp_table_name",
+        "dagster_corpscout.sources.finland.prh_ytj.explorer_cache._temp_table_name",
         lambda: "fi_prhytj_company_explorer_cache_refresh_test",
     )
 
@@ -85,9 +89,7 @@ def test_refresh_company_explorer_cache_uses_atomic_table_exchange(monkeypatch):
 
 
 def test_company_explorer_cache_asset_is_registered():
-    import dagster as dg
-
     from dagster_corpscout.definitions import defs
 
-    assert defs.get_assets_def(dg.AssetKey(["finland_prhytj", "company_explorer_cache"])) is not None
+    assert defs.get_assets_def(dg.AssetKey([*SOURCE_PREFIX, "company_explorer_cache"])) is not None
     assert COMPANY_EXPLORER_CACHE_TABLE == "fi_prhytj_company_explorer_cache"

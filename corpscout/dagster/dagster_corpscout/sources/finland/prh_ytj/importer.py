@@ -5,9 +5,9 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import BinaryIO
 
-from dagster_corpscout.sources.finland_prhytj.normalizer import ImportRun, normalize_record
-from dagster_corpscout.sources.finland_prhytj.parser import parse_snapshot
-from dagster_corpscout.sources.finland_prhytj.tables import NORMALIZED_TABLE_COLUMNS, NORMALIZED_TABLES
+from dagster_corpscout.sources.finland.prh_ytj.normalizer import ImportRun, normalize_record
+from dagster_corpscout.sources.finland.prh_ytj.parser import parse_snapshot
+from dagster_corpscout.sources.finland.prh_ytj.tables import NORMALIZED_TABLE_COLUMNS, NORMALIZED_TABLES
 
 DEFAULT_BATCH_SIZE = 10_000
 DEFAULT_PROGRESS_INTERVAL_RECORDS = 50_000

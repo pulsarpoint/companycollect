@@ -1,6 +1,8 @@
 import dagster as dg
 
-from dagster_corpscout.sources.finland_prhytj.checks import (
+SOURCE_PREFIX = ["sources", "finland", "prh_ytj"]
+
+from dagster_corpscout.sources.finland.prh_ytj.checks import (
     check_company_explorer_cache_matches_view,
     check_industry_nace_mappings_have_rows,
 )
@@ -65,13 +67,13 @@ def test_finland_prhytj_asset_checks_are_registered():
 
     mapping_check = defs.get_asset_checks_def(
         dg.AssetCheckKey(
-            dg.AssetKey(["finland_prhytj", "industry_nace_mappings"]),
+            dg.AssetKey([*SOURCE_PREFIX, "industry_nace_mappings"]),
             "mapping_rows_present",
         )
     )
     cache_check = defs.get_asset_checks_def(
         dg.AssetCheckKey(
-            dg.AssetKey(["finland_prhytj", "company_explorer_cache"]),
+            dg.AssetKey([*SOURCE_PREFIX, "company_explorer_cache"]),
             "cache_matches_explorer_view",
         )
     )

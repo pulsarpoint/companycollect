@@ -4,15 +4,15 @@ from datetime import datetime, timezone
 
 import pytest
 
-from dagster_corpscout.sources.finland_prhytj.code_lists import (
+from dagster_corpscout.sources.finland.prh_ytj.code_lists import (
     CodeListObject,
     CodeListRun,
     code_list_objects_from_manifest,
     import_code_lists,
     parse_code_list_rows,
 )
-from dagster_corpscout.sources.finland_prhytj.normalizer import source_item_hash
-from dagster_corpscout.sources.finland_prhytj.tables import CODE_LIST_COLUMNS, CODE_LIST_TABLE
+from dagster_corpscout.sources.finland.prh_ytj.normalizer import source_item_hash
+from dagster_corpscout.sources.finland.prh_ytj.tables import CODE_LIST_COLUMNS, CODE_LIST_TABLE
 
 
 class FakeClickHouse:

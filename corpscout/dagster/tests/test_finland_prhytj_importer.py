@@ -1,11 +1,11 @@
 import io
 
-from dagster_corpscout.sources.finland_prhytj.importer import (
+from dagster_corpscout.sources.finland.prh_ytj.importer import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_PROGRESS_INTERVAL_RECORDS,
     import_normalized_snapshot,
 )
-from dagster_corpscout.sources.finland_prhytj.tables import NORMALIZED_TABLES
+from dagster_corpscout.sources.finland.prh_ytj.tables import NORMALIZED_TABLES
 
 
 class FakeClickHouse:

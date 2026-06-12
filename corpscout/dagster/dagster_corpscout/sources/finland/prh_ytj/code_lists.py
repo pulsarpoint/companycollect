@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import BinaryIO
 
-from dagster_corpscout.sources.finland_prhytj.normalizer import source_item_hash
-from dagster_corpscout.sources.finland_prhytj.tables import CODE_LIST_COLUMNS, CODE_LIST_TABLE
+from dagster_corpscout.sources.finland.prh_ytj.normalizer import source_item_hash
+from dagster_corpscout.sources.finland.prh_ytj.tables import CODE_LIST_COLUMNS, CODE_LIST_TABLE
 
 
 @dataclass(frozen=True)

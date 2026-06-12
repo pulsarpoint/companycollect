@@ -3,7 +3,7 @@ import io
 
 import pytest
 
-from dagster_corpscout.sources.finland_prhytj.parser import parse_snapshot
+from dagster_corpscout.sources.finland.prh_ytj.parser import parse_snapshot
 
 
 def test_parse_snapshot_records_line_number_and_raw_line_hash():

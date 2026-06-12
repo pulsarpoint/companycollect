@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from dagster_corpscout.sources.finland_prhytj.parser import ParsedRecord
-from dagster_corpscout.sources.finland_prhytj.tables import (
+from dagster_corpscout.sources.finland.prh_ytj.parser import ParsedRecord
+from dagster_corpscout.sources.finland.prh_ytj.tables import (
     ADDRESSES_TABLE,
     ADDRESS_POST_OFFICES_TABLE,
     BUSINESS_LINES_TABLE,

@@ -6,8 +6,8 @@ from dagster import materialize
 from moto import mock_aws
 
 from dagster_corpscout.resources.rustfs import RustFSResource
-from dagster_corpscout.sources.finland_prhytj import spec
-from dagster_corpscout.sources.finland_prhytj.assets import raw_snapshot
+from dagster_corpscout.sources.finland.prh_ytj import spec
+from dagster_corpscout.sources.finland.prh_ytj.assets import raw_snapshot
 
 BASE = spec.BASE_URL
 

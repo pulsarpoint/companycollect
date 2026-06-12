@@ -3,15 +3,15 @@
 import dagster as dg
 
 from dagster_corpscout.resources.clickhouse import ClickHouseResource
-from dagster_corpscout.sources.finland_prhytj.assets import (
+from dagster_corpscout.sources.finland.prh_ytj.assets import (
     company_explorer_cache,
     industry_nace_mappings,
 )
-from dagster_corpscout.sources.finland_prhytj.explorer_cache import (
+from dagster_corpscout.sources.finland.prh_ytj.explorer_cache import (
     COMPANY_EXPLORER_CACHE_TABLE,
     COMPANY_EXPLORER_VIEW_TABLE,
 )
-from dagster_corpscout.sources.finland_prhytj.industry_mapping import INDUSTRY_NACE_MAPPING_TABLE
+from dagster_corpscout.sources.finland.prh_ytj.industry_mapping import INDUSTRY_NACE_MAPPING_TABLE
 
 
 def check_industry_nace_mappings_have_rows(clickhouse) -> dg.AssetCheckResult:
