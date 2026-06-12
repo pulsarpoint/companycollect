@@ -110,6 +110,7 @@ def normalized_tables(
             clickhouse=clickhouse,
             stream=stream,
             run_id=manifest["run_id"],
+            progress_logger=context.log.info,
         )
 
     return dg.MaterializeResult(
