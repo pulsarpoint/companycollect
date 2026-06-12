@@ -1,0 +1,38 @@
+services:
+  dagster-code:
+    build: .
+    image: dagster-corpscout-v2:latest
+    restart: unless-stopped
+    env_file: .env
+    extra_hosts:
+      - "companycollect:100.85.212.113"
+    command: dagster api grpc -h 0.0.0.0 -p 4266 -m dagster_corpscout.definitions
+    networks: [dagster-corpscout]
+
+  dagster-webserver:
+    image: dagster-corpscout-v2:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3500:3500"
+    extra_hosts:
+      - "companycollect:100.85.212.113"
+    command: dagster-webserver -h 0.0.0.0 -p 3500 -w /opt/dagster/home/workspace.yaml
+    depends_on: [dagster-code]
+    networks: [dagster-corpscout]
+
+  dagster-daemon:
+    image: dagster-corpscout-v2:latest
+    restart: unless-stopped
+    env_file: .env
+    extra_hosts:
+      - "companycollect:100.85.212.113"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: dagster-daemon run -w /opt/dagster/home/workspace.yaml
+    depends_on: [dagster-code]
+    networks: [dagster-corpscout]
+
+networks:
+  dagster-corpscout:
+    name: dagster-corpscout
