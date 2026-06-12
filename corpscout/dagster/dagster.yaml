@@ -14,9 +14,17 @@ run_launcher:
       - CORPSCOUT_S3_ENDPOINT
       - CORPSCOUT_S3_ACCESS_KEY
       - CORPSCOUT_S3_SECRET_KEY
+      - CLICKHOUSE_HOST
+      - CLICKHOUSE_PORT
+      - CLICKHOUSE_USER
+      - CLICKHOUSE_PASSWORD
+      - CLICKHOUSE_DATABASE
+      - CLICKHOUSE_SECURE
+    network: dagster-corpscout
     container_kwargs:
-      network_mode: host
       mem_limit: 2g
+      extra_hosts:
+        companycollect: 100.85.212.113
 
 run_queue:
   max_concurrent_runs: 4

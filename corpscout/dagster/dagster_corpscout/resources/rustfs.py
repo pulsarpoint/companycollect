@@ -54,3 +54,23 @@ class RustFSResource(ConfigurableResource):
             Body=body,
             ContentType="application/json",
         )
+
+    def get_json(self, bucket: str, key: str) -> dict:
+        response = self.client().get_object(Bucket=bucket, Key=key)
+        with response["Body"] as body:
+            return json.loads(body.read().decode("utf-8"))
+
+    def open_object(self, bucket: str, key: str):
+        return self.client().get_object(Bucket=bucket, Key=key)["Body"]
+
+    def latest_manifest(self, bucket: str, prefix: str = "runs/") -> dict:
+        paginator = self.client().get_paginator("list_objects_v2")
+        keys: list[str] = []
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for item in page.get("Contents", []):
+                key = item["Key"]
+                if key.endswith("/manifest.json"):
+                    keys.append(key)
+        if not keys:
+            raise FileNotFoundError(f"no manifests found in s3://{bucket}/{prefix}")
+        return self.get_json(bucket, sorted(keys)[-1])

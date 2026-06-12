@@ -1,6 +1,8 @@
 import responses
+from requests.exceptions import ChunkedEncodingError
 
 from dagster_corpscout.lib.streaming import StreamStats
+from dagster_corpscout.sources.finland_prhytj import client
 from dagster_corpscout.sources.finland_prhytj import spec
 from dagster_corpscout.sources.finland_prhytj.client import (
     fetch_code_list,
@@ -43,6 +45,18 @@ def test_iter_companies_raises_on_http_error():
         raise AssertionError("expected an HTTP error")
     except Exception as exc:
         assert "503" in str(exc)
+
+
+@responses.activate
+def test_iter_companies_retries_premature_chunked_response(monkeypatch):
+    monkeypatch.setattr(client, "_RETRY_DELAYS_SECONDS", [0])
+    responses.get(f"{BASE}?page=1", body=ChunkedEncodingError("Response ended prematurely"))
+    responses.get(f"{BASE}?page=1", json=page_json(1, [{"businessId": "1"}]))
+
+    companies = list(iter_companies(BASE))
+
+    assert [c["businessId"] for c in companies] == ["1"]
+    assert len(responses.calls) == 2
 
 
 def test_ndjson_chunks_counts_records():

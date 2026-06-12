@@ -35,3 +35,57 @@ def test_put_bytes_and_put_json():
     resource.put_json("bkt", "runs/x/manifest.json", {"run_id": "x"})
     body = boto3.client("s3").get_object(Bucket="bkt", Key="runs/x/manifest.json")["Body"].read()
     assert json.loads(body) == {"run_id": "x"}
+
+
+@mock_aws
+def test_get_json_reads_manifest():
+    resource = make_resource()
+    resource.client().create_bucket(Bucket="source-finland-prhytj")
+    resource.client().put_object(
+        Bucket="source-finland-prhytj",
+        Key="runs/20260611T100000Z-abc12345/manifest.json",
+        Body=b'{"run_id":"20260611T100000Z-abc12345","artifacts":[]}',
+    )
+
+    manifest = resource.get_json(
+        "source-finland-prhytj",
+        "runs/20260611T100000Z-abc12345/manifest.json",
+    )
+
+    assert manifest["run_id"] == "20260611T100000Z-abc12345"
+
+
+@mock_aws
+def test_latest_manifest_uses_timestamp_sorted_completed_manifest():
+    resource = make_resource()
+    resource.client().create_bucket(Bucket="source-finland-prhytj")
+    resource.client().put_object(
+        Bucket="source-finland-prhytj",
+        Key="runs/20260611T100000Z-aaaaaaaa/manifest.json",
+        Body=b'{"run_id":"old","artifacts":[]}',
+    )
+    resource.client().put_object(
+        Bucket="source-finland-prhytj",
+        Key="runs/20260611T110000Z-bbbbbbbb/manifest.json",
+        Body=b'{"run_id":"new","artifacts":[]}',
+    )
+
+    manifest = resource.latest_manifest("source-finland-prhytj")
+
+    assert manifest["run_id"] == "new"
+
+
+@mock_aws
+def test_open_object_streams_body():
+    resource = make_resource()
+    resource.client().create_bucket(Bucket="source-finland-prhytj")
+    resource.client().put_object(
+        Bucket="source-finland-prhytj",
+        Key="runs/x/source.ndjson",
+        Body=b'{"businessId":{"value":"1234567-8"}}\n',
+    )
+
+    with resource.open_object("source-finland-prhytj", "runs/x/source.ndjson") as stream:
+        body = stream.read()
+
+    assert body == b'{"businessId":{"value":"1234567-8"}}\n'

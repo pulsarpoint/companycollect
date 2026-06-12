@@ -6,6 +6,7 @@ import dagster as dg
 
 from dagster_corpscout.lib.manifest import Artifact, build_manifest
 from dagster_corpscout.lib.streaming import StreamStats
+from dagster_corpscout.resources.clickhouse import ClickHouseResource
 from dagster_corpscout.resources.rustfs import RustFSResource
 from dagster_corpscout.sources.finland_prhytj import spec
 from dagster_corpscout.sources.finland_prhytj.client import (
@@ -13,6 +14,11 @@ from dagster_corpscout.sources.finland_prhytj.client import (
     iter_companies,
     ndjson_chunks,
 )
+from dagster_corpscout.sources.finland_prhytj.code_lists import (
+    code_list_objects_from_manifest,
+    import_code_lists,
+)
+from dagster_corpscout.sources.finland_prhytj.importer import import_normalized_snapshot
 
 
 @dg.asset(
@@ -81,3 +87,67 @@ def raw_snapshot(context: dg.AssetExecutionContext, rustfs: RustFSResource) -> d
             "artifact_count": len(artifacts),
         }
     )
+
+
+@dg.asset(
+    key_prefix=[spec.SOURCE_NAME],
+    name="normalized_tables",
+    group_name=spec.SOURCE_NAME,
+    deps=[raw_snapshot],
+    retry_policy=dg.RetryPolicy(max_retries=2, delay=120, backoff=dg.Backoff.EXPONENTIAL),
+    op_tags={"dagster/concurrency_key": f"{spec.SOURCE_NAME}:clickhouse"},
+)
+def normalized_tables(
+    context: dg.AssetExecutionContext,
+    rustfs: RustFSResource,
+    clickhouse: ClickHouseResource,
+) -> dg.MaterializeResult:
+    """Parse the latest PRH YTJ snapshot and import normalized ClickHouse rows."""
+    manifest = rustfs.latest_manifest(spec.BUCKET)
+    source = _artifact_by_key(manifest, "source")
+    with rustfs.open_object(spec.BUCKET, source["object_key"]) as stream:
+        counts = import_normalized_snapshot(
+            clickhouse=clickhouse,
+            stream=stream,
+            run_id=manifest["run_id"],
+        )
+
+    return dg.MaterializeResult(
+        metadata={
+            "run_id": manifest["run_id"],
+            "tables": len(counts),
+            "rows": sum(counts.values()),
+            **{f"rows_{table}": count for table, count in counts.items()},
+        }
+    )
+
+
+@dg.asset(
+    key_prefix=[spec.SOURCE_NAME],
+    name="code_lists",
+    group_name=spec.SOURCE_NAME,
+    deps=[raw_snapshot],
+    retry_policy=dg.RetryPolicy(max_retries=2, delay=120, backoff=dg.Backoff.EXPONENTIAL),
+    op_tags={"dagster/concurrency_key": f"{spec.SOURCE_NAME}:clickhouse"},
+)
+def code_lists(
+    context: dg.AssetExecutionContext,
+    rustfs: RustFSResource,
+    clickhouse: ClickHouseResource,
+) -> dg.MaterializeResult:
+    """Parse the latest PRH YTJ code-list artifacts and import ClickHouse rows."""
+    manifest = rustfs.latest_manifest(spec.BUCKET)
+    objects = code_list_objects_from_manifest(manifest, rustfs, spec.BUCKET)
+    imported = import_code_lists(
+        clickhouse=clickhouse,
+        objects=objects,
+        run_id=manifest["run_id"],
+    )
+    return dg.MaterializeResult(metadata={"run_id": manifest["run_id"], "rows": imported})
+
+
+def _artifact_by_key(manifest: dict, key: str) -> dict:
+    for artifact in manifest.get("artifacts", []):
+        if artifact.get("key") == key:
+            return artifact
+    raise KeyError(f"manifest artifact not found: {key}")

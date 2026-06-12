@@ -1,5 +1,5 @@
 load_from:
   - grpc_server:
-      host: localhost
+      host: dagster-code
       port: 4266
       location_name: dagster_corpscout

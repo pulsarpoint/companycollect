@@ -8,6 +8,13 @@ def test_definitions_load():
     assert assets_def is not None
 
 
+def test_definitions_include_finland_prhytj_import_assets():
+    from dagster_corpscout.definitions import defs
+
+    assert defs.get_assets_def(dg.AssetKey(["finland_prhytj", "normalized_tables"])) is not None
+    assert defs.get_assets_def(dg.AssetKey(["finland_prhytj", "code_lists"])) is not None
+
+
 def test_pull_schedule_exists_and_is_stopped():
     from dagster_corpscout.definitions import defs
 

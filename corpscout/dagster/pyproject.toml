@@ -8,6 +8,7 @@ dependencies = [
     "dagster-docker>=0.26",
     "boto3>=1.34",
     "requests>=2.32",
+    "clickhouse-connect>=0.8",
 ]
 
 [project.optional-dependencies]
