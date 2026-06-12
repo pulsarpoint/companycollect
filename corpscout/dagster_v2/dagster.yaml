@@ -1,0 +1,38 @@
+storage:
+  postgres:
+    postgres_url:
+      env: DAGSTER_PG_URL
+
+run_launcher:
+  module: dagster_docker
+  class: DockerRunLauncher
+  config:
+    image:
+      env: DAGSTER_RUN_IMAGE
+    env_vars:
+      - DAGSTER_PG_URL
+      - CORPSCOUT_S3_ENDPOINT
+      - CORPSCOUT_S3_ACCESS_KEY
+      - CORPSCOUT_S3_SECRET_KEY
+      - CLICKHOUSE_HOST
+      - CLICKHOUSE_PORT
+      - CLICKHOUSE_USER
+      - CLICKHOUSE_PASSWORD
+      - CLICKHOUSE_DATABASE
+      - CLICKHOUSE_SECURE
+    network: dagster-corpscout
+    container_kwargs:
+      mem_limit: 2g
+      extra_hosts:
+        companycollect: 100.85.212.113
+
+run_queue:
+  max_concurrent_runs: 4
+  tag_concurrency_limits:
+    - key: dagster/concurrency_key
+      limit: 1
+      value:
+        applyLimitPerUniqueValue: true
+
+run_retries:
+  enabled: true
