@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 import dagster as dg
 
+from dagster_corpscout.lib.automation import eager_partition_cascade
 from dagster_corpscout.resources.clickhouse import ClickHouseResource
 from dagster_corpscout.resources.rustfs import RustFSResource
 from dagster_corpscout.sources.finland.prh_xbrl import spec, tables
@@ -25,7 +26,7 @@ from dagster_corpscout.sources.finland.prh_xbrl.partitions import registration_m
     group_name=spec.GROUP_NAME,
     tags={**spec.TAGS, "layer": "parsed"},
     deps=[raw_xml_documents],
-    automation_condition=dg.AutomationCondition.eager(),
+    automation_condition=eager_partition_cascade(),
     retry_policy=dg.RetryPolicy(max_retries=2, delay=120, backoff=dg.Backoff.EXPONENTIAL),
     op_tags={"dagster/concurrency_key": f"{spec.SOURCE_NAME}:clickhouse"},
 )

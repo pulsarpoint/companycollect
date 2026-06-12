@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 import dagster as dg
 
+from dagster_corpscout.lib.automation import eager_rollup_cascade
 from dagster_corpscout.resources.clickhouse import ClickHouseResource
 from dagster_corpscout.sources.finland.prh_xbrl import spec, tables
 from dagster_corpscout.sources.finland.prh_xbrl.assets.parsed import statement_tables
@@ -46,7 +47,7 @@ WHERE f.value_kind = 'numeric' AND f.numeric_value IS NOT NULL
     group_name=spec.GROUP_NAME,
     tags={**spec.TAGS, "layer": "normalized"},
     deps=[statement_tables],
-    automation_condition=dg.AutomationCondition.eager(),
+    automation_condition=eager_rollup_cascade(),
     op_tags={"dagster/concurrency_key": f"{spec.SOURCE_NAME}:clickhouse"},
 )
 def financial_metrics(
