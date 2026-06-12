@@ -22,6 +22,21 @@ LINK_NS = "http://www.xbrl.org/2003/linkbase"
 XLINK_NS = "http://www.w3.org/1999/xlink"
 XBRLDI_NS = "http://xbrl.org/2006/xbrldi"
 
+# Canonical prefixes for the fixed PRH/suomi.fi taxonomy namespaces, so
+# concept_qname and member codes are stable even if a document declares
+# different prefixes. Anything outside this table falls back to the
+# document's own prefix.
+CANONICAL_PREFIXES = {
+    "http://www.suomi.fi/xbrl/crr/dict/met": "fi_met",
+    "http://www.suomi.fi/xbrl/crr/dict/dim": "fi_dim",
+    "http://www.suomi.fi/xbrl/crr/dict/dom/MC": "fi_MC",
+    "http://www.suomi.fi/xbrl/crr/dict/dom/RF": "fi_RF",
+    "http://www.suomi.fi/xbrl/crr/dict/dom/SC": "fi_SC",
+    "http://www.xbrl.org/2003/iso4217": "iso4217",
+}
+
+_XML_PARSER = etree.XMLParser(resolve_entities=False)
+
 _REPORTED_CONCEPTS = {
     "si289": "reported_business_id",
     "si168": "reported_company_name",
@@ -54,7 +69,7 @@ def parse_statement_xml(
     body: bytes,
     parsed_at: datetime,
 ) -> ParsedStatement:
-    root = etree.fromstring(body)
+    root = etree.fromstring(body, parser=_XML_PARSER)
     xml_sha256 = hashlib.sha256(body).hexdigest()
     statement_key = statement_key_for(business_id, financial_date, xml_sha256)
     financial_date_value = date.fromisoformat(financial_date)
@@ -65,6 +80,8 @@ def parse_statement_xml(
         for element in root.findall(f"{{{XBRLI_NS}}}context")
     ]
     contexts_by_id = {row["context_id"]: row for row in context_rows}
+    if len(contexts_by_id) != len(context_rows):
+        warnings.append("statement contains duplicate context ids")
 
     unit_rows = [
         _unit_row(statement_key, element, parsed_at)
@@ -74,6 +91,7 @@ def parse_statement_xml(
     prefix_by_namespace = {
         namespace: prefix for prefix, namespace in (root.nsmap or {}).items() if prefix
     }
+    prefix_by_namespace.update(CANONICAL_PREFIXES)
 
     fact_rows: list[dict] = []
     reported: dict[str, str] = {}
@@ -158,6 +176,42 @@ def _date_or_none(value: str) -> date | None:
         return None
 
 
+_DECIMAL_MAX_DIGITS = 38
+_DECIMAL_MAX_SCALE = 6
+
+
+def _decimal_or_none(raw_value: str) -> Decimal | None:
+    """Parse a fact value if it fits ClickHouse Decimal(38, 6); otherwise None."""
+    try:
+        value = Decimal(raw_value)
+    except InvalidOperation:
+        return None
+    if not value.is_finite():
+        return None
+    _sign, digits, exponent = value.as_tuple()
+    exponent_int = int(exponent)
+    scale = max(0, -exponent_int)
+    if exponent_int < 0:
+        integral_digits = max(len(digits) + exponent_int, 0)
+    else:
+        integral_digits = len(digits) + exponent_int
+    if scale > _DECIMAL_MAX_SCALE:
+        return None
+    if integral_digits + _DECIMAL_MAX_SCALE > _DECIMAL_MAX_DIGITS:
+        return None
+    return value
+
+
+def _canonical_qname_text(value: str, element) -> str:
+    """Re-prefix a document-literal QName string canonically when possible."""
+    prefix, sep, local = value.partition(":")
+    if not sep:
+        return value
+    namespace = (element.nsmap or {}).get(prefix)
+    canonical = CANONICAL_PREFIXES.get(namespace) if namespace else None
+    return f"{canonical}:{local}" if canonical else value
+
+
 def _member_for(dimensions: list[tuple[str, str, str]], suffix: str) -> str | None:
     for dimension_code, member_code, _label in dimensions:
         if dimension_code == suffix or dimension_code.endswith(f":{suffix}"):
@@ -179,7 +233,11 @@ def _context_row(statement_key: str, element, parsed_at: datetime) -> dict:
         period_type = "none"
 
     dimensions = [
-        (member.get("dimension", ""), (member.text or "").strip(), "")
+        (
+            _canonical_qname_text(member.get("dimension", ""), member),
+            _canonical_qname_text((member.text or "").strip(), member),
+            "",
+        )
         for member in element.findall(f".//{{{XBRLDI_NS}}}explicitMember")
     ]
     ref_member = _member_for(dimensions, "REF")
@@ -239,12 +297,15 @@ def _fact_row(
     if not raw_value:
         value_kind = "empty"
     elif unit_id is not None:
-        try:
-            numeric_value = Decimal(raw_value)
+        numeric_value = _decimal_or_none(raw_value)
+        if numeric_value is not None:
             value_kind = "numeric"
-        except InvalidOperation:
+        else:
             text_value = raw_value
             value_kind = "text"
+            warnings.append(
+                f"fact value {raw_value!r} is not representable as Decimal(38,6); stored as text"
+            )
     else:
         date_value = _date_or_none(raw_value)
         if date_value is not None:
@@ -253,8 +314,14 @@ def _fact_row(
             text_value = raw_value
             value_kind = "text"
 
-    prefix = prefix_by_namespace.get(qname.namespace)
-    concept_qname = f"{prefix}:{qname.localname}" if prefix else qname.localname
+    prefix = prefix_by_namespace.get(qname.namespace) or element.prefix
+    if prefix:
+        concept_qname = f"{prefix}:{qname.localname}"
+    else:
+        concept_qname = qname.localname
+        warnings.append(
+            f"no namespace prefix resolved for concept {qname.localname!r} ({qname.namespace!r})"
+        )
 
     context_ref = element.get("contextRef", "")
     context = contexts_by_id.get(context_ref)

@@ -128,3 +128,77 @@ def test_reported_business_id_mismatch_produces_warning_not_failure():
 
     assert any("reported business id" in warning for warning in parsed.warnings)
     assert document["facts_count"] == 6
+
+
+def test_row_keys_match_table_contract_for_every_table():
+    parsed = _parse()
+    for table, rows in parsed.rows_by_table.items():
+        for row in rows:
+            assert set(row.keys()) == set(tables.TABLE_COLUMNS[table]), table
+
+
+def test_non_representable_numeric_values_degrade_to_text_with_warning():
+    xml = b"""<xbrl xmlns="http://www.xbrl.org/2003/instance"
+        xmlns:fi_met="http://www.suomi.fi/xbrl/crr/dict/met">
+      <context id="c1">
+        <entity><identifier scheme="http://ytj.fi">0176460-0</identifier></entity>
+        <period><instant>2023-09-30</instant></period>
+      </context>
+      <unit id="EUR"><measure>iso4217:EUR</measure></unit>
+      <fi_met:md103 contextRef="c1" unitRef="EUR">NaN</fi_met:md103>
+      <fi_met:md103 contextRef="c1" unitRef="EUR">1.5E+45</fi_met:md103>
+      <fi_met:md103 contextRef="c1" unitRef="EUR">0.123456789</fi_met:md103>
+      <fi_met:md103 contextRef="c1" unitRef="EUR">125000.50</fi_met:md103>
+    </xbrl>"""
+
+    parsed = parse_statement_xml(
+        business_id="0176460-0",
+        financial_date="2023-09-30",
+        registration_date=None,
+        source_url="test",
+        xml_object_key="test",
+        source_run_id="test",
+        body=xml,
+        parsed_at=PARSED_AT,
+    )
+
+    facts = parsed.rows_by_table[tables.FACTS_TABLE]
+    kinds = [fact["value_kind"] for fact in facts]
+    assert kinds == ["text", "text", "text", "numeric"]
+    assert facts[3]["numeric_value"] == Decimal("125000.50")
+    assert sum("not representable" in w for w in parsed.warnings) == 3
+
+
+def test_concept_qname_is_canonical_even_with_nonstandard_prefixes():
+    xml = b"""<xbrl xmlns="http://www.xbrl.org/2003/instance"
+        xmlns:met="http://www.suomi.fi/xbrl/crr/dict/met"
+        xmlns:xbrldi="http://xbrl.org/2006/xbrldi"
+        xmlns:d="http://www.suomi.fi/xbrl/crr/dict/dim"
+        xmlns:mc="http://www.suomi.fi/xbrl/crr/dict/dom/MC">
+      <context id="c1">
+        <entity><identifier scheme="http://ytj.fi">0176460-0</identifier></entity>
+        <period><instant>2023-09-30</instant></period>
+        <scenario>
+          <xbrldi:explicitMember dimension="d:MCY">mc:x673</xbrldi:explicitMember>
+        </scenario>
+      </context>
+      <unit id="EUR"><measure>iso4217:EUR</measure></unit>
+      <met:md103 contextRef="c1" unitRef="EUR">125000</met:md103>
+    </xbrl>"""
+
+    parsed = parse_statement_xml(
+        business_id="0176460-0",
+        financial_date="2023-09-30",
+        registration_date=None,
+        source_url="test",
+        xml_object_key="test",
+        source_run_id="test",
+        body=xml,
+        parsed_at=PARSED_AT,
+    )
+
+    [fact] = parsed.rows_by_table[tables.FACTS_TABLE]
+    assert fact["concept_qname"] == "fi_met:md103"
+    assert fact["mcy_member_code"] == "fi_MC:x673"
+    [context] = parsed.rows_by_table[tables.CONTEXTS_TABLE]
+    assert ("fi_dim:MCY", "fi_MC:x673", "") in context["dimensions"]
