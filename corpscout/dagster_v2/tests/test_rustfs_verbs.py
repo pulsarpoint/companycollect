@@ -15,3 +15,15 @@ def test_ensure_bucket_is_idempotent_and_list_get_roundtrip():
         "companies/0176460-0/2024-09-30.xml"
     ]
     assert resource.get_bytes("source-test", "companies/0176460-0/2024-09-30.xml") == b"<xbrl />"
+
+
+@mock_aws
+def test_list_keys_paginates_beyond_one_page():
+    resource = RustFSResource(endpoint_url="", access_key="test", secret_key="test")
+    resource.ensure_bucket("source-test")
+    for index in range(1001):
+        resource.put_bytes("source-test", f"companies/{index:04d}.xml", b"<xbrl />")
+
+    keys = resource.list_keys("source-test", "companies/")
+
+    assert len(keys) == 1001

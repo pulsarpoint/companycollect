@@ -78,7 +78,10 @@ class RustFSResource(ConfigurableResource):
 
     def ensure_bucket(self, bucket: str) -> None:
         try:
-            self.client().create_bucket(Bucket=bucket)
+            kwargs: dict = {"Bucket": bucket}
+            if self.region != "us-east-1":
+                kwargs["CreateBucketConfiguration"] = {"LocationConstraint": self.region}
+            self.client().create_bucket(**kwargs)
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "")
             if code not in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
