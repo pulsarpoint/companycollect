@@ -1,3 +1,4 @@
+import pytest
 import responses
 
 from dagster_corpscout.sources.finland.prh_xbrl.client import PRHXBRLClient
@@ -40,6 +41,7 @@ def test_iter_registration_window_paginates_until_total_results():
 
         assert "registeredDateStart=2025-01-01" in rsps.calls[0].request.url
         assert "registeredDateEnd=2025-01-31" in rsps.calls[0].request.url
+        assert "page=1" in rsps.calls[0].request.url
         assert "page=2" in rsps.calls[1].request.url
         assert rsps.calls[0].request.headers["User-Agent"] == "corpscout-test/1.0"
 
@@ -75,3 +77,15 @@ def test_download_financial_xml_returns_bytes_and_url():
     assert body == b"<xbrl />"
     assert "businessId=0176460-0" in source_url
     assert "financialDate=2023-09-30" in source_url
+
+
+def test_paginate_aborts_on_runaway_api():
+    from dagster_corpscout.sources.finland.prh_xbrl import client as client_module
+
+    page = client_module.DiscoveryPage(
+        total_results=0,
+        statements=[client_module.DiscoveredStatement(business_id="x", financial_date="2024-01-01")],
+    )
+
+    with pytest.raises(RuntimeError, match="pagination exceeded"):
+        list(client_module._paginate(lambda page_number: page))

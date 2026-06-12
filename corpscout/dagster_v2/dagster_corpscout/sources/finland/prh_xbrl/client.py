@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import requests
+
+MAX_PAGES = 10_000
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,15 @@ class PRHXBRLClient:
     def iter_company_financials(self, business_id: str) -> Iterator[DiscoveredStatement]:
         yield from _paginate(lambda page: self.list_company_financials(business_id, page=page))
 
+    def close(self) -> None:
+        self.session.close()
+
+    def __enter__(self) -> "PRHXBRLClient":
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
+
     def download_financial_xml(self, business_id: str, financial_date: str) -> tuple[bytes, str]:
         response = self.session.get(
             f"{self.base_url}/financial",
@@ -76,10 +87,9 @@ class PRHXBRLClient:
         return response.content, response.url
 
 
-def _paginate(fetch_page) -> Iterator[DiscoveredStatement]:
-    page_number = 1
+def _paginate(fetch_page: Callable[[int], DiscoveryPage]) -> Iterator[DiscoveredStatement]:
     seen = 0
-    while True:
+    for page_number in range(1, MAX_PAGES + 1):
         page = fetch_page(page_number)
         if not page.statements:
             return
@@ -87,7 +97,7 @@ def _paginate(fetch_page) -> Iterator[DiscoveredStatement]:
         seen += len(page.statements)
         if page.total_results and seen >= page.total_results:
             return
-        page_number += 1
+    raise RuntimeError(f"pagination exceeded {MAX_PAGES} pages; aborting runaway loop")
 
 
 def _discovery_page(payload: dict) -> DiscoveryPage:
