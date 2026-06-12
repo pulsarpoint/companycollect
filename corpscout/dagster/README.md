@@ -8,7 +8,7 @@ Use `finland_prhytj_pipeline` only when you want a fresh full download from the
 PRH YTJ API:
 
 ```text
-prh_ytj_open_data_api -> raw_snapshot -> normalized_tables -> code_lists
+source_system -> raw_snapshot -> normalized_tables -> code_lists
   -> industry_nace_mappings -> company_explorer_cache
 ```
 
@@ -52,3 +52,20 @@ docker compose run --rm dagster-code \
   dagster job execute -m dagster_corpscout.definitions \
   -j finland_prhytj_pipeline
 ```
+
+## Source Package Convention
+
+Each source lives under `dagster_corpscout/sources/<country>/<source>` and
+exports a `source_bundle` from `__init__.py`. The registry imports source
+packages from `registry.source_modules`; source names and asset key prefixes
+must be unique.
+
+Create a new source package skeleton with:
+
+```bash
+dagster-corpscout-scaffold-source serbia apr
+```
+
+The scaffold creates `spec.py`, `jobs.py`, `schedules.py`, and the initial
+`assets/external.py` and `assets/raw.py` modules. Register the package in
+`dagster_corpscout/registry.py` only after the raw asset is implemented.

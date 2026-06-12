@@ -19,6 +19,9 @@ dev = [
     "dagster-webserver>=1.10,<2",
 ]
 
+[project.scripts]
+dagster-corpscout-scaffold-source = "dagster_corpscout.source_scaffold:main"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
