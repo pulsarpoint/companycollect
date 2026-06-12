@@ -367,7 +367,19 @@ download:
 finland_prh_xbrl_launch_download_job
 ```
 
-The job calls Temporal with the same input shape as the workflow:
+The job receives explicit Dagster run config for the source window:
+
+```yaml
+ops:
+  launch_prh_xbrl_download:
+    config:
+      registered_date_start: "2026-06-01"
+      registered_date_end: "2026-06-03"
+      max_statements: 50
+      retry_failed: false
+```
+
+The op then calls Temporal with the same input shape as the workflow:
 
 ```json
 {
@@ -389,6 +401,11 @@ The job is intentionally thin:
 5. Exit successfully when Temporal accepted the start request or returned the
    already-open workflow for the same window.
 
+Manual Dagster launches must provide `registered_date_start` and
+`registered_date_end`; the job does not infer a date window from wall-clock time
+for manual runs. `max_statements` defaults to 50 for smoke tests and remains
+bounded. `retry_failed` defaults to `false`.
+
 It does not poll the workflow to completion and does not emit a
 `raw_statements` materialization. Completion remains asynchronous and is
 observed by `finland_prh_xbrl_manifest_sensor`.
@@ -399,6 +416,11 @@ Temporal connection settings are regular Dagster environment configuration:
 TEMPORAL_ADDRESS=companycollect:7233
 TEMPORAL_NAMESPACE=default
 ```
+
+Infrastructure settings such as Temporal address, namespace, and credentials
+come from environment configuration. Source action parameters such as
+registered-date windows are Dagster run config so operators can change them per
+launch without rebuilding images or editing deployment files.
 
 The implementation may keep the first launcher source-specific, but the
 Temporal client resource should be generic enough for other source packages to
@@ -412,8 +434,10 @@ finland_prh_xbrl_daily_download_schedule
 ```
 
 The schedule should be disabled by default in phase 1 or configured for a very
-small rolling window until the workflow has passed a real smoke test. Manual
-launches from Dagster remain the primary phase-1 operating mode.
+small rolling window until the workflow has passed a real smoke test. When
+enabled, the schedule should generate the same run config shape as manual
+launches, for example yesterday's registered-date window. Manual launches from
+Dagster remain the primary phase-1 operating mode.
 
 ## Dagster Sensor
 
@@ -473,9 +497,12 @@ Python/Dagster tests:
 - source package convention for `finland/prh_xbrl`;
 - definitions include `source_system` and `raw_statements`;
 - `raw_statements` group/tags match `source_finland_prh_xbrl`;
+- launcher op rejects missing, malformed, or reversed date-window run config;
 - launcher job builds deterministic Temporal workflow IDs;
 - launcher job uses an idempotent conflict policy for already-open workflows;
 - launcher job does not emit `raw_statements` materializations;
+- schedule, when enabled, generates the same run config shape as manual
+  launches;
 - sensor emits one materialization per unseen manifest;
 - sensor cursor prevents duplicate materializations;
 - malformed manifest is logged by failing the sensor tick rather than emitting
