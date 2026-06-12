@@ -26,11 +26,24 @@ from dagster_corpscout.sources.finland_prhytj.industry_mapping import (
     refresh_industry_nace_mappings,
 )
 
+prh_ytj_open_data_api = dg.AssetSpec(
+    key=dg.AssetKey([spec.SOURCE_NAME, "prh_ytj_open_data_api"]),
+    group_name=spec.SOURCE_NAME,
+    description="External PRH YTJ Open Data API used to download Finland company snapshots.",
+    metadata={
+        "base_url": spec.BASE_URL,
+        "description_path": spec.DESCRIPTION_PATH,
+        "country": spec.COUNTRY,
+        "source": spec.DISPLAY_NAME,
+    },
+)
+
 
 @dg.asset(
     key_prefix=[spec.SOURCE_NAME],
     name="raw_snapshot",
     group_name=spec.SOURCE_NAME,
+    deps=[prh_ytj_open_data_api],
     retry_policy=dg.RetryPolicy(max_retries=3, delay=60, backoff=dg.Backoff.EXPONENTIAL),
     op_tags={"dagster/concurrency_key": spec.SOURCE_NAME},
 )

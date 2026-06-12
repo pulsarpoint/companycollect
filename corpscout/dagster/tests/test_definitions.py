@@ -8,6 +8,19 @@ def test_definitions_load():
     assert assets_def is not None
 
 
+def test_raw_snapshot_has_external_prh_ytj_api_upstream_asset():
+    from dagster_corpscout.definitions import defs
+
+    api_key = dg.AssetKey(["finland_prhytj", "prh_ytj_open_data_api"])
+    raw_key = dg.AssetKey(["finland_prhytj", "raw_snapshot"])
+
+    graph = defs.resolve_asset_graph()
+    raw_node = next(node for node in graph.asset_nodes if node.key == raw_key)
+
+    assert api_key in graph.external_asset_keys
+    assert api_key in {parent.key for parent in graph.get_parents(raw_node)}
+
+
 def test_definitions_include_finland_prhytj_import_assets():
     from dagster_corpscout.definitions import defs
 

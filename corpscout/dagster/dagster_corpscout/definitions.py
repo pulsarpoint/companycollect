@@ -6,6 +6,7 @@ from dagster_corpscout.sources.finland_prhytj.assets import (
     code_lists,
     company_explorer_cache,
     industry_nace_mappings,
+    prh_ytj_open_data_api,
     normalized_tables,
     raw_snapshot,
 )
@@ -16,7 +17,14 @@ from dagster_corpscout.sources.finland_prhytj.checks import (
 from dagster_corpscout.sources.finland_prhytj.schedules import pipeline_job, pull_job, pull_schedule
 
 defs = dg.Definitions(
-    assets=[raw_snapshot, normalized_tables, code_lists, industry_nace_mappings, company_explorer_cache],
+    assets=[
+        prh_ytj_open_data_api,
+        raw_snapshot,
+        normalized_tables,
+        code_lists,
+        industry_nace_mappings,
+        company_explorer_cache,
+    ],
     asset_checks=[industry_nace_mappings_rows_present, company_explorer_cache_matches_view],
     jobs=[pull_job, pipeline_job],
     schedules=[pull_schedule],
