@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -24,25 +25,70 @@ class DiscoveryPage:
 
 
 class PRHXBRLClient:
-    def __init__(self, *, base_url: str, user_agent: str, timeout_seconds: int = 120) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        user_agent: str,
+        timeout_seconds: int = 120,
+        min_request_interval_seconds: float = 1.0,
+        max_attempts: int = 8,
+        backoff_base_seconds: float = 5.0,
+        backoff_max_seconds: float = 120.0,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self.min_request_interval_seconds = min_request_interval_seconds
+        self.max_attempts = max_attempts
+        self.backoff_base_seconds = backoff_base_seconds
+        self.backoff_max_seconds = backoff_max_seconds
+        self._last_request_at: float | None = None
         self.session = requests.Session()
         self.session.headers["User-Agent"] = user_agent
+
+    def _throttle(self) -> None:
+        if self._last_request_at is not None:
+            wait = self.min_request_interval_seconds - (time.monotonic() - self._last_request_at)
+            if wait > 0:
+                time.sleep(wait)
+        self._last_request_at = time.monotonic()
+
+    def _get(self, path: str, params: dict) -> requests.Response:
+        """GET with pacing and bounded backoff. PRH rate-limits (429) without a
+        Retry-After header, so exponential backoff is the only safe strategy."""
+        response: requests.Response | None = None
+        for attempt in range(1, self.max_attempts + 1):
+            self._throttle()
+            response = self.session.get(
+                f"{self.base_url}{path}", params=params, timeout=self.timeout_seconds
+            )
+            if response.status_code == 429 or response.status_code >= 500:
+                if attempt < self.max_attempts:
+                    delay = min(
+                        self.backoff_base_seconds * 2 ** (attempt - 1),
+                        self.backoff_max_seconds,
+                    )
+                    retry_after = response.headers.get("Retry-After", "")
+                    if retry_after.isdigit():
+                        delay = max(delay, float(retry_after))
+                    time.sleep(delay)
+                    continue
+            response.raise_for_status()
+            return response
+        response.raise_for_status()
+        return response
 
     def list_registration_window(
         self, *, registered_date_start: str, registered_date_end: str, page: int = 1
     ) -> DiscoveryPage:
-        response = self.session.get(
-            f"{self.base_url}/all_financial_statements",
-            params={
+        response = self._get(
+            "/all_financial_statements",
+            {
                 "registeredDateStart": registered_date_start,
                 "registeredDateEnd": registered_date_end,
                 "page": page,
             },
-            timeout=self.timeout_seconds,
         )
-        response.raise_for_status()
         return _discovery_page(response.json())
 
     def iter_registration_window(
@@ -57,16 +103,21 @@ class PRHXBRLClient:
         )
 
     def list_company_financials(self, business_id: str, *, page: int = 1) -> DiscoveryPage:
-        response = self.session.get(
-            f"{self.base_url}/financials",
-            params={"businessId": business_id, "page": page},
-            timeout=self.timeout_seconds,
+        response = self._get(
+            "/financials",
+            {"businessId": business_id, "page": page},
         )
-        response.raise_for_status()
         return _discovery_page(response.json())
 
     def iter_company_financials(self, business_id: str) -> Iterator[DiscoveredStatement]:
         yield from _paginate(lambda page: self.list_company_financials(business_id, page=page))
+
+    def download_financial_xml(self, business_id: str, financial_date: str) -> tuple[bytes, str]:
+        response = self._get(
+            "/financial",
+            {"businessId": business_id, "financialDate": financial_date},
+        )
+        return response.content, response.url
 
     def close(self) -> None:
         self.session.close()
@@ -76,15 +127,6 @@ class PRHXBRLClient:
 
     def __exit__(self, *exc_info) -> None:
         self.close()
-
-    def download_financial_xml(self, business_id: str, financial_date: str) -> tuple[bytes, str]:
-        response = self.session.get(
-            f"{self.base_url}/financial",
-            params={"businessId": business_id, "financialDate": financial_date},
-            timeout=self.timeout_seconds,
-        )
-        response.raise_for_status()
-        return response.content, response.url
 
 
 def _paginate(fetch_page: Callable[[int], DiscoveryPage]) -> Iterator[DiscoveredStatement]:

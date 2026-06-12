@@ -7,7 +7,7 @@ BASE = "https://example.test/opendata-xbrl-api/v3"
 
 
 def _client() -> PRHXBRLClient:
-    return PRHXBRLClient(base_url=BASE, user_agent="corpscout-test/1.0")
+    return PRHXBRLClient(base_url=BASE, user_agent="corpscout-test/1.0", min_request_interval_seconds=0)
 
 
 def test_iter_registration_window_paginates_until_total_results():
@@ -89,3 +89,71 @@ def test_paginate_aborts_on_runaway_api():
 
     with pytest.raises(RuntimeError, match="pagination exceeded"):
         list(client_module._paginate(lambda page_number: page))
+
+
+def test_retries_with_backoff_on_429_and_succeeds(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr("dagster_corpscout.sources.finland.prh_xbrl.client.time.sleep", sleeps.append)
+
+    client = PRHXBRLClient(
+        base_url=BASE, user_agent="corpscout-test/1.0", min_request_interval_seconds=0
+    )
+
+    with responses.RequestsMock() as rsps:
+        rsps.add(responses.GET, f"{BASE}/financial", status=429)
+        rsps.add(responses.GET, f"{BASE}/financial", status=429)
+        rsps.add(responses.GET, f"{BASE}/financial", body=b"<xbrl />")
+
+        body, _source_url = client.download_financial_xml("0176460-0", "2023-09-30")
+
+    assert body == b"<xbrl />"
+    assert sleeps == [5.0, 10.0]
+
+
+def test_gives_up_after_max_attempts_on_persistent_429(monkeypatch):
+    monkeypatch.setattr("dagster_corpscout.sources.finland.prh_xbrl.client.time.sleep", lambda _s: None)
+
+    client = PRHXBRLClient(
+        base_url=BASE,
+        user_agent="corpscout-test/1.0",
+        min_request_interval_seconds=0,
+        max_attempts=3,
+    )
+
+    with responses.RequestsMock() as rsps:
+        for _ in range(3):
+            rsps.add(responses.GET, f"{BASE}/financial", status=429)
+
+        with pytest.raises(Exception) as excinfo:
+            client.download_financial_xml("0176460-0", "2023-09-30")
+
+    assert "429" in str(excinfo.value)
+
+
+def test_requests_are_paced_by_min_interval(monkeypatch):
+    sleeps: list[float] = []
+    clock = {"now": 1000.0}
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr("dagster_corpscout.sources.finland.prh_xbrl.client.time.sleep", fake_sleep)
+    monkeypatch.setattr(
+        "dagster_corpscout.sources.finland.prh_xbrl.client.time.monotonic", lambda: clock["now"]
+    )
+
+    client = PRHXBRLClient(
+        base_url=BASE, user_agent="corpscout-test/1.0", min_request_interval_seconds=1.0
+    )
+
+    with responses.RequestsMock() as rsps:
+        rsps.add(responses.GET, f"{BASE}/financial", body=b"<a />")
+        rsps.add(responses.GET, f"{BASE}/financial", body=b"<b />")
+
+        client.download_financial_xml("0176460-0", "2023-09-30")
+        client.download_financial_xml("0176460-0", "2024-09-30")
+
+    # Second request must wait out the remaining interval (clock doesn't advance
+    # between requests except via fake_sleep, so the full interval is slept).
+    assert sleeps == [1.0]
