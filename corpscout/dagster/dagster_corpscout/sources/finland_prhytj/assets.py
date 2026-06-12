@@ -56,7 +56,18 @@ def raw_snapshot(context: dg.AssetExecutionContext, rustfs: RustFSResource) -> d
 
     snapshot_key = spec.snapshot_object_key(run_id)
     record_stats = StreamStats()
-    chunks = ndjson_chunks(iter_companies(spec.BASE_URL), record_stats)
+    chunks = ndjson_chunks(
+        iter_companies(
+            spec.BASE_URL,
+            progress_logger=lambda page, records, total: context.log.info(
+                "snapshot download progress: page=%d records=%d total=%s",
+                page,
+                records,
+                total,
+            ),
+        ),
+        record_stats,
+    )
     upload_stats = rustfs.upload_stream(spec.BUCKET, snapshot_key, chunks)
     context.log.info(
         "snapshot uploaded: %d records, %d bytes",

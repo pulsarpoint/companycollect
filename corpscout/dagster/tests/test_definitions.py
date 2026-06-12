@@ -37,3 +37,19 @@ def test_pull_schedule_exists_and_is_stopped():
     assert schedule.cron_schedule == "0 3 * * 1"
     assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
     assert schedule.job.name == "finland_prhytj_pipeline"
+
+
+def test_transform_latest_job_excludes_raw_download():
+    from dagster_corpscout.definitions import defs
+    from dagster_corpscout.sources.finland_prhytj.schedules import transform_latest_job
+
+    defs.resolve_job_def("finland_prhytj_transform_latest")
+    selected = set(transform_latest_job.selection.selected_keys)
+
+    assert dg.AssetKey(["finland_prhytj", "raw_snapshot"]) not in selected
+    assert selected == {
+        dg.AssetKey(["finland_prhytj", "normalized_tables"]),
+        dg.AssetKey(["finland_prhytj", "code_lists"]),
+        dg.AssetKey(["finland_prhytj", "industry_nace_mappings"]),
+        dg.AssetKey(["finland_prhytj", "company_explorer_cache"]),
+    }

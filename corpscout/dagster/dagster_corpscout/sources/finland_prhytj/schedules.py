@@ -24,6 +24,16 @@ pipeline_job = dg.define_asset_job(
     ],
 )
 
+transform_latest_job = dg.define_asset_job(
+    name="finland_prhytj_transform_latest",
+    selection=[
+        normalized_tables,
+        code_lists,
+        industry_nace_mappings,
+        company_explorer_cache,
+    ],
+)
+
 pull_schedule = dg.ScheduleDefinition(
     name="finland_prhytj_pull_schedule",
     job=pipeline_job,

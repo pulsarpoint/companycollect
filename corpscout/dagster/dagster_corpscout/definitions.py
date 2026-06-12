@@ -14,7 +14,12 @@ from dagster_corpscout.sources.finland_prhytj.checks import (
     company_explorer_cache_matches_view,
     industry_nace_mappings_rows_present,
 )
-from dagster_corpscout.sources.finland_prhytj.schedules import pipeline_job, pull_job, pull_schedule
+from dagster_corpscout.sources.finland_prhytj.schedules import (
+    pipeline_job,
+    pull_job,
+    pull_schedule,
+    transform_latest_job,
+)
 
 defs = dg.Definitions(
     assets=[
@@ -26,7 +31,7 @@ defs = dg.Definitions(
         company_explorer_cache,
     ],
     asset_checks=[industry_nace_mappings_rows_present, company_explorer_cache_matches_view],
-    jobs=[pull_job, pipeline_job],
+    jobs=[pull_job, pipeline_job, transform_latest_job],
     schedules=[pull_schedule],
     resources={
         "rustfs": RustFSResource(

@@ -2,7 +2,7 @@
 
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
@@ -35,7 +35,12 @@ def _get_with_transport_retries(
     raise RuntimeError("unreachable retry state")
 
 
-def iter_companies(base_url: str, page_size: int = spec.PAGE_SIZE) -> Iterator[dict]:
+def iter_companies(
+    base_url: str,
+    page_size: int = spec.PAGE_SIZE,
+    progress_logger: Callable[[int, int, int | None], None] | None = None,
+    progress_interval_pages: int = 100,
+) -> Iterator[dict]:
     session = requests.Session()
     total_results: int | None = None
     records = 0
@@ -58,6 +63,18 @@ def iter_companies(base_url: str, page_size: int = spec.PAGE_SIZE) -> Iterator[d
         for company in companies:
             records += 1
             yield company
+
+        is_done = (
+            (total_results is not None and records >= total_results)
+            or not companies
+            or (total_results is None and len(companies) < page_size)
+        )
+        if progress_logger and (
+            page_number == 1
+            or page_number % progress_interval_pages == 0
+            or is_done
+        ):
+            progress_logger(page_number, records, total_results)
 
         if total_results is not None and records >= total_results:
             return

@@ -59,6 +59,31 @@ def test_iter_companies_retries_premature_chunked_response(monkeypatch):
     assert len(responses.calls) == 2
 
 
+@responses.activate
+def test_iter_companies_reports_page_progress():
+    responses.get(
+        f"{BASE}?page=1",
+        json=page_json(5, [{"businessId": "1"}, {"businessId": "2"}]),
+    )
+    responses.get(
+        f"{BASE}?page=2",
+        json=page_json(5, [{"businessId": "3"}, {"businessId": "4"}]),
+    )
+    responses.get(f"{BASE}?page=3", json=page_json(5, [{"businessId": "5"}]))
+    progress = []
+
+    companies = list(
+        iter_companies(
+            BASE,
+            progress_logger=lambda page, records, total: progress.append((page, records, total)),
+            progress_interval_pages=2,
+        )
+    )
+
+    assert [c["businessId"] for c in companies] == ["1", "2", "3", "4", "5"]
+    assert progress == [(1, 2, 5), (2, 4, 5), (3, 5, 5)]
+
+
 def test_ndjson_chunks_counts_records():
     stats = StreamStats()
     chunks = list(ndjson_chunks(iter([{"a": 1}, {"b": "\u00e4"}]), stats))
