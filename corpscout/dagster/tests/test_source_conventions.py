@@ -25,6 +25,12 @@ def test_registered_source_packages_follow_layout_convention():
 
         country, source = source_bundle.asset_key_prefix[1:]
         assert module_name.endswith(f".{country}.{source}")
+        assert module.spec.GROUP_NAME == f"country_{country}"
+        assert module.spec.TAGS == {
+            "country": country,
+            "source": source,
+            "source_name": source_bundle.source_name,
+        }
 
         package_dir = Path(module.__file__).parent
         for relative_path in [
@@ -59,6 +65,8 @@ def test_source_scaffold_creates_expected_package_layout(tmp_path):
     spec_text = (package_dir / "spec.py").read_text()
     assert 'SOURCE_NAME = "serbia_apr"' in spec_text
     assert 'ASSET_KEY_PREFIX = ["sources", COUNTRY, SOURCE_SLUG]' in spec_text
+    assert 'GROUP_NAME = f"country_{COUNTRY}"' in spec_text
+    assert '"source_name": SOURCE_NAME' in spec_text
 
     init_text = (package_dir / "__init__.py").read_text()
     assert "SourceBundle(" in init_text

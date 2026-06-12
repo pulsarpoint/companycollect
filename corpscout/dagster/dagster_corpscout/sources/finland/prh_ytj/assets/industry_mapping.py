@@ -14,6 +14,7 @@ from dagster_corpscout.sources.finland.prh_ytj.industry_mapping import (
     key_prefix=spec.ASSET_KEY_PREFIX,
     name="industry_nace_mappings",
     group_name=spec.GROUP_NAME,
+    tags={**spec.TAGS, "layer": "mapping"},
     deps=[normalized_tables],
     retry_policy=dg.RetryPolicy(max_retries=2, delay=120, backoff=dg.Backoff.EXPONENTIAL),
     op_tags={"dagster/concurrency_key": f"{spec.SOURCE_NAME}:clickhouse"},

@@ -14,6 +14,7 @@ from dagster_corpscout.sources.finland.prh_ytj.importer import import_normalized
     key_prefix=spec.ASSET_KEY_PREFIX,
     name="normalized_tables",
     group_name=spec.GROUP_NAME,
+    tags={**spec.TAGS, "layer": "normalized"},
     deps=[raw_snapshot],
     retry_policy=dg.RetryPolicy(max_retries=2, delay=120, backoff=dg.Backoff.EXPONENTIAL),
     op_tags={"dagster/concurrency_key": f"{spec.SOURCE_NAME}:clickhouse"},

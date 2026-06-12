@@ -90,7 +90,12 @@ COUNTRY = "{country}"
 SOURCE_SLUG = "{source}"
 DISPLAY_NAME = "{display_name}"
 ASSET_KEY_PREFIX = ["sources", COUNTRY, SOURCE_SLUG]
-GROUP_NAME = "sources_{country}_{source}"
+GROUP_NAME = f"country_{{COUNTRY}}"
+TAGS = {{
+    "country": COUNTRY,
+    "source": SOURCE_SLUG,
+    "source_name": SOURCE_NAME,
+}}
 '''
 
 
@@ -131,6 +136,7 @@ from {module} import spec
 source_system = dg.AssetSpec(
     key=dg.AssetKey([*spec.ASSET_KEY_PREFIX, "source_system"]),
     group_name=spec.GROUP_NAME,
+    tags={{**spec.TAGS, "layer": "external"}},
     description=f"External source system for {{spec.DISPLAY_NAME}}.",
     metadata={{"country": spec.COUNTRY, "source": spec.DISPLAY_NAME}},
 )
@@ -149,6 +155,7 @@ from {module}.assets.external import source_system
     key_prefix=spec.ASSET_KEY_PREFIX,
     name="raw_snapshot",
     group_name=spec.GROUP_NAME,
+    tags={{**spec.TAGS, "layer": "raw"}},
     deps=[source_system],
     op_tags={{"dagster/concurrency_key": spec.SOURCE_NAME}},
 )

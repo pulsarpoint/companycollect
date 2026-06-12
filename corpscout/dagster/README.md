@@ -60,6 +60,14 @@ exports a `source_bundle` from `__init__.py`. The registry imports source
 packages from `registry.source_modules`; source names and asset key prefixes
 must be unique.
 
+Assets are grouped by country in Dagster, with source and layer carried as tags:
+
+```text
+group_name: country_finland
+asset key:  sources/finland/prh_ytj/raw_snapshot
+tags:       country=finland, source=prh_ytj, source_name=finland_prhytj, layer=raw
+```
+
 Create a new source package skeleton with:
 
 ```bash

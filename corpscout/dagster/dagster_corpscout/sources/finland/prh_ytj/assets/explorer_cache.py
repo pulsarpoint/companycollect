@@ -18,6 +18,7 @@ from dagster_corpscout.sources.finland.prh_ytj.explorer_cache import (
     key_prefix=spec.ASSET_KEY_PREFIX,
     name="company_explorer_cache",
     group_name=spec.GROUP_NAME,
+    tags={**spec.TAGS, "layer": "serving"},
     deps=[normalized_tables, code_lists, industry_nace_mappings],
     retry_policy=dg.RetryPolicy(max_retries=2, delay=120, backoff=dg.Backoff.EXPONENTIAL),
     op_tags={"dagster/concurrency_key": f"{spec.SOURCE_NAME}:clickhouse"},

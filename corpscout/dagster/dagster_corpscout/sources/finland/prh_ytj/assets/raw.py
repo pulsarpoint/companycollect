@@ -20,6 +20,7 @@ from dagster_corpscout.sources.finland.prh_ytj.client import (
     key_prefix=spec.ASSET_KEY_PREFIX,
     name="raw_snapshot",
     group_name=spec.GROUP_NAME,
+    tags={**spec.TAGS, "layer": "raw"},
     deps=[source_system],
     retry_policy=dg.RetryPolicy(max_retries=3, delay=60, backoff=dg.Backoff.EXPONENTIAL),
     op_tags={"dagster/concurrency_key": spec.SOURCE_NAME},

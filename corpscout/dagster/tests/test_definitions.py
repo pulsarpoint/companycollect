@@ -36,6 +36,29 @@ def test_definitions_include_finland_prhytj_import_assets():
     assert defs.get_assets_def(source_key("company_explorer_cache")) is not None
 
 
+def test_finland_prhytj_assets_are_grouped_by_country_and_tagged_by_source():
+    from dagster_corpscout.definitions import defs
+
+    graph = defs.resolve_asset_graph()
+    expected_layers = {
+        "source_system": "external",
+        "raw_snapshot": "raw",
+        "normalized_tables": "normalized",
+        "code_lists": "reference",
+        "industry_nace_mappings": "mapping",
+        "company_explorer_cache": "serving",
+    }
+
+    for asset_name, layer in expected_layers.items():
+        node = graph.get(source_key(asset_name))
+
+        assert node.group_name == "country_finland"
+        assert node.tags["country"] == "finland"
+        assert node.tags["source"] == "prh_ytj"
+        assert node.tags["source_name"] == "finland_prhytj"
+        assert node.tags["layer"] == layer
+
+
 def test_definitions_are_registry_driven():
     from dagster_corpscout.registry import all_assets, all_asset_checks, all_jobs, all_schedules
     from dagster_corpscout.source_bundle import SourceBundle

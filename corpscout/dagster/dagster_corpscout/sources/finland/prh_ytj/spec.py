@@ -5,7 +5,12 @@ COUNTRY = "finland"
 SOURCE_SLUG = "prh_ytj"
 DISPLAY_NAME = "Finland PRH YTJ"
 ASSET_KEY_PREFIX = ["sources", COUNTRY, SOURCE_SLUG]
-GROUP_NAME = "sources_finland_prh_ytj"
+GROUP_NAME = f"country_{COUNTRY}"
+TAGS = {
+    "country": COUNTRY,
+    "source": SOURCE_SLUG,
+    "source_name": SOURCE_NAME,
+}
 BUCKET = "source-finland-prhytj"
 BASE_URL = "https://avoindata.prh.fi/opendata-ytj-api/v3/companies"
 DESCRIPTION_PATH = "/opendata-ytj-api/v3/description"
