@@ -2,11 +2,16 @@ import dagster as dg
 
 from dagster_corpscout.resources.clickhouse import ClickHouseResource
 from dagster_corpscout.resources.rustfs import RustFSResource
-from dagster_corpscout.sources.finland_prhytj.assets import code_lists, normalized_tables, raw_snapshot
+from dagster_corpscout.sources.finland_prhytj.assets import (
+    code_lists,
+    company_explorer_cache,
+    normalized_tables,
+    raw_snapshot,
+)
 from dagster_corpscout.sources.finland_prhytj.schedules import pull_job, pull_schedule
 
 defs = dg.Definitions(
-    assets=[raw_snapshot, normalized_tables, code_lists],
+    assets=[raw_snapshot, normalized_tables, code_lists, company_explorer_cache],
     jobs=[pull_job],
     schedules=[pull_schedule],
     resources={

@@ -18,6 +18,9 @@ from dagster_corpscout.sources.finland_prhytj.code_lists import (
     code_list_objects_from_manifest,
     import_code_lists,
 )
+from dagster_corpscout.sources.finland_prhytj.explorer_cache import (
+    refresh_company_explorer_cache,
+)
 from dagster_corpscout.sources.finland_prhytj.importer import import_normalized_snapshot
 
 
@@ -145,6 +148,34 @@ def code_lists(
         run_id=manifest["run_id"],
     )
     return dg.MaterializeResult(metadata={"run_id": manifest["run_id"], "rows": imported})
+
+
+@dg.asset(
+    key_prefix=[spec.SOURCE_NAME],
+    name="company_explorer_cache",
+    group_name=spec.SOURCE_NAME,
+    deps=[normalized_tables, code_lists],
+    retry_policy=dg.RetryPolicy(max_retries=2, delay=120, backoff=dg.Backoff.EXPONENTIAL),
+    op_tags={"dagster/concurrency_key": f"{spec.SOURCE_NAME}:clickhouse"},
+)
+def company_explorer_cache(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickHouseResource,
+) -> dg.MaterializeResult:
+    """Refresh the final company explorer cache with an atomic ClickHouse table swap."""
+    result = refresh_company_explorer_cache(clickhouse)
+    context.log.info(
+        "company explorer cache refreshed: %d rows in %s",
+        result.rows,
+        result.cache_table,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "table": result.cache_table,
+            "rows": result.rows,
+            "refreshed_at": result.refreshed_at.isoformat(),
+        }
+    )
 
 
 def _artifact_by_key(manifest: dict, key: str) -> dict:
