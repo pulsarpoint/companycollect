@@ -36,7 +36,7 @@ def test_definitions_include_finland_prhytj_import_assets():
     assert defs.get_assets_def(source_key("company_explorer_cache")) is not None
 
 
-def test_finland_prhytj_assets_are_grouped_by_country_and_tagged_by_source():
+def test_finland_prhytj_assets_are_grouped_by_source_and_tagged_by_country():
     from dagster_corpscout.definitions import defs
 
     graph = defs.resolve_asset_graph()
@@ -52,7 +52,7 @@ def test_finland_prhytj_assets_are_grouped_by_country_and_tagged_by_source():
     for asset_name, layer in expected_layers.items():
         node = graph.get(source_key(asset_name))
 
-        assert node.group_name == "country_finland"
+        assert node.group_name == "source_finland_prh_ytj"
         assert node.tags["country"] == "finland"
         assert node.tags["source"] == "prh_ytj"
         assert node.tags["source_name"] == "finland_prhytj"

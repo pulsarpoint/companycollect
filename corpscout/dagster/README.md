@@ -60,13 +60,32 @@ exports a `source_bundle` from `__init__.py`. The registry imports source
 packages from `registry.source_modules`; source names and asset key prefixes
 must be unique.
 
-Assets are grouped by country in Dagster, with source and layer carried as tags:
+Assets are grouped by source in Dagster, with country and layer carried as tags:
 
 ```text
-group_name: country_finland
+group_name: source_finland_prh_ytj
 asset key:  sources/finland/prh_ytj/raw_snapshot
 tags:       country=finland, source=prh_ytj, source_name=finland_prhytj, layer=raw
 ```
+
+Use the code-location Assets page as the normal operator entry point:
+
+```text
+/locations/dagster_corpscout/assets
+```
+
+Each source group expands to its source-owned assets and links to a dedicated
+asset-group page:
+
+```text
+/locations/dagster_corpscout/asset-groups/source_finland_prh_ytj
+/locations/dagster_corpscout/asset-groups/source_finland_prh_ytj/list
+```
+
+The global lineage page at `/asset-groups` is a whole-workspace graph. Keep all
+real source assets loaded in Dagster and use global lineage with filters, such
+as `group:"source_finland_prh_ytj"`, instead of removing assets from
+`Definitions` to make the global graph smaller.
 
 Create a new source package skeleton with:
 

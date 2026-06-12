@@ -90,7 +90,7 @@ COUNTRY = "{country}"
 SOURCE_SLUG = "{source}"
 DISPLAY_NAME = "{display_name}"
 ASSET_KEY_PREFIX = ["sources", COUNTRY, SOURCE_SLUG]
-GROUP_NAME = f"country_{{COUNTRY}}"
+GROUP_NAME = f"source_{{COUNTRY}}_{{SOURCE_SLUG}}"
 TAGS = {{
     "country": COUNTRY,
     "source": SOURCE_SLUG,
