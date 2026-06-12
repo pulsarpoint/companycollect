@@ -18,6 +18,7 @@ Dagster architecture in
 - Reuse the existing Go PRH XBRL discovery/download code and Postgres ledger.
 - Move PRH XBRL run artifacts from local run directories to RustFS.
 - Write a run-level `manifest.json` that Dagster can observe.
+- Let Dagster request PRH XBRL Temporal runs from a source-owned launcher job.
 - Add a Dagster source package and sensor for `source_finland_prh_xbrl`.
 - Keep all real source assets loaded in Dagster while treating global lineage
   as a filtered/debug view.
@@ -70,10 +71,18 @@ Dagster sensor
   -> lists source-finland-prh-xbrl/runs/*/manifest.json
   -> records sources/finland/prh_xbrl/raw_statements materialization
   -> exposes run metadata in source_finland_prh_xbrl
+
+Dagster launcher job
+  -> validates registered-date window input
+  -> starts or reuses FinlandPRHXBRLDownloadWorkflow in Temporal
+  -> records launch metadata in Dagster run logs
 ```
 
-Dagster does not start this workflow in phase 1. Manual triggering is through
-Temporal UI or Temporal CLI with explicit registered-date window input.
+Dagster may start the Temporal workflow in phase 1, but starting the workflow
+does not materialize `raw_statements`. The `raw_statements` asset is recorded
+only after the manifest sensor observes a completed RustFS manifest. This keeps
+Dagster as the operator entry point without confusing "download requested" with
+"downloaded data exists."
 
 ## PRH API Surface
 
@@ -149,6 +158,11 @@ Use a conflict/reuse policy that prevents two open workflows for the same date
 window. If the window completed earlier and a new retry is desired, use the same
 workflow ID only when Temporal permits reuse for completed workflows; otherwise
 append an explicit retry suffix and rely on the Postgres ledger for idempotency.
+
+When Dagster starts the workflow, it uses the same workflow ID rule and an
+idempotent conflict policy such as "use existing" for an already-open workflow.
+Dagster must not start duplicate open downloads for the same registered-date
+window.
 
 Run ID for RustFS:
 
@@ -310,6 +324,8 @@ dagster_corpscout/sources/finland/prh_xbrl/
   spec.py
   assets/__init__.py
   assets/external.py
+  jobs.py
+  schedules.py
   sensors.py
 ```
 
@@ -341,6 +357,63 @@ The source group appears under:
 ```
 
 The global `/asset-groups` page remains a filtered/debug view.
+
+## Dagster Temporal Launcher
+
+Dagster provides the source-owned control entry point for requesting a PRH XBRL
+download:
+
+```text
+finland_prh_xbrl_launch_download_job
+```
+
+The job calls Temporal with the same input shape as the workflow:
+
+```json
+{
+  "registered_date_start": "2026-06-01",
+  "registered_date_end": "2026-06-03",
+  "max_statements": 50,
+  "retry_failed": false
+}
+```
+
+The job is intentionally thin:
+
+1. Validate the date window and bounded `max_statements`.
+2. Build the deterministic workflow ID:
+   `finland-prh-xbrl:{registered_date_start}:{registered_date_end}`.
+3. Start or reuse the Temporal workflow on task queue `company-source`.
+4. Write Dagster run metadata with workflow ID, Temporal run ID if available,
+   task queue, date window, and input limits.
+5. Exit successfully when Temporal accepted the start request or returned the
+   already-open workflow for the same window.
+
+It does not poll the workflow to completion and does not emit a
+`raw_statements` materialization. Completion remains asynchronous and is
+observed by `finland_prh_xbrl_manifest_sensor`.
+
+Temporal connection settings are regular Dagster environment configuration:
+
+```text
+TEMPORAL_ADDRESS=companycollect:7233
+TEMPORAL_NAMESPACE=default
+```
+
+The implementation may keep the first launcher source-specific, but the
+Temporal client resource should be generic enough for other source packages to
+reuse later. Do not introduce a broad orchestration abstraction before there is
+a second real source using it.
+
+Optional schedule:
+
+```text
+finland_prh_xbrl_daily_download_schedule
+```
+
+The schedule should be disabled by default in phase 1 or configured for a very
+small rolling window until the workflow has passed a real smoke test. Manual
+launches from Dagster remain the primary phase-1 operating mode.
 
 ## Dagster Sensor
 
@@ -400,6 +473,9 @@ Python/Dagster tests:
 - source package convention for `finland/prh_xbrl`;
 - definitions include `source_system` and `raw_statements`;
 - `raw_statements` group/tags match `source_finland_prh_xbrl`;
+- launcher job builds deterministic Temporal workflow IDs;
+- launcher job uses an idempotent conflict policy for already-open workflows;
+- launcher job does not emit `raw_statements` materializations;
 - sensor emits one materialization per unseen manifest;
 - sensor cursor prevents duplicate materializations;
 - malformed manifest is logged by failing the sensor tick rather than emitting
@@ -408,8 +484,8 @@ Python/Dagster tests:
 Manual smoke test:
 
 1. Start Temporal worker and Dagster.
-2. Trigger a small window, for example 2-5 registered days with
-   `max_statements=5`.
+2. Launch `finland_prh_xbrl_launch_download_job` from Dagster for a small
+   window, for example 2-5 registered days with `max_statements=5`.
 3. Verify RustFS has:
    - `runs/{run_id}/manifest.json`;
    - `runs/{run_id}/statements.ndjson`;
@@ -424,8 +500,10 @@ Manual smoke test:
    run-level manifest while preserving the existing ledger behavior.
 2. Register the PRH XBRL Temporal workflow in the current or slim worker with
    deterministic workflow IDs.
-3. Add the Dagster `finland/prh_xbrl` source package and manifest sensor.
-4. Run the manual smoke test against a small registered-date window.
+3. Add the Dagster `finland/prh_xbrl` source package with external assets,
+   Temporal launcher job, disabled-by-default schedule, and manifest sensor.
+4. Run the manual smoke test from Dagster against a small registered-date
+   window.
 
 ## Later Phases
 
