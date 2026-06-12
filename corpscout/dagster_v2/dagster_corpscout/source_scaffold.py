@@ -37,7 +37,10 @@ def scaffold_source(
         assets_dir / "raw.py": _raw_asset_template(country, source),
     }
     if archetype == "window":
+        files[package_dir / "__init__.py"] = _window_init_template(country, source)
+        files[package_dir / "jobs.py"] = _window_jobs_template(country, source)
         files[package_dir / "partitions.py"] = _window_partitions_template(country, source)
+        files[assets_dir / "__init__.py"] = _window_assets_init_template(country, source)
         files[assets_dir / "raw.py"] = _window_raw_asset_template(country, source)
         files[assets_dir / "parsed.py"] = _window_parsed_asset_template(country, source)
     for path, content in files.items():
@@ -180,6 +183,50 @@ from {module}.assets.external import source_system
 )
 def raw_snapshot() -> dg.MaterializeResult:
     raise NotImplementedError("Implement the source download before registering this package.")
+'''
+
+
+def _window_init_template(country: str, source: str) -> str:
+    module = f"dagster_corpscout.sources.{country}.{source}"
+    return f'''from dagster_corpscout.source_bundle import SourceBundle
+from {module} import spec
+from {module}.assets import parsed_tables, raw_documents, source_system
+from {module}.jobs import pull_window_job
+
+source_bundle = SourceBundle(
+    source_name=spec.SOURCE_NAME,
+    asset_key_prefix=tuple(spec.ASSET_KEY_PREFIX),
+    assets=(source_system, raw_documents, parsed_tables),
+    jobs=(pull_window_job,),
+)
+
+__all__ = ["source_bundle"]
+'''
+
+
+def _window_assets_init_template(country: str, source: str) -> str:
+    module = f"dagster_corpscout.sources.{country}.{source}.assets"
+    return f'''from {module}.external import source_system
+from {module}.parsed import parsed_tables
+from {module}.raw import raw_documents
+
+__all__ = ["parsed_tables", "raw_documents", "source_system"]
+'''
+
+
+def _window_jobs_template(country: str, source: str) -> str:
+    module = f"dagster_corpscout.sources.{country}.{source}"
+    return f'''import dagster as dg
+
+from {module} import spec
+from {module}.assets import raw_documents
+from {module}.partitions import window_partitions
+
+pull_window_job = dg.define_asset_job(
+    name=f"{{spec.SOURCE_NAME}}_pull_window",
+    selection=[raw_documents],
+    partitions_def=window_partitions,
+)
 '''
 
 

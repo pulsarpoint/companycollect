@@ -34,6 +34,12 @@ def test_window_archetype_adds_partitions_and_parsed_asset(tmp_path):
     parsed_text = (package_dir / "assets/parsed.py").read_text()
     assert "AutomationCondition.eager()" in parsed_text
 
+    for relative_path in ["__init__.py", "assets/__init__.py", "jobs.py"]:
+        text = (package_dir / relative_path).read_text()
+        assert "raw_snapshot" not in text, relative_path
+        assert "raw_documents" in text, relative_path
+    assert "pull_window_job" in (package_dir / "jobs.py").read_text()
+
 
 def test_unknown_archetype_is_rejected(tmp_path):
     with pytest.raises(ValueError):
