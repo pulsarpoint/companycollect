@@ -38,8 +38,13 @@ def test_definitions_include_finland_prhytj_import_assets():
 
 def test_definitions_are_registry_driven():
     from dagster_corpscout.registry import all_assets, all_asset_checks, all_jobs, all_schedules
+    from dagster_corpscout.source_bundle import SourceBundle
+    from dagster_corpscout.sources.finland.prh_ytj import spec
     from dagster_corpscout.sources.finland.prh_ytj import source_bundle
 
+    assert isinstance(source_bundle, SourceBundle)
+    assert source_bundle.source_name == spec.SOURCE_NAME
+    assert source_bundle.asset_key_prefix == tuple(spec.ASSET_KEY_PREFIX)
     assert source_bundle.assets
     assert all(asset in all_assets for asset in source_bundle.assets)
     assert all(check in all_asset_checks for check in source_bundle.asset_checks)
