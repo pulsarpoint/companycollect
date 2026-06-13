@@ -1,0 +1,38 @@
+[
+  {
+    "name": "OpenMercantil sample - 100 companies (CSV)",
+    "slug": "openmercantil_sample_companies",
+    "type": "bulk",
+    "url": "https://openmercantil.es/assets/samples/muestra_empresas_100.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "OpenMercantil sample - 50 new companies (JSON)",
+    "slug": "openmercantil_sample_new",
+    "type": "bulk",
+    "url": "https://openmercantil.es/assets/samples/muestra_nuevas_50.json",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "BORME summary (BOE open-data API) - single date",
+    "slug": "borme_sumario",
+    "type": "bulk",
+    "url": "https://www.boe.es/datosabiertos/api/borme/sumario/20240115",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0
+  },
+  {
+    "name": "BORME province act bulletin (XML) - example Almería",
+    "slug": "borme_acto_provincia",
+    "type": "bulk",
+    "url": "https://www.boe.es/diario_borme/xml.php?id=BORME-A-2024-10-04",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
