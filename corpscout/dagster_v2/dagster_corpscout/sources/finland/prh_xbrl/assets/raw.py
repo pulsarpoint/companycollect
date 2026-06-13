@@ -49,16 +49,16 @@ def raw_xml_documents(
     """Statements registered in the partition month, filtered to eligible companies.
     The discovery listing (the only place registration_date and skip decisions
     exist) is stored as raw data alongside the XML objects."""
-    window = context.partition_time_window
-    registered_date_start = window.start.date().isoformat()
-    registered_date_end = (window.end.date() - timedelta(days=1)).isoformat()
-
     eligible = fetch_eligible_business_ids(clickhouse)
     if not eligible:
         raise dg.Failure(
             "eligibility query returned no companies — the company cache is empty or "
             "broken; refusing to record the whole window as skipped"
         )
+
+    window = context.partition_time_window
+    registered_date_start = window.start.date().isoformat()
+    registered_date_end = (window.end.date() - timedelta(days=1)).isoformat()
 
     rustfs.ensure_bucket(spec.BUCKET)
 

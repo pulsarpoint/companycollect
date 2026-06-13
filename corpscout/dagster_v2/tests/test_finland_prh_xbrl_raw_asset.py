@@ -118,26 +118,19 @@ def test_existing_objects_are_reused_without_downloading():
     assert listing["skipped"] == []
 
 
+@mock_aws
 def test_empty_eligibility_set_fails_the_run_instead_of_skipping_everything():
-    """dg.Failure is raised before any I/O when the eligibility set is empty.
-    We verify this by calling fetch_eligible_business_ids directly with the fake
-    ClickHouse client (empty rows) and confirming the asset guard raises dg.Failure.
-    Avoiding dg.materialize here because the RetryPolicy (delay=60s) makes the
-    full-Dagster path impractically slow in tests."""
     import pytest
 
     _eligibility_client.rows = []
-    fake_clickhouse = FakeClickHouseResource(host="test", password="test")
+    rustfs = RustFSResource(endpoint_url="", access_key="test", secret_key="test")
 
-    from dagster_corpscout.sources.finland.prh_xbrl.eligibility import fetch_eligible_business_ids
+    from dagster_corpscout.sources.finland.prh_xbrl.assets.raw import RawPullConfig
 
-    eligible = fetch_eligible_business_ids(fake_clickhouse)
-    assert eligible == set()
-
-    # Verify the guard raises dg.Failure for empty eligibility
     with pytest.raises(dg.Failure, match="eligibility query returned no companies"):
-        if not eligible:
-            raise dg.Failure(
-                "eligibility query returned no companies — the company cache is empty or "
-                "broken; refusing to record the whole window as skipped"
-            )
+        raw_xml_documents(
+            context=dg.build_asset_context(partition_key="2025-01-01"),
+            config=RawPullConfig(),
+            rustfs=rustfs,
+            clickhouse=FakeClickHouseResource(host="test", password="test"),
+        )
