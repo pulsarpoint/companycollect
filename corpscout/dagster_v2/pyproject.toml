@@ -10,6 +10,7 @@ dependencies = [
     "requests>=2.32",
     "clickhouse-connect>=0.8",
     "lxml>=5.2",
+    "dagster-dg-cli>=1.13.9",
 ]
 
 [project.optional-dependencies]
@@ -32,3 +33,19 @@ include = ["dagster_corpscout*"]
 
 [tool.dagster]
 module_name = "dagster_corpscout.definitions"
+
+# `dg` CLI project recognition. Coexists with [tool.dagster] above, which the
+# deployed `dagster api grpc -m dagster_corpscout.definitions` and `dagster dev`
+# continue to use. This project uses the classic explicit-Definitions layout
+# (dagster_corpscout/definitions.py), not the Components defs_module autoload.
+[tool.dg]
+directory_type = "project"
+
+[tool.dg.project]
+root_module = "dagster_corpscout"
+code_location_target_module = "dagster_corpscout.definitions"
+
+[dependency-groups]
+dev = [
+    "dagster-dg-cli>=1.13.9",
+]
