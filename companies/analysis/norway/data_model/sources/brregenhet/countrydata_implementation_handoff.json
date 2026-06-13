@@ -1,0 +1,94 @@
+{
+  "country": "Norway",
+  "country_slug": "norway",
+  "source_slug": "brregenhet",
+  "source_identity": "norway_brregenhet",
+  "source_package": "brregenhet",
+  "env_prefix": "BRREG_ENHET",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Enhetsregisteret — Central Coordinating Register for Legal Entities (entities)",
+    "source_type": "official_registry_api",
+    "organization": "Brønnøysund Register Centre (Brønnøysundregistrene)",
+    "source_url": "https://data.brreg.no/enhetsregisteret/api/enheter",
+    "license": "NLOD 2.0",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Inneholder data under Norsk lisens for offentlige data (NLOD) tilgjengeliggjort av Brønnøysundregistrene."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "bulk_file",
+    "base_url": "https://data.brreg.no/enhetsregisteret/api/enheter",
+    "download_url": "https://data.brreg.no/enhetsregisteret/api/enheter/lastned",
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "Accept", "value": "application/vnd.brreg.enhetsregisteret.enhet.v2+gzip", "note": "for JSON.gz bulk; use .../lastned/csv for CSV.gz"},
+      {"name": "User-Agent", "value": "companycollect/0.1 (contact)", "note": "set a descriptive UA"}
+    ],
+    "formats": ["json", "csv", "xlsx"],
+    "compression": "gzip",
+    "encoding": "utf-8",
+    "record_path": "$ (gzip JSON is a top-level array of entities; CSV is one row per entity with dot-notation headers)",
+    "total_results_path": "page.totalElements (on the /enheter search endpoint, not the bulk file)",
+    "pagination": {
+      "type": "not_used_for_bulk",
+      "page_param": "page",
+      "page_start": 0,
+      "page_size": null,
+      "page_size_param": "size",
+      "next_page_path": "_links.next.href",
+      "note": "Bulk file is preferred for full load. The search API paginates with page/size (HAL _links) but is slower for full crawls."
+    },
+    "incremental_feed": {
+      "url": "https://data.brreg.no/enhetsregisteret/api/oppdateringer/enheter",
+      "param": "dato (ISO 8601, e.g. 2026-06-12T00:00:00.000Z)",
+      "note": "Daily delta feed of changed org numbers; re-fetch only changed entities."
+    },
+    "rate_limit": "unknown (not published); prefer bulk + delta feed over page crawling"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_gzip_then_stream_decode",
+    "file_extension": ".json.gz",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "EnhetRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": ["2006-01-02T15:04:05.000Z07:00"],
+    "number_formats": ["plain_decimal_dot"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "JSON bulk preserves nested objects/arrays + kapital + aktivitet; CSV flattens to dot-notation columns and adds *Dato status dates, epostadresse, and foreign-entity columns but drops kapital/aktivitet. Choose JSON bulk for richest data. CSV header casing differs slightly from JSON keys."
+  },
+  "keys": {
+    "primary_keys": ["organisasjonsnummer"],
+    "join_keys": ["organisasjonsnummer", "overordnetEnhet"],
+    "dedupe_keys": ["organisasjonsnummer"]
+  },
+  "mapping_rules": {
+    "legal_name": "navn (current registered name).",
+    "status": "Derive from booleans: konkurs -> bankrupt; underTvangsavviklingEllerTvangsopplosning -> compulsory_liquidation; underAvvikling -> liquidation; else active.",
+    "legal_form": "organisasjonsform.kode (+ .beskrivelse).",
+    "incorporation_date": "stiftelsesdato, fallback registreringsdatoEnhetsregisteret.",
+    "registered_address": "forretningsadresse (join adresse[] lines).",
+    "vat_id": "If registrertIMvaregisteret: 'NO' + organisasjonsnummer + 'MVA'.",
+    "activity_code": "naeringskode1.kode (SN2007/NACE).",
+    "financials_trigger": "sisteInnsendteAarsregnskap signals when to (re)fetch Regnskapsregisteret."
+  },
+  "fixture_requirements": [
+    "representative active AS/ASA with kapital + naeringskode1..3 + forretningsadresse + postadresse",
+    "entity missing optional fields (no website, no employees, no kapital)",
+    "dissolved/bankrupt entity (konkurs=true with konkursdato in CSV)",
+    "NUF foreign entity with utenlandskRegister*/foretaksformIHjemlandet columns (CSV)",
+    "malformed individual record / truncated gzip stream"
+  ],
+  "live_test_plan": {
+    "smoke": "GET /enheter?size=5 and one /enheter/{orgnr}; assert page.totalElements > 1,000,000 and required fields present.",
+    "full": "Download .../enheter/lastned (JSON.gz ~197MB), stream-decode, count records; gate behind explicit env flag. Then exercise /oppdateringer/enheter delta feed."
+  },
+  "blockers": []
+}

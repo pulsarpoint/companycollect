@@ -1,0 +1,27 @@
+{
+  "organisasjonsnummer": "933489272",
+  "navn": "- ZOTKO .NO",
+  "organisasjonsform": {
+    "kode": "BEDR",
+    "beskrivelse": "Underenhet til næringsdrivende og offentlig forvaltning"
+  },
+  "registreringsdatoEnhetsregisteret": "2024-05-23",
+  "registrertIMvaregisteret": false,
+  "naeringskode1": {
+    "kode": "47.250",
+    "beskrivelse": "Detaljhandel med drikkevarer"
+  },
+  "harRegistrertAntallAnsatte": false,
+  "overordnetEnhet": "933365573",
+  "oppstartsdato": "2024-06-01",
+  "beliggenhetsadresse": {
+    "land": "Norge",
+    "landkode": "NO",
+    "postnummer": "6652",
+    "poststed": "SURNADAL",
+    "adresse": ["Follerøvegen 20"],
+    "kommune": "SURNADAL",
+    "kommunenummer": "1566"
+  },
+  "respons_klasse": "Underenhet"
+}

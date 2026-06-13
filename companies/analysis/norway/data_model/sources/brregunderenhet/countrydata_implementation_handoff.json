@@ -1,0 +1,88 @@
+{
+  "country": "Norway",
+  "country_slug": "norway",
+  "source_slug": "brregunderenhet",
+  "source_identity": "norway_brregunderenhet",
+  "source_package": "brregunderenhet",
+  "env_prefix": "BRREG_UNDERENHET",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Enhetsregisteret — Sub-entities / establishments (underenheter)",
+    "source_type": "official_registry_api",
+    "organization": "Brønnøysund Register Centre (Brønnøysundregistrene)",
+    "source_url": "https://data.brreg.no/enhetsregisteret/api/underenheter",
+    "license": "NLOD 2.0",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Inneholder data under Norsk lisens for offentlige data (NLOD) tilgjengeliggjort av Brønnøysundregistrene."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "bulk_file",
+    "base_url": "https://data.brreg.no/enhetsregisteret/api/underenheter",
+    "download_url": "https://data.brreg.no/enhetsregisteret/api/underenheter/lastned",
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "Accept", "value": "application/vnd.brreg.enhetsregisteret.underenhet.v2+gzip", "note": "JSON.gz; use .../lastned/csv for CSV.gz (~60MB)"},
+      {"name": "User-Agent", "value": "companycollect/0.1 (contact)", "note": "descriptive UA"}
+    ],
+    "formats": ["json", "csv", "xlsx"],
+    "compression": "gzip",
+    "encoding": "utf-8",
+    "record_path": "$ (gzip JSON top-level array; CSV one row per sub-entity)",
+    "total_results_path": "page.totalElements (search endpoint)",
+    "pagination": {
+      "type": "not_used_for_bulk",
+      "page_param": "page",
+      "page_start": 0,
+      "page_size": null,
+      "page_size_param": "size",
+      "next_page_path": "_links.next.href"
+    },
+    "incremental_feed": {
+      "url": "https://data.brreg.no/enhetsregisteret/api/oppdateringer/underenheter",
+      "param": "dato (ISO 8601)",
+      "note": "Daily delta feed of changed sub-entity org numbers."
+    },
+    "rate_limit": "unknown; prefer bulk + delta feed"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_gzip_then_stream_decode",
+    "file_extension": ".json.gz",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "UnderenhetRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": ["2006-01-02T15:04:05.000Z07:00"],
+    "number_formats": ["plain_decimal_dot"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Sub-entities use beliggenhetsadresse (not forretningsadresse). overordnetEnhet links to the parent enhet."
+  },
+  "keys": {
+    "primary_keys": ["organisasjonsnummer"],
+    "join_keys": ["organisasjonsnummer", "overordnetEnhet"],
+    "dedupe_keys": ["organisasjonsnummer"]
+  },
+  "mapping_rules": {
+    "establishment_id": "organisasjonsnummer.",
+    "parent_company_id": "overordnetEnhet (join to brregenhet.organisasjonsnummer).",
+    "site_address": "beliggenhetsadresse (join adresse[] lines).",
+    "activity_code": "naeringskode1.kode (establishment-level SN2007)."
+  },
+  "fixture_requirements": [
+    "representative sub-entity with beliggenhetsadresse + naeringskode1 + overordnetEnhet",
+    "sub-entity missing optional fields (no industry code, no employees)",
+    "sub-entity whose overordnetEnhet points to a dissolved parent",
+    "malformed individual record"
+  ],
+  "live_test_plan": {
+    "smoke": "GET /underenheter?size=5 and one /underenheter/{orgnr}; assert overordnetEnhet present and page.totalElements > 800,000.",
+    "full": "Download .../underenheter/lastned (JSON.gz) or /lastned/csv (~60MB), stream-decode, count; gate behind env flag. Then exercise the oppdateringer feed."
+  },
+  "blockers": []
+}

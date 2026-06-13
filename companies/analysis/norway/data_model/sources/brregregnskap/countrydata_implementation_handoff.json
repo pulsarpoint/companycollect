@@ -1,0 +1,91 @@
+{
+  "country": "Norway",
+  "country_slug": "norway",
+  "source_slug": "brregregnskap",
+  "source_identity": "norway_brregregnskap",
+  "source_package": "brregregnskap",
+  "env_prefix": "BRREG_REGNSKAP",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Regnskapsregisteret — Register of Company Accounts (annual accounts figures)",
+    "source_type": "official_registry_api",
+    "organization": "Brønnøysund Register Centre (Brønnøysundregistrene)",
+    "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/{orgnr}",
+    "license": "NLOD 2.0",
+    "access": "public",
+    "data_freshness": "weekly (~5 imports/week); annual filing cycle",
+    "attribution": "Inneholder data under Norsk lisens for offentlige data (NLOD) tilgjengeliggjort av Brønnøysundregistrene."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Open API is labelled by Brreg as a temporary/research distribution. Paid Subscription Service holds full history + image copies (out of scope)."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://data.brreg.no/regnskapsregisteret/regnskap",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "Accept", "value": "application/json", "note": "also supports json-ld, xml, rdf, ttl"},
+      {"name": "User-Agent", "value": "companycollect/0.1 (contact)", "note": "descriptive UA"}
+    ],
+    "formats": ["json", "json-ld", "xml", "rdf", "ttl"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "$ (top-level JSON array; one element per period x regnskapstype)",
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null,
+      "note": "One request per organisation number. No open bulk file for financials."
+    },
+    "rate_limit": "unknown; per-orgnr fetch — throttle; only fetch accounting-liable entities; cache by sisteInnsendteAarsregnskap"
+  },
+  "snapshot": {
+    "strategy": "json_one_response_per_orgnr",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "RegnskapRecord (array)",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["plain_decimal_dot"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Response is an ARRAY; iterate elements. Preserve source-side typos in keys: 'regnkapsprinsipper' and 'sumInnskuttEgenkaptial'. valuta varies (NOK/USD/EUR) — store currency with each figure. Empty array = no filed accounts."
+  },
+  "keys": {
+    "primary_keys": ["virksomhet.organisasjonsnummer", "regnskapsperiode.tilDato", "regnskapstype"],
+    "join_keys": ["virksomhet.organisasjonsnummer"],
+    "dedupe_keys": ["virksomhet.organisasjonsnummer + regnskapsperiode.tilDato + regnskapstype"]
+  },
+  "mapping_rules": {
+    "financial_statements": "Map each array element to one yearly financial record keyed by period_end + accounts_type.",
+    "revenue": "resultatregnskapResultat.driftsresultat.driftsinntekter.sumDriftsinntekter",
+    "operating_result": "resultatregnskapResultat.driftsresultat.driftsresultat",
+    "net_result": "resultatregnskapResultat.aarsresultat",
+    "total_assets": "eiendeler.sumEiendeler",
+    "equity": "egenkapitalGjeld.egenkapital.sumEgenkapital",
+    "total_debt": "egenkapitalGjeld.gjeldOversikt.sumGjeld",
+    "currency": "valuta (REQUIRED — store with every figure)",
+    "prefer": "Use regnskapstype=SELSKAP for the entity's own figures; KONSERN for consolidated group when present."
+  },
+  "fixture_requirements": [
+    "large filer (oppstillingsplan=store) with full income statement + balance sheet (non-NOK currency, e.g. USD)",
+    "small enterprise (regnkapsprinsipper.smaaForetak=true, fravalgRevisjon=true) with reduced figures",
+    "entity with both SELSKAP and KONSERN elements for the same year",
+    "org number with empty array (no filed accounts)",
+    "record exercising the source-side typo keys"
+  ],
+  "live_test_plan": {
+    "smoke": "GET /regnskapsregisteret/regnskap/923609016; assert array non-empty, valuta present, sumDriftsinntekter + sumEiendeler parse as decimals.",
+    "full": "For the accounting-liable entity set from brregenhet (filter on sisteInnsendteAarsregnskap present), fetch per orgnr behind an env gate; throttle; persist raw JSON then normalize."
+  },
+  "blockers": []
+}

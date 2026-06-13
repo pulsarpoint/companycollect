@@ -1,0 +1,62 @@
+{
+  "_note": "Structure preserved from the live /enheter/{orgnr}/roller response. Person names and birth dates are PERSONAL DATA (GDPR) and have been REDACTED here per skill safety rules. Corporate role-holders (enhet) are public company data and are kept.",
+  "rollegrupper": [
+    {
+      "type": {"kode": "DAGL", "beskrivelse": "Daglig leder"},
+      "sistEndret": "2020-11-02",
+      "roller": [
+        {
+          "type": {"kode": "DAGL", "beskrivelse": "Daglig leder"},
+          "person": {
+            "fodselsdato": "<redacted: YYYY-MM-DD>",
+            "navn": {"fornavn": "<redacted>", "etternavn": "<redacted>"},
+            "erDoed": false
+          },
+          "fratraadt": false,
+          "avregistrert": false,
+          "rekkefolge": 0
+        }
+      ]
+    },
+    {
+      "type": {"kode": "STYR", "beskrivelse": "Styre"},
+      "sistEndret": "2026-02-17",
+      "roller": [
+        {
+          "type": {"kode": "LEDE", "beskrivelse": "Styrets leder"},
+          "person": {"fodselsdato": "<redacted>", "navn": {"fornavn": "<redacted>", "etternavn": "<redacted>"}, "erDoed": false},
+          "fratraadt": false,
+          "avregistrert": false,
+          "rekkefolge": 0
+        },
+        {
+          "type": {"kode": "MEDL", "beskrivelse": "Styremedlem"},
+          "person": {"fodselsdato": "<redacted>", "navn": {"fornavn": "<redacted>", "etternavn": "<redacted>"}, "erDoed": false},
+          "valgtAv": {"kode": "AREP", "beskrivelse": "Representant for de ansatte"},
+          "fratraadt": false,
+          "avregistrert": false,
+          "rekkefolge": 8
+        }
+      ]
+    },
+    {
+      "type": {"kode": "REVI", "beskrivelse": "Revisor"},
+      "sistEndret": "2019-07-12",
+      "roller": [
+        {
+          "type": {"kode": "REVI", "beskrivelse": "Revisor"},
+          "enhet": {
+            "organisasjonsnummer": "976389387",
+            "organisasjonsform": {"kode": "AS", "beskrivelse": "Aksjeselskap"},
+            "navn": ["ERNST & YOUNG AS"],
+            "godkjenningsstatus": "Godkjent revisjonsforetak",
+            "erSlettet": false
+          },
+          "fratraadt": false,
+          "avregistrert": false,
+          "rekkefolge": 0
+        }
+      ]
+    }
+  ]
+}

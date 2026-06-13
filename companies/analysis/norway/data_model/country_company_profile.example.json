@@ -1,0 +1,147 @@
+{
+  "country": "Norway",
+  "country_slug": "norway",
+  "country_profile_version": "2026-06-13",
+  "registration": {
+    "organisasjonsnummer": "923609016",
+    "vat_id": "NO923609016MVA",
+    "registered_in_ccr_date": "1995-03-12",
+    "register_memberships": {
+      "foretaksregisteret": true,
+      "mvaregisteret": true,
+      "stiftelsesregisteret": false,
+      "frivillighetsregisteret": false,
+      "partiregisteret": false
+    }
+  },
+  "legal_identity": {
+    "navn": "EQUINOR ASA",
+    "legal_form": {"kode": "ASA", "beskrivelse": "Allmennaksjeselskap"},
+    "language_form": "Bokmål",
+    "share_capital": {"belop": 6392018780.0, "valuta": "NOK", "antallAksjer": 2556807512}
+  },
+  "status": {
+    "derived": "active",
+    "konkurs": false,
+    "under_avvikling": false,
+    "under_tvangsavvikling": false
+  },
+  "activity": {
+    "naeringskoder": [
+      {"kode": "06.100", "beskrivelse": "Utvinning av råolje"},
+      {"kode": "06.200", "beskrivelse": "Utvinning av naturgass"},
+      {"kode": "19.200", "beskrivelse": "Produksjon av raffinerte petroleumsprodukter og fossile brenselsprodukter"}
+    ],
+    "institusjonell_sektorkode": {"kode": "1120", "beskrivelse": "Statlig eide aksjeselskaper mv."},
+    "vedtektsfestet_formaal": [
+      "Å utvikle, produsere og markedsføre ulike former for energi, avledede",
+      "produkter og tjenester, samt annen virksomhet."
+    ],
+    "aktivitet_tekst": null
+  },
+  "addresses": {
+    "forretningsadresse": {
+      "adresse": ["Forusbeen 50"],
+      "postnummer": "4035",
+      "poststed": "STAVANGER",
+      "kommune": "STAVANGER",
+      "kommunenummer": "1103",
+      "landkode": "NO"
+    },
+    "postadresse": {
+      "adresse": ["Postboks 8500"],
+      "postnummer": "4035",
+      "poststed": "STAVANGER",
+      "kommune": "STAVANGER",
+      "kommunenummer": "1103",
+      "landkode": "NO"
+    }
+  },
+  "contact": {
+    "hjemmeside": "www.equinor.com",
+    "telefon": "51 99 00 00",
+    "epostadresse": null
+  },
+  "employment": {
+    "antall_ansatte": 21467,
+    "har_registrert_antall_ansatte": true
+  },
+  "group": {
+    "er_i_konsern": true,
+    "overordnet_enhet": null
+  },
+  "establishments": [
+    {
+      "_note": "ILLUSTRATIVE shape only (placeholder org number) — real sub-entities are joined from brregunderenhet via overordnetEnhet=923609016; not fetched in this sample.",
+      "organisasjonsnummer": "000000000",
+      "navn": "<establishment name from brregunderenhet>",
+      "naeringskode1": {"kode": "06.100", "beskrivelse": "Utvinning av råolje"},
+      "beliggenhetsadresse": {"adresse": ["<street>"], "postnummer": "4035", "poststed": "STAVANGER", "kommunenummer": "1103", "landkode": "NO"},
+      "oppstartsdato": null
+    }
+  ],
+  "officers": [
+    {
+      "role_group": "DAGL",
+      "role_code": "DAGL",
+      "role_description": "Daglig leder",
+      "holder_type": "person",
+      "person": {"navn": {"fornavn": "<redacted>", "etternavn": "<redacted>"}, "fodselsaar": 1968},
+      "enhet": null,
+      "valgt_av": null,
+      "fratraadt": false
+    },
+    {
+      "role_group": "STYR",
+      "role_code": "LEDE",
+      "role_description": "Styrets leder",
+      "holder_type": "person",
+      "person": {"navn": {"fornavn": "<redacted>", "etternavn": "<redacted>"}, "fodselsaar": 1956},
+      "enhet": null,
+      "valgt_av": null,
+      "fratraadt": false
+    },
+    {
+      "role_group": "REVI",
+      "role_code": "REVI",
+      "role_description": "Revisor",
+      "holder_type": "enhet",
+      "person": null,
+      "enhet": {"organisasjonsnummer": "976389387", "navn": ["ERNST & YOUNG AS"], "godkjenningsstatus": "Godkjent revisjonsforetak"},
+      "valgt_av": null,
+      "fratraadt": false
+    }
+  ],
+  "financial_statements": [
+    {
+      "regnskapstype": "SELSKAP",
+      "period_start": "2024-01-01",
+      "period_end": "2024-12-31",
+      "valuta": "USD",
+      "oppstillingsplan": "store",
+      "small_enterprise": false,
+      "not_audited": false,
+      "revenue": 72543000000.0,
+      "operating_result": 10347000000.0,
+      "net_financial_items": -2179000000.0,
+      "pretax_result": 8168000000.0,
+      "net_result": 8141000000.0,
+      "total_assets": 109150000000.0,
+      "current_assets": 45079000000.0,
+      "fixed_assets": 64071000000.0,
+      "total_equity": 41090000000.0,
+      "total_debt": 68060000000.0,
+      "current_liabilities": 42024000000.0,
+      "long_term_liabilities": 26036000000.0
+    }
+  ],
+  "filing_signals": {
+    "siste_innsendte_aarsregnskap": "2024"
+  },
+  "source_provenance": [
+    {"source_slug": "brregenhet", "source_name": "Enhetsregisteret (entities)", "source_url": "https://data.brreg.no/enhetsregisteret/api/enheter/923609016", "license": "NLOD 2.0", "retrieved_at": "2026-06-13T17:28:47Z"},
+    {"source_slug": "brregunderenhet", "source_name": "Enhetsregisteret (sub-entities)", "source_url": "https://data.brreg.no/enhetsregisteret/api/underenheter?overordnetEnhet=923609016", "license": "NLOD 2.0", "retrieved_at": "2026-06-13T17:28:47Z"},
+    {"source_slug": "brregroller", "source_name": "Enhetsregisteret (roles)", "source_url": "https://data.brreg.no/enhetsregisteret/api/enheter/923609016/roller", "license": "NLOD 2.0", "retrieved_at": "2026-06-13T17:28:47Z"},
+    {"source_slug": "brregregnskap", "source_name": "Regnskapsregisteret (annual accounts)", "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/923609016", "license": "NLOD 2.0", "retrieved_at": "2026-06-13T17:28:47Z"}
+  ]
+}

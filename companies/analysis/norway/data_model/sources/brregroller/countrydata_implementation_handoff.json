@@ -1,0 +1,95 @@
+{
+  "country": "Norway",
+  "country_slug": "norway",
+  "source_slug": "brregroller",
+  "source_identity": "norway_brregroller",
+  "source_package": "brregroller",
+  "env_prefix": "BRREG_ROLLER",
+  "implementation_status": "ready",
+  "personal_data": true,
+  "source": {
+    "source_name": "Enhetsregisteret — Roles (roller): officers, board, auditor",
+    "source_type": "official_registry_api",
+    "organization": "Brønnøysund Register Centre (Brønnøysundregistrene)",
+    "source_url": "https://data.brreg.no/enhetsregisteret/api/enheter/{orgnr}/roller",
+    "license": "NLOD 2.0",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Inneholder data under Norsk lisens for offentlige data (NLOD) tilgjengeliggjort av Brønnøysundregistrene."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Public endpoint returns person names + full birth date. The fødselsnummer (national ID) is NOT here — that requires the authenticated autorisert-api (Maskinporten), which is out of scope."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://data.brreg.no/enhetsregisteret/api/enheter",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "Accept", "value": "application/json", "note": null},
+      {"name": "User-Agent", "value": "companycollect/0.1 (contact)", "note": "descriptive UA"}
+    ],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "rollegrupper",
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null,
+      "note": "One request per organisation number: /enheter/{orgnr}/roller. No open roles bulk file."
+    },
+    "incremental_feed": {
+      "url": "https://data.brreg.no/enhetsregisteret/api/oppdateringer/roller",
+      "param": "dato (ISO 8601)",
+      "note": "Delta feed of entities whose roles changed; also /api/roller/totalbestand where available."
+    },
+    "rate_limit": "unknown; per-orgnr fetch — throttle and only fetch entities of interest"
+  },
+  "snapshot": {
+    "strategy": "json_one_response_per_orgnr",
+    "file_extension": ".json",
+    "preserve_raw_download": true,
+    "pii_handling": "Redact or minimize person.navn and person.fodselsdato before persisting outside raw zone; consider birth-year-only; keep PII out of fixtures."
+  },
+  "parsing": {
+    "record_type_hint": "RollerResponse",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Each role is a discriminated union: person XOR enhet. Filter fratraadt/avregistrert for current officers. valgtAv marks how a board member was elected (e.g. AREP employee rep)."
+  },
+  "keys": {
+    "primary_keys": ["{orgnr}"],
+    "join_keys": ["{orgnr}", "roller[].enhet.organisasjonsnummer"],
+    "dedupe_keys": ["{orgnr} + role code + person/enhet identity + rekkefolge"]
+  },
+  "mapping_rules": {
+    "officers": "Flatten rollegrupper[].roller[] into officer entries with role code, role description, holder (person or company), elected_by, resigned.",
+    "auditor": "rollegrupper where type.kode=REVI; holder is usually an enhet (audit firm) — join to brregenhet.",
+    "ceo": "rollegrupper where type.kode=DAGL.",
+    "board": "rollegrupper where type.kode=STYR (LEDE chair, MEDL member, VARA deputy)."
+  },
+  "fixture_requirements": [
+    "entity with DAGL + STYR (chair, members, deputies, employee reps) + REVI",
+    "role held by a company (enhet, e.g. auditor) vs a person",
+    "resigned/de-registered role (fratraadt=true / avregistrert=true)",
+    "entity with no roles registered",
+    "REDACTED fixtures only — no real person names or birth dates"
+  ],
+  "live_test_plan": {
+    "smoke": "GET /enheter/{orgnr}/roller for a known AS/ASA; assert rollegrupper contains DAGL/STYR/REVI and person XOR enhet per role.",
+    "full": "Iterate roles only for the entity set of interest via the oppdateringer/roller delta feed; gate behind env flag; apply PII minimization on persist."
+  },
+  "blockers": [
+    "PII/GDPR: lawful basis and retention policy required before persisting person names/birth dates beyond the raw zone."
+  ]
+}

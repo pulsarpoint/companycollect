@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Norway Company Profile",
+  "description": "Country-specific combined company profile for Norway, built from Brønnøysund Register Centre (Brreg) open data: Enhetsregisteret (entities + sub-entities + roles) and Regnskapsregisteret (annual accounts). All sources NLOD 2.0.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": {"type": "string", "const": "Norway"},
+    "country_slug": {"type": "string", "const": "norway"},
+    "country_profile_version": {"type": "string", "description": "Profile schema version / build date (YYYY-MM-DD)."},
+    "registration": {
+      "type": "object",
+      "required": ["organisasjonsnummer"],
+      "properties": {
+        "organisasjonsnummer": {
+          "type": "string",
+          "description": "9-digit Norwegian organisation number. National company identifier and primary join key.",
+          "pattern": "^[0-9]{9}$",
+          "x-source": "brregenhet",
+          "x-source-path": "organisasjonsnummer",
+          "x-join-key": true,
+          "x-freshness": "daily"
+        },
+        "vat_id": {
+          "type": ["string", "null"],
+          "description": "VAT number, present only when registered in the VAT register. Derived as 'NO' + organisasjonsnummer + 'MVA'.",
+          "x-source": "brregenhet",
+          "x-source-path": "registrertIMvaregisteret (derived)"
+        },
+        "registered_in_ccr_date": {"type": ["string", "null"], "format": "date", "x-source": "brregenhet", "x-source-path": "registreringsdatoEnhetsregisteret"},
+        "register_memberships": {
+          "type": "object",
+          "description": "Which Brreg sub-registers the entity belongs to.",
+          "properties": {
+            "foretaksregisteret": {"type": "boolean", "x-source-path": "registrertIForetaksregisteret"},
+            "mvaregisteret": {"type": "boolean", "x-source-path": "registrertIMvaregisteret"},
+            "stiftelsesregisteret": {"type": "boolean", "x-source-path": "registrertIStiftelsesregisteret"},
+            "frivillighetsregisteret": {"type": "boolean", "x-source-path": "registrertIFrivillighetsregisteret"},
+            "partiregisteret": {"type": "boolean", "x-source-path": "registrertIPartiregisteret"}
+          },
+          "x-source": "brregenhet"
+        }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["navn"],
+      "properties": {
+        "navn": {"type": "string", "description": "Current registered legal name.", "x-source": "brregenhet", "x-source-path": "navn"},
+        "legal_form": {
+          "type": "object",
+          "properties": {
+            "kode": {"type": "string", "description": "Legal form code (AS, ASA, ENK, NUF, ...).", "x-source-path": "organisasjonsform.kode"},
+            "beskrivelse": {"type": "string", "x-source-path": "organisasjonsform.beskrivelse"}
+          },
+          "x-source": "brregenhet"
+        },
+        "language_form": {"type": ["string", "null"], "description": "Bokmål/Nynorsk.", "x-source": "brregenhet", "x-source-path": "maalform"},
+        "share_capital": {
+          "type": ["object", "null"],
+          "description": "Registered share capital (mainly AS/ASA).",
+          "properties": {
+            "belop": {"type": ["number", "null"], "x-source-path": "kapital.belop"},
+            "valuta": {"type": ["string", "null"], "x-source-path": "kapital.valuta"},
+            "antallAksjer": {"type": ["integer", "null"], "x-source-path": "kapital.antallAksjer"}
+          },
+          "x-source": "brregenhet"
+        }
+      }
+    },
+    "status": {
+      "type": "object",
+      "description": "Derived single status plus the underlying Brreg boolean flags.",
+      "properties": {
+        "derived": {"type": "string", "enum": ["active", "liquidation", "compulsory_liquidation", "bankrupt"], "description": "Derived: konkurs->bankrupt; underTvangsavviklingEllerTvangsopplosning->compulsory_liquidation; underAvvikling->liquidation; else active."},
+        "konkurs": {"type": "boolean", "x-source-path": "konkurs"},
+        "under_avvikling": {"type": "boolean", "x-source-path": "underAvvikling"},
+        "under_tvangsavvikling": {"type": "boolean", "x-source-path": "underTvangsavviklingEllerTvangsopplosning"}
+      },
+      "x-source": "brregenhet"
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "naeringskoder": {
+          "type": "array",
+          "description": "Up to 3 industry codes (SN2007 / NACE Rev.2).",
+          "items": {
+            "type": "object",
+            "properties": {"kode": {"type": "string"}, "beskrivelse": {"type": "string"}}
+          },
+          "x-source": "brregenhet",
+          "x-source-path": "naeringskode1..3"
+        },
+        "institusjonell_sektorkode": {"type": ["object", "null"], "x-source": "brregenhet", "x-source-path": "institusjonellSektorkode"},
+        "vedtektsfestet_formaal": {"type": ["array", "null"], "items": {"type": "string"}, "x-source": "brregenhet", "x-source-path": "vedtektsfestetFormaal"},
+        "aktivitet_tekst": {"type": ["array", "null"], "items": {"type": "string"}, "x-source": "brregenhet", "x-source-path": "aktivitet"}
+      }
+    },
+    "addresses": {
+      "type": "object",
+      "properties": {
+        "forretningsadresse": {"type": ["object", "null"], "description": "Business/visiting address.", "x-source": "brregenhet", "x-source-path": "forretningsadresse"},
+        "postadresse": {"type": ["object", "null"], "description": "Mailing address.", "x-source": "brregenhet", "x-source-path": "postadresse"}
+      }
+    },
+    "contact": {
+      "type": "object",
+      "properties": {
+        "hjemmeside": {"type": ["string", "null"], "x-source": "brregenhet", "x-source-path": "hjemmeside"},
+        "telefon": {"type": ["string", "null"], "x-source": "brregenhet", "x-source-path": "telefon"},
+        "epostadresse": {"type": ["string", "null"], "description": "From bulk CSV; may be personal data (GDPR).", "x-source": "brregenhet", "x-source-path": "epostadresse"}
+      }
+    },
+    "employment": {
+      "type": "object",
+      "properties": {
+        "antall_ansatte": {"type": ["integer", "null"], "x-source": "brregenhet", "x-source-path": "antallAnsatte"},
+        "har_registrert_antall_ansatte": {"type": "boolean", "x-source": "brregenhet", "x-source-path": "harRegistrertAntallAnsatte"}
+      }
+    },
+    "group": {
+      "type": "object",
+      "description": "Corporate group / parent relationships.",
+      "properties": {
+        "er_i_konsern": {"type": "boolean", "x-source": "brregenhet", "x-source-path": "erIKonsern"},
+        "overordnet_enhet": {"type": ["string", "null"], "description": "Parent entity org number.", "x-source": "brregenhet", "x-source-path": "overordnetEnhet", "x-join-key": true}
+      }
+    },
+    "establishments": {
+      "type": "array",
+      "description": "Sub-entities / operating sites belonging to this entity (joined via overordnetEnhet).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "organisasjonsnummer": {"type": "string", "x-source-path": "organisasjonsnummer"},
+          "navn": {"type": "string", "x-source-path": "navn"},
+          "naeringskode1": {"type": ["object", "null"], "x-source-path": "naeringskode1"},
+          "beliggenhetsadresse": {"type": ["object", "null"], "x-source-path": "beliggenhetsadresse"},
+          "oppstartsdato": {"type": ["string", "null"], "format": "date", "x-source-path": "oppstartsdato"}
+        }
+      },
+      "x-source": "brregunderenhet",
+      "x-join-key": "overordnetEnhet -> registration.organisasjonsnummer",
+      "x-freshness": "daily"
+    },
+    "officers": {
+      "type": "array",
+      "description": "Roles: CEO (DAGL), board (STYR), auditor (REVI), etc. CONTAINS PERSONAL DATA (GDPR) for natural-person holders.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role_group": {"type": "string", "x-source-path": "rollegrupper[].type.kode"},
+          "role_code": {"type": "string", "x-source-path": "rollegrupper[].roller[].type.kode"},
+          "role_description": {"type": "string", "x-source-path": "rollegrupper[].roller[].type.beskrivelse"},
+          "holder_type": {"type": "string", "enum": ["person", "enhet"]},
+          "person": {
+            "type": ["object", "null"],
+            "description": "PERSONAL DATA — minimize/redact per GDPR (e.g. birth year only).",
+            "properties": {
+              "navn": {"type": ["object", "null"]},
+              "fodselsaar": {"type": ["integer", "null"], "description": "Birth year only (minimized from fodselsdato)."}
+            }
+          },
+          "enhet": {
+            "type": ["object", "null"],
+            "description": "Corporate role-holder (e.g. audit firm). Join to brregenhet.",
+            "properties": {
+              "organisasjonsnummer": {"type": "string", "x-join-key": true},
+              "navn": {"type": "array", "items": {"type": "string"}},
+              "godkjenningsstatus": {"type": ["string", "null"]}
+            }
+          },
+          "valgt_av": {"type": ["string", "null"], "x-source-path": "rollegrupper[].roller[].valgtAv.kode"},
+          "fratraadt": {"type": "boolean", "x-source-path": "rollegrupper[].roller[].fratraadt"}
+        }
+      },
+      "x-source": "brregroller",
+      "x-join-key": "{orgnr} -> registration.organisasjonsnummer",
+      "x-freshness": "daily",
+      "x-personal-data": true
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Annual accounts figures, one entry per period x accounts type (SELSKAP/KONSERN).",
+      "items": {
+        "type": "object",
+        "required": ["period_end", "regnskapstype", "valuta"],
+        "properties": {
+          "regnskapstype": {"type": "string", "enum": ["SELSKAP", "KONSERN"], "x-source-path": "regnskapstype"},
+          "period_start": {"type": "string", "format": "date", "x-source-path": "regnskapsperiode.fraDato"},
+          "period_end": {"type": "string", "format": "date", "x-source-path": "regnskapsperiode.tilDato"},
+          "valuta": {"type": "string", "description": "Reporting currency — required, never assume NOK.", "x-source-path": "valuta"},
+          "oppstillingsplan": {"type": ["string", "null"], "x-source-path": "oppstillingsplan"},
+          "small_enterprise": {"type": ["boolean", "null"], "x-source-path": "regnkapsprinsipper.smaaForetak"},
+          "not_audited": {"type": ["boolean", "null"], "x-source-path": "revisjon.ikkeRevidertAarsregnskap"},
+          "revenue": {"type": ["number", "null"], "x-source-path": "resultatregnskapResultat.driftsresultat.driftsinntekter.sumDriftsinntekter"},
+          "operating_result": {"type": ["number", "null"], "x-source-path": "resultatregnskapResultat.driftsresultat.driftsresultat"},
+          "net_financial_items": {"type": ["number", "null"], "x-source-path": "resultatregnskapResultat.finansresultat.nettoFinans"},
+          "pretax_result": {"type": ["number", "null"], "x-source-path": "resultatregnskapResultat.ordinaertResultatFoerSkattekostnad"},
+          "net_result": {"type": ["number", "null"], "x-source-path": "resultatregnskapResultat.aarsresultat"},
+          "total_assets": {"type": ["number", "null"], "x-source-path": "eiendeler.sumEiendeler"},
+          "current_assets": {"type": ["number", "null"], "x-source-path": "eiendeler.omloepsmidler.sumOmloepsmidler"},
+          "fixed_assets": {"type": ["number", "null"], "x-source-path": "eiendeler.anleggsmidler.sumAnleggsmidler"},
+          "total_equity": {"type": ["number", "null"], "x-source-path": "egenkapitalGjeld.egenkapital.sumEgenkapital"},
+          "total_debt": {"type": ["number", "null"], "x-source-path": "egenkapitalGjeld.gjeldOversikt.sumGjeld"},
+          "current_liabilities": {"type": ["number", "null"], "x-source-path": "egenkapitalGjeld.gjeldOversikt.kortsiktigGjeld.sumKortsiktigGjeld"},
+          "long_term_liabilities": {"type": ["number", "null"], "x-source-path": "egenkapitalGjeld.gjeldOversikt.langsiktigGjeld.sumLangsiktigGjeld"}
+        }
+      },
+      "x-source": "brregregnskap",
+      "x-join-key": "virksomhet.organisasjonsnummer -> registration.organisasjonsnummer",
+      "x-freshness": "weekly",
+      "x-access": "public; open API labelled temporary/research"
+    },
+    "filing_signals": {
+      "type": "object",
+      "properties": {
+        "siste_innsendte_aarsregnskap": {"type": ["string", "null"], "description": "Year of last filed accounts; trigger to refresh financial_statements.", "x-source": "brregenhet", "x-source-path": "sisteInnsendteAarsregnskap"}
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "One entry per source contributing to this profile.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "source_url", "retrieved_at"],
+        "properties": {
+          "source_slug": {"type": "string"},
+          "source_name": {"type": "string"},
+          "source_url": {"type": "string"},
+          "license": {"type": "string"},
+          "retrieved_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}
