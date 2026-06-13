@@ -1,0 +1,82 @@
+{
+  "country": "France",
+  "country_slug": "france",
+  "source_slug": "inpi_comptes_annuels",
+  "source_identity": "france_inpi_comptes_annuels",
+  "source_package": "inpicomptesannuels",
+  "env_prefix": "INPI_COMPTES_ANNUELS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "INPI RNE — Comptes annuels (annual accounts)",
+    "source_type": "official_financial_disclosure",
+    "organization": "INPI",
+    "source_url": "https://data.inpi.fr/",
+    "license": "Open data (INPI conditions); non-confidential filings only",
+    "access": "public_with_free_account",
+    "data_freshness": "daily; filings since 2017-01-01; JSON since 2023",
+    "attribution": "Source: INPI, RNE — comptes annuels."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["INPI_RNE_USERNAME", "INPI_RNE_PASSWORD"],
+    "note": "Same free INPI account as inpi_rne. Only non-confidential accounts are published."
+  },
+  "transport": {
+    "access_mode": "bulk_file",
+    "base_url": "https://registre-national-entreprises.inpi.fr/api",
+    "download_url": "sftp://(data.inpi.fr SFTP, comptes annuels path)",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "pdf"],
+    "compression": "zip/gzip",
+    "encoding": "utf-8",
+    "record_path": "per-company per-exercice accounts JSON",
+    "total_results_path": null,
+    "pagination": {"type": "sftp_files_or_api_token", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Bulk over SFTP (daily). Also per-SIREN via the RNE API. Confirm SFTP layout from account docs."},
+    "rate_limit": "per INPI terms"
+  },
+  "snapshot": {
+    "strategy": "json_per_company_per_exercice",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "InpiComptesAnnuels (bilan + compteResultat)",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["plain_decimal_eur"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Figures coded per liasse fiscale poste; map standard postes to total_assets/equity/revenue/net_income. typeBilan (complet/simplifié) governs which lines exist; confidentialite=true means excluded. Store devise (EUR)."
+  },
+  "keys": {
+    "primary_keys": ["siren", "dateClotureExercice"],
+    "join_keys": ["siren"],
+    "dedupe_keys": ["siren + dateClotureExercice + typeBilan"]
+  },
+  "mapping_rules": {
+    "financial_statements": "One record per dateClotureExercice; map bilan + compte de résultat postes.",
+    "revenue": "chiffre d'affaires",
+    "net_income": "résultat net",
+    "total_assets": "total actif",
+    "equity": "capitaux propres",
+    "currency": "devise (EUR).",
+    "matching": "Join on siren (clean, unlike DE/ES)."
+  },
+  "fixture_requirements": [
+    "bilan complet with full balance sheet + income statement",
+    "bilan simplifié (reduced lines)",
+    "bilan consolidé",
+    "exercice flagged confidentialite=true (excluded)",
+    "non-EUR devise (if any)"
+  ],
+  "live_test_plan": {
+    "smoke": "With INPI creds, fetch comptes annuels for one SIREN; assert dateClotureExercice + chiffre d'affaires + résultat net parse.",
+    "full": "Behind cred env gate, pull the comptes-annuels SFTP stock + diffs; parse per exercice; join on siren to the profile financial_statements[]."
+  },
+  "blockers": [
+    "Free INPI account required.",
+    "Confidential filings excluded — partial coverage of small firms.",
+    "Exact JSON paths / liasse poste codes to confirm against a live record."
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "country": "France",
+  "country_slug": "france",
+  "source_slug": "inpi_rne",
+  "source_identity": "france_inpi_rne",
+  "source_package": "inpirne",
+  "env_prefix": "INPI_RNE",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "RNE — Registre National des Entreprises (Data INPI)",
+    "source_type": "official_registry_bulk_and_api",
+    "organization": "INPI",
+    "source_url": "https://data.inpi.fr/",
+    "license": "Open data (INPI conditions of reuse); RBE restricted",
+    "access": "public_with_free_account",
+    "data_freshness": "daily (SFTP + API), JSON",
+    "attribution": "Source: INPI, Registre National des Entreprises."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["INPI_RNE_USERNAME", "INPI_RNE_PASSWORD"],
+    "note": "Free account on data.inpi.fr issues SFTP + API credentials. Do not bypass auth; provision creds via env."
+  },
+  "transport": {
+    "access_mode": "bulk_file",
+    "base_url": "https://registre-national-entreprises.inpi.fr/api",
+    "download_url": "sftp://(data.inpi.fr SFTP, path per account)",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "pdf"],
+    "compression": "zip/gzip (bulk archives)",
+    "encoding": "utf-8",
+    "record_path": "per-company JSON document",
+    "total_results_path": null,
+    "pagination": {"type": "sftp_files_or_api_token", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Bulk = daily JSON archives over SFTP (full stock + diffs). RNE API = per-SIREN/token. Confirm exact SFTP layout from account docs."},
+    "rate_limit": "per INPI terms"
+  },
+  "snapshot": {
+    "strategy": "json_per_company_from_sftp",
+    "file_extension": ".json",
+    "preserve_raw_download": true,
+    "note": "Persist raw JSON. Exact nested paths vary by personne morale/physique and formality version."
+  },
+  "parsing": {
+    "record_type_hint": "RneFormality",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["plain_decimal_eur"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Nested JSON; branch on personneMorale vs personnePhysique. montantCapital is register capital (EUR; capitalVariable possible). beneficiairesEffectifs is RESTRICTED — do not ingest as open. représentants are PII."
+  },
+  "keys": {
+    "primary_keys": ["siren"],
+    "join_keys": ["siren"],
+    "dedupe_keys": ["siren"]
+  },
+  "mapping_rules": {
+    "share_capital": "montantCapital (+ deviseCapital, capitalVariable).",
+    "officers": "composition.pouvoirs / représentants (role + person).",
+    "company_purpose": "objet.",
+    "registration_date": "dateImmatriculation.",
+    "annual_accounts": "comptesAnnuels[] -> see inpi_comptes_annuels for figures.",
+    "beneficial_owners": "PLANNING-ONLY (restricted) — do not populate from the open feed."
+  },
+  "fixture_requirements": [
+    "société (personne morale) with capital + représentants",
+    "entreprise individuelle (personne physique) — PII masking",
+    "company with comptes annuels references",
+    "company with capitalVariable=true",
+    "record exercising nested formality paths"
+  ],
+  "live_test_plan": {
+    "smoke": "With INPI creds, fetch one company via the RNE API; assert siren + denomination + montantCapital parse.",
+    "full": "Behind cred env gate, pull the SFTP daily JSON stock + diffs; parse per-company; join to the Sirene spine on siren; route comptesAnnuels to inpi_comptes_annuels."
+  },
+  "blockers": [
+    "Free INPI account required (SFTP/API credentials).",
+    "Beneficial ownership (RBE) restricted — exclude from open ingestion.",
+    "Nested JSON paths must be confirmed against live records.",
+    "Représentants/beneficial owners are PII — GDPR."
+  ]
+}

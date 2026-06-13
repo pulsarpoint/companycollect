@@ -1,0 +1,96 @@
+{
+  "_note": "Built from a real API Recherche d'Entreprises record (LA POSTE, SIREN 356000000) — identity/activity/status/size/officers/financials(recherche) are real open values. capital + the inpi_comptes_annuels financial_statements entry are illustrative placeholders (require a free INPI account). Officer is a real public dirigeant from the open API.",
+  "country": "France",
+  "country_slug": "france",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "siren": "356000000",
+    "siege_siret": "35600000000048",
+    "vat_id": "FR41356000000"
+  },
+  "legal_identity": {
+    "nom_complet": "LA POSTE",
+    "nom_raison_sociale": "LA POSTE",
+    "sigle": null,
+    "nature_juridique": "5510",
+    "objet_social": null
+  },
+  "status": {
+    "etat_administratif": "A",
+    "derived": "active",
+    "date_fermeture": null
+  },
+  "activity": {
+    "naf_rev2": "53.10Z",
+    "naf2025": "53.10Y",
+    "section": "H"
+  },
+  "registered_location": {
+    "adresse": "9 RUE DU COLONEL PIERRE AVIA 75015 PARIS",
+    "code_postal": "75015",
+    "commune": "PARIS 15",
+    "departement": "75",
+    "region": "11",
+    "latitude": 48.83,
+    "longitude": 2.28
+  },
+  "capital": {
+    "montant": 5857785892.00,
+    "devise": "EUR",
+    "variable": false
+  },
+  "size": {
+    "categorie_entreprise": "GE",
+    "tranche_effectif_salarie": "53"
+  },
+  "officers": [
+    {
+      "nom": "BAUDRY",
+      "prenoms": "IRENE",
+      "annee_de_naissance": "1976",
+      "qualite": "Autre",
+      "type_dirigeant": "personne physique",
+      "siren_dirigeant": null
+    }
+  ],
+  "beneficial_owners": null,
+  "financial_statements": [
+    {
+      "fiscal_year": 2024,
+      "period_end": null,
+      "accounts_type": null,
+      "currency": "EUR",
+      "revenue": 34569000000,
+      "operating_result": null,
+      "net_income": 1722000000,
+      "total_assets": null,
+      "equity": null,
+      "liabilities": null,
+      "source": "recherche_entreprises"
+    },
+    {
+      "fiscal_year": 2024,
+      "period_end": "2024-12-31",
+      "accounts_type": "consolidé",
+      "currency": "EUR",
+      "revenue": 34569000000,
+      "operating_result": 920000000,
+      "net_income": 1722000000,
+      "total_assets": 142000000000,
+      "equity": 14500000000,
+      "liabilities": 127500000000,
+      "source": "inpi_comptes_annuels"
+    }
+  ],
+  "establishments": [
+    {"siret": "35600000000048", "est_siege": true, "adresse": "9 RUE DU COLONEL PIERRE AVIA 75015 PARIS", "etat_administratif": "A"}
+  ],
+  "events": [
+    {"id": "A202400000000", "familleavis_lib": "Dépôt des comptes", "dateparution": "2025-06-30"}
+  ],
+  "source_provenance": [
+    {"source_slug": "insee_sirene", "source_name": "Base Sirene (SIREN/SIRET)", "source_url": "https://www.data.gouv.fr/datasets/base-sirene-des-entreprises-et-de-leurs-etablissements-siren-siret", "license": "ODbL", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "recherche_entreprises", "source_name": "API Recherche d'Entreprises", "source_url": "https://recherche-entreprises.api.gouv.fr/search", "license": "open public service", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "inpi_comptes_annuels", "source_name": "INPI RNE — Comptes annuels", "source_url": "https://data.inpi.fr/", "license": "open data (INPI); non-confidential", "access": "public_with_free_account", "retrieved_at": "2026-06-14T00:00:00Z"}
+  ]
+}

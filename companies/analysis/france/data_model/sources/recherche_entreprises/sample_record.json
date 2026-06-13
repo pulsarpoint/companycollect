@@ -1,0 +1,45 @@
+{
+  "_note": "Real trimmed record from API Recherche d'Entreprises (open public service; data ODbL/INPI). La Poste SIREN 356000000.",
+  "siren": "356000000",
+  "nom_complet": "LA POSTE",
+  "nom_raison_sociale": "LA POSTE",
+  "nature_juridique": "5510",
+  "activite_principale": "53.10Z",
+  "activite_principale_naf25": "53.10Y",
+  "section_activite_principale": "H",
+  "etat_administratif": "A",
+  "date_creation": "1991-01-01",
+  "categorie_entreprise": "GE",
+  "tranche_effectif_salarie": "53",
+  "statut_diffusion": "O",
+  "nombre_etablissements": 13120,
+  "dirigeants": [
+    {
+      "nom": "BAUDRY",
+      "prenoms": "IRENE",
+      "annee_de_naissance": "1976",
+      "date_de_naissance": "1976-05",
+      "qualite": "Autre",
+      "nationalite": null,
+      "type_dirigeant": "personne physique"
+    }
+  ],
+  "finances": {
+    "2024": {
+      "ca": 34569000000,
+      "resultat_net": 1722000000
+    }
+  },
+  "siege": {
+    "siret": "35600000000048",
+    "adresse": "DIRECTION GENERALE DE LA POSTE 9 RUE DU COLONEL PIERRE AVIA 75015 PARIS",
+    "code_postal": "75015",
+    "libelle_commune": "PARIS",
+    "departement": "75",
+    "region": "11",
+    "latitude": "48.831515159",
+    "longitude": "2.2780898787",
+    "activite_principale": "53.10Z",
+    "est_siege": true
+  }
+}

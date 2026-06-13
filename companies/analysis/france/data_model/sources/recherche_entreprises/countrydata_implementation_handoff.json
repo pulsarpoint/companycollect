@@ -1,0 +1,84 @@
+{
+  "country": "France",
+  "country_slug": "france",
+  "source_slug": "recherche_entreprises",
+  "source_identity": "france_recherche_entreprises",
+  "source_package": "rechercheentreprises",
+  "env_prefix": "RECHERCHE_ENTREPRISES",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "API Recherche d'Entreprises",
+    "source_type": "official_aggregator_api",
+    "organization": "DINUM / Annuaire des Entreprises",
+    "source_url": "https://recherche-entreprises.api.gouv.fr/search",
+    "license": "Open public service; underlying data ODbL (Sirene) + INPI open data",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Données: INSEE (Sirene, ODbL) + INPI (RNE), via Annuaire des Entreprises / DINUM."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "No key. Documented limit ~7 req/s per IP. Not a bulk dump path — for the full population use Sirene/INPI bulk."
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://recherche-entreprises.api.gouv.fr/search",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "User-Agent", "value": "companycollect/0.1 open-data-research", "note": "descriptive UA"}
+    ],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "results",
+    "total_results_path": "total_results",
+    "pagination": {"type": "page_number", "page_param": "page", "page_start": 1, "page_size": 25, "page_size_param": "per_page", "next_page_path": null, "note": "Max per_page=25; deep pagination capped (~page 1000). For lookups/enrichment by query or by SIREN, not full-population dumping."},
+    "rate_limit": "~7 req/s per IP"
+  },
+  "snapshot": {
+    "strategy": "json_results_per_query",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "RechercheEntreprisesCompany",
+    "date_formats": ["2006-01-02", "2006-01"],
+    "datetime_formats": [],
+    "number_formats": ["plain_integer_eur"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "siren/siret stay strings. finances is an object keyed by year string -> {ca, resultat_net} (EUR integers, nullable). dirigeants[] is PII. Resolve nature_juridique / tranche_effectif via INSEE label tables; keep NAF Rev2 + NAF2025."
+  },
+  "keys": {
+    "primary_keys": ["siren"],
+    "join_keys": ["siren", "siege.siret"],
+    "dedupe_keys": ["siren"]
+  },
+  "mapping_rules": {
+    "legal_name": "nom_raison_sociale (fallback nom_complet).",
+    "status": "etat_administratif (A=active, C=ceased).",
+    "incorporation_date": "date_creation; dissolution_date: date_fermeture.",
+    "activity": "activite_principale (NAF Rev2) + activite_principale_naf25 (NAF2025).",
+    "officers": "dirigeants[] (PII).",
+    "financials": "finances{year:{ca->revenue, resultat_net->net_income}} (EUR; open, non-confidential only).",
+    "head_office": "siege (siret + address + geo)."
+  },
+  "fixture_requirements": [
+    "large company WITH a finances block (ca + resultat_net)",
+    "company with finances null (confidential / micro)",
+    "entrepreneur individuel (statut_diffusion=P, est_entrepreneur_individuel=true) — PII masking",
+    "company with multiple dirigeants incl. a personne morale",
+    "ceased company (etat_administratif=C, date_fermeture set)"
+  ],
+  "live_test_plan": {
+    "smoke": "GET /search?q=la poste&per_page=3; assert results[0].siren and a finances year with ca+resultat_net.",
+    "full": "Use for enrichment/lookup by SIREN over the Sirene spine; throttle to ~7 req/s; persist raw JSON; do not attempt whole-population dumping (use Sirene/INPI bulk)."
+  },
+  "blockers": [
+    "Aggregator/lookup API, not a bulk source — pair with Sirene/INPI bulk for full coverage.",
+    "finances limited to ca + resultat_net and to non-confidential filings.",
+    "dirigeants PII — GDPR handling required."
+  ]
+}

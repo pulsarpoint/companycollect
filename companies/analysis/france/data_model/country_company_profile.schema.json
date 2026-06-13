@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "France Company Profile",
+  "description": "Country-specific combined company profile for France. Single clean join key: SIREN (9 digits) — unlike Germany (no key) or Spain (sparse CIF), every French source keys on SIREN. Spine = INSEE Sirene (ODbL); legal enrichment (capital, dirigeants, purpose, accounts refs) = INPI RNE; aggregator + open headline financials = API Recherche d'Entreprises (finances block); full statements = INPI comptes annuels; lifecycle events = BODACC. Financials are OPEN (no auth for ca+résultat net; free INPI account for full statements) but coverage is PARTIAL due to the legal confidentiality option. Beneficial ownership (RBE) is restricted — planning-only.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": {"type": "string", "const": "France"},
+    "country_slug": {"type": "string", "const": "france"},
+    "country_profile_version": {"type": "string", "description": "Profile schema version / build date (YYYY-MM-DD)."},
+    "registration": {
+      "type": "object",
+      "required": ["siren"],
+      "properties": {
+        "siren": {"type": "string", "description": "9-digit national legal-unit id; the universal join key across ALL French sources.", "pattern": "^[0-9]{9}$", "x-source": "insee_sirene", "x-source-path": "siren", "x-join-key": true, "x-freshness": "monthly+daily"},
+        "siege_siret": {"type": ["string", "null"], "description": "14-digit head-office establishment id.", "x-source": "insee_sirene | recherche_entreprises", "x-source-path": "siret (etablissementSiege)"},
+        "vat_id": {"type": ["string", "null"], "description": "FR VAT (TVA intracommunautaire) = 'FR' + key(2) + SIREN (computable).", "x-source": "derived"}
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["nom_complet"],
+      "properties": {
+        "nom_complet": {"type": "string", "description": "Full display name.", "x-source": "recherche_entreprises | insee_sirene", "x-source-path": "nom_complet | denominationUniteLegale"},
+        "nom_raison_sociale": {"type": ["string", "null"], "description": "Legal name (legal persons).", "x-source": "recherche_entreprises"},
+        "sigle": {"type": ["string", "null"], "x-source": "recherche_entreprises"},
+        "nature_juridique": {"type": ["string", "null"], "description": "Legal form code (INSEE catégorie juridique).", "x-source": "recherche_entreprises | insee_sirene", "x-source-path": "nature_juridique | categorieJuridiqueUniteLegale"},
+        "objet_social": {"type": ["string", "null"], "description": "Corporate purpose (free text).", "x-source": "inpi_rne", "x-source-path": "objet"}
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "etat_administratif": {"type": ["string", "null"], "enum": ["A", "C", null], "description": "A=active, C=ceased.", "x-source": "insee_sirene | recherche_entreprises"},
+        "derived": {"type": ["string", "null"], "enum": ["active", "ceased", "insolvency", null], "description": "C->ceased; BODACC procédure collective->insolvency."},
+        "date_fermeture": {"type": ["string", "null"], "format": "date", "x-source": "recherche_entreprises"}
+      }
+    },
+    "activity": {
+      "type": "object",
+      "description": "France HAS clean activity codes (NAF) — unlike DE/ES open data.",
+      "properties": {
+        "naf_rev2": {"type": ["string", "null"], "x-source": "recherche_entreprises | insee_sirene", "x-source-path": "activite_principale"},
+        "naf2025": {"type": ["string", "null"], "x-source": "recherche_entreprises", "x-source-path": "activite_principale_naf25"},
+        "section": {"type": ["string", "null"], "x-source": "recherche_entreprises", "x-source-path": "section_activite_principale"}
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "description": "Head-office (siège) address + geo.",
+      "properties": {
+        "adresse": {"type": ["string", "null"], "x-source": "recherche_entreprises | insee_sirene", "x-source-path": "siege.adresse"},
+        "code_postal": {"type": ["string", "null"], "x-source": "recherche_entreprises"},
+        "commune": {"type": ["string", "null"], "x-source": "recherche_entreprises", "x-source-path": "siege.libelle_commune"},
+        "departement": {"type": ["string", "null"], "x-source": "recherche_entreprises"},
+        "region": {"type": ["string", "null"], "x-source": "recherche_entreprises"},
+        "latitude": {"type": ["number", "null"], "x-source": "recherche_entreprises", "x-source-path": "siege.latitude"},
+        "longitude": {"type": ["number", "null"], "x-source": "recherche_entreprises", "x-source-path": "siege.longitude"}
+      }
+    },
+    "capital": {
+      "type": ["object", "null"],
+      "description": "Registered share capital (legal register). NOT annual-accounts data.",
+      "properties": {
+        "montant": {"type": ["number", "null"], "x-source": "inpi_rne", "x-source-path": "montantCapital"},
+        "devise": {"type": ["string", "null"], "description": "Usually EUR.", "x-source": "inpi_rne"},
+        "variable": {"type": ["boolean", "null"], "x-source": "inpi_rne", "x-source-path": "capitalVariable"}
+      }
+    },
+    "size": {
+      "type": "object",
+      "properties": {
+        "categorie_entreprise": {"type": ["string", "null"], "enum": ["PME", "ETI", "GE", null], "x-source": "recherche_entreprises"},
+        "tranche_effectif_salarie": {"type": ["string", "null"], "description": "INSEE employee band code (not exact count).", "x-source": "recherche_entreprises | insee_sirene"}
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Dirigeants / représentants. CONTAINS PERSONAL DATA (GDPR). From Recherche API (basic) / INPI RNE (richer with roles).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "nom": {"type": ["string", "null"]},
+          "prenoms": {"type": ["string", "null"]},
+          "annee_de_naissance": {"type": ["string", "null"]},
+          "qualite": {"type": ["string", "null"], "description": "Role (gérant, président, DG, ...)."},
+          "type_dirigeant": {"type": ["string", "null"], "enum": ["personne physique", "personne morale", null]},
+          "siren_dirigeant": {"type": ["string", "null"], "description": "SIREN when the director is a company (personne morale)."}
+        }
+      },
+      "x-source": "recherche_entreprises | inpi_rne",
+      "x-join-key": "siren -> registration.siren",
+      "x-personal-data": true
+    },
+    "beneficial_owners": {
+      "type": ["array", "null"],
+      "description": "PLANNING-ONLY. Bénéficiaires effectifs (RBE) — RESTRICTED/regulated access since the 2022 CJEU ruling; NOT in the open feed. Do not populate from open sources.",
+      "items": {"type": "object"},
+      "x-source": "inpi_rne",
+      "x-access": "restricted (planning-only)",
+      "x-personal-data": true
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Annual financials. OPEN. MULTI-SOURCE: 'recherche_entreprises' gives headline ca (revenue) + resultat_net (net income) per year, no auth; 'inpi_comptes_annuels' gives the FULL balance sheet + income statement (free INPI account). PARTIAL coverage: confidential filings excluded; simplifié discloses fewer lines.",
+      "items": {
+        "type": "object",
+        "required": ["fiscal_year", "source"],
+        "properties": {
+          "fiscal_year": {"type": "integer", "x-source-path": "finances.<year> | dateClotureExercice"},
+          "period_end": {"type": ["string", "null"], "format": "date", "x-source-path": "dateClotureExercice"},
+          "accounts_type": {"type": ["string", "null"], "description": "complet/simplifié/consolidé (INPI).", "x-source-path": "typeBilan"},
+          "currency": {"type": ["string", "null"], "description": "Usually EUR.", "x-source-path": "deviseComptes"},
+          "revenue": {"type": ["number", "null"], "description": "Chiffre d'affaires.", "x-source-path": "finances.<year>.ca | chiffreAffaires"},
+          "operating_result": {"type": ["number", "null"], "x-source-path": "resultatExploitation"},
+          "net_income": {"type": ["number", "null"], "description": "Résultat net.", "x-source-path": "finances.<year>.resultat_net | resultatNet"},
+          "total_assets": {"type": ["number", "null"], "x-source-path": "totalActif"},
+          "equity": {"type": ["number", "null"], "x-source-path": "capitauxPropres"},
+          "liabilities": {"type": ["number", "null"], "x-source-path": "dettes"},
+          "source": {"type": "string", "enum": ["recherche_entreprises", "inpi_comptes_annuels"], "description": "Which financial source produced this record."}
+        }
+      },
+      "x-source": "recherche_entreprises | inpi_comptes_annuels",
+      "x-join-key": "siren -> registration.siren",
+      "x-freshness": "annual",
+      "x-access": "open (ca+résultat net no-auth; full statements free INPI account)"
+    },
+    "establishments": {
+      "type": ["array", "null"],
+      "description": "Establishments (SIRET) of the company.",
+      "items": {"type": "object", "properties": {"siret": {"type": "string"}, "est_siege": {"type": "boolean"}, "adresse": {"type": ["string", "null"]}, "etat_administratif": {"type": ["string", "null"]}}},
+      "x-source": "insee_sirene",
+      "x-join-key": "siren -> registration.siren"
+    },
+    "events": {
+      "type": ["array", "null"],
+      "description": "BODACC lifecycle announcements (création/modification/radiation/procédure collective/dépôt de comptes).",
+      "items": {"type": "object", "properties": {"id": {"type": "string"}, "familleavis_lib": {"type": ["string", "null"]}, "dateparution": {"type": ["string", "null"], "format": "date"}}},
+      "x-source": "bodacc",
+      "x-join-key": "registre(SIREN) -> registration.siren"
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "One entry per source contributing to this profile.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "source_url", "retrieved_at"],
+        "properties": {
+          "source_slug": {"type": "string"},
+          "source_name": {"type": "string"},
+          "source_url": {"type": "string"},
+          "license": {"type": "string"},
+          "access": {"type": "string"},
+          "retrieved_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

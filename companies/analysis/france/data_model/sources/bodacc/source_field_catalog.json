@@ -1,0 +1,29 @@
+{
+  "country": "France",
+  "country_slug": "france",
+  "source_slug": "bodacc",
+  "source_name": "BODACC — Bulletin officiel des annonces civiles et commerciales",
+  "source_type": "official_gazette_api",
+  "organization": "DILA (Direction de l'information légale et administrative)",
+  "source_url": "https://bodacc-datadila.opendatasoft.com/explore/dataset/annonces-commerciales/",
+  "license": "Licence Ouverte / Open Licence v2.0",
+  "access": "public",
+  "data_freshness": "daily; ~49.4M announcement records",
+  "record_shape": "Opendatasoft Explore v2.1 records: { results: [ { ...fields } ], total_count }",
+  "primary_keys": ["id"],
+  "join_keys": ["registre (contains SIREN)"],
+  "field_count": 11,
+  "fields": [
+    {"path": "results[].id", "source_field": "id", "english_name": "announcement_id", "meaning": "Unique announcement id.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Primary key of the event."},
+    {"path": "results[].registre", "source_field": "registre", "english_name": "registre_siren", "meaning": "RCS registration reference; contains the SIREN.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "French", "limitations": "Parse SIREN out of the registre string to join.", "source_confidence": "high", "analysis_notes": "Join key to the spine (extract 9-digit SIREN)."},
+    {"path": "results[].familleavis_lib", "source_field": "familleavis_lib", "english_name": "announcement_family", "meaning": "Type of announcement.", "data_type": "string", "semantic_type": "filing", "example_values": ["Création", "Modification", "Radiation", "Procédure collective", "Dépôt des comptes", "Vente/Cession"], "nullable": true, "repeatable": false, "code_list": "BODACC familles d'avis", "language": "French", "limitations": null, "source_confidence": "high", "analysis_notes": "Drives the lifecycle-event type."},
+    {"path": "results[].dateparution", "source_field": "dateparution", "english_name": "publication_date", "meaning": "Publication date of the announcement.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Event date for change detection."},
+    {"path": "results[].tribunal", "source_field": "tribunal", "english_name": "court", "meaning": "Issuing commercial court (greffe).", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "French", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "results[].commercant", "source_field": "commercant", "english_name": "trader_name", "meaning": "Company/trader name in the announcement.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "French", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "results[].ville", "source_field": "ville", "english_name": "city", "meaning": "City.", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "French", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "results[].cp", "source_field": "cp", "english_name": "postal_code", "meaning": "Postal code.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "results[].jugement", "source_field": "jugement", "english_name": "judgment_block", "meaning": "Structured judgment details (for procédures collectives).", "data_type": "object", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "French", "limitations": "Present for insolvency/collective-procedure announcements.", "source_confidence": "medium", "analysis_notes": "Bankruptcy / safeguard / liquidation details."},
+    {"path": "results[].depot", "source_field": "depot", "english_name": "deposit_block", "meaning": "Structured 'dépôt des comptes' details (accounts filing announcement).", "data_type": "object", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "French", "limitations": "Announces that accounts were filed; NOT the figures (those are in INPI comptes annuels).", "source_confidence": "medium", "analysis_notes": "Signal to refresh financials for that SIREN."},
+    {"path": "results[].publicationavis", "source_field": "publicationavis", "english_name": "bulletin_ref", "meaning": "BODACC bulletin reference/number.", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null}
+  ]
+}

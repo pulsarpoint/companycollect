@@ -1,0 +1,84 @@
+{
+  "country": "France",
+  "country_slug": "france",
+  "source_slug": "insee_sirene",
+  "source_identity": "france_insee_sirene",
+  "source_package": "inseesirene",
+  "env_prefix": "INSEE_SIRENE",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Base Sirene des entreprises et de leurs établissements (SIREN, SIRET)",
+    "source_type": "official_registry_bulk",
+    "organization": "INSEE",
+    "source_url": "https://www.data.gouv.fr/datasets/base-sirene-des-entreprises-et-de-leurs-etablissements-siren-siret",
+    "license": "ODbL",
+    "access": "public",
+    "data_freshness": "monthly stock + daily API",
+    "attribution": "Source: INSEE, base Sirene (ODbL). Derived databases redistributed publicly must be ODbL."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Bulk is no-auth. Daily deltas need a free API Sirene key (portail-api.insee.fr) — separate source api_sirene."
+  },
+  "transport": {
+    "access_mode": "bulk_file",
+    "base_url": null,
+    "download_url": "https://www.sirene.fr/sirene/public/static/open-data",
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "User-Agent", "value": "companycollect/0.1 open-data-research", "note": "descriptive UA"}
+    ],
+    "formats": ["csv", "zip", "parquet"],
+    "compression": "zip (csv) / none (parquet)",
+    "encoding": "utf-8",
+    "record_path": "$ (CSV rows; two files: StockUniteLegale, StockEtablissement)",
+    "total_results_path": null,
+    "pagination": {"type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Monthly stock files (~960 MB units zip, ~2.83 GB establishments zip; Parquet variants). Dated URLs ROTATE monthly — resolve via the stable landing page / data.gouv.fr dataset API, do NOT hardcode."},
+    "rate_limit": "n/a (file download)"
+  },
+  "snapshot": {
+    "strategy": "csv_or_parquet_two_stocks",
+    "file_extension": ".parquet",
+    "preserve_raw_download": true,
+    "note": "Prefer Parquet (typed, smaller). Persist raw; join StockEtablissement to StockUniteLegale on siren."
+  },
+  "parsing": {
+    "record_type_hint": "SireneUniteLegale + SireneEtablissement",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "siren/siret/codePostal stay strings. Resolve categorieJuridique / trancheEffectifs / NAF via INSEE label tables. Honor statutDiffusion=P (mask opted-out individuals)."
+  },
+  "keys": {
+    "primary_keys": ["siren", "siret"],
+    "join_keys": ["siren", "siret"],
+    "dedupe_keys": ["siren", "siret"]
+  },
+  "mapping_rules": {
+    "legal_name": "denominationUniteLegale (else nom/prenom for individuals).",
+    "status": "etatAdministratifUniteLegale (A/C).",
+    "incorporation_date": "dateCreationUniteLegale.",
+    "activity": "activitePrincipaleUniteLegale (NAF).",
+    "registered_address": "head-office establishment (etablissementSiege=true) address columns.",
+    "vat_id": "compute FR VAT: 'FR' + key(2) + siren."
+  },
+  "fixture_requirements": [
+    "active legal-person unit with denomination",
+    "individual entrepreneur unit (statutDiffusion=P) — masking",
+    "ceased unit (etatAdministratif=C)",
+    "unit with multiple establishments incl. siege",
+    "establishment row with full address"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve current StockUniteLegale URL via data.gouv.fr dataset API; download a few MB; parse columns siren/denomination/etatAdministratif.",
+    "full": "Download both stocks (Parquet) behind an env gate; load to Postgres/DuckDB; join establishments to units; add daily deltas from api_sirene."
+  },
+  "blockers": [
+    "Multi-GB downloads — confirm environment capacity.",
+    "Dated stock URLs rotate monthly — must resolve dynamically.",
+    "ODbL share-alike on redistributed derived databases."
+  ]
+}

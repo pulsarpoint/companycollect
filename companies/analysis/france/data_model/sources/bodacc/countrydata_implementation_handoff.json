@@ -1,0 +1,81 @@
+{
+  "country": "France",
+  "country_slug": "france",
+  "source_slug": "bodacc",
+  "source_identity": "france_bodacc",
+  "source_package": "bodacc",
+  "env_prefix": "BODACC",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "BODACC — Bulletin officiel des annonces civiles et commerciales",
+    "source_type": "official_gazette_api",
+    "organization": "DILA",
+    "source_url": "https://bodacc-datadila.opendatasoft.com/explore/dataset/annonces-commerciales/",
+    "license": "Licence Ouverte / Open Licence v2.0",
+    "access": "public",
+    "data_freshness": "daily; ~49.4M records",
+    "attribution": "Source: DILA — BODACC (Licence Ouverte 2.0)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Opendatasoft anonymous quota (throttled). No key."
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://bodacc-datadila.opendatasoft.com/api/explore/v2.1/catalog/datasets/annonces-commerciales/records",
+    "download_url": "https://bodacc-datadila.opendatasoft.com/api/explore/v2.1/catalog/datasets/annonces-commerciales/exports/json",
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "User-Agent", "value": "companycollect/0.1 open-data-research", "note": "descriptive UA"}
+    ],
+    "formats": ["json", "csv", "xlsx"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "results",
+    "total_results_path": "total_count",
+    "pagination": {"type": "offset_limit", "page_param": "offset", "page_start": 0, "page_size": 100, "page_size_param": "limit", "next_page_path": null, "note": "Records API caps offset (~10000); for full history use the exports endpoint or filter by dateparution windows."},
+    "rate_limit": "Opendatasoft anonymous quota"
+  },
+  "snapshot": {
+    "strategy": "json_events_by_date_window",
+    "file_extension": ".json",
+    "preserve_raw_download": true,
+    "note": "Harvest incrementally by dateparution; or full via exports/json. Persist raw events."
+  },
+  "parsing": {
+    "record_type_hint": "BodaccAnnonce",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Extract 9-digit SIREN from 'registre' to join. familleavis_lib classifies the event. jugement/depot are nested objects (insolvency / accounts-filing). Not a master list — events only."
+  },
+  "keys": {
+    "primary_keys": ["id"],
+    "join_keys": ["registre (SIREN)"],
+    "dedupe_keys": ["id"]
+  },
+  "mapping_rules": {
+    "events": "familleavis_lib + dateparution + jugement/depot -> lifecycle event records.",
+    "status_signal": "Procédure collective (jugement) -> distressed/closing; Radiation -> ceased.",
+    "financial_refresh": "Dépôt des comptes (depot) -> trigger inpi_comptes_annuels refresh for the SIREN.",
+    "join": "Parse SIREN from registre."
+  },
+  "fixture_requirements": [
+    "Création announcement",
+    "Radiation announcement",
+    "Procédure collective with jugement block",
+    "Dépôt des comptes with depot block",
+    "announcement with malformed/missing registre (no SIREN)"
+  ],
+  "live_test_plan": {
+    "smoke": "GET records?limit=2; assert total_count and results[].familleavis_lib present.",
+    "full": "Harvest by dateparution windows (or exports/json) behind an env gate; parse SIREN; attach events to the spine; trigger financial refresh on dépôt des comptes."
+  },
+  "blockers": [
+    "Records API offset cap — use date windows or the exports endpoint for full history.",
+    "registre parsing needed to recover SIREN (not always clean)."
+  ]
+}
