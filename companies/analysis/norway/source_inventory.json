@@ -1,0 +1,157 @@
+[
+  {
+    "country": "Norway",
+    "country_slug": "norway",
+    "source_name": "Enhetsregisteret — Central Coordinating Register for Legal Entities (API)",
+    "source_type": "official_registry_api",
+    "organization": "Brønnøysund Register Centre (Brønnøysundregistrene / Brreg)",
+    "url": "https://data.brreg.no/enhetsregisteret/api/dokumentasjon/en/index.html",
+    "bulk_download_url": "https://data.brreg.no/enhetsregisteret/api/enheter/lastned",
+    "api_base_url": "https://data.brreg.no/enhetsregisteret/api/enheter",
+    "formats": ["json", "csv", "xlsx"],
+    "license": "NLOD 2.0",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": "not published; prefer bulk + oppdateringer feed over page crawling",
+    "fields_observed": [
+      "organisasjonsnummer", "navn", "organisasjonsform", "naeringskode1/2/3",
+      "antallAnsatte", "hjemmeside", "telefon", "postadresse", "forretningsadresse",
+      "institusjonellSektorkode", "stiftelsesdato", "registreringsdatoEnhetsregisteret",
+      "registrertIMvaregisteret", "registrertIForetaksregisteret", "sisteInnsendteAarsregnskap",
+      "konkurs", "underAvvikling", "erIKonsern", "overordnetEnhet", "kapital", "maalform"
+    ],
+    "data_freshness": "daily",
+    "total_records": 1164396,
+    "pagination": "page/size params (HAL); bulk gzip preferred for full load; oppdateringer feed for deltas",
+    "example_requests": [
+      "https://data.brreg.no/enhetsregisteret/api/enheter?size=1",
+      "https://data.brreg.no/enhetsregisteret/api/enheter/923609016",
+      "https://data.brreg.no/enhetsregisteret/api/enheter/923609016/roller",
+      "https://data.brreg.no/enhetsregisteret/api/oppdateringer/enheter?dato=2026-06-12T00:00:00.000Z"
+    ],
+    "downloaded_files": [
+      "raw/api/enhetsregisteret_search_page.json",
+      "raw/api/enhetsregisteret_entity_equinor.json",
+      "raw/api/enhetsregisteret_roller_equinor.json",
+      "raw/bulk/enheter_alle.csv.gz"
+    ],
+    "status": "recommended",
+    "recommended_source_key": "brregenhet",
+    "recommended_registry_key": "norway/brregenhet",
+    "notes": "Canonical official base register. Key-less REST + gzip bulk (JSON ~197MB / CSV ~154MB) + daily delta feed. Bulk CSV has 1,458,299 rows incl. dissolved; API active count 1,164,396."
+  },
+  {
+    "country": "Norway",
+    "country_slug": "norway",
+    "source_name": "Enhetsregisteret — Sub-entities (underenheter)",
+    "source_type": "official_registry_api",
+    "organization": "Brønnøysund Register Centre (Brreg)",
+    "url": "https://data.brreg.no/enhetsregisteret/api/dokumentasjon/en/index.html",
+    "bulk_download_url": "https://data.brreg.no/enhetsregisteret/api/underenheter/lastned/csv",
+    "api_base_url": "https://data.brreg.no/enhetsregisteret/api/underenheter",
+    "formats": ["json", "csv", "xlsx"],
+    "license": "NLOD 2.0",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": "not published",
+    "fields_observed": [
+      "organisasjonsnummer", "navn", "organisasjonsform", "naeringskode1",
+      "overordnetEnhet", "oppstartsdato", "beliggenhetsadresse", "harRegistrertAntallAnsatte",
+      "registrertIMvaregisteret", "registreringsdatoEnhetsregisteret"
+    ],
+    "data_freshness": "daily",
+    "total_records": 842538,
+    "pagination": "page/size; bulk gzip ~60MB",
+    "example_requests": [
+      "https://data.brreg.no/enhetsregisteret/api/underenheter?size=1"
+    ],
+    "downloaded_files": [
+      "raw/api/enhetsregisteret_underenheter_page.json"
+    ],
+    "status": "recommended",
+    "notes": "Establishments/branches linked to parent via overordnetEnhet. Useful for site-level / address-level coverage."
+  },
+  {
+    "country": "Norway",
+    "country_slug": "norway",
+    "source_name": "Regnskapsregisteret — Register of Company Accounts (financial data API)",
+    "source_type": "official_registry_api",
+    "organization": "Brønnøysund Register Centre (Brreg)",
+    "url": "https://data.norge.no/en/datasets/7c87f169-2520-4e56-ba2a-b7a3cc7de2e9/regnskapsregisteret",
+    "bulk_download_url": null,
+    "api_base_url": "https://data.brreg.no/regnskapsregisteret/regnskap",
+    "formats": ["json", "json-ld", "xml", "rdf", "ttl"],
+    "license": "NLOD 2.0",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": "not published; one orgnr per call, throttle and cache by sisteInnsendteAarsregnskap",
+    "fields_observed": [
+      "regnskapsperiode", "valuta", "oppstillingsplan", "regnskapsregler",
+      "resultatregnskapResultat.driftsresultat.driftsinntekter.sumDriftsinntekter",
+      "resultatregnskapResultat.driftsresultat.driftsresultat",
+      "resultatregnskapResultat.aarsresultat",
+      "resultatregnskapResultat.finansresultat.nettoFinans",
+      "eiendeler.sumEiendeler", "eiendeler.omloepsmidler", "eiendeler.anleggsmidler",
+      "egenkapitalGjeld.sumEgenkapital", "egenkapitalGjeld.gjeldOversikt.sumGjeld",
+      "egenkapitalGjeld.gjeldOversikt.kortsiktigGjeld", "egenkapitalGjeld.gjeldOversikt.langsiktigGjeld",
+      "revisjon", "regnkapsprinsipper.smaaForetak"
+    ],
+    "data_freshness": "weekly (~5 days/week import); annual filing cycle",
+    "coverage_notes": "~80% of accounting-liable companies (AS, ASA, NUF, savings banks). Banks/insurance excluded from standard figures. Open API ~2018+; recent year(s) depth.",
+    "example_requests": [
+      "https://data.brreg.no/regnskapsregisteret/regnskap/923609016"
+    ],
+    "downloaded_files": [
+      "raw/api/regnskapsregisteret_equinor.json"
+    ],
+    "status": "recommended",
+    "recommended_source_key": "brregregnskap",
+    "recommended_registry_key": "norway/brregregnskap",
+    "notes": "Financial enrichment by organisation number. Income statement + balance sheet as JSON. Open API is a 'temporary/research' distribution; paid Subscription Service holds full history + image copies. GitHub: github.com/brreg/regnskapsregister-api"
+  },
+  {
+    "country": "Norway",
+    "country_slug": "norway",
+    "source_name": "data.norge.no — national open data catalog (DCAT)",
+    "source_type": "open_data_portal_catalog",
+    "organization": "Norwegian Digitalisation Agency (Digdir)",
+    "url": "https://data.norge.no",
+    "bulk_download_url": null,
+    "api_base_url": "https://data.norge.no/api",
+    "formats": ["dcat", "json"],
+    "license": "NLOD 2.0 (catalog)",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": null,
+    "fields_observed": ["dataset metadata only — points to Brreg services"],
+    "data_freshness": "n/a",
+    "downloaded_files": [],
+    "status": "useful_secondary_source",
+    "notes": "National catalog confirming publisher (Brreg) and NLOD 2.0 license. Actual data served from data.brreg.no."
+  },
+  {
+    "country": "Norway",
+    "country_slug": "norway",
+    "source_name": "Register over reelle rettighetshavere (Beneficial Ownership Register)",
+    "source_type": "official_registry",
+    "organization": "Brønnøysund Register Centre (Brreg)",
+    "url": "https://www.brreg.no/produkter-og-tjenester/registre/register-over-reelle-rettighetshavere/",
+    "bulk_download_url": null,
+    "api_base_url": null,
+    "formats": [],
+    "license": "restricted",
+    "access": "controlled",
+    "requires_authentication": true,
+    "requires_payment": false,
+    "rate_limits": null,
+    "fields_observed": [],
+    "data_freshness": "unknown",
+    "downloaded_files": [],
+    "status": "blocked_by_license_uncertainty",
+    "notes": "UBO register exists but is not openly available as bulk/open API. Out of scope for open ingestion."
+  }
+]

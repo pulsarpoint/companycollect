@@ -1,0 +1,49 @@
+[
+  {
+    "name": "Enhetsregisteret entities bulk (JSON gzip)",
+    "slug": "brreg_enheter_json",
+    "type": "bulk",
+    "url": "https://data.brreg.no/enhetsregisteret/api/enheter/lastned",
+    "method": "GET",
+    "headers": { "Accept": "application/vnd.brreg.enhetsregisteret.enhet.v2+gzip" },
+    "max_pages": 0
+  },
+  {
+    "name": "Enhetsregisteret entities bulk (CSV gzip)",
+    "slug": "brreg_enheter_csv",
+    "type": "bulk",
+    "url": "https://data.brreg.no/enhetsregisteret/api/enheter/lastned/csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "Enhetsregisteret sub-entities bulk (CSV gzip)",
+    "slug": "brreg_underenheter_csv",
+    "type": "bulk",
+    "url": "https://data.brreg.no/enhetsregisteret/api/underenheter/lastned/csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "Enhetsregisteret entities API (sample pages)",
+    "slug": "brreg_enheter_api",
+    "type": "api_page",
+    "url": "https://data.brreg.no/enhetsregisteret/api/enheter",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 0,
+    "max_pages": 3
+  },
+  {
+    "name": "Regnskapsregisteret financials (single orgnr — Equinor)",
+    "slug": "brreg_regnskap_923609016",
+    "type": "bulk",
+    "url": "https://data.brreg.no/regnskapsregisteret/regnskap/923609016",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0
+  }
+]
