@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Offentliggoerelser — financial filings by CVR (OPEN, URI search)",
+    "slug": "dk_offentliggoerelser_maersk",
+    "type": "bulk",
+    "url": "http://distribution.virk.dk/offentliggoerelser/_search?q=cvrNummer:22756214&sort=offentliggoerelsesTidspunkt:desc&size=5",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0,
+    "note": "Open, no auth. Returns filing metadata + document URLs (XBRL/iXBRL/ESEF/PDF). Body-based POST queries (term/range on sidstOpdateret) are richer — see README."
+  },
+  {
+    "name": "Offentliggoerelser — total count (size=0, OPEN)",
+    "slug": "dk_offentliggoerelser_count",
+    "type": "bulk",
+    "url": "http://distribution.virk.dk/offentliggoerelser/_search?size=0",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0
+  },
+  {
+    "name": "CVR-permanent virksomhed — single company (REQUIRES free HTTP Basic auth)",
+    "slug": "dk_cvr_virksomhed_maersk",
+    "type": "bulk",
+    "url": "http://distribution.virk.dk/cvr-permanent/virksomhed/_search?q=cvrNummer:22756214",
+    "method": "GET",
+    "headers": {
+      "Accept": "application/json",
+      "Authorization": "Basic REPLACE_WITH_BASE64_USER_COLON_PASS"
+    },
+    "max_pages": 0,
+    "note": "401 without credentials. Request free access at cvrselvbetjening@erst.dk. For full load use the Elasticsearch scroll API, not this single search."
+  }
+]
