@@ -1,0 +1,30 @@
+{
+  "_index": "indberetninger-20230623",
+  "_type": "_doc",
+  "_id": "urn:ofk:oid:39194942",
+  "_source": {
+    "cvrNummer": 22756214,
+    "regNummer": null,
+    "omgoerelse": false,
+    "sagsNummer": "X26-CA-87-GK",
+    "offentliggoerelsestype": "regnskab",
+    "regnskab": {
+      "godkendelse": null,
+      "regnskabsperiode": {
+        "startDato": "2026-01-01",
+        "slutDato": "2026-03-31"
+      }
+    },
+    "offentliggoerelsesTidspunkt": "2026-05-07T12:30:46.231Z",
+    "indlaesningsTidspunkt": "2026-05-07T12:31:02.025Z",
+    "sidstOpdateret": "2026-05-07T12:30:46.930Z",
+    "dokumenter": [
+      {"dokumentUrl": "http://regnskaber.virk.dk/41265722/amNsb3VkczovLzAzLzQxLzg1LzYzLzRhL2E0YTItNDMxYS05Yjg0LTEyY2Y5YjA3NTY0ZQ.xhtml", "dokumentMimeType": "application/xhtml+xml", "dokumentType": "DELAARSRAPPORT"},
+      {"dokumentUrl": "http://regnskaber.virk.dk/41265722/amNsb3VkczovLzAzLzI1LzFlLzllLzk5LzkwZWEtNDNlNy1iNDE1LWRiY2I1NTdmMjJjYw.xml", "dokumentMimeType": "application/xml", "dokumentType": "DELAARSRAPPORT"},
+      {"dokumentUrl": "http://regnskaber.virk.dk/41265722/amNsb3VkczovLzAzLzVmL2U5LzcyLzY2LzY2YzQtNDkxYS04MjVkLTdhZTQ0OWE5ODcyOA.xml", "dokumentMimeType": "application/xml", "dokumentType": "DELAARSRAPPORT_ESEF"},
+      {"dokumentUrl": "http://regnskaber.virk.dk/41265722/amNsb3VkczovLzAzLzA4L2ZjL2NiLzYxLzRkZjMtNDhjNi04YTI2LTc1OWM2NjQxYjQ4Mw.zip", "dokumentMimeType": "application/zip", "dokumentType": "ESEF_EXTENSION"}
+    ],
+    "indlaesningsId": "AZ4Ca0zKsNSFThW4CIVI"
+  },
+  "sort": [1778157046231]
+}

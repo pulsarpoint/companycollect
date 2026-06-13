@@ -1,0 +1,123 @@
+{
+  "country": "Denmark",
+  "country_slug": "denmark",
+  "country_profile_version": "2026-06-13",
+  "_note": "Example built around A.P. Møller - Mærsk A/S (CVR 22756214). Fields sourced from cvr_offentliggoerelser and cvr_regnskab_xbrl are REAL observed values from the downloaded samples. Fields sourced from cvr_permanent (legal_form, status, activity, registered_location, contact, employment, production_units, participants) are ILLUSTRATIVE — the base register was not fetched (HTTP 401 without credentials) — and show the shape of the richest practical profile only.",
+  "registration": {
+    "cvr_nummer": "22756214",
+    "vat_id": "DK22756214",
+    "lei": "549300D2K6PKKKXVNN73",
+    "incorporation_date": "1904-04-16"
+  },
+  "legal_identity": {
+    "navn": "A.P. Møller - Mærsk A/S",
+    "previous_names": [
+      {"navn": "Aktieselskabet Dampskibsselskabet Svendborg", "gyldig_fra": null, "gyldig_til": "2003-11-25"}
+    ],
+    "legal_form": {"kode": "60", "tekst": "Aktieselskab (A/S)"},
+    "purpose": "At drive rederivirksomhed, handel og dermed beslægtet virksomhed (illustrative).",
+    "share_capital": {"amount": 4393916000, "currency": "DKK"}
+  },
+  "status": {
+    "current_status": "NORMAL",
+    "dissolution_date": null,
+    "advertising_protected": false
+  },
+  "activity": {
+    "primary": {"branchekode": "493200", "branchetekst": "Skibsfart (illustrative DB07 code)"},
+    "secondary": [
+      {"branchekode": "521000", "branchetekst": "Oplagrings- og pakhusvirksomhed (illustrative)"}
+    ]
+  },
+  "registered_location": {
+    "vejnavn": "Esplanaden",
+    "husnummer": "50",
+    "postnummer": "1263",
+    "postdistrikt": "København K",
+    "kommune_kode": "0101",
+    "kommune_navn": "København",
+    "land": "DK"
+  },
+  "contact": {
+    "email": null,
+    "telefon": null,
+    "hjemmeside": "https://www.maersk.com"
+  },
+  "employment": [
+    {"aar": 2025, "antal_ansatte_interval": "100+", "antal_aarsvaerk_interval": "100+"}
+  ],
+  "production_units": [
+    {"p_nummer": "1000000000", "navn": "A.P. Møller - Mærsk A/S (illustrative P-unit)", "branchekode": "493200"}
+  ],
+  "participants": [
+    {"role": "reel ejer", "name": "(personal data — resolve from deltager index)", "ownership_pct": null}
+  ],
+  "financial_filings": [
+    {
+      "filing_id": "urn:ofk:oid:39194942",
+      "cvr_nummer": "22756214",
+      "sags_nummer": "X26-CA-87-GK",
+      "publication_type": "regnskab",
+      "is_correction": false,
+      "period_start": "2026-01-01",
+      "period_end": "2026-03-31",
+      "published_at": "2026-05-07T12:30:46.231Z",
+      "last_updated": "2026-05-07T12:30:46.930Z",
+      "documents": [
+        {"type": "DELAARSRAPPORT", "mime": "application/xhtml+xml", "url": "http://regnskaber.virk.dk/41265722/amNsb3VkczovLzAzLzQxLzg1LzYzLzRhL2E0YTItNDMxYS05Yjg0LTEyY2Y5YjA3NTY0ZQ.xhtml"},
+        {"type": "DELAARSRAPPORT", "mime": "application/xml", "url": "http://regnskaber.virk.dk/41265722/amNsb3VkczovLzAzLzI1LzFlLzllLzk5LzkwZWEtNDNlNy1iNDE1LWRiY2I1NTdmMjJjYw.xml"},
+        {"type": "DELAARSRAPPORT_ESEF", "mime": "application/xml", "url": "http://regnskaber.virk.dk/41265722/amNsb3VkczovLzAzLzVmL2U5LzcyLzY2LzY2YzQtNDkxYS04MjVkLTdhZTQ0OWE5ODcyOA.xml"},
+        {"type": "ESEF_EXTENSION", "mime": "application/zip", "url": "http://regnskaber.virk.dk/41265722/amNsb3VkczovLzAzLzA4L2ZjL2NiLzYxLzRkZjMtNDhjNi04YTI2LTc1OWM2NjQxYjQ4Mw.zip"}
+      ]
+    }
+  ],
+  "financial_statements": [
+    {
+      "period_start": "2026-01-01",
+      "period_end": "2026-03-31",
+      "reporting_class": "Reporting class D",
+      "report_type": "Interim report (other than 6 months)",
+      "auditor_assistance": "No audit assistance",
+      "consolidated": true,
+      "currency": "USD",
+      "line_items": [],
+      "board": [
+        {"name": "Vincent Clerc", "title": "CEO", "body": "executive"},
+        {"name": "Robert Erni", "title": "CFO", "body": "executive"},
+        {"name": "Robert Mærsk Uggla", "title": "Chair", "body": "supervisory"},
+        {"name": "Marc Engel", "title": "Vice Chair", "body": "supervisory"},
+        {"name": "Marika Fredriksson", "title": null, "body": "supervisory"}
+      ]
+    }
+  ],
+  "change_history": [],
+  "source_provenance": [
+    {
+      "source_slug": "cvr_permanent",
+      "source_name": "CVR-permanent — Det Centrale Virksomhedsregister",
+      "source_url": "http://distribution.virk.dk/cvr-permanent",
+      "license": "Free reuse incl. commercial under CVR-loven",
+      "access": "public_with_free_credentials",
+      "retrieved_at": null,
+      "freshness": "near real-time"
+    },
+    {
+      "source_slug": "cvr_offentliggoerelser",
+      "source_name": "Offentliggørelser / Regnskaber (filing metadata)",
+      "source_url": "http://distribution.virk.dk/offentliggoerelser",
+      "license": "Free / open; same CVR reuse terms",
+      "access": "public",
+      "retrieved_at": "2026-06-13T00:00:00Z",
+      "freshness": "near real-time"
+    },
+    {
+      "source_slug": "cvr_regnskab_xbrl",
+      "source_name": "Regnskaber — XBRL / iXBRL documents (DCCA taxonomy)",
+      "source_url": "http://regnskaber.virk.dk",
+      "license": "Free / open; same CVR reuse terms",
+      "access": "public",
+      "retrieved_at": "2026-06-13T00:00:00Z",
+      "freshness": "per filing"
+    }
+  ]
+}

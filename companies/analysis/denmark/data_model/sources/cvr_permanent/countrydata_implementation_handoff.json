@@ -1,0 +1,98 @@
+{
+  "country": "Denmark",
+  "country_slug": "denmark",
+  "source_slug": "cvr_permanent",
+  "source_identity": "denmark_cvr_permanent",
+  "source_package": "cvrpermanent",
+  "env_prefix": "CVR_PERMANENT",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "CVR-permanent — Det Centrale Virksomhedsregister (base company data)",
+    "source_type": "official_registry_api",
+    "organization": "Erhvervsstyrelsen (Danish Business Authority)",
+    "source_url": "http://distribution.virk.dk/cvr-permanent",
+    "license": "Free reuse incl. commercial under CVR-loven; honour reklamebeskyttelse flag",
+    "access": "public_with_free_credentials",
+    "data_freshness": "near real-time",
+    "attribution": "Kilde: CVR / Erhvervsstyrelsen"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["CVR_PERMANENT_USERNAME", "CVR_PERMANENT_PASSWORD"],
+    "credential_acquisition": "Request free HTTP Basic credentials by emailing cvrselvbetjening@erst.dk and signing the protected-data (address protection) declaration."
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "http://distribution.virk.dk/cvr-permanent",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": [
+      {"name": "Authorization", "value": "Basic <base64 user:pass>", "note": "HTTP Basic; 401 without it (live-verified)"},
+      {"name": "Content-Type", "value": "application/json", "note": "Elasticsearch query body"}
+    ],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "hits.hits[]._source.Vrvirksomhed",
+    "total_results_path": "hits.total",
+    "pagination": {
+      "type": "elasticsearch_scroll",
+      "page_param": "scroll_id",
+      "page_start": null,
+      "page_size": 3000,
+      "page_size_param": "size",
+      "next_page_path": "_scroll_id",
+      "note": "Elasticsearch 1.7.x. A single _search is capped at 3,000 docs. Full extraction uses the scroll API: POST /{index}/_search?scroll=1m then POST /_search/scroll with the returned _scroll_id. Indexes: virksomhed, produktionsenhed, deltager."
+    },
+    "rate_limit": "max 3,000 docs per query; use scroll for bulk; be polite"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "VrvirksomhedRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": ["2006-01-02T15:04:05.000Z07:00"],
+    "number_formats": ["plain_integer_cvr", "decimal_dot_capital"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Most attributes are arrays of period-stamped values (periode.gyldigFra/gyldigTil); resolve the current entry (gyldigTil == null) or read the virksomhedMetadata rollup. Exact nesting under Vrvirksomhed must be confirmed against a real authenticated response. attributter[] is a typed list — KAPITAL and FORMÅL are stored as string values with a type discriminator."
+  },
+  "keys": {
+    "primary_keys": ["cvrNummer"],
+    "join_keys": ["cvrNummer"],
+    "dedupe_keys": ["cvrNummer"]
+  },
+  "mapping_rules": {
+    "legal_name": "Current navne[] entry where periode.gyldigTil is null (or virksomhedMetadata.nyesteNavn).",
+    "status": "Current virksomhedsstatus[].status (or virksomhedMetadata.sammensatStatus/nyesteStatus).",
+    "legal_form": "Current virksomhedsform[].virksomhedsformkode + text.",
+    "incorporation_date": "stiftelsesDato.",
+    "dissolution_date": "Close of the last livsforloeb period when status is OPLØST.",
+    "registered_address": "Current beliggenhedsadresse[]; expose kommune code for geography.",
+    "vat_id": "'DK' + cvrNummer (8 digits).",
+    "activity_code": "Current hovedbranche[].branchekode (DB07/NACE).",
+    "share_capital": "attributter[] entry of type KAPITAL (+ currency attribute).",
+    "purpose": "attributter[] entry of type FORMÅL.",
+    "advertising_protection": "Carry the reklamebeskyttelse flag through to gate marketing use."
+  },
+  "fixture_requirements": [
+    "representative active ApS/AS with current navne + virksomhedsform + status + beliggenhedsadresse + hovedbranche + KAPITAL",
+    "entity with name history (multiple navne[] periods, prior gyldigTil set)",
+    "dissolved/bankrupt entity (status UNDER KONKURS / OPLØST with closed livsforloeb)",
+    "advertising-protected (reklamebeskyttet) entity",
+    "entity with deltagerRelation incl. beneficial owners (reelle ejere)",
+    "malformed / partially-null individual record"
+  ],
+  "live_test_plan": {
+    "smoke": "With credentials, POST /cvr-permanent/virksomhed/_search {\"query\":{\"term\":{\"cvrNummer\":22756214}}}; assert one hit with cvrNummer + current navne. Confirm 401 without auth.",
+    "full": "Scroll virksomhed (2,194,982), produktionsenhed (2,787,126), deltager (1,772,344) behind explicit env gates; refresh incrementally where a sidstOpdateret-equivalent exists."
+  },
+  "blockers": [
+    "Requires free HTTP Basic credentials obtained via email (cvrselvbetjening@erst.dk) and a signed protected-data declaration — cannot be automated unattended.",
+    "No raw records inspected yet (401 without auth); exact JSON nesting under Vrvirksomhed unconfirmed.",
+    "deltager / reelle ejere data is personal data — GDPR + address-protection handling required before ingestion."
+  ]
+}

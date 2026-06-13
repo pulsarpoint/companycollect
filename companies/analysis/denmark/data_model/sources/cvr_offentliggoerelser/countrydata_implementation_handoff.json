@@ -1,0 +1,87 @@
+{
+  "country": "Denmark",
+  "country_slug": "denmark",
+  "source_slug": "cvr_offentliggoerelser",
+  "source_identity": "denmark_cvr_offentliggoerelser",
+  "source_package": "cvroffentliggoerelser",
+  "env_prefix": "CVR_OFFENTLIGGOERELSER",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Offentliggørelser / Regnskaber — published annual-report filings (metadata)",
+    "source_type": "official_registry_api",
+    "organization": "Erhvervsstyrelsen (Danish Business Authority)",
+    "source_url": "http://distribution.virk.dk/offentliggoerelser",
+    "license": "Free / open; same CVR reuse terms",
+    "access": "public",
+    "data_freshness": "near real-time (annual filing cycle)",
+    "attribution": "Kilde: CVR / Erhvervsstyrelsen"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "http://distribution.virk.dk/offentliggoerelser/_search",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": [
+      {"name": "Content-Type", "value": "application/json", "note": "Elasticsearch query body"}
+    ],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "hits.hits[]._source",
+    "total_results_path": "hits.total",
+    "pagination": {
+      "type": "elasticsearch_scroll",
+      "page_param": "scroll_id",
+      "page_start": null,
+      "page_size": 3000,
+      "page_size_param": "size",
+      "next_page_path": "_scroll_id",
+      "note": "ES 1.7.x; single _search capped at 3,000 docs. Per-company: POST term query on cvrNummer with sort offentliggoerelsesTidspunkt desc. Full/incremental: scroll, or range-filter on sidstOpdateret."
+    },
+    "rate_limit": "max 3,000 docs per query; scroll for bulk; be polite"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "OffentliggoerelseRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": ["2006-01-02T15:04:05.000Z07:00"],
+    "number_formats": ["plain_integer_cvr"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Metadata only — no figures. Filter offentliggoerelsestype == 'regnskab'. Pick the document(s) with MIME application/xml or application/xhtml+xml for structured parsing; skip image/tiff and application/pdf as unstructured. _index name varies; key on _id. Document downloads are gzip-compressed even when text/xml."
+  },
+  "keys": {
+    "primary_keys": ["_id"],
+    "join_keys": ["cvrNummer"],
+    "dedupe_keys": ["_id"]
+  },
+  "mapping_rules": {
+    "filing_id": "_id (URN).",
+    "company_join": "cvrNummer (format as 8-digit string).",
+    "accounting_period": "regnskab.regnskabsperiode.startDato / slutDato.",
+    "published_at": "offentliggoerelsesTidspunkt.",
+    "incremental_cursor": "sidstOpdateret (range filter / high-water mark).",
+    "documents": "dokumenter[] -> {type: dokumentType, mime: dokumentMimeType, url: dokumentUrl}.",
+    "supersede": "omgoerelse == true marks a correction that supersedes an earlier filing for the same period."
+  },
+  "fixture_requirements": [
+    "modern filing with XBRL + iXBRL + ESEF documents (e.g. Maersk Q1-2026)",
+    "old filing with only an image/tiff AARSRAPPORT (no structured figures)",
+    "company with multiple filings across years (ordering by offentliggoerelsesTidspunkt)",
+    "correction filing (omgoerelse == true)",
+    "malformed / partially-null individual record"
+  ],
+  "live_test_plan": {
+    "smoke": "POST {\"query\":{\"term\":{\"cvrNummer\":22756214}},\"sort\":[{\"offentliggoerelsesTidspunkt\":{\"order\":\"desc\"}}]}; assert hits.total > 0 and a dokumenter[] with application/xml. POST match_all size=0 and assert hits.total ~ 6,295,759.",
+    "full": "Scroll the whole index (or incremental on sidstOpdateret), persist NDJSON, then hand document URLs to the cvr_regnskab_xbrl downloader. Gate full crawl behind an explicit env flag."
+  },
+  "blockers": []
+}

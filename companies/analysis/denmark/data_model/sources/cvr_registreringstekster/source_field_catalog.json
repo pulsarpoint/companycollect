@@ -1,0 +1,51 @@
+{
+  "country": "Denmark",
+  "country_slug": "denmark",
+  "source_slug": "cvr_registreringstekster",
+  "source_name": "Registreringstekster — CVR registration / change-event texts",
+  "source_type": "official_registry_api",
+  "organization": "Erhvervsstyrelsen (Danish Business Authority)",
+  "source_url": "http://distribution.virk.dk/registreringstekster",
+  "license": "Free reuse incl. commercial under CVR-loven",
+  "access": "public_with_free_credentials",
+  "data_freshness": "near real-time",
+  "record_shape": "elasticsearch_hits_with_source_registration_texts_per_cvr",
+  "primary_keys": ["unknown (registration event id)"],
+  "join_keys": ["cvrNummer"],
+  "field_count": 2,
+  "catalog_basis": "Planning-only. No raw records inspected. Same distribution and same free HTTP Basic credentials as cvr-permanent. The source_inventory records only that it provides 'registration text / change events per CVR number'. Exact field names are NOT confirmed; treat all paths as provisional.",
+  "fields": [
+    {
+      "path": "hits.hits[]._source.cvrNummer",
+      "source_field": "cvrNummer",
+      "english_name": "cvr_number",
+      "meaning": "CVR number the registration text/change event belongs to (join key). Provisional — field name unconfirmed.",
+      "data_type": "integer",
+      "semantic_type": "identifier",
+      "example_values": [],
+      "nullable": false,
+      "repeatable": false,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": "Not observed; assumed to mirror the other CVR indexes.",
+      "source_confidence": "low",
+      "analysis_notes": "Join key to virksomhed; confirm against a real response."
+    },
+    {
+      "path": "hits.hits[]._source.(registration text / change event)",
+      "source_field": "registreringstekst",
+      "english_name": "registration_text",
+      "meaning": "Textual registration / announcement / change event for the company (e.g. new board, capital change, address change). Provisional field name.",
+      "data_type": "string",
+      "semantic_type": "filing",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "Danish",
+      "limitations": "Exact structure (date, event type, text body) unconfirmed; no sample inspected. May contain personal data.",
+      "source_confidence": "low",
+      "analysis_notes": "Use as an audit/history secondary source after the base register and financials are in place."
+    }
+  ]
+}

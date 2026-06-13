@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Denmark Company Profile",
+  "description": "Country-specific combined company profile for Denmark, built from Erhvervsstyrelsen (Danish Business Authority) data distributed at distribution.virk.dk: the CVR base register (cvr_permanent, free credentials required), published financial filings (cvr_offentliggoerelser, open), and the XBRL/iXBRL annual-report documents themselves (cvr_regnskab_xbrl, open, DCCA taxonomy). Registration texts (cvr_registreringstekster) add change history. Field names are Danish; many CVR attributes carry validity periods (periode.gyldigFra/gyldigTil) and the 'current' value is the one whose gyldigTil is null. Honour the reklamebeskyttelse (advertising-protection) flag for any marketing use.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": {"type": "string", "const": "Denmark"},
+    "country_slug": {"type": "string", "const": "denmark"},
+    "country_profile_version": {"type": "string", "description": "Profile schema version / build date (YYYY-MM-DD)."},
+    "registration": {
+      "type": "object",
+      "required": ["cvr_nummer"],
+      "properties": {
+        "cvr_nummer": {
+          "type": "string",
+          "description": "8-digit CVR number. National company identifier and primary join key across all CVR layers.",
+          "pattern": "^[0-9]{8}$",
+          "x-source": "cvr_permanent",
+          "x-source-path": "cvrNummer",
+          "x-join-key": true,
+          "x-freshness": "near real-time"
+        },
+        "vat_id": {
+          "type": ["string", "null"],
+          "description": "Danish VAT number, derived as 'DK' + cvr_nummer.",
+          "pattern": "^DK[0-9]{8}$",
+          "x-source": "cvr_permanent",
+          "x-source-path": "cvrNummer (derived)"
+        },
+        "lei": {
+          "type": ["string", "null"],
+          "description": "ISO 17442 Legal Entity Identifier, present for listed/IFRS filers (from XBRL).",
+          "x-source": "cvr_regnskab_xbrl",
+          "x-source-path": "gsd:LegalEntityIdentifierOfReportingEntity"
+        },
+        "incorporation_date": {
+          "type": ["string", "null"],
+          "format": "date",
+          "description": "Incorporation/founding date.",
+          "x-source": "cvr_permanent",
+          "x-source-path": "stiftelsesDato"
+        }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["navn"],
+      "properties": {
+        "navn": {
+          "type": "string",
+          "description": "Current registered legal name (navne[] entry with gyldigTil == null, or virksomhedMetadata.nyesteNavn).",
+          "x-source": "cvr_permanent",
+          "x-source-path": "navne[] (current)"
+        },
+        "previous_names": {
+          "type": "array",
+          "description": "Prior names with validity bounds.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "navn": {"type": "string", "x-source-path": "navne[].navn"},
+              "gyldig_fra": {"type": ["string", "null"], "format": "date", "x-source-path": "navne[].periode.gyldigFra"},
+              "gyldig_til": {"type": ["string", "null"], "format": "date", "x-source-path": "navne[].periode.gyldigTil"}
+            }
+          },
+          "x-source": "cvr_permanent"
+        },
+        "legal_form": {
+          "type": "object",
+          "description": "Current legal form (virksomhedsform).",
+          "properties": {
+            "kode": {"type": ["string", "null"], "description": "Legal form code (e.g. 80=ApS, 60=A/S, 10=Enkeltmandsvirksomhed).", "x-source-path": "virksomhedsform[].virksomhedsformkode"},
+            "tekst": {"type": ["string", "null"], "description": "Legal form text.", "x-source-path": "virksomhedsform[].langBeskrivelse"}
+          },
+          "x-source": "cvr_permanent"
+        },
+        "purpose": {
+          "type": ["string", "null"],
+          "description": "Company purpose (formaal).",
+          "x-source": "cvr_permanent",
+          "x-source-path": "attributter[type=FORMÅL]"
+        },
+        "share_capital": {
+          "type": ["object", "null"],
+          "properties": {
+            "amount": {"type": ["number", "null"], "x-source-path": "attributter[type=KAPITAL]"},
+            "currency": {"type": ["string", "null"], "x-source-path": "attributter[type=REGISTRERET_KAPITAL_VALUTA]"}
+          },
+          "x-source": "cvr_permanent"
+        }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "current_status": {
+          "type": ["string", "null"],
+          "description": "Current status (NORMAL, UNDER KONKURS, OPLØST, ...) — current virksomhedsstatus entry or virksomhedMetadata.sammensatStatus.",
+          "x-source": "cvr_permanent",
+          "x-source-path": "virksomhedsstatus[].status (current)"
+        },
+        "dissolution_date": {
+          "type": ["string", "null"],
+          "format": "date",
+          "description": "Cessation/dissolution date, derived from the close of the last livsforloeb period when status is OPLØST.",
+          "x-source": "cvr_permanent",
+          "x-source-path": "livsforloeb[].periode.gyldigTil"
+        },
+        "advertising_protected": {
+          "type": ["boolean", "null"],
+          "description": "reklamebeskyttelse flag — if true, basic data may not be used for direct marketing.",
+          "x-source": "cvr_permanent",
+          "x-source-path": "reklamebeskyttelse"
+        }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "primary": {
+          "type": ["object", "null"],
+          "properties": {
+            "branchekode": {"type": ["string", "null"], "description": "DB07/NACE primary industry code.", "x-source-path": "hovedbranche[].branchekode"},
+            "branchetekst": {"type": ["string", "null"], "x-source-path": "hovedbranche[].branchetekst"}
+          },
+          "x-source": "cvr_permanent"
+        },
+        "secondary": {
+          "type": "array",
+          "description": "Secondary industries (bibranche1/2/3).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "branchekode": {"type": "string", "x-source-path": "bibranche{1,2,3}[].branchekode"},
+              "branchetekst": {"type": ["string", "null"], "x-source-path": "bibranche{1,2,3}[].branchetekst"}
+            }
+          },
+          "x-source": "cvr_permanent"
+        }
+      }
+    },
+    "registered_location": {
+      "type": ["object", "null"],
+      "description": "Current registered (beliggenhed) address.",
+      "properties": {
+        "vejnavn": {"type": ["string", "null"], "x-source-path": "beliggenhedsadresse[].vejnavn"},
+        "husnummer": {"type": ["string", "null"], "x-source-path": "beliggenhedsadresse[].husnummerFra"},
+        "postnummer": {"type": ["string", "null"], "x-source-path": "beliggenhedsadresse[].postnummer"},
+        "postdistrikt": {"type": ["string", "null"], "x-source-path": "beliggenhedsadresse[].postdistrikt"},
+        "kommune_kode": {"type": ["string", "null"], "description": "Municipality code.", "x-source-path": "beliggenhedsadresse[].kommune.kommuneKode"},
+        "kommune_navn": {"type": ["string", "null"], "x-source-path": "beliggenhedsadresse[].kommune.kommuneNavn"},
+        "land": {"type": ["string", "null"], "x-source-path": "beliggenhedsadresse[].landekode"}
+      },
+      "x-source": "cvr_permanent"
+    },
+    "contact": {
+      "type": ["object", "null"],
+      "properties": {
+        "email": {"type": ["string", "null"], "x-source-path": "elektroniskPost"},
+        "telefon": {"type": ["string", "null"], "x-source-path": "telefonNummer"},
+        "hjemmeside": {"type": ["string", "null"], "x-source-path": "hjemmeside"}
+      },
+      "x-source": "cvr_permanent",
+      "description": "Contact details; gate marketing use on advertising_protected."
+    },
+    "employment": {
+      "type": "array",
+      "description": "Employment figures over time (yearly bands).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "aar": {"type": ["integer", "null"], "x-source-path": "aarsbeskaeftigelse[].aar"},
+          "antal_ansatte_interval": {"type": ["string", "null"], "x-source-path": "aarsbeskaeftigelse[].intervalKodeAntalAnsatte"},
+          "antal_aarsvaerk_interval": {"type": ["string", "null"], "x-source-path": "aarsbeskaeftigelse[].intervalKodeAntalAarsvaerk"}
+        }
+      },
+      "x-source": "cvr_permanent"
+    },
+    "production_units": {
+      "type": "array",
+      "description": "Production units / establishments (P-numbers) belonging to the company.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "p_nummer": {"type": "string", "description": "10-digit production-unit number.", "x-source-path": "pNummer", "x-join-key": true},
+          "navn": {"type": ["string", "null"], "x-source-path": "navne[] (current)"},
+          "branchekode": {"type": ["string", "null"], "x-source-path": "hovedbranche[].branchekode"}
+        }
+      },
+      "x-source": "cvr_permanent",
+      "x-source-path": "produktionsenhed index (virksomhedsrelation.cvrNummer == this company)"
+    },
+    "participants": {
+      "type": "array",
+      "description": "Owners, management/board, and beneficial owners (reelle ejere). PERSONAL DATA — GDPR + address protection apply.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {"type": ["string", "null"], "description": "Role/organisation type (owner, direktion, bestyrelse, reel ejer).", "x-source-path": "deltagerRelation[].organisationer[].hovedtype"},
+          "name": {"type": ["string", "null"], "x-source-path": "deltager index (joined)"},
+          "ownership_pct": {"type": ["number", "null"], "x-source-path": "deltagerRelation[]...ejerandel"}
+        }
+      },
+      "x-source": "cvr_permanent",
+      "x-source-path": "deltagerRelation[] joined to deltager index"
+    },
+    "financial_filings": {
+      "type": "array",
+      "description": "Published annual/interim report filings (discovery layer).",
+      "items": {
+        "type": "object",
+        "required": ["filing_id", "cvr_nummer"],
+        "properties": {
+          "filing_id": {"type": "string", "x-source": "cvr_offentliggoerelser", "x-source-path": "_id"},
+          "cvr_nummer": {"type": "string", "x-source-path": "cvrNummer"},
+          "sags_nummer": {"type": ["string", "null"], "x-source-path": "sagsNummer"},
+          "publication_type": {"type": ["string", "null"], "x-source-path": "offentliggoerelsestype"},
+          "is_correction": {"type": ["boolean", "null"], "x-source-path": "omgoerelse"},
+          "period_start": {"type": ["string", "null"], "format": "date", "x-source-path": "regnskab.regnskabsperiode.startDato"},
+          "period_end": {"type": ["string", "null"], "format": "date", "x-source-path": "regnskab.regnskabsperiode.slutDato"},
+          "published_at": {"type": ["string", "null"], "format": "date-time", "x-source-path": "offentliggoerelsesTidspunkt"},
+          "last_updated": {"type": ["string", "null"], "format": "date-time", "x-source-path": "sidstOpdateret"},
+          "documents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {"type": "string", "x-source-path": "dokumenter[].dokumentType"},
+                "mime": {"type": "string", "x-source-path": "dokumenter[].dokumentMimeType"},
+                "url": {"type": "string", "x-source-path": "dokumenter[].dokumentUrl"}
+              }
+            }
+          }
+        },
+        "x-source": "cvr_offentliggoerelser",
+        "x-freshness": "near real-time"
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Parsed financial-statement facts extracted from the XBRL/iXBRL documents (DCCA taxonomy). One entry per reporting period; figures honour the consolidated/solo dimension and currency from the XBRL context/unit.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "period_start": {"type": ["string", "null"], "format": "date", "x-source-path": "gsd:ReportingPeriodStartDate"},
+          "period_end": {"type": ["string", "null"], "format": "date", "x-source-path": "gsd:ReportingPeriodEndDate"},
+          "reporting_class": {"type": ["string", "null"], "description": "Danish regnskabsklasse A-D.", "x-source-path": "fsa:ClassOfReportingEntity"},
+          "report_type": {"type": ["string", "null"], "x-source-path": "gsd:InformationOnTypeOfSubmittedReport"},
+          "auditor_assistance": {"type": ["string", "null"], "x-source-path": "cmn:TypeOfAuditorAssistance"},
+          "consolidated": {"type": ["boolean", "null"], "description": "True if facts come from cmn:ConsolidatedMember contexts.", "x-source-path": "xbrli:context cmn:ConsolidatedSoloDimension"},
+          "currency": {"type": ["string", "null"], "description": "ISO 4217 currency from the XBRL unit.", "x-source-path": "xbrli:unit iso4217"},
+          "line_items": {
+            "type": "array",
+            "description": "Monetary facts (fsa:* concepts) such as revenue, profit/loss, assets, equity, liabilities.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "concept": {"type": "string", "description": "XBRL concept QName, e.g. fsa:ProfitLoss.", "x-source-path": "fsa:* element name"},
+                "value": {"type": ["number", "null"], "x-source-path": "fsa:* element value"}
+              }
+            }
+          },
+          "board": {
+            "type": "array",
+            "description": "Board/executive members disclosed in the report (PERSONAL DATA).",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {"type": "string", "x-source-path": "cmn:NameAndSurnameOfMemberOf{Executive,Supervisory}Board"},
+                "title": {"type": ["string", "null"], "x-source-path": "cmn:TitleOfMemberOf{Executive,Supervisory}Board"},
+                "body": {"type": ["string", "null"], "description": "executive | supervisory"}
+              }
+            }
+          }
+        },
+        "x-source": "cvr_regnskab_xbrl",
+        "x-freshness": "per filing"
+      }
+    },
+    "change_history": {
+      "type": "array",
+      "description": "Registration / change-event texts (PLANNING-ONLY — schema unconfirmed, requires CVR credentials).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {"type": ["string", "null"], "x-source-path": "registreringstekst (provisional)"},
+          "date": {"type": ["string", "null"], "format": "date"}
+        }
+      },
+      "x-source": "cvr_registreringstekster",
+      "x-access": "public_with_free_credentials"
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "Per-source provenance for the assembled profile.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug"],
+        "properties": {
+          "source_slug": {"type": "string"},
+          "source_name": {"type": "string"},
+          "source_url": {"type": "string"},
+          "license": {"type": "string"},
+          "access": {"type": "string"},
+          "retrieved_at": {"type": ["string", "null"], "format": "date-time"},
+          "freshness": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "country": "Denmark",
+  "country_slug": "denmark",
+  "source_slug": "cvr_registreringstekster",
+  "source_identity": "denmark_cvr_registreringstekster",
+  "source_package": "cvrregistreringstekster",
+  "env_prefix": "CVR_REGISTRERINGSTEKSTER",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "Registreringstekster — CVR registration / change-event texts",
+    "source_type": "official_registry_api",
+    "organization": "Erhvervsstyrelsen (Danish Business Authority)",
+    "source_url": "http://distribution.virk.dk/registreringstekster",
+    "license": "Free reuse incl. commercial under CVR-loven",
+    "access": "public_with_free_credentials",
+    "data_freshness": "near real-time",
+    "attribution": "Kilde: CVR / Erhvervsstyrelsen"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["CVR_PERMANENT_USERNAME", "CVR_PERMANENT_PASSWORD"],
+    "credential_acquisition": "Same free HTTP Basic credentials as cvr-permanent (cvrselvbetjening@erst.dk + signed declaration)."
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "http://distribution.virk.dk/registreringstekster/_search",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": [
+      {"name": "Authorization", "value": "Basic <base64 user:pass>", "note": "same credentials as cvr-permanent"},
+      {"name": "Content-Type", "value": "application/json", "note": "Elasticsearch query body"}
+    ],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "hits.hits[]._source",
+    "total_results_path": "hits.total",
+    "pagination": {
+      "type": "elasticsearch_scroll",
+      "page_param": "scroll_id",
+      "page_start": null,
+      "page_size": 3000,
+      "page_size_param": "size",
+      "next_page_path": "_scroll_id",
+      "note": "ES 1.7.x; 3,000-doc cap; scroll for bulk. Query by cvrNummer for per-company history. Record structure unconfirmed."
+    },
+    "rate_limit": "max 3,000 docs per query; scroll for bulk"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "RegistreringstekstRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": ["2006-01-02T15:04:05.000Z07:00"],
+    "number_formats": ["plain_integer_cvr"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Field names unconfirmed — inspect a real authenticated response before implementing. May contain personal data (GDPR)."
+  },
+  "keys": {
+    "primary_keys": ["unknown"],
+    "join_keys": ["cvrNummer"],
+    "dedupe_keys": ["unknown"]
+  },
+  "mapping_rules": {
+    "company_join": "cvrNummer (provisional).",
+    "history_events": "Map registration/change texts to a change-history array once the record shape is confirmed."
+  },
+  "fixture_requirements": [
+    "per-company registration history with multiple change events (after schema is confirmed)"
+  ],
+  "live_test_plan": {
+    "smoke": "With credentials, POST a term query on cvrNummer and inspect one hit's _source to determine the real field names.",
+    "full": "Deferred until schema is confirmed and base register is implemented."
+  },
+  "blockers": [
+    "Requires the same free HTTP Basic credentials as cvr-permanent (email + signed declaration).",
+    "Record schema not inspected; field names are provisional.",
+    "May contain personal data — GDPR / address-protection handling required."
+  ]
+}

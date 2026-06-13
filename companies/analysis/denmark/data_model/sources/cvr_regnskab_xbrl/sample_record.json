@@ -1,0 +1,38 @@
+{
+  "_comment": "Truncated, JSON-rendered excerpt of the real XBRL instance raw/samples/maersk_delaarsrapport.xbrl.xml (A.P. Møller - Mærsk A/S, CVR 22756214, Q1-2026 interim). The original is an XML XBRL document; this JSON view preserves original element QNames and one representative context. Board-member contexts (ctx-51..ctx-62) collapsed to two examples. No fsa: monetary line items are present in this identity/management-review interim instance.",
+  "schemaRef": "http://archprod.service.eogs.dk/taxonomy/20241001/entryDanishGAAPExcludingBalanceSheetIncomeStatementIncludingManagementsReview20241001.xsd",
+  "contexts": {
+    "ctx-1": {
+      "entity": {"scheme": "http://standards.iso.org/iso/17442", "identifier": "549300D2K6PKKKXVNN73"},
+      "period": {"startDate": "2026-01-01", "endDate": "2026-03-31"},
+      "scenario": {"cmn:ConsolidatedSoloDimension": "cmn:ConsolidatedMember"}
+    },
+    "ctx-51": {
+      "entity": {"scheme": "http://standards.iso.org/iso/17442", "identifier": "549300D2K6PKKKXVNN73"},
+      "period": {"startDate": "2026-01-01", "endDate": "2026-03-31"},
+      "scenario": {"cmn:ConsolidatedSoloDimension": "cmn:ConsolidatedMember", "cmn:IdentificationOfMemberOfExecutiveBoardDimension": {"cmn:memberOfBoardIdentifier": "1"}}
+    }
+  },
+  "facts": {
+    "gsd:IdentificationNumberCvrOfReportingEntity": {"contextRef": "ctx-1", "value": "22756214"},
+    "gsd:IdentificationNumberCvrOfSubmittingEnterprise": {"contextRef": "ctx-1", "value": "22756214"},
+    "gsd:NameOfReportingEntity": {"contextRef": "ctx-1", "xml:lang": "en", "value": "A.P. Møller - Mærsk A/S"},
+    "gsd:LegalEntityIdentifierOfReportingEntity": {"contextRef": "ctx-1", "value": "549300D2K6PKKKXVNN73"},
+    "gsd:AddressOfReportingEntityStreetName": {"contextRef": "ctx-1", "value": "Esplanaden"},
+    "gsd:AddressOfReportingEntityStreetBuildingIdentifier": {"contextRef": "ctx-1", "value": "50"},
+    "gsd:AddressOfReportingEntityPostCodeIdentifier": {"contextRef": "ctx-1", "value": "1263"},
+    "gsd:AddressOfReportingEntityDistrictName": {"contextRef": "ctx-1", "value": "Copenhagen K"},
+    "gsd:AddressOfReportingEntityCountry": {"contextRef": "ctx-1", "value": "Denmark"},
+    "gsd:ReportingPeriodStartDate": {"contextRef": "ctx-1", "value": "2026-01-01"},
+    "gsd:ReportingPeriodEndDate": {"contextRef": "ctx-1", "value": "2026-03-31"},
+    "gsd:PrecedingReportingPeriodStartDate": {"contextRef": "ctx-1", "value": "2025-01-01"},
+    "gsd:PredingReportingPeriodEndDate": {"contextRef": "ctx-1", "value": "2025-03-31"},
+    "fsa:ClassOfReportingEntity": {"contextRef": "ctx-1", "value": "Reporting class D"},
+    "gsd:InformationOnTypeOfSubmittedReport": {"contextRef": "ctx-1", "value": "Interim report (other than 6 months)"},
+    "cmn:TypeOfAuditorAssistance": {"contextRef": "ctx-1", "value": "No audit assistance"},
+    "sob:PlaceOfSignatureOfStatement": {"contextRef": "ctx-1", "value": "Copenhagen"},
+    "cmn:NameAndSurnameOfMemberOfExecutiveBoard": {"contextRef": "ctx-51", "value": "Vincent Clerc"},
+    "cmn:TitleOfMemberOfExecutiveBoard": {"contextRef": "ctx-51", "value": "CEO"},
+    "cmn:NameAndSurnameOfMemberOfSupervisoryBoard": {"contextRef": "ctx-53", "value": "Robert Mærsk Uggla", "_note": "title via cmn:TitleOfMemberOfSupervisoryBoard = Chair"}
+  }
+}

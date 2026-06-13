@@ -1,0 +1,88 @@
+{
+  "country": "Denmark",
+  "country_slug": "denmark",
+  "source_slug": "cvr_regnskab_xbrl",
+  "source_identity": "denmark_cvr_regnskab_xbrl",
+  "source_package": "cvrregnskabxbrl",
+  "env_prefix": "CVR_REGNSKAB_XBRL",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Regnskaber — XBRL / Inline XBRL annual-report documents (DCCA taxonomy)",
+    "source_type": "official_financial_documents",
+    "organization": "Erhvervsstyrelsen (Danish Business Authority)",
+    "source_url": "http://regnskaber.virk.dk/{id}/{token}.xml",
+    "license": "Free / open; same CVR reuse terms",
+    "access": "public",
+    "data_freshness": "per filing (annual / interim)",
+    "attribution": "Kilde: CVR / Erhvervsstyrelsen"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_document_download",
+    "base_url": "http://regnskaber.virk.dk",
+    "download_url": "(per-document, taken from cvr_offentliggoerelser.dokumenter[].dokumentUrl)",
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "Accept-Encoding", "value": "gzip", "note": "documents are gzip-compressed even when Content-Type is text/xml; decompress on read"}
+    ],
+    "formats": ["xml", "xhtml+xml", "zip", "pdf", "tiff"],
+    "compression": "gzip",
+    "encoding": "utf-8",
+    "record_path": "xbrli:xbrl (XBRL instance root); facts are child elements with contextRef",
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null,
+      "note": "One document per URL. Discovery and the list of documents come from the cvr_offentliggoerelser source."
+    },
+    "rate_limit": "be polite; documents are static files"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_document_then_parse",
+    "file_extension": ".xml",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "XbrlInstance",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["xbrl_decimal_with_decimals_attr"],
+    "malformed_record_policy": "log_warn_and_skip_document",
+    "notes": "Parse the XBRL instance: build a context map (id -> entity scheme/identifier, period instant or start/end, scenario/segment dimensions incl. cmn:ConsolidatedSoloDimension and typed board-member dimensions), then iterate facts. For each fact: resolve contextRef (period + consolidated/solo) and unitRef (iso4217 currency). DCCA namespaces: gsd (general/identity), fsa (financial line items), cmn (common/boards), sob (statements). Listed groups add ifrs-full + ESEF. For application/xhtml+xml (iXBRL) extract ix: facts from the XHTML; for application/xml parse the plain XBRL directly (simpler). Skip image/tiff and application/pdf (unstructured). Note taxonomy typo: gsd:PredingReportingPeriodEndDate."
+  },
+  "keys": {
+    "primary_keys": ["gsd:IdentificationNumberCvrOfReportingEntity + ReportingPeriodEndDate"],
+    "join_keys": ["gsd:IdentificationNumberCvrOfReportingEntity", "gsd:LegalEntityIdentifierOfReportingEntity"],
+    "dedupe_keys": ["filing_id (from cvr_offentliggoerelser) + document type"]
+  },
+  "mapping_rules": {
+    "company_join": "gsd:IdentificationNumberCvrOfReportingEntity (CVR).",
+    "lei": "gsd:LegalEntityIdentifierOfReportingEntity (ISO 17442), when present.",
+    "reporting_class": "fsa:ClassOfReportingEntity (Danish regnskabsklasse A-D).",
+    "report_period": "gsd:ReportingPeriodStartDate / gsd:ReportingPeriodEndDate (cross-check with offentliggoerelser regnskabsperiode).",
+    "financial_facts": "Map fsa:* concept QNames to internal line items; attach period + currency (unitRef iso4217) + consolidated/solo from the resolved context.",
+    "board_members": "cmn:NameAndSurnameOfMemberOfSupervisoryBoard (+ Title); cmn:NameAndSurnameOfMemberOfExecutiveBoard (+ Title) — match name/title by shared context id.",
+    "audit_status": "cmn:TypeOfAuditorAssistance."
+  },
+  "fixture_requirements": [
+    "identity/management-review interim instance (Maersk Q1-2026 sample) — no fsa: figures",
+    "full annual report with fsa: income statement + balance sheet line items in DKK (class B/C small/medium company, Danish GAAP)",
+    "listed group with IFRS/ESEF + LEI + consolidated and solo contexts",
+    "iXBRL (application/xhtml+xml) document requiring ix: fact extraction",
+    "legacy image/tiff document (must be skipped as unstructured)",
+    "gzip-compressed response served as text/xml (decompression path)"
+  ],
+  "live_test_plan": {
+    "smoke": "GET the Maersk DELAARSRAPPORT application/xml URL; gzip-decode; assert gsd:IdentificationNumberCvrOfReportingEntity == 22756214 and a resolvable ctx-1 period 2026-01-01..2026-03-31.",
+    "full": "For a batch of CVR numbers, discover documents via cvr_offentliggoerelser, download each application/xml/xhtml document, parse facts, and assert currency + period resolve. Gate full runs behind explicit env flags."
+  },
+  "blockers": []
+}
