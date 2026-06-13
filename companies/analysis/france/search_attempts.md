@@ -77,3 +77,29 @@
   - data.gouv.fr dataset `5b7ffc618b4c4169d30727e0` → resolved live Sirene stock file URLs + sizes
 - Result: Two no-auth APIs verified returning real data; Sirene bulk URLs resolved.
 - Decision: Save samples to `raw/api/`, build normalized sample, record sizes (bulk not downloaded).
+
+---
+
+# Financial-data follow-up (2026-06-14)
+
+## Attempt 7
+- Date/time: 2026-06-14
+- Source: WebSearch (x2)
+- Queries: `INPI RNE comptes annuels open data bulk download bilans data.gouv.fr`;
+  `recherche-entreprises API finances chiffre d'affaires résultat net annuaire entreprises`
+- Language: French/English
+- Why: Determine whether French financials are open and how to access them.
+- Result: INPI RNE publishes **non-confidential comptes annuels** (bilan + compte de résultat + immobilisations/amortissements/provisions) since 2017 (JSON since 2023) via data.inpi.fr SFTP/API. The Recherche API and API Entreprise both surface financials; API Entreprise (restricted) brokers DGFIP CA + Banque de France bilans.
+- Decision: Treat INPI RNE comptes annuels as the open full-statement source; probe the Recherche API for an open finances block.
+
+## Attempt 8 (live verification)
+- Date/time: 2026-06-14
+- Source: curl `GET https://recherche-entreprises.api.gouv.fr/search?q=la%20poste&per_page=3`
+- Result: HTTP 200. Each result carries a **`finances`** object: `{"2024":{"ca":34569000000,"resultat_net":1722000000}}` for SIREN 356000000 LA POSTE (other matches `null` = confidential/none). Saved to `raw/api/recherche_entreprises_finances_sample.json`.
+- Decision: Catalog the open `finances` block (no auth) as the headline-financials source; INPI RNE for full statements. Record confidentiality caveat.
+
+## Attempt 9
+- Date/time: 2026-06-14
+- Source: WebFetch — data.economie.gouv.fr "Documents et comptes des entreprises"; data.gouv.fr RNE dataset
+- Result: RNE confirms non-confidential annual-accounts data (balance sheet, income statement, fixed assets, depreciation, provisions) since 2017-01-01, JSON since 2023. "Documents et comptes" dataset under Open Licence 2.0 (document links + metadata + confidentiality).
+- Decision: Add INPI comptes annuels + Documents-et-comptes to the inventory; document the confidentiality coverage limit.

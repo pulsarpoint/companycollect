@@ -53,6 +53,28 @@ establishment addresses, `actes`, `comptes annuels` (non-confidential).
 (creation / modification / radiation / procédure collective / dépôt de comptes),
 `tribunal`, `commercant`, `ville`, `cp`, structured `jugement` / `depot` blocks.
 
+### Financials — Recherche API `finances` block (verified)
+
+```
+finances : object keyed by year, e.g.
+  "finances": { "2024": { "ca": 34569000000, "resultat_net": 1722000000 } }
+    ca           integer  - chiffre d'affaires (revenue), EUR
+    resultat_net integer  - résultat net (net income), EUR; negative = loss
+```
+- Only these two figures; only years with a non-confidential filing. `null`/absent when confidential
+  or not filed. Source: derived from INPI RNE comptes annuels.
+
+### Financials — INPI RNE comptes annuels (full statements)
+
+Non-confidential annual accounts since 2017 (JSON since 2023). Expected concepts:
+```
+exercice (year), type de comptes (complet / simplifié / consolidé), confidentialité (bool)
+bilan:   actif (total, immobilisations, actif circulant), passif (capitaux propres, dettes)
+compte de résultat: chiffre d'affaires, résultat d'exploitation, résultat net
+immobilisations, amortissements, provisions
+```
+- Coverage partial: micro/small firms may file **confidential** accounts (excluded). Currency EUR.
+
 ## Mapping to internal company model
 
 | Internal field        | Sirene (UniteLegale)              | Recherche API            | RNE              |
@@ -71,6 +93,7 @@ establishment addresses, `actes`, `comptes annuels` (non-confidential).
 | region/department     | code departement                  | siege.departement        | departement      |
 | country               | "France"                          | "France"                 | "France"         |
 | source_url/name/at    | dataset URL + retrieved_at        | endpoint + retrieved_at  | feed + retrieved |
+| financials[]          | —                                 | finances{} (ca, résultat net) | comptes annuels (full bilan + résultat) |
 | raw_record            | full row                          | full JSON object         | full JSON        |
 
 ## Encoding / formats

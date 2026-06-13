@@ -52,6 +52,44 @@ France splits "company data" across a few official producers:
 - **API Sirene** and **RNE** — documented; both require a free account/key, so
   no live key-based call was made (no credentials, and we do not bypass auth).
 
+## Financial data (annual accounts / comptes annuels)
+
+> Added 2026-06-14 — the user requested financial data. France is a **standout for OPEN financials**.
+
+### How French company financials are published
+- Commercial companies deposit annual accounts (**comptes annuels** / bilans) at the greffes; the
+  **INPI RNE** captures the **non-confidential** figures and republishes them as **open data** —
+  **balance sheet, income statement, fixed assets, depreciation, provisions**, for filings since
+  **2017-01-01** (format moved to **JSON** from 2023). Access: **data.inpi.fr** SFTP bulk + RNE API,
+  free account.
+- **Confidentiality option:** micro and small companies may legally file accounts as **confidential**
+  (déclaration de confidentialité), so they are **absent** from the open set. Coverage is therefore
+  **partial** (skewed toward larger companies).
+
+### The easy open win — `finances` block (no auth)  ✅ verified
+- The **API Recherche d'Entreprises** (no key) returns a per-company **`finances`** object keyed by
+  year with **`ca`** (chiffre d'affaires / revenue) and **`resultat_net`** (net income). Example
+  captured live: SIREN 356000000 LA POSTE → `{"2024": {"ca": 34569000000, "resultat_net": 1722000000}}`.
+- This is the fastest way to attach headline financials to the whole company spine **for free**, but it
+  is only two figures (CA + résultat net) and only where accounts are non-confidential.
+
+### Full statements
+- **INPI RNE comptes annuels** (bulk/API) — the full non-confidential balance sheet + income statement
+  line items. The path when you need more than CA + résultat net.
+- **data.economie.gouv.fr — "Documents et comptes des entreprises"** — Opendatasoft dataset (Open
+  Licence 2.0) listing/serving company documents incl. comptes; useful for discovery/links.
+
+### Restricted (not open) financial sources — for completeness
+- **API Entreprise** (DINUM, habilitation only) brokers **DGFIP chiffres d'affaires** (last 3 years)
+  and **Banque de France bilans** (last 3 years). Richer/authoritative but **reserved for
+  administrations** — not open reuse.
+- **Banque de France** Centrale de bilans / FIBEN — not open.
+
+### Financial conclusion
+- France gives **open financials**: headline CA + résultat net via the no-auth Recherche API, and full
+  non-confidential statements via INPI RNE comptes annuels. The only real limit is the
+  **confidentiality option** (partial coverage of small firms), not access or cost.
+
 ## Recommendation
 
 - **Master list / identifiers:** INSEE Sirene bulk (Parquet preferred), refreshed
@@ -59,6 +97,9 @@ France splits "company data" across a few official producers:
 - **Legal enrichment:** INPI RNE bulk (SFTP) for capital, dirigeants, accounts.
 - **Lifecycle events:** BODACC API for ongoing change detection.
 - **Fast prototype / lookups:** API Recherche d'Entreprises (no auth, works now).
+- **Financials:** `finances` block (CA + résultat net) from the Recherche API for breadth at zero cost;
+  INPI RNE comptes annuels bulk for full balance-sheet/income-statement detail. Expect partial coverage
+  due to the confidentiality option.
 
 ## Risks / open questions
 
@@ -70,3 +111,7 @@ France splits "company data" across a few official producers:
   Sirene/Recherche API. Mapping tables needed for consistent activity coding.
 - ODbL (Sirene) requires attribution + share-alike on derived databases —
   see `license_notes.md`.
+- **Financial coverage is partial** — the legal confidentiality option removes many small companies'
+  accounts from the open set; micro-entrepreneurs lack DGFIP revenue. Do not treat missing financials
+  as zero.
+- The Recherche API `finances` block is only **CA + résultat net**; full statements need INPI RNE.

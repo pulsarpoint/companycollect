@@ -35,11 +35,23 @@
   RNE open data, etc.). Attribution to original producers expected.
 - Respect documented rate limit (~7 req/s) and fair-use.
 
+## Financial data — licenses & confidentiality
+
+- **INPI RNE comptes annuels** — open data under INPI conditions of reuse (attribution expected).
+  **Only non-confidential filings** are published; companies that elected the legal **confidentiality
+  option** (micro/small) are excluded. Do not infer figures for confidential filers.
+- **Recherche API `finances` block** — open public service; figures derive from non-confidential INPI
+  comptes annuels. Same confidentiality limit; attribution to original producers expected.
+- **Documents et comptes des entreprises** (data.economie.gouv.fr) — **Licence Ouverte 2.0**.
+- **API Entreprise financials** (DGFIP chiffres d'affaires, Banque de France bilans) — **restricted**
+  (habilitation only); **not** reusable openly even though richer. Do not ingest via this route for
+  general reuse.
+
 ## API Entreprise (DINUM) — **restricted**
 
 - Reserved for administrations and legally authorized private bodies
   (habilitation required). **Not** open for general reuse. Excluded from
-  ingestion recommendations.
+  ingestion recommendations. (Brokers DGFIP CA + Banque de France bilans — restricted financials.)
 
 ## Practical guidance for ingestion
 
