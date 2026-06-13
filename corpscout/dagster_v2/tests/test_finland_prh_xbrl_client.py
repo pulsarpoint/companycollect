@@ -68,15 +68,20 @@ def test_iter_company_financials_uses_business_id():
     assert statements[0].financial_date == "2023-09-30"
 
 
-def test_download_financial_xml_returns_bytes_and_url():
+def test_download_statement_xml_returns_bytes_and_url():
     with responses.RequestsMock() as rsps:
         rsps.add(responses.GET, f"{BASE}/financial", body=b"<xbrl />")
 
-        body, source_url = _client().download_financial_xml("0176460-0", "2023-09-30")
+        body, source_url = _client().download_statement_xml("0176460-0", "2023-09-30")
 
     assert body == b"<xbrl />"
-    assert "businessId=0176460-0" in source_url
-    assert "financialDate=2023-09-30" in source_url
+    assert source_url == f"{BASE}/financial?businessId=0176460-0&financialDate=2023-09-30"
+
+
+def test_statement_xml_url_builds_download_url_without_requesting():
+    url = _client().statement_xml_url("0176460-0", "2023-09-30")
+
+    assert url == f"{BASE}/financial?businessId=0176460-0&financialDate=2023-09-30"
 
 
 def test_paginate_aborts_on_runaway_api():
@@ -104,7 +109,7 @@ def test_retries_with_backoff_on_429_and_succeeds(monkeypatch):
         rsps.add(responses.GET, f"{BASE}/financial", status=429)
         rsps.add(responses.GET, f"{BASE}/financial", body=b"<xbrl />")
 
-        body, _source_url = client.download_financial_xml("0176460-0", "2023-09-30")
+        body, _source_url = client.download_statement_xml("0176460-0", "2023-09-30")
 
     assert body == b"<xbrl />"
     assert sleeps == [5.0, 10.0]
@@ -125,7 +130,7 @@ def test_gives_up_after_max_attempts_on_persistent_429(monkeypatch):
             rsps.add(responses.GET, f"{BASE}/financial", status=429)
 
         with pytest.raises(Exception) as excinfo:
-            client.download_financial_xml("0176460-0", "2023-09-30")
+            client.download_statement_xml("0176460-0", "2023-09-30")
 
     assert "429" in str(excinfo.value)
 
@@ -151,8 +156,8 @@ def test_requests_are_paced_by_min_interval(monkeypatch):
         rsps.add(responses.GET, f"{BASE}/financial", body=b"<a />")
         rsps.add(responses.GET, f"{BASE}/financial", body=b"<b />")
 
-        client.download_financial_xml("0176460-0", "2023-09-30")
-        client.download_financial_xml("0176460-0", "2024-09-30")
+        client.download_statement_xml("0176460-0", "2023-09-30")
+        client.download_statement_xml("0176460-0", "2024-09-30")
 
     # Second request must wait out the remaining interval (clock doesn't advance
     # between requests except via fake_sleep, so the full interval is slept).

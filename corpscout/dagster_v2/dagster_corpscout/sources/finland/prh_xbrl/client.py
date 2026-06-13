@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import requests
+from urllib.parse import urlencode
 
 MAX_PAGES = 10_000
 
@@ -112,12 +113,19 @@ class PRHXBRLClient:
     def iter_company_financials(self, business_id: str) -> Iterator[DiscoveredStatement]:
         yield from _paginate(lambda page: self.list_company_financials(business_id, page=page))
 
-    def download_financial_xml(self, business_id: str, financial_date: str) -> tuple[bytes, str]:
+    def statement_xml_url(self, business_id: str, financial_date: str) -> str:
+        """The canonical download URL for one statement, without making a request.
+        Used when an already-downloaded object is reused and the listing still
+        needs source_url — and by download_statement_xml so both paths agree."""
+        query = urlencode({"businessId": business_id, "financialDate": financial_date})
+        return f"{self.base_url}/financial?{query}"
+
+    def download_statement_xml(self, business_id: str, financial_date: str) -> tuple[bytes, str]:
         response = self._get(
             "/financial",
             {"businessId": business_id, "financialDate": financial_date},
         )
-        return response.content, response.url
+        return response.content, self.statement_xml_url(business_id, financial_date)
 
     def close(self) -> None:
         self.session.close()

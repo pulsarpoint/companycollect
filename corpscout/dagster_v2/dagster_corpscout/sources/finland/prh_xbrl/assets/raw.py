@@ -39,7 +39,7 @@ def raw_xml_documents(
             registered_date_start=registered_date_start,
             registered_date_end=registered_date_end,
         ):
-            body, source_url = client.download_financial_xml(
+            body, source_url = client.download_statement_xml(
                 statement.business_id, statement.financial_date
             )
             object_key = spec.document_object_key(statement.business_id, statement.financial_date)

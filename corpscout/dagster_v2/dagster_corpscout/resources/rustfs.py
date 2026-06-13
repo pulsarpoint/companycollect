@@ -98,3 +98,13 @@ class RustFSResource(ConfigurableResource):
         response = self.client().get_object(Bucket=bucket, Key=key)
         with response["Body"] as body:
             return body.read()
+
+    def object_exists(self, bucket: str, key: str) -> bool:
+        try:
+            self.client().head_object(Bucket=bucket, Key=key)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise
+        return True

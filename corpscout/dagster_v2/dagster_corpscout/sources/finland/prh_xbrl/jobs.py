@@ -47,7 +47,7 @@ def pull_company_statements(
     downloaded = 0
     with PRHXBRLClient(base_url=spec.BASE_URL, user_agent=spec.USER_AGENT) as client:
         for statement in client.iter_company_financials(config.business_id):
-            body, source_url = client.download_financial_xml(
+            body, source_url = client.download_statement_xml(
                 statement.business_id, statement.financial_date
             )
             object_key = spec.document_object_key(statement.business_id, statement.financial_date)
