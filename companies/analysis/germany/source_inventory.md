@@ -12,6 +12,18 @@
 | Commercial APIs (handelsregister.ai, OpenRegister, Viaductus, Kausate, Implisense) | Commercial API | Paid | json + docs | Commercial | blocked by payment (fresh data option) |
 | GovData.de | Open data portal | Free public | various (CKAN API) | Per dataset | useful secondary (regional/statistical) |
 
+## Financial data sources (annual financial statements / Jahresabschluss)
+
+| Source | Type | Access | Format | License | Status |
+|---|---|---|---|---|---|
+| **Unternehmensregister / Bundesanzeiger** (statements) | Official financial disclosure | Free **view** (no fee/registration since 2022) | XBRL / iXBRL / HTML / PDF | Free view; **no bulk/API**; reuse not granted | useful secondary (per-company) |
+| **OpenRegister.de** Bundesanzeiger financial API | Commercial API | Paid | JSON | Commercial | blocked by payment (**structured financials at scale**) |
+| `bundesanzeiger` (bundesAPI `deutschland`) | Community Python tool | Free, per-company, captcha-limited | dict / HTML | Apache-2.0 tool; portal terms apply | useful secondary (targeted enrichment) |
+
+**Financial-data bottom line:** no open/bulk dataset and no free official retrieval API.
+Structured financials at scale → **commercial API** (OpenRegister / North Data / …).
+Free → per-company `bundesanzeiger` scraping (captcha/rate-limited) + XBRL/HTML parsing.
+
 ## Direct download URLs (open data)
 
 - `https://daten.offeneregister.de/de_companies_ocdata.jsonl.bz2` — 260 MB, 2019 (**downloaded**)

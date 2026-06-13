@@ -76,3 +76,63 @@
   - `openregister.db.gz` (773,380,427 bytes, 2019)
   - `.torrent` files
 - Decision: Downloaded the JSONL bulk; streamed a sample first to confirm schema.
+
+---
+
+# Financial-data follow-up (2026-06-13)
+
+User requested **financial data** for German companies; the searches below target annual financial
+statements (Jahresabschluss / Bilanz) specifically.
+
+## Attempt 7
+- Date/time: 2026-06-13
+- Source: WebSearch (x2)
+- Queries: `Bundesanzeiger Jahresabschluss open data bulk download Rechnungslegungsdaten 2024`;
+  `Unternehmensregister Rechnungslegungsdaten XBRL bulk download free financial statements API`
+- Language: German/English
+- Why: Determine where financials are filed and whether any open bulk/API exists.
+- Result: Since **DiRUG (2022-08-01)** financials are filed via the **Unternehmensregister** (FY≥2022),
+  Bundesanzeiger for older years; **XBRL** format; **free to view**. Official XML/XBRL interfaces are for
+  **submission**, not retrieval. No open bulk/API found.
+- Decision: Confirm free-view status and look for practical retrieval paths (community + commercial).
+
+## Attempt 8
+- Date/time: 2026-06-13
+- Source: WebSearch (x3)
+- Queries: `Bundesanzeiger Rechnungslegungsdaten Open Data Bilanzen kostenlos Download datensatz`;
+  `offeneregister.de Bilanzen Jahresabschluss financial data German companies open dataset`;
+  `German company financial statements dataset bulk balance sheet Bundesanzeiger 2007 2012 open data discontinued`
+- Language: German/English
+- Why: Look for any open financial dataset; confirm OffeneRegister has no financials.
+- Result: No open financial dataset. Viewing free at unternehmensregister.de. OffeneRegister = registration
+  + officers only (confirmed via README fetch). OpenRegister.de surfaced as commercial Bundesanzeiger API.
+- Decision: Catalog official free-view source; deep-dive OpenRegister + community Python tool.
+
+## Attempt 9
+- Date/time: 2026-06-13
+- Source: WebSearch + WebFetch
+- Queries/targets: `bundesanzeiger python package financial reports get_reports XBRL`;
+  WebFetch `https://docs.openregister.de/sources/bundesanzeiger`;
+  `Unternehmensregister Massendatenschnittstelle bulk data interface ... Bundesanzeiger Verlag`
+- Language: English/German
+- Why: Identify concrete retrieval mechanisms (free community + paid API + official bulk interface).
+- Result:
+  - **OpenRegister.de** — structured **JSON** financials (balance sheet, revenue, net income, equity,
+    cash, employees), daily updates, hundreds of thousands of companies. Paid.
+  - **`bundesanzeiger`** (bundesAPI `deutschland`) — `get_reports()` returns report title → full-text;
+    solves captcha via ML model. Free, per-company, unofficial.
+  - **Massendatenschnittstelle** (`webservice@rt.bundesanzeiger.de`) — for **submitting** XML/XBRL, not retrieval.
+- Decision: No open bulk financials. Recommend commercial API for scale; `bundesanzeiger` tool for targeted enrichment.
+
+## Attempt 10
+- Date/time: 2026-06-13
+- Source: WebFetch (x2)
+- Targets: `https://github.com/bundesAPI/deutschland` (bundesanzeiger module);
+  `https://offeneregister.de/daten/` (confirm no financials);
+  `https://www.boniforce.de/bundesanzeiger-api-2026/` (official API / free-view status)
+- Language: English/German
+- Why: Confirm tool behavior, confirm OffeneRegister excludes financials, confirm no official retrieval API.
+- Result: `get_reports()` returns dict of `Jahresabschluss…` → content (ML captcha solver). OffeneRegister
+  README: registration + officers only, **no financials**, CC-BY 4.0. boniforce: **no freely documented
+  official Bundesanzeiger retrieval API**; official interfaces are submission-only; commercial providers recommended.
+- Decision: Findings locked. Updated README/investigation/inventory/schema/license with financial-data dimension.

@@ -82,3 +82,66 @@ raw_record          <- full JSON line
 Officers should go to a separate `company_officers` table keyed by `company_id`.
 
 See `normalized/companies.sample.jsonl` and `normalized/companies.sample.csv` for the applied mapping.
+
+---
+
+## Financial statements (Jahresabschluss) — schema notes
+
+> The open OffeneRegister bulk has **no financials**. Financial data comes from the
+> Unternehmensregister/Bundesanzeiger (XBRL) or a commercial API (JSON). Notes below are for whichever
+> financial source is chosen.
+
+### Source formats
+- **XBRL (German HGB taxonomy)** — the canonical machine-readable form. Concepts (e.g.
+  `de-gaap-ci:bs.ass.fixAss.tan`) map to balance-sheet/P&L line items. IFRS and US-GAAP taxonomies also
+  occur; listed issuers file **ESEF iXBRL**. Parse with **Arelle / Brel / tidyxbrl**.
+- **HTML/PDF** — many published statements render as HTML/PDF (no clean XBRL on the public view). The
+  `bundesanzeiger` Python tool returns report **full-text/HTML** that needs extraction.
+- **Commercial JSON** (e.g. OpenRegister) — already structured: indicators + detailed report objects.
+
+### Size class drives what exists (§§267, 267a HGB)
+| Size class | Typically disclosed | Revenue / P&L present? |
+|---|---|---|
+| Micro | Balance sheet only (may just be deposited) | No |
+| Small | Abridged balance sheet + notes | Usually No (P&L not required) |
+| Medium | Full balance sheet + P&L + notes + mgmt report | Yes |
+| Large | + audit opinion, fuller disclosures | Yes |
+
+→ Expect **many companies to have a balance sheet but no revenue/profit**. Model must tolerate nulls.
+
+### Proposed normalized financials model
+```
+financial_statement
+  company_id            <- link to company (match by register no / name+seat)
+  source_name           <- "Unternehmensregister" | "Bundesanzeiger" | "<vendor>"
+  source_url
+  source_retrieved_at
+  fiscal_year           <- e.g. 2023
+  period_start          <- Geschäftsjahr von
+  period_end            <- Geschäftsjahr bis
+  accounting_standard   <- "HGB" | "IFRS" | "US-GAAP"
+  consolidated          <- bool (Konzernabschluss vs Einzelabschluss)
+  size_class            <- micro | small | medium | large (if known)
+  currency              <- usually "EUR"
+  -- balance sheet (Bilanz)
+  total_assets          <- Bilanzsumme
+  fixed_assets          <- Anlagevermögen
+  current_assets        <- Umlaufvermögen
+  equity                <- Eigenkapital
+  liabilities           <- Verbindlichkeiten
+  -- P&L (GuV) — medium/large only
+  revenue               <- Umsatzerlöse (nullable)
+  net_income            <- Jahresüberschuss/-fehlbetrag (nullable)
+  -- other
+  employees             <- durchschnittliche Zahl der Beschäftigten (nullable)
+  raw_document_ref      <- pointer to stored XBRL/HTML/PDF or vendor record id
+  raw_record            <- original payload
+```
+
+### Gotchas
+- **Matching to the company master** is non-trivial: statements key on company **name + seat** (and
+  sometimes register number). Build a matcher against `company_number` / register no.
+- **German number formats** in HTML (`1.234.567,89`) need locale-aware parsing; XBRL gives clean numerics.
+- **Negative values** often shown in parentheses / with sign conventions per taxonomy.
+- **Deposited (hinterlegt) micro statements** may be access-gated differently than published ones.
+- Consolidated vs single-entity statements can both exist for one group — capture `consolidated`.
