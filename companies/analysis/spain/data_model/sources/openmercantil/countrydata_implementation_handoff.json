@@ -1,0 +1,84 @@
+{
+  "country": "Spain",
+  "country_slug": "spain",
+  "source_slug": "openmercantil",
+  "source_identity": "spain_openmercantil",
+  "source_package": "openmercantil",
+  "env_prefix": "OPENMERCANTIL",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "OpenMercantil (BORME-derived company database)",
+    "source_type": "open_data_reconstructed",
+    "organization": "OpenMercantil (community/NGO project)",
+    "source_url": "https://openmercantil.es/",
+    "license": "CC BY 4.0",
+    "access": "public",
+    "data_freshness": "daily (D+1 from BORME); 2009-present",
+    "attribution": "Data from OpenMercantil (https://openmercantil.es/), derived from BORME / Boletín Oficial del Estado. CC BY 4.0."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Full bulk CSV/Parquet marked 'Próximamente' at time of analysis; samples, per-company export, and REST API are live."
+  },
+  "transport": {
+    "access_mode": "bulk_file",
+    "base_url": "https://openmercantil.es/api",
+    "download_url": "https://openmercantil.es/descargas",
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "User-Agent", "value": "companycollect/0.1 open-data-research", "note": "descriptive UA"}
+    ],
+    "formats": ["csv", "parquet", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "$ (CSV rows; full file is act-level, 12 cols)",
+    "total_results_path": null,
+    "pagination": {"type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Bulk file when published (~210 MB, ~5.8M rows). REST API at /api and per-company /export?format=csv&empresa={slug} available now; confirm API pagination from live docs."},
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "csv_rows_then_normalize",
+    "file_extension": ".csv",
+    "preserve_raw_download": true,
+    "note": "Persist raw CSV/Parquet. Distinguish company-master rows (7 cols) from act-level rows (12 cols)."
+  },
+  "parsing": {
+    "record_type_hint": "OpenMercantilCompany | OpenMercantilAct",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["plain_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "cif/slug stay strings; cif often empty. Strip status/registry tags from name for normalized_name. Capital is register share capital (EUR), NOT annual-accounts data."
+  },
+  "keys": {
+    "primary_keys": ["slug"],
+    "join_keys": ["cif", "slug"],
+    "dedupe_keys": ["cif (when present) else slug"]
+  },
+  "mapping_rules": {
+    "legal_name": "name (strip 'EN LIQUIDACION' / '(R.M. ...)').",
+    "tax_id": "cif (nullable).",
+    "company_type": "Derive from name suffix / cif leading letter.",
+    "status": "Infer from name suffix ('EN LIQUIDACION') and acts; else unknown.",
+    "region": "province.",
+    "incorporation_date": "first_seen (proxy; verify via BORME Constitución)."
+  },
+  "fixture_requirements": [
+    "company row WITH a valid CIF",
+    "company row with EMPTY cif (fallback to slug)",
+    "name carrying a status suffix (EN LIQUIDACION)",
+    "act-level row from the full 12-column CSV (Capital/Workers/Address populated)",
+    "malformed CSV line"
+  ],
+  "live_test_plan": {
+    "smoke": "Load muestra_empresas_100.csv; assert columns and that ~10-20% rows carry a cif; build normalized rows.",
+    "full": "When the bulk file is published, download behind an env gate; persist raw; normalize; split act-level vs company-master."
+  },
+  "blockers": [
+    "Full bulk CSV/Parquet was 'Próximamente' at analysis time — confirm availability before a full run.",
+    "Low CIF coverage (~18%) weakens joins to financials.",
+    "Community reconstruction — verify authoritative values against BORME / Registro Mercantil."
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "country": "Spain",
+  "country_slug": "spain",
+  "source_slug": "registro_mercantil_cuentas_anuales",
+  "source_identity": "spain_registro_mercantil_cuentas_anuales",
+  "source_package": "rmcuentasanuales",
+  "env_prefix": "RM_CUENTAS_ANUALES",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Depósito de Cuentas Anuales (Registro Mercantil) — annual accounts XBRL",
+    "source_type": "official_financial_disclosure",
+    "organization": "Colegio de Registradores de España (CORPME)",
+    "source_url": "https://sede.registradores.org/site/mercantil",
+    "license": "Per-document fee (~EUR 8.99-20/company); reuse restricted",
+    "access": "paid",
+    "data_freshness": "annual; retained 6 years",
+    "attribution": "Source: Registro Mercantil / Colegio de Registradores de España (CORPME)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": true,
+    "credential_env_vars": ["RM_CUENTAS_ANUALES_PAYMENT_TOKEN"],
+    "note": "Per-company fee (~EUR 9-20). No registration required for occasional access, but documents are paid. No bulk, no free API."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://sede.registradores.org/site/mercantil",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": [],
+    "formats": ["xbrl", "xml", "pdf", "zip"],
+    "compression": "zip",
+    "encoding": "utf-8",
+    "record_path": "per-company deposit ZIP (XBRL accounts + PDF docs)",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Search by NIF or denominación, pay, retrieve one company's deposit. No enumeration of the population; no bulk."},
+    "rate_limit": "per-company paid retrieval only"
+  },
+  "snapshot": {
+    "strategy": "zip_per_company_per_year",
+    "file_extension": ".zip",
+    "preserve_raw_download": true,
+    "note": "Persist the deposit ZIP; extract XBRL for figures, keep PDFs as documents."
+  },
+  "parsing": {
+    "record_type_hint": "EsAnnualAccounts (PGC XBRL)",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["es_locale_grouping_1.234.567,89", "xbrl_plain_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Parse XBRL with Arelle against the ES PGC taxonomy. tipo de cuentas (normal/abreviado/PYME/micro) governs which concepts exist; revenue/net_result/employees nullable for small models. Capture individual vs consolidado."
+  },
+  "keys": {
+    "primary_keys": ["nif", "ejercicio"],
+    "join_keys": ["nif", "denominacion + provincia", "hoja_registral"],
+    "dedupe_keys": ["nif + ejercicio + tipo"]
+  },
+  "mapping_rules": {
+    "financial_statements": "One record per ejercicio; map balance + P&L concepts.",
+    "revenue": "Importe neto de la cifra de negocios",
+    "net_result": "Resultado del ejercicio",
+    "total_assets": "Total activo",
+    "equity": "Patrimonio neto",
+    "employees": "Número medio de empleados (memoria)",
+    "matching": "Join via NIF/CIF; fall back to denominación+provincia or hoja registral."
+  },
+  "fixture_requirements": [
+    "cuentas normales (large) with full balance + P&L + audit",
+    "cuentas abreviadas / PYME (reduced)",
+    "microempresa (minimal; revenue may be absent)",
+    "consolidated vs individual deposit",
+    "deposit with audit report present vs absent"
+  ],
+  "live_test_plan": {
+    "smoke": "Not applicable without payment — do not attempt automated paid retrieval without explicit authorization.",
+    "full": "Behind a payment-token env gate and explicit authorization, retrieve target companies by NIF; persist ZIP; parse XBRL; normalize. Otherwise prefer a commercial aggregator for financials at scale."
+  },
+  "blockers": [
+    "Paid per company (~EUR 9-20); no bulk; no free API — not viable for whole-population ingestion at zero cost.",
+    "Reuse/redistribution of purchased documents is restricted.",
+    "Join to the open spine is weak when CIF is missing."
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "country": "Spain",
+  "country_slug": "spain",
+  "source_slug": "cnmv_financials",
+  "source_name": "CNMV — financial reports of listed/issuer companies (XBRL)",
+  "source_type": "official_financial_disclosure",
+  "organization": "Comisión Nacional del Mercado de Valores (CNMV)",
+  "source_url": "https://www.cnmv.es/ipps/",
+  "license": "Open (CNMV public information; reusable, confirm attribution)",
+  "access": "public",
+  "data_freshness": "annual (IFA) + intermediate (IFI/IPP: quarterly/half-year)",
+  "record_shape": "per-issuer XBRL report (CNMV/IPP taxonomy) + PDF; consultable/downloadable via cnmv.es/ipps and datos.gob.es",
+  "primary_keys": ["issuer id (NIF) + period + report_type"],
+  "join_keys": ["NIF/CIF", "ISIN/LEI (issuer)"],
+  "field_count": 12,
+  "fields": [
+    {"path": "issuer.nif", "source_field": "NIF", "english_name": "tax_id", "meaning": "Tax id of the issuer entity.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": "AEAT NIF/CIF", "language": "n/a", "limitations": "Cataloged from CNMV docs; no values copied. Listed issuers only.", "source_confidence": "high", "analysis_notes": "Join key to the BORME/OpenMercantil spine via CIF."},
+    {"path": "report.tipo", "source_field": "tipo informe", "english_name": "report_type", "meaning": "IFA (annual) vs IFI/IPP (intermediate: H1/quarterly).", "data_type": "string", "semantic_type": "filing", "example_values": [], "nullable": false, "repeatable": false, "code_list": "IFA | IFI", "language": "Spanish", "limitations": "Planning-level (no values).", "source_confidence": "high", "analysis_notes": "Prefer IFA for annual financials."},
+    {"path": "report.ejercicio", "source_field": "ejercicio / periodo", "english_name": "fiscal_period", "meaning": "Reporting year/period.", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "One report per period."},
+    {"path": "balance.activo_total", "source_field": "Total activo", "english_name": "total_assets", "meaning": "Balance sheet total assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "CNMV/IPP XBRL taxonomy", "language": "Spanish", "limitations": "XBRL concept; consolidated for groups.", "source_confidence": "high", "analysis_notes": "EUR (or reporting currency)."},
+    {"path": "balance.activo_no_corriente", "source_field": "Activo no corriente", "english_name": "non_current_assets", "meaning": "Non-current assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "balance.activo_corriente", "source_field": "Activo corriente", "english_name": "current_assets", "meaning": "Current assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "balance.patrimonio_neto", "source_field": "Patrimonio neto", "english_name": "equity", "meaning": "Total equity.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "balance.pasivo", "source_field": "Pasivo corriente/no corriente", "english_name": "liabilities", "meaning": "Liabilities (current + non-current).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "resultados.cifra_negocios", "source_field": "Importe neto de la cifra de negocios", "english_name": "revenue", "meaning": "Net turnover / revenue.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": null, "source_confidence": "high", "analysis_notes": "Primary revenue concept."},
+    {"path": "resultados.resultado_explotacion", "source_field": "Resultado de explotación", "english_name": "operating_result", "meaning": "Operating result.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "resultados.resultado_ejercicio", "source_field": "Resultado del ejercicio", "english_name": "net_result", "meaning": "Net profit/loss for the period.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": null, "source_confidence": "high", "analysis_notes": "Negative = loss."},
+    {"path": "report.documento_xbrl / pdf", "source_field": "documento", "english_name": "report_document", "meaning": "The downloadable XBRL and PDF report files.", "data_type": "string", "semantic_type": "document", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "XBRL parseable (Arelle); PDF human copy."}
+  ]
+}

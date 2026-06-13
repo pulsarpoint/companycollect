@@ -1,0 +1,88 @@
+{
+  "country": "Spain",
+  "country_slug": "spain",
+  "source_slug": "borme_boe_api",
+  "source_identity": "spain_borme_boe_api",
+  "source_package": "bormeboe",
+  "env_prefix": "BORME_BOE",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "BORME via BOE open-data API",
+    "source_type": "official_gazette_api",
+    "organization": "Agencia Estatal Boletín Oficial del Estado (BOE)",
+    "source_url": "https://www.boe.es/datosabiertos/api/borme/sumario/{YYYYMMDD}",
+    "license": "BOE open data reuse (open; confirm attribution)",
+    "access": "public",
+    "data_freshness": "daily (business days); 2009-present (Seccion I)",
+    "attribution": "Source: Agencia Estatal Boletín Oficial del Estado (BORME), datos abiertos."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Two-step crawl: summary endpoint then per-province bulletin XML. Be polite (no documented rate limit)."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://www.boe.es/datosabiertos/api/borme/sumario",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "Accept", "value": "application/json", "note": "or application/xml"},
+      {"name": "User-Agent", "value": "companycollect/0.1 open-data-research", "note": "descriptive UA"}
+    ],
+    "formats": ["json", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "data.sumario.diario[].seccion[].item[] (then fetch item.url_xml for acts)",
+    "total_results_path": null,
+    "pagination": {"type": "date_iteration", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Iterate by publication date (YYYYMMDD). 404 on non-publication days. For each date, fetch section-A item url_xml bulletins."},
+    "rate_limit": "not documented; throttle politely"
+  },
+  "snapshot": {
+    "strategy": "json_summary_plus_xml_bulletins",
+    "file_extension": ".json/.xml",
+    "preserve_raw_download": true,
+    "note": "Persist the daily summary JSON and each province bulletin XML before parsing prose into acts."
+  },
+  "parsing": {
+    "record_type_hint": "BormeSummary -> BormeProvinceBulletin -> BormeAct",
+    "date_formats": ["20060102", "2.1.06", "02.01.06"],
+    "datetime_formats": [],
+    "number_formats": ["es_locale_grouping_909.000,00"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Acts are Spanish prose in <p class=articulo>/<p class=parrafo>. Use a BORME parser (e.g. bormeparser) to extract acto types + 'Datos registrales' (T/F/S/H/IA). Hoja registral is the dedup key (CIF usually absent). Capital uses es number locale. Officer/sole-shareholder names are PII."
+  },
+  "keys": {
+    "primary_keys": ["bulletin_id + acto_number"],
+    "join_keys": ["hoja_registral", "cif (rare)"],
+    "dedupe_keys": ["hoja_registral"]
+  },
+  "mapping_rules": {
+    "legal_name": "Company name from p.articulo (strip leading act number).",
+    "registration_number": "hoja_registral (province letters + number) from Datos registrales.",
+    "incorporation_date": "Date of a Constitución act.",
+    "dissolution_date": "Date of a Disolución/Extinción act.",
+    "share_capital": "Capital from Constitución/Ampliación (es-locale decimal).",
+    "officers": "Parse Nombramientos/Ceses roles (Adm. Unico/Liquidador/Auditor/...).",
+    "sole_shareholder": "Parse 'Declaración de unipersonalidad. Socio único:'.",
+    "status": "Derive from Disolución/Extinción/En liquidación acts."
+  },
+  "fixture_requirements": [
+    "Constitución act (capital + domicilio + objeto + administradores)",
+    "Nombramientos/Ceses act (officer changes)",
+    "Ampliación de capital act (Capital + Resultante Suscrito)",
+    "Disolución + Extinción act",
+    "Declaración de unipersonalidad (Socio único)",
+    "act with multi-line Datos registrales / unusual punctuation"
+  ],
+  "live_test_plan": {
+    "smoke": "GET sumario/20240115 (JSON); assert section A items; fetch one url_xml; parse at least one articulo+parrafo and extract the Hoja.",
+    "full": "Iterate dates from 2009-01-01 behind an env gate; for each, fetch all section-A bulletins; parse acts; dedup into a company master keyed on Hoja registral; throttle politely."
+  },
+  "blockers": [
+    "Act text is unstructured Spanish prose — robust parsing (bormeparser) required.",
+    "CIF usually absent from act text — join to financials needs name/Hoja matching.",
+    "Officer/sole-shareholder personal data — GDPR handling required."
+  ]
+}

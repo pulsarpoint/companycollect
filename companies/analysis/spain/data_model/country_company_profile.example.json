@@ -1,0 +1,96 @@
+{
+  "_note": "Illustrative profile. registration/legal_identity use a real CC-BY OpenMercantil row (ASESORIA POLO MARIVELA SL, CIF B88314463). BORME act fields (officers/share_capital/acts) and financial_statements[] are illustrative placeholders showing shape — BORME acts need parsing and financials are paid/listed-only. Officer name is a fabricated placeholder, not real personal data.",
+  "country": "Spain",
+  "country_slug": "spain",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "cif": "B88314463",
+    "vat_id": "ESB88314463",
+    "hoja_registral": "M 700001",
+    "tomo": "40000",
+    "folio": "1",
+    "openmercantil_slug": "asesoria-polo-marivela-sl",
+    "province": "Madrid"
+  },
+  "legal_identity": {
+    "name": "ASESORIA POLO MARIVELA SL",
+    "company_type": "SL",
+    "normalized_name": "asesoria polo marivela"
+  },
+  "status": {
+    "derived": "active",
+    "dissolution_date": null
+  },
+  "registered_location": {
+    "registered_address": null,
+    "province": "Madrid"
+  },
+  "share_capital": {
+    "amount": 3000.00,
+    "currency": "EUR",
+    "as_of": "2019-03-07"
+  },
+  "officers": [
+    {
+      "role": "Adm. Unico",
+      "name": "NOMBRE APELLIDO APELLIDO",
+      "holder_type": "person",
+      "event": "nombramiento",
+      "act_date": "2019-03-07"
+    }
+  ],
+  "ownership": {
+    "sole_shareholder": null
+  },
+  "financial_statements": [
+    {
+      "fiscal_year": 2022,
+      "accounts_type": "abreviado/individual",
+      "consolidated": false,
+      "currency": "EUR",
+      "total_assets": 185000.00,
+      "non_current_assets": 40000.00,
+      "current_assets": 145000.00,
+      "equity": 92000.00,
+      "liabilities": 93000.00,
+      "revenue": null,
+      "operating_result": null,
+      "net_result": 12000.00,
+      "employees": null,
+      "source": "registro_mercantil_cuentas_anuales"
+    }
+  ],
+  "acts": [
+    {
+      "bulletin_id": "BORME-A-2019-46-28",
+      "date": "2019-03-07",
+      "text": "Constitución. Comienzo de operaciones... Capital: 3.000,00 Euros. Nombramientos. Adm. Unico: ...  Datos registrales. T 40000, F 1, S 8, H M 700001, I/A 1."
+    }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "openmercantil",
+      "source_name": "OpenMercantil (BORME-derived company database)",
+      "source_url": "https://openmercantil.es/",
+      "license": "CC BY 4.0",
+      "access": "public",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "borme_boe_api",
+      "source_name": "BORME via BOE open-data API",
+      "source_url": "https://www.boe.es/datosabiertos/api/borme/sumario/{YYYYMMDD}",
+      "license": "BOE open data reuse",
+      "access": "public",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "registro_mercantil_cuentas_anuales",
+      "source_name": "Depósito de Cuentas Anuales (Registro Mercantil)",
+      "source_url": "https://sede.registradores.org/site/mercantil",
+      "license": "paid per-document (planning-only)",
+      "access": "paid",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    }
+  ]
+}

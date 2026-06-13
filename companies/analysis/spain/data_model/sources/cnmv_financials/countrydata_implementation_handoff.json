@@ -1,0 +1,81 @@
+{
+  "country": "Spain",
+  "country_slug": "spain",
+  "source_slug": "cnmv_financials",
+  "source_identity": "spain_cnmv_financials",
+  "source_package": "cnmvfinancials",
+  "env_prefix": "CNMV_FIN",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "CNMV — financial reports of listed/issuer companies (XBRL)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Comisión Nacional del Mercado de Valores (CNMV)",
+    "source_url": "https://www.cnmv.es/ipps/",
+    "license": "Open (CNMV public information; confirm attribution)",
+    "access": "public",
+    "data_freshness": "annual (IFA) + intermediate (IFI)",
+    "attribution": "Source: Comisión Nacional del Mercado de Valores (CNMV)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Open and free. Scope limited to entities with securities admitted to trading."
+  },
+  "transport": {
+    "access_mode": "bulk_file",
+    "base_url": "https://www.cnmv.es/ipps/",
+    "download_url": "https://www.cnmv.es/portal/xbrl/xbrl",
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "User-Agent", "value": "companycollect/0.1 open-data-research", "note": "descriptive UA"}
+    ],
+    "formats": ["xbrl", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-issuer report (XBRL instance)",
+    "total_results_path": null,
+    "pagination": {"type": "list_then_download", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Enumerate issuers/reports via the IPP listing (cnmv.es/ipps) or datos.gob.es CNMV datasets, then download each XBRL+PDF. Confirm exact listing endpoint from the live portal."},
+    "rate_limit": "not documented; throttle politely"
+  },
+  "snapshot": {
+    "strategy": "xbrl_one_report_per_issuer_period",
+    "file_extension": ".xbrl",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "CnmvFinancialReport (XBRL)",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["xbrl_plain_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Parse XBRL with Arelle against the CNMV/IPP taxonomy. Capture consolidated vs individual. Map Importe neto de la cifra de negocios -> revenue, Resultado del ejercicio -> net_result, Total activo -> total_assets, Patrimonio neto -> equity."
+  },
+  "keys": {
+    "primary_keys": ["nif", "ejercicio", "tipo"],
+    "join_keys": ["nif", "isin", "lei"],
+    "dedupe_keys": ["nif + ejercicio + tipo"]
+  },
+  "mapping_rules": {
+    "financial_statements": "One record per ejercicio x report type (IFA/IFI); prefer IFA for annual.",
+    "revenue": "Importe neto de la cifra de negocios",
+    "net_result": "Resultado del ejercicio",
+    "total_assets": "Total activo",
+    "equity": "Patrimonio neto",
+    "matching": "Join to the company spine via NIF/CIF."
+  },
+  "fixture_requirements": [
+    "annual (IFA) XBRL with full balance + P&L",
+    "intermediate (IFI) XBRL",
+    "consolidated vs individual report for the same issuer",
+    "issuer matched to a CIF on the spine"
+  ],
+  "live_test_plan": {
+    "smoke": "Pull one issuer's latest IFA XBRL from cnmv.es/ipps; parse total_assets/revenue/net_result; assert NIF present.",
+    "full": "Enumerate issuers via the IPP listing / datos.gob.es; download XBRL+PDF per issuer/period behind an env gate; parse and normalize."
+  },
+  "blockers": [
+    "Scope limited to listed issuers — not the general company population.",
+    "Exact machine listing endpoint for enumerating reports to confirm from the live portal."
+  ]
+}

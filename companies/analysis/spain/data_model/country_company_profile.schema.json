@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Spain Company Profile",
+  "description": "Country-specific combined company profile for Spain. Open spine = BORME (BOE open-data API, official acts) + OpenMercantil (CC-BY reconstructed master). Identity/events are open; share capital and the sole-shareholder case come from BORME acts. financial_statements[] is multi-source: CNMV (open XBRL, LISTED issuers only) and the Registro Mercantil 'Depósito de Cuentas Anuales' (XBRL, PAID per company ~€9-20, general population — planning-only). Primary key is NIF/CIF when present (sparse in open data, ~18%), else the Hoja registral (province+number), else name+province.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": {"type": "string", "const": "Spain"},
+    "country_slug": {"type": "string", "const": "spain"},
+    "country_profile_version": {"type": "string", "description": "Profile schema version / build date (YYYY-MM-DD)."},
+    "registration": {
+      "type": "object",
+      "description": "Spanish register identity. CIF is the tax id and best key but is sparse in open data; the Hoja registral (province letters + number) is the stable open key from BORME.",
+      "required": [],
+      "properties": {
+        "cif": {"type": ["string", "null"], "description": "Spanish tax id (CIF/NIF). Best join key; ~18% populated in open data.", "x-source": "openmercantil | borme_boe_api", "x-source-path": "cif", "x-join-key": true},
+        "vat_id": {"type": ["string", "null"], "description": "VAT id = 'ES' + CIF.", "x-source": "derived", "x-source-path": "cif"},
+        "hoja_registral": {"type": ["string", "null"], "description": "Registry sheet (province letters + number), e.g. 'AL 52199'. Stable open key when CIF is absent.", "x-source": "borme_boe_api", "x-source-path": "Datos registrales -> H", "x-join-key": true},
+        "tomo": {"type": ["string", "null"], "x-source": "borme_boe_api", "x-source-path": "Datos registrales -> T"},
+        "folio": {"type": ["string", "null"], "x-source": "borme_boe_api", "x-source-path": "Datos registrales -> F"},
+        "openmercantil_slug": {"type": ["string", "null"], "description": "OpenMercantil slug (fallback id).", "x-source": "openmercantil", "x-source-path": "slug"},
+        "province": {"type": ["string", "null"], "description": "Province of the registering mercantile registry.", "x-source": "openmercantil | borme_boe_api", "x-source-path": "province | item.titulo"}
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "description": "Legal name incl. form suffix (uppercase).", "x-source": "openmercantil | borme_boe_api", "x-source-path": "name | p.articulo"},
+        "company_type": {"type": ["string", "null"], "description": "Legal form (SL, SA, SLU, SCP, ...) derived from the name suffix / CIF leading letter.", "x-source": "derived"},
+        "normalized_name": {"type": ["string", "null"], "description": "Name with status/registry tags and form suffix stripped.", "x-source": "derived"}
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "derived": {"type": ["string", "null"], "enum": ["active", "en_liquidacion", "dissolved", "extinguished", "unknown", null], "description": "From BORME Disolución/Extinción acts and name suffixes (e.g. 'EN LIQUIDACION')."},
+        "dissolution_date": {"type": ["string", "null"], "format": "date", "x-source": "borme_boe_api", "x-source-path": "Disolución/Extinción act date"}
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "description": "Activity (CNAE) is NOT in the open BORME/OpenMercantil data without parsing the Constitución objeto social; treat CNAE as derived/enrichment.",
+      "properties": {
+        "registered_address": {"type": ["string", "null"], "description": "Domicilio social (free text).", "x-source": "openmercantil(full CSV) | borme_boe_api", "x-source-path": "Address | Constitución domicilio"},
+        "province": {"type": ["string", "null"], "x-source": "openmercantil", "x-source-path": "province"}
+      }
+    },
+    "share_capital": {
+      "type": ["object", "null"],
+      "description": "Registered share capital from BORME Constitución / Ampliación de capital acts. This is REGISTER capital, NOT annual-accounts data.",
+      "properties": {
+        "amount": {"type": ["number", "null"], "x-source": "borme_boe_api", "x-source-path": "Constitución/Ampliación -> Capital"},
+        "currency": {"type": ["string", "null"], "description": "Usually EUR.", "x-source": "borme_boe_api"},
+        "as_of": {"type": ["string", "null"], "format": "date", "description": "Date of the capital act."}
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Administrators / auditor / liquidator / apoderado from BORME acts. CONTAINS PERSONAL DATA (GDPR).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {"type": "string", "description": "Adm. Unico/Solidario/Mancomunado, Consejero, Liquidador, Auditor, Apoderado.", "x-source-path": "Nombramientos/Ceses role"},
+          "name": {"type": "string", "x-source-path": "Nombramientos/Ceses name"},
+          "holder_type": {"type": ["string", "null"], "enum": ["person", "company", null], "description": "Auditor may be a company."},
+          "event": {"type": ["string", "null"], "enum": ["nombramiento", "cese", "reeleccion", "dimision", null]},
+          "act_date": {"type": ["string", "null"], "format": "date"}
+        }
+      },
+      "x-source": "borme_boe_api",
+      "x-join-key": "{hoja/cif} -> registration",
+      "x-freshness": "daily (event-driven)",
+      "x-personal-data": true
+    },
+    "ownership": {
+      "type": ["object", "null"],
+      "description": "Open ownership in Spain is limited to the SOLE-SHAREHOLDER case (Declaración de unipersonalidad). No general cap table is open. Beneficial ownership (Titularidades Reales) is restricted.",
+      "properties": {
+        "sole_shareholder": {"type": ["string", "null"], "description": "Socio único (PERSONAL DATA if a natural person).", "x-source": "borme_boe_api", "x-source-path": "Declaración de unipersonalidad -> Socio único"}
+      },
+      "x-personal-data": true
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Annual accounts. MULTI-SOURCE: 'cnmv' = open XBRL but LISTED issuers only; 'registro_mercantil' = XBRL for the general population but PAID per company (~€9-20), no bulk (planning-only). revenue/net_result/employees are nullable for small PGC models (abreviado/PYME/microempresa).",
+      "items": {
+        "type": "object",
+        "required": ["fiscal_year", "source"],
+        "properties": {
+          "fiscal_year": {"type": "integer", "x-source-path": "ejercicio"},
+          "accounts_type": {"type": ["string", "null"], "description": "normal/abreviado/PYME/microempresa; individual/consolidado (registry) or IFA/IFI (CNMV).", "x-source-path": "tipo"},
+          "consolidated": {"type": ["boolean", "null"]},
+          "currency": {"type": ["string", "null"], "description": "Usually EUR."},
+          "total_assets": {"type": ["number", "null"], "x-source-path": "Total activo"},
+          "non_current_assets": {"type": ["number", "null"], "x-source-path": "Activo no corriente"},
+          "current_assets": {"type": ["number", "null"], "x-source-path": "Activo corriente"},
+          "equity": {"type": ["number", "null"], "x-source-path": "Patrimonio neto"},
+          "liabilities": {"type": ["number", "null"], "x-source-path": "Pasivo"},
+          "revenue": {"type": ["number", "null"], "description": "Importe neto de la cifra de negocios — nullable for micro.", "x-source-path": "Importe neto de la cifra de negocios"},
+          "operating_result": {"type": ["number", "null"], "x-source-path": "Resultado de explotación"},
+          "net_result": {"type": ["number", "null"], "x-source-path": "Resultado del ejercicio"},
+          "employees": {"type": ["integer", "null"], "x-source-path": "Número medio de empleados"},
+          "source": {"type": "string", "enum": ["cnmv_financials", "registro_mercantil_cuentas_anuales"], "description": "Which financial source produced this record."}
+        }
+      },
+      "x-source": "cnmv_financials | registro_mercantil_cuentas_anuales",
+      "x-join-key": "NIF/CIF -> registration.cif (else name+province)",
+      "x-freshness": "annual",
+      "x-access": "cnmv open (listed); registro_mercantil paid (general) — planning-only"
+    },
+    "acts": {
+      "type": ["array", "null"],
+      "description": "Raw BORME acts linked to the company (event history).",
+      "items": {"type": "object", "properties": {"bulletin_id": {"type": "string"}, "date": {"type": ["string", "null"], "format": "date"}, "text": {"type": "string"}}},
+      "x-source": "borme_boe_api",
+      "x-source-path": "p.articulo + p.parrafo"
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "One entry per source contributing to this profile.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "source_url", "retrieved_at"],
+        "properties": {
+          "source_slug": {"type": "string"},
+          "source_name": {"type": "string"},
+          "source_url": {"type": "string"},
+          "license": {"type": "string"},
+          "access": {"type": "string"},
+          "retrieved_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}
