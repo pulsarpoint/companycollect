@@ -1,0 +1,80 @@
+{
+  "country": "Germany",
+  "country_slug": "germany",
+  "source_slug": "openregister_financials_api",
+  "source_identity": "germany_openregister_financials_api",
+  "source_package": "openregisterfinancials",
+  "env_prefix": "OPENREGISTER_FIN",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "OpenRegister.de — Bundesanzeiger financial API",
+    "source_type": "commercial_api",
+    "organization": "OpenRegister (private vendor)",
+    "source_url": "https://docs.openregister.de/sources/bundesanzeiger",
+    "license": "Commercial / paid; redistribution by contract",
+    "access": "paid",
+    "data_freshness": "daily",
+    "attribution": "Per vendor contract."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["OPENREGISTER_FIN_API_KEY"],
+    "note": "Requires a paid plan + API key. Redistribution/storage limits per contract."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://api.openregister.de/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "Authorization", "value": "<api-key>", "note": "exact scheme per vendor docs"},
+      {"name": "Accept", "value": "application/json", "note": null}
+    ],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "unknown (per endpoint: financial indicators vs detailed reports)",
+    "total_results_path": null,
+    "pagination": {"type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Two endpoints documented: indicators + detailed reports. Exact request/response shape requires the contracted API docs."},
+    "rate_limit": "per plan"
+  },
+  "snapshot": {
+    "strategy": "json_one_response_per_company",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "OpenRegisterFinancials",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["plain_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Vendor returns pre-parsed JSON (no XBRL parsing needed). Exact keys unknown until contracted; confirm currency handling and multi-year history shape."
+  },
+  "keys": {
+    "primary_keys": ["company_ref", "fiscal_period"],
+    "join_keys": ["German register number / company name+seat (vendor-resolved)"],
+    "dedupe_keys": ["company_ref + fiscal_period"]
+  },
+  "mapping_rules": {
+    "financial_statements": "Map detailed-reports response to financial_statements[] (one per fiscal_period).",
+    "matching": "Use the vendor's register reference to join to the OffeneRegister spine; confirm it exposes register number + court.",
+    "nullability": "revenue/net_income nullable (size-class dependent)."
+  },
+  "fixture_requirements": [
+    "indicators-endpoint response for one company",
+    "detailed-reports response with balance sheet + income statement",
+    "company with only balance-sheet figures (no revenue)",
+    "multi-year history response"
+  ],
+  "live_test_plan": {
+    "smoke": "Behind OPENREGISTER_FIN_API_KEY env gate, fetch one known company; assert financial fields parse as decimals and a register reference is present.",
+    "full": "Out of scope until a paid plan exists; then batch by the registry spine, throttle per plan, persist raw JSON, normalize."
+  },
+  "blockers": [
+    "Paid — requires a contracted plan and API key.",
+    "Exact JSON schema, pagination, and join reference unknown until contracted.",
+    "Redistribution governed by vendor contract."
+  ]
+}

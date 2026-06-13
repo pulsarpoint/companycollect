@@ -1,0 +1,84 @@
+{
+  "country": "Germany",
+  "country_slug": "germany",
+  "source_slug": "offeneregister_companies",
+  "source_identity": "germany_offeneregister_companies",
+  "source_package": "offeneregistercompanies",
+  "env_prefix": "OFFENEREGISTER_COMPANIES",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "OffeneRegister.de — German company bulk (JSONL)",
+    "source_type": "open_data_bulk",
+    "organization": "Open Knowledge Foundation Deutschland e.V. / OpenCorporates",
+    "source_url": "https://daten.offeneregister.de/de_companies_ocdata.jsonl.bz2",
+    "license": "CC-BY 4.0 (per OffeneRegister); mirror tags CC-BY-NC 4.0 — confirm",
+    "access": "public",
+    "data_freshness": "stale (2017-2019; 2022 SQLite alternative)",
+    "attribution": "Contains data from OpenCorporates, made available by Open Knowledge Foundation Deutschland (OffeneRegister.de) under CC-BY 4.0. Do not market the data as 'Handelsregister'/'Commercial Register'."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "License is the main risk: CC-BY vs CC-BY-NC unresolved. Treat as NonCommercial until confirmed."
+  },
+  "transport": {
+    "access_mode": "bulk_file",
+    "base_url": null,
+    "download_url": "https://daten.offeneregister.de/de_companies_ocdata.jsonl.bz2",
+    "http_method": "GET",
+    "headers_required": [
+      {"name": "User-Agent", "value": "companycollect/0.1 open-data-research", "note": "descriptive UA"}
+    ],
+    "formats": ["jsonl", "bz2"],
+    "compression": "bzip2",
+    "encoding": "utf-8",
+    "record_path": "$ (one JSON object per line after bzip2 decompression)",
+    "total_results_path": null,
+    "pagination": {"type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Single bulk file (~260 MB compressed / ~4 GB decompressed). Alt: handelsregister.db SQLite 3.7 GB (2022); openregister.db.gz 773 MB (2019)."},
+    "rate_limit": "n/a (single download)"
+  },
+  "snapshot": {
+    "strategy": "stream_decompress_ndjson_one_record_per_line",
+    "file_extension": ".jsonl.bz2",
+    "preserve_raw_download": true,
+    "note": "Stream-decompress; do NOT load ~4 GB into memory. Persist raw archive in raw/bulk/."
+  },
+  "parsing": {
+    "record_type_hint": "OffeneRegisterCompany",
+    "date_formats": ["2006-01-02", "2006-01-02T15:04:05Z07:00"],
+    "datetime_formats": ["2006-01-02T15:04:05Z07:00"],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "company_number / _registerNummer MUST stay strings (leading zeros / court scope). all_attributes is a nested object with mixed-language values. officers[] is PII — gate persistence behind GDPR policy. No NACE/tax_id/VAT/incorporation date present."
+  },
+  "keys": {
+    "primary_keys": ["company_number"],
+    "join_keys": ["company_number", "all_attributes.registrar + all_attributes._registerArt + all_attributes._registerNummer"],
+    "dedupe_keys": ["company_number"]
+  },
+  "mapping_rules": {
+    "legal_name": "name (current); previous_names[] -> historical names.",
+    "company_type": "Derive from the legal-form suffix in name and/or all_attributes._registerArt.",
+    "status": "current_status (free text) -> derived active/dissolved heuristic.",
+    "natural_register_key": "Compose all_attributes.registrar + '_' + _registerArt + '_' + _registerNummer; expose native_company_number as the human reference.",
+    "officers": "Map officers[] to a separate company_officers table keyed by company_number (PII).",
+    "address": "registered_address is free text — parse downstream; municipality from all_attributes.registered_office, region from all_attributes.federal_state."
+  },
+  "fixture_requirements": [
+    "HRB Kapitalgesellschaft (GmbH) with multiple officers and additional_data flags",
+    "HRA record (sole trader / Personengesellschaft)",
+    "record with previous_names and subsequent_registrations populated",
+    "record with an officer that has end_date + dismissed=true",
+    "record with company-type officer (type='company')",
+    "malformed / truncated NDJSON line"
+  ],
+  "live_test_plan": {
+    "smoke": "Download a few KB, bunzip2 a handful of lines, assert company_number + name + all_attributes._registerArt present.",
+    "full": "Stream the full bz2 behind an env gate; decompress line by line; persist raw archive; normalize to NDJSON; split officers to a side table."
+  },
+  "blockers": [
+    "License ambiguity CC-BY vs CC-BY-NC must be resolved before any commercial use/redistribution.",
+    "Data is stale (2017-2019). For more recent coverage evaluate the 2022 SQLite snapshot or a commercial API."
+  ]
+}

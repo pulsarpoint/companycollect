@@ -1,0 +1,23 @@
+{
+  "country": "Germany",
+  "country_slug": "germany",
+  "source_slug": "bundesanzeiger_reports",
+  "source_name": "bundesanzeiger (bundesAPI 'deutschland' Python package)",
+  "source_type": "community_tool",
+  "organization": "bundesAPI community (unofficial)",
+  "source_url": "https://github.com/bundesAPI/deutschland",
+  "license": "Tool: Apache-2.0. Retrieved data: Bundesanzeiger content subject to portal terms — per-company use, not bulk",
+  "access": "public",
+  "data_freshness": "live (reads the public Bundesanzeiger search)",
+  "record_shape": "python dict { report_title: report_content }; one entry per published report found for a company name",
+  "primary_keys": ["company name (query) + report_title"],
+  "join_keys": ["company name (query)"],
+  "field_count": 5,
+  "fields": [
+    {"path": "<report_title>", "source_field": "report dict key", "english_name": "report_title", "meaning": "Title of a published Bundesanzeiger report for the queried company, e.g. an annual financial statement for a given fiscal year.", "data_type": "string", "semantic_type": "filing", "example_values": ["Jahresabschluss zum Geschäftsjahr vom 01.01.2020 bis zum 31.12.2020"], "nullable": false, "repeatable": true, "code_list": null, "language": "German", "limitations": "Title text only encodes the period; structured fields must be parsed from the content.", "source_confidence": "high", "analysis_notes": "Period start/end parseable from the title; filter to Jahresabschluss/Bilanz reports."},
+    {"path": "<report_title>.content", "source_field": "report dict value", "english_name": "report_content", "meaning": "Full-text / HTML content of the report (the actual financial statement text).", "data_type": "string", "semantic_type": "document", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "German", "limitations": "HTML/full-text, NOT clean XBRL — requires extraction to get numeric line items. No values copied here.", "source_confidence": "high", "analysis_notes": "Feed into an HTML/table extractor to derive total_assets/equity/revenue/net_income."},
+    {"path": "query.company_name", "source_field": "get_reports(name) argument", "english_name": "query_company_name", "meaning": "The company name used to query the public search.", "data_type": "string", "semantic_type": "identifier", "example_values": ["Deutsche Bahn AG"], "nullable": false, "repeatable": false, "code_list": null, "language": "German", "limitations": "Name-based lookup — ambiguous for common names; no register-number query in the basic example.", "source_confidence": "high", "analysis_notes": "Matching to the registry spine is by name (+ disambiguation), not a numeric key."},
+    {"path": "report_type", "source_field": "(derived from title)", "english_name": "report_type", "meaning": "Kind of report (annual financial statement, announcement, etc.) derived from the title.", "data_type": "string", "semantic_type": "filing", "example_values": ["Jahresabschluss"], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "Derived, not a source field.", "source_confidence": "medium", "analysis_notes": "Use to keep only financial statements."},
+    {"path": "fiscal_period", "source_field": "(parsed from title)", "english_name": "fiscal_period", "meaning": "Financial period parsed from the report title (von … bis …).", "data_type": "string", "semantic_type": "date", "example_values": ["2020-01-01..2020-12-31"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Parsed from German title text.", "source_confidence": "medium", "analysis_notes": null}
+  ]
+}

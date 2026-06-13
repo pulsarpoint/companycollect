@@ -1,0 +1,79 @@
+{
+  "country": "Germany",
+  "country_slug": "germany",
+  "source_slug": "bundesanzeiger_reports",
+  "source_identity": "germany_bundesanzeiger_reports",
+  "source_package": "bundesanzeigerreports",
+  "env_prefix": "BUNDESANZEIGER_REPORTS",
+  "implementation_status": "sample_only",
+  "source": {
+    "source_name": "bundesanzeiger (bundesAPI 'deutschland' Python package)",
+    "source_type": "community_tool",
+    "organization": "bundesAPI community (unofficial)",
+    "source_url": "https://github.com/bundesAPI/deutschland",
+    "license": "Tool Apache-2.0; data subject to Bundesanzeiger portal terms",
+    "access": "public",
+    "data_freshness": "live",
+    "attribution": "Reports retrieved from Bundesanzeiger via the bundesAPI deutschland package."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Queries the public Bundesanzeiger search and solves a captcha via a bundled ML model. Effectively rate-limited; per-company only; do not bulk-scrape."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://www.bundesanzeiger.de/ (via the bundesanzeiger Python module)",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["python_dict", "html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "dict: {report_title: report_content}",
+    "total_results_path": null,
+    "pagination": {"type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "One call per company name; returns all found reports as a dict. Go implementation would need to port the search+captcha flow or shell out to the Python tool."},
+    "rate_limit": "captcha-gated; keep volume low (community guidance for the official portal is <=60 lookups/hour)"
+  },
+  "snapshot": {
+    "strategy": "json_one_response_per_company_name",
+    "file_extension": ".json",
+    "preserve_raw_download": true,
+    "note": "Persist {report_title: content} per queried company; downstream extractor derives figures."
+  },
+  "parsing": {
+    "record_type_hint": "BundesanzeigerReports (map title->content)",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": ["de_locale_grouping_1.234.567,89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Content is HTML/full-text, NOT XBRL. Parse period from the German title; run an HTML/table extractor for numeric line items. Filter titles to Jahresabschluss/Bilanz."
+  },
+  "keys": {
+    "primary_keys": ["query_company_name", "report_title"],
+    "join_keys": ["query_company_name (disambiguate against registry seat/court)"],
+    "dedupe_keys": ["query_company_name + report_title"]
+  },
+  "mapping_rules": {
+    "documents": "Each report -> a documents[]/filing entry with report_type + fiscal_period.",
+    "financial_statements": "Only after extracting figures from report_content; map to financial_statements[] with source='bundesanzeiger_reports'.",
+    "matching": "Name-based query; resolve to the registry spine by name+seat before attaching."
+  },
+  "fixture_requirements": [
+    "get_reports() result with at least one Jahresabschluss title + HTML content",
+    "company with multiple yearly reports (multi-entry dict)",
+    "ambiguous common name returning unrelated companies",
+    "report whose content is HTML tables (exercise the figure extractor)"
+  ],
+  "live_test_plan": {
+    "smoke": "Query one well-known company name; assert a 'Jahresabschluss …' key exists and content is non-empty.",
+    "full": "For a bounded set of target companies (NOT the whole population), query throttled behind an env gate; persist raw dicts; extract figures; respect portal terms and captcha limits."
+  },
+  "blockers": [
+    "Captcha/rate-limited and unofficial — not viable for bulk ingestion.",
+    "Returns HTML/text, not structured XBRL — needs a figure-extraction layer.",
+    "Name-based matching to the registry spine is ambiguous.",
+    "Native tool is Python; a Go implementation must port or shell out."
+  ]
+}

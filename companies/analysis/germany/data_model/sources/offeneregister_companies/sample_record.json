@@ -1,0 +1,42 @@
+{
+  "_note": "SYNTHETIC illustrative record — the real bulk download was not retained (data folder is gitignored) and rows carry personal data. Field shape matches the OpenCorporates German company schema documented in schema_notes.md; names/numbers are fabricated placeholders, not a real company or person.",
+  "company_number": "K1101R_HRB150148",
+  "name": "Beispiel Verwaltungs GmbH",
+  "current_status": "currently registered",
+  "jurisdiction_code": "de",
+  "registered_address": "Beispielstraße 1, 40210 Düsseldorf",
+  "retrieved_at": "2018-11-14T00:00:00Z",
+  "previous_names": [
+    {"company_name": "Alt Beispiel GmbH"}
+  ],
+  "subsequent_registrations": [],
+  "officers": [
+    {
+      "name": "Max Mustermann",
+      "position": "Geschäftsführer",
+      "type": "person",
+      "start_date": "2015-03-01",
+      "end_date": null,
+      "other_attributes": {
+        "firstname": "Max",
+        "lastname": "Mustermann",
+        "city": "Düsseldorf",
+        "dismissed": false,
+        "flag": "einzelvertretungsberechtigt",
+        "reference_no": "1"
+      }
+    }
+  ],
+  "all_attributes": {
+    "_registerArt": "HRB",
+    "_registerNummer": "150148",
+    "native_company_number": "Düsseldorf HRB 150148",
+    "federal_state": "North Rhine-Westphalia",
+    "registered_office": "Düsseldorf",
+    "registrar": "Düsseldorf",
+    "former_registrar": null,
+    "additional_data": {
+      "AD": true, "CD": true, "HD": true, "DK": true, "SI": true, "UT": true, "VÖ": true
+    }
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "_note": "SYNTHETIC illustrative profile. Registry fields follow the OffeneRegister/OpenCorporates schema (CC-BY); financial_statements[] is PLANNING-ONLY and shown with fabricated figures to illustrate shape — Germany has no open/bulk financials. Names/numbers are placeholders, not a real company or person.",
+  "country": "Germany",
+  "country_slug": "germany",
+  "country_profile_version": "2026-06-13",
+  "registration": {
+    "company_number": "K1101R_HRB150148",
+    "register_type": "HRB",
+    "register_number": "150148",
+    "registrar": "Düsseldorf",
+    "former_registrar": null,
+    "native_company_number": "Düsseldorf HRB 150148",
+    "natural_key": "Düsseldorf_HRB_150148",
+    "jurisdiction_code": "de"
+  },
+  "legal_identity": {
+    "name": "Beispiel Verwaltungs GmbH",
+    "company_type": "GmbH",
+    "previous_names": [
+      {"company_name": "Alt Beispiel GmbH"}
+    ]
+  },
+  "status": {
+    "current_status": "currently registered",
+    "derived": "active"
+  },
+  "registered_location": {
+    "registered_address": "Beispielstraße 1, 40210 Düsseldorf",
+    "municipality": "Düsseldorf",
+    "federal_state": "North Rhine-Westphalia"
+  },
+  "officers": [
+    {
+      "name": "Max Mustermann",
+      "position": "Geschäftsführer",
+      "holder_type": "person",
+      "firstname": "Max",
+      "lastname": "Mustermann",
+      "city": "Düsseldorf",
+      "start_date": "2015-03-01",
+      "end_date": null,
+      "dismissed": false,
+      "representation_rule": "einzelvertretungsberechtigt"
+    }
+  ],
+  "related_registrations": [],
+  "available_documents": {
+    "AD": true, "CD": true, "HD": true, "DK": true, "SI": true, "UT": true, "VÖ": true
+  },
+  "financial_statements": [
+    {
+      "fiscal_year": 2022,
+      "period_start": "2022-01-01",
+      "period_end": "2022-12-31",
+      "accounting_standard": "HGB",
+      "consolidated": false,
+      "size_class": "small",
+      "currency": "EUR",
+      "total_assets": 4200000.00,
+      "fixed_assets": 1500000.00,
+      "current_assets": 2700000.00,
+      "equity": 1800000.00,
+      "liabilities": 2400000.00,
+      "revenue": null,
+      "net_income": null,
+      "employees": null,
+      "source": "unternehmensregister_financials"
+    },
+    {
+      "fiscal_year": 2022,
+      "period_start": "2022-01-01",
+      "period_end": "2022-12-31",
+      "accounting_standard": "HGB",
+      "consolidated": false,
+      "size_class": "large",
+      "currency": "EUR",
+      "total_assets": 4200000.00,
+      "fixed_assets": 1500000.00,
+      "current_assets": 2700000.00,
+      "equity": 1800000.00,
+      "liabilities": 2400000.00,
+      "revenue": 9800000.00,
+      "net_income": 350000.00,
+      "employees": 42,
+      "source": "openregister_financials_api"
+    }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "offeneregister_companies",
+      "source_name": "OffeneRegister.de — German company bulk (JSONL)",
+      "source_url": "https://daten.offeneregister.de/de_companies_ocdata.jsonl.bz2",
+      "license": "CC-BY 4.0 (confirm vs CC-BY-NC)",
+      "access": "public",
+      "retrieved_at": "2018-11-14T00:00:00Z"
+    },
+    {
+      "source_slug": "unternehmensregister_financials",
+      "source_name": "Unternehmensregister / Bundesanzeiger — annual financial statements",
+      "source_url": "https://www.unternehmensregister.de/",
+      "license": "free view only; reuse not granted (planning-only)",
+      "access": "public_view_only",
+      "retrieved_at": "2026-06-13T00:00:00Z"
+    },
+    {
+      "source_slug": "openregister_financials_api",
+      "source_name": "OpenRegister.de — Bundesanzeiger financial API",
+      "source_url": "https://docs.openregister.de/sources/bundesanzeiger",
+      "license": "commercial/paid (planning-only)",
+      "access": "paid",
+      "retrieved_at": "2026-06-13T00:00:00Z"
+    }
+  ]
+}

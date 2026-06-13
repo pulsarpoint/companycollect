@@ -1,0 +1,28 @@
+{
+  "country": "Germany",
+  "country_slug": "germany",
+  "source_slug": "openregister_financials_api",
+  "source_name": "OpenRegister.de — Bundesanzeiger financial API",
+  "source_type": "commercial_api",
+  "organization": "OpenRegister (private vendor)",
+  "source_url": "https://docs.openregister.de/sources/bundesanzeiger",
+  "license": "Commercial / paid; redistribution by contract — planning-only",
+  "access": "paid",
+  "data_freshness": "daily (as statements are published in Bundesanzeiger)",
+  "record_shape": "structured JSON; two endpoints — financial indicators (key metrics) and detailed reports (balance sheet + income statement)",
+  "primary_keys": ["vendor company id (+ fiscal period)"],
+  "join_keys": ["German register number / company name+seat (vendor-resolved)"],
+  "field_count": 10,
+  "fields": [
+    {"path": "balance_sheet_total", "source_field": "(vendor JSON; balance sheet total)", "english_name": "total_assets", "meaning": "Balance sheet total / total assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY — cataloged from public docs; no values retrieved (paid). Exact JSON key unknown until contracted.", "source_confidence": "medium", "analysis_notes": "Vendor states structured JSON instead of PDF."},
+    {"path": "asset_liability_breakdown", "source_field": "(vendor JSON; component breakdown)", "english_name": "asset_liability_breakdown", "meaning": "Detailed asset and liability components of the balance sheet.", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY. Structure unknown until contracted.", "source_confidence": "low", "analysis_notes": null},
+    {"path": "revenue", "source_field": "(vendor JSON; revenue)", "english_name": "revenue", "meaning": "Revenue / turnover.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY. Only where the underlying filing includes a P&L (medium/large).", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "profitability", "source_field": "(vendor JSON; profitability metrics)", "english_name": "profitability", "meaning": "Profitability metrics derived from the income statement.", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null},
+    {"path": "net_income", "source_field": "(vendor JSON; net income)", "english_name": "net_income", "meaning": "Net income / annual result.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "equity", "source_field": "(vendor JSON; equity)", "english_name": "equity", "meaning": "Total equity.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "cash_position", "source_field": "(vendor JSON; cash position)", "english_name": "cash_position", "meaning": "Cash / liquid funds position.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null},
+    {"path": "employee_count", "source_field": "(vendor JSON; employee count)", "english_name": "employees", "meaning": "Number of employees.", "data_type": "integer", "semantic_type": "employment", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "fiscal_period", "source_field": "(vendor JSON; period/year)", "english_name": "fiscal_period", "meaning": "Fiscal year / period the figures belong to.", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": "Multi-year history implied by 'track performance over time'."},
+    {"path": "company_ref", "source_field": "(vendor JSON; company identifier)", "english_name": "company_ref", "meaning": "Vendor company identifier / register reference used to attribute financials.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY. Mapping to OffeneRegister key TBD.", "source_confidence": "medium", "analysis_notes": "Join lever to the registry spine."}
+  ]
+}

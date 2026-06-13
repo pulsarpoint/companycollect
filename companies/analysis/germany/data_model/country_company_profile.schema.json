@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Germany Company Profile",
+  "description": "Country-specific combined company profile for Germany. Spine = OffeneRegister.de open bulk (registration + officers, CC-BY, STALE 2017-2019). financial_statements[] is PLANNING-ONLY: Germany has no open/bulk financials — figures come from the Unternehmensregister/Bundesanzeiger (free view, no bulk/API) or a commercial API (OpenRegister/North Data) or the free per-company bundesanzeiger tool. There is NO shared numeric join key between registry and financials — matching is by register number or name+seat.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": {"type": "string", "const": "Germany"},
+    "country_slug": {"type": "string", "const": "germany"},
+    "country_profile_version": {"type": "string", "description": "Profile schema version / build date (YYYY-MM-DD)."},
+    "registration": {
+      "type": "object",
+      "description": "Identity in the German commercial register. The natural key is registrar + register_type + register_number (register_number alone is NOT unique — it is scoped per court).",
+      "required": ["company_number"],
+      "properties": {
+        "company_number": {
+          "type": "string",
+          "description": "Synthetic OpenCorporates id (primary key of the open dataset). NOT the official quotable number.",
+          "x-source": "offeneregister_companies",
+          "x-source-path": "company_number",
+          "x-join-key": true,
+          "x-freshness": "stale (2017-2019)"
+        },
+        "register_type": {"type": ["string", "null"], "description": "HRB/HRA/GnR/VR/PR.", "x-source": "offeneregister_companies", "x-source-path": "all_attributes._registerArt"},
+        "register_number": {"type": ["string", "null"], "description": "Court-scoped register number (not globally unique).", "x-source": "offeneregister_companies", "x-source-path": "all_attributes._registerNummer"},
+        "registrar": {"type": ["string", "null"], "description": "Registering court (Amtsgericht).", "x-source": "offeneregister_companies", "x-source-path": "all_attributes.registrar"},
+        "former_registrar": {"type": ["string", "null"], "x-source": "offeneregister_companies", "x-source-path": "all_attributes.former_registrar"},
+        "native_company_number": {"type": ["string", "null"], "description": "Human-readable reference, e.g. 'Düsseldorf HRB 150148'.", "x-source": "offeneregister_companies", "x-source-path": "all_attributes.native_company_number"},
+        "natural_key": {"type": ["string", "null"], "description": "Derived join key: registrar + '_' + register_type + '_' + register_number.", "x-source": "offeneregister_companies", "x-source-path": "derived", "x-join-key": true},
+        "jurisdiction_code": {"type": "string", "const": "de", "x-source": "offeneregister_companies", "x-source-path": "jurisdiction_code"}
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "description": "Current registered legal name incl. legal-form suffix.", "x-source": "offeneregister_companies", "x-source-path": "name"},
+        "company_type": {"type": ["string", "null"], "description": "Legal form derived from the name suffix and/or register_type (GmbH, AG, UG, KG, e.V., eG, …).", "x-source": "offeneregister_companies", "x-source-path": "derived(name,_registerArt)"},
+        "previous_names": {"type": ["array", "null"], "items": {"type": "object", "properties": {"company_name": {"type": "string"}}}, "x-source": "offeneregister_companies", "x-source-path": "previous_names"}
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "current_status": {"type": ["string", "null"], "description": "Textual status, e.g. 'currently registered'. No clean dissolution date in the open data.", "x-source": "offeneregister_companies", "x-source-path": "current_status"},
+        "derived": {"type": ["string", "null"], "enum": ["active", "dissolved", "unknown", null], "description": "Heuristic from current_status text."}
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "description": "No NACE/activity code is available in the open dataset.",
+      "properties": {
+        "registered_address": {"type": ["string", "null"], "description": "Free-text address (unparsed).", "x-source": "offeneregister_companies", "x-source-path": "registered_address"},
+        "municipality": {"type": ["string", "null"], "description": "Seat (Sitz).", "x-source": "offeneregister_companies", "x-source-path": "all_attributes.registered_office"},
+        "federal_state": {"type": ["string", "null"], "description": "Bundesland (English in source).", "x-source": "offeneregister_companies", "x-source-path": "all_attributes.federal_state"}
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Representatives (Geschäftsführer/Vorstand/Prokurist/Liquidator). CONTAINS PERSONAL DATA (GDPR).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string", "x-source-path": "officers[].name"},
+          "position": {"type": ["string", "null"], "x-source-path": "officers[].position"},
+          "holder_type": {"type": ["string", "null"], "enum": ["person", "company", null], "x-source-path": "officers[].type"},
+          "firstname": {"type": ["string", "null"], "x-source-path": "officers[].other_attributes.firstname"},
+          "lastname": {"type": ["string", "null"], "x-source-path": "officers[].other_attributes.lastname"},
+          "city": {"type": ["string", "null"], "x-source-path": "officers[].other_attributes.city"},
+          "start_date": {"type": ["string", "null"], "format": "date", "x-source-path": "officers[].start_date"},
+          "end_date": {"type": ["string", "null"], "format": "date", "x-source-path": "officers[].end_date"},
+          "dismissed": {"type": ["boolean", "null"], "x-source-path": "officers[].other_attributes.dismissed"},
+          "representation_rule": {"type": ["string", "null"], "x-source-path": "officers[].other_attributes.flag"}
+        }
+      },
+      "x-source": "offeneregister_companies",
+      "x-join-key": "{company_number} -> registration.company_number",
+      "x-freshness": "stale (2017-2019)",
+      "x-personal-data": true
+    },
+    "related_registrations": {
+      "type": ["array", "null"],
+      "description": "Links to later/renamed/merged registrations.",
+      "items": {"type": "object"},
+      "x-source": "offeneregister_companies",
+      "x-source-path": "subsequent_registrations"
+    },
+    "available_documents": {
+      "type": ["object", "null"],
+      "description": "Booleans for which official documents EXIST at handelsregister.de (availability flags, not the data).",
+      "properties": {
+        "AD": {"type": "boolean", "description": "Current printout (Aktueller Abdruck)."},
+        "CD": {"type": "boolean", "description": "Chronological printout."},
+        "HD": {"type": "boolean", "description": "Historical printout."},
+        "DK": {"type": "boolean", "description": "Document folder (Dokumentenkasten)."},
+        "SI": {"type": "boolean", "description": "Structured content / XML available per document."},
+        "UT": {"type": "boolean", "description": "Documents."},
+        "VÖ": {"type": "boolean", "description": "Publications."}
+      },
+      "x-source": "offeneregister_companies",
+      "x-source-path": "all_attributes.additional_data"
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Annual financial statements (§325 HGB). NOT available from any open/bulk source — sourced from Unternehmensregister/Bundesanzeiger (free view, no bulk/API), a commercial API (OpenRegister/North Data, paid), or the free per-company bundesanzeiger tool (captcha-limited, returns HTML to parse). revenue/net_income/employees are NULL for micro/small filers (no P&L required).",
+      "items": {
+        "type": "object",
+        "required": ["fiscal_year", "currency"],
+        "properties": {
+          "fiscal_year": {"type": "integer", "x-source-path": "Geschäftsjahr"},
+          "period_start": {"type": ["string", "null"], "format": "date", "x-source-path": "Geschäftsjahr von"},
+          "period_end": {"type": ["string", "null"], "format": "date", "x-source-path": "Geschäftsjahr bis / Stichtag"},
+          "accounting_standard": {"type": ["string", "null"], "enum": ["HGB", "IFRS", "US-GAAP", null], "x-source-path": "Rechnungslegungsstandard"},
+          "consolidated": {"type": ["boolean", "null"], "description": "Einzel- vs Konzernabschluss.", "x-source-path": "Einzel-/Konzernabschluss"},
+          "size_class": {"type": ["string", "null"], "enum": ["micro", "small", "medium", "large", null], "x-source-path": "Größenklasse (§§267/267a HGB)"},
+          "currency": {"type": "string", "description": "Reporting currency (usually EUR).", "x-source-path": "Währung"},
+          "total_assets": {"type": ["number", "null"], "x-source-path": "Bilanzsumme"},
+          "fixed_assets": {"type": ["number", "null"], "x-source-path": "Anlagevermögen"},
+          "current_assets": {"type": ["number", "null"], "x-source-path": "Umlaufvermögen"},
+          "equity": {"type": ["number", "null"], "x-source-path": "Eigenkapital"},
+          "liabilities": {"type": ["number", "null"], "x-source-path": "Verbindlichkeiten"},
+          "revenue": {"type": ["number", "null"], "description": "Umsatzerlöse — medium/large only.", "x-source-path": "Umsatzerlöse"},
+          "net_income": {"type": ["number", "null"], "x-source-path": "Jahresüberschuss/-fehlbetrag"},
+          "employees": {"type": ["integer", "null"], "x-source-path": "durchschnittliche Zahl der Beschäftigten"},
+          "source": {"type": "string", "enum": ["unternehmensregister_financials", "openregister_financials_api", "bundesanzeiger_reports"], "description": "Which financial source produced this record."}
+        }
+      },
+      "x-source": "unternehmensregister_financials | openregister_financials_api | bundesanzeiger_reports",
+      "x-join-key": "register number or name+seat -> registration (NO shared numeric key)",
+      "x-freshness": "current (financials) — but matched to a stale registry spine",
+      "x-access": "planning-only; free-view/paid/community per source"
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "One entry per source contributing to this profile.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "source_url", "retrieved_at"],
+        "properties": {
+          "source_slug": {"type": "string"},
+          "source_name": {"type": "string"},
+          "source_url": {"type": "string"},
+          "license": {"type": "string"},
+          "access": {"type": "string"},
+          "retrieved_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}
