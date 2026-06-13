@@ -23,11 +23,17 @@ Deploy: stop the v1 stack first (`cd ../dagster && docker compose down`), then
 
 ## Finland PRH XBRL (window archetype reference)
 
-- `raw_xml_documents` — partitioned by registration month. Backfill months from
-  the asset page; the monthly schedule (`finland_prh_xbrl_pull_window_schedule`,
-  default STOPPED) keeps it current. Raw XML lands at
-  `source-finland-prh-xbrl/companies/<business_id>/<financial_date>.xml`;
-  the discovery listing at `windows/<partition>/listing.json`.
+- `raw_xml_documents` — partitioned by registration month. Downloads only
+  statements of **eligible companies** (active + website, queried from
+  `fi_prhytj_company_explorer_cache`; the asset depends on
+  `sources/finland/prh_ytj/company_explorer_cache`). Ineligible statements are
+  recorded under `skipped` in `windows/<partition>/listing.json` — re-materialize
+  a window to catch up companies that became eligible later (already-downloaded
+  objects are reused, only new ones are fetched; set `refresh_existing: true`
+  in run config to force re-downloads). Backfill months from the asset page;
+  the monthly schedule (`finland_prh_xbrl_pull_window_schedule`, default
+  STOPPED) keeps it current. Raw XML lands at
+  `source-finland-prh-xbrl/companies/<business_id>/<financial_date>.xml`.
 - `statement_tables` — re-parses the partition's XML from RustFS into the
   `fi_prh_xbrl_*` ClickHouse tables. Rebuildable any time without touching the
   PRH API (re-materialize after parser changes). All tables are
