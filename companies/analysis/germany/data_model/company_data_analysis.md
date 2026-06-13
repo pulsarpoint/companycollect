@@ -90,6 +90,46 @@ provenance; financial entries carry a `source` discriminator.
 - **PII**: officers carry personal data (names, city, role dates) — GDPR lawful basis + retention needed.
 - **revenue/net_income/employees**: NULL for micro/small filers (no P&L required) — most German GmbHs.
 
+## Industry (NACE/WZ) Mapping Options
+
+The open registry spine has **no activity code**, but German industry classification — **WZ 2008**
+(the German NACE Rev.2 implementation, with an extra 5th digit) — is still reachable. The gap is best
+closed by **derivation, not a new open dataset**. Options, ranked by fit for this platform:
+
+### A. Derive the code (self-hosted, no per-record licensing)
+1. **Business-purpose-text classification.** Every Handelsregister entry has a free-text
+   *"Gegenstand des Unternehmens"* (object of the company) — the same basis Destatis/state statistical
+   offices use to assign the official code. Classify it against the WZ 2008 catalog (LLM/classifier).
+   **Caveat:** the purpose text is **not** in the OffeneRegister bulk (registration + officers only);
+   obtain it from Handelsregister **SI structured data** / Registerbekanntmachungen per company, or a
+   commercial extract. Text→code is then cheap and self-hosted.
+2. **Website-based LLM classification (best fit here).** This platform already scans company websites
+   and runs LLM-based technology detection; add an industry-classification prompt over homepage/about
+   text → WZ/NACE. No register dependency, covers any company with a web presence, reuses existing
+   infrastructure. **Primary recommended route for this stack.**
+3. **Name heuristics.** Legal name sometimes implies a sector (e.g. "…Logistik GmbH"). Low precision;
+   tie-breaker/fallback only.
+
+### B. Buy a coded value (turnkey, paid)
+4. **Commercial company-data APIs ship WZ/NACE per company** — the same vendors already in the
+   inventory: **North Data** (carries the code, auto-converts standards), **Implisense** (~2.5M German
+   companies, industry in API), **Creditreform**, **Dun & Bradstreet/Bisnode**, **handelsregister.ai**,
+   **OpenRegister**. No classifier to build; redistribution by contract.
+
+### C/D. Looks promising but not usable per-company
+- **Destatis URS (statistical business register)** holds the WZ code but is **statistically
+  confidential — not public at company level**. Aggregate only.
+- **GLEIF LEI** (open) carries **no NACE/industry** attribute and covers only LEI-holding entities.
+- **Gewerbeanmeldung** (municipal trade registrations) — sometimes on GovData per city with a free-text
+  *Tätigkeit*, but fragmented and partial; not reliable nationally.
+- **VAT/VIES** — validates a number; no industry.
+
+### Modeling impact
+The profile now carries a planning-only, **derived** `activity` section. Whichever route is used, store
+`industry_source` (`website_llm` | `purpose_text` | `vendor`) and a `confidence` — derived codes are not
+official statistical assignments. See `country_company_profile.schema.json` (`activity`) and
+`common_field_mapping_suggestions.md`.
+
 ## Common Mapper Notes
 
 See `common_field_mapping_suggestions.md`. Key cross-country points: Germany has **no single national

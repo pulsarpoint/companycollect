@@ -60,6 +60,12 @@ Deduplicate financial records on `register/name+seat + period_end + consolidated
 
 - **tax_id / vat_id**: not in open data. VAT can be *validated* via EU VIES but VIES does not *list* —
   `not_available_in_open_sources`.
-- **activity / NACE (WZ) code**: not present in OffeneRegister → no `activity` section in the profile.
+- **activity / NACE (WZ) code**: not present in OffeneRegister → the `activity` section is **DERIVED /
+  planning-only**, not sourced from the spine. Populate via (1) LLM classification of the company
+  **website** (`industry_source=website_llm`, best fit for this platform), (2) LLM/classifier over the
+  Handelsregister **"Gegenstand des Unternehmens"** purpose text (`purpose_text`; text needs SI/
+  announcements or a commercial extract — not in the open bulk), or (3) a commercial API
+  (`vendor`: North Data / Implisense / Creditreform). Destatis URS holds WZ but is confidential
+  (aggregate only); GLEIF/VIES carry no industry. Always store `industry_source` + `confidence`.
 - **incorporation_date / dissolution_date**: not clean fields; only textual `current_status`.
 - **beneficial ownership** (Transparenzregister): not modeled (access-restricted) — out of scope here.

@@ -48,12 +48,25 @@
     },
     "registered_location": {
       "type": "object",
-      "description": "No NACE/activity code is available in the open dataset.",
+      "description": "Geographic location only. No NACE/activity code is available in the open dataset — see the 'activity' section, which is DERIVED.",
       "properties": {
         "registered_address": {"type": ["string", "null"], "description": "Free-text address (unparsed).", "x-source": "offeneregister_companies", "x-source-path": "registered_address"},
         "municipality": {"type": ["string", "null"], "description": "Seat (Sitz).", "x-source": "offeneregister_companies", "x-source-path": "all_attributes.registered_office"},
         "federal_state": {"type": ["string", "null"], "description": "Bundesland (English in source).", "x-source": "offeneregister_companies", "x-source-path": "all_attributes.federal_state"}
       }
+    },
+    "activity": {
+      "type": ["object", "null"],
+      "description": "PLANNING-ONLY / DERIVED. Industry classification (WZ 2008 = German NACE Rev.2, with an extra 5th digit). NOT present in any open German company dataset — it must be derived (LLM classification of the website or of the Handelsregister 'Gegenstand des Unternehmens' business-purpose text) or bought from a commercial API (North Data, Implisense, Creditreform, etc.). Always record industry_source + confidence because derived codes are not official statistical assignments.",
+      "properties": {
+        "nace_code": {"type": ["string", "null"], "description": "NACE Rev.2 code (e.g. '62.01').", "x-source": "derived | vendor"},
+        "wz_code": {"type": ["string", "null"], "description": "German WZ 2008 code (5-digit; e.g. '62010').", "x-source": "derived | vendor"},
+        "label": {"type": ["string", "null"], "description": "Human-readable activity label."},
+        "industry_source": {"type": ["string", "null"], "enum": ["website_llm", "purpose_text", "vendor", "name_heuristic", null], "description": "How the code was obtained: website_llm = LLM over the company website (best fit for this platform); purpose_text = LLM/classifier over the Handelsregister 'Gegenstand des Unternehmens' (text not in OffeneRegister bulk — needs SI/announcements or a commercial extract); vendor = commercial API; name_heuristic = fallback."},
+        "confidence": {"type": ["number", "null"], "description": "0..1 confidence of the derived classification."},
+        "evidence": {"type": ["string", "null"], "description": "Source text/URL the classification was derived from (e.g. website URL or purpose text)."}
+      },
+      "x-access": "planning-only; derived or paid — no open source provides this"
     },
     "officers": {
       "type": "array",

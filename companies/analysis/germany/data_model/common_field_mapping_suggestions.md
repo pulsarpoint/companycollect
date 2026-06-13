@@ -16,7 +16,7 @@
 | incorporation_date | not_available_in_open_sources | Not a clean field in OffeneRegister. |
 | dissolution_date | not_available_in_open_sources | Infer (unreliably) from status text only. |
 | registered_address | registered_location.registered_address (+ municipality, federal_state) | Address is unparsed free text. |
-| activity_code | not_available_in_open_sources | No NACE/WZ code in the open dataset. |
+| activity_code | activity.nace_code / activity.wz_code (DERIVED) | No NACE/WZ in any open German source. Derive via website-LLM or business-purpose-text classification, or buy from a commercial API. Store `industry_source` + `confidence`. Destatis URS is confidential (aggregate only). |
 | financials | financial_statements[] | **Planning-only** — no open/bulk source; paid API or per-company tool. revenue/net_income present only for medium/large filers. |
 | officers | officers[] | Present in open data (PII; GDPR). |
 | owners | not_available_in_open_sources | Beneficial ownership (Transparenzregister) not modeled here. |
@@ -32,4 +32,7 @@
   must tolerate `revenue`/`net_income` being NULL for the majority (small/micro) of companies.
 - **Currency** must be stored per figure (usually EUR for Germany, but do not hardcode).
 - **Spine staleness**: Germany's open spine is 2017-2019; a cross-country freshness field should mark this.
-- **No activity code** in the German open data — `activity_code` is `not_available_in_open_sources`.
+- **No open activity code** in the German data — `activity_code` must be **derived** (website-LLM or
+  business-purpose-text classification) or bought from a vendor. A cross-country mapper should treat
+  Germany's `activity` as derived/optional and carry an `industry_source` + `confidence` rather than
+  assuming an authoritative code.

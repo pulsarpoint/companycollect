@@ -43,6 +43,14 @@
       "representation_rule": "einzelvertretungsberechtigt"
     }
   ],
+  "activity": {
+    "nace_code": "68.20",
+    "wz_code": "68201",
+    "label": "Vermietung und Verpachtung von eigenen oder geleasten Grundstücken, Gebäuden und Wohnungen",
+    "industry_source": "website_llm",
+    "confidence": 0.82,
+    "evidence": "https://www.beispiel-verwaltung.example/ueber-uns"
+  },
   "related_registrations": [],
   "available_documents": {
     "AD": true, "CD": true, "HD": true, "DK": true, "SI": true, "UT": true, "VÖ": true
