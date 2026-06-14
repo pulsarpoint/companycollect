@@ -1,0 +1,20 @@
+[
+  {
+    "name": "data.egov.bg - Registry Agency Commercial Register publications (CC-BY; resolve resource via portal/api_key)",
+    "slug": "data_egov_commercial_register",
+    "type": "bulk",
+    "url": "https://data.egov.bg/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "Commercial Register public search (single-company; free)",
+    "slug": "commercial_register_search",
+    "type": "bulk",
+    "url": "https://portal.registryagency.bg/CR/en",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
