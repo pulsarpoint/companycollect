@@ -1,0 +1,60 @@
+{
+  "country": "Slovakia",
+  "country_slug": "slovakia",
+  "source_slug": "ruz_financial_reports",
+  "source_identity": "slovakia_ruz_financial_reports",
+  "source_package": "ruzreports",
+  "env_prefix": "RUZ_REPORTS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "RÚZ — financial statements & reports (Open API)",
+    "source_type": "official_registry",
+    "organization": "Register účtovných závierok (Ministry of Finance SR / DataCentrum)",
+    "source_url": "https://www.registeruz.sk/cruz-public/api/",
+    "license": "CC0",
+    "access": "public",
+    "data_freshness": "continuous",
+    "attribution": "Register účtovných závierok (registeruz.sk)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://www.registeruz.sk/cruz-public/api/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "obsah.tabulky",
+    "total_results_path": null,
+    "pagination": { "type": "cursor", "page_param": "pokracovat-za-id", "page_start": null, "page_size": 10000, "page_size_param": "max-zaznamov", "next_page_path": "existujeDalsieId" },
+    "rate_limit": "max-zaznamov<=10000 per page"
+  },
+  "snapshot": { "strategy": "one_json_per_statement_and_report_plus_cached_templates", "file_extension": ".json", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "RuzUctovnyVykaz",
+    "date_formats": ["2006-01-02", "2006-01"],
+    "datetime_formats": [],
+    "number_formats": ["eur_decimal_string"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Walk uctovna-zavierka -> idUctovnychVykazov[] -> uctovny-vykaz. obsah.tabulky[].data[] is POSITIONAL; decode against sablona?id={idSablony} riadky[]. Cache templates. Empty obsah => use prilohy PDF or RPO equities. Values EUR."
+  },
+  "keys": { "primary_keys": ["uctovna_zavierka_id"], "join_keys": ["ico"], "dedupe_keys": ["uctovna_zavierka_id", "uctovny_vykaz_id"] },
+  "mapping_rules": {
+    "financials": "Per statement (year = obdobieDo): decode each table's data[] via the template into labelled line items (assets/liabilities-equity/income statement). currency=EUR.",
+    "fiscal_year": "Year of obdobieDo.",
+    "join": "uctovna-zavierka.idUJ -> uctovna-jednotka.ico -> profile."
+  },
+  "fixture_requirements": [
+    "report with populated obsah tables (template 687 Úč MUJ)",
+    "report with empty obsah + PDF attachment (large filer)",
+    "small/large-entity template (different idSablony)",
+    "statement with multiple report ids"
+  ],
+  "live_test_plan": {
+    "smoke": "Fetch one uctovna-zavierka, then uctovny-vykaz; decode against sablona; assert assets table maps to labelled rows.",
+    "full": "Incremental crawl uctovne-vykazy?zmenene-od; decode with cached templates; join to units by idUJ."
+  },
+  "blockers": ["Positional data[] requires the matching template (sablona) to interpret — template caching is mandatory.", "Some large filers expose only PDF (empty obsah)."]
+}

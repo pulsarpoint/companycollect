@@ -1,0 +1,112 @@
+{
+  "prilohy": [
+    {
+      "id": 7793162,
+      "velkostPrilohy": 1691910,
+      "pocetStran": 0,
+      "jazyk": "SK",
+      "mimeType": "application/pdf",
+      "digest": "155d2d5053e80190dbd86493bb350e5076b59708e3868620b6ce6662736d2e9a",
+      "meno": "Príloha k účtovnej závierke MÚJ.PDF"
+    },
+    {
+      "id": 7793163,
+      "velkostPrilohy": 177566,
+      "pocetStran": 5,
+      "jazyk": "SLK",
+      "mimeType": "application/pdf",
+      "digest": "b06a43d2da33a820bbdb8302eb33afe0df15ccc3210f390603f787d95db102f4",
+      "meno": "MUJ_2121155729_IR_201912-201912_2535453_3595858.pdf"
+    }
+  ],
+  "id": 7221914,
+  "obsah": {
+    "tabulky": [
+      {
+        "nazov": {
+          "sk": "Strana aktív"
+        },
+        "data": [
+          "5000",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "...(truncated)"
+        ]
+      },
+      {
+        "nazov": {
+          "sk": "Strana pasív"
+        },
+        "data": [
+          "5000",
+          "",
+          "5000",
+          "",
+          "5000",
+          "",
+          "5000",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "...(truncated)"
+        ]
+      },
+      {
+        "nazov": {
+          "sk": "Výkaz ziskov a strát"
+        },
+        "data": [
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "...(truncated)"
+        ]
+      }
+    ],
+    "titulnaStrana": {
+      "nazovUctovnejJednotky": "Juraj Kollar s. r. o.",
+      "ico": "52772128",
+      "dic": "2121155729",
+      "adresa": {
+        "ulica": "Černyševského",
+        "cislo": "46",
+        "psc": "85101",
+        "mesto": "Bratislava - Petržalka"
+      },
+      "skNace": "22190",
+      "typZavierky": "Riadna",
+      "obdobieOd": "2019-12",
+      "obdobieDo": "2019-12",
+      "datumSchvalenia": "2020-08-11",
+      "datumZostavenia": "2020-08-11",
+      "oznacenieObchodnehoRegistra": "OR OS Bratislava I, odd.: Sro, vl.čís lo 142237/B"
+    }
+  },
+  "pristupnostDat": "Verejné",
+  "idUctovnejZavierky": 4441347,
+  "kodDanovehoUradu": "100",
+  "idSablony": 687,
+  "zdrojDat": "FRSR",
+  "datumPoslednejUpravy": "2026-05-19",
+  "_note": "Real RÚZ uctovny-vykaz with structured tables (template 687 'Úč MUJ'). data[] truncated for readability; decode against sablona riadky[]."
+}

@@ -1,0 +1,72 @@
+{
+  "country": "Slovakia",
+  "country_slug": "slovakia",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "ico": "31333532",
+    "rpo_entity_id": 937053
+  },
+  "tax_identifiers": {
+    "dic": "2020317068",
+    "vat_id": "SK2020317068"
+  },
+  "legal_identity": {
+    "legal_name": "ESET, spol. s r.o.",
+    "legal_form": "Spoločnosť s ručením obmedzeným",
+    "legal_form_code": "112",
+    "name_history": [
+      { "value": "ESET, spol. s r.o.", "validFrom": "1992-09-17" }
+    ]
+  },
+  "status": {
+    "dissolution_date": null,
+    "active": true
+  },
+  "activity": {
+    "sk_nace": "62090",
+    "main_activity": "Ostatné služby týkajúce sa informačných technológií a počítačov",
+    "business_activities": [
+      "nákup a predaj výpočtovej techniky, elektroniky, kancelárskej techniky a kancelárskych potrieb"
+    ]
+  },
+  "incorporation": {
+    "incorporation_date": "1992-09-17"
+  },
+  "registered_location": {
+    "street": "Einsteinova 24",
+    "city": "Bratislava - mestská časť Petržalka",
+    "postal_code": "85101",
+    "region_code": "SK010",
+    "district_code": "SK0105"
+  },
+  "share_capital": {
+    "amount": 140000.0,
+    "currency": "EUR"
+  },
+  "officers": [
+    { "name": "[REDACTED — personal data; RPO statutoryBodies]", "role": "Konateľ" }
+  ],
+  "owners": [
+    { "name": "[REDACTED — personal data; RPO stakeholders]", "type": "Spoločník v.o.s. / s.r.o.", "contribution": null }
+  ],
+  "financial_statements": [
+    {
+      "fiscal_year": 2024,
+      "balance_date": "2024-12-31",
+      "statement_type": "Riadna",
+      "template_id": null,
+      "line_items": [
+        { "label": "Statement filed as PDF (Vybrané údaje) — large/consolidated filer; structured obsah empty for this unit", "row": null, "value": null }
+      ],
+      "currency": "EUR"
+    }
+  ],
+  "predecessors": [
+    { "ico": "35889691", "name": "COMDOM Software s.r.o." }
+  ],
+  "source_provenance": [
+    { "source_slug": "rpo", "section": "legal_identity/activity/incorporation/registered_location/share_capital/officers/owners/predecessors", "source_url": "https://api.statistics.sk/rpo/v1/entity/937053", "access": "public", "license": "CC-BY 4.0", "retrieved_at": "2026-06-14T00:00:00Z" },
+    { "source_slug": "ruz_accounting_units", "section": "registration/tax_identifiers/status/activity.sk_nace", "source_url": "https://www.registeruz.sk/cruz-public/api/uctovna-jednotka?id=154048", "access": "public", "license": "CC0", "retrieved_at": "2026-06-14T00:00:00Z" },
+    { "source_slug": "ruz_financial_reports", "section": "financial_statements", "source_url": "https://www.registeruz.sk/cruz-public/api/uctovna-zavierka?id=6500234", "access": "public", "license": "CC0", "retrieved_at": "2026-06-14T00:00:00Z" }
+  ]
+}

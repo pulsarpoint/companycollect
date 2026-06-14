@@ -1,0 +1,67 @@
+{
+  "country": "Slovakia",
+  "country_slug": "slovakia",
+  "source_slug": "ruz_accounting_units",
+  "source_identity": "slovakia_ruz_accounting_units",
+  "source_package": "ruzunits",
+  "env_prefix": "RUZ_UNITS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "RÚZ — accounting units (Open API)",
+    "source_type": "official_registry",
+    "organization": "Register účtovných závierok (Ministry of Finance SR / DataCentrum)",
+    "source_url": "https://www.registeruz.sk/cruz-public/api/",
+    "license": "CC0",
+    "access": "public",
+    "data_freshness": "continuous",
+    "attribution": "Register účtovných závierok (registeruz.sk)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://www.registeruz.sk/cruz-public/api/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "id",
+    "total_results_path": null,
+    "pagination": { "type": "cursor", "page_param": "pokracovat-za-id", "page_start": null, "page_size": 10000, "page_size_param": "max-zaznamov", "next_page_path": "existujeDalsieId" },
+    "rate_limit": "max-zaznamov<=10000 per page"
+  },
+  "snapshot": { "strategy": "ndjson_one_unit_per_line", "file_extension": ".ndjson", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "RuzUctovnaJednotka",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Two-step: uctovne-jednotky?zmenene-od=&max-zaznamov=&pokracovat-za-id= -> {id:[...],existujeDalsieId}; then uctovna-jednotka?id= per unit. Decode coded fields (pravnaForma, skNace, kraj, okres) via classifier endpoints. Incremental by zmenene-od."
+  },
+  "keys": { "primary_keys": ["ico"], "join_keys": ["ico", "dic"], "dedupe_keys": ["ico"] },
+  "mapping_rules": {
+    "company_id": "Use ico.",
+    "tax_id": "Use dic.",
+    "vat_id": "Compose SK+dic when VAT-registered.",
+    "legal_name": "Use nazovUJ.",
+    "legal_form": "Decode pravnaForma via pravne-formy.",
+    "incorporation_date": "Use datumZalozenia.",
+    "dissolution_date": "Use datumZrusenia.",
+    "registered_address": "Compose ulica + mesto + psc.",
+    "activity_code": "Use skNace.",
+    "financials_link": "Use idUctovnychZavierok[] -> ruz_financial_reports."
+  },
+  "fixture_requirements": [
+    "active unit with statements (e.g. IČO 31333532)",
+    "dissolved unit (datumZrusenia set)",
+    "consolidated unit (konsolidovana=true)",
+    "unit with no statements"
+  ],
+  "live_test_plan": {
+    "smoke": "uctovne-jednotky?zmenene-od=2026-05-01&max-zaznamov=100 then uctovna-jednotka per id.",
+    "full": "Incremental crawl by zmenene-od with cursor pagination; cache classifiers."
+  },
+  "blockers": []
+}

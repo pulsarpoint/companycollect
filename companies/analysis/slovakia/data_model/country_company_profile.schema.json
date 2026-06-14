@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Slovakia Company Profile",
+  "description": "Country-specific company profile for Slovakia. Best-in-class fully-open: two official free APIs joined on the IČO (8-digit). RPO (Statistics Office, CC-BY 4.0) gives identity, legal form, activities, OFFICERS, SHAREHOLDERS, share capital, predecessors, and name/address history. RÚZ (Register of Financial Statements, CC0) gives the accounting-unit master (IČO, DIČ, address, SK NACE, dates) plus FULL structured financial statements (balance sheet + income statement) decoded via templates. VAT = SK + DIČ. Officers/shareholders/deposits are personal data — redact.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Slovakia" },
+    "country_slug": { "type": "string", "const": "slovakia" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["ico"],
+      "properties": {
+        "ico": {
+          "type": "string",
+          "description": "8-digit IČO. Company id and universal join key (RPO + RÚZ).",
+          "x-source": "ruz_accounting_units",
+          "x-source-path": "ico",
+          "x-join-key": true,
+          "x-access": "public"
+        },
+        "rpo_entity_id": { "type": ["integer", "null"], "description": "Internal RPO entity id.", "x-source": "rpo", "x-source-path": "id" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "dic": { "type": ["string", "null"], "description": "DIČ tax id.", "x-source": "ruz_accounting_units", "x-source-path": "dic" },
+        "vat_id": { "type": ["string", "null"], "description": "SK + DIČ when VAT-registered.", "x-source": "ruz_accounting_units", "x-source-path": "dic" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "description": "Current name.", "x-source": "rpo", "x-source-path": "fullNames[current]" },
+        "legal_form": { "type": ["string", "null"], "description": "Legal form (e.g. s.r.o.).", "x-source": "rpo", "x-source-path": "legalForms[current].value" },
+        "legal_form_code": { "type": ["string", "null"], "x-source": "ruz_accounting_units", "x-source-path": "pravnaForma" },
+        "name_history": { "type": "array", "x-source": "rpo", "x-source-path": "fullNames[]", "items": { "type": "object" } }
+      }
+    },
+    "status": {
+      "type": "object",
+      "description": "No single status flag; derive from dissolution date / legal facts.",
+      "properties": {
+        "dissolution_date": { "type": ["string", "null"], "format": "date", "x-source": "ruz_accounting_units", "x-source-path": "datumZrusenia" },
+        "active": { "type": ["boolean", "null"], "description": "Derived: true when no dissolution date." }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "sk_nace": { "type": ["string", "null"], "x-source": "ruz_accounting_units", "x-source-path": "skNace" },
+        "main_activity": { "type": ["string", "null"], "x-source": "rpo", "x-source-path": "statisticalCodes.mainActivity" },
+        "business_activities": { "type": "array", "description": "Free-text scope of business.", "x-source": "rpo", "x-source-path": "activities[]", "items": { "type": "string" } }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "incorporation_date": { "type": ["string", "null"], "format": "date", "x-source": "rpo", "x-source-path": "establishment" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "x-source": "rpo",
+      "properties": {
+        "street": { "type": ["string", "null"], "x-source-path": "addresses[current].street+buildingNumber" },
+        "city": { "type": ["string", "null"], "x-source-path": "addresses[current].municipality" },
+        "postal_code": { "type": ["string", "null"], "x-source-path": "addresses[current].postalCodes[0]" },
+        "region_code": { "type": ["string", "null"], "x-source": "ruz_accounting_units", "x-source-path": "kraj" },
+        "district_code": { "type": ["string", "null"], "x-source": "ruz_accounting_units", "x-source-path": "okres" }
+      }
+    },
+    "share_capital": {
+      "type": "object",
+      "description": "Registered share capital (RPO equities; EUR).",
+      "x-source": "rpo",
+      "properties": {
+        "amount": { "type": ["number", "null"], "x-source-path": "equities[current].valuePaid" },
+        "currency": { "type": ["string", "null"], "x-source-path": "equities[current].currency.code" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Statutory bodies / directors (RPO). OPEN but PERSONAL DATA (GDPR) — redact name/address.",
+      "x-source": "rpo",
+      "x-access": "public_personal_data",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source-path": "statutoryBodies[].personName", "x-personal-data": true },
+          "role": { "type": ["string", "null"], "x-source-path": "statutoryBodies[].stakeholderType.value" }
+        }
+      }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Shareholders / partners (RPO stakeholders + deposits). OPEN but PERSONAL DATA — redact.",
+      "x-source": "rpo",
+      "x-access": "public_personal_data",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source-path": "stakeholders[].name", "x-personal-data": true },
+          "type": { "type": ["string", "null"], "x-source-path": "stakeholders[].stakeholderType.value" },
+          "contribution": { "type": ["number", "null"], "x-source-path": "deposits[].amount" }
+        }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Structured annual financial statements (RÚZ, CC0): balance sheet (Strana aktív/pasív) + income statement (Výkaz ziskov a strát), decoded from positional data[] via the template. EUR. Multi-year available.",
+      "x-source": "ruz_financial_reports",
+      "items": {
+        "type": "object",
+        "required": ["fiscal_year"],
+        "properties": {
+          "fiscal_year": { "type": "integer", "x-source-path": "uctovna-zavierka.obdobieDo[year]" },
+          "balance_date": { "type": ["string", "null"], "format": "date", "x-source-path": "uctovna-zavierka.datumZostaveniaK" },
+          "statement_type": { "type": ["string", "null"], "x-source-path": "uctovna-zavierka.typ" },
+          "template_id": { "type": ["integer", "null"], "x-source-path": "uctovny-vykaz.idSablony" },
+          "line_items": {
+            "type": "array",
+            "description": "Decoded line items (label, row number, value(s) in EUR).",
+            "items": { "type": "object", "properties": { "label": { "type": "string" }, "row": { "type": ["string", "null"] }, "value": { "type": ["number", "null"] } } }
+          },
+          "currency": { "type": "string", "const": "EUR" }
+        }
+      }
+    },
+    "predecessors": {
+      "type": "array",
+      "description": "Predecessor entities (mergers).",
+      "x-source": "rpo",
+      "items": { "type": "object", "properties": { "ico": { "type": ["string", "null"], "x-source-path": "predecessors[].identifier" }, "name": { "type": ["string", "null"], "x-source-path": "predecessors[].fullName" } } }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

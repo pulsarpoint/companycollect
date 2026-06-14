@@ -1,0 +1,66 @@
+{
+  "country": "Slovakia",
+  "country_slug": "slovakia",
+  "source_slug": "rpo",
+  "source_identity": "slovakia_rpo",
+  "source_package": "rpo",
+  "env_prefix": "RPO",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "RPO — Register právnických osôb (Statistics Office) — REST API",
+    "source_type": "official_registry",
+    "organization": "Štatistický úrad Slovenskej republiky",
+    "source_url": "https://api.statistics.sk/rpo/v1/",
+    "license": "CC-BY 4.0",
+    "access": "public",
+    "data_freshness": "continuous",
+    "attribution": "Štatistický úrad Slovenskej republiky (RPO)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://api.statistics.sk/rpo/v1/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "results",
+    "total_results_path": null,
+    "pagination": { "type": "page_number", "page_param": "page", "page_start": 1, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown (be polite; sequential)"
+  },
+  "snapshot": { "strategy": "one_json_per_entity_by_ico", "file_extension": ".json", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "RpoEntity",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "search?identifier={ICO} -> results[].id, then entity/{id} for full record. Most fields are history arrays with validFrom/validTo: current = no validTo / latest validFrom. v1 deprecated but live; consider RPO V2. License inline."
+  },
+  "keys": { "primary_keys": ["ico"], "join_keys": ["ico"], "dedupe_keys": ["ico"] },
+  "mapping_rules": {
+    "company_id": "Use identifiers[].value (IČO).",
+    "legal_name": "Use current fullNames (no validTo).",
+    "legal_form": "Use current legalForms[].value (code 112 = s.r.o.).",
+    "incorporation_date": "Use establishment.",
+    "registered_address": "Use current addresses[].",
+    "officers": "statutoryBodies[] (PII — redact name/address).",
+    "owners": "stakeholders[] + deposits[] (PII — redact).",
+    "share_capital": "equities[].valuePaid (+ currency).",
+    "activity_code": "statisticalCodes.mainActivity (SK NACE)."
+  },
+  "fixture_requirements": [
+    "s.r.o. with directors + shareholders + equities (e.g. IČO 31333532)",
+    "entity with name/address history (multiple validFrom)",
+    "entity with predecessors (merger)",
+    "entity where shareholder is a legal person not a natural person"
+  ],
+  "live_test_plan": {
+    "smoke": "search?identifier={ICO} then entity/{id}; assert identifiers + legalForms present.",
+    "full": "Enrich the IČO universe (from RÚZ) via RPO; redact PII; cache classifiers."
+  },
+  "blockers": ["Personal data (officers/shareholders/deposits) — GDPR redaction required before persisting.", "v1 deprecated (still live); evaluate RPO V2 for new integrations."]
+}

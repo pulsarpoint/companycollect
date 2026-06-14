@@ -1,0 +1,61 @@
+{
+  "country": "Slovakia",
+  "country_slug": "slovakia",
+  "source_slug": "finstat",
+  "source_identity": "slovakia_finstat",
+  "source_package": "finstat",
+  "env_prefix": "FINSTAT",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "FinStat / commercial aggregators",
+    "source_type": "aggregator",
+    "organization": "FinStat s.r.o. (and similar)",
+    "source_url": "https://www.finstat.sk/api",
+    "license": "commercial / restricted",
+    "access": "paid",
+    "data_freshness": "from RPO/RÚZ",
+    "attribution": "FinStat"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["FINSTAT_API_KEY", "FINSTAT_PRIVATE_KEY"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://www.finstat.sk/api",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per plan"
+  },
+  "snapshot": { "strategy": "not_applicable_paid", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "FinstatCompany",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Aggregates RPO + RÚZ; adds a proprietary rating. Prefer the free official APIs."
+  },
+  "keys": { "primary_keys": ["ico"], "join_keys": ["ico"], "dedupe_keys": ["ico"] },
+  "mapping_rules": {
+    "credit_rating": "Planning-only: optional proprietary rating.",
+    "note": "Do not use as a primary source; RPO + RÚZ are authoritative and free."
+  },
+  "fixture_requirements": ["planning-only: synthetic aggregator record with rating"],
+  "live_test_plan": {
+    "smoke": "Not applicable without a paid API key.",
+    "full": "Not applicable — paid; redistribution restricted."
+  },
+  "blockers": [
+    "Paid API (key + signature); restricted redistribution.",
+    "Adds no authoritative fields over the free RPO + RÚZ (only a proprietary rating)."
+  ]
+}

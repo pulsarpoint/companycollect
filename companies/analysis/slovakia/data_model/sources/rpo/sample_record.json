@@ -1,0 +1,131 @@
+{
+  "id": 937053,
+  "identifiers": [
+    {
+      "value": "31333532",
+      "validFrom": "1992-09-17"
+    }
+  ],
+  "fullNames": [
+    {
+      "value": "ESET, spol. s r.o.",
+      "validFrom": "1992-09-17"
+    }
+  ],
+  "addresses": [
+    {
+      "validFrom": "2009-07-23",
+      "street": "Einsteinova",
+      "regNumber": 0,
+      "buildingNumber": "24",
+      "postalCodes": [
+        "85101"
+      ],
+      "municipality": {
+        "value": "Bratislava"
+      },
+      "country": {
+        "value": "Slovenská republika",
+        "code": "703",
+        "codelistCode": "CL000086"
+      }
+    }
+  ],
+  "legalForms": [
+    {
+      "value": {
+        "value": "Spoločnosť s ručením obmedzeným",
+        "code": "112",
+        "codelistCode": "CL000056"
+      },
+      "validFrom": "1992-09-17"
+    }
+  ],
+  "establishment": "1992-09-17",
+  "activities": [
+    {
+      "economicActivityDescription": "nákup a predaj výpočtovej techniky, elektroniky, kancelárskej techniky a kancelárskych potrieb,",
+      "validFrom": "1992-09-17"
+    },
+    {
+      "economicActivityDescription": "poskytovanie softwaru /predaj hotových programov na základe zmluvy s autormi alebo vyhotovovanie programov na zákazku/,",
+      "validFrom": "1992-09-17"
+    }
+  ],
+  "statutoryBodies": [
+    {
+      "stakeholderType": {
+        "value": "Konateľ",
+        "code": "3",
+        "codelistCode": "CL010113"
+      },
+      "validFrom": "1992-09-17",
+      "personName": "[REDACTED — personal data]",
+      "address": "[REDACTED]"
+    }
+  ],
+  "stakeholders": [
+    {
+      "stakeholderType": {
+        "value": "Spoločník v.o.s. / s.r.o.",
+        "code": "99",
+        "codelistCode": "CL010109"
+      },
+      "validFrom": "2022-02-16",
+      "name": "[REDACTED — personal data]"
+    }
+  ],
+  "equities": [
+    {
+      "validFrom": "2009-07-23",
+      "valuePaid": 140000.0,
+      "currency": {
+        "value": "euro",
+        "code": "EUR",
+        "codelistCode": "CL000083"
+      }
+    },
+    {
+      "validFrom": "2009-07-23",
+      "value": 140000.0,
+      "currency": {
+        "value": "euro",
+        "code": "EUR",
+        "codelistCode": "CL000083"
+      }
+    }
+  ],
+  "sourceRegister": {
+    "value": {
+      "value": "Obchodný register",
+      "code": "1",
+      "codelistCode": "CL010112"
+    },
+    "registrationOffices": [
+      {
+        "value": "Mestský súd Bratislava III",
+        "validFrom": "1992-09-17"
+      }
+    ],
+    "registrationNumbers": [
+      {
+        "value": "Sro/3586/B",
+        "validFrom": "1992-09-17"
+      }
+    ]
+  },
+  "statisticalCodes": {
+    "statCodesActualization": "2026-01-01",
+    "mainActivity": {
+      "value": "Ostatné služby týkajúce sa informačných technológií a počítačov",
+      "code": "6290",
+      "codelistCode": "CL010579"
+    },
+    "esa2010": {
+      "value": "Národné súkromné nefinančné korporácie",
+      "code": "11002",
+      "codelistCode": "CL010010"
+    }
+  },
+  "_note": "Real RPO record for ESET (IČO 31333532). Officer/shareholder personal data REDACTED per GDPR; company-level fields kept."
+}
