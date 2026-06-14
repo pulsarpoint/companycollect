@@ -1,0 +1,57 @@
+{
+  "country": "Serbia",
+  "country_slug": "serbia",
+  "source_slug": "apr_ngo",
+  "source_identity": "serbia_apr_ngo",
+  "source_package": "aprngo",
+  "env_prefix": "APR_NGO",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "APR Registar udruženja, zadužbina i fondacija (NGOs) — Open Data API",
+    "source_type": "official_registry",
+    "organization": "Agencija za privredne registre (APR)",
+    "source_url": "https://openapi.apr.gov.rs/api/opendata/ngo",
+    "license": "public_domain",
+    "access": "public",
+    "data_freshness": "monthly",
+    "attribution": "Agencija za privredne registre (APR) — data.gov.rs"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://openapi.apr.gov.rs/api/opendata/ngo",
+    "download_url": "https://openapi.apr.gov.rs/api/opendata/ngo",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "Podaci",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown (single GET returns the full ~32MB snapshot)"
+  },
+  "snapshot": { "strategy": "full_json_snapshot_keyed_by_datumpreseka", "file_extension": ".json", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "AprNgo",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "{DatumPreseka, Podaci} map keyed by maticni_broj. OblastiOstvarivanjaCiljeva is a nested array (NazivOblastiOstvarivanjaCiljeva + OpisOblastiOstvarivanjaCiljeva). SifraMesta is a place code, not municipality."
+  },
+  "keys": { "primary_keys": ["maticni_broj"], "join_keys": ["maticni_broj"], "dedupe_keys": ["maticni_broj"] },
+  "mapping_rules": {
+    "legal_name": "Use Naziv.",
+    "legal_form": "Use TipLica.",
+    "incorporation_date": "Use DatumOsnivanja.",
+    "activity_code": "Use SifraDelatnosti (KD2010).",
+    "note": "Separate entity type from commercial companies; do not merge into the company profile unless full legal-entity coverage is desired."
+  },
+  "fixture_requirements": ["association (Удружење) with goal areas", "foundation/endowment", "entity with empty OblastiOstvarivanjaCiljeva"],
+  "live_test_plan": {
+    "smoke": "GET endpoint, decode Podaci, sample 50 entries; verify nested goal-area array.",
+    "full": "Stream monthly; store as a separate ngo entity stream."
+  },
+  "blockers": []
+}

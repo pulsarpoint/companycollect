@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Serbia Company Profile",
+  "description": "Country-specific company profile for Serbia. APR (Serbian Business Registers Agency) publishes the company register and the latest annual financial statements as public-domain JSON open-data APIs, both keyed on the matični broj (8-digit registration number) and refreshed monthly. The open feed gives identity, status, legal form, incorporation date, municipality, activity (KD2010), plus a one-year financial summary — but NOT PIB/VAT, street address, directors, shareholders, beneficial owners, sole traders, or multi-year history; those require the paid APR web service. Join companies ↔ financials on matični broj.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Serbia" },
+    "country_slug": { "type": "string", "const": "serbia" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["maticni_broj"],
+      "properties": {
+        "maticni_broj": {
+          "type": "string",
+          "description": "8-digit company registration number. Company id and join key across all APR datasets.",
+          "x-source": "apr_companies",
+          "x-source-path": "Podaci.<maticni_broj>",
+          "x-join-key": true,
+          "x-access": "public"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "description": "PLANNING-ONLY. PIB (tax id / VAT base) is NOT in the open feed — only via the paid APR web service.",
+      "x-access": "paid",
+      "properties": {
+        "pib": { "type": ["string", "null"], "description": "9-digit tax id (planning-only).", "x-source": "apr_webservice", "x-source-path": "pib" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "description": "PoslovnoIme (Latin).", "x-source": "apr_companies", "x-source-path": "PoslovnoIme" },
+        "legal_form": { "type": ["string", "null"], "description": "NazivPravneForme (Cyrillic; DOO, AD, Zadruga, …).", "x-source": "apr_companies", "x-source-path": "NazivPravneForme" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_raw": { "type": ["string", "null"], "description": "NazivStatus (Cyrillic).", "x-source": "apr_companies", "x-source-path": "NazivStatus" },
+        "status": { "type": ["string", "null"], "description": "Mapped: active/bankruptcy/liquidation/compulsory_liquidation.", "enum": ["active", "bankruptcy", "liquidation", "compulsory_liquidation", null] }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "kd2010_code": { "type": ["string", "null"], "description": "SifraDelatnosti (KD2010 ≈ NACE Rev.2).", "x-source": "apr_companies", "x-source-path": "SifraDelatnosti" }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "incorporation_date": { "type": ["string", "null"], "format": "date", "x-source": "apr_companies", "x-source-path": "DatumOsnivanja" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "description": "Only municipality is open — no street address (paid web service).",
+      "properties": {
+        "municipality_code": { "type": ["string", "null"], "x-source": "apr_companies", "x-source-path": "SifraOpstine" },
+        "municipality_name": { "type": ["string", "null"], "description": "Cyrillic.", "x-source": "apr_companies", "x-source-path": "NazivOpstine" },
+        "street_address": { "type": ["string", "null"], "description": "PLANNING-ONLY — not in open data.", "x-source": "apr_webservice", "x-access": "paid" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Latest annual financial statement (RGFI) from the open feed (one year only). Monetary values in THOUSANDS of RSD. Multi-year history is planning-only (paid web service).",
+      "x-source": "apr_financial_statements",
+      "items": {
+        "type": "object",
+        "required": ["fiscal_year"],
+        "properties": {
+          "fiscal_year": { "type": "integer", "x-source-path": "GodinaFi" },
+          "total_assets": { "type": ["integer", "null"], "description": "PoslovnaImovina.", "x-source-path": "PoslovnaImovina" },
+          "capital": { "type": ["integer", "null"], "description": "Kapital.", "x-source-path": "Kapital" },
+          "accumulated_loss": { "type": ["integer", "null"], "description": "Gubitak.", "x-source-path": "Gubitak" },
+          "total_revenue": { "type": ["integer", "null"], "description": "UkupniPrihodi.", "x-source-path": "UkupniPrihodi" },
+          "net_profit": { "type": ["integer", "null"], "description": "NetoDobitak.", "x-source-path": "NetoDobitak" },
+          "net_loss": { "type": ["integer", "null"], "description": "NetoGubitak.", "x-source-path": "NetoGubitak" },
+          "average_employees": { "type": ["integer", "null"], "description": "ProsecanBrojZaposlenih.", "x-source-path": "ProsecanBrojZaposlenih" },
+          "currency": { "type": "string", "const": "RSD" },
+          "unit": { "type": "string", "const": "thousands" }
+        }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Directors/representatives — not in open data (paid APR web service). PERSONAL DATA.",
+      "x-source": "apr_webservice",
+      "x-access": "paid",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "beneficial_owners": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Central Register of Beneficial Owners — not in open data (paid APR web service). PERSONAL DATA.",
+      "x-source": "apr_webservice",
+      "x-access": "paid",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "basis": { "type": ["string", "null"] } } }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

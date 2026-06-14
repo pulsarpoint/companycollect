@@ -1,0 +1,59 @@
+{
+  "country": "Serbia",
+  "country_slug": "serbia",
+  "source_slug": "apr_financial_statements",
+  "source_identity": "serbia_apr_financial_statements",
+  "source_package": "aprfinancials",
+  "env_prefix": "APR_FINANCIALS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "APR Registar finansijskih izveštaja (Financial Statements) — Open Data API",
+    "source_type": "official_registry",
+    "organization": "Agencija za privredne registre (APR)",
+    "source_url": "https://openapi.apr.gov.rs/api/opendata/companies/financial-statements",
+    "license": "public_domain",
+    "access": "public",
+    "data_freshness": "monthly",
+    "attribution": "Agencija za privredne registre (APR) — data.gov.rs"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://openapi.apr.gov.rs/api/opendata/companies/financial-statements",
+    "download_url": "https://openapi.apr.gov.rs/api/opendata/companies/financial-statements",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "Podaci",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown (single GET returns the full ~57MB snapshot)"
+  },
+  "snapshot": { "strategy": "full_json_snapshot_keyed_by_datumpreseka", "file_extension": ".json", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "AprFinancialStatement",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": ["thousands_rsd_integer"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "{DatumPreseka, Podaci} map keyed by maticni_broj. Latest year only (GodinaFi). Monetary fields in thousands of RSD; ProsecanBrojZaposlenih is headcount."
+  },
+  "keys": { "primary_keys": ["maticni_broj"], "join_keys": ["maticni_broj"], "dedupe_keys": ["maticni_broj"] },
+  "mapping_rules": {
+    "financials": "One financial_statements[] entry: year=GodinaFi, total_assets=PoslovnaImovina, capital=Kapital, total_revenue=UkupniPrihodi, net_profit=NetoDobitak, net_loss=NetoGubitak, accumulated_loss=Gubitak, employees=ProsecanBrojZaposlenih. currency=RSD, unit=thousands.",
+    "join": "maticni_broj == apr_companies map key."
+  },
+  "fixture_requirements": [
+    "profitable company (NetoDobitak>0, NetoGubitak=0)",
+    "loss-making company (NetoGubitak>0)",
+    "company with accumulated Gubitak>0",
+    "company present in financials but absent in companies feed"
+  ],
+  "live_test_plan": {
+    "smoke": "GET endpoint, decode Podaci, sample 100 entries; assert numeric fields parse.",
+    "full": "Stream monthly, join to apr_companies on maticni_broj; only latest year available."
+  },
+  "blockers": ["Open feed exposes only the LATEST year — multi-year history needs the paid APR web service."]
+}

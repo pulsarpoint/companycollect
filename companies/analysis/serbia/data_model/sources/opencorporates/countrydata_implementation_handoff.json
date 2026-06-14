@@ -1,0 +1,60 @@
+{
+  "country": "Serbia",
+  "country_slug": "serbia",
+  "source_slug": "opencorporates",
+  "source_identity": "serbia_opencorporates",
+  "source_package": "opencorporates",
+  "env_prefix": "OPENCORPORATES",
+  "implementation_status": "blocked_license",
+  "source": {
+    "source_name": "OpenCorporates — Serbian Business Registrations Agency (register 224)",
+    "source_type": "aggregator",
+    "organization": "OpenCorporates",
+    "source_url": "https://opencorporates.com/registers/224",
+    "license": "restricted (OpenCorporates terms; bulk requires agreement)",
+    "access": "public (search) / restricted (bulk/API)",
+    "data_freshness": "varies",
+    "attribution": "OpenCorporates"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["OPENCORPORATES_API_TOKEN"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://api.opencorporates.com/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "results.companies",
+    "total_results_path": "results.total_count",
+    "pagination": { "type": "page_number", "page_param": "page", "page_start": 1, "page_size": 30, "page_size_param": "per_page", "next_page_path": null },
+    "rate_limit": "API tier dependent"
+  },
+  "snapshot": { "strategy": "not_applicable_restricted", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "OpenCorporatesCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Planning-only. Mirror of APR; bulk/API restricted by terms. Use only for cross-check."
+  },
+  "keys": { "primary_keys": ["company_number"], "join_keys": ["company_number"], "dedupe_keys": ["company_number"] },
+  "mapping_rules": {
+    "cross_check": "Match company_number to APR maticni_broj; do not override authoritative APR fields."
+  },
+  "fixture_requirements": ["planning-only: synthetic OpenCorporates company record"],
+  "live_test_plan": {
+    "smoke": "Not applicable without an API token and license agreement.",
+    "full": "Not applicable — bulk requires an OpenCorporates agreement."
+  },
+  "blockers": [
+    "Bulk/API access restricted by OpenCorporates terms (agreement + paid tier).",
+    "Adds no authoritative fields beyond the primary APR open data."
+  ]
+}

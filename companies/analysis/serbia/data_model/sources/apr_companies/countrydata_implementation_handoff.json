@@ -1,0 +1,69 @@
+{
+  "country": "Serbia",
+  "country_slug": "serbia",
+  "source_slug": "apr_companies",
+  "source_identity": "serbia_apr_companies",
+  "source_package": "aprcompanies",
+  "env_prefix": "APR_COMPANIES",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "APR Registar privrednih društava (Companies) — Open Data API",
+    "source_type": "official_registry",
+    "organization": "Agencija za privredne registre (APR)",
+    "source_url": "https://openapi.apr.gov.rs/api/opendata/companies",
+    "license": "public_domain",
+    "access": "public",
+    "data_freshness": "monthly",
+    "attribution": "Agencija za privredne registre (APR) — data.gov.rs"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://openapi.apr.gov.rs/api/opendata/companies",
+    "download_url": "https://openapi.apr.gov.rs/api/opendata/companies",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "Podaci",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown (single GET returns the full ~57MB snapshot)"
+  },
+  "snapshot": {
+    "strategy": "full_json_snapshot_keyed_by_datumpreseka",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "AprCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Top-level object: {DatumPreseka, Podaci}. Podaci is a map keyed by maticni_broj — stream as a map, do not assume an array. ~57MB; use a streaming JSON decoder over Podaci. Cyrillic in status/legal-form/municipality."
+  },
+  "keys": { "primary_keys": ["maticni_broj"], "join_keys": ["maticni_broj"], "dedupe_keys": ["maticni_broj"] },
+  "mapping_rules": {
+    "company_id": "Use the Podaci map key (maticni_broj).",
+    "registration_number": "Same as company_id.",
+    "legal_name": "Use PoslovnoIme.",
+    "legal_form": "Use NazivPravneForme (Cyrillic).",
+    "status": "Map NazivStatus: Активан->active, У стечају->bankruptcy, У ликвидацији->liquidation, У принудној ликвидацији->compulsory_liquidation.",
+    "incorporation_date": "Use DatumOsnivanja (ISO).",
+    "municipality": "Use NazivOpstine (+ SifraOpstine).",
+    "activity_code": "Use SifraDelatnosti (KD2010)."
+  },
+  "fixture_requirements": [
+    "active DOO with all fields",
+    "company in bankruptcy/liquidation status",
+    "non-DOO legal form (AD, Zadruga, foreign branch)",
+    "record with missing optional fields"
+  ],
+  "live_test_plan": {
+    "smoke": "GET the endpoint, decode {DatumPreseka, Podaci}, sample 100 map entries.",
+    "full": "Stream the full Podaci map monthly, key snapshots by DatumPreseka, upsert by maticni_broj."
+  },
+  "blockers": []
+}
