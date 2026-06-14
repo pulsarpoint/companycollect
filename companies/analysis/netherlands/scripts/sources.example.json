@@ -1,0 +1,32 @@
+[
+  {
+    "name": "KvK Open Data — basis bedrijfsgegevens (anonymised bulk CSV)",
+    "slug": "kvk_open_basis",
+    "type": "bulk",
+    "url": "https://www.kvk.nl/download/kvk-open-dataset-basis-bedrijfsgegevens.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "KvK Open Data — jaarrekeningen (structured XML, part 0)",
+    "slug": "kvk_open_jaarrekeningen0",
+    "type": "bulk",
+    "url": "https://www.kvk.nl/download/kvk-open-data-set-jaarrekeningen0.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "KvK HVDS open-data API — basis bedrijfsgegevens by KvK number (free API key)",
+    "slug": "kvk_hvds_basis",
+    "type": "api_page",
+    "url": "https://opendata.kvk.nl/api/v1/hvds/basisbedrijfsgegevens/kvknummer/69599084",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 0,
+    "max_pages": 0,
+    "_note": "Requires a free KvK API key (apikey header). Rate-limited (HTTP 429) without one. Returns a company's basic data by KvK number; no names/addresses (paid KvK API for those)."
+  }
+]
