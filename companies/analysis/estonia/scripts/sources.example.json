@@ -1,0 +1,56 @@
+[
+  {
+    "name": "e-Business Register — basic company data (CSV)",
+    "slug": "ariregister_lihtandmed_csv",
+    "type": "bulk",
+    "url": "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__lihtandmed.csv.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "e-Business Register — general company data (JSON)",
+    "slug": "ariregister_yldandmed_json",
+    "type": "bulk",
+    "url": "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__yldandmed.json.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "e-Business Register — annual report metadata",
+    "slug": "ariregister_aruannete_yldandmed",
+    "type": "bulk",
+    "url": "https://avaandmed.ariregister.rik.ee/sites/default/files/1.aruannete_yldandmed_kuni_31052026_0.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "e-Business Register — 2024 financial statement line items",
+    "slug": "ariregister_aruannete_elemendid_2024",
+    "type": "bulk",
+    "url": "https://avaandmed.ariregister.rik.ee/sites/default/files/4.2024_aruannete_elemendid_kuni_31052026_0.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "e-Business Register — beneficial owners (kasusaajad)",
+    "slug": "ariregister_kasusaajad_json",
+    "type": "bulk",
+    "url": "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__kasusaajad.json.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "e-Business Register — shareholders (osanikud)",
+    "slug": "ariregister_osanikud_json",
+    "type": "bulk",
+    "url": "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__osanikud.json.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
