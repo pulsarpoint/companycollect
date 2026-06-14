@@ -1,0 +1,50 @@
+{
+  "country": "Netherlands",
+  "country_slug": "netherlands",
+  "source_slug": "data_overheid_nl",
+  "source_name": "data.overheid.nl — national open data portal",
+  "source_type": "open_data_portal",
+  "organization": "Government of the Netherlands (DONL)",
+  "source_url": "https://data.overheid.nl/",
+  "license": "Per dataset (KvK = CC-BY 4.0)",
+  "access": "public",
+  "data_freshness": "varies",
+  "record_shape": "ckan_catalog",
+  "primary_keys": ["dataset_id", "resource_id"],
+  "join_keys": [],
+  "field_count": 2,
+  "fields": [
+    {
+      "path": "result.resources[].url",
+      "source_field": "url",
+      "english_name": "resource_url",
+      "meaning": "Download URL / API endpoint for a KvK open dataset (basis bedrijfsgegevens, jaarrekeningen).",
+      "data_type": "string",
+      "semantic_type": "metadata",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": "Catalog; resolve the kvk.nl / opendata.kvk.nl URLs.",
+      "source_confidence": "high",
+      "analysis_notes": "Use to discover/refresh the KvK open dataset URLs."
+    },
+    {
+      "path": "result.license_id",
+      "source_field": "license_id",
+      "english_name": "license",
+      "meaning": "Per-dataset licence (KvK open datasets = CC-BY 4.0).",
+      "data_type": "string",
+      "semantic_type": "license_or_terms",
+      "example_values": ["http://creativecommons.org/licenses/by/4.0/deed.nl"],
+      "nullable": true,
+      "repeatable": false,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": null,
+      "source_confidence": "high",
+      "analysis_notes": "Confirms CC-BY 4.0."
+    }
+  ]
+}

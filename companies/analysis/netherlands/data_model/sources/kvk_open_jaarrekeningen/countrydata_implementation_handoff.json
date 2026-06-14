@@ -1,0 +1,91 @@
+{
+  "country": "Netherlands",
+  "country_slug": "netherlands",
+  "source_slug": "kvk_open_jaarrekeningen",
+  "source_identity": "netherlands_kvk_open_jaarrekeningen",
+  "source_package": "kvkopenjaarrekeningen",
+  "env_prefix": "NL_KVK_OPEN_JAARREKENINGEN",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "KvK Handelsregister Open Data Set — jaarrekeningen (annual accounts, structured)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Kamer van Koophandel (KvK)",
+    "source_url": "https://www.kvk.nl/producten-bestellen/kvk-jaarrekeningen-open-data-set/",
+    "license": "CC-BY 4.0",
+    "access": "public",
+    "data_freshness": "monthly",
+    "attribution": "Attribute Kamer van Koophandel (KvK) (CC-BY 4.0)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": "https://www.kvk.nl/download",
+    "download_url": "https://www.kvk.nl/download/kvk-open-data-set-jaarrekeningen0.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xml"],
+    "compression": "zip",
+    "encoding": "utf-8",
+    "record_path": "opendata/opendataField",
+    "total_results_path": null,
+    "pagination": {
+      "type": "multi_file_zips",
+      "page_param": null,
+      "page_start": 0,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown",
+    "related_files": [
+      "kvk-open-data-set-jaarrekeningen0.zip",
+      "...jaarrekeningen1.zip",
+      "...jaarrekeningen2.zip",
+      "...jaarrekeningen3.zip",
+      "...jaarrekeningen4.zip",
+      "...jaarrekeningen5.zip"
+    ]
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_zips_then_ndjson_one_report_per_line",
+    "file_extension": ".zip",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "KvkJaarrekening",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["integer_eur"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "xml_namespace": "http://schemas.kvk.nl/xb/query/service/2016/1/0/0",
+    "xml_shape": "nested opendataField key/value pairs"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": [],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "financials": "Parse each XML's nested opendataField key/value tree into a financials[] entry: FinancialYear + balance-sheet (Assets, AssetsCurrent/Noncurrent, Equity, Liabilities + maturity, Provisions, CalledUpShareCapital). Currency EUR. Note BalanceSheetBeforeAfterAppropriationResults.",
+    "fiscal_year": "Use FinancialYear / DocumentAdoptionDate.",
+    "activity_code": "Use SbiBusinessCode.",
+    "company_id": "NOT AVAILABLE in the bulk (anonymised) — link financials to a company only via the HVDS jaarrekeningen API by KvK number."
+  },
+  "fixture_requirements": [
+    "report with full balance sheet (assets/equity/liabilities/provisions)",
+    "abridged micro/small report (limited fields)",
+    "report with negative equity",
+    "malformed/partial XML"
+  ],
+  "live_test_plan": {
+    "smoke": "Download jaarrekeningen0.zip, extract a few XML files, parse the opendataField tree into balance-sheet figures.",
+    "full": "Process all ZIPs (0..5, ~200 MB each) behind env gates; stream/chunk; preserve raw zips. Use the HVDS API for identified per-company financials."
+  },
+  "blockers": [
+    "Bulk is anonymised — no KvK number/name; financials cannot be linked to a named company from the bulk."
+  ]
+}

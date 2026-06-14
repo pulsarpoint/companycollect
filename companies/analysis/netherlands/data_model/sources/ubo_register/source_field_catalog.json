@@ -1,0 +1,50 @@
+{
+  "country": "Netherlands",
+  "country_slug": "netherlands",
+  "source_slug": "ubo_register",
+  "source_name": "UBO-register (beneficial owners) — KvK",
+  "source_type": "beneficial_ownership_register",
+  "organization": "Kamer van Koophandel (KvK)",
+  "source_url": "https://www.kvk.nl/ubo/",
+  "license": "Restricted (AML-obliged entities; post-CJEU)",
+  "access": "restricted",
+  "data_freshness": "continuous",
+  "record_shape": "restricted_register (access-controlled; AML)",
+  "primary_keys": ["kvkNummer"],
+  "join_keys": ["kvkNummer", "rsin"],
+  "field_count": 2,
+  "fields": [
+    {
+      "path": "ubo[].naam",
+      "source_field": "uiteindelijk belanghebbende",
+      "english_name": "beneficial_owner_name",
+      "meaning": "Ultimate beneficial owner (natural person) — planning-only, restricted.",
+      "data_type": "string",
+      "semantic_type": "ownership",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "Dutch",
+      "limitations": "Planning-only. Restricted (AML-obliged entities, post-CJEU). Personal data (GDPR). No values copied.",
+      "source_confidence": "medium",
+      "analysis_notes": "Not open bulk. Join on kvkNummer."
+    },
+    {
+      "path": "ubo[].aardEnOmvang",
+      "source_field": "aard en omvang van het belang",
+      "english_name": "nature_and_extent_of_interest",
+      "meaning": "Nature and extent of the beneficial interest held.",
+      "data_type": "string",
+      "semantic_type": "ownership",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "Dutch",
+      "limitations": "Planning-only; restricted.",
+      "source_confidence": "low",
+      "analysis_notes": "Only if/when lawful (AML) access is obtained."
+    }
+  ]
+}

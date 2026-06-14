@@ -1,0 +1,85 @@
+{
+  "country": "Netherlands",
+  "country_slug": "netherlands",
+  "source_slug": "kvk_handelsregister_api",
+  "source_identity": "netherlands_kvk_handelsregister_api",
+  "source_package": "kvkhrapi",
+  "env_prefix": "NL_KVK_API",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "KvK Handelsregister API (Zoeken / Basisprofiel / Vestigingsprofiel / Naamgeving)",
+    "source_type": "official_registry",
+    "organization": "Kamer van Koophandel (KvK)",
+    "source_url": "https://developers.kvk.nl/",
+    "license": "Commercial / paid (KvK API subscription)",
+    "access": "paid",
+    "data_freshness": "real-time",
+    "attribution": "Attribute Kamer van Koophandel (KvK)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["NL_KVK_API_KEY"]
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://api.kvk.nl/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["apikey"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": "totaal",
+    "pagination": {
+      "type": "page_number",
+      "page_param": "pagina",
+      "page_start": 1,
+      "page_size": 10,
+      "page_size_param": "resultatenPerPagina",
+      "next_page_path": null
+    },
+    "rate_limit": "per subscription"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_company_per_line_when_subscribed",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "KvkBasisprofiel",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["kvkNummer"],
+    "join_keys": ["kvkNummer", "rsin", "vestigingsnummer"],
+    "dedupe_keys": ["kvkNummer"]
+  },
+  "mapping_rules": {
+    "company_id": "Use kvkNummer (8-digit).",
+    "tax_id": "Use rsin (9-digit).",
+    "vat_id": "NL + rsin + B + 2 (legal entities).",
+    "legal_name": "Use naam / handelsnamen.",
+    "company_type": "Use rechtsvorm.",
+    "registered_address": "Use adressen.",
+    "activity_code": "Use sbiActiviteiten.",
+    "officers": "Use functionarissen (Basisprofiel) — PII (GDPR)."
+  },
+  "fixture_requirements": [
+    "planning-only: subscription required; synthetic Basisprofiel response fixture",
+    "search (Zoeken) response with multiple matches",
+    "Vestigingsprofiel response with multiple establishments"
+  ],
+  "live_test_plan": {
+    "smoke": "With a KvK API key, query Zoeken by name then Basisprofiel by kvkNummer; verify the response shape.",
+    "full": "Per-product subscription + rate limits; identified data route. Map KvK number -> company; join open jaarrekeningen via the HVDS API by the same KvK number."
+  },
+  "blockers": [
+    "Paid subscription + API key required.",
+    "Officer data is personal data (GDPR)."
+  ]
+}

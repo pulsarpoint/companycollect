@@ -1,0 +1,91 @@
+{
+  "_note": "Example profile combining a real anonymised KvK basis row (legal form/activity/region) with a real jaarrekening (balance-sheet figures). kvk_nummer/rsin/legal_name/full address/officers are NULL/redacted because the open bulk is anonymised — those come from the free HVDS API (by KvK number) or the paid KvK API. Beneficial owners restricted.",
+  "country": "Netherlands",
+  "country_slug": "netherlands",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "kvk_nummer": null,
+    "rsin": null
+  },
+  "tax_identifiers": {
+    "vat_id": null,
+    "vat_valid": null
+  },
+  "legal_identity": {
+    "legal_name": null,
+    "legal_form": "BV"
+  },
+  "status": {
+    "active": true,
+    "insolvency": null
+  },
+  "activity": {
+    "sbi_main": "64210",
+    "sbi_all": ["64210", "68203"]
+  },
+  "incorporation": {
+    "registration_date": "1972-05-16"
+  },
+  "registered_location": {
+    "postcode_region": "89",
+    "registered_address": null
+  },
+  "officers": [],
+  "beneficial_owners": [],
+  "financial_statements": [
+    {
+      "fiscal_year": 2025,
+      "adoption_date": "2026-06-03",
+      "sbi_business_code": "66120",
+      "total_assets": 428763,
+      "equity": 275698,
+      "liabilities": 153065,
+      "provisions": null,
+      "called_up_share_capital": null,
+      "currency": "EUR",
+      "before_after_appropriation": "Na"
+    }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "kvk_open_basis",
+      "section": "legal_identity.legal_form, status, activity, incorporation, registered_location.postcode_region (anonymised)",
+      "source_url": "https://www.kvk.nl/producten-bestellen/kvk-handelsregister-open-data-set/",
+      "access": "public",
+      "license": "CC-BY 4.0",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "kvk_open_jaarrekeningen",
+      "section": "financial_statements (anonymised; structured XBRL)",
+      "source_url": "https://www.kvk.nl/producten-bestellen/kvk-jaarrekeningen-open-data-set/",
+      "access": "public",
+      "license": "CC-BY 4.0",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "kvk_handelsregister_api",
+      "section": "registration (kvk_nummer/rsin), legal_identity.legal_name, registered_location.registered_address, officers (PAID; identified)",
+      "source_url": "https://developers.kvk.nl/",
+      "access": "paid",
+      "license": "Commercial",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "vies_vat",
+      "section": "tax_identifiers (derive NL+RSIN+B+2)",
+      "source_url": "https://ec.europa.eu/taxation_customs/vies/",
+      "access": "public",
+      "license": "Validation only",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "ubo_register",
+      "section": "beneficial_owners (restricted; AML)",
+      "source_url": "https://www.kvk.nl/ubo/",
+      "access": "restricted",
+      "license": "Restricted (post-CJEU)",
+      "retrieved_at": null
+    }
+  ]
+}

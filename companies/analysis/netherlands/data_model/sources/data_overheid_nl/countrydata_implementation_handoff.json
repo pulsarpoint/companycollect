@@ -1,0 +1,74 @@
+{
+  "country": "Netherlands",
+  "country_slug": "netherlands",
+  "source_slug": "data_overheid_nl",
+  "source_identity": "netherlands_data_overheid_nl",
+  "source_package": "dataoverheidnl",
+  "env_prefix": "NL_DATAOVERHEID",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "data.overheid.nl — national open data portal",
+    "source_type": "open_data_portal",
+    "organization": "Government of the Netherlands (DONL)",
+    "source_url": "https://data.overheid.nl/",
+    "license": "Per dataset (KvK = CC-BY 4.0)",
+    "access": "public",
+    "data_freshness": "varies",
+    "attribution": "Attribute data.overheid.nl / KvK"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://data.overheid.nl/data/api/3/action",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "result.resources",
+    "total_results_path": "result.count",
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "catalog_lookup_to_resolve_resource_urls",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "CkanPackage",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["dataset_id", "resource_id"],
+    "join_keys": [],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "resource_url": "Use package_show for the KvK open datasets to resolve current download/API URLs.",
+    "license": "Confirm CC-BY 4.0."
+  },
+  "fixture_requirements": [
+    "package_show response for kvk-handelsregister-open-dataset-basis-bedrijfsgegevens"
+  ],
+  "live_test_plan": {
+    "smoke": "GET package_show?id=kvk-handelsregister-open-dataset-basis-bedrijfsgegevens; confirm CC-BY 4.0 + resource URLs.",
+    "full": "Resolve both KvK open dataset URLs for refresh; ingest from kvk.nl / opendata.kvk.nl."
+  },
+  "blockers": []
+}

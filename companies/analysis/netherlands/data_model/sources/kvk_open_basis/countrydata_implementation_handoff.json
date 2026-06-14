@@ -1,0 +1,85 @@
+{
+  "country": "Netherlands",
+  "country_slug": "netherlands",
+  "source_slug": "kvk_open_basis",
+  "source_identity": "netherlands_kvk_open_basis",
+  "source_package": "kvkopenbasis",
+  "env_prefix": "NL_KVK_OPEN_BASIS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "KvK Handelsregister Open Data Set — basis bedrijfsgegevens (anonymised)",
+    "source_type": "official_registry",
+    "organization": "Kamer van Koophandel (KvK)",
+    "source_url": "https://www.kvk.nl/producten-bestellen/kvk-handelsregister-open-data-set/",
+    "license": "CC-BY 4.0",
+    "access": "public",
+    "data_freshness": "regular",
+    "attribution": "Attribute Kamer van Koophandel (KvK) (CC-BY 4.0)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://www.kvk.nl/download",
+    "download_url": "https://www.kvk.nl/download/kvk-open-dataset-basis-bedrijfsgegevens.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": "zip",
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_zip_then_ndjson_one_row_per_line",
+    "file_extension": ".csv.zip",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "KvkOpenBasisRow",
+    "date_formats": ["20060102"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "csv_delimiter": ";"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": [],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "company_type": "Use Rechtsvorm (BV/NV/EZ/VOF/Stichting/...).",
+    "status": "Use Actief (J=active); flag Insolventie.",
+    "incorporation_date": "Use Datum aanvang (YYYYMMDD -> ISO).",
+    "activity_code": "Use Hoofdactiviteiten (primary) + SBI activiteiten (all).",
+    "region": "Use Postcode regio (2-digit; no full address in open data).",
+    "company_id": "NOT AVAILABLE in the bulk (anonymised) — KvK-nummer comes from the HVDS/paid API."
+  },
+  "fixture_requirements": [
+    "active BV with multiple SBI codes",
+    "inactive entity (Actief=N)",
+    "entity with an insolvency indicator",
+    "non-BV legal form (EZ/VOF/Stichting)",
+    "malformed individual CSV row"
+  ],
+  "live_test_plan": {
+    "smoke": "Download the basis ZIP, unzip, parse the first rows (UTF-8, ; delimiter). Note: anonymised, no join key.",
+    "full": "Process the full ~1.89M-row CSV behind env gates for statistics; preserve the raw zip. Use the HVDS API for identified per-KvK-number data."
+  },
+  "blockers": [
+    "Bulk is anonymised — no KvK number/name/address; statistical use only."
+  ]
+}
