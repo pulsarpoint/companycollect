@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Sudski registar API - subjekt (needs Ocp-Apim-Subscription-Key after free registration)",
+    "slug": "sudreg_subjekt",
+    "type": "api_page",
+    "url": "https://sudreg-data.gov.hr/api/javni/subjekt",
+    "method": "GET",
+    "headers": { "Accept": "application/json", "Ocp-Apim-Subscription-Key": "REPLACE_WITH_KEY" },
+    "page_param": "offset",
+    "page_start": 0,
+    "max_pages": 1
+  },
+  {
+    "name": "FINA RGFI javna objava (CSV; free FINA login)",
+    "slug": "fina_rgfi_javna_objava",
+    "type": "bulk",
+    "url": "http://rgfi.fina.hr/JavnaObjava-web",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
