@@ -1,0 +1,29 @@
+[
+  {
+    "name": "Justice VR — a.s. actual Praha 2026 (bulk XML, gzip)",
+    "slug": "justice_as_actual_praha_2026",
+    "type": "bulk",
+    "url": "https://dataor.justice.cz/api/file/as-actual-praha-2026.xml.gz",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "Justice VR — s.r.o. actual Praha 2026 (bulk XML, gzip)",
+    "slug": "justice_sro_actual_praha_2026",
+    "type": "bulk",
+    "url": "https://dataor.justice.cz/api/file/sro-actual-praha-2026.xml.gz",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "ARES — single economic subject by IČO",
+    "slug": "ares_subject",
+    "type": "bulk",
+    "url": "https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/27082440",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0
+  }
+]
