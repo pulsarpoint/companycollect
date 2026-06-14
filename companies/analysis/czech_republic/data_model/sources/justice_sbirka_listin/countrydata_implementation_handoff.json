@@ -1,0 +1,80 @@
+{
+  "country": "Czech Republic",
+  "country_slug": "czech_republic",
+  "source_slug": "justice_sbirka_listin",
+  "source_identity": "czech_republic_justice_sbirka_listin",
+  "source_package": "sbirkalistin",
+  "env_prefix": "CZ_SBIRKA_LISTIN",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Sbírka listin — financial statements (účetní závěrka)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Ministerstvo spravedlnosti ČR (Ministry of Justice)",
+    "source_url": "https://or.justice.cz/ias/ui/rejstrik",
+    "license": "Public register documents (free to view; confirm reuse terms)",
+    "access": "public",
+    "data_freshness": "per filing (annual)",
+    "attribution": "Attribute Ministerstvo spravedlnosti ČR"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://or.justice.cz/ias/ui/vypis-sl-firma?subjektId=",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf"],
+    "compression": null,
+    "encoding": "binary",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "store_pdf_plus_parsed_json_when_extracted",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "UcetniZaverka",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["1 234 567,89"],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["ico", "fiscal_year"],
+    "join_keys": ["ico"],
+    "dedupe_keys": ["ico", "fiscal_year"]
+  },
+  "mapping_rules": {
+    "financials": "Map účetní závěrka (rozvaha + výkaz zisku a ztráty) into financials[] per fiscal_year after OCR/parse. Currency CZK.",
+    "documents": "Map výroční zpráva / zpráva auditora into documents[]."
+  },
+  "fixture_requirements": [
+    "synthetic účetní závěrka PDF fixture for the parser (no live scraping in CI)",
+    "garbled-OCR text fixture"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve subjektId for a known IČO and confirm the Sbírka listin document index; do not bulk-download.",
+    "full": "Document fetch + OCR only behind explicit env gates; respect the register and avoid aggressive scraping."
+  },
+  "blockers": [
+    "Document-based scanned/native PDFs — no structured XBRL/CSV; requires OCR/parsing.",
+    "No bulk download endpoint; documents are fetched per company.",
+    "Reuse terms of the documents to be confirmed.",
+    "Filing coverage/recency is uneven across companies."
+  ]
+}

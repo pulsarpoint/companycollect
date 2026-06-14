@@ -1,0 +1,50 @@
+{
+  "country": "Czech Republic",
+  "country_slug": "czech_republic",
+  "source_slug": "ares_opendata_bulk",
+  "source_name": "ARES — open data bulk export (otevřená data)",
+  "source_type": "official_registry",
+  "organization": "Ministerstvo financí ČR (Ministry of Finance)",
+  "source_url": "https://ares.gov.cz/stranky/otevrena-data",
+  "license": "Open data (MF ČR open-data portal; confirm exact terms)",
+  "access": "public",
+  "data_freshness": "periodic bulk refresh",
+  "record_shape": "bulk_export_of_ares_economic_subjects (same fields as the API, full population)",
+  "primary_keys": ["ico"],
+  "join_keys": ["ico"],
+  "field_count": 2,
+  "fields": [
+    {
+      "path": "ico",
+      "source_field": "ico",
+      "english_name": "company_id",
+      "meaning": "IČO; join key. Bulk equivalent of the ARES API record set.",
+      "data_type": "string",
+      "semantic_type": "identifier",
+      "example_values": [],
+      "nullable": false,
+      "repeatable": false,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": "Exact dataset/resource URLs to resolve on the portal (JS-rendered).",
+      "source_confidence": "medium",
+      "analysis_notes": "Use for full-population loads instead of per-IČO API calls."
+    },
+    {
+      "path": "(ares_fields)",
+      "source_field": "(same as ARES API)",
+      "english_name": "ares_record_fields",
+      "meaning": "The bulk export carries the same economic-subject fields as the ARES API (name, legal form, address, status).",
+      "data_type": "object",
+      "semantic_type": "raw_extension",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": false,
+      "code_list": null,
+      "language": "Czech",
+      "limitations": "Catalog the API source (ares_api) for exact field semantics.",
+      "source_confidence": "medium",
+      "analysis_notes": "See ares_api for the per-field catalog."
+    }
+  ]
+}

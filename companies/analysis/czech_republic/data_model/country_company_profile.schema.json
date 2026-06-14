@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Czech Republic Company Profile",
+  "description": "Country-specific company profile for the Czech Republic. Keyed on IČO (8-digit). The ARES API (Ministry of Finance) is the clean aggregated spine (identity, DIČ, legal form, structured RUIAN address, CZ-NACE, per-register status); the Veřejný rejstřík open bulk (dataor.justice.cz) adds the deepest structure (share capital, officers with DOB, shareholders for a.s., boards, insolvency). Financial statements (účetní závěrka) are free but document-based PDF (Sbírka listin) — represented as a section that is structured only after OCR/parsing.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Czech Republic" },
+    "country_slug": { "type": "string", "const": "czech_republic" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["ico"],
+      "properties": {
+        "ico": {
+          "type": "string",
+          "description": "IČO — 8-digit company id (normalize zero-padding across ARES/Justice). Join key.",
+          "x-source": "ares_api",
+          "x-source-path": "ico",
+          "x-join-key": true,
+          "x-freshness": "near_real_time",
+          "x-access": "public"
+        },
+        "court_file_mark": {
+          "type": ["string", "null"],
+          "description": "spisová značka — court file mark (soud/oddil/vlozka).",
+          "x-source": "justice_vr_bulk",
+          "x-source-path": "Udaj[SPIS_ZN].spisZn"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "dic": {
+          "type": ["string", "null"],
+          "description": "DIČ — VAT/tax id (CZ + IČO).",
+          "x-source": "ares_api",
+          "x-source-path": "dic"
+        },
+        "vat_registered": {
+          "type": ["boolean", "null"],
+          "description": "VAT registration (from seznamRegistraci.stavZdrojeDph / VIES).",
+          "x-source": "ares_api",
+          "x-source-path": "seznamRegistraci.stavZdrojeDph"
+        },
+        "unreliable_vat_payer": {
+          "type": ["boolean", "null"],
+          "description": "Czech 'nespolehlivý plátce' risk flag.",
+          "x-source": "vat_register",
+          "x-source-path": "nespolehlivy_platce"
+        }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": {
+          "type": "string",
+          "description": "Current registered name.",
+          "x-source": "ares_api",
+          "x-source-path": "obchodniJmeno"
+        },
+        "legal_form_code": {
+          "type": ["string", "null"],
+          "description": "Legal-form code (codebook).",
+          "x-source": "ares_api",
+          "x-source-path": "pravniForma"
+        },
+        "legal_form_name": {
+          "type": ["string", "null"],
+          "description": "Legal-form name (e.g. Akciová společnost).",
+          "x-source": "justice_vr_bulk",
+          "x-source-path": "Udaj[PRAVNI_FORMA].pravniForma.nazev"
+        }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string",
+          "description": "Derived: active / dissolved / in_liquidation / in_insolvency.",
+          "x-source": "ares_api",
+          "x-source-path": "seznamRegistraci.stavZdrojeVr + datumZaniku"
+        }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "cz_nace": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "CZ-NACE activity codes.",
+          "x-source": "ares_api",
+          "x-source-path": "czNace2008"
+        },
+        "primary_cz_nace": {
+          "type": ["string", "null"],
+          "description": "Primary CZ-NACE (flagged in ČSÚ RES).",
+          "x-source": "csu_res",
+          "x-source-path": "cz_nace"
+        },
+        "scope_of_business": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Free-text objects of business.",
+          "x-source": "justice_vr_bulk",
+          "x-source-path": "Udaj[PREDMET_PODNIKANI]"
+        }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "incorporation_date": {
+          "type": ["string", "null"],
+          "format": "date",
+          "x-source": "ares_api",
+          "x-source-path": "datumVzniku"
+        },
+        "dissolution_date": {
+          "type": ["string", "null"],
+          "format": "date",
+          "x-source": "ares_api",
+          "x-source-path": "datumZaniku"
+        }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "ares_api", "x-source-path": "sidlo.textovaAdresa" },
+        "municipality": { "type": ["string", "null"], "x-source": "ares_api", "x-source-path": "sidlo.nazevObce" },
+        "region": { "type": ["string", "null"], "description": "kraj (NUTS3)", "x-source": "ares_api", "x-source-path": "sidlo.nazevKraje" },
+        "ruian_address_code": { "type": ["integer", "null"], "x-source": "ares_api", "x-source-path": "sidlo.kodAdresnihoMista" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "properties": {
+        "share_capital_czk": {
+          "type": ["number", "null"],
+          "description": "Registered/share capital in CZK.",
+          "x-source": "justice_vr_bulk",
+          "x-source-path": "Udaj[ZAKLADNI_KAPITAL]"
+        },
+        "capital_paid_pct": {
+          "type": ["number", "null"],
+          "x-source": "justice_vr_bulk",
+          "x-source-path": "Udaj[ZAKLADNI_KAPITAL].splaceni"
+        }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Board + supervisory-board members. PERSONAL DATA incl. date of birth (GDPR).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "justice_vr_bulk", "x-source-path": "Udaj[STATUTARNI_ORGAN_CLEN].osoba", "x-personal-data": true },
+          "role": { "type": "string", "x-source": "justice_vr_bulk", "x-source-path": "Udaj[*].funkce" },
+          "board": { "type": "string", "description": "statutory | supervisory" },
+          "date_of_birth": { "type": ["string", "null"], "x-personal-data": true },
+          "member_since": { "type": ["string", "null"], "format": "date" }
+        }
+      }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Shareholders (AKCIONAR, a.s.) / members (SPOLECNIK, s.r.o.) as recorded in the register. May be personal data (GDPR).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "justice_vr_bulk", "x-source-path": "Udaj[AKCIONAR]" },
+          "kind": { "type": "string", "description": "shareholder | member" }
+        }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Účetní závěrka from the Sbírka listin. FREE but document-based PDF — structured only after OCR/parsing. Currency CZK.",
+      "x-access": "public_document_pdf",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": "string", "x-source": "justice_sbirka_listin", "x-source-path": "ucetni_zaverka.fiscal_year" },
+          "balance_sheet": { "type": ["object", "null"], "x-source": "justice_sbirka_listin", "x-source-path": "ucetni_zaverka.rozvaha" },
+          "income_statement": { "type": ["object", "null"], "x-source": "justice_sbirka_listin", "x-source-path": "ucetni_zaverka.vykaz_zisku_a_ztraty" },
+          "currency": { "type": "string", "const": "CZK" },
+          "source_document": { "type": ["string", "null"], "description": "PDF reference in Sbírka listin" }
+        }
+      }
+    },
+    "documents": {
+      "type": "array",
+      "description": "Other filed documents (výroční zpráva, zpráva auditora) from the Sbírka listin.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string" },
+          "fiscal_year": { "type": ["string", "null"] },
+          "source_document": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

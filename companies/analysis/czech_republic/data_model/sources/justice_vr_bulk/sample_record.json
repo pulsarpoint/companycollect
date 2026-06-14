@@ -1,0 +1,94 @@
+{
+  "_note": "Real record from dataor.justice.cz as-actual-praha-2026 (CR Holding a.s.). Original Czech field/kod names preserved. Natural-person officer name + date of birth REDACTED to placeholders for the committed sample (GDPR); they are present in the source.",
+  "nazev": "CR Holding a.s.",
+  "ico": "3431509",
+  "zapisDatum": "2014-09-24",
+  "udaje": [
+    {
+      "udajTyp": {
+        "kod": "ZAKLADNI_KAPITAL"
+      },
+      "hodnotaUdaje": {
+        "vklad": {
+          "typ": "KORUNY",
+          "textValue": "183800000"
+        },
+        "splaceni": {
+          "typ": "PROCENTA",
+          "textValue": "100"
+        }
+      }
+    },
+    {
+      "udajTyp": {
+        "kod": "PRAVNI_FORMA"
+      },
+      "hodnotaText": "as",
+      "pravniForma": {
+        "kod": "as",
+        "nazev": "Akciová společnost",
+        "zkratka": "as"
+      }
+    },
+    {
+      "udajTyp": {
+        "kod": "SIDLO"
+      },
+      "adresa": {
+        "statNazev": "Česká republika",
+        "obec": "Praha",
+        "castObce": "Nové Město",
+        "ulice": "Washingtonova",
+        "cisloPo": "1624",
+        "cisloOr": "5",
+        "psc": "11000",
+        "okres": "Hlavní město Praha"
+      }
+    },
+    {
+      "udajTyp": {
+        "kod": "ICO"
+      },
+      "hodnotaText": "3431509"
+    },
+    {
+      "udajTyp": {
+        "kod": "SPIS_ZN"
+      },
+      "hodnotaText": "B 20032/MSPH",
+      "spisZn": {
+        "soud": {
+          "kod": "MSPH",
+          "nazev": "Městský soud v Praze"
+        },
+        "oddil": "B",
+        "vlozka": "20032"
+      }
+    },
+    {
+      "udajTyp": {
+        "kod": "PREDMET_PODNIKANI"
+      },
+      "podudaje": [
+        {
+          "udajTyp": {
+            "kod": "PREDMET_PODNIKANI"
+          },
+          "hodnotaText": "Pronájem nemovitostí, bytů a prostor sloužících k podnikání."
+        }
+      ]
+    },
+    {
+      "udajTyp": {
+        "kod": "STATUTARNI_ORGAN_CLEN"
+      },
+      "funkce": "předseda správní rady",
+      "clenstviOd": "2025-06-16",
+      "osoba": {
+        "jmeno": "<REDACTED>",
+        "prijmeni": "<REDACTED>",
+        "narozDatum": "<REDACTED-DOB>"
+      }
+    }
+  ]
+}

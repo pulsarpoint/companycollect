@@ -1,0 +1,77 @@
+{
+  "country": "Czech Republic",
+  "country_slug": "czech_republic",
+  "source_slug": "nkod_portal",
+  "source_identity": "czech_republic_nkod_portal",
+  "source_package": "nkodportal",
+  "env_prefix": "CZ_NKOD",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Národní katalog otevřených dat (NKOD) / data.gov.cz",
+    "source_type": "open_data_portal",
+    "organization": "Ministerstvo vnitra ČR / Digitální a informační agentura",
+    "source_url": "https://data.gov.cz/",
+    "license": "Per dataset",
+    "access": "public",
+    "data_freshness": "varies",
+    "attribution": "Attribute data.gov.cz"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://data.gov.cz/sparql",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["dcat", "json", "csv", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "catalog_lookup_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "DcatDataset",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["dataset_iri"],
+    "join_keys": [],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "resource_url": "Use distribution.downloadURL to populate bulk download_url of ares_opendata_bulk / csu_res.",
+    "license": "Use distribution.license to confirm reuse terms for the company datasets."
+  },
+  "fixture_requirements": [
+    "DCAT dataset entry for ARES / Justice VR with distribution + license"
+  ],
+  "live_test_plan": {
+    "smoke": "Query the SPARQL/DCAT endpoint for the ARES and Justice VR datasets; capture distribution URLs + licences.",
+    "full": "Not a bulk source itself; used only to drive other sources."
+  },
+  "blockers": [
+    "Discovery/metadata only — not company data.",
+    "Exact SPARQL/DCAT query shape to confirm."
+  ]
+}

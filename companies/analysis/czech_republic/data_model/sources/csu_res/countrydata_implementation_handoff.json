@@ -1,0 +1,76 @@
+{
+  "country": "Czech Republic",
+  "country_slug": "czech_republic",
+  "source_slug": "csu_res",
+  "source_identity": "czech_republic_csu_res",
+  "source_package": "csures",
+  "env_prefix": "CZ_CSU_RES",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "RES — Registr ekonomických subjektů (ČSÚ)",
+    "source_type": "statistical_business_register",
+    "organization": "Český statistický úřad (ČSÚ)",
+    "source_url": "https://www.czso.cz/csu/res/registr_ekonomickych_subjektu",
+    "license": "Open data (ČSÚ)",
+    "access": "public",
+    "data_freshness": "regular",
+    "attribution": "Attribute ČSÚ"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.czso.cz/csu/res/registr_ekonomickych_subjektu",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "csv_passthrough_then_ndjson",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "CsuResRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["ico"],
+    "join_keys": ["ico"],
+    "dedupe_keys": ["ico"]
+  },
+  "mapping_rules": {
+    "activity_code": "Use CZ-NACE primary activity to set the primary activity over ARES's unordered list.",
+    "employment": "Use the employee-size band (no exact count available)."
+  },
+  "fixture_requirements": [
+    "record with primary CZ-NACE + institutional sector + size band"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve the exact RES open-data resource URL via the ČSÚ page / NKOD and load a bounded sample.",
+    "full": "Load the full RES open dataset behind env gates."
+  },
+  "blockers": [
+    "Exact open-data resource URL/format not resolved during discovery — resolve via the ČSÚ page or NKOD."
+  ]
+}

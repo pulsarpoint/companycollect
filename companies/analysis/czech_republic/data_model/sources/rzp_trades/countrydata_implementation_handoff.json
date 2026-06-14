@@ -1,0 +1,78 @@
+{
+  "country": "Czech Republic",
+  "country_slug": "czech_republic",
+  "source_slug": "rzp_trades",
+  "source_identity": "czech_republic_rzp_trades",
+  "source_package": "rzptrades",
+  "env_prefix": "CZ_RZP",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "RŽP — Živnostenský rejstřík (trade licensing register)",
+    "source_type": "official_registry",
+    "organization": "Ministerstvo průmyslu a obchodu ČR (MPO)",
+    "source_url": "https://www.rzp.cz/",
+    "license": "Open/public (confirm terms)",
+    "access": "public",
+    "data_freshness": "regular",
+    "attribution": "Attribute MPO / RŽP"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.rzp.cz/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "enrichment_lookup_only",
+    "file_extension": ".xml",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "RzpTrade",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["ico"],
+    "join_keys": ["ico"],
+    "dedupe_keys": ["ico"]
+  },
+  "mapping_rules": {
+    "activity": "Use živnosti (trade licences) for licence/activity detail; covers OSVČ not in the Veřejný rejstřík.",
+    "officers": "Map odpovědný zástupce (responsible representative) where present — PII (GDPR)."
+  },
+  "fixture_requirements": [
+    "trader with multiple trade licences",
+    "OSVČ sole-trader record"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve the RŽP query/export interface for one IČO; confirm licence list.",
+    "full": "Bulk/enumeration only if an open export exists; otherwise per-IČO enrichment behind env gates."
+  },
+  "blockers": [
+    "Exact machine/export interface not resolved during discovery (rzp.cz query forms).",
+    "Responsible-representative records are personal data (GDPR)."
+  ]
+}

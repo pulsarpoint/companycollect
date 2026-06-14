@@ -1,0 +1,79 @@
+{
+  "country": "Czech Republic",
+  "country_slug": "czech_republic",
+  "source_slug": "vat_register",
+  "source_identity": "czech_republic_vat_register",
+  "source_package": "vatregister",
+  "env_prefix": "CZ_VAT",
+  "implementation_status": "sample_only",
+  "source": {
+    "source_name": "Registr plátců DPH / VAT payer register (Finanční správa + VIES)",
+    "source_type": "official_tax",
+    "organization": "Finanční správa ČR / EU VIES",
+    "source_url": "https://adisspr.mfcr.cz/dpr/DphReg",
+    "license": "Validation only (not redistributable as a list)",
+    "access": "public",
+    "data_freshness": "real-time",
+    "attribution": "Finanční správa ČR / EU VIES"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://adisspr.mfcr.cz/dpr/DphReg",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "soap", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "throttled; per-DIČ validation only"
+  },
+  "snapshot": {
+    "strategy": "enrichment_lookup_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "DphRegValidation",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": ["ico", "dic"],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "tax_id": "Confirm/derive DIČ (CZ + IČO).",
+    "vat_id": "Confirm VAT registration (vat_status).",
+    "risk_flags": "Capture nespolehlivý plátce (unreliable payer) as a risk signal."
+  },
+  "fixture_requirements": [
+    "valid CZ DIČ validation",
+    "unreliable-payer flagged record"
+  ],
+  "live_test_plan": {
+    "smoke": "Validate one known DIČ; respect rate limits.",
+    "full": "Per-company enrichment only; never bulk-enumerate (not a list)."
+  },
+  "blockers": [
+    "Validation only — does not enumerate companies; not redistributable as a list.",
+    "Exact machine endpoint/format to confirm (DphReg HTML/SOAP)."
+  ]
+}

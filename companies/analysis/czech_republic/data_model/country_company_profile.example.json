@@ -1,0 +1,101 @@
+{
+  "_note": "Example profile combining real ARES API values (Alza.cz a.s., IČO 27082440) with the Justice VR structure illustrated by CR Holding a.s. Officer/owner identities are placeholders (GDPR); financial_statements shown empty (PDF, requires OCR).",
+  "country": "Czech Republic",
+  "country_slug": "czech_republic",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "ico": "27082440",
+    "court_file_mark": "B 20032/MSPH"
+  },
+  "tax_identifiers": {
+    "dic": "CZ27082440",
+    "vat_registered": true,
+    "unreliable_vat_payer": false
+  },
+  "legal_identity": {
+    "legal_name": "Alza.cz a.s.",
+    "legal_form_code": "121",
+    "legal_form_name": "Akciová společnost"
+  },
+  "status": {
+    "value": "active"
+  },
+  "activity": {
+    "cz_nace": ["532", "26110", "26300", "46900", "47911", "620"],
+    "primary_cz_nace": "47911",
+    "scope_of_business": ["Výroba, obchod a služby neuvedené v přílohách 1 až 3 živnostenského zákona"]
+  },
+  "incorporation": {
+    "incorporation_date": "2003-08-26",
+    "dissolution_date": null
+  },
+  "registered_location": {
+    "registered_address": "Jankovcova 1522/53, Holešovice, 17000 Praha 7",
+    "municipality": "Praha",
+    "region": "Hlavní město Praha",
+    "ruian_address_code": 25958895
+  },
+  "capital": {
+    "share_capital_czk": 183800000,
+    "capital_paid_pct": 100
+  },
+  "officers": [
+    {
+      "name": "<REDACTED>",
+      "role": "předseda správní rady",
+      "board": "statutory",
+      "date_of_birth": "<REDACTED-DOB>",
+      "member_since": "2025-06-16"
+    }
+  ],
+  "owners": [
+    {
+      "name": "<REDACTED>",
+      "kind": "shareholder"
+    }
+  ],
+  "financial_statements": [],
+  "documents": [],
+  "source_provenance": [
+    {
+      "source_slug": "ares_api",
+      "section": "registration.ico, tax_identifiers, legal_identity, status, activity.cz_nace, incorporation, registered_location",
+      "source_url": "https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/27082440",
+      "access": "public",
+      "license": "Open data (confirm exact terms)",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "justice_vr_bulk",
+      "section": "registration.court_file_mark, legal_identity.legal_form_name, capital, officers, owners, activity.scope_of_business",
+      "source_url": "https://dataor.justice.cz/api/file/as-actual-praha-2026.xml.gz",
+      "access": "public",
+      "license": "Open data (CKAN; license field empty — confirm)",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "csu_res",
+      "section": "activity.primary_cz_nace",
+      "source_url": "https://www.czso.cz/csu/res/registr_ekonomickych_subjektu",
+      "access": "public",
+      "license": "Open data (ČSÚ)",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "vat_register",
+      "section": "tax_identifiers.unreliable_vat_payer",
+      "source_url": "https://adisspr.mfcr.cz/dpr/DphReg",
+      "access": "public",
+      "license": "Validation only",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "justice_sbirka_listin",
+      "section": "financial_statements, documents (document-based PDF; empty here)",
+      "source_url": "https://or.justice.cz/ias/ui/rejstrik",
+      "access": "public",
+      "license": "Public documents (free to view)",
+      "retrieved_at": null
+    }
+  ]
+}

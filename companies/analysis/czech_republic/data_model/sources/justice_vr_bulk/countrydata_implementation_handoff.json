@@ -1,0 +1,90 @@
+{
+  "country": "Czech Republic",
+  "country_slug": "czech_republic",
+  "source_slug": "justice_vr_bulk",
+  "source_identity": "czech_republic_justice_vr_bulk",
+  "source_package": "justicevr",
+  "env_prefix": "CZ_JUSTICE_VR",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Veřejný rejstřík — Justice open data (dataor.justice.cz)",
+    "source_type": "official_registry",
+    "organization": "Ministerstvo spravedlnosti ČR (Ministry of Justice)",
+    "source_url": "https://dataor.justice.cz/",
+    "license": "Open data (CKAN; license field empty — confirm exact terms)",
+    "access": "public",
+    "data_freshness": "monthly full + frequent incremental",
+    "attribution": "Attribute Ministerstvo spravedlnosti ČR / dataor.justice.cz"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "xml_file",
+    "base_url": "https://dataor.justice.cz/api/3/action",
+    "download_url": "https://dataor.justice.cz/api/file/{package}.xml.gz",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xml", "csv"],
+    "compression": "gzip",
+    "encoding": "utf-8",
+    "record_path": "xml/Subjekt",
+    "total_results_path": null,
+    "pagination": {
+      "type": "package_enumeration",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_gzip_then_ndjson_one_subjekt_per_line",
+    "file_extension": ".xml.gz",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "JusticeSubjekt",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["ico"],
+    "join_keys": ["ico"],
+    "dedupe_keys": ["ico"]
+  },
+  "mapping_rules": {
+    "company_id": "Use Subjekt.ico; LEFT-PAD to 8 digits before joining with ARES.",
+    "legal_name": "Use Subjekt.nazev (or Udaj[NAZEV]).",
+    "company_type": "Use Udaj[PRAVNI_FORMA].pravniForma.nazev (also encoded in the package name).",
+    "incorporation_date": "Use Subjekt.zapisDatum.",
+    "registered_address": "Use Udaj[SIDLO].adresa (obec/castObce/ulice/cisloPo/cisloOr/psc/okres).",
+    "share_capital": "Use Udaj[ZAKLADNI_KAPITAL] vklad (CZK) + splaceni (% paid).",
+    "activity": "Use Udaj[PREDMET_PODNIKANI]/[PREDMET_CINNOSTI] (free text; take NACE codes from ARES).",
+    "officers": "Use Udaj[STATUTARNI_ORGAN_CLEN] + [DOZORCI_RADA_CLEN] osoba — PERSONAL DATA incl. DOB (GDPR).",
+    "owners": "Use Udaj[AKCIONAR] (a.s.) / [SPOLECNIK] (s.r.o.) — may be personal data (GDPR).",
+    "status": "Derive from presence of LIKVIDATOR / INSOLVENCE and (via ARES) datumZaniku."
+  },
+  "fixture_requirements": [
+    "active a.s. with board, supervisory board, share capital, shareholder (e.g. CR Holding a.s.)",
+    "s.r.o. record with SPOLECNIK members",
+    "entity in liquidation (LIKVIDATOR) / insolvency (INSOLVENCE)",
+    "malformed/partial <Subjekt> element",
+    "officer record with date of birth (PII) to exercise redaction/retention handling"
+  ],
+  "live_test_plan": {
+    "smoke": "package_show for one {form}-actual-{court}-{year}; download its .xml.gz with redirect-following (-L) and stream-parse the first few <Subjekt> elements.",
+    "full": "Enumerate all {form}-actual-{court}-{year} packages and stream-parse behind env gates; preserve raw gzip snapshots."
+  },
+  "blockers": [
+    "CKAN package license field empty — confirm exact reuse terms with the Ministry of Justice before redistribution.",
+    "File URLs 302-redirect — the HTTP client must follow redirects.",
+    "Officer/shareholder records contain date of birth — GDPR personal data; lawful basis + retention required."
+  ]
+}

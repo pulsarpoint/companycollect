@@ -1,0 +1,85 @@
+{
+  "country": "Czech Republic",
+  "country_slug": "czech_republic",
+  "source_slug": "ares_api",
+  "source_identity": "czech_republic_ares_api",
+  "source_package": "aresapi",
+  "env_prefix": "CZ_ARES",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "ARES — Administrativní registr ekonomických subjektů (REST API)",
+    "source_type": "official_registry",
+    "organization": "Ministerstvo financí ČR (Ministry of Finance)",
+    "source_url": "https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty",
+    "license": "Open data (otevřená data; confirm exact terms)",
+    "access": "public",
+    "data_freshness": "near real-time",
+    "attribution": "Attribute ARES / MF ČR"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Content-Type: application/json", "Accept: application/json"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "ekonomickeSubjekty",
+    "total_results_path": "pocetCelkem",
+    "pagination": {
+      "type": "offset",
+      "page_param": "start",
+      "page_start": 0,
+      "page_size": 100,
+      "page_size_param": "pocet",
+      "next_page_path": null
+    },
+    "rate_limit": "tens of thousands of queries/day; can be blocked"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "AresEkonomickySubjekt",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["ico"],
+    "join_keys": ["ico"],
+    "dedupe_keys": ["ico"]
+  },
+  "mapping_rules": {
+    "company_id": "Use ico (8-digit; already padded by ARES).",
+    "tax_id": "Use dic (CZ + IČO).",
+    "vat_id": "Use dic; confirm VAT registration via seznamRegistraci.stavZdrojeDph / VIES.",
+    "legal_name": "Use obchodniJmeno.",
+    "company_type": "Resolve pravniForma code via the legal-form codebook.",
+    "status": "Derive from seznamRegistraci.stavZdrojeVr/Res + datumZaniku.",
+    "incorporation_date": "Use datumVzniku.",
+    "dissolution_date": "Use datumZaniku when present.",
+    "registered_address": "Use sidlo.textovaAdresa; municipality = sidlo.nazevObce; region = sidlo.nazevKraje.",
+    "activity_code": "Use czNace2008 (CZ-NACE)."
+  },
+  "fixture_requirements": [
+    "active a.s. with DIČ and CZ-NACE (e.g. Alza.cz a.s.)",
+    "public-body record without DIČ history (e.g. ministry)",
+    "dissolved entity with datumZaniku",
+    "search envelope page with pocetCelkem > pocet"
+  ],
+  "live_test_plan": {
+    "smoke": "GET /{ico} for a known IČO; POST /vyhledat with a small pocet and verify pocetCelkem paging.",
+    "full": "Iterate /vyhledat pages behind env gates; respect the daily rate limit (prefer the bulk export for full population)."
+  },
+  "blockers": []
+}
