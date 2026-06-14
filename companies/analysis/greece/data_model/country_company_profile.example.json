@@ -1,0 +1,73 @@
+{
+  "_note": "SCHEMATIC illustrative profile — placeholder values, not a real company. No per-company open record was lawfully downloadable (GEMI reCAPTCHA-protected; AADE needs credentials). Financials/officers are planning-only and shown empty/redacted.",
+  "country": "Greece",
+  "country_slug": "greece",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "gemi_number": "123456789000"
+  },
+  "tax_identifiers": {
+    "afm": "123456789",
+    "vat_id": "EL123456789",
+    "vat_valid": true
+  },
+  "legal_identity": {
+    "legal_name": "ΠΑΡΑΔΕΙΓΜΑ ΑΝΩΝΥΜΗ ΕΤΑΙΡΕΙΑ (PARADEIGMA SA)",
+    "legal_form": "ΑΕ (Anonymi Etaireia / SA)"
+  },
+  "status": {
+    "value": "ΕΝΕΡΓΗ (active)",
+    "tax_status": null
+  },
+  "activity": {
+    "kad": ["62010"],
+    "kad_primary": "62010"
+  },
+  "incorporation": {
+    "incorporation_date": "2010-05-12"
+  },
+  "registered_location": {
+    "registered_address": "Leoforos Kifisias 1, 11523 Athina",
+    "municipality": "Athina",
+    "region": "Attiki"
+  },
+  "officers": [
+    { "name": "<REDACTED>", "role": "Diefthynon Symvoulos (CEO)" }
+  ],
+  "financial_statements": [],
+  "public_sector_links": [],
+  "source_provenance": [
+    {
+      "source_slug": "gemi_portal",
+      "section": "registration, tax_identifiers.afm, legal_identity, status.value, activity.kad, incorporation, registered_location, officers",
+      "source_url": "https://publicity.businessportal.gr/",
+      "access": "public_manual",
+      "license": "Public register (reuse terms unclear)",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "vies_vat",
+      "section": "tax_identifiers.vat_id, vat_valid",
+      "source_url": "https://ec.europa.eu/taxation_customs/vies/",
+      "access": "public",
+      "license": "Validation only",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "aade_rgwspublic",
+      "section": "status.tax_status, activity.kad_primary (planning-only, credentialed)",
+      "source_url": "https://www1.aade.gr/webtax2/wsgsis/RgWsPublic/RgWsPublicPort",
+      "access": "restricted",
+      "license": "Restricted (credentials)",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "gemi_financial_statements",
+      "section": "financial_statements (planning-only, PDF)",
+      "source_url": "https://publicity.businessportal.gr/",
+      "access": "public_document_pdf",
+      "license": "Public documents",
+      "retrieved_at": null
+    }
+  ]
+}

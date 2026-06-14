@@ -1,0 +1,82 @@
+{
+  "country": "Greece",
+  "country_slug": "greece",
+  "source_slug": "aade_rgwspublic",
+  "source_identity": "greece_aade_rgwspublic",
+  "source_package": "aaderg",
+  "env_prefix": "GR_AADE_RG",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "AADE RgWsPublic — tax registry company basic data web service",
+    "source_type": "official_tax",
+    "organization": "Ανεξάρτητη Αρχή Δημοσίων Εσόδων (AADE)",
+    "source_url": "https://www1.aade.gr/webtax2/wsgsis/RgWsPublic/RgWsPublicPort",
+    "license": "Restricted (registered TaxisNet credentials required)",
+    "access": "restricted",
+    "data_freshness": "real-time",
+    "attribution": "Attribute AADE"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["GR_AADE_RG_USERNAME", "GR_AADE_RG_PASSWORD"]
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://www1.aade.gr/webtax2/wsgsis/RgWsPublic/RgWsPublicPort",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Content-Type: text/xml", "SOAPAction"],
+    "formats": ["soap", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "per account"
+  },
+  "snapshot": {
+    "strategy": "enrichment_lookup_only",
+    "file_extension": ".xml",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "RgWsPublicResult",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["afm"],
+    "join_keys": ["afm"],
+    "dedupe_keys": ["afm"]
+  },
+  "mapping_rules": {
+    "tax_id": "Use afm.",
+    "legal_name": "Use onomasia (tax-side); cross-check GEMI επωνυμία.",
+    "registered_address": "Use postalAddress components.",
+    "activity_code": "Use firmActivities kad; set the primary from the κύρια flag.",
+    "status": "Use deactivationFlag (active/ceased)."
+  },
+  "fixture_requirements": [
+    "planning-only: synthetic RgWsPublic2 SOAP response (active firm with primary + secondary ΚΑΔ)",
+    "ceased-AFM response"
+  ],
+  "live_test_plan": {
+    "smoke": "With registered credentials, query one known ΑΦΜ and verify the response shape.",
+    "full": "Per-ΑΦΜ enrichment behind credential env gates; respect per-account limits; not bulk."
+  },
+  "blockers": [
+    "Requires registered TaxisNet web-service credentials (username/password issued by AADE).",
+    "Per-ΑΦΜ lookup; not a bulk source.",
+    "No values copied (credentialed)."
+  ]
+}

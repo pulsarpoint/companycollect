@@ -63,7 +63,8 @@ canonical Parquet (8-table contract)    company, registrations, financials, comp
 ### Acquire layer (download, first asset)
 
 - A `download_*()` function per source fetches raw files from the source URLs
-  (Phase 2) and writes them **directly to S3** — no local staging. This is the
+  (constants in `download.py`, Phase 2) and writes them **directly to S3** — no
+  local staging. This is the
   first asset. Download logic is reused-by-copying from the existing source
   clients, same as the parsers.
 - prh_xbrl acquisition is bounded for the reference (e.g. one registration
@@ -105,7 +106,7 @@ of a confirmed phase.
 | Phase | Deliverable | Confirm before proceeding |
 |---|---|---|
 | 1 — Environment | `notebook/pyproject.toml` + uv env (marimo, polars, pyarrow, duckdb, boto3, lxml) | `uv sync` succeeds; marimo + imports run |
-| 2 — Source URLs | `conformance/urls.py` — download endpoints for prh_ytj (companies + code lists) and prh_xbrl (discovery + statement XML) | a probe request to each URL returns the expected shape |
+| 2 — Source URLs | download endpoints for prh_ytj (companies + code lists) and prh_xbrl (discovery + statement XML), as constants in `conformance/download.py` | a probe request to each URL returns the expected shape |
 | 3 — Download to S3 (first asset) | `conformance/download.py` — function(s) that download source files and store them directly in S3 | raw objects land at the expected S3 keys; re-runnable |
 | 4 — Analysis method (pedagogical) | `notebook/analysis_method.md` — how to analyse the raw files with Polars and convert them to the proper Parquet shape | doc covers every source file/entity and the target structured schema |
 | 5 — Parse to structured Parquet | `conformance/parse_*.py` (copied parsers + Parquet serialization) | structured Parquet produced and validates against the per-source structured schema |
@@ -126,8 +127,7 @@ finland/
   notebook/
     conformance/
       __init__.py
-      urls.py             source download URLs / endpoints                 (Phase 2)
-      download.py         download source files → S3  (first asset)        (Phase 3)
+      download.py         source URL constants + download → S3  (first asset)  (Phases 2–3)
       parse_prh_ytj.py    COPIED prh_ytj parser + Parquet serialization → structured Parquet   (Phase 5)
       parse_prh_xbrl.py   COPIED prh_xbrl parser + Parquet serialization → structured Parquet  (Phase 5)
       build_company.py    structured → canonical company + registrations   (pure, local)        (Phase 6)
@@ -211,8 +211,8 @@ columns present, types compatible, declared key columns unique (e.g.
 
 ## Deliverables
 
-1. `companies/analysis/finland/notebook/conformance/` pure functions (urls +
-   download + copied parse + local build + validate).
+1. `companies/analysis/finland/notebook/conformance/` pure functions (download +
+   copied parse + local build + validate).
 2. `companies/analysis/finland/notebook/finland_conformance.py` marimo notebook.
 3. `companies/analysis/finland/notebook/analysis_method.md` (Phase 4 pedagogical).
 4. `companies/analysis/finland/notebook/output/` sample raw + structured + canonical.

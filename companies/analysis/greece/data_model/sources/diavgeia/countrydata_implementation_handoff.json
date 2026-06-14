@@ -1,0 +1,76 @@
+{
+  "country": "Greece",
+  "country_slug": "greece",
+  "source_slug": "diavgeia",
+  "source_identity": "greece_diavgeia",
+  "source_package": "diavgeia",
+  "env_prefix": "GR_DIAVGEIA",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Diavgeia (Δι@ύγεια) — government transparency programme",
+    "source_type": "transparency_register",
+    "organization": "Greek Government (Υπουργείο Ψηφιακής Διακυβέρνησης)",
+    "source_url": "https://diavgeia.gov.gr/opendata/",
+    "license": "Open",
+    "access": "public",
+    "data_freshness": "continuous",
+    "attribution": "Attribute Diavgeia / Δι@ύγεια"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://diavgeia.gov.gr/opendata",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "decisions",
+    "total_results_path": "info.total",
+    "pagination": {
+      "type": "page_number",
+      "page_param": "page",
+      "page_start": 0,
+      "page_size": 100,
+      "page_size_param": "size",
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_act_per_line_crossref_only",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "DiavgeiaDecision",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["ada"],
+    "join_keys": ["afm"],
+    "dedupe_keys": ["ada"]
+  },
+  "mapping_rules": {
+    "cross_reference": "Use afm references in decision acts only to corroborate ΑΦΜ↔name / public-sector links; not a company master."
+  },
+  "fixture_requirements": [
+    "decision act referencing a company ΑΦΜ + name + amount"
+  ],
+  "live_test_plan": {
+    "smoke": "Query a bounded set of decisions and extract ΑΦΜ references.",
+    "full": "Stream the open decisions API behind env gates; treat as cross-reference only."
+  },
+  "blockers": [
+    "Exact field paths for ΑΦΜ within acts vary by act type — confirm on first parse.",
+    "Not a company master; cross-reference only."
+  ]
+}

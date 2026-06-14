@@ -1,0 +1,74 @@
+{
+  "country": "Greece",
+  "country_slug": "greece",
+  "source_slug": "data_gov_gr",
+  "source_identity": "greece_data_gov_gr",
+  "source_package": "datagovgr",
+  "env_prefix": "GR_DATAGOV",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "data.gov.gr — national open data portal",
+    "source_type": "open_data_portal",
+    "organization": "Greek Government (Υπουργείο Ψηφιακής Διακυβέρνησης)",
+    "source_url": "https://data.gov.gr/",
+    "license": "Open (per dataset)",
+    "access": "public",
+    "data_freshness": "varies",
+    "attribution": "Attribute data.gov.gr"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["GR_DATAGOV_TOKEN"]
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://data.gov.gr/api/v1/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Authorization: Token <token>"],
+    "formats": ["json", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "not_company_data",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "DataGovGrDataset",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": [],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "none": "Not a company register; no company mapping."
+  },
+  "fixture_requirements": [],
+  "live_test_plan": {
+    "smoke": "n/a — not company data.",
+    "full": "n/a"
+  },
+  "blockers": [
+    "Not the company register — curated statistical datasets only.",
+    "API requires a free token."
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "country": "Greece",
+  "country_slug": "greece",
+  "source_slug": "procurement_kimdis",
+  "source_identity": "greece_procurement_kimdis",
+  "source_package": "kimdis",
+  "env_prefix": "GR_KIMDIS",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "KIMDIS / Promitheus — public procurement (ΚΗΜΔΗΣ/ΕΣΗΔΗΣ)",
+    "source_type": "public_procurement",
+    "organization": "Greek Government — Εθνικό Σύστημα Ηλεκτρονικών Δημοσίων Συμβάσεων",
+    "source_url": "https://www.eprocurement.gov.gr/",
+    "license": "Open (per terms)",
+    "access": "public",
+    "data_freshness": "continuous",
+    "attribution": "Attribute ΚΗΜΔΗΣ / ΕΣΗΔΗΣ"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.eprocurement.gov.gr/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "xml", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "crossref_only",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "ProcurementAward",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": ["afm"],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "cross_reference": "Use supplier ΑΦΜ + name to corroborate company identity; not a company master."
+  },
+  "fixture_requirements": [
+    "award notice with supplier ΑΦΜ + name + amount"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve the procurement open-data/export interface and pull a bounded set of awards.",
+    "full": "Stream awards behind env gates; cross-reference only."
+  },
+  "blockers": [
+    "Exact open-data/export interface and field paths to resolve.",
+    "Not a company master; cross-reference only."
+  ]
+}

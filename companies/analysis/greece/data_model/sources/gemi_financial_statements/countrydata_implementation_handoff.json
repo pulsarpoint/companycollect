@@ -1,0 +1,80 @@
+{
+  "country": "Greece",
+  "country_slug": "greece",
+  "source_slug": "gemi_financial_statements",
+  "source_identity": "greece_gemi_financial_statements",
+  "source_package": "gemifinancials",
+  "env_prefix": "GR_GEMI_FIN",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "GEMI financial statements (ισολογισμοί / οικονομικές καταστάσεις)",
+    "source_type": "official_financial_disclosure",
+    "organization": "GEMI / Γενική Γραμματεία Εμπορίου",
+    "source_url": "https://publicity.businessportal.gr/",
+    "license": "Public (filed in the register); document-based",
+    "access": "public",
+    "data_freshness": "annual filing",
+    "attribution": "Attribute GEMI"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://publicity.businessportal.gr/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf"],
+    "compression": null,
+    "encoding": "binary",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "reCAPTCHA-gated + rate-limited (via the portal)"
+  },
+  "snapshot": {
+    "strategy": "store_pdf_plus_parsed_json_when_lawfully_obtained",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "GemiFinancialStatement",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": ["1.234,56"],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["gemi_number", "fiscal_year"],
+    "join_keys": ["gemi_number", "afm"],
+    "dedupe_keys": ["gemi_number", "fiscal_year"]
+  },
+  "mapping_rules": {
+    "financials": "Map balance sheet + income statement into financials[] per fiscal_year after OCR/parse (ΕΛΠ/IFRS). Currency EUR.",
+    "documents": "Map the GA resolution / filings into documents[]."
+  },
+  "fixture_requirements": [
+    "synthetic ΕΛΠ balance-sheet PDF fixture for the parser",
+    "synthetic IFRS financial-statement PDF fixture",
+    "garbled-OCR fixture"
+  ],
+  "live_test_plan": {
+    "smoke": "No automated portal fetch (reCAPTCHA/rate limits). Use synthetic fixtures or a lawful access path.",
+    "full": "Document fetch + OCR only via a sanctioned access path or a commercial provider; never bypass reCAPTCHA."
+  },
+  "blockers": [
+    "Document-based PDFs — no structured XBRL/CSV; requires OCR/parsing.",
+    "Reached via the reCAPTCHA-gated GEMI portal — automated access blocked.",
+    "Reuse terms of the documents to be confirmed."
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "country": "Greece",
+  "country_slug": "greece",
+  "source_slug": "gemi_portal",
+  "source_identity": "greece_gemi_portal",
+  "source_package": "gemiportal",
+  "env_prefix": "GR_GEMI",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "GEMI — General Commercial Registry publicity portal",
+    "source_type": "official_registry",
+    "organization": "Central Union of Chambers of Greece (KEEE) / Ministry of Development",
+    "source_url": "https://publicity.businessportal.gr/",
+    "license": "Public register (free to view); reuse terms unclear",
+    "access": "public",
+    "data_freshness": "real-time",
+    "attribution": "Attribute GEMI / Γενική Γραμματεία Εμπορίου"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://publicity.businessportal.gr/api",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "aggressive (HTTP 429); reCAPTCHA-gated"
+  },
+  "snapshot": {
+    "strategy": "none_blocked",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "GemiCompany",
+    "date_formats": ["02/01/2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["gemi_number"],
+    "join_keys": ["gemi_number", "afm"],
+    "dedupe_keys": ["afm"]
+  },
+  "mapping_rules": {
+    "company_id": "Use gemi_number (register) with afm as the cross-source key.",
+    "tax_id": "Use afm (9-digit).",
+    "vat_id": "EL + afm.",
+    "legal_name": "Use επωνυμία (keep Greek + Latin).",
+    "company_type": "Use νομική μορφή (ΑΕ/ΕΠΕ/ΙΚΕ/ΟΕ/ΕΕ).",
+    "status": "Use κατάσταση (ΕΝΕΡΓΗ active / ΛΥΘΕΙΣΑ dissolved / ΥΠΟ ΕΚΚΑΘΑΡΙΣΗ liquidation).",
+    "activity_code": "Use ΚΑΔ.",
+    "officers": "Use representatives/directors — PII (GDPR)."
+  },
+  "fixture_requirements": [
+    "planning-only: do NOT automate the reCAPTCHA-gated API",
+    "synthetic GEMI company fixture if implemented via a lawful access path"
+  ],
+  "live_test_plan": {
+    "smoke": "None — automated access is reCAPTCHA-protected + rate-limited. Manual portal lookups only.",
+    "full": "Only via a sanctioned/credentialed access path or a commercial provider; never bypass reCAPTCHA/rate limits."
+  },
+  "blockers": [
+    "Underlying /api is undocumented, rate-limited (HTTP 429) and reCAPTCHA-protected — must not be bypassed.",
+    "No official open bulk export.",
+    "GEMI reuse/redistribution terms unclear — confirm before redistribution.",
+    "Director data is personal data (GDPR)."
+  ]
+}

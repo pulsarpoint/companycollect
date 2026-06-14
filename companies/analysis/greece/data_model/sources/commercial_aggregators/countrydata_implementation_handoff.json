@@ -1,0 +1,79 @@
+{
+  "country": "Greece",
+  "country_slug": "greece",
+  "source_slug": "commercial_aggregators",
+  "source_identity": "greece_commercial_aggregators",
+  "source_package": "commercialaggregators",
+  "env_prefix": "GR_COMMERCIAL",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "Commercial aggregators (ICAP/CRIF, Kyckr, ...)",
+    "source_type": "commercial_api",
+    "organization": "Various private vendors",
+    "source_url": "https://www.icapcrif.com/",
+    "license": "Commercial / paid (per-vendor contract)",
+    "access": "paid",
+    "data_freshness": "from GEMI/AADE",
+    "attribution": "Per-vendor contract"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["GR_COMMERCIAL_API_KEY"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": null,
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Authorization"],
+    "formats": ["json", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "per plan"
+  },
+  "snapshot": {
+    "strategy": "vendor_json_when_contracted",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "VendorCompanyRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["1.234,56"],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["afm"],
+    "join_keys": ["afm", "gemi_number"],
+    "dedupe_keys": ["afm"]
+  },
+  "mapping_rules": {
+    "financials": "Map vendor parsed financials[] into financials[] (EUR) — the scalable structured-financials route.",
+    "officers": "Use vendor officers only where they add over GEMI representatives.",
+    "risk": "Optionally store the vendor credit score as a risk signal."
+  },
+  "fixture_requirements": [
+    "planning-only: synthetic vendor company record with parsed financials"
+  ],
+  "live_test_plan": {
+    "smoke": "Only against a contracted vendor sandbox with a real API key.",
+    "full": "Per-vendor contract and plan limits; respect redistribution terms."
+  },
+  "blockers": [
+    "Proprietary, paid, per-vendor contract — planning-only.",
+    "Requires authentication (API key) and payment.",
+    "Redistribution/persistence governed by vendor terms."
+  ]
+}

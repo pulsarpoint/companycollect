@@ -1,0 +1,34 @@
+{
+  "country": "Greece",
+  "country_slug": "greece",
+  "source_slug": "data_gov_gr",
+  "source_name": "data.gov.gr — national open data portal",
+  "source_type": "open_data_portal",
+  "organization": "Greek Government (Υπουργείο Ψηφιακής Διακυβέρνησης)",
+  "source_url": "https://data.gov.gr/",
+  "license": "Open (per dataset)",
+  "access": "public",
+  "data_freshness": "varies",
+  "record_shape": "curated_statistical_datasets_api (token-gated)",
+  "primary_keys": [],
+  "join_keys": [],
+  "field_count": 1,
+  "fields": [
+    {
+      "path": "(dataset rows)",
+      "source_field": "(per dataset)",
+      "english_name": "statistical_dataset",
+      "meaning": "Curated statistical datasets (e.g. crime, traffic, health, economy). NOT a company register.",
+      "data_type": "object",
+      "semantic_type": "metadata",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "Greek/English",
+      "limitations": "Token-gated API; no GEMI/company bulk. Context/discovery only.",
+      "source_confidence": "high",
+      "analysis_notes": "Not company data; included for completeness."
+    }
+  ]
+}
