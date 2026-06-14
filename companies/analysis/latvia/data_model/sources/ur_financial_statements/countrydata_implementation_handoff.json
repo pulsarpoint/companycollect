@@ -1,0 +1,87 @@
+{
+  "country": "Latvia",
+  "country_slug": "latvia",
+  "source_slug": "ur_financial_statements",
+  "source_identity": "latvia_ur_financial_statements",
+  "source_package": "urfinancials",
+  "env_prefix": "LV_UR_FINANCIALS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Gada pārskatu finanšu dati — Annual report financial data (structured)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Latvijas Republikas Uzņēmumu reģistrs (UR)",
+    "source_url": "https://data.gov.lv/dati/lv/dataset/gada-parskatu-finansu-dati",
+    "license": "CC0-1.0 (public domain)",
+    "access": "public",
+    "data_freshness": "annual filing",
+    "attribution": null
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://data.gov.lv/dati/lv/api/3/action",
+    "download_url": "https://data.gov.lv/dati/dataset/8d31b878-536a-44aa-a013-8bc6b669d477/resource/27fcc5ec-c63b-4bfd-bb08-01f073a52d04/download/financial_statements.csv",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "multi_file",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown",
+    "related_files": [
+      "financial_statements.csv (metadata)",
+      "balance_sheets.csv",
+      "income_statements.csv",
+      "cash_flow_statements.csv"
+    ]
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_csvs_then_pivot_statement_parts_per_report",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "UrFinancialStatement",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": ["2006-01-02 15:04:05.999999"],
+    "number_formats": ["integer_or_decimal_apply_rounded_to_nearest"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "csv_delimiter": ";"
+  },
+  "keys": {
+    "primary_keys": ["id"],
+    "join_keys": ["legal_entity_registration_number", "id", "file_id"],
+    "dedupe_keys": ["id"]
+  },
+  "mapping_rules": {
+    "financials": "Join balance_sheets/income_statements/cash_flow_statements on statement_id (= financial_statements.id) and file_id; group per report into financials[] with year/period/currency/employees + balance-sheet + income-statement + cash-flow figures. Attach to the company via legal_entity_registration_number -> register.regcode.",
+    "fiscal_year": "Use year / year_started_on..year_ended_on.",
+    "employees": "Use financial_statements.employees.",
+    "currency": "Use currency (EUR; pre-2014 LVL); apply rounded_to_nearest to values."
+  },
+  "fixture_requirements": [
+    "report metadata row (regcode + year + employees + currency)",
+    "balance_sheet row for one statement_id (total_assets/equity)",
+    "income_statement row for one statement_id (net_turnover/net_income; by_function and by_nature variants)",
+    "cash_flow row for one statement_id",
+    "statement_id present in parts but missing in metadata (orphan handling)"
+  ],
+  "live_test_plan": {
+    "smoke": "Download financial_statements.csv + balance_sheets.csv; pivot a handful of statement_ids and verify the join to a register regcode.",
+    "full": "Process all four CSVs (200+ MB each) behind env gates; stream/chunk; preserve raw CSVs."
+  },
+  "blockers": []
+}

@@ -1,0 +1,74 @@
+{
+  "country": "Latvia",
+  "country_slug": "latvia",
+  "source_slug": "data_gov_lv",
+  "source_identity": "latvia_data_gov_lv",
+  "source_package": "datagovlv",
+  "env_prefix": "LV_DATAGOV",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "data.gov.lv — national open data portal",
+    "source_type": "open_data_portal",
+    "organization": "VARAM",
+    "source_url": "https://data.gov.lv/",
+    "license": "Per dataset (UR = CC0)",
+    "access": "public",
+    "data_freshness": "varies",
+    "attribution": null
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://data.gov.lv/dati/lv/api/3/action",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "result.resources",
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "catalog_lookup_to_resolve_resource_urls",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "CkanPackage",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["dataset_id", "resource_id"],
+    "join_keys": [],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "resource_url": "Use package_show for uz / gada-parskatu-finansu-dati / patiesie-labuma-guveji etc. to resolve the current download URLs.",
+    "license": "Confirm CC0-1.0 per dataset."
+  },
+  "fixture_requirements": [
+    "package_show response for the UR register dataset"
+  ],
+  "live_test_plan": {
+    "smoke": "GET package_show?id=uz and confirm the register.csv resource URL + CC0 licence.",
+    "full": "Resolve all UR dataset resource URLs for refresh; ingest from the resolved URLs."
+  },
+  "blockers": []
+}

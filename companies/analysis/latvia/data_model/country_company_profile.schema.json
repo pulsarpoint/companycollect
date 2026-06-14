@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Latvia Company Profile",
+  "description": "Country-specific company profile for Latvia. One authoritative open source (UR Register of Enterprises, CC0-1.0 / public domain), keyed on the regcode (11-digit registration number). Uniquely rich and unrestricted: structured financial statements (line items + employees), registered members, beneficial owners, and officers — all open under CC0. VAT = LV + regcode (derivable).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Latvia" },
+    "country_slug": { "type": "string", "const": "latvia" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["regcode"],
+      "properties": {
+        "regcode": {
+          "type": "string",
+          "description": "Reģistrācijas numurs — 11-digit registration number; company id and universal join key.",
+          "x-source": "ur_register",
+          "x-source-path": "regcode",
+          "x-join-key": true,
+          "x-freshness": "daily",
+          "x-access": "public"
+        },
+        "register_type": { "type": ["string", "null"], "description": "e.g. Komercreģistrs.", "x-source": "ur_register", "x-source-path": "regtype_text" },
+        "sepa_id": { "type": ["string", "null"], "x-source": "ur_register", "x-source-path": "sepa" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "vat_id": { "type": ["string", "null"], "description": "LV + regcode (derivable; not in register CSV).", "x-source": "vid_vat", "x-source-path": "vat_id" },
+        "vat_valid": { "type": ["boolean", "null"], "x-source": "vid_vat", "x-source-path": "vat_valid" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": "string", "x-source": "ur_register", "x-source-path": "name" },
+        "name_core": { "type": ["string", "null"], "description": "Bare firm name.", "x-source": "ur_register", "x-source-path": "name_in_quotes" },
+        "legal_form": { "type": ["string", "null"], "description": "SIA/AS/IK.", "x-source": "ur_register", "x-source-path": "type_text" },
+        "legal_form_code": { "type": ["string", "null"], "x-source": "ur_register", "x-source-path": "type" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "value": { "type": "string", "description": "Derived: registered / terminated / closed.", "x-source": "ur_register", "x-source-path": "terminated+closed" }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "registration_date": { "type": ["string", "null"], "format": "date", "x-source": "ur_register", "x-source-path": "registered" },
+        "termination_date": { "type": ["string", "null"], "format": "date", "x-source": "ur_register", "x-source-path": "terminated" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "ur_register", "x-source-path": "address" },
+        "postcode": { "type": ["string", "null"], "x-source": "ur_register", "x-source-path": "index" },
+        "atvk_code": { "type": ["string", "null"], "x-source": "ur_register", "x-source-path": "atvk" }
+      }
+    },
+    "share_capital": {
+      "type": ["object", "null"],
+      "description": "From equity-capitals dataset.",
+      "properties": {
+        "amount": { "type": ["number", "null"], "x-source": "ur_officers_members", "x-source-path": "pamatkapitals.amount" },
+        "currency": { "type": "string", "const": "EUR" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Officers (amatpersonas). Open (CC0). PERSONAL DATA (GDPR).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "ur_officers_members", "x-source-path": "amatpersonas[].name", "x-personal-data": true },
+          "role": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "members": {
+      "type": "array",
+      "description": "Registered members/shareholders (dalībnieki). Open. PERSONAL DATA where natural persons. Distinct from beneficial_owners.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "ur_officers_members", "x-source-path": "dalibnieki[].name", "x-personal-data": true },
+          "share": { "type": ["string", "number", "null"] }
+        }
+      }
+    },
+    "beneficial_owners": {
+      "type": "array",
+      "description": "Beneficial owners (patiesie labuma guvēji). Open (CC0; unusual post-CJEU). PERSONAL DATA (GDPR).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "ur_beneficial_owners", "x-source-path": "beneficial_owner", "x-personal-data": true },
+          "nature_of_control": { "type": ["string", "null"], "x-source": "ur_beneficial_owners", "x-source-path": "nature_of_control" }
+        }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "STRUCTURED annual financial statements (open, CC0). One entry per report (year); balance-sheet + income-statement + cash-flow figures pivoted from the four CSVs. Includes employees. Currency EUR (pre-2014 LVL). Join via statement_id/file_id then legal_entity_registration_number -> regcode.",
+      "x-source": "ur_financial_statements",
+      "items": {
+        "type": "object",
+        "required": ["statement_id", "fiscal_year"],
+        "properties": {
+          "statement_id": { "type": "string", "x-source-path": "financial_statements.id", "x-join-key": true },
+          "fiscal_year": { "type": "integer", "x-source-path": "financial_statements.year" },
+          "employees": { "type": ["integer", "null"], "x-source-path": "financial_statements.employees" },
+          "currency": { "type": "string", "x-source-path": "financial_statements.currency" },
+          "total_assets": { "type": ["number", "null"], "x-source-path": "balance_sheets.total_assets" },
+          "equity": { "type": ["number", "null"], "x-source-path": "balance_sheets.equity" },
+          "net_turnover": { "type": ["number", "null"], "x-source-path": "income_statements.net_turnover" },
+          "net_income": { "type": ["number", "null"], "x-source-path": "income_statements.net_income" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

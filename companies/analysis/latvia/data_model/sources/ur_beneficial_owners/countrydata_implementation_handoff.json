@@ -1,0 +1,79 @@
+{
+  "country": "Latvia",
+  "country_slug": "latvia",
+  "source_slug": "ur_beneficial_owners",
+  "source_identity": "latvia_ur_beneficial_owners",
+  "source_package": "urbeneficialowners",
+  "env_prefix": "LV_UR_BO",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Patiesie labuma guvēji — Beneficial owners (open)",
+    "source_type": "beneficial_ownership_register",
+    "organization": "Latvijas Republikas Uzņēmumu reģistrs (UR)",
+    "source_url": "https://data.gov.lv/dati/lv/dataset/patiesie-labuma-guveji",
+    "license": "CC0-1.0 (public domain)",
+    "access": "public",
+    "data_freshness": "regular",
+    "attribution": null
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://data.gov.lv/dati/lv/api/3/action",
+    "download_url": "https://data.gov.lv/dati/dataset/b7848ab9-7886-4df0-8bc6-70052a8d9e1a/resource/20a9b26d-d056-4dbb-ae18-9ff23c87bdee/download/beneficial_owners.csv",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_csv_then_ndjson_per_owner",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "BeneficialOwner",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "csv_delimiter": ";"
+  },
+  "keys": {
+    "primary_keys": ["regcode", "beneficial_owner"],
+    "join_keys": ["regcode"],
+    "dedupe_keys": ["regcode", "beneficial_owner"]
+  },
+  "mapping_rules": {
+    "beneficial_owners": "Map rows into beneficial_owners[] keyed on regcode — PERSONAL DATA (GDPR); keep distinct from registered members (dalībnieki)."
+  },
+  "fixture_requirements": [
+    "company with one beneficial owner",
+    "company with multiple beneficial owners / control types",
+    "company with no BO entry"
+  ],
+  "live_test_plan": {
+    "smoke": "Download beneficial_owners.csv; parse a bounded set; confirm regcode join.",
+    "full": "Process the full BO CSV behind env gates; apply GDPR retention from the start."
+  },
+  "blockers": [
+    "Beneficial owners are personal data — confirm GDPR lawful basis + retention before persisting.",
+    "Exact CSV column names to confirm on first parse (documented from dataset description)."
+  ]
+}

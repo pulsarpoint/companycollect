@@ -1,0 +1,50 @@
+{
+  "country": "Latvia",
+  "country_slug": "latvia",
+  "source_slug": "data_gov_lv",
+  "source_name": "data.gov.lv — national open data portal",
+  "source_type": "open_data_portal",
+  "organization": "Vides aizsardzības un reģionālās attīstības ministrija (VARAM)",
+  "source_url": "https://data.gov.lv/",
+  "license": "Per dataset (UR = CC0)",
+  "access": "public",
+  "data_freshness": "varies",
+  "record_shape": "ckan_catalog (org 'ur' hosts ~35 datasets)",
+  "primary_keys": ["dataset_id", "resource_id"],
+  "join_keys": [],
+  "field_count": 2,
+  "fields": [
+    {
+      "path": "result.resources[].url",
+      "source_field": "url",
+      "english_name": "resource_url",
+      "meaning": "Download URL of a UR dataset resource (register, financials, BO, officers, …).",
+      "data_type": "string",
+      "semantic_type": "metadata",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": "Discovery; resolve the canonical resource URLs here.",
+      "source_confidence": "high",
+      "analysis_notes": "Use to resolve/refresh the UR dataset download URLs."
+    },
+    {
+      "path": "result.license_id",
+      "source_field": "license_id",
+      "english_name": "license",
+      "meaning": "Per-dataset licence (UR datasets = CC0-1.0).",
+      "data_type": "string",
+      "semantic_type": "license_or_terms",
+      "example_values": ["CC0-1.0"],
+      "nullable": true,
+      "repeatable": false,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": null,
+      "source_confidence": "high",
+      "analysis_notes": "Confirms CC0 for the UR datasets."
+    }
+  ]
+}

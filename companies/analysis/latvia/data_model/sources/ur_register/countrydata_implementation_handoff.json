@@ -1,0 +1,86 @@
+{
+  "country": "Latvia",
+  "country_slug": "latvia",
+  "source_slug": "ur_register",
+  "source_identity": "latvia_ur_register",
+  "source_package": "urregister",
+  "env_prefix": "LV_UR_REGISTER",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Uzņēmumu reģistrs — Register of Enterprises (company register)",
+    "source_type": "official_registry",
+    "organization": "Latvijas Republikas Uzņēmumu reģistrs (UR)",
+    "source_url": "https://data.gov.lv/dati/lv/dataset/uz",
+    "license": "CC0-1.0 (public domain)",
+    "access": "public",
+    "data_freshness": "daily/regular",
+    "attribution": null
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://data.gov.lv/dati/lv/api/3/action",
+    "download_url": "https://data.gov.lv/dati/dataset/4de9697f-850b-45ec-8bba-61fa09ce932f/resource/25e80bf3-f107-4ab4-89ef-251b5b9374e9/download/register.csv",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "xlsx", "json", "parquet", "sqlite", "postgresql_dump"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_csv_then_ndjson_one_entity_per_line",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "UrRegisterEntity",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "csv_delimiter": ";"
+  },
+  "keys": {
+    "primary_keys": ["regcode"],
+    "join_keys": ["regcode"],
+    "dedupe_keys": ["regcode"]
+  },
+  "mapping_rules": {
+    "company_id": "Use regcode (11-digit registration number).",
+    "registration_number": "Use regcode.",
+    "vat_id": "Derive LV + regcode (not in CSV); validate via VIES/VID.",
+    "legal_name": "Use name; name_in_quotes is the bare firm name.",
+    "company_type": "Use type_text (+ type code: SIA/AS/IK).",
+    "status": "Derive: registered unless terminated set / closed flagged.",
+    "incorporation_date": "Use registered.",
+    "dissolution_date": "Use terminated when present.",
+    "registered_address": "Use address; postcode = index; territory = atvk."
+  },
+  "fixture_requirements": [
+    "active SIA (e.g. 40103550818)",
+    "terminated/closed entity (with terminated date)",
+    "sole trader (IK) record",
+    "entity with empty atvk / postcode",
+    "malformed individual CSV row"
+  ],
+  "live_test_plan": {
+    "smoke": "Download register.csv, parse the first rows in chunks (UTF-8, ; delimiter); verify regcode join.",
+    "full": "Process the full ~485k-row register behind env gates; preserve raw CSV; CKAN for refresh."
+  },
+  "blockers": []
+}

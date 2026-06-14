@@ -1,0 +1,82 @@
+{
+  "country": "Latvia",
+  "country_slug": "latvia",
+  "source_slug": "ur_officers_members",
+  "source_identity": "latvia_ur_officers_members",
+  "source_package": "urofficersmembers",
+  "env_prefix": "LV_UR_OFFICERS",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "UR officers / members / share capital / events (open datasets)",
+    "source_type": "official_registry",
+    "organization": "Latvijas Republikas Uzņēmumu reģistrs (UR)",
+    "source_url": "https://data.gov.lv/dati/lv/organization/ur",
+    "license": "CC0-1.0 (public domain)",
+    "access": "public",
+    "data_freshness": "regular",
+    "attribution": null
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://data.gov.lv/dati/lv/api/3/action",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "multi_dataset",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_csvs_per_dataset",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "UrGovernanceDatasets",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "csv_delimiter": ";"
+  },
+  "keys": {
+    "primary_keys": ["regcode"],
+    "join_keys": ["regcode"],
+    "dedupe_keys": ["regcode"]
+  },
+  "mapping_rules": {
+    "officers": "Map amatpersonas into officers[] (role + person) — PII (GDPR).",
+    "members": "Map dalībnieki into members[] (registered shareholders) — keep distinct from beneficial_owners; PII.",
+    "share_capital": "Map equity-capitals / pamatkapitāls into share capital (EUR).",
+    "status": "Feed status/history from insolvency/liquidation/reorganization/historical-name datasets."
+  },
+  "fixture_requirements": [
+    "company with officers (amatpersonas)",
+    "SIA with members/shareholders (dalībnieki) + shareholding",
+    "company with an insolvency / liquidation event"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve the exact dataset resource URLs (amatpersonas, dalibnieki, equity-capitals) and parse a bounded set; confirm regcode join.",
+    "full": "Process all governance/event datasets behind env gates; GDPR retention for persons."
+  },
+  "blockers": [
+    "Exact per-dataset resource URLs/columns to resolve via CKAN (multiple datasets).",
+    "Officer/member data are personal data (GDPR)."
+  ]
+}

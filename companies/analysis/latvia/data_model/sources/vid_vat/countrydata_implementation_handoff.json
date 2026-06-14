@@ -1,0 +1,77 @@
+{
+  "country": "Latvia",
+  "country_slug": "latvia",
+  "source_slug": "vid_vat",
+  "source_identity": "latvia_vid_vat",
+  "source_package": "vidvat",
+  "env_prefix": "LV_VID",
+  "implementation_status": "sample_only",
+  "source": {
+    "source_name": "VID — State Revenue Service VAT register / VIES (LV VAT)",
+    "source_type": "official_tax",
+    "organization": "Valsts ieņēmumu dienests (VID) / European Commission",
+    "source_url": "https://www.vid.gov.lv/",
+    "license": "Validation / open lists",
+    "access": "public",
+    "data_freshness": "real-time",
+    "attribution": "VID / EU VIES"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://ec.europa.eu/taxation_customs/vies/services/checkVatService",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Content-Type: text/xml"],
+    "formats": ["soap", "xml", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "throttled"
+  },
+  "snapshot": {
+    "strategy": "enrichment_lookup_only",
+    "file_extension": ".xml",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "ViesValidation",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": ["regcode", "vat_id"],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "vat_id": "Derive LV + regcode; validate via VIES.",
+    "vat_valid": "Store VIES/VID validity as point-in-time evidence."
+  },
+  "fixture_requirements": [
+    "valid LV VAT validation",
+    "invalid LV VAT validation"
+  ],
+  "live_test_plan": {
+    "smoke": "Validate one LV VAT (LV + regcode) via VIES; respect rate limits.",
+    "full": "Per-company enrichment only; never bulk-enumerate."
+  },
+  "blockers": [
+    "Validation only — VAT is derivable from regcode; VIES does not enumerate companies."
+  ]
+}

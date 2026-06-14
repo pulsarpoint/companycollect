@@ -1,0 +1,100 @@
+{
+  "_note": "Example profile using real UR register values (SIA Psihologs Tavā kabatā, regcode 40103550818) + real financial-statement shape. officers/members/beneficial_owners are open (CC0) but redacted here (GDPR); financials show the real per-report shape with placeholder figures.",
+  "country": "Latvia",
+  "country_slug": "latvia",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "regcode": "40103550818",
+    "register_type": "Komercreģistrs",
+    "sepa_id": "LV95ZZZ40103550818"
+  },
+  "tax_identifiers": {
+    "vat_id": "LV40103550818",
+    "vat_valid": null
+  },
+  "legal_identity": {
+    "legal_name": "SIA Psihologs Tavā kabatā",
+    "name_core": "Psihologs Tavā kabatā",
+    "legal_form": "Sabiedrība ar ierobežotu atbildību",
+    "legal_form_code": "SIA"
+  },
+  "status": {
+    "value": "registered"
+  },
+  "incorporation": {
+    "registration_date": "2012-05-31",
+    "termination_date": null
+  },
+  "registered_location": {
+    "registered_address": "Valmieras nov., Valmiera, Georga Apiņa iela 12",
+    "postcode": "4201",
+    "atvk_code": null
+  },
+  "share_capital": {
+    "amount": null,
+    "currency": "EUR"
+  },
+  "officers": [
+    { "name": "<REDACTED>", "role": "valdes loceklis" }
+  ],
+  "members": [
+    { "name": "<REDACTED>", "share": null }
+  ],
+  "beneficial_owners": [
+    { "name": "<REDACTED>", "nature_of_control": "tiešā līdzdalība" }
+  ],
+  "financial_statements": [
+    {
+      "statement_id": "726650",
+      "fiscal_year": 2017,
+      "employees": 3,
+      "currency": "EUR",
+      "total_assets": null,
+      "equity": null,
+      "net_turnover": null,
+      "net_income": null
+    }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "ur_register",
+      "section": "registration, legal_identity, status, incorporation, registered_location",
+      "source_url": "https://data.gov.lv/dati/lv/dataset/uz",
+      "access": "public",
+      "license": "CC0-1.0",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "ur_financial_statements",
+      "section": "financial_statements",
+      "source_url": "https://data.gov.lv/dati/lv/dataset/gada-parskatu-finansu-dati",
+      "access": "public",
+      "license": "CC0-1.0",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "ur_beneficial_owners",
+      "section": "beneficial_owners",
+      "source_url": "https://data.gov.lv/dati/lv/dataset/patiesie-labuma-guveji",
+      "access": "public",
+      "license": "CC0-1.0",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "ur_officers_members",
+      "section": "officers, members, share_capital",
+      "source_url": "https://data.gov.lv/dati/lv/organization/ur",
+      "access": "public",
+      "license": "CC0-1.0",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "vid_vat",
+      "section": "tax_identifiers",
+      "source_url": "https://www.vid.gov.lv/",
+      "access": "public",
+      "license": "Validation",
+      "retrieved_at": null
+    }
+  ]
+}
