@@ -1,0 +1,35 @@
+[
+  {
+    "name": "RPO search by IČO (Statistics Office)",
+    "slug": "rpo_search",
+    "type": "api_page",
+    "url": "https://api.statistics.sk/rpo/v1/search?identifier=31333532",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1
+  },
+  {
+    "name": "RÚZ accounting units (changed since)",
+    "slug": "ruz_uctovne_jednotky",
+    "type": "api_page",
+    "url": "https://www.registeruz.sk/cruz-public/api/uctovne-jednotky?zmenene-od=2026-05-01&max-zaznamov=1000",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "pokracovat-za-id",
+    "page_start": 1,
+    "max_pages": 1
+  },
+  {
+    "name": "RÚZ financial report by id (structured tables)",
+    "slug": "ruz_uctovny_vykaz",
+    "type": "api_page",
+    "url": "https://www.registeruz.sk/cruz-public/api/uctovny-vykaz?id=7221914",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1
+  }
+]
