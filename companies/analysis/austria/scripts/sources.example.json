@@ -1,0 +1,20 @@
+[
+  {
+    "name": "GISA - Gewerbe in Österreich (open data landing; resolve resource URL via portal)",
+    "slug": "gisa_gewerbe",
+    "type": "bulk",
+    "url": "https://www.data.gv.at/katalog/dataset/gewerbe-in-osterreich",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "data.gv.at - trade code list (Gewerbeschlüssel)",
+    "slug": "gewerbeschluessel",
+    "type": "bulk",
+    "url": "https://www.data.gv.at/katalog/dataset/22391f1b-bccd-44ef-9c58-c8b18ebaa011",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
