@@ -1,0 +1,60 @@
+{
+  "country": "Bulgaria",
+  "country_slug": "bulgaria",
+  "source_slug": "beneficial_ownership",
+  "source_identity": "bulgaria_beneficial_ownership",
+  "source_package": "bgbeneficialownership",
+  "env_prefix": "BG_UBO",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Регистър на действителните собственици (beneficial ownership)",
+    "source_type": "beneficial_ownership_register",
+    "organization": "Агенция по вписванията",
+    "source_url": "https://portal.registryagency.bg/",
+    "license": "Access conditions apply (legitimate interest)",
+    "access": "restricted",
+    "data_freshness": "continuous",
+    "attribution": "Източник: Регистър на действителните собственици (Агенция по вписванията) — restricted."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["BG_UBO_ACCESS"],
+    "note": "Restricted (legitimate interest / authorities / obliged entities). Filed as documents. Sensitive PII. Not open."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://portal.registryagency.bg/ (restricted)",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-company declaration",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Restricted per-company access; no open bulk."},
+    "rate_limit": "per access regime"
+  },
+  "snapshot": {"strategy": "restricted_no_ingest", "file_extension": null, "preserve_raw_download": false},
+  "parsing": {
+    "record_type_hint": "BgBeneficialOwner",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Sensitive PII — minimize/redact. Join via EIK. Only with lawful access. Documents (PDF) -> parse."
+  },
+  "keys": {"primary_keys": ["eik", "beneficial_owner"], "join_keys": ["eik"], "dedupe_keys": ["eik + beneficial_owner"]},
+  "mapping_rules": {
+    "beneficial_owners": "Map to owners[] only with lawful access; minimize PII.",
+    "matching": "EIK.",
+    "note": "Commercial-register съдружници/собственик is the OPEN partial ownership signal; this BO register is restricted."
+  },
+  "fixture_requirements": ["planning-only — no fixtures until lawful access"],
+  "live_test_plan": {
+    "smoke": "Not applicable — restricted access.",
+    "full": "Out of scope for open ingestion; only with legitimate-interest access + GDPR handling."
+  },
+  "blockers": ["Restricted access (legitimate interest).", "Sensitive PII (GDPR).", "Document-based; not open data."]
+}

@@ -1,0 +1,26 @@
+{
+  "country": "Bulgaria",
+  "country_slug": "bulgaria",
+  "source_slug": "companybook_bg",
+  "source_name": "CompanyBook.BG (third-party register data + API)",
+  "source_type": "third_party_api",
+  "organization": "CompanyBook.BG (private)",
+  "source_url": "https://companybook.bg/?lang=en",
+  "license": "Non-financial data free; financials paid; per terms (underlying data = CC-BY register)",
+  "access": "public (non-financial) / paid (financials)",
+  "data_freshness": "from the Commercial Register",
+  "record_shape": "JSON per company (REST API)",
+  "primary_keys": ["eik"],
+  "join_keys": ["eik"],
+  "field_count": 8,
+  "fields": [
+    {"path": "eik", "source_field": "eik", "english_name": "unified_identification_code", "meaning": "Company EIK.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Cataloged from public docs; API key likely needed.", "source_confidence": "medium", "analysis_notes": "Join key."},
+    {"path": "name", "source_field": "name", "english_name": "legal_name", "meaning": "Company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Bulgarian/Latin", "limitations": null, "source_confidence": "medium", "analysis_notes": null},
+    {"path": "legal_form", "source_field": "legal_form", "english_name": "legal_form", "meaning": "Legal form.", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": null, "source_confidence": "medium", "analysis_notes": null},
+    {"path": "status", "source_field": "status", "english_name": "status", "meaning": "Status.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": null, "source_confidence": "medium", "analysis_notes": null},
+    {"path": "address", "source_field": "address", "english_name": "address", "meaning": "Registered address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": null, "source_confidence": "medium", "analysis_notes": null},
+    {"path": "contacts", "source_field": "contacts (where available)", "english_name": "contacts", "meaning": "Contact info (phone/email/web).", "data_type": "object", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Free tier.", "source_confidence": "low", "analysis_notes": "Website useful for the platform."},
+    {"path": "financials[]", "source_field": "balance sheet / income statement (PAID)", "english_name": "financials", "meaning": "Parsed balance sheet + income statement + ratios (2022+).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PAID subscription. Structured (parsed from ГФО PDFs).", "source_confidence": "medium", "analysis_notes": "The convenient route to STRUCTURED financials (ГФО are otherwise PDFs)."},
+    {"path": "vat_id", "source_field": "vat (BG+eik)", "english_name": "vat_id", "meaning": "VAT number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": "= BG + EIK."}
+  ]
+}

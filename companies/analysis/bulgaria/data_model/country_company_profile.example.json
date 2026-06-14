@@ -1,0 +1,61 @@
+{
+  "_note": "SCHEMATIC illustrative profile. Bulgaria's open register data was not downloadable here (data.egov.bg WAF-blocked; register web service needs registration). Identifiers/structure follow the documented Commercial Register + ГФО schemas; values are placeholders (not a real company). financial_statements shown with placeholder figures to illustrate shape — official ГФО are PDFs (parse/OCR). beneficial_owners omitted (restricted).",
+  "country": "Bulgaria",
+  "country_slug": "bulgaria",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "eik": "123456789",
+    "vat_id": "BG123456789"
+  },
+  "legal_identity": {
+    "name": "Пример ЕООД",
+    "name_latin": "Primer EOOD",
+    "legal_form": "ЕООД"
+  },
+  "status": {
+    "status": "вписано",
+    "derived": "active"
+  },
+  "activity": {
+    "object_of_activity": "разработка на софтуер и информационни услуги"
+  },
+  "registered_location": {
+    "address": "гр. София, ул. Пример 1",
+    "municipality": "София",
+    "region": "София-град"
+  },
+  "capital": {
+    "amount": 5000.00,
+    "currency": "BGN"
+  },
+  "officers": [
+    {"name": "Иван Иванов", "role": "управител"}
+  ],
+  "owners": [
+    {"name": "Иван Иванов", "share": "100%"}
+  ],
+  "beneficial_owners": null,
+  "acts": [
+    {"act_type": "Първоначална регистрация", "date": "2014-03-10"},
+    {"act_type": "Обявяване на ГФО", "date": "2025-06-20"}
+  ],
+  "financial_statements": [
+    {
+      "fiscal_year": 2024,
+      "size_category": "малко",
+      "currency": "BGN",
+      "total_assets": 1800000.00,
+      "equity": 720000.00,
+      "liabilities": 1080000.00,
+      "revenue": 2400000.00,
+      "net_income": 145000.00,
+      "employees": 18,
+      "source": "gfo_financial_statements"
+    }
+  ],
+  "source_provenance": [
+    {"source_slug": "data_egov_bg", "source_name": "data.egov.bg (Registry Agency publications)", "source_url": "https://data.egov.bg/", "license": "CC-BY", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "commercial_register", "source_name": "Търговски регистър", "source_url": "https://portal.registryagency.bg/", "license": "free search; CC-BY publications", "access": "public/registered", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "gfo_financial_statements", "source_name": "ГФО (Commercial Register)", "source_url": "https://portal.registryagency.bg/", "license": "public (PDF)", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"}
+  ]
+}

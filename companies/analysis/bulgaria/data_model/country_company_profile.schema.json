@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bulgaria Company Profile",
+  "description": "Country-specific combined company profile for Bulgaria. PARTIAL-OPEN with a single clean key: the ЕИК / EIK (9 digits; 13 for branches = VAT root, 'BG' + EIK). The Commercial Register (Агенция по вписванията) is the authoritative spine — open-ish: free public search + CC-BY daily publications (data.egov.bg) + a registered web service; a full bulk needs a data-sharing agreement. Financials (ГФО) are PUBLIC but DOCUMENT-based (PDF in the register), not structured open data — parse or use a commercial provider. The register openly carries managers + capital partners (PII); beneficial ownership (Регистър на действителните собственици) is restricted. No coded activity (предмет на дейност is free text).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": {"type": "string", "const": "Bulgaria"},
+    "country_slug": {"type": "string", "const": "bulgaria"},
+    "country_profile_version": {"type": "string", "description": "Profile schema version / build date (YYYY-MM-DD)."},
+    "registration": {
+      "type": "object",
+      "required": ["eik"],
+      "properties": {
+        "eik": {"type": "string", "description": "Unified Identification Code (ЕИК): 9 digits (13 for branches). Universal join key = VAT root.", "x-source": "commercial_register | data_egov_bg", "x-source-path": "eik", "x-join-key": true, "x-freshness": "daily"},
+        "vat_id": {"type": ["string", "null"], "description": "'BG' + EIK.", "x-source": "derived"}
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "description": "Registered name (Cyrillic).", "x-source": "commercial_register", "x-source-path": "naimenovanie"},
+        "name_latin": {"type": ["string", "null"], "description": "Latin transliteration (where available).", "x-source": "commercial_register | companybook_bg"},
+        "legal_form": {"type": ["string", "null"], "description": "ЕООД/ООД/АД/ЕАД/ЕТ/...", "x-source": "commercial_register", "x-source-path": "pravna_forma"}
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status": {"type": ["string", "null"], "description": "вписано/заличено/в ликвидация/в несъстоятелност.", "x-source": "commercial_register", "x-source-path": "status"},
+        "derived": {"type": ["string", "null"], "enum": ["active", "struck_off", "liquidation", "insolvency", null]}
+      }
+    },
+    "activity": {
+      "type": "object",
+      "description": "No coded КИД/NACE in the register — предмет на дейност is free text (derive if needed).",
+      "properties": {
+        "object_of_activity": {"type": ["string", "null"], "description": "предмет на дейност (free text).", "x-source": "commercial_register", "x-source-path": "predmet_na_deynost"}
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "address": {"type": ["string", "null"], "x-source": "commercial_register", "x-source-path": "sedalishte_adres"},
+        "municipality": {"type": ["string", "null"], "description": "Settlement (населено място).", "x-source": "derived"},
+        "region": {"type": ["string", "null"], "description": "Oblast (област).", "x-source": "derived"}
+      }
+    },
+    "capital": {
+      "type": ["object", "null"],
+      "description": "Registered capital (NOT annual accounts).",
+      "properties": {
+        "amount": {"type": ["number", "null"], "x-source": "commercial_register", "x-source-path": "kapital"},
+        "currency": {"type": ["string", "null"], "description": "BGN (EUR from 2026)."}
+      }
+    },
+    "officers": {
+      "type": ["array", "null"],
+      "description": "Managers / board (управители / съвет). OPEN in the register. PERSONAL DATA (GDPR).",
+      "items": {"type": "object", "properties": {"name": {"type": ["string", "null"]}, "role": {"type": ["string", "null"]}}},
+      "x-source": "commercial_register",
+      "x-source-path": "upraviteli",
+      "x-personal-data": true
+    },
+    "owners": {
+      "type": ["array", "null"],
+      "description": "Capital partners / sole owner (съдружници / едноличен собственик). OPEN (share ownership). PII. Distinct from the restricted beneficial-ownership register.",
+      "items": {"type": "object", "properties": {"name": {"type": ["string", "null"]}, "share": {"type": ["string", "null"]}}},
+      "x-source": "commercial_register",
+      "x-source-path": "sobstvenitsi",
+      "x-personal-data": true
+    },
+    "beneficial_owners": {
+      "type": ["array", "null"],
+      "description": "PLANNING-ONLY. Регистър на действителните собственици — RESTRICTED (legitimate interest). Sensitive PII. Not open.",
+      "items": {"type": "object", "properties": {"name": {"type": ["string", "null"]}, "control_nature": {"type": ["string", "null"]}}},
+      "x-source": "beneficial_ownership",
+      "x-join-key": "eik",
+      "x-access": "restricted (planning-only)",
+      "x-personal-data": true
+    },
+    "acts": {
+      "type": ["array", "null"],
+      "description": "Registered acts / announcements (the CC-BY daily-publication stream).",
+      "items": {"type": "object", "properties": {"act_type": {"type": ["string", "null"]}, "date": {"type": ["string", "null"], "format": "date"}}},
+      "x-source": "data_egov_bg",
+      "x-join-key": "eik",
+      "x-access": "CC-BY"
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PUBLIC but DOCUMENT-based. ГФО filed to the register (public by 30 June) as PDFs — figures require OCR/parsing, or a commercial provider (CompanyBook/APIS) for structured data. revenue/employees nullable for micro/small (категория).",
+      "items": {
+        "type": "object",
+        "required": ["fiscal_year", "source"],
+        "properties": {
+          "fiscal_year": {"type": "integer", "x-source-path": "otcheten_period"},
+          "size_category": {"type": ["string", "null"], "description": "микро/малко/средно/голямо.", "x-source-path": "kategoriya"},
+          "currency": {"type": ["string", "null"], "description": "BGN (EUR from 2026)."},
+          "total_assets": {"type": ["number", "null"], "x-source-path": "balans.obshto_aktivi"},
+          "equity": {"type": ["number", "null"], "x-source-path": "balans.sobstven_kapital"},
+          "liabilities": {"type": ["number", "null"], "x-source-path": "balans.zadalzheniya"},
+          "revenue": {"type": ["number", "null"], "description": "нетни приходи от продажби — reduced for micro/small.", "x-source-path": "opr.neto_prihodi"},
+          "net_income": {"type": ["number", "null"], "description": "печалба/загуба за периода.", "x-source-path": "opr.pechalba_zaguba"},
+          "employees": {"type": ["integer", "null"], "x-source-path": "prilozhenie.sreden_personal"},
+          "source": {"type": "string", "enum": ["gfo_financial_statements", "companybook_bg"], "description": "Financial source: official PDF (parsed) or commercial provider."}
+        }
+      },
+      "x-source": "gfo_financial_statements | companybook_bg",
+      "x-join-key": "eik -> registration.eik",
+      "x-freshness": "annual",
+      "x-access": "public PDF (parse) / paid structured"
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "One entry per source contributing to this profile.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "source_url", "retrieved_at"],
+        "properties": {
+          "source_slug": {"type": "string"},
+          "source_name": {"type": "string"},
+          "source_url": {"type": "string"},
+          "license": {"type": "string"},
+          "access": {"type": "string"},
+          "retrieved_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "country": "Bulgaria",
+  "country_slug": "bulgaria",
+  "source_slug": "data_egov_bg",
+  "source_name": "data.egov.bg — Registry Agency Commercial Register publications (CC-BY)",
+  "source_type": "open_data_portal",
+  "organization": "Държавна агенция Електронно управление / Агенция по вписванията",
+  "source_url": "https://data.egov.bg/",
+  "license": "CC-BY (Registry Agency daily publications)",
+  "access": "public",
+  "data_freshness": "daily",
+  "record_shape": "dataset of resources (CSV/XML/JSON): daily commercial-register publications (acts/changes keyed on EIK)",
+  "primary_keys": ["eik + publication_id"],
+  "join_keys": ["eik"],
+  "field_count": 6,
+  "fields": [
+    {"path": "eik", "source_field": "ЕИК", "english_name": "unified_identification_code", "meaning": "Entity the publication concerns.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented (resource not downloadable here; data.egov.bg WAF-blocked).", "source_confidence": "medium", "analysis_notes": "Join key to the spine; accumulate publications per EIK."},
+    {"path": "naimenovanie", "source_field": "наименование", "english_name": "name", "meaning": "Entity name in the publication.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": "Cyrillic.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "vid_vpisvane", "source_field": "вид вписване / обявяване", "english_name": "act_type", "meaning": "Type of registered act/announcement (incorporation/change/struck-off/financial-statement filing/...).", "data_type": "string", "semantic_type": "filing", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": null, "source_confidence": "medium", "analysis_notes": "Lifecycle event type; a 'обявяване на ГФО' act signals a financial-statement filing."},
+    {"path": "data", "source_field": "дата", "english_name": "publication_date", "meaning": "Publication date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": "Daily stream."},
+    {"path": "polе/data_fields", "source_field": "fields per act (changed attributes)", "english_name": "changed_fields", "meaning": "Changed attributes carried in the act (name/address/managers/capital/...).", "data_type": "object", "semantic_type": "raw_extension", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": "Structure varies by act type.", "source_confidence": "low", "analysis_notes": "Apply latest-wins per field to maintain the master."},
+    {"path": "resource_meta", "source_field": "dataset/resource metadata", "english_name": "resource_metadata", "meaning": "data.egov.bg resource metadata (file, date, format).", "data_type": "object", "semantic_type": "metadata", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": "Carry into source_provenance."}
+  ]
+}

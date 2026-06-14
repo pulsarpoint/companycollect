@@ -1,0 +1,28 @@
+{
+  "country": "Bulgaria",
+  "country_slug": "bulgaria",
+  "source_slug": "gfo_financial_statements",
+  "source_name": "ГФО — Annual Financial Statements (in the Commercial Register)",
+  "source_type": "official_financial_disclosure",
+  "organization": "Агенция по вписванията (Registry Agency)",
+  "source_url": "https://portal.registryagency.bg/CR/en",
+  "license": "Public (filed in the register); reuse per register terms",
+  "access": "public (per-company documents)",
+  "data_freshness": "annual; public by 30 June",
+  "record_shape": "per-company per-year FILED DOCUMENT (PDF/scanned): баланс + ОПР inside",
+  "primary_keys": ["eik + otcheten_period"],
+  "join_keys": ["eik"],
+  "field_count": 10,
+  "fields": [
+    {"path": "eik", "source_field": "ЕИК", "english_name": "unified_identification_code", "meaning": "Filing company's EIK; join key.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Clean join to the spine.", "source_confidence": "high", "analysis_notes": "Same EIK key as the register."},
+    {"path": "otcheten_period", "source_field": "отчетен период", "english_name": "fiscal_year", "meaning": "Reporting period (fiscal year).", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Inside the PDF.", "source_confidence": "high", "analysis_notes": "Per-statement key."},
+    {"path": "kategoriya", "source_field": "категория предприятие", "english_name": "size_category", "meaning": "Enterprise size category: микро / малко / средно / голямо.", "data_type": "string", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": false, "code_list": "микро|малко|средно|голямо", "language": "Bulgarian", "limitations": "Governs disclosure depth.", "source_confidence": "medium", "analysis_notes": "Micro/small disclose less."},
+    {"path": "balans.obshto_aktivi", "source_field": "обща сума на активите (баланс)", "english_name": "total_assets", "meaning": "Balance sheet total (total assets).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": "Inside the PDF -> OCR/parse. BGN (EUR from 2026).", "source_confidence": "high", "analysis_notes": "From the баланс."},
+    {"path": "balans.dalgotrayni_aktivi", "source_field": "дълготрайни активи", "english_name": "fixed_assets", "meaning": "Non-current/fixed assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": "PDF.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "balans.sobstven_kapital", "source_field": "собствен капитал", "english_name": "equity", "meaning": "Total equity.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": "PDF.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "balans.zadalzheniya", "source_field": "задължения", "english_name": "liabilities", "meaning": "Liabilities.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": "PDF.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "opr.neto_prihodi", "source_field": "нетни приходи от продажби (ОПР)", "english_name": "revenue", "meaning": "Net sales revenue.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": "PDF. Reduced disclosure for micro/small.", "source_confidence": "high", "analysis_notes": "From the отчет за приходите и разходите."},
+    {"path": "opr.pechalba_zaguba", "source_field": "печалба/загуба за периода", "english_name": "net_income", "meaning": "Net profit/loss for the period.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": "PDF. Negative = загуба (loss).", "source_confidence": "high", "analysis_notes": null},
+    {"path": "prilozhenie.sreden_personal", "source_field": "среден брой персонал (приложение)", "english_name": "employees", "meaning": "Average number of employees.", "data_type": "integer", "semantic_type": "employment", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": "PDF; may be absent for micro.", "source_confidence": "low", "analysis_notes": null}
+  ]
+}

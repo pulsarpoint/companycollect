@@ -1,0 +1,85 @@
+{
+  "country": "Bulgaria",
+  "country_slug": "bulgaria",
+  "source_slug": "commercial_register",
+  "source_identity": "bulgaria_commercial_register",
+  "source_package": "commercialregister",
+  "env_prefix": "BG_COMMERCIAL_REGISTER",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Търговски регистър (Commercial Register / ТРРЮЛНЦ)",
+    "source_type": "official_registry",
+    "organization": "Агенция по вписванията (Registry Agency)",
+    "source_url": "https://portal.registryagency.bg/CR/en",
+    "license": "Free public search; CC-BY publications; full bulk by agreement",
+    "access": "public (search) / registered (web service) / agreement (bulk)",
+    "data_freshness": "daily publications",
+    "attribution": "Източник: Търговски регистър — Агенция по вписванията."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["BG_CR_WEBSERVICE_USER", "BG_CR_WEBSERVICE_PASSWORD"],
+    "note": "Single-company public search is free (no account). The integration WEB SERVICE needs registration/contract. A FULL bulk for a commercial database needs a data-sharing agreement. For open bulk, prefer the CC-BY publications via data_egov_bg."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://portal.registryagency.bg/ (web service; registration)",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "xml", "html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-company",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Per-EIK lookup. No anonymous population enumeration. The open bulk path is the CC-BY daily publications (data_egov_bg). Confirm web-service shape from the Registry Agency integration docs."},
+    "rate_limit": "single lookups unrestricted; bulk by agreement"
+  },
+  "snapshot": {
+    "strategy": "json_per_company_or_accumulate_publications",
+    "file_extension": ".json",
+    "preserve_raw_download": true,
+    "note": "Either per-EIK via the web service, or build a master by accumulating data_egov_bg publications keyed on EIK."
+  },
+  "parsing": {
+    "record_type_hint": "BgCommercialRegisterEntry",
+    "date_formats": ["02.01.2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["bg_locale_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "eik stays string (9 or 13 digits). Names in Cyrillic (+Latin translit). предмет на дейност free text (no КИД). управители/съдружници are PII. Capital BGN (EUR from 2026)."
+  },
+  "keys": {
+    "primary_keys": ["eik"],
+    "join_keys": ["eik"],
+    "dedupe_keys": ["eik"]
+  },
+  "mapping_rules": {
+    "company_id": "eik; vat_id = 'BG' + eik.",
+    "legal_name": "наименование (keep Cyrillic + Latin).",
+    "company_type": "правна форма.",
+    "status": "статус (вписано/заличено/ликвидация/несъстоятелност).",
+    "incorporation_date": "дата на вписване.",
+    "officers": "управители / съвет (PII).",
+    "owners": "съдружници / едноличен собственик (share ownership; PII).",
+    "activity": "предмет на дейност (free text; no coded NACE)."
+  },
+  "fixture_requirements": [
+    "ЕООД with управител + едноличен собственик + капитал",
+    "АД (joint-stock) with board",
+    "заличено (struck-off) entity",
+    "branch with 13-digit EIK",
+    "publication-stream act (data.egov.bg) keyed on EIK"
+  ],
+  "live_test_plan": {
+    "smoke": "Free public search by a known EIK to confirm field availability (manual). Do not mass-scrape the public search.",
+    "full": "Either register for the web service (per-EIK) or ingest the CC-BY publications (data_egov_bg) and accumulate to a master keyed on EIK. Full bulk only under a data-sharing agreement."
+  },
+  "blockers": [
+    "Integration web service needs registration; full bulk needs a data-sharing agreement.",
+    "No anonymous population enumeration (use the CC-BY publications for open bulk).",
+    "No coded activity (предмет на дейност free text).",
+    "Managers/partners PII (GDPR); Cyrillic."
+  ]
+}

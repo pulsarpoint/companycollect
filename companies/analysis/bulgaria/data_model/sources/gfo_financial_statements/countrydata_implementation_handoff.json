@@ -1,0 +1,81 @@
+{
+  "country": "Bulgaria",
+  "country_slug": "bulgaria",
+  "source_slug": "gfo_financial_statements",
+  "source_identity": "bulgaria_gfo_financial_statements",
+  "source_package": "gfofinancials",
+  "env_prefix": "BG_GFO",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "ГФО — Annual Financial Statements (in the Commercial Register)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Агенция по вписванията (Registry Agency)",
+    "source_url": "https://portal.registryagency.bg/CR/en",
+    "license": "Public (filed in the register)",
+    "access": "public",
+    "data_freshness": "annual; public by 30 June",
+    "attribution": "Източник: Търговски регистър — ГФО (Агенция по вписванията)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Public per-company filed documents (PDF). No structured open feed. Bulk/automated retrieval may fall under the register's bulk terms; single-document access is public."
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://portal.registryagency.bg/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-company per-year document",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_documents", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Documents attached to the company's register file; located via the register / the 'обявяване на ГФО' publication act. No structured open bulk."},
+    "rate_limit": "per-document access"
+  },
+  "snapshot": {
+    "strategy": "pdf_per_company_per_year",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true,
+    "note": "Persist the PDF; OCR/parse баланс + ОПР. Or consume a commercial provider's structured feed."
+  },
+  "parsing": {
+    "record_type_hint": "BgGFO",
+    "date_formats": ["02.01.2006", "2006"],
+    "datetime_formats": [],
+    "number_formats": ["bg_locale_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Figures are inside a PDF (Bulgarian, Cyrillic) -> OCR/layout parsing required. Map обща сума на активите->total_assets, собствен капитал->equity, нетни приходи от продажби->revenue, печалба/загуба->net_income. Size category limits disclosure. BGN (EUR from 2026)."
+  },
+  "keys": {
+    "primary_keys": ["eik", "otcheten_period"],
+    "join_keys": ["eik"],
+    "dedupe_keys": ["eik + otcheten_period"]
+  },
+  "mapping_rules": {
+    "financial_statements": "One record per отчетен период; parse баланс + ОПР.",
+    "revenue": "нетни приходи от продажби",
+    "net_income": "печалба/загуба за периода",
+    "total_assets": "обща сума на активите",
+    "equity": "собствен капитал",
+    "matching": "Clean join on EIK; trigger from the 'обявяване на ГФО' act."
+  },
+  "fixture_requirements": [
+    "голямо/средно company GFO (full баланс + ОПР; revenue present)",
+    "микро/малко company GFO (reduced; revenue may be absent)",
+    "year with загуба (net loss)",
+    "scanned/image PDF requiring OCR"
+  ],
+  "live_test_plan": {
+    "smoke": "Locate one company's ГФО PDF via the register; OCR/parse total assets + revenue + net result.",
+    "full": "For spine entities flagged by an 'обявяване на ГФО' act, fetch the PDFs; OCR/parse to financial_statements[]; OR consume a commercial provider's structured financials (recommended for scale)."
+  },
+  "blockers": [
+    "Financials are PDF documents, not structured open data (no XBRL) — OCR/parsing required.",
+    "No structured open bulk; commercial provider recommended for scale.",
+    "Micro/small reduced disclosure; Cyrillic OCR."
+  ]
+}

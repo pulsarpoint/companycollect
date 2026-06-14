@@ -1,0 +1,60 @@
+{
+  "country": "Bulgaria",
+  "country_slug": "bulgaria",
+  "source_slug": "companybook_bg",
+  "source_identity": "bulgaria_companybook_bg",
+  "source_package": "companybookbg",
+  "env_prefix": "COMPANYBOOK_BG",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "CompanyBook.BG (third-party register data + API)",
+    "source_type": "third_party_api",
+    "organization": "CompanyBook.BG (private)",
+    "source_url": "https://companybook.bg/?lang=en",
+    "license": "Non-financial free; financials paid",
+    "access": "public (non-financial) / paid (financials)",
+    "data_freshness": "from the Commercial Register",
+    "attribution": "Data from the Bulgarian Commercial Register (CC-BY) via CompanyBook.BG."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["COMPANYBOOK_BG_API_KEY"],
+    "note": "Free tier (non-financial) likely needs an API key; financials are a paid subscription."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://companybook.bg/ (REST API)",
+    "download_url": "full dataset on request",
+    "http_method": "GET",
+    "headers_required": [{"name": "Authorization", "value": "<api-key>", "note": "per provider"}],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "company",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Lookup by EIK/name. Full dataset on request. Confirm exact endpoints + key from provider docs."},
+    "rate_limit": "per plan"
+  },
+  "snapshot": {"strategy": "json_per_company", "file_extension": ".json", "preserve_raw_download": true},
+  "parsing": {
+    "record_type_hint": "CompanyBookCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["plain_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "eik stays string. financials[] are parsed from ГФО (paid). vat = BG+EIK."
+  },
+  "keys": {"primary_keys": ["eik"], "join_keys": ["eik"], "dedupe_keys": ["eik"]},
+  "mapping_rules": {
+    "company_master": "Map non-financial fields (free).",
+    "financial_statements": "financials[] -> structured records (paid).",
+    "matching": "EIK."
+  },
+  "fixture_requirements": ["company with structured financials (paid)", "company non-financial only (free tier)", "company matched by VAT"],
+  "live_test_plan": {
+    "smoke": "With COMPANYBOOK_BG_API_KEY, fetch one company; assert eik + name; (paid) assert a financial year.",
+    "full": "Behind the key, enrich the spine by EIK; use for structured financials if the official PDF parsing is not built."
+  },
+  "blockers": ["Financials are a paid subscription; free tier non-financial + API key. Underlying register is CC-BY."]
+}

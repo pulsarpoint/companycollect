@@ -1,0 +1,79 @@
+{
+  "country": "Bulgaria",
+  "country_slug": "bulgaria",
+  "source_slug": "data_egov_bg",
+  "source_identity": "bulgaria_data_egov_bg",
+  "source_package": "dataegovbg",
+  "env_prefix": "DATA_EGOV_BG",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "data.egov.bg — Registry Agency Commercial Register publications (CC-BY)",
+    "source_type": "open_data_portal",
+    "organization": "State e-Government Agency / Агенция по вписванията",
+    "source_url": "https://data.egov.bg/",
+    "license": "CC-BY",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Източник: Агенция по вписванията чрез data.egov.bg (CC-BY)."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["DATA_EGOV_BG_API_KEY"],
+    "note": "Open (CC-BY) but resource data via the portal API may need an api_key. WAF-blocked from automated access in discovery (HTTP 403). Resolve dataset/resource URLs via the portal UI."
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://data.egov.bg/api",
+    "download_url": "unknown (resolve Registry Agency dataset resource URLs via the portal)",
+    "http_method": "GET",
+    "headers_required": [{"name": "User-Agent", "value": "Mozilla/5.0", "note": "WAF may require a browser-like UA"}],
+    "formats": ["csv", "xml", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "resource rows (daily publications)",
+    "total_results_path": null,
+    "pagination": {"type": "dataset_resources", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Many resources (per day / per file) under the Търговски регистър dataset. Confirm exact resource URIs + api_key requirement from the portal."},
+    "rate_limit": "WAF; api_key per portal"
+  },
+  "snapshot": {
+    "strategy": "accumulate_publications_to_master",
+    "file_extension": ".csv",
+    "preserve_raw_download": true,
+    "note": "Persist daily publication files; build/maintain the EIK-keyed master (latest-wins per field)."
+  },
+  "parsing": {
+    "record_type_hint": "BgRegistryPublication",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": ["bg_locale_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Cyrillic. Change-stream semantics: accumulate per EIK. 'обявяване на ГФО' act -> trigger ГФО fetch. Confirm exact columns from a real resource."
+  },
+  "keys": {
+    "primary_keys": ["eik", "publication_id"],
+    "join_keys": ["eik"],
+    "dedupe_keys": ["eik + publication_id"]
+  },
+  "mapping_rules": {
+    "company_master": "Accumulate publications per EIK (latest-wins) -> registration/legal_identity/status/...",
+    "financial_trigger": "Act 'обявяване на ГФО' -> fetch the ГФО document (gfo_financial_statements).",
+    "join": "EIK."
+  },
+  "fixture_requirements": [
+    "incorporation publication",
+    "change-of-manager / address publication",
+    "'обявяване на ГФО' (financial-statement filing) publication",
+    "struck-off publication",
+    "resource with Cyrillic encoding edge cases"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve the Registry Agency dataset on data.egov.bg; fetch one resource (browser UA / api_key); assert EIK + act type + date parse.",
+    "full": "Harvest the daily publication resources; accumulate to an EIK-keyed master; trigger ГФО fetches on financial-filing acts."
+  },
+  "blockers": [
+    "Portal WAF-blocked automated access in discovery; resolve resource URLs + api_key from the portal.",
+    "Change/event stream (not a single master) — accumulation required.",
+    "Cyrillic; columns to confirm from a real resource."
+  ]
+}

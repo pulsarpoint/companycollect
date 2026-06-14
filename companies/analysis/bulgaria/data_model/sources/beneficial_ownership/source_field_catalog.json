@@ -1,0 +1,22 @@
+{
+  "country": "Bulgaria",
+  "country_slug": "bulgaria",
+  "source_slug": "beneficial_ownership",
+  "source_name": "Регистър на действителните собственици (beneficial ownership)",
+  "source_type": "beneficial_ownership_register",
+  "organization": "Агенция по вписванията",
+  "source_url": "https://portal.registryagency.bg/",
+  "license": "Filed in the commercial register; access conditions apply — planning-only",
+  "access": "restricted",
+  "data_freshness": "continuous",
+  "record_shape": "per-company beneficial-owner declaration (document)",
+  "primary_keys": ["eik + beneficial_owner"],
+  "join_keys": ["eik"],
+  "field_count": 4,
+  "fields": [
+    {"path": "eik", "source_field": "ЕИК", "english_name": "unified_identification_code", "meaning": "Entity whose beneficial owners are declared.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY (restricted).", "source_confidence": "medium", "analysis_notes": "Join via EIK."},
+    {"path": "deystvitelen_sobstvenik.ime", "source_field": "действителен собственик (име)", "english_name": "beneficial_owner_name", "meaning": "Beneficial owner (natural person).", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "Bulgarian", "limitations": "PLANNING-ONLY. SENSITIVE PII.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "deystvitelen_sobstvenik.kontrol", "source_field": "вид/размер на контрола", "english_name": "control_nature", "meaning": "Nature/percentage of control.", "data_type": "string", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Bulgarian", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null},
+    {"path": "data", "source_field": "дата на деклариране", "english_name": "declaration_date", "meaning": "Declaration date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null}
+  ]
+}
