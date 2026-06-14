@@ -57,8 +57,34 @@ BUCKET = "conformance-finland"
 _TIMEOUT = 300
 _RETRY_DELAYS = [1, 2, 4, 8]
 
+_S3_ENV_KEYS = ("CORPSCOUT_S3_ENDPOINT", "CORPSCOUT_S3_ACCESS_KEY", "CORPSCOUT_S3_SECRET_KEY")
+
+
+def _ensure_env() -> None:
+    """Load S3 creds from the repo's dagster .env if they aren't already in the
+    environment, so the notebook works without manually sourcing .env (e.g. when
+    launched by the marimo server process)."""
+    if all(k in os.environ for k in _S3_ENV_KEYS):
+        return
+    import pathlib
+
+    # download.py -> conformance -> notebook -> finland -> analysis -> companies -> <repo root>
+    env_path = pathlib.Path(__file__).resolve().parents[5] / "corpscout" / "dagster_v2" / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text().splitlines():
+        line = raw.strip()
+        if line.startswith("export "):
+            line = line[len("export ") :]
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key.strip(), value)
+
 
 def s3_client():
+    _ensure_env()
     return boto3.client(
         "s3",
         endpoint_url=os.environ["CORPSCOUT_S3_ENDPOINT"],
