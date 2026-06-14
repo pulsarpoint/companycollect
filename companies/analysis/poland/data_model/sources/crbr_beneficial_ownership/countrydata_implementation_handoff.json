@@ -1,0 +1,78 @@
+{
+  "country": "Poland",
+  "country_slug": "poland",
+  "source_slug": "crbr_beneficial_ownership",
+  "source_identity": "poland_crbr_beneficial_ownership",
+  "source_package": "crbr",
+  "env_prefix": "CRBR",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "CRBR — Centralny Rejestr Beneficjentów Rzeczywistych",
+    "source_type": "beneficial_ownership_register",
+    "organization": "Ministerstwo Finansów",
+    "source_url": "https://crbr.podatki.gov.pl/",
+    "license": "Open (free public register)",
+    "access": "public",
+    "data_freshness": "continuous",
+    "attribution": "Źródło: Centralny Rejestr Beneficjentów Rzeczywistych (Ministerstwo Finansów)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Free public, lookup by NIP. SENSITIVE PERSONAL DATA (names, PESEL) — GDPR; minimize/redact."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://crbr.podatki.gov.pl/adcrbr/api",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [{"name": "Accept", "value": "application/json", "note": null}],
+    "formats": ["json", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-entity declaration (beneficjenci[])",
+    "total_results_path": null,
+    "pagination": {"type": "per_entity_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Lookup by NIP. Confirm the exact public API/endpoint shape from crbr.podatki.gov.pl (the UI offers PDF + structured export)."},
+    "rate_limit": "fair use"
+  },
+  "snapshot": {
+    "strategy": "json_per_entity",
+    "file_extension": ".json",
+    "preserve_raw_download": true,
+    "note": "Persist raw to the restricted raw zone; minimize PII before promotion."
+  },
+  "parsing": {
+    "record_type_hint": "CrbrZgloszenie",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Beneficial owners are natural persons (PII). DO NOT persist PESEL beyond raw — minimize to birth year. Join by NIP."
+  },
+  "keys": {
+    "primary_keys": ["nip", "beneficjent"],
+    "join_keys": ["nip"],
+    "dedupe_keys": ["nip + beneficjent (name+birthyear)"]
+  },
+  "mapping_rules": {
+    "beneficial_owners": "beneficjenci[] -> owners[] with name (minimized), citizenship, ownership_nature.",
+    "matching": "Join by NIP to the company spine.",
+    "pii_policy": "Redact/minimize PESEL; default to birth year."
+  },
+  "fixture_requirements": [
+    "entity with one beneficial owner",
+    "entity with multiple beneficial owners + ownership %",
+    "foreign-citizen owner",
+    "record exercising PESEL minimization"
+  ],
+  "live_test_plan": {
+    "smoke": "Look up a known NIP; assert beneficjenci[] present; verify PII minimization applied before promotion.",
+    "full": "Seed NIPs from the spine; look up CRBR per NIP; persist raw to restricted zone; promote minimized owners[]; throttle."
+  },
+  "blockers": [
+    "Sensitive PII (names, PESEL) — strict GDPR handling / minimization required.",
+    "Exact public API shape to confirm from the portal.",
+    "Per-NIP lookup (no bulk)."
+  ]
+}

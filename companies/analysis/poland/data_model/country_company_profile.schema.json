@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Poland Company Profile",
+  "description": "Country-specific combined company profile for Poland. Among the MOST open jurisdictions: free KRS API (spine), free structured financial statements (RDF e-Sprawozdania XML), free VAT white list (bridges NIP<->REGON<->KRS + bank accounts), free CEIDG (sole traders) and free CRBR (beneficial ownership). Three identifiers — KRS (10-digit, companies), NIP (10-digit tax/VAT), REGON (9 or 14-digit) — bridged by the white list. entity_kind distinguishes KRS companies from CEIDG sole proprietors.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": {"type": "string", "const": "Poland"},
+    "country_slug": {"type": "string", "const": "poland"},
+    "country_profile_version": {"type": "string", "description": "Profile schema version / build date (YYYY-MM-DD)."},
+    "entity_kind": {"type": "string", "enum": ["company", "sole_proprietor"], "description": "company = KRS-registered; sole_proprietor = CEIDG.", "x-source": "krs_api | ceidg"},
+    "registration": {
+      "type": "object",
+      "description": "Identifiers. KRS for companies; NIP bridges everything; REGON normalized to 9-digit core.",
+      "properties": {
+        "krs": {"type": ["string", "null"], "description": "10-digit KRS number (companies; null for sole traders).", "pattern": "^[0-9]{10}$", "x-source": "krs_api | vat_whitelist", "x-source-path": "naglowekA.numerKRS | result.subject.krs", "x-join-key": true},
+        "nip": {"type": ["string", "null"], "description": "10-digit tax id (universal bridge key).", "x-source": "krs_api | vat_whitelist | ceidg", "x-source-path": "identyfikatory.nip | result.subject.nip", "x-join-key": true},
+        "vat_id": {"type": ["string", "null"], "description": "PL + NIP.", "x-source": "derived"},
+        "regon": {"type": ["string", "null"], "description": "REGON (normalize KRS 14-digit to the 9-digit core).", "x-source": "krs_api | vat_whitelist", "x-source-path": "identyfikatory.regon | result.subject.regon", "x-join-key": true},
+        "rejestr": {"type": ["string", "null"], "enum": ["P", "S", null], "description": "KRS register: P companies, S NGOs.", "x-source": "krs_api"}
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["nazwa"],
+      "properties": {
+        "nazwa": {"type": "string", "description": "Legal name.", "x-source": "krs_api | vat_whitelist | ceidg", "x-source-path": "danePodmiotu.nazwa | result.subject.name | firma.nazwa"},
+        "forma_prawna": {"type": ["string", "null"], "description": "Legal form (SPÓŁKA AKCYJNA, SP. Z O.O., ...).", "x-source": "krs_api", "x-source-path": "danePodmiotu.formaPrawna"}
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "derived": {"type": ["string", "null"], "enum": ["active", "liquidation", "bankrupt", "suspended", "struck_off", null], "description": "From KRS dzial6 (likwidacja/upadłość), CEIDG status (ZAWIESZONY/WYKREŚLONY), else active."},
+        "vat_status": {"type": ["string", "null"], "description": "Czynny / Zwolniony / not registered.", "x-source": "vat_whitelist", "x-source-path": "result.subject.statusVat"}
+      }
+    },
+    "activity": {
+      "type": "object",
+      "description": "Poland HAS clean activity codes (PKD).",
+      "properties": {
+        "pkd_primary": {"type": ["string", "null"], "description": "Primary PKD (kodDzial.kodKlasa.kodPodklasa, e.g. 64.19.Z).", "x-source": "krs_api", "x-source-path": "dzial3.przedmiotPrzewazajacejDzialalnosci"},
+        "pkd_all": {"type": ["array", "null"], "items": {"type": "string"}, "x-source": "krs_api | ceidg"}
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "address": {"type": ["string", "null"], "x-source": "krs_api | vat_whitelist", "x-source-path": "dzial1.siedzibaIAdres.adres | result.subject.workingAddress"},
+        "miejscowosc": {"type": ["string", "null"], "description": "Municipality.", "x-source": "krs_api", "x-source-path": "siedziba.miejscowosc"},
+        "wojewodztwo": {"type": ["string", "null"], "description": "Voivodeship (region).", "x-source": "krs_api", "x-source-path": "siedziba.wojewodztwo"}
+      }
+    },
+    "capital": {
+      "type": ["object", "null"],
+      "description": "Registered share capital (KRS). NOT annual accounts.",
+      "properties": {
+        "wartosc": {"type": ["number", "null"], "x-source": "krs_api", "x-source-path": "dzial1.kapital.wysokoscKapitaluZakladowego.wartosc"},
+        "waluta": {"type": ["string", "null"], "description": "Usually PLN.", "x-source": "krs_api"}
+      }
+    },
+    "contact": {
+      "type": "object",
+      "properties": {
+        "website": {"type": ["string", "null"], "x-source": "krs_api", "x-source-path": "dzial1.siedzibaIAdres.adresStronyInternetowej"},
+        "bank_accounts": {"type": ["array", "null"], "items": {"type": "string"}, "description": "Registered NRB accounts.", "x-source": "vat_whitelist", "x-source-path": "result.subject.accountNumbers"}
+      }
+    },
+    "officers": {
+      "type": ["array", "null"],
+      "description": "Board / representation from KRS dzial2. Natural-person details are ANONYMIZED by the KRS API.",
+      "items": {"type": "object", "properties": {"organ": {"type": ["string", "null"]}, "funkcja": {"type": ["string", "null"]}}},
+      "x-source": "krs_api",
+      "x-source-path": "dzial2.reprezentacja",
+      "x-personal-data": "anonymized by source"
+    },
+    "beneficial_owners": {
+      "type": ["array", "null"],
+      "description": "OPEN beneficial owners from CRBR (by NIP). SENSITIVE PII — minimize (no PESEL; birth year only).",
+      "items": {"type": "object", "properties": {"name": {"type": ["string", "null"]}, "citizenship": {"type": ["string", "null"]}, "ownership_nature": {"type": ["string", "null"]}}},
+      "x-source": "crbr_beneficial_ownership",
+      "x-join-key": "nip -> registration.nip",
+      "x-personal-data": true
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "OPEN, structured. Free e-Sprawozdania finansowe XML from RDF (per KRS): bilans + rachunek zysków i strat. revenue/net_income/employees nullable for mikro/małe filers. Units may be whole PLN or thousands.",
+      "items": {
+        "type": "object",
+        "required": ["period_end", "source"],
+        "properties": {
+          "period_start": {"type": ["string", "null"], "format": "date", "x-source-path": "Naglowek.okresOd"},
+          "period_end": {"type": "string", "format": "date", "x-source-path": "Naglowek.okresDo"},
+          "entity_type": {"type": ["string", "null"], "description": "mikro/małe/inne/banki.", "x-source-path": "Naglowek.typJednostki"},
+          "currency": {"type": ["string", "null"], "description": "Usually PLN.", "x-source-path": "Naglowek.waluta"},
+          "total_assets": {"type": ["number", "null"], "x-source-path": "Bilans.SumaBilansowa"},
+          "equity": {"type": ["number", "null"], "x-source-path": "Bilans.Pasywa.KapitalWlasny"},
+          "liabilities": {"type": ["number", "null"], "x-source-path": "Bilans.Pasywa.ZobowiazaniaIRezerwy"},
+          "revenue": {"type": ["number", "null"], "description": "przychody netto ze sprzedaży.", "x-source-path": "RachunekZyskowIStrat.PrzychodyNetto"},
+          "operating_result": {"type": ["number", "null"], "x-source-path": "RachunekZyskowIStrat.ZyskStrataOperacyjny"},
+          "net_income": {"type": ["number", "null"], "description": "zysk/strata netto.", "x-source-path": "RachunekZyskowIStrat.ZyskStrataNetto"},
+          "employees": {"type": ["integer", "null"], "x-source-path": "InformacjaDodatkowa.przecietneZatrudnienie"},
+          "source": {"type": "string", "enum": ["krs_rdf_financials"], "description": "Financial source."}
+        }
+      },
+      "x-source": "krs_rdf_financials",
+      "x-join-key": "krs -> registration.krs",
+      "x-freshness": "annual",
+      "x-access": "open (free per-company XML)"
+    },
+    "filing_signals": {
+      "type": ["object", "null"],
+      "properties": {
+        "wzmianki_o_zlozonych_dokumentach": {"type": ["array", "null"], "items": {"type": "object"}, "description": "KRS mentions of filed statements (periods) — trigger to fetch RDF.", "x-source": "krs_api", "x-source-path": "dzial3.wzmiankiOZlozonychDokumentach"}
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "One entry per source contributing to this profile.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "source_url", "retrieved_at"],
+        "properties": {
+          "source_slug": {"type": "string"},
+          "source_name": {"type": "string"},
+          "source_url": {"type": "string"},
+          "license": {"type": "string"},
+          "access": {"type": "string"},
+          "retrieved_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

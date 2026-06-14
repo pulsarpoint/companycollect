@@ -1,0 +1,67 @@
+{
+  "_note": "Built from real open data: registration/legal_identity/activity/location/capital/contact use the real KRS API + VAT white-list records for PKO BP (KRS 0000026438). financial_statements is an illustrative RDF entry (figures fabricated placeholders) and beneficial_owners is omitted (PII). Officers anonymized by source.",
+  "country": "Poland",
+  "country_slug": "poland",
+  "country_profile_version": "2026-06-14",
+  "entity_kind": "company",
+  "registration": {
+    "krs": "0000026438",
+    "nip": "5250007738",
+    "vat_id": "PL5250007738",
+    "regon": "016298263",
+    "rejestr": "P"
+  },
+  "legal_identity": {
+    "nazwa": "POWSZECHNA KASA OSZCZĘDNOŚCI BANK POLSKI SPÓŁKA AKCYJNA",
+    "forma_prawna": "SPÓŁKA AKCYJNA"
+  },
+  "status": {
+    "derived": "active",
+    "vat_status": "Czynny"
+  },
+  "activity": {
+    "pkd_primary": "64.19.Z",
+    "pkd_all": ["64.19.Z"]
+  },
+  "registered_location": {
+    "address": "UL. ŚWIĘTOKRZYSKA 36, 00-116 WARSZAWA",
+    "miejscowosc": "WARSZAWA",
+    "wojewodztwo": "MAZOWIECKIE"
+  },
+  "capital": {
+    "wartosc": 1250000000.00,
+    "waluta": "PLN"
+  },
+  "contact": {
+    "website": null,
+    "bank_accounts": ["52101000391020000310000000"]
+  },
+  "officers": [
+    {"organ": "ZARZĄD", "funkcja": "(anonymized by KRS API)"}
+  ],
+  "beneficial_owners": null,
+  "financial_statements": [
+    {
+      "period_start": "2024-01-01",
+      "period_end": "2024-12-31",
+      "entity_type": "banki",
+      "currency": "PLN",
+      "total_assets": 470000000000.00,
+      "equity": 45000000000.00,
+      "liabilities": 425000000000.00,
+      "revenue": 21000000000.00,
+      "operating_result": 9500000000.00,
+      "net_income": 7700000000.00,
+      "employees": 25000,
+      "source": "krs_rdf_financials"
+    }
+  ],
+  "filing_signals": {
+    "wzmianki_o_zlozonych_dokumentach": [{"typ": "rocznego sprawozdania finansowego", "okres": "2024"}]
+  },
+  "source_provenance": [
+    {"source_slug": "krs_api", "source_name": "KRS API", "source_url": "https://api-krs.ms.gov.pl/", "license": "open / free reuse", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "vat_whitelist", "source_name": "Biała lista VAT", "source_url": "https://wl-api.mf.gov.pl/", "license": "open (MF)", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "krs_rdf_financials", "source_name": "RDF — financial statements", "source_url": "https://ekrs.ms.gov.pl/rdf/", "license": "open", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"}
+  ]
+}

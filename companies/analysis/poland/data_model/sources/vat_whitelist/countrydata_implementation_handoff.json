@@ -1,0 +1,80 @@
+{
+  "country": "Poland",
+  "country_slug": "poland",
+  "source_slug": "vat_whitelist",
+  "source_identity": "poland_vat_whitelist",
+  "source_package": "vatwhitelist",
+  "env_prefix": "VAT_WHITELIST",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Biała lista podatników VAT (White list of VAT taxpayers)",
+    "source_type": "official_tax_api",
+    "organization": "Ministerstwo Finansów / KAS",
+    "source_url": "https://wl-api.mf.gov.pl/api/search/nip/{nip}?date=YYYY-MM-DD",
+    "license": "Open (Ministerstwo Finansów public register)",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Źródło: Wykaz podatników VAT — Ministerstwo Finansów / KAS."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Free, no auth. Documented per-day request limits + max entities per request. A daily flat file lists all NIP-account pairs."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://wl-api.mf.gov.pl/api/search",
+    "download_url": "https://wl-api.mf.gov.pl/ (daily flat file)",
+    "http_method": "GET",
+    "headers_required": [{"name": "Accept", "value": "application/json", "note": null}],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "result.subject",
+    "total_results_path": null,
+    "pagination": {"type": "per_entity_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Lookup by /nip/{nip}, /regon/{regon}, /bank-account/{nrb}, or batch /nips/{n1,n2,...}. The 'date' query param is required. Daily flat file = population seed."},
+    "rate_limit": "documented per-day limits"
+  },
+  "snapshot": {
+    "strategy": "json_per_entity_or_daily_flatfile",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "VatWhitelistSubject",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "nip/regon/krs stay strings. REGON 9-digit (normalize KRS 14-digit to match). accountNumbers are NRB strings. representatives/partners are PII."
+  },
+  "keys": {
+    "primary_keys": ["nip"],
+    "join_keys": ["nip", "regon", "krs"],
+    "dedupe_keys": ["nip"]
+  },
+  "mapping_rules": {
+    "tax_id": "nip; vat_id = 'PL'+nip.",
+    "id_bridge": "nip <-> regon <-> krs in one record.",
+    "vat_status": "statusVat (Czynny/Zwolniony).",
+    "bank_accounts": "accountNumbers[].",
+    "address": "workingAddress (else residenceAddress)."
+  },
+  "fixture_requirements": [
+    "active company (statusVat=Czynny) with krs + regon + accountNumbers",
+    "sole trader (krs null, residenceAddress)",
+    "exempt taxpayer (statusVat=Zwolniony)",
+    "NIP not registered for VAT",
+    "subject with representatives/partners"
+  ],
+  "live_test_plan": {
+    "smoke": "GET /api/search/nip/5250007738?date=<today>; assert result.subject.nip + krs + statusVat.",
+    "full": "Download the daily flat file as a NIP seed; per NIP resolve krs/regon; throttle to the documented limits; persist raw."
+  },
+  "blockers": [
+    "Per-day request limits — batch and cache.",
+    "REGON length normalization vs KRS.",
+    "representatives/partners are PII (GDPR)."
+  ]
+}

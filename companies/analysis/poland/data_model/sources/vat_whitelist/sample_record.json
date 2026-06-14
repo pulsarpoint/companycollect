@@ -1,0 +1,13 @@
+{
+  "_note": "Real trimmed VAT white-list record (open, MF). PKO BP NIP 5250007738. accountNumbers truncated.",
+  "name": "POWSZECHNA KASA OSZCZĘDNOŚCI BANK POLSKI SPÓŁKA AKCYJNA",
+  "nip": "5250007738",
+  "regon": "016298263",
+  "krs": "0000026438",
+  "statusVat": "Czynny",
+  "workingAddress": "ŚWIĘTOKRZYSKA 36, 00-116 WARSZAWA",
+  "accountNumbers": [
+    "52101000391020000310000000"
+  ],
+  "registrationLegalDate": "1998-10-01"
+}

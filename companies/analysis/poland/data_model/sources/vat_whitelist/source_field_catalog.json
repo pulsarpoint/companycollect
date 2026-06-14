@@ -1,0 +1,30 @@
+{
+  "country": "Poland",
+  "country_slug": "poland",
+  "source_slug": "vat_whitelist",
+  "source_name": "Biała lista podatników VAT (White list of VAT taxpayers)",
+  "source_type": "official_tax_api",
+  "organization": "Ministerstwo Finansów / KAS",
+  "source_url": "https://wl-api.mf.gov.pl/api/search/nip/{nip}?date=YYYY-MM-DD",
+  "license": "Open (Ministerstwo Finansów public register)",
+  "access": "public",
+  "data_freshness": "daily",
+  "record_shape": "json: { result: { subject: {...}, requestId, requestDateTime } }",
+  "primary_keys": ["result.subject.nip"],
+  "join_keys": ["nip", "regon", "krs"],
+  "field_count": 12,
+  "fields": [
+    {"path": "result.subject.name", "source_field": "name", "english_name": "legal_name", "meaning": "Taxpayer name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["POWSZECHNA KASA OSZCZĘDNOŚCI BANK POLSKI SPÓŁKA AKCYJNA"], "nullable": false, "repeatable": false, "code_list": null, "language": "Polish", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "result.subject.nip", "source_field": "nip", "english_name": "tax_id", "meaning": "Tax id (NIP).", "data_type": "string", "semantic_type": "identifier", "example_values": ["5250007738"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Primary key; VAT = PL+NIP."},
+    {"path": "result.subject.regon", "source_field": "regon", "english_name": "regon", "meaning": "Statistical id (REGON, 9-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": ["016298263"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "9-digit here (KRS returns 14) — bridge key.", "source_confidence": "high", "analysis_notes": "NIP<->REGON<->KRS bridge."},
+    {"path": "result.subject.krs", "source_field": "krs", "english_name": "krs_number", "meaning": "KRS number (if registered in KRS).", "data_type": "string", "semantic_type": "identifier", "example_values": ["0000026438"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Null for sole traders.", "source_confidence": "high", "analysis_notes": "The bridge from NIP to the KRS spine."},
+    {"path": "result.subject.statusVat", "source_field": "statusVat", "english_name": "vat_status", "meaning": "VAT status.", "data_type": "string", "semantic_type": "status", "example_values": ["Czynny"], "nullable": true, "repeatable": false, "code_list": "Czynny|Zwolniony|(not registered)", "language": "Polish", "limitations": null, "source_confidence": "high", "analysis_notes": "Czynny=active VAT payer; Zwolniony=exempt."},
+    {"path": "result.subject.workingAddress", "source_field": "workingAddress", "english_name": "working_address", "meaning": "Business address.", "data_type": "string", "semantic_type": "address", "example_values": ["ŚWIĘTOKRZYSKA 36, 00-116 WARSZAWA"], "nullable": true, "repeatable": false, "code_list": null, "language": "Polish", "limitations": null, "source_confidence": "high", "analysis_notes": "residenceAddress is the alternative (sole traders)."},
+    {"path": "result.subject.accountNumbers", "source_field": "accountNumbers", "english_name": "bank_accounts", "meaning": "Registered bank account numbers (NRB).", "data_type": "array", "semantic_type": "financial", "example_values": ["[\"52101000391020000310000000\"]"], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "Cleared/registered accounts only.", "source_confidence": "high", "analysis_notes": "Useful for payment verification; not in any other open source."},
+    {"path": "result.subject.representatives", "source_field": "representatives", "english_name": "representatives", "meaning": "Representatives (persons).", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Polish", "limitations": "PERSONAL DATA — GDPR.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "result.subject.partners", "source_field": "partners", "english_name": "partners", "meaning": "Partners (persons/companies).", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Polish", "limitations": "PII possible.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "result.subject.registrationLegalDate", "source_field": "registrationLegalDate", "english_name": "vat_registration_date", "meaning": "VAT registration date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "result.subject.removalDate", "source_field": "removalDate / restorationDate", "english_name": "vat_removal_restoration", "meaning": "VAT removal / restoration dates.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": "Status history signal."},
+    {"path": "result.subject.hasVirtualAccounts", "source_field": "hasVirtualAccounts", "english_name": "has_virtual_accounts", "meaning": "Whether the taxpayer uses virtual (masowy) bank accounts.", "data_type": "boolean", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null}
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "country": "Poland",
+  "country_slug": "poland",
+  "source_slug": "ceidg",
+  "source_name": "CEIDG (sole proprietors register)",
+  "source_type": "official_registry_api",
+  "organization": "Ministerstwo Rozwoju i Technologii",
+  "source_url": "https://dane.biznes.gov.pl/api/ceidg/v3",
+  "license": "Open (free reuse); free token required",
+  "access": "public_with_free_token",
+  "data_freshness": "daily",
+  "record_shape": "json: paginated firma[] (one per sole-proprietor business)",
+  "primary_keys": ["id (CEIDG id)", "nip"],
+  "join_keys": ["nip", "regon"],
+  "field_count": 10,
+  "fields": [
+    {"path": "firma[].nazwa", "source_field": "nazwa", "english_name": "business_name", "meaning": "Business name (often includes the owner's name).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Polish", "limitations": "Documented (token required; not exercised). Usually embeds the entrepreneur name.", "source_confidence": "high", "analysis_notes": "Sole proprietor display name."},
+    {"path": "firma[].wlasciciel.imie / nazwisko", "source_field": "imię / nazwisko", "english_name": "owner_name", "meaning": "Entrepreneur's first/last name.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Polish", "limitations": "PERSONAL DATA — GDPR.", "source_confidence": "high", "analysis_notes": "Sole trader = a natural person."},
+    {"path": "firma[].wlasciciel.nip", "source_field": "nip", "english_name": "tax_id", "meaning": "Tax id (NIP) of the business.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Join key; VAT = PL+NIP."},
+    {"path": "firma[].wlasciciel.regon", "source_field": "regon", "english_name": "regon", "meaning": "REGON.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "firma[].status", "source_field": "status", "english_name": "status", "meaning": "Business status (AKTYWNY / WYKRESLONY / ZAWIESZONY / ...).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": false, "repeatable": false, "code_list": "AKTYWNY|ZAWIESZONY|WYKRESLONY|WYLACZNIE_W_FORMIE_SPOLKI", "language": "Polish", "limitations": null, "source_confidence": "high", "analysis_notes": "Sole traders can be suspended (zawieszony) — common."},
+    {"path": "firma[].dataRozpoczecia", "source_field": "dataRozpoczecia", "english_name": "start_date", "meaning": "Activity start date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "incorporation_date equivalent."},
+    {"path": "firma[].adresDzialalnosci", "source_field": "adres działalności", "english_name": "business_address", "meaning": "Main business address.", "data_type": "object", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Polish", "limitations": "May be restricted/absent (privacy).", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "firma[].pkd", "source_field": "pkd", "english_name": "activity_codes", "meaning": "PKD activity codes.", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "PKD 2007", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "firma[].dataZawieszenia / dataWznowienia", "source_field": "dataZawieszenia", "english_name": "suspension_dates", "meaning": "Suspension / resumption dates.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null},
+    {"path": "firma[].id", "source_field": "id", "english_name": "ceidg_id", "meaning": "CEIDG internal record id.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Stable CEIDG key."}
+  ]
+}

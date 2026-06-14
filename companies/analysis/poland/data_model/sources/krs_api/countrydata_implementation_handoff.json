@@ -1,0 +1,83 @@
+{
+  "country": "Poland",
+  "country_slug": "poland",
+  "source_slug": "krs_api",
+  "source_identity": "poland_krs_api",
+  "source_package": "krsapi",
+  "env_prefix": "KRS_API",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "KRS API (Krajowy Rejestr Sądowy)",
+    "source_type": "official_registry_api",
+    "organization": "Ministerstwo Sprawiedliwości",
+    "source_url": "https://api-krs.ms.gov.pl/api/krs/OdpisAktualny/{krs}?rejestr={P|S}&format=json",
+    "license": "Open / free reuse; personal data anonymized",
+    "access": "public",
+    "data_freshness": "continuous",
+    "attribution": "Źródło: Krajowy Rejestr Sądowy (Ministerstwo Sprawiedliwości)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Free, no auth. No formal rate limit — throttle politely. Personal data anonymized by the API."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://api-krs.ms.gov.pl/api/krs",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [{"name": "Accept", "value": "application/json", "note": null}, {"name": "User-Agent", "value": "companycollect/0.1 open-data-research", "note": "descriptive UA"}],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "odpis",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Per-KRS lookup: /OdpisAktualny/{krs}?rejestr={P|S}. No population enumeration endpoint — iterate the KRS number space, or seed from the VAT white-list flat file (NIP->KRS). Use OdpisPelny for full history."},
+    "rate_limit": "fair use"
+  },
+  "snapshot": {
+    "strategy": "json_per_company",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "KrsOdpis",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": ["pl_locale_comma_decimal_1250000000,00"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "numerKRS/nip/regon stay strings. REGON is 14-digit here — normalize to 9-digit core. kapital values are PL-locale decimals (comma). PKD = kodDzial.kodKlasa.kodPodklasa. Board fields anonymized."
+  },
+  "keys": {
+    "primary_keys": ["odpis.naglowekA.numerKRS"],
+    "join_keys": ["numerKRS", "identyfikatory.nip", "identyfikatory.regon"],
+    "dedupe_keys": ["numerKRS"]
+  },
+  "mapping_rules": {
+    "legal_name": "dzial1.danePodmiotu.nazwa.",
+    "company_type": "dzial1.danePodmiotu.formaPrawna.",
+    "tax_id": "identyfikatory.nip; vat_id = 'PL'+nip; regon = identyfikatory.regon (normalize 9-digit).",
+    "registered_address": "dzial1.siedzibaIAdres.adres (ulica+nrDomu+kodPocztowy+miejscowosc); region = siedziba.wojewodztwo.",
+    "activity": "dzial3 PKD przeważający (kodDzial.kodKlasa.kodPodklasa).",
+    "share_capital": "dzial1.kapital.wysokoscKapitaluZakladowego (PL decimal, PLN).",
+    "status": "derive from dzial6 (likwidacja/upadłość); else aktywny.",
+    "financial_trigger": "dzial3.wzmiankiOZlozonychDokumentach -> fetch RDF statements (krs_rdf_financials)."
+  },
+  "fixture_requirements": [
+    "spółka akcyjna with kapitał + PKD + wzmianki o złożonych dokumentach",
+    "sp. z o.o. (different legal form)",
+    "rejestr=S (NGO/stowarzyszenie) record",
+    "entity in likwidacja/upadłość (dzial6)",
+    "record with 14-digit REGON to test normalization"
+  ],
+  "live_test_plan": {
+    "smoke": "GET /OdpisAktualny/0000026438?rejestr=P&format=json; assert odpis.naglowekA.numerKRS + dzial1.danePodmiotu.identyfikatory.nip.",
+    "full": "Iterate the KRS number space (or seed from white-list NIPs -> resolve KRS) behind an env gate; throttle; persist raw JSON; normalize; trigger RDF on wzmianki."
+  },
+  "blockers": [
+    "No population enumeration endpoint — must iterate KRS numbers or seed externally.",
+    "Companies only (sole traders are in CEIDG).",
+    "REGON length normalization (14 vs 9 digit)."
+  ]
+}

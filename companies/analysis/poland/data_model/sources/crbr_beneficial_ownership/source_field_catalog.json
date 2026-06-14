@@ -1,0 +1,24 @@
+{
+  "country": "Poland",
+  "country_slug": "poland",
+  "source_slug": "crbr_beneficial_ownership",
+  "source_name": "CRBR — Centralny Rejestr Beneficjentów Rzeczywistych (beneficial ownership)",
+  "source_type": "beneficial_ownership_register",
+  "organization": "Ministerstwo Finansów",
+  "source_url": "https://crbr.podatki.gov.pl/",
+  "license": "Open (free public register)",
+  "access": "public",
+  "data_freshness": "continuous",
+  "record_shape": "per-entity (by NIP) JSON/PDF: zgłoszenie with beneficjenci rzeczywiści[]",
+  "primary_keys": ["nip + beneficjent"],
+  "join_keys": ["nip"],
+  "field_count": 6,
+  "fields": [
+    {"path": "podmiot.nip", "source_field": "nip", "english_name": "entity_tax_id", "meaning": "NIP of the entity whose beneficial owners are listed.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented (lookup by NIP). Join to the spine.", "source_confidence": "high", "analysis_notes": "Join key to KRS/white list via NIP."},
+    {"path": "beneficjenci[].imie / nazwisko", "source_field": "imię / nazwisko", "english_name": "beneficial_owner_name", "meaning": "Beneficial owner's name.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "Polish", "limitations": "PERSONAL DATA — GDPR.", "source_confidence": "high", "analysis_notes": "Natural person (beneficjent rzeczywisty)."},
+    {"path": "beneficjenci[].obywatelstwo", "source_field": "obywatelstwo", "english_name": "citizenship", "meaning": "Citizenship of the beneficial owner.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": "ISO country", "language": "Polish", "limitations": "PII.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "beneficjenci[].udzialy / charakterUprawnien", "source_field": "informacja o udziałach / uprawnieniach", "english_name": "ownership_nature", "meaning": "Nature/size of ownership or control.", "data_type": "string", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Polish", "limitations": "Free text / coded; % or control description.", "source_confidence": "medium", "analysis_notes": "The ownership/control signal."},
+    {"path": "beneficjenci[].pesel_or_dataUrodzenia", "source_field": "PESEL / data urodzenia", "english_name": "owner_identifier", "meaning": "PESEL (national id) or birth date of the owner.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "SENSITIVE PERSONAL DATA — minimize/redact (e.g. keep year only).", "source_confidence": "medium", "analysis_notes": "Do not persist PESEL beyond raw; minimize."},
+    {"path": "dataZgloszenia", "source_field": "data zgłoszenia", "english_name": "filing_date", "meaning": "Date the beneficial-ownership declaration was filed.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null}
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "country": "Poland",
+  "country_slug": "poland",
+  "source_slug": "krs_rdf_financials",
+  "source_identity": "poland_krs_rdf_financials",
+  "source_package": "krsrdf",
+  "env_prefix": "KRS_RDF",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "RDF — Repozytorium Dokumentów Finansowych (financial statements)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Ministerstwo Sprawiedliwości (KRS)",
+    "source_url": "https://ekrs.ms.gov.pl/rdf/pd/search_df",
+    "license": "Open (free access/download)",
+    "access": "public",
+    "data_freshness": "annual; continuous",
+    "attribution": "Źródło: Repozytorium Dokumentów Finansowych — KRS (Ministerstwo Sprawiedliwości)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Per-company free download (XML+PDF). Mass/automated access via the PRS-eKRS module requires registration. Respect portal terms; throttle."
+  },
+  "transport": {
+    "access_mode": "xml_file",
+    "base_url": "https://ekrs.ms.gov.pl/rdf",
+    "download_url": "https://ekrs.ms.gov.pl/rdf/pd/search_df",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xml", "xbrl", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-company per-period e-Sprawozdanie XML",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_documents", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Enter KRS -> list of filed documents -> download each XML/PDF. Trigger from KRS dzial3 wzmiankiOZlozonychDokumentach. For scale use the PRS-eKRS module (registration)."},
+    "rate_limit": "portal fair use"
+  },
+  "snapshot": {
+    "strategy": "xml_per_company_per_period",
+    "file_extension": ".xml",
+    "preserve_raw_download": true,
+    "note": "Persist the raw e-Sprawozdanie XML; parse against the versioned MF schema."
+  },
+  "parsing": {
+    "record_type_hint": "ESprawozdanieFinansowe",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["xml_plain_decimal", "pl_locale_comma"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Handle multiple MF schema versions + entity-type variants (mikro/małe/inne/banki) + two P&L variants (kalkulacyjny/porównawczy). Read jednostka (whole/thousands) and scale; store waluta (PLN). Some entities PDF-only / XBRL (listed)."
+  },
+  "keys": {
+    "primary_keys": ["krs", "okresOd", "okresDo"],
+    "join_keys": ["krs"],
+    "dedupe_keys": ["krs + okresOd + okresDo + typJednostki"]
+  },
+  "mapping_rules": {
+    "financial_statements": "One record per period; map bilans + rachunek zysków i strat.",
+    "revenue": "przychody netto ze sprzedaży",
+    "net_income": "zysk/strata netto",
+    "total_assets": "suma bilansowa",
+    "equity": "kapitał własny",
+    "employees": "przeciętne zatrudnienie (informacja dodatkowa)",
+    "matching": "Join on krs to the spine; trigger from KRS wzmianki."
+  },
+  "fixture_requirements": [
+    "inne (large) statement: full bilans + rachunek zysków i strat (wariant kalkulacyjny)",
+    "małe / mikro statement (reduced lines)",
+    "statement reported in thousands (jednostka scaling)",
+    "P&L wariant porównawczy",
+    "PDF-only filing (no structured XML) / XBRL (listed)"
+  ],
+  "live_test_plan": {
+    "smoke": "For a known KRS, list RDF documents; download one e-Sprawozdanie XML; parse suma bilansowa + przychody netto + zysk/strata netto.",
+    "full": "For the spine entities with wzmianki, fetch the latest statements; parse per MF schema version; normalize to financial_statements[]; throttle."
+  },
+  "blockers": [
+    "Versioned MF schema + entity-type/P&L variants — parser must handle all.",
+    "Some filings are PDF-only / XBRL.",
+    "Units (whole vs thousands) must be scaled.",
+    "Mass access via PRS-eKRS needs registration."
+  ]
+}

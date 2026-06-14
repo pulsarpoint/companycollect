@@ -1,0 +1,80 @@
+{
+  "country": "Poland",
+  "country_slug": "poland",
+  "source_slug": "ceidg",
+  "source_identity": "poland_ceidg",
+  "source_package": "ceidg",
+  "env_prefix": "CEIDG",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "CEIDG (sole proprietors register)",
+    "source_type": "official_registry_api",
+    "organization": "Ministerstwo Rozwoju i Technologii",
+    "source_url": "https://dane.biznes.gov.pl/api/ceidg/v3",
+    "license": "Open (free reuse); free token required",
+    "access": "public_with_free_token",
+    "data_freshness": "daily",
+    "attribution": "Źródło: CEIDG (Ministerstwo Rozwoju i Technologii)."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["CEIDG_TOKEN"],
+    "note": "Free token (Bearer) required for API v3. Personal data (entrepreneur) — GDPR."
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://dane.biznes.gov.pl/api/ceidg/v3/firmy",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [{"name": "Authorization", "value": "Bearer <CEIDG_TOKEN>", "note": "free token"}, {"name": "Accept", "value": "application/json", "note": null}],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "firma",
+    "total_results_path": "count",
+    "pagination": {"type": "page_number", "page_param": "page", "page_start": 1, "page_size": 50, "page_size_param": "limit", "next_page_path": "links.next", "note": "Filter by nip/regon/date. Confirm exact params from the v3 docs."},
+    "rate_limit": "per token"
+  },
+  "snapshot": {
+    "strategy": "json_pages",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "CeidgFirma",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "nip/regon stay strings. Owner name is PII. status includes ZAWIESZONY (suspended). No KRS number for sole traders."
+  },
+  "keys": {
+    "primary_keys": ["id", "wlasciciel.nip"],
+    "join_keys": ["nip", "regon"],
+    "dedupe_keys": ["nip"]
+  },
+  "mapping_rules": {
+    "legal_name": "nazwa.",
+    "tax_id": "wlasciciel.nip; vat_id = 'PL'+nip.",
+    "status": "status (AKTYWNY/ZAWIESZONY/WYKREŚLONY).",
+    "incorporation_date": "dataRozpoczecia.",
+    "activity": "pkd[].",
+    "entity_kind": "sole_proprietor (no KRS)."
+  },
+  "fixture_requirements": [
+    "active sole trader with PKD + address",
+    "suspended (ZAWIESZONY) sole trader",
+    "struck-off (WYKREŚLONY) record",
+    "record with hidden/restricted address"
+  ],
+  "live_test_plan": {
+    "smoke": "With CEIDG_TOKEN, GET /firmy?nip=<nip>; assert firma[0].wlasciciel.nip + status.",
+    "full": "Behind CEIDG_TOKEN env gate, page through (or by date deltas); persist raw; normalize as sole_proprietor entities keyed on NIP."
+  },
+  "blockers": [
+    "Free token required.",
+    "Entrepreneur PII (GDPR).",
+    "Separate population from KRS — keep entity_kind distinct."
+  ]
+}

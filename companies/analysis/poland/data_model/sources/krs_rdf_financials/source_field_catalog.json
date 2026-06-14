@@ -1,0 +1,31 @@
+{
+  "country": "Poland",
+  "country_slug": "poland",
+  "source_slug": "krs_rdf_financials",
+  "source_name": "RDF — Repozytorium Dokumentów Finansowych (financial statements)",
+  "source_type": "official_financial_disclosure",
+  "organization": "Ministerstwo Sprawiedliwości (KRS)",
+  "source_url": "https://ekrs.ms.gov.pl/rdf/pd/search_df",
+  "license": "Open (free access/download)",
+  "access": "public",
+  "data_freshness": "annual filing; continuous",
+  "record_shape": "per-company per-period e-Sprawozdanie finansowe XML (MF logical schema) + PDF; XBRL for listed",
+  "primary_keys": ["krs + okresOd + okresDo"],
+  "join_keys": ["krs"],
+  "field_count": 13,
+  "fields": [
+    {"path": "krs", "source_field": "numerKRS", "english_name": "krs_number", "meaning": "KRS number of the filing entity.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented from the MF e-Sprawozdania schema; per-company free download.", "source_confidence": "high", "analysis_notes": "Join to the KRS spine."},
+    {"path": "Naglowek.okresOd / okresDo", "source_field": "okres", "english_name": "period", "meaning": "Reporting period start/end.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Per-statement key (fiscal year)."},
+    {"path": "Naglowek.typJednostki", "source_field": "typ jednostki / wariant", "english_name": "entity_type", "meaning": "Reporting unit type / schema variant: mikro / małe / inne / banki / ubezpieczyciele.", "data_type": "string", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": false, "code_list": "warianty schematu MF", "language": "Polish", "limitations": "Governs which line items exist -> nullability.", "source_confidence": "high", "analysis_notes": "mikro/małe disclose fewer lines."},
+    {"path": "Bilans.Aktywa.SumaBilansowa", "source_field": "suma bilansowa", "english_name": "total_assets", "meaning": "Balance sheet total (total assets).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Polish", "limitations": "PLN; may be in thousands (check jednostka).", "source_confidence": "high", "analysis_notes": "Aktywa razem."},
+    {"path": "Bilans.Aktywa.AktywaTrwale", "source_field": "aktywa trwałe", "english_name": "fixed_assets", "meaning": "Non-current/fixed assets (A).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Polish", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "Bilans.Aktywa.AktywaObrotowe", "source_field": "aktywa obrotowe", "english_name": "current_assets", "meaning": "Current assets (B).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Polish", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "Bilans.Pasywa.KapitalWlasny", "source_field": "kapitał (fundusz) własny", "english_name": "equity", "meaning": "Total equity (A of passive).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Polish", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "Bilans.Pasywa.ZobowiazaniaIRezerwy", "source_field": "zobowiązania i rezerwy na zobowiązania", "english_name": "liabilities", "meaning": "Liabilities and provisions (B of passive).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Polish", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "RachunekZyskowIStrat.PrzychodyNetto", "source_field": "przychody netto ze sprzedaży", "english_name": "revenue", "meaning": "Net revenue from sales.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Polish", "limitations": "Variant wording (wariant kalkulacyjny/porównawczy).", "source_confidence": "high", "analysis_notes": "Primary revenue concept."},
+    {"path": "RachunekZyskowIStrat.ZyskStrataOperacyjny", "source_field": "zysk (strata) z działalności operacyjnej", "english_name": "operating_result", "meaning": "Operating result.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Polish", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "RachunekZyskowIStrat.ZyskStrataNetto", "source_field": "zysk (strata) netto", "english_name": "net_income", "meaning": "Net profit/loss for the period.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Polish", "limitations": "Negative = strata (loss).", "source_confidence": "high", "analysis_notes": null},
+    {"path": "InformacjaDodatkowa.przecietneZatrudnienie", "source_field": "przeciętne zatrudnienie", "english_name": "employees", "meaning": "Average employment (from the notes).", "data_type": "integer", "semantic_type": "employment", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Polish", "limitations": "In informacja dodatkowa; may be absent for mikro.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "Naglowek.walutaSprawozdania / jednostka", "source_field": "waluta / jednostka", "english_name": "currency_unit", "meaning": "Reporting currency and unit (whole / thousands).", "data_type": "string", "semantic_type": "financial", "example_values": ["PLN"], "nullable": true, "repeatable": false, "code_list": "ISO 4217", "language": "n/a", "limitations": "Some report in thousands — scale figures.", "source_confidence": "high", "analysis_notes": "Store currency + unit with figures."}
+  ]
+}
