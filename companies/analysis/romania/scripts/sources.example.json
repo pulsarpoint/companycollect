@@ -1,0 +1,61 @@
+[
+  {
+    "name": "ONRC company register (OD_FIRME) via data.gov.ro",
+    "slug": "onrc_od_firme",
+    "type": "bulk",
+    "url": "https://data.gov.ro/dataset/f7374920-a656-4e34-85dd-a61c6e6e5603/resource/488a8d00-90df-4f37-b5f4-6c9111e6f1e7/download/od_firme.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "ONRC firm status (OD_STARE_FIRMA)",
+    "slug": "onrc_od_stare_firma",
+    "type": "bulk",
+    "url": "https://data.gov.ro/dataset/f7374920-a656-4e34-85dd-a61c6e6e5603/resource/9ab6d186-6cf9-4330-b2ee-430469501f9d/download/od_stare_firma.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "ONRC authorized CAEN (OD_CAEN_AUTORIZAT)",
+    "slug": "onrc_od_caen_autorizat",
+    "type": "bulk",
+    "url": "https://data.gov.ro/dataset/f7374920-a656-4e34-85dd-a61c6e6e5603/resource/7001180a-9be1-4951-bc06-9a91057ce70b/download/od_caen_autorizat.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "ONRC legal representatives (OD_REPREZENTANTI_LEGALI) [PII]",
+    "slug": "onrc_od_reprezentanti_legali",
+    "type": "bulk",
+    "url": "https://data.gov.ro/dataset/f7374920-a656-4e34-85dd-a61c6e6e5603/resource/7b81f1a6-cd77-4b01-bf92-2795653a69e5/download/od_reprezentanti_legali.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "ONRC branches in other member states (OD_SUCURSALE_ALTE_STATE_MEMBRE)",
+    "slug": "onrc_od_sucursale_alte_state_membre",
+    "type": "bulk",
+    "url": "https://data.gov.ro/dataset/f7374920-a656-4e34-85dd-a61c6e6e5603/resource/e806d003-a2fa-460e-bf73-28e1d703d275/download/od_sucursale_alte_state_membre.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "ANAF financial statements (bilant) web service — per CUI/year",
+    "slug": "anaf_bilant",
+    "type": "api_page",
+    "url": "https://webservicesp.anaf.ro/bilant?an=2024&cui=14399840",
+    "method": "GET",
+    "headers": {
+      "User-Agent": "Mozilla/5.0",
+      "Accept": "application/json"
+    },
+    "page_param": "_",
+    "page_start": 1,
+    "max_pages": 1
+  }
+]
