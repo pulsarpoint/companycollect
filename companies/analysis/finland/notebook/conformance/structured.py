@@ -73,7 +73,7 @@ def ytj_structured_from_ndjson(ndjson: bytes) -> dict[str, pl.DataFrame]:
                 .otherwise(pl.concat_str([pl.lit("https://"), pl.col("url")])).alias("normalized_url")
             )
             .with_columns(
-                pl.col("normalized_url").str.replace(r"^https?://", "").str.split("/").list.first().alias("host"),
+                pl.col("normalized_url").str.replace(r"^https?://", "").str.split("/").list.first().str.to_lowercase().alias("host"),
                 pl.lit(True).alias("is_current"),
                 pl.lit(True).alias("is_primary"),
             )
