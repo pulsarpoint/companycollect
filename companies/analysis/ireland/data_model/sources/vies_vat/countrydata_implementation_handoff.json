@@ -1,0 +1,78 @@
+{
+  "country": "Ireland",
+  "country_slug": "ireland",
+  "source_slug": "vies_vat",
+  "source_identity": "ireland_vies_vat",
+  "source_package": "viesvat",
+  "env_prefix": "IE_VIES",
+  "implementation_status": "sample_only",
+  "source": {
+    "source_name": "Revenue / VIES — VAT validation (IE VAT)",
+    "source_type": "official_tax",
+    "organization": "Revenue Commissioners / European Commission",
+    "source_url": "https://ec.europa.eu/taxation_customs/vies/services/checkVatService",
+    "license": "Validation only",
+    "access": "public",
+    "data_freshness": "real-time",
+    "attribution": "European Commission VIES / Revenue"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://ec.europa.eu/taxation_customs/vies/services/checkVatService",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Content-Type: text/xml"],
+    "formats": ["soap", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "throttled"
+  },
+  "snapshot": {
+    "strategy": "enrichment_lookup_only",
+    "file_extension": ".xml",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "ViesValidation",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": ["vat_id"],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "vat_id": "Validate IE + 7 digits + letters; not in CRO data.",
+    "legal_name": "Cross-check the VIES name to associate VAT with the CRO number (no open crosswalk)."
+  },
+  "fixture_requirements": [
+    "valid IE VAT validation",
+    "invalid IE VAT validation"
+  ],
+  "live_test_plan": {
+    "smoke": "Validate one IE VAT via SOAP; respect rate limits.",
+    "full": "Per-company enrichment only; never bulk-enumerate."
+  },
+  "blockers": [
+    "Validation only — does not enumerate companies; not redistributable as a list.",
+    "No open CRO↔VAT crosswalk — VAT must be associated via matching or a vendor."
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "country": "Ireland",
+  "country_slug": "ireland",
+  "source_slug": "data_gov_ie",
+  "source_identity": "ireland_data_gov_ie",
+  "source_package": "datagovie",
+  "env_prefix": "IE_DATAGOV",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "data.gov.ie — national open data portal",
+    "source_type": "open_data_portal",
+    "organization": "Government of Ireland",
+    "source_url": "https://data.gov.ie/dataset/companies",
+    "license": "CC-BY 4.0 (per dataset)",
+    "access": "public",
+    "data_freshness": "mirrors CRO",
+    "attribution": "Attribute data.gov.ie / CRO"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://data.gov.ie/api/3/action",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "mirror_lookup_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "DataGovIeDataset",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["dataset_id"],
+    "join_keys": ["company_num"],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "resource_url": "Use opendata.cro.ie directly; data.gov.ie is a mirror for discovery."
+  },
+  "fixture_requirements": [
+    "catalog entry mirroring the CRO Company Records resource"
+  ],
+  "live_test_plan": {
+    "smoke": "Confirm the mirror points at the CRO resources.",
+    "full": "Ingest from opendata.cro.ie directly, not the mirror."
+  },
+  "blockers": [
+    "Mirror of the CRO datasets — use opendata.cro.ie as the authoritative source."
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "country": "Ireland",
+  "country_slug": "ireland",
+  "source_slug": "cro_core_search",
+  "source_identity": "ireland_cro_core_search",
+  "source_package": "crocoresearch",
+  "env_prefix": "IE_CRO_CORE",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "CORE — Companies Online Registration Environment (company search)",
+    "source_type": "official_registry",
+    "organization": "Companies Registration Office (CRO)",
+    "source_url": "https://core.cro.ie/",
+    "license": "Public (free search)",
+    "access": "public",
+    "data_freshness": "real-time",
+    "attribution": "Attribute CRO"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://core.cro.ie/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "manual_lookup_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "CoreCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["company_num"],
+    "join_keys": ["company_num"],
+    "dedupe_keys": ["company_num"]
+  },
+  "mapping_rules": {
+    "all": "Real-time single-company lookups; bulk via the Open Data Portal. Document purchase = paid."
+  },
+  "fixture_requirements": [
+    "single-company search result"
+  ],
+  "live_test_plan": {
+    "smoke": "Manual name/number lookup; confirm fields match the open data.",
+    "full": "Bulk via the Open Data Portal; CORE for manual lookups + filing only."
+  },
+  "blockers": [
+    "Bulk/API needs are met by the Open Data Portal — CORE is for manual lookups + filing.",
+    "Document purchase is paid."
+  ]
+}

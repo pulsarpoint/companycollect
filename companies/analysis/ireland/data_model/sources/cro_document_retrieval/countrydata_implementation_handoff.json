@@ -1,0 +1,81 @@
+{
+  "country": "Ireland",
+  "country_slug": "ireland",
+  "source_slug": "cro_document_retrieval",
+  "source_identity": "ireland_cro_document_retrieval",
+  "source_package": "crodocretrieval",
+  "env_prefix": "IE_CRO_DOCS",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "CRO document retrieval (financial-statement PDFs)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Companies Registration Office (CRO)",
+    "source_url": "https://opendata.cro.ie/",
+    "license": "Public document (per-document fee)",
+    "access": "paid",
+    "data_freshness": "per filing",
+    "attribution": "Attribute CRO"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["IE_CRO_DOCS_API_KEY"]
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://opendata.cro.ie/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Authorization"],
+    "formats": ["pdf"],
+    "compression": null,
+    "encoding": "binary",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "per account / per call (pay-per-call)"
+  },
+  "snapshot": {
+    "strategy": "store_paid_pdf_plus_parsed_json",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "CroFinancialStatementPdf",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["1,234,567"],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["submission_num"],
+    "join_keys": ["company_num"],
+    "dedupe_keys": ["submission_num"]
+  },
+  "mapping_rules": {
+    "financials": "Map balance sheet (+ P&L where present) into financials[] per accounts-to date after OCR/parse. Currency EUR; abridged for small/micro.",
+    "officers": "Optionally derive directors from the directors'/auditor's report — PII (GDPR)."
+  },
+  "fixture_requirements": [
+    "planning-only: do NOT fetch paid PDFs in CI",
+    "synthetic balance-sheet PDF fixture (full accounts)",
+    "synthetic abridged small-company accounts fixture",
+    "garbled-OCR fixture"
+  ],
+  "live_test_plan": {
+    "smoke": "No automated free fetch — pay-per-call. Use synthetic fixtures; integrate via a credentialed/paid path.",
+    "full": "Only behind explicit, paid, credentialed retrieval with stored PDFs; never bulk-crawl."
+  },
+  "blockers": [
+    "Pay-per-call document retrieval (registered account + fee).",
+    "Document-based PDF — no structured figures; requires OCR/parsing.",
+    "Directors in the report are personal data (GDPR)."
+  ]
+}

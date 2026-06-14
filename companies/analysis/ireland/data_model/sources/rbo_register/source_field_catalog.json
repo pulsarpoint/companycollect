@@ -1,0 +1,50 @@
+{
+  "country": "Ireland",
+  "country_slug": "ireland",
+  "source_slug": "rbo_register",
+  "source_name": "RBO — Register of Beneficial Ownership",
+  "source_type": "beneficial_ownership_register",
+  "organization": "Registrar of Beneficial Ownership (RBO)",
+  "source_url": "https://rbo.gov.ie/",
+  "license": "Restricted (access conditions; post-CJEU)",
+  "access": "restricted",
+  "data_freshness": "continuous",
+  "record_shape": "restricted_register (access-controlled)",
+  "primary_keys": ["company_num"],
+  "join_keys": ["company_num"],
+  "field_count": 2,
+  "fields": [
+    {
+      "path": "beneficial_owners[].name",
+      "source_field": "beneficial owner",
+      "english_name": "beneficial_owner_name",
+      "meaning": "Natural person who ultimately owns or controls the company (planning-only — restricted).",
+      "data_type": "string",
+      "semantic_type": "ownership",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "English",
+      "limitations": "Planning-only. Restricted access (post-CJEU). Personal data (GDPR). No values copied.",
+      "source_confidence": "medium",
+      "analysis_notes": "Not open bulk; noted for completeness. Join on company_num."
+    },
+    {
+      "path": "beneficial_owners[].nature_and_extent",
+      "source_field": "nature and extent of control",
+      "english_name": "nature_and_extent_of_control",
+      "meaning": "Nature and extent of the beneficial interest/control held.",
+      "data_type": "string",
+      "semantic_type": "ownership",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "English",
+      "limitations": "Planning-only; restricted.",
+      "source_confidence": "low",
+      "analysis_notes": "Only if/when lawful access is obtained."
+    }
+  ]
+}

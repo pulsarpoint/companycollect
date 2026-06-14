@@ -1,0 +1,78 @@
+{
+  "country": "Ireland",
+  "country_slug": "ireland",
+  "source_slug": "cro_financial_statements",
+  "source_identity": "ireland_cro_financial_statements",
+  "source_package": "crofinancialstatements",
+  "env_prefix": "IE_CRO_FINSTMT",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "CRO Open Data Portal — Financial Statements (filings index)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Companies Registration Office (CRO)",
+    "source_url": "https://opendata.cro.ie/dataset/financial-statements",
+    "license": "Creative Commons Attribution 4.0 (CC-BY-4.0)",
+    "access": "public",
+    "data_freshness": "annual files",
+    "attribution": "Attribute Companies Registration Office (CRO) (CC-BY 4.0)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://opendata.cro.ie/api/3/action",
+    "download_url": "https://opendata.cro.ie/dataset/99e64d94-0a2f-4cd1-b237-7164bec1426e/resource/dd413039-f628-4931-9788-dfc38eaf6b99/download/financial_statements_2023.csv",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "per_year_files",
+      "page_param": null,
+      "page_start": 2022,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_csv_then_ndjson_one_filing_per_line",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "CroFinancialStatementFiling",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "csv_delimiter": ","
+  },
+  "keys": {
+    "primary_keys": ["submission_num"],
+    "join_keys": ["company_num"],
+    "dedupe_keys": ["submission_num"]
+  },
+  "mapping_rules": {
+    "financial_filings": "Map each row into financial_filings[] (submission_num, file_name, accounts_to date, filing dates) keyed on company_num.",
+    "fiscal_year": "Use submissions_accounts_to_date as the fiscal-year end.",
+    "document_pointer": "Use file_name to request the PDF via cro_document_retrieval (paid)."
+  },
+  "fixture_requirements": [
+    "filing row with PDF file_name + accounts-to date (e.g. SR1746845)",
+    "company with multiple filings across years",
+    "company present in Company Records but with no filing (no-accounts case)"
+  ],
+  "live_test_plan": {
+    "smoke": "Download financial_statements_2023.csv; parse the first rows; verify company_num join to Company Records.",
+    "full": "Process all per-year files (2022, 2023, ...) behind env gates; preserve raw CSVs."
+  },
+  "blockers": []
+}

@@ -1,0 +1,34 @@
+{
+  "country": "Ireland",
+  "country_slug": "ireland",
+  "source_slug": "data_gov_ie",
+  "source_name": "data.gov.ie — national open data portal",
+  "source_type": "open_data_portal",
+  "organization": "Government of Ireland",
+  "source_url": "https://data.gov.ie/dataset/companies",
+  "license": "CC-BY 4.0 (per dataset)",
+  "access": "public",
+  "data_freshness": "mirrors CRO",
+  "record_shape": "ckan_catalog_mirror_of_cro_datasets",
+  "primary_keys": ["dataset_id"],
+  "join_keys": ["company_num"],
+  "field_count": 1,
+  "fields": [
+    {
+      "path": "result.resources[].url",
+      "source_field": "resource url",
+      "english_name": "resource_url",
+      "meaning": "Mirror of the CRO Company Records / Financial Statements resources (same fields as opendata.cro.ie).",
+      "data_type": "string",
+      "semantic_type": "metadata",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": "Discovery/mirror; authoritative source is opendata.cro.ie.",
+      "source_confidence": "medium",
+      "analysis_notes": "Use opendata.cro.ie directly; data.gov.ie for discovery / data.europa.eu onward publishing."
+    }
+  ]
+}

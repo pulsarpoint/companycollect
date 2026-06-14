@@ -1,0 +1,50 @@
+{
+  "country": "Ireland",
+  "country_slug": "ireland",
+  "source_slug": "cro_core_search",
+  "source_name": "CORE — Companies Online Registration Environment (company search)",
+  "source_type": "official_registry",
+  "organization": "Companies Registration Office (CRO)",
+  "source_url": "https://core.cro.ie/",
+  "license": "Public (free search)",
+  "access": "public",
+  "data_freshness": "real-time",
+  "record_shape": "company_search_page (free name/number lookup; document purchase)",
+  "primary_keys": ["company_num"],
+  "join_keys": ["company_num"],
+  "field_count": 2,
+  "fields": [
+    {
+      "path": "company_num",
+      "source_field": "CRO number",
+      "english_name": "cro_number",
+      "meaning": "CRO number returned by the free company search.",
+      "data_type": "string",
+      "semantic_type": "identifier",
+      "example_values": [],
+      "nullable": false,
+      "repeatable": false,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": "Same fields as the open data; CORE is for real-time lookups + filing.",
+      "source_confidence": "high",
+      "analysis_notes": "Real-time lookup key; bulk needs met by the open data portal."
+    },
+    {
+      "path": "documents_list",
+      "source_field": "company documents",
+      "english_name": "documents_list",
+      "meaning": "List of filed documents available for purchase (incl. financial statements).",
+      "data_type": "array",
+      "semantic_type": "document",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "English",
+      "limitations": "Document purchase is paid (mirrors document retrieval).",
+      "source_confidence": "medium",
+      "analysis_notes": "Alternative manual route to documents."
+    }
+  ]
+}

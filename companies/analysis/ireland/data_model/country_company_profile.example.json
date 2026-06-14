@@ -1,0 +1,85 @@
+{
+  "_note": "Example profile using a real CRO Company Records row (CRO 784992, SILVACRAFT FURNITURE LIMITED) + the real Financial Statements index shape. financial_statements (figures) / officers / beneficial_owners are paid/restricted (planning-only) and shown empty/redacted; vat_id is external (not in CRO data).",
+  "country": "Ireland",
+  "country_slug": "ireland",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "cro_number": "784992"
+  },
+  "tax_identifiers": {
+    "vat_id": null,
+    "vat_valid": null
+  },
+  "legal_identity": {
+    "legal_name": "SILVACRAFT FURNITURE LIMITED",
+    "company_type": "LTD - Private Company Limited by Shares",
+    "company_type_code": "1153"
+  },
+  "status": {
+    "value": "Normal",
+    "code": "1151",
+    "since": null
+  },
+  "activity": {
+    "nace_v2_code": "3101"
+  },
+  "incorporation": {
+    "incorporation_date": "2025-03-31",
+    "dissolution_date": null
+  },
+  "registered_location": {
+    "registered_address": "Unit 13 Mastertech Business Park, Athlone Road, Co. Longford, Longford, Ireland",
+    "eircode": "N39 D880"
+  },
+  "compliance": {
+    "last_annual_return_date": "2025-09-30",
+    "next_annual_return_date": "2026-09-30",
+    "last_accounts_date": null
+  },
+  "financial_filings": [
+    {
+      "submission_num": "SR1746845",
+      "file_name": "125210782.pdf",
+      "accounts_to_date": "2023-04-30",
+      "received_date": "2023-05-11",
+      "registered_date": "2023-05-16"
+    }
+  ],
+  "financial_statements": [],
+  "officers": [],
+  "beneficial_owners": [],
+  "source_provenance": [
+    {
+      "source_slug": "cro_company_records",
+      "section": "registration, legal_identity, status, activity, incorporation, registered_location, compliance",
+      "source_url": "https://opendata.cro.ie/dataset/companies",
+      "access": "public",
+      "license": "CC-BY 4.0",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "cro_financial_statements",
+      "section": "financial_filings (index)",
+      "source_url": "https://opendata.cro.ie/dataset/financial-statements",
+      "access": "public",
+      "license": "CC-BY 4.0",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "cro_document_retrieval",
+      "section": "financial_statements, officers (planning-only / paid PDF)",
+      "source_url": "https://opendata.cro.ie/",
+      "access": "paid",
+      "license": "Public document (per-document fee)",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "vies_vat",
+      "section": "tax_identifiers (external; not in CRO data)",
+      "source_url": "https://ec.europa.eu/taxation_customs/vies/",
+      "access": "public",
+      "license": "Validation only",
+      "retrieved_at": null
+    }
+  ]
+}

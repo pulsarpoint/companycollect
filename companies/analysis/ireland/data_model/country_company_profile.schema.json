@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ireland Company Profile",
+  "description": "Country-specific company profile for Ireland. One authoritative open source (CRO Open Data Portal, CC-BY 4.0), keyed on the CRO number (company_num). Company Records gives full identity (incl. NACE, eircode, filing signals); the Financial Statements dataset is an open INDEX of filed accounts (figures are inside pay-per-call PDFs). VAT (IE...) is not in the CRO data; officers come only from filed documents (paid); beneficial ownership (RBO) is restricted.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Ireland" },
+    "country_slug": { "type": "string", "const": "ireland" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["cro_number"],
+      "properties": {
+        "cro_number": {
+          "type": "string",
+          "description": "CRO registration number; company id and universal join key.",
+          "x-source": "cro_company_records",
+          "x-source-path": "company_num",
+          "x-join-key": true,
+          "x-freshness": "daily",
+          "x-access": "public"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "description": "VAT is NOT in the CRO open data — sourced separately (no open crosswalk).",
+      "properties": {
+        "vat_id": { "type": ["string", "null"], "description": "IE + 7 digits + 1-2 letters.", "x-source": "vies_vat", "x-source-path": "vatNumber", "x-access": "external" },
+        "vat_valid": { "type": ["boolean", "null"], "x-source": "vies_vat", "x-source-path": "valid" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": "string", "x-source": "cro_company_records", "x-source-path": "company_name" },
+        "company_type": { "type": ["string", "null"], "description": "LTD/PLC/DAC/CLG/Unlimited/External.", "x-source": "cro_company_records", "x-source-path": "company_type" },
+        "company_type_code": { "type": ["string", "null"], "x-source": "cro_company_records", "x-source-path": "company_type_code" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "value": { "type": "string", "description": "Normal / Dissolved / Strike off / Liquidation / Receivership.", "x-source": "cro_company_records", "x-source-path": "company_status" },
+        "code": { "type": ["string", "null"], "x-source": "cro_company_records", "x-source-path": "company_status_code" },
+        "since": { "type": ["string", "null"], "format": "date", "x-source": "cro_company_records", "x-source-path": "company_status_date" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "nace_v2_code": { "type": ["string", "null"], "description": "NACE Rev.2 (strip trailing .0).", "x-source": "cro_company_records", "x-source-path": "nace_v2_code" }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "incorporation_date": { "type": ["string", "null"], "format": "date", "x-source": "cro_company_records", "x-source-path": "company_reg_date" },
+        "dissolution_date": { "type": ["string", "null"], "format": "date", "x-source": "cro_company_records", "x-source-path": "comp_dissolved_date" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "description": "Concatenated company_address_1..4.", "x-source": "cro_company_records", "x-source-path": "company_address_1..4" },
+        "eircode": { "type": ["string", "null"], "x-source": "cro_company_records", "x-source-path": "eircode" }
+      }
+    },
+    "compliance": {
+      "type": "object",
+      "properties": {
+        "last_annual_return_date": { "type": ["string", "null"], "format": "date", "x-source": "cro_company_records", "x-source-path": "last_ar_date" },
+        "next_annual_return_date": { "type": ["string", "null"], "format": "date", "x-source": "cro_company_records", "x-source-path": "nard" },
+        "last_accounts_date": { "type": ["string", "null"], "format": "date", "x-source": "cro_company_records", "x-source-path": "last_accounts_date" }
+      }
+    },
+    "financial_filings": {
+      "type": "array",
+      "description": "Open INDEX of filed financial statements (CC-BY 4.0). Pointers to the pay-per-call PDFs.",
+      "x-source": "cro_financial_statements",
+      "items": {
+        "type": "object",
+        "required": ["submission_num"],
+        "properties": {
+          "submission_num": { "type": "string", "x-source-path": "submission_num" },
+          "file_name": { "type": "string", "description": "PDF file name (paid retrieval).", "x-source-path": "file_name" },
+          "accounts_to_date": { "type": ["string", "null"], "format": "date", "x-source-path": "submissions_accounts_to_date" },
+          "received_date": { "type": ["string", "null"], "format": "date", "x-source-path": "submission_rec_date" },
+          "registered_date": { "type": ["string", "null"], "format": "date", "x-source-path": "submission_reg_date" }
+        }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY / PAID. Figures from the filed PDFs (document retrieval pay-per-call). Abridged for small/micro. Currency EUR.",
+      "x-access": "paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year_end": { "type": ["string", "null"], "format": "date", "x-source": "cro_document_retrieval", "x-source-path": "submissions_accounts_to_date" },
+          "balance_sheet": { "type": ["object", "null"], "x-source": "cro_document_retrieval", "x-source-path": "balance_sheet" },
+          "income_statement": { "type": ["object", "null"], "x-source": "cro_document_retrieval", "x-source-path": "profit_and_loss" },
+          "currency": { "type": "string", "const": "EUR" },
+          "abridged": { "type": ["boolean", "null"] }
+        }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Directors are not in open Company Records; derived from filed documents (paid PDF). PERSONAL DATA (GDPR).",
+      "x-access": "paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "cro_document_retrieval", "x-source-path": "directors_auditor_report", "x-personal-data": true },
+          "role": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "beneficial_owners": {
+      "type": "array",
+      "description": "PLANNING-ONLY. RBO — restricted (post-CJEU). PERSONAL DATA (GDPR).",
+      "x-access": "restricted",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "rbo_register", "x-source-path": "beneficial_owners[].name", "x-personal-data": true },
+          "nature_and_extent": { "type": ["string", "null"], "x-source": "rbo_register", "x-source-path": "beneficial_owners[].nature_and_extent" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "country": "Ireland",
+  "country_slug": "ireland",
+  "source_slug": "rbo_register",
+  "source_identity": "ireland_rbo_register",
+  "source_package": "rboregister",
+  "env_prefix": "IE_RBO",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "RBO — Register of Beneficial Ownership",
+    "source_type": "beneficial_ownership_register",
+    "organization": "Registrar of Beneficial Ownership (RBO)",
+    "source_url": "https://rbo.gov.ie/",
+    "license": "Restricted (access conditions; post-CJEU)",
+    "access": "restricted",
+    "data_freshness": "continuous",
+    "attribution": "Attribute RBO"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": null,
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "none_planning_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "RboRecord",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["company_num"],
+    "join_keys": ["company_num"],
+    "dedupe_keys": ["company_num"]
+  },
+  "mapping_rules": {
+    "owners": "Map beneficial_owners[] into owners[] (beneficial) only if/when lawful access is obtained — planning-only, personal data."
+  },
+  "fixture_requirements": [
+    "planning-only: no live access; synthetic UBO fixture only if implemented"
+  ],
+  "live_test_plan": {
+    "smoke": "None — restricted register; do not attempt automated access.",
+    "full": "Only under a documented lawful access agreement; never bypass access controls."
+  },
+  "blockers": [
+    "Restricted access (post-CJEU) — not open bulk.",
+    "Requires authorised access.",
+    "Beneficial owners are personal data (GDPR)."
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "country": "Ireland",
+  "country_slug": "ireland",
+  "source_slug": "cro_company_records",
+  "source_identity": "ireland_cro_company_records",
+  "source_package": "crocompanyrecords",
+  "env_prefix": "IE_CRO_COMPANIES",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "CRO Open Data Portal — Company Records",
+    "source_type": "official_registry",
+    "organization": "Companies Registration Office (CRO)",
+    "source_url": "https://opendata.cro.ie/dataset/companies",
+    "license": "Creative Commons Attribution 4.0 (CC-BY-4.0)",
+    "access": "public",
+    "data_freshness": "daily snapshot",
+    "attribution": "Attribute Companies Registration Office (CRO) (CC-BY 4.0)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://opendata.cro.ie/api/3/action",
+    "download_url": "https://opendata.cro.ie/dataset/bf6f837d-0946-4c14-9a99-82cd6980c121/resource/3fef41bc-b8f4-4b10-8434-ce51c29b1bba/download/companies.csv.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": "zip",
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_zip_then_ndjson_one_company_per_line",
+    "file_extension": ".csv.zip",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "CroCompanyRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "csv_delimiter": ","
+  },
+  "keys": {
+    "primary_keys": ["company_num"],
+    "join_keys": ["company_num"],
+    "dedupe_keys": ["company_num"]
+  },
+  "mapping_rules": {
+    "company_id": "Use company_num (CRO number, keep as string).",
+    "registration_number": "Use company_num.",
+    "legal_name": "Use company_name (trim double/trailing spaces).",
+    "company_type": "Use company_type (+ company_type_code).",
+    "status": "Use company_status (trim) + company_status_code + company_status_date.",
+    "incorporation_date": "Use company_reg_date.",
+    "dissolution_date": "Use comp_dissolved_date when present.",
+    "registered_address": "Concatenate company_address_1..4; eircode = postcode.",
+    "activity_code": "Use nace_v2_code, stripping the trailing .0 (NACE Rev.2).",
+    "filing_signals": "Carry last_ar_date / nard / last_accounts_date."
+  },
+  "fixture_requirements": [
+    "active LTD with NACE + eircode (e.g. 784992)",
+    "dissolved company with comp_dissolved_date",
+    "company with empty optional fields (no eircode / no accounts)",
+    "non-LTD type (PLC / DAC / CLG / external)",
+    "malformed individual CSV row"
+  ],
+  "live_test_plan": {
+    "smoke": "Download companies.csv.zip, unzip, parse the first rows in chunks; verify company_num join.",
+    "full": "Process the full ~817k-row CSV behind env gates; preserve the raw zip; daily refresh via CKAN."
+  },
+  "blockers": []
+}
