@@ -34,15 +34,12 @@ companies/analysis/finland/notebook/
   conformance/
     __init__.py
     download.py               Phase 2-3  URL constants + download_* → S3 (first asset)
-    _vendor/                  Phase 5  COPIED parsers (imports rewritten local)
+    _vendor/                  Phase 5  COPIED XBRL parser only (imports rewritten local)
       __init__.py
-      prh_ytj_parser.py         copy of prh_ytj/parser.py
-      prh_ytj_normalizer.py     copy of prh_ytj/normalizer.py
-      prh_ytj_tables.py         copy of prh_ytj/tables.py (column lists)
       prh_xbrl_parser.py        copy of prh_xbrl/parser.py
       prh_xbrl_tables.py        copy of prh_xbrl/tables.py
       prh_xbrl_spec.py          PARSER_VERSION + object-key helpers
-    structured.py             Phase 5  reused parsers → structured Parquet
+    structured.py             Phase 5  prh_ytj via native Polars; prh_xbrl via copied parser
     schemas.py                Phase 6  canonical table Polars schemas (single source of truth)
     validate.py               Phase 6  assert a DataFrame matches a canonical schema
     build_company.py          Phase 6  structured → canonical company + registrations
@@ -415,8 +412,8 @@ Create `companies/analysis/finland/notebook/analysis_method.md` covering, in ord
 2. **Per-source raw shape:**
    - prh_ytj: one JSON object per company per NDJSON line (`businessId`, `names[]`, `tradeRegisterStatus`, `companyForms[]`, `mainBusinessLine`, `website`, `addresses[]`, `registeredEntries[]`). Cite `country_company_profile_mapping.md`.
    - prh_xbrl: per-statement XBRL XML; facts are `fi_met:*` keyed by `fi_dim:MCY` dimension members, not element names. Cite `prh_xbrl_schema_spike/schema_analysis.md`.
-3. **How to profile with Polars/DuckDB:** load NDJSON via `pl.read_ndjson`; for nested fields use `.struct`/`.explode`; null-rate and cardinality with `df.describe()` / `df.null_count()`; DuckDB `SUMMARIZE` over the structured Parquet. Reference `_templates/profile_source.py`.
-4. **Structured schema decision:** the structured Parquet IS the reused parser output — prh_ytj's normalized tables (statuses, names, websites, addresses, business_lines, ...) and prh_xbrl's documents/contexts/units/facts. One Parquet dataset per table.
+3. **How to convert JSONL with Polars (prh_ytj) — the idiomatic path:** `pl.read_ndjson` (or `scan_ndjson` for the full snapshot) reads JSONL into nested struct/list columns; reshape with vectorized expressions (`.struct.field()`, `.explode()`, `.unnest()`, `.list.eval()`) — NOT a Python row loop. Encode the domain rules here: the `status='2'` liveness pitfall → derive from `tradeRegisterStatus`; current-primary name = `type==1 & endDate null`; website URL normalization. Profile with `df.null_count()` / DuckDB `SUMMARIZE`; reference `_templates/profile_source.py` and `country_company_profile_mapping.md`.
+4. **When to reuse a parser instead (prh_xbrl):** XML is not tabular — Polars can't parse XBRL, so the `lxml` parser is COPIED and reused, and its row output wrapped into Polars. The rule: **native Polars for JSONL/CSV; reuse the parser only where parsing is non-trivial (XML).** Structured Parquet, one dataset per table: prh_ytj → statuses/names/websites/addresses/business_lines (native Polars); prh_xbrl → documents/contexts/units/facts (parser).
 5. **Mapping to canonical:** how structured rows map to `registrations`/`company`/`company_websites`/`financials` per the dossier §6 and the metric map in the schema spike. Which 4 of 8 tables Finland fills; which 4 are known-absent.
 6. **Validation:** every canonical DataFrame is checked against `schemas.py` before writing.
 
@@ -446,30 +443,27 @@ Copy the parsers into `conformance/_vendor/`, rewriting `dagster_corpscout` impo
 - Create: `NB/conformance/structured.py`
 - Create: `NB/tests/test_structured.py`
 
-- [ ] **Step 1: Copy the parser modules into `_vendor/`, rewriting imports**
+- [ ] **Step 1: Copy ONLY the XBRL parser into `_vendor/`, rewriting imports**
+
+prh_ytj is JSONL — no parser is copied for it; Polars reads JSONL natively in Step 5. Only the XBRL XML parser is reused.
 
 Create `companies/analysis/finland/notebook/conformance/_vendor/__init__.py` (empty).
 
 Copy these files verbatim, then rewrite imports:
-- `prh_ytj/parser.py` → `_vendor/prh_ytj_parser.py`. It exposes `ParsedRecord` (dataclass: `payload: dict`, `line_number: int`, `payload_hash: str`) and a record parser. Rewrite any `from dagster_corpscout...` import to local.
-- `prh_ytj/tables.py` → `_vendor/prh_ytj_tables.py` (column lists; no imports to rewrite).
-- `prh_ytj/normalizer.py` → `_vendor/prh_ytj_normalizer.py`. Rewrite `from dagster_corpscout.sources.finland.prh_ytj.parser import ParsedRecord` → `from conformance._vendor.prh_ytj_parser import ParsedRecord`, and `from ...tables import (...)` → `from conformance._vendor.prh_ytj_tables import (...)`.
-- `prh_xbrl/tables.py` → `_vendor/prh_xbrl_tables.py`.
-- `prh_xbrl/spec.py` → `_vendor/prh_xbrl_spec.py` (keep only `PARSER_VERSION`, `BUCKET`, key helpers; drop nothing else needed).
+- `prh_xbrl/tables.py` → `_vendor/prh_xbrl_tables.py` (column-name constants; no imports to rewrite).
+- `prh_xbrl/spec.py` → `_vendor/prh_xbrl_spec.py` (keep `PARSER_VERSION` and the object-key helpers).
 - `prh_xbrl/parser.py` → `_vendor/prh_xbrl_parser.py`. Rewrite `from dagster_corpscout.sources.finland.prh_xbrl import spec, tables` → `from conformance._vendor import prh_xbrl_spec as spec, prh_xbrl_tables as tables`.
 
-- [ ] **Step 2: Verify the copied parsers import cleanly**
+- [ ] **Step 2: Verify the copied XBRL parser imports cleanly**
 
 Run (from repo root):
 ```bash
 cd companies/analysis/finland/notebook && uv run python -c "
-from conformance._vendor.prh_ytj_normalizer import normalize_record, ImportRun
-from conformance._vendor.prh_ytj_parser import ParsedRecord
 from conformance._vendor.prh_xbrl_parser import parse_statement_xml
-print('vendored parsers import ok')
+print('vendored xbrl parser import ok')
 "
 ```
-Expected: prints `vendored parsers import ok`.
+Expected: prints `vendored xbrl parser import ok`.
 
 - [ ] **Step 3: Write the failing test for `structured.py`**
 
@@ -477,26 +471,33 @@ Create `companies/analysis/finland/notebook/tests/test_structured.py`:
 
 ```python
 import datetime as dt
+import json
 
 import polars as pl
 
-from conformance.structured import ytj_structured_from_records, xbrl_structured_from_statements
+from conformance.structured import ytj_structured_from_ndjson, xbrl_structured_from_statements
 
 
 def test_ytj_structured_produces_statuses_and_names():
     record = {
         "businessId": {"value": "0104539-0"},
         "tradeRegisterStatus": "1", "status": "2",
-        "registrationDate": "2001-01-01", "endDate": None, "lastModified": "2026-01-01",
-        "names": [{"name": "Acme Oy", "type": "1", "version": 1, "registrationDate": "2001-01-01", "endDate": None}],
-        "website": {"url": "https://acme.fi", "registrationDate": "2010-01-01"},
-        "addresses": [], "companyForms": [], "registeredEntries": [],
+        "registrationDate": "2001-01-01", "endDate": None,
+        "names": [{"name": "Acme Oy", "type": "1", "registrationDate": "2001-01-01", "endDate": None}],
+        "website": {"url": "acme.fi", "registrationDate": "2010-01-01", "endDate": None},
+        "addresses": [{"type": 1, "street": "Main 1", "postCode": "00100", "country": "FI",
+                       "postOffices": [{"languageCode": "1", "city": "Helsinki", "municipalityCode": "091"}]}],
         "mainBusinessLine": {"type": "62010", "typeCodeSet": "TOL2008", "descriptions": []},
     }
-    tables = ytj_structured_from_records([record], run_id="t", ingested_at=dt.datetime(2026, 1, 1))
+    ndjson = (json.dumps(record) + "\n").encode("utf-8")
+    tables = ytj_structured_from_ndjson(ndjson)
     assert tables["fi_prhytj_statuses"]["business_id"].to_list() == ["0104539-0"]
+    assert tables["fi_prhytj_statuses"]["is_active"].to_list() == [True]
     assert tables["fi_prhytj_names"]["name"].to_list() == ["Acme Oy"]
     assert tables["fi_prhytj_websites"]["normalized_url"].to_list() == ["https://acme.fi"]
+    assert tables["fi_prhytj_websites"]["host"].to_list() == ["acme.fi"]
+    assert tables["fi_prhytj_addresses"]["city"].to_list() == ["Helsinki"]
+    assert tables["fi_prhytj_business_lines"]["business_line_type"].to_list() == ["62010"]
 
 
 def test_xbrl_structured_extracts_facts():
@@ -527,9 +528,14 @@ Expected: FAIL — `ModuleNotFoundError: conformance.structured` / function not 
 Create `companies/analysis/finland/notebook/conformance/structured.py`:
 
 ```python
-"""Reused parsers -> structured Parquet (one dataset per parser table).
+"""Raw -> structured Parquet.
 
-Pure: records/statements in, dict[table_name -> polars.DataFrame] out. The
+prh_ytj (JSONL): native Polars — read NDJSON into nested structs/lists and
+reshape with vectorized expressions. No Python row loop, no copied parser.
+prh_xbrl (XML): reuse the copied lxml parser (XML is not tabular), then wrap
+its rows into Polars.
+
+Pure: bytes/statements in, dict[table_name -> polars.DataFrame] out. The
 notebook handles S3 read and Parquet write at its edges. These functions are
 the future structured-layer Dagster assets.
 """
@@ -537,32 +543,96 @@ the future structured-layer Dagster assets.
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
-import json
-import uuid
 
 import polars as pl
 
-from conformance._vendor.prh_ytj_normalizer import ImportRun, normalize_record
-from conformance._vendor.prh_ytj_parser import ParsedRecord
-from conformance._vendor.prh_ytj_tables import NORMALIZED_TABLES
 from conformance._vendor.prh_xbrl_parser import parse_statement_xml
 from conformance._vendor import prh_xbrl_tables as xbrl_tables
 
 
-def ytj_structured_from_records(
-    records: list[dict], *, run_id: str, ingested_at: dt.datetime
-) -> dict[str, pl.DataFrame]:
-    run = ImportRun(run_id=run_id, source_export_id=uuid.uuid5(uuid.NAMESPACE_URL, run_id),
-                    ingested_at=ingested_at)
-    by_table: dict[str, list[dict]] = {t: [] for t in NORMALIZED_TABLES}
-    for i, payload in enumerate(records):
-        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        parsed = ParsedRecord(payload=payload, line_number=i + 1,
-                              payload_hash=hashlib.sha256(body).hexdigest())
-        for table, rows in normalize_record(run, parsed).items():
-            by_table[table].extend(rows)
-    return {t: pl.DataFrame(rows, infer_schema_length=None) for t, rows in by_table.items()}
+def ytj_structured_from_ndjson(ndjson: bytes) -> dict[str, pl.DataFrame]:
+    """prh_ytj JSONL -> structured frames, idiomatic Polars. Domain rules
+    (the status='2' liveness pitfall, current-primary name, URL normalization)
+    are expressed as Polars expressions."""
+    df = pl.read_ndjson(ndjson).with_columns(
+        pl.col("businessId").struct.field("value").alias("business_id")
+    )
+
+    statuses = (
+        df.select(
+            "business_id",
+            pl.col("tradeRegisterStatus").alias("trade_register_status"),
+            pl.col("registrationDate").alias("registration_date"),
+            pl.col("endDate").fill_null("").alias("end_date"),
+        )
+        # Liveness from tradeRegisterStatus/endDate — never the constant `status` field.
+        .with_columns(
+            pl.when((pl.col("end_date") != "") | (pl.col("trade_register_status") == "3"))
+            .then(pl.lit("ceased")).otherwise(pl.lit("active")).alias("lifecycle_status")
+        )
+        .with_columns((pl.col("lifecycle_status") == "active").alias("is_active"))
+    )
+
+    names = (
+        df.select("business_id", "names")
+        .explode("names").drop_nulls("names").unnest("names")
+        .select(
+            "business_id", "name",
+            pl.col("type").alias("name_type_code"),
+            pl.col("endDate").is_null().alias("is_current"),
+            (pl.col("type") == "1").alias("is_primary"),
+        )
+    )
+
+    websites = (
+        df.select("business_id", "website")
+        .with_columns(pl.col("website").struct.field("url").alias("url"))
+        .filter(pl.col("url").is_not_null() & (pl.col("url") != ""))
+        .with_columns(
+            pl.when(pl.col("url").str.contains("://")).then(pl.col("url"))
+            .otherwise(pl.concat_str([pl.lit("https://"), pl.col("url")])).alias("normalized_url")
+        )
+        .with_columns(
+            pl.col("normalized_url").str.replace(r"^https?://", "").str.split("/").list.first().alias("host"),
+            pl.lit(True).alias("is_current"),
+            pl.lit(True).alias("is_primary"),
+        )
+        .select("business_id", "url", "normalized_url", "host", "is_current", "is_primary")
+    )
+
+    addresses = (
+        df.select("business_id", "addresses")
+        .explode("addresses").drop_nulls("addresses").unnest("addresses")
+        .with_columns(
+            pl.col("postOffices").list.eval(pl.element().struct.field("city")).list.first().alias("city"),
+            pl.col("postOffices").list.eval(pl.element().struct.field("municipalityCode")).list.first().alias("municipality_code"),
+        )
+        .select(
+            "business_id",
+            pl.col("type").alias("address_type_code"),
+            "street",
+            pl.col("postCode").alias("post_code"),
+            "city", "municipality_code", "country",
+        )
+    )
+
+    business_lines = (
+        df.select("business_id", "mainBusinessLine")
+        .with_columns(
+            pl.col("mainBusinessLine").struct.field("type").alias("business_line_type"),
+            pl.col("mainBusinessLine").struct.field("typeCodeSet").alias("business_line_code_set"),
+        )
+        .filter(pl.col("business_line_type").is_not_null())
+        .select("business_id", "business_line_type", "business_line_code_set")
+    )
+
+    return {
+        "fi_prhytj_statuses": statuses,
+        "fi_prhytj_names": names,
+        "fi_prhytj_websites": websites,
+        "fi_prhytj_addresses": addresses,
+        "fi_prhytj_business_lines": business_lines,
+    }
 
 
 def xbrl_structured_from_statements(
@@ -581,10 +651,14 @@ def xbrl_structured_from_statements(
         )
         for table, rows in parsed.rows_by_table.items():
             by_table[table].extend(rows)
-    return {t: pl.DataFrame(rows, infer_schema_length=None) for t, rows in by_table.items()}
+    # Drop nested fact/context columns Polars can't infer flatly; not consumed downstream.
+    drop = {"dimensions", "measures", "schema_refs", "validation_warnings"}
+    out = {}
+    for table, rows in by_table.items():
+        frame = pl.DataFrame(rows, infer_schema_length=None) if rows else pl.DataFrame()
+        out[table] = frame.drop([c for c in drop if c in frame.columns]) if rows else frame
+    return out
 ```
-
-(If `pl.DataFrame` rejects nested fields like `dimensions`/`measures`, drop those columns before constructing — they are not needed downstream; add `.drop(...)` in the comprehension. Confirm against the test.)
 
 - [ ] **Step 6: Run the test to verify it passes**
 
@@ -600,7 +674,7 @@ Expected: 2 passed.
 git add companies/analysis/finland/notebook/conformance/_vendor \
         companies/analysis/finland/notebook/conformance/structured.py \
         companies/analysis/finland/notebook/tests/test_structured.py
-git commit -m "Phase 5: copy parsers, build structured Parquet from raw"
+git commit -m "Phase 5: structured Parquet - native Polars for JSONL, copied parser for XBRL"
 ```
 
 ---
@@ -1255,8 +1329,7 @@ def _(download, json, st, dt, RUN_ID, pl, OUT, ytj_meta, xbrl_meta):
     # Load raw from S3 and run the copied parsers -> structured Parquet.
     s3 = download.s3_client()
     ndjson = s3.get_object(Bucket=download.BUCKET, Key=ytj_meta["snapshot_key"])["Body"].read()
-    records = [json.loads(line) for line in ndjson.splitlines() if line.strip()]
-    ytj_tables = st.ytj_structured_from_records(records, run_id=RUN_ID, ingested_at=dt.datetime(2026, 6, 14))
+    ytj_tables = st.ytj_structured_from_ndjson(ndjson)
 
     listing = json.loads(s3.get_object(Bucket=download.BUCKET, Key=xbrl_meta["listing_key"])["Body"].read())
     statements = []
@@ -1347,6 +1420,7 @@ The partition doc (`partitioning.md`) is the next deliverable, written from the 
 
 ## Notes for the implementer
 
-- **Real-data fragility:** the `build_*` functions assume structured column names from the copied normalizer/parser (e.g. `fi_prhytj_statuses.business_id`, `fi_prh_xbrl_facts.concept_qname`). If a column name differs at runtime, fix the reference in the build function and its test together — do not loosen the schema in `schemas.py`.
-- **Nested Polars columns:** the parser rows contain nested fields (`dimensions`, `measures`, `schema_refs`, `validation_warnings`). If `pl.DataFrame(...)` errors on them in `structured.py`, drop those columns before constructing the DataFrame — they are not consumed by any `build_*` function.
+- **Real-data fragility:** the `build_*` functions assume the structured column names produced in `structured.py` (e.g. `fi_prhytj_statuses.business_id` from the native Polars transform, `fi_prh_xbrl_facts.concept_qname` from the copied parser). If a column name differs at runtime, fix the reference in the build function and its test together — do not loosen the schema in `schemas.py`.
+- **Native Polars schema inference (prh_ytj):** `pl.read_ndjson` infers struct/list fields from the data. If an optional field (e.g. `website`) is absent across the whole sample, `.struct.field(...)` raises — guard optional structs (`"website" in df.columns`) and validate against a real snapshot. `.list.eval(pl.element().struct.field(...))` needs a recent Polars; confirm the version resolved in Phase 1 supports it.
+- **XBRL nested columns:** the XBRL parser rows carry nested fields (`dimensions`, `measures`, `schema_refs`, `validation_warnings`); `structured.py` drops them before building the DataFrame since no `build_*` consumes them.
 - **S3 absence:** if `CORPSCOUT_S3_*` is unset, Phases 3/6 end-to-end steps can't run; the unit tests (which use synthetic data) still must pass. Do not mark a phase confirmed on unit tests alone where the step calls for an S3 smoke run — flag it for the user instead.
