@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Luxembourg Company Profile",
+  "description": "Country-specific company profile for Luxembourg. The authoritative register is the RCS (Registre de Commerce et des Sociétés, run by Luxembourg Business Registers), keyed on the RCS number (prefix = entity class) and the matricule (13-digit national id). The RCS is free to search and free to download filed documents (incl. annual accounts), but the search is captcha-gated with no open bulk/API, so several sections are planning-only / blocked-for-automation. VAT (LU+8) is separate; beneficial ownership (RBE) is restricted.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Luxembourg" },
+    "country_slug": { "type": "string", "const": "luxembourg" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["rcs_number"],
+      "properties": {
+        "rcs_number": {
+          "type": "string",
+          "description": "RCS register identifier (prefix = entity class: B=sociétés, A=personnes physiques, F=succursales).",
+          "x-source": "rcs_register",
+          "x-source-path": "rcs_number",
+          "x-join-key": true,
+          "x-access": "public_manual"
+        },
+        "matricule": {
+          "type": ["string", "null"],
+          "description": "13-digit national identification number; cross-source join key.",
+          "x-source": "rcs_register",
+          "x-source-path": "matricule",
+          "x-join-key": true
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "vat_id": { "type": ["string", "null"], "description": "LU + 8 digits (separate; not in RCS data).", "x-source": "vies_vat", "x-source-path": "vatNumber", "x-access": "external" },
+        "vat_valid": { "type": ["boolean", "null"], "x-source": "vies_vat", "x-source-path": "valid" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": "string", "x-source": "rcs_register", "x-source-path": "denomination" },
+        "legal_form": { "type": ["string", "null"], "description": "S.A./S.à r.l./SCSp/...", "x-source": "rcs_register", "x-source-path": "forme_juridique" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "value": { "type": "string", "description": "inscrite / en liquidation / radiée.", "x-source": "rcs_register", "x-source-path": "statut" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "activity_code": { "type": "null", "description": "not_available_in_open_sources (no public NACE in the free RCS data).", "x-source": null }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "incorporation_date": { "type": ["string", "null"], "format": "date", "x-source": "rcs_register", "x-source-path": "date_constitution" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "rcs_register", "x-source-path": "siege_social" },
+        "municipality": { "type": ["string", "null"], "description": "commune, parsed from address." }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Directors/managers (gérants/administrateurs) — in the free filed RCS documents (PDF). PERSONAL DATA (GDPR).",
+      "x-access": "public_document_pdf",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "rcs_register", "x-source-path": "documents[]", "x-personal-data": true },
+          "role": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Annual accounts (comptes annuels). FREE to download per company as PDF/eCDF, but reached via the captcha-gated RCS page and not openly bulk — structured only after OCR/eCDF-parse, or via a vendor. Currency EUR.",
+      "x-access": "public_document_pdf",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": "string", "x-source": "rcs_annual_accounts", "x-source-path": "fiscal_year" },
+          "balance_sheet": { "type": ["object", "null"], "x-source": "rcs_annual_accounts", "x-source-path": "bilan" },
+          "income_statement": { "type": ["object", "null"], "x-source": "rcs_annual_accounts", "x-source-path": "compte_profits_pertes" },
+          "currency": { "type": "string", "const": "EUR" },
+          "filing_format": { "type": ["string", "null"], "description": "eCDF | PDF" }
+        }
+      }
+    },
+    "beneficial_owners": {
+      "type": "array",
+      "description": "PLANNING-ONLY. RBE — restricted (post-CJEU). PERSONAL DATA (GDPR).",
+      "x-access": "restricted",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "rbe_register", "x-source-path": "beneficial_owners[].name", "x-personal-data": true },
+          "nature_and_extent_of_control": { "type": ["string", "null"], "x-source": "rbe_register", "x-source-path": "beneficial_owners[].nature_extent_control" }
+        }
+      }
+    },
+    "lifecycle_events": {
+      "type": "array",
+      "description": "RESA gazette publications (incorporation, amendments, accounts deposits, dissolutions).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string", "x-source": "resa_gazette", "x-source-path": "publication_type" },
+          "date": { "type": ["string", "null"], "format": "date", "x-source": "resa_gazette", "x-source-path": "publication_date" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "country": "Luxembourg",
+  "country_slug": "luxembourg",
+  "source_slug": "rcs_annual_accounts",
+  "source_identity": "luxembourg_rcs_annual_accounts",
+  "source_package": "rcsaccounts",
+  "env_prefix": "LU_RCS_ACCOUNTS",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "RCS annual accounts (comptes annuels / eCDF)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Luxembourg Business Registers (LBR) / Centrale des bilans (STATEC/BCL)",
+    "source_url": "https://www.lbr.lu/",
+    "license": "Public (filed in the register; free to download per company)",
+    "access": "public",
+    "data_freshness": "annual filing",
+    "attribution": "Attribute Luxembourg Business Registers / RCS"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://www.lbr.lu/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf", "ecdf_xml"],
+    "compression": null,
+    "encoding": "binary",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "via captcha-gated RCS page"
+  },
+  "snapshot": {
+    "strategy": "store_pdf_ecdf_plus_parsed_json_when_lawfully_obtained",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "RcsComptesAnnuels",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": ["1.234.567,89"],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["rcs_number", "fiscal_year"],
+    "join_keys": ["rcs_number", "matricule"],
+    "dedupe_keys": ["rcs_number", "fiscal_year"]
+  },
+  "mapping_rules": {
+    "financials": "Map bilan + compte de profits et pertes into financials[] per fiscal_year after OCR/parse (eCDF parses best). Currency EUR; abridged for small/micro.",
+    "documents": "Map the comptes annuels document into documents[]."
+  },
+  "fixture_requirements": [
+    "synthetic eCDF balance-sheet fixture for the parser",
+    "synthetic abridged small-company accounts PDF fixture",
+    "garbled-OCR fixture"
+  ],
+  "live_test_plan": {
+    "smoke": "No automated portal fetch (captcha). Use synthetic fixtures; integrate via a vendor or a lawful access path.",
+    "full": "Document fetch + OCR/eCDF-parse only via a sanctioned access path or a commercial provider; never bypass the captcha."
+  },
+  "blockers": [
+    "Documents free but reached via the captcha-gated RCS page — automated access blocked.",
+    "No open structured bulk; figures inside PDF/eCDF (OCR/parse).",
+    "Reuse terms of the documents to be confirmed."
+  ]
+}

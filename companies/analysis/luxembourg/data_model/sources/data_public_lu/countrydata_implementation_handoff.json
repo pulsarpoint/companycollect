@@ -1,0 +1,73 @@
+{
+  "country": "Luxembourg",
+  "country_slug": "luxembourg",
+  "source_slug": "data_public_lu",
+  "source_identity": "luxembourg_data_public_lu",
+  "source_package": "datapubliclu",
+  "env_prefix": "LU_DATAPUBLIC",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "data.public.lu / STATEC — statistical enterprise data",
+    "source_type": "open_data_portal",
+    "organization": "STATEC / data.public.lu",
+    "source_url": "https://data.public.lu/",
+    "license": "CC0 / open (per dataset)",
+    "access": "public",
+    "data_freshness": "periodic",
+    "attribution": "Attribute STATEC / data.public.lu"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://data.public.lu/api/1/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "data",
+    "total_results_path": "total",
+    "pagination": {
+      "type": "page_number",
+      "page_param": "page",
+      "page_start": 1,
+      "page_size": 20,
+      "page_size_param": "page_size",
+      "next_page_path": "next_page"
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "not_company_data",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "UdataDataset",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["dataset_id"],
+    "join_keys": [],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "none": "Not a company register; no company mapping (STATEC statistical aggregates only)."
+  },
+  "fixture_requirements": [],
+  "live_test_plan": {
+    "smoke": "n/a — not company data.",
+    "full": "n/a"
+  },
+  "blockers": [
+    "Not the company register — STATEC statistical aggregates only (no RCS/financials bulk)."
+  ]
+}

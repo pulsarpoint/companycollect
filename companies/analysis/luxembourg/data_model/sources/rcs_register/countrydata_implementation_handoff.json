@@ -1,0 +1,85 @@
+{
+  "country": "Luxembourg",
+  "country_slug": "luxembourg",
+  "source_slug": "rcs_register",
+  "source_identity": "luxembourg_rcs_register",
+  "source_package": "rcsregister",
+  "env_prefix": "LU_RCS",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "RCS — Registre de Commerce et des Sociétés (LBR public search)",
+    "source_type": "official_registry",
+    "organization": "Luxembourg Business Registers (LBR, GIE)",
+    "source_url": "https://www.lbr.lu/",
+    "license": "Public register (free search + free document download; certified extracts paid; reuse terms unclear)",
+    "access": "public",
+    "data_freshness": "real-time",
+    "attribution": "Attribute Luxembourg Business Registers / RCS"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://www.lbr.lu/mjrcs/jsp/secured/RechercheController.action",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "captcha-gated"
+  },
+  "snapshot": {
+    "strategy": "none_blocked",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "RcsCompany",
+    "date_formats": ["02/01/2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["rcs_number"],
+    "join_keys": ["rcs_number", "matricule"],
+    "dedupe_keys": ["rcs_number"]
+  },
+  "mapping_rules": {
+    "company_id": "Use rcs_number (prefix = entity class) with matricule as the cross-source key.",
+    "tax_id": "Use matricule (13-digit national id).",
+    "vat_id": "LU + 8 digits (separate; VIES/AED).",
+    "legal_name": "Use dénomination.",
+    "company_type": "Use forme juridique (S.A./S.à r.l./SCSp/...).",
+    "status": "Use statut (inscrite/en liquidation/radiée).",
+    "officers": "Derive from filed documents (gérants/administrateurs) — PII (GDPR).",
+    "documents": "Filed documents (statuts, comptes annuels) are free to download per company."
+  },
+  "fixture_requirements": [
+    "planning-only: do NOT automate the captcha-gated search",
+    "synthetic RCS company fixture if implemented via a lawful access path / vendor"
+  ],
+  "live_test_plan": {
+    "smoke": "None — search is captcha-gated with no open API. Manual lookups only.",
+    "full": "Only via a commercial provider or a sanctioned access path; never bypass the captcha or scrape the search."
+  },
+  "blockers": [
+    "RCS search is captcha-gated with no open bulk/API — must not be bypassed.",
+    "No official open bulk export.",
+    "Certified extracts are paid; reuse terms unclear."
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "_note": "SCHEMATIC illustrative profile — placeholder values, not a real company. No per-company open record was lawfully downloadable in bulk (RCS search captcha-gated; no open bulk/API). Officers/financials are free per company (PDF) but planning-only for automation; beneficial owners restricted. Shown empty/redacted.",
+  "country": "Luxembourg",
+  "country_slug": "luxembourg",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "rcs_number": "B123456",
+    "matricule": "20152411234"
+  },
+  "tax_identifiers": {
+    "vat_id": "LU12345678",
+    "vat_valid": null
+  },
+  "legal_identity": {
+    "legal_name": "Exemple Holding S.A.",
+    "legal_form": "Société anonyme (S.A.)"
+  },
+  "status": {
+    "value": "inscrite (active)"
+  },
+  "activity": {
+    "activity_code": null
+  },
+  "incorporation": {
+    "incorporation_date": "2015-03-10"
+  },
+  "registered_location": {
+    "registered_address": "2 rue de la Boucherie, L-1247 Luxembourg",
+    "municipality": "Luxembourg"
+  },
+  "officers": [
+    { "name": "<REDACTED>", "role": "administrateur" }
+  ],
+  "financial_statements": [],
+  "beneficial_owners": [],
+  "lifecycle_events": [],
+  "source_provenance": [
+    {
+      "source_slug": "rcs_register",
+      "section": "registration, legal_identity, status, incorporation, registered_location, officers (officers in free documents)",
+      "source_url": "https://www.lbr.lu/",
+      "access": "public_manual",
+      "license": "Public register (terms unclear)",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "vies_vat",
+      "section": "tax_identifiers (external; not in RCS data)",
+      "source_url": "https://ec.europa.eu/taxation_customs/vies/",
+      "access": "public",
+      "license": "Validation only",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "rcs_annual_accounts",
+      "section": "financial_statements (free per company; planning-only for automation; PDF/eCDF)",
+      "source_url": "https://www.lbr.lu/",
+      "access": "public_document_pdf",
+      "license": "Public documents",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "rbe_register",
+      "section": "beneficial_owners (restricted; planning-only)",
+      "source_url": "https://www.lbr.lu/",
+      "access": "restricted",
+      "license": "Restricted (post-CJEU)",
+      "retrieved_at": null
+    }
+  ]
+}

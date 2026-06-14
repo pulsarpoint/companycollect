@@ -1,0 +1,34 @@
+{
+  "country": "Luxembourg",
+  "country_slug": "luxembourg",
+  "source_slug": "data_public_lu",
+  "source_name": "data.public.lu / STATEC — statistical enterprise data",
+  "source_type": "open_data_portal",
+  "organization": "STATEC / data.public.lu",
+  "source_url": "https://data.public.lu/",
+  "license": "CC0 / open (per dataset)",
+  "access": "public",
+  "data_freshness": "periodic",
+  "record_shape": "udata_catalog (STATEC aggregate enterprise statistics)",
+  "primary_keys": ["dataset_id"],
+  "join_keys": [],
+  "field_count": 1,
+  "fields": [
+    {
+      "path": "(dataset rows)",
+      "source_field": "(per dataset)",
+      "english_name": "enterprise_statistics",
+      "meaning": "Aggregate enterprise statistics (demography, structural business statistics, creations/cessations). NOT a company register.",
+      "data_type": "object",
+      "semantic_type": "metadata",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "French/English",
+      "limitations": "No RCS/company/financials bulk (verified: RCS/registre/LBR/société/TVA = 0 datasets). Context only.",
+      "source_confidence": "high",
+      "analysis_notes": "Not company data; included for completeness."
+    }
+  ]
+}

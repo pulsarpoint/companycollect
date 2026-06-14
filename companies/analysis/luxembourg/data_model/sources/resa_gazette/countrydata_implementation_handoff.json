@@ -1,0 +1,76 @@
+{
+  "country": "Luxembourg",
+  "country_slug": "luxembourg",
+  "source_slug": "resa_gazette",
+  "source_identity": "luxembourg_resa_gazette",
+  "source_package": "resagazette",
+  "env_prefix": "LU_RESA",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "RESA — Recueil Électronique des Sociétés et Associations (legal gazette)",
+    "source_type": "official_gazette",
+    "organization": "Luxembourg Business Registers (LBR)",
+    "source_url": "https://www.lbr.lu/resa/",
+    "license": "Public (free)",
+    "access": "public",
+    "data_freshness": "continuous",
+    "attribution": "Attribute RESA / LBR"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.lbr.lu/resa/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "crossref_events_only",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "ResaPublication",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["publication_id"],
+    "join_keys": ["rcs_number"],
+    "dedupe_keys": ["publication_id"]
+  },
+  "mapping_rules": {
+    "events": "Map RESA publications into lifecycle events keyed on rcs_number (incorporation/amendment/accounts/dissolution)."
+  },
+  "fixture_requirements": [
+    "publication referencing an RCS number with type + date"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve the RESA search/consult interface and confirm publications reference the RCS number.",
+    "full": "Consult RESA for events; cross-reference only (not a structured master)."
+  },
+  "blockers": [
+    "Exact search/export interface to resolve.",
+    "Not a structured company master; events/history cross-reference."
+  ]
+}
