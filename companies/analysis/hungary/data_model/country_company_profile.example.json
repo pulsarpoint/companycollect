@@ -1,0 +1,81 @@
+{
+  "_note": "SCHEMATIC illustrative profile — placeholder values, not a real company. No per-company open record was lawfully downloadable (e-beszámoló reCAPTCHA-gated; full cégjegyzék paid). Financials/officers/owners are planning-only and shown empty/redacted.",
+  "country": "Hungary",
+  "country_slug": "hungary",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "cegjegyzekszam": "01-10-041713"
+  },
+  "tax_identifiers": {
+    "adoszam": "10841713-2-44",
+    "tax_base_number": "10841713",
+    "vat_id": "HU10841713",
+    "vat_valid": true,
+    "vat_status": "áfaalany",
+    "tax_number_cancelled": false,
+    "statistical_code": "10841713-1920-114-01"
+  },
+  "legal_identity": {
+    "legal_name": "PÉLDA Nyilvánosan Működő Részvénytársaság",
+    "legal_form": "Nyrt"
+  },
+  "status": {
+    "value": "bejegyezve (registered/active)"
+  },
+  "activity": {
+    "teaor": "0610"
+  },
+  "registered_location": {
+    "registered_seat": "Budapest, Példa utca 1, 1117",
+    "municipality": "Budapest",
+    "region": "Budapest"
+  },
+  "officers": [
+    { "name": "<REDACTED>", "role": "ügyvezető / vezérigazgató" }
+  ],
+  "owners": [],
+  "financial_statements": [],
+  "public_sector_links": [],
+  "source_provenance": [
+    {
+      "source_slug": "ecegjegyzek",
+      "section": "registration, tax_identifiers.adoszam, legal_identity, status, activity, registered_location, officers (officers paid/planning-only)",
+      "source_url": "https://www.e-cegjegyzek.hu/",
+      "access": "public_basic_paid_full",
+      "license": "Free basic; full paid",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "nav_afaalany",
+      "section": "tax_identifiers.vat_status, tax_number_cancelled",
+      "source_url": "https://nav.gov.hu/adatbazisok/adatbleker/afaalanyok",
+      "access": "public",
+      "license": "NAV közadat",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "vies_vat",
+      "section": "tax_identifiers.vat_id, vat_valid",
+      "source_url": "https://ec.europa.eu/taxation_customs/vies/",
+      "access": "public",
+      "license": "Validation only",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "ksh_register",
+      "section": "tax_identifiers.statistical_code, activity.teaor",
+      "source_url": "https://www.ksh.hu/",
+      "access": "public",
+      "license": "KSH terms",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "ebeszamolo",
+      "section": "financial_statements (planning-only; reCAPTCHA-gated)",
+      "source_url": "https://e-beszamolo.im.gov.hu/",
+      "access": "public_recaptcha_gated",
+      "license": "Public documents",
+      "retrieved_at": null
+    }
+  ]
+}

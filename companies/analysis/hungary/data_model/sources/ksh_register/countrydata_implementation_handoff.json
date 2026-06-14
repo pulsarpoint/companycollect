@@ -1,0 +1,78 @@
+{
+  "country": "Hungary",
+  "country_slug": "hungary",
+  "source_slug": "ksh_register",
+  "source_identity": "hungary_ksh_register",
+  "source_package": "kshregister",
+  "env_prefix": "HU_KSH",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "KSH — Hungarian Central Statistical Office business register",
+    "source_type": "statistical_business_register",
+    "organization": "Központi Statisztikai Hivatal (KSH)",
+    "source_url": "https://www.ksh.hu/",
+    "license": "Open (KSH terms)",
+    "access": "public",
+    "data_freshness": "periodic",
+    "attribution": "Attribute KSH"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.ksh.hu/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "xlsx", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "classification_reference",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "KshClassification",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["statisztikai_szamjel"],
+    "join_keys": ["adoszam"],
+    "dedupe_keys": ["statisztikai_szamjel"]
+  },
+  "mapping_rules": {
+    "activity_code": "Use TEÁOR as the canonical activity scheme.",
+    "statistical_code": "Decode statisztikai számjel (base+TEÁOR+form+county); join via the 8-digit base."
+  },
+  "fixture_requirements": [
+    "statistical-code decode fixture",
+    "TEÁOR classification reference"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve the TEÁOR classification + statistical-code structure references.",
+    "full": "Load classification tables; not a per-company feed."
+  },
+  "blockers": [
+    "Not a per-company open master (aggregate stats + classifications).",
+    "Exact classification/download URLs to resolve."
+  ]
+}

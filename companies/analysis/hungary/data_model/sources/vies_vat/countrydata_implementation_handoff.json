@@ -1,0 +1,77 @@
+{
+  "country": "Hungary",
+  "country_slug": "hungary",
+  "source_slug": "vies_vat",
+  "source_identity": "hungary_vies_vat",
+  "source_package": "viesvat",
+  "env_prefix": "HU_VIES",
+  "implementation_status": "sample_only",
+  "source": {
+    "source_name": "VIES — EU VAT validation (HU VAT)",
+    "source_type": "official_tax",
+    "organization": "European Commission / NAV",
+    "source_url": "https://ec.europa.eu/taxation_customs/vies/services/checkVatService",
+    "license": "Validation only",
+    "access": "public",
+    "data_freshness": "real-time",
+    "attribution": "European Commission VIES"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://ec.europa.eu/taxation_customs/vies/services/checkVatService",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Content-Type: text/xml"],
+    "formats": ["soap", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "throttled"
+  },
+  "snapshot": {
+    "strategy": "enrichment_lookup_only",
+    "file_extension": ".xml",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "ViesValidation",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": ["vat_id", "adoszam"],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "vat_id": "Confirm HU + 8-digit base via VIES.",
+    "legal_name": "Optionally cross-check the name VIES returns."
+  },
+  "fixture_requirements": [
+    "valid HU VAT validation",
+    "invalid HU VAT validation"
+  ],
+  "live_test_plan": {
+    "smoke": "Validate one HU VAT via SOAP; respect rate limits.",
+    "full": "Per-company enrichment only; never bulk-enumerate."
+  },
+  "blockers": [
+    "Validation only — does not enumerate companies; not redistributable as a list."
+  ]
+}

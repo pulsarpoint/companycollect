@@ -1,0 +1,79 @@
+{
+  "country": "Hungary",
+  "country_slug": "hungary",
+  "source_slug": "nav_afaalany",
+  "source_identity": "hungary_nav_afaalany",
+  "source_package": "navafaalany",
+  "env_prefix": "HU_NAV_AFA",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "NAV VAT-subjects database (Áfaalanyok adatbázis)",
+    "source_type": "official_tax",
+    "organization": "Nemzeti Adó- és Vámhivatal (NAV)",
+    "source_url": "https://nav.gov.hu/adatbazisok/adatbleker/afaalanyok",
+    "license": "Public (NAV közadat)",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Attribute NAV"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://nav.gov.hu/adatbazisok/adatbleker/afaalanyok",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": [],
+    "formats": ["html", "csv", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "batch_upload",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "enrichment_lookup_or_batch",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "NavAfaalany",
+    "date_formats": ["2006.01.02."],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["adoszam"],
+    "join_keys": ["adoszam"],
+    "dedupe_keys": ["adoszam"]
+  },
+  "mapping_rules": {
+    "vat_status": "Use áfaalany státusz for VAT registration status.",
+    "risk_flags": "Capture tax-number cancellation as a distress signal.",
+    "tax_id": "Confirm adószám ↔ name."
+  },
+  "fixture_requirements": [
+    "active VAT-subject record",
+    "cancelled tax-number record"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve the single/batch query interface and validate one known adószám.",
+    "full": "Use the group/batch query (upload adószám list) behind env gates; respect NAV terms."
+  },
+  "blockers": [
+    "Exact single/batch query endpoint + downloadable-list URLs to resolve (heavy CMS pages).",
+    "Validation/enrichment; not a company master."
+  ]
+}

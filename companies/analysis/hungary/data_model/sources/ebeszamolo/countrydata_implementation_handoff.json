@@ -1,0 +1,80 @@
+{
+  "country": "Hungary",
+  "country_slug": "hungary",
+  "source_slug": "ebeszamolo",
+  "source_identity": "hungary_ebeszamolo",
+  "source_package": "ebeszamolo",
+  "env_prefix": "HU_EBESZAMOLO",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "e-beszámoló — Electronic Financial Reports Portal",
+    "source_type": "official_financial_disclosure",
+    "organization": "Igazságügyi Minisztérium — Céginformációs Szolgálat",
+    "source_url": "https://e-beszamolo.im.gov.hu/",
+    "license": "Public (free to view); reuse terms unclear",
+    "access": "public",
+    "data_freshness": "annual filing",
+    "attribution": "Attribute Igazságügyi Minisztérium / e-beszámoló"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://e-beszamolo.im.gov.hu/Search/Results",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Content-Type: application/x-www-form-urlencoded"],
+    "formats": ["pdf", "xml", "html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "reCAPTCHA-gated"
+  },
+  "snapshot": {
+    "strategy": "store_pdf_xml_plus_parsed_json_when_lawfully_obtained",
+    "file_extension": ".xml",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "EbeszamoloReport",
+    "date_formats": ["2006.01.02.", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["1 234 567"],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["cegjegyzekszam", "report_year"],
+    "join_keys": ["cegjegyzekszam", "adoszam"],
+    "dedupe_keys": ["cegjegyzekszam", "report_year"]
+  },
+  "mapping_rules": {
+    "financials": "Map net sales revenue / profit after tax / total assets / equity / liabilities into financials[] per report_year (HUF, some EUR). Parse the XML electronic form for full statements.",
+    "documents": "Map the PDF + XML report into documents[]."
+  },
+  "fixture_requirements": [
+    "planning-only: do NOT automate the reCAPTCHA-gated search",
+    "synthetic e-beszámoló XML electronic-form fixture for the parser",
+    "key-figures fixture (revenue/profit/assets/equity/liabilities)"
+  ],
+  "live_test_plan": {
+    "smoke": "None — search is reCAPTCHA-protected. Manual viewing only.",
+    "full": "Only via a sanctioned access path or a commercial provider; never bypass reCAPTCHA."
+  },
+  "blockers": [
+    "Search endpoint is reCAPTCHA-protected (verified) — must not be bypassed.",
+    "No official open bulk export.",
+    "Reuse/redistribution terms unclear — confirm before redistribution."
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "country": "Hungary",
+  "country_slug": "hungary",
+  "source_slug": "procurement_ekr",
+  "source_identity": "hungary_procurement_ekr",
+  "source_package": "ekrprocurement",
+  "env_prefix": "HU_EKR",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "EKR / Közbeszerzés — public procurement (suppliers)",
+    "source_type": "public_procurement",
+    "organization": "Közbeszerzési Hatóság / Elektronikus Közbeszerzési Rendszer (EKR)",
+    "source_url": "https://ekr.gov.hu/",
+    "license": "Public (per terms)",
+    "access": "public",
+    "data_freshness": "continuous",
+    "attribution": "Attribute EKR / Közbeszerzési Hatóság"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://ekr.gov.hu/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "crossref_only",
+    "file_extension": ".xml",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "ProcurementAward",
+    "date_formats": ["2006.01.02."],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": ["adoszam"],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "cross_reference": "Use supplier adószám + name to corroborate company identity; not a company master."
+  },
+  "fixture_requirements": [
+    "award notice with supplier adószám + name + amount"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve the EKR/Közbeszerzési Értesítő export interface and pull a bounded set of awards.",
+    "full": "Stream awards behind env gates; cross-reference only."
+  },
+  "blockers": [
+    "Exact export/API interface and field paths to resolve.",
+    "Not a company master; cross-reference only."
+  ]
+}

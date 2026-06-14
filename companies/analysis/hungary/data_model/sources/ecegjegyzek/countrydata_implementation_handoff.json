@@ -1,0 +1,85 @@
+{
+  "country": "Hungary",
+  "country_slug": "hungary",
+  "source_slug": "ecegjegyzek",
+  "source_identity": "hungary_ecegjegyzek",
+  "source_package": "ecegjegyzek",
+  "env_prefix": "HU_CEGJEGYZEK",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "e-cégjegyzék / Cégszolgálat — free company information",
+    "source_type": "official_registry",
+    "organization": "Igazságügyi Minisztérium — Céginformációs Szolgálat",
+    "source_url": "https://www.e-cegjegyzek.hu/",
+    "license": "Free basic info; certified/full data paid",
+    "access": "public",
+    "data_freshness": "real-time",
+    "attribution": "Attribute Céginformációs Szolgálat"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": true,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://www.e-cegjegyzek.hu/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "manual_basic_info_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "CegjegyzekCompany",
+    "date_formats": ["2006.01.02."],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["cegjegyzekszam"],
+    "join_keys": ["cegjegyzekszam", "adoszam"],
+    "dedupe_keys": ["cegjegyzekszam"]
+  },
+  "mapping_rules": {
+    "company_id": "Use cegjegyzekszam (register).",
+    "legal_name": "Use cégnév.",
+    "company_type": "Use cégforma (Kft/Zrt/Nyrt/Bt).",
+    "status": "Use állapot (bejegyezve active / törölve deleted).",
+    "registered_address": "Use székhely.",
+    "activity_code": "Use főtevékenység (TEÁOR).",
+    "officers": "Use full-extract képviselők — PAID + PII (GDPR); planning-only.",
+    "owners": "Use full-extract tulajdonosok — PAID + PII; planning-only."
+  },
+  "fixture_requirements": [
+    "free basic-info company fixture (name/seat/status/TEÁOR)",
+    "planning-only: paid full-extract fixture with officers/owners"
+  ],
+  "live_test_plan": {
+    "smoke": "Manual basic-info lookup; confirm fields.",
+    "full": "Full register data only via a paid Céginformációs Szolgálat / vendor channel."
+  },
+  "blockers": [
+    "Full register data (officers/owners/history) is PAID.",
+    "Free basic info only via manual lookup; no open bulk.",
+    "Officer/owner data is personal data (GDPR)."
+  ]
+}

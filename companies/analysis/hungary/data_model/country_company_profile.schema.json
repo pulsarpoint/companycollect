@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hungary Company Profile",
+  "description": "Country-specific company profile for Hungary. Keyed on cégjegyzékszám (registration number) and adószám (tax number; the 8-digit base is the universal cross-source stem; EU VAT = HU + base). Financial statements (e-beszámoló) are free to view but reCAPTCHA-gated for automation; full register data (officers/owners/history) is paid — so several sections are planning-only / blocked-for-automation.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Hungary" },
+    "country_slug": { "type": "string", "const": "hungary" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["cegjegyzekszam"],
+      "properties": {
+        "cegjegyzekszam": {
+          "type": "string",
+          "description": "Company registration number (NN-NN-NNNNNN); register-side company id.",
+          "x-source": "ecegjegyzek",
+          "x-source-path": "cegjegyzekszam",
+          "x-join-key": true,
+          "x-access": "public"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "adoszam": {
+          "type": ["string", "null"],
+          "description": "Tax number (11-digit: 8-digit base + VAT code + county).",
+          "x-source": "ecegjegyzek",
+          "x-source-path": "adoszam",
+          "x-join-key": true
+        },
+        "tax_base_number": { "type": ["string", "null"], "description": "8-digit base (törzsszám) — universal join stem." },
+        "vat_id": { "type": ["string", "null"], "description": "EU VAT = HU + 8-digit base.", "x-source": "vies_vat", "x-source-path": "vatNumber" },
+        "vat_valid": { "type": ["boolean", "null"], "x-source": "vies_vat", "x-source-path": "valid" },
+        "vat_status": { "type": ["string", "null"], "description": "NAV VAT-subject status.", "x-source": "nav_afaalany", "x-source-path": "afa_status" },
+        "tax_number_cancelled": { "type": ["boolean", "null"], "x-source": "nav_afaalany", "x-source-path": "tax_number_cancelled" },
+        "statistical_code": { "type": ["string", "null"], "description": "17-digit statisztikai számjel.", "x-source": "ksh_register", "x-source-path": "statisztikai_szamjel" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": "string", "x-source": "ecegjegyzek", "x-source-path": "name" },
+        "legal_form": { "type": ["string", "null"], "description": "Kft/Zrt/Nyrt/Bt/Kkt/Ev.", "x-source": "ecegjegyzek", "x-source-path": "legal_form" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "value": { "type": "string", "description": "bejegyezve / törölve / felszámolás.", "x-source": "ecegjegyzek", "x-source-path": "status" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "teaor": { "type": ["string", "null"], "description": "Main TEÁOR activity.", "x-source": "ecegjegyzek", "x-source-path": "main_activity" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_seat": { "type": ["string", "null"], "x-source": "ecegjegyzek", "x-source-path": "registered_seat" },
+        "municipality": { "type": ["string", "null"], "description": "település, parsed from seat." },
+        "region": { "type": ["string", "null"], "description": "megye, parsed from seat." }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY (paid full extract / vendor). Representatives (képviselők). PERSONAL DATA (GDPR).",
+      "x-access": "paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "ecegjegyzek", "x-source-path": "officers_owners[]", "x-personal-data": true },
+          "role": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "owners": {
+      "type": "array",
+      "description": "PLANNING-ONLY (paid full extract / vendor). Owners (tulajdonosok). PERSONAL DATA (GDPR).",
+      "x-access": "paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "commercial_aggregators", "x-source-path": "company.owners[]", "x-personal-data": true }
+        }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Annual financial statements (e-beszámoló). Free to view but reCAPTCHA-gated for automation; structured key figures + PDF/XML. Currency HUF (some EUR). Planning-only for automation / via a vendor.",
+      "x-access": "public_recaptcha_gated",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": "integer", "x-source": "ebeszamolo", "x-source-path": "report_year" },
+          "net_sales_revenue": { "type": ["number", "null"], "x-source": "ebeszamolo", "x-source-path": "ertekesites_netto_arbevetele" },
+          "profit_after_tax": { "type": ["number", "null"], "x-source": "ebeszamolo", "x-source-path": "adozott_eredmeny" },
+          "total_assets": { "type": ["number", "null"], "x-source": "ebeszamolo", "x-source-path": "eszkozok_osszesen" },
+          "equity": { "type": ["number", "null"], "x-source": "ebeszamolo", "x-source-path": "sajat_toke" },
+          "liabilities": { "type": ["number", "null"], "x-source": "ebeszamolo", "x-source-path": "kotelezettsegek" },
+          "currency": { "type": "string", "enum": ["HUF", "EUR"] },
+          "source": { "type": "string", "description": "ebeszamolo (manual/gated) | commercial_aggregators (parsed)" }
+        }
+      }
+    },
+    "public_sector_links": {
+      "type": "array",
+      "description": "Open cross-references (procurement awards) referencing the company adószám.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": { "type": "string", "const": "procurement_ekr" },
+          "adoszam": { "type": "string", "x-source": "procurement_ekr", "x-source-path": "supplier.adoszam" },
+          "amount": { "type": ["number", "null"] }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}
