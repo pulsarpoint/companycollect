@@ -1,0 +1,20 @@
+[
+  {
+    "name": "KRS API - OdpisAktualny (single company, JSON)",
+    "slug": "krs_odpisaktualny",
+    "type": "bulk",
+    "url": "https://api-krs.ms.gov.pl/api/krs/OdpisAktualny/0000026438?rejestr=P&format=json",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0
+  },
+  {
+    "name": "VAT white list - lookup by NIP (JSON)",
+    "slug": "vat_whitelist_nip",
+    "type": "bulk",
+    "url": "https://wl-api.mf.gov.pl/api/search/nip/5250007738?date=2026-06-12",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0
+  }
+]
