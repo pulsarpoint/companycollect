@@ -1,0 +1,74 @@
+{
+  "country": "Malta",
+  "country_slug": "malta",
+  "source_slug": "data_gov_mt",
+  "source_identity": "malta_data_gov_mt",
+  "source_package": "datagovmt",
+  "env_prefix": "MT_DATAGOV",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "data.gov.mt — national open data portal",
+    "source_type": "open_data_portal",
+    "organization": "Government of Malta",
+    "source_url": "https://data.gov.mt/",
+    "license": "Per dataset",
+    "access": "public",
+    "data_freshness": "varies",
+    "attribution": "Attribute data.gov.mt"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://data.gov.mt/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "WAF (HTTP 403 to non-browser clients)"
+  },
+  "snapshot": {
+    "strategy": "not_company_data",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "DataGovMtDataset",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": [],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "none": "Not a company register; no company mapping."
+  },
+  "fixture_requirements": [],
+  "live_test_plan": {
+    "smoke": "n/a — not company data; WAF-blocked.",
+    "full": "n/a"
+  },
+  "blockers": [
+    "Not the company register — no MBR/financials bulk.",
+    "WAF-blocked (HTTP 403) + non-standard API (404)."
+  ]
+}

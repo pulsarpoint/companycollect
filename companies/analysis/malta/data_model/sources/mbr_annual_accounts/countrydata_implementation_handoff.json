@@ -1,0 +1,82 @@
+{
+  "country": "Malta",
+  "country_slug": "malta",
+  "source_slug": "mbr_annual_accounts",
+  "source_identity": "malta_mbr_annual_accounts",
+  "source_package": "mbraccounts",
+  "env_prefix": "MT_MBR_ACCOUNTS",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "MBR annual accounts / annual return (financial statements)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Malta Business Registry (MBR)",
+    "source_url": "https://mbr.mt/",
+    "license": "Public (filed; document purchase EUR 5-25)",
+    "access": "paid",
+    "data_freshness": "annual filing",
+    "attribution": "Attribute Malta Business Registry"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://mbr.mt/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf"],
+    "compression": null,
+    "encoding": "binary",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "per paid document (EUR 5-25)"
+  },
+  "snapshot": {
+    "strategy": "store_paid_pdf_plus_parsed_json_when_lawfully_acquired",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "MbrAnnualAccounts",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": ["1,234,567.89"],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["registration_number", "fiscal_year"],
+    "join_keys": ["registration_number"],
+    "dedupe_keys": ["registration_number", "fiscal_year"]
+  },
+  "mapping_rules": {
+    "financials": "Map balance sheet + P&L into financials[] per fiscal_year after OCR/parse (IFRS/GAPSME). Currency EUR; abridged for small/micro.",
+    "shareholders": "Map annual_return shareholders/officers snapshot — PII (GDPR).",
+    "documents": "Map the annual accounts / annual return into documents[]."
+  },
+  "fixture_requirements": [
+    "planning-only: do NOT fetch paid PDFs in CI",
+    "synthetic IFRS balance-sheet PDF fixture",
+    "synthetic GAPSME abridged small-company accounts fixture",
+    "synthetic annual return fixture"
+  ],
+  "live_test_plan": {
+    "smoke": "No automated free fetch — paid per document. Use synthetic fixtures; integrate via the paid MBR API or a vendor.",
+    "full": "Only behind explicit, paid acquisition with stored PDFs; never bulk-crawl or bypass the WAF."
+  },
+  "blockers": [
+    "Paid: EUR 5-25 per document; no open bulk.",
+    "Document-based PDFs — no structured figures; requires OCR/parsing.",
+    "Directors/shareholders in the documents are personal data (GDPR)."
+  ]
+}

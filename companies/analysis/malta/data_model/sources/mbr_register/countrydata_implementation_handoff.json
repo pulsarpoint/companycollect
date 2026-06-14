@@ -1,0 +1,86 @@
+{
+  "country": "Malta",
+  "country_slug": "malta",
+  "source_slug": "mbr_register",
+  "source_identity": "malta_mbr_register",
+  "source_package": "mbrregister",
+  "env_prefix": "MT_MBR",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "MBR — Malta Business Registry (company search)",
+    "source_type": "official_registry",
+    "organization": "Malta Business Registry (MBR)",
+    "source_url": "https://mbr.mt/",
+    "license": "Public register (free basic search; documents paid; reuse terms unclear)",
+    "access": "public",
+    "data_freshness": "real-time",
+    "attribution": "Attribute Malta Business Registry"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://registry.mbr.mt/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "WAF (HTTP 403 to non-browser clients)"
+  },
+  "snapshot": {
+    "strategy": "none_blocked",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "MbrCompany",
+    "date_formats": ["02/01/2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["registration_number"],
+    "join_keys": ["registration_number"],
+    "dedupe_keys": ["registration_number"]
+  },
+  "mapping_rules": {
+    "company_id": "Use registration_number (prefix = entity class).",
+    "legal_name": "Use name.",
+    "company_type": "Use company_type (Ltd/plc/partnership).",
+    "status": "Use status (Active/Struck off/Liquidated).",
+    "incorporation_date": "Use registration_date.",
+    "officers": "Use directors + secretary (paid documents/API) — PII (GDPR).",
+    "shareholders": "Use shareholders (name/share type/control; paid) — registered owners, distinct from beneficial owners.",
+    "financials": "Link to annual accounts via mbr_annual_accounts (paid)."
+  },
+  "fixture_requirements": [
+    "planning-only: do NOT automate the WAF-blocked registry portals",
+    "synthetic MBR company fixture if implemented via the paid MBR API / a vendor"
+  ],
+  "live_test_plan": {
+    "smoke": "None — registry portals are WAF-blocked (403) with no open API. Manual lookups only.",
+    "full": "Only via the paid MBR API packages or a commercial provider; never bypass the WAF or scrape the portals."
+  },
+  "blockers": [
+    "Registry portals (registry.mbr.mt, baros.mbr.mt) WAF-blocked (HTTP 403) — must not be bypassed.",
+    "No official open bulk export; no free API.",
+    "Officers/shareholders/financials delivered via paid documents or the paid MBR API.",
+    "Reuse terms unclear; officer/shareholder data is personal data (GDPR)."
+  ]
+}

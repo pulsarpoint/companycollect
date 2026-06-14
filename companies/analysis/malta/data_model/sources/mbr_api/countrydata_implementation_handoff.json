@@ -1,0 +1,77 @@
+{
+  "country": "Malta",
+  "country_slug": "malta",
+  "source_slug": "mbr_api",
+  "source_identity": "malta_mbr_api",
+  "source_package": "mbrapi",
+  "env_prefix": "MT_MBR_API",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "MBR API packages (Company Search API, etc.)",
+    "source_type": "official_registry",
+    "organization": "Malta Business Registry (MBR)",
+    "source_url": "https://mbr.mt/",
+    "license": "Commercial / subscription (MBR API packages)",
+    "access": "paid",
+    "data_freshness": "real-time",
+    "attribution": "Attribute Malta Business Registry"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["MT_MBR_API_KEY"]
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://mbr.mt/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Authorization"],
+    "formats": ["json", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "per package"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line_when_subscribed",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "MbrApiCompany",
+    "date_formats": ["2006-01-02", "02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["registration_number"],
+    "join_keys": ["registration_number"],
+    "dedupe_keys": ["registration_number"]
+  },
+  "mapping_rules": {
+    "all": "Map per mbr_register semantics (name/type/status/officers/shareholders) from the API response.",
+    "financials": "Where the package includes financial information, map it into financials[] (EUR)."
+  },
+  "fixture_requirements": [
+    "planning-only: subscription required; synthetic API company response fixture"
+  ],
+  "live_test_plan": {
+    "smoke": "With an MBR API subscription + key, query one registration number and verify the response shape.",
+    "full": "Per-package terms and rate limits; the sanctioned automation route (not the WAF-blocked web search)."
+  },
+  "blockers": [
+    "Subscription/paid MBR API packages — requires registration + payment.",
+    "Exact endpoints/field set per package to confirm on subscription."
+  ]
+}

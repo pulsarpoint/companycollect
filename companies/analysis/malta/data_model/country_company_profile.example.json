@@ -1,0 +1,72 @@
+{
+  "_note": "SCHEMATIC illustrative profile — placeholder values, not a real company. No per-company open record was lawfully downloadable in bulk (MBR registry portals WAF-blocked; documents/API paid). Officers/shareholders/financials are paid; beneficial owners restricted. Shown empty/redacted.",
+  "country": "Malta",
+  "country_slug": "malta",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "registration_number": "C 12345"
+  },
+  "tax_identifiers": {
+    "vat_id": "MT12345678",
+    "vat_valid": null
+  },
+  "legal_identity": {
+    "legal_name": "Example Holdings Limited",
+    "company_type": "Private Limited Liability Company (Ltd)"
+  },
+  "status": {
+    "value": "Active"
+  },
+  "activity": {
+    "activity_code": null
+  },
+  "incorporation": {
+    "incorporation_date": "2014-06-20"
+  },
+  "registered_location": {
+    "registered_address": "Level 3, Example Building, Triq San Gwann, San Gwann SGN 1234, Malta",
+    "locality": "San Gwann"
+  },
+  "officers": [
+    { "name": "<REDACTED>", "role": "director" }
+  ],
+  "shareholders": [
+    { "name": "<REDACTED>", "share_type": "ordinary", "degree_of_control": null }
+  ],
+  "beneficial_owners": [],
+  "financial_statements": [],
+  "source_provenance": [
+    {
+      "source_slug": "mbr_register",
+      "section": "registration, legal_identity, status, incorporation, registered_location, officers + shareholders (paid)",
+      "source_url": "https://mbr.mt/",
+      "access": "public_manual",
+      "license": "Public register (terms unclear)",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "vies_vat",
+      "section": "tax_identifiers (external; not in register)",
+      "source_url": "https://ec.europa.eu/taxation_customs/vies/",
+      "access": "public",
+      "license": "Validation only",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "mbr_annual_accounts",
+      "section": "financial_statements (paid documents; planning-only)",
+      "source_url": "https://mbr.mt/",
+      "access": "paid",
+      "license": "Public/paid (EUR 5-25)",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "rbe_register",
+      "section": "beneficial_owners (restricted; legitimate interest; planning-only)",
+      "source_url": "https://mbr.mt/",
+      "access": "restricted",
+      "license": "Restricted (post-CJEU)",
+      "retrieved_at": null
+    }
+  ]
+}

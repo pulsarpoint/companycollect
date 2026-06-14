@@ -1,0 +1,34 @@
+{
+  "country": "Malta",
+  "country_slug": "malta",
+  "source_slug": "data_gov_mt",
+  "source_name": "data.gov.mt — national open data portal",
+  "source_type": "open_data_portal",
+  "organization": "Government of Malta",
+  "source_url": "https://data.gov.mt/",
+  "license": "Per dataset",
+  "access": "public",
+  "data_freshness": "varies",
+  "record_shape": "custom_portal (WAF-blocked; non-standard API)",
+  "primary_keys": [],
+  "join_keys": [],
+  "field_count": 1,
+  "fields": [
+    {
+      "path": "(datasets)",
+      "source_field": "(per dataset)",
+      "english_name": "open_datasets",
+      "meaning": "Government open datasets. The portal does NOT publish the MBR company register or financials as open bulk.",
+      "data_type": "object",
+      "semantic_type": "metadata",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "English",
+      "limitations": "Verified: HTTP 403 (WAF) to non-browser clients; standard CKAN/uData API paths return 404. Not company data.",
+      "source_confidence": "high",
+      "analysis_notes": "Not the company register; included for completeness."
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "country": "Malta",
+  "country_slug": "malta",
+  "source_slug": "rbe_register",
+  "source_identity": "malta_rbe_register",
+  "source_package": "rberegister",
+  "env_prefix": "MT_RBE",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "MBR Register of Beneficial Owners (UBO)",
+    "source_type": "beneficial_ownership_register",
+    "organization": "Malta Business Registry (MBR)",
+    "source_url": "https://mbr.mt/",
+    "license": "Restricted (legitimate interest; post-CJEU)",
+    "access": "restricted",
+    "data_freshness": "continuous",
+    "attribution": "Attribute Malta Business Registry"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": null,
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "none_planning_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "RbeRecord",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["registration_number"],
+    "join_keys": ["registration_number"],
+    "dedupe_keys": ["registration_number"]
+  },
+  "mapping_rules": {
+    "owners": "Map beneficial_owners[] into owners[] (beneficial) only if/when lawful access (legitimate interest) is obtained — planning-only, personal data."
+  },
+  "fixture_requirements": [
+    "planning-only: no live access; synthetic UBO fixture only if implemented"
+  ],
+  "live_test_plan": {
+    "smoke": "None — restricted register; do not attempt automated access.",
+    "full": "Only under a documented legitimate-interest access agreement; never bypass access controls."
+  },
+  "blockers": [
+    "Restricted access (legitimate interest, post-CJEU) — not open bulk.",
+    "Requires authorised access.",
+    "Beneficial owners are personal data (GDPR)."
+  ]
+}

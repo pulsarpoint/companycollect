@@ -1,0 +1,50 @@
+{
+  "country": "Malta",
+  "country_slug": "malta",
+  "source_slug": "rbe_register",
+  "source_name": "MBR Register of Beneficial Owners (UBO)",
+  "source_type": "beneficial_ownership_register",
+  "organization": "Malta Business Registry (MBR)",
+  "source_url": "https://mbr.mt/",
+  "license": "Restricted (legitimate interest; post-CJEU)",
+  "access": "restricted",
+  "data_freshness": "continuous",
+  "record_shape": "restricted_register (access-controlled; legitimate interest)",
+  "primary_keys": ["registration_number"],
+  "join_keys": ["registration_number"],
+  "field_count": 2,
+  "fields": [
+    {
+      "path": "beneficial_owners[].name",
+      "source_field": "beneficial owner",
+      "english_name": "beneficial_owner_name",
+      "meaning": "Natural person who ultimately owns or controls the entity (planning-only — restricted).",
+      "data_type": "string",
+      "semantic_type": "ownership",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "English",
+      "limitations": "Planning-only. Restricted (legitimate interest since July 2025, post-CJEU). Personal data (GDPR). No values copied.",
+      "source_confidence": "medium",
+      "analysis_notes": "Not open bulk. Join on registration_number. Distinct from registered shareholders."
+    },
+    {
+      "path": "beneficial_owners[].nature_extent",
+      "source_field": "extent/nature of beneficial interest",
+      "english_name": "nature_and_extent_of_interest",
+      "meaning": "Nature and extent of the beneficial interest held.",
+      "data_type": "string",
+      "semantic_type": "ownership",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "English",
+      "limitations": "Planning-only; restricted.",
+      "source_confidence": "low",
+      "analysis_notes": "Only if/when lawful access (legitimate interest) is obtained."
+    }
+  ]
+}
