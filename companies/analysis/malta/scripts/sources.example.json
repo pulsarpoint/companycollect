@@ -1,0 +1,26 @@
+[
+  {
+    "name": "MBR company search (reference only — free manual; registry portals WAF-blocked for bots)",
+    "slug": "mbr_register",
+    "type": "api_page",
+    "url": "https://registry.mbr.mt/",
+    "method": "GET",
+    "headers": {},
+    "page_param": "page",
+    "page_start": 0,
+    "max_pages": 0,
+    "_note": "Reference only — the registry portals return HTTP 403 to non-browser clients (WAF). Do NOT automate/bypass; use the free web search manually. Documents are paid (EUR 5-25)."
+  },
+  {
+    "name": "MBR API packages (subscription — sanctioned automation; requires credentials)",
+    "slug": "mbr_api",
+    "type": "api_page",
+    "url": "https://mbr.mt/",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 0,
+    "_note": "The MBR offers paid API packages (Company Search API, etc.). Subscription + credentials required; per-package terms. The sanctioned automation route."
+  }
+]
