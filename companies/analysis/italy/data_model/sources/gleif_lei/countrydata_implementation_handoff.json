@@ -1,0 +1,79 @@
+{
+  "country": "Italy",
+  "country_slug": "italy",
+  "source_slug": "gleif_lei",
+  "source_identity": "italy_gleif_lei",
+  "source_package": "gleiflei",
+  "env_prefix": "GLEIF_LEI",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "GLEIF — Legal Entity Identifier (Italian LEI holders)",
+    "source_type": "open_identifier_registry",
+    "organization": "GLEIF",
+    "source_url": "https://api.gleif.org/api/v1/lei-records",
+    "license": "CC0 (public domain)",
+    "access": "public",
+    "data_freshness": "daily (golden copy)",
+    "attribution": "Source: GLEIF (CC0)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Public API (fair use) + downloadable golden copy (LEI-CDF XML / CSV). Filter to country=IT."
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://api.gleif.org/api/v1/lei-records",
+    "download_url": "https://www.gleif.org/en/lei-data/gleif-golden-copy/download-the-golden-copy",
+    "http_method": "GET",
+    "headers_required": [{"name": "Accept", "value": "application/vnd.api+json", "note": "JSON:API"}],
+    "formats": ["json", "xml", "csv"],
+    "compression": "zip (golden copy)",
+    "encoding": "utf-8",
+    "record_path": "data",
+    "total_results_path": "meta.pagination.total",
+    "pagination": {"type": "page_number", "page_param": "page[number]", "page_start": 1, "page_size": 200, "page_size_param": "page[size]", "next_page_path": "links.next", "note": "Filter filter[entity.legalAddress.country]=IT. For full set, use the daily golden copy and filter IT."},
+    "rate_limit": "public fair use"
+  },
+  "snapshot": {
+    "strategy": "json_pages_or_golden_copy",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "GleifLeiRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": ["2006-01-02T15:04:05Z07:00"],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Bridge to the register via entity.registeredAs (+ registrationAuthorityID RA000407). Honor registration.status (LAPSED=stale). Level-2 relationships optional."
+  },
+  "keys": {
+    "primary_keys": ["lei"],
+    "join_keys": ["lei", "entity.registeredAs", "legalName"],
+    "dedupe_keys": ["lei"]
+  },
+  "mapping_rules": {
+    "lei": "data[].attributes.lei.",
+    "legal_name": "entity.legalName.name.",
+    "registration_number_bridge": "entity.registeredAs (reconcile to REA/CF).",
+    "legal_form": "entity.legalForm.id (ELF).",
+    "owners": "relationships (direct/ultimate parent) where present."
+  },
+  "fixture_requirements": [
+    "IT record with registeredAs populated (REA/CF bridge)",
+    "record with LAPSED registration status",
+    "record with a reported parent relationship (Level 2)",
+    "record with registeredAs absent"
+  ],
+  "live_test_plan": {
+    "smoke": "GET lei-records?filter[entity.legalAddress.country]=IT&page[size]=5; assert lei + legalName + (often) registeredAs.",
+    "full": "Download the daily golden copy; filter country=IT; map LEI<->CF/REA; attach to the spine; optionally ingest Level-2 ownership."
+  },
+  "blockers": [
+    "Subset only (LEI holders) — not a master.",
+    "registeredAs format varies — reconcile to REA vs codice fiscale.",
+    "No financials."
+  ]
+}

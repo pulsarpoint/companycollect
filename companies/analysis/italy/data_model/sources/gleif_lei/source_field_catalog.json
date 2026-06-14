@@ -1,0 +1,27 @@
+{
+  "country": "Italy",
+  "country_slug": "italy",
+  "source_slug": "gleif_lei",
+  "source_name": "GLEIF — Legal Entity Identifier (Italian LEI holders)",
+  "source_type": "open_identifier_registry",
+  "organization": "GLEIF (Global Legal Entity Identifier Foundation)",
+  "source_url": "https://api.gleif.org/api/v1/lei-records",
+  "license": "CC0 (public domain)",
+  "access": "public",
+  "data_freshness": "daily (golden copy)",
+  "record_shape": "JSON:API records (or LEI-CDF XML / CSV golden copy); filter country=IT",
+  "primary_keys": ["lei"],
+  "join_keys": ["lei", "entity.registeredAs (Italian REA/CF)", "legalName"],
+  "field_count": 9,
+  "fields": [
+    {"path": "data[].attributes.lei", "source_field": "lei", "english_name": "lei", "meaning": "20-character Legal Entity Identifier.", "data_type": "string", "semantic_type": "identifier", "example_values": ["815600..."], "nullable": false, "repeatable": false, "code_list": "ISO 17442", "language": "n/a", "limitations": "Only entities that obtained a LEI (subset — larger/regulated firms).", "source_confidence": "high", "analysis_notes": "Global key; cross-reference to Italian CF/REA."},
+    {"path": "data[].attributes.entity.legalName.name", "source_field": "legalName.name", "english_name": "legal_name", "meaning": "Registered legal name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Italian", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "data[].attributes.entity.registeredAs", "source_field": "registeredAs", "english_name": "national_registration_id", "meaning": "National registration id at the business register (for IT typically the REA or codice fiscale).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Format varies; reconcile to CF/REA.", "source_confidence": "high", "analysis_notes": "The bridge from LEI to the Registro Imprese key."},
+    {"path": "data[].attributes.entity.registationAuthority.registrationAuthorityID", "source_field": "registrationAuthorityID", "english_name": "registration_authority", "meaning": "Registration authority code (e.g. RA000407 = Italian business register).", "data_type": "string", "semantic_type": "metadata", "example_values": ["RA000407"], "nullable": true, "repeatable": false, "code_list": "GLEIF Registration Authorities List", "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": "Confirms the id system of registeredAs."},
+    {"path": "data[].attributes.entity.legalAddress", "source_field": "legalAddress", "english_name": "legal_address", "meaning": "Legal address (lines, city, region, country, postalCode).", "data_type": "object", "semantic_type": "address", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Italian", "limitations": "country = IT for the filter.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "data[].attributes.entity.legalForm.id", "source_field": "legalForm.id", "english_name": "legal_form_code", "meaning": "Legal form (ELF code, ISO 20275).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "ISO 20275 ELF", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "data[].attributes.entity.status", "source_field": "entity.status", "english_name": "entity_status", "meaning": "Entity status (ACTIVE / INACTIVE).", "data_type": "string", "semantic_type": "status", "example_values": ["ACTIVE"], "nullable": false, "repeatable": false, "code_list": "ACTIVE|INACTIVE", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "data[].attributes.registration.status", "source_field": "registration.status", "english_name": "lei_registration_status", "meaning": "LEI record status (ISSUED, LAPSED, ...).", "data_type": "string", "semantic_type": "status", "example_values": ["ISSUED", "LAPSED"], "nullable": false, "repeatable": false, "code_list": "ISSUED|LAPSED|RETIRED|...", "language": "n/a", "limitations": "LAPSED = not renewed (data may be stale).", "source_confidence": "high", "analysis_notes": null},
+    {"path": "data[].relationships (Level 2)", "source_field": "parent/ultimate relationships", "english_name": "ownership_relationships", "meaning": "Direct/ultimate parent relationships (LEI-to-LEI), where reported.", "data_type": "object", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Only when both entities have LEIs and the relationship is reported.", "source_confidence": "medium", "analysis_notes": "Open (partial) corporate-group signal."}
+  ]
+}

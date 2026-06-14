@@ -1,0 +1,78 @@
+{
+  "_note": "SCHEMATIC illustrative profile. Italy has no open per-company master: the spine + financials are PAID (planning-only). Values here are fabricated placeholders showing the target shape and which source/access each field comes from. The OPEN-derivable fields (codice_fiscale, denominazione, ateco, comune, revenue_band/employee_band, lei) are marked by source; not a real company.",
+  "country": "Italy",
+  "country_slug": "italy",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "codice_fiscale": "01234560123",
+    "partita_iva": "01234560123",
+    "vat_id": "IT01234560123",
+    "numero_rea": "MI-1234567",
+    "provincia": "MI",
+    "lei": "8156001234567890 AB12"
+  },
+  "legal_identity": {
+    "denominazione": "ESEMPIO INNOVAZIONE SRL",
+    "forma_giuridica": "SRL"
+  },
+  "status": {
+    "stato_attivita": "attiva",
+    "derived": "active"
+  },
+  "activity": {
+    "ateco": "62.01"
+  },
+  "registered_location": {
+    "sede_legale": "Via Roma 1, 20100 Milano (MI)",
+    "comune": "Milano",
+    "provincia": "MI",
+    "regione": "Lombardia"
+  },
+  "capital": {
+    "capitale_sociale": 50000.00,
+    "valuta": "EUR"
+  },
+  "officers": [
+    {"nome": "MARIO ROSSI", "carica": "Amministratore Unico", "tipo": "persona fisica"}
+  ],
+  "ownership": {
+    "lei_direct_parent": null,
+    "lei_ultimate_parent": null
+  },
+  "financial_statements": [
+    {
+      "fiscal_year": 2024,
+      "accounts_type": null,
+      "currency": "EUR",
+      "revenue": null,
+      "revenue_band": "1-2 mln",
+      "net_income": null,
+      "total_assets": null,
+      "equity": null,
+      "liabilities": null,
+      "employees": null,
+      "employee_band": "10-19",
+      "source": "startup_pmi_innovative"
+    },
+    {
+      "fiscal_year": 2024,
+      "accounts_type": "abbreviato",
+      "currency": "EUR",
+      "revenue": 1650000.00,
+      "revenue_band": null,
+      "net_income": 95000.00,
+      "total_assets": 2100000.00,
+      "equity": 780000.00,
+      "liabilities": 1320000.00,
+      "employees": 14,
+      "employee_band": null,
+      "source": "registro_imprese_bilanci_xbrl"
+    }
+  ],
+  "source_provenance": [
+    {"source_slug": "startup_pmi_innovative", "source_name": "Startup/PMI innovative (open)", "source_url": "https://startup.registroimprese.it/", "license": "IODL 2.0 / CC-BY", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "gleif_lei", "source_name": "GLEIF LEI", "source_url": "https://api.gleif.org/api/v1/lei-records", "license": "CC0", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "registro_imprese", "source_name": "Registro Imprese (InfoCamere)", "source_url": "https://www.registroimprese.it/", "license": "paid/contractual (planning-only)", "access": "paid", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "registro_imprese_bilanci_xbrl", "source_name": "Registro Imprese — Bilanci XBRL", "source_url": "https://www.registroimprese.it/deposito-bilanci", "license": "paid (planning-only)", "access": "paid", "retrieved_at": "2026-06-14T00:00:00Z"}
+  ]
+}

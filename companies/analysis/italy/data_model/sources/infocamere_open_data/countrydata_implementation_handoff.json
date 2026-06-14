@@ -1,0 +1,73 @@
+{
+  "country": "Italy",
+  "country_slug": "italy",
+  "source_slug": "infocamere_open_data",
+  "source_identity": "italy_infocamere_open_data",
+  "source_package": "infocamereopendata",
+  "env_prefix": "INFOCAMERE_OPENDATA",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "InfoCamere / CCIAA regional open data (Open Data Imprese Italia)",
+    "source_type": "open_data_portal",
+    "organization": "InfoCamere / CCIAA Marche",
+    "source_url": "https://opendata.marche.camcom.it/",
+    "license": "CC-BY 4.0",
+    "access": "public",
+    "data_freshness": "monthly / quarterly",
+    "attribution": "opendata.marche.camcom.it — CCIAA su dati InfoCamere (CC-BY 4.0)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "AGGREGATE statistics only — NOT a company master. Use for benchmarks/denominators."
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://opendata.marche.camcom.it/data/",
+    "download_url": "https://opendata.marche.camcom.it/data/imprese-attive-ateco.csv",
+    "http_method": "GET",
+    "headers_required": [{"name": "User-Agent", "value": "companycollect/0.1 open-data-research", "note": "descriptive UA"}],
+    "formats": ["csv", "rdf", "xlsx", "json", "odata"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "$ (CSV rows; semicolon-separated)",
+    "total_results_path": null,
+    "pagination": {"type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Discover datasets via the DCAT catalog (data/dcat-opendata-catalog.rdf). All aggregate."},
+    "rate_limit": "n/a"
+  },
+  "snapshot": {
+    "strategy": "csv_aggregate_timeseries",
+    "file_extension": ".csv",
+    "preserve_raw_download": true,
+    "note": "Semicolon-separated; columns after the ATECO dimensions are dated count columns."
+  },
+  "parsing": {
+    "record_type_hint": "InfoCamereAtecoCount",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": ["plain_integer"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Header columns after 'Divisione Ateco' are reference dates (dd/mm/yyyy) holding counts. No company id — aggregate only."
+  },
+  "keys": {
+    "primary_keys": ["settore_ateco + divisione_ateco + period"],
+    "join_keys": [],
+    "dedupe_keys": ["settore_ateco + divisione_ateco + period"]
+  },
+  "mapping_rules": {
+    "benchmarks": "Use counts as sector/territory denominators; this source does NOT contribute to the per-company profile."
+  },
+  "fixture_requirements": [
+    "CSV with multiple ATECO sections + divisions",
+    "row labelled TOTALE (section aggregate)",
+    "multiple dated count columns (time series)"
+  ],
+  "live_test_plan": {
+    "smoke": "GET imprese-attive-ateco.csv; assert ATECO columns + at least one dated count column parse as integers.",
+    "full": "Harvest the aggregate datasets for benchmarks; do NOT treat as a company master."
+  },
+  "blockers": [
+    "Aggregate only — no per-company records; cannot seed the profile spine."
+  ]
+}

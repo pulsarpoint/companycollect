@@ -1,0 +1,79 @@
+{
+  "country": "Italy",
+  "country_slug": "italy",
+  "source_slug": "startup_pmi_innovative",
+  "source_identity": "italy_startup_pmi_innovative",
+  "source_package": "startuppmiinnovative",
+  "env_prefix": "STARTUP_PMI_INNOVATIVE",
+  "implementation_status": "sample_only",
+  "source": {
+    "source_name": "Startup innovative & PMI innovative (open data)",
+    "source_type": "open_data_registry_subset",
+    "organization": "InfoCamere / MIMIT",
+    "source_url": "https://startup.registroimprese.it/",
+    "license": "IODL 2.0 / CC-BY (lists); API needs PEC + conditions",
+    "access": "public",
+    "data_freshness": "weekly (Monday)",
+    "attribution": "Source: InfoCamere / MIMIT — startup e PMI innovative (IODL 2.0)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Human XLS lists are free; the bulk API requires PEC registration + accepting conditions. Direct file endpoints are dynamic (not stable)."
+  },
+  "transport": {
+    "access_mode": "xml_file",
+    "base_url": "https://startup.registroimprese.it/",
+    "download_url": "https://startup.registroimprese.it/ (weekly XLS via portal)",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xls", "xml", "json", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "tabular rows (per-company)",
+    "total_results_path": null,
+    "pagination": {"type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Weekly full list (XLS). Resolve the current download link from the portal UI; direct guessable URLs 404. Bulk API requires PEC."},
+    "rate_limit": "n/a (file) / gated API"
+  },
+  "snapshot": {
+    "strategy": "xls_rows_then_normalize",
+    "file_extension": ".xls",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "StartupInnovativaRow",
+    "date_formats": ["02/01/2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "codice_fiscale stays string. classe_addetti / classe_valore_produzione are BANDS (ranges), not numbers. Subset only."
+  },
+  "keys": {
+    "primary_keys": ["codice_fiscale"],
+    "join_keys": ["codice_fiscale", "denominazione+comune"],
+    "dedupe_keys": ["codice_fiscale"]
+  },
+  "mapping_rules": {
+    "legal_name": "denominazione.",
+    "tax_id": "codice_fiscale.",
+    "activity": "codice_ateco.",
+    "region": "regione / provincia / comune.",
+    "financials": "classe_valore_produzione -> revenue_band (range, not exact)."
+  },
+  "fixture_requirements": [
+    "startup innovativa row with classe_valore_produzione + classe_addetti",
+    "PMI innovativa row",
+    "row with missing optional bands",
+    "row with accented/special characters in denominazione"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve the current weekly XLS link from the portal; parse a few rows; assert codice_fiscale + denominazione present.",
+    "full": "Download the weekly list; normalize per-company rows; use codice_fiscale as an open seed to enrich via paid Registro Imprese / bilanci. (Bulk API only behind PEC.)"
+  },
+  "blockers": [
+    "Subset of the economy (innovative startups/SMEs) — not a master.",
+    "Financials only as bands (no exact figures).",
+    "Direct file endpoints dynamic; bulk API needs PEC + conditions."
+  ]
+}

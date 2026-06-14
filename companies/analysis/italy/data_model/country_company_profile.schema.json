@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Italy Company Profile",
+  "description": "Country-specific combined company profile for Italy. Single join key: Codice Fiscale (CF). The AUTHORITATIVE spine (Registro Imprese / InfoCamere) and full financials (bilanci XBRL) are PAID — modeled planning-only. OPEN contributions are a SUBSET: startup/PMI innovative (CF + name + ATECO + size BANDS), GLEIF LEI (LEI↔CF bridge + legal form + partial ownership), and ANAC procurement (supplier CF/PIVA). Regional InfoCamere open data is aggregate-only (non-contributing). Identifiers to reconcile: CF (primary), Partita IVA (often = CF but not always), numero REA (province-scoped), LEI.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": {"type": "string", "const": "Italy"},
+    "country_slug": {"type": "string", "const": "italy"},
+    "country_profile_version": {"type": "string", "description": "Profile schema version / build date (YYYY-MM-DD)."},
+    "registration": {
+      "type": "object",
+      "required": ["codice_fiscale"],
+      "properties": {
+        "codice_fiscale": {"type": "string", "description": "Company fiscal code; the universal join key.", "x-source": "registro_imprese | startup_pmi_innovative | gleif_lei", "x-source-path": "codice_fiscale", "x-join-key": true},
+        "partita_iva": {"type": ["string", "null"], "description": "VAT number (often = CF, not always).", "x-source": "registro_imprese", "x-source-path": "partita_iva", "x-access": "paid"},
+        "vat_id": {"type": ["string", "null"], "description": "IT + partita_iva.", "x-source": "derived"},
+        "numero_rea": {"type": ["string", "null"], "description": "REA registry number (province-scoped).", "x-source": "registro_imprese | gleif_lei", "x-source-path": "numero_rea | entity.registeredAs"},
+        "provincia": {"type": ["string", "null"], "x-source": "registro_imprese | startup_pmi_innovative"},
+        "lei": {"type": ["string", "null"], "description": "Legal Entity Identifier (LEI holders only).", "x-source": "gleif_lei", "x-source-path": "data[].attributes.lei", "x-join-key": true}
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["denominazione"],
+      "properties": {
+        "denominazione": {"type": "string", "description": "Legal name.", "x-source": "registro_imprese | startup_pmi_innovative | gleif_lei", "x-source-path": "denominazione | legalName.name"},
+        "forma_giuridica": {"type": ["string", "null"], "description": "Legal form (SRL/SPA/...).", "x-source": "registro_imprese", "x-source-path": "forma_giuridica", "x-access": "paid", "x-source-alt": "gleif_lei entity.legalForm.id (ELF)"}
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "stato_attivita": {"type": ["string", "null"], "description": "attiva / in liquidazione / fallita / cessata / sospesa / inattiva.", "x-source": "registro_imprese", "x-access": "paid"},
+        "derived": {"type": ["string", "null"], "enum": ["active", "liquidation", "bankrupt", "ceased", "unknown", null]}
+      }
+    },
+    "activity": {
+      "type": "object",
+      "description": "Italy HAS activity codes (ATECO) — but for the open profile only via the startup subset; full coverage is paid.",
+      "properties": {
+        "ateco": {"type": ["string", "null"], "description": "ATECO activity code (2025/2007).", "x-source": "registro_imprese | startup_pmi_innovative", "x-source-path": "codice_ateco"}
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "sede_legale": {"type": ["string", "null"], "description": "Registered office (paid for full address; open subset gives comune).", "x-source": "registro_imprese", "x-access": "paid"},
+        "comune": {"type": ["string", "null"], "x-source": "startup_pmi_innovative | registro_imprese"},
+        "provincia": {"type": ["string", "null"], "x-source": "startup_pmi_innovative | registro_imprese"},
+        "regione": {"type": ["string", "null"], "x-source": "startup_pmi_innovative | registro_imprese"}
+      }
+    },
+    "capital": {
+      "type": ["object", "null"],
+      "description": "PLANNING-ONLY (paid). Registered share capital (NOT annual accounts).",
+      "properties": {
+        "capitale_sociale": {"type": ["number", "null"], "x-source": "registro_imprese", "x-source-path": "capitale_sociale", "x-access": "paid"},
+        "valuta": {"type": ["string", "null"], "description": "Usually EUR."}
+      }
+    },
+    "officers": {
+      "type": ["array", "null"],
+      "description": "PLANNING-ONLY (paid). Administrators / directors. CONTAINS PERSONAL DATA (GDPR).",
+      "items": {"type": "object", "properties": {"nome": {"type": ["string", "null"]}, "carica": {"type": ["string", "null"]}, "tipo": {"type": ["string", "null"], "enum": ["persona fisica", "persona giuridica", null]}}},
+      "x-source": "registro_imprese",
+      "x-access": "paid",
+      "x-personal-data": true
+    },
+    "ownership": {
+      "type": ["object", "null"],
+      "description": "Partial OPEN ownership via GLEIF Level-2 (LEI↔LEI parent links) where reported. Full beneficial ownership (titolare effettivo) is NOT openly modeled here.",
+      "properties": {
+        "lei_direct_parent": {"type": ["string", "null"], "x-source": "gleif_lei", "x-source-path": "relationships.direct-parent"},
+        "lei_ultimate_parent": {"type": ["string", "null"], "x-source": "gleif_lei", "x-source-path": "relationships.ultimate-parent"}
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Annual accounts. MULTI-SOURCE: 'registro_imprese_bilanci_xbrl' = full balance sheet + income statement in XBRL but PAID (planning-only); 'startup_pmi_innovative' = revenue/employee BANDS only (open, subset). No open exact figures. revenue/net_income nullable for micro/abbreviato filers.",
+      "items": {
+        "type": "object",
+        "required": ["source"],
+        "properties": {
+          "fiscal_year": {"type": ["integer", "null"], "x-source-path": "esercizio"},
+          "accounts_type": {"type": ["string", "null"], "description": "ordinario/abbreviato/micro/consolidato.", "x-source-path": "tipologia_bilancio"},
+          "currency": {"type": ["string", "null"], "description": "Usually EUR."},
+          "revenue": {"type": ["number", "null"], "description": "valore della produzione (exact, paid).", "x-source-path": "valore della produzione"},
+          "revenue_band": {"type": ["string", "null"], "description": "Open band (startup subset).", "x-source-path": "classe_valore_produzione"},
+          "net_income": {"type": ["number", "null"], "x-source-path": "utile/perdita d'esercizio"},
+          "total_assets": {"type": ["number", "null"], "x-source-path": "totale attivo"},
+          "equity": {"type": ["number", "null"], "x-source-path": "patrimonio netto"},
+          "liabilities": {"type": ["number", "null"], "x-source-path": "debiti"},
+          "employees": {"type": ["integer", "null"], "x-source-path": "numero medio dipendenti"},
+          "employee_band": {"type": ["string", "null"], "description": "Open band (startup subset).", "x-source-path": "classe_addetti"},
+          "source": {"type": "string", "enum": ["registro_imprese_bilanci_xbrl", "startup_pmi_innovative"], "description": "Which financial source produced this record."}
+        }
+      },
+      "x-source": "registro_imprese_bilanci_xbrl | startup_pmi_innovative",
+      "x-join-key": "codice_fiscale -> registration.codice_fiscale",
+      "x-freshness": "annual",
+      "x-access": "bilanci XBRL paid; startup bands open"
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "One entry per source contributing to this profile.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "source_url", "retrieved_at"],
+        "properties": {
+          "source_slug": {"type": "string"},
+          "source_name": {"type": "string"},
+          "source_url": {"type": "string"},
+          "license": {"type": "string"},
+          "access": {"type": "string"},
+          "retrieved_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

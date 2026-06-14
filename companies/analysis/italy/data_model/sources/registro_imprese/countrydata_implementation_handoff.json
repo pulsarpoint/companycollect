@@ -1,0 +1,81 @@
+{
+  "country": "Italy",
+  "country_slug": "italy",
+  "source_slug": "registro_imprese",
+  "source_identity": "italy_registro_imprese",
+  "source_package": "registroimprese",
+  "env_prefix": "REGISTRO_IMPRESE",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Registro Imprese (InfoCamere / Camere di Commercio)",
+    "source_type": "official_registry",
+    "organization": "InfoCamere S.C.p.A. / Unioncamere",
+    "source_url": "https://www.registroimprese.it/",
+    "license": "Paid/contractual; not open data",
+    "access": "paid",
+    "data_freshness": "authoritative / continuous",
+    "attribution": "Source: Registro Imprese — Camere di Commercio (InfoCamere)."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["REGISTRO_IMPRESE_API_KEY"],
+    "note": "Paid InfoCamere Web Service/API or Telemaco per-document. No open bulk. Do not scrape; redistribution restricted."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://accessoallebanchedati.registroimprese.it/abdo/api",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [{"name": "Authorization", "value": "<api-key>", "note": "per contract"}],
+    "formats": ["json", "xml", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-company (Ricerca Anagrafica / Visure)",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Per-company lookup by CF/PIVA/REA/denominazione. No population enumeration / bulk. Exact request shape per the contracted API docs ('Scarica le API')."},
+    "rate_limit": "per contract"
+  },
+  "snapshot": {
+    "strategy": "json_per_company",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "RegistroImpreseVisura",
+    "date_formats": ["2006-01-02", "02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": ["it_locale_grouping_1.234.567,89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "codice_fiscale/partita_iva/numero_rea stay strings. CF is the key; P.IVA may differ. amministratori are PII. Italian number locale for capitale_sociale."
+  },
+  "keys": {
+    "primary_keys": ["codice_fiscale"],
+    "join_keys": ["codice_fiscale", "partita_iva", "numero_rea+provincia", "lei"],
+    "dedupe_keys": ["codice_fiscale"]
+  },
+  "mapping_rules": {
+    "legal_name": "denominazione.",
+    "tax_id": "codice_fiscale; vat_id: 'IT'+partita_iva.",
+    "registration_number": "numero_rea (+ provincia).",
+    "company_type": "forma_giuridica.",
+    "status": "stato_attivita.",
+    "activity": "codice_ateco.",
+    "officers": "amministratori[] (PII)."
+  },
+  "fixture_requirements": [
+    "SRL with full anagrafica + amministratori",
+    "company where partita_iva differs from codice_fiscale",
+    "company in liquidazione / fallita (status)",
+    "company with multiple administrators incl. a company officer"
+  ],
+  "live_test_plan": {
+    "smoke": "Not applicable without a paid contract/key — do not attempt unauthenticated calls.",
+    "full": "Behind REGISTRO_IMPRESE_API_KEY env gate and a contract, look up target companies by CF; persist raw JSON; normalize. For scale prefer a commercial aggregator."
+  },
+  "blockers": [
+    "Paid/contractual — no open bulk, no free API.",
+    "Redistribution of purchased records restricted.",
+    "Per-company lookup only (no population enumeration)."
+  ]
+}

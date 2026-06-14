@@ -1,0 +1,22 @@
+{
+  "country": "Italy",
+  "country_slug": "italy",
+  "source_slug": "infocamere_open_data",
+  "source_name": "InfoCamere / CCIAA regional open data (Open Data Imprese Italia)",
+  "source_type": "open_data_portal",
+  "organization": "InfoCamere / Camere di Commercio (CCIAA Marche)",
+  "source_url": "https://opendata.marche.camcom.it/",
+  "license": "CC-BY 4.0 (cite opendata.marche.camcom.it / CCIAA su dati InfoCamere)",
+  "access": "public",
+  "data_freshness": "monthly / quarterly",
+  "record_shape": "CSV: one row per (ATECO division x period); semicolon-separated counts. AGGREGATE — NOT per-company.",
+  "primary_keys": ["Settore Ateco + Divisione Ateco + period"],
+  "join_keys": [],
+  "field_count": 4,
+  "fields": [
+    {"path": "Settore Ateco 2025", "source_field": "Settore Ateco 2025", "english_name": "ateco_section", "meaning": "ATECO section (letter + label).", "data_type": "string", "semantic_type": "activity", "example_values": ["A Agricoltura, silvicoltura e pesca", "B Attivita' estrattive"], "nullable": false, "repeatable": false, "code_list": "ATECO 2025 sezioni", "language": "Italian", "limitations": "Aggregate dimension, not a company attribute.", "source_confidence": "high", "analysis_notes": "From the downloaded imprese-attive-ateco.csv."},
+    {"path": "Divisione Ateco 2025", "source_field": "Divisione Ateco 2025", "english_name": "ateco_division", "meaning": "ATECO division (2-digit + label).", "data_type": "string", "semantic_type": "activity", "example_values": ["A 01 Produzioni vegetali e animali, caccia e servizi connessi", "A 02 Silvicoltura e utilizzo di aree forestali"], "nullable": false, "repeatable": false, "code_list": "ATECO 2025 divisioni", "language": "Italian", "limitations": "Aggregate dimension.", "source_confidence": "high", "analysis_notes": "TOTALE rows aggregate the section."},
+    {"path": "<period_1>", "source_field": "30/04/2025", "english_name": "active_count_period_1", "meaning": "Number of active companies in that ATECO division at period 1.", "data_type": "integer", "semantic_type": "metadata", "example_values": ["651677"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "COUNT — aggregate statistic, not a company.", "source_confidence": "high", "analysis_notes": "Column header is the reference date (dd/mm/yyyy)."},
+    {"path": "<period_2>", "source_field": "31/05/2025", "english_name": "active_count_period_2", "meaning": "Number of active companies at period 2.", "data_type": "integer", "semantic_type": "metadata", "example_values": ["651776"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "COUNT — aggregate.", "source_confidence": "high", "analysis_notes": "Time series across monthly columns."}
+  ]
+}

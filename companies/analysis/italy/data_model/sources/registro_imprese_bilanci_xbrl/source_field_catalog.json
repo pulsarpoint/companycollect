@@ -1,0 +1,30 @@
+{
+  "country": "Italy",
+  "country_slug": "italy",
+  "source_slug": "registro_imprese_bilanci_xbrl",
+  "source_name": "Registro Imprese — Bilanci XBRL (annual accounts)",
+  "source_type": "official_financial_disclosure",
+  "organization": "InfoCamere / Camere di Commercio",
+  "source_url": "https://www.registroimprese.it/deposito-bilanci",
+  "license": "Paid/contractual (per-document fees) — planning-only",
+  "access": "paid",
+  "data_freshness": "annual deposit; XBRL taxonomy 2018-11-04",
+  "record_shape": "per-company per-esercizio XBRL instance (Italian civil-code taxonomy) + PDF/HTML/XLS/CSV prospetto",
+  "primary_keys": ["codice_fiscale + esercizio"],
+  "join_keys": ["codice_fiscale"],
+  "field_count": 12,
+  "fields": [
+    {"path": "codice_fiscale", "source_field": "codice_fiscale", "english_name": "tax_id", "meaning": "Company fiscal code; join key.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "high", "analysis_notes": "Join to the register spine."},
+    {"path": "esercizio", "source_field": "esercizio / data chiusura", "english_name": "fiscal_year", "meaning": "Financial year (closing date).", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": "Part of the per-statement key."},
+    {"path": "tipologia_bilancio", "source_field": "tipologia bilancio", "english_name": "accounts_type", "meaning": "Accounts type: ordinario / abbreviato / micro (consolidato).", "data_type": "string", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": false, "code_list": "ordinario|abbreviato|micro|consolidato", "language": "Italian", "limitations": "PLANNING-ONLY. micro/abbreviato disclose fewer lines.", "source_confidence": "high", "analysis_notes": "Governs which line items exist -> nullability."},
+    {"path": "statoPatrimoniale.totaleAttivo", "source_field": "totale attivo", "english_name": "total_assets", "meaning": "Balance sheet total (assets).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "tassonomia XBRL civilistica", "language": "Italian", "limitations": "PLANNING-ONLY. EUR.", "source_confidence": "high", "analysis_notes": "XBRL concept."},
+    {"path": "statoPatrimoniale.immobilizzazioni", "source_field": "immobilizzazioni", "english_name": "fixed_assets", "meaning": "Fixed/non-current assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Italian", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "statoPatrimoniale.attivoCircolante", "source_field": "attivo circolante", "english_name": "current_assets", "meaning": "Current assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Italian", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "statoPatrimoniale.patrimonioNetto", "source_field": "patrimonio netto", "english_name": "equity", "meaning": "Total equity.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Italian", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "statoPatrimoniale.debiti", "source_field": "debiti / totale passivo", "english_name": "liabilities", "meaning": "Liabilities / debts.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Italian", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "contoEconomico.valoreDellaProduzione", "source_field": "valore della produzione / ricavi", "english_name": "revenue", "meaning": "Value of production / revenue.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Italian", "limitations": "PLANNING-ONLY. 'ricavi delle vendite' is a sub-item; value of production is the headline.", "source_confidence": "high", "analysis_notes": "Primary revenue concept (A) of conto economico."},
+    {"path": "contoEconomico.risultatoEsercizio", "source_field": "utile/perdita d'esercizio", "english_name": "net_income", "meaning": "Net profit/loss for the year.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Italian", "limitations": "PLANNING-ONLY. Negative = perdita (loss).", "source_confidence": "high", "analysis_notes": null},
+    {"path": "notaIntegrativa.numeroMedioDipendenti", "source_field": "numero medio dipendenti", "english_name": "employees", "meaning": "Average number of employees (from the notes).", "data_type": "integer", "semantic_type": "employment", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Italian", "limitations": "PLANNING-ONLY. In nota integrativa; may be absent for micro.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "valuta", "source_field": "valuta", "english_name": "currency", "meaning": "Reporting currency.", "data_type": "string", "semantic_type": "financial", "example_values": ["EUR"], "nullable": true, "repeatable": false, "code_list": "ISO 4217", "language": "n/a", "limitations": "PLANNING-ONLY. Usually EUR.", "source_confidence": "high", "analysis_notes": "Store with figures."}
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "country": "Italy",
+  "country_slug": "italy",
+  "source_slug": "startup_pmi_innovative",
+  "source_name": "Startup innovative & PMI innovative (open data)",
+  "source_type": "open_data_registry_subset",
+  "organization": "InfoCamere / MIMIT (Ministero delle Imprese e del Made in Italy)",
+  "source_url": "https://startup.registroimprese.it/",
+  "license": "IODL 2.0 / CC-BY (open lists); bulk API needs PEC + conditions",
+  "access": "public",
+  "data_freshness": "weekly (Monday)",
+  "record_shape": "tabular per-company rows (XLS lists; XML/JSON via gated API)",
+  "primary_keys": ["codice_fiscale"],
+  "join_keys": ["codice_fiscale", "denominazione + comune"],
+  "field_count": 9,
+  "fields": [
+    {"path": "denominazione", "source_field": "denominazione", "english_name": "legal_name", "meaning": "Company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Italian", "limitations": "Documented field (per-company XLS; not downloaded here — portal endpoints dynamic).", "source_confidence": "high", "analysis_notes": "Display name."},
+    {"path": "codice_fiscale", "source_field": "codice_fiscale", "english_name": "tax_id", "meaning": "Company fiscal code; join key to the register spine.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented.", "source_confidence": "high", "analysis_notes": "Open CF -> enrich via Registro Imprese / bilanci."},
+    {"path": "regione", "source_field": "regione", "english_name": "region", "meaning": "Region of the registered office.", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": true, "repeatable": false, "code_list": "regioni italiane", "language": "Italian", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "provincia", "source_field": "provincia", "english_name": "province", "meaning": "Province.", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": true, "repeatable": false, "code_list": "province (sigle)", "language": "Italian", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "comune", "source_field": "comune", "english_name": "municipality", "meaning": "Municipality.", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Italian", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "ateco", "source_field": "codice_ateco", "english_name": "activity_code", "meaning": "ATECO activity code.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "ATECO", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "data_iscrizione", "source_field": "data_iscrizione", "english_name": "registration_date", "meaning": "Date registered in the special section (startup/PMI innovative).", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null},
+    {"path": "classe_addetti", "source_field": "classe di addetti", "english_name": "employee_band", "meaning": "Employee count band (class, not exact).", "data_type": "string", "semantic_type": "employment", "example_values": [], "nullable": true, "repeatable": false, "code_list": "classi di addetti", "language": "Italian", "limitations": "Band, not exact count.", "source_confidence": "medium", "analysis_notes": "Closest open employment signal for this subset."},
+    {"path": "classe_valore_produzione", "source_field": "classe di valore della produzione", "english_name": "revenue_band", "meaning": "Value-of-production (revenue) band.", "data_type": "string", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "classi di valore produzione", "language": "Italian", "limitations": "BAND only, not an exact figure.", "source_confidence": "medium", "analysis_notes": "Only open per-company financial signal — a range, not a value."}
+  ]
+}

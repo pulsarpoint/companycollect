@@ -1,0 +1,83 @@
+{
+  "country": "Italy",
+  "country_slug": "italy",
+  "source_slug": "registro_imprese_bilanci_xbrl",
+  "source_identity": "italy_registro_imprese_bilanci_xbrl",
+  "source_package": "ribilancixbrl",
+  "env_prefix": "RI_BILANCI_XBRL",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Registro Imprese — Bilanci XBRL (annual accounts)",
+    "source_type": "official_financial_disclosure",
+    "organization": "InfoCamere / Camere di Commercio",
+    "source_url": "https://www.registroimprese.it/deposito-bilanci",
+    "license": "Paid/contractual (per-document fees)",
+    "access": "paid",
+    "data_freshness": "annual; XBRL taxonomy 2018-11-04",
+    "attribution": "Source: Registro Imprese — bilanci (InfoCamere)."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["RI_BILANCI_XBRL_API_KEY"],
+    "note": "Per-company paid retrieval via Telemaco / Bilancio XBRL API. No open bulk, no free API."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://accessoallebanchedati.registroimprese.it/abdo/api",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [{"name": "Authorization", "value": "<api-key>", "note": "per contract"}],
+    "formats": ["xbrl", "pdf", "html", "xls", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-company per-esercizio bilancio",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Request a company's bilancio by CF (+ year). No population enumeration."},
+    "rate_limit": "per contract"
+  },
+  "snapshot": {
+    "strategy": "xbrl_per_company_per_year",
+    "file_extension": ".xbrl",
+    "preserve_raw_download": true,
+    "note": "Persist the XBRL instance; parse with an XBRL toolkit against the Italian civil-code taxonomy."
+  },
+  "parsing": {
+    "record_type_hint": "ItBilancioXBRL",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["it_locale_grouping_1.234.567,89", "xbrl_plain_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "tipologia bilancio (ordinario/abbreviato/micro) governs which concepts exist; revenue/net_income/employees nullable for small filers. Map valore della produzione -> revenue, utile/perdita d'esercizio -> net_income, totale attivo -> total_assets, patrimonio netto -> equity. Currency EUR."
+  },
+  "keys": {
+    "primary_keys": ["codice_fiscale", "esercizio"],
+    "join_keys": ["codice_fiscale"],
+    "dedupe_keys": ["codice_fiscale + esercizio + tipologia_bilancio"]
+  },
+  "mapping_rules": {
+    "financial_statements": "One record per esercizio; map stato patrimoniale + conto economico.",
+    "revenue": "valore della produzione",
+    "net_income": "utile/perdita d'esercizio",
+    "total_assets": "totale attivo",
+    "equity": "patrimonio netto",
+    "employees": "numero medio dipendenti (nota integrativa)",
+    "matching": "Join on codice_fiscale to the register spine."
+  },
+  "fixture_requirements": [
+    "bilancio ordinario with full stato patrimoniale + conto economico",
+    "bilancio abbreviato / micro (reduced lines)",
+    "bilancio consolidato",
+    "esercizio with negative risultato (perdita)",
+    "XBRL exercising Italian number locale in the HTML prospetto"
+  ],
+  "live_test_plan": {
+    "smoke": "Not applicable without a paid contract — do not attempt unauthenticated retrieval.",
+    "full": "Behind RI_BILANCI_XBRL_API_KEY and a contract, fetch target companies' bilanci by CF; parse XBRL; normalize to financial_statements[]. For scale prefer a commercial aggregator's financial API."
+  },
+  "blockers": [
+    "Paid per document; no open bulk; no free API.",
+    "Smallest filers (micro/abbreviato) disclose fewer lines — partial detail.",
+    "Redistribution of purchased documents restricted."
+  ]
+}
