@@ -1,0 +1,47 @@
+[
+  {
+    "name": "UR Register of Enterprises (register CSV)",
+    "slug": "ur_register",
+    "type": "bulk",
+    "url": "https://data.gov.lv/dati/dataset/4de9697f-850b-45ec-8bba-61fa09ce932f/resource/25e80bf3-f107-4ab4-89ef-251b5b9374e9/download/register.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "UR Financial statements — metadata (CSV)",
+    "slug": "ur_financial_statements",
+    "type": "bulk",
+    "url": "https://data.gov.lv/dati/dataset/8d31b878-536a-44aa-a013-8bc6b669d477/resource/27fcc5ec-c63b-4bfd-bb08-01f073a52d04/download/financial_statements.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "UR Financial statements — balance sheets (CSV)",
+    "slug": "ur_balance_sheets",
+    "type": "bulk",
+    "url": "https://data.gov.lv/dati/dataset/8d31b878-536a-44aa-a013-8bc6b669d477/resource/50ef4f26-f410-4007-b296-22043ca3dc43/download/balance_sheets.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "UR Financial statements — income statements (CSV)",
+    "slug": "ur_income_statements",
+    "type": "bulk",
+    "url": "https://data.gov.lv/dati/dataset/8d31b878-536a-44aa-a013-8bc6b669d477/resource/d5fd17ef-d32e-40cb-8399-82b780095af0/download/income_statements.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "UR Beneficial owners (CSV)",
+    "slug": "ur_beneficial_owners",
+    "type": "bulk",
+    "url": "https://data.gov.lv/dati/dataset/b7848ab9-7886-4df0-8bc6-70052a8d9e1a/resource/20a9b26d-d056-4dbb-ae18-9ff23c87bdee/download/beneficial_owners.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
