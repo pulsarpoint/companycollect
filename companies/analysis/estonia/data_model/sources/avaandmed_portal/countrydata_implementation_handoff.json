@@ -1,0 +1,76 @@
+{
+  "country": "Estonia",
+  "country_slug": "estonia",
+  "source_slug": "avaandmed_portal",
+  "source_identity": "estonia_avaandmed_portal",
+  "source_package": "avaandmedportal",
+  "env_prefix": "EE_AVAANDMED",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "avaandmed.eesti.ee — national open data portal",
+    "source_type": "open_data_portal",
+    "organization": "Republic of Estonia",
+    "source_url": "https://avaandmed.eesti.ee/",
+    "license": "Per dataset",
+    "access": "public",
+    "data_freshness": "varies",
+    "attribution": "Per dataset"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://avaandmed.eesti.ee/api",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "csv", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "catalog_lookup_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "CkanDataset",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["dataset_id"],
+    "join_keys": [],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "resource_url": "Resolve EMTA / secondary dataset URLs + licences."
+  },
+  "fixture_requirements": [
+    "catalog entry for an EMTA tax dataset"
+  ],
+  "live_test_plan": {
+    "smoke": "Query the catalog for e-Business Register / EMTA datasets; capture resource URLs + licences.",
+    "full": "Not a bulk source itself; drives secondary sources."
+  },
+  "blockers": [
+    "Discovery/metadata only — not company data.",
+    "Authoritative company source is avaandmed.ariregister.rik.ee directly."
+  ]
+}

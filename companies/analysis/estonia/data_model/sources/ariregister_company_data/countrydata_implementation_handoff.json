@@ -1,0 +1,85 @@
+{
+  "country": "Estonia",
+  "country_slug": "estonia",
+  "source_slug": "ariregister_company_data",
+  "source_identity": "estonia_ariregister_company_data",
+  "source_package": "ariregistercompany",
+  "env_prefix": "EE_ARIREGISTER",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "e-Business Register open data — company basic + general data (RIK)",
+    "source_type": "official_registry",
+    "organization": "Registrite ja Infosüsteemide Keskus (RIK)",
+    "source_url": "https://avaandmed.ariregister.rik.ee/en/downloading-open-data",
+    "license": "Creative Commons Attribution 4.0 (CC-BY 4.0)",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Attribute Registrite ja Infosüsteemide Keskus / e-Business Register (CC-BY 4.0)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed",
+    "download_url": "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__lihtandmed.csv.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "json", "xml", "parquet"],
+    "compression": "zip",
+    "encoding": "utf-8-bom",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_zip_then_ndjson_one_company_per_line",
+    "file_extension": ".csv.zip",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "AriregisterCompany",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "csv_delimiter": ";"
+  },
+  "keys": {
+    "primary_keys": ["ariregistri_kood"],
+    "join_keys": ["ariregistri_kood"],
+    "dedupe_keys": ["ariregistri_kood"]
+  },
+  "mapping_rules": {
+    "company_id": "Use ariregistri_kood (registrikood, 8-digit).",
+    "registration_number": "Use ariregistri_kood.",
+    "vat_id": "Use kmkr_nr (EE + 9 digits) when present.",
+    "tax_id": "Use kmkr_nr (no separate open tax id).",
+    "legal_name": "Use nimi.",
+    "company_type": "Use ettevotja_oiguslik_vorm (+ alaliik).",
+    "status": "Use ettevotja_staatus_tekstina (code ettevotja_staatus).",
+    "incorporation_date": "Use ettevotja_esmakande_kpv (dd.mm.yyyy → ISO).",
+    "registered_address": "Use ads_normaliseeritud_taisaadress; geography from asukoha_ehak_kood/tekstina."
+  },
+  "fixture_requirements": [
+    "active OÜ with VAT (kmkr_nr)",
+    "company without VAT (empty kmkr_nr)",
+    "company in liquidation/bankruptcy status",
+    "malformed individual CSV row"
+  ],
+  "live_test_plan": {
+    "smoke": "Download lihtandmed.csv.zip, unzip, parse the first rows in chunks (UTF-8 BOM, ; delimiter).",
+    "full": "Process the full basic CSV (and yldandmed JSON for deep fields) behind env gates; preserve raw zip."
+  },
+  "blockers": []
+}

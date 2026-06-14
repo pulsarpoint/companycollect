@@ -1,0 +1,50 @@
+{
+  "country": "Estonia",
+  "country_slug": "estonia",
+  "source_slug": "ariregister_api",
+  "source_name": "e-Business Register XML/REST API (real-time)",
+  "source_type": "official_registry",
+  "organization": "Registrite ja Infosüsteemide Keskus (RIK)",
+  "source_url": "https://www.rik.ee/en/e-business-register/business-register-queries",
+  "license": "Creative Commons Attribution 4.0 (CC-BY 4.0) — open data services",
+  "access": "public",
+  "data_freshness": "real-time",
+  "record_shape": "xml_or_json_per_query (point lookups across ~16 services)",
+  "primary_keys": ["registrikood"],
+  "join_keys": ["registrikood"],
+  "field_count": 2,
+  "fields": [
+    {
+      "path": "(service-dependent)",
+      "source_field": "(per service)",
+      "english_name": "company_record_fields",
+      "meaning": "Real-time equivalents of the bulk datasets (general data, annual reports, shareholders, beneficial owners) returned per query.",
+      "data_type": "object",
+      "semantic_type": "raw_extension",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": false,
+      "code_list": null,
+      "language": "Estonian/English",
+      "limitations": "~16 services; exact schemas per service. Use the bulk catalogs for field semantics.",
+      "source_confidence": "medium",
+      "analysis_notes": "Use for real-time single-company refresh, not full-population loads."
+    },
+    {
+      "path": "registrikood",
+      "source_field": "registrikood",
+      "english_name": "registry_code",
+      "meaning": "Query/join key.",
+      "data_type": "string",
+      "semantic_type": "identifier",
+      "example_values": [],
+      "nullable": false,
+      "repeatable": false,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": null,
+      "source_confidence": "high",
+      "analysis_notes": "Lookup key."
+    }
+  ]
+}

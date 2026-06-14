@@ -1,0 +1,76 @@
+{
+  "country": "Estonia",
+  "country_slug": "estonia",
+  "source_slug": "ariregister_api",
+  "source_identity": "estonia_ariregister_api",
+  "source_package": "ariregisterapi",
+  "env_prefix": "EE_ARIREGISTER_API",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "e-Business Register XML/REST API (real-time)",
+    "source_type": "official_registry",
+    "organization": "Registrite ja Infosüsteemide Keskus (RIK)",
+    "source_url": "https://www.rik.ee/en/e-business-register/business-register-queries",
+    "license": "CC-BY 4.0 (open data services)",
+    "access": "public",
+    "data_freshness": "real-time",
+    "attribution": "Attribute RIK / e-Business Register (CC-BY 4.0)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": ["EE_ARIREGISTER_API_USER", "EE_ARIREGISTER_API_PASS"]
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://ariregister.rik.ee/est/api",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xml", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "service-dependent"
+  },
+  "snapshot": {
+    "strategy": "lookup_only_refresh",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "AriregisterApiRecord",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["registrikood"],
+    "join_keys": ["registrikood"],
+    "dedupe_keys": ["registrikood"]
+  },
+  "mapping_rules": {
+    "all": "Real-time single-company refresh; map per the bulk catalogs (company/financials/owners)."
+  },
+  "fixture_requirements": [
+    "single-company API response"
+  ],
+  "live_test_plan": {
+    "smoke": "Call one open service for a known registrikood and confirm the response shape.",
+    "full": "Use for targeted refresh only; bulk files for full population."
+  },
+  "blockers": [
+    "Exact service endpoints/schemas not enumerated here (~16 services).",
+    "Some advanced services may require a free user account."
+  ]
+}

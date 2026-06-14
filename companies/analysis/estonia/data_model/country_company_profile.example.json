@@ -1,0 +1,104 @@
+{
+  "_note": "Example profile using real ariregister basic-data values (007 Autohaus osaühing, registrikood 11694365, KMKR EE101335276) plus the real financial element shape (XBRL-like names + EUR values from the downloaded 2024 elements file, shown for an illustrative report). Officer/shareholder/beneficial-owner identities are placeholders (GDPR).",
+  "country": "Estonia",
+  "country_slug": "estonia",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "registrikood": "11694365",
+    "register_url": "https://ariregister.rik.ee/est/company/11694365"
+  },
+  "tax_identifiers": {
+    "kmkr": "EE101335276",
+    "vat_valid": true
+  },
+  "legal_identity": {
+    "legal_name": "007 Autohaus osaühing",
+    "legal_form": "Osaühing"
+  },
+  "status": {
+    "code": "R",
+    "text": "Registrisse kantud"
+  },
+  "activity": {
+    "emtak_primary": "45200"
+  },
+  "incorporation": {
+    "first_registration_date": "2009-07-30"
+  },
+  "registered_location": {
+    "registered_address": "Tartu maakond, Tartu linn, Tartu linn, Turu tn 34",
+    "ehak_code": "8151",
+    "location_text": "Tartu linn, Tartu linn, Tartu maakond"
+  },
+  "officers": [
+    { "name": "<REDACTED>", "role": "juhatuse liige" }
+  ],
+  "shareholders": [
+    { "name": "<REDACTED>", "shareholding": "2500.0" }
+  ],
+  "beneficial_owners": [
+    { "name": "<REDACTED>", "nature_of_control": "otsene osalus" }
+  ],
+  "financial_statements": [
+    {
+      "report_id": "2762301",
+      "fiscal_year": 2024,
+      "period_start": "2024-01-01",
+      "period_end": "2024-12-31",
+      "consolidated": false,
+      "audited": false,
+      "auditor_opinion": null,
+      "currency": "EUR",
+      "elements": [
+        { "table": "Lõppbilanss", "element": "Assets", "value": 2500.0 },
+        { "table": "Lõppbilanss", "element": "CurrentAssets", "value": 2500.0 },
+        { "table": "Lõppbilanss", "element": "CashAndCashEquivalents", "value": 2500.0 },
+        { "table": "Lõppbilanss", "element": "Equity", "value": 2500.0 },
+        { "table": "Lõppbilanss", "element": "IssuedCapital", "value": 2500.0 },
+        { "table": "Lõppbilanss", "element": "CurrentLiabilities", "value": 0.0 }
+      ]
+    }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "ariregister_company_data",
+      "section": "registration, tax_identifiers.kmkr, legal_identity, status, incorporation, registered_location",
+      "source_url": "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__lihtandmed.csv.zip",
+      "access": "public",
+      "license": "CC-BY 4.0",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "ariregister_annual_reports",
+      "section": "financial_statements, activity.emtak_primary",
+      "source_url": "https://avaandmed.ariregister.rik.ee/sites/default/files/4.2024_aruannete_elemendid_kuni_31052026_0.zip",
+      "access": "public",
+      "license": "CC-BY 4.0",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "ariregister_shareholders",
+      "section": "shareholders",
+      "source_url": "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__osanikud.json.zip",
+      "access": "public",
+      "license": "CC-BY 4.0",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "ariregister_beneficial_owners",
+      "section": "beneficial_owners",
+      "source_url": "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__kasusaajad.json.zip",
+      "access": "public",
+      "license": "CC-BY 4.0",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "ariregister_persons_other",
+      "section": "officers",
+      "source_url": "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__kaardile_kantud_isikud.json.zip",
+      "access": "public",
+      "license": "CC-BY 4.0",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    }
+  ]
+}

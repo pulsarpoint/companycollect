@@ -1,0 +1,80 @@
+{
+  "country": "Estonia",
+  "country_slug": "estonia",
+  "source_slug": "ariregister_annual_reports",
+  "source_identity": "estonia_ariregister_annual_reports",
+  "source_package": "ariregisterreports",
+  "env_prefix": "EE_ARIREGISTER_REPORTS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "e-Business Register open data — annual report financial data (majandusaasta aruanne)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Registrite ja Infosüsteemide Keskus (RIK)",
+    "source_url": "https://avaandmed.ariregister.rik.ee/en/downloading-open-data",
+    "license": "Creative Commons Attribution 4.0 (CC-BY 4.0)",
+    "access": "public",
+    "data_freshness": "monthly",
+    "attribution": "Attribute Registrite ja Infosüsteemide Keskus / e-Business Register (CC-BY 4.0)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://avaandmed.ariregister.rik.ee/sites/default/files",
+    "download_url": "https://avaandmed.ariregister.rik.ee/sites/default/files/4.2024_aruannete_elemendid_kuni_31052026_0.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": "zip",
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "per_year_files",
+      "page_param": null,
+      "page_start": 2019,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_zip_then_pivot_elements_per_report",
+    "file_extension": ".zip",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "AnnualReportElement",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": ["dot_decimal_string"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "csv_delimiter": ";"
+  },
+  "keys": {
+    "primary_keys": ["report_id"],
+    "join_keys": ["report_id", "registrikood"],
+    "dedupe_keys": ["report_id", "tabel", "elemendi_nimetus"]
+  },
+  "mapping_rules": {
+    "financials": "Group {year}_aruannete_elemendid rows by report_id; pivot (elemendi_nimetus -> vaartus) within each tabel (Lõppbilanss=balance sheet, Kasumiaruanne=income statement). Attach aruannete_yldandmed metadata (year, audited, consolidated, auditor) and join registrikood to the company. Currency EUR.",
+    "revenue_by_activity": "Join EMTAK_myygitulu on report_id for revenue split by EMTAK activity.",
+    "fiscal_year": "Use aruandeaasta / period_start..period_end."
+  },
+  "fixture_requirements": [
+    "report metadata row (audited + consolidated flags)",
+    "balance-sheet element rows for one report_id (Assets/Equity/CurrentAssets)",
+    "income-statement element rows for one report_id (TotalAnnualPeriodProfitLoss)",
+    "EMTAK revenue rows for one report_id",
+    "report_id present in elements but missing in metadata (orphan handling)"
+  ],
+  "live_test_plan": {
+    "smoke": "Download one year's aruannete_elemendid + aruannete_yldandmed; pivot a handful of report_ids and verify the join to a company registrikood.",
+    "full": "Process all years 2019-2025 + EMTAK/geographical revenue behind env gates; stream the large CSVs."
+  },
+  "blockers": []
+}

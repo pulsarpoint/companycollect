@@ -26,13 +26,21 @@ it does **not** wire anything into Dagster — that comes later.
   written as if it is the only country that exists. No shared/generic library,
   no cross-country abstraction. Pattern extraction across countries is a
   deliberate future decision, not done preemptively.
-- **Functions are future assets.** Every transform is a pure function
-  (data in → data out, no hidden IO). These exact functions become Dagster
-  asset bodies later with no rewrite. IO (reading raw from S3, writing Parquet)
-  lives only at the notebook edges.
-- **Reuse parsing.** The existing pure parse functions in the source packages
-  are reused as-is; only their output is retargeted from ClickHouse rows to
-  Parquet. No parser is re-implemented.
+- **Functions are future assets, shaped like asset bodies.** Every transform is
+  a pure function (data in → data out, no hidden IO), written to mirror a Dagster
+  asset materialization function as closely as possible: parameters are the
+  upstream assets' outputs (DataFrames), the return is this asset's output. The
+  whole pipeline then copies into Dagster by wrapping each function in `@dg.asset`
+  — no logic rewrite. IO (reading raw from S3, writing Parquet) lives only at the
+  notebook edges.
+- **Reuse parsing by copying.** The existing pure parse functions are reused —
+  but **copied into the country folder**, not imported. prh_ytj/prh_xbrl are the
+  only sources that have such functions today; every future source starts from
+  nothing, so each country folder must own a complete, standalone copy. Reuse =
+  copy the tested logic, retarget output to Parquet, drop the CH importer.
+- **This notebook is the template.** Finland is the worked example every other
+  country notebook is copied from. It must be self-contained end to end, with no
+  dependency on `dagster_corpscout`.
 
 ## Architecture
 
@@ -40,7 +48,7 @@ Two pure-function layers, both future Dagster assets:
 
 ```
 raw files (S3)                          prh_ytj NDJSON + code lists, prh_xbrl XML + listings
-  │  parse_*()   REUSED pure parsers → structured Parquet  (drop CH importer only)
+  │  parse_*()   COPIED pure parsers → structured Parquet  (drop CH importer only)
   ▼
 structured Parquet (local sample / S3)  source-native, one dataset per source
   │  build_*()   per-country, self-contained, pure → canonical
@@ -49,48 +57,57 @@ canonical Parquet (8-table contract)    company, registrations, financials, comp
         (ClickHouse load = later, separate, out of scope)
 ```
 
-### Parse layer (reused)
+### Parse layer (reused by copying)
 
-- Import the existing pure parse functions:
-  - prh_ytj: the NDJSON record parser / normalizer in
+- Copy the existing pure parse functions into the country folder:
+  - prh_ytj: the NDJSON record parser / normalizer logic from
     `dagster_corpscout.sources.finland.prh_ytj` (parser/normalizer modules).
-  - prh_xbrl: `parse_statement_xml` in
+  - prh_xbrl: `parse_statement_xml` from
     `dagster_corpscout.sources.finland.prh_xbrl.parser`.
-- The analysis environment installs `dagster_corpscout` as a path dependency so
-  these are imported, not copied (single source of truth). The parse functions
-  are already independent of ClickHouse (they return row dicts; the CH importer
-  is a separate step we simply don't call).
-- The only new parse-side code is serializing parser output to Parquet
-  (Polars/PyArrow), producing the **structured Parquet** datasets.
+- Copied, not imported: these are the only sources that have such functions, and
+  every future country starts from scratch, so the folder must be a complete
+  standalone example. The parse functions are already ClickHouse-independent
+  (they return row dicts; we never call the CH importer).
+- The only added parse-side code serializes parser output to Parquet
+  (Polars/PyArrow), producing the **structured Parquet** datasets — themselves a
+  future asset, hence persisted, not in-memory.
 
 ### Conform layer (self-contained per country)
 
-- Pure functions, one per canonical output table, written locally in the
-  country folder:
+- Pure functions, one per canonical output table, written locally:
   - `build_company()` + `build_registrations()` — entity + per-country record
   - `build_financials()` — tall metric rows
   - `build_websites()` — `company_websites` rows
-- Signature shape: structured inputs (Polars DataFrames) → canonical Polars
-  DataFrame validated against the contract. No IO inside.
+- Signature mirrors a Dagster asset body: parameters are the upstream structured
+  DataFrames (the future upstream assets), return is the canonical Polars
+  DataFrame, validated against the contract. No IO inside — wrapping in
+  `@dg.asset` later is the only change.
 
-## File layout (`companies/analysis/finland/`)
+## File layout (`companies/analysis/finland/notebook/`)
+
+All notebook-related files live under a `notebook/` child of the country folder,
+keeping the conformance system separate from the country's other analysis docs
+(investigation.md, data_model/, dossiers).
 
 ```
 finland/
-  conformance/
-    __init__.py
-    structured.py        reused parsers → structured Parquet (thin Parquet-serialization wrappers)
-    build_company.py     structured → canonical company + registrations   (pure, local)
-    build_financials.py  structured → canonical financials                (pure, local)
-    build_websites.py    structured → canonical company_websites          (pure, local)
-    validate.py          assert a DataFrame matches a canonical table's columns/types
-  finland_conformance.py marimo notebook: load raw (S3) → parse → conform → validate → write
-  output/                canonical Parquet datasets (sample artifact)
-  partitioning.md        partition-strategy doc, grounded in Finland's real numbers
-  pyproject.toml         analysis env: marimo, polars, pyarrow, duckdb, boto3, dagster_corpscout (path dep)
+  notebook/
+    conformance/
+      __init__.py
+      parse_prh_ytj.py    COPIED prh_ytj parser + Parquet serialization → structured Parquet
+      parse_prh_xbrl.py   COPIED prh_xbrl parser + Parquet serialization → structured Parquet
+      build_company.py    structured → canonical company + registrations   (pure, local)
+      build_financials.py structured → canonical financials                (pure, local)
+      build_websites.py   structured → canonical company_websites          (pure, local)
+      validate.py         assert a DataFrame matches a canonical table's columns/types
+    finland_conformance.py marimo notebook: load raw (S3) → parse → conform → validate → write
+    output/                structured/ + canonical/ Parquet datasets (sample artifacts)
+    partitioning.md        partition-strategy doc, grounded in Finland's real numbers
+    pyproject.toml         analysis env: marimo, polars, pyarrow, duckdb, boto3, lxml (no dagster_corpscout)
 ```
 
-Other countries get the same shape under their own folder, independently.
+Other countries get the same `notebook/` shape under their own folder, copied
+from Finland and edited.
 
 ## Finland specifics
 
@@ -152,15 +169,15 @@ columns present, types compatible, declared key columns unique (e.g.
   credentials. prh_ytj snapshot is live (should exist); prh_xbrl raw may be
   thin, so financials may be a small sample — acceptable for a structure
   reference.
-- Reusing parsers couples the analysis env to `dagster_corpscout` via a path
-  dependency. The parse functions are CH-independent, so the coming CH removal
-  shouldn't break them; if that coupling becomes a problem, the parse functions
-  can later be vendored into the country folder.
+- Parse functions are copied, not imported, so they can drift from the
+  originals. Acceptable: the originals' ClickHouse path is being removed, so the
+  country folder becomes the home of record for Finland's parse logic anyway.
+  Each future country copies this folder as its starting template.
 
 ## Deliverables
 
-1. `companies/analysis/finland/conformance/` pure functions (reused parse +
-   local build + validate).
-2. `companies/analysis/finland/finland_conformance.py` marimo notebook.
-3. `companies/analysis/finland/output/` sample canonical Parquet.
-4. `companies/analysis/finland/partitioning.md`.
+1. `companies/analysis/finland/notebook/conformance/` pure functions (copied
+   parse + local build + validate).
+2. `companies/analysis/finland/notebook/finland_conformance.py` marimo notebook.
+3. `companies/analysis/finland/notebook/output/` sample structured + canonical Parquet.
+4. `companies/analysis/finland/notebook/partitioning.md`.

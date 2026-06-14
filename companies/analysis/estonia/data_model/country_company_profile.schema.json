@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Estonia Company Profile",
+  "description": "Country-specific company profile for Estonia. One authoritative open source (e-Business Register / RIK, CC-BY 4.0), keyed on registrikood (8-digit). Uniquely rich: structured financial statements (line items), registered shareholders AND beneficial owners, and officers — all open. KMKR (VAT) doubles as the tax id. Financial statements join via report_id.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Estonia" },
+    "country_slug": { "type": "string", "const": "estonia" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["registrikood"],
+      "properties": {
+        "registrikood": {
+          "type": "string",
+          "description": "Registrikood — 8-digit registry code; company id and universal join key.",
+          "x-source": "ariregister_company_data",
+          "x-source-path": "ariregistri_kood",
+          "x-join-key": true,
+          "x-freshness": "daily",
+          "x-access": "public"
+        },
+        "register_url": {
+          "type": ["string", "null"],
+          "x-source": "ariregister_company_data",
+          "x-source-path": "teabesysteemi_link"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "kmkr": {
+          "type": ["string", "null"],
+          "description": "VAT number (EE + 9 digits); doubles as the tax id.",
+          "x-source": "ariregister_company_data",
+          "x-source-path": "kmkr_nr"
+        },
+        "vat_valid": {
+          "type": ["boolean", "null"],
+          "x-source": "emta_vat",
+          "x-source-path": "vat_valid"
+        }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": "string", "x-source": "ariregister_company_data", "x-source-path": "nimi" },
+        "legal_form": { "type": ["string", "null"], "description": "Osaühing (OÜ), Aktsiaselts (AS), …", "x-source": "ariregister_company_data", "x-source-path": "ettevotja_oiguslik_vorm" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "x-source": "ariregister_company_data", "x-source-path": "ettevotja_staatus" },
+        "text": { "type": "string", "x-source": "ariregister_company_data", "x-source-path": "ettevotja_staatus_tekstina" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "emtak_primary": {
+          "type": ["string", "null"],
+          "description": "Primary EMTAK activity code.",
+          "x-source": "ariregister_annual_reports",
+          "x-source-path": "EMTAK_myygitulu.emtak (põhitegevusala=jah)"
+        }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "first_registration_date": {
+          "type": ["string", "null"],
+          "format": "date",
+          "x-source": "ariregister_company_data",
+          "x-source-path": "ettevotja_esmakande_kpv"
+        }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "ariregister_company_data", "x-source-path": "ads_normaliseeritud_taisaadress" },
+        "ehak_code": { "type": ["string", "null"], "x-source": "ariregister_company_data", "x-source-path": "asukoha_ehak_kood" },
+        "location_text": { "type": ["string", "null"], "x-source": "ariregister_company_data", "x-source-path": "asukoha_ehak_tekstina" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Persons on the registry card (board members/representatives). PERSONAL DATA (GDPR).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "ariregister_persons_other", "x-source-path": "kaardile_kantud_isikud[].nimi", "x-personal-data": true },
+          "role": { "type": ["string", "null"], "x-source": "ariregister_persons_other", "x-source-path": "kaardile_kantud_isikud[].roll" }
+        }
+      }
+    },
+    "shareholders": {
+      "type": "array",
+      "description": "Registered shareholders/members (osanikud). Open. PERSONAL DATA where natural persons (GDPR). Distinct from beneficial_owners.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "ariregister_shareholders", "x-source-path": "osanikud[].nimi", "x-personal-data": true },
+          "shareholding": { "type": ["number", "string", "null"], "x-source": "ariregister_shareholders", "x-source-path": "osanikud[].osa_suurus" }
+        }
+      }
+    },
+    "beneficial_owners": {
+      "type": "array",
+      "description": "Beneficial owners (kasusaajad). Open (unusual post-CJEU). PERSONAL DATA (GDPR).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "ariregister_beneficial_owners", "x-source-path": "kasusaajad[].nimi", "x-personal-data": true },
+          "nature_of_control": { "type": ["string", "null"], "x-source": "ariregister_beneficial_owners", "x-source-path": "kasusaajad[].kontrolli_teostamise_viis" }
+        }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "STRUCTURED annual financial statements (open, CC-BY 4.0). One entry per report (year); line items pivoted from elemendi_nimetus→vaartus. Currency EUR. Join report_id → registrikood.",
+      "x-source": "ariregister_annual_reports",
+      "items": {
+        "type": "object",
+        "required": ["report_id", "fiscal_year"],
+        "properties": {
+          "report_id": { "type": "string", "x-source-path": "aruannete_yldandmed.report_id", "x-join-key": true },
+          "fiscal_year": { "type": "integer", "x-source-path": "aruannete_yldandmed.aruandeaasta" },
+          "period_start": { "type": ["string", "null"], "format": "date", "x-source-path": "aruannete_yldandmed.period_start" },
+          "period_end": { "type": ["string", "null"], "format": "date", "x-source-path": "aruannete_yldandmed.period_end" },
+          "consolidated": { "type": ["boolean", "null"], "x-source-path": "aruannete_yldandmed.kas konsolideeritud?" },
+          "audited": { "type": ["boolean", "null"], "x-source-path": "aruannete_yldandmed.kas auditeeritud?" },
+          "auditor_opinion": { "type": ["string", "null"], "x-source-path": "aruannete_yldandmed.audiitori otsuse tüüp" },
+          "currency": { "type": "string", "const": "EUR" },
+          "elements": {
+            "type": "array",
+            "description": "Line items: element name + value, grouped by statement table.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "table": { "type": "string", "x-source-path": "elemendid.tabel" },
+                "element": { "type": "string", "description": "XBRL-like, e.g. CurrentAssets, Equity, Assets, TotalAnnualPeriodProfitLoss", "x-source-path": "elemendid.elemendi_nimetus" },
+                "value": { "type": "number", "x-source-path": "elemendid.vaartus" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

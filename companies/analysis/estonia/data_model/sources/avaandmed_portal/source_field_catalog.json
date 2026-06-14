@@ -1,0 +1,50 @@
+{
+  "country": "Estonia",
+  "country_slug": "estonia",
+  "source_slug": "avaandmed_portal",
+  "source_name": "avaandmed.eesti.ee — national open data portal",
+  "source_type": "open_data_portal",
+  "organization": "Republic of Estonia",
+  "source_url": "https://avaandmed.eesti.ee/",
+  "license": "Per dataset",
+  "access": "public",
+  "data_freshness": "varies",
+  "record_shape": "ckan_catalog (datasets/resources)",
+  "primary_keys": ["dataset_id"],
+  "join_keys": [],
+  "field_count": 2,
+  "fields": [
+    {
+      "path": "result.resources[].url",
+      "source_field": "url",
+      "english_name": "resource_url",
+      "meaning": "Download URL of a dataset resource (e.g. EMTA tax datasets, e-Business Register mirrors).",
+      "data_type": "string",
+      "semantic_type": "metadata",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": "Discovery only.",
+      "source_confidence": "medium",
+      "analysis_notes": "Resolve EMTA / secondary dataset URLs here."
+    },
+    {
+      "path": "result.license_title",
+      "source_field": "license_title",
+      "english_name": "license",
+      "meaning": "Per-dataset licence.",
+      "data_type": "string",
+      "semantic_type": "license_or_terms",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": false,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": "Confirm per dataset.",
+      "source_confidence": "medium",
+      "analysis_notes": "Authoritative company source is avaandmed.ariregister.rik.ee directly."
+    }
+  ]
+}

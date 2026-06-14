@@ -1,0 +1,78 @@
+{
+  "country": "Estonia",
+  "country_slug": "estonia",
+  "source_slug": "emta_vat",
+  "source_identity": "estonia_emta_vat",
+  "source_package": "emtavat",
+  "env_prefix": "EE_EMTA",
+  "implementation_status": "sample_only",
+  "source": {
+    "source_name": "Estonian Tax and Customs Board — VAT (KMKR) / tax datasets / VIES",
+    "source_type": "official_tax",
+    "organization": "Maksu- ja Tolliamet (EMTA)",
+    "source_url": "https://www.emta.ee/",
+    "license": "Validation (VIES) / open (EMTA tax datasets)",
+    "access": "public",
+    "data_freshness": "real-time / periodic",
+    "attribution": "EMTA / EU VIES"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://ec.europa.eu/taxation_customs/vies/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "soap", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "VIES throttled"
+  },
+  "snapshot": {
+    "strategy": "enrichment_lookup_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "EmtaVat",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": ["registrikood", "kmkr_nr"],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "vat_id": "Confirm kmkr_nr via VIES.",
+    "tax_debt": "Optionally join EMTA tax-debt open datasets on registrikood as a risk signal."
+  },
+  "fixture_requirements": [
+    "valid EE VAT validation",
+    "EMTA tax-debt dataset row"
+  ],
+  "live_test_plan": {
+    "smoke": "Validate one EE KMKR via VIES; respect rate limits.",
+    "full": "Per-company enrichment + optional EMTA tax dataset load behind env gates."
+  },
+  "blockers": [
+    "VIES validates a supplied number; does not enumerate companies.",
+    "Exact EMTA tax-dataset URLs/format to resolve via avaandmed.eesti.ee."
+  ]
+}

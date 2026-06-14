@@ -1,0 +1,78 @@
+{
+  "country": "Estonia",
+  "country_slug": "estonia",
+  "source_slug": "ariregister_beneficial_owners",
+  "source_identity": "estonia_ariregister_beneficial_owners",
+  "source_package": "ariregisterbo",
+  "env_prefix": "EE_ARIREGISTER_BO",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "e-Business Register open data — beneficial owners (kasusaajad)",
+    "source_type": "beneficial_ownership_register",
+    "organization": "Registrite ja Infosüsteemide Keskus (RIK)",
+    "source_url": "https://avaandmed.ariregister.rik.ee/en/downloading-open-data",
+    "license": "Creative Commons Attribution 4.0 (CC-BY 4.0)",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Attribute RIK / e-Business Register (CC-BY 4.0)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "bulk_file",
+    "base_url": "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed",
+    "download_url": "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__kasusaajad.json.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "xml"],
+    "compression": "zip",
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "preserve_raw_zip_then_ndjson_per_company",
+    "file_extension": ".json.zip",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "BeneficialOwner",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["registrikood"],
+    "join_keys": ["registrikood"],
+    "dedupe_keys": ["registrikood"]
+  },
+  "mapping_rules": {
+    "beneficial_owners": "Map kasusaajad[] into beneficial_owners[] keyed on registrikood — PERSONAL DATA (GDPR), keep distinct from shareholders."
+  },
+  "fixture_requirements": [
+    "company with one beneficial owner",
+    "company with multiple beneficial owners / control types",
+    "company with no beneficial owner entry"
+  ],
+  "live_test_plan": {
+    "smoke": "Download kasusaajad.json.zip, unzip, parse a bounded set of companies; confirm registrikood join.",
+    "full": "Process the full BO dataset behind env gates; apply GDPR retention from the start."
+  },
+  "blockers": [
+    "Beneficial owners are personal data — confirm GDPR lawful basis + retention before persisting.",
+    "Exact JSON field names to confirm on first parse (documented from dataset description, not parsed here)."
+  ]
+}
