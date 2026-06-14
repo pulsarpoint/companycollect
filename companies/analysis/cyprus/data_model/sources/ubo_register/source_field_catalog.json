@@ -1,0 +1,50 @@
+{
+  "country": "Cyprus",
+  "country_slug": "cyprus",
+  "source_slug": "ubo_register",
+  "source_name": "UBO register (beneficial ownership) — DRCIP",
+  "source_type": "beneficial_ownership_register",
+  "organization": "Department of Registrar of Companies and Intellectual Property (DRCIP)",
+  "source_url": "https://www.companies.gov.cy/en/",
+  "license": "Access conditions apply (legitimate interest / fee; post-CJEU)",
+  "access": "restricted",
+  "data_freshness": "continuous",
+  "record_shape": "restricted_register (HTML; access-controlled)",
+  "primary_keys": ["registration_number"],
+  "join_keys": ["registration_number"],
+  "field_count": 2,
+  "fields": [
+    {
+      "path": "beneficial_owners[].name",
+      "source_field": "beneficial_owner",
+      "english_name": "beneficial_owner_name",
+      "meaning": "Natural person who ultimately owns or controls the company (planning-only — restricted access).",
+      "data_type": "string",
+      "semantic_type": "ownership",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "Greek/English",
+      "limitations": "Planning-only. Restricted access (conditions/fee post-CJEU). Personal data (GDPR). No values copied.",
+      "source_confidence": "medium",
+      "analysis_notes": "Not open bulk; noted for completeness. Distinct from open officers and from HE32 shareholders."
+    },
+    {
+      "path": "beneficial_owners[].ownership_percentage",
+      "source_field": "ownership_percentage",
+      "english_name": "ownership_percentage",
+      "meaning": "Extent of beneficial interest/control held.",
+      "data_type": "decimal",
+      "semantic_type": "ownership",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": "Planning-only; restricted.",
+      "source_confidence": "low",
+      "analysis_notes": "Only if/when lawful access is obtained."
+    }
+  ]
+}

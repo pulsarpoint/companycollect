@@ -1,0 +1,77 @@
+{
+  "country": "Cyprus",
+  "country_slug": "cyprus",
+  "source_slug": "data_gov_cy",
+  "source_identity": "cyprus_data_gov_cy",
+  "source_package": "datagovcy",
+  "env_prefix": "CY_DATAGOV",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "data.gov.cy — national open data portal",
+    "source_type": "open_data_portal",
+    "organization": "Republic of Cyprus (Deputy Ministry of Research, Innovation and Digital Policy)",
+    "source_url": "https://www.data.gov.cy/",
+    "license": "Per dataset (open data)",
+    "access": "public",
+    "data_freshness": "varies per dataset",
+    "attribution": "Attribute data.gov.cy"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.data.gov.cy/en/group/30",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "json", "xls"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "catalog_lookup_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "DataGovCyCatalog",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["dataset_id", "resource_id"],
+    "join_keys": [],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "resource_url": "Use to populate drcip_register.transport.download_url once resolved.",
+    "license": "Use the per-dataset licence to confirm DRCIP reuse terms."
+  },
+  "fixture_requirements": [
+    "catalog response listing the DRCIP company CSV resource"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve the DRCIP group #30 dataset and its CSV resource URL + licence via the portal.",
+    "full": "Not a bulk source itself; used only to drive drcip_register."
+  },
+  "blockers": [
+    "CKAN-like API on a non-standard path; /api/3/action/* returned HTTP 404 during discovery.",
+    "Pages JS-rendered — resource URL not resolved programmatically."
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "country": "Cyprus",
+  "country_slug": "cyprus",
+  "source_slug": "tax_department",
+  "source_identity": "cyprus_tax_department",
+  "source_package": "taxdepartment",
+  "env_prefix": "CY_TAX",
+  "implementation_status": "sample_only",
+  "source": {
+    "source_name": "Tax Department — TIC / VAT",
+    "source_type": "official_tax",
+    "organization": "Tax Department (Τμήμα Φορολογίας)",
+    "source_url": "https://www.mof.gov.cy/mof/tax/taxdep.nsf",
+    "license": "Validation only (not redistributable as a list)",
+    "access": "public",
+    "data_freshness": "real-time validation",
+    "attribution": "Tax Department / EU VIES"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://ec.europa.eu/taxation_customs/vies/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "soap"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "VIES throttled; per-number validation only"
+  },
+  "snapshot": {
+    "strategy": "enrichment_lookup_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "ViesValidation",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": ["registration_number"],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "tax_id": "Map TIC to tax_id (separate from HE and VAT).",
+    "vat_id": "Map VAT number (CY+8+letter) to vat_id; validate via VIES.",
+    "vat_status": "Store VIES validity as point-in-time evidence."
+  },
+  "fixture_requirements": [
+    "valid CY VAT validation response",
+    "invalid CY VAT validation response"
+  ],
+  "live_test_plan": {
+    "smoke": "Validate a single known CY VAT number via VIES; respect rate limits.",
+    "full": "Per-company enrichment only; never bulk-enumerate (VIES does not list companies)."
+  },
+  "blockers": [
+    "Validation only — does not enumerate companies; not redistributable as a list.",
+    "VIES is rate-limited."
+  ]
+}

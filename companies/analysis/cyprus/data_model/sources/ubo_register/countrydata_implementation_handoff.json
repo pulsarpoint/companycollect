@@ -1,0 +1,77 @@
+{
+  "country": "Cyprus",
+  "country_slug": "cyprus",
+  "source_slug": "ubo_register",
+  "source_identity": "cyprus_ubo_register",
+  "source_package": "uboregister",
+  "env_prefix": "CY_UBO",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "UBO register (beneficial ownership) — DRCIP",
+    "source_type": "beneficial_ownership_register",
+    "organization": "Department of Registrar of Companies and Intellectual Property (DRCIP)",
+    "source_url": "https://www.companies.gov.cy/en/",
+    "license": "Access conditions apply (legitimate interest / fee; post-CJEU)",
+    "access": "restricted",
+    "data_freshness": "continuous",
+    "attribution": "Attribute DRCIP"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": null,
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "none_planning_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "UboRecord",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["registration_number"],
+    "join_keys": ["registration_number"],
+    "dedupe_keys": ["registration_number"]
+  },
+  "mapping_rules": {
+    "owners": "Map beneficial_owners[] into owners[] (beneficial) only if/when lawful access is obtained — planning-only, personal data."
+  },
+  "fixture_requirements": [
+    "planning-only: no live access; synthetic UBO fixture only if implemented"
+  ],
+  "live_test_plan": {
+    "smoke": "None — restricted register; do not attempt automated access.",
+    "full": "Only under a documented lawful access agreement; never bypass access controls."
+  },
+  "blockers": [
+    "Restricted access (conditions/fee, post-CJEU) — not open bulk.",
+    "Requires authentication and payment.",
+    "Beneficial owners are personal data (GDPR)."
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "country": "Cyprus",
+  "country_slug": "cyprus",
+  "source_slug": "opensanctions_mirror",
+  "source_identity": "cyprus_opensanctions_mirror",
+  "source_package": "opensanctionscy",
+  "env_prefix": "CY_OPENSANCTIONS",
+  "implementation_status": "blocked_license",
+  "source": {
+    "source_name": "OpenSanctions cy_companies (open data mirror)",
+    "source_type": "open_data_mirror",
+    "organization": "OpenSanctions / DRCIP",
+    "source_url": "https://www.opensanctions.org/datasets/cy_companies/",
+    "license": "CC-BY-NC 4.0 (commercial use needs a separate OpenSanctions licence)",
+    "access": "public",
+    "data_freshness": "derived from the data.gov.cy DRCIP CSV",
+    "attribution": "OpenSanctions, source DRCIP / data.gov.cy"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "ndjson_file",
+    "base_url": "https://data.opensanctions.org/datasets/latest/cy_companies/",
+    "download_url": "https://data.opensanctions.org/datasets/latest/cy_companies/entities.ftm.json",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "ftm"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_ftm_entity_per_line_cross_reference_only",
+    "file_extension": ".ftm.json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "FtmEntity",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["id"],
+    "join_keys": ["registrationNumber"],
+    "dedupe_keys": ["registrationNumber"]
+  },
+  "mapping_rules": {
+    "cross_reference": "Use only to QA/cross-check drcip_register (names, officers). Do NOT use as the commercial ingest source — CC-BY-NC.",
+    "officers": "Directorship entities confirm officer coverage; authoritative officers come from the data.gov.cy CSV."
+  },
+  "fixture_requirements": [
+    "one FTM Company entity",
+    "one FTM Directorship entity"
+  ],
+  "live_test_plan": {
+    "smoke": "Download a bounded slice of the FTM NDJSON and cross-check a few HE numbers against drcip_register.",
+    "full": "Not used for production ingest due to CC-BY-NC; QA cross-reference only."
+  },
+  "blockers": [
+    "CC-BY-NC 4.0 — non-commercial; commercial reuse requires a separate OpenSanctions licence.",
+    "Authoritative open source for commercial reuse is the data.gov.cy DRCIP CSV, not this mirror.",
+    "Officer names are personal data (GDPR)."
+  ]
+}

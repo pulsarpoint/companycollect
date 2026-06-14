@@ -1,0 +1,74 @@
+{
+  "_note": "SCHEMATIC illustrative profile — placeholder values, not a real company. The open DRCIP CSV resource URL was not resolved during discovery; financials/shareholders/UBO are paid/restricted (planning-only) and intentionally shown empty or synthetic.",
+  "country": "Cyprus",
+  "country_slug": "cyprus",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "registration_number": "HE123456",
+    "entity_type": "company"
+  },
+  "tax_identifiers": {
+    "tic": null,
+    "vat_number": "CY12345678X",
+    "vat_status": null
+  },
+  "legal_identity": {
+    "legal_name": "Example Holdings Ltd",
+    "company_type": "company (Ltd)"
+  },
+  "status": {
+    "value": "operational"
+  },
+  "activity": {
+    "activity_code": null
+  },
+  "incorporation": {
+    "registration_date": "2014-03-10"
+  },
+  "registered_location": {
+    "registered_address": "1 Example Street, 1010 Nicosia",
+    "municipality": "Nicosia",
+    "region": "Nicosia"
+  },
+  "officers": [
+    { "name": "John Doe", "role": "director" },
+    { "name": "Jane Roe", "role": "secretary" }
+  ],
+  "financial_statements": [],
+  "shareholders": [],
+  "beneficial_owners": [],
+  "source_provenance": [
+    {
+      "source_slug": "drcip_register",
+      "section": "registration, legal_identity, status, incorporation, registered_location, officers",
+      "source_url": "https://www.companies.gov.cy/en/",
+      "access": "public",
+      "license": "Open data (data.gov.cy; confirm exact licence)",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "tax_department",
+      "section": "tax_identifiers",
+      "source_url": "https://www.mof.gov.cy/mof/tax/taxdep.nsf",
+      "access": "public",
+      "license": "Validation only",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "he32_financial_statements",
+      "section": "financial_statements, shareholders (planning-only)",
+      "source_url": "https://www.companies.gov.cy/en/company-lifecycle/search-for-company-information",
+      "access": "paid",
+      "license": "Public/paid (EUR 10 detailed search; scanned PDF)",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "ubo_register",
+      "section": "beneficial_owners (planning-only)",
+      "source_url": "https://www.companies.gov.cy/en/",
+      "access": "restricted",
+      "license": "Access conditions / fee (post-CJEU)",
+      "retrieved_at": null
+    }
+  ]
+}

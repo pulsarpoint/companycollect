@@ -1,0 +1,13 @@
+{
+  "_note": "SCHEMATIC illustrative record — not a real company. The data.gov.cy CSV resource URL was not resolved during discovery, so no real open record was downloaded. Field names follow the documented DRCIP eSearch/open-CSV schema; values are placeholders.",
+  "registration_number": "HE123456",
+  "name": "Example Holdings Ltd",
+  "type": "company",
+  "status": "operational",
+  "registration_date": "2014-03-10",
+  "registered_address": "1 Example Street, 1010 Nicosia",
+  "officers": [
+    { "name": "John Doe", "role": "director" },
+    { "name": "Jane Roe", "role": "secretary" }
+  ]
+}

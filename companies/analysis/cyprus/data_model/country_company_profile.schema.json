@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Cyprus Company Profile",
+  "description": "Country-specific company profile for Cyprus. The open spine is the DRCIP register (data.gov.cy CSV + free eSearch), keyed on the HE registration number, and uniquely includes named officers. Tax/VAT identifiers come from the Tax Department/VIES. Financials are public but PAID and document-based (scanned HE32 PDFs) — represented as a planning-only section. Shareholders and beneficial owners are NOT in open data.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Cyprus" },
+    "country_slug": { "type": "string", "const": "cyprus" },
+    "country_profile_version": { "type": "string", "description": "Profile schema version date." },
+    "registration": {
+      "type": "object",
+      "description": "DRCIP registration identity — the open spine.",
+      "required": ["registration_number"],
+      "properties": {
+        "registration_number": {
+          "type": "string",
+          "description": "DRCIP registration number and company id. Prefix encodes entity type (HE=company, BN=business name, EE=partnership, AE=overseas).",
+          "x-source": "drcip_register",
+          "x-source-path": "registration_number",
+          "x-join-key": true,
+          "x-freshness": "regular",
+          "x-access": "public"
+        },
+        "entity_type": {
+          "type": "string",
+          "description": "company | business name | partnership | overseas company.",
+          "x-source": "drcip_register",
+          "x-source-path": "type"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "description": "Tax and VAT identifiers — separate from the HE number; sourced per company from the Tax Department / VIES (not in the open CSV).",
+      "properties": {
+        "tic": {
+          "type": ["string", "null"],
+          "description": "Tax Identification Code (tax id).",
+          "x-source": "tax_department",
+          "x-source-path": "tic",
+          "x-access": "public"
+        },
+        "vat_number": {
+          "type": ["string", "null"],
+          "description": "Cyprus VAT number: CY + 8 digits + a letter (e.g. CY12345678X).",
+          "x-source": "tax_department",
+          "x-source-path": "vat_number",
+          "x-access": "public"
+        },
+        "vat_status": {
+          "type": ["string", "null"],
+          "description": "VIES validity at validation time.",
+          "x-source": "tax_department",
+          "x-source-path": "vat_status"
+        }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "description": "Names and legal form.",
+      "properties": {
+        "legal_name": {
+          "type": "string",
+          "description": "Registered name (Greek and/or English).",
+          "x-source": "drcip_register",
+          "x-source-path": "name"
+        },
+        "company_type": {
+          "type": ["string", "null"],
+          "description": "Refined type incl. Ltd/Plc from the name suffix.",
+          "x-source": "drcip_register",
+          "x-source-path": "type+name"
+        }
+      }
+    },
+    "status": {
+      "type": "object",
+      "description": "Lifecycle status.",
+      "properties": {
+        "value": {
+          "type": "string",
+          "description": "operational | struck-off | dissolved | under liquidation | ...",
+          "x-source": "drcip_register",
+          "x-source-path": "status"
+        }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "description": "Activity classification. NOTE: no public NACE/activity code exists in the Cyprus open register.",
+      "properties": {
+        "activity_code": {
+          "type": "null",
+          "description": "not_available_in_open_sources for Cyprus.",
+          "x-source": null
+        }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "registration_date": {
+          "type": ["string", "null"],
+          "format": "date",
+          "description": "Date of registration / incorporation.",
+          "x-source": "drcip_register",
+          "x-source-path": "registration_date"
+        }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "description": "Registered office; municipality/region derived by parsing the free-text address.",
+      "properties": {
+        "registered_address": {
+          "type": ["string", "null"],
+          "x-source": "drcip_register",
+          "x-source-path": "registered_address"
+        },
+        "municipality": {
+          "type": ["string", "null"],
+          "description": "Town, parsed from the address.",
+          "x-source": "drcip_register",
+          "x-source-path": "registered_address(parsed)"
+        },
+        "region": {
+          "type": ["string", "null"],
+          "description": "District: Nicosia | Limassol | Larnaca | Paphos | Famagusta.",
+          "x-source": "drcip_register",
+          "x-source-path": "registered_address(parsed)"
+        }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Directors and the secretary — present in the OPEN DRCIP CSV (a Cyprus distinctive). PERSONAL DATA (GDPR). Shareholders are NOT here.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "drcip_register", "x-source-path": "officers[].name", "x-personal-data": true },
+          "role": { "type": "string", "description": "director | secretary", "x-source": "drcip_register", "x-source-path": "officers[].role" }
+        }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Public but PAID (EUR 10 detailed search) and document-based (scanned HE32 + audited statements, PDF). No structured open figures; requires OCR/parsing or a commercial provider. Currency EUR.",
+      "x-access": "paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": "string", "x-source": "he32_financial_statements", "x-source-path": "financial_statements.fiscal_year" },
+          "balance_sheet": { "type": ["object", "null"], "x-source": "he32_financial_statements", "x-source-path": "financial_statements.balance_sheet" },
+          "income_statement": { "type": ["object", "null"], "x-source": "he32_financial_statements", "x-source-path": "financial_statements.income_statement" },
+          "share_capital": { "type": ["number", "null"], "x-source": "he32_financial_statements", "x-source-path": "annual_return.share_capital" },
+          "auditor_report": { "type": ["object", "null"], "x-source": "he32_financial_statements", "x-source-path": "financial_statements.auditor_report" },
+          "currency": { "type": "string", "const": "EUR" }
+        }
+      }
+    },
+    "shareholders": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Shareholders snapshot from the PAID HE32 annual return (not in the open register). Personal data.",
+      "x-access": "paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "he32_financial_statements", "x-source-path": "annual_return.shareholders[]", "x-personal-data": true }
+        }
+      }
+    },
+    "beneficial_owners": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Restricted UBO register (access conditions/fee, post-CJEU). Personal data. Distinct from officers and shareholders.",
+      "x-access": "restricted",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "ubo_register", "x-source-path": "beneficial_owners[].name", "x-personal-data": true },
+          "ownership_percentage": { "type": ["number", "null"], "x-source": "ubo_register", "x-source-path": "beneficial_owners[].ownership_percentage" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "Per-section provenance: which source supplied which part, with access/freshness.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

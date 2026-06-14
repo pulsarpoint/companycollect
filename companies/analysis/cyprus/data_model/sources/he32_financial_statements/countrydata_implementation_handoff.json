@@ -1,0 +1,83 @@
+{
+  "country": "Cyprus",
+  "country_slug": "cyprus",
+  "source_slug": "he32_financial_statements",
+  "source_identity": "cyprus_he32_financial_statements",
+  "source_package": "he32financials",
+  "env_prefix": "CY_HE32",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "HE32 annual return + audited financial statements (DRCIP)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Department of Registrar of Companies and Intellectual Property (DRCIP)",
+    "source_url": "https://www.companies.gov.cy/en/company-lifecycle/search-for-company-information",
+    "license": "Public (filed in the register); detailed search EUR 10 per company; no bulk redistribution implied",
+    "access": "paid",
+    "data_freshness": "annual filing",
+    "attribution": "Attribute DRCIP"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": true,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://efiling.drcor.mcit.gov.cy/DrcorPublic/SearchForm.aspx",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf"],
+    "compression": null,
+    "encoding": "binary",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "per paid detailed search (EUR 10/company)"
+  },
+  "snapshot": {
+    "strategy": "store_paid_pdf_plus_parsed_json_when_lawfully_acquired",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "He32FinancialStatement",
+    "date_formats": ["2006-01-02", "02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": ["1.234,56", "1,234.56"],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["registration_number", "fiscal_year"],
+    "join_keys": ["registration_number"],
+    "dedupe_keys": ["registration_number", "fiscal_year"]
+  },
+  "mapping_rules": {
+    "financials": "Map balance_sheet/income_statement into financials[] per fiscal_year once OCR/parsed. Currency EUR.",
+    "owners": "Map annual_return.shareholders[] into owners[] (snapshot) — personal data, planning-only.",
+    "share_capital": "Map annual_return.share_capital (EUR) into the matching financials/registration field."
+  },
+  "fixture_requirements": [
+    "planning-only: do NOT fetch paid PDFs in CI",
+    "synthetic balance sheet + income statement fixture for the parser",
+    "synthetic HE32 annual return with shareholders",
+    "malformed/garbled OCR text fixture"
+  ],
+  "live_test_plan": {
+    "smoke": "No automated live fetch — access is paid per company and document-based. Use synthetic fixtures only.",
+    "full": "Only behind explicit, lawful, paid acquisition with a stored PDF; never bulk-crawl the paid search."
+  },
+  "blockers": [
+    "Paid: EUR 10 per company detailed search; no bulk access.",
+    "Document-based scanned PDFs — no structured XBRL/CSV; requires OCR/parsing.",
+    "No bulk redistribution rights implied; treat as planning-only.",
+    "Shareholders/directors are personal data (GDPR)."
+  ]
+}
