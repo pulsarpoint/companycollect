@@ -1,0 +1,20 @@
+[
+  {
+    "name": "KBO Open Data - full file (requires free registration; resolve URL after login)",
+    "slug": "kbo_open_data_full",
+    "type": "bulk",
+    "url": "https://kbopub.economie.fgov.be/kbo-open-data/login",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "NBB CBSO CONSULT (per-entity annual accounts; free)",
+    "slug": "nbb_cbso_consult",
+    "type": "bulk",
+    "url": "https://consult.cbso.nbb.be/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
