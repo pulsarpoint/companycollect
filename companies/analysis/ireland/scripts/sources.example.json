@@ -1,0 +1,29 @@
+[
+  {
+    "name": "CRO Open Data — Company Records (CSV zip)",
+    "slug": "cro_company_records",
+    "type": "bulk",
+    "url": "https://opendata.cro.ie/dataset/bf6f837d-0946-4c14-9a99-82cd6980c121/resource/3fef41bc-b8f4-4b10-8434-ce51c29b1bba/download/companies.csv.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "CRO Open Data — Financial Statements 2023 (CSV)",
+    "slug": "cro_financial_statements_2023",
+    "type": "bulk",
+    "url": "https://opendata.cro.ie/dataset/99e64d94-0a2f-4cd1-b237-7164bec1426e/resource/dd413039-f628-4931-9788-dfc38eaf6b99/download/financial_statements_2023.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "CRO Open Data — Financial Statements 2022 (CSV)",
+    "slug": "cro_financial_statements_2022",
+    "type": "bulk",
+    "url": "https://opendata.cro.ie/dataset/99e64d94-0a2f-4cd1-b237-7164bec1426e/resource/508d4f8a-74a1-40c7-8b86-cdf0d54a4929/download/financial_statements.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
