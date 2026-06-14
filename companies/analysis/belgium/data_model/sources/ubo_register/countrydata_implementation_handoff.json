@@ -1,0 +1,63 @@
+{
+  "country": "Belgium",
+  "country_slug": "belgium",
+  "source_slug": "ubo_register",
+  "source_identity": "belgium_ubo_register",
+  "source_package": "uboregister",
+  "env_prefix": "UBO",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "UBO register (beneficial ownership)",
+    "source_type": "beneficial_ownership_register",
+    "organization": "FOD Financiën / SPF Finances",
+    "source_url": "https://finances.belgium.be/fr/E-services/ubo-register",
+    "license": "Restricted (legitimate interest / fee)",
+    "access": "restricted",
+    "data_freshness": "continuous",
+    "attribution": "Source: UBO register (SPF Finances) — restricted."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["UBO_MYMINFIN_CREDENTIALS"],
+    "note": "Restricted: authorities / obliged entities / legitimate interest, via MyMinfin, fee. Not open. Sensitive PII."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "MyMinfin (restricted)",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-company beneficial owners",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Restricted per-company access; no open bulk."},
+    "rate_limit": "per access regime"
+  },
+  "snapshot": {"strategy": "restricted_no_ingest", "file_extension": null, "preserve_raw_download": false},
+  "parsing": {
+    "record_type_hint": "UboBeneficialOwner",
+    "date_formats": ["02-01-2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Sensitive PII — minimize/redact. Join via EnterpriseNumber. Only with lawful access."
+  },
+  "keys": {"primary_keys": ["EnterpriseNumber", "beneficial_owner"], "join_keys": ["EnterpriseNumber"], "dedupe_keys": ["EnterpriseNumber + beneficial_owner"]},
+  "mapping_rules": {
+    "beneficial_owners": "Map to owners[] only with lawful access; minimize PII.",
+    "matching": "Join via EnterpriseNumber."
+  },
+  "fixture_requirements": ["planning-only — no fixtures until lawful access"],
+  "live_test_plan": {
+    "smoke": "Not applicable — restricted access.",
+    "full": "Out of scope for open ingestion. Only with legitimate-interest access + GDPR handling."
+  },
+  "blockers": [
+    "Restricted access (legitimate interest / obliged entity / fee).",
+    "Sensitive PII (GDPR) — minimize.",
+    "Not open data."
+  ]
+}

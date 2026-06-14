@@ -1,0 +1,84 @@
+{
+  "country": "Belgium",
+  "country_slug": "belgium",
+  "source_slug": "nbb_cbso_financials",
+  "source_identity": "belgium_nbb_cbso_financials",
+  "source_package": "nbbcbso",
+  "env_prefix": "NBB_CBSO",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "NBB Central Balance Sheet Office (annual accounts, XBRL)",
+    "source_type": "official_financial_disclosure",
+    "organization": "NBB/BNB — Centrale des bilans / Balanscentrale",
+    "source_url": "https://www.nbb.be/en/central-balance-sheet-office",
+    "license": "Free (Authentic Data); Improved Data paid",
+    "access": "public_with_free_account",
+    "data_freshness": "annual; XBRL since 2007, CSV since 2022",
+    "attribution": "Source: National Bank of Belgium — Central Balance Sheet Office."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["NBB_CBSO_CLIENT_ID", "NBB_CBSO_API_KEY"],
+    "note": "Free developer account at developer.cbso.nbb.be (CLIENT_ID + approval). Authentic Data is free; Improved Data is paid. CONSULT (consult.cbso.nbb.be) is free per-entity without an account."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://ws.cbso.nbb.be/ (web services; confirm from technical guide)",
+    "download_url": "https://consult.cbso.nbb.be/ (per-entity XBRL/CSV/PDF)",
+    "http_method": "GET",
+    "headers_required": [{"name": "X-Request-Id", "value": "<uuid>", "note": "per guide"}, {"name": "NBB-CBSO-Subscription-Key", "value": "<api-key>", "note": "subscription key"}],
+    "formats": ["xbrl", "json", "csv", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-company per-boekjaar filing",
+    "total_results_path": null,
+    "pagination": {"type": "reference_then_document", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Authentic Data Query: list a company's deposit references by EnterpriseNumber, then fetch each filing (XBRL/JSON). Authentic Data Daily Extract: daily delta of new filings. Confirm exact endpoints from the CBSO web services technical guide."},
+    "rate_limit": "per subscription"
+  },
+  "snapshot": {
+    "strategy": "xbrl_or_json_per_company_per_year",
+    "file_extension": ".xbrl",
+    "preserve_raw_download": true,
+    "note": "Persist the raw XBRL/JSON; parse against the versioned Belgian GAAP taxonomy."
+  },
+  "parsing": {
+    "record_type_hint": "NbbAnnualAccount",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["xbrl_plain_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Belgian GAAP XBRL; concepts by rubriek code (total assets ~ rubriek 20/58). Handle micro/abbreviated/full schema variants + yearly taxonomy versions. omzet/operating result/net_income nullable for micro/abbreviated. JSON-from-XBRL available since 2022. EUR."
+  },
+  "keys": {
+    "primary_keys": ["EnterpriseNumber", "boekjaar", "schema"],
+    "join_keys": ["EnterpriseNumber"],
+    "dedupe_keys": ["EnterpriseNumber + boekjaar + schema"]
+  },
+  "mapping_rules": {
+    "financial_statements": "One record per boekjaar x schema; map balans + resultatenrekening.",
+    "revenue": "omzet / chiffre d'affaires",
+    "net_income": "winst/verlies van het boekjaar",
+    "total_assets": "totaal van de activa",
+    "equity": "eigen vermogen",
+    "employees": "gemiddeld personeelsbestand (toelichting)",
+    "matching": "Clean join on EnterpriseNumber to the KBO spine."
+  },
+  "fixture_requirements": [
+    "full schema (volledig) with balance sheet + income statement (revenue present)",
+    "abbreviated (verkort) schema (reduced; revenue often absent)",
+    "micro schema",
+    "consolidated accounts",
+    "year with net loss (verlies); non-2022+ XBRL (no JSON)"
+  ],
+  "live_test_plan": {
+    "smoke": "With NBB_CBSO creds, query deposit references for a known EnterpriseNumber; fetch one XBRL/JSON; parse totaal activa + omzet + winst/verlies.",
+    "full": "Behind NBB_CBSO_* env gate, use the Daily Extract for new filings + reference queries for back years; parse per taxonomy version; normalize to financial_statements[]; join on EnterpriseNumber."
+  },
+  "blockers": [
+    "Free developer account (CLIENT_ID + subscription key) required for web services.",
+    "Belgian GAAP XBRL: schema variants + yearly taxonomy versions to handle.",
+    "Micro/abbreviated companies disclose reduced figures (no revenue).",
+    "Improved Data (rectified) is paid; use free Authentic Data."
+  ]
+}

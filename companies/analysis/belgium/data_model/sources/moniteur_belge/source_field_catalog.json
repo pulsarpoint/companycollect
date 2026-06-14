@@ -1,0 +1,24 @@
+{
+  "country": "Belgium",
+  "country_slug": "belgium",
+  "source_slug": "moniteur_belge",
+  "source_name": "Moniteur Belge / Belgisch Staatsblad (official gazette)",
+  "source_type": "official_gazette",
+  "organization": "FOD Justitie / SPF Justice",
+  "source_url": "https://www.ejustice.just.fgov.be/",
+  "license": "Free public",
+  "access": "public",
+  "data_freshness": "daily",
+  "record_shape": "per-publication (company act/announcement) HTML/PDF; searchable by enterprise number",
+  "primary_keys": ["publication_id"],
+  "join_keys": ["EnterpriseNumber"],
+  "field_count": 6,
+  "fields": [
+    {"path": "enterpriseNumber", "source_field": "Ondernemingsnummer", "english_name": "enterprise_number", "meaning": "Enterprise the publication concerns.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Present for company acts; join key.", "source_confidence": "high", "analysis_notes": "Clean join to the spine when present."},
+    {"path": "name", "source_field": "Naam / Dénomination", "english_name": "name", "meaning": "Company name in the publication.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "NL/FR", "limitations": null, "source_confidence": "medium", "analysis_notes": null},
+    {"path": "publicationType", "source_field": "Type de publication / Type publicatie", "english_name": "publication_type", "meaning": "Act type: incorporation / amendment of articles / appointment / dissolution / merger / ...", "data_type": "string", "semantic_type": "filing", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "NL/FR", "limitations": null, "source_confidence": "medium", "analysis_notes": "Lifecycle event type."},
+    {"path": "publicationDate", "source_field": "Datum / Date", "english_name": "publication_date", "meaning": "Publication date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Event date."},
+    {"path": "reference", "source_field": "Referentie / Référence", "english_name": "reference", "meaning": "Publication reference number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "documentUrl", "source_field": "PDF link", "english_name": "document_url", "meaning": "Link to the published act (PDF).", "data_type": "string", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null}
+  ]
+}

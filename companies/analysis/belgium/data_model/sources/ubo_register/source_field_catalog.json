@@ -1,0 +1,22 @@
+{
+  "country": "Belgium",
+  "country_slug": "belgium",
+  "source_slug": "ubo_register",
+  "source_name": "UBO register (beneficial ownership)",
+  "source_type": "beneficial_ownership_register",
+  "organization": "FOD Financiën / SPF Finances",
+  "source_url": "https://finances.belgium.be/fr/E-services/ubo-register",
+  "license": "Restricted (legitimate interest / authorities / obliged entities; fee) — planning-only",
+  "access": "restricted",
+  "data_freshness": "continuous",
+  "record_shape": "per-company beneficial owners (via MyMinfin; restricted)",
+  "primary_keys": ["EnterpriseNumber + beneficial_owner"],
+  "join_keys": ["EnterpriseNumber"],
+  "field_count": 4,
+  "fields": [
+    {"path": "enterpriseNumber", "source_field": "Ondernemingsnummer", "english_name": "enterprise_number", "meaning": "Entity whose beneficial owners are listed.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY (restricted; no values).", "source_confidence": "medium", "analysis_notes": "Join to the spine via EnterpriseNumber."},
+    {"path": "beneficialOwner.name", "source_field": "uiteindelijke begunstigde / bénéficiaire effectif", "english_name": "beneficial_owner_name", "meaning": "Beneficial owner (natural person).", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "NL/FR", "limitations": "PLANNING-ONLY. SENSITIVE PERSONAL DATA.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "beneficialOwner.ownership", "source_field": "percentage / nature of control", "english_name": "ownership_nature", "meaning": "Percentage / nature of beneficial control.", "data_type": "string", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "NL/FR", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null},
+    {"path": "category", "source_field": "category of beneficial owner", "english_name": "category", "meaning": "Category (direct/indirect/senior managing official).", "data_type": "string", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "NL/FR", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null}
+  ]
+}

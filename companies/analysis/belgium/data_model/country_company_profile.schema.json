@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Belgium Company Profile",
+  "description": "Country-specific combined company profile for Belgium. TOP-TIER OPEN with a single clean join key: the Ondernemingsnummer / EnterpriseNumber (10 digits = VAT root, 'BE' + number). Open company master = KBO/BCE Open Data (free bulk CSV, free registration); open structured financials = NBB Central Balance Sheet Office (free XBRL since 2007, free account). Both key on the EnterpriseNumber, so company<->financials is a CLEAN join (no fuzzy matching). Activity codes are clean (NACE-BEL). Beneficial ownership (UBO) is restricted (planning-only).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": {"type": "string", "const": "Belgium"},
+    "country_slug": {"type": "string", "const": "belgium"},
+    "country_profile_version": {"type": "string", "description": "Profile schema version / build date (YYYY-MM-DD)."},
+    "registration": {
+      "type": "object",
+      "required": ["enterprise_number"],
+      "properties": {
+        "enterprise_number": {"type": "string", "description": "10-digit enterprise number (Ondernemingsnummer / Numéro d'entreprise). Universal join key.", "x-source": "kbo_open_data", "x-source-path": "enterprise.csv:EnterpriseNumber", "x-join-key": true, "x-freshness": "daily"},
+        "vat_id": {"type": ["string", "null"], "description": "'BE' + enterprise number (digits only).", "x-source": "derived"},
+        "type_of_enterprise": {"type": ["string", "null"], "enum": ["natural_person", "legal_entity", null], "description": "1=natural person (PII), 2=legal entity.", "x-source": "kbo_open_data", "x-source-path": "enterprise.csv:TypeOfEnterprise"}
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "description": "Social/legal name (TypeOfDenomination=001), one language.", "x-source": "kbo_open_data", "x-source-path": "denomination.csv:Denomination"},
+        "names_by_language": {"type": ["array", "null"], "items": {"type": "object", "properties": {"language": {"type": "string"}, "type": {"type": "string"}, "value": {"type": "string"}}}, "x-source": "kbo_open_data", "x-source-path": "denomination.csv"},
+        "legal_form": {"type": ["string", "null"], "description": "Legal form (resolve code via code.csv).", "x-source": "kbo_open_data", "x-source-path": "enterprise.csv:JuridicalForm"}
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "code": {"type": ["string", "null"], "x-source": "kbo_open_data", "x-source-path": "enterprise.csv:Status"},
+        "juridical_situation": {"type": ["string", "null"], "x-source": "kbo_open_data", "x-source-path": "enterprise.csv:JuridicalSituation"},
+        "derived": {"type": ["string", "null"], "enum": ["active", "stopped", "liquidation", "dissolved", null]}
+      }
+    },
+    "activity": {
+      "type": "object",
+      "description": "Belgium HAS clean activity codes (NACE-BEL).",
+      "properties": {
+        "nace_main": {"type": ["string", "null"], "description": "Primary NACE-BEL (Classification=MAIN).", "x-source": "kbo_open_data", "x-source-path": "activity.csv:NaceCode (MAIN)"},
+        "nace_all": {"type": ["array", "null"], "items": {"type": "object", "properties": {"code": {"type": "string"}, "version": {"type": "string"}, "classification": {"type": "string"}}}, "x-source": "kbo_open_data", "x-source-path": "activity.csv"}
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "address": {"type": ["string", "null"], "x-source": "kbo_open_data", "x-source-path": "address.csv"},
+        "zipcode": {"type": ["string", "null"], "x-source": "kbo_open_data"},
+        "municipality": {"type": ["string", "null"], "x-source": "kbo_open_data", "x-source-path": "address.csv:MunicipalityNL/FR"},
+        "region": {"type": ["string", "null"], "description": "Vlaanderen / Wallonie / Bruxelles (derived from zipcode).", "x-source": "derived"}
+      }
+    },
+    "contact": {
+      "type": "object",
+      "properties": {
+        "website": {"type": ["string", "null"], "x-source": "kbo_open_data", "x-source-path": "contact.csv:Value (WEB)"},
+        "email": {"type": ["string", "null"], "x-source": "kbo_open_data", "x-source-path": "contact.csv:Value (EMAIL)"},
+        "phone": {"type": ["string", "null"], "x-source": "kbo_open_data", "x-source-path": "contact.csv:Value (TEL)"}
+      }
+    },
+    "establishments": {
+      "type": ["array", "null"],
+      "description": "Establishment units (vestigingseenheden) of the enterprise.",
+      "items": {"type": "object", "properties": {"establishment_number": {"type": "string"}, "name": {"type": ["string", "null"]}, "address": {"type": ["string", "null"]}, "nace_main": {"type": ["string", "null"]}}},
+      "x-source": "kbo_open_data",
+      "x-join-key": "EnterpriseNumber -> registration.enterprise_number",
+      "x-freshness": "daily"
+    },
+    "beneficial_owners": {
+      "type": ["array", "null"],
+      "description": "PLANNING-ONLY. UBO register — RESTRICTED (legitimate interest / fee). Sensitive PII. Not open.",
+      "items": {"type": "object", "properties": {"name": {"type": ["string", "null"]}, "ownership_nature": {"type": ["string", "null"]}, "category": {"type": ["string", "null"]}}},
+      "x-source": "ubo_register",
+      "x-join-key": "EnterpriseNumber",
+      "x-access": "restricted (planning-only)",
+      "x-personal-data": true
+    },
+    "acts": {
+      "type": ["array", "null"],
+      "description": "Official-gazette publications (incorporation/amendment/appointment/dissolution/merger).",
+      "items": {"type": "object", "properties": {"publication_type": {"type": ["string", "null"]}, "publication_date": {"type": ["string", "null"], "format": "date"}, "reference": {"type": ["string", "null"]}}},
+      "x-source": "moniteur_belge",
+      "x-join-key": "EnterpriseNumber"
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "OPEN, structured. NBB Central Balance Sheet Office annual accounts (free XBRL since 2007), joined on EnterpriseNumber. revenue/operating_result/net_income NULL for micro/abbreviated schemas (reduced disclosure).",
+      "items": {
+        "type": "object",
+        "required": ["fiscal_year", "source"],
+        "properties": {
+          "fiscal_year": {"type": "integer", "x-source-path": "header.boekjaar"},
+          "schema": {"type": ["string", "null"], "enum": ["micro", "abbreviated", "full", "consolidated", null], "x-source-path": "header.schema"},
+          "currency": {"type": ["string", "null"], "description": "Usually EUR.", "x-source-path": "header.valuta"},
+          "total_assets": {"type": ["number", "null"], "x-source-path": "balans.totaalActiva"},
+          "fixed_assets": {"type": ["number", "null"], "x-source-path": "balans.vasteActiva"},
+          "current_assets": {"type": ["number", "null"], "x-source-path": "balans.vlottendeActiva"},
+          "equity": {"type": ["number", "null"], "x-source-path": "balans.eigenVermogen"},
+          "liabilities": {"type": ["number", "null"], "x-source-path": "balans.schulden"},
+          "revenue": {"type": ["number", "null"], "description": "omzet/chiffre d'affaires — absent for micro/abbreviated.", "x-source-path": "resultaten.omzet"},
+          "operating_result": {"type": ["number", "null"], "x-source-path": "resultaten.bedrijfsresultaat"},
+          "net_income": {"type": ["number", "null"], "description": "winst/verlies van het boekjaar.", "x-source-path": "resultaten.winstVerliesBoekjaar"},
+          "employees": {"type": ["number", "null"], "description": "gemiddeld personeelsbestand (FTE).", "x-source-path": "toelichting.gemiddeldPersoneel"},
+          "source": {"type": "string", "enum": ["nbb_cbso_financials"], "description": "Financial source."}
+        }
+      },
+      "x-source": "nbb_cbso_financials",
+      "x-join-key": "EnterpriseNumber -> registration.enterprise_number",
+      "x-freshness": "annual",
+      "x-access": "open (free; Authentic Data)"
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "One entry per source contributing to this profile.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "source_url", "retrieved_at"],
+        "properties": {
+          "source_slug": {"type": "string"},
+          "source_name": {"type": "string"},
+          "source_url": {"type": "string"},
+          "license": {"type": "string"},
+          "access": {"type": "string"},
+          "retrieved_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

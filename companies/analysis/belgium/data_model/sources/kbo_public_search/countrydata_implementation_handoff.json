@@ -1,0 +1,56 @@
+{
+  "country": "Belgium",
+  "country_slug": "belgium",
+  "source_slug": "kbo_public_search",
+  "source_identity": "belgium_kbo_public_search",
+  "source_package": "kbopublicsearch",
+  "env_prefix": "KBO_PUBLIC_SEARCH",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "KBO Public Search (web) + Public Search Web Service",
+    "source_type": "official_registry_search",
+    "organization": "FOD Economie / SPF Économie",
+    "source_url": "https://kbopub.economie.fgov.be/kbopub/zoeknummerform.html",
+    "license": "Free web; web service paid",
+    "access": "public (web) / paid (web service)",
+    "data_freshness": "real-time",
+    "attribution": "Source: Crossroads Bank for Enterprises (KBO/BCE)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": true,
+    "credential_env_vars": ["KBO_PUBLIC_SEARCH_WS_KEY"],
+    "note": "Free web UI (no API). The Public Search Web Service is paid (~EUR 50 / 2000). Prefer kbo_open_data for ingestion."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "Public Search Web Service (SOAP; paid)",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": [],
+    "formats": ["soap/xml", "html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-company",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Per-company lookup by EnterpriseNumber/name. Paid web service; free web UI is not a clean API."},
+    "rate_limit": "per package"
+  },
+  "snapshot": {"strategy": "not_applicable", "file_extension": null, "preserve_raw_download": false},
+  "parsing": {
+    "record_type_hint": "KboPublicSearchEntry",
+    "date_formats": ["02-01-2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Overlaps kbo_open_data; same EnterpriseNumber key. Use only for authoritative single-company verification."
+  },
+  "keys": {"primary_keys": ["EnterpriseNumber"], "join_keys": ["EnterpriseNumber"], "dedupe_keys": ["EnterpriseNumber"]},
+  "mapping_rules": {"note": "Same mapping as kbo_open_data; verification only."},
+  "fixture_requirements": ["single active company lookup", "stopped company"],
+  "live_test_plan": {
+    "smoke": "Free web UI only without the paid web service; do not build ingestion on it.",
+    "full": "If the paid web service is contracted, look up by EnterpriseNumber; otherwise use kbo_open_data."
+  },
+  "blockers": ["Web service is paid; free access is web-UI only (no clean API). Use kbo_open_data for bulk."]
+}

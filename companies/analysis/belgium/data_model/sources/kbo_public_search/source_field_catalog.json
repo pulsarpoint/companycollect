@@ -1,0 +1,25 @@
+{
+  "country": "Belgium",
+  "country_slug": "belgium",
+  "source_slug": "kbo_public_search",
+  "source_name": "KBO Public Search (web) + Public Search Web Service",
+  "source_type": "official_registry_search",
+  "organization": "FOD Economie / SPF Économie",
+  "source_url": "https://kbopub.economie.fgov.be/kbopub/zoeknummerform.html",
+  "license": "Free web search; web service paid (~EUR 50 / 2000 requests)",
+  "access": "public (web) / paid (web service)",
+  "data_freshness": "real-time",
+  "record_shape": "per-company HTML page (web) or SOAP/XML response (paid web service)",
+  "primary_keys": ["EnterpriseNumber"],
+  "join_keys": ["EnterpriseNumber"],
+  "field_count": 7,
+  "fields": [
+    {"path": "enterpriseNumber", "source_field": "Ondernemingsnummer / Numéro d'entreprise", "english_name": "enterprise_number", "meaning": "Enterprise number; join key.", "data_type": "string", "semantic_type": "identifier", "example_values": ["0202.239.951"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Same key as KBO Open Data.", "source_confidence": "high", "analysis_notes": "Use the open data bulk for ingestion; this for ad-hoc lookups."},
+    {"path": "name", "source_field": "Naam / Dénomination", "english_name": "name", "meaning": "Current name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "NL/FR/DE", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "legalForm", "source_field": "Rechtsvorm / Forme légale", "english_name": "legal_form", "meaning": "Legal form.", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "NL/FR", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "status", "source_field": "Status / Statut", "english_name": "status", "meaning": "Status (active/stopped).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "NL/FR", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "address", "source_field": "Adres / Adresse", "english_name": "address", "meaning": "Registered office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "NL/FR", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "activities", "source_field": "Activiteiten / Activités (NACEBEL)", "english_name": "activities", "meaning": "NACE-BEL activities.", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "NACE-BEL", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "establishments", "source_field": "Vestigingseenheden / Unités d'établissement", "english_name": "establishments", "meaning": "Establishment units.", "data_type": "array", "semantic_type": "relationship", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null}
+  ]
+}

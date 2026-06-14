@@ -1,0 +1,84 @@
+{
+  "country": "Belgium",
+  "country_slug": "belgium",
+  "source_slug": "kbo_open_data",
+  "source_identity": "belgium_kbo_open_data",
+  "source_package": "kboopendata",
+  "env_prefix": "KBO_OPEN_DATA",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "KBO/BCE Open Data (Crossroads Bank for Enterprises)",
+    "source_type": "official_registry_bulk",
+    "organization": "FOD Economie / SPF Économie (KBO / BCE)",
+    "source_url": "https://economie.fgov.be/en/themes/enterprises/crossroads-bank-enterprises/services-everyone/cbe-open-data",
+    "license": "Licence-BCE-Open-Data (reuse; no direct marketing of personal data)",
+    "access": "public_with_free_registration",
+    "data_freshness": "daily (full + update; kept 31 days)",
+    "attribution": "Source: Crossroads Bank for Enterprises (KBO/BCE), FOD/SPF Economie. No direct-marketing reuse of personal data."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["KBO_OPEN_DATA_USER", "KBO_OPEN_DATA_PASSWORD"],
+    "note": "Free registration + terms acceptance. Download via the portal (login) or SFTP (request kbo-bce-webservice@economie.fgov.be). Not anonymous; not paid."
+  },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": "https://kbopub.economie.fgov.be/kbo-open-data",
+    "download_url": "https://kbopub.economie.fgov.be/kbo-open-data/login (resolve file URL after login) ; or SFTP",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "zip"],
+    "compression": "zip",
+    "encoding": "utf-8",
+    "record_path": "$ (multi-file CSV set inside the ZIP)",
+    "total_results_path": null,
+    "pagination": {"type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "One full ZIP (multi-file CSV) + daily update ZIP. Files: enterprise/establishment/denomination/address/activity/contact/branch/code/meta. Apply update files incrementally."},
+    "rate_limit": "daily file"
+  },
+  "snapshot": {
+    "strategy": "csv_multifile_join",
+    "file_extension": ".zip",
+    "preserve_raw_download": true,
+    "note": "Load each CSV; join denomination/address/activity/contact on EntityNumber; establishments on EnterpriseNumber; resolve codes via code.csv."
+  },
+  "parsing": {
+    "record_type_hint": "KboEnterprise + KboEstablishment + KboDenomination/Address/Activity/Contact",
+    "date_formats": ["02-01-2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "EnterpriseNumber/EstablishmentNumber stay strings (dotted format). EntityNumber is polymorphic (enterprise or establishment). Resolve Status/JuridicalForm/NACE via code.csv (multilingual). TypeOfEnterprise=1 -> PII. Pick one denomination Language consistently."
+  },
+  "keys": {
+    "primary_keys": ["EnterpriseNumber"],
+    "join_keys": ["EnterpriseNumber", "EstablishmentNumber", "EntityNumber"],
+    "dedupe_keys": ["EnterpriseNumber"]
+  },
+  "mapping_rules": {
+    "company_id": "EnterpriseNumber; vat_id = 'BE' + digits.",
+    "legal_name": "denomination where TypeOfDenomination=001 (social name), one language.",
+    "company_type": "JuridicalForm (resolve via code.csv).",
+    "status": "Status + JuridicalSituation (resolve via code.csv).",
+    "incorporation_date": "StartDate.",
+    "activity": "activity NaceCode where Classification=MAIN (NACE-BEL).",
+    "registered_address": "address (registered office TypeOfAddress).",
+    "establishments": "establishment.csv joined on EnterpriseNumber."
+  },
+  "fixture_requirements": [
+    "legal entity (TypeOfEnterprise=2) with denomination + address + MAIN NACE",
+    "natural person (TypeOfEnterprise=1) — PII handling",
+    "enterprise with multiple establishments",
+    "entity with multilingual denominations (NL/FR)",
+    "update-file row (incremental apply) + code.csv lookup"
+  ],
+  "live_test_plan": {
+    "smoke": "With KBO creds, download the full ZIP; assert enterprise.csv has EnterpriseNumber + Status and code.csv resolves JuridicalForm.",
+    "full": "Behind KBO_OPEN_DATA_* env gate, download full + apply daily update files; load multi-file CSV; build the enterprise master + establishments; resolve codes; join NBB financials on EnterpriseNumber."
+  },
+  "blockers": [
+    "Free registration required (portal/SFTP) — credentials needed.",
+    "License: no direct-marketing reuse of personal data (GDPR).",
+    "Multi-file join + code.csv resolution required."
+  ]
+}
