@@ -1,0 +1,24 @@
+[
+  {
+    "name": "dados.justica RCO — statistical registrations (CSV)",
+    "slug": "dados_justica_rco",
+    "type": "bulk",
+    "url": "https://dados.justica.gov.pt/dataset/4b089e72-5944-41f0-88c5-71e457fe068e/resource/1212c43c-375a-4a62-b968-936b4035a523/download/rco.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "_note": "Statistical monthly time series (CC-BY-SA) — NOT a per-company register."
+  },
+  {
+    "name": "publicacoes.mj.pt company acts (reference only — reCAPTCHA-gated)",
+    "slug": "publicacoes_mj",
+    "type": "api_page",
+    "url": "https://publicacoes.mj.pt/pesquisa.aspx",
+    "method": "GET",
+    "headers": {},
+    "page_param": "page",
+    "page_start": 0,
+    "max_pages": 0,
+    "_note": "Reference only — the company-acts search is reCAPTCHA-protected. Do NOT automate/bypass; use it manually (free per-company acts by NIPC)."
+  }
+]
