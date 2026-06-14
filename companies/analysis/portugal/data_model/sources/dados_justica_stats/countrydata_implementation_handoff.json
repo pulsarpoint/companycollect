@@ -1,0 +1,76 @@
+{
+  "country": "Portugal",
+  "country_slug": "portugal",
+  "source_slug": "dados_justica_stats",
+  "source_identity": "portugal_dados_justica_stats",
+  "source_package": "dadosjusticastats",
+  "env_prefix": "PT_DADOS_JUSTICA",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "dados.justica.gov.pt / dados.gov.pt — open statistical datasets",
+    "source_type": "open_data_portal",
+    "organization": "Direção-Geral da Política de Justiça (DGPJ) / IRN",
+    "source_url": "https://dados.justica.gov.pt/",
+    "license": "CC-BY-SA / CC-BY (per dataset)",
+    "access": "public",
+    "data_freshness": "monthly/quarterly",
+    "attribution": "Attribute DGPJ / dados.justica.gov.pt"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://dados.justica.gov.pt/api/3/action",
+    "download_url": "https://dados.justica.gov.pt/dataset/4b089e72-5944-41f0-88c5-71e457fe068e/resource/1212c43c-375a-4a62-b968-936b4035a523/download/rco.csv",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "xlsx", "xml", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "statistics_not_company_data",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "JusticaStatRow",
+    "date_formats": ["2006-01", "2006/01/02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "csv_delimiter": ","
+  },
+  "keys": {
+    "primary_keys": ["Year-Month"],
+    "join_keys": [],
+    "dedupe_keys": ["Year-Month"]
+  },
+  "mapping_rules": {
+    "none": "Statistical aggregates only; no per-company mapping. Use for context/benchmarks (registration/insolvency volumes)."
+  },
+  "fixture_requirements": [
+    "statistical time-series row"
+  ],
+  "live_test_plan": {
+    "smoke": "Download rco.csv and confirm it is a statistical time series (not per-company).",
+    "full": "Ingest the aggregate datasets for context only; not a company register."
+  },
+  "blockers": [
+    "Statistical aggregates only — no per-company register or financials."
+  ]
+}

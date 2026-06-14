@@ -1,0 +1,80 @@
+{
+  "country": "Portugal",
+  "country_slug": "portugal",
+  "source_slug": "publicacoes_mj",
+  "source_identity": "portugal_publicacoes_mj",
+  "source_package": "publicacoesmj",
+  "env_prefix": "PT_PUBLICACOES",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Publicações de atos societários (publicacoes.mj.pt)",
+    "source_type": "official_gazette",
+    "organization": "Ministério da Justiça",
+    "source_url": "https://publicacoes.mj.pt/",
+    "license": "Public (free to consult); reuse terms unclear",
+    "access": "public",
+    "data_freshness": "continuous",
+    "attribution": "Attribute Ministério da Justiça / publicacoes.mj.pt"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://publicacoes.mj.pt/pesquisa.aspx",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "reCAPTCHA-gated"
+  },
+  "snapshot": {
+    "strategy": "none_blocked",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "AtoSocietario",
+    "date_formats": ["02-01-2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["publication_id"],
+    "join_keys": ["nipc"],
+    "dedupe_keys": ["publication_id"]
+  },
+  "mapping_rules": {
+    "events": "Map acts into lifecycle events keyed on nipc (constituição/alterações/dissolução).",
+    "legal_name": "Use firma (free, manual).",
+    "officers": "Optionally extract gerência changes from the act text (manual) — PII (GDPR)."
+  },
+  "fixture_requirements": [
+    "planning-only: do NOT automate the reCAPTCHA-gated search",
+    "synthetic act fixture (constituição) for the parser"
+  ],
+  "live_test_plan": {
+    "smoke": "None — search is reCAPTCHA-protected. Manual lookups by NIPC only.",
+    "full": "Only via a sanctioned access path; never bypass the reCAPTCHA or scrape the search."
+  },
+  "blockers": [
+    "Company-acts search is reCAPTCHA-protected — must not be bypassed.",
+    "No open bulk/API; reuse terms unclear.",
+    "Act text may contain personal data (GDPR)."
+  ]
+}

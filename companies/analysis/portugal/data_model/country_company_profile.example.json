@@ -1,0 +1,106 @@
+{
+  "country": "Portugal",
+  "country_slug": "portugal",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "nipc": "500000000"
+  },
+  "tax_identifiers": {
+    "nif": "500000000",
+    "vat_id": "PT500000000",
+    "vat_valid": true
+  },
+  "legal_identity": {
+    "legal_name": "EXEMPLO SOCIEDADE, LDA.",
+    "legal_form": "Sociedade por quotas (Lda.)",
+    "objeto": null
+  },
+  "status": {
+    "estado": null
+  },
+  "activity": {
+    "cae_main": null
+  },
+  "capital": {
+    "capital_social": null,
+    "currency": "EUR"
+  },
+  "registered_location": {
+    "sede": null
+  },
+  "officers": [
+    {
+      "name": "[REDACTED — personal data, paid register]",
+      "role": "Gerente"
+    }
+  ],
+  "shareholders": [
+    {
+      "name": "[REDACTED — personal data, paid register]",
+      "share": null
+    }
+  ],
+  "beneficial_owners": [
+    {
+      "name": "[REDACTED — RCBE restricted, personal data]",
+      "nature_of_control": null
+    }
+  ],
+  "publications": [
+    {
+      "act_type": "[planning-only — publicacoes.mj.pt reCAPTCHA-gated]",
+      "publication_date": null,
+      "text": null
+    }
+  ],
+  "financial_statements": [
+    {
+      "fiscal_year": 2024,
+      "total_assets": null,
+      "equity": null,
+      "liabilities": null,
+      "turnover": null,
+      "net_result": null,
+      "employees": null,
+      "currency": "EUR"
+    }
+  ],
+  "registry_statistics": {
+    "available": true,
+    "note": "dados.justica.gov.pt (CC-BY-SA) provides statistical time series only (e.g. registos por transcrição requeridos online), not per-company rows."
+  },
+  "source_provenance": [
+    {
+      "source_slug": "vies_vat",
+      "section": "tax_identifiers",
+      "source_url": "https://ec.europa.eu/taxation_customs/vies/",
+      "access": "public",
+      "license": "validation only",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "registo_comercial",
+      "section": "registration/legal_identity/status/activity/capital/registered_location/officers/shareholders",
+      "source_url": "https://eportugal.gov.pt/ (Registo Comercial / IRN)",
+      "access": "paid",
+      "license": "paid certidão",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "ies_financials",
+      "section": "financial_statements",
+      "source_url": "https://www.ies.gov.pt/",
+      "access": "paid",
+      "license": "not openly published",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    },
+    {
+      "source_slug": "dados_justica_stats",
+      "section": "registry_statistics",
+      "source_url": "https://dados.justica.gov.pt/",
+      "access": "public",
+      "license": "CC-BY-SA",
+      "retrieved_at": "2026-06-14T00:00:00Z"
+    }
+  ]
+}

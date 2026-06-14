@@ -1,0 +1,50 @@
+{
+  "country": "Portugal",
+  "country_slug": "portugal",
+  "source_slug": "rcbe_register",
+  "source_name": "RCBE — Registo Central do Beneficiário Efetivo (beneficial owners)",
+  "source_type": "beneficial_ownership_register",
+  "organization": "IRN / Ministério da Justiça",
+  "source_url": "https://rcbe.justica.gov.pt/",
+  "license": "Restricted (access conditions; post-CJEU)",
+  "access": "restricted",
+  "data_freshness": "continuous",
+  "record_shape": "restricted_register (access-controlled)",
+  "primary_keys": ["nipc"],
+  "join_keys": ["nipc"],
+  "field_count": 2,
+  "fields": [
+    {
+      "path": "beneficiarios[].nome",
+      "source_field": "beneficiário efetivo",
+      "english_name": "beneficial_owner_name",
+      "meaning": "Natural person who ultimately owns or controls the entity (planning-only — restricted).",
+      "data_type": "string",
+      "semantic_type": "ownership",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "Portuguese",
+      "limitations": "Planning-only. Restricted (post-CJEU; legitimate interest / obliged entities). Personal data (GDPR). No values copied.",
+      "source_confidence": "medium",
+      "analysis_notes": "Not open bulk. Join on NIPC. Distinct from registered sócios."
+    },
+    {
+      "path": "beneficiarios[].natureza_controlo",
+      "source_field": "natureza e extensão do controlo",
+      "english_name": "nature_and_extent_of_control",
+      "meaning": "Nature and extent of the beneficial interest/control held.",
+      "data_type": "string",
+      "semantic_type": "ownership",
+      "example_values": [],
+      "nullable": true,
+      "repeatable": true,
+      "code_list": null,
+      "language": "Portuguese",
+      "limitations": "Planning-only; restricted.",
+      "source_confidence": "low",
+      "analysis_notes": "Only if/when lawful access is obtained."
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "country": "Portugal",
+  "country_slug": "portugal",
+  "source_slug": "rcbe_register",
+  "source_identity": "portugal_rcbe_register",
+  "source_package": "rcberegister",
+  "env_prefix": "PT_RCBE",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "RCBE — Registo Central do Beneficiário Efetivo (beneficial owners)",
+    "source_type": "beneficial_ownership_register",
+    "organization": "IRN / Ministério da Justiça",
+    "source_url": "https://rcbe.justica.gov.pt/",
+    "license": "Restricted (access conditions; post-CJEU)",
+    "access": "restricted",
+    "data_freshness": "continuous",
+    "attribution": "Attribute IRN / RCBE"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": null,
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "unknown"
+  },
+  "snapshot": {
+    "strategy": "none_planning_only",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "RcbeRecord",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["nipc"],
+    "join_keys": ["nipc"],
+    "dedupe_keys": ["nipc"]
+  },
+  "mapping_rules": {
+    "owners": "Map beneficiarios[] into owners[] (beneficial) only if/when lawful access is obtained — planning-only, personal data."
+  },
+  "fixture_requirements": [
+    "planning-only: no live access; synthetic UBO fixture only if implemented"
+  ],
+  "live_test_plan": {
+    "smoke": "None — restricted register; do not attempt automated access.",
+    "full": "Only under a documented lawful access agreement; never bypass access controls."
+  },
+  "blockers": [
+    "Restricted access (post-CJEU) — not open bulk.",
+    "Requires authorised access (legitimate interest / obliged entities).",
+    "Beneficial owners are personal data (GDPR)."
+  ]
+}

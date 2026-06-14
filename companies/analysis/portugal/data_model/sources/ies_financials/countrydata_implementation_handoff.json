@@ -1,0 +1,77 @@
+{
+  "country": "Portugal",
+  "country_slug": "portugal",
+  "source_slug": "ies_financials",
+  "source_identity": "portugal_ies_financials",
+  "source_package": "iesfinancials",
+  "env_prefix": "PT_IES",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "IES — Informação Empresarial Simplificada (annual accounts)",
+    "source_type": "official_financial_disclosure",
+    "organization": "Autoridade Tributária (AT) / INE / Banco de Portugal / IRN",
+    "source_url": "https://www.ies.gov.pt/",
+    "license": "Not openly published (filed to AT/INE/Banco de Portugal)",
+    "access": "restricted",
+    "data_freshness": "annual filing",
+    "attribution": "Attribute AT / INE / Banco de Portugal"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://www.ies.gov.pt/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf", "xbrl"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "not openly accessible"
+  },
+  "snapshot": {
+    "strategy": "none_not_open",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "IesAnnualAccounts",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["1.234.567,89"],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["nipc", "fiscal_year"],
+    "join_keys": ["nipc"],
+    "dedupe_keys": ["nipc", "fiscal_year"]
+  },
+  "mapping_rules": {
+    "financials": "Map balanço (ativo/capital próprio/passivo) + DR (volume de negócios/resultado líquido) into financials[] per fiscal_year. Currency EUR. Source: paid register / commercial provider (not openly published)."
+  },
+  "fixture_requirements": [
+    "planning-only: synthetic IES balance sheet + income statement fixture"
+  ],
+  "live_test_plan": {
+    "smoke": "None — IES financials are not openly published per company.",
+    "full": "Obtain structured financials via the paid register (depósito de contas) or a commercial provider; never bypass access controls."
+  },
+  "blockers": [
+    "IES financial statements not openly published per company (filed to AT/INE/Banco de Portugal).",
+    "Per-company figures only via the paid register or a commercial provider.",
+    "Banco de Portugal publishes only aggregate sector statistics."
+  ]
+}

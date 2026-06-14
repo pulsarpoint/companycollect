@@ -1,0 +1,88 @@
+{
+  "country": "Portugal",
+  "country_slug": "portugal",
+  "source_slug": "registo_comercial",
+  "source_identity": "portugal_registo_comercial",
+  "source_package": "registocomercial",
+  "env_prefix": "PT_RC",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Registo Comercial — certidão permanente (IRN)",
+    "source_type": "official_registry",
+    "organization": "Instituto dos Registos e do Notariado (IRN) / Ministério da Justiça",
+    "source_url": "https://eportugal.gov.pt/servicos/aceder-a-certidao-permanente-de-registo-comercial",
+    "license": "Public register (paid access; reuse terms unclear)",
+    "access": "paid",
+    "data_freshness": "real-time",
+    "attribution": "Attribute IRN / Registo Comercial"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "local_sample_only",
+    "base_url": "https://eportugal.gov.pt/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "paid per certidão / access code"
+  },
+  "snapshot": {
+    "strategy": "none_paid",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "CertidaoPermanente",
+    "date_formats": ["02-01-2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["1.234.567,89"],
+    "malformed_record_policy": "fail_closed_require_human_review"
+  },
+  "keys": {
+    "primary_keys": ["nipc"],
+    "join_keys": ["nipc"],
+    "dedupe_keys": ["nipc"]
+  },
+  "mapping_rules": {
+    "company_id": "Use nipc (9-digit; = NIF).",
+    "tax_id": "Use nipc.",
+    "vat_id": "PT + nipc.",
+    "legal_name": "Use firma / denominação.",
+    "company_type": "Use natureza jurídica.",
+    "status": "Use estado (ativa/dissolvida/insolvente).",
+    "registered_address": "Use sede.",
+    "activity_code": "Use CAE (Rev.3).",
+    "share_capital": "Use capital social (EUR).",
+    "shareholders": "Use sócios — PII (GDPR).",
+    "officers": "Use gerência/administração — PII (GDPR)."
+  },
+  "fixture_requirements": [
+    "planning-only: do NOT automate paid certidão access",
+    "synthetic certidão fixture if implemented via a paid/vendor channel"
+  ],
+  "live_test_plan": {
+    "smoke": "None — per-company data is paid. Manual certidão lookups only.",
+    "full": "Only via the paid certidão permanente or a commercial provider; no open bulk/API."
+  },
+  "blockers": [
+    "Per-company register data is paid (certidão permanente ~EUR 25/year or access codes).",
+    "No open bulk export / API.",
+    "Reuse terms unclear; sócios/gerência are personal data (GDPR)."
+  ]
+}

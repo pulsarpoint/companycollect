@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Portugal Company Profile",
+  "description": "Country-specific company profile for Portugal. Unlike the Nordics/Baltics, Portugal has NO open per-company register: the Registo Comercial (IRN/Justiça) is PAID per certidão, the publicações obrigatórias (publicacoes.mj.pt) are reCAPTCHA-gated, the IES financial statements are NOT openly published, and dados.justica.gov.pt only exposes STATISTICAL aggregates (no company rows). Identity keys on the NIPC (9 digits = NIF; VAT = PT + NIPC). Structured per-company data + financials are realistically obtainable only via the paid register or commercial aggregators (Racius/Informa D&B/Iberinform). VIES gives free VAT validation (+ sometimes a name). This profile is therefore largely PLANNING-ONLY: company_id is derivable, but officers/owners/financials are paid/redacted.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Portugal" },
+    "country_slug": { "type": "string", "const": "portugal" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["nipc"],
+      "properties": {
+        "nipc": {
+          "type": ["string", "null"],
+          "description": "9-digit NIPC (Número de Identificação de Pessoa Coletiva). Company id and join key; equals the NIF for legal persons. NOT in any open per-company dataset — from the paid register, a commercial aggregator, or a known VAT number.",
+          "x-source": "registo_comercial",
+          "x-source-path": "nipc",
+          "x-join-key": true,
+          "x-access": "paid"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "nif": { "type": ["string", "null"], "description": "NIF — equals the NIPC for legal persons.", "x-source": "registo_comercial", "x-source-path": "nipc" },
+        "vat_id": { "type": ["string", "null"], "description": "PT + NIPC.", "x-source": "vies_vat", "x-source-path": "vatNumber" },
+        "vat_valid": { "type": ["boolean", "null"], "x-source": "vies_vat", "x-source-path": "valid", "x-access": "public" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "description": "Firma. PAID register, or a commercial aggregator / VIES name signal.", "x-source": "registo_comercial", "x-source-path": "firma", "x-access": "paid" },
+        "legal_form": { "type": ["string", "null"], "description": "Natureza jurídica (Lda., S.A., Unipessoal, ...).", "x-source": "registo_comercial", "x-source-path": "natureza_juridica", "x-access": "paid" },
+        "objeto": { "type": ["string", "null"], "description": "Object / business purpose.", "x-source": "registo_comercial", "x-source-path": "objeto", "x-access": "paid" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "estado": { "type": ["string", "null"], "description": "Status (ativa, dissolvida, insolvente, ...).", "x-source": "registo_comercial", "x-source-path": "estado", "x-access": "paid" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "cae_main": { "type": ["string", "null"], "description": "Main CAE Rev.3 activity code.", "x-source": "registo_comercial", "x-source-path": "cae", "x-access": "paid" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "properties": {
+        "capital_social": { "type": ["number", "null"], "description": "Share capital (EUR).", "x-source": "registo_comercial", "x-source-path": "capital_social", "x-access": "paid" },
+        "currency": { "type": "string", "const": "EUR" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "sede": { "type": ["string", "null"], "description": "Registered office address.", "x-source": "registo_comercial", "x-source-path": "sede", "x-access": "paid" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY / PAID. Gerência / administração from the register or an aggregator. PERSONAL DATA (GDPR) — redacted in committed samples.",
+      "x-access": "paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "registo_comercial", "x-source-path": "gerencia[].nome", "x-personal-data": true },
+          "role": { "type": ["string", "null"], "x-source": "registo_comercial", "x-source-path": "gerencia[].cargo" }
+        }
+      }
+    },
+    "shareholders": {
+      "type": "array",
+      "description": "PLANNING-ONLY / PAID. Sócios (quotaholders) from the register or an aggregator. PERSONAL DATA (GDPR) — redacted in committed samples.",
+      "x-access": "paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "registo_comercial", "x-source-path": "socios[].nome", "x-personal-data": true },
+          "share": { "type": ["string", "null"], "x-source": "registo_comercial", "x-source-path": "socios[].quota" }
+        }
+      }
+    },
+    "beneficial_owners": {
+      "type": "array",
+      "description": "PLANNING-ONLY. RCBE (Registo Central do Beneficiário Efetivo) — restricted post-CJEU (no general public access). PERSONAL DATA (GDPR).",
+      "x-access": "restricted",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source": "rcbe_register", "x-source-path": "beneficiarios[].nome", "x-personal-data": true },
+          "nature_of_control": { "type": ["string", "null"], "x-source": "rcbe_register", "x-source-path": "beneficiarios[].natureza_controlo" }
+        }
+      }
+    },
+    "publications": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Mandatory acts (publicações obrigatórias) at publicacoes.mj.pt — reCAPTCHA-gated, not bulk-downloadable.",
+      "x-access": "blocked_authentication",
+      "items": {
+        "type": "object",
+        "properties": {
+          "act_type": { "type": ["string", "null"], "x-source": "publicacoes_mj", "x-source-path": "tipo_ato" },
+          "publication_date": { "type": ["string", "null"], "format": "date", "x-source": "publicacoes_mj", "x-source-path": "data_publicacao" },
+          "text": { "type": ["string", "null"], "x-source": "publicacoes_mj", "x-source-path": "texto_ato" }
+        }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. IES (Informação Empresarial Simplificada): balanço + demonstração de resultados (SNC), EUR, multi-year. NOT openly published — realistically via a commercial aggregator that parses the IES, or the paid register. Redacted/empty in committed samples.",
+      "x-access": "paid",
+      "items": {
+        "type": "object",
+        "required": ["fiscal_year"],
+        "properties": {
+          "fiscal_year": { "type": "integer", "x-source": "ies_financials", "x-source-path": "ano" },
+          "total_assets": { "type": ["number", "null"], "x-source": "ies_financials", "x-source-path": "ativo" },
+          "equity": { "type": ["number", "null"], "x-source": "ies_financials", "x-source-path": "capital_proprio" },
+          "liabilities": { "type": ["number", "null"], "x-source": "ies_financials", "x-source-path": "passivo" },
+          "turnover": { "type": ["number", "null"], "x-source": "ies_financials", "x-source-path": "volume_negocios" },
+          "net_result": { "type": ["number", "null"], "x-source": "ies_financials", "x-source-path": "resultado_liquido" },
+          "employees": { "type": ["integer", "null"], "x-source": "ies_financials", "x-source-path": "n_trabalhadores" },
+          "currency": { "type": "string", "const": "EUR" }
+        }
+      }
+    },
+    "registry_statistics": {
+      "type": "object",
+      "description": "The ONLY truly open dataset family (dados.justica.gov.pt, CC-BY-SA): STATISTICAL time series about registrations/insolvencies — NOT per-company. Context only.",
+      "x-access": "public",
+      "x-source": "dados_justica_stats",
+      "properties": {
+        "available": { "type": "boolean" },
+        "note": { "type": "string" }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

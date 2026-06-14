@@ -1,0 +1,78 @@
+{
+  "country": "Portugal",
+  "country_slug": "portugal",
+  "source_slug": "vies_vat",
+  "source_identity": "portugal_vies_vat",
+  "source_package": "viesvat",
+  "env_prefix": "PT_VIES",
+  "implementation_status": "sample_only",
+  "source": {
+    "source_name": "AT / VIES — VAT validation (PT NIF)",
+    "source_type": "official_tax",
+    "organization": "Autoridade Tributária e Aduaneira (AT) / European Commission",
+    "source_url": "https://ec.europa.eu/taxation_customs/vies/services/checkVatService",
+    "license": "Validation only",
+    "access": "public",
+    "data_freshness": "real-time",
+    "attribution": "European Commission VIES / AT"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://ec.europa.eu/taxation_customs/vies/services/checkVatService",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Content-Type: text/xml"],
+    "formats": ["soap", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "none",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": "throttled"
+  },
+  "snapshot": {
+    "strategy": "enrichment_lookup_only",
+    "file_extension": ".xml",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "ViesValidation",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": [],
+    "join_keys": ["nipc", "vat_id"],
+    "dedupe_keys": []
+  },
+  "mapping_rules": {
+    "vat_id": "Derive PT + NIPC; validate via VIES.",
+    "legal_name": "Use the VIES name (where returned) to confirm a company's name for a known NIPC."
+  },
+  "fixture_requirements": [
+    "valid PT VAT validation (with name)",
+    "invalid PT VAT validation"
+  ],
+  "live_test_plan": {
+    "smoke": "Validate one PT VAT (PT + NIPC) via SOAP; capture name if returned; respect rate limits.",
+    "full": "Per-company enrichment only; never bulk-enumerate."
+  },
+  "blockers": [
+    "Validation only — does not enumerate companies; not redistributable as a list.",
+    "Name may be suppressed by VIES."
+  ]
+}
