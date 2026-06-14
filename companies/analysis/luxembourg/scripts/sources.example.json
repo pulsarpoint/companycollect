@@ -1,0 +1,26 @@
+[
+  {
+    "name": "RCS public search (reference only — captcha-gated, no open API)",
+    "slug": "rcs_register",
+    "type": "api_page",
+    "url": "https://www.lbr.lu/mjrcs/jsp/secured/RechercheController.action",
+    "method": "GET",
+    "headers": {},
+    "page_param": "page",
+    "page_start": 0,
+    "max_pages": 0,
+    "_note": "Reference only — the RCS search is captcha-gated with no open API/bulk. Do NOT automate/bypass; use the portal manually (basic info + document downloads incl. annual accounts are free)."
+  },
+  {
+    "name": "data.public.lu — STATEC enterprise statistics (uData API; not the register)",
+    "slug": "data_public_lu",
+    "type": "api_page",
+    "url": "https://data.public.lu/api/1/datasets/?q=entreprises",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "_note": "Statistical aggregates only (STATEC); not a company register. No RCS/financials bulk."
+  }
+]
