@@ -1,0 +1,20 @@
+[
+  {
+    "name": "DRCIP open company CSV (data.gov.cy; resolve resource URL via group #30)",
+    "slug": "drcip_open_csv",
+    "type": "bulk",
+    "url": "https://www.data.gov.cy/en/group/30",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "DRCIP eSearch (free basic search; single company)",
+    "slug": "drcip_esearch",
+    "type": "bulk",
+    "url": "https://efiling.drcor.mcit.gov.cy/DrcorPublic/SearchForm.aspx?lang=EN",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
