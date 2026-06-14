@@ -1,0 +1,84 @@
+{
+  "country": "Austria",
+  "country_slug": "austria",
+  "source_slug": "firmenbuch",
+  "source_identity": "austria_firmenbuch",
+  "source_package": "firmenbuch",
+  "env_prefix": "FIRMENBUCH",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Firmenbuch (Companies Register) — JustizOnline / Verrechnungsstellen",
+    "source_type": "official_registry",
+    "organization": "BMJ / courts; clearing houses",
+    "source_url": "https://justizonline.gv.at/jop/web/firmenbuchabfrage",
+    "license": "Free brief extract; full paid/contractual; API ID-Austria-gated",
+    "access": "mixed",
+    "data_freshness": "continuous",
+    "attribution": "Quelle: Firmenbuch (Bundesministerium für Justiz)."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["FIRMENBUCH_CLEARINGHOUSE_KEY", "FIRMENBUCH_ID_AUSTRIA"],
+    "note": "Free brief extract (per company, viewing). JustizOnline API requires ID Austria. Full data/documents PAID via a Verrechnungsstelle contract. No open bulk."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "via clearing house / JustizOnline (ID-gated)",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf", "json (clearing houses / firmafind)"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-company Firmenbuchauszug",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Per-company lookup by Firmenbuchnummer/name. No population enumeration / open bulk. Exact API shape depends on the chosen clearing house or the ID-gated JustizOnline API."},
+    "rate_limit": "per contract"
+  },
+  "snapshot": {
+    "strategy": "json_or_pdf_per_company",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "Firmenbuchauszug",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": ["de_at_locale_1.234.567,89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "firmenbuchnummer keeps the check letter. UID = ATU + 8 digits. Geschäftszweig is free text (no ÖNACE). Organe are PII. AT number locale (comma decimal)."
+  },
+  "keys": {
+    "primary_keys": ["firmenbuchnummer"],
+    "join_keys": ["firmenbuchnummer", "uid"],
+    "dedupe_keys": ["firmenbuchnummer"]
+  },
+  "mapping_rules": {
+    "legal_name": "Firmenwortlaut.",
+    "company_type": "Rechtsform.",
+    "registration_number": "Firmenbuchnummer; vat_id = UID (ATU########).",
+    "registered_address": "Geschäftsanschrift; municipality = Sitz.",
+    "share_capital": "Stammkapital (EUR).",
+    "status": "aufrecht/gelöscht (+ Ediktsdatei insolvency).",
+    "officers": "vertretungsbefugte Organe (PII).",
+    "activity": "Geschäftszweig free text (derive) — no ÖNACE in public extract."
+  },
+  "fixture_requirements": [
+    "GmbH with Stammkapital + Organe + UID",
+    "AG (Grundkapital)",
+    "deleted company (Status gelöscht)",
+    "record with free-text Geschäftszweig only (no activity code)",
+    "OG/KG (Personengesellschaft)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not applicable without a clearing-house contract or ID Austria — do not attempt unauthenticated bulk.",
+    "full": "Behind a Verrechnungsstelle contract (or ID-Austria API), look up target companies by Firmenbuchnummer; persist raw; normalize. For scale prefer a commercial aggregator."
+  },
+  "blockers": [
+    "Full data is paid (clearing houses); free brief extract limited; API needs ID Austria.",
+    "No open bulk / population enumeration.",
+    "No coded activity (Geschäftszweig free text).",
+    "Officers PII (GDPR)."
+  ]
+}

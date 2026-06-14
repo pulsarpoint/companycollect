@@ -1,0 +1,77 @@
+{
+  "country": "Austria",
+  "country_slug": "austria",
+  "source_slug": "ediktsdatei",
+  "source_identity": "austria_ediktsdatei",
+  "source_package": "ediktsdatei",
+  "env_prefix": "EDIKTSDATEI",
+  "implementation_status": "blocked_license",
+  "source": {
+    "source_name": "Ediktsdatei / Insolvenzdatei (insolvency gazette)",
+    "source_type": "official_gazette",
+    "organization": "BMJ",
+    "source_url": "https://edikte.justiz.gv.at/",
+    "license": "Free web queries; structured JSON feed requires an IWG re-use licence",
+    "access": "public (web) / licensed (feed)",
+    "data_freshness": "daily",
+    "attribution": "Quelle: Ediktsdatei der Justiz (BMJ)."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["EDIKTSDATEI_IWG_USER", "EDIKTSDATEI_IWG_PASSWORD"],
+    "note": "Free per-case WEB queries (no auth). The structured JSON feed (iwg.justiz.gv.at) requires an IWG re-use licence (login wall). Do not scrape the web UI aggressively."
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://iwg.justiz.gv.at/edikte/id/idiwg8.nsf/api/data/collections/name/All",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [{"name": "Accept", "value": "application/json", "note": null}],
+    "formats": ["json (licensed)", "html (free web)"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "(licensed feed shape — confirm after IWG licence)",
+    "total_results_path": null,
+    "pagination": {"type": "page_number", "page_param": "page", "page_start": 0, "page_size": 100, "page_size_param": "ps", "next_page_path": null, "note": "Endpoint exists (ps=&page=) but returned a LOGIN wall without an IWG licence. Confirm shape after obtaining the licence."},
+    "rate_limit": "per IWG licence"
+  },
+  "snapshot": {
+    "strategy": "json_pages_insolvency_edicts",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "Edikt",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Filter Art to insolvency (Konkurs/Sanierung). Join via Firmenbuchnummer when present, else debtor name. Debtors may be PII."
+  },
+  "keys": {
+    "primary_keys": ["aktenzeichen", "gericht"],
+    "join_keys": ["firmenbuchnummer", "schuldner.name"],
+    "dedupe_keys": ["aktenzeichen + gericht"]
+  },
+  "mapping_rules": {
+    "status_signal": "insolvency edict -> distressed/insolvent flag on the company.",
+    "events": "art + datum + verfahrensstatus -> lifecycle event.",
+    "matching": "Firmenbuchnummer when present, else debtor name."
+  },
+  "fixture_requirements": [
+    "Konkurs (bankruptcy) edict with Firmenbuchnummer",
+    "Sanierungsverfahren (restructuring) edict",
+    "edict without Firmenbuchnummer (name-match)",
+    "Versteigerung (auction) edict to be filtered out"
+  ],
+  "live_test_plan": {
+    "smoke": "With an IWG licence, GET the collection endpoint; assert edict records parse. Without a licence, only the free web UI is available (do not scrape aggressively).",
+    "full": "Behind the IWG licence, harvest insolvency edicts daily; attach distressed flags to the spine by Firmenbuchnummer/name."
+  },
+  "blockers": [
+    "Structured JSON feed requires an IWG re-use licence (formal application).",
+    "Free access is web-query only (not bulk).",
+    "Debtor PII (GDPR)."
+  ]
+}

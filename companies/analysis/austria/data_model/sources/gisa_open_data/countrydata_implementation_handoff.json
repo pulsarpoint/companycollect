@@ -1,0 +1,78 @@
+{
+  "country": "Austria",
+  "country_slug": "austria",
+  "source_slug": "gisa_open_data",
+  "source_identity": "austria_gisa_open_data",
+  "source_package": "gisaopendata",
+  "env_prefix": "GISA_OPENDATA",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "GISA — Gewerbe in Österreich (trade authorizations, open data)",
+    "source_type": "open_data_registry_subset",
+    "organization": "BMAW/BMWET (GISA) via data.gv.at",
+    "source_url": "https://www.data.gv.at/katalog/dataset/gewerbe-in-osterreich",
+    "license": "Open (data.gv.at; confirm CC-BY 4.0)",
+    "access": "public",
+    "data_freshness": "regular (monthly statistics)",
+    "attribution": "Quelle: GISA / BMAW via data.gv.at (CC-BY — confirm)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Open. The direct CSV/JSON resource URL must be resolved from the data.gv.at dataset page (JS portal) before implementation."
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://www.data.gv.at/katalog/dataset/gewerbe-in-osterreich",
+    "download_url": "unknown (resolve resource URL from the dataset page / CKAN resource id)",
+    "http_method": "GET",
+    "headers_required": [{"name": "User-Agent", "value": "companycollect/0.1 open-data-research", "note": "descriptive UA"}],
+    "formats": ["csv", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "$ (CSV rows / JSON array)",
+    "total_results_path": null,
+    "pagination": {"type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Full file (GISA CSV + GISA JSON). Resolve the exact resource URL first — the data.gv.at SPA did not expose it via guessed paths / CKAN API in discovery."},
+    "rate_limit": "n/a"
+  },
+  "snapshot": {
+    "strategy": "csv_rows_then_normalize",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "GisaGewerbe",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "gisa_zahl is the key (NOT Firmenbuchnummer). No personal data. Gewerbeschlüssel maps to the companion code list. Confirm exact columns + delimiter + encoding from the real file."
+  },
+  "keys": {
+    "primary_keys": ["gisa_zahl"],
+    "join_keys": ["gisa_zahl", "name+standort"],
+    "dedupe_keys": ["gisa_zahl"]
+  },
+  "mapping_rules": {
+    "legal_name": "name.",
+    "activity": "gewerbeschluessel (+ gewerbewortlaut) — open activity proxy.",
+    "location": "standort -> municipality/Bundesland.",
+    "matching": "Link to the Firmenbuch spine by name+location (no guaranteed Firmenbuchnummer)."
+  },
+  "fixture_requirements": [
+    "active trade authorization with Gewerbeschlüssel + Gewerbewortlaut",
+    "row with only Gewerbewortlaut (no code)",
+    "row matchable to a Firmenbuch company by name+location",
+    "row for a sole trader (no personal data)"
+  ],
+  "live_test_plan": {
+    "smoke": "Resolve the CSV/JSON resource URL from the dataset page; download a few KB; assert gisa_zahl + name + gewerbewortlaut columns.",
+    "full": "Download the full GISA file; normalize per authorization; use as an open activity/location layer + name-match seed to the Firmenbuch."
+  },
+  "blockers": [
+    "Direct resource URL not resolved in discovery (data.gv.at JS portal) — resolve before implementation.",
+    "Trade authorizations, NOT a company master; no guaranteed Firmenbuchnummer link.",
+    "Confirm exact columns + license (CC-BY?)."
+  ]
+}

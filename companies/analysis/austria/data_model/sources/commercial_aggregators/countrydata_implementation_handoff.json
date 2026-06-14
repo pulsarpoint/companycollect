@@ -1,0 +1,77 @@
+{
+  "country": "Austria",
+  "country_slug": "austria",
+  "source_slug": "commercial_aggregators",
+  "source_identity": "austria_commercial_aggregators",
+  "source_package": "atcommercial",
+  "env_prefix": "AT_COMMERCIAL",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Commercial aggregators (Compass, KSV1870, firmafind, Bisnode/Dun & Bradstreet)",
+    "source_type": "commercial_api",
+    "organization": "Compass-Verlag / KSV1870 / firmafind / Dun & Bradstreet",
+    "source_url": "https://firmafind.at/docs",
+    "license": "Commercial / paid",
+    "access": "paid",
+    "data_freshness": "daily",
+    "attribution": "Per vendor contract (data from Firmenbuch / BMJ)."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["AT_COMMERCIAL_API_KEY"],
+    "note": "Paid plan + API key. Redistribution by contract. They resell Firmenbuch + Jahresabschluss as structured JSON."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://firmafind.at/ (or Compass/KSV1870 API)",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [{"name": "Authorization", "value": "<api-key>", "note": "per vendor"}, {"name": "Accept", "value": "application/json", "note": null}],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "company",
+    "total_results_path": null,
+    "pagination": {"type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Per-company lookup by Firmenbuchnummer/UID/name. Exact request/response shape per the contracted vendor docs."},
+    "rate_limit": "per plan"
+  },
+  "snapshot": {
+    "strategy": "json_per_company",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "AtAggregatorCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["plain_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Pre-parsed structured JSON (master + multi-year financials). Exact keys per vendor; revenue/net_income subject to AT small-company disclosure limits."
+  },
+  "keys": {
+    "primary_keys": ["firmenbuchnummer"],
+    "join_keys": ["firmenbuchnummer", "uid"],
+    "dedupe_keys": ["firmenbuchnummer"]
+  },
+  "mapping_rules": {
+    "company_master": "Map to registration/legal_identity (Firmenbuchnummer, name, UID, officers).",
+    "financial_statements": "financials[] -> one record per year (revenue/net_income/total_assets/equity).",
+    "matching": "Join on Firmenbuchnummer."
+  },
+  "fixture_requirements": [
+    "company with multi-year financials",
+    "small company with limited financial disclosure",
+    "company with officers (PII)",
+    "company matched by UID"
+  ],
+  "live_test_plan": {
+    "smoke": "Behind AT_COMMERCIAL_API_KEY, fetch one known company; assert firmenbuchnummer + at least one financial year.",
+    "full": "Out of scope until a paid plan exists; then batch by the spine, persist raw JSON, normalize master + financial_statements[]."
+  },
+  "blockers": [
+    "Paid — contracted plan + API key required.",
+    "Exact JSON schema per vendor.",
+    "Redistribution governed by contract."
+  ]
+}

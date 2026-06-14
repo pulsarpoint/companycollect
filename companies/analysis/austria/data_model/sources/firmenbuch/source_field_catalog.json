@@ -1,0 +1,29 @@
+{
+  "country": "Austria",
+  "country_slug": "austria",
+  "source_slug": "firmenbuch",
+  "source_name": "Firmenbuch (Companies Register) — JustizOnline / Verrechnungsstellen",
+  "source_type": "official_registry",
+  "organization": "Bundesministerium für Justiz (BMJ) / courts; clearing houses",
+  "source_url": "https://justizonline.gv.at/jop/web/firmenbuchabfrage",
+  "license": "Free brief extract; full extract/documents paid; JustizOnline API free but ID-Austria-gated — planning-only",
+  "access": "mixed (free brief / paid full / ID-gated API)",
+  "data_freshness": "authoritative / continuous",
+  "record_shape": "per-company Firmenbuchauszug (HTML/PDF; JSON via clearing houses / firmafind)",
+  "primary_keys": ["firmenbuchnummer"],
+  "join_keys": ["firmenbuchnummer", "uid"],
+  "field_count": 11,
+  "fields": [
+    {"path": "firmenbuchnummer", "source_field": "Firmenbuchnummer", "english_name": "company_register_number", "meaning": "Company register number: digits + check letter (e.g. FN 123456a).", "data_type": "string", "semantic_type": "identifier", "example_values": ["FN 123456a"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY (paid/ID-gated; no values copied). Companies only.", "source_confidence": "high", "analysis_notes": "Primary key. Keep the check letter."},
+    {"path": "firmenwortlaut", "source_field": "Firmenwortlaut", "english_name": "legal_name", "meaning": "Registered company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": "Primary display name."},
+    {"path": "rechtsform", "source_field": "Rechtsform", "english_name": "legal_form", "meaning": "Legal form (GmbH, AG, OG, KG, eU, Genossenschaft, ...).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": false, "repeatable": false, "code_list": "österr. Rechtsformen", "language": "German", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "uid", "source_field": "UID", "english_name": "vat_number", "meaning": "VAT id (Umsatzsteuer-Identifikationsnummer).", "data_type": "string", "semantic_type": "identifier", "example_values": ["ATU12345678"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY. Format ATU + 8 digits. Not always in the brief extract.", "source_confidence": "high", "analysis_notes": "vat_id; tax bridge."},
+    {"path": "sitz", "source_field": "Sitz", "english_name": "registered_seat", "meaning": "Registered seat (Gemeinde/municipality).", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": "-> municipality; derive Bundesland."},
+    {"path": "geschaeftsanschrift", "source_field": "Geschäftsanschrift", "english_name": "business_address", "meaning": "Business address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "stammkapital", "source_field": "Stammkapital / Grundkapital", "english_name": "share_capital", "meaning": "Registered share capital.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY. EUR; register capital, NOT annual accounts.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "geschaeftszweig", "source_field": "Geschäftszweig", "english_name": "line_of_business", "meaning": "Line of business (free text).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY. FREE TEXT — not a coded ÖNACE in the public extract.", "source_confidence": "medium", "analysis_notes": "No clean activity code in the register; classify or use GISA Gewerbeschlüssel as a proxy."},
+    {"path": "organe", "source_field": "vertretungsbefugte Organe", "english_name": "officers", "meaning": "Representatives (Geschäftsführer/Vorstand/Prokuristen) with signing powers.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY. PERSONAL DATA — GDPR.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "status", "source_field": "Status", "english_name": "status", "meaning": "Register status: aufrecht (active) / gelöscht (deleted).", "data_type": "string", "semantic_type": "status", "example_values": ["aufrecht", "gelöscht"], "nullable": false, "repeatable": false, "code_list": "aufrecht|gelöscht", "language": "German", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": "Combine with Ediktsdatei insolvency for distressed status."},
+    {"path": "eintragungsdatum", "source_field": "Eintragungsdatum / Ersteintragung", "english_name": "registration_date", "meaning": "First registration date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": "incorporation_date."}
+  ]
+}

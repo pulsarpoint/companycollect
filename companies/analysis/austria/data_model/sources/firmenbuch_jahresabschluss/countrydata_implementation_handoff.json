@@ -1,0 +1,84 @@
+{
+  "country": "Austria",
+  "country_slug": "austria",
+  "source_slug": "firmenbuch_jahresabschluss",
+  "source_identity": "austria_firmenbuch_jahresabschluss",
+  "source_package": "firmenbuchjahresabschluss",
+  "env_prefix": "FB_JAHRESABSCHLUSS",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Jahresabschluss (annual accounts) — Firmenbuch Urkundensammlung",
+    "source_type": "official_financial_disclosure",
+    "organization": "BMJ / Firmenbuchgerichte; clearing houses",
+    "source_url": "https://justizonline.gv.at/",
+    "license": "Publicly accessible for a fee; contractual",
+    "access": "paid",
+    "data_freshness": "annual",
+    "attribution": "Quelle: Firmenbuch — Jahresabschluss (Urkundensammlung)."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["FB_JAHRESABSCHLUSS_CLEARINGHOUSE_KEY"],
+    "note": "Per-document paid retrieval via a Verrechnungsstelle. No open bulk, no free API."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "via clearing house / firmafind (paid)",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf", "structured electronic filing", "json (aggregators)"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-company per-Geschäftsjahr document",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_documents", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Request a company's Jahresabschluss by Firmenbuchnummer (+ year). No enumeration; no bulk. Figures via PDF parsing or an aggregator's structured API."},
+    "rate_limit": "per document / per contract"
+  },
+  "snapshot": {
+    "strategy": "document_per_company_per_year",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true,
+    "note": "Persist the filed document; parse figures (or consume a structured aggregator feed)."
+  },
+  "parsing": {
+    "record_type_hint": "AtJahresabschluss",
+    "date_formats": ["02.01.2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["de_at_locale_1.234.567,89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Größenklasse (§221 UGB) governs which lines exist; Kleinst/klein file balance sheet only (no GuV) -> revenue/net_income null. Map Bilanzsumme->total_assets, Eigenkapital->equity, Umsatzerlöse->revenue, Jahresüberschuss/-fehlbetrag->net_income. EUR; AT locale."
+  },
+  "keys": {
+    "primary_keys": ["firmenbuchnummer", "geschaeftsjahr"],
+    "join_keys": ["firmenbuchnummer"],
+    "dedupe_keys": ["firmenbuchnummer + geschaeftsjahr"]
+  },
+  "mapping_rules": {
+    "financial_statements": "One record per Geschäftsjahr; map Bilanz + GuV.",
+    "revenue": "Umsatzerlöse",
+    "net_income": "Jahresüberschuss/-fehlbetrag",
+    "total_assets": "Bilanzsumme",
+    "equity": "Eigenkapital",
+    "employees": "durchschnittliche Mitarbeiterzahl (Anhang)",
+    "matching": "Join on Firmenbuchnummer."
+  },
+  "fixture_requirements": [
+    "große/mittel GmbH with full Bilanz + GuV (revenue present)",
+    "kleine/Kleinst company (abridged balance sheet only; revenue null)",
+    "AG",
+    "year with negative Jahresergebnis (Fehlbetrag)",
+    "PDF-only filing requiring extraction"
+  ],
+  "live_test_plan": {
+    "smoke": "Not applicable without a paid contract — do not attempt unauthenticated retrieval.",
+    "full": "Behind FB_JAHRESABSCHLUSS_CLEARINGHOUSE_KEY, retrieve target companies' Jahresabschluss by Firmenbuchnummer; parse; normalize. For scale prefer a commercial aggregator's financial API."
+  },
+  "blockers": [
+    "Paid per document; no open bulk; no free API.",
+    "Small/micro companies file balance sheet only (no revenue/net_income).",
+    "Documents are PDF/structured filing — extraction required.",
+    "Redistribution of purchased documents restricted."
+  ]
+}

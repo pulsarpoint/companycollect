@@ -1,0 +1,57 @@
+{
+  "_note": "SCHEMATIC illustrative profile. Austria has no open per-company master: the Firmenbuch spine + Jahresabschluss are PAID (planning-only). Values are fabricated placeholders showing the target shape and which source/access each field comes from. The OPEN-derivable fields (gisa_zahl, gewerbeschluessel/gewerbewortlaut, name, insolvency_events) are marked by source. Not a real company.",
+  "country": "Austria",
+  "country_slug": "austria",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "firmenbuchnummer": "FN 123456a",
+    "uid": "ATU12345678",
+    "vat_id": "ATU12345678",
+    "gisa_zahl": "12345678901"
+  },
+  "legal_identity": {
+    "name": "Beispiel GmbH",
+    "rechtsform": "GmbH"
+  },
+  "status": {
+    "derived": "active",
+    "firmenbuch_status": "aufrecht"
+  },
+  "activity": {
+    "gewerbeschluessel": "62.01",
+    "gewerbewortlaut": "Dienstleistungen in der automatischen Datenverarbeitung und Informationstechnik",
+    "geschaeftszweig": "Softwareentwicklung"
+  },
+  "registered_location": {
+    "address": "Beispielstraße 1, 1010 Wien",
+    "sitz": "Wien",
+    "bundesland": "Wien"
+  },
+  "capital": {
+    "stammkapital": 35000.00,
+    "waehrung": "EUR"
+  },
+  "officers": [
+    {"name": "(paid source; PII)", "funktion": "Geschäftsführer"}
+  ],
+  "insolvency_events": [],
+  "financial_statements": [
+    {
+      "fiscal_year": 2024,
+      "size_class": "klein",
+      "currency": "EUR",
+      "total_assets": 1200000.00,
+      "equity": 480000.00,
+      "liabilities": 720000.00,
+      "revenue": null,
+      "net_income": null,
+      "employees": null,
+      "source": "firmenbuch_jahresabschluss"
+    }
+  ],
+  "source_provenance": [
+    {"source_slug": "gisa_open_data", "source_name": "GISA — Gewerbe in Österreich", "source_url": "https://www.data.gv.at/katalog/dataset/gewerbe-in-osterreich", "license": "open (CC-BY?)", "access": "public", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "firmenbuch", "source_name": "Firmenbuch", "source_url": "https://justizonline.gv.at/", "license": "paid/contractual (planning-only)", "access": "paid", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "firmenbuch_jahresabschluss", "source_name": "Jahresabschluss", "source_url": "https://justizonline.gv.at/", "license": "paid (planning-only)", "access": "paid", "retrieved_at": "2026-06-14T00:00:00Z"}
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Austria Company Profile",
+  "description": "Country-specific combined company profile for Austria. The authoritative spine (Firmenbuch) and financials (Jahresabschluss) are PAID — modeled planning-only. The OPEN layer is a SUBSET: GISA trade authorizations (data.gv.at, keyed on GISA-Zahl — a SEPARATE id with no guaranteed Firmenbuchnummer link) + the free insolvency gazette (Ediktsdatei). Company key = Firmenbuchnummer (e.g. FN 123456a); UID (ATU########) bridges to VAT. No coded activity in the register (Geschäftszweig is free text); GISA Gewerbeschlüssel is the open activity proxy.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": {"type": "string", "const": "Austria"},
+    "country_slug": {"type": "string", "const": "austria"},
+    "country_profile_version": {"type": "string", "description": "Profile schema version / build date (YYYY-MM-DD)."},
+    "registration": {
+      "type": "object",
+      "description": "Identifiers. Firmenbuchnummer for companies (paid); GISA-Zahl is a separate open trade-licence id.",
+      "properties": {
+        "firmenbuchnummer": {"type": ["string", "null"], "description": "Company register number (FN###### + check letter). PAID/ID-gated.", "x-source": "firmenbuch | commercial_aggregators", "x-source-path": "firmenbuchnummer", "x-join-key": true, "x-access": "paid"},
+        "uid": {"type": ["string", "null"], "description": "VAT id (ATU########).", "x-source": "firmenbuch", "x-source-path": "uid", "x-join-key": true, "x-access": "paid"},
+        "vat_id": {"type": ["string", "null"], "description": "= UID.", "x-source": "derived"},
+        "gisa_zahl": {"type": ["string", "null"], "description": "GISA trade-register number (OPEN; separate id, no guaranteed FN link).", "x-source": "gisa_open_data", "x-source-path": "gisa_zahl", "x-join-key": true}
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "description": "Company / business name.", "x-source": "firmenbuch | gisa_open_data", "x-source-path": "firmenwortlaut | name"},
+        "rechtsform": {"type": ["string", "null"], "description": "Legal form (GmbH/AG/OG/KG/eU/...).", "x-source": "firmenbuch", "x-source-path": "rechtsform", "x-access": "paid"}
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "derived": {"type": ["string", "null"], "enum": ["active", "deleted", "insolvency", null], "description": "Firmenbuch aufrecht/gelöscht + Ediktsdatei insolvency."},
+        "firmenbuch_status": {"type": ["string", "null"], "enum": ["aufrecht", "gelöscht", null], "x-source": "firmenbuch", "x-access": "paid"}
+      }
+    },
+    "activity": {
+      "type": "object",
+      "description": "No coded ÖNACE in the register. GISA Gewerbeschlüssel (open) is the activity proxy; Geschäftszweig (paid) is free text.",
+      "properties": {
+        "gewerbeschluessel": {"type": ["string", "null"], "description": "GISA trade code (OPEN).", "x-source": "gisa_open_data", "x-source-path": "gewerbeschluessel"},
+        "gewerbewortlaut": {"type": ["string", "null"], "description": "Trade wording (OPEN).", "x-source": "gisa_open_data", "x-source-path": "gewerbewortlaut"},
+        "geschaeftszweig": {"type": ["string", "null"], "description": "Line of business, free text (PAID).", "x-source": "firmenbuch", "x-access": "paid"}
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "address": {"type": ["string", "null"], "x-source": "firmenbuch | gisa_open_data", "x-source-path": "geschaeftsanschrift | standort"},
+        "sitz": {"type": ["string", "null"], "description": "Registered seat (municipality).", "x-source": "firmenbuch", "x-access": "paid"},
+        "bundesland": {"type": ["string", "null"], "description": "Federal state (derived from address/seat)."}
+      }
+    },
+    "capital": {
+      "type": ["object", "null"],
+      "description": "PLANNING-ONLY (paid). Registered share capital (NOT annual accounts).",
+      "properties": {
+        "stammkapital": {"type": ["number", "null"], "x-source": "firmenbuch", "x-source-path": "stammkapital", "x-access": "paid"},
+        "waehrung": {"type": ["string", "null"], "description": "Usually EUR."}
+      }
+    },
+    "officers": {
+      "type": ["array", "null"],
+      "description": "PLANNING-ONLY (paid). Representatives (Geschäftsführer/Vorstand/Prokuristen). PERSONAL DATA (GDPR).",
+      "items": {"type": "object", "properties": {"name": {"type": ["string", "null"]}, "funktion": {"type": ["string", "null"]}}},
+      "x-source": "firmenbuch | commercial_aggregators",
+      "x-access": "paid",
+      "x-personal-data": true
+    },
+    "insolvency_events": {
+      "type": ["array", "null"],
+      "description": "Insolvency proceedings from the Ediktsdatei (free web; structured feed needs an IWG licence).",
+      "items": {"type": "object", "properties": {"art": {"type": ["string", "null"]}, "datum": {"type": ["string", "null"], "format": "date"}, "gericht": {"type": ["string", "null"]}, "aktenzeichen": {"type": ["string", "null"]}}},
+      "x-source": "ediktsdatei",
+      "x-join-key": "firmenbuchnummer (when present) / debtor name",
+      "x-access": "free web / IWG-licensed feed"
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY (paid). Jahresabschluss (UGB) from the Firmenbuch Urkundensammlung (per-document fee) or a commercial aggregator. revenue/net_income/employees are NULL for Kleinst/klein filers (no GuV).",
+      "items": {
+        "type": "object",
+        "required": ["fiscal_year", "source"],
+        "properties": {
+          "fiscal_year": {"type": "integer", "x-source-path": "geschaeftsjahr"},
+          "size_class": {"type": ["string", "null"], "description": "Kleinst/klein/mittel/groß (§221 UGB).", "x-source-path": "groessenklasse"},
+          "currency": {"type": ["string", "null"], "description": "EUR."},
+          "total_assets": {"type": ["number", "null"], "x-source-path": "Bilanzsumme"},
+          "equity": {"type": ["number", "null"], "x-source-path": "Eigenkapital"},
+          "liabilities": {"type": ["number", "null"], "x-source-path": "Verbindlichkeiten"},
+          "revenue": {"type": ["number", "null"], "description": "Umsatzerlöse — absent for small/micro.", "x-source-path": "Umsatzerlöse"},
+          "net_income": {"type": ["number", "null"], "description": "Jahresüberschuss/-fehlbetrag.", "x-source-path": "Jahresergebnis"},
+          "employees": {"type": ["integer", "null"], "x-source-path": "Mitarbeiterzahl"},
+          "source": {"type": "string", "enum": ["firmenbuch_jahresabschluss", "commercial_aggregators"], "description": "Financial source."}
+        }
+      },
+      "x-source": "firmenbuch_jahresabschluss | commercial_aggregators",
+      "x-join-key": "firmenbuchnummer -> registration.firmenbuchnummer",
+      "x-freshness": "annual",
+      "x-access": "paid"
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "One entry per source contributing to this profile.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "source_url", "retrieved_at"],
+        "properties": {
+          "source_slug": {"type": "string"},
+          "source_name": {"type": "string"},
+          "source_url": {"type": "string"},
+          "license": {"type": "string"},
+          "access": {"type": "string"},
+          "retrieved_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "country": "Austria",
+  "country_slug": "austria",
+  "source_slug": "firmenbuch_jahresabschluss",
+  "source_name": "Jahresabschluss (annual accounts) — Firmenbuch Urkundensammlung",
+  "source_type": "official_financial_disclosure",
+  "organization": "BMJ / Firmenbuchgerichte; clearing houses",
+  "source_url": "https://justizonline.gv.at/",
+  "license": "Publicly accessible FOR A FEE; contractual — planning-only",
+  "access": "paid",
+  "data_freshness": "annual filing",
+  "record_shape": "per-company per-Geschäftsjahr filed document (PDF / structured electronic filing)",
+  "primary_keys": ["firmenbuchnummer + geschaeftsjahr"],
+  "join_keys": ["firmenbuchnummer"],
+  "field_count": 11,
+  "fields": [
+    {"path": "firmenbuchnummer", "source_field": "Firmenbuchnummer", "english_name": "company_register_number", "meaning": "Company register number; join key.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "high", "analysis_notes": "Join to the Firmenbuch spine."},
+    {"path": "geschaeftsjahr", "source_field": "Geschäftsjahr / Bilanzstichtag", "english_name": "fiscal_year", "meaning": "Financial year (balance-sheet date).", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": "Per-statement key."},
+    {"path": "groessenklasse", "source_field": "Größenklasse (§221 UGB)", "english_name": "size_class", "meaning": "Size class: Kleinst / klein / mittel / groß.", "data_type": "string", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Kleinst|klein|mittel|groß", "language": "German", "limitations": "PLANNING-ONLY. Governs disclosure depth.", "source_confidence": "high", "analysis_notes": "Small/micro file abridged balance sheet only (no P&L/revenue) -> nullability."},
+    {"path": "bilanz.bilanzsumme", "source_field": "Bilanzsumme", "english_name": "total_assets", "meaning": "Balance sheet total.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY. EUR.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "bilanz.anlagevermoegen", "source_field": "Anlagevermögen", "english_name": "fixed_assets", "meaning": "Non-current/fixed assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "bilanz.umlaufvermoegen", "source_field": "Umlaufvermögen", "english_name": "current_assets", "meaning": "Current assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "bilanz.eigenkapital", "source_field": "Eigenkapital", "english_name": "equity", "meaning": "Total equity.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "bilanz.verbindlichkeiten", "source_field": "Verbindlichkeiten / Rückstellungen", "english_name": "liabilities", "meaning": "Liabilities and provisions.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "guv.umsatzerloese", "source_field": "Umsatzerlöse", "english_name": "revenue", "meaning": "Revenue (turnover).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY. Often ABSENT — small/micro companies need not disclose a GuV.", "source_confidence": "high", "analysis_notes": "Expect null for the majority (small companies file balance sheet only)."},
+    {"path": "guv.jahresergebnis", "source_field": "Jahresüberschuss/-fehlbetrag", "english_name": "net_income", "meaning": "Net profit/loss for the year.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY. GuV-dependent.", "source_confidence": "high", "analysis_notes": "Negative = Fehlbetrag (loss)."},
+    {"path": "anhang.mitarbeiter", "source_field": "durchschnittliche Mitarbeiterzahl", "english_name": "employees", "meaning": "Average number of employees (from the notes).", "data_type": "integer", "semantic_type": "employment", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "PLANNING-ONLY. In Anhang; may be absent for Kleinst.", "source_confidence": "medium", "analysis_notes": null}
+  ]
+}

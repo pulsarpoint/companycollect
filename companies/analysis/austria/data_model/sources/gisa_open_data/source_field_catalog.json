@@ -1,0 +1,24 @@
+{
+  "country": "Austria",
+  "country_slug": "austria",
+  "source_slug": "gisa_open_data",
+  "source_name": "GISA — Gewerbe in Österreich (trade authorizations, open data)",
+  "source_type": "open_data_registry_subset",
+  "organization": "BMAW/BMWET (Gewerbeinformationssystem Austria) via data.gv.at",
+  "source_url": "https://www.data.gv.at/katalog/dataset/gewerbe-in-osterreich",
+  "license": "Open (data.gv.at; likely CC-BY 4.0 — confirm)",
+  "access": "public",
+  "data_freshness": "regular (monthly statistics resource)",
+  "record_shape": "CSV/JSON: one row per active trade authorization (Gewerbeberechtigung), no personal data",
+  "primary_keys": ["gisa_zahl"],
+  "join_keys": ["gisa_zahl", "name + standort"],
+  "field_count": 6,
+  "fields": [
+    {"path": "gisa_zahl", "source_field": "GISA-Zahl", "english_name": "gisa_number", "meaning": "GISA trade-register number of the authorization holder.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented (open file URL not resolved in this environment). NOT the Firmenbuchnummer.", "source_confidence": "medium", "analysis_notes": "Primary key for GISA; no guaranteed Firmenbuchnummer link."},
+    {"path": "name", "source_field": "Name / Firmenwortlaut", "english_name": "business_name", "meaning": "Business name of the trade-authorization holder (no personal data).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "German", "limitations": "Sole-trader personal data is excluded by design.", "source_confidence": "medium", "analysis_notes": "Match to the Firmenbuch by name+location."},
+    {"path": "standort", "source_field": "Standort / Adresse", "english_name": "location", "meaning": "Location/address of the trade.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "Documented.", "source_confidence": "medium", "analysis_notes": "-> municipality/Bundesland."},
+    {"path": "gewerbewortlaut", "source_field": "Gewerbewortlaut", "english_name": "trade_wording", "meaning": "Wording of the trade authorization (what the business is licensed to do).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "German", "limitations": "Free text; describes licensed activity.", "source_confidence": "medium", "analysis_notes": "Closest open activity description for AT businesses."},
+    {"path": "gewerbeschluessel", "source_field": "Gewerbeschlüssel", "english_name": "trade_code", "meaning": "Trade code classifying the authorization.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Gewerbeschlüssel (data.gv.at companion list)", "language": "n/a", "limitations": "Documented; use the companion code list on data.gv.at.", "source_confidence": "medium", "analysis_notes": "A coded activity proxy where the Firmenbuch has none."},
+    {"path": "status", "source_field": "Status", "english_name": "status", "meaning": "Authorization status (active in this dataset).", "data_type": "string", "semantic_type": "status", "example_values": ["aktiv"], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": "Dataset = active authorizations.", "source_confidence": "medium", "analysis_notes": null}
+  ]
+}

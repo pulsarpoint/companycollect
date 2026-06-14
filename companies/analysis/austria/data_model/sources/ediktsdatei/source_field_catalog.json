@@ -1,0 +1,25 @@
+{
+  "country": "Austria",
+  "country_slug": "austria",
+  "source_slug": "ediktsdatei",
+  "source_name": "Ediktsdatei / Insolvenzdatei (insolvency gazette)",
+  "source_type": "official_gazette",
+  "organization": "Bundesministerium für Justiz (BMJ)",
+  "source_url": "https://edikte.justiz.gv.at/",
+  "license": "Free web queries; structured JSON feed requires an IWG re-use licence",
+  "access": "public (web) / licensed (structured feed)",
+  "data_freshness": "daily",
+  "record_shape": "per-edict (insolvency proceeding / auction / register announcement); web HTML, JSON via licensed IWG feed",
+  "primary_keys": ["aktenzeichen + gericht"],
+  "join_keys": ["firmenbuchnummer (when present)", "schuldner name"],
+  "field_count": 7,
+  "fields": [
+    {"path": "art", "source_field": "Art des Edikts", "english_name": "edict_type", "meaning": "Type of edict: Insolvenzverfahren (Konkurs/Sanierung), Versteigerung, Firmenbuch-Kundmachung.", "data_type": "string", "semantic_type": "filing", "example_values": ["Konkurs", "Sanierungsverfahren"], "nullable": false, "repeatable": false, "code_list": null, "language": "German", "limitations": "Web queries free; structured feed licensed (no values copied).", "source_confidence": "high", "analysis_notes": "Filter to insolvency for the status signal."},
+    {"path": "schuldner.name", "source_field": "Schuldner", "english_name": "debtor_name", "meaning": "Debtor (company or person) name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "German", "limitations": "May be a natural person (PII).", "source_confidence": "high", "analysis_notes": "Match to the company spine by name / Firmenbuchnummer."},
+    {"path": "schuldner.firmenbuchnummer", "source_field": "Firmenbuchnummer", "english_name": "debtor_company_register_number", "meaning": "Debtor's Firmenbuchnummer (when a registered company).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Present for registered companies.", "source_confidence": "medium", "analysis_notes": "Clean join to the Firmenbuch when present."},
+    {"path": "gericht", "source_field": "Gericht", "english_name": "court", "meaning": "Court handling the proceeding.", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "German", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "aktenzeichen", "source_field": "Aktenzeichen", "english_name": "case_number", "meaning": "Court case number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "With Gericht = case key."},
+    {"path": "datum", "source_field": "Datum / Bekanntmachung", "english_name": "date", "meaning": "Edict/publication date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Event date."},
+    {"path": "verfahrensstatus", "source_field": "Verfahrensstatus", "english_name": "proceeding_status", "meaning": "Status of the insolvency proceeding (eröffnet/aufgehoben/...).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "German", "limitations": null, "source_confidence": "medium", "analysis_notes": "Drives a distressed/insolvent status flag on the company."}
+  ]
+}
