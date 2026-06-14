@@ -1,0 +1,26 @@
+[
+  {
+    "name": "e-beszámoló company/report search (reference only — reCAPTCHA-gated)",
+    "slug": "ebeszamolo_search",
+    "type": "api_page",
+    "url": "https://e-beszamolo.im.gov.hu/Search/Results",
+    "method": "POST",
+    "headers": { "Content-Type": "application/x-www-form-urlencoded" },
+    "page_param": "page",
+    "page_start": 0,
+    "max_pages": 0,
+    "_note": "Reference only — the search requires a reCAPTCHA token (verified). Do NOT automate/bypass; use the portal manually for free financial-statement viewing."
+  },
+  {
+    "name": "NAV áfaalany group/batch query (reference)",
+    "slug": "nav_afaalany_csoportos",
+    "type": "api_page",
+    "url": "https://nav.gov.hu/adatbazisok/adatbleker/afaalanyok/afaalanyok_csoportos",
+    "method": "GET",
+    "headers": {},
+    "page_param": "page",
+    "page_start": 0,
+    "max_pages": 1,
+    "_note": "VAT-subject validation: single + group/batch (upload adószám list). Some lists downloadable as CSV. Validation/enrichment, not a company master."
+  }
+]
