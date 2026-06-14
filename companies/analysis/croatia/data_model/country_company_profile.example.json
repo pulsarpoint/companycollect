@@ -1,0 +1,58 @@
+{
+  "_note": "Illustrative profile. Croatia's open sources (Sudski registar API, FINA RGFI) are open-licensed (Otvorena dozvola) but behind a free registration; no per-company open record was downloadable here. Identifiers/structure follow the documented sudreg OpenAPI + RGFI forms; values are placeholders (not a real company). financial_statements shown with placeholder figures to illustrate shape. beneficial_owners omitted (restricted).",
+  "country": "Croatia",
+  "country_slug": "croatia",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "oib": "12345678901",
+    "mbs": "080123456",
+    "vat_id": "HR12345678901"
+  },
+  "legal_identity": {
+    "name": "Primjer d.o.o.",
+    "legal_form": "d.o.o."
+  },
+  "status": {
+    "status": "aktivan",
+    "derived": "active"
+  },
+  "activity": {
+    "nkd_codes": ["62.01"],
+    "object_of_business": "računalno programiranje"
+  },
+  "registered_location": {
+    "address": "Primjerova 1, 10000 Zagreb",
+    "municipality": "Zagreb",
+    "region": "Grad Zagreb"
+  },
+  "capital": {
+    "amount": 2650.00,
+    "currency": "EUR"
+  },
+  "officers_and_owners": [
+    {"name": "Ivan Horvat", "role": "član društva", "type": "owner"},
+    {"name": "Ivan Horvat", "role": "direktor (uprava)", "type": "officer"}
+  ],
+  "beneficial_owners": null,
+  "financial_statements": [
+    {
+      "fiscal_year": 2024,
+      "size_category": "mali",
+      "currency": "EUR",
+      "total_assets": 1450000.00,
+      "fixed_assets": 600000.00,
+      "current_assets": 850000.00,
+      "equity": 620000.00,
+      "liabilities": 830000.00,
+      "revenue": 2100000.00,
+      "operating_result": 185000.00,
+      "net_income": 142000.00,
+      "employees": 16,
+      "source": "fina_rgfi"
+    }
+  ],
+  "source_provenance": [
+    {"source_slug": "sudski_registar", "source_name": "Sudski registar", "source_url": "https://sudreg-data.gov.hr/", "license": "Otvorena dozvola", "access": "public_with_free_registration", "retrieved_at": "2026-06-14T00:00:00Z"},
+    {"source_slug": "fina_rgfi", "source_name": "FINA RGFI", "source_url": "http://rgfi.fina.hr/JavnaObjava-web", "license": "Otvorena dozvola", "access": "public_with_free_registration", "retrieved_at": "2026-06-14T00:00:00Z"}
+  ]
+}

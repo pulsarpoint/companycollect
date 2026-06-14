@@ -1,0 +1,60 @@
+{
+  "country": "Croatia",
+  "country_slug": "croatia",
+  "source_slug": "rsv_beneficial_ownership",
+  "source_identity": "croatia_rsv_beneficial_ownership",
+  "source_package": "rsv",
+  "env_prefix": "HR_RSV",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Registar stvarnih vlasnika (RSV) — beneficial ownership",
+    "source_type": "beneficial_ownership_register",
+    "organization": "FINA / Ministarstvo financija",
+    "source_url": "https://www.fina.hr/",
+    "license": "Access conditions apply (legitimate interest)",
+    "access": "restricted",
+    "data_freshness": "continuous",
+    "attribution": "Izvor: Registar stvarnih vlasnika (FINA) — restricted."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["HR_RSV_ACCESS"],
+    "note": "Restricted (legitimate interest / authorities / obliged entities). Sensitive PII. Not open."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://www.fina.hr/ (RSV; restricted)",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "per-company",
+    "total_results_path": null,
+    "pagination": {"type": "per_company_lookup", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "Restricted per-company access; no open bulk."},
+    "rate_limit": "per access regime"
+  },
+  "snapshot": {"strategy": "restricted_no_ingest", "file_extension": null, "preserve_raw_download": false},
+  "parsing": {
+    "record_type_hint": "HrBeneficialOwner",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Sensitive PII — minimize/redact. Join via OIB. Only with lawful access."
+  },
+  "keys": {"primary_keys": ["oib", "beneficial_owner"], "join_keys": ["oib"], "dedupe_keys": ["oib + beneficial_owner"]},
+  "mapping_rules": {
+    "beneficial_owners": "Map to owners[] only with lawful access; minimize PII.",
+    "matching": "OIB.",
+    "note": "Sudski registar osobe is the OPEN partial ownership signal; this BO register is restricted."
+  },
+  "fixture_requirements": ["planning-only — no fixtures until lawful access"],
+  "live_test_plan": {
+    "smoke": "Not applicable — restricted access.",
+    "full": "Out of scope for open ingestion; only with legitimate-interest access + GDPR handling."
+  },
+  "blockers": ["Restricted access (legitimate interest).", "Sensitive PII (GDPR).", "Not open data."]
+}

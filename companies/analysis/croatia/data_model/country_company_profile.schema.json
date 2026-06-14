@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Croatia Company Profile",
+  "description": "Country-specific combined company profile for Croatia. OPEN (Belgium tier, free-but-registered) with a single clean key: the OIB (11-digit tax id = VAT root, 'HR' + OIB) and/or MBS (court register number). Open company spine = Sudski registar API (Otvorena dozvola; free subscription key); open structured financials = FINA RGFI (Otvorena dozvola CSV: bilanca + račun dobiti i gubitka; free FINA login). Both key on the OIB, so company<->financials is a CLEAN join (no fuzzy matching). The register openly carries members/owners + management (osobe); beneficial ownership (RSV) is restricted. Currency EUR since 2023 (HRK before).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": {"type": "string", "const": "Croatia"},
+    "country_slug": {"type": "string", "const": "croatia"},
+    "country_profile_version": {"type": "string", "description": "Profile schema version / build date (YYYY-MM-DD)."},
+    "registration": {
+      "type": "object",
+      "required": ["oib"],
+      "properties": {
+        "oib": {"type": "string", "description": "11-digit tax id (Osobni identifikacijski broj). Universal join key = VAT root.", "pattern": "^[0-9]{11}$", "x-source": "sudski_registar", "x-source-path": "oib", "x-join-key": true, "x-freshness": "continuous"},
+        "mbs": {"type": ["string", "null"], "description": "Court-register number (Matični broj subjekta).", "x-source": "sudski_registar", "x-source-path": "mbs", "x-join-key": true},
+        "vat_id": {"type": ["string", "null"], "description": "'HR' + OIB.", "x-source": "derived"}
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "description": "Registered company name.", "x-source": "sudski_registar", "x-source-path": "tvrtka / naziv"},
+        "legal_form": {"type": ["string", "null"], "description": "d.o.o./j.d.o.o./d.d./obrt.", "x-source": "sudski_registar", "x-source-path": "pravni_oblik"}
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status": {"type": ["string", "null"], "description": "aktivan/u likvidaciji/brisan.", "x-source": "sudski_registar", "x-source-path": "status"},
+        "derived": {"type": ["string", "null"], "enum": ["active", "liquidation", "deleted", null]}
+      }
+    },
+    "activity": {
+      "type": "object",
+      "description": "NKD (Croatian NACE) where coded in predmet_poslovanja; partly free text.",
+      "properties": {
+        "nkd_codes": {"type": ["array", "null"], "items": {"type": "string"}, "x-source": "sudski_registar", "x-source-path": "predmet_poslovanja"},
+        "object_of_business": {"type": ["string", "null"], "x-source": "sudski_registar"}
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "address": {"type": ["string", "null"], "x-source": "sudski_registar", "x-source-path": "adresa"},
+        "municipality": {"type": ["string", "null"], "description": "Seat (mjesto/grad).", "x-source": "sudski_registar", "x-source-path": "sjediste"},
+        "region": {"type": ["string", "null"], "description": "Županija (derived)."}
+      }
+    },
+    "capital": {
+      "type": ["object", "null"],
+      "description": "Registered/share capital (NOT annual accounts). EUR since 2023.",
+      "properties": {
+        "amount": {"type": ["number", "null"], "x-source": "sudski_registar", "x-source-path": "temeljni_kapital"},
+        "currency": {"type": ["string", "null"], "description": "EUR (HRK before 2023)."}
+      }
+    },
+    "officers_and_owners": {
+      "type": ["array", "null"],
+      "description": "Persons (osobe): members/partners (owners) + management board/directors. OPEN in the register. PERSONAL DATA (GDPR). Distinct from the restricted RSV beneficial owners.",
+      "items": {"type": "object", "properties": {"name": {"type": ["string", "null"]}, "role": {"type": ["string", "null"], "description": "član/uprava/direktor/..."}, "type": {"type": ["string", "null"], "enum": ["owner", "officer", null]}}},
+      "x-source": "sudski_registar",
+      "x-source-path": "osobe",
+      "x-personal-data": true
+    },
+    "beneficial_owners": {
+      "type": ["array", "null"],
+      "description": "PLANNING-ONLY. Registar stvarnih vlasnika — RESTRICTED (legitimate interest). Sensitive PII. Not open.",
+      "items": {"type": "object", "properties": {"name": {"type": ["string", "null"]}, "ownership_nature": {"type": ["string", "null"]}}},
+      "x-source": "rsv_beneficial_ownership",
+      "x-join-key": "oib",
+      "x-access": "restricted (planning-only)",
+      "x-personal-data": true
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "OPEN, structured. FINA RGFI annual accounts (Otvorena dozvola CSV: bilanca + račun dobiti i gubitka), joined on OIB. revenue/operating_result/employees nullable for mikro/mali (abbreviated forms). Currency EUR since 2023.",
+      "items": {
+        "type": "object",
+        "required": ["fiscal_year", "source"],
+        "properties": {
+          "fiscal_year": {"type": "integer", "x-source-path": "razdoblje"},
+          "size_category": {"type": ["string", "null"], "description": "mikro/mali/srednji/veliki.", "x-source-path": "velicina"},
+          "currency": {"type": ["string", "null"], "description": "EUR (HRK before 2023)."},
+          "total_assets": {"type": ["number", "null"], "x-source-path": "bilanca.ukupna_aktiva"},
+          "fixed_assets": {"type": ["number", "null"], "x-source-path": "bilanca.dugotrajna_imovina"},
+          "current_assets": {"type": ["number", "null"], "x-source-path": "bilanca.kratkotrajna_imovina"},
+          "equity": {"type": ["number", "null"], "x-source-path": "bilanca.kapital_i_rezerve"},
+          "liabilities": {"type": ["number", "null"], "x-source-path": "bilanca.obveze"},
+          "revenue": {"type": ["number", "null"], "description": "ukupni prihodi.", "x-source-path": "rdg.ukupni_prihodi"},
+          "operating_result": {"type": ["number", "null"], "x-source-path": "rdg.poslovni_rezultat"},
+          "net_income": {"type": ["number", "null"], "description": "dobit/gubitak razdoblja.", "x-source-path": "rdg.dobit_gubitak_razdoblja"},
+          "employees": {"type": ["integer", "null"], "x-source-path": "broj_zaposlenih"},
+          "source": {"type": "string", "enum": ["fina_rgfi"], "description": "Financial source."}
+        }
+      },
+      "x-source": "fina_rgfi",
+      "x-join-key": "oib -> registration.oib",
+      "x-freshness": "annual",
+      "x-access": "open (free; Otvorena dozvola; free FINA login)"
+    },
+    "source_provenance": {
+      "type": "array",
+      "description": "One entry per source contributing to this profile.",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "source_url", "retrieved_at"],
+        "properties": {
+          "source_slug": {"type": "string"},
+          "source_name": {"type": "string"},
+          "source_url": {"type": "string"},
+          "license": {"type": "string"},
+          "access": {"type": "string"},
+          "retrieved_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

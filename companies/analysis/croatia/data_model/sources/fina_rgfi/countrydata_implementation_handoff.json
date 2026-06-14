@@ -1,0 +1,83 @@
+{
+  "country": "Croatia",
+  "country_slug": "croatia",
+  "source_slug": "fina_rgfi",
+  "source_identity": "croatia_fina_rgfi",
+  "source_package": "finargfi",
+  "env_prefix": "FINA_RGFI",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "FINA RGFI — Annual Financial Statements (javna objava)",
+    "source_type": "official_financial_disclosure",
+    "organization": "FINA (Financijska agencija)",
+    "source_url": "http://rgfi.fina.hr/JavnaObjava-web",
+    "license": "Otvorena dozvola; fuller products paid",
+    "access": "public_with_free_registration",
+    "data_freshness": "annual",
+    "attribution": "Izvor: FINA — Registar godišnjih financijskih izvještaja (RGFI), Otvorena dozvola."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["FINA_RGFI_USER", "FINA_RGFI_PASSWORD"],
+    "note": "Free registration/login on the RGFI javna objava portal. Balance sheet + income statement available as open CSV. Fuller/large-company data may need FINA's paid product."
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "http://rgfi.fina.hr/JavnaObjava-web",
+    "download_url": "http://rgfi.fina.hr/JavnaObjava-web (CSV after login); data.gov.hr CKAN dataset",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "$ (CSV rows; per company per year)",
+    "total_results_path": null,
+    "pagination": {"type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "CSV downloads of standard documentation (bilanca + RDG). Per-company or batched depending on the portal. Confirm exact resource/columns from the FINA RGFI portal / CKAN."},
+    "rate_limit": "per portal"
+  },
+  "snapshot": {
+    "strategy": "csv_rows_per_company_year",
+    "file_extension": ".csv",
+    "preserve_raw_download": true,
+    "note": "Persist raw CSV; map AOP positions to financial fields."
+  },
+  "parsing": {
+    "record_type_hint": "FinaRgfi",
+    "date_formats": ["2006"],
+    "datetime_formats": [],
+    "number_formats": ["hr_locale_decimal", "eur_since_2023"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "oib stays string. Map RGFI AOP positions: ukupna aktiva->total_assets, kapital i rezerve->equity, ukupni prihodi->revenue, dobit/gubitak razdoblja->net_income. velicina governs which lines exist. Currency EUR since 2023 (HRK earlier) — watch the boundary."
+  },
+  "keys": {
+    "primary_keys": ["oib", "razdoblje"],
+    "join_keys": ["oib"],
+    "dedupe_keys": ["oib + razdoblje"]
+  },
+  "mapping_rules": {
+    "financial_statements": "One record per razdoblje; map bilanca + RDG.",
+    "revenue": "ukupni prihodi / prihodi od prodaje",
+    "net_income": "dobit/gubitak razdoblja",
+    "total_assets": "ukupna aktiva",
+    "equity": "kapital i rezerve",
+    "employees": "prosječan broj zaposlenih",
+    "matching": "Clean join on OIB to the Sudski registar spine."
+  },
+  "fixture_requirements": [
+    "veliki/srednji company (full bilanca + RDG; revenue present)",
+    "mikro/mali company (abbreviated; some lines absent)",
+    "year with gubitak (net loss)",
+    "2022 (HRK) vs 2023+ (EUR) currency boundary",
+    "company with prosječan broj zaposlenih present"
+  ],
+  "live_test_plan": {
+    "smoke": "With FINA_RGFI login, download one company's RGFI CSV; parse ukupna aktiva + ukupni prihodi + dobit/gubitak.",
+    "full": "Behind FINA_RGFI_* env gate, download the javna-objava CSVs; parse AOP positions; normalize to financial_statements[]; join on OIB. For full large-company coverage evaluate the paid FINA product."
+  },
+  "blockers": [
+    "Free FINA login required for the CSV.",
+    "Open CSV emphasized for micro/small; full large-company data may need the paid FINA product.",
+    "EUR/HRK currency boundary (2023); Croatian."
+  ]
+}

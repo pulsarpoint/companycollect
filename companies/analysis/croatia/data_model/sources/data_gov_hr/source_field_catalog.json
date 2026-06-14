@@ -1,0 +1,22 @@
+{
+  "country": "Croatia",
+  "country_slug": "croatia",
+  "source_slug": "data_gov_hr",
+  "source_name": "data.gov.hr — national open data portal (CKAN)",
+  "source_type": "open_data_portal",
+  "organization": "Republic of Croatia (open data)",
+  "source_url": "https://data.gov.hr/",
+  "license": "Otvorena dozvola (per dataset)",
+  "access": "public",
+  "data_freshness": "varies",
+  "record_shape": "CKAN catalog: datasets + resources (the Sudski registar + RGFI datasets)",
+  "primary_keys": ["dataset_id + resource_id"],
+  "join_keys": [],
+  "field_count": 4,
+  "fields": [
+    {"path": "dataset.title", "source_field": "title", "english_name": "dataset_title", "meaning": "Dataset title (e.g. Sudski registar; Registar godišnjih financijskih izvještaja - javna objava).", "data_type": "string", "semantic_type": "metadata", "example_values": ["Sudski registar", "Registar godišnjih financijskih izvještaja - javna objava"], "nullable": false, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": "Confirmed via CKAN package_show.", "source_confidence": "high", "analysis_notes": "Discovery catalog, not the data itself."},
+    {"path": "dataset.license_id", "source_field": "license_id / license_title", "english_name": "license", "meaning": "Dataset license.", "data_type": "string", "semantic_type": "license_or_terms", "example_values": ["open-license", "Otvorena dozvola (OD)"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Both core datasets are Otvorena dozvola."},
+    {"path": "resources[].url", "source_field": "resource url", "english_name": "resource_url", "meaning": "Resource URL (points to sudreg-data.gov.hr / rgfi.fina.hr login portals).", "data_type": "string", "semantic_type": "document", "example_values": ["https://sudreg-data.gov.hr/", "http://rgfi.fina.hr/JavnaObjava-web/..."], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "Resource links go to the registration-gated portals (not direct files).", "source_confidence": "high", "analysis_notes": "Use the CKAN API to discover; actual data via the gated portals."},
+    {"path": "resources[].format", "source_field": "resource format", "english_name": "resource_format", "meaning": "Resource format (CSV/HTML/JSON).", "data_type": "string", "semantic_type": "metadata", "example_values": ["CSV", "HTML"], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null}
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "country": "Croatia",
+  "country_slug": "croatia",
+  "source_slug": "sudski_registar",
+  "source_name": "Sudski registar (Court Register) — Open Data API",
+  "source_type": "official_registry_api",
+  "organization": "Ministarstvo pravosuđa (Ministry of Justice)",
+  "source_url": "https://sudreg-data.gov.hr",
+  "license": "Otvorena dozvola (Croatian Open Licence)",
+  "access": "public_with_free_registration",
+  "data_freshness": "authoritative / continuous",
+  "record_shape": "JSON per subjekt (REST/OpenAPI; query by tipIdentifikatora oib|mbs + identifikator)",
+  "primary_keys": ["mbs"],
+  "join_keys": ["oib", "mbs"],
+  "field_count": 12,
+  "fields": [
+    {"path": "mbs", "source_field": "mbs", "english_name": "court_register_number", "meaning": "Matični broj subjekta — court-register entry number.", "data_type": "string", "semantic_type": "identifier", "example_values": ["080123456"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented (API behind a free subscription key; not downloaded here). Keep as string.", "source_confidence": "high", "analysis_notes": "Primary key in the court register."},
+    {"path": "oib", "source_field": "oib", "english_name": "tax_id", "meaning": "Osobni identifikacijski broj — 11-digit tax id.", "data_type": "string", "semantic_type": "identifier", "example_values": ["12345678901"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "VAT = 'HR' + OIB.", "source_confidence": "high", "analysis_notes": "Universal join key (= VAT root) to FINA RGFI + RSV."},
+    {"path": "tvrtka / naziv", "source_field": "tvrtka / ime", "english_name": "legal_name", "meaning": "Registered company name (full firm).", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Primjer d.o.o."], "nullable": false, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": null, "source_confidence": "high", "analysis_notes": "Primary display name. skraceni_naziv = short name."},
+    {"path": "pravni_oblik", "source_field": "pravni_oblik", "english_name": "legal_form", "meaning": "Legal form (d.o.o., j.d.o.o., d.d., obrt, ...).", "data_type": "string", "semantic_type": "legal_form", "example_values": ["d.o.o."], "nullable": true, "repeatable": false, "code_list": "pravni oblici (sudreg)", "language": "Croatian", "limitations": null, "source_confidence": "high", "analysis_notes": "d.o.o.=LLC; j.d.o.o.=simple LLC; d.d.=JSC; obrt=sole trader."},
+    {"path": "status", "source_field": "status", "english_name": "status", "meaning": "Status (aktivan / u likvidaciji / brisan).", "data_type": "string", "semantic_type": "status", "example_values": ["aktivan"], "nullable": false, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": null, "source_confidence": "high", "analysis_notes": "Map to active/liquidation/deleted."},
+    {"path": "nadlezni_sud", "source_field": "nadlezni_sud", "english_name": "competent_court", "meaning": "Competent commercial court.", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": "trgovački sudovi", "language": "Croatian", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "sjediste", "source_field": "sjediste", "english_name": "registered_seat", "meaning": "Registered seat (place/city).", "data_type": "string", "semantic_type": "geography", "example_values": ["Zagreb"], "nullable": true, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": null, "source_confidence": "high", "analysis_notes": "-> municipality; derive županija (region)."},
+    {"path": "adresa", "source_field": "adresa (ulica, kucni_broj, ...)", "english_name": "address", "meaning": "Registered address.", "data_type": "object", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": null, "source_confidence": "high", "analysis_notes": null},
+    {"path": "temeljni_kapital", "source_field": "temeljni_kapital", "english_name": "share_capital", "meaning": "Registered/share capital.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Register capital, NOT annual accounts. EUR since 2023 (HRK before).", "source_confidence": "high", "analysis_notes": null},
+    {"path": "predmet_poslovanja", "source_field": "predmet_poslovanja", "english_name": "object_of_business", "meaning": "Object of business / activities (+ NKD codes where present).", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "NKD (Croatian NACE) where coded", "language": "Croatian", "limitations": "Partly free text; NKD coding varies.", "source_confidence": "medium", "analysis_notes": "Use NKD codes where present; else derive."},
+    {"path": "osobe", "source_field": "osobe (clanovi, uprava, ...)", "english_name": "persons", "meaning": "Persons: members/partners, management board, directors, signatories.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Croatian", "limitations": "PERSONAL DATA — GDPR. Members + management both present.", "source_confidence": "high", "analysis_notes": "OPEN officers + owners (members) in the register; distinct from RSV beneficial owners."},
+    {"path": "datum_osnivanja", "source_field": "datum_osnivanja / datum_upisa", "english_name": "registration_date", "meaning": "Incorporation/registration date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "incorporation_date."}
+  ]
+}

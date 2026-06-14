@@ -1,0 +1,83 @@
+{
+  "country": "Croatia",
+  "country_slug": "croatia",
+  "source_slug": "sudski_registar",
+  "source_identity": "croatia_sudski_registar",
+  "source_package": "sudskiregistar",
+  "env_prefix": "SUDREG",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Sudski registar (Court Register) — Open Data API",
+    "source_type": "official_registry_api",
+    "organization": "Ministarstvo pravosuđa (Ministry of Justice)",
+    "source_url": "https://sudreg-data.gov.hr",
+    "license": "Otvorena dozvola (Croatian Open Licence)",
+    "access": "public_with_free_registration",
+    "data_freshness": "continuous",
+    "attribution": "Izvor: Sudski registar (Ministarstvo pravosuđa), Otvorena dozvola."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["SUDREG_CLIENT_ID", "SUDREG_CLIENT_SECRET", "SUDREG_SUBSCRIPTION_KEY"],
+    "note": "Free registration at sudreg-data.gov.hr -> Client ID/Secret + token + Ocp-Apim-Subscription-Key (Oracle APIM). Open licence; not paid. Test env: sudreg-data-test.gov.hr."
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://sudreg-data.gov.hr/api/javni",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [{"name": "Ocp-Apim-Subscription-Key", "value": "<subscription-key>", "note": "from registration"}, {"name": "Accept", "value": "application/json", "note": null}],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "subjekt",
+    "total_results_path": null,
+    "pagination": {"type": "offset_limit", "page_param": "offset", "page_start": 0, "page_size": 100, "page_size_param": "limit", "next_page_path": null, "note": "subjekt list endpoint supports offset/limit paging; subjekt detail by tipIdentifikatora (oib|mbs) + identifikator. Confirm exact paths from the OpenAPI (sudreg-podaci.pravosudje.hr/docs/services)."},
+    "rate_limit": "per subscription"
+  },
+  "snapshot": {
+    "strategy": "json_pages_or_per_company",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "SudregSubjekt",
+    "date_formats": ["2006-01-02", "02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": ["hr_locale_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "oib/mbs stay strings. temeljni_kapital EUR since 2023 (HRK before). osobe are PII (members + management). predmet_poslovanja carries NKD where coded. Confirm exact JSON field names from the OpenAPI."
+  },
+  "keys": {
+    "primary_keys": ["mbs"],
+    "join_keys": ["oib", "mbs"],
+    "dedupe_keys": ["oib"]
+  },
+  "mapping_rules": {
+    "company_id": "oib; registration_number = mbs; vat_id = 'HR' + oib.",
+    "legal_name": "tvrtka / naziv.",
+    "company_type": "pravni_oblik.",
+    "status": "status (aktivan/u likvidaciji/brisan).",
+    "incorporation_date": "datum_osnivanja.",
+    "share_capital": "temeljni_kapital (EUR since 2023).",
+    "activity": "predmet_poslovanja (NKD where coded).",
+    "officers_owners": "osobe (members + management; PII)."
+  },
+  "fixture_requirements": [
+    "d.o.o. with osobe (member + uprava) + temeljni_kapital + NKD",
+    "j.d.o.o. (simple LLC)",
+    "d.d. (joint-stock) with board",
+    "brisan (deleted) / u likvidaciji subjekt",
+    "subjekt looked up by OIB vs by MBS"
+  ],
+  "live_test_plan": {
+    "smoke": "With SUDREG_SUBSCRIPTION_KEY, GET subjekt by tipIdentifikatora=oib&identifikator=<oib>; assert mbs + oib + tvrtka + status.",
+    "full": "Behind SUDREG_* env gate, page the subjekt list (offset/limit); persist raw JSON; normalize the spine keyed on OIB/MBS; join FINA RGFI financials on OIB."
+  },
+  "blockers": [
+    "Free registration required for the subscription key (Ocp-Apim-Subscription-Key).",
+    "Exact JSON field names / endpoint paths to confirm from the OpenAPI.",
+    "osobe PII (GDPR); Croatian language."
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "country": "Croatia",
+  "country_slug": "croatia",
+  "source_slug": "fina_rgfi",
+  "source_name": "FINA RGFI — Annual Financial Statements (javna objava)",
+  "source_type": "official_financial_disclosure",
+  "organization": "FINA (Financijska agencija)",
+  "source_url": "http://rgfi.fina.hr/JavnaObjava-web",
+  "license": "Otvorena dozvola (Croatian Open Licence); fuller FINA products paid",
+  "access": "public_with_free_registration",
+  "data_freshness": "annual filing",
+  "record_shape": "per-company per-razdoblje CSV (bilanca + račun dobiti i gubitka, abbreviated; notes)",
+  "primary_keys": ["oib + razdoblje"],
+  "join_keys": ["oib"],
+  "field_count": 12,
+  "fields": [
+    {"path": "oib", "source_field": "OIB", "english_name": "tax_id", "meaning": "Filing company's OIB; join key.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented (CSV behind a free FINA login). Same OIB key as Sudski registar.", "source_confidence": "high", "analysis_notes": "Clean join to the spine (no fuzzy match)."},
+    {"path": "razdoblje", "source_field": "razdoblje / godina", "english_name": "fiscal_year", "meaning": "Reporting period (fiscal year).", "data_type": "integer", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Per-statement key."},
+    {"path": "velicina", "source_field": "veličina", "english_name": "size_category", "meaning": "Enterprise size: mikro / mali / srednji / veliki.", "data_type": "string", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": false, "code_list": "mikro|mali|srednji|veliki", "language": "Croatian", "limitations": "Governs disclosure depth; open CSV highlighted for mikro/mali.", "source_confidence": "medium", "analysis_notes": "Micro/small file abbreviated forms."},
+    {"path": "bilanca.ukupna_aktiva", "source_field": "ukupna aktiva (bilanca)", "english_name": "total_assets", "meaning": "Total assets (balance sheet total).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "RGFI standard form (AOP positions)", "language": "Croatian", "limitations": "EUR (since 2023; HRK before).", "source_confidence": "high", "analysis_notes": "From the bilanca."},
+    {"path": "bilanca.dugotrajna_imovina", "source_field": "dugotrajna imovina", "english_name": "fixed_assets", "meaning": "Non-current/fixed assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": "EUR.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "bilanca.kratkotrajna_imovina", "source_field": "kratkotrajna imovina", "english_name": "current_assets", "meaning": "Current assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": "EUR.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "bilanca.kapital_i_rezerve", "source_field": "kapital i rezerve", "english_name": "equity", "meaning": "Equity (capital and reserves).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": "EUR.", "source_confidence": "high", "analysis_notes": null},
+    {"path": "bilanca.obveze", "source_field": "obveze", "english_name": "liabilities", "meaning": "Liabilities.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": "EUR.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "rdg.ukupni_prihodi", "source_field": "ukupni prihodi / prihodi od prodaje", "english_name": "revenue", "meaning": "Total revenue / sales revenue.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": "EUR. From the račun dobiti i gubitka.", "source_confidence": "high", "analysis_notes": "Primary revenue concept."},
+    {"path": "rdg.poslovni_rezultat", "source_field": "poslovni rezultat", "english_name": "operating_result", "meaning": "Operating result.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": "EUR.", "source_confidence": "medium", "analysis_notes": null},
+    {"path": "rdg.dobit_gubitak_razdoblja", "source_field": "dobit/gubitak razdoblja", "english_name": "net_income", "meaning": "Net profit/loss for the period.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": "EUR. Negative = gubitak (loss).", "source_confidence": "high", "analysis_notes": null},
+    {"path": "broj_zaposlenih", "source_field": "prosječan broj zaposlenih", "english_name": "employees", "meaning": "Average number of employees.", "data_type": "integer", "semantic_type": "employment", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Croatian", "limitations": "May be absent for micro.", "source_confidence": "medium", "analysis_notes": null}
+  ]
+}

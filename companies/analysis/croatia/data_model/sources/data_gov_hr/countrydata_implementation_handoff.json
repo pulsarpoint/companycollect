@@ -1,0 +1,56 @@
+{
+  "country": "Croatia",
+  "country_slug": "croatia",
+  "source_slug": "data_gov_hr",
+  "source_identity": "croatia_data_gov_hr",
+  "source_package": "datagovhr",
+  "env_prefix": "DATA_GOV_HR",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "data.gov.hr — national open data portal (CKAN)",
+    "source_type": "open_data_portal",
+    "organization": "Republic of Croatia (open data)",
+    "source_url": "https://data.gov.hr/",
+    "license": "Otvorena dozvola (per dataset)",
+    "access": "public",
+    "data_freshness": "varies",
+    "attribution": "Izvor: data.gov.hr (Otvorena dozvola)."
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": [],
+    "note": "Open CKAN API (no auth). Discovery only; actual company data via sudski_registar + fina_rgfi (gated portals)."
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://data.gov.hr/ckan/api/3/action",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [{"name": "Accept", "value": "application/json", "note": null}],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "result",
+    "total_results_path": null,
+    "pagination": {"type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null, "note": "package_show?id=sudski-registar / registar-godisnjih-financijskih-izvjestaja-javna-objava to resolve resources + license."},
+    "rate_limit": "fair use"
+  },
+  "snapshot": {"strategy": "catalog_metadata", "file_extension": ".json", "preserve_raw_download": true},
+  "parsing": {
+    "record_type_hint": "CkanPackage",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": ["2006-01-02T15:04:05"],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Use to confirm dataset licenses + resolve resource URLs. Not company data."
+  },
+  "keys": {"primary_keys": ["dataset_id", "resource_id"], "join_keys": [], "dedupe_keys": ["dataset_id"]},
+  "mapping_rules": {"discovery": "Resolve Sudski registar + RGFI resource URLs + licenses; the data comes from those sources."},
+  "fixture_requirements": ["package_show for sudski-registar", "package_show for the RGFI dataset"],
+  "live_test_plan": {
+    "smoke": "GET package_show?id=sudski-registar; assert license = Otvorena dozvola + resources present.",
+    "full": "Use CKAN to discover/monitor the Sudski registar + RGFI datasets; fetch data from those gated portals."
+  },
+  "blockers": ["Catalog only — does not host the company data directly (resources point to gated portals)."]
+}
