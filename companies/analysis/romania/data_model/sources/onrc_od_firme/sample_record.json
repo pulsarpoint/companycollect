@@ -1,0 +1,23 @@
+{
+  "DENUMIRE": "DANTE INTERNATIONAL SA",
+  "CUI": "14399840",
+  "COD_INMATRICULARE": "J2002000372404",
+  "DATA_INMATRICULARE": "23/01/2002",
+  "EUID": "ROONRC.J2002000372404",
+  "FORMA_JURIDICA": "SA",
+  "ADR_TARA": "România",
+  "ADR_JUDET": "Bucureşti",
+  "ADR_LOCALITATE": "Bucureşti Sectorul 6",
+  "ADR_DEN_STRADA": "Şos. VIRTUŢII",
+  "ADR_NR_STRADA": "148",
+  "ADR_BLOC": "",
+  "ADR_SCARA": "",
+  "ADR_ETAJ": "",
+  "ADR_APARTAMENT": "",
+  "ADR_COD_POSTAL": "060787",
+  "ADR_SECTOR": "6",
+  "ADR_COMPLETARE": "spatiul E47",
+  "WEB": "",
+  "TARA_FIRMA_MAMA": "",
+  "_note": "Real row from OD_FIRME for Dante International SA (eMAG operator). Company-level data only; no personal data."
+}

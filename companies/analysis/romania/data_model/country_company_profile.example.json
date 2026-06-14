@@ -1,0 +1,73 @@
+{
+  "country": "Romania",
+  "country_slug": "romania",
+  "country_profile_version": "2026-06-14",
+  "registration": {
+    "cui": "14399840",
+    "cod_inmatriculare": "J2002000372404",
+    "euid": "ROONRC.J2002000372404"
+  },
+  "tax_identifiers": {
+    "vat_id": "RO14399840",
+    "vat_registered": true,
+    "fiscally_inactive": false
+  },
+  "legal_identity": {
+    "legal_name": "DANTE INTERNATIONAL SA",
+    "legal_form": "SA"
+  },
+  "status": {
+    "status_code": "1048",
+    "status_label": "funcţiune (active)"
+  },
+  "activity": {
+    "caen_main": "4754",
+    "caen_main_description": "Comert cu amanuntul al articolelor si aparatelor electrocasnice, in magazine specializate",
+    "caen_authorized": [
+      { "code": "4754", "version": "2" },
+      { "code": "4791", "version": "2" }
+    ]
+  },
+  "incorporation": {
+    "registration_date": "2002-01-23"
+  },
+  "registered_location": {
+    "country": "România",
+    "county": "Bucureşti",
+    "locality": "Bucureşti Sectorul 6",
+    "street": "Şos. VIRTUŢII",
+    "street_number": "148",
+    "postal_code": "060787",
+    "sector": "6",
+    "full_address": "Şos. VIRTUŢII 148, spatiul E47, Bucureşti Sectorul 6, 060787"
+  },
+  "officers": [
+    {
+      "name": "[REDACTED — personal data; see OD_REPREZENTANTI_LEGALI]",
+      "role": "administrator",
+      "is_legal_entity": false
+    }
+  ],
+  "foreign_branches": [],
+  "financial_statements": [
+    { "fiscal_year": 2019, "turnover_net": 4559413123, "total_revenue": 4833372676, "total_expenses": 4783698274, "gross_profit": 49674402, "net_profit": 49548545, "avg_employees": 2478, "fixed_assets": 655378420, "current_assets": 1282280567, "liabilities": 1346771245, "equity": 501911330, "paid_up_capital": 1310243, "currency": "RON" },
+    { "fiscal_year": 2021, "turnover_net": 7346114540, "total_revenue": 7407435644, "total_expenses": 7563725510, "gross_profit": 0, "net_profit": 0, "avg_employees": 3668, "fixed_assets": 1267390415, "current_assets": 2074108621, "liabilities": 2191742624, "equity": 609646995, "paid_up_capital": 1350384, "currency": "RON" },
+    { "fiscal_year": 2023, "turnover_net": 7719798207, "total_revenue": 7824791595, "total_expenses": 7679617091, "gross_profit": 145174504, "net_profit": 119060358, "avg_employees": 3231, "fixed_assets": 2676405507, "current_assets": 2488048766, "liabilities": 2669465023, "equity": 2232984116, "paid_up_capital": 1526047, "currency": "RON" },
+    { "fiscal_year": 2024, "turnover_net": 8992961799, "total_revenue": 9068506360, "total_expenses": 9185993711, "gross_profit": 0, "net_profit": 0, "avg_employees": 3191, "fixed_assets": 2770685187, "current_assets": 2203441152, "liabilities": 2316131718, "equity": 2390301600, "paid_up_capital": 1566421, "currency": "RON" }
+  ],
+  "ownership": {
+    "shareholders": [
+      { "name": "[PLANNING-ONLY — paid ONRC portal; not in open data]", "share": null }
+    ],
+    "beneficial_owners": [
+      { "name": "[PLANNING-ONLY — restricted RBR; personal data]", "nature_of_control": null }
+    ]
+  },
+  "source_provenance": [
+    { "source_slug": "onrc_od_firme", "section": "registration/legal_identity/incorporation/registered_location", "source_url": "https://data.gov.ro/dataset/firme-08-12-2025", "access": "public", "license": "open (data.gov.ro)", "retrieved_at": "2026-06-14T00:00:00Z" },
+    { "source_slug": "onrc_od_stare_firma", "section": "status", "source_url": "https://data.gov.ro/dataset/firme-08-12-2025", "access": "public", "license": "open (data.gov.ro)", "retrieved_at": "2026-06-14T00:00:00Z" },
+    { "source_slug": "onrc_od_caen_autorizat", "section": "activity.caen_authorized", "source_url": "https://data.gov.ro/dataset/firme-08-12-2025", "access": "public", "license": "open (data.gov.ro)", "retrieved_at": "2026-06-14T00:00:00Z" },
+    { "source_slug": "anaf_bilant", "section": "activity.caen_main/financial_statements", "source_url": "https://webservicesp.anaf.ro/bilant", "access": "public", "license": "public information", "retrieved_at": "2026-06-14T00:00:00Z" },
+    { "source_slug": "onrc_od_reprezentanti_legali", "section": "officers", "source_url": "https://data.gov.ro/dataset/firme-08-12-2025", "access": "public (personal data)", "license": "open (data.gov.ro)", "retrieved_at": "2026-06-14T00:00:00Z" }
+  ]
+}

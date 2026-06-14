@@ -1,0 +1,50 @@
+{
+  "country": "Romania",
+  "country_slug": "romania",
+  "source_slug": "onrc_od_stare_firma",
+  "source_name": "ONRC firm status — OD_STARE_FIRMA (data.gov.ro)",
+  "source_type": "official_registry",
+  "organization": "ONRC via data.gov.ro",
+  "source_url": "https://data.gov.ro/dataset/f7374920-a656-4e34-85dd-a61c6e6e5603/resource/9ab6d186-6cf9-4330-b2ee-430469501f9d/download/od_stare_firma.csv",
+  "license": "open (Romanian open-data; exact license text not stated)",
+  "access": "public",
+  "data_freshness": "with the dataset snapshot",
+  "record_shape": "caret_delimited_csv_one_row_per_company",
+  "primary_keys": ["COD_INMATRICULARE"],
+  "join_keys": ["COD_INMATRICULARE"],
+  "field_count": 2,
+  "fields": [
+    {
+      "path": "COD_INMATRICULARE",
+      "source_field": "COD_INMATRICULARE",
+      "english_name": "registration_number",
+      "meaning": "Trade-register number; join key.",
+      "data_type": "string",
+      "semantic_type": "identifier",
+      "example_values": ["J2002000372404", "J40/9369/2014"],
+      "nullable": false,
+      "repeatable": false,
+      "code_list": null,
+      "language": "n/a",
+      "limitations": null,
+      "source_confidence": "high",
+      "analysis_notes": "Join to OD_FIRME."
+    },
+    {
+      "path": "COD",
+      "source_field": "COD",
+      "english_name": "status_code",
+      "meaning": "Company status code.",
+      "data_type": "integer",
+      "semantic_type": "status",
+      "example_values": ["1048", "1084", "2069"],
+      "nullable": false,
+      "repeatable": false,
+      "code_list": "ONRC status nomenclator",
+      "language": "n/a",
+      "limitations": "Needs the ONRC status nomenclator for full decode; observed: 1048=funcţiune (active), 1084=radiată (struck off), 2069=dizolvare (dissolution).",
+      "source_confidence": "medium",
+      "analysis_notes": "Decode at ingestion."
+    }
+  ]
+}

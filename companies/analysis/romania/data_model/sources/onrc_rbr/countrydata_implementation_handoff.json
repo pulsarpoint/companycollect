@@ -1,0 +1,61 @@
+{
+  "country": "Romania",
+  "country_slug": "romania",
+  "source_slug": "onrc_rbr",
+  "source_identity": "romania_onrc_rbr",
+  "source_package": "onrcrbr",
+  "env_prefix": "ONRC_RBR",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "ONRC Beneficial Ownership Register (Registrul Beneficiarilor Reali)",
+    "source_type": "beneficial_ownership",
+    "organization": "ONRC",
+    "source_url": "https://www.onrc.ro/index.php/ro/informatii-privind-beneficiarii-reali",
+    "license": "restricted",
+    "access": "restricted",
+    "data_freshness": "unknown",
+    "attribution": "ONRC"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["ONRC_RBR_ACCOUNT", "ONRC_RBR_QES_CERT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": null,
+    "download_url": null,
+    "http_method": null,
+    "headers_required": [],
+    "formats": [],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown"
+  },
+  "snapshot": { "strategy": "not_applicable_restricted", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "RbrBeneficiar",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. No transport implemented."
+  },
+  "keys": { "primary_keys": ["cui"], "join_keys": ["cui", "cod_inmatriculare"], "dedupe_keys": ["cui"] },
+  "mapping_rules": {
+    "beneficial_owners": "Planning-only: beneficiari[] -> {name, nature_of_control, citizenship}. Not implementable without legitimate-interest access + e-signature."
+  },
+  "fixture_requirements": ["planning-only: synthetic beneficial-owner record"],
+  "live_test_plan": {
+    "smoke": "Not applicable — restricted.",
+    "full": "Not applicable — requires registration, fee, and qualified e-signature; legitimate-interest gate."
+  },
+  "blockers": [
+    "Restricted access: online registration + administrative fee + qualified electronic signature.",
+    "Public access narrowed to legitimate interest after CJEU C-37/20.",
+    "Personal data (beneficial owners)."
+  ]
+}

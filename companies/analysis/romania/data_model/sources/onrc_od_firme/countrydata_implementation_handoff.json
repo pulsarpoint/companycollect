@@ -1,0 +1,78 @@
+{
+  "country": "Romania",
+  "country_slug": "romania",
+  "source_slug": "onrc_od_firme",
+  "source_identity": "romania_onrc_od_firme",
+  "source_package": "onrcfirme",
+  "env_prefix": "ONRC_FIRME",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "ONRC company register — OD_FIRME (data.gov.ro)",
+    "source_type": "official_registry",
+    "organization": "Oficiul National al Registrului Comertului (ONRC) via data.gov.ro",
+    "source_url": "https://data.gov.ro/dataset/firme-08-12-2025",
+    "license": "open (Romanian open-data; exact license text not stated)",
+    "access": "public",
+    "data_freshness": "regular dated snapshots (monthly+)",
+    "attribution": "Oficiul Național al Registrului Comerțului (ONRC) — data.gov.ro"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": null,
+    "download_url": "https://data.gov.ro/dataset/f7374920-a656-4e34-85dd-a61c6e6e5603/resource/488a8d00-90df-4f37-b5f4-6c9111e6f1e7/download/od_firme.csv",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "utf-8-bom",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented"
+  },
+  "snapshot": {
+    "strategy": "raw_csv_stream_then_ndjson",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "OnrcFirmaRecord",
+    "delimiter": "^",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "643 MB / ~4.1M rows. Stream line-by-line; do NOT load fully into memory. Strip UTF-8 BOM on the header. The resource download URL changes per dated snapshot; resolve the latest snapshot from the data.gov.ro ONRC organization page."
+  },
+  "keys": {
+    "primary_keys": ["COD_INMATRICULARE"],
+    "join_keys": ["COD_INMATRICULARE", "CUI", "EUID"],
+    "dedupe_keys": ["COD_INMATRICULARE"]
+  },
+  "mapping_rules": {
+    "company_id": "Use CUI (fiscal code); fall back to COD_INMATRICULARE when CUI=0.",
+    "registration_number": "Use COD_INMATRICULARE.",
+    "legal_name": "Use DENUMIRE.",
+    "legal_form": "Use FORMA_JURIDICA.",
+    "incorporation_date": "Parse DATA_INMATRICULARE as DD/MM/YYYY.",
+    "registered_address": "Concatenate ADR_* fields; trim leading spaces on ADR_COD_POSTAL.",
+    "vat_id": "Compose RO+CUI; confirm VAT registration via anaf_ws_tva.scpTVA.",
+    "status": "Not in this file — join onrc_od_stare_firma on COD_INMATRICULARE."
+  },
+  "fixture_requirements": [
+    "active SA/SRL with full address (e.g. CUI 14399840)",
+    "entity with CUI=0 (PF without fiscal code)",
+    "branch row with TARA_FIRMA_MAMA set",
+    "row with embedded quotes/special chars in DENUMIRE"
+  ],
+  "live_test_plan": {
+    "smoke": "Stream the first ~1000 lines, parse on '^', verify 20 columns and BOM handling.",
+    "full": "Process the full 643 MB file behind an env gate; join companion CSVs by COD_INMATRICULARE."
+  },
+  "blockers": []
+}

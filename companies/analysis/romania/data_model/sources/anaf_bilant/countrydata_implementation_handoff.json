@@ -1,0 +1,72 @@
+{
+  "country": "Romania",
+  "country_slug": "romania",
+  "source_slug": "anaf_bilant",
+  "source_identity": "romania_anaf_bilant",
+  "source_package": "anafbilant",
+  "env_prefix": "ANAF_BILANT",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "ANAF financial statements (bilant) web service",
+    "source_type": "official_tax",
+    "organization": "Agentia Nationala de Administrare Fiscala (ANAF)",
+    "source_url": "https://webservicesp.anaf.ro/bilant",
+    "license": "public information (financial statements published by law)",
+    "access": "public",
+    "data_freshness": "annual; verified 2014-2024",
+    "attribution": "ANAF"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://webservicesp.anaf.ro/bilant",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["User-Agent: Mozilla/5.0", "Accept: application/json"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "i",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "max 1 request/second (hard); browser User-Agent required (F5 WAF returns empty i:[] otherwise)"
+  },
+  "snapshot": {
+    "strategy": "one_json_per_cui_year",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "AnafBilant",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": ["plain_integer_ron"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Map indicators by i[].indicator code (NOT array position). Currency RON, plain units. Empty i:[] + deni:'' means no statement for that CUI/year OR a bot User-Agent was used."
+  },
+  "keys": {
+    "primary_keys": ["cui", "an"],
+    "join_keys": ["cui"],
+    "dedupe_keys": ["cui", "an"]
+  },
+  "mapping_rules": {
+    "financials": "Per year, map I13->turnover_net, I14->total_revenue, I15->total_expenses, I16->gross_profit, I18->net_profit, I20->avg_employees, I1->fixed_assets, I2->current_assets, I7->liabilities, I10->equity, I11->paid_up_capital. Currency RON.",
+    "activity_code": "Use caen/den_caen as the financial-statement activity (cross-check OD_CAEN_AUTORIZAT).",
+    "join": "cui == onrc_od_firme.CUI."
+  },
+  "fixture_requirements": [
+    "commercial entity with full I1-I20 set (e.g. CUI 14399840, year 2024)",
+    "year with no statement (empty i:[])",
+    "insurance/financial entity using extended I21-I33 codes",
+    "loss-making year (I17/I19 populated, I16/I18 = 0)"
+  ],
+  "live_test_plan": {
+    "smoke": "GET ?an=2024&cui=14399840 with a browser UA; assert deni!='' and len(i)>0.",
+    "full": "Enrich the CUI set from OD_FIRME at <=1 req/s across the needed years, behind an env gate."
+  },
+  "blockers": []
+}

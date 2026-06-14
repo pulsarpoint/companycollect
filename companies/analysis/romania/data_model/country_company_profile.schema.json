@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Romania Company Profile",
+  "description": "Country-specific company profile for Romania. Romania is best-in-class fully-open: ONRC publishes the COMPLETE trade register as open bulk CSV on data.gov.ro (OD_FIRME + companion CSVs for status, CAEN activities, legal representatives [PII], and foreign branches), and ANAF exposes a free official web service returning STRUCTURED financial statements per company per year (2014-2024). Two identifiers: CUI (fiscal/unique code; ANAF + VAT key) and COD_INMATRICULARE (trade-register number; key across ONRC companion CSVs). OD_FIRME bridges them. Shareholders/beneficial owners are NOT open (paid ONRC portal / restricted RBR).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Romania" },
+    "country_slug": { "type": "string", "const": "romania" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["cod_inmatriculare"],
+      "properties": {
+        "cui": {
+          "type": ["string", "null"],
+          "description": "Cod Unic de Înregistrare — fiscal/unique code; company id (0/null for some sole traders). Join key to ANAF.",
+          "x-source": "onrc_od_firme",
+          "x-source-path": "CUI",
+          "x-join-key": true,
+          "x-access": "public"
+        },
+        "cod_inmatriculare": {
+          "type": "string",
+          "description": "Trade-register number (J40/630/1992 or numeric). Primary join key across ONRC companion CSVs.",
+          "x-source": "onrc_od_firme",
+          "x-source-path": "COD_INMATRICULARE",
+          "x-join-key": true,
+          "x-access": "public"
+        },
+        "euid": {
+          "type": ["string", "null"],
+          "description": "European Unique Identifier (e.g. ROONRC.J2002000372404).",
+          "x-source": "onrc_od_firme",
+          "x-source-path": "EUID"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "vat_id": { "type": ["string", "null"], "description": "RO + CUI when VAT-registered.", "x-source": "anaf_ws_tva", "x-source-path": "found[].inregistrare_scop_Tva", "x-access": "public" },
+        "vat_registered": { "type": ["boolean", "null"], "x-source": "anaf_ws_tva", "x-source-path": "found[].inregistrare_scop_Tva.scpTVA", "x-access": "public" },
+        "fiscally_inactive": { "type": ["boolean", "null"], "x-source": "anaf_ws_tva", "x-source-path": "found[].stare_inactiv.statusInactivi", "x-access": "public" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "onrc_od_firme", "x-source-path": "DENUMIRE" },
+        "legal_form": { "type": ["string", "null"], "description": "SRL, SA, PF, PFA, SCS, SNC, …", "x-source": "onrc_od_firme", "x-source-path": "FORMA_JURIDICA" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_code": { "type": ["string", "null"], "description": "ONRC status code (1048 active, 1084 struck off, 2069 dissolution).", "x-source": "onrc_od_stare_firma", "x-source-path": "COD" },
+        "status_label": { "type": ["string", "null"], "description": "Decoded status label." }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "caen_main": { "type": ["string", "null"], "description": "Main CAEN at filing time.", "x-source": "anaf_bilant", "x-source-path": "caen" },
+        "caen_main_description": { "type": ["string", "null"], "x-source": "anaf_bilant", "x-source-path": "den_caen" },
+        "caen_authorized": {
+          "type": "array",
+          "description": "All authorized CAEN codes.",
+          "x-source": "onrc_od_caen_autorizat",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string", "x-source-path": "COD_CAEN_AUTORIZAT" },
+              "version": { "type": ["string", "null"], "x-source-path": "VER_CAEN_AUTORIZAT" }
+            }
+          }
+        }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "registration_date": { "type": ["string", "null"], "format": "date", "description": "DD/MM/YYYY in source.", "x-source": "onrc_od_firme", "x-source-path": "DATA_INMATRICULARE" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "x-source": "onrc_od_firme",
+      "properties": {
+        "country": { "type": ["string", "null"], "x-source-path": "ADR_TARA" },
+        "county": { "type": ["string", "null"], "x-source-path": "ADR_JUDET" },
+        "locality": { "type": ["string", "null"], "x-source-path": "ADR_LOCALITATE" },
+        "street": { "type": ["string", "null"], "x-source-path": "ADR_DEN_STRADA" },
+        "street_number": { "type": ["string", "null"], "x-source-path": "ADR_NR_STRADA" },
+        "postal_code": { "type": ["string", "null"], "x-source-path": "ADR_COD_POSTAL" },
+        "sector": { "type": ["string", "null"], "description": "Bucharest sector.", "x-source-path": "ADR_SECTOR" },
+        "full_address": { "type": ["string", "null"], "description": "Reassembled from ADR_* fields." }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Legal representatives (administrators, liquidators). OPEN but PERSONAL DATA (GDPR) — redact names/birth fields in published views.",
+      "x-source": "onrc_od_reprezentanti_legali",
+      "x-access": "public_personal_data",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source-path": "PERSOANA_IMPUTERNICITA", "x-personal-data": true },
+          "role": { "type": ["string", "null"], "x-source-path": "CALITATE" },
+          "is_legal_entity": { "type": ["boolean", "null"], "description": "True when the representative is an entity (e.g. IPURL liquidator)." }
+        }
+      }
+    },
+    "foreign_branches": {
+      "type": "array",
+      "description": "Branches/units in other EU member states.",
+      "x-source": "onrc_od_sucursale_alte_state_membre",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "x-source-path": "DENUMIRE_SUCURSALA" },
+          "type": { "type": ["string", "null"], "x-source-path": "TIP_UNITATE" },
+          "country": { "type": ["string", "null"], "x-source-path": "TARA" },
+          "euid": { "type": ["string", "null"], "x-source-path": "EUID" },
+          "fiscal_code": { "type": ["string", "null"], "x-source-path": "COD_FISCAL" }
+        }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "STRUCTURED annual financials from the ANAF /bilant web service (2014-2024). Values in RON (plain units).",
+      "x-source": "anaf_bilant",
+      "items": {
+        "type": "object",
+        "required": ["fiscal_year"],
+        "properties": {
+          "fiscal_year": { "type": "integer", "x-source-path": "an" },
+          "turnover_net": { "type": ["integer", "null"], "description": "I13 Cifra de afaceri neta.", "x-source-path": "i[indicator=I13].val_indicator" },
+          "total_revenue": { "type": ["integer", "null"], "description": "I14.", "x-source-path": "i[indicator=I14].val_indicator" },
+          "total_expenses": { "type": ["integer", "null"], "description": "I15.", "x-source-path": "i[indicator=I15].val_indicator" },
+          "gross_profit": { "type": ["integer", "null"], "description": "I16.", "x-source-path": "i[indicator=I16].val_indicator" },
+          "net_profit": { "type": ["integer", "null"], "description": "I18.", "x-source-path": "i[indicator=I18].val_indicator" },
+          "avg_employees": { "type": ["integer", "null"], "description": "I20.", "x-source-path": "i[indicator=I20].val_indicator" },
+          "fixed_assets": { "type": ["integer", "null"], "description": "I1.", "x-source-path": "i[indicator=I1].val_indicator" },
+          "current_assets": { "type": ["integer", "null"], "description": "I2.", "x-source-path": "i[indicator=I2].val_indicator" },
+          "liabilities": { "type": ["integer", "null"], "description": "I7.", "x-source-path": "i[indicator=I7].val_indicator" },
+          "equity": { "type": ["integer", "null"], "description": "I10.", "x-source-path": "i[indicator=I10].val_indicator" },
+          "paid_up_capital": { "type": ["integer", "null"], "description": "I11 Capital subscris varsat.", "x-source-path": "i[indicator=I11].val_indicator" },
+          "currency": { "type": "string", "const": "RON" }
+        }
+      }
+    },
+    "ownership": {
+      "type": "object",
+      "description": "PLANNING-ONLY. Shareholders/beneficial owners are NOT open: paid ONRC portal (asociati/actionari) or restricted RBR (beneficiari). PERSONAL DATA.",
+      "x-access": "paid_or_restricted",
+      "properties": {
+        "shareholders": {
+          "type": "array",
+          "x-source": "onrc_portal_recom",
+          "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "share": { "type": ["string", "null"] } } }
+        },
+        "beneficial_owners": {
+          "type": "array",
+          "x-source": "onrc_rbr",
+          "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "nature_of_control": { "type": ["string", "null"] } } }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

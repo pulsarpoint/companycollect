@@ -1,0 +1,58 @@
+{
+  "country": "Romania",
+  "country_slug": "romania",
+  "source_slug": "anaf_ws_tva",
+  "source_identity": "romania_anaf_ws_tva",
+  "source_package": "anafwstva",
+  "env_prefix": "ANAF_WSTVA",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "ANAF VAT / fiscal-info web service (PlatitorTvaRest, ws/tva)",
+    "source_type": "official_tax",
+    "organization": "ANAF",
+    "source_url": "https://static.anaf.ro/static/10/Anaf/Informatii_R/servicii_web.html",
+    "license": "public information",
+    "access": "public",
+    "data_freshness": "real-time fiscal status",
+    "attribution": "ANAF"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://webservicesp.anaf.ro/PlatitorTvaRest/api/v5/ws/tva",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Content-Type: application/json", "User-Agent: Mozilla/5.0"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "found",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "max 500 CUIs per request; max 1 request/second"
+  },
+  "snapshot": { "strategy": "enrichment_lookup_only", "file_extension": ".json", "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "AnafTvaResult",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Request body: [{\"cui\":N,\"data\":\"YYYY-MM-DD\"}]. Response shape per ANAF doc (found[]/notFound[]). ENDPOINT VERSION UNCONFIRMED — all of v5-v9 returned 404 on this run."
+  },
+  "keys": { "primary_keys": ["cui"], "join_keys": ["cui"], "dedupe_keys": ["cui"] },
+  "mapping_rules": {
+    "vat_id": "If scpTVA true -> vat_id = RO+cui (active).",
+    "status": "statusInactivi -> fiscally inactive flag.",
+    "registration_number": "Cross-check nrRegCom against COD_INMATRICULARE."
+  },
+  "fixture_requirements": ["VAT-registered active company", "non-VAT entity", "fiscally inactive company", "notFound CUI"],
+  "live_test_plan": {
+    "smoke": "Resolve current version path from servicii_web.html, then POST one CUI with a browser UA.",
+    "full": "Batch up to 500 CUIs/request at <=1 req/s, behind an env gate, once the path is confirmed."
+  },
+  "blockers": [
+    "Current endpoint version path unconfirmed — v5 (documented) and v6-v9 all returned HTTP 404 on this run. Resolve the live path before implementing.",
+    "Enrichment-only; not a company enumeration source."
+  ]
+}

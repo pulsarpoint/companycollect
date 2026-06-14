@@ -1,0 +1,54 @@
+{
+  "country": "Romania",
+  "country_slug": "romania",
+  "source_slug": "onrc_od_caen_autorizat",
+  "source_identity": "romania_onrc_od_caen_autorizat",
+  "source_package": "onrccaen",
+  "env_prefix": "ONRC_CAEN",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "ONRC authorized CAEN — OD_CAEN_AUTORIZAT",
+    "source_type": "official_registry",
+    "organization": "ONRC via data.gov.ro",
+    "source_url": "https://data.gov.ro/dataset/firme-08-12-2025",
+    "license": "open (Romanian open-data; exact license text not stated)",
+    "access": "public",
+    "data_freshness": "with the dataset snapshot",
+    "attribution": "ONRC — data.gov.ro"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": null,
+    "download_url": "https://data.gov.ro/dataset/f7374920-a656-4e34-85dd-a61c6e6e5603/resource/7001180a-9be1-4951-bc06-9a91057ce70b/download/od_caen_autorizat.csv",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "utf-8-bom",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented"
+  },
+  "snapshot": { "strategy": "raw_csv_grouped_by_company", "file_extension": ".csv", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "OnrcCaenRecord",
+    "delimiter": "^",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Multiple rows per COD_INMATRICULARE; group into activities[]. VER distinguishes CAEN Rev.2/Rev.3."
+  },
+  "keys": { "primary_keys": ["COD_INMATRICULARE", "COD_CAEN_AUTORIZAT"], "join_keys": ["COD_INMATRICULARE"], "dedupe_keys": ["COD_INMATRICULARE", "COD_CAEN_AUTORIZAT"] },
+  "mapping_rules": {
+    "activity_code": "Group COD_CAEN_AUTORIZAT into activities[] per COD_INMATRICULARE. Main activity: prefer ANAF caen; these are authorized activities."
+  },
+  "fixture_requirements": ["company with multiple CAEN rows", "company with a single CAEN", "Rev.2 vs Rev.3 versions"],
+  "live_test_plan": {
+    "smoke": "Parse first 1000 rows; group by COD_INMATRICULARE.",
+    "full": "Build activities[] join table for OD_FIRME."
+  },
+  "blockers": []
+}

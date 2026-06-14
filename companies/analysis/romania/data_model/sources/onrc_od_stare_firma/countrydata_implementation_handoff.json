@@ -1,0 +1,54 @@
+{
+  "country": "Romania",
+  "country_slug": "romania",
+  "source_slug": "onrc_od_stare_firma",
+  "source_identity": "romania_onrc_od_stare_firma",
+  "source_package": "onrcstare",
+  "env_prefix": "ONRC_STARE",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "ONRC firm status — OD_STARE_FIRMA",
+    "source_type": "official_registry",
+    "organization": "ONRC via data.gov.ro",
+    "source_url": "https://data.gov.ro/dataset/firme-08-12-2025",
+    "license": "open (Romanian open-data; exact license text not stated)",
+    "access": "public",
+    "data_freshness": "with the dataset snapshot",
+    "attribution": "ONRC — data.gov.ro"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": null,
+    "download_url": "https://data.gov.ro/dataset/f7374920-a656-4e34-85dd-a61c6e6e5603/resource/9ab6d186-6cf9-4330-b2ee-430469501f9d/download/od_stare_firma.csv",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "utf-8-bom",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented"
+  },
+  "snapshot": { "strategy": "raw_csv_lookup_table", "file_extension": ".csv", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "OnrcStareRecord",
+    "delimiter": "^",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "89 MB; load as a COD_INMATRICULARE -> status-code map. Resolve codes via the ONRC status nomenclator (1048 active, 1084 struck off, 2069 dissolution observed)."
+  },
+  "keys": { "primary_keys": ["COD_INMATRICULARE"], "join_keys": ["COD_INMATRICULARE"], "dedupe_keys": ["COD_INMATRICULARE"] },
+  "mapping_rules": {
+    "status": "Decode COD: 1048->active, 1084->struck_off, 2069->dissolution; other codes via nomenclator. Join on COD_INMATRICULARE."
+  },
+  "fixture_requirements": ["active company (1048)", "struck-off company (1084)", "dissolution (2069)", "unknown code"],
+  "live_test_plan": {
+    "smoke": "Parse first 1000 lines; assert 2 columns; build the lookup map.",
+    "full": "Load the full file as a join table for OD_FIRME."
+  },
+  "blockers": ["Status nomenclator (code->label) not bundled; obtain full code list from ONRC for complete decode."]
+}
