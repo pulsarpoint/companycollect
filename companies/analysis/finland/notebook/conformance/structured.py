@@ -24,7 +24,7 @@ def ytj_structured_from_ndjson(ndjson: bytes) -> dict[str, pl.DataFrame]:
     """prh_ytj JSONL -> structured frames, idiomatic Polars. Domain rules
     (the status='2' liveness pitfall, current-primary name, URL normalization)
     are expressed as Polars expressions."""
-    df = pl.read_ndjson(ndjson).with_columns(
+    df = pl.read_ndjson(ndjson, infer_schema_length=None).with_columns(
         pl.col("businessId").struct.field("value").alias("business_id")
     )
 
@@ -53,36 +53,52 @@ def ytj_structured_from_ndjson(ndjson: bytes) -> dict[str, pl.DataFrame]:
         )
     )
 
-    websites = (
-        df.select("business_id", "website")
-        .with_columns(pl.col("website").struct.field("url").alias("url"))
-        .filter(pl.col("url").is_not_null() & (pl.col("url") != ""))
-        .with_columns(
-            pl.when(pl.col("url").str.contains("://")).then(pl.col("url"))
-            .otherwise(pl.concat_str([pl.lit("https://"), pl.col("url")])).alias("normalized_url")
+    _website_cols = ["business_id", "url", "normalized_url", "host", "is_current", "is_primary"]
+    if "website" not in df.columns:
+        websites = pl.DataFrame(schema={c: pl.Utf8 for c in _website_cols}).with_columns(
+            pl.col("is_current").cast(pl.Boolean),
+            pl.col("is_primary").cast(pl.Boolean),
         )
-        .with_columns(
-            pl.col("normalized_url").str.replace(r"^https?://", "").str.split("/").list.first().alias("host"),
-            pl.lit(True).alias("is_current"),
-            pl.lit(True).alias("is_primary"),
+    else:
+        websites = (
+            df.select("business_id", "website")
+            .with_columns(
+                pl.when(pl.col("website").is_not_null())
+                .then(pl.col("website").struct.field("url"))
+                .otherwise(pl.lit(None, dtype=pl.Utf8)).alias("url")
+            )
+            .filter(pl.col("url").is_not_null() & (pl.col("url") != ""))
+            .with_columns(
+                pl.when(pl.col("url").str.contains("://")).then(pl.col("url"))
+                .otherwise(pl.concat_str([pl.lit("https://"), pl.col("url")])).alias("normalized_url")
+            )
+            .with_columns(
+                pl.col("normalized_url").str.replace(r"^https?://", "").str.split("/").list.first().alias("host"),
+                pl.lit(True).alias("is_current"),
+                pl.lit(True).alias("is_primary"),
+            )
+            .select("business_id", "url", "normalized_url", "host", "is_current", "is_primary")
         )
-        .select("business_id", "url", "normalized_url", "host", "is_current", "is_primary")
-    )
 
-    addresses = (
+    _addr_exploded = (
         df.select("business_id", "addresses")
         .explode("addresses").drop_nulls("addresses").unnest("addresses")
         .with_columns(
             pl.col("postOffices").list.eval(pl.element().struct.field("city")).list.first().alias("city"),
             pl.col("postOffices").list.eval(pl.element().struct.field("municipalityCode")).list.first().alias("municipality_code"),
         )
-        .select(
-            "business_id",
-            pl.col("type").alias("address_type_code"),
-            "street",
-            pl.col("postCode").alias("post_code"),
-            "city", "municipality_code", "country",
-        )
+    )
+    # `country` may be absent in the real PRH-YTJ payload; default to "FI".
+    _country_expr = (
+        pl.col("country") if "country" in _addr_exploded.columns else pl.lit("FI")
+    )
+    addresses = _addr_exploded.select(
+        "business_id",
+        pl.col("type").alias("address_type_code"),
+        "street",
+        pl.col("postCode").alias("post_code"),
+        "city", "municipality_code",
+        _country_expr.alias("country"),
     )
 
     business_lines = (
