@@ -1,0 +1,31 @@
+[
+  {
+    "name": "InfoCamere open data - imprese attive per ATECO (aggregate, CC-BY)",
+    "slug": "infocamere_imprese_attive_ateco",
+    "type": "bulk",
+    "url": "https://opendata.marche.camcom.it/data/imprese-attive-ateco.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "InfoCamere open data - DCAT catalog",
+    "slug": "infocamere_dcat_catalog",
+    "type": "bulk",
+    "url": "https://opendata.marche.camcom.it/data/dcat-opendata-catalog.rdf",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "GLEIF LEI records - Italy (filter client-side; CC0)",
+    "slug": "gleif_lei_it",
+    "type": "api_page",
+    "url": "https://api.gleif.org/api/v1/lei-records?filter[entity.legalAddress.country]=IT&page[size]=50",
+    "method": "GET",
+    "headers": { "Accept": "application/vnd.api+json" },
+    "page_param": "page[number]",
+    "page_start": 1,
+    "max_pages": 2
+  }
+]
