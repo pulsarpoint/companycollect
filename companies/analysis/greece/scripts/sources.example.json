@@ -1,0 +1,26 @@
+[
+  {
+    "name": "GEMI publicity portal (manual search — reference only)",
+    "slug": "gemi_portal",
+    "type": "api_page",
+    "url": "https://publicity.businessportal.gr/api/search",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 0,
+    "max_pages": 1,
+    "_note": "Reference only — the GEMI /api is reCAPTCHA-protected and rate-limited (HTTP 429). Do NOT automate/bulk-scrape; use the portal manually."
+  },
+  {
+    "name": "AADE RgWsPublic — company basic data by ΑΦΜ (requires credentials)",
+    "slug": "aade_rgwspublic",
+    "type": "api_page",
+    "url": "https://www1.aade.gr/webtax2/wsgsis/RgWsPublic/RgWsPublicPort",
+    "method": "POST",
+    "headers": { "Content-Type": "text/xml" },
+    "page_param": "page",
+    "page_start": 0,
+    "max_pages": 0,
+    "_note": "SOAP service; requires registered TaxisNet web-service credentials. Per-ΑΦΜ lookup, not bulk."
+  }
+]

@@ -44,18 +44,31 @@ it does **not** wire anything into Dagster — that comes later.
 
 ## Architecture
 
-Two pure-function layers, both future Dagster assets:
+Three function layers, all future Dagster assets:
 
 ```
-raw files (S3)                          prh_ytj NDJSON + code lists, prh_xbrl XML + listings
-  │  parse_*()   COPIED pure parsers → structured Parquet  (drop CH importer only)
+source URLs                             prh_ytj companies API + code lists, prh_xbrl discovery + statement XML
+  │  download_*()   URLs → raw files in S3                                  [Phase 3, first asset]
   ▼
-structured Parquet (local sample / S3)  source-native, one dataset per source
-  │  build_*()   per-country, self-contained, pure → canonical
+raw files (S3)                          prh_ytj NDJSON + code lists, prh_xbrl XML + listings
+  │  parse_*()      COPIED pure parsers → structured Parquet (drop CH importer)   [Phase 5]
+  ▼
+structured Parquet                      source-native, one dataset per source
+  │  build_*()      per-country, self-contained, pure → canonical                [Phase 6]
   ▼
 canonical Parquet (8-table contract)    company, registrations, financials, company_websites, …
         (ClickHouse load = later, separate, out of scope)
 ```
+
+### Acquire layer (download, first asset)
+
+- A `download_*()` function per source fetches raw files from the source URLs
+  (Phase 2) and writes them **directly to S3** — no local staging. This is the
+  first asset. Download logic is reused-by-copying from the existing source
+  clients, same as the parsers.
+- prh_xbrl acquisition is bounded for the reference (e.g. one registration
+  month); if eligibility filtering is applied, the eligible business-id list
+  derives from the prh_ytj structured output, not from ClickHouse.
 
 ### Parse layer (reused by copying)
 
@@ -83,6 +96,25 @@ canonical Parquet (8-table contract)    company, registrations, financials, comp
   DataFrame, validated against the contract. No IO inside — wrapping in
   `@dg.asset` later is the only change.
 
+## Phased implementation
+
+Implementation is **serialized into phases**. Each phase is a **separate commit**,
+and each must be **confirmed working before the next begins** — no work runs ahead
+of a confirmed phase.
+
+| Phase | Deliverable | Confirm before proceeding |
+|---|---|---|
+| 1 — Environment | `notebook/pyproject.toml` + uv env (marimo, polars, pyarrow, duckdb, boto3, lxml) | `uv sync` succeeds; marimo + imports run |
+| 2 — Source URLs | `conformance/urls.py` — download endpoints for prh_ytj (companies + code lists) and prh_xbrl (discovery + statement XML) | a probe request to each URL returns the expected shape |
+| 3 — Download to S3 (first asset) | `conformance/download.py` — function(s) that download source files and store them directly in S3 | raw objects land at the expected S3 keys; re-runnable |
+| 4 — Analysis method (pedagogical) | `notebook/analysis_method.md` — how to analyse the raw files with Polars and convert them to the proper Parquet shape | doc covers every source file/entity and the target structured schema |
+| 5 — Parse to structured Parquet | `conformance/parse_*.py` (copied parsers + Parquet serialization) | structured Parquet produced and validates against the per-source structured schema |
+| 6 — Build canonical tables | `conformance/build_*.py` — final canonical tables for ClickHouse | canonical Parquet validates against the 8-table contract; notebook runs end-to-end |
+
+Phases map to the asset chain: Phase 3 = the download asset; Phase 5 = the
+structured assets; Phase 6 = the canonical assets. Phase 4 is documentation that
+gates Phase 5 — the analysis reasoning is written and agreed before transforms.
+
 ## File layout (`companies/analysis/finland/notebook/`)
 
 All notebook-related files live under a `notebook/` child of the country folder,
@@ -94,14 +126,17 @@ finland/
   notebook/
     conformance/
       __init__.py
-      parse_prh_ytj.py    COPIED prh_ytj parser + Parquet serialization → structured Parquet
-      parse_prh_xbrl.py   COPIED prh_xbrl parser + Parquet serialization → structured Parquet
-      build_company.py    structured → canonical company + registrations   (pure, local)
-      build_financials.py structured → canonical financials                (pure, local)
-      build_websites.py   structured → canonical company_websites          (pure, local)
+      urls.py             source download URLs / endpoints                 (Phase 2)
+      download.py         download source files → S3  (first asset)        (Phase 3)
+      parse_prh_ytj.py    COPIED prh_ytj parser + Parquet serialization → structured Parquet   (Phase 5)
+      parse_prh_xbrl.py   COPIED prh_xbrl parser + Parquet serialization → structured Parquet  (Phase 5)
+      build_company.py    structured → canonical company + registrations   (pure, local)        (Phase 6)
+      build_financials.py structured → canonical financials                (pure, local)        (Phase 6)
+      build_websites.py   structured → canonical company_websites          (pure, local)        (Phase 6)
       validate.py         assert a DataFrame matches a canonical table's columns/types
-    finland_conformance.py marimo notebook: load raw (S3) → parse → conform → validate → write
-    output/                structured/ + canonical/ Parquet datasets (sample artifacts)
+    finland_conformance.py marimo notebook: download → parse → conform → validate → write
+    analysis_method.md     pedagogical: analysing source files with Polars → Parquet   (Phase 4)
+    output/                raw/ + structured/ + canonical/ sample artifacts
     partitioning.md        partition-strategy doc, grounded in Finland's real numbers
     pyproject.toml         analysis env: marimo, polars, pyarrow, duckdb, boto3, lxml (no dagster_corpscout)
 ```
@@ -128,9 +163,9 @@ from Finland and edited.
 
 ## marimo notebook responsibilities
 
-1. Load raw Finland files from S3 (prh_ytj latest snapshot NDJSON + code lists;
-   prh_xbrl window listings + XML). IO lives here only.
-2. Run reused parsers → structured Parquet (write to `output/structured/`).
+1. Download raw Finland files to S3 via `download_*` (or load existing): prh_ytj
+   snapshot NDJSON + code lists, a bounded prh_xbrl sample. IO lives here only.
+2. Run copied parsers → structured Parquet (write to `output/structured/`).
 3. Run local `build_*` functions → canonical DataFrames.
 4. Validate each against the canonical contract (`validate.py`).
 5. Write canonical Parquet to `output/canonical/`.
@@ -161,14 +196,14 @@ columns present, types compatible, declared key columns unique (e.g.
 - Any shared/generic conformance library.
 - ClickHouse table creation or loading.
 - Dagster assets, schedules, or sensors.
-- New source ingestion or corpscout-discovered websites/contacts.
+- Sources beyond Finland's prh_ytj / prh_xbrl; corpscout-discovered websites/contacts.
 
 ## Dependencies & risks
 
-- Raw Finland files must be present in S3 and the notebook env needs S3
-  credentials. prh_ytj snapshot is live (should exist); prh_xbrl raw may be
-  thin, so financials may be a small sample — acceptable for a structure
-  reference.
+- The download step needs network access to the PRH endpoints and S3 write
+  credentials. prh_xbrl is large, so the reference uses a bounded sample (e.g.
+  one registration month); eligibility filtering, if applied, derives from the
+  prh_ytj structured output rather than ClickHouse.
 - Parse functions are copied, not imported, so they can drift from the
   originals. Acceptable: the originals' ClickHouse path is being removed, so the
   country folder becomes the home of record for Finland's parse logic anyway.
@@ -176,8 +211,10 @@ columns present, types compatible, declared key columns unique (e.g.
 
 ## Deliverables
 
-1. `companies/analysis/finland/notebook/conformance/` pure functions (copied
-   parse + local build + validate).
+1. `companies/analysis/finland/notebook/conformance/` pure functions (urls +
+   download + copied parse + local build + validate).
 2. `companies/analysis/finland/notebook/finland_conformance.py` marimo notebook.
-3. `companies/analysis/finland/notebook/output/` sample structured + canonical Parquet.
-4. `companies/analysis/finland/notebook/partitioning.md`.
+3. `companies/analysis/finland/notebook/analysis_method.md` (Phase 4 pedagogical).
+4. `companies/analysis/finland/notebook/output/` sample raw + structured + canonical.
+5. `companies/analysis/finland/notebook/partitioning.md`.
+6. One commit per phase (6 phases), serialized and individually confirmed.
