@@ -14,13 +14,14 @@ The US has **no single national company register**. Company formation happens at
 
 ## Best sources
 
-1. **SEC EDGAR** — public/SEC-reporting companies. Fully open, near real-time, no key (just a User-Agent header). Best federal source for public companies.
+1. **SEC EDGAR** — public/SEC-reporting companies. Fully open, near real-time, no key (just a User-Agent header). Best federal source for public companies. **Financial data is concretely covered** via the SEC **companyfacts** XBRL API (per CIK) + the quarterly **Financial Statement Data Sets** (all filers) — verified live (e.g. Apple FY2025 revenue $416.16B). Private for-profit financials remain unavailable openly.
 2. **IRS EO BMF** — all tax-exempt nonprofits, EIN-keyed, national CSV, fully open, monthly.
 3. **SAM.gov** — federal contractors/grantees. Public extracts (FOIA), requires a free API key.
-4. **Colorado Business Entities** — exemplar of a free, open state registry (1M+ entities via Socrata API/CSV). Template for other free states (Oregon, Connecticut, Iowa, Minnesota).
+4. **Colorado Business Entities** and **New York Active Corporations** — two concrete, free, open state registries (Socrata API/CSV), both verified live. Template for other free states (Washington, Oregon, Connecticut, Iowa, Minnesota).
 
 ## Next action
 
 - For full private-company coverage, evaluate each state's bulk/API offering and cost (start with the free states; budget for paid ones or use an aggregator).
-- For an immediate, fully-open foundation: ingest SEC EDGAR + IRS EO BMF + free-state open data (Colorado etc.).
+- For an immediate, fully-open foundation: ingest SEC EDGAR (identity) + **SEC XBRL financials** (companyfacts / Financial Statement Data Sets) + IRS EO BMF + free-state open data (Colorado, New York, …).
 - Obtain a SAM.gov System Account API key to add federal-contractor entities.
+- Expand state coverage by adding more free Socrata/CSV states (Washington, Oregon, Connecticut, Iowa, Minnesota) on the New York/Colorado pattern.

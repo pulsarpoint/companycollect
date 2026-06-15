@@ -2,10 +2,12 @@
 
 | # | Source | Type | Coverage | Access | Formats | License | Status |
 |---|--------|------|----------|--------|---------|---------|--------|
-| 1 | **SEC EDGAR** | Federal regulator | Public / SEC-reporting companies | Open, no key (User-Agent required), 10 req/s | JSON, ZIP, XBRL | US Gov / public domain | ✅ recommended |
+| 1 | **SEC EDGAR** (company index) | Federal regulator | Public / SEC-reporting companies | Open, no key (User-Agent required), 10 req/s | JSON, ZIP, XBRL | US Gov / public domain | ✅ recommended |
+| 1b | **SEC EDGAR — XBRL financials** (companyfacts + Financial Statement Data Sets) | Federal regulator | **Open structured financials** for SEC filers | Open, no key (User-Agent required) | JSON, ZIP, TSV | US Gov / public domain | ✅ recommended (ready; verified) |
 | 2 | **IRS EO BMF** | Federal tax authority | Tax-exempt nonprofits (national, EIN) | Open, no key | CSV | US Gov / public domain | ✅ recommended |
 | 3 | **SAM.gov Entity** | Federal registry (GSA) | Federal contractors / grantees | Public extract, **free API key required** | JSON, CSV | FOIA public | ✅ recommended |
 | 4 | **Colorado Business Entities** | State registry (open data) | All CO entities (1M+) | Open, no key (Socrata) | JSON, CSV, XML | Open data (verify) | ✅ recommended |
+| 4b | **New York — Active Corporations** | State registry (open data) | All active NY corporations | Open, no key (Socrata) | JSON, CSV | Open data (data.ny.gov) | ✅ recommended (ready; verified) |
 | 5 | **State SoS registries (50+DC)** | State registries | All US private companies (authoritative) | Free search; **bulk often paid** | varies | varies | ◐ useful secondary |
 | 6 | **Data.gov catalog** | Open data portal | Discovery of fed/state datasets | Open | varies | varies | ◐ useful secondary |
 | 7 | **OpenCorporates** | Aggregator | All 50 states normalized | **Paid/licensed bulk** | JSON (API) | restricted | ⚠ license uncertainty |

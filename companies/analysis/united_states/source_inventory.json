@@ -12,16 +12,28 @@
       "https://www.sec.gov/files/company_tickers.json"
     ],
     "api_base_url": "https://data.sec.gov/",
-    "formats": ["json", "zip", "xbrl"],
+    "formats": [
+      "json",
+      "zip",
+      "xbrl"
+    ],
     "license": "U.S. Government work / public domain",
     "access": "public",
     "requires_authentication": false,
     "requires_payment": false,
     "rate_limits": "10 requests/second/IP; descriptive User-Agent header with contact email REQUIRED (else HTTP 403)",
-    "fields_observed": ["cik", "ticker", "company_name", "filing_history", "xbrl_financial_facts"],
+    "fields_observed": [
+      "cik",
+      "ticker",
+      "company_name",
+      "filing_history",
+      "xbrl_financial_facts"
+    ],
     "data_freshness": "near real-time (submissions <1s delay; XBRL <1 min)",
     "coverage": "Public companies and SEC-registered filers only (~10,405 companies with tickers; more filers without)",
-    "downloaded_files": ["raw/bulk/sec_company_tickers.json"],
+    "downloaded_files": [
+      "raw/bulk/sec_company_tickers.json"
+    ],
     "status": "recommended",
     "notes": "Best FEDERAL source. Covers only public/SEC-reporting companies, not the bulk of US private companies. Fully open, no key needed."
   },
@@ -34,13 +46,23 @@
     "url": "https://open.gsa.gov/api/entity-api/",
     "bulk_download_url": "https://open.gsa.gov/api/sam-entity-extracts-api/",
     "api_base_url": "https://api.sam.gov/entity-information/v3/entities",
-    "formats": ["json", "csv"],
+    "formats": [
+      "json",
+      "csv"
+    ],
     "license": "Public data released under FOIA (Public extract)",
     "access": "public",
     "requires_authentication": true,
     "requires_payment": false,
     "rate_limits": "Extract API returns max 1,000,000 records; daily/monthly extracts available",
-    "fields_observed": ["uei", "cage_code", "legal_business_name", "physical_address", "registration_status", "naics"],
+    "fields_observed": [
+      "uei",
+      "cage_code",
+      "legal_business_name",
+      "physical_address",
+      "registration_status",
+      "naics"
+    ],
     "data_freshness": "daily / monthly extracts",
     "coverage": "Entities registered to do business with the US federal government (contractors, grantees)",
     "downloaded_files": [],
@@ -61,16 +83,33 @@
       "https://www.irs.gov/pub/irs-soi/eo4.csv"
     ],
     "api_base_url": null,
-    "formats": ["csv"],
+    "formats": [
+      "csv"
+    ],
     "license": "U.S. Government work / public domain",
     "access": "public",
     "requires_authentication": false,
     "requires_payment": false,
     "rate_limits": null,
-    "fields_observed": ["EIN", "NAME", "STREET", "CITY", "STATE", "ZIP", "SUBSECTION", "CLASSIFICATION", "RULING", "NTEE_CD", "ASSET_AMT", "INCOME_AMT"],
+    "fields_observed": [
+      "EIN",
+      "NAME",
+      "STREET",
+      "CITY",
+      "STATE",
+      "ZIP",
+      "SUBSECTION",
+      "CLASSIFICATION",
+      "RULING",
+      "NTEE_CD",
+      "ASSET_AMT",
+      "INCOME_AMT"
+    ],
     "data_freshness": "monthly (2nd Tuesday)",
     "coverage": "Tax-exempt organizations (nonprofits) with an EIN and IRS determination",
-    "downloaded_files": ["raw/samples/irs_eo_bmf_region1_head.csv"],
+    "downloaded_files": [
+      "raw/samples/irs_eo_bmf_region1_head.csv"
+    ],
     "status": "recommended",
     "notes": "Covers nonprofits only, but is a true national EIN-keyed dataset, fully open. Data dictionary: https://www.irs.gov/pub/irs-pdf/p5926.pdf"
   },
@@ -83,16 +122,34 @@
     "url": "https://data.colorado.gov/Business/Business-Entities-in-Colorado/4ykn-tg5h",
     "bulk_download_url": "https://data.colorado.gov/api/views/4ykn-tg5h/rows.csv?accessType=DOWNLOAD",
     "api_base_url": "https://data.colorado.gov/resource/4ykn-tg5h.json",
-    "formats": ["json", "csv", "xml"],
+    "formats": [
+      "json",
+      "csv",
+      "xml"
+    ],
     "license": "Open data (Socrata); verify Colorado open data terms",
     "access": "public",
     "requires_authentication": false,
     "requires_payment": false,
     "rate_limits": "Socrata SODA; app token recommended for high volume, not required for low volume",
-    "fields_observed": ["entityid", "entityname", "principaladdress1", "principalcity", "principalstate", "entitystatus", "entitytype", "jurisdictonofformation", "agentfirstname", "agentlastname", "entityformdate"],
+    "fields_observed": [
+      "entityid",
+      "entityname",
+      "principaladdress1",
+      "principalcity",
+      "principalstate",
+      "entitystatus",
+      "entitytype",
+      "jurisdictonofformation",
+      "agentfirstname",
+      "agentlastname",
+      "entityformdate"
+    ],
     "data_freshness": "regularly updated; records back to 1800s, 1M+ entities",
     "coverage": "All business entities registered in Colorado",
-    "downloaded_files": ["raw/api/colorado_business_entities_sample.json"],
+    "downloaded_files": [
+      "raw/api/colorado_business_entities_sample.json"
+    ],
     "status": "recommended",
     "notes": "EXEMPLAR of a free, open state registry. Most other states charge for bulk data (AZ $2000+/yr, SC $12000/yr UCC, NC $750 setup + $250/yr). A few other states (Oregon, Connecticut, Iowa, Minnesota) also offer free/open bulk or APIs."
   },
@@ -105,13 +162,24 @@
     "url": "https://www.nass.org/can-i-vote/business-services",
     "bulk_download_url": null,
     "api_base_url": null,
-    "formats": ["varies", "csv", "ftp", "api"],
+    "formats": [
+      "varies",
+      "csv",
+      "ftp",
+      "api"
+    ],
     "license": "varies by state",
     "access": "public search free; bulk often paid",
     "requires_authentication": false,
     "requires_payment": true,
     "rate_limits": "varies",
-    "fields_observed": ["entity_name", "entity_type", "formation_date", "status", "registered_agent"],
+    "fields_observed": [
+      "entity_name",
+      "entity_type",
+      "formation_date",
+      "status",
+      "registered_agent"
+    ],
     "data_freshness": "varies",
     "coverage": "Authoritative source for ALL US private companies (registration is at state level)",
     "downloaded_files": [],
@@ -127,7 +195,9 @@
     "url": "https://catalog.data.gov/dataset?tags=business-entity",
     "bulk_download_url": null,
     "api_base_url": "https://catalog.data.gov/api/3/",
-    "formats": ["varies"],
+    "formats": [
+      "varies"
+    ],
     "license": "varies by dataset",
     "access": "public",
     "requires_authentication": false,
@@ -149,17 +219,99 @@
     "url": "https://opencorporates.com/",
     "bulk_download_url": null,
     "api_base_url": "https://api.opencorporates.com/",
-    "formats": ["json"],
+    "formats": [
+      "json"
+    ],
     "license": "Restricted; commercial/bulk requires license/payment",
     "access": "partial public",
     "requires_authentication": true,
     "requires_payment": true,
     "rate_limits": "API key tiers",
-    "fields_observed": ["company_number", "name", "jurisdiction_code", "incorporation_date", "status"],
+    "fields_observed": [
+      "company_number",
+      "name",
+      "jurisdiction_code",
+      "incorporation_date",
+      "status"
+    ],
     "data_freshness": "varies",
     "coverage": "Aggregated all 50 US state registers into one standardized schema",
     "downloaded_files": [],
     "status": "blocked_by_license_uncertainty",
     "notes": "Best single cross-state aggregator, but bulk/commercial use requires a license. Useful as comparison/fallback, not for free bulk ingestion."
+  },
+  {
+    "country": "United States",
+    "country_slug": "united_states",
+    "source_name": "SEC EDGAR — XBRL financial data (companyfacts + Financial Statement Data Sets)",
+    "source_slug": "sec_financials",
+    "source_type": "official_financial",
+    "organization": "U.S. Securities and Exchange Commission (SEC)",
+    "url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+    "bulk_download_url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2025q1.zip",
+    "api_base_url": "https://data.sec.gov/api/xbrl/companyfacts/",
+    "formats": [
+      "json",
+      "zip",
+      "tsv"
+    ],
+    "license": "U.S. Government work / public domain",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": "<=10 req/s; descriptive User-Agent required",
+    "fields_observed": [
+      "cik",
+      "entityName",
+      "us-gaap concepts (Revenue/NetIncomeLoss/Assets/Liabilities/StockholdersEquity)",
+      "val",
+      "end",
+      "fy",
+      "form"
+    ],
+    "data_freshness": "near real-time; bulk quarterly",
+    "record_count": null,
+    "downloaded_files": [
+      "raw/api/sec_company_tickers.json",
+      "raw/samples/sec_companyfacts_sample.json"
+    ],
+    "status": "recommended",
+    "notes": "OPEN structured financials for SEC-reporting companies. companyfacts API (per CIK) + quarterly Financial Statement Data Sets (all filers). Verified live (Apple FY2025 revenue $416.16B). Join on CIK. Upgrades the previously planning-only SEC financials to ready."
+  },
+  {
+    "country": "United States",
+    "country_slug": "united_states",
+    "source_name": "New York — Active Corporations (data.ny.gov)",
+    "source_slug": "new_york_active_corporations",
+    "source_type": "official_registry",
+    "organization": "New York Department of State (via data.ny.gov / Socrata)",
+    "url": "https://data.ny.gov/resource/n9v6-gdp6.json",
+    "bulk_download_url": "https://data.ny.gov/api/views/n9v6-gdp6/rows.csv?accessType=DOWNLOAD",
+    "api_base_url": "https://data.ny.gov/resource/n9v6-gdp6.json",
+    "formats": [
+      "json",
+      "csv"
+    ],
+    "license": "Open data (data.ny.gov terms)",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": "Socrata throttle; optional free app token",
+    "fields_observed": [
+      "dos_id",
+      "current_entity_name",
+      "entity_type",
+      "jurisdiction",
+      "initial_dos_filing_date",
+      "county",
+      "dos_process_*"
+    ],
+    "data_freshness": "periodic",
+    "record_count": null,
+    "downloaded_files": [
+      "raw/api/ny_sample.json"
+    ],
+    "status": "recommended",
+    "notes": "Second concrete free/open state registry (alongside Colorado), verified live. Major state. Sibling open states: Washington (data.wa.gov), Oregon, Connecticut, Iowa, Minnesota. No principal street address; dos_process may carry agent name (redact). State-scoped id."
   }
 ]

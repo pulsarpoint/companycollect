@@ -27,9 +27,11 @@ aggregating many paid state registers.
 
 | Source slug | Source name | Status | Access | License | Role |
 |---|---|---|---|---|---|
-| sec_edgar | SEC EDGAR | recommended | public (UA header req'd) | US gov / public domain | Federal — public companies |
+| sec_edgar | SEC EDGAR (company index) | recommended | public (UA header req'd) | US gov / public domain | Federal — public-company identity (CIK↔ticker↔name) |
+| sec_financials | SEC EDGAR XBRL financials (companyfacts + Financial Statement Data Sets) | recommended (**ready**) | public (UA header req'd) | US gov / public domain | Federal — **open structured financials** for SEC filers |
 | irs_eo_bmf | IRS Exempt Orgs Business Master File | recommended | public | US gov / public domain | Federal — nonprofits (national, EIN-keyed) |
 | colorado_business_entities | Colorado Business Entities | recommended | public (Socrata) | open data (verify terms) | State exemplar — private companies |
+| new_york_active_corporations | New York Active Corporations (data.ny.gov) | recommended (**ready**) | public (Socrata) | open data | Second concrete free state (major state) |
 | sam_gov_entity | SAM.gov Entity Management | recommended | authenticated (free key) | FOIA public extract | Federal contractors — **planning-only** |
 | state_sos_registries | 50 states + DC SoS registries | useful_secondary | mixed (bulk often paid) | varies per state | Authoritative for private cos — **generic/planning** |
 | opencorporates | OpenCorporates | blocked_by_license_uncertainty | partial / paid bulk | restricted/share-alike | Cross-state aggregator — **planning-only** |
@@ -113,8 +115,12 @@ honestly null because that entity is neither public nor a nonprofit).
 **Available only from restricted / authenticated / paid sources:**
 - NAICS industry codes, ueiSAM/CAGE, physical address — **SAM.gov** (free key,
   authenticated; planning-only here).
-- SEC addresses, SIC, state of incorporation, former names, XBRL financials —
-  **SEC submissions/companyfacts APIs** (open but not downloaded; planning-only).
+- SEC addresses, SIC, state of incorporation, former names — **SEC submissions
+  API** (open; planning-only here).
+- **(Now available/ready)** Public-company **XBRL financials** — the **SEC
+  companyfacts API** + quarterly **Financial Statement Data Sets** are open and
+  verified live (see `sec_financials`); revenue/net income/assets/liabilities/
+  equity in USD, keyed on CIK. SEC-reporting companies only (not private companies).
 - Comprehensive private-company coverage — **state bulk feeds** (mostly paid) or
   **OpenCorporates** (paid/license-uncertain).
 

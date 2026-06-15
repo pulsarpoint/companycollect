@@ -72,7 +72,8 @@ keyed by whichever identifiers exist.
 |---|---|---|---|
 | nonprofit_financials.asset_amount/income_amount/revenue_amount | irs_eo_bmf | `ASSET_AMT`/`INCOME_AMT`/`REVENUE_AMT` | Nonprofits only; whole USD; sparse; period = `TAX_PERIOD` |
 | nonprofit_financials.filing_requirement | irs_eo_bmf | `FILING_REQ_CD` | Pub 5926 code |
-| public_company_financials[] | sec_edgar | companyfacts `facts.us-gaap.*` | PLANNING-ONLY; public companies; on-demand only |
+| public_company_financials[] | sec_financials | companyfacts `facts.us-gaap.<Concept>.units.USD[]` / Financial Statement Data Sets | **OPEN (ready)**; SEC filers only; join on CIK; USD; pick by form=10-K + latest end |
+| identifiers.state_registrations[].state_entity_id (NY) | new_york_active_corporations | `dos_id` | **OPEN (ready)**; NY-scoped; second concrete free state (data.ny.gov) |
 
 ## Source provenance
 

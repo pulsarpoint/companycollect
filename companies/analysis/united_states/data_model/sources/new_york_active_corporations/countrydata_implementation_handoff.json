@@ -1,0 +1,66 @@
+{
+  "country": "United States",
+  "country_slug": "united_states",
+  "source_slug": "new_york_active_corporations",
+  "source_identity": "united_states_new_york_active_corporations",
+  "source_package": "nyactivecorps",
+  "env_prefix": "NY_ACTIVE_CORPS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "New York — Active Corporations (data.ny.gov)",
+    "source_type": "official_registry",
+    "organization": "New York Department of State, Division of Corporations (via data.ny.gov)",
+    "source_url": "https://data.ny.gov/resource/n9v6-gdp6.json",
+    "license": "Open data (data.ny.gov terms)",
+    "access": "public",
+    "data_freshness": "periodic",
+    "attribution": "New York Department of State (data.ny.gov)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": ["NY_SOCRATA_APP_TOKEN_OPTIONAL"] },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://data.ny.gov/resource/n9v6-gdp6.json",
+    "download_url": "https://data.ny.gov/api/views/n9v6-gdp6/rows.csv?accessType=DOWNLOAD",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "offset", "page_param": "$offset", "page_start": 0, "page_size": 50000, "page_size_param": "$limit", "next_page_path": null },
+    "rate_limit": "Socrata throttles anonymous; optional free app token raises limits"
+  },
+  "snapshot": { "strategy": "csv_or_socrata_to_ndjson", "file_extension": ".json", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "NyActiveCorp",
+    "date_formats": ["2006-01-02T15:04:05.000"],
+    "datetime_formats": ["2006-01-02T15:04:05.000"],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Socrata: page with $limit/$offset (or download the full CSV). Redact dos_process person names. State-scoped dos_id; no national join."
+  },
+  "keys": { "primary_keys": ["dos_id"], "join_keys": ["dos_id"], "dedupe_keys": ["dos_id"] },
+  "mapping_rules": {
+    "company_id": "Use dos_id (NY-scoped; prefix with state if combining states).",
+    "legal_name": "Use current_entity_name.",
+    "legal_form": "Use entity_type.",
+    "incorporation_date": "Use initial_dos_filing_date.",
+    "registered_location": "Only county + service-of-process available (no principal street address).",
+    "note": "Pattern replicable for other free states (Washington data.wa.gov, Colorado, Oregon, Connecticut, Iowa, Minnesota)."
+  },
+  "fixture_requirements": [
+    "domestic business corporation",
+    "foreign corporation (jurisdiction != New York)",
+    "record with process agent name (verify redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "GET ?$limit=5; assert dos_id + current_entity_name + entity_type.",
+    "full": "Page $limit=50000/$offset, or download rows.csv; load to NDJSON keyed on dos_id; redact process names."
+  },
+  "blockers": [
+    "State-scoped id only (no national US company id).",
+    "Service-of-process fields may be personal data — redact.",
+    "Comprehensive US coverage needs ~51 separate state sources."
+  ]
+}

@@ -260,16 +260,19 @@
     },
     "public_company_financials": {
       "type": "array",
-      "description": "PLANNING-ONLY. XBRL financial facts (revenue/assets/net income) per period via SEC companyfacts API; public companies only.",
-      "x-source": "sec_edgar",
-      "x-source-path": "companyfacts:facts.us-gaap.*",
+      "description": "OPEN (ready). Structured XBRL financial facts (revenue/net income/assets/liabilities/equity) per period from the SEC companyfacts API (per CIK) or the quarterly Financial Statement Data Sets (all filers). USD. SEC-reporting companies only (empty for the private-company example).",
+      "x-source": "sec_financials",
+      "x-source-path": "facts.us-gaap.<Concept>.units.USD[]",
+      "x-access": "public",
       "items": {
         "type": "object",
         "properties": {
-          "concept": { "type": "string" },
-          "period": { "type": "string" },
+          "concept": { "type": "string", "description": "US-GAAP XBRL concept (e.g. NetIncomeLoss, Assets)." },
+          "fiscal_year": { "type": ["integer", "null"] },
+          "period_end": { "type": ["string", "null"], "format": "date" },
           "value": { "type": "number" },
-          "unit": { "type": "string" }
+          "unit": { "type": "string", "description": "Usually USD." },
+          "form": { "type": ["string", "null"], "description": "Source form (10-K annual, 10-Q quarterly)." }
         }
       }
     },

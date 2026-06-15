@@ -1,0 +1,25 @@
+{
+  "country": "United States",
+  "country_slug": "united_states",
+  "source_slug": "new_york_active_corporations",
+  "source_name": "New York — Active Corporations (data.ny.gov)",
+  "source_type": "official_registry",
+  "organization": "New York Department of State, Division of Corporations (via data.ny.gov / Socrata)",
+  "source_url": "https://data.ny.gov/resource/n9v6-gdp6.json",
+  "license": "Open data (data.ny.gov terms)",
+  "access": "public",
+  "data_freshness": "periodic (state refresh)",
+  "record_shape": "socrata_json_csv_one_row_per_entity",
+  "primary_keys": ["dos_id"],
+  "join_keys": ["dos_id"],
+  "field_count": 7,
+  "fields": [
+    { "path": "dos_id", "source_field": "dos_id", "english_name": "dos_id", "meaning": "NY Department of State filing ID; company id within NY.", "data_type": "string", "semantic_type": "identifier", "example_values": ["4424185"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "State-scoped id (no national id exists).", "source_confidence": "high", "analysis_notes": "Join key within NY." },
+    { "path": "current_entity_name", "source_field": "current_entity_name", "english_name": "legal_name", "meaning": "Current registered entity name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["BUTCHY'S WINE & SPIRITS, INC."], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "entity_type", "source_field": "entity_type", "english_name": "entity_type", "meaning": "Entity type / legal form.", "data_type": "string", "semantic_type": "legal_form", "example_values": ["DOMESTIC BUSINESS CORPORATION", "FOREIGN BUSINESS CORPORATION"], "nullable": false, "repeatable": false, "code_list": "NY entity types", "language": "English", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "jurisdiction", "source_field": "jurisdiction", "english_name": "jurisdiction", "meaning": "Jurisdiction of formation.", "data_type": "string", "semantic_type": "geography", "example_values": ["New York", "Delaware"], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": null, "source_confidence": "high", "analysis_notes": "Many NY-registered entities are formed in Delaware." },
+    { "path": "initial_dos_filing_date", "source_field": "initial_dos_filing_date", "english_name": "initial_filing_date", "meaning": "Initial DOS filing (≈ registration date).", "data_type": "date", "semantic_type": "date", "example_values": ["2013-06-27T00:00:00.000"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "ISO datetime.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "county", "source_field": "county", "english_name": "county", "meaning": "County of the entity.", "data_type": "string", "semantic_type": "geography", "example_values": ["Westchester"], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "dos_process_name / dos_process_address_*", "source_field": "dos_process_*", "english_name": "process_address", "meaning": "Service-of-process name + address (may name an agent/person).", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "May be PERSONAL DATA (agent name) — minimise. Not the principal office.", "source_confidence": "medium", "analysis_notes": "Registered-agent style field; redact person names." }
+  ]
+}

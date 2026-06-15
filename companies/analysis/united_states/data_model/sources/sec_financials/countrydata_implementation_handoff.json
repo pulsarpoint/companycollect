@@ -1,0 +1,62 @@
+{
+  "country": "United States",
+  "country_slug": "united_states",
+  "source_slug": "sec_financials",
+  "source_identity": "united_states_sec_financials",
+  "source_package": "secfinancials",
+  "env_prefix": "SEC_FINANCIALS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "SEC EDGAR — XBRL financial data (companyfacts + Financial Statement Data Sets)",
+    "source_type": "official_financial",
+    "organization": "U.S. Securities and Exchange Commission (SEC)",
+    "source_url": "https://data.sec.gov/api/xbrl/companyfacts/",
+    "license": "U.S. Government work / public domain",
+    "access": "public",
+    "data_freshness": "near real-time; bulk quarterly",
+    "attribution": "U.S. Securities and Exchange Commission (SEC) — public domain"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://data.sec.gov/api/xbrl/companyfacts/",
+    "download_url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2025q1.zip",
+    "http_method": "GET",
+    "headers_required": ["User-Agent: <descriptive app + contact email>"],
+    "formats": ["json", "zip", "tsv"],
+    "compression": "zip (bulk)",
+    "encoding": "utf-8",
+    "record_path": "facts.us-gaap",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "<=10 requests/second; descriptive User-Agent required (SEC fair access)"
+  },
+  "snapshot": { "strategy": "one_json_per_cik_plus_quarterly_bulk", "file_extension": ".json", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "SecCompanyFacts",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["plain_usd_integer"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "companyfacts URL: CIK zero-padded to 10 (CIK0000320193.json). Per concept, pick datapoint by form (10-K annual) + latest end; dedupe restatements by accn. Units tagged (USD/shares/USD-per-share). For full population use the quarterly Financial Statement Data Sets (num/sub/pre/tag.tsv)."
+  },
+  "keys": { "primary_keys": ["cik", "concept", "period"], "join_keys": ["cik"], "dedupe_keys": ["cik", "concept", "period", "accn"] },
+  "mapping_rules": {
+    "financials": "Per fiscal year (form=10-K): revenue=RevenueFromContractWithCustomerExcludingAssessedTax (or Revenues), net_income=NetIncomeLoss, assets=Assets, liabilities=Liabilities, equity=StockholdersEquity, cash=CashAndCashEquivalentsAtCarryingValue. currency=USD.",
+    "join": "cik == sec_edgar.cik_str (zero-pad to 10 for the URL)."
+  },
+  "fixture_requirements": [
+    "large filer with full us-gaap set (e.g. CIK 320193 Apple)",
+    "smaller filer with sparse concepts",
+    "concept with restated values across filings (dedupe by accn)",
+    "quarterly Financial Statement Data Sets num.tsv slice"
+  ],
+  "live_test_plan": {
+    "smoke": "GET companyfacts/CIK0000320193.json with a descriptive UA; assert Revenue + NetIncomeLoss + Assets present.",
+    "full": "Per-CIK companyfacts for the ticker universe (<=10 req/s), or harvest the quarterly Financial Statement Data Sets for all filers."
+  },
+  "blockers": [
+    "Coverage = SEC-reporting companies only (not the private-company universe).",
+    "Descriptive User-Agent required (SEC fair-access); <=10 req/s."
+  ]
+}

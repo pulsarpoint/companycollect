@@ -22,7 +22,7 @@
 | `dissolution_date` | `not_available_in_open_sources` | Not in the analyzed open feeds; inferable only indirectly from status (e.g. Delinquent/Dissolved) without an explicit date. |
 | `registered_address` | `addresses[]` where `address_role` = principal/physical | State principal address primary; IRS mailing / SAM physical as fallback. |
 | `activity_code` | `activity.naics_codes` ∥ `activity.sic_code` ∥ `activity.ntee_code` | Fragmented taxonomies: NAICS (SAM, planning), SIC (SEC, planning), NTEE (IRS nonprofits). No single code in the open Colorado feed. |
-| `financials` | `public_company_financials[]` (SEC XBRL, planning) ∥ `nonprofit_financials` (IRS) | Only public-company and nonprofit financials are open; private for-profit financials are `not_available_in_open_sources`. |
+| `financials` | `public_company_financials[]` (SEC XBRL — **open/ready** via `sec_financials`) ∥ `nonprofit_financials` (IRS EO BMF) | Public-company financials are now a **ready** open source (SEC companyfacts API + quarterly Financial Statement Data Sets, USD, join on CIK); nonprofit financials via IRS. **Private for-profit financials remain `not_available_in_open_sources`.** |
 | `officers` | `not_available_in_open_sources` | No open officer/director data. |
 | `owners` | `not_available_in_open_sources` | No open beneficial-ownership data (FinCEN BOI is access-controlled, not open). The state registered agent is NOT an owner. |
 | `source_provenance` | `source_provenance[]` | Already structured per source with license/access/planning_only flags. |

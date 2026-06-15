@@ -1,0 +1,55 @@
+{
+  "cik": 320193,
+  "entityName": "Apple Inc.",
+  "_note": "Real SEC companyfacts XBRL facts (us-gaap), latest 10-K value per concept. Trimmed to key line items; full response has 503 concepts.",
+  "facts": [
+    {
+      "concept": "RevenueFromContractWithCustomerExcludingAssessedTax",
+      "unit": "USD",
+      "fy": 2025,
+      "end": "2025-09-27",
+      "val": 416161000000,
+      "form": "10-K"
+    },
+    {
+      "concept": "NetIncomeLoss",
+      "unit": "USD",
+      "fy": 2025,
+      "end": "2025-09-27",
+      "val": 112010000000,
+      "form": "10-K"
+    },
+    {
+      "concept": "Assets",
+      "unit": "USD",
+      "fy": 2025,
+      "end": "2025-09-27",
+      "val": 359241000000,
+      "form": "10-K"
+    },
+    {
+      "concept": "Liabilities",
+      "unit": "USD",
+      "fy": 2025,
+      "end": "2025-09-27",
+      "val": 285508000000,
+      "form": "10-K"
+    },
+    {
+      "concept": "StockholdersEquity",
+      "unit": "USD",
+      "fy": 2025,
+      "end": "2025-09-27",
+      "val": 73733000000,
+      "form": "10-K"
+    },
+    {
+      "concept": "CashAndCashEquivalentsAtCarryingValue",
+      "unit": "USD",
+      "fy": 2025,
+      "end": "2025-09-27",
+      "val": 35934000000,
+      "form": "10-K"
+    }
+  ]
+}

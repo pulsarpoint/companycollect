@@ -1,0 +1,26 @@
+{
+  "country": "United States",
+  "country_slug": "united_states",
+  "source_slug": "sec_financials",
+  "source_name": "SEC EDGAR — XBRL financial data (companyfacts API + Financial Statement Data Sets)",
+  "source_type": "official_financial",
+  "organization": "U.S. Securities and Exchange Commission (SEC)",
+  "source_url": "https://data.sec.gov/api/xbrl/companyfacts/CIK##########.json",
+  "license": "U.S. Government work / public domain",
+  "access": "public",
+  "data_freshness": "near real-time (as filed); bulk data sets quarterly",
+  "record_shape": "json_xbrl_facts_per_cik_plus_quarterly_bulk_tsv",
+  "primary_keys": ["cik", "concept", "period"],
+  "join_keys": ["cik"],
+  "field_count": 8,
+  "fields": [
+    { "path": "cik", "source_field": "cik", "english_name": "central_index_key", "meaning": "SEC Central Index Key; join key to sec_edgar.", "data_type": "integer", "semantic_type": "identifier", "example_values": ["320193"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Zero-pad to 10 in the companyfacts URL (CIK0000320193).", "source_confidence": "high", "analysis_notes": "Join to sec_edgar (CIK<->ticker<->name)." },
+    { "path": "entityName", "source_field": "entityName", "english_name": "entity_name", "meaning": "Registrant name as filed.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Apple Inc."], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "facts.us-gaap.<Concept>.units.<unit>[].val", "source_field": "val", "english_name": "fact_value", "meaning": "Numeric value of an XBRL financial concept for a period.", "data_type": "decimal", "semantic_type": "financial", "example_values": ["416161000000"], "nullable": false, "repeatable": true, "code_list": "US-GAAP XBRL taxonomy", "language": "n/a", "limitations": "USD (unit-tagged); ~503 us-gaap concepts for a large filer.", "source_confidence": "high", "analysis_notes": "e.g. RevenueFromContractWithCustomerExcludingAssessedTax, NetIncomeLoss, Assets, Liabilities, StockholdersEquity." },
+    { "path": "facts.us-gaap.<Concept>.units.<unit>[].end", "source_field": "end", "english_name": "period_end", "meaning": "Period end date for the fact (instant or duration end).", "data_type": "date", "semantic_type": "date", "example_values": ["2025-09-27"], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "facts.us-gaap.<Concept>.units.<unit>[].fy / fp", "source_field": "fy/fp", "english_name": "fiscal_year_period", "meaning": "Fiscal year + period (FY/Q1..Q4).", "data_type": "string", "semantic_type": "date", "example_values": ["2025", "FY"], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "facts.us-gaap.<Concept>.units.<unit>[].form", "source_field": "form", "english_name": "source_form", "meaning": "Filing form the fact came from (10-K, 10-Q, …).", "data_type": "string", "semantic_type": "filing", "example_values": ["10-K", "10-Q"], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "Use 10-K for annual; dedupe restated values by accn/frame.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "facts.dei.<Concept>", "source_field": "dei facts", "english_name": "dei_facts", "meaning": "Document & entity info (shares outstanding, fiscal-year-end, etc.).", "data_type": "object", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": true, "code_list": "DEI taxonomy", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Financial Statement Data Sets (sub/num/pre/tag .tsv)", "source_field": "financial-statement-data-sets", "english_name": "bulk_financial_data_sets", "meaning": "Quarterly bulk ZIPs of ALL filers' XBRL numeric facts (num.tsv), submissions (sub.tsv), presentation (pre.tsv), tags (tag.tsv).", "data_type": "array", "semantic_type": "financial", "example_values": ["2025q1.zip (~128 MB)"], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "The bulk route to all SEC financials (vs per-CIK companyfacts).", "source_confidence": "high", "analysis_notes": "https://www.sec.gov/dera/data/financial-statement-data-sets" }
+  ]
+}
