@@ -1,0 +1,25 @@
+{
+  "country": "Japan",
+  "country_slug": "japan",
+  "source_slug": "houki_toukibo",
+  "source_name": "Registry Information Service (登記情報提供サービス) / Legal Affairs Bureau",
+  "source_type": "official_registry",
+  "organization": "Ministry of Justice (法務省) / Legal Affairs Bureau (法務局)",
+  "source_url": "https://www1.touki.or.jp/",
+  "license": "restricted",
+  "access": "paid",
+  "data_freshness": "real-time registry",
+  "record_shape": "per_company_registry_certificate",
+  "primary_keys": ["company_registration_number"],
+  "join_keys": ["corporate_number"],
+  "field_count": 7,
+  "fields": [
+    { "path": "registry.company_registration_number", "source_field": "会社法人等番号", "english_name": "company_registration_number", "meaning": "Commercial registration number (12-digit) issued by the Legal Affairs Bureau; the corporate number is derived from it.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY (paid). Cataloged from public docs.", "source_confidence": "low", "analysis_notes": "12-digit base of the 13-digit corporate number." },
+    { "path": "registry.company_name", "source_field": "商号", "english_name": "company_name", "meaning": "Registered trade name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "registry.head_office", "source_field": "本店", "english_name": "head_office", "meaning": "Registered head-office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "registry.capital", "source_field": "資本金の額", "english_name": "capital", "meaning": "Registered capital amount (JPY).", "data_type": "integer", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "registry.purpose", "source_field": "目的", "english_name": "company_purpose", "meaning": "Registered business purpose(s).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "registry.directors", "source_field": "役員に関する事項", "english_name": "directors_officers", "meaning": "Directors / representative directors and related officer records.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY (paid). PERSONAL DATA (APPI) — must be redacted.", "source_confidence": "low", "analysis_notes": "Only source of officer data; not in open data." },
+    { "path": "registry.establishment", "source_field": "会社成立の年月日", "english_name": "establishment_date", "meaning": "Date of company incorporation.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": "Authoritative incorporation date." }
+  ]
+}

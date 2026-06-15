@@ -1,0 +1,71 @@
+{
+  "country": "Japan",
+  "country_slug": "japan",
+  "country_profile_version": "2026-06-15",
+  "_note": "Identity (registration/legal_identity/status/registered_location) is REAL data from the NTA Tottori bulk CSV (31_tottori_all_20260529), a kind=301 registered corporation — corporate identity, public by law. company_details (gBizINFO), financial_statements (EDINET), and officers (paid registry) are PLANNING-ONLY illustrations: this is a non-listed SME, so it would have NO EDINET filings, and those sources are key/token/pay gated and were not fetched. Placeholders show the schema shape only.",
+  "registration": {
+    "corporate_number": "1010001119515",
+    "assignment_date": "2015-10-05"
+  },
+  "tax_identifiers": {
+    "tax_id": "1010001119515",
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "株式会社ウッドプラスチックテクノロジー",
+    "legal_name_en": null,
+    "legal_name_kana": "ウッドプラスチックテクノロジー",
+    "corporate_kind": "301"
+  },
+  "status": {
+    "status": "active",
+    "close_date": null,
+    "close_cause": null,
+    "successor_corporate_number": null
+  },
+  "registered_location": {
+    "prefecture": "鳥取県",
+    "city": "倉吉市",
+    "street": "谷６０５－３３",
+    "post_code": "6820954",
+    "prefecture_code": "31",
+    "city_code": "203",
+    "address_full": "鳥取県倉吉市谷６０５－３３"
+  },
+  "company_details": {
+    "_planning_only": "gBizINFO (free token; not fetched). Values below are illustrative placeholders.",
+    "establishment_date": null,
+    "capital_stock": null,
+    "employee_number": null,
+    "business_summary": null,
+    "business_items": []
+  },
+  "financial_statements": [],
+  "officers": [],
+  "source_provenance": [
+    {
+      "source_slug": "nta_houjin_bangou",
+      "section": "registration / legal_identity / status / registered_location",
+      "source_url": "https://www.houjin-bangou.nta.go.jp/download/zenken/",
+      "access": "public (no auth)",
+      "license": "free_use_public_data",
+      "retrieved_at": "2026-06-15T15:49:53Z"
+    },
+    {
+      "source_slug": "gbizinfo",
+      "section": "company_details (planning-only)",
+      "source_url": "https://info.gbiz.go.jp/hojin/v1/hojin",
+      "access": "free token required",
+      "license": "gov_standard_terms",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "edinet_xbrl",
+      "section": "financial_statements (planning-only; listed/obligated only)",
+      "source_url": "https://api.edinet-fsa.go.jp/api/v2/",
+      "access": "free Subscription-Key required",
+      "license": "public_disclosure_terms",
+      "retrieved_at": null
+    }
+  ]
+}

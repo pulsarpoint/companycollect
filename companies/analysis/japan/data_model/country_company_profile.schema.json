@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Japan Company Profile",
+  "description": "Country-specific company profile for Japan. Keyed on the 13-digit Corporate Number (法人番号), which is the company id AND the corporate taxpayer number — Japan has NO separate VAT number (the invoice-system number is 'T' + the 13-digit number). Identity is fully open from the NTA Corporate Number Publication (name, address, kind, registry-closure status). Financials come from EDINET XBRL (listed/disclosure-obligated; free Subscription-Key) and lightly from gBizINFO (free token). Capital, employees, establishment date, and industry items come from gBizINFO; officers and authoritative incorporation date are only in the paid Legal Affairs Bureau registry (planning-only, APPI personal data).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Japan" },
+    "country_slug": { "type": "string", "const": "japan" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["corporate_number"],
+      "properties": {
+        "corporate_number": {
+          "type": "string",
+          "description": "13-digit Corporate Number (法人番号). Company id + join key; also the corporate tax id.",
+          "x-source": "nta_houjin_bangou",
+          "x-source-path": "col2.corporateNumber",
+          "x-join-key": true,
+          "x-freshness": "monthly full + daily diff"
+        },
+        "assignment_date": { "type": ["string", "null"], "format": "date", "description": "Date the corporate number was assigned (NOT incorporation).", "x-source": "nta_houjin_bangou", "x-source-path": "col23.assignmentDate" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= corporate number.", "x-source": "nta_houjin_bangou", "x-source-path": "col2.corporateNumber" },
+        "vat_id": { "type": ["string", "null"], "description": "No separate VAT. Invoice-system number = 'T' + corporate number.", "x-access": "not_available" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "nta_houjin_bangou", "x-source-path": "col7.name" },
+        "legal_name_en": { "type": ["string", "null"], "description": "Opt-in English name.", "x-source": "nta_houjin_bangou", "x-source-path": "col25.enName" },
+        "legal_name_kana": { "type": ["string", "null"], "x-source": "nta_houjin_bangou", "x-source-path": "col29.furigana" },
+        "corporate_kind": { "type": ["string", "null"], "description": "101 national agency / 201 local public body / 301 registered corporation / 401 foreign company / 499 other.", "x-source": "nta_houjin_bangou", "x-source-path": "col9.kind" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status": { "type": ["string", "null"], "enum": ["active", "closed", null], "description": "closed when closeDate present, else active." },
+        "close_date": { "type": ["string", "null"], "format": "date", "x-source": "nta_houjin_bangou", "x-source-path": "col19.closeDate" },
+        "close_cause": { "type": ["string", "null"], "description": "01 liquidation / 11 merger dissolution / 21 closed by registrar / 31 other.", "x-source": "nta_houjin_bangou", "x-source-path": "col20.closeCause" },
+        "successor_corporate_number": { "type": ["string", "null"], "x-source": "nta_houjin_bangou", "x-source-path": "col21.successorCorporateNumber" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "prefecture": { "type": ["string", "null"], "x-source": "nta_houjin_bangou", "x-source-path": "col10.prefectureName" },
+        "city": { "type": ["string", "null"], "x-source": "nta_houjin_bangou", "x-source-path": "col11.cityName" },
+        "street": { "type": ["string", "null"], "x-source": "nta_houjin_bangou", "x-source-path": "col12.streetNumber" },
+        "post_code": { "type": ["string", "null"], "x-source": "nta_houjin_bangou", "x-source-path": "col16.postCode" },
+        "prefecture_code": { "type": ["string", "null"], "x-source": "nta_houjin_bangou", "x-source-path": "col14.prefectureCode" },
+        "city_code": { "type": ["string", "null"], "x-source": "nta_houjin_bangou", "x-source-path": "col15.cityCode" },
+        "address_full": { "type": ["string", "null"], "description": "prefecture+city+street concatenated." }
+      }
+    },
+    "company_details": {
+      "type": "object",
+      "description": "From gBizINFO (free token; planning-only) — fields not in the open NTA data.",
+      "x-source": "gbizinfo",
+      "x-access": "free_token",
+      "properties": {
+        "establishment_date": { "type": ["string", "null"], "format": "date", "description": "Authoritative founding date (prefer over assignment_date).", "x-source-path": "date_of_establishment" },
+        "capital_stock": { "type": ["integer", "null"], "description": "Registered capital, JPY.", "x-source-path": "capital_stock" },
+        "employee_number": { "type": ["integer", "null"], "x-source-path": "employee_number" },
+        "business_summary": { "type": ["string", "null"], "x-source-path": "business_summary" },
+        "business_items": { "type": "array", "items": { "type": "string" }, "description": "Industry item codes (closest to an industry code for Japan).", "x-source-path": "business_items" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "EDINET XBRL (free Subscription-Key; listed/disclosure-obligated only). Currency JPY. gBizINFO finance[] is a lighter supplement.",
+      "x-source": "edinet_xbrl",
+      "x-access": "free_key",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_period_end": { "type": ["string", "null"], "format": "date", "x-source-path": "results[].periodEnd" },
+          "doc_type_code": { "type": ["string", "null"], "x-source-path": "results[].docTypeCode" },
+          "edinet_code": { "type": ["string", "null"], "x-source-path": "results[].edinetCode" },
+          "securities_code": { "type": ["string", "null"], "x-source-path": "results[].secCode" },
+          "net_sales": { "type": ["number", "null"], "x-source-path": "xbrl.NetSales" },
+          "operating_income": { "type": ["number", "null"], "x-source-path": "xbrl.OperatingIncome" },
+          "net_income": { "type": ["number", "null"], "x-source-path": "xbrl.NetIncome" },
+          "total_assets": { "type": ["number", "null"], "x-source-path": "xbrl.TotalAssets" },
+          "currency": { "type": "string", "const": "JPY" }
+        }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Only in the paid Legal Affairs Bureau registry (登記情報提供サービス). PERSONAL DATA (APPI) — redact.",
+      "x-source": "houki_toukibo",
+      "x-access": "paid_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

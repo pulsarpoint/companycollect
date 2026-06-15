@@ -1,0 +1,30 @@
+{
+  "country": "Japan",
+  "country_slug": "japan",
+  "source_slug": "gbizinfo",
+  "source_name": "gBizINFO (Gビズインフォ)",
+  "source_type": "government_aggregator",
+  "organization": "Ministry of Economy, Trade and Industry (経済産業省)",
+  "source_url": "https://info.gbiz.go.jp/hojin/v1/hojin",
+  "license": "gov_standard_terms",
+  "access": "public_with_free_token",
+  "data_freshness": "periodic (sourced from multiple government systems)",
+  "record_shape": "json_hojin_infos_array",
+  "primary_keys": ["corporate_number"],
+  "join_keys": ["corporate_number"],
+  "field_count": 12,
+  "fields": [
+    { "path": "hojin-infos[].corporate_number", "source_field": "corporate_number", "english_name": "corporate_number", "meaning": "13-digit corporate number (法人番号).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: API returns 500 without a free token; fields from public API docs.", "source_confidence": "medium", "analysis_notes": "Join key to NTA/EDINET." },
+    { "path": "hojin-infos[].name", "source_field": "name", "english_name": "name", "meaning": "Company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "hojin-infos[].location", "source_field": "location", "english_name": "location", "meaning": "Address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "hojin-infos[].date_of_establishment", "source_field": "date_of_establishment", "english_name": "establishment_date", "meaning": "Company establishment/incorporation date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY; fills the gap NTA lacks (true incorporation date).", "source_confidence": "medium", "analysis_notes": "Use over NTA assignmentDate for founding date." },
+    { "path": "hojin-infos[].capital_stock", "source_field": "capital_stock", "english_name": "capital_stock", "meaning": "Registered capital (JPY).", "data_type": "integer", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "hojin-infos[].employee_number", "source_field": "employee_number", "english_name": "employee_number", "meaning": "Number of employees.", "data_type": "integer", "semantic_type": "employment", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "hojin-infos[].business_summary", "source_field": "business_summary", "english_name": "business_summary", "meaning": "Free-text description of the business.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY; free text.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "hojin-infos[].business_items[]", "source_field": "business_items", "english_name": "business_items", "meaning": "Business/industry item codes.", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "gBizINFO business item classification", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Closest thing to an industry code for Japan." },
+    { "path": "hojin-infos[].finance[]", "source_field": "財務情報 (finance)", "english_name": "finance", "meaning": "Financial figures (net sales, ordinary income, etc.) where available.", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY; coverage varies; for listed firms overlaps EDINET.", "source_confidence": "low", "analysis_notes": "Lighter than EDINET XBRL; use EDINET as authoritative." },
+    { "path": "hojin-infos[].procurement[]", "source_field": "調達情報 (procurement)", "english_name": "procurement", "meaning": "Government procurement / award records.", "data_type": "array", "semantic_type": "raw_extension", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Context/enrichment." },
+    { "path": "hojin-infos[].subsidy[]", "source_field": "補助金情報 (subsidy)", "english_name": "subsidy", "meaning": "Subsidy/grant records.", "data_type": "array", "semantic_type": "raw_extension", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "hojin-infos[].certification[]", "source_field": "認定情報 (certification)", "english_name": "certification", "meaning": "Government certifications / awards.", "data_type": "array", "semantic_type": "raw_extension", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

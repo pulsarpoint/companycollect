@@ -1,0 +1,78 @@
+{
+  "country": "Japan",
+  "country_slug": "japan",
+  "source_slug": "gbizinfo",
+  "source_identity": "japan_gbizinfo",
+  "source_package": "gbizinfo",
+  "env_prefix": "GBIZINFO",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "gBizINFO (Gビズインフォ)",
+    "source_type": "government_aggregator",
+    "organization": "Ministry of Economy, Trade and Industry (経済産業省)",
+    "source_url": "https://info.gbiz.go.jp/hojin/v1/hojin",
+    "license": "gov_standard_terms",
+    "access": "public_with_free_token",
+    "data_freshness": "periodic",
+    "attribution": "gBizINFO / METI (CC-BY style)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["GBIZINFO_API_TOKEN"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://info.gbiz.go.jp/hojin/v1/hojin",
+    "download_url": "https://info.gbiz.go.jp/hojin/DownloadTop",
+    "http_method": "GET",
+    "headers_required": ["X-hojinInfo-api-token"],
+    "formats": ["json", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "hojin-infos",
+    "total_results_path": "errors",
+    "pagination": { "type": "page_number", "page_param": "page", "page_start": 1, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per gBizINFO terms; returns 500 without token"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "GbizHojin",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["jpy_integer"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Send free token via X-hojinInfo-api-token header. Detail at /hojin/v1/hojin/{corporate_number}; sub-resources /finance /procurement /subsidy /certification /patent /workplace. Bulk CSV at /hojin/DownloadTop. Returns 500 without token."
+  },
+  "keys": {
+    "primary_keys": ["corporate_number"],
+    "join_keys": ["corporate_number"],
+    "dedupe_keys": ["corporate_number"]
+  },
+  "mapping_rules": {
+    "incorporation_date": "date_of_establishment (authoritative founding date; preferred over NTA assignmentDate).",
+    "capital": "capital_stock (JPY).",
+    "employees": "employee_number.",
+    "activity": "business_summary + business_items[] (closest to an industry code).",
+    "financials": "finance[] as a lighter supplement; prefer EDINET XBRL when the company is a filer.",
+    "join": "corporate_number = 13-digit NTA corporate number."
+  },
+  "fixture_requirements": [
+    "basic record (name, location, establishment, capital, employees)",
+    "record with finance[] populated",
+    "record with procurement[]/subsidy[]/certification[]",
+    "record with only basic info (sparse coverage)"
+  ],
+  "live_test_plan": {
+    "smoke": "With a free GBIZINFO_API_TOKEN, fetch one corporate_number detail + /finance.",
+    "full": "Enrich the NTA universe by corporate_number; gate behind env and respect rate limits."
+  },
+  "blockers": [
+    "REST API requires a free token (利用申請 → APIトークン); returns 500 without it.",
+    "Per-dataset coverage varies; many companies have only basic info."
+  ]
+}

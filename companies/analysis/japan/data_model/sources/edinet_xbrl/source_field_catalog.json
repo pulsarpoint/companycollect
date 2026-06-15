@@ -1,0 +1,31 @@
+{
+  "country": "Japan",
+  "country_slug": "japan",
+  "source_slug": "edinet_xbrl",
+  "source_name": "EDINET (FSA electronic disclosure, XBRL financials)",
+  "source_type": "financial_disclosure",
+  "organization": "Financial Services Agency (金融庁)",
+  "source_url": "https://api.edinet-fsa.go.jp/api/v2/",
+  "license": "public_disclosure_terms",
+  "access": "public_with_free_key",
+  "data_freshness": "daily (filing-driven)",
+  "record_shape": "documents_list_json_plus_per_document_xbrl_zip",
+  "primary_keys": ["docID"],
+  "join_keys": ["JCN(corporateNumber)", "edinetCode", "secCode"],
+  "field_count": 13,
+  "fields": [
+    { "path": "results[].docID", "source_field": "docID", "english_name": "document_id", "meaning": "Unique EDINET document id for a filing.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: structure from public API docs; documents.json returns 401 without a free Subscription-Key.", "source_confidence": "medium", "analysis_notes": "Fetch XBRL via /documents/{docID}?type=1." },
+    { "path": "results[].edinetCode", "source_field": "edinetCode", "english_name": "edinet_code", "meaning": "6-char EDINET filer code (e.g. E01234).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": true, "code_list": "EDINET code list (EdinetcodeDlInfo.zip)", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": "Stable filer id." },
+    { "path": "results[].secCode", "source_field": "secCode", "english_name": "securities_code", "meaning": "Securities (ticker) code for listed issuers (5-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY; null for non-listed filers.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "results[].JCN", "source_field": "JCN", "english_name": "corporate_number", "meaning": "13-digit corporate number of the filer (法人番号).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": "JOIN KEY to NTA/gBizINFO." },
+    { "path": "results[].filerName", "source_field": "filerName", "english_name": "filer_name", "meaning": "Name of the filing company.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "Japanese", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "results[].docTypeCode", "source_field": "docTypeCode", "english_name": "doc_type_code", "meaning": "Type of disclosure document.", "data_type": "string", "semantic_type": "document", "example_values": ["120", "140", "160"], "nullable": false, "repeatable": true, "code_list": "120 annual securities report (有価証券報告書) / 140 quarterly / 160 semi-annual / 030 etc", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": "120 = annual report with full financials." },
+    { "path": "results[].periodStart", "source_field": "periodStart", "english_name": "period_start", "meaning": "Fiscal period start.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "results[].periodEnd", "source_field": "periodEnd", "english_name": "period_end", "meaning": "Fiscal period end.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": "Fiscal year of the financials." },
+    { "path": "results[].submitDateTime", "source_field": "submitDateTime", "english_name": "submit_datetime", "meaning": "Filing submission timestamp.", "data_type": "datetime", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "xbrl.NetSales", "source_field": "売上高 (NetSales / Revenue)", "english_name": "net_sales", "meaning": "Net sales / revenue for the period (JPY).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "EDINET/JP-GAAP/IFRS XBRL taxonomy element", "language": "n/a", "limitations": "PLANNING-ONLY; element name varies by taxonomy (JP-GAAP vs IFRS).", "source_confidence": "medium", "analysis_notes": "Extract from the XBRL instance per fiscal period." },
+    { "path": "xbrl.OperatingIncome", "source_field": "営業利益 (OperatingIncome)", "english_name": "operating_income", "meaning": "Operating income (JPY).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "XBRL taxonomy element", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "xbrl.NetIncome", "source_field": "当期純利益 (ProfitLoss)", "english_name": "net_income", "meaning": "Net income for the period (JPY).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "XBRL taxonomy element", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "xbrl.TotalAssets", "source_field": "総資産 (Assets)", "english_name": "total_assets", "meaning": "Total assets at period end (JPY).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "XBRL taxonomy element", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": "Plus NetAssets, equity, etc available in the same instance." }
+  ]
+}

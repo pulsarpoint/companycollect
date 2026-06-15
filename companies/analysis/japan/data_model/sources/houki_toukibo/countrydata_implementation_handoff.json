@@ -1,0 +1,68 @@
+{
+  "country": "Japan",
+  "country_slug": "japan",
+  "source_slug": "houki_toukibo",
+  "source_identity": "japan_houki_toukibo",
+  "source_package": "houkitoukibo",
+  "env_prefix": "HOUKI_TOUKIBO",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Registry Information Service (登記情報提供サービス) / Legal Affairs Bureau",
+    "source_type": "official_registry",
+    "organization": "Ministry of Justice (法務省) / Legal Affairs Bureau (法務局)",
+    "source_url": "https://www1.touki.or.jp/",
+    "license": "restricted",
+    "access": "paid",
+    "data_freshness": "real-time registry",
+    "attribution": "Ministry of Justice"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["HOUKI_TOUKIBO_ACCOUNT", "HOUKI_TOUKIBO_PASSWORD"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www1.touki.or.jp/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf", "view"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per-record fee; no bulk"
+  },
+  "snapshot": { "strategy": "not_applicable_paid", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "ToukiRegistryRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["jpy_integer"],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Pay-per-record registry certificate; no open bulk/API. Only source of officers, capital, purpose, and incorporation date. Officer data is personal data (APPI) — redact."
+  },
+  "keys": {
+    "primary_keys": ["company_registration_number"],
+    "join_keys": ["corporate_number"],
+    "dedupe_keys": ["company_registration_number"]
+  },
+  "mapping_rules": {
+    "officers": "directors (役員) -> officers[]; PERSONAL DATA (APPI), redact in samples.",
+    "capital": "capital (資本金の額).",
+    "incorporation_date": "establishment (会社成立の年月日) — authoritative founding date.",
+    "join": "12-digit 会社法人等番号 is the base of the 13-digit corporate number."
+  },
+  "fixture_requirements": ["documented-only: registry certificate with officers", "documented-only: capital + purpose"],
+  "live_test_plan": {
+    "smoke": "Not applicable — paid per-record.",
+    "full": "Not applicable without lawful paid access; do not bulk-fetch."
+  },
+  "blockers": [
+    "Pay-per-record; no open bulk or API.",
+    "Officer/director data is personal data (APPI) — must be redacted.",
+    "Prefer free gBizINFO for capital/establishment date where coverage allows."
+  ]
+}

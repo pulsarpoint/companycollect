@@ -1,0 +1,79 @@
+{
+  "country": "Japan",
+  "country_slug": "japan",
+  "source_slug": "nta_houjin_bangou",
+  "source_identity": "japan_nta_houjin_bangou",
+  "source_package": "ntahoujinbangou",
+  "env_prefix": "NTA_HOUJIN_BANGOU",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "NTA Corporate Number Publication Site (法人番号公表サイト)",
+    "source_type": "official_registry",
+    "organization": "National Tax Agency (国税庁)",
+    "source_url": "https://www.houjin-bangou.nta.go.jp/download/zenken/",
+    "license": "free_use_public_data",
+    "access": "public",
+    "data_freshness": "monthly full + daily diff",
+    "attribution": "National Tax Agency (recommended, not mandated)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": "https://www.houjin-bangou.nta.go.jp/download/zenken/",
+    "download_url": "https://www.houjin-bangou.nta.go.jp/download/zenken/index.html",
+    "http_method": "POST",
+    "headers_required": ["Content-Type: application/x-www-form-urlencoded"],
+    "formats": ["csv", "zip", "xml"],
+    "compression": "zip",
+    "encoding": "utf-8 (Unicode file) or shift_jis (SJIS file)",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "manual_two_step_form_post", "page_param": "selDlFileNo", "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented; one-shot bulk file"
+  },
+  "snapshot": {
+    "strategy": "preserve_zip_then_extract_csv",
+    "file_extension": ".zip",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "NtaCorporateNumberRow",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "30-column CSV, no header. Map columns by position (see source_field_catalog.json). Filter latest=1 for current state. Status = closeDate present ? closed : active. Convert full-width digits in addresses if normalizing. Download is a two-step public form: GET /download/zenken/ with a cookie jar to read the CSRF token (CNSFWTokenProcessor.request.token), then POST event=download & selDlFileNo=<fileNo> with the same session. fileNo for national Unicode CSV ~27194; per-prefecture varies per refresh — re-read the page each run."
+  },
+  "keys": {
+    "primary_keys": ["corporateNumber"],
+    "join_keys": ["corporateNumber"],
+    "dedupe_keys": ["corporateNumber"]
+  },
+  "mapping_rules": {
+    "company_id": "corporateNumber (col2).",
+    "tax_id": "corporateNumber (same value).",
+    "vat_id": "null — no separate VAT; invoice number is 'T' + corporateNumber.",
+    "legal_name": "name (col7); legal_name_en = enName (col25, opt-in); legal_name_kana = furigana (col29).",
+    "company_type": "kind (col9) code list 101/201/301/401/499.",
+    "status": "closeDate (col19) present => closed (reason closeCause col20); else active. Keep latest=1 rows.",
+    "registered_address": "prefectureName + cityName + streetNumber (col10-12); postCode col16.",
+    "incorporation_date": "NOT available — assignmentDate (col23) is number-assignment, not incorporation."
+  },
+  "fixture_requirements": [
+    "active kind=301 registered corporation",
+    "kind=101/201 public body",
+    "record with closeDate + closeCause (closed)",
+    "record with successorCorporateNumber (merger)",
+    "record with English name + furigana populated",
+    "malformed/short row"
+  ],
+  "live_test_plan": {
+    "smoke": "Download one small prefecture (e.g. Tottori) Unicode CSV via the form POST and parse the 30 columns.",
+    "full": "Download the national Unicode CSV (or all prefectures) and ingest; apply daily diff files for updates. Gate behind explicit env."
+  },
+  "blockers": []
+}

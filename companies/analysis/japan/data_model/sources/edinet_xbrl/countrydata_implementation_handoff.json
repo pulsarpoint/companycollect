@@ -1,0 +1,77 @@
+{
+  "country": "Japan",
+  "country_slug": "japan",
+  "source_slug": "edinet_xbrl",
+  "source_identity": "japan_edinet_xbrl",
+  "source_package": "edinetxbrl",
+  "env_prefix": "EDINET",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "EDINET (FSA electronic disclosure, XBRL financials)",
+    "source_type": "financial_disclosure",
+    "organization": "Financial Services Agency (金融庁)",
+    "source_url": "https://api.edinet-fsa.go.jp/api/v2/",
+    "license": "public_disclosure_terms",
+    "access": "public_with_free_key",
+    "data_freshness": "daily (filing-driven)",
+    "attribution": "EDINET / Financial Services Agency"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["EDINET_SUBSCRIPTION_KEY"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://api.edinet-fsa.go.jp/api/v2/documents.json",
+    "download_url": "https://api.edinet-fsa.go.jp/api/v2/documents/{docID}",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "xbrl", "zip", "csv", "pdf"],
+    "compression": "zip (per-document XBRL)",
+    "encoding": "utf-8",
+    "record_path": "results",
+    "total_results_path": "metadata.resultset.count",
+    "pagination": { "type": "by_date", "page_param": "date", "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per FSA terms; one list call per day, then per-docID downloads"
+  },
+  "snapshot": {
+    "strategy": "preserve_xbrl_zip_per_document",
+    "file_extension": ".zip",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "EdinetDocument",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": ["2006-01-02 15:04"],
+    "number_formats": ["jpy_integer"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Two-step: list filings per day via documents.json?date=YYYY-MM-DD&type=2&Subscription-Key=KEY (401 without key), then download each docID's XBRL ZIP via /documents/{docID}?type=1&Subscription-Key=KEY. Extract financial facts from the XBRL instance using a taxonomy-aware reader (JP-GAAP vs IFRS element names differ). Currency JPY. v1 API is retired (403)."
+  },
+  "keys": {
+    "primary_keys": ["docID"],
+    "join_keys": ["JCN"],
+    "dedupe_keys": ["JCN", "periodEnd", "docTypeCode"]
+  },
+  "mapping_rules": {
+    "financials": "Map XBRL facts (NetSales, OperatingIncome, NetIncome, TotalAssets, NetAssets) per fiscal period (periodEnd) into financial_statements[].",
+    "join": "JCN (col results[].JCN) = 13-digit corporate number -> join to NTA. secCode -> ticker for listed issuers.",
+    "document_filter": "Use docTypeCode 120 (annual securities report) for full annual statements."
+  },
+  "fixture_requirements": [
+    "documents.json day listing (planning-only structure)",
+    "annual report docTypeCode=120 metadata",
+    "XBRL instance with JP-GAAP financial facts",
+    "XBRL instance with IFRS financial facts",
+    "filer with null secCode (non-listed obligated filer)"
+  ],
+  "live_test_plan": {
+    "smoke": "With a free EDINET_SUBSCRIPTION_KEY, list one day and download one annual report's XBRL; extract net sales / net income.",
+    "full": "Iterate the disclosure calendar, download annual reports, extract financial facts; gate behind env."
+  },
+  "blockers": [
+    "API v2 requires a free Subscription-Key (registration with FSA); documents.json returns 401 without it.",
+    "Coverage limited to listed & disclosure-obligated companies (not non-listed SMEs).",
+    "Financial facts require a taxonomy-aware XBRL extractor (JP-GAAP/IFRS)."
+  ]
+}
