@@ -1,0 +1,14 @@
+{
+  "CompanyName": "! LTD",
+  "CompanyNumber": "08209948",
+  "CompanyCategory": "Private Limited Company",
+  "CompanyStatus": "Active",
+  "IncorporationDate": "11/09/2012",
+  "RegAddress.AddressLine1": "9 PRINCES SQUARE",
+  "RegAddress.PostTown": "HARROGATE",
+  "RegAddress.PostCode": "HG1 1ND",
+  "RegAddress.Country": "ENGLAND",
+  "Accounts.AccountCategory": "DORMANT",
+  "SICCode.SicText_1": "99999 - Dormant Company",
+  "URI": "http://business.data.gov.uk/id/company/08209948"
+}

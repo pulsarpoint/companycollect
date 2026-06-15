@@ -1,0 +1,59 @@
+{
+  "country": "United Kingdom",
+  "country_slug": "united_kingdom",
+  "country_profile_version": "2026-06-15",
+  "registration": {
+    "company_number": "00009604"
+  },
+  "legal_identity": {
+    "legal_name": "Hull & Humber Chamber of Commerce Industry & Shipping",
+    "legal_form": null,
+    "previous_names": []
+  },
+  "status": {
+    "status": null
+  },
+  "activity": {
+    "sic_codes": []
+  },
+  "incorporation": {
+    "incorporation_date": null,
+    "dissolution_date": null
+  },
+  "registered_location": {
+    "address_line_1": "34 - 38 Beverley Road",
+    "post_town": "Hull",
+    "county": "East Yorkshire",
+    "country": "ENGLAND",
+    "post_code": "HU3 1YE"
+  },
+  "accounts_meta": {
+    "account_category": "FULL",
+    "next_due_date": null,
+    "last_made_up_date": "2025-09-30"
+  },
+  "financial_statements": [
+    {
+      "made_up_to": "2025-09-30",
+      "turnover": 1615243,
+      "profit_loss": 221523,
+      "fixed_assets": 1619290,
+      "cash": 514506,
+      "net_current_assets": 4163394,
+      "net_assets": 5782684,
+      "equity": 402324,
+      "currency": "GBP"
+    }
+  ],
+  "officers": [
+    { "name": "[REDACTED — personal data; Companies House REST API /officers]", "role": "director", "appointed_on": null }
+  ],
+  "owners": [
+    { "name": "[REDACTED — personal data; PSC snapshot]", "kind": "individual-person-with-significant-control", "natures_of_control": ["[control band]"] }
+  ],
+  "source_provenance": [
+    { "source_slug": "ch_basic_company_data", "section": "registration/legal_identity/status/activity/incorporation (from register; null here — register row not joined in this example)", "source_url": "http://download.companieshouse.gov.uk/en_output.html", "access": "public", "license": "OGL", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "ch_accounts_bulk", "section": "legal_identity.legal_name/registered_location/accounts_meta/financial_statements (real iXBRL facts)", "source_url": "http://download.companieshouse.gov.uk/en_accountsdata.html", "access": "public", "license": "OGL", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "ch_psc_snapshot", "section": "owners", "source_url": "http://download.companieshouse.gov.uk/en_pscdata.html", "access": "public", "license": "OGL", "retrieved_at": "2026-06-15T00:00:00Z" }
+  ]
+}

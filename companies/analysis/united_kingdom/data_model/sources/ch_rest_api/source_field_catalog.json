@@ -1,0 +1,23 @@
+{
+  "country": "United Kingdom",
+  "country_slug": "united_kingdom",
+  "source_slug": "ch_rest_api",
+  "source_name": "Companies House — REST API",
+  "source_type": "official_registry",
+  "organization": "Companies House",
+  "source_url": "https://developer.company-information.service.gov.uk/",
+  "license": "Open Government Licence (OGL)",
+  "access": "public (free key)",
+  "data_freshness": "real-time",
+  "record_shape": "credentialed_json_endpoints_per_company",
+  "primary_keys": ["company_number"],
+  "join_keys": ["company_number"],
+  "field_count": 5,
+  "fields": [
+    { "path": "company/{number}/officers -> items[]", "source_field": "officers", "english_name": "officers", "meaning": "Directors/secretaries (name, role, appointed_on, nationality, occupation, partial DOB).", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": "CH officer roles", "language": "English", "limitations": "Free API key required; PERSONAL DATA — redact. Not in any bulk product.", "source_confidence": "high", "analysis_notes": "The route to officers." },
+    { "path": "company/{number}/filing-history -> items[]", "source_field": "filing-history", "english_name": "filing_history", "meaning": "Filing events (accounts, confirmation statements, officer changes, …) with dates + document links.", "data_type": "array", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "Free key required.", "source_confidence": "high", "analysis_notes": "Document API gives the actual PDFs/iXBRL per filing." },
+    { "path": "company/{number}/charges -> items[]", "source_field": "charges", "english_name": "charges", "meaning": "Mortgage/charge detail (vs the counts in the bulk register).", "data_type": "array", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "Free key required.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "company/{number} (profile)", "source_field": "company profile", "english_name": "company_profile", "meaning": "Live company profile (status, type, SIC, accounts/CS dates, registered office) in ISO/JSON form.", "data_type": "object", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "Free key required; same data as bulk but real-time + ISO dates.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "company/{number}/persons-with-significant-control", "source_field": "PSC", "english_name": "psc", "meaning": "PSC (beneficial owners) — same as the snapshot, real-time.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "Free key required; PERSONAL DATA.", "source_confidence": "high", "analysis_notes": "See ch_psc_snapshot for bulk." }
+  ]
+}

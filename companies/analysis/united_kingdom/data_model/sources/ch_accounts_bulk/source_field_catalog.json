@@ -1,0 +1,28 @@
+{
+  "country": "United Kingdom",
+  "country_slug": "united_kingdom",
+  "source_slug": "ch_accounts_bulk",
+  "source_name": "Companies House — Accounts Bulk Data (iXBRL)",
+  "source_type": "official_financial",
+  "organization": "Companies House",
+  "source_url": "http://download.companieshouse.gov.uk/en_accountsdata.html",
+  "license": "Open Government Licence (OGL)",
+  "access": "public",
+  "data_freshness": "daily (60-day window) + monthly",
+  "record_shape": "zip_of_ixbrl_html_and_xbrl_xml_per_filing",
+  "primary_keys": ["company_number", "made_up_to"],
+  "join_keys": ["company_number"],
+  "field_count": 10,
+  "fields": [
+    { "path": "filename / bus:UKCompaniesHouseRegisteredNumber", "source_field": "UKCompaniesHouseRegisteredNumber", "english_name": "company_number", "meaning": "Company number (in the filename and as an iXBRL fact); join key.", "data_type": "string", "semantic_type": "identifier", "example_values": ["00009604"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Filename Prod223_<run>_<companynumber>_<madeupto>.html.", "source_confidence": "high", "analysis_notes": "Join to the register." },
+    { "path": "bus:EntityCurrentLegalOrRegisteredName", "source_field": "EntityCurrentLegalOrRegisteredName", "english_name": "entity_name", "meaning": "Filer's registered name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Hull & Humber Chamber of Commerce Industry & Shipping"], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "made_up_to (filename / context period)", "source_field": "period end", "english_name": "made_up_to", "meaning": "Balance-sheet date / period end.", "data_type": "date", "semantic_type": "date", "example_values": ["2025-09-30"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "In filename (YYYYMMDD) + XBRL context.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "core:TurnoverRevenue", "source_field": "TurnoverRevenue", "english_name": "turnover", "meaning": "Turnover / revenue.", "data_type": "decimal", "semantic_type": "financial", "example_values": ["1,615,243"], "nullable": true, "repeatable": false, "code_list": "FRC/UK GAAP taxonomy", "language": "n/a", "limitations": "GBP; comma thousands. May be absent for small/micro/dormant.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "core:ProfitLoss", "source_field": "ProfitLoss", "english_name": "profit_loss", "meaning": "Profit or loss for the period.", "data_type": "decimal", "semantic_type": "financial", "example_values": ["221,523"], "nullable": true, "repeatable": false, "code_list": "FRC taxonomy", "language": "n/a", "limitations": "GBP.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "core:FixedAssets", "source_field": "FixedAssets", "english_name": "fixed_assets", "meaning": "Total fixed assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": ["1,619,290"], "nullable": true, "repeatable": false, "code_list": "FRC taxonomy", "language": "n/a", "limitations": "GBP.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "core:CashBankOnHand", "source_field": "CashBankOnHand", "english_name": "cash", "meaning": "Cash at bank and in hand.", "data_type": "decimal", "semantic_type": "financial", "example_values": ["514,506"], "nullable": true, "repeatable": false, "code_list": "FRC taxonomy", "language": "n/a", "limitations": "GBP.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "core:NetCurrentAssetsLiabilities", "source_field": "NetCurrentAssetsLiabilities", "english_name": "net_current_assets", "meaning": "Net current assets (liabilities).", "data_type": "decimal", "semantic_type": "financial", "example_values": ["4,163,394"], "nullable": true, "repeatable": false, "code_list": "FRC taxonomy", "language": "n/a", "limitations": "GBP.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "core:NetAssetsLiabilities", "source_field": "NetAssetsLiabilities", "english_name": "net_assets", "meaning": "Net assets (total assets less liabilities).", "data_type": "decimal", "semantic_type": "financial", "example_values": ["5,782,684"], "nullable": true, "repeatable": false, "code_list": "FRC taxonomy", "language": "n/a", "limitations": "GBP.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "core:Equity", "source_field": "Equity", "english_name": "equity", "meaning": "Total equity / shareholders' funds.", "data_type": "decimal", "semantic_type": "financial", "example_values": ["402,324"], "nullable": true, "repeatable": false, "code_list": "FRC taxonomy", "language": "n/a", "limitations": "GBP.", "source_confidence": "high", "analysis_notes": null }
+  ]
+}

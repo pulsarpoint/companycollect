@@ -1,0 +1,69 @@
+{
+  "country": "United Kingdom",
+  "country_slug": "united_kingdom",
+  "source_slug": "ch_rest_api",
+  "source_identity": "united_kingdom_ch_rest_api",
+  "source_package": "chapi",
+  "env_prefix": "CH_API",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Companies House — REST API",
+    "source_type": "official_registry",
+    "organization": "Companies House",
+    "source_url": "https://developer.company-information.service.gov.uk/",
+    "license": "Open Government Licence (OGL)",
+    "access": "public (free key)",
+    "data_freshness": "real-time",
+    "attribution": "Companies House (OGL v3.0)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["CH_API_KEY"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://api.company-information.service.gov.uk/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Authorization: Basic <base64(api_key:)>"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "items",
+    "total_results_path": "total_results",
+    "pagination": { "type": "offset", "page_param": "start_index", "page_start": 0, "page_size": 35, "page_size_param": "items_per_page", "next_page_path": null },
+    "rate_limit": "600 requests / 5 minutes"
+  },
+  "snapshot": { "strategy": "per_company_json_enrichment", "file_extension": ".json", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "ChApiResource",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "HTTP Basic with the API key as username (blank password). Endpoints: /company/{n}, /officers, /persons-with-significant-control, /filing-history, /charges, document API. Officers/PSC are personal data — redact. Respect 600 req/5min."
+  },
+  "keys": { "primary_keys": ["company_number"], "join_keys": ["company_number"], "dedupe_keys": ["company_number"] },
+  "mapping_rules": {
+    "officers": "From /officers items[] (name redacted; role, appointed_on). The only officers source.",
+    "documents": "From /filing-history items[] + document API.",
+    "owners": "From /persons-with-significant-control (or the bulk PSC snapshot).",
+    "join": "company_number == ch_basic_company_data.CompanyNumber."
+  },
+  "fixture_requirements": [
+    "company with active director + secretary",
+    "filing-history with an accounts filing (document link)",
+    "company with charges",
+    "resigned/terminated officer"
+  ],
+  "live_test_plan": {
+    "smoke": "With an API key: GET /company/{n}/officers; assert items[] + roles.",
+    "full": "Enrich the company universe (from basic data) with officers/filing-history at <=600 req/5min; redact PII."
+  },
+  "blockers": [
+    "Requires a free Companies House API key (HTTP Basic).",
+    "Officers/PSC are personal data (UK GDPR) — redaction + lawful basis.",
+    "Rate limit 600 req / 5 min — plan enrichment accordingly."
+  ]
+}

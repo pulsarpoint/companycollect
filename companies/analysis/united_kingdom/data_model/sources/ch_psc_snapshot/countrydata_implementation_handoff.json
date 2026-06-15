@@ -1,0 +1,59 @@
+{
+  "country": "United Kingdom",
+  "country_slug": "united_kingdom",
+  "source_slug": "ch_psc_snapshot",
+  "source_identity": "united_kingdom_ch_psc_snapshot",
+  "source_package": "chpsc",
+  "env_prefix": "CH_PSC",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Companies House — PSC snapshot (persons with significant control)",
+    "source_type": "beneficial_ownership",
+    "organization": "Companies House",
+    "source_url": "http://download.companieshouse.gov.uk/en_pscdata.html",
+    "license": "Open Government Licence (OGL)",
+    "access": "public",
+    "data_freshness": "daily snapshot",
+    "attribution": "Contains public sector information licensed under the Open Government Licence v3.0 (Companies House)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "ndjson_file",
+    "base_url": "http://download.companieshouse.gov.uk/",
+    "download_url": "http://download.companieshouse.gov.uk/en_pscdata.html",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "ndjson", "zip"],
+    "compression": "zip",
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented"
+  },
+  "snapshot": { "strategy": "ndjson_pii_minimised", "file_extension": ".ndjson", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "ChPscRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Daily snapshot of PSC records (one JSON object per line, with company_number + data{}). Resolve the latest snapshot file from en_pscdata.html. Personal data — minimise/redact individual name/DOB/nationality; retain control bands + corporate PSCs."
+  },
+  "keys": { "primary_keys": ["company_number", "psc_id"], "join_keys": ["company_number"], "dedupe_keys": ["company_number", "psc_id"] },
+  "mapping_rules": {
+    "owners": "Map PSC records to owners[]: name (redact individuals), kind, natures_of_control (control bands). Join on company_number.",
+    "join": "company_number == ch_basic_company_data.CompanyNumber."
+  },
+  "fixture_requirements": [
+    "individual PSC with 75-100% ownership",
+    "corporate-entity PSC",
+    "legal-person PSC",
+    "PSC statement (no individual identified)"
+  ],
+  "live_test_plan": {
+    "smoke": "Parse first 1000 PSC lines; assert company_number + natures_of_control; verify PII minimisation.",
+    "full": "Daily snapshot load to owners[] keyed on company_number with PII minimisation."
+  },
+  "blockers": ["Personal data (PSC individuals) — redaction + lawful basis required."]
+}

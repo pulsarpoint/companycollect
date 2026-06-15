@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "United Kingdom Company Profile",
+  "description": "Country-specific company profile for the United Kingdom. Best-in-class fully-open under the Open Government Licence: Companies House publishes the full register (Free Company Data Product, CSV), structured financial statements (Accounts Bulk Data, iXBRL/FRC taxonomy), and beneficial ownership (PSC snapshot) as free bulk products, plus a free-key REST API for officers/filing history/documents. Everything keys on the company number (8 chars). No tax id/VAT in Companies House (VAT is held by HMRC). Officers and PSC are personal data — redact. Accounts cover electronically-filed only (~60-75%).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "United Kingdom" },
+    "country_slug": { "type": "string", "const": "united_kingdom" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["company_number"],
+      "properties": {
+        "company_number": {
+          "type": "string",
+          "description": "8-character Companies House number. Company id and universal join key.",
+          "x-source": "ch_basic_company_data",
+          "x-source-path": "CompanyNumber",
+          "x-join-key": true,
+          "x-access": "public"
+        }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "ch_basic_company_data", "x-source-path": "CompanyName" },
+        "legal_form": { "type": ["string", "null"], "description": "CompanyCategory (Private Limited Company, PLC, LLP, …).", "x-source": "ch_basic_company_data", "x-source-path": "CompanyCategory" },
+        "previous_names": { "type": "array", "x-source": "ch_basic_company_data", "x-source-path": "PreviousName_1..10", "items": { "type": "object" } }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status": { "type": ["string", "null"], "description": "Active / Dissolved / Liquidation / …", "x-source": "ch_basic_company_data", "x-source-path": "CompanyStatus" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "sic_codes": { "type": "array", "description": "UK SIC 2007 (code + text), up to 4.", "x-source": "ch_basic_company_data", "x-source-path": "SICCode.SicText_1..4", "items": { "type": "string" } }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "incorporation_date": { "type": ["string", "null"], "format": "date", "x-source": "ch_basic_company_data", "x-source-path": "IncorporationDate" },
+        "dissolution_date": { "type": ["string", "null"], "format": "date", "x-source": "ch_basic_company_data", "x-source-path": "DissolutionDate" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "x-source": "ch_basic_company_data",
+      "properties": {
+        "address_line_1": { "type": ["string", "null"], "x-source-path": "RegAddress.AddressLine1" },
+        "post_town": { "type": ["string", "null"], "x-source-path": "RegAddress.PostTown" },
+        "county": { "type": ["string", "null"], "x-source-path": "RegAddress.County" },
+        "country": { "type": ["string", "null"], "x-source-path": "RegAddress.Country" },
+        "post_code": { "type": ["string", "null"], "x-source-path": "RegAddress.PostCode" }
+      }
+    },
+    "accounts_meta": {
+      "type": "object",
+      "properties": {
+        "account_category": { "type": ["string", "null"], "x-source": "ch_basic_company_data", "x-source-path": "Accounts.AccountCategory" },
+        "next_due_date": { "type": ["string", "null"], "format": "date", "x-source": "ch_basic_company_data", "x-source-path": "Accounts.NextDueDate" },
+        "last_made_up_date": { "type": ["string", "null"], "format": "date", "x-source": "ch_basic_company_data", "x-source-path": "Accounts.LastMadeUpDate" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Structured iXBRL financials (FRC taxonomy), join on company number. GBP. Electronically-filed accounts only (~60-75%).",
+      "x-source": "ch_accounts_bulk",
+      "items": {
+        "type": "object",
+        "required": ["made_up_to"],
+        "properties": {
+          "made_up_to": { "type": "string", "format": "date", "x-source-path": "made_up_to" },
+          "turnover": { "type": ["number", "null"], "x-source-path": "core:TurnoverRevenue" },
+          "profit_loss": { "type": ["number", "null"], "x-source-path": "core:ProfitLoss" },
+          "fixed_assets": { "type": ["number", "null"], "x-source-path": "core:FixedAssets" },
+          "cash": { "type": ["number", "null"], "x-source-path": "core:CashBankOnHand" },
+          "net_current_assets": { "type": ["number", "null"], "x-source-path": "core:NetCurrentAssetsLiabilities" },
+          "net_assets": { "type": ["number", "null"], "x-source-path": "core:NetAssetsLiabilities" },
+          "equity": { "type": ["number", "null"], "x-source-path": "core:Equity" },
+          "currency": { "type": "string", "const": "GBP" }
+        }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Directors/secretaries (REST API, free key). PERSONAL DATA — redact.",
+      "x-source": "ch_rest_api",
+      "x-access": "free_credentialed_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] }, "appointed_on": { "type": ["string", "null"], "format": "date" } } }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Persons with significant control (PSC snapshot). OPEN but PERSONAL DATA — redact individuals; keep control bands + corporate PSCs.",
+      "x-source": "ch_psc_snapshot",
+      "x-access": "public_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "kind": { "type": ["string", "null"] }, "natures_of_control": { "type": "array", "items": { "type": "string" } } } }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

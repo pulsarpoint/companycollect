@@ -1,0 +1,25 @@
+{
+  "country": "United Kingdom",
+  "country_slug": "united_kingdom",
+  "source_slug": "ch_psc_snapshot",
+  "source_name": "Companies House — PSC snapshot (persons with significant control)",
+  "source_type": "beneficial_ownership",
+  "organization": "Companies House",
+  "source_url": "http://download.companieshouse.gov.uk/en_pscdata.html",
+  "license": "Open Government Licence (OGL)",
+  "access": "public",
+  "data_freshness": "daily snapshot",
+  "record_shape": "ndjson_psc_records_per_company_personal_data",
+  "primary_keys": ["company_number", "psc_id"],
+  "join_keys": ["company_number"],
+  "field_count": 7,
+  "fields": [
+    { "path": "company_number", "source_field": "company_number", "english_name": "company_number", "meaning": "Company the PSC relates to; join key.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Join to the register." },
+    { "path": "data.name", "source_field": "name", "english_name": "psc_name", "meaning": "Name of the person/entity with significant control.", "data_type": "string", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "PERSONAL DATA — redact for individuals.", "source_confidence": "high", "analysis_notes": "May be an individual, corporate, or legal person." },
+    { "path": "data.kind", "source_field": "kind", "english_name": "psc_kind", "meaning": "PSC kind (individual / corporate-entity / legal-person / statement).", "data_type": "string", "semantic_type": "ownership", "example_values": ["individual-person-with-significant-control", "corporate-entity-person-with-significant-control"], "nullable": true, "repeatable": false, "code_list": "CH PSC kinds", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "data.natures_of_control", "source_field": "natures_of_control", "english_name": "natures_of_control", "meaning": "How control is exercised (ownership-of-shares-25-to-50-percent, voting rights, …).", "data_type": "array", "semantic_type": "ownership", "example_values": ["ownership-of-shares-75-to-100-percent"], "nullable": true, "repeatable": true, "code_list": "CH natures of control", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Key ownership signal." },
+    { "path": "data.notified_on", "source_field": "notified_on", "english_name": "notified_on", "meaning": "Date PSC was notified.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "data.nationality", "source_field": "nationality", "english_name": "nationality", "meaning": "PSC nationality.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "PERSONAL DATA.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "data.date_of_birth", "source_field": "date_of_birth", "english_name": "date_of_birth", "meaning": "Month + year of birth (day suppressed).", "data_type": "object", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PERSONAL DATA — month/year only; redact.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

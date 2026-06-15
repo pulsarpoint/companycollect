@@ -1,0 +1,68 @@
+{
+  "country": "United Kingdom",
+  "country_slug": "united_kingdom",
+  "source_slug": "ch_basic_company_data",
+  "source_identity": "united_kingdom_ch_basic_company_data",
+  "source_package": "chbasic",
+  "env_prefix": "CH_BASIC",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Companies House — Free Company Data Product (basic data)",
+    "source_type": "official_registry",
+    "organization": "Companies House",
+    "source_url": "http://download.companieshouse.gov.uk/en_output.html",
+    "license": "Open Government Licence (OGL)",
+    "access": "public",
+    "data_freshness": "monthly",
+    "attribution": "Contains public sector information licensed under the Open Government Licence v3.0 (Companies House)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": "http://download.companieshouse.gov.uk/",
+    "download_url": "http://download.companieshouse.gov.uk/BasicCompanyDataAsOneFile-2026-06-01.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "zip"],
+    "compression": "zip",
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented"
+  },
+  "snapshot": { "strategy": "csv_to_ndjson", "file_extension": ".csv", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "ChBasicCompany",
+    "delimiter": ",",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Monthly file dated YYYY-MM-01; AsOneFile (470MB) or 7 parts (~70MB). 55 columns; column names have dotted prefixes (RegAddress./Accounts./SICCode.). Dates DD/MM/YYYY. Resolve the current month's filename from en_output.html."
+  },
+  "keys": { "primary_keys": ["CompanyNumber"], "join_keys": ["CompanyNumber"], "dedupe_keys": ["CompanyNumber"] },
+  "mapping_rules": {
+    "company_id": "Use CompanyNumber.",
+    "registration_number": "Use CompanyNumber.",
+    "legal_name": "Use CompanyName.",
+    "legal_form": "Use CompanyCategory.",
+    "status": "Use CompanyStatus.",
+    "incorporation_date": "Parse IncorporationDate (DD/MM/YYYY).",
+    "dissolution_date": "Parse DissolutionDate.",
+    "registered_address": "Reassemble RegAddress.* fields.",
+    "activity_code": "Parse SICCode.SicText_1..4 (code + text).",
+    "previous_names": "PreviousName_1..10."
+  },
+  "fixture_requirements": [
+    "active Private Limited Company with SIC + address",
+    "dissolved company (DissolutionDate set)",
+    "LLP (CompanyCategory)",
+    "company with previous names"
+  ],
+  "live_test_plan": {
+    "smoke": "Stream first 1000 rows of one part; assert 55 columns + CompanyNumber.",
+    "full": "Monthly: download AsOneFile (or 7 parts), stream to NDJSON keyed on CompanyNumber."
+  },
+  "blockers": []
+}

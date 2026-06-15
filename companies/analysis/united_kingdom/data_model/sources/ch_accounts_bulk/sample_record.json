@@ -1,0 +1,14 @@
+{
+  "_filename": "Prod223_4238_00009604_20250930.html",
+  "bus:UKCompaniesHouseRegisteredNumber": "00009604",
+  "bus:EntityCurrentLegalOrRegisteredName": "Hull & Humber Chamber of Commerce Industry & Shipping",
+  "made_up_to": "2025-09-30",
+  "core:TurnoverRevenue": "1,615,243",
+  "core:ProfitLoss": "1,160,246",
+  "core:FixedAssets": "1,619,290",
+  "core:CashBankOnHand": "514,506",
+  "core:NetCurrentAssetsLiabilities": "4,163,394",
+  "core:NetAssetsLiabilities": "5,782,684",
+  "core:Equity": "402,324",
+  "_note": "Real iXBRL facts extracted from a Companies House Accounts Bulk Data filing (FRC taxonomy). Company-level financial data; GBP. Values comma-grouped as in source."
+}

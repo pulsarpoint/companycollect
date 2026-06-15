@@ -1,0 +1,62 @@
+{
+  "country": "United Kingdom",
+  "country_slug": "united_kingdom",
+  "source_slug": "ch_accounts_bulk",
+  "source_identity": "united_kingdom_ch_accounts_bulk",
+  "source_package": "chaccounts",
+  "env_prefix": "CH_ACCOUNTS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Companies House — Accounts Bulk Data (iXBRL)",
+    "source_type": "official_financial",
+    "organization": "Companies House",
+    "source_url": "http://download.companieshouse.gov.uk/en_accountsdata.html",
+    "license": "Open Government Licence (OGL)",
+    "access": "public",
+    "data_freshness": "daily (60-day window) + monthly",
+    "attribution": "Contains public sector information licensed under the Open Government Licence v3.0 (Companies House)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": "http://download.companieshouse.gov.uk/",
+    "download_url": "http://download.companieshouse.gov.uk/Accounts_Bulk_Data-2026-06-10.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["ixbrl", "xbrl", "zip"],
+    "compression": "zip",
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "date", "page_param": "Accounts_Bulk_Data-{YYYY-MM-DD}", "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented; 60-day retention for daily files"
+  },
+  "snapshot": { "strategy": "extract_ixbrl_facts_to_ndjson", "file_extension": ".html", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "ChAccountsIXBRL",
+    "date_formats": ["2006-01-02", "20060102"],
+    "datetime_formats": [],
+    "number_formats": ["1,234,567"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "ZIP of iXBRL .html (+ some .xml). Filename Prod223_<run>_<companynumber>_<madeupto>.html. Parse ix:nonFraction / ix:nonNumeric by @name (FRC taxonomy: core:/bus:). Handle multiple contexts (current/prior, instant/duration) via contextRef + sign/scale (decimals/scale attrs). Coverage = e-filed only (~60-75%)."
+  },
+  "keys": { "primary_keys": ["company_number", "made_up_to"], "join_keys": ["company_number"], "dedupe_keys": ["company_number", "made_up_to"] },
+  "mapping_rules": {
+    "financials": "Per filing (made_up_to year): turnover=core:TurnoverRevenue, profit_loss=core:ProfitLoss, fixed_assets=core:FixedAssets, cash=core:CashBankOnHand, net_current_assets=core:NetCurrentAssetsLiabilities, net_assets=core:NetAssetsLiabilities, equity=core:Equity. currency=GBP.",
+    "join": "company_number == ch_basic_company_data.CompanyNumber (zero-pad to 8)."
+  },
+  "fixture_requirements": [
+    "FULL/SMALL accounts with turnover + net assets (e.g. 00009604)",
+    "MICRO ENTITY accounts (minimal tags)",
+    "DORMANT accounts (few/no figures)",
+    "filing with prior-period comparatives (multiple contexts)"
+  ],
+  "live_test_plan": {
+    "smoke": "Open one daily zip; parse one iXBRL; assert company number + at least one core: figure.",
+    "full": "Daily harvest (within the 60-day window) + monthly backfill; extract facts to NDJSON keyed on company number + period."
+  },
+  "blockers": [
+    "Coverage = electronically-filed accounts only (~60-75%); paper/scanned PDFs excluded.",
+    "iXBRL multi-context parsing required to pick the right period/sign/scale."
+  ]
+}
