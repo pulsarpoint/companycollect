@@ -1,0 +1,57 @@
+{
+  "country": "Ukraine",
+  "country_slug": "ukraine",
+  "source_slug": "xbrl_frs",
+  "source_identity": "ukraine_xbrl_frs",
+  "source_package": "xbrlfrs",
+  "env_prefix": "XBRL_FRS",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Financial Reporting System — IFRS financial statements (XBRL)",
+    "source_type": "official_financial",
+    "organization": "NSSMC / Financial Reporting Collection Centre; XBRL International",
+    "source_url": "https://filings.xbrl.org/",
+    "license": "open (XBRL International / NSSMC disclosure)",
+    "access": "public",
+    "data_freshness": "annual",
+    "attribution": "NSSMC / Financial Reporting Collection Centre"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://filings.xbrl.org/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xbrl"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown"
+  },
+  "snapshot": { "strategy": "xbrl_filings_per_entity_period", "file_extension": ".xbrl", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "XbrlFinancialFiling",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": ["uah"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Documented. Parse UA MSFS XBRL facts (assets/equity/revenue/profit) per filing; key on EDRPOU + period. Confirm the exact open endpoint (NSSMC portal vs filings.xbrl.org) and entity-id scheme before implementation."
+  },
+  "keys": { "primary_keys": ["edrpou", "period"], "join_keys": ["edrpou"], "dedupe_keys": ["edrpou", "period"] },
+  "mapping_rules": {
+    "financials": "Per period: total_assets, equity, revenue, net_profit from UA MSFS XBRL (UAH).",
+    "join": "edrpou == edr_uo.EDRPOU."
+  },
+  "fixture_requirements": ["documented-only: one IFRS reporter XBRL filing with balance sheet + income statement"],
+  "live_test_plan": {
+    "smoke": "Resolve the open endpoint; fetch one filing; map UA MSFS facts to fields.",
+    "full": "Annual harvest of IFRS-reporter filings; join to EDR by EDRPOU."
+  },
+  "blockers": [
+    "Exact open-bulk endpoint and entity-id scheme to be confirmed (NSSMC portal / filings.xbrl.org).",
+    "Coverage limited to IFRS reporters (not all SMEs)."
+  ]
+}

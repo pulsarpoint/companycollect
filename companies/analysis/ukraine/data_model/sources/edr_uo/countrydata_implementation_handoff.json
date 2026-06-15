@@ -1,0 +1,72 @@
+{
+  "country": "Ukraine",
+  "country_slug": "ukraine",
+  "source_slug": "edr_uo",
+  "source_identity": "ukraine_edr_uo",
+  "source_package": "edruo",
+  "env_prefix": "EDR_UO",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "EDR — legal entities (UO) open data",
+    "source_type": "official_registry",
+    "organization": "Ministry of Justice of Ukraine via data.gov.ua",
+    "source_url": "https://data.gov.ua/dataset/a1799820-195b-4982-8141-6e84f58103e7",
+    "license": "CC-BY 4.0",
+    "access": "public",
+    "data_freshness": "weekly",
+    "attribution": "Ministry of Justice of Ukraine — EDR (data.gov.ua)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": null,
+    "download_url": "https://data.gov.ua/dataset/03cc1239-3988-4451-aa0d-aadb77448714/resource/d40cc921-39bb-44fd-be06-dc02589f45c6/download/uo.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xml", "zip"],
+    "compression": "zip",
+    "encoding": "windows-1251",
+    "record_path": "DATA/SUBJECT",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented"
+  },
+  "snapshot": { "strategy": "stream_xml_subject_to_ndjson", "file_extension": ".xml", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "EdrLegalEntity",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": ["1234,56"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "ZIP -> UO.xml (3.1 GB, windows-1251). STREAM <SUBJECT> elements (SAX/iterparse) — do NOT load fully. Decode windows-1251; unescape &quot;/&apos;. Split REGISTRATION/TERMINATED_INFO on ';'. Resource UUID changes per refresh — resolve latest from the data.gov.ua dataset. Redact person names. NO address/KVED in the open export."
+  },
+  "keys": { "primary_keys": ["EDRPOU"], "join_keys": ["EDRPOU"], "dedupe_keys": ["EDRPOU"] },
+  "mapping_rules": {
+    "company_id": "Use EDRPOU.",
+    "registration_number": "Use EDRPOU.",
+    "tax_id": "Use EDRPOU (legal-entity tax code).",
+    "legal_name": "Use NAME.",
+    "legal_form": "Use OPF.",
+    "status": "Map STAN: зареєстровано->active, в стані припинення->in_termination, припинено->terminated.",
+    "incorporation_date": "First date in REGISTRATION.",
+    "dissolution_date": "First date in TERMINATED_INFO.",
+    "share_capital": "Parse AUTHORIZED_CAPITAL (UAH, comma decimal).",
+    "officers": "SIGNERS[] (name + role; redact PII).",
+    "owners": "FOUNDERS[] + BENEFICIARIES[] (redact PII).",
+    "vat_id": "Not available (no separate VAT number); TAX_PAYER_TYPE flags tax registration."
+  },
+  "fixture_requirements": [
+    "active LLC (ТОВ) with founders + beneficiaries + signers + capital",
+    "terminated entity (TERMINATED_INFO populated)",
+    "entity in termination (TERMINATION_STARTED_INFO)",
+    "record with predecessors/assignees (reorganization)"
+  ],
+  "live_test_plan": {
+    "smoke": "Stream the first 1000 <SUBJECT> records from UO.zip; parse fields; assert EDRPOU + OPF + STAN.",
+    "full": "Weekly: stream the full UO.xml to NDJSON keyed on EDRPOU; redact PII."
+  },
+  "blockers": [
+    "PERSONAL DATA (founders/officers/beneficial owners) — redaction + lawful basis required.",
+    "No registered address / KVED in the open export (wartime reduction)."
+  ]
+}

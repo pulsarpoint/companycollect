@@ -1,0 +1,21 @@
+{
+  "country": "Ukraine",
+  "country_slug": "ukraine",
+  "source_slug": "nssmc_smida",
+  "source_name": "NSSMC / SMIDA — securities-issuer disclosure & financials",
+  "source_type": "official_financial",
+  "organization": "National Securities and Stock Market Commission (NSSMC) / SMIDA",
+  "source_url": "https://stockmarket.gov.ua",
+  "license": "open (disclosure)",
+  "access": "public",
+  "data_freshness": "annual/periodic",
+  "record_shape": "issuer_disclosure_documents",
+  "primary_keys": ["edrpou"],
+  "join_keys": ["edrpou"],
+  "field_count": 3,
+  "fields": [
+    { "path": "edrpou", "source_field": "EDRPOU", "english_name": "edrpou", "meaning": "Issuer EDRPOU; join to EDR.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented.", "source_confidence": "medium", "analysis_notes": "Join key." },
+    { "path": "financial_statements", "source_field": "financial statements", "english_name": "financial_statements", "meaning": "Issuer balance sheet + income statement (annual report).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Ukrainian", "limitations": "Documented; issuers only. UAH.", "source_confidence": "medium", "analysis_notes": "Often XBRL/XML." },
+    { "path": "disclosures", "source_field": "regular/special disclosures", "english_name": "disclosures", "meaning": "Issuer disclosures (annual reports, material events).", "data_type": "array", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Ukrainian", "limitations": "Documented.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

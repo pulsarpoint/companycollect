@@ -1,0 +1,20 @@
+{
+  "country": "Ukraine",
+  "country_slug": "ukraine",
+  "source_slug": "edr_full_restricted",
+  "source_name": "EDR full register (with address/KVED) — restricted (wartime)",
+  "source_type": "official_registry",
+  "organization": "Ministry of Justice of Ukraine",
+  "source_url": "https://usr.minjust.gov.ua/",
+  "license": "restricted",
+  "access": "restricted",
+  "data_freshness": "real-time",
+  "record_shape": "restricted_planning_only",
+  "primary_keys": ["EDRPOU"],
+  "join_keys": ["EDRPOU"],
+  "field_count": 2,
+  "fields": [
+    { "path": "registered_address", "source_field": "ADDRESS", "english_name": "registered_address", "meaning": "Registered legal address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Ukrainian", "limitations": "PLANNING-ONLY; removed from the open export since 2022 (wartime). Restricted.", "source_confidence": "low", "analysis_notes": "The main gap vs the open export." },
+    { "path": "activity_kved", "source_field": "KVED", "english_name": "activity_code_kved", "meaning": "Activity classifier (КВЕД ≈ NACE), primary + secondary.", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "КВЕД-2010", "language": "n/a", "limitations": "PLANNING-ONLY; removed from the open export (wartime). Restricted.", "source_confidence": "low", "analysis_notes": "The other main gap." }
+  ]
+}

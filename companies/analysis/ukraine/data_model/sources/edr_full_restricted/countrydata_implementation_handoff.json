@@ -1,0 +1,61 @@
+{
+  "country": "Ukraine",
+  "country_slug": "ukraine",
+  "source_slug": "edr_full_restricted",
+  "source_identity": "ukraine_edr_full_restricted",
+  "source_package": "edrfull",
+  "env_prefix": "EDR_FULL",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "EDR full register (with address/KVED) — restricted (wartime)",
+    "source_type": "official_registry",
+    "organization": "Ministry of Justice of Ukraine",
+    "source_url": "https://usr.minjust.gov.ua/",
+    "license": "restricted",
+    "access": "restricted",
+    "data_freshness": "real-time",
+    "attribution": "Ministry of Justice of Ukraine"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["EDR_FULL_ACCESS"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://usr.minjust.gov.ua/",
+    "download_url": null,
+    "http_method": null,
+    "headers_required": [],
+    "formats": [],
+    "compression": null,
+    "encoding": "windows-1251",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown"
+  },
+  "snapshot": { "strategy": "not_applicable_restricted", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "EdrFullRecord",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Address + KVED removed from the open export (wartime); full register access-restricted. No transport implemented."
+  },
+  "keys": { "primary_keys": ["EDRPOU"], "join_keys": ["EDRPOU"], "dedupe_keys": ["EDRPOU"] },
+  "mapping_rules": {
+    "registered_address": "Planning-only: restored only with restricted access.",
+    "activity_code": "Planning-only: KVED, restricted."
+  },
+  "fixture_requirements": ["planning-only: synthetic record with address + KVED"],
+  "live_test_plan": {
+    "smoke": "Not applicable — restricted.",
+    "full": "Not applicable — wartime access restriction."
+  },
+  "blockers": [
+    "Registered address and KVED removed from the open export since 2022 (security).",
+    "Full register (usr.minjust.gov.ua) is access-restricted."
+  ]
+}

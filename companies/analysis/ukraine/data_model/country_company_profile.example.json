@@ -1,0 +1,58 @@
+{
+  "country": "Ukraine",
+  "country_slug": "ukraine",
+  "country_profile_version": "2026-06-15",
+  "registration": {
+    "edrpou": "26535980"
+  },
+  "legal_identity": {
+    "legal_name": "КРЕДИТНА СПІЛКА \"УМАНСЬКА РЕГІОНАЛЬНА КРЕДИТНА СПІЛКА\"",
+    "short_name": "КС\"УРКС\"",
+    "legal_form": "КРЕДИТНА СПІЛКА"
+  },
+  "status": {
+    "status_raw": "зареєстровано",
+    "status": "active"
+  },
+  "incorporation": {
+    "registration_date": "2004-04-29",
+    "termination_date": null
+  },
+  "share_capital": {
+    "authorized_capital": 0.0,
+    "currency": "UAH"
+  },
+  "tax_registrations": [
+    "Реєстр платників податків",
+    "Реєстр платників єдиного внеску"
+  ],
+  "officers": [
+    { "name": "[REDACTED — personal data; EDR SIGNERS]", "role": "керівник" }
+  ],
+  "owners": {
+    "founders": [
+      { "name": "[REDACTED — personal data; EDR FOUNDERS (53 founders)]", "share": "0,00 грн." }
+    ],
+    "beneficial_owners": [
+      { "name": "[REDACTED — personal data; EDR BENEFICIARIES]" }
+    ]
+  },
+  "related_entities": {
+    "predecessors": [],
+    "assignees": []
+  },
+  "financial_statements": [
+    { "fiscal_year": 2024, "total_assets": null, "equity": null, "revenue": null, "net_profit": null, "currency": "UAH" }
+  ],
+  "registered_location": {
+    "registered_address": null
+  },
+  "activity": {
+    "kved_codes": []
+  },
+  "source_provenance": [
+    { "source_slug": "edr_uo", "section": "registration/legal_identity/status/incorporation/share_capital/tax_registrations/officers/owners", "source_url": "https://data.gov.ua/dataset/a1799820-195b-4982-8141-6e84f58103e7", "access": "public", "license": "CC-BY 4.0", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "xbrl_frs", "section": "financial_statements", "source_url": "https://filings.xbrl.org/", "access": "public (IFRS reporters)", "license": "open", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "edr_full_restricted", "section": "registered_location/activity", "source_url": "https://usr.minjust.gov.ua/", "access": "restricted (wartime)", "license": "restricted", "retrieved_at": "2026-06-15T00:00:00Z" }
+  ]
+}

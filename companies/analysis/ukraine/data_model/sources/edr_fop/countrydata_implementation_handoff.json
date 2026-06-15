@@ -1,0 +1,53 @@
+{
+  "country": "Ukraine",
+  "country_slug": "ukraine",
+  "source_slug": "edr_fop",
+  "source_identity": "ukraine_edr_fop",
+  "source_package": "edrfop",
+  "env_prefix": "EDR_FOP",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "EDR — individual entrepreneurs (FOP) open data",
+    "source_type": "official_registry",
+    "organization": "Ministry of Justice of Ukraine via data.gov.ua",
+    "source_url": "https://data.gov.ua/dataset/a1799820-195b-4982-8141-6e84f58103e7",
+    "license": "CC-BY 4.0",
+    "access": "public",
+    "data_freshness": "weekly",
+    "attribution": "Ministry of Justice of Ukraine — EDR (data.gov.ua)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": null,
+    "download_url": "https://data.gov.ua/dataset/03cc1239-3988-4451-aa0d-aadb77448714/resource/c262938f-cce7-4489-a805-2fd7c5a44e0b/download/fop.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xml", "zip"],
+    "compression": "zip",
+    "encoding": "windows-1251",
+    "record_path": "DATA/RECORD",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented"
+  },
+  "snapshot": { "strategy": "stream_xml_to_ndjson_pii_minimised", "file_extension": ".xml", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "EdrFop",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "windows-1251 XML; whole record is personal data. Stream; minimise/redact person data. Separate stream from legal entities (do not merge into the company profile)."
+  },
+  "keys": { "primary_keys": ["fop_id"], "join_keys": [], "dedupe_keys": ["fop_id"] },
+  "mapping_rules": {
+    "note": "Sole traders — personal data; keep as a separate FOP stream, not part of the legal-entity company profile."
+  },
+  "fixture_requirements": ["active sole trader", "terminated sole trader"],
+  "live_test_plan": {
+    "smoke": "Stream first 500 FOP records; assert status parses; verify PII minimisation.",
+    "full": "Weekly stream with PII minimisation behind an env gate."
+  },
+  "blockers": ["Entire record is personal data (natural person) — redaction + lawful basis required."]
+}

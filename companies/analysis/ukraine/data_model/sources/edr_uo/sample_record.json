@@ -1,0 +1,21 @@
+{
+  "RECORD": "9689",
+  "NAME": "КРЕДИТНА СПІЛКА \"УМАНСЬКА РЕГІОНАЛЬНА КРЕДИТНА СПІЛКА\"",
+  "SHORT_NAME": "КС\"УРКС\"",
+  "OPF": "КРЕДИТНА СПІЛКА",
+  "EDRPOU": "26535980",
+  "STAN": "зареєстровано",
+  "FOUNDERS": "[53 founders — person names REDACTED (PII)]",
+  "BENEFICIARIES": "[1 beneficiary(ies) — REDACTED (PII)]",
+  "SUPERIOR_MANAGEMENT": "ЗАГАЛЬНІ ЗБОРИ",
+  "SIGNERS": "[2 signer(s) — person names REDACTED (PII)]",
+  "AUTHORIZED_CAPITAL": "0,00",
+  "REGISTRATION": "29.04.2004; 24.10.2006; 10251200000000716",
+  "EXCHANGE_DATA": {
+    "TAX_PAYER_TYPE": [
+      "Реєстр платників податків",
+      "Реєстр платників єдиного внеску"
+    ]
+  },
+  "_note": "Real EDR UO record (EDRPOU 26535980). Person names in FOUNDERS/BENEFICIARIES/SIGNERS redacted per data-protection; company-level fields verbatim. Current open export has NO address and NO KVED (wartime reduction)."
+}

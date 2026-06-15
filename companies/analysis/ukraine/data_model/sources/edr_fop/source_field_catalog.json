@@ -1,0 +1,21 @@
+{
+  "country": "Ukraine",
+  "country_slug": "ukraine",
+  "source_slug": "edr_fop",
+  "source_name": "EDR — individual entrepreneurs (FOP) open data",
+  "source_type": "official_registry",
+  "organization": "Ministry of Justice of Ukraine via data.gov.ua",
+  "source_url": "https://data.gov.ua/dataset/a1799820-195b-4982-8141-6e84f58103e7",
+  "license": "CC-BY 4.0",
+  "access": "public",
+  "data_freshness": "weekly",
+  "record_shape": "windows1251_xml_records_personal_data",
+  "primary_keys": ["fop_id"],
+  "join_keys": [],
+  "field_count": 3,
+  "fields": [
+    { "path": "RECORD/NAME", "source_field": "NAME (П.І.Б.)", "english_name": "person_name", "meaning": "Sole trader's full name.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Ukrainian", "limitations": "PERSONAL DATA — whole record concerns a natural person. Redact.", "source_confidence": "medium", "analysis_notes": "FOP = фізична особа-підприємець." },
+    { "path": "RECORD/STAN", "source_field": "STAN", "english_name": "status", "meaning": "Registration status.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Ukrainian", "limitations": "Documented.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "RECORD/KVED", "source_field": "activity", "english_name": "activity", "meaning": "Declared activities (where present).", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Ukrainian", "limitations": "May be reduced in the wartime export.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

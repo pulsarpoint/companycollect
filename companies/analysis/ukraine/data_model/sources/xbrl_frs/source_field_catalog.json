@@ -1,0 +1,24 @@
+{
+  "country": "Ukraine",
+  "country_slug": "ukraine",
+  "source_slug": "xbrl_frs",
+  "source_name": "Financial Reporting System — IFRS financial statements (XBRL)",
+  "source_type": "official_financial",
+  "organization": "NSSMC / Financial Reporting Collection Centre; XBRL International",
+  "source_url": "https://www.nssmc.gov.ua/en/for-market-participants/services/databases/",
+  "license": "open (XBRL International / NSSMC disclosure)",
+  "access": "public",
+  "data_freshness": "annual",
+  "record_shape": "xbrl_facts_per_filing",
+  "primary_keys": ["edrpou", "period"],
+  "join_keys": ["edrpou"],
+  "field_count": 6,
+  "fields": [
+    { "path": "edrpou", "source_field": "EDRPOU (entity identifier)", "english_name": "edrpou", "meaning": "Filer's 8-digit EDRPOU; join to EDR.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented; confirm the exact entity-id scheme in the XBRL.", "source_confidence": "medium", "analysis_notes": "Join key to edr_uo." },
+    { "path": "period", "source_field": "reporting period", "english_name": "fiscal_year", "meaning": "Reporting period (context).", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "XBRL context period.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "assets_total", "source_field": "Assets (UA MSFS taxonomy)", "english_name": "total_assets", "meaning": "Total assets (balance sheet).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "UA MSFS XBRL taxonomy", "language": "n/a", "limitations": "Documented; UAH.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "equity_total", "source_field": "Equity", "english_name": "equity", "meaning": "Total equity.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "UA MSFS XBRL", "language": "n/a", "limitations": "Documented; UAH.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "revenue", "source_field": "Revenue", "english_name": "revenue", "meaning": "Revenue (income statement).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "UA MSFS XBRL", "language": "n/a", "limitations": "Documented; UAH.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "net_profit", "source_field": "ProfitLoss", "english_name": "net_profit", "meaning": "Net profit/loss for the period.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "UA MSFS XBRL", "language": "n/a", "limitations": "Documented; UAH.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}
