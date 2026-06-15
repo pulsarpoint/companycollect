@@ -1,0 +1,62 @@
+{
+  "country": "Slovenia",
+  "country_slug": "slovenia",
+  "source_slug": "ajpes_restprsinfo",
+  "source_identity": "slovenia_ajpes_restprsinfo",
+  "source_package": "ajpesrestprs",
+  "env_prefix": "AJPES_RESTPRS",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "AJPES restPrsInfo — REST web service",
+    "source_type": "official_registry",
+    "organization": "AJPES",
+    "source_url": "https://www.ajpes.si/Doc/AJPES/Za_razvijalce/restPrsInfo_Opis_servisa_za_razvijalce.pdf",
+    "license": "AJPES terms (registered users)",
+    "access": "restricted",
+    "data_freshness": "real-time",
+    "attribution": "AJPES"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["AJPES_RESTPRS_USER", "AJPES_RESTPRS_PASSWORD"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": null,
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Authorization"],
+    "formats": ["json", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "not for mass download"
+  },
+  "snapshot": { "strategy": "enrichment_lookup_only", "file_extension": ".json", "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "RestPrsInfo",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Planning-only. Credentialed; minimal/ožja/širša tiers; change-list endpoint for incremental sync. Not for mass download."
+  },
+  "keys": { "primary_keys": ["maticna_stevilka"], "join_keys": ["maticna_stevilka", "davcna_stevilka"], "dedupe_keys": ["maticna_stevilka"] },
+  "mapping_rules": {
+    "status": "Planning-only: fills the status gap absent from PRS/FURS.",
+    "incorporation_date": "Planning-only: datum vpisa.",
+    "activity_code": "Planning-only: full SKD (primary + secondary)."
+  },
+  "fixture_requirements": ["planning-only: synthetic broad-tier entity with status + SKD + registration date"],
+  "live_test_plan": {
+    "smoke": "Not applicable without AJPES credentials.",
+    "full": "Per-entity enrichment + change-list sync once access is granted; never mass-download."
+  },
+  "blockers": [
+    "Requires AJPES registration/credentials.",
+    "Explicitly not for mass download — targeted lookups/sync only."
+  ]
+}

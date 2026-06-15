@@ -1,0 +1,65 @@
+{
+  "country": "Slovenia",
+  "country_slug": "slovenia",
+  "source_slug": "ajpes_prs",
+  "source_identity": "slovenia_ajpes_prs",
+  "source_package": "ajpesprs",
+  "env_prefix": "AJPES_PRS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "AJPES PRS — Poslovni register Slovenije (OPSI open data)",
+    "source_type": "official_registry",
+    "organization": "AJPES via OPSI",
+    "source_url": "https://podatki.gov.si/dataset/poslovni-register-slovenije",
+    "license": "CC-BY 4.0",
+    "access": "public",
+    "data_freshness": "twice monthly",
+    "attribution": "AJPES — Poslovni register Slovenije (podatki.gov.si)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": null,
+    "download_url": "https://podatki.gov.si/dataset/9ee1a9aa-c224-4995-b2ad-3760d7af0748/resource/beb70929-3d0d-41c6-9af2-25d525d906d3/download/opsiprs.csv",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "utf-16",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented"
+  },
+  "snapshot": { "strategy": "raw_csv_then_ndjson", "file_extension": ".csv", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "AjpesPrsEntity",
+    "delimiter": ",",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Encoding UTF-16 (decode before CSV parse). Comma-delimited, all fields quoted. ~293k rows. The companion ATRIBUTI_MR_20.xml holds codelist/attribute definitions. Resource UUID may change per refresh; resolve the latest from the OPSI dataset page."
+  },
+  "keys": { "primary_keys": ["maticna_stevilka"], "join_keys": ["maticna_stevilka"], "dedupe_keys": ["maticna_stevilka"] },
+  "mapping_rules": {
+    "company_id": "Use Matična številka.",
+    "registration_number": "Same as company_id.",
+    "legal_name": "Use Popolno ime.",
+    "legal_form": "Use Pravnoorganizacijska oblika (text).",
+    "registered_address": "Compose Ulica + Hišna št (+ dodatek) + Naselje + Poštna št + Pošta.",
+    "tax_id": "Not here — join furs_zavezanci_po on Matična številka.",
+    "status": "Not here — credentialed restPrsInfo only."
+  },
+  "fixture_requirements": [
+    "d.o.o. with full address (court registrar)",
+    "s.p. (AJPES branch registrar)",
+    "association / public institution",
+    "row with house-number addendum"
+  ],
+  "live_test_plan": {
+    "smoke": "Decode first ~1000 lines from UTF-16; parse 12 columns.",
+    "full": "Stream the full 127MB file twice-monthly; join companion sources by Matična številka."
+  },
+  "blockers": []
+}

@@ -1,0 +1,21 @@
+{
+  "country": "Slovenia",
+  "country_slug": "slovenia",
+  "source_slug": "ajpes_fipo",
+  "source_name": "AJPES Fi=Po / S.BON — financial database & credit ratings",
+  "source_type": "official_registry",
+  "organization": "AJPES",
+  "source_url": "https://www.ajpes.si/FinancialData",
+  "license": "paid / contract",
+  "access": "paid",
+  "data_freshness": "annual",
+  "record_shape": "paid_planning_only",
+  "primary_keys": ["maticna_stevilka"],
+  "join_keys": ["maticna_stevilka", "davcna_stevilka"],
+  "field_count": 3,
+  "fields": [
+    { "path": "financial_statements[]", "source_field": "complete financial statements", "english_name": "financial_statements", "meaning": "Structured multi-year balance sheet + income statement.", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Slovenian", "limitations": "PLANNING-ONLY; paid. The structured/bulk route to financials. EUR.", "source_confidence": "low", "analysis_notes": "What JOLP shows view-only, Fi=Po delivers structured/bulk." },
+    { "path": "indicators", "source_field": "financial indicators", "english_name": "financial_indicators", "meaning": "Computed ratios/indicators.", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Slovenian", "limitations": "PLANNING-ONLY; paid.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "sbon_rating", "source_field": "S.BON credit rating", "english_name": "credit_rating", "meaning": "AJPES S.BON credit-rating score.", "data_type": "string", "semantic_type": "raw_extension", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY; paid; proprietary model.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

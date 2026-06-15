@@ -1,0 +1,57 @@
+{
+  "country": "Slovenia",
+  "country_slug": "slovenia",
+  "source_slug": "ajpes_jolp",
+  "source_identity": "slovenia_ajpes_jolp",
+  "source_package": "ajpesjolp",
+  "env_prefix": "AJPES_JOLP",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "AJPES JOLP — Javna objava letnih poročil (annual reports)",
+    "source_type": "official_registry",
+    "organization": "AJPES",
+    "source_url": "https://www.ajpes.si/jolp/",
+    "license": "public view; reuse terms unclear",
+    "access": "public (view-only)",
+    "data_freshness": "annual (~last 5 years)",
+    "attribution": "AJPES — JOLP"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.ajpes.si/jolp/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "view-only; no bulk"
+  },
+  "snapshot": { "strategy": "not_applicable_view_only", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "JolpAnnualReport",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": ["eur"],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. View-only per company; no open bulk/API. Do not mass-scrape. For structured/bulk financials use the paid Fi=Po."
+  },
+  "keys": { "primary_keys": ["maticna_stevilka"], "join_keys": ["maticna_stevilka"], "dedupe_keys": ["maticna_stevilka"] },
+  "mapping_rules": {
+    "financials": "Planning-only: balance sheet + income statement per company per year (EUR). No bulk access."
+  },
+  "fixture_requirements": ["planning-only: synthetic JOLP balance sheet + income statement"],
+  "live_test_plan": {
+    "smoke": "Not applicable — view-only, no API.",
+    "full": "Not applicable — no open bulk; license Fi=Po for structured financials."
+  },
+  "blockers": [
+    "No open bulk download or API — view-only per company.",
+    "Reuse/redistribution terms differ from the CC-BY open datasets; do not mass-scrape.",
+    "Structured/bulk financials require the paid Fi=Po product."
+  ]
+}

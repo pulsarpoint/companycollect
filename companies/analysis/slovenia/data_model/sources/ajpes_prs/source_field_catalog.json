@@ -1,0 +1,30 @@
+{
+  "country": "Slovenia",
+  "country_slug": "slovenia",
+  "source_slug": "ajpes_prs",
+  "source_name": "AJPES PRS — Poslovni register Slovenije (OPSI open data)",
+  "source_type": "official_registry",
+  "organization": "AJPES (Agencija RS za javnopravne evidence in storitve) via OPSI",
+  "source_url": "https://podatki.gov.si/dataset/poslovni-register-slovenije",
+  "license": "CC-BY 4.0",
+  "access": "public",
+  "data_freshness": "twice monthly (dvotedensko)",
+  "record_shape": "utf16_csv_one_row_per_entity",
+  "primary_keys": ["maticna_stevilka"],
+  "join_keys": ["maticna_stevilka"],
+  "field_count": 12,
+  "fields": [
+    { "path": "Matična številka", "source_field": "Matična številka", "english_name": "registration_number", "meaning": "10-digit registration number; company id and join key.", "data_type": "string", "semantic_type": "identifier", "example_values": ["3282490000", "5000152000"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Base 7-digit unit + 3-digit suffix (000 for main entity).", "source_confidence": "high", "analysis_notes": "Join to FURS." },
+    { "path": "Popolno ime", "source_field": "Popolno ime", "english_name": "full_name", "meaning": "Full registered name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["ISTRA XLL, trgovina in transport, d.o.o."], "nullable": false, "repeatable": false, "code_list": null, "language": "Slovenian", "limitations": null, "source_confidence": "high", "analysis_notes": "Main display name." },
+    { "path": "HSEID", "source_field": "HSEID", "english_name": "address_identifier", "meaning": "Unique building/address identifier (HSMID).", "data_type": "string", "semantic_type": "identifier", "example_values": ["100400000140334594"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Links to the national spatial address register." },
+    { "path": "Pravnoorganizacijska oblika", "source_field": "Pravnoorganizacijska oblika", "english_name": "legal_form", "meaning": "Legal organizational form (text).", "data_type": "string", "semantic_type": "legal_form", "example_values": ["Družba z omejeno odgovornostjo d.o.o.", "Samostojni podjetnik posameznik s.p."], "nullable": false, "repeatable": false, "code_list": null, "language": "Slovenian", "limitations": "Text label, no code.", "source_confidence": "high", "analysis_notes": "d.o.o., s.p., društvo, javni zavod, poslovna enota, …" },
+    { "path": "Registrski organ", "source_field": "Registrski organ", "english_name": "registering_authority", "meaning": "Registering authority (district court or AJPES branch).", "data_type": "string", "semantic_type": "metadata", "example_values": ["Okrožno sodišče Koper", "AJPES, izpostava Ljubljana"], "nullable": true, "repeatable": false, "code_list": null, "language": "Slovenian", "limitations": null, "source_confidence": "high", "analysis_notes": "Court = d.o.o./d.d.; AJPES branch = s.p./društvo." },
+    { "path": "Ulica", "source_field": "Ulica", "english_name": "street", "meaning": "Street name.", "data_type": "string", "semantic_type": "address", "example_values": ["Fazanska ulica"], "nullable": true, "repeatable": false, "code_list": null, "language": "Slovenian", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Hišna št", "source_field": "Hišna št ", "english_name": "house_number", "meaning": "House number.", "data_type": "string", "semantic_type": "address", "example_values": ["004"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Zero-padded.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Hišna št dodatek", "source_field": "Hišna št  dodatek", "english_name": "house_number_suffix", "meaning": "House-number addendum (e.g. A).", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Often blank.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "Naselje", "source_field": "Naselje", "english_name": "settlement", "meaning": "Settlement / town.", "data_type": "string", "semantic_type": "geography", "example_values": ["Lucija", "Vrhnika"], "nullable": true, "repeatable": false, "code_list": null, "language": "Slovenian", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Poštna št", "source_field": "Poštna št ", "english_name": "postal_code", "meaning": "Postal code.", "data_type": "string", "semantic_type": "address", "example_values": ["6320", "1360"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Pošta", "source_field": "Pošta", "english_name": "post_office", "meaning": "Post-office name.", "data_type": "string", "semantic_type": "geography", "example_values": ["Portorož - Portorose"], "nullable": true, "repeatable": false, "code_list": null, "language": "Slovenian", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Država", "source_field": "Država", "english_name": "country", "meaning": "Country.", "data_type": "string", "semantic_type": "geography", "example_values": ["SLOVENIJA"], "nullable": true, "repeatable": false, "code_list": null, "language": "Slovenian", "limitations": null, "source_confidence": "high", "analysis_notes": null }
+  ]
+}

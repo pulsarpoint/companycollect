@@ -1,0 +1,22 @@
+{
+  "country": "Slovenia",
+  "country_slug": "slovenia",
+  "source_slug": "ajpes_jolp",
+  "source_name": "AJPES JOLP — Javna objava letnih poročil (annual reports)",
+  "source_type": "official_registry",
+  "organization": "AJPES",
+  "source_url": "https://www.ajpes.si/jolp/",
+  "license": "public view; reuse terms unclear",
+  "access": "public (view-only)",
+  "data_freshness": "annual (~last 5 years)",
+  "record_shape": "per_company_view_only_planning_only",
+  "primary_keys": ["maticna_stevilka"],
+  "join_keys": ["maticna_stevilka"],
+  "field_count": 4,
+  "fields": [
+    { "path": "bilanca_stanja", "source_field": "Bilanca stanja", "english_name": "balance_sheet", "meaning": "Balance sheet (assets, equity, liabilities).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Slovenian", "limitations": "PLANNING-ONLY; view-only, no open bulk/API. EUR.", "source_confidence": "medium", "analysis_notes": "Free to view per company." },
+    { "path": "izkaz_poslovnega_izida", "source_field": "Izkaz poslovnega izida", "english_name": "income_statement", "meaning": "Income statement (revenue, costs, net profit/loss).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Slovenian", "limitations": "PLANNING-ONLY; view-only. EUR.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "leto", "source_field": "poslovno leto", "english_name": "fiscal_year", "meaning": "Business year of the report.", "data_type": "integer", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY. ~last 5 years.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "letno_porocilo", "source_field": "Letno poročilo", "english_name": "annual_report", "meaning": "Full annual report document (incl. audited where applicable).", "data_type": "document", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Slovenian", "limitations": "PLANNING-ONLY; HTML/PDF per company.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

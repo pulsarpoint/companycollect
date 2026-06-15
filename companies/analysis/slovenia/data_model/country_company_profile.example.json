@@ -1,0 +1,52 @@
+{
+  "country": "Slovenia",
+  "country_slug": "slovenia",
+  "country_profile_version": "2026-06-15",
+  "registration": {
+    "maticna_stevilka": "3282490000"
+  },
+  "tax_identifiers": {
+    "davcna_stevilka": "10001310",
+    "vat_id": "SI10001310",
+    "vat_registered": true,
+    "vat_registration_date": "2008-03-14"
+  },
+  "legal_identity": {
+    "legal_name": "ISTRA XLL, trgovina in transport, d.o.o.",
+    "legal_form": "Družba z omejeno odgovornostjo d.o.o."
+  },
+  "status": {
+    "status": null
+  },
+  "activity": {
+    "skd_code": "49.410"
+  },
+  "incorporation": {
+    "registration_date": null
+  },
+  "registered_location": {
+    "street": "Fazanska ulica",
+    "house_number": "004",
+    "settlement": "Lucija",
+    "postal_code": "6320",
+    "post_office": "Portorož - Portorose",
+    "address_identifier_hseid": "100400000140334594"
+  },
+  "registering_authority": "Okrožno sodišče Koper",
+  "financial_statements": [
+    {
+      "fiscal_year": 2024,
+      "balance_sheet": null,
+      "income_statement": null,
+      "currency": "EUR"
+    }
+  ],
+  "officers": [
+    { "name": "[PLANNING-ONLY — not in open data; court register / restPrsInfo; personal data]", "role": null }
+  ],
+  "source_provenance": [
+    { "source_slug": "ajpes_prs", "section": "registration/legal_identity/registered_location/registering_authority", "source_url": "https://podatki.gov.si/dataset/poslovni-register-slovenije", "access": "public", "license": "CC-BY 4.0", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "furs_zavezanci_po", "section": "tax_identifiers/activity", "source_url": "https://podatki.gov.si/dataset/seznam-davcnih-zavezancev", "access": "public", "license": "CC-BY 4.0", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "ajpes_jolp", "section": "financial_statements", "source_url": "https://www.ajpes.si/jolp/", "access": "public (view-only)", "license": "view-only", "retrieved_at": "2026-06-15T00:00:00Z" }
+  ]
+}

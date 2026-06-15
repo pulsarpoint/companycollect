@@ -1,0 +1,63 @@
+{
+  "country": "Slovenia",
+  "country_slug": "slovenia",
+  "source_slug": "furs_zavezanci_po",
+  "source_identity": "slovenia_furs_zavezanci_po",
+  "source_package": "furszavezanci",
+  "env_prefix": "FURS_ZAVEZANCI",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "FURS — Seznam davčnih zavezancev (legal entities)",
+    "source_type": "official_tax",
+    "organization": "Finančna uprava RS (FURS) via OPSI",
+    "source_url": "https://podatki.gov.si/dataset/seznam-davcnih-zavezancev",
+    "license": "CC-BY 4.0",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "FURS — Finančna uprava RS (podatki.gov.si)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": null,
+    "download_url": "https://www.fu.gov.si/fileadmin/prenosi/DURS_zavezanci_PO_csv.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "zip"],
+    "compression": "zip",
+    "encoding": "utf-8-bom",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented"
+  },
+  "snapshot": { "strategy": "unzip_csv_then_ndjson", "file_extension": ".csv", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "FursZavezanecPO",
+    "delimiter": ";",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "ZIP -> DURS_zavezanci_PO.csv (UTF-8 BOM, semicolon). Trim trailing spaces on name/address. VAT flag 'Zavezanost za DDV' = '*'. ~144k legal entities."
+  },
+  "keys": { "primary_keys": ["maticna_stevilka"], "join_keys": ["maticna_stevilka", "davcna_stevilka"], "dedupe_keys": ["maticna_stevilka"] },
+  "mapping_rules": {
+    "tax_id": "Use Davčna številka.",
+    "vat_id": "Compose SI + Davčna številka when Zavezanost za DDV starts with '*'.",
+    "vat_registered": "True when Zavezanost za DDV = '*'.",
+    "activity_code": "Use Šifra dejavnosti (SKD).",
+    "join": "Matična številka == ajpes_prs.Matična številka."
+  },
+  "fixture_requirements": [
+    "VAT-registered d.o.o. (Zavezanost za DDV='*')",
+    "non-VAT legal entity",
+    "entity with SKD activity code",
+    "name/address with trailing spaces"
+  ],
+  "live_test_plan": {
+    "smoke": "Unzip; parse first 1000 rows with ';'; assert davčna+matična present.",
+    "full": "Daily refresh; build maticna->tax/VAT/SKD map; join to PRS."
+  },
+  "blockers": []
+}

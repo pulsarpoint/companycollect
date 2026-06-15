@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Slovenia Company Profile",
+  "description": "Country-specific company profile for Slovenia. Identity is fully open: AJPES PRS (CC-BY 4.0) gives name, legal form, address; FURS Seznam davčnih zavezancev (CC-BY 4.0) adds tax number, VAT status, VAT registration date, and SKD activity. Both join on the matična številka (registration number); VAT id = SI + davčna številka. Status, incorporation date, officers, and ownership are NOT in the open feeds (credentialed restPrsInfo / court register). Financials are NOT openly downloadable: JOLP shows annual reports view-only per company, and the structured Fi=Po database + S.BON ratings are paid.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Slovenia" },
+    "country_slug": { "type": "string", "const": "slovenia" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["maticna_stevilka"],
+      "properties": {
+        "maticna_stevilka": {
+          "type": "string",
+          "description": "10-digit registration number. Company id and universal join key (PRS ↔ FURS).",
+          "x-source": "ajpes_prs",
+          "x-source-path": "Matična številka",
+          "x-join-key": true,
+          "x-access": "public"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "davcna_stevilka": { "type": ["string", "null"], "description": "8-digit tax number.", "x-source": "furs_zavezanci_po", "x-source-path": "Davčna številka" },
+        "vat_id": { "type": ["string", "null"], "description": "SI + davčna številka when VAT-registered.", "x-source": "furs_zavezanci_po", "x-source-path": "Davčna številka" },
+        "vat_registered": { "type": ["boolean", "null"], "description": "Zavezanost za DDV = '*'.", "x-source": "furs_zavezanci_po", "x-source-path": "Zavezanost za DDV" },
+        "vat_registration_date": { "type": ["string", "null"], "format": "date", "x-source": "furs_zavezanci_po", "x-source-path": "Datum registracije za DDV" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "ajpes_prs", "x-source-path": "Popolno ime" },
+        "legal_form": { "type": ["string", "null"], "description": "Text label (d.o.o., s.p., …).", "x-source": "ajpes_prs", "x-source-path": "Pravnoorganizacijska oblika" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "description": "PLANNING-ONLY. No status in the open feeds — credentialed restPrsInfo only.",
+      "x-access": "restricted",
+      "properties": {
+        "status": { "type": ["string", "null"], "x-source": "ajpes_restprsinfo", "x-source-path": "status" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "skd_code": { "type": ["string", "null"], "description": "SKD activity (≈ NACE Rev.2).", "x-source": "furs_zavezanci_po", "x-source-path": "Šifra dejavnosti" }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "description": "PLANNING-ONLY. Registration date not in open feeds (restPrsInfo).",
+      "x-access": "restricted",
+      "properties": {
+        "registration_date": { "type": ["string", "null"], "format": "date", "x-source": "ajpes_restprsinfo", "x-source-path": "datumVpisa" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "x-source": "ajpes_prs",
+      "properties": {
+        "street": { "type": ["string", "null"], "x-source-path": "Ulica" },
+        "house_number": { "type": ["string", "null"], "x-source-path": "Hišna št" },
+        "settlement": { "type": ["string", "null"], "x-source-path": "Naselje" },
+        "postal_code": { "type": ["string", "null"], "x-source-path": "Poštna št" },
+        "post_office": { "type": ["string", "null"], "x-source-path": "Pošta" },
+        "address_identifier_hseid": { "type": ["string", "null"], "x-source-path": "HSEID" }
+      }
+    },
+    "registering_authority": { "type": ["string", "null"], "x-source": "ajpes_prs", "x-source-path": "Registrski organ" },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Financials are NOT openly downloadable: JOLP is view-only per company; the structured Fi=Po database is paid. EUR.",
+      "x-access": "view_only_or_paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": "integer", "x-source": "ajpes_jolp", "x-source-path": "leto" },
+          "balance_sheet": { "type": ["object", "null"], "x-source": "ajpes_jolp", "x-source-path": "Bilanca stanja" },
+          "income_statement": { "type": ["object", "null"], "x-source": "ajpes_jolp", "x-source-path": "Izkaz poslovnega izida" },
+          "currency": { "type": "string", "const": "EUR" }
+        }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Not in open data (court register / restPrsInfo). PERSONAL DATA.",
+      "x-access": "restricted",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "country": "Slovenia",
+  "country_slug": "slovenia",
+  "source_slug": "ajpes_restprsinfo",
+  "source_name": "AJPES restPrsInfo — REST web service",
+  "source_type": "official_registry",
+  "organization": "AJPES",
+  "source_url": "https://www.ajpes.si/Doc/AJPES/Za_razvijalce/restPrsInfo_Opis_servisa_za_razvijalce.pdf",
+  "license": "AJPES terms (registered users)",
+  "access": "restricted",
+  "data_freshness": "real-time",
+  "record_shape": "credentialed_json_xml_planning_only",
+  "primary_keys": ["maticna_stevilka"],
+  "join_keys": ["maticna_stevilka", "davcna_stevilka"],
+  "field_count": 4,
+  "fields": [
+    { "path": "status", "source_field": "status poslovnega subjekta", "english_name": "status", "meaning": "Entity status (active/in liquidation/deleted).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Slovenian", "limitations": "PLANNING-ONLY; credentialed. The open feeds have no status.", "source_confidence": "medium", "analysis_notes": "Fills the status gap." },
+    { "path": "skd", "source_field": "SKD dejavnost", "english_name": "activity_skd", "meaning": "Full SKD activity (principal + secondary).", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "SKD 2008", "language": "n/a", "limitations": "PLANNING-ONLY; credentialed.", "source_confidence": "medium", "analysis_notes": "FURS gives only the principal code openly." },
+    { "path": "datumVpisa", "source_field": "datum vpisa", "english_name": "registration_date", "meaning": "Date of entry in the register.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY; credentialed.", "source_confidence": "medium", "analysis_notes": "Fills the incorporation-date gap." },
+    { "path": "spremembe[]", "source_field": "seznam sprememb", "english_name": "change_list", "meaning": "List of registration numbers changed in a period (for incremental sync).", "data_type": "array", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY; credentialed.", "source_confidence": "medium", "analysis_notes": "Enables incremental updates." }
+  ]
+}
