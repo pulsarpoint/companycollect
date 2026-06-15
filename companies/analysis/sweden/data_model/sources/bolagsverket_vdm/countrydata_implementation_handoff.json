@@ -1,0 +1,100 @@
+{
+  "country": "Sweden",
+  "country_slug": "sweden",
+  "source_slug": "bolagsverket_vdm",
+  "source_identity": "sweden_bolagsverket_vdm",
+  "source_package": "bolagsverketvdm",
+  "env_prefix": "BOLAGSVERKET_VDM",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Bolagsverket Värdefulla datamängder API v1 — /organisationer",
+    "source_type": "official_registry_api",
+    "organization": "Bolagsverket (Swedish Companies Registration Office)",
+    "source_url": "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1/organisationer",
+    "license": "Free of charge, no contract — EU high-value datasets (2019/1024). Confirm exact reuse string on dataportal.se/datasets/612_5428.",
+    "access": "public_oauth_gated",
+    "data_freshness": "real-time",
+    "attribution": "Confirm per dataset; treat as open/free-reuse. CC0 is explicit only for the SCB source."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": [
+      "BOLAGSVERKET_VDM_CLIENT_ID",
+      "BOLAGSVERKET_VDM_CLIENT_SECRET",
+      "BOLAGSVERKET_VDM_TOKEN_URL"
+    ]
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Authorization: Bearer {oauth2_access_token}", "Content-Type: application/json"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "unknown — confirm response envelope after credentialed call",
+    "total_results_path": null,
+    "pagination": {
+      "type": "per_identifier_lookup",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "auth": {
+      "type": "oauth2_client_credentials",
+      "gateway": "WSO2 API Manager",
+      "scope": "vardefulla-datamangder:read",
+      "ping_scope": "vardefulla-datamangder:ping",
+      "token_url": "issued at registration (community lib references https://gw.api.bolagsverket.se/oauth2/token; the literal /oauth2/token probe returned 404 — DO NOT hardcode without confirmation)"
+    },
+    "rate_limit": "not published; OAuth-gated"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "OrganisationBaseRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["organisationsnummer"],
+    "join_keys": ["organisationsnummer"],
+    "dedupe_keys": ["organisationsnummer"]
+  },
+  "mapping_rules": {
+    "company_id": "organisationsnummer (digits-only canonical form).",
+    "legal_name": "organisationsnamn.",
+    "legal_form": "juridisk_form / organisationsform (keep raw label + any code).",
+    "status": "status field (active/inactive + raw label; preserve konkurs/likvidation sub-states).",
+    "incorporation_date": "registreringsdatum.",
+    "dissolution_date": "avregistreringsdatum.",
+    "registered_address": "postadress_organisation (gatuadress / postnummer / postort).",
+    "vat_id": "momsregistreringsnummer if present; otherwise prefer SCB VAT flag over a derived SE+orgnr+01 value and mark derived."
+  },
+  "fixture_requirements": [
+    "active Aktiebolag (AB) with full base data + address",
+    "deregistered/konkurs entity with avregistreringsdatum and status sub-state",
+    "enskild firma (sole trader; personnummer-based orgnr) — privacy-sensitive handling",
+    "entity with missing optional fields (no VAT, no SNI)",
+    "malformed/partial JSON response (auth-expiry or gateway error envelope)"
+  ],
+  "live_test_plan": {
+    "smoke": "After registering, obtain an OAuth2 client_credentials token, then POST /organisationer for a few known orgnr (e.g. 556012-5790) and capture the real JSON to confirm field keys/casing/nesting.",
+    "full": "Iterate the orgnr universe seeded from SCB; POST /organisationer per orgnr behind explicit env gates; respect undocumented rate limits with backoff."
+  },
+  "blockers": [
+    "Requires free OAuth2 credentials via Bolagsverket Kundanmälan registration (email + phone). Not yet obtained — no authenticated record captured.",
+    "Exact OAuth token URL is issued at registration; the literal /oauth2/token path returned 404 and must not be hardcoded.",
+    "Response envelope, exact field keys, casing, nesting, and request body schema for /organisationer are unverified (all probes returned 401).",
+    "Exact formal reuse/redistribution license string for the Bolagsverket VDM datasets is unconfirmed (record from dataportal.se/datasets/612_5428)."
+  ]
+}

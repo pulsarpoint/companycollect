@@ -1,0 +1,109 @@
+{
+  "_illustrative": true,
+  "_note": "SHAPE-ONLY example conforming to country_company_profile.schema.json. No authenticated records were pulled from either official source (Bolagsverket VDM is OAuth2-gated; SCB FDB is certificate-gated). The organisationsnummer 556012-5790 is a publicly known number used solely to show the identifier format; all other values are placeholders illustrating the target profile, NOT fetched data.",
+  "country": "Sweden",
+  "country_slug": "sweden",
+  "country_profile_version": "2026-06-13",
+  "registration": {
+    "organisationsnummer": "5560125790",
+    "organisationsnummer_display": "556012-5790",
+    "vat_id": "SE556012579001",
+    "vat_registered": true,
+    "f_tax_registered": true,
+    "employer_registered": true
+  },
+  "legal_identity": {
+    "legal_name": "Example Aktiebolag",
+    "normalized_name": "example aktiebolag",
+    "name_scb": "Example Aktiebolag",
+    "legal_form": "Aktiebolag",
+    "legal_form_scb": "Aktiebolag"
+  },
+  "status": {
+    "status_raw": "registrerad",
+    "active": true,
+    "incorporation_date": "1995-04-12",
+    "dissolution_date": null
+  },
+  "activity": {
+    "sni_codes": ["62010"],
+    "employees_size_class": "5-9"
+  },
+  "registered_location": {
+    "street_address": "Exempelgatan 1",
+    "postal_code": "111 22",
+    "postal_town": "Stockholm",
+    "municipality": "Stockholm",
+    "county": "Stockholms län",
+    "country": "Sweden"
+  },
+  "local_units": [
+    {
+      "cfar": "12345678",
+      "name": "Example Aktiebolag, huvudkontor",
+      "address": "Exempelgatan 1",
+      "postal_code": "111 22",
+      "postal_town": "Stockholm",
+      "municipality": "Stockholm",
+      "county": "Stockholms län",
+      "sni_codes": ["62010"],
+      "employees_size_class": "5-9",
+      "main_or_subsidiary": "huvudarbetsställe"
+    }
+  ],
+  "financials": [
+    {
+      "fiscal_year": "2024",
+      "period_start": "2024-01-01",
+      "period_end": "2024-12-31",
+      "currency": "SEK",
+      "accounting_framework": "K2",
+      "net_revenue": 12500000,
+      "operating_profit_ebit": 1450000,
+      "profit_after_financial_items": 1400000,
+      "net_profit": 1100000,
+      "total_assets": 8200000,
+      "total_equity": 4300000,
+      "total_liabilities": 3900000,
+      "audited": false,
+      "document_id": "doc-illustrative-0001",
+      "raw_xbrl_concepts": {}
+    }
+  ],
+  "documents": [
+    {
+      "document_id": "doc-illustrative-0001",
+      "document_type": "årsredovisning",
+      "fiscal_year": "2024"
+    }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "bolagsverket_vdm",
+      "source_name": "Bolagsverket Värdefulla datamängder API v1 — /organisationer",
+      "source_url": "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1/organisationer",
+      "license": "Free of charge, no contract (EU high-value datasets); confirm exact reuse string",
+      "access": "public_oauth_gated",
+      "retrieved_at": null,
+      "freshness": "real-time"
+    },
+    {
+      "source_slug": "bolagsverket_annual_reports",
+      "source_name": "Bolagsverket Värdefulla datamängder API v1 — annual reports (iXBRL)",
+      "source_url": "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1/dokumentlista",
+      "license": "Free of charge, no contract; verify document-file reuse wording",
+      "access": "public_oauth_gated",
+      "retrieved_at": null,
+      "freshness": "per filing"
+    },
+    {
+      "source_slug": "scb_fdb",
+      "source_name": "SCB Företagsregistret / FDB free API",
+      "source_url": "https://www.scb.se/vara-tjanster/bestall-data-och-statistik/foretagsregistret/",
+      "license": "CC0 1.0",
+      "access": "public_certificate_gated",
+      "retrieved_at": null,
+      "freshness": "nightly/weekly"
+    }
+  ]
+}

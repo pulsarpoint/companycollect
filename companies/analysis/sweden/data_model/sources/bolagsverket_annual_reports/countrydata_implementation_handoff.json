@@ -1,0 +1,106 @@
+{
+  "country": "Sweden",
+  "country_slug": "sweden",
+  "source_slug": "bolagsverket_annual_reports",
+  "source_identity": "sweden_bolagsverket_annual_reports",
+  "source_package": "bolagsverketreports",
+  "env_prefix": "BOLAGSVERKET_VDM",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Bolagsverket Värdefulla datamängder API v1 — annual reports (iXBRL)",
+    "source_type": "official_registry_api",
+    "organization": "Bolagsverket (Swedish Companies Registration Office)",
+    "source_url": "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1/dokumentlista",
+    "license": "Free of charge, no contract — EU high-value datasets. Annual-report document files may carry specific reuse wording — verify.",
+    "access": "public_oauth_gated",
+    "data_freshness": "real-time per filing; reported by fiscal year",
+    "attribution": "Confirm document-file reuse terms specifically before redistributing raw report files."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": [
+      "BOLAGSVERKET_VDM_CLIENT_ID",
+      "BOLAGSVERKET_VDM_CLIENT_SECRET",
+      "BOLAGSVERKET_VDM_TOKEN_URL"
+    ]
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1",
+    "download_url": "https://gw.api.bolagsverket.se/vardefulla-datamangder/v1/dokument/{id}",
+    "http_method": "POST (dokumentlista) + GET (dokument/{id})",
+    "headers_required": ["Authorization: Bearer {oauth2_access_token}", "Content-Type: application/json"],
+    "formats": ["json", "zip", "ixbrl"],
+    "compression": "zip (the dokument download is a ZIP containing an iXBRL instance)",
+    "encoding": "utf-8",
+    "record_path": "unknown — confirm dokumentlista envelope after credentialed call",
+    "total_results_path": null,
+    "pagination": {
+      "type": "per_identifier_lookup",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "auth": {
+      "type": "oauth2_client_credentials",
+      "gateway": "WSO2 API Manager",
+      "scope": "vardefulla-datamangder:read",
+      "token_url": "issued at registration — do not hardcode /oauth2/token (probe returned 404)"
+    },
+    "rate_limit": "not published; OAuth-gated"
+  },
+  "snapshot": {
+    "strategy": "store_raw_zip_plus_parsed_ixbrl_json",
+    "file_extension": ".zip (raw) + .json (parsed concept map)",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "AnnualReportFinancials",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["xbrl_decimals_and_scale (read decimals/scale attributes; do not assume integer SEK)"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "special": "Unzip the document, then parse inline XBRL (iXBRL) with an XBRL parser keyed to the Swedish K2/K3 taxonomies (taxonomier.se). Resolve concept names, period contexts, and currency units from the instance — do not hardcode element names across taxonomy versions."
+  },
+  "keys": {
+    "primary_keys": ["organisationsnummer", "dokument_id", "rakenskapsar"],
+    "join_keys": ["organisationsnummer"],
+    "dedupe_keys": ["organisationsnummer", "rakenskapsar"]
+  },
+  "mapping_rules": {
+    "financials[].year": "räkenskapsår / XBRL period end.",
+    "financials[].currency": "XBRL unit (ISO 4217; usually SEK).",
+    "financials[].net_revenue": "Nettoomsättning.",
+    "financials[].ebit": "Rörelseresultat.",
+    "financials[].profit_after_financial_items": "Resultat efter finansiella poster.",
+    "financials[].net_profit": "Årets resultat.",
+    "financials[].total_assets": "Summa tillgångar.",
+    "financials[].total_equity": "Summa eget kapital.",
+    "financials[].total_liabilities": "Summa skulder (or kortfristiga + långfristiga skulder).",
+    "financials[].audited": "presence of revisor/revisionsberättelse.",
+    "financials[].regelverk": "K2 or K3.",
+    "financials[].raw": "persist the raw parsed iXBRL concept map."
+  },
+  "fixture_requirements": [
+    "K2 abbreviated annual report (revenue/subtotals omitted)",
+    "K3 full annual report (complete income statement + balance sheet)",
+    "report in a non-SEK currency (verify unit handling)",
+    "non-calendar fiscal year (period context start/end != Jan-Dec)",
+    "company with multiple years of reports (multi-fiscal-year dokumentlista)",
+    "malformed/partial iXBRL or unexpected ZIP contents"
+  ],
+  "live_test_plan": {
+    "smoke": "After registering, POST /dokumentlista for a known orgnr, GET /dokument/{id} for the latest annual report, unzip, and parse the iXBRL to confirm concept names, period contexts, and currency units against the K2/K3 taxonomy.",
+    "full": "For the orgnr universe (seeded from SCB / enumerated via /organisationer), pull latest report(s) per orgnr behind explicit env gates; cache by orgnr + fiscal year; respect rate limits."
+  },
+  "blockers": [
+    "Requires the same free OAuth2 credentials as bolagsverket_vdm (Kundanmälan). Not obtained — no document retrieved.",
+    "Exact dokumentlista/dokument request and response schemas are unverified (OAuth-gated).",
+    "iXBRL concept names vary by K2/K3 taxonomy version/year — require a taxonomy-aware XBRL parser, not fixed keys.",
+    "Reuse/redistribution terms for the annual-report document files specifically are unconfirmed.",
+    "Historical coverage is limited to digitally filed reports; paper-only filings are absent."
+  ]
+}

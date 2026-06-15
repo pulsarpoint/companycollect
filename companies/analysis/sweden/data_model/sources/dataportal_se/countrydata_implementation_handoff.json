@@ -1,0 +1,76 @@
+{
+  "country": "Sweden",
+  "country_slug": "sweden",
+  "source_slug": "dataportal_se",
+  "source_identity": "sweden_dataportal_se",
+  "source_package": "dataportalse",
+  "env_prefix": "DATAPORTAL_SE",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "dataportal.se — national open data catalog (DCAT)",
+    "source_type": "open_data_portal_catalog",
+    "organization": "Agency for Digital Government (DIGG)",
+    "source_url": "https://www.dataportal.se/datasets/612_5428",
+    "license": "catalog metadata; points to source licenses",
+    "access": "public",
+    "data_freshness": "n/a",
+    "attribution": "n/a"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://admin.dataportal.se/store",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["dcat", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "unknown — search endpoint requires a 'type' parameter; dataset page is a JS SPA",
+    "total_results_path": null,
+    "pagination": {
+      "type": "unknown",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": null
+    },
+    "rate_limit": null
+  },
+  "snapshot": {
+    "strategy": "metadata_only_no_ingestion",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "DcatDatasetMetadata",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["dataset_id"],
+    "join_keys": [],
+    "dedupe_keys": ["dataset_id"]
+  },
+  "mapping_rules": {
+    "license_provenance": "Read the formal license string for dataset 612_5428 and record verbatim into license_notes.md.",
+    "publisher_provenance": "Confirm Bolagsverket and SCB as the official publishers."
+  },
+  "fixture_requirements": [],
+  "live_test_plan": {
+    "smoke": "Query admin.dataportal.se/store with the required 'type' parameter to retrieve dataset 612_5428 metadata and read the license string.",
+    "full": "Not applicable — this source is not ingested as company data."
+  },
+  "blockers": [
+    "Catalog metadata only — yields no company records; do not implement as a company-data ingestion source.",
+    "Search endpoint requires a 'type' parameter; the captured probe returned a parameter error.",
+    "Use only to record license/publisher provenance for the two official sources."
+  ]
+}

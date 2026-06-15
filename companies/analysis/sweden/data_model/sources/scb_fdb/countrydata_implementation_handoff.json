@@ -1,0 +1,103 @@
+{
+  "country": "Sweden",
+  "country_slug": "sweden",
+  "source_slug": "scb_fdb",
+  "source_identity": "sweden_scb_fdb",
+  "source_package": "scbfdb",
+  "env_prefix": "SCB_FDB",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "SCB Företagsregistret / Företagsdatabasen (FDB) free API",
+    "source_type": "statistical_business_register_api",
+    "organization": "Statistics Sweden (Statistiska centralbyrån, SCB)",
+    "source_url": "https://www.scb.se/vara-tjanster/bestall-data-och-statistik/foretagsregistret/foretagsregistrets-tjanster/foretagsregistrets-webbtjanster/",
+    "license": "CC0 1.0",
+    "access": "public_certificate_gated",
+    "data_freshness": "nightly Mon-Fri; weekly/annual per variable; from Skatteverket",
+    "attribution": "Not required (CC0); courtesy attribution to SCB."
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": [
+      "SCB_FDB_CLIENT_CERT_PATH",
+      "SCB_FDB_CLIENT_CERT_PASSWORD",
+      "SCB_FDB_BASE_URL",
+      "SCB_FDB_API_KEY"
+    ]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "provided with the certificate on registration (request via scbforetag@scb.se)",
+    "download_url": null,
+    "http_method": "GET/POST (per SCB web-service spec; confirm)",
+    "headers_required": ["mutual-TLS client certificate (today)", "API key header (from September 2026)"],
+    "formats": ["json", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "unknown — confirm against SCB postbeskrivning + authenticated response",
+    "total_results_path": null,
+    "pagination": {
+      "type": "row_window",
+      "page_param": null,
+      "page_start": null,
+      "page_size": 2000,
+      "page_size_param": null,
+      "next_page_path": null,
+      "notes": "Max 2,000 rows per request; max 10 requests per 10 seconds per user. Pagination mechanics improve under the Sept 2026 API-key model."
+    },
+    "auth": {
+      "type_today": "client_certificate_mutual_tls",
+      "type_from_2026_09": "api_key",
+      "obtain": "Request certificate + accept API terms via scbforetag@scb.se"
+    },
+    "rate_limit": "2,000 rows/request; 10 requests / 10 seconds per user"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "ScbCompanyRecord + ScbWorkplaceRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue"
+  },
+  "keys": {
+    "primary_keys": ["organisationsnummer", "cfar_nummer"],
+    "join_keys": ["organisationsnummer"],
+    "dedupe_keys": ["organisationsnummer", "cfar_nummer"]
+  },
+  "mapping_rules": {
+    "company_id": "organisationsnummer.",
+    "company_name_fallback": "företagsnamn (prefer Bolagsverket organisationsnamn as legal name).",
+    "municipality": "kommun.",
+    "region": "län.",
+    "industry_code_sni": "SNI-kod (company; treat as repeatable).",
+    "employees_size_class": "storleksklass anställda (band only).",
+    "vat_registered": "moms register flag (use to validate a derived SE+orgnr+01 VAT number).",
+    "employer_registered": "arbetsgivare register flag.",
+    "f_tax_registered": "F-skatt register flag.",
+    "local_units[]": "one entry per CFAR workplace: {cfar, name, address, kommun, lan, sni, size_class, main_or_subsidiary}."
+  },
+  "fixture_requirements": [
+    "company with multiple CFAR workplaces (huvud + del)",
+    "company with a single workplace",
+    "sole trader (personnummer-based) record",
+    "company with VAT + employer + F-tax flags all set",
+    "company with missing optional flags / no workplaces",
+    "row-window pagination boundary (exactly 2,000 rows)"
+  ],
+  "live_test_plan": {
+    "smoke": "After obtaining the certificate, request a small bounded page (<=2,000 rows) of företag + arbetsställe records and confirm field keys against the postbeskrivning PDFs.",
+    "full": "Page the full register in 2,000-row windows (10 req/10 s cap) to build the orgnr + workplace universe; this seed feeds Bolagsverket enrichment."
+  },
+  "blockers": [
+    "Requires a free SCB client certificate (request + accept terms via scbforetag@scb.se). Not obtained — no record pulled.",
+    "Concrete base URL / endpoint paths are issued with the certificate and are not public.",
+    "Exact JSON field keys must be confirmed against the postbeskrivning PDFs and a real response.",
+    "Auth model changes to API key in September 2026 — client must support both certificate and API-key modes."
+  ]
+}
