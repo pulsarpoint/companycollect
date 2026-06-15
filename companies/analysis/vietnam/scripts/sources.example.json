@@ -1,0 +1,14 @@
+[
+  {
+    "name": "National Business Registration Portal — per-company search (CAPTCHA-gated, no open bulk)",
+    "slug": "nbrp_search",
+    "type": "api_page",
+    "url": "https://dangkykinhdoanh.gov.vn/",
+    "method": "GET",
+    "headers": { "Accept-Language": "vi" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Search-only Vietnamese portal; submit is CAPTCHA-gated. No documented open API or bulk download. Do not bypass the CAPTCHA."
+  }
+]
