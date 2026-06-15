@@ -1,0 +1,29 @@
+[
+  {
+    "name": "Companies House Basic Company Data (one file)",
+    "slug": "ch_basic_company_data",
+    "type": "bulk",
+    "url": "http://download.companieshouse.gov.uk/BasicCompanyDataAsOneFile-2026-06-01.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "Companies House Accounts Bulk Data (daily iXBRL)",
+    "slug": "ch_accounts_bulk",
+    "type": "bulk",
+    "url": "http://download.companieshouse.gov.uk/Accounts_Bulk_Data-2026-06-10.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "Companies House PSC snapshot (persons with significant control)",
+    "slug": "ch_psc_snapshot",
+    "type": "bulk",
+    "url": "http://download.companieshouse.gov.uk/en_pscdata.html",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
