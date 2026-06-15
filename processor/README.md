@@ -2,13 +2,14 @@
 
 Local Prefect workflows for company collection experiments.
 
-## Finland Raw Ingest
+## Finland YTJ Base Ingest
 
-`finland_raw_ingest.py` downloads raw Finland PRH data from public APIs into the
-existing S3/RustFS buckets:
+`finland_raw_ingest.py` currently implements the first Finland Prefect task:
 
-- YTJ companies: `source-finland-prhytj`
-- XBRL statements: `source-finland-prh-xbrl`
+1. Download the full PRH YTJ companies JSON from the public API.
+2. Store that full JSON in S3/RustFS.
+3. Filter companies with `registrationDate >= start_date` and `registrationDate < today`.
+4. Store the filtered result as `base.json`.
 
 Required environment variables:
 
@@ -31,10 +32,8 @@ uv run python - <<'PY'
 from finland_raw_ingest import finland_raw_ingest_flow
 
 finland_raw_ingest_flow(
-    snapshot_date="2026-06-15",
-    max_companies=200,
-    xbrl_start="2025-01-01",
-    xbrl_end="2025-01-03",
+    start_date="2024-01-01",
+    today="2026-06-15",
     refresh=False,
 )
 PY
@@ -54,14 +53,10 @@ Object layout:
 
 ```text
 source-finland-prhytj/
-  snapshots/<YYYY-MM-DD>/source.ndjson
-  snapshots/<YYYY-MM-DD>/manifest.json
-
-source-finland-prh-xbrl/
-  windows/<start>_<end>/listing.json
-  windows/<start>_<end>/manifest.json
-  companies/<business_id>/<financial_date>.xml
+  full/date=<today>/companies.json
+  base/start_date=<start_date>/end_date=<today>/base.json
+  base/start_date=<start_date>/end_date=<today>/manifest.json
 ```
 
-Existing objects are reused by default. Pass `refresh=True` to redownload and
-overwrite source objects.
+Existing full JSON objects are reused by default. Pass `refresh=True` to redownload
+and overwrite the full JSON before rebuilding `base.json`.

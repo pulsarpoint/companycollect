@@ -2,10 +2,8 @@ import json
 from io import BytesIO
 
 from finland_raw_ingest import (
-    FINLAND_PRH_XBRL_BUCKET,
     FINLAND_PRH_YTJ_BUCKET,
-    download_xbrl_window_to_s3,
-    download_ytj_snapshot_to_s3,
+    download_ytj_full_and_base_to_s3,
 )
 
 
@@ -35,9 +33,9 @@ class FakeS3:
 
 
 class FakeResponse:
-    def __init__(self, payload: dict | None = None, content: bytes = b"", status_code: int = 200) -> None:
-        self._payload = payload or {}
-        self.content = content
+    def __init__(self, payload: dict, status_code: int = 200) -> None:
+        self._payload = payload
+        self.content = json.dumps(payload).encode("utf-8")
         self.status_code = status_code
 
     def json(self) -> dict:
@@ -57,90 +55,76 @@ class FakeSession:
         if url.endswith("/companies"):
             return FakeResponse(
                 {
-                    "totalResults": 2,
                     "companies": [
-                        {"businessId": {"value": "1234567-8"}, "names": []},
-                        {"businessId": {"value": "8765432-1"}, "names": []},
-                    ],
+                        {"businessId": {"value": "old"}, "registrationDate": "2023-12-31"},
+                        {"businessId": {"value": "base-1"}, "registrationDate": "2024-01-01"},
+                        {"businessId": {"value": "base-2"}, "registrationDate": "2024-06-15"},
+                        {"businessId": {"value": "today"}, "registrationDate": "2026-06-15"},
+                    ]
                 }
             )
-        if url.endswith("/all_financial_statements"):
-            return FakeResponse(
-                {
-                    "totalResults": 1,
-                    "financials": [
-                        {
-                            "businessId": "1234567-8",
-                            "financialDate": "2024-12-31",
-                            "registrationDate": "2025-01-02",
-                        }
-                    ],
-                }
-            )
-        if url.endswith("/financial"):
-            return FakeResponse(content=b"<xbrl/>")
         raise AssertionError(f"unexpected URL {url}")
 
 
-def test_ytj_snapshot_skips_existing_s3_object() -> None:
+def test_download_ytj_full_and_base_to_s3_downloads_once_and_filters_base() -> None:
     s3 = FakeS3()
-    key = "snapshots/2026-06-15/source.ndjson"
-    s3.objects[(FINLAND_PRH_YTJ_BUCKET, key)] = b'{"existing":true}\n'
     session = FakeSession()
 
-    result = download_ytj_snapshot_to_s3(
+    result = download_ytj_full_and_base_to_s3(
         s3=s3,
         session=session,
-        snapshot_date="2026-06-15",
-        max_companies=2,
+        start_date="2024-01-01",
+        today="2026-06-15",
         refresh=False,
     )
 
-    assert result["source_key"] == key
-    assert result["skipped"] is True
-    assert result["downloaded"] is False
-    assert result["company_count"] == 1
+    full_key = "full/date=2026-06-15/companies.json"
+    base_key = "base/start_date=2024-01-01/end_date=2026-06-15/base.json"
+    manifest_key = "base/start_date=2024-01-01/end_date=2026-06-15/manifest.json"
+
+    assert result["full_key"] == full_key
+    assert result["base_key"] == base_key
+    assert result["full_downloaded"] is True
+    assert result["full_skipped"] is False
+    assert result["full_count"] == 4
+    assert result["base_count"] == 2
+    assert session.calls == [("https://avoindata.prh.fi/opendata-ytj-api/v3/companies", {})]
+
+    full_payload = json.loads(s3.objects[(FINLAND_PRH_YTJ_BUCKET, full_key)])
+    base_payload = json.loads(s3.objects[(FINLAND_PRH_YTJ_BUCKET, base_key)])
+    manifest = json.loads(s3.objects[(FINLAND_PRH_YTJ_BUCKET, manifest_key)])
+
+    assert len(full_payload["companies"]) == 4
+    assert [company["businessId"]["value"] for company in base_payload["companies"]] == ["base-1", "base-2"]
+    assert manifest["base_count"] == 2
+
+
+def test_download_ytj_full_and_base_to_s3_reuses_existing_full_json() -> None:
+    s3 = FakeS3()
+    full_key = "full/date=2026-06-15/companies.json"
+    s3.objects[(FINLAND_PRH_YTJ_BUCKET, full_key)] = json.dumps(
+        {
+            "companies": [
+                {"businessId": {"value": "base-1"}, "registrationDate": "2024-01-01"},
+                {"businessId": {"value": "today"}, "registrationDate": "2026-06-15"},
+            ]
+        }
+    ).encode("utf-8")
+    session = FakeSession()
+
+    result = download_ytj_full_and_base_to_s3(
+        s3=s3,
+        session=session,
+        start_date="2024-01-01",
+        today="2026-06-15",
+        refresh=False,
+    )
+
+    base_key = "base/start_date=2024-01-01/end_date=2026-06-15/base.json"
+    base_payload = json.loads(s3.objects[(FINLAND_PRH_YTJ_BUCKET, base_key)])
+
+    assert result["full_downloaded"] is False
+    assert result["full_skipped"] is True
+    assert result["base_count"] == 1
     assert session.calls == []
-
-
-def test_ytj_snapshot_downloads_and_writes_manifest() -> None:
-    s3 = FakeS3()
-
-    result = download_ytj_snapshot_to_s3(
-        s3=s3,
-        session=FakeSession(),
-        snapshot_date="2026-06-15",
-        max_companies=1,
-        refresh=False,
-    )
-
-    source = s3.objects[(FINLAND_PRH_YTJ_BUCKET, "snapshots/2026-06-15/source.ndjson")]
-    manifest = json.loads(s3.objects[(FINLAND_PRH_YTJ_BUCKET, "snapshots/2026-06-15/manifest.json")])
-    assert json.loads(source.splitlines()[0])["businessId"]["value"] == "1234567-8"
-    assert result["company_count"] == 1
-    assert result["downloaded"] is True
-    assert manifest["company_count"] == 1
-
-
-def test_xbrl_window_skips_existing_xml_and_downloads_missing_listing() -> None:
-    s3 = FakeS3()
-    xml_key = "companies/1234567-8/2024-12-31.xml"
-    s3.objects[(FINLAND_PRH_XBRL_BUCKET, xml_key)] = b"<existing/>"
-    session = FakeSession()
-
-    result = download_xbrl_window_to_s3(
-        s3=s3,
-        session=session,
-        registered_start="2025-01-01",
-        registered_end="2025-01-03",
-        refresh=False,
-    )
-
-    listing = json.loads(s3.objects[(FINLAND_PRH_XBRL_BUCKET, "windows/2025-01-01_2025-01-03/listing.json")])
-    manifest = json.loads(s3.objects[(FINLAND_PRH_XBRL_BUCKET, "windows/2025-01-01_2025-01-03/manifest.json")])
-    assert listing["documents"][0]["object_key"] == xml_key
-    assert s3.objects[(FINLAND_PRH_XBRL_BUCKET, xml_key)] == b"<existing/>"
-    assert result["document_count"] == 1
-    assert result["downloaded_count"] == 0
-    assert result["skipped_count"] == 1
-    assert manifest["skipped_count"] == 1
+    assert [company["businessId"]["value"] for company in base_payload["companies"]] == ["base-1"]
