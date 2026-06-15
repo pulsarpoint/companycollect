@@ -1,0 +1,69 @@
+{
+  "country": "China",
+  "country_slug": "china",
+  "source_slug": "gsxt_search",
+  "source_identity": "china_gsxt_search",
+  "source_package": "gsxtsearch",
+  "env_prefix": "GSXT_SEARCH",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "GSXT — National Enterprise Credit Information Publicity System",
+    "source_type": "official_registry",
+    "organization": "State Administration for Market Regulation (SAMR)",
+    "source_url": "https://www.gsxt.gov.cn/",
+    "license": "restricted/unclear",
+    "access": "public (real-name authentication + CAPTCHA)",
+    "data_freshness": "real-time",
+    "attribution": "National Enterprise Credit Information Publicity System (SAMR)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.gsxt.gov.cn/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Accept-Language: zh-CN"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "real-name auth + CAPTCHA per query"
+  },
+  "snapshot": { "strategy": "per_company_lookup_only_no_bulk", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "GsxtCompany",
+    "date_formats": ["2006-01-02", "2006年01月02日"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Real-name authentication + CAPTCHA gated per-company search; no open API/bulk; often HTTP 521 externally. Do NOT bypass the controls or scrape. USCC = company id = taxpayer id. Redact legal-representative name (PIPL). Mind cross-border data-export rules."
+  },
+  "keys": { "primary_keys": ["uscc"], "join_keys": ["uscc"], "dedupe_keys": ["uscc"] },
+  "mapping_rules": {
+    "company_id": "Use USCC (统一社会信用代码).",
+    "tax_id": "Use USCC (same number).",
+    "vat_id": "Not available (no separate VAT number; taxpayer id = USCC).",
+    "legal_name": "Use 企业名称.",
+    "legal_form": "Use 类型.",
+    "status": "Map 登记状态: 存续/在营->active, 注销->deregistered, 吊销->revoked.",
+    "registered_address": "Use 住所.",
+    "incorporation_date": "Use 成立日期.",
+    "officers": "Legal representative only (法定代表人; redact PII)."
+  },
+  "fixture_requirements": ["documented-only: active LLC (有限责任公司)", "documented-only: deregistered (注销) company", "documented-only: joint-stock (股份有限公司)"],
+  "live_test_plan": {
+    "smoke": "Not applicable — real-name + CAPTCHA gated; per-company manual lookup only.",
+    "full": "Not applicable for bulk — use a licensed commercial provider (cn_aggregators)."
+  },
+  "blockers": [
+    "Per-company search requires real-name authentication + CAPTCHA; no open API or bulk.",
+    "Frequently unreachable externally (HTTP 521).",
+    "No open re-use licence; legal-representative name is personal data (PIPL); cross-border data-export rules apply."
+  ]
+}

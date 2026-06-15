@@ -1,0 +1,58 @@
+{
+  "country": "China",
+  "country_slug": "china",
+  "country_profile_version": "2026-06-13",
+  "_note": "SCHEMATIC EXAMPLE ONLY. China is portal-gated with no open bulk: the GSXT register (SAMR) requires real-name auth + per-query CAPTCHA (no open API/bulk; often unreachable externally), so identity values here are PLACEHOLDERS, not copied from any record. USCC is the 18-char company id and also the taxpayer id (no separate VAT). Financials are open only for listed issuers (cninfo/SSE/SZSE, CNY, ASBE) — shown empty here. Legal-representative name is personal data (PIPL) and is redacted.",
+  "registration": {
+    "uscc": "91110000000000000X"
+  },
+  "tax_identifiers": {
+    "tax_id": "91110000000000000X",
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "示例有限公司 (Example Co., Ltd.)",
+    "company_type": "有限责任公司"
+  },
+  "status": {
+    "status_raw": "存续",
+    "status": "active"
+  },
+  "incorporation": {
+    "establishment_date": "2010-01-01"
+  },
+  "capital": {
+    "registered_capital": "10000000 CNY"
+  },
+  "registered_location": {
+    "registered_address": "北京市 (Beijing) — placeholder"
+  },
+  "activity": {
+    "business_scope": "技术开发、技术咨询、软件开发 (free-text scope; no coded classification)"
+  },
+  "officers": [
+    {
+      "name": "[REDACTED — legal representative, personal data (PIPL)]",
+      "role": "legal_representative"
+    }
+  ],
+  "financial_statements": [],
+  "source_provenance": [
+    {
+      "source_slug": "gsxt_search",
+      "section": "registration / legal_identity / status / incorporation / capital / registered_location / activity / officers",
+      "source_url": "https://www.gsxt.gov.cn/",
+      "access": "gated (real-name + CAPTCHA; no open bulk/API)",
+      "license": "restricted/unclear",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "cninfo_disclosure",
+      "section": "financial_statements (listed only)",
+      "source_url": "http://www.cninfo.com.cn/",
+      "access": "public (listed issuers only)",
+      "license": "restricted/unclear",
+      "retrieved_at": null
+    }
+  ]
+}

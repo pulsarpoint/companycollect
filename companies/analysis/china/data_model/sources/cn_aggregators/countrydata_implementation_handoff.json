@@ -1,0 +1,62 @@
+{
+  "country": "China",
+  "country_slug": "china",
+  "source_slug": "cn_aggregators",
+  "source_identity": "china_cn_aggregators",
+  "source_package": "cnaggregators",
+  "env_prefix": "CN_AGGREGATORS",
+  "implementation_status": "blocked_license",
+  "source": {
+    "source_name": "Commercial aggregators (Qichacha, Tianyancha, Aiqicha)",
+    "source_type": "aggregator",
+    "organization": "Various private vendors",
+    "source_url": "https://www.tianyancha.com/",
+    "license": "restricted / vendor terms",
+    "access": "public (search) / paid (bulk/API)",
+    "data_freshness": "varies",
+    "attribution": "per vendor"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["CN_AGGREGATOR_API_KEY"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": null,
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Authorization"],
+    "formats": ["json", "html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per vendor; anti-bot on the web UI (HTTP 419)"
+  },
+  "snapshot": { "strategy": "not_applicable_restricted", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "CnAggregatorRecord",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": ["cny"],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Paid vendor APIs reselling GSXT + listed financials. Verify against official sources. PIPL + cross-border data-export rules apply."
+  },
+  "keys": { "primary_keys": ["uscc"], "join_keys": ["uscc"], "dedupe_keys": ["uscc"] },
+  "mapping_rules": {
+    "coverage": "The realistic route to identity + shareholders/officers at scale (licensed/paid).",
+    "cross_check": "Match on USCC; verify against official GSXT/cninfo; do not treat as authoritative."
+  },
+  "fixture_requirements": ["planning-only: synthetic aggregator company record with shareholders"],
+  "live_test_plan": {
+    "smoke": "Not applicable without a vendor licence/API key.",
+    "full": "Not applicable — license-uncertain; prefer official sources; comply with PIPL."
+  },
+  "blockers": [
+    "Not official; resells GSXT + listed financials.",
+    "Paid / restricted vendor terms (license-uncertain); web UI anti-bot (HTTP 419).",
+    "Personal data (PIPL) + cross-border data-export rules."
+  ]
+}

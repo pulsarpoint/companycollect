@@ -1,0 +1,27 @@
+{
+  "country": "China",
+  "country_slug": "china",
+  "source_slug": "gsxt_search",
+  "source_name": "GSXT — National Enterprise Credit Information Publicity System",
+  "source_type": "official_registry",
+  "organization": "State Administration for Market Regulation (SAMR)",
+  "source_url": "https://www.gsxt.gov.cn/",
+  "license": "restricted/unclear (no open re-use terms)",
+  "access": "public (per-company search; real-name authentication + CAPTCHA)",
+  "data_freshness": "real-time",
+  "record_shape": "html_per_company_result_realname_captcha_gated",
+  "primary_keys": ["uscc"],
+  "join_keys": ["uscc"],
+  "field_count": 9,
+  "fields": [
+    { "path": "统一社会信用代码", "source_field": "uscc", "english_name": "uscc", "meaning": "Unified Social Credit Code (18-char); company id that doubles as the taxpayer id.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "DOCUMENTED-ONLY (real-name + CAPTCHA gated; no value copied).", "source_confidence": "high", "analysis_notes": "Universal join key (= taxpayer id)." },
+    { "path": "企业名称", "source_field": "qiye_mingcheng", "english_name": "company_name", "meaning": "Registered company name (Chinese).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Chinese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "类型", "source_field": "leixing", "english_name": "company_type", "meaning": "Company type (有限责任公司 LLC, 股份有限公司 joint-stock, 个体工商户 sole trader, ...).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Chinese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "登记状态", "source_field": "dengji_zhuangtai", "english_name": "status", "meaning": "Registration status (存续/在营 active, 注销 deregistered, 吊销 revoked).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Chinese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "法定代表人", "source_field": "fading_daibiaoren", "english_name": "legal_representative", "meaning": "Legal representative (a natural person).", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Chinese", "limitations": "DOCUMENTED-ONLY; PERSONAL DATA (PIPL) — redact.", "source_confidence": "medium", "analysis_notes": "The closest open analogue to an officer." },
+    { "path": "注册资本", "source_field": "zhuce_ziben", "english_name": "registered_capital", "meaning": "Registered capital (subscribed; CNY).", "data_type": "string", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Chinese", "limitations": "DOCUMENTED-ONLY; subscribed (认缴), not paid-in necessarily.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "成立日期", "source_field": "chengli_riqi", "english_name": "establishment_date", "meaning": "Establishment date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "住所", "source_field": "zhusuo", "english_name": "registered_address", "meaning": "Registered address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Chinese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "经营范围", "source_field": "jingying_fanwei", "english_name": "business_scope", "meaning": "Business scope (free text).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Chinese", "limitations": "DOCUMENTED-ONLY; FREE TEXT — not a coded industry classification (GB/T not shown).", "source_confidence": "medium", "analysis_notes": "No activity code; parse scope text if needed." }
+  ]
+}

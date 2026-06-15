@@ -1,0 +1,57 @@
+{
+  "country": "China",
+  "country_slug": "china",
+  "source_slug": "credit_china",
+  "source_identity": "china_credit_china",
+  "source_package": "creditchina",
+  "env_prefix": "CREDIT_CHINA",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Credit China (信用中国, creditchina.gov.cn)",
+    "source_type": "official_registry",
+    "organization": "National Public Credit Information Center (NDRC)",
+    "source_url": "https://www.creditchina.gov.cn/",
+    "license": "restricted/unclear",
+    "access": "public (bot-protected)",
+    "data_freshness": "periodic",
+    "attribution": "Credit China / NDRC"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.creditchina.gov.cn/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "anti-bot (HTTP 412)"
+  },
+  "snapshot": { "strategy": "credit_penalty_lookup_only", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "CreditChinaRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Planning-only / secondary. Bot-protected (HTTP 412); not the company register. Penalty/redlist datasets keyed on USCC. Do not bypass anti-bot."
+  },
+  "keys": { "primary_keys": ["uscc"], "join_keys": ["uscc"], "dedupe_keys": ["uscc"] },
+  "mapping_rules": {
+    "risk_signals": "Administrative penalties + red/black-list status keyed on USCC.",
+    "note": "Compliance/risk enrichment only; not identity or financials."
+  },
+  "fixture_requirements": ["documented-only: penalty record", "documented-only: blacklist status"],
+  "live_test_plan": {
+    "smoke": "Not applicable — bot-protected.",
+    "full": "Not applicable without lawful access; secondary/context only."
+  },
+  "blockers": [
+    "Bot-protected (HTTP 412); not the company register.",
+    "Reuse terms unclear; secondary/context source only."
+  ]
+}

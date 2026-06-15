@@ -1,0 +1,23 @@
+{
+  "country": "China",
+  "country_slug": "china",
+  "source_slug": "cninfo_disclosure",
+  "source_name": "cninfo (巨潮资讯网) — CSRC listed-company disclosure & financials",
+  "source_type": "official_financial",
+  "organization": "CSRC-designated platform (Shenzhen Securities Information Co.); SSE / SZSE / BSE",
+  "source_url": "http://www.cninfo.com.cn/",
+  "license": "issuer disclosure (open to view)",
+  "access": "public (per-issuer)",
+  "data_freshness": "annual/quarterly",
+  "record_shape": "per_issuer_disclosure_documents",
+  "primary_keys": ["stock_code", "uscc"],
+  "join_keys": ["uscc"],
+  "field_count": 5,
+  "fields": [
+    { "path": "stock_code", "source_field": "证券代码", "english_name": "stock_code", "meaning": "Stock code (e.g. 600519 SSE, 000001 SZSE).", "data_type": "string", "semantic_type": "identifier", "example_values": ["600519", "000001"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Listed issuers only.", "source_confidence": "medium", "analysis_notes": "Map to USCC by issuer." },
+    { "path": "资产负债表", "source_field": "balance_sheet", "english_name": "balance_sheet", "meaning": "Balance sheet (assets, equity, liabilities).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "ASBE (Chinese GAAP)", "language": "Chinese", "limitations": "Listed only; CNY; PDF.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "利润表", "source_field": "income_statement", "english_name": "income_statement", "meaning": "Income statement (revenue, profit).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "ASBE", "language": "Chinese", "limitations": "Listed only; CNY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "现金流量表", "source_field": "cash_flow", "english_name": "cash_flow", "meaning": "Cash flow statement.", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "ASBE", "language": "Chinese", "limitations": "Listed only; CNY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "年报/半年报", "source_field": "annual_interim_report", "english_name": "annual_interim_report", "meaning": "Annual / interim report + announcements.", "data_type": "array", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Chinese", "limitations": "Listed only.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

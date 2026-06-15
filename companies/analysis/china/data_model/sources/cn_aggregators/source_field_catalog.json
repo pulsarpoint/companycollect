@@ -1,0 +1,21 @@
+{
+  "country": "China",
+  "country_slug": "china",
+  "source_slug": "cn_aggregators",
+  "source_name": "Commercial aggregators (Qichacha 企查查, Tianyancha 天眼查, Aiqicha 爱企查)",
+  "source_type": "aggregator",
+  "organization": "Various private vendors",
+  "source_url": "https://www.tianyancha.com/",
+  "license": "restricted / vendor terms",
+  "access": "public (search) / paid (bulk/API)",
+  "data_freshness": "varies",
+  "record_shape": "aggregator_planning_only",
+  "primary_keys": ["uscc"],
+  "join_keys": ["uscc"],
+  "field_count": 3,
+  "fields": [
+    { "path": "company_identity", "source_field": "identity (from GSXT)", "english_name": "company_identity", "meaning": "Company identity repackaged from GSXT (name, USCC, status, address, capital, legal rep).", "data_type": "object", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Chinese", "limitations": "PLANNING-ONLY; paid/license-uncertain; verify vs official.", "source_confidence": "low", "analysis_notes": "The realistic route to coverage." },
+    { "path": "shareholders_officers", "source_field": "股东/主要人员", "english_name": "shareholders_officers", "meaning": "Shareholders + key personnel.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Chinese", "limitations": "PLANNING-ONLY; paid; PERSONAL DATA (PIPL).", "source_confidence": "low", "analysis_notes": "Ownership/officers not in the open data." },
+    { "path": "listed_financials", "source_field": "财务数据", "english_name": "listed_financials", "meaning": "Listed-company financial time series (from cninfo).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Chinese", "limitations": "PLANNING-ONLY; vendor terms; listed only.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

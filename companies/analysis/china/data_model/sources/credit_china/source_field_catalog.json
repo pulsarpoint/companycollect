@@ -1,0 +1,20 @@
+{
+  "country": "China",
+  "country_slug": "china",
+  "source_slug": "credit_china",
+  "source_name": "Credit China (信用中国, creditchina.gov.cn)",
+  "source_type": "official_registry",
+  "organization": "National Public Credit Information Center (NDRC)",
+  "source_url": "https://www.creditchina.gov.cn/",
+  "license": "restricted/unclear",
+  "access": "public (bot-protected)",
+  "data_freshness": "periodic",
+  "record_shape": "credit_penalty_records_planning_only",
+  "primary_keys": ["uscc"],
+  "join_keys": ["uscc"],
+  "field_count": 2,
+  "fields": [
+    { "path": "administrative_penalties", "source_field": "行政处罚", "english_name": "administrative_penalties", "meaning": "Administrative-penalty records against an entity.", "data_type": "array", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Chinese", "limitations": "DOCUMENTED-ONLY; bot-protected (HTTP 412). Not the company register.", "source_confidence": "low", "analysis_notes": "Compliance/risk signal; join on USCC." },
+    { "path": "redlist_blacklist", "source_field": "红名单/黑名单", "english_name": "redlist_blacklist", "meaning": "Trust-worthy (redlist) / discredited (blacklist) status.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Chinese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

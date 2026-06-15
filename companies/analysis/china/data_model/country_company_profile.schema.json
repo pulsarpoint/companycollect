@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "China Company Profile",
+  "description": "Country-specific company profile for China. China is portal-gated with NO open bulk: the authoritative GSXT register (SAMR) requires real-name authentication + a CAPTCHA per query (no open API/bulk; often unreachable externally), and full coverage realistically needs a licensed commercial provider. Everything keys on the USCC — Unified Social Credit Code (18-character), which IS the taxpayer id; China has no separate VAT number. Financials are open only for LISTED companies via cninfo / SSE / SZSE (CNY, ASBE); non-listed companies do not publicly disclose financials. This profile is largely PLANNING-ONLY: the company id is derivable per company, but bulk identity is gated/paid and most financials/ownership are unavailable. Legal-representative / shareholder names are personal data (PIPL); cross-border data-export rules apply.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "China" },
+    "country_slug": { "type": "string", "const": "china" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["uscc"],
+      "properties": {
+        "uscc": {
+          "type": "string",
+          "description": "Unified Social Credit Code (统一社会信用代码), 18-character. Company id and universal join key; doubles as the taxpayer id.",
+          "x-source": "gsxt_search",
+          "x-source-path": "统一社会信用代码",
+          "x-join-key": true,
+          "x-access": "gated"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= USCC.", "x-source": "gsxt_search", "x-source-path": "统一社会信用代码" },
+        "vat_id": { "type": ["string", "null"], "description": "No separate VAT number — taxpayer id = USCC.", "x-access": "not_available" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "gsxt_search", "x-source-path": "企业名称", "x-access": "gated" },
+        "company_type": { "type": ["string", "null"], "description": "类型 (有限责任公司 / 股份有限公司 / ...).", "x-source": "gsxt_search", "x-source-path": "类型", "x-access": "gated" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_raw": { "type": ["string", "null"], "x-source": "gsxt_search", "x-source-path": "登记状态", "x-access": "gated" },
+        "status": { "type": ["string", "null"], "description": "Mapped: active/deregistered/revoked.", "enum": ["active", "deregistered", "revoked", null] }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "establishment_date": { "type": ["string", "null"], "format": "date", "x-source": "gsxt_search", "x-source-path": "成立日期", "x-access": "gated" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "properties": {
+        "registered_capital": { "type": ["string", "null"], "description": "注册资本 (subscribed; CNY).", "x-source": "gsxt_search", "x-source-path": "注册资本", "x-access": "gated" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "gsxt_search", "x-source-path": "住所", "x-access": "gated" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "business_scope": { "type": ["string", "null"], "description": "经营范围 (free text; no coded activity classification).", "x-source": "gsxt_search", "x-source-path": "经营范围", "x-access": "gated" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Only the legal representative is open (GSXT, gated). PERSONAL DATA (PIPL) — redact. Shareholders/officers otherwise via paid aggregators.",
+      "x-source": "gsxt_search",
+      "x-access": "gated_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-source-path": "法定代表人", "x-personal-data": true }, "role": { "type": ["string", "null"], "const": "legal_representative" } } }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Open ONLY for listed companies (cninfo / SSE / SZSE), per issuer, CNY, ASBE. Non-listed financials are not disclosed.",
+      "x-source": "cninfo_disclosure",
+      "x-access": "listed_only",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": "integer" },
+          "stock_code": { "type": ["string", "null"] },
+          "balance_sheet": { "type": ["object", "null"] },
+          "income_statement": { "type": ["object", "null"] },
+          "currency": { "type": "string", "const": "CNY" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}
