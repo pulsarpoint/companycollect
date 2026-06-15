@@ -1,0 +1,25 @@
+{
+  "country": "India",
+  "country_slug": "india",
+  "source_slug": "mca_xbrl_financials",
+  "source_name": "MCA annual financial statements (AOC-4 / XBRL)",
+  "source_type": "financial_disclosure",
+  "organization": "Ministry of Corporate Affairs",
+  "source_url": "https://www.mca.gov.in/",
+  "license": "restricted",
+  "access": "paid",
+  "data_freshness": "annual filings",
+  "record_shape": "per_company_per_year_xbrl_or_pdf_document",
+  "primary_keys": ["cin", "financial_year"],
+  "join_keys": ["cin"],
+  "field_count": 7,
+  "fields": [
+    { "path": "filing.cin", "source_field": "CIN", "english_name": "cin", "meaning": "Corporate Identification Number of the filer.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY: paid documents; cataloged from public docs.", "source_confidence": "low", "analysis_notes": "Join key to master data." },
+    { "path": "filing.financial_year", "source_field": "Financial Year", "english_name": "financial_year", "meaning": "Fiscal year of the statement (Apr-Mar).", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "filing.turnover", "source_field": "Turnover / Revenue from operations", "english_name": "turnover", "meaning": "Revenue for the year (INR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Ind-AS / Schedule III XBRL taxonomy", "language": "n/a", "limitations": "PLANNING-ONLY; paid.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "filing.net_profit", "source_field": "Profit/Loss for the period", "english_name": "net_profit", "meaning": "Net profit/loss (INR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "XBRL taxonomy element", "language": "n/a", "limitations": "PLANNING-ONLY; paid.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "filing.net_worth", "source_field": "Net worth", "english_name": "net_worth", "meaning": "Net worth (INR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "XBRL taxonomy element", "language": "n/a", "limitations": "PLANNING-ONLY; paid.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "filing.total_assets", "source_field": "Total assets", "english_name": "total_assets", "meaning": "Balance-sheet total assets (INR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "XBRL taxonomy element", "language": "n/a", "limitations": "PLANNING-ONLY; paid.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "filing.borrowings", "source_field": "Borrowings", "english_name": "borrowings", "meaning": "Total borrowings (INR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "XBRL taxonomy element", "language": "n/a", "limitations": "PLANNING-ONLY; paid.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

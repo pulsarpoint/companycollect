@@ -1,0 +1,82 @@
+{
+  "country": "India",
+  "country_slug": "india",
+  "source_slug": "mca_company_master_data",
+  "source_identity": "india_mca_company_master_data",
+  "source_package": "mcacompanymaster",
+  "env_prefix": "MCA_COMPANY_MASTER",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "MCA Company Master Data (data.gov.in / OGD API)",
+    "source_type": "official_registry",
+    "organization": "Ministry of Corporate Affairs (via NIC data.gov.in)",
+    "source_url": "https://api.data.gov.in/resource/{resource_id}",
+    "license": "GODL-India",
+    "access": "public_with_free_key",
+    "data_freshness": "point-in-time snapshots, state-wise (2015-2021)",
+    "attribution": "Ministry of Corporate Affairs / data.gov.in (required by GODL-India)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["DATA_GOV_IN_API_KEY"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://api.data.gov.in/resource/{resource_id}",
+    "download_url": "https://api.data.gov.in/resource/{resource_id}?format=csv",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "csv", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "records",
+    "total_results_path": "total",
+    "pagination": { "type": "offset_limit", "page_param": "offset", "page_start": 0, "page_size": 100, "page_size_param": "limit", "next_page_path": null },
+    "rate_limit": "per-key; respect data.gov.in limits"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "McaCompanyMasterRecord",
+    "date_formats": ["2-1-2006", "2006-01-02"],
+    "datetime_formats": ["2006-01-02T15:04:05Z"],
+    "number_formats": ["inr_integer"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Two-step: GET /lists?filters[org]=Ministry of Corporate Affairs&filters[title]=company master&api-key=KEY to enumerate the 128 resource ids (records[].index_name), then GET /resource/{id}?api-key=KEY&offset=N&limit=100. Handle BOTH schema variants: 2015 (UPPER field names, SUB_CATEGORY, D-M-YYYY dates) and 2021 (lower field names, company_sub_category, industrial_class, email_addr, latest_year_ar/bs, ISO dates). REDACT email_addr (PII). Prefer the newest snapshot per state."
+  },
+  "keys": {
+    "primary_keys": ["corporate_identification_number"],
+    "join_keys": ["corporate_identification_number"],
+    "dedupe_keys": ["corporate_identification_number"]
+  },
+  "mapping_rules": {
+    "company_id": "corporate_identification_number (CIN).",
+    "registration_number": "CIN (last 6 digits = RoC sequence).",
+    "tax_id": "null — PAN not in open data.",
+    "vat_id": "null — India uses GST (GSTIN), not in open data.",
+    "legal_name": "company_name.",
+    "status": "company_status normalized (ACTIVE->active, STRIKE OFF->struck_off, AMALGAMATED->amalgamated, UNDER LIQUIDATION->under_liquidation, DORMANT->dormant, CONVERTED TO LLP->converted_to_llp).",
+    "legal_form": "company_class + company_category + CIN type segment (chars 13-15).",
+    "incorporation_date": "date_of_registration (normalize both formats to YYYY-MM-DD).",
+    "activity_code": "CIN industry code (chars 2-6) and/or industrial_class (2021); principal_business_activity is the description.",
+    "capital": "authorized_capital + paidup_capital (INR).",
+    "financials": "NOT available here beyond capital + latest_year_ar/bs filing markers."
+  },
+  "fixture_requirements": [
+    "2015-schema active public company (capital populated)",
+    "2015-schema struck-off private company",
+    "2021-schema active company with industrial_class + latest_year_ar/bs",
+    "record with email_addr (assert redaction)",
+    "record with principal_business_activity = NA",
+    "malformed/short record"
+  ],
+  "live_test_plan": {
+    "smoke": "List MCA resources, fetch one small state (e.g. Mizoram 2021) with a free key, parse 2 records.",
+    "full": "Iterate all 128 resources (newest snapshot per state), keyed on CIN; redact email; gate behind env."
+  },
+  "blockers": []
+}

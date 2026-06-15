@@ -1,0 +1,37 @@
+{
+  "_comment": "Real records from the MCA Company Master Data OGD API. GODL-India licensed. Corporate identity (not personal data). The 2021 'email_addr' field is personal data and is REDACTED here.",
+  "record_2015_schema": {
+    "corporate_identification_number": "L20101NL1985PLC002284",
+    "date_of_registration": "1-4-1985",
+    "company_name": "SANGRAHALAYA TIMBER AND CRAFTS LTD",
+    "company_status": "ACTIVE",
+    "company_class": "Public",
+    "company_category": "Company Limited by Shares",
+    "authorized_capital": "200100000",
+    "paidup_capital": "200100000",
+    "registered_state": "Nagaland",
+    "registrar_of_companies": "RoC-Shillong",
+    "principal_business_activity": "Manufacturing (Wood Products)",
+    "registered_office_address": "P.O. - NAGINIMARA DIST : MON NAGALAND Nagaland INDIA 798622",
+    "sub_category": "Indian Non-Government Company"
+  },
+  "record_2021_schema": {
+    "corporate_identification_number": "U01100MZ2016PTC013293",
+    "company_name": "ZO THLAI THAR PRODUCER COMPANY LIMITED",
+    "company_status": "Active",
+    "company_class": "Private",
+    "company_category": "Company limited by Shares",
+    "company_sub_category": "Non-govt company",
+    "date_of_registration": "2016-05-25T16:40:09Z",
+    "registered_state": "Mizoram",
+    "authorized_cap": 1000000,
+    "paidup_capital": 10000,
+    "industrial_class": "1100",
+    "principal_business_activity_as_per_cin": "Agriculture, hunting and related service activities",
+    "registered_office_address": "DURTLANG MIZORAM MIZORAM , Aizawl Unclassified MZ 796025",
+    "registrar_of_companies": "RoC-Shillong",
+    "email_addr": "[REDACTED-PII]",
+    "latest_year_ar": "NA",
+    "latest_year_bs": "NA"
+  }
+}

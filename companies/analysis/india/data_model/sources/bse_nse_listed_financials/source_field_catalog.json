@@ -1,0 +1,25 @@
+{
+  "country": "India",
+  "country_slug": "india",
+  "source_slug": "bse_nse_listed_financials",
+  "source_name": "BSE / NSE / SEBI listed-company disclosures",
+  "source_type": "financial_disclosure",
+  "organization": "BSE Ltd / National Stock Exchange / SEBI",
+  "source_url": "https://www.bseindia.com/",
+  "license": "exchange_terms",
+  "access": "public_exchange_terms",
+  "data_freshness": "quarterly / event-driven",
+  "record_shape": "per_listed_company_results_and_shareholding",
+  "primary_keys": ["scrip_code", "isin"],
+  "join_keys": ["cin", "isin"],
+  "field_count": 7,
+  "fields": [
+    { "path": "listing.scrip_code", "source_field": "Scrip Code / Symbol", "english_name": "scrip_code", "meaning": "Exchange trading code (BSE numeric scrip code or NSE symbol).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY; cataloged from public docs.", "source_confidence": "low", "analysis_notes": "Listed companies only (CIN starts L)." },
+    { "path": "listing.isin", "source_field": "ISIN", "english_name": "isin", "meaning": "International Securities Identification Number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": "ISO 6166", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Join to CIN via exchange master." },
+    { "path": "listing.company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Listed entity name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "results.period", "source_field": "Quarter/Year ended", "english_name": "period", "meaning": "Reporting period of the result.", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "results.revenue", "source_field": "Revenue from operations", "english_name": "revenue", "meaning": "Revenue for the period (INR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "SEBI LODR XBRL", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "results.net_profit", "source_field": "Net Profit/Loss", "english_name": "net_profit", "meaning": "Net profit/loss for the period (INR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "SEBI LODR XBRL", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "shareholding.pattern", "source_field": "Shareholding Pattern", "english_name": "shareholding_pattern", "meaning": "Promoter/public shareholding breakdown.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": "SEBI shareholding pattern", "language": "n/a", "limitations": "PLANNING-ONLY; aggregate, not personal data.", "source_confidence": "low", "analysis_notes": "Quarterly SEBI filing." }
+  ]
+}

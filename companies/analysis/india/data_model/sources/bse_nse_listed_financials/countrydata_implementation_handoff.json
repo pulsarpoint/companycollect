@@ -1,0 +1,67 @@
+{
+  "country": "India",
+  "country_slug": "india",
+  "source_slug": "bse_nse_listed_financials",
+  "source_identity": "india_bse_nse_listed_financials",
+  "source_package": "bsensefinancials",
+  "env_prefix": "BSE_NSE",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "BSE / NSE / SEBI listed-company disclosures",
+    "source_type": "financial_disclosure",
+    "organization": "BSE Ltd / National Stock Exchange / SEBI",
+    "source_url": "https://www.bseindia.com/",
+    "license": "exchange_terms",
+    "access": "public_exchange_terms",
+    "data_freshness": "quarterly / event-driven",
+    "attribution": "BSE / NSE / SEBI"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.bseindia.com/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xbrl", "xlsx", "pdf", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "exchange website terms; anti-bot likely"
+  },
+  "snapshot": { "strategy": "preserve_filing_documents", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "ExchangeFinancialResult",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["inr_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Planning-only. Listed companies only (CIN starts L). Quarterly/annual results + shareholding via BSE/NSE under SEBI LODR. Join ISIN<->CIN via exchange master. Verify exchange terms of use before fetching/redistribution; anti-bot likely."
+  },
+  "keys": {
+    "primary_keys": ["scrip_code", "isin"],
+    "join_keys": ["cin", "isin"],
+    "dedupe_keys": ["isin", "results.period"]
+  },
+  "mapping_rules": {
+    "financials": "Map results.revenue/net_profit per period into financial_statements[] for listed companies.",
+    "owners": "shareholding.pattern -> ownership summary (aggregate).",
+    "join": "ISIN -> CIN -> MCA master data."
+  },
+  "fixture_requirements": ["documented-only: quarterly result row", "documented-only: shareholding pattern"],
+  "live_test_plan": {
+    "smoke": "Not run — verify exchange terms first; resolve one ISIN to CIN.",
+    "full": "Out of scope until exchange terms are confirmed and a non-abusive access path is chosen."
+  },
+  "blockers": [
+    "Listed companies only (small fraction of the MCA universe).",
+    "Reuse governed by exchange terms of use; anti-bot protections likely.",
+    "ISIN<->CIN mapping required to join to master data."
+  ]
+}

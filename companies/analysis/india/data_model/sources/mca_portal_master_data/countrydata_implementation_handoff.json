@@ -1,0 +1,63 @@
+{
+  "country": "India",
+  "country_slug": "india",
+  "source_slug": "mca_portal_master_data",
+  "source_identity": "india_mca_portal_master_data",
+  "source_package": "mcaportalmaster",
+  "env_prefix": "MCA_PORTAL",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "MCA21 portal — Company/LLP master data & public documents",
+    "source_type": "official_registry",
+    "organization": "Ministry of Corporate Affairs",
+    "source_url": "https://www.mca.gov.in/content/mca/global/en/data-and-reports/company-llp-master-data/company-master-data.html",
+    "license": "restricted",
+    "access": "public_lookup_plus_paid_documents",
+    "data_freshness": "live register",
+    "attribution": "Ministry of Corporate Affairs"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["MCA21_ACCOUNT", "MCA21_PASSWORD"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.mca.gov.in/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "WAF protected (403 to automated clients)"
+  },
+  "snapshot": { "strategy": "not_applicable_gated", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "McaPortalView",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["inr_integer"],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Free per-CIN master-data lookup + paid documents; WAF-blocked to bots. Only source of directors/DIN (personal data, redact) and charges. Do not bypass the WAF. Use data.gov.in for open master data."
+  },
+  "keys": { "primary_keys": ["cin"], "join_keys": ["cin"], "dedupe_keys": ["cin"] },
+  "mapping_rules": {
+    "officers": "directors_din -> officers[] (PERSONAL DATA, DPDP — redact).",
+    "charges": "charges -> secured-debt indicator.",
+    "join": "CIN -> master data."
+  },
+  "fixture_requirements": ["documented-only: master-data view", "documented-only: directors list (assert redaction)"],
+  "live_test_plan": {
+    "smoke": "Not applicable — WAF-blocked; do not bypass.",
+    "full": "Not applicable for automated ingestion; use data.gov.in open data."
+  },
+  "blockers": [
+    "WAF-protected (403); do not bypass access controls.",
+    "Documents are pay-per-document.",
+    "Directors/DIN are personal data (DPDP Act) — redact."
+  ]
+}

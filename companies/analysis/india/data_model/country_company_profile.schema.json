@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "India Company Profile",
+  "description": "Country-specific company profile for India. Keyed on the 21-char CIN (Corporate Identification Number), which encodes listing status, industry, state, incorporation year, company type, and the RoC sequence. Identity + authorized/paid-up capital are open via the MCA Company Master Data on data.gov.in (OGD API, GODL-India, free key). India has NO VAT (it uses GST); the corporate tax id (PAN) and GST id (GSTIN) are NOT in the open data. Full financial statements are paid (MCA AOC-4/XBRL) or listed-only (BSE/NSE) and are planning-only here; the open data only carries capital + latest filing-year markers. Directors and the contact email are personal data (DPDP Act) and are redacted/out of the open layer.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "India" },
+    "country_slug": { "type": "string", "const": "india" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["cin"],
+      "properties": {
+        "cin": {
+          "type": "string",
+          "description": "21-char Corporate Identification Number. Company id + join key.",
+          "x-source": "mca_company_master_data",
+          "x-source-path": "records[].corporate_identification_number",
+          "x-join-key": true,
+          "x-freshness": "snapshot 2015-2021"
+        },
+        "cin_decoded": {
+          "type": "object",
+          "description": "Derived from the CIN structure.",
+          "properties": {
+            "listing_status": { "type": ["string", "null"], "enum": ["listed", "unlisted", null], "description": "char 1: L/U." },
+            "industry_code": { "type": ["string", "null"], "description": "chars 2-6 (5-digit)." },
+            "state_code": { "type": ["string", "null"], "description": "chars 7-8." },
+            "incorporation_year": { "type": ["string", "null"], "description": "chars 9-12." },
+            "type_code": { "type": ["string", "null"], "description": "chars 13-15 (PLC/PTC/NPL/...)." },
+            "roc_sequence": { "type": ["string", "null"], "description": "chars 16-21." }
+          }
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "pan": { "type": ["string", "null"], "description": "Corporate income-tax id (10-char). NOT in open data.", "x-access": "not_available" },
+        "gstin": { "type": ["string", "null"], "description": "GST registration (15-char). NOT in open data.", "x-access": "not_available" },
+        "vat_id": { "type": ["string", "null"], "description": "No VAT in India (GST instead).", "x-access": "not_available" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "mca_company_master_data", "x-source-path": "records[].company_name" },
+        "company_class": { "type": ["string", "null"], "description": "Public/Private.", "x-source": "mca_company_master_data", "x-source-path": "records[].company_class" },
+        "company_category": { "type": ["string", "null"], "description": "Limited by Shares/Guarantee/Unlimited.", "x-source": "mca_company_master_data", "x-source-path": "records[].company_category" },
+        "company_sub_category": { "type": ["string", "null"], "description": "Indian Non-Government / Government / Subsidiary of Foreign.", "x-source": "mca_company_master_data", "x-source-path": "records[].company_sub_category" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_raw": { "type": ["string", "null"], "x-source": "mca_company_master_data", "x-source-path": "records[].company_status" },
+        "status": { "type": ["string", "null"], "enum": ["active", "struck_off", "amalgamated", "under_liquidation", "dissolved", "dormant", "converted_to_llp", null] }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "date_of_registration": { "type": ["string", "null"], "format": "date", "x-source": "mca_company_master_data", "x-source-path": "records[].date_of_registration" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "description": "Capital only (INR) — not financial statements.",
+      "properties": {
+        "authorized_capital_inr": { "type": ["number", "null"], "x-source": "mca_company_master_data", "x-source-path": "records[].authorized_capital" },
+        "paidup_capital_inr": { "type": ["number", "null"], "x-source": "mca_company_master_data", "x-source-path": "records[].paidup_capital" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "principal_business_activity": { "type": ["string", "null"], "x-source": "mca_company_master_data", "x-source-path": "records[].principal_business_activity" },
+        "industrial_class": { "type": ["string", "null"], "description": "4-digit class (2021 snapshots).", "x-source": "mca_company_master_data", "x-source-path": "records[].industrial_class" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_office_address": { "type": ["string", "null"], "x-source": "mca_company_master_data", "x-source-path": "records[].registered_office_address" },
+        "registered_state": { "type": ["string", "null"], "x-source": "mca_company_master_data", "x-source-path": "records[].registered_state" },
+        "registrar_of_companies": { "type": ["string", "null"], "x-source": "mca_company_master_data", "x-source-path": "records[].registrar_of_companies" }
+      }
+    },
+    "compliance_markers": {
+      "type": "object",
+      "description": "Latest filing-year markers (2021 snapshots) — NOT financial figures.",
+      "properties": {
+        "latest_year_annual_return": { "type": ["string", "null"], "x-source": "mca_company_master_data", "x-source-path": "records[].latest_year_ar" },
+        "latest_year_balance_sheet": { "type": ["string", "null"], "x-source": "mca_company_master_data", "x-source-path": "records[].latest_year_bs" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Paid (MCA AOC-4/XBRL) for all companies, or open for LISTED only (BSE/NSE). Currency INR. Empty in the open layer.",
+      "x-source": "mca_xbrl_financials / bse_nse_listed_financials",
+      "x-access": "paid_or_listed_only",
+      "items": {
+        "type": "object",
+        "properties": {
+          "financial_year": { "type": ["string", "null"] },
+          "turnover": { "type": ["number", "null"] },
+          "net_profit": { "type": ["number", "null"] },
+          "net_worth": { "type": ["number", "null"] },
+          "total_assets": { "type": ["number", "null"] },
+          "currency": { "type": "string", "const": "INR" },
+          "source": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Directors/DIN only via the MCA portal (free lookup, WAF-gated). PERSONAL DATA (DPDP Act) — redact.",
+      "x-source": "mca_portal_master_data",
+      "x-access": "gated_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "din": { "type": ["string", "null"], "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

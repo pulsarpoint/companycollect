@@ -1,0 +1,23 @@
+{
+  "country": "India",
+  "country_slug": "india",
+  "source_slug": "mca_portal_master_data",
+  "source_name": "MCA21 portal — Company/LLP master data & public documents",
+  "source_type": "official_registry",
+  "organization": "Ministry of Corporate Affairs",
+  "source_url": "https://www.mca.gov.in/content/mca/global/en/data-and-reports/company-llp-master-data/company-master-data.html",
+  "license": "restricted",
+  "access": "public_lookup_plus_paid_documents",
+  "data_freshness": "live register",
+  "record_shape": "per_company_lookup_view",
+  "primary_keys": ["cin"],
+  "join_keys": ["cin"],
+  "field_count": 5,
+  "fields": [
+    { "path": "view.cin", "source_field": "CIN", "english_name": "cin", "meaning": "Corporate Identification Number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY: WAF-blocked (403); cataloged from public docs.", "source_confidence": "low", "analysis_notes": "Live equivalent of the master data (fresher than data.gov.in snapshots)." },
+    { "path": "view.company_status_master", "source_field": "Company Status / master data fields", "english_name": "company_status_master", "meaning": "Live master-data fields (status, capital, dates, RoC, activity) by CIN.", "data_type": "object", "semantic_type": "metadata", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Free 'View Company Master Data' lookup." },
+    { "path": "view.directors_din", "source_field": "Directors / Signatory Details (DIN)", "english_name": "directors_din", "meaning": "Directors and their DIN (Director Identification Number).", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY. PERSONAL DATA (DPDP Act) — redact.", "source_confidence": "low", "analysis_notes": "Only source of officers; not in the open bulk." },
+    { "path": "view.charges", "source_field": "Index of Charges", "english_name": "charges", "meaning": "Registered charges (secured borrowings/liens) against the company.", "data_type": "array", "semantic_type": "relationship", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Indicator of secured debt." },
+    { "path": "view.public_documents", "source_field": "View Public Documents", "english_name": "public_documents", "meaning": "Filed documents (annual financials AOC-4/XBRL, returns, etc.).", "data_type": "array", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY; pay-per-document.", "source_confidence": "low", "analysis_notes": "Paid; see mca_xbrl_financials." }
+  ]
+}

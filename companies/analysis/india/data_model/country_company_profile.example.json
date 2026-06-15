@@ -1,0 +1,80 @@
+{
+  "country": "India",
+  "country_slug": "india",
+  "country_profile_version": "2026-06-15",
+  "_note": "Identity + capital + activity + location are REAL data from the MCA Company Master Data OGD API (GODL-India), CIN L20101NL1985PLC002284 — corporate data, not personal. cin_decoded is derived from the CIN structure. tax_identifiers are null (PAN/GSTIN not in open data; India has no VAT). financial_statements and officers are PLANNING-ONLY (paid/listed-only and personal-data gated respectively) and were not fetched.",
+  "registration": {
+    "cin": "L20101NL1985PLC002284",
+    "cin_decoded": {
+      "listing_status": "listed",
+      "industry_code": "20101",
+      "state_code": "NL",
+      "incorporation_year": "1985",
+      "type_code": "PLC",
+      "roc_sequence": "002284"
+    }
+  },
+  "tax_identifiers": {
+    "pan": null,
+    "gstin": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "SANGRAHALAYA TIMBER AND CRAFTS LTD",
+    "company_class": "Public",
+    "company_category": "Company Limited by Shares",
+    "company_sub_category": "Indian Non-Government Company"
+  },
+  "status": {
+    "status_raw": "ACTIVE",
+    "status": "active"
+  },
+  "incorporation": {
+    "date_of_registration": "1985-04-01"
+  },
+  "capital": {
+    "authorized_capital_inr": 200100000,
+    "paidup_capital_inr": 200100000
+  },
+  "activity": {
+    "principal_business_activity": "Manufacturing (Wood Products)",
+    "industrial_class": null
+  },
+  "registered_location": {
+    "registered_office_address": "P.O. - NAGINIMARA DIST : MON NAGALAND Nagaland INDIA 798622",
+    "registered_state": "Nagaland",
+    "registrar_of_companies": "RoC-Shillong"
+  },
+  "compliance_markers": {
+    "latest_year_annual_return": null,
+    "latest_year_balance_sheet": null
+  },
+  "financial_statements": [],
+  "officers": [],
+  "source_provenance": [
+    {
+      "source_slug": "mca_company_master_data",
+      "section": "registration / legal_identity / status / incorporation / capital / activity / registered_location",
+      "source_url": "https://api.data.gov.in/resource/6a6e802c-66e2-47c2-ad20-4abc9289c85b",
+      "access": "public (free API key)",
+      "license": "GODL-India",
+      "retrieved_at": "2026-06-15T00:00:00Z"
+    },
+    {
+      "source_slug": "mca_xbrl_financials",
+      "section": "financial_statements (planning-only; paid)",
+      "source_url": "https://www.mca.gov.in/",
+      "access": "paid per-document",
+      "license": "restricted",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "mca_portal_master_data",
+      "section": "officers (planning-only; DPDP personal data)",
+      "source_url": "https://www.mca.gov.in/",
+      "access": "free lookup (WAF-gated) / paid documents",
+      "license": "restricted",
+      "retrieved_at": null
+    }
+  ]
+}
