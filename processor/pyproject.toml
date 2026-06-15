@@ -1,0 +1,17 @@
+[project]
+name = "processor"
+version = "0.1.0"
+description = "Prefect workflows for company collection processing experiments"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.34",
+    "fastapi<0.137",
+    "prefect>=3.7.4",
+    "requests>=2.32",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
