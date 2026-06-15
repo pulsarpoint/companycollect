@@ -1,0 +1,24 @@
+{
+  "country": "Mexico",
+  "country_slug": "mexico",
+  "source_slug": "sat_69b",
+  "source_name": "SAT Listado 69-B — taxpayers with presumed non-existent operations",
+  "source_type": "tax_risk_list",
+  "organization": "Servicio de Administración Tributaria (SAT)",
+  "source_url": "http://omawww.sat.gob.mx/cifras_sat/Documents/Listado_Completo_69-B.csv",
+  "license": "public_data_cff_69b",
+  "access": "public",
+  "data_freshness": "periodically updated",
+  "record_shape": "flat_csv_with_3_preamble_lines_then_header",
+  "primary_keys": ["RFC"],
+  "join_keys": ["RFC", "Nombre del Contribuyente"],
+  "field_count": 6,
+  "fields": [
+    { "path": "No", "source_field": "No", "english_name": "row_number", "meaning": "Sequential row number.", "data_type": "integer", "semantic_type": "metadata", "example_values": ["1", "2"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Not a stable id." },
+    { "path": "RFC", "source_field": "RFC", "english_name": "rfc", "meaning": "Taxpayer RFC (12-char for companies).", "data_type": "string", "semantic_type": "identifier", "example_values": ["AAA080808HL8", "AAA100303L51"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Individual RFCs (13-char) are personal data.", "source_confidence": "high", "analysis_notes": "Join key (RFC). Tax id = VAT id." },
+    { "path": "Nombre del Contribuyente", "source_field": "Nombre del Contribuyente", "english_name": "taxpayer_name", "meaning": "Legal name of the taxpayer.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["ASESORES EN AVALÚOS Y ACTIVOS, S.A. DE C.V.", "INGENIOS SANTOS, S.A. DE C.V."], "nullable": false, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": null, "source_confidence": "high", "analysis_notes": "Legal name incl. the corporate form suffix (S.A. de C.V., S.C., …)." },
+    { "path": "Situación del contribuyente", "source_field": "Situación del contribuyente", "english_name": "situation", "meaning": "Status in the 69-B process.", "data_type": "string", "semantic_type": "status", "example_values": ["Presunto", "Definitivo", "Desvirtuado", "Sentencia Favorable"], "nullable": false, "repeatable": false, "code_list": "Presunto / Definitivo / Desvirtuado / Sentencia Favorable", "language": "Spanish", "limitations": null, "source_confidence": "high", "analysis_notes": "Definitivo = confirmed presumed-non-existent (highest risk); Desvirtuado / Sentencia Favorable = cleared." },
+    { "path": "oficio_fecha", "source_field": "Número y fecha de oficio global de presunción/definitivo/…", "english_name": "oficio_references", "meaning": "SAT office (oficio) numbers and dates for each stage.", "data_type": "string", "semantic_type": "document", "example_values": ["500-05-2018-16632 de fecha 01 de junio de 2018"], "nullable": true, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": "Several stage-specific columns.", "source_confidence": "high", "analysis_notes": "Audit trail of the 69-B determination." },
+    { "path": "publicacion_dof", "source_field": "Publicación DOF presunción/definitivo/…", "english_name": "dof_publication", "meaning": "Diario Oficial de la Federación publication references.", "data_type": "string", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": null, "source_confidence": "high", "analysis_notes": null }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "country": "Mexico",
+  "country_slug": "mexico",
+  "source_slug": "bmv_cnbv_listed",
+  "source_name": "BMV / CNBV listed-company financial disclosures",
+  "source_type": "financial_disclosure",
+  "organization": "Bolsa Mexicana de Valores / Comisión Nacional Bancaria y de Valores",
+  "source_url": "https://www.bmv.com.mx/",
+  "license": "exchange_terms",
+  "access": "public",
+  "data_freshness": "quarterly / event-driven",
+  "record_shape": "per_issuer_financial_report",
+  "primary_keys": ["ticker"],
+  "join_keys": ["ticker", "rfc", "issuer_name"],
+  "field_count": 6,
+  "fields": [
+    { "path": "issuer.ticker", "source_field": "Clave de cotización", "english_name": "ticker", "meaning": "Stock ticker / issuer code (BMV).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: cataloged from public docs.", "source_confidence": "low", "analysis_notes": "Listed issuers only." },
+    { "path": "issuer.name", "source_field": "Emisora", "english_name": "issuer_name", "meaning": "Issuer (company) name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "report.period", "source_field": "Periodo", "english_name": "period", "meaning": "Reporting period (quarter / year).", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "report.revenue", "source_field": "Ingresos totales", "english_name": "revenue", "meaning": "Total revenue (MXN).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "IFRS XBRL taxonomy", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "report.net_income", "source_field": "Utilidad neta", "english_name": "net_income", "meaning": "Net income (MXN).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "IFRS XBRL taxonomy", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "report.total_assets", "source_field": "Activos totales", "english_name": "total_assets", "meaning": "Total assets (MXN).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "IFRS XBRL taxonomy", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

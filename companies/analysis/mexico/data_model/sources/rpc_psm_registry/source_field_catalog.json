@@ -1,0 +1,25 @@
+{
+  "country": "Mexico",
+  "country_slug": "mexico",
+  "source_slug": "rpc_psm_registry",
+  "source_name": "Registro Público de Comercio (RPC/SIGER) & PSM publications",
+  "source_type": "official_registry",
+  "organization": "Secretaría de Economía",
+  "source_url": "https://psm.economia.gob.mx/PSM/",
+  "license": "restricted",
+  "access": "public_search_per_document",
+  "data_freshness": "live register",
+  "record_shape": "per_company_registry_entry_or_publication",
+  "primary_keys": ["folio_mercantil_electronico"],
+  "join_keys": ["folio_mercantil_electronico", "rfc"],
+  "field_count": 7,
+  "fields": [
+    { "path": "registry.folio_mercantil_electronico", "source_field": "Folio Mercantil Electrónico", "english_name": "folio_mercantil", "meaning": "Commercial-registry id (RPC) for the company.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: search/per-document, fee-based; cataloged from public docs.", "source_confidence": "low", "analysis_notes": "Authoritative legal-entity registry id." },
+    { "path": "registry.denominacion", "source_field": "Denominación o razón social", "english_name": "legal_name", "meaning": "Registered company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "registry.tipo_societario", "source_field": "Tipo societario", "english_name": "company_type", "meaning": "Legal form.", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "S.A. de C.V. / S. de R.L. de C.V. / S.A.P.I. de C.V. / S.C. / S. en C. / etc.", "language": "Spanish", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Exact legal form." },
+    { "path": "registry.fecha_constitucion", "source_field": "Fecha de constitución", "english_name": "incorporation_date", "meaning": "Date of incorporation.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Authoritative founding date." },
+    { "path": "registry.domicilio", "source_field": "Domicilio social", "english_name": "registered_address", "meaning": "Registered (statutory) address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "registry.capital_social", "source_field": "Capital social", "english_name": "capital", "meaning": "Share capital (MXN).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "registry.objeto_social", "source_field": "Objeto social", "english_name": "company_purpose", "meaning": "Registered corporate purpose.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Spanish", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

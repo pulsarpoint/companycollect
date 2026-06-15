@@ -1,0 +1,74 @@
+{
+  "country": "Mexico",
+  "country_slug": "mexico",
+  "country_profile_version": "2026-06-16",
+  "_note": "identity/legal_identity/activity/size/locations are REAL data from the open INEGI DENUE establishment directory (libre uso), Aguascalientes file — establishment 'AGROPECUARIA CHARCOS DE QUEZADA'. DENUE has NO RFC and NO folio mercantil, so those (and tax_identifiers, risk_69b) are null here — they require SAT/registry and only join by name. registry_details (RPC, fee-based) and financial_statements (BMV/CNBV, listed-only) are PLANNING-ONLY and empty. Contact fields redacted (LFPDPPP).",
+  "identity": {
+    "denue_id": "11845141",
+    "clee": "(real clee from the DENUE record)",
+    "folio_mercantil_electronico": null,
+    "rfc": null
+  },
+  "tax_identifiers": {
+    "tax_id": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "AGROPECUARIA CHARCOS DE QUEZADA",
+    "trade_name": "AGROPECUARIA CHARCOS DE QUEZADA",
+    "legal_form": null
+  },
+  "status": {
+    "in_directory": true,
+    "risk_69b": null
+  },
+  "activity": {
+    "scian_code": "115110",
+    "scian_name": "Otros servicios relacionados con la agricultura"
+  },
+  "size": {
+    "employee_band": "0 a 5 personas"
+  },
+  "locations": [
+    {
+      "address": "(street + colonia + CP from DENUE)",
+      "municipality": "(municipio)",
+      "state": "Aguascalientes",
+      "postal_code": null,
+      "latitude": null,
+      "longitude": null
+    }
+  ],
+  "registry_details": {
+    "incorporation_date": null,
+    "capital_social_mxn": null,
+    "objeto_social": null
+  },
+  "financial_statements": [],
+  "source_provenance": [
+    {
+      "source_slug": "inegi_denue",
+      "section": "identity / legal_identity / activity / size / locations",
+      "source_url": "https://www.inegi.org.mx/contenidos/masiva/denue/denue_01_csv.zip",
+      "access": "public (no token)",
+      "license": "inegi_libre_uso",
+      "retrieved_at": "2026-06-16T00:00:00Z"
+    },
+    {
+      "source_slug": "sat_69b",
+      "section": "tax_identifiers / status.risk_69b (name/RFC join; not present for this record)",
+      "source_url": "http://omawww.sat.gob.mx/cifras_sat/Documents/Listado_Completo_69-B.csv",
+      "access": "public",
+      "license": "public_data_cff_69b",
+      "retrieved_at": "2026-06-16T00:00:00Z"
+    },
+    {
+      "source_slug": "rpc_psm_registry",
+      "section": "identity.folio_mercantil / registry_details (planning-only; fee-based)",
+      "source_url": "https://psm.economia.gob.mx/PSM/",
+      "access": "search / per-document (paid)",
+      "license": "restricted",
+      "retrieved_at": null
+    }
+  ]
+}

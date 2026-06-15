@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mexico Company Profile",
+  "description": "Country-specific company profile for Mexico. Mexico is fragmented with NO single open legal-entity register and NO shared open join key. The open layer is INEGI DENUE — an establishment directory (id/clee, trade name, legal name raz_social when present, SCIAN activity, employee band, address, geolocation) with NO RFC and NO folio mercantil. The legal registry (RPC/SIGER, identified by folio mercantil electrónico) and the tax id (RFC, SAT) are NOT in DENUE, so cross-source joins are name-based. RFC is the tax id (12-char for companies); Mexico has IVA (VAT) but no separate VAT number. SAT 69-B adds an RFC risk overlay. Financials are not public for private companies (listed only via BMV/CNBV). Officers and definitive legal fields are in the fee-based registry — planning-only.",
+  "type": "object",
+  "required": ["country", "country_slug", "identity", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Mexico" },
+    "country_slug": { "type": "string", "const": "mexico" },
+    "country_profile_version": { "type": "string" },
+    "identity": {
+      "type": "object",
+      "required": ["denue_id"],
+      "properties": {
+        "denue_id": { "type": ["string", "null"], "description": "INEGI DENUE establishment id (open-layer primary key).", "x-source": "inegi_denue", "x-source-path": "id", "x-join-key": true },
+        "clee": { "type": ["string", "null"], "description": "Clave Única del Establecimiento (28-char).", "x-source": "inegi_denue", "x-source-path": "clee", "x-join-key": true },
+        "folio_mercantil_electronico": { "type": ["string", "null"], "description": "RPC legal-entity registry id. NOT in DENUE — registry-only (fee-based).", "x-source": "rpc_psm_registry", "x-access": "paid" },
+        "rfc": { "type": ["string", "null"], "description": "Registro Federal de Contribuyentes (tax id, 12-char companies). NOT in DENUE — SAT/registry only.", "x-source": "sat_69b", "x-source-path": "RFC", "x-access": "name_join" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= RFC.", "x-source": "sat_69b", "x-source-path": "RFC" },
+        "vat_id": { "type": ["string", "null"], "description": "= RFC (no separate VAT number; Mexico has IVA).", "x-source": "sat_69b", "x-source-path": "RFC" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "description": "raz_social (DENUE) or registry denominación.", "x-source": "inegi_denue", "x-source-path": "raz_social" },
+        "trade_name": { "type": ["string", "null"], "x-source": "inegi_denue", "x-source-path": "nom_estab" },
+        "legal_form": { "type": ["string", "null"], "description": "tipo societario (registry) or inferred from name suffix (S.A. de C.V., …).", "x-source": "rpc_psm_registry", "x-source-path": "tipo_societario", "x-access": "paid_or_inferred" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "in_directory": { "type": ["boolean", "null"], "description": "Present in DENUE (operating establishment).", "x-source": "inegi_denue" },
+        "risk_69b": { "type": ["string", "null"], "description": "SAT 69-B situation (Definitivo/Presunto/Desvirtuado/Sentencia Favorable).", "x-source": "sat_69b", "x-source-path": "Situación del contribuyente", "x-access": "name_or_rfc_join" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "scian_code": { "type": ["string", "null"], "x-source": "inegi_denue", "x-source-path": "codigo_act" },
+        "scian_name": { "type": ["string", "null"], "x-source": "inegi_denue", "x-source-path": "nombre_act" }
+      }
+    },
+    "size": {
+      "type": "object",
+      "properties": {
+        "employee_band": { "type": ["string", "null"], "x-source": "inegi_denue", "x-source-path": "per_ocu" }
+      }
+    },
+    "locations": {
+      "type": "array",
+      "description": "Establishment locations from DENUE (a company may have several). Geolocated.",
+      "x-source": "inegi_denue",
+      "items": {
+        "type": "object",
+        "properties": {
+          "address": { "type": ["string", "null"], "x-source-path": "tipo_vial+nom_vial+numero_ext+nomb_asent+cod_postal" },
+          "municipality": { "type": ["string", "null"], "x-source-path": "municipio" },
+          "state": { "type": ["string", "null"], "x-source-path": "entidad" },
+          "postal_code": { "type": ["string", "null"], "x-source-path": "cod_postal" },
+          "latitude": { "type": ["number", "null"], "x-source-path": "latitud" },
+          "longitude": { "type": ["number", "null"], "x-source-path": "longitud" }
+        }
+      }
+    },
+    "registry_details": {
+      "type": "object",
+      "description": "PLANNING-ONLY. Authoritative legal fields from the fee-based RPC/SIGER registry.",
+      "x-source": "rpc_psm_registry",
+      "x-access": "paid",
+      "properties": {
+        "incorporation_date": { "type": ["string", "null"], "format": "date", "x-source-path": "fecha_constitucion" },
+        "capital_social_mxn": { "type": ["number", "null"], "x-source-path": "capital_social" },
+        "objeto_social": { "type": ["string", "null"], "x-source-path": "objeto_social" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Listed issuers only (BMV/CNBV, IFRS, MXN). Private-company financials are not public.",
+      "x-source": "bmv_cnbv_listed",
+      "x-access": "listed_only",
+      "items": {
+        "type": "object",
+        "properties": {
+          "period": { "type": ["string", "null"] },
+          "revenue": { "type": ["number", "null"] },
+          "net_income": { "type": ["number", "null"] },
+          "total_assets": { "type": ["number", "null"] },
+          "currency": { "type": "string", "const": "MXN" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

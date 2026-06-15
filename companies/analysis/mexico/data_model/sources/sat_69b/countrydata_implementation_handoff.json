@@ -1,0 +1,74 @@
+{
+  "country": "Mexico",
+  "country_slug": "mexico",
+  "source_slug": "sat_69b",
+  "source_identity": "mexico_sat_69b",
+  "source_package": "sat69b",
+  "env_prefix": "SAT_69B",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "SAT Listado 69-B — taxpayers with presumed non-existent operations",
+    "source_type": "tax_risk_list",
+    "organization": "Servicio de Administración Tributaria (SAT)",
+    "source_url": "http://omawww.sat.gob.mx/cifras_sat/Documents/Listado_Completo_69-B.csv",
+    "license": "public_data_cff_69b",
+    "access": "public",
+    "data_freshness": "periodically updated",
+    "attribution": "SAT"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "http://omawww.sat.gob.mx/cifras_sat/Documents/",
+    "download_url": "http://omawww.sat.gob.mx/cifras_sat/Documents/Listado_Completo_69-B.csv",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "latin-1",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "single_file", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "single CSV; no key"
+  },
+  "snapshot": {
+    "strategy": "csv_skip_preamble",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "Sat69bRecord",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Latin-1 CSV. Skip the first 3 preamble lines, then the header is No,RFC,Nombre del Contribuyente,Situación del contribuyente,<oficio/fecha columns>,<DOF columns>. Use as a risk overlay keyed on RFC. Handle individual (13-char) RFCs/names as personal data."
+  },
+  "keys": {
+    "primary_keys": ["RFC"],
+    "join_keys": ["RFC", "Nombre del Contribuyente"],
+    "dedupe_keys": ["RFC"]
+  },
+  "mapping_rules": {
+    "tax_id": "RFC.",
+    "vat_id": "RFC (no separate VAT id).",
+    "legal_name": "Nombre del Contribuyente.",
+    "risk_flag": "Situación (Definitivo/Presunto = risk; Desvirtuado/Sentencia Favorable = cleared).",
+    "join": "RFC and/or legal name (no RFC in DENUE -> name-based join to DENUE)."
+  },
+  "fixture_requirements": [
+    "Definitivo (confirmed) company record",
+    "Desvirtuado (cleared) record",
+    "Sentencia Favorable record",
+    "row with all oficio/DOF columns populated"
+  ],
+  "live_test_plan": {
+    "smoke": "Download the CSV, skip 3 preamble lines, parse 10 rows, map RFC + situation.",
+    "full": "Ingest the full list as a risk overlay; join by RFC where available. No key."
+  },
+  "blockers": []
+}

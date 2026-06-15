@@ -1,0 +1,78 @@
+{
+  "country": "Mexico",
+  "country_slug": "mexico",
+  "source_slug": "inegi_denue",
+  "source_identity": "mexico_inegi_denue",
+  "source_package": "inegidenue",
+  "env_prefix": "INEGI_DENUE",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "INEGI DENUE — Directorio Estadístico Nacional de Unidades Económicas",
+    "source_type": "statistical_business_directory",
+    "organization": "Instituto Nacional de Estadística y Geografía (INEGI)",
+    "source_url": "https://www.inegi.org.mx/contenidos/masiva/denue/denue_{EE}_csv.zip",
+    "license": "inegi_libre_uso",
+    "access": "public",
+    "data_freshness": "updated ~twice a year",
+    "attribution": "INEGI (citation required by libre-uso terms)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": "https://www.inegi.org.mx/contenidos/masiva/denue/",
+    "download_url": "https://www.inegi.org.mx/contenidos/masiva/denue/denue_{EE}_csv.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "zip"],
+    "compression": "zip",
+    "encoding": "latin-1",
+    "record_path": "conjunto_de_datos/denue_inegi_{EE}_.csv",
+    "total_results_path": null,
+    "pagination": { "type": "per_state_files", "page_param": "EE", "page_start": 1, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "no token; one ZIP per state (EE=01..32; 00=national ~5M units)"
+  },
+  "snapshot": {
+    "strategy": "preserve_zip_then_extract_csv",
+    "file_extension": ".zip",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "DenueEstablishment",
+    "date_formats": ["2006-01"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "ZIP contains conjunto_de_datos/denue_inegi_{EE}_.csv (Latin-1, 42 cols, header row), plus a data dictionary and metadata. Concatenate address columns. raz_social = legal name (when present); nom_estab = trade name. fecha_alta is YYYY-MM DENUE listing date (NOT incorporation). Redact telefono/correoelec (PII). No RFC/folio present."
+  },
+  "keys": {
+    "primary_keys": ["id"],
+    "join_keys": ["id", "clee"],
+    "dedupe_keys": ["clee"]
+  },
+  "mapping_rules": {
+    "company_id": "id / clee (establishment).",
+    "legal_name": "raz_social when present, else nom_estab.",
+    "trade_name": "nom_estab.",
+    "activity_code": "codigo_act (SCIAN) + nombre_act.",
+    "employees": "per_ocu (size band).",
+    "registered_address": "concatenate street + settlement + cod_postal + municipio + entidad; lat/long.",
+    "tax_id": "null — no RFC in DENUE.",
+    "registration_number": "null — no folio mercantil in DENUE."
+  },
+  "fixture_requirements": [
+    "establishment with raz_social populated (company)",
+    "establishment without raz_social (persona física / micro-unit)",
+    "establishment with lat/long + full address",
+    "establishment with contact fields (assert redaction)",
+    "malformed/short row"
+  ],
+  "live_test_plan": {
+    "smoke": "Download one small state (e.g. denue_01_csv.zip), parse the 42-col CSV, map a few records.",
+    "full": "Download all 32 state ZIPs (or denue_00); dedupe by clee; gate behind env. No token."
+  },
+  "blockers": []
+}
