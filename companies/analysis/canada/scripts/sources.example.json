@@ -1,0 +1,29 @@
+[
+  {
+    "name": "Corporations Canada — Active business corporations (CBCA, EN)",
+    "slug": "cc_active_cbca_en",
+    "type": "bulk",
+    "url": "https://d4bf66bykfyaf.cloudfront.net/corporations-active-cbca-en.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "Corporations Canada — Other active corporations (non-CBCA, EN)",
+    "slug": "cc_active_non_cbca_en",
+    "type": "bulk",
+    "url": "https://d4bf66bykfyaf.cloudfront.net/corporations-active-non-cbca-en.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "Corporations Canada — Inactive/dissolved business corporations (CBCA, EN)",
+    "slug": "cc_inactive_cbca_en",
+    "type": "bulk",
+    "url": "https://d4bf66bykfyaf.cloudfront.net/corporations-inactive-or-dissolved-cbca-en.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
