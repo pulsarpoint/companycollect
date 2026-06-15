@@ -1,0 +1,34 @@
+[
+  {
+    "name": "INEGI DENUE per-state CSV (bulk, no token)",
+    "slug": "denue_state_csv",
+    "type": "bulk",
+    "url": "https://www.inegi.org.mx/contenidos/masiva/denue/denue_01_csv.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "EE = 01..32 per state (00 = national, large). ZIP contains conjunto_de_datos/denue_inegi_{EE}_.csv (Latin-1, 42 cols), a data dictionary, and metadata. No token. Redact telefono/correoelec (PII)."
+  },
+  {
+    "name": "SAT Listado 69-B (RFC risk list, CSV)",
+    "slug": "sat_69b_csv",
+    "type": "bulk",
+    "url": "http://omawww.sat.gob.mx/cifras_sat/Documents/Listado_Completo_69-B.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Latin-1 CSV with 3 preamble lines before the header (No,RFC,Nombre del Contribuyente,Situación...). Keyed on RFC. Risk overlay; handle individual RFCs/names as personal data."
+  },
+  {
+    "name": "INEGI DENUE query API (needs free token)",
+    "slug": "denue_api",
+    "type": "api_page",
+    "url": "https://www.inegi.org.mx/app/api/denue/v1/consulta/Buscar/{condition}/{lat,long}/{radius}/{token}",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Optional. The query API needs a free INEGI token. The masiva CSV (above) is preferred for bulk ingestion and needs no token."
+  }
+]
