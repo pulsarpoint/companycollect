@@ -1,0 +1,57 @@
+[
+  {
+    "name": "NTA Corporate Number bulk (per-prefecture Unicode CSV)",
+    "slug": "nta_houjin_bangou_bulk",
+    "type": "bulk",
+    "url": "https://www.houjin-bangou.nta.go.jp/download/zenken/index.html",
+    "method": "POST",
+    "headers": {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    "note": "Public form POST. First GET /download/zenken/ with a cookie jar to obtain the CSRF token (jp.go.nta.houjin_bangou.framework.web.common.CNSFWTokenProcessor.request.token), then POST event=download & selDlFileNo=<fileNo> with the same session. fileNo 27194 = national Unicode CSV; per-prefecture e.g. 27306 = Tottori. No auth/payment.",
+    "max_pages": 0
+  },
+  {
+    "name": "NTA Corporate Number Web-API (needs free application ID)",
+    "slug": "nta_houjin_bangou_webapi",
+    "type": "api_page",
+    "url": "https://api.houjin-bangou.nta.go.jp/4/num",
+    "method": "GET",
+    "headers": {
+      "Accept": "application/json"
+    },
+    "page_param": "id",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Requires a free application ID (id=<applicationID>). Returns CSV/XML per corporate number or diff. Do not call without an ID."
+  },
+  {
+    "name": "EDINET documents list (needs free Subscription-Key)",
+    "slug": "edinet_documents",
+    "type": "api_page",
+    "url": "https://api.edinet-fsa.go.jp/api/v2/documents.json",
+    "method": "GET",
+    "headers": {
+      "Accept": "application/json"
+    },
+    "page_param": "date",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Append &type=2&Subscription-Key=<freeKey>. Returns 401 without the key. XBRL per docID via /documents/{docID}?type=1&Subscription-Key=..."
+  },
+  {
+    "name": "gBizINFO hojin API (needs free token)",
+    "slug": "gbizinfo_hojin",
+    "type": "api_page",
+    "url": "https://info.gbiz.go.jp/hojin/v1/hojin",
+    "method": "GET",
+    "headers": {
+      "Accept": "application/json",
+      "X-hojinInfo-api-token": "<freeToken>"
+    },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Returns 500 without the token. Enrichment incl. 財務情報 (financial info). Bulk CSV also at /hojin/DownloadTop."
+  }
+]
