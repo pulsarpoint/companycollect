@@ -1,0 +1,27 @@
+{
+  "country": "New Zealand",
+  "country_slug": "new_zealand",
+  "source_slug": "companies_register",
+  "source_name": "New Zealand Companies Register",
+  "source_type": "official_registry",
+  "organization": "Companies Office / MBIE",
+  "source_url": "https://companies-register.companiesoffice.govt.nz/",
+  "license": "public_register_crown_copyright",
+  "access": "public_search",
+  "data_freshness": "live register",
+  "record_shape": "per_company_search_view",
+  "primary_keys": ["company_number"],
+  "join_keys": ["nzbn", "company_number"],
+  "field_count": 9,
+  "fields": [
+    { "path": "company.company_number", "source_field": "Company number", "english_name": "company_number", "meaning": "Companies Register company number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY: search-only, no bulk/API; cataloged from public docs.", "source_confidence": "medium", "analysis_notes": "Join to NZBN sourceRegisterUniqueIdentifier." },
+    { "path": "company.nzbn", "source_field": "NZBN", "english_name": "nzbn", "meaning": "13-digit NZBN of the company.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": "Universal join key." },
+    { "path": "company.company_name", "source_field": "Company name", "english_name": "company_name", "meaning": "Registered company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "company.company_status", "source_field": "Company status", "english_name": "company_status", "meaning": "Registration status.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": false, "repeatable": false, "code_list": "Registered / Removed / In liquidation / In receivership / In administration", "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "company.incorporation_date", "source_field": "Incorporation date", "english_name": "incorporation_date", "meaning": "Date of incorporation.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "company.registered_office", "source_field": "Registered office", "english_name": "registered_office", "meaning": "Registered office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "company.directors[]", "source_field": "Directors", "english_name": "directors", "meaning": "Company directors.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY. PERSONAL DATA (Privacy Act 2020) — redact.", "source_confidence": "low", "analysis_notes": "Not in the public NZBN tier; on the register UI." },
+    { "path": "company.shareholders[]", "source_field": "Shareholders / Shareholding", "english_name": "shareholders", "meaning": "Shareholders and shareholding allocations.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY. PERSONAL DATA where individuals — redact.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "company.documents[]", "source_field": "Filed documents", "english_name": "filed_documents", "meaning": "Filed documents (annual returns; financial statements for entities required to file).", "data_type": "array", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Financial statements only for FMC reporting entities / those required to file." }
+  ]
+}

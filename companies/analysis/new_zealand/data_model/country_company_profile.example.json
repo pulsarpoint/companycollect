@@ -1,0 +1,64 @@
+{
+  "country": "New Zealand",
+  "country_slug": "new_zealand",
+  "country_profile_version": "2026-06-15",
+  "_note": "SCHEMATIC EXAMPLE. The NZBN API is key-gated (HTTP 401 without a free subscription key), so identity values here are PLACEHOLDERS, not copied from any record. NZBN is the 13-digit join key; company_number is the Companies Register id. NZ has GST not VAT; IRD/GST numbers are not public. financial_statements are FMC-reporting-only (Disclose/Companies registers) — empty here. officers (directors) are personal data (Privacy Act 2020) and are not in the public NZBN tier.",
+  "registration": {
+    "nzbn": "9429000000000",
+    "company_number": "1234567",
+    "source_register": "COMPANIES"
+  },
+  "tax_identifiers": {
+    "ird_number": null,
+    "gst_number": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "EXAMPLE TRADING LIMITED",
+    "entity_type": "NZ Limited Company",
+    "trading_names": ["Example Store"]
+  },
+  "status": {
+    "status": "Registered"
+  },
+  "incorporation": {
+    "registration_date": "2008-03-14"
+  },
+  "activity": {
+    "industry_classifications": [
+      { "code": "G411", "description": "Supermarket and grocery stores" }
+    ]
+  },
+  "registered_location": {
+    "registered_address": "123 Example Street, Wellington Central, Wellington 6011, New Zealand",
+    "service_address": "123 Example Street, Wellington Central, Wellington 6011, New Zealand"
+  },
+  "financial_statements": [],
+  "officers": [],
+  "source_provenance": [
+    {
+      "source_slug": "nzbn_api",
+      "section": "registration / legal_identity / status / incorporation / activity / registered_location",
+      "source_url": "https://api.business.govt.nz/gateway/nzbn/v5/entities/9429000000000",
+      "access": "free subscription key required",
+      "license": "crown_copyright_publicly_available_data",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "disclose_register",
+      "section": "financial_statements (planning-only; FMC reporting entities only)",
+      "source_url": "https://disclose-register.companiesoffice.govt.nz/",
+      "access": "public search",
+      "license": "public_register_crown_copyright",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "companies_register",
+      "section": "officers (planning-only; Privacy Act personal data)",
+      "source_url": "https://companies-register.companiesoffice.govt.nz/",
+      "access": "public search",
+      "license": "public_register_crown_copyright",
+      "retrieved_at": null
+    }
+  ]
+}

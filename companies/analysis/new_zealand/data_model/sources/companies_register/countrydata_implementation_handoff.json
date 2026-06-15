@@ -1,0 +1,68 @@
+{
+  "country": "New Zealand",
+  "country_slug": "new_zealand",
+  "source_slug": "companies_register",
+  "source_identity": "new_zealand_companies_register",
+  "source_package": "nzcompaniesregister",
+  "env_prefix": "NZ_COMPANIES_REGISTER",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "New Zealand Companies Register",
+    "source_type": "official_registry",
+    "organization": "Companies Office / MBIE",
+    "source_url": "https://companies-register.companiesoffice.govt.nz/",
+    "license": "public_register_crown_copyright",
+    "access": "public_search",
+    "data_freshness": "live register",
+    "attribution": "Companies Office (Crown copyright)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://companies-register.companiesoffice.govt.nz/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "search UI; no documented free API/bulk"
+  },
+  "snapshot": { "strategy": "not_applicable_search_only", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "NzCompanyRegisterView",
+    "date_formats": ["02 Jan 2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Public per-company search; no free bulk/API. Use the NZBN API for structured identity; use this for directors/shareholders (personal data, redact) and filed documents (financial statements for FMC reporting entities). Do not scrape aggressively."
+  },
+  "keys": {
+    "primary_keys": ["company_number"],
+    "join_keys": ["nzbn", "company_number"],
+    "dedupe_keys": ["company_number"]
+  },
+  "mapping_rules": {
+    "company_number": "company.company_number (join to NZBN sourceRegisterUniqueIdentifier).",
+    "officers": "company.directors[] (PERSONAL DATA — redact).",
+    "owners": "company.shareholders[] (PERSONAL DATA where individuals — redact).",
+    "documents": "company.documents[] (financial statements only for those required to file)."
+  },
+  "fixture_requirements": ["documented-only: company view with directors", "documented-only: filed financial statement entry (FMC entity)"],
+  "live_test_plan": {
+    "smoke": "Not run — search-only; resolve one company number via NZBN API instead.",
+    "full": "Out of scope until a non-abusive document-access path is defined; prefer NZBN API + Disclose Register."
+  },
+  "blockers": [
+    "No free bulk download or API (search UI only).",
+    "Directors/shareholders are personal data (Privacy Act 2020) — redact.",
+    "Financial statements only for entities required to file (FMC reporting entities)."
+  ]
+}

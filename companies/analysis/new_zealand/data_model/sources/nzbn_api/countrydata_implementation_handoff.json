@@ -1,0 +1,84 @@
+{
+  "country": "New Zealand",
+  "country_slug": "new_zealand",
+  "source_slug": "nzbn_api",
+  "source_identity": "new_zealand_nzbn_api",
+  "source_package": "nzbnapi",
+  "env_prefix": "NZBN_API",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "NZBN API (New Zealand Business Number)",
+    "source_type": "official_registry",
+    "organization": "Companies Office / MBIE (api.business.govt.nz)",
+    "source_url": "https://api.business.govt.nz/gateway/nzbn/v5/entities",
+    "license": "crown_copyright_publicly_available_data",
+    "access": "public_with_free_key",
+    "data_freshness": "live register",
+    "attribution": "Companies Office / NZBN (Crown copyright)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["NZBN_API_SUBSCRIPTION_KEY"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://api.business.govt.nz/gateway/nzbn/v5/entities",
+    "download_url": "https://api.business.govt.nz/gateway/nzbn/v5/entities/{nzbn}",
+    "http_method": "GET",
+    "headers_required": ["Ocp-Apim-Subscription-Key"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "items",
+    "total_results_path": "totalItems",
+    "pagination": { "type": "page_number", "page_param": "page", "page_start": 1, "page_size": 50, "page_size_param": "page-size", "next_page_path": "links.next" },
+    "rate_limit": "per subscription key; OAuth/subscription gateway"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "NzbnEntity",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": ["2006-01-02T15:04:05Z07:00"],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Requires a free subscription key (register on api.business.govt.nz developer portal); returns 401 without it. Search via /v5/entities?search-term=...; detail via /v5/entities/{nzbn}. Capture sourceRegisterUniqueIdentifier (company number) for the Companies Register join. Redact emailAddresses/phoneNumbers (personal data). gstNumbers/roles are not in the public tier."
+  },
+  "keys": {
+    "primary_keys": ["nzbn"],
+    "join_keys": ["nzbn", "sourceRegisterUniqueIdentifier"],
+    "dedupe_keys": ["nzbn"]
+  },
+  "mapping_rules": {
+    "company_id": "nzbn (or sourceRegisterUniqueIdentifier=company number for companies).",
+    "tax_id": "null — IRD number not in public tier.",
+    "vat_id": "null — NZ uses GST (not public); no VAT.",
+    "legal_name": "entityName.",
+    "company_type": "entityTypeDescription.",
+    "status": "entityStatusDescription.",
+    "incorporation_date": "registrationDate.",
+    "registered_address": "addresses where addressType=REGISTERED.",
+    "activity_code": "industryClassifications[] (ANZSIC 2006).",
+    "company_number": "sourceRegisterUniqueIdentifier / companyDetails (join to Companies Register)."
+  },
+  "fixture_requirements": [
+    "company entity (sourceRegister=COMPANIES) with companyDetails",
+    "non-company entity (sole trader/partnership/trust)",
+    "removed/in-liquidation entity",
+    "entity with tradingNames + ANZSIC",
+    "entity with contact details (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "With a free NZBN_API_SUBSCRIPTION_KEY, fetch one entity by NZBN and one search page.",
+    "full": "Iterate entities (search/paged) keyed on NZBN; redact contacts; gate behind env and respect key rate limits."
+  },
+  "blockers": [
+    "Free subscription key required (HTTP 401 without it).",
+    "No free full-register bulk download — per-entity / search only.",
+    "gstNumbers/roles (directors) not in the public tier; contacts are personal data (Privacy Act 2020)."
+  ]
+}

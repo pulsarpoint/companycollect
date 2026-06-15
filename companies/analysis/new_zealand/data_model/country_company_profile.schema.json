@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "New Zealand Company Profile",
+  "description": "Country-specific company profile for New Zealand. Keyed on the 13-digit NZBN (New Zealand Business Number, a GS1 GLN, starts 9429), the universal identifier for every NZ business entity. The Companies Register company number is the secondary id (NZBN sourceRegisterUniqueIdentifier). Identity comes from the NZBN API, which needs a free subscription key (so the open layer is key-gated/planning-only here). NZ has GST, not VAT; the IRD/GST numbers are not public. Financial statements exist only for FMC reporting entities (issuers, large/overseas-owned companies, managed investment schemes), as documents on the Companies Register and the FMA Disclose Register — planning-only. Directors/shareholders are personal data (Privacy Act 2020) and are not in the public NZBN tier.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "New Zealand" },
+    "country_slug": { "type": "string", "const": "new_zealand" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["nzbn"],
+      "properties": {
+        "nzbn": {
+          "type": "string",
+          "description": "13-digit New Zealand Business Number (GLN). Universal entity id + join key.",
+          "x-source": "nzbn_api",
+          "x-source-path": "nzbn",
+          "x-join-key": true,
+          "x-freshness": "live"
+        },
+        "company_number": {
+          "type": ["string", "null"],
+          "description": "Companies Register company number (for companies).",
+          "x-source": "nzbn_api",
+          "x-source-path": "sourceRegisterUniqueIdentifier",
+          "x-join-key": true
+        },
+        "source_register": { "type": ["string", "null"], "description": "COMPANIES / IR / etc.", "x-source": "nzbn_api", "x-source-path": "sourceRegister" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "ird_number": { "type": ["string", "null"], "description": "Inland Revenue tax id. NOT public.", "x-access": "not_available" },
+        "gst_number": { "type": ["string", "null"], "description": "GST number (= IRD number). NOT public.", "x-access": "not_available" },
+        "vat_id": { "type": ["string", "null"], "description": "No VAT in NZ (GST instead).", "x-access": "not_available" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "nzbn_api", "x-source-path": "entityName" },
+        "entity_type": { "type": ["string", "null"], "description": "LTD / sole trader / partnership / trust / government / overseas company.", "x-source": "nzbn_api", "x-source-path": "entityTypeDescription" },
+        "trading_names": { "type": "array", "items": { "type": "string" }, "x-source": "nzbn_api", "x-source-path": "tradingNames[].name" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status": { "type": ["string", "null"], "description": "Registered / Removed / In liquidation / In receivership.", "x-source": "nzbn_api", "x-source-path": "entityStatusDescription" }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "registration_date": { "type": ["string", "null"], "format": "date", "x-source": "nzbn_api", "x-source-path": "registrationDate" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "industry_classifications": {
+          "type": "array",
+          "description": "ANZSIC 2006 codes + descriptions.",
+          "x-source": "nzbn_api",
+          "x-source-path": "industryClassifications[]",
+          "items": { "type": "object", "properties": { "code": { "type": ["string", "null"] }, "description": { "type": ["string", "null"] } } }
+        }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "nzbn_api", "x-source-path": "addresses.addressList[type=REGISTERED]" },
+        "service_address": { "type": ["string", "null"], "x-source": "nzbn_api", "x-source-path": "addresses.addressList[type=SERVICE]" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Only for FMC reporting entities (Companies Register filed documents + FMA Disclose Register). PDF/XBRL; NZD. Empty for ordinary companies.",
+      "x-source": "disclose_register / companies_register",
+      "x-access": "fmc_reporting_entities_only",
+      "items": {
+        "type": "object",
+        "properties": {
+          "financial_year": { "type": ["string", "null"] },
+          "source": { "type": ["string", "null"] },
+          "document_url": { "type": ["string", "null"] },
+          "currency": { "type": "string", "const": "NZD" }
+        }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Directors only via the Companies Register (not in the public NZBN tier). PERSONAL DATA (Privacy Act 2020) — redact.",
+      "x-source": "companies_register",
+      "x-access": "gated_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"], "const": "director" } } }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

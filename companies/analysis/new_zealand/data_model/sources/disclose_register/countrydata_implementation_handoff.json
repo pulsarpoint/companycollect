@@ -1,0 +1,66 @@
+{
+  "country": "New Zealand",
+  "country_slug": "new_zealand",
+  "source_slug": "disclose_register",
+  "source_identity": "new_zealand_disclose_register",
+  "source_package": "nzdiscloseregister",
+  "env_prefix": "NZ_DISCLOSE_REGISTER",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Disclose Register (FMA financial statements & offers)",
+    "source_type": "financial_disclosure",
+    "organization": "Companies Office / Financial Markets Authority",
+    "source_url": "https://disclose-register.companiesoffice.govt.nz/",
+    "license": "public_register_crown_copyright",
+    "access": "public_search",
+    "data_freshness": "filing-driven",
+    "attribution": "FMA / Companies Office (Crown copyright)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://disclose-register.companiesoffice.govt.nz/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf", "xbrl"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "search UI"
+  },
+  "snapshot": { "strategy": "preserve_financial_statement_documents", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "DiscloseOffer",
+    "date_formats": ["02 Jan 2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["nzd_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Planning-only. FMA Disclose Register: FMC offers / managed investment schemes under the FMC Act 2013. Public document search; financial statements as PDF (some XBRL), NZD. Covers FMC reporting entities only. Join issuer -> NZBN/company number. No documented free bulk/API."
+  },
+  "keys": {
+    "primary_keys": ["offer_number"],
+    "join_keys": ["nzbn", "company_number"],
+    "dedupe_keys": ["offer_number", "financial_year"]
+  },
+  "mapping_rules": {
+    "financials": "offer.financial_statements[] per financial_year -> financial_statements[] (NZD; FMC subset only).",
+    "join": "issuer -> NZBN / company number -> NZBN API + Companies Register."
+  },
+  "fixture_requirements": ["documented-only: offer with financial statements", "documented-only: managed investment scheme fund update"],
+  "live_test_plan": {
+    "smoke": "Not run — define a non-abusive document-access path first.",
+    "full": "Out of scope until access path defined; covers only FMC reporting entities."
+  },
+  "blockers": [
+    "Covers only FMC reporting entities/issuers — not all companies.",
+    "No documented free bulk/API; document search only.",
+    "Financials are documents (PDF/XBRL) requiring extraction."
+  ]
+}

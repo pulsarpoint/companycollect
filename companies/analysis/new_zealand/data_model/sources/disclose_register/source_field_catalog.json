@@ -1,0 +1,25 @@
+{
+  "country": "New Zealand",
+  "country_slug": "new_zealand",
+  "source_slug": "disclose_register",
+  "source_name": "Disclose Register (FMA financial statements & offers)",
+  "source_type": "financial_disclosure",
+  "organization": "Companies Office / Financial Markets Authority",
+  "source_url": "https://disclose-register.companiesoffice.govt.nz/",
+  "license": "public_register_crown_copyright",
+  "access": "public_search",
+  "data_freshness": "filing-driven",
+  "record_shape": "per_offer_or_scheme_with_documents",
+  "primary_keys": ["offer_number"],
+  "join_keys": ["nzbn", "company_number"],
+  "field_count": 7,
+  "fields": [
+    { "path": "offer.offer_name", "source_field": "Offer / Scheme name", "english_name": "offer_name", "meaning": "Name of the FMC offer or managed investment scheme.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY: public search; cataloged from public docs.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "offer.issuer", "source_field": "Issuer", "english_name": "issuer", "meaning": "Issuer entity (links to a company / NZBN).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": "Join to NZBN/company number." },
+    { "path": "offer.scheme_type", "source_field": "Scheme type", "english_name": "scheme_type", "meaning": "Type of FMC offer / scheme.", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": "managed investment scheme / equity / debt / KiwiSaver / etc.", "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "offer.financial_statements[]", "source_field": "Financial statements", "english_name": "financial_statements", "meaning": "Audited financial statements filed by the FMC reporting entity.", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY; PDF (some XBRL); NZD.", "source_confidence": "low", "analysis_notes": "The open route to NZ company financials (FMC subset only)." },
+    { "path": "offer.product_disclosure_statement", "source_field": "Product Disclosure Statement (PDS)", "english_name": "product_disclosure_statement", "meaning": "Offer disclosure document.", "data_type": "object", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "offer.fund_updates[]", "source_field": "Fund updates", "english_name": "fund_updates", "meaning": "Periodic fund update disclosures.", "data_type": "array", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "offer.financial_year", "source_field": "Financial year / Balance date", "english_name": "financial_year", "meaning": "Reporting period of the financial statements.", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "NZ balance dates vary (often 31 Mar)." }
+  ]
+}
