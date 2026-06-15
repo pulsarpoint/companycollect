@@ -4,10 +4,13 @@ import datetime as dt
 import json
 import os
 import time
+from io import BytesIO
+from zipfile import ZipFile, is_zipfile
 from collections.abc import Mapping
 from typing import Any, Protocol
 
 import boto3
+import polars as pl
 import requests
 from botocore.config import Config
 from prefect import flow, get_run_logger, task
@@ -15,6 +18,7 @@ from prefect.artifacts import create_markdown_artifact
 
 COUNTRY = "FI"
 PRH_YTJ_COMPANIES_URL = "https://avoindata.prh.fi/opendata-ytj-api/v3/companies"
+PRH_YTJ_ALL_COMPANIES_URL = "https://avoindata.prh.fi/opendata-ytj-api/v3/all_companies"
 USER_AGENT = "corpscout-prefect-raw-ingest/0.1 (finland)"
 
 FINLAND_PRH_YTJ_BUCKET = "source-finland-prhytj"
@@ -128,6 +132,18 @@ def _companies_from_payload(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _full_companies_json_from_response(body: bytes) -> bytes:
+    buffer = BytesIO(body)
+    if not is_zipfile(buffer):
+        return body
+    buffer.seek(0)
+    with ZipFile(buffer) as archive:
+        json_names = [name for name in archive.namelist() if name.lower().endswith(".json")]
+        if not json_names:
+            raise ValueError("PRH all_companies zip did not contain a JSON file")
+        return archive.read(json_names[0])
+
+
 def _filter_registered_companies(companies: list[dict[str, Any]], *, start_date: str, today: str) -> list[dict[str, Any]]:
     start = dt.date.fromisoformat(start_date)
     end = dt.date.fromisoformat(today)
@@ -139,6 +155,75 @@ def _filter_registered_companies(companies: list[dict[str, Any]], *, start_date:
         if start <= registered_at < end:
             filtered.append(company)
     return filtered
+
+
+def _business_id(company: dict[str, Any]) -> str | None:
+    value = company.get("businessId")
+    if isinstance(value, dict):
+        raw = value.get("value")
+        return str(raw) if raw else None
+    return str(value) if value else None
+
+
+def _legal_name(company: dict[str, Any]) -> str | None:
+    names = company.get("names") or []
+    if not isinstance(names, list):
+        return None
+    current_primary = [
+        name for name in names
+        if isinstance(name, dict) and str(name.get("type")) == "1" and not name.get("endDate")
+    ]
+    candidates = current_primary or [name for name in names if isinstance(name, dict)]
+    if not candidates:
+        return None
+    value = candidates[0].get("name")
+    return str(value) if value else None
+
+
+def _lifecycle_status(company: dict[str, Any]) -> str:
+    end_date = company.get("endDate")
+    trade_register_status = company.get("tradeRegisterStatus")
+    if end_date or str(trade_register_status) == "3":
+        return "ceased"
+    return "active"
+
+
+def _base_rows(companies: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for company in companies:
+        lifecycle_status = _lifecycle_status(company)
+        rows.append(
+            {
+                "business_id": _business_id(company),
+                "registration_date": company.get("registrationDate"),
+                "end_date": company.get("endDate"),
+                "trade_register_status": company.get("tradeRegisterStatus"),
+                "status": company.get("status"),
+                "lifecycle_status": lifecycle_status,
+                "is_active": lifecycle_status == "active",
+                "legal_name": _legal_name(company),
+            }
+        )
+    return rows
+
+
+def _base_parquet_bytes(companies: list[dict[str, Any]]) -> bytes:
+    frame = pl.DataFrame(
+        _base_rows(companies),
+        schema={
+            "business_id": pl.Utf8,
+            "registration_date": pl.Utf8,
+            "end_date": pl.Utf8,
+            "trade_register_status": pl.Utf8,
+            "status": pl.Utf8,
+            "lifecycle_status": pl.Utf8,
+            "is_active": pl.Boolean,
+            "legal_name": pl.Utf8,
+        },
+    )
+    output = BytesIO()
+    frame.write_parquet(output)
+    return output.getvalue()
 
 
 def download_ytj_full_and_base_to_s3(
@@ -153,45 +238,84 @@ def download_ytj_full_and_base_to_s3(
     full_key = f"full/date={today}/companies.json"
     base_prefix = f"base/start_date={start_date}/end_date={today}"
     base_key = f"{base_prefix}/base.json"
+    parquet_key = f"{base_prefix}/base.parquet"
     manifest_key = f"{base_prefix}/manifest.json"
 
-    if object_exists(s3, FINLAND_PRH_YTJ_BUCKET, full_key) and not refresh:
+    if object_exists(s3, FINLAND_PRH_YTJ_BUCKET, base_key) and not refresh:
+        base_body = _read_object_bytes(s3, FINLAND_PRH_YTJ_BUCKET, base_key)
+        base_payload = json.loads(base_body)
+        base_companies = _companies_from_payload(base_payload)
+        full_downloaded = False
+        full_skipped = True
+        base_skipped = True
+        full_count = None
+    elif object_exists(s3, FINLAND_PRH_YTJ_BUCKET, full_key) and not refresh:
         full_body = _read_object_bytes(s3, FINLAND_PRH_YTJ_BUCKET, full_key)
         full_downloaded = False
         full_skipped = True
+        payload = json.loads(full_body)
+        companies = _companies_from_payload(payload)
+        base_companies = _filter_registered_companies(companies, start_date=start_date, today=today)
+        base_payload = {
+            "country": COUNTRY,
+            "source": "finland_prhytj",
+            "start_date": start_date,
+            "end_date": today,
+            "companies": base_companies,
+        }
+        s3.put_object(
+            Bucket=FINLAND_PRH_YTJ_BUCKET,
+            Key=base_key,
+            Body=json.dumps(base_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        )
+        base_skipped = False
+        full_count = len(companies)
     else:
-        full_body = _get(session, PRH_YTJ_COMPANIES_URL, {}).content
+        full_body = _full_companies_json_from_response(_get(session, PRH_YTJ_ALL_COMPANIES_URL, {}).content)
         s3.put_object(Bucket=FINLAND_PRH_YTJ_BUCKET, Key=full_key, Body=full_body)
         full_downloaded = True
         full_skipped = False
+        payload = json.loads(full_body)
+        companies = _companies_from_payload(payload)
+        base_companies = _filter_registered_companies(companies, start_date=start_date, today=today)
+        base_payload = {
+            "country": COUNTRY,
+            "source": "finland_prhytj",
+            "start_date": start_date,
+            "end_date": today,
+            "companies": base_companies,
+        }
+        s3.put_object(
+            Bucket=FINLAND_PRH_YTJ_BUCKET,
+            Key=base_key,
+            Body=json.dumps(base_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        )
+        base_skipped = False
+        full_count = len(companies)
 
-    payload = json.loads(full_body)
-    companies = _companies_from_payload(payload)
-    base_companies = _filter_registered_companies(companies, start_date=start_date, today=today)
-    base_payload = {
-        "country": COUNTRY,
-        "source": "finland_prhytj",
-        "start_date": start_date,
-        "end_date": today,
-        "companies": base_companies,
-    }
-    s3.put_object(
-        Bucket=FINLAND_PRH_YTJ_BUCKET,
-        Key=base_key,
-        Body=json.dumps(base_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-    )
+    if object_exists(s3, FINLAND_PRH_YTJ_BUCKET, parquet_key) and not refresh:
+        parquet_downloaded = False
+        parquet_skipped = True
+    else:
+        s3.put_object(Bucket=FINLAND_PRH_YTJ_BUCKET, Key=parquet_key, Body=_base_parquet_bytes(base_companies))
+        parquet_downloaded = True
+        parquet_skipped = False
 
     result = {
         "bucket": FINLAND_PRH_YTJ_BUCKET,
         "full_key": full_key,
         "base_key": base_key,
+        "parquet_key": parquet_key,
         "manifest_key": manifest_key,
         "start_date": start_date,
         "end_date": today,
-        "full_count": len(companies),
+        "full_count": full_count,
         "base_count": len(base_companies),
         "full_downloaded": full_downloaded,
         "full_skipped": full_skipped,
+        "base_skipped": base_skipped,
+        "parquet_downloaded": parquet_downloaded,
+        "parquet_skipped": parquet_skipped,
     }
     s3.put_object(Bucket=FINLAND_PRH_YTJ_BUCKET, Key=manifest_key, Body=json.dumps(result, indent=2))
     return result

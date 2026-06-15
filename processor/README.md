@@ -10,6 +10,7 @@ Local Prefect workflows for company collection experiments.
 2. Store that full JSON in S3/RustFS.
 3. Filter companies with `registrationDate >= start_date` and `registrationDate < today`.
 4. Store the filtered result as `base.json`.
+5. Create `base.parquet` from `base.json` with lightweight status columns.
 
 Required environment variables:
 
@@ -55,8 +56,11 @@ Object layout:
 source-finland-prhytj/
   full/date=<today>/companies.json
   base/start_date=<start_date>/end_date=<today>/base.json
+  base/start_date=<start_date>/end_date=<today>/base.parquet
   base/start_date=<start_date>/end_date=<today>/manifest.json
 ```
 
-Existing full JSON objects are reused by default. Pass `refresh=True` to redownload
-and overwrite the full JSON before rebuilding `base.json`.
+Existing `base.json` objects are the run-once marker. If `base.json` exists and
+`refresh=False`, the workflow does not download or rebuild it. It still creates
+`base.parquet` from the existing `base.json` if the Parquet file is missing.
+Pass `refresh=True` to redownload and rebuild all base outputs.
