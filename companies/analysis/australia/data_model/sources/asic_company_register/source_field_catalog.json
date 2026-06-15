@@ -1,0 +1,23 @@
+{
+  "country": "Australia",
+  "country_slug": "australia",
+  "source_slug": "asic_company_register",
+  "source_name": "ASIC company register (ASIC Connect)",
+  "source_type": "official_registry",
+  "organization": "Australian Securities and Investments Commission (ASIC)",
+  "source_url": "https://asic.gov.au/online-services/search-asic-registers/company-and-organisation-registers/",
+  "license": "paid extracts",
+  "access": "paid",
+  "data_freshness": "real-time",
+  "record_shape": "paid_register_extract_planning_only",
+  "primary_keys": ["ACN"],
+  "join_keys": ["ACN", "ABN"],
+  "field_count": 5,
+  "fields": [
+    { "path": "ACN", "source_field": "ACN", "english_name": "acn", "meaning": "Australian Company Number; join key to the ABR ASICNumber.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY; paid.", "source_confidence": "medium", "analysis_notes": "Join to abr_bulk_extract.ASICNumber." },
+    { "path": "registered_office_address", "source_field": "registered office", "english_name": "registered_office_address", "meaning": "Full registered-office street address (vs ABR state+postcode only).", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY; paid. The full address the ABR lacks.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "date_of_registration", "source_field": "registration date", "english_name": "incorporation_date", "meaning": "Date of incorporation/registration with ASIC.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY; paid. Not in the ABR (which has the ABN date).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "company_status_type", "source_field": "status / type / class", "english_name": "company_status_type", "meaning": "ASIC company status (Registered/Deregistered/Strike-off) + type/class.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY; paid. More precise than the ABR ABN status.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "officeholders[]", "source_field": "officeholders", "english_name": "officeholders", "meaning": "Directors / secretaries.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY; paid; PERSONAL DATA.", "source_confidence": "low", "analysis_notes": "Officers — not in any open source." }
+  ]
+}

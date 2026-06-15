@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Australia Company Profile",
+  "description": "Country-specific company profile for Australia. Identity is fully open via the ABR / ABN Lookup Bulk Extract (ATO, data.gov.au, CC-BY 3.0 AU, weekly): ABN, ACN (companies), entity type, legal name, trading/business names, state+postcode, GST registration. Keyed on the ABN (11-digit, also the tax id); companies also carry an ACN (9-digit). Australia has NO separate VAT number — GST registration is the indirect-tax flag. The open extract LACKS street address, incorporation date, ANZSIC activity, officers, and financials — those need PAID ASIC (company register + financial reports). Financials are essentially listed-only (free via ASX) or paid (ASIC); most small proprietary companies do not lodge financials publicly. Individual/sole-trader names and officeholders are personal data.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Australia" },
+    "country_slug": { "type": "string", "const": "australia" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["abn"],
+      "properties": {
+        "abn": {
+          "type": "string",
+          "description": "Australian Business Number (11 digits). Company id, tax id, and universal join key.",
+          "x-source": "abr_bulk_extract",
+          "x-source-path": "ABR/ABN",
+          "x-join-key": true,
+          "x-access": "public"
+        },
+        "acn": {
+          "type": ["string", "null"],
+          "description": "Australian Company Number (9 digits); for companies. = ABR ASICNumber; join key to ASIC.",
+          "x-source": "abr_bulk_extract",
+          "x-source-path": "ABR/ASICNumber",
+          "x-join-key": true
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= ABN.", "x-source": "abr_bulk_extract", "x-source-path": "ABR/ABN" },
+        "vat_id": { "type": ["string", "null"], "description": "No separate VAT number in Australia.", "x-access": "not_available" },
+        "gst_registered": { "type": ["boolean", "null"], "description": "GST registration (indirect-tax flag).", "x-source": "abr_bulk_extract", "x-source-path": "ABR/GST/@status" },
+        "gst_from_date": { "type": ["string", "null"], "format": "date", "x-source": "abr_bulk_extract", "x-source-path": "ABR/GST/@GSTStatusFromDate" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "abr_bulk_extract", "x-source-path": "ABR/MainEntity/NonIndividualName/NonIndividualNameText" },
+        "entity_type": { "type": ["string", "null"], "description": "EntityTypeText (Australian Public/Private Company, …).", "x-source": "abr_bulk_extract", "x-source-path": "ABR/EntityType/EntityTypeText" },
+        "trading_business_names": { "type": "array", "x-source": "abr_bulk_extract", "x-source-path": "ABR/OtherEntity", "items": { "type": "string" } }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "abn_status": { "type": ["string", "null"], "description": "ABN status (ACT/CAN).", "x-source": "abr_bulk_extract", "x-source-path": "ABR/ABN/@status" },
+        "abn_status_from_date": { "type": ["string", "null"], "format": "date", "x-source": "abr_bulk_extract", "x-source-path": "ABR/ABN/@ABNStatusFromDate" },
+        "asic_company_status": { "type": ["string", "null"], "description": "PLANNING-ONLY (paid ASIC): Registered/Deregistered/Strike-off.", "x-source": "asic_company_register", "x-access": "paid" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "state": { "type": ["string", "null"], "x-source": "abr_bulk_extract", "x-source-path": "ABR/MainEntity/BusinessAddress/AddressDetails/State" },
+        "postcode": { "type": ["string", "null"], "x-source": "abr_bulk_extract", "x-source-path": "ABR/MainEntity/BusinessAddress/AddressDetails/Postcode" },
+        "registered_office_address": { "type": ["string", "null"], "description": "PLANNING-ONLY (paid ASIC): full street address (ABR has only state+postcode).", "x-source": "asic_company_register", "x-access": "paid" }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "description": "Incorporation date is PLANNING-ONLY (paid ASIC). ABR only has the ABN status date.",
+      "properties": {
+        "incorporation_date": { "type": ["string", "null"], "format": "date", "x-source": "asic_company_register", "x-access": "paid" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY (paid ASIC): officeholders (directors/secretaries). PERSONAL DATA.",
+      "x-source": "asic_company_register",
+      "x-access": "paid",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Open only for LISTED companies (free via ASX); otherwise paid per document via ASIC; most small proprietary companies do not lodge. AUD; AASB/IFRS.",
+      "x-source": "asx_listed",
+      "x-access": "listed_or_paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": "integer" },
+          "asx_ticker": { "type": ["string", "null"] },
+          "balance_sheet": { "type": ["object", "null"] },
+          "income_statement": { "type": ["object", "null"] },
+          "currency": { "type": "string", "const": "AUD" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

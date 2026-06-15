@@ -1,0 +1,15 @@
+{
+  "ABN": "11000000948",
+  "ABN_status": "ACT",
+  "ABNStatusFromDate": "19991101",
+  "EntityTypeInd": "PUB",
+  "EntityTypeText": "Australian Public Company",
+  "NonIndividualNameText": "QBE INSURANCE (INTERNATIONAL) LTD",
+  "State": "NSW",
+  "Postcode": "2000",
+  "ASICNumber": "000000948",
+  "GST_status": "ACT",
+  "GSTStatusFromDate": "20000701",
+  "OtherEntity_tradingName": "QBE INSURANCE (INTERNATIONAL) LIMITED",
+  "_note": "Real ABR Bulk Extract record (QBE Insurance (International) Ltd, a public company). Company-level fields only; no personal data."
+}

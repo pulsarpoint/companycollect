@@ -1,0 +1,58 @@
+{
+  "country": "Australia",
+  "country_slug": "australia",
+  "source_slug": "asic_financial_reports",
+  "source_identity": "australia_asic_financial_reports",
+  "source_package": "asicfinancials",
+  "env_prefix": "ASIC_FINANCIALS",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "ASIC financial reports",
+    "source_type": "official_financial",
+    "organization": "ASIC",
+    "source_url": "https://www.asic.gov.au/for-business-and-companies/companies/company-financial-reports/",
+    "license": "paid (per document)",
+    "access": "paid",
+    "data_freshness": "annual",
+    "attribution": "ASIC"
+  },
+  "access": { "requires_authentication": true, "requires_payment": true, "credential_env_vars": ["ASIC_CONNECT_ACCOUNT"] },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.asic.gov.au/",
+    "download_url": null,
+    "http_method": null,
+    "headers_required": [],
+    "formats": ["pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown"
+  },
+  "snapshot": { "strategy": "not_applicable_paid", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "AsicFinancialReport",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": ["aud"],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Paid per-document PDFs via ASIC Connect; only lodging companies. No transport implemented."
+  },
+  "keys": { "primary_keys": ["ACN"], "join_keys": ["ACN", "ABN"], "dedupe_keys": ["ACN", "fiscal_year"] },
+  "mapping_rules": {
+    "financials": "Planning-only: audited annual financial report (AUD, AASB/IFRS) for lodging companies. Join on ACN.",
+    "scope": "Public / large proprietary / disclosing entities / schemes only; small proprietary companies do not lodge."
+  },
+  "fixture_requirements": ["planning-only: synthetic ASIC financial report"],
+  "live_test_plan": {
+    "smoke": "Not applicable — paid.",
+    "full": "Not applicable — paid per document; for listed issuers use ASX."
+  },
+  "blockers": [
+    "Financial reports are paid per document (ASIC Connect).",
+    "Only certain companies lodge; small proprietary companies generally do not.",
+    "PDF documents (not structured)."
+  ]
+}

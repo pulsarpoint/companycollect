@@ -1,0 +1,58 @@
+{
+  "country": "Australia",
+  "country_slug": "australia",
+  "source_slug": "asx_listed",
+  "source_identity": "australia_asx_listed",
+  "source_package": "asxlisted",
+  "env_prefix": "ASX_LISTED",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "ASX — listed-company financial reports & announcements",
+    "source_type": "stock_exchange",
+    "organization": "Australian Securities Exchange (ASX)",
+    "source_url": "https://www.asx.com.au/",
+    "license": "issuer disclosure (open to view; redistribution per ASX/issuer terms)",
+    "access": "public (per-issuer)",
+    "data_freshness": "periodic",
+    "attribution": "ASX / issuer"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.asx.com.au/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf", "html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown"
+  },
+  "snapshot": { "strategy": "per_issuer_documents", "file_extension": null, "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "AsxIssuerReport",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": ["aud"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Planning-only. Listed issuers only; per-issuer PDFs (AUD, AASB/IFRS). Link ASX ticker -> ACN/ABN. No uniform open bulk."
+  },
+  "keys": { "primary_keys": ["asx_ticker"], "join_keys": ["acn", "abn"], "dedupe_keys": ["asx_ticker", "fiscal_year"] },
+  "mapping_rules": {
+    "financials": "Listed issuers only: balance sheet + income statement + cash flow (AUD). Join ticker -> ACN/ABN.",
+    "scope": "Listed companies only; non-listed via paid ASIC (most small companies do not lodge)."
+  },
+  "fixture_requirements": ["planning-only: synthetic listed-issuer annual report"],
+  "live_test_plan": {
+    "smoke": "Fetch one listed issuer's annual report from the ASX announcements page.",
+    "full": "Per-issuer collection; respect ASX/issuer redistribution terms."
+  },
+  "blockers": [
+    "Listed issuers only; not the company universe.",
+    "No uniform open bulk API; per-issuer PDFs.",
+    "Redistribution governed by ASX/issuer terms."
+  ]
+}

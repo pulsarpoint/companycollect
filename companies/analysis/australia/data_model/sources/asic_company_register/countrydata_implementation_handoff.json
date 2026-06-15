@@ -1,0 +1,61 @@
+{
+  "country": "Australia",
+  "country_slug": "australia",
+  "source_slug": "asic_company_register",
+  "source_identity": "australia_asic_company_register",
+  "source_package": "asicregister",
+  "env_prefix": "ASIC_REGISTER",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "ASIC company register (ASIC Connect)",
+    "source_type": "official_registry",
+    "organization": "ASIC",
+    "source_url": "https://asic.gov.au/online-services/search-asic-registers/company-and-organisation-registers/",
+    "license": "paid extracts",
+    "access": "paid",
+    "data_freshness": "real-time",
+    "attribution": "ASIC"
+  },
+  "access": { "requires_authentication": true, "requires_payment": true, "credential_env_vars": ["ASIC_CONNECT_ACCOUNT"] },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://asic.gov.au/",
+    "download_url": null,
+    "http_method": null,
+    "headers_required": [],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown"
+  },
+  "snapshot": { "strategy": "not_applicable_paid", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "AsicCompanyExtract",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Paid per-extract via ASIC Connect. No transport implemented. Some ASIC datasets are free on data.gov.au (e.g. Business Names register) but not the company register detail."
+  },
+  "keys": { "primary_keys": ["ACN"], "join_keys": ["ACN", "ABN"], "dedupe_keys": ["ACN"] },
+  "mapping_rules": {
+    "registered_address": "Planning-only: full registered-office address (ABR has only state+postcode).",
+    "incorporation_date": "Planning-only: ASIC date of registration.",
+    "status": "Planning-only: ASIC company status (more precise than ABR ABN status).",
+    "officers": "Planning-only: officeholders (PII).",
+    "join": "ACN == abr_bulk_extract.ASICNumber."
+  },
+  "fixture_requirements": ["planning-only: synthetic ASIC company extract with address + incorporation date + officeholders"],
+  "live_test_plan": {
+    "smoke": "Not applicable — paid.",
+    "full": "Not applicable — paid per extract via ASIC Connect."
+  },
+  "blockers": [
+    "Company-register extracts are paid (ASIC Connect).",
+    "Officeholders are personal data — redact.",
+    "Free ASIC open datasets (Business Names register) cover different data."
+  ]
+}

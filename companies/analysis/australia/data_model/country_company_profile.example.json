@@ -1,0 +1,45 @@
+{
+  "country": "Australia",
+  "country_slug": "australia",
+  "country_profile_version": "2026-06-15",
+  "registration": {
+    "abn": "11000000948",
+    "acn": "000000948"
+  },
+  "tax_identifiers": {
+    "tax_id": "11000000948",
+    "vat_id": null,
+    "gst_registered": true,
+    "gst_from_date": "2000-07-01"
+  },
+  "legal_identity": {
+    "legal_name": "QBE INSURANCE (INTERNATIONAL) LTD",
+    "entity_type": "Australian Public Company",
+    "trading_business_names": ["QBE INSURANCE (INTERNATIONAL) LIMITED"]
+  },
+  "status": {
+    "abn_status": "ACT",
+    "abn_status_from_date": "1999-11-01",
+    "asic_company_status": null
+  },
+  "registered_location": {
+    "state": "NSW",
+    "postcode": "2000",
+    "registered_office_address": null
+  },
+  "incorporation": {
+    "incorporation_date": null
+  },
+  "officers": [
+    { "name": "[PLANNING-ONLY — paid ASIC; officeholders; personal data]", "role": null }
+  ],
+  "financial_statements": [
+    { "fiscal_year": 2024, "asx_ticker": null, "balance_sheet": null, "income_statement": null, "currency": "AUD" }
+  ],
+  "source_provenance": [
+    { "source_slug": "abr_bulk_extract", "section": "registration/tax_identifiers/legal_identity/status/registered_location", "source_url": "https://data.gov.au/data/dataset/abn-bulk-extract", "access": "public", "license": "CC-BY 3.0 AU", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "asic_company_register", "section": "incorporation/registered_office_address/officers/asic_company_status", "source_url": "https://asic.gov.au/", "access": "paid", "license": "paid extracts", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "asx_listed", "section": "financial_statements (listed only)", "source_url": "https://www.asx.com.au/", "access": "public (listed)", "license": "issuer disclosure", "retrieved_at": "2026-06-15T00:00:00Z" }
+  ],
+  "_note": "Real ABR Bulk Extract identity for QBE Insurance (International) Ltd (ABN 11000000948, ACN 000000948). Paid-ASIC fields (incorporation date, full address, officers, status) and financials are null/redacted — open only via paid ASIC or (listed) ASX; this company-level example shows the open ABR fields."
+}

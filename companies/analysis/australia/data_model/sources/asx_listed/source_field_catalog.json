@@ -1,0 +1,21 @@
+{
+  "country": "Australia",
+  "country_slug": "australia",
+  "source_slug": "asx_listed",
+  "source_name": "ASX — listed-company financial reports & announcements",
+  "source_type": "stock_exchange",
+  "organization": "Australian Securities Exchange (ASX)",
+  "source_url": "https://www.asx.com.au/",
+  "license": "issuer disclosure (open to view; redistribution per ASX/issuer terms)",
+  "access": "public (per-issuer)",
+  "data_freshness": "periodic",
+  "record_shape": "per_issuer_reports_pdf",
+  "primary_keys": ["asx_ticker"],
+  "join_keys": ["acn", "abn"],
+  "field_count": 3,
+  "fields": [
+    { "path": "asx_ticker", "source_field": "ASX code", "english_name": "asx_ticker", "meaning": "ASX listing code; maps to ACN/ABN by issuer.", "data_type": "string", "semantic_type": "identifier", "example_values": ["BHP", "CBA", "WES"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Listed issuers only.", "source_confidence": "medium", "analysis_notes": "Link to ACN/ABN to join with ABR." },
+    { "path": "financial_report", "source_field": "annual / half-year financial report", "english_name": "financial_report", "meaning": "Listed-issuer financial statements (balance sheet, income statement, cash flow).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "AASB/IFRS", "language": "English", "limitations": "Listed only; PDF; AUD.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "announcements[]", "source_field": "company announcements", "english_name": "announcements", "meaning": "Market announcements (results, material events).", "data_type": "array", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "Listed only.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

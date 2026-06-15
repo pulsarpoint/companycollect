@@ -1,0 +1,61 @@
+{
+  "country": "Australia",
+  "country_slug": "australia",
+  "source_slug": "abn_lookup_api",
+  "source_identity": "australia_abn_lookup_api",
+  "source_package": "abnlookup",
+  "env_prefix": "ABN_LOOKUP",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "ABN Lookup web services (free API)",
+    "source_type": "official_registry",
+    "organization": "ATO — Australian Business Register",
+    "source_url": "https://abr.business.gov.au/Tools/WebServices",
+    "license": "CC-BY 3.0 Australia",
+    "access": "public (free GUID)",
+    "data_freshness": "real-time",
+    "attribution": "Australian Business Register (CC-BY 3.0 AU)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["ABR_LOOKUP_GUID"]
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://abr.business.gov.au/json/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "soap", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per GUID; fair use (not for bulk)"
+  },
+  "snapshot": { "strategy": "per_abn_enrichment_lookup", "file_extension": ".json", "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "AbnLookupResult",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Free GUID (guid query param) required. Endpoints: AbnDetails / AcnDetails / MatchingNames. Same public fields as the extract; use for per-ABN lookups, not bulk."
+  },
+  "keys": { "primary_keys": ["ABN"], "join_keys": ["ABN", "ACN"], "dedupe_keys": ["ABN"] },
+  "mapping_rules": {
+    "enrichment": "Per-ABN/ACN lookup of name/type/GST/state/postcode/businessNames; join on ABN.",
+    "note": "Use the bulk extract for the full population; this API for targeted refresh."
+  },
+  "fixture_requirements": ["documented-only: AbnDetails response", "documented-only: AcnDetails response", "documented-only: MatchingNames response"],
+  "live_test_plan": {
+    "smoke": "With a free GUID: GET AbnDetails for a known ABN; assert entityName + entityType.",
+    "full": "Targeted per-ABN refresh at fair-use rates; not for bulk harvesting."
+  },
+  "blockers": [
+    "Requires a free GUID (registration) — not bypassed here.",
+    "Not for bulk download — use abr_bulk_extract."
+  ]
+}

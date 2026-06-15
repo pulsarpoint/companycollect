@@ -1,0 +1,22 @@
+{
+  "country": "Australia",
+  "country_slug": "australia",
+  "source_slug": "abn_lookup_api",
+  "source_name": "ABN Lookup web services (free API)",
+  "source_type": "official_registry",
+  "organization": "Australian Taxation Office (ATO) — Australian Business Register",
+  "source_url": "https://abr.business.gov.au/Tools/WebServices",
+  "license": "CC-BY 3.0 Australia",
+  "access": "public (free GUID registration)",
+  "data_freshness": "real-time",
+  "record_shape": "json_or_soap_per_abn_acn_name_lookup",
+  "primary_keys": ["ABN"],
+  "join_keys": ["ABN", "ACN"],
+  "field_count": 4,
+  "fields": [
+    { "path": "ABN / ACN", "source_field": "abn/acn", "english_name": "identifiers", "meaning": "ABN and (for companies) ACN.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Requires a free GUID (auth token).", "source_confidence": "high", "analysis_notes": "Same id space as the bulk extract." },
+    { "path": "entityName", "source_field": "entityName / mainName", "english_name": "entity_name", "meaning": "Current entity / business name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "entityType / GST / state / postcode", "source_field": "entityType/GST/address", "english_name": "core_public_fields", "meaning": "Entity type, GST registration, state + postcode.", "data_type": "object", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "Same public fields as the extract.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "businessNames[]", "source_field": "businessNames", "english_name": "business_names", "meaning": "Registered business/trading names.", "data_type": "array", "semantic_type": "legal_name", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": null, "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

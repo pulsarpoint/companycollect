@@ -1,0 +1,70 @@
+{
+  "country": "Australia",
+  "country_slug": "australia",
+  "source_slug": "abr_bulk_extract",
+  "source_identity": "australia_abr_bulk_extract",
+  "source_package": "abrbulk",
+  "env_prefix": "ABR_BULK",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "ABR / ABN Lookup Bulk Extract (data.gov.au)",
+    "source_type": "official_registry",
+    "organization": "Australian Taxation Office (ATO) — Australian Business Register",
+    "source_url": "https://data.gov.au/data/dataset/abn-bulk-extract",
+    "license": "CC-BY 3.0 Australia",
+    "access": "public",
+    "data_freshness": "weekly",
+    "attribution": "Australian Business Register / Australian Taxation Office (CC-BY 3.0 AU)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": "https://data.gov.au/data/dataset/abn-bulk-extract",
+    "download_url": "https://data.gov.au/data/dataset/5bd7fcab-e315-42cb-8daf-50b7efc2027e/resource/0ae4d427-6fa8-4d40-8e76-c6909b5a071b/download/public_split_1_10.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xml", "zip"],
+    "compression": "zip",
+    "encoding": "utf-8",
+    "record_path": "ABR",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented"
+  },
+  "snapshot": { "strategy": "stream_xml_abr_to_ndjson", "file_extension": ".xml", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "AbrEntity",
+    "date_formats": ["20060102"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "TWO zips (public_split_1_10.zip, public_split_11_20.zip), each 20 XML files (Public01..20). STREAM <ABR> elements (SAX/iterparse). Dates YYYYMMDD. Validate against bulkextract.xsd. Resource UUIDs may change per weekly publish — resolve from the data.gov.au dataset. Filter ASICNumber present (or EntityType) for companies. Redact IndividualName."
+  },
+  "keys": { "primary_keys": ["ABN"], "join_keys": ["ABN", "ASICNumber"], "dedupe_keys": ["ABN"] },
+  "mapping_rules": {
+    "company_id": "Use ABN; for companies also keep ASICNumber (ACN).",
+    "registration_number": "Use ASICNumber (ACN) for companies; else ABN.",
+    "tax_id": "Use ABN.",
+    "vat_id": "Not available — record GST registration (no separate VAT number).",
+    "legal_name": "Use MainEntity NonIndividualNameText (orgs) or IndividualName (redact).",
+    "legal_form": "Use EntityTypeText/EntityTypeInd.",
+    "status": "Map ABN @status: ACT->active, CAN->cancelled (note: ABN status, not ASIC status).",
+    "registered_address": "Only State + Postcode (no street).",
+    "alternate_names": "OtherEntity trading/business names.",
+    "is_company": "True when ASICNumber present / EntityType in {PUB, PRV, ...}."
+  },
+  "fixture_requirements": [
+    "public company (PUB) with ACN + GST (e.g. ABN 11000000948)",
+    "private company (PRV)",
+    "individual/sole trader (IND) — verify name redaction",
+    "cancelled ABN (status CAN)"
+  ],
+  "live_test_plan": {
+    "smoke": "Open public_split_1_10.zip, stream the first 1000 <ABR> records, assert ABN + EntityType.",
+    "full": "Weekly: stream both zips to NDJSON keyed on ABN; redact IndividualName; filter companies by ASICNumber."
+  },
+  "blockers": [
+    "Individual/sole-trader names are personal data (Privacy Act) — redact.",
+    "No street address / incorporation date / ANZSIC / financials — need paid ASIC."
+  ]
+}
