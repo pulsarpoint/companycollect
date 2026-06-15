@@ -1,0 +1,29 @@
+[
+  {
+    "name": "EDR — legal entities (UO.zip)",
+    "slug": "edr_uo",
+    "type": "bulk",
+    "url": "https://data.gov.ua/dataset/03cc1239-3988-4451-aa0d-aadb77448714/resource/d40cc921-39bb-44fd-be06-dc02589f45c6/download/uo.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "EDR — individual entrepreneurs (FOP.zip)",
+    "slug": "edr_fop",
+    "type": "bulk",
+    "url": "https://data.gov.ua/dataset/03cc1239-3988-4451-aa0d-aadb77448714/resource/c262938f-cce7-4489-a805-2fd7c5a44e0b/download/fop.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "EDR — UO XML schema (XSD)",
+    "slug": "edr_uo_schema",
+    "type": "bulk",
+    "url": "https://data.gov.ua/dataset/03cc1239-3988-4451-aa0d-aadb77448714/resource/131e73ef-eeff-4374-aa23-0c7e10d6509c/download/uo_schema.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
