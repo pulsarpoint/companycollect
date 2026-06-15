@@ -1,0 +1,61 @@
+{
+  "country": "Vietnam",
+  "country_slug": "vietnam",
+  "source_slug": "vn_aggregators",
+  "source_identity": "vietnam_vn_aggregators",
+  "source_package": "vnaggregators",
+  "env_prefix": "VN_AGGREGATORS",
+  "implementation_status": "blocked_license",
+  "source": {
+    "source_name": "Commercial aggregators (masothue.com, infodoanhnghiep.com; vietstock/cafef/fireant)",
+    "source_type": "aggregator",
+    "organization": "Various private vendors",
+    "source_url": "https://masothue.com/",
+    "license": "restricted / vendor terms",
+    "access": "public (search) / paid (bulk/API)",
+    "data_freshness": "varies",
+    "attribution": "per vendor"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["VN_AGGREGATOR_API_KEY"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": null,
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per vendor"
+  },
+  "snapshot": { "strategy": "not_applicable_restricted", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "VnAggregatorRecord",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": ["vnd"],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Scraped/repackaged official data; vendor terms restrict reuse. Verify against official sources."
+  },
+  "keys": { "primary_keys": ["ma_so_thue"], "join_keys": ["ma_so_thue"], "dedupe_keys": ["ma_so_thue"] },
+  "mapping_rules": {
+    "cross_check": "Match on tax code (= enterprise code); never override official NBRP/SSC fields."
+  },
+  "fixture_requirements": ["planning-only: synthetic aggregator record"],
+  "live_test_plan": {
+    "smoke": "Not applicable without a vendor agreement.",
+    "full": "Not applicable — license-uncertain; prefer official sources."
+  },
+  "blockers": [
+    "Not official; scrapes/repackages NBRP + listed financials.",
+    "Vendor terms restrict reuse (license-uncertain).",
+    "Adds no authoritative fields over the official (gated) sources."
+  ]
+}

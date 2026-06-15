@@ -1,0 +1,23 @@
+{
+  "country": "Vietnam",
+  "country_slug": "vietnam",
+  "source_slug": "gdt_taxpayer_lookup",
+  "source_name": "General Department of Taxation — taxpayer lookup",
+  "source_type": "official_tax",
+  "organization": "Tổng cục Thuế (General Department of Taxation)",
+  "source_url": "https://tracuunnt.gdt.gov.vn/tcnnt/mstdn.jsp",
+  "license": "restricted/unclear",
+  "access": "public (per-company; CAPTCHA-gated)",
+  "data_freshness": "real-time",
+  "record_shape": "html_per_company_result_captcha_gated",
+  "primary_keys": ["ma_so_thue"],
+  "join_keys": ["ma_so_thue"],
+  "field_count": 5,
+  "fields": [
+    { "path": "Mã số thuế", "source_field": "ma_so_thue", "english_name": "tax_code", "meaning": "Tax code = enterprise code; join key.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "DOCUMENTED-ONLY (CAPTCHA-gated).", "source_confidence": "high", "analysis_notes": "Same number as NBRP enterprise code." },
+    { "path": "Tên người nộp thuế", "source_field": "ten", "english_name": "taxpayer_name", "meaning": "Taxpayer (company) name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Vietnamese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Địa chỉ", "source_field": "dia_chi", "english_name": "address", "meaning": "Registered address held by the tax authority.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Vietnamese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "Cơ quan thuế", "source_field": "co_quan_thue", "english_name": "managing_tax_office", "meaning": "Managing tax office.", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Vietnamese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "Tình trạng", "source_field": "tinh_trang", "english_name": "tax_status", "meaning": "Tax-registration status (active / closed / suspended).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Vietnamese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "high", "analysis_notes": "Confirms a known company's tax status." }
+  ]
+}

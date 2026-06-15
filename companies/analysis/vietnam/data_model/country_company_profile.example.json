@@ -1,0 +1,42 @@
+{
+  "country": "Vietnam",
+  "country_slug": "vietnam",
+  "country_profile_version": "2026-06-15",
+  "registration": {
+    "enterprise_code": "0100000000"
+  },
+  "tax_identifiers": {
+    "tax_code": "0100000000",
+    "vat_id": "0100000000",
+    "tax_status": null
+  },
+  "legal_identity": {
+    "legal_name": "CÔNG TY TNHH VÍ DỤ (EXAMPLE CO., LTD)",
+    "legal_form": "Công ty trách nhiệm hữu hạn (TNHH / LLC)"
+  },
+  "status": {
+    "status_raw": "Đang hoạt động",
+    "status": "active"
+  },
+  "activity": {
+    "vsic_codes": ["[VSIC code(s) — from gated NBRP search]"]
+  },
+  "incorporation": {
+    "establishment_date": null
+  },
+  "registered_location": {
+    "head_office_address": "[from gated NBRP per-company search]"
+  },
+  "officers": [
+    { "name": "[REDACTED — personal data; legal representative]", "role": "legal_representative" }
+  ],
+  "financial_statements": [
+    { "fiscal_year": 2024, "ticker": null, "balance_sheet": null, "income_statement": null, "currency": "VND" }
+  ],
+  "source_provenance": [
+    { "source_slug": "nbrp_search", "section": "registration/legal_identity/status/activity/incorporation/registered_location/officers", "source_url": "https://dangkykinhdoanh.gov.vn/", "access": "public (CAPTCHA-gated)", "license": "restricted/unclear", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "gdt_taxpayer_lookup", "section": "tax_identifiers", "source_url": "https://tracuunnt.gdt.gov.vn/", "access": "public (CAPTCHA-gated)", "license": "restricted/unclear", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "hose_hnx_ssc_disclosure", "section": "financial_statements", "source_url": "https://congbothongtin.ssc.gov.vn/", "access": "listed only", "license": "issuer disclosure", "retrieved_at": "2026-06-15T00:00:00Z" }
+  ],
+  "_note": "SCHEMATIC. Vietnam has no open bulk: the NBRP register and GDT lookup are CAPTCHA-gated and the enterprise code 0100000000 is a placeholder (no real per-company record was copied). Financials are open only for listed companies; this non-listed example shows them empty."
+}

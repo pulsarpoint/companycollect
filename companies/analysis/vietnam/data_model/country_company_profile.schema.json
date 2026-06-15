@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Vietnam Company Profile",
+  "description": "Country-specific company profile for Vietnam. Vietnam is portal-gated with NO open bulk: the authoritative National Business Registration Portal (NBRP) offers a free but CAPTCHA-gated per-company search (no open API/bulk; full coverage only via a paid MOU). The General Department of Taxation lookup confirms tax status per company (also CAPTCHA-gated). Everything keys on the enterprise code, which IS the tax code (mã số doanh nghiệp = mã số thuế, 10-13 digits); Vietnam has no separate VAT number. Financials are open ONLY for listed companies (HOSE/HNX/SSC); non-listed financials are not published. This profile is therefore largely PLANNING-ONLY: the company id is derivable per company, but bulk identity is paid and most financials/ownership are unavailable. Legal-representative names are personal data.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Vietnam" },
+    "country_slug": { "type": "string", "const": "vietnam" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["enterprise_code"],
+      "properties": {
+        "enterprise_code": {
+          "type": "string",
+          "description": "Mã số doanh nghiệp = mã số thuế (enterprise code = tax code), 10-13 digits. Company id and universal join key (NBRP ↔ GDT ↔ financials).",
+          "x-source": "nbrp_search",
+          "x-source-path": "Mã số doanh nghiệp",
+          "x-join-key": true,
+          "x-access": "gated"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_code": { "type": ["string", "null"], "description": "Same number as enterprise_code.", "x-source": "gdt_taxpayer_lookup", "x-source-path": "Mã số thuế" },
+        "vat_id": { "type": ["string", "null"], "description": "No separate VAT number — the tax code serves VAT.", "x-source": "gdt_taxpayer_lookup", "x-source-path": "Mã số thuế" },
+        "tax_status": { "type": ["string", "null"], "description": "Tax-registration status (GDT; gated).", "x-source": "gdt_taxpayer_lookup", "x-source-path": "Tình trạng", "x-access": "gated" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "nbrp_search", "x-source-path": "Tên doanh nghiệp", "x-access": "gated" },
+        "legal_form": { "type": ["string", "null"], "description": "Loại hình (TNHH/CP/DNTN/…).", "x-source": "nbrp_search", "x-source-path": "Loại hình", "x-access": "gated" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_raw": { "type": ["string", "null"], "x-source": "nbrp_search", "x-source-path": "Tình trạng hoạt động", "x-access": "gated" },
+        "status": { "type": ["string", "null"], "description": "Mapped: active/suspended/dissolved.", "enum": ["active", "suspended", "dissolved", null] }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "vsic_codes": { "type": "array", "description": "Business lines (VSIC).", "x-source": "nbrp_search", "x-source-path": "Ngành nghề kinh doanh", "x-access": "gated", "items": { "type": "string" } }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "establishment_date": { "type": ["string", "null"], "format": "date", "x-source": "nbrp_search", "x-source-path": "Ngày thành lập", "x-access": "gated" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "head_office_address": { "type": ["string", "null"], "x-source": "nbrp_search", "x-source-path": "Địa chỉ trụ sở", "x-access": "gated" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Only the legal representative is open (NBRP). PERSONAL DATA — redact. Shareholders/beneficial owners are NOT available.",
+      "x-source": "nbrp_search",
+      "x-access": "gated_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-source-path": "Người đại diện theo pháp luật", "x-personal-data": true }, "role": { "type": ["string", "null"], "const": "legal_representative" } } }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Open ONLY for listed companies (HOSE/HNX/SSC), per issuer, VND, VAS. Non-listed financials are not published.",
+      "x-source": "hose_hnx_ssc_disclosure",
+      "x-access": "listed_only",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": "integer" },
+          "ticker": { "type": ["string", "null"] },
+          "balance_sheet": { "type": ["object", "null"] },
+          "income_statement": { "type": ["object", "null"] },
+          "currency": { "type": "string", "const": "VND" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

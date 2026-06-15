@@ -1,0 +1,26 @@
+{
+  "country": "Vietnam",
+  "country_slug": "vietnam",
+  "source_slug": "nbrp_search",
+  "source_name": "National Business Registration Portal (NBRP) — per-company search",
+  "source_type": "official_registry",
+  "organization": "Business Registration Authority, Ministry of Planning and Investment (MPI)",
+  "source_url": "https://dangkykinhdoanh.gov.vn/",
+  "license": "restricted/unclear (no open re-use terms)",
+  "access": "public (per-company search; CAPTCHA-gated)",
+  "data_freshness": "real-time",
+  "record_shape": "html_per_company_result_captcha_gated",
+  "primary_keys": ["ma_so_doanh_nghiep"],
+  "join_keys": ["ma_so_doanh_nghiep"],
+  "field_count": 8,
+  "fields": [
+    { "path": "Mã số doanh nghiệp", "source_field": "ma_so_doanh_nghiep", "english_name": "enterprise_code", "meaning": "Enterprise code = tax code (mã số thuế); 10 digits (HQ) or 13 (with branch suffix). Company id.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "DOCUMENTED-ONLY (CAPTCHA-gated; no value copied). Also serves as the tax/VAT id.", "source_confidence": "high", "analysis_notes": "Universal join key (= tax code)." },
+    { "path": "Tên doanh nghiệp", "source_field": "ten_doanh_nghiep", "english_name": "company_name", "meaning": "Registered company name (Vietnamese; sometimes English/abbrev).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Vietnamese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Loại hình", "source_field": "loai_hinh", "english_name": "company_type", "meaning": "Legal form (TNHH=LLC, CP=joint-stock, DNTN=sole proprietorship, ...).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "VN company types", "language": "Vietnamese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "Tình trạng hoạt động", "source_field": "tinh_trang", "english_name": "status", "meaning": "Legal status (Đang hoạt động=active, Tạm ngừng=suspended, Đã giải thể=dissolved).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Vietnamese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Ngày thành lập", "source_field": "ngay_thanh_lap", "english_name": "establishment_date", "meaning": "Establishment / first-issue date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "Địa chỉ trụ sở", "source_field": "dia_chi_tru_so", "english_name": "head_office_address", "meaning": "Registered head-office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Vietnamese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Ngành nghề kinh doanh", "source_field": "nganh_nghe", "english_name": "business_lines", "meaning": "Business lines / activities (VSIC codes + text).", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "VSIC (Vietnam Standard Industrial Classification)", "language": "Vietnamese", "limitations": "DOCUMENTED-ONLY.", "source_confidence": "medium", "analysis_notes": "Primary + secondary activities." },
+    { "path": "Người đại diện theo pháp luật", "source_field": "nguoi_dai_dien", "english_name": "legal_representative", "meaning": "Legal representative (a natural person).", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Vietnamese", "limitations": "DOCUMENTED-ONLY; PERSONAL DATA — redact.", "source_confidence": "medium", "analysis_notes": "The closest open analogue to an officer." }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "country": "Vietnam",
+  "country_slug": "vietnam",
+  "source_slug": "gdt_taxpayer_lookup",
+  "source_identity": "vietnam_gdt_taxpayer_lookup",
+  "source_package": "gdttaxlookup",
+  "env_prefix": "GDT_TAX",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "General Department of Taxation — taxpayer lookup",
+    "source_type": "official_tax",
+    "organization": "Tổng cục Thuế (General Department of Taxation)",
+    "source_url": "https://tracuunnt.gdt.gov.vn/tcnnt/mstdn.jsp",
+    "license": "restricted/unclear",
+    "access": "public (CAPTCHA-gated)",
+    "data_freshness": "real-time",
+    "attribution": "General Department of Taxation"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://tracuunnt.gdt.gov.vn/tcnnt/mstdn.jsp",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "CAPTCHA"
+  },
+  "snapshot": { "strategy": "per_company_lookup_only", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "GdtTaxpayer",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "CAPTCHA-gated per-company lookup; no bulk/API. Do not bypass the CAPTCHA. Tax code = NBRP enterprise code."
+  },
+  "keys": { "primary_keys": ["ma_so_thue"], "join_keys": ["ma_so_thue"], "dedupe_keys": ["ma_so_thue"] },
+  "mapping_rules": {
+    "tax_id": "Use ma_so_thue (= enterprise code).",
+    "status": "Confirm via tinh_trang (tax status).",
+    "join": "ma_so_thue == nbrp_search.ma_so_doanh_nghiep."
+  },
+  "fixture_requirements": ["documented-only: active taxpayer", "documented-only: closed taxpayer"],
+  "live_test_plan": {
+    "smoke": "Not applicable — CAPTCHA-gated; manual per-company lookup.",
+    "full": "Not applicable for bulk."
+  },
+  "blockers": ["CAPTCHA-gated; no open API/bulk.", "No open re-use licence."]
+}

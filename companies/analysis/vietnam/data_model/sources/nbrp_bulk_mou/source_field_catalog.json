@@ -1,0 +1,20 @@
+{
+  "country": "Vietnam",
+  "country_slug": "vietnam",
+  "source_slug": "nbrp_bulk_mou",
+  "source_name": "NBRP bulk business-registration database (paid MOU)",
+  "source_type": "official_registry",
+  "organization": "Business Registration Support Centre, MPI",
+  "source_url": "https://dangkykinhdoanh.gov.vn/",
+  "license": "paid / contract (MOU)",
+  "access": "paid",
+  "data_freshness": "periodic",
+  "record_shape": "paid_bulk_planning_only",
+  "primary_keys": ["ma_so_doanh_nghiep"],
+  "join_keys": ["ma_so_doanh_nghiep"],
+  "field_count": 2,
+  "fields": [
+    { "path": "company_master", "source_field": "company master fields", "english_name": "company_master", "meaning": "Full register master (name, enterprise code, address, legal form, status, business lines, legal representative) for the whole population.", "data_type": "object", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Vietnamese", "limitations": "PLANNING-ONLY; paid MOU. The realistic route to full coverage.", "source_confidence": "low", "analysis_notes": "Same fields as nbrp_search but bulk." },
+    { "path": "changes_feed", "source_field": "registration changes", "english_name": "changes_feed", "meaning": "New registrations / amendments feed.", "data_type": "array", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Vietnamese", "limitations": "PLANNING-ONLY; paid.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "country": "Vietnam",
+  "country_slug": "vietnam",
+  "source_slug": "hose_hnx_ssc_disclosure",
+  "source_name": "HOSE / HNX / SSC — listed-company disclosure & financials",
+  "source_type": "stock_exchange",
+  "organization": "Ho Chi Minh Stock Exchange (HOSE), Hanoi Stock Exchange (HNX), State Securities Commission (SSC)",
+  "source_url": "https://congbothongtin.ssc.gov.vn/",
+  "license": "issuer disclosure (open to view)",
+  "access": "public (per-issuer)",
+  "data_freshness": "annual/quarterly",
+  "record_shape": "per_issuer_disclosure_documents",
+  "primary_keys": ["ma_so_thue", "ticker"],
+  "join_keys": ["ma_so_thue"],
+  "field_count": 5,
+  "fields": [
+    { "path": "ticker", "source_field": "mã chứng khoán", "english_name": "ticker", "meaning": "Stock ticker on HOSE/HNX/UPCoM.", "data_type": "string", "semantic_type": "identifier", "example_values": ["VNM", "VIC", "FPT"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Listed issuers only.", "source_confidence": "medium", "analysis_notes": "Map to the enterprise code/tax code by issuer." },
+    { "path": "bang_can_doi_ke_toan", "source_field": "Bảng cân đối kế toán", "english_name": "balance_sheet", "meaning": "Balance sheet (assets, equity, liabilities).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "VAS (Vietnamese Accounting Standards)", "language": "Vietnamese", "limitations": "Listed only; VND; PDF/XLS.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "ket_qua_kinh_doanh", "source_field": "Kết quả hoạt động kinh doanh", "english_name": "income_statement", "meaning": "Income statement (revenue, profit).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "VAS", "language": "Vietnamese", "limitations": "Listed only; VND.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "luu_chuyen_tien_te", "source_field": "Lưu chuyển tiền tệ", "english_name": "cash_flow", "meaning": "Cash flow statement.", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "VAS", "language": "Vietnamese", "limitations": "Listed only; VND.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "bao_cao_thuong_nien", "source_field": "Báo cáo thường niên / công bố thông tin", "english_name": "annual_report_disclosures", "meaning": "Annual report + periodic/extraordinary disclosures.", "data_type": "array", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Vietnamese", "limitations": "Listed only.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

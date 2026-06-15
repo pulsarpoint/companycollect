@@ -1,0 +1,20 @@
+{
+  "country": "Vietnam",
+  "country_slug": "vietnam",
+  "source_slug": "vn_aggregators",
+  "source_name": "Commercial aggregators (masothue.com, infodoanhnghiep.com; vietstock/cafef/fireant)",
+  "source_type": "aggregator",
+  "organization": "Various private vendors",
+  "source_url": "https://masothue.com/",
+  "license": "restricted / vendor terms",
+  "access": "public (search) / paid (bulk/API)",
+  "data_freshness": "varies",
+  "record_shape": "aggregator_planning_only",
+  "primary_keys": ["ma_so_thue"],
+  "join_keys": ["ma_so_thue"],
+  "field_count": 2,
+  "fields": [
+    { "path": "company_identity", "source_field": "identity (from NBRP)", "english_name": "company_identity", "meaning": "Company identity repackaged from the NBRP register.", "data_type": "object", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Vietnamese", "limitations": "PLANNING-ONLY; license-uncertain (scraped).", "source_confidence": "low", "analysis_notes": "Convenience over the gated NBRP; verify against official." },
+    { "path": "listed_financials", "source_field": "financials (from HOSE/HNX)", "english_name": "listed_financials", "meaning": "Listed-company financial time series (vietstock/cafef/fireant).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Vietnamese", "limitations": "PLANNING-ONLY; vendor terms; listed only.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

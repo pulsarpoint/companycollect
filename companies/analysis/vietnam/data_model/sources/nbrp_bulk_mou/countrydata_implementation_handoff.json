@@ -1,0 +1,61 @@
+{
+  "country": "Vietnam",
+  "country_slug": "vietnam",
+  "source_slug": "nbrp_bulk_mou",
+  "source_identity": "vietnam_nbrp_bulk_mou",
+  "source_package": "nbrpbulk",
+  "env_prefix": "NBRP_BULK",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "NBRP bulk business-registration database (paid MOU)",
+    "source_type": "official_registry",
+    "organization": "Business Registration Support Centre, MPI",
+    "source_url": "https://dangkykinhdoanh.gov.vn/",
+    "license": "paid / contract (MOU)",
+    "access": "paid",
+    "data_freshness": "periodic",
+    "attribution": "National Business Registration Database (MPI)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["NBRP_MOU_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": null,
+    "download_url": null,
+    "http_method": null,
+    "headers_required": [],
+    "formats": ["unknown"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per contract"
+  },
+  "snapshot": { "strategy": "not_applicable_paid", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "NbrpBulkRecord",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Paid MOU; transport/format defined by the agreement. No transport implemented."
+  },
+  "keys": { "primary_keys": ["ma_so_doanh_nghiep"], "join_keys": ["ma_so_doanh_nghiep"], "dedupe_keys": ["ma_so_doanh_nghiep"] },
+  "mapping_rules": {
+    "company_master": "Planning-only: full register master keyed on enterprise code (= tax code). Redact legal-representative PII."
+  },
+  "fixture_requirements": ["planning-only: synthetic bulk register record"],
+  "live_test_plan": {
+    "smoke": "Not applicable — paid MOU.",
+    "full": "Not applicable without an MOU contract."
+  },
+  "blockers": [
+    "Bulk access requires a paid MOU with the agency.",
+    "Transport/format/license defined by the contract.",
+    "Legal-representative names are personal data — redact."
+  ]
+}

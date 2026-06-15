@@ -1,0 +1,63 @@
+{
+  "country": "Vietnam",
+  "country_slug": "vietnam",
+  "source_slug": "nbrp_search",
+  "source_identity": "vietnam_nbrp_search",
+  "source_package": "nbrpsearch",
+  "env_prefix": "NBRP_SEARCH",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "National Business Registration Portal (NBRP) — per-company search",
+    "source_type": "official_registry",
+    "organization": "Business Registration Authority, MPI",
+    "source_url": "https://dangkykinhdoanh.gov.vn/",
+    "license": "restricted/unclear",
+    "access": "public (CAPTCHA-gated)",
+    "data_freshness": "real-time",
+    "attribution": "National Business Registration Portal (MPI)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://dangkykinhdoanh.gov.vn/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Accept-Language: vi"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "CAPTCHA on submit"
+  },
+  "snapshot": { "strategy": "per_company_lookup_only_no_bulk", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "NbrpCompany",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "CAPTCHA-gated per-company search; no open API/bulk. Do NOT bypass the CAPTCHA or scrape. Enterprise code = tax code. Redact legal-representative names."
+  },
+  "keys": { "primary_keys": ["ma_so_doanh_nghiep"], "join_keys": ["ma_so_doanh_nghiep"], "dedupe_keys": ["ma_so_doanh_nghiep"] },
+  "mapping_rules": {
+    "company_id": "Use ma_so_doanh_nghiep (= tax code).",
+    "legal_name": "Use ten_doanh_nghiep.",
+    "legal_form": "Use loai_hinh.",
+    "status": "Map tinh_trang: Đang hoạt động->active, Tạm ngừng->suspended, Đã giải thể->dissolved.",
+    "registered_address": "Use dia_chi_tru_so.",
+    "activity_code": "Use nganh_nghe (VSIC).",
+    "officers": "legal representative only (nguoi_dai_dien; redact PII)."
+  },
+  "fixture_requirements": ["documented-only: active LLC (TNHH)", "documented-only: dissolved company", "documented-only: joint-stock (CP)"],
+  "live_test_plan": {
+    "smoke": "Not applicable — CAPTCHA-gated; per-company manual lookup only.",
+    "full": "Not applicable for bulk — use the paid MOU (nbrp_bulk_mou)."
+  },
+  "blockers": [
+    "Per-company search is CAPTCHA-gated; no open API or bulk download.",
+    "No open re-use licence; bulk only via paid MOU.",
+    "Legal-representative name is personal data — redact."
+  ]
+}
