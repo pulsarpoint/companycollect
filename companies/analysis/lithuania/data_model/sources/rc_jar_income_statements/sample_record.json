@@ -1,0 +1,23 @@
+{
+  "_id": "0000007c-bdbc-4936-996a-d426ef3e4896",
+  "juridinis_asmuo": {
+    "_id": "85f86af4-907f-4593-af9a-7ed725a9c85e"
+  },
+  "forma": {
+    "_id": "5c444113-5081-4d88-b94d-782c0779bb89"
+  },
+  "statusas": {
+    "_id": "5ef6b364-a5ff-47fb-8600-ff859214ef85"
+  },
+  "template_id": "FS0128",
+  "template_name": "Labai mažų įmonių, taikančių išimtis, finansinių ataskaitų rinkinys",
+  "standard_id": "IST023",
+  "standard_name": "PELNO (NUOSTOLIŲ) ATASKAITA (Trumpa)",
+  "line_type_id": "ISLT00345",
+  "line_name": "PARDAVIMO PAJAMOS",
+  "reiksme": 58708,
+  "laikotarpis_nuo": "2021-01-01",
+  "laikotarpis_iki": "2021-12-31",
+  "reg_date": "2022-05-27",
+  "_comment": "Real P&L line item from RC JAR PelnoAtaskaita via the keyless data.gov.lt Spinta API (CC-BY). One row per account line; EUR; join juridinis_asmuo._id -> JuridinisAsmuo."
+}

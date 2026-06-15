@@ -1,0 +1,27 @@
+{
+  "country": "Lithuania",
+  "country_slug": "lithuania",
+  "source_slug": "rc_jar_income_statements",
+  "source_name": "Registrų centras JAR — Profit & loss (PelnoAtaskaita)",
+  "source_type": "financial_statements",
+  "organization": "Registrų centras via data.gov.lt",
+  "source_url": "https://get.data.gov.lt/datasets/gov/rc/jar/pelno_ataskaitos/PelnoAtaskaita",
+  "license": "cc_by_4_0",
+  "access": "public",
+  "data_freshness": "annual filings (regularly updated)",
+  "record_shape": "spinta_json_rows_one_per_income_statement_line_item",
+  "primary_keys": ["_id"],
+  "join_keys": ["juridinis_asmuo._id"],
+  "field_count": 9,
+  "fields": [
+    { "path": "juridinis_asmuo._id", "source_field": "juridinis_asmuo", "english_name": "company_ref", "meaning": "Reference to the legal entity the statement belongs to.", "data_type": "string", "semantic_type": "identifier", "example_values": ["85f86af4-907f-4593-af9a-7ed725a9c85e"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "UUID; resolve to ja_kodas via JuridinisAsmuo._id.", "source_confidence": "high", "analysis_notes": "Join key to the company." },
+    { "path": "template_id", "source_field": "template_id", "english_name": "template_id", "meaning": "Statement-set template id.", "data_type": "string", "semantic_type": "metadata", "example_values": ["FS0128"], "nullable": true, "repeatable": false, "code_list": "RC statement-set templates", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "template_name", "source_field": "template_name", "english_name": "template_name", "meaning": "Template name.", "data_type": "string", "semantic_type": "metadata", "example_values": ["Labai mažų įmonių, taikančių išimtis, finansinių ataskaitų rinkinys"], "nullable": true, "repeatable": false, "code_list": null, "language": "Lithuanian", "limitations": null, "source_confidence": "high", "analysis_notes": "Micro-entity statement set in this example." },
+    { "path": "standard_id", "source_field": "standard_id", "english_name": "standard_id", "meaning": "Statement standard id.", "data_type": "string", "semantic_type": "metadata", "example_values": ["IST023"], "nullable": true, "repeatable": false, "code_list": "RC statement standards", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "standard_name", "source_field": "standard_name", "english_name": "standard_name", "meaning": "Statement standard name.", "data_type": "string", "semantic_type": "metadata", "example_values": ["PELNO (NUOSTOLIŲ) ATASKAITA (Trumpa)"], "nullable": true, "repeatable": false, "code_list": null, "language": "Lithuanian", "limitations": null, "source_confidence": "high", "analysis_notes": "PELNO (NUOSTOLIŲ) ATASKAITA = profit & loss (Trumpa = short)." },
+    { "path": "line_type_id", "source_field": "line_type_id", "english_name": "line_type_id", "meaning": "P&L line-item code.", "data_type": "string", "semantic_type": "financial", "example_values": ["ISLT00345"], "nullable": false, "repeatable": false, "code_list": "RC income-statement line types", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "line_name", "source_field": "line_name", "english_name": "line_name", "meaning": "P&L line-item name.", "data_type": "string", "semantic_type": "financial", "example_values": ["PARDAVIMO PAJAMOS"], "nullable": false, "repeatable": false, "code_list": null, "language": "Lithuanian", "limitations": null, "source_confidence": "high", "analysis_notes": "e.g. PARDAVIMO PAJAMOS = sales revenue." },
+    { "path": "reiksme", "source_field": "reiksme", "english_name": "value", "meaning": "Line-item value in EUR.", "data_type": "decimal", "semantic_type": "financial", "example_values": ["58708"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency EUR.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "laikotarpis_nuo|iki", "source_field": "laikotarpis_nuo / laikotarpis_iki", "english_name": "period_from_to", "meaning": "Reporting period start / end.", "data_type": "date", "semantic_type": "date", "example_values": ["2021-01-01", "2021-12-31"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "reg_date = filing-registration date." }
+  ]
+}

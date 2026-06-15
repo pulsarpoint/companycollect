@@ -1,0 +1,71 @@
+{
+  "country": "Lithuania",
+  "country_slug": "lithuania",
+  "source_slug": "rc_jar_balance_sheets",
+  "source_identity": "lithuania_rc_jar_balance_sheets",
+  "source_package": "rcjarbalance",
+  "env_prefix": "RC_JAR_BALANCE",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Registrų centras JAR — Balance sheets (BalansoAtaskaita)",
+    "source_type": "financial_statements",
+    "organization": "Registrų centras via data.gov.lt",
+    "source_url": "https://get.data.gov.lt/datasets/gov/rc/jar/balanso_ataskaitos/BalansoAtaskaita",
+    "license": "cc_by_4_0",
+    "access": "public",
+    "data_freshness": "annual filings (regularly updated)",
+    "attribution": "Registrų centras / data.gov.lt (CC-BY 4.0)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://get.data.gov.lt/datasets/gov/rc/jar/balanso_ataskaitos/BalansoAtaskaita",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "_data",
+    "total_results_path": null,
+    "pagination": { "type": "cursor", "page_param": "page", "page_start": null, "page_size": 1000, "page_size_param": "limit", "next_page_path": "_page.next" },
+    "rate_limit": "no key; pace requests"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_line_item_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "JarBalansoAtaskaita",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["eur_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "One row per balance-sheet line item. Group by juridinis_asmuo._id + period (laikotarpis_nuo/iki) and pivot on line_type_id/line_name to assemble a statement. reiksme is EUR. Resolve juridinis_asmuo._id -> JuridinisAsmuo._id -> ja_kodas. Available lines vary by template/standard (full/abbreviated/micro)."
+  },
+  "keys": {
+    "primary_keys": ["_id"],
+    "join_keys": ["juridinis_asmuo._id"],
+    "dedupe_keys": ["juridinis_asmuo._id", "laikotarpis_iki", "line_type_id"]
+  },
+  "mapping_rules": {
+    "financials": "Aggregate line items into financial_statements[] entries keyed by period; line_name/line_type_id -> account, reiksme -> amount (EUR).",
+    "join": "juridinis_asmuo._id -> JuridinisAsmuo._id -> ja_kodas (company code)."
+  },
+  "fixture_requirements": [
+    "abbreviated balance-sheet line (e.g. TRUMPALAIKIS TURTAS)",
+    "full balance-sheet line",
+    "micro/small-partnership statement-set line",
+    "multiple periods for one company"
+  ],
+  "live_test_plan": {
+    "smoke": "GET BalansoAtaskaita?limit(20); group by company + period; pivot lines.",
+    "full": "Page the model via _page.next; assemble per-company balance sheets; join to JuridinisAsmuo. Gate behind env."
+  },
+  "blockers": []
+}

@@ -1,0 +1,23 @@
+{
+  "_id": "0000008d-9f63-4ba0-a51e-d0c4b36d36d2",
+  "juridinis_asmuo": {
+    "_id": "6e956d29-80d7-4f20-8722-145e9a701155"
+  },
+  "forma": {
+    "_id": "cc5df44f-de10-47c4-a2b7-36191f606f26"
+  },
+  "statusas": {
+    "_id": "5ef6b364-a5ff-47fb-8600-ff859214ef85"
+  },
+  "template_id": "FS0422",
+  "template_name": "Mažųjų bendrijų finansinių ataskaitų rinkinys",
+  "standard_id": "BST124",
+  "standard_name": "BALANSAS (Sutrumpintas)",
+  "line_type_id": "BSLT00021",
+  "line_name": "TRUMPALAIKIS TURTAS",
+  "reiksme": 13532,
+  "laikotarpis_nuo": "2023-01-01",
+  "laikotarpis_iki": "2023-12-31",
+  "reg_date": "2024-04-26",
+  "_comment": "Real balance-sheet line item from RC JAR BalansoAtaskaita via the keyless data.gov.lt Spinta API (CC-BY). One row per account line; EUR; join juridinis_asmuo._id -> JuridinisAsmuo."
+}

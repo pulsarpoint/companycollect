@@ -1,0 +1,27 @@
+{
+  "country": "Lithuania",
+  "country_slug": "lithuania",
+  "source_slug": "rc_jar_legal_entities",
+  "source_name": "Registrų centras JAR — Register of Legal Entities (JuridinisAsmuo)",
+  "source_type": "official_registry",
+  "organization": "Registrų centras (Centre of Registers) via data.gov.lt",
+  "source_url": "https://get.data.gov.lt/datasets/gov/rc/jar/iregistruoti/JuridinisAsmuo",
+  "license": "cc_by_4_0",
+  "access": "public",
+  "data_freshness": "regularly updated (live register feed)",
+  "record_shape": "spinta_json_rows_one_per_legal_entity",
+  "primary_keys": ["ja_kodas"],
+  "join_keys": ["ja_kodas", "_id"],
+  "field_count": 9,
+  "fields": [
+    { "path": "ja_kodas", "source_field": "ja_kodas", "english_name": "company_code", "meaning": "Company code (įmonės kodas / juridinio asmens kodas), 9-digit. Company id, legal-entity taxpayer code, and universal join key.", "data_type": "integer", "semantic_type": "identifier", "example_values": ["110000291", "110000334"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Returned as an integer; store as string to preserve any leading characters in joins.", "source_confidence": "high", "analysis_notes": "Primary business key across all JAR models." },
+    { "path": "ja_pavadinimas", "source_field": "ja_pavadinimas", "english_name": "legal_name", "meaning": "Registered legal name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Bendra Lietuvos - Jungtinių Amerikos Valstijų įmonė uždaroji akcinė bendrovė \"STT Inc.\""], "nullable": false, "repeatable": false, "code_list": null, "language": "Lithuanian", "limitations": "Embeds the legal-form phrase (e.g. uždaroji akcinė bendrovė).", "source_confidence": "high", "analysis_notes": "Primary display name." },
+    { "path": "pilnas_adresas", "source_field": "pilnas_adresas", "english_name": "full_address", "meaning": "Full registered address (inline).", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Lithuanian", "limitations": "Often null on this model; addresses are in the Buveine model.", "source_confidence": "medium", "analysis_notes": "Prefer Buveine for current address." },
+    { "path": "adresas", "source_field": "adresas", "english_name": "address", "meaning": "Address (inline, short).", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Lithuanian", "limitations": "Often null; see Buveine.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "reg_data", "source_field": "reg_data", "english_name": "registration_date", "meaning": "Date the entity was registered.", "data_type": "date", "semantic_type": "date", "example_values": ["1991-03-11"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Incorporation date." },
+    { "path": "isreg_data", "source_field": "isreg_data", "english_name": "deregistration_date", "meaning": "Date the entity was deregistered (null if active).", "data_type": "date", "semantic_type": "date", "example_values": ["2002-03-22"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Presence implies the entity is removed/deregistered." },
+    { "path": "forma._id", "source_field": "forma", "english_name": "legal_form_ref", "meaning": "Reference to the legal-form code (Forma model).", "data_type": "string", "semantic_type": "legal_form", "example_values": ["5c444113-5081-4d88-b94d-782c0779bb89"], "nullable": true, "repeatable": false, "code_list": "datasets/gov/rc/jar/formos_statusai/Forma (168 forms; kodas + LT pavadinimas + EN name)", "language": "n/a", "limitations": "A UUID reference; resolve against Forma.", "source_confidence": "high", "analysis_notes": "Join forma._id -> Forma._id to get kodas/name." },
+    { "path": "statusas._id", "source_field": "statusas", "english_name": "status_ref", "meaning": "Reference to the legal-status code (Statusas model).", "data_type": "string", "semantic_type": "status", "example_values": ["5bcfd61f-7810-4946-9bd3-6de946b56f18"], "nullable": true, "repeatable": false, "code_list": "datasets/gov/rc/jar/formos_statusai/Statusas (31 statuses; 0 not registered..6 bankrupt..10 removed..11 liquidated)", "language": "n/a", "limitations": "A UUID reference; resolve against Statusas.", "source_confidence": "high", "analysis_notes": "Join statusas._id -> Statusas._id to get kodas/pavadinimas/name." },
+    { "path": "stat_data", "source_field": "stat_data", "english_name": "status_date", "meaning": "Date the current legal status took effect.", "data_type": "date", "semantic_type": "date", "example_values": ["2002-03-22"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null }
+  ]
+}

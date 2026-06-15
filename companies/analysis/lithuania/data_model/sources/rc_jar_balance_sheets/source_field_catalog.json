@@ -1,0 +1,29 @@
+{
+  "country": "Lithuania",
+  "country_slug": "lithuania",
+  "source_slug": "rc_jar_balance_sheets",
+  "source_name": "Registrų centras JAR — Balance sheets (BalansoAtaskaita)",
+  "source_type": "financial_statements",
+  "organization": "Registrų centras via data.gov.lt",
+  "source_url": "https://get.data.gov.lt/datasets/gov/rc/jar/balanso_ataskaitos/BalansoAtaskaita",
+  "license": "cc_by_4_0",
+  "access": "public",
+  "data_freshness": "annual filings (regularly updated)",
+  "record_shape": "spinta_json_rows_one_per_balance_sheet_line_item",
+  "primary_keys": ["_id"],
+  "join_keys": ["juridinis_asmuo._id"],
+  "field_count": 11,
+  "fields": [
+    { "path": "juridinis_asmuo._id", "source_field": "juridinis_asmuo", "english_name": "company_ref", "meaning": "Reference to the legal entity (JuridinisAsmuo) the statement belongs to.", "data_type": "string", "semantic_type": "identifier", "example_values": ["6e956d29-80d7-4f20-8722-145e9a701155"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "A UUID; resolve to ja_kodas via JuridinisAsmuo._id.", "source_confidence": "high", "analysis_notes": "Join key to the company." },
+    { "path": "forma._id", "source_field": "forma", "english_name": "form_ref", "meaning": "Reference to the statement form/code.", "data_type": "string", "semantic_type": "metadata", "example_values": ["cc5df44f-de10-47c4-a2b7-36191f606f26"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "statusas._id", "source_field": "statusas", "english_name": "status_ref", "meaning": "Reference to the statement status.", "data_type": "string", "semantic_type": "status", "example_values": ["5ef6b364-a5ff-47fb-8600-ff859214ef85"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "template_id", "source_field": "template_id", "english_name": "template_id", "meaning": "Financial-statement-set template id.", "data_type": "string", "semantic_type": "metadata", "example_values": ["FS0422"], "nullable": true, "repeatable": false, "code_list": "RC statement-set templates", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "template_name", "source_field": "template_name", "english_name": "template_name", "meaning": "Template name (statement set).", "data_type": "string", "semantic_type": "metadata", "example_values": ["Mažųjų bendrijų finansinių ataskaitų rinkinys"], "nullable": true, "repeatable": false, "code_list": null, "language": "Lithuanian", "limitations": null, "source_confidence": "high", "analysis_notes": "Indicates the reporting regime (small-partnership/micro/etc.)." },
+    { "path": "standard_id", "source_field": "standard_id", "english_name": "standard_id", "meaning": "Statement standard id.", "data_type": "string", "semantic_type": "metadata", "example_values": ["BST124"], "nullable": true, "repeatable": false, "code_list": "RC statement standards", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "standard_name", "source_field": "standard_name", "english_name": "standard_name", "meaning": "Statement standard name.", "data_type": "string", "semantic_type": "metadata", "example_values": ["BALANSAS (Sutrumpintas)"], "nullable": true, "repeatable": false, "code_list": null, "language": "Lithuanian", "limitations": null, "source_confidence": "high", "analysis_notes": "BALANSAS = balance sheet (Sutrumpintas = abbreviated)." },
+    { "path": "line_type_id", "source_field": "line_type_id", "english_name": "line_type_id", "meaning": "Balance-sheet line-item code.", "data_type": "string", "semantic_type": "financial", "example_values": ["BSLT00021"], "nullable": false, "repeatable": false, "code_list": "RC balance-sheet line types", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Stable code for the account line." },
+    { "path": "line_name", "source_field": "line_name", "english_name": "line_name", "meaning": "Balance-sheet line-item name.", "data_type": "string", "semantic_type": "financial", "example_values": ["TRUMPALAIKIS TURTAS"], "nullable": false, "repeatable": false, "code_list": null, "language": "Lithuanian", "limitations": null, "source_confidence": "high", "analysis_notes": "e.g. TRUMPALAIKIS TURTAS = current assets." },
+    { "path": "reiksme", "source_field": "reiksme", "english_name": "value", "meaning": "Line-item value in EUR.", "data_type": "decimal", "semantic_type": "financial", "example_values": ["13532"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency EUR; integer/decimal.", "source_confidence": "high", "analysis_notes": "The reported amount." },
+    { "path": "laikotarpis_nuo|iki", "source_field": "laikotarpis_nuo / laikotarpis_iki", "english_name": "period_from_to", "meaning": "Reporting period start / end.", "data_type": "date", "semantic_type": "date", "example_values": ["2023-01-01", "2023-12-31"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Fiscal period; reg_date is the filing-registration date." }
+  ]
+}

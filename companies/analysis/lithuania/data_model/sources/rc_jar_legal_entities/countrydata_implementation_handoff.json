@@ -1,0 +1,81 @@
+{
+  "country": "Lithuania",
+  "country_slug": "lithuania",
+  "source_slug": "rc_jar_legal_entities",
+  "source_identity": "lithuania_rc_jar_legal_entities",
+  "source_package": "rcjarentities",
+  "env_prefix": "RC_JAR_ENTITIES",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Registrų centras JAR — Register of Legal Entities (JuridinisAsmuo)",
+    "source_type": "official_registry",
+    "organization": "Registrų centras via data.gov.lt",
+    "source_url": "https://get.data.gov.lt/datasets/gov/rc/jar/iregistruoti/JuridinisAsmuo",
+    "license": "cc_by_4_0",
+    "access": "public",
+    "data_freshness": "regularly updated (live register feed)",
+    "attribution": "Registrų centras / data.gov.lt (CC-BY 4.0)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://get.data.gov.lt/datasets/gov/rc/jar/iregistruoti/JuridinisAsmuo",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "_data",
+    "total_results_path": null,
+    "pagination": { "type": "cursor", "page_param": "page", "page_start": null, "page_size": 1000, "page_size_param": "limit", "next_page_path": "_page.next" },
+    "rate_limit": "no key; pace requests (transient curl 000 on rapid bursts)"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "JarJuridinisAsmuo",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Spinta API. Rows under _data[]; cursor pagination via _page.next (append &page('<cursor>')) or use ?limit(N). Resolve forma._id -> formos_statusai/Forma and statusas._id -> formos_statusai/Statusas (fetch the two code lists once and cache). Store ja_kodas as a string. Addresses are usually null here — join the Buveine model (gov/rc/jar/buveines/Buveine) on juridinis_asmuo."
+  },
+  "keys": {
+    "primary_keys": ["ja_kodas"],
+    "join_keys": ["ja_kodas", "_id"],
+    "dedupe_keys": ["ja_kodas"]
+  },
+  "mapping_rules": {
+    "company_id": "ja_kodas (9-digit).",
+    "registration_number": "ja_kodas.",
+    "tax_id": "ja_kodas (legal-entity taxpayer code).",
+    "vat_id": "null — PVM kodas not in JAR; via EU VIES.",
+    "legal_name": "ja_pavadinimas.",
+    "legal_form": "resolve forma._id -> Forma (kodas + LT/EN name).",
+    "status": "resolve statusas._id -> Statusas; isreg_data present => deregistered.",
+    "incorporation_date": "reg_data.",
+    "dissolution_date": "isreg_data.",
+    "registered_address": "Buveine.adresas (join on company)."
+  },
+  "fixture_requirements": [
+    "active entity (no isreg_data)",
+    "deregistered entity (isreg_data present)",
+    "entity referencing a bankrupt/liquidated status",
+    "Forma code-list row (kodas + LT + EN)",
+    "Statusas code-list row (kodas + LT + EN)",
+    "Buveine address row"
+  ],
+  "live_test_plan": {
+    "smoke": "GET JuridinisAsmuo?limit(10); fetch Forma + Statusas; resolve refs for the 10 rows.",
+    "full": "Page the full model via _page.next; join Buveine for addresses; cache the two code lists. Gate behind env; pace requests."
+  },
+  "blockers": []
+}

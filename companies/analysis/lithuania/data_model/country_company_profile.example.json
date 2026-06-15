@@ -1,0 +1,83 @@
+{
+  "country": "Lithuania",
+  "country_slug": "lithuania",
+  "country_profile_version": "2026-06-16",
+  "_note": "Identity (registration/legal_identity/status/incorporation) is REAL data from the RC JAR JuridinisAsmuo model via the keyless data.gov.lt Spinta API (CC-BY); company code 110000291. legal_form/status codes are illustrative resolutions of the real forma/statusas _id refs (resolve against Forma/Statusas at ingest). financial_statements show the real shape (one balance-sheet line + one P&L line actually observed, though from other companies) — EUR, aggregated per period. officers (valdymo_organai) are personal data (GDPR) and left empty/redacted.",
+  "registration": {
+    "company_code": "110000291"
+  },
+  "tax_identifiers": {
+    "tax_id": "110000291",
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "Bendra Lietuvos - Jungtinių Amerikos Valstijų įmonė uždaroji akcinė bendrovė \"STT Inc.\"",
+    "legal_form": {
+      "code": null,
+      "name_lt": "(resolve forma._id 5c444113-… -> Forma)",
+      "name_en": "(resolve -> Forma.name)"
+    }
+  },
+  "status": {
+    "status": {
+      "code": 10,
+      "name_lt": "Išregistruotas",
+      "name_en": "Removed"
+    },
+    "status_date": "2002-03-22"
+  },
+  "incorporation": {
+    "registration_date": "1991-03-11",
+    "deregistration_date": "2002-03-22"
+  },
+  "registered_location": {
+    "registered_address": null
+  },
+  "financial_statements": [
+    {
+      "period_from": "2023-01-01",
+      "period_to": "2023-12-31",
+      "standard_name": "BALANSAS (Sutrumpintas)",
+      "currency": "EUR",
+      "lines": [
+        { "statement": "balance_sheet", "line_type_id": "BSLT00021", "line_name": "TRUMPALAIKIS TURTAS", "value": 13532 }
+      ]
+    },
+    {
+      "period_from": "2021-01-01",
+      "period_to": "2021-12-31",
+      "standard_name": "PELNO (NUOSTOLIŲ) ATASKAITA (Trumpa)",
+      "currency": "EUR",
+      "lines": [
+        { "statement": "income_statement", "line_type_id": "ISLT00345", "line_name": "PARDAVIMO PAJAMOS", "value": 58708 }
+      ]
+    }
+  ],
+  "officers": [],
+  "source_provenance": [
+    {
+      "source_slug": "rc_jar_legal_entities",
+      "section": "registration / tax_identifiers / legal_identity / status / incorporation",
+      "source_url": "https://get.data.gov.lt/datasets/gov/rc/jar/iregistruoti/JuridinisAsmuo",
+      "access": "public (no key)",
+      "license": "cc_by_4_0",
+      "retrieved_at": "2026-06-16T00:00:00Z"
+    },
+    {
+      "source_slug": "rc_jar_balance_sheets",
+      "section": "financial_statements (balance sheet)",
+      "source_url": "https://get.data.gov.lt/datasets/gov/rc/jar/balanso_ataskaitos/BalansoAtaskaita",
+      "access": "public (no key)",
+      "license": "cc_by_4_0",
+      "retrieved_at": "2026-06-16T00:00:00Z"
+    },
+    {
+      "source_slug": "rc_jar_income_statements",
+      "section": "financial_statements (P&L)",
+      "source_url": "https://get.data.gov.lt/datasets/gov/rc/jar/pelno_ataskaitos/PelnoAtaskaita",
+      "access": "public (no key)",
+      "license": "cc_by_4_0",
+      "retrieved_at": "2026-06-16T00:00:00Z"
+    }
+  ]
+}

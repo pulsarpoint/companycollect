@@ -1,0 +1,17 @@
+{
+  "_id": "dd6289a2-fc6e-4708-85cd-7914bd3dc297",
+  "ja_kodas": 110000291,
+  "ja_pavadinimas": "Bendra Lietuvos - Jungtinių Amerikos Valstijų įmonė uždaroji akcinė bendrovė \"STT Inc.\"",
+  "pilnas_adresas": null,
+  "adresas": null,
+  "reg_data": "1991-03-11",
+  "isreg_data": "2002-03-22",
+  "forma": {
+    "_id": "5c444113-5081-4d88-b94d-782c0779bb89"
+  },
+  "statusas": {
+    "_id": "5bcfd61f-7810-4946-9bd3-6de946b56f18"
+  },
+  "stat_data": "2002-03-22",
+  "_comment": "Real record from RC JAR JuridinisAsmuo via the keyless data.gov.lt Spinta API (CC-BY). Company identity (not personal data). forma/statusas are _id refs into the Forma/Statusas code lists."
+}

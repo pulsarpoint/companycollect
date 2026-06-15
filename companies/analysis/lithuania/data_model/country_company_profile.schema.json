@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Lithuania Company Profile",
+  "description": "Country-specific company profile for Lithuania. Fully open: both the Register of Legal Entities (JAR) and financial statements are available with NO API key via the data.gov.lt Spinta REST API (Registrų centras). Keyed on the įmonės kodas / juridinio asmens kodas (company code, 9-digit), which is also the legal-entity taxpayer code. The VAT number (PVM kodas) is a separate registration (LT + digits), not in JAR — verify via EU VIES. Financial statements (balance sheet + P&L) are granular line items in EUR, aggregated per company + period. Directors (valdymo_organai) are personal data (GDPR) and excluded from the open identity layer here.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Lithuania" },
+    "country_slug": { "type": "string", "const": "lithuania" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["company_code"],
+      "properties": {
+        "company_code": {
+          "type": "string",
+          "description": "įmonės kodas / juridinio asmens kodas (9-digit). Company id, taxpayer code, universal join key.",
+          "x-source": "rc_jar_legal_entities",
+          "x-source-path": "ja_kodas",
+          "x-join-key": true,
+          "x-freshness": "live"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= company code (legal-entity taxpayer code).", "x-source": "rc_jar_legal_entities", "x-source-path": "ja_kodas" },
+        "vat_id": { "type": ["string", "null"], "description": "PVM kodas (LT + digits). Separate registration, not in JAR — via EU VIES.", "x-access": "not_available_in_open_register" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "rc_jar_legal_entities", "x-source-path": "ja_pavadinimas" },
+        "legal_form": {
+          "type": "object",
+          "description": "Resolved from forma._id -> Forma code list.",
+          "x-source": "rc_jar_legal_entities",
+          "x-source-path": "forma._id -> formos_statusai/Forma",
+          "properties": { "code": { "type": ["string", "null"] }, "name_lt": { "type": ["string", "null"] }, "name_en": { "type": ["string", "null"] } }
+        }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "object",
+          "description": "Resolved from statusas._id -> Statusas code list.",
+          "x-source": "rc_jar_legal_entities",
+          "x-source-path": "statusas._id -> formos_statusai/Statusas",
+          "properties": { "code": { "type": ["integer", "null"] }, "name_lt": { "type": ["string", "null"] }, "name_en": { "type": ["string", "null"] } }
+        },
+        "status_date": { "type": ["string", "null"], "format": "date", "x-source": "rc_jar_legal_entities", "x-source-path": "stat_data" }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "registration_date": { "type": ["string", "null"], "format": "date", "x-source": "rc_jar_legal_entities", "x-source-path": "reg_data" },
+        "deregistration_date": { "type": ["string", "null"], "format": "date", "x-source": "rc_jar_legal_entities", "x-source-path": "isreg_data" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "rc_jar_legal_entities", "x-source-path": "buveines/Buveine.adresas" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Open financial statements (balance sheet + P&L) aggregated per fiscal period from line items. Currency EUR.",
+      "x-source": "rc_jar_balance_sheets / rc_jar_income_statements",
+      "x-access": "open",
+      "items": {
+        "type": "object",
+        "properties": {
+          "period_from": { "type": ["string", "null"], "format": "date" },
+          "period_to": { "type": ["string", "null"], "format": "date" },
+          "standard_name": { "type": ["string", "null"], "description": "e.g. BALANSAS (Sutrumpintas) / PELNO (NUOSTOLIŲ) ATASKAITA." },
+          "currency": { "type": "string", "const": "EUR" },
+          "lines": {
+            "type": "array",
+            "items": { "type": "object", "properties": { "statement": { "type": ["string", "null"], "enum": ["balance_sheet", "income_statement", null] }, "line_type_id": { "type": ["string", "null"] }, "line_name": { "type": ["string", "null"] }, "value": { "type": ["number", "null"] } } }
+          }
+        }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Management bodies from gov/rc/jar/valdymo_organai. PERSONAL DATA (GDPR) — redact. Not populated in the open identity layer here.",
+      "x-source": "rc_jar_supplementary (valdymo_organai)",
+      "x-access": "open_but_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}
