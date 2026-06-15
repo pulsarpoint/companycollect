@@ -1,0 +1,31 @@
+[
+  {
+    "name": "Zefix LINDAS SPARQL — paged company export (POST query)",
+    "slug": "zefix_lindas_sparql",
+    "type": "api_page",
+    "url": "https://lindas.admin.ch/query",
+    "method": "POST",
+    "headers": {
+      "Accept": "application/sparql-results+json",
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    "page_param": "offset",
+    "page_start": 0,
+    "max_pages": 1,
+    "note": "Real ingestion sends a SPARQL SELECT with OFFSET/LIMIT paging; this generic downloader only illustrates the endpoint. See investigation.md for the query."
+  },
+  {
+    "name": "Zefix REST API — company by UID (Basic auth required)",
+    "slug": "zefix_rest_uid",
+    "type": "api_page",
+    "url": "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/company/uid/CHE-105.909.036",
+    "method": "GET",
+    "headers": {
+      "Accept": "application/json",
+      "Authorization": "Basic <base64 user:pass — request free Zefix credentials>"
+    },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1
+  }
+]
