@@ -1,0 +1,22 @@
+{
+  "country": "Canada",
+  "country_slug": "canada",
+  "source_slug": "corporations_canada_api",
+  "source_name": "Corporations Canada — real-time API (data services)",
+  "source_type": "official_registry",
+  "organization": "ISED — Corporations Canada",
+  "source_url": "https://ised-isde.canada.ca/site/corporations-canada/en/data-services",
+  "license": "Open Government Licence - Canada (OGL)",
+  "access": "public",
+  "data_freshness": "real-time",
+  "record_shape": "json_per_corporation_number",
+  "primary_keys": ["corporationNumber"],
+  "join_keys": ["corporationNumber", "businessNumber"],
+  "field_count": 4,
+  "fields": [
+    { "path": "directors[]", "source_field": "directors", "english_name": "directors", "meaning": "Director names + addresses (beyond the bulk CSV's counts).", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English/French", "limitations": "PERSONAL DATA — redact. The open route to director identities.", "source_confidence": "medium", "analysis_notes": "Officers; not in the bulk file." },
+    { "path": "status", "source_field": "status", "english_name": "status", "meaning": "Real-time corporation status.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "registeredOfficeAddress", "source_field": "registered office", "english_name": "registered_office", "meaning": "Current registered office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "corporateHistory[]", "source_field": "history / filings", "english_name": "corporate_history", "meaning": "Annual filings / name changes / amalgamations history.", "data_type": "array", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": null, "source_confidence": "low", "analysis_notes": null }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "country": "Canada",
+  "country_slug": "canada",
+  "source_slug": "provincial_registries",
+  "source_name": "Provincial corporate registries (Québec REQ, BC OrgBook, Ontario, Alberta, ...)",
+  "source_type": "official_registry",
+  "organization": "Provincial/territorial registrars (13 jurisdictions)",
+  "source_url": "https://www.orgbook.gov.bc.ca/",
+  "license": "varies by province",
+  "access": "mixed (some open, some paid)",
+  "data_freshness": "varies",
+  "record_shape": "per_province_registry_csv_json_html",
+  "primary_keys": ["provincial_registry_number"],
+  "join_keys": ["business_number", "name"],
+  "field_count": 4,
+  "fields": [
+    { "path": "registry_number", "source_field": "provincial registration number", "english_name": "provincial_registry_number", "meaning": "Provincial corporate registration id (NEQ in Québec, incorporation number in BC, etc.).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English/French", "limitations": "Province-scoped; varies by jurisdiction.", "source_confidence": "medium", "analysis_notes": "Québec NEQ (10-digit); BC incorporation no.; join via BN/name." },
+    { "path": "name", "source_field": "legal name", "english_name": "legal_name", "meaning": "Registered legal name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English/French", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "status_type", "source_field": "status / type", "english_name": "status_type", "meaning": "Status + legal form/type.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English/French", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "registered_office", "source_field": "registered office", "english_name": "registered_office", "meaning": "Registered office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English/French", "limitations": null, "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

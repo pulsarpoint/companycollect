@@ -1,0 +1,71 @@
+{
+  "country": "Canada",
+  "country_slug": "canada",
+  "source_slug": "corporations_canada_federal",
+  "source_identity": "canada_corporations_canada_federal",
+  "source_package": "cccorporations",
+  "env_prefix": "CC_FEDERAL",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Corporations Canada — Federal Corporations (open.canada.ca)",
+    "source_type": "official_registry",
+    "organization": "ISED — Corporations Canada",
+    "source_url": "https://open.canada.ca/data/en/dataset/0032ce54-c5dd-4b66-99a0-320a7b5e99f2",
+    "license": "Open Government Licence - Canada (OGL)",
+    "access": "public",
+    "data_freshness": "periodic",
+    "attribution": "Corporations Canada / Innovation, Science and Economic Development Canada (OGL)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://d4bf66bykfyaf.cloudfront.net/",
+    "download_url": "https://d4bf66bykfyaf.cloudfront.net/corporations-active-cbca-en.csv",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "utf-8-bom",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "none documented"
+  },
+  "snapshot": { "strategy": "csv_to_ndjson", "file_extension": ".csv", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "CcFederalCorporation",
+    "delimiter": ",",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "8 CSVs: active/inactive x CBCA/non-CBCA x EN/FR. Ingest active+inactive (EN), key on Corporation number. UTF-8 BOM. Resolve current resource URLs from the open.canada.ca dataset (CloudFront hosts). Federal corporations ONLY."
+  },
+  "keys": { "primary_keys": ["Corporation number"], "join_keys": ["Corporation number", "Business number (BN)"], "dedupe_keys": ["Corporation number"] },
+  "mapping_rules": {
+    "company_id": "Use Corporation number.",
+    "registration_number": "Use Corporation number.",
+    "tax_id": "Use Business number (BN).",
+    "vat_id": "Not available (GST/HST = BN + RT program account).",
+    "legal_name": "Use Corporate name - form 1 (fall back to form 2).",
+    "legal_form": "Use Governing legislation.",
+    "status": "Use Status (Active / Inactive / Dissolved).",
+    "incorporation_date": "Approximate from Anniversary date (exact via API).",
+    "registered_address": "Compose Street + Street 2 + City/town + Province + Postal code + Country."
+  },
+  "fixture_requirements": [
+    "active CBCA corporation with BN + full address (e.g. corp # 8660115)",
+    "non-CBCA entity (NFP / cooperative)",
+    "inactive/dissolved corporation",
+    "corporation with a blank BN"
+  ],
+  "live_test_plan": {
+    "smoke": "Stream first 1000 rows of the active CBCA CSV; assert 17 columns + Corporation number.",
+    "full": "Periodic: download active + inactive (EN) CSVs, stream to NDJSON keyed on Corporation number; add provincial sources for full coverage."
+  },
+  "blockers": [
+    "Covers federally-incorporated corporations only — provincial companies need provincial registries.",
+    "No NAICS / financials in this dataset; director names only via the API.",
+    "Director names (API) are personal data."
+  ]
+}

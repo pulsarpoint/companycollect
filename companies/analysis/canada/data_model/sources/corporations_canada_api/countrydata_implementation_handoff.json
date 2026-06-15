@@ -1,0 +1,60 @@
+{
+  "country": "Canada",
+  "country_slug": "canada",
+  "source_slug": "corporations_canada_api",
+  "source_identity": "canada_corporations_canada_api",
+  "source_package": "ccapi",
+  "env_prefix": "CC_API",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Corporations Canada — real-time API (data services)",
+    "source_type": "official_registry",
+    "organization": "ISED — Corporations Canada",
+    "source_url": "https://ised-isde.canada.ca/site/corporations-canada/en/data-services",
+    "license": "Open Government Licence - Canada (OGL)",
+    "access": "public",
+    "data_freshness": "real-time",
+    "attribution": "Corporations Canada (OGL)"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://ised-isde.canada.ca/cc/lgcy/api/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "fair use"
+  },
+  "snapshot": { "strategy": "per_corporation_enrichment", "file_extension": ".json", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "CcApiCorporation",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Documented. Per-corporation lookup by corporation number; adds directors + history. Confirm the exact endpoint path/shape from the data-services page before implementation. Redact director PII."
+  },
+  "keys": { "primary_keys": ["corporationNumber"], "join_keys": ["corporationNumber", "businessNumber"], "dedupe_keys": ["corporationNumber"] },
+  "mapping_rules": {
+    "officers": "directors[] (names — redact PII).",
+    "status": "Real-time status (overrides the periodic bulk).",
+    "documents": "corporateHistory[] filings.",
+    "join": "corporationNumber == corporations_canada_federal.Corporation number."
+  },
+  "fixture_requirements": ["documented-only: corporation with directors", "documented-only: amalgamation history"],
+  "live_test_plan": {
+    "smoke": "GET the API for a known corporation number; assert status + directors present.",
+    "full": "Per-corporation enrichment for director names/history at fair-use rates; redact PII."
+  },
+  "blockers": [
+    "Exact API endpoint/shape to confirm from the data-services page.",
+    "Director names are personal data (PIPEDA) — redact.",
+    "Federal corporations only."
+  ]
+}

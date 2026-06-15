@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Canada Company Profile",
+  "description": "Country-specific company profile for Canada. Canada has NO single national company register: incorporation is split between the FEDERAL level (Corporations Canada, CBCA) and 13 provinces/territories. The federal open dataset (Corporations Canada, open.canada.ca, OGL) is rich (corporation number, BN, name EN/FR, status, anniversary date, full registered address, director counts) but covers federally-incorporated corporations ONLY — provincial companies need provincial registries (Québec REQ, BC OrgBook open; others vary/paid). Identifiers: corporation number (federal id), Business Number / BN (CRA 9-digit tax id; the cross-source join key); no separate VAT (GST/HST = BN + RT). Financials are open only for reporting issuers via SEDAR+; private-company financials are not public. Director names (federal API / provincial) are personal data.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Canada" },
+    "country_slug": { "type": "string", "const": "canada" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["corporation_number"],
+      "properties": {
+        "corporation_number": {
+          "type": "string",
+          "description": "Federal corporation id (7-digit) from Corporations Canada. Primary key for federal corporations.",
+          "x-source": "corporations_canada_federal",
+          "x-source-path": "Corporation number",
+          "x-join-key": true,
+          "x-access": "public"
+        },
+        "business_number": {
+          "type": ["string", "null"],
+          "description": "CRA Business Number (9-digit); tax id and the cross-source join key (federal ↔ provincial ↔ SEDAR+).",
+          "x-source": "corporations_canada_federal",
+          "x-source-path": "Business number (BN)",
+          "x-join-key": true
+        },
+        "provincial_registry_number": {
+          "type": ["string", "null"],
+          "description": "Provincial registration id (e.g. Québec NEQ) for provincially-incorporated companies.",
+          "x-source": "provincial_registries",
+          "x-source-path": "registry_number"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= Business Number.", "x-source": "corporations_canada_federal", "x-source-path": "Business number (BN)" },
+        "vat_id": { "type": ["string", "null"], "description": "No separate VAT — GST/HST = BN + RT.", "x-access": "not_available" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "corporations_canada_federal", "x-source-path": "Corporate name - form 1" },
+        "legal_name_alt": { "type": ["string", "null"], "description": "Bilingual alternate name.", "x-source": "corporations_canada_federal", "x-source-path": "Corporate name - form 2" },
+        "governing_legislation": { "type": ["string", "null"], "description": "e.g. Canada Business Corporations Act.", "x-source": "corporations_canada_federal", "x-source-path": "Governing legislation" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status": { "type": ["string", "null"], "description": "Active / Inactive / Dissolved.", "x-source": "corporations_canada_federal", "x-source-path": "Status" }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "anniversary_date": { "type": ["string", "null"], "format": "date", "description": "≈ incorporation date; exact via API.", "x-source": "corporations_canada_federal", "x-source-path": "Anniversary date" },
+        "year_last_annual_filing": { "type": ["integer", "null"], "x-source": "corporations_canada_federal", "x-source-path": "Year of last annual filing" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "x-source": "corporations_canada_federal",
+      "properties": {
+        "street": { "type": ["string", "null"], "x-source-path": "Street" },
+        "city": { "type": ["string", "null"], "x-source-path": "City/town" },
+        "province": { "type": ["string", "null"], "x-source-path": "Province/territory" },
+        "postal_code": { "type": ["string", "null"], "x-source-path": "Postal code" },
+        "country": { "type": ["string", "null"], "x-source-path": "Country" }
+      }
+    },
+    "directors": {
+      "type": "object",
+      "properties": {
+        "min_directors": { "type": ["integer", "null"], "x-source": "corporations_canada_federal", "x-source-path": "Minimum number of directors" },
+        "max_directors": { "type": ["integer", "null"], "x-source": "corporations_canada_federal", "x-source-path": "Maximum number of directors" },
+        "director_list": {
+          "type": "array",
+          "description": "PLANNING-ONLY. Director names via the Corporations Canada API (federal) or provincial registries. PERSONAL DATA — redact.",
+          "x-source": "corporations_canada_api",
+          "x-access": "public_personal_data",
+          "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true } } }
+        }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Open only for REPORTING ISSUERS via SEDAR+ (public companies / funds); private-company financials are not public. CAD; IFRS/ASPE.",
+      "x-source": "sedar_plus",
+      "x-access": "reporting_issuers_only",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": "integer" },
+          "balance_sheet": { "type": ["object", "null"] },
+          "income_statement": { "type": ["object", "null"] },
+          "currency": { "type": "string", "const": "CAD" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

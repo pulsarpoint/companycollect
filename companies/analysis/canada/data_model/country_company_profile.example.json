@@ -1,0 +1,49 @@
+{
+  "country": "Canada",
+  "country_slug": "canada",
+  "country_profile_version": "2026-06-15",
+  "registration": {
+    "corporation_number": "8660115",
+    "business_number": "835752437",
+    "provincial_registry_number": null
+  },
+  "tax_identifiers": {
+    "tax_id": "835752437",
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "MINDANGLER CAPITAL INC.",
+    "legal_name_alt": null,
+    "governing_legislation": "Canada Business Corporations Act"
+  },
+  "status": {
+    "status": "Active"
+  },
+  "incorporation": {
+    "anniversary_date": "2013-10-10",
+    "year_last_annual_filing": 2025
+  },
+  "registered_location": {
+    "street": "515 Legget Drive, Suite 800",
+    "city": "Ottawa",
+    "province": "ON",
+    "postal_code": "K2K 3G4",
+    "country": "CA"
+  },
+  "directors": {
+    "min_directors": 1,
+    "max_directors": 12,
+    "director_list": [
+      { "name": "[PLANNING-ONLY — Corporations Canada API; personal data]" }
+    ]
+  },
+  "financial_statements": [
+    { "fiscal_year": 2024, "balance_sheet": null, "income_statement": null, "currency": "CAD" }
+  ],
+  "source_provenance": [
+    { "source_slug": "corporations_canada_federal", "section": "registration/tax_identifiers/legal_identity/status/incorporation/registered_location/directors(counts)", "source_url": "https://open.canada.ca/data/en/dataset/0032ce54-c5dd-4b66-99a0-320a7b5e99f2", "access": "public", "license": "OGL Canada", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "corporations_canada_api", "section": "directors.director_list", "source_url": "https://ised-isde.canada.ca/site/corporations-canada/en/data-services", "access": "public", "license": "OGL Canada", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "sedar_plus", "section": "financial_statements (reporting issuers only)", "source_url": "https://www.sedarplus.ca/", "access": "public (reporting issuers)", "license": "public disclosure", "retrieved_at": "2026-06-15T00:00:00Z" }
+  ],
+  "_note": "Real Corporations Canada federal record for MINDANGLER CAPITAL INC. (corp # 8660115, BN 835752437, Ottawa ON). Director names (API) and financials (SEDAR+, reporting issuers only) are planning-only/redacted; this private federal corporation has no public financials."
+}

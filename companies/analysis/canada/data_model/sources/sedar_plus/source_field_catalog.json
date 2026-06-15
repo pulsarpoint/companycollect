@@ -1,0 +1,22 @@
+{
+  "country": "Canada",
+  "country_slug": "canada",
+  "source_slug": "sedar_plus",
+  "source_name": "SEDAR+ — reporting-issuer filings & financial statements",
+  "source_type": "official_financial",
+  "organization": "Canadian Securities Administrators (CSA) — 13 provincial/territorial securities regulators",
+  "source_url": "https://www.sedarplus.ca/",
+  "license": "public disclosure (open to view)",
+  "access": "public (per-issuer search)",
+  "data_freshness": "annual/quarterly",
+  "record_shape": "per_issuer_filing_documents",
+  "primary_keys": ["issuer", "filing_date"],
+  "join_keys": ["business_number", "corporation_number", "name"],
+  "field_count": 4,
+  "fields": [
+    { "path": "financial_statements", "source_field": "financial statements", "english_name": "financial_statements", "meaning": "Audited annual / interim financial statements.", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": "IFRS / ASPE", "language": "English/French", "limitations": "Reporting issuers only; PDF; CAD.", "source_confidence": "medium", "analysis_notes": "Public companies + investment funds." },
+    { "path": "mdna", "source_field": "MD&A", "english_name": "mdna", "meaning": "Management's discussion & analysis.", "data_type": "object", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English/French", "limitations": "Reporting issuers only.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "annual_report", "source_field": "annual report / AIF", "english_name": "annual_report", "meaning": "Annual report / Annual Information Form.", "data_type": "document", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English/French", "limitations": "Reporting issuers only.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "issuer_profile", "source_field": "reporting issuer", "english_name": "issuer_profile", "meaning": "Issuer name + jurisdiction; link to corporation number / BN.", "data_type": "object", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": null, "source_confidence": "medium", "analysis_notes": "Reporting Issuers List." }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "country": "Canada",
+  "country_slug": "canada",
+  "source_slug": "sedar_plus",
+  "source_identity": "canada_sedar_plus",
+  "source_package": "sedarplus",
+  "env_prefix": "SEDAR_PLUS",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "SEDAR+ — reporting-issuer filings & financial statements",
+    "source_type": "official_financial",
+    "organization": "Canadian Securities Administrators (CSA)",
+    "source_url": "https://www.sedarplus.ca/",
+    "license": "public disclosure (open to view; redistribution per CSA terms)",
+    "access": "public (per-issuer search)",
+    "data_freshness": "annual/quarterly",
+    "attribution": "SEDAR+ / Canadian Securities Administrators"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.sedarplus.ca/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf", "html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown"
+  },
+  "snapshot": { "strategy": "per_issuer_documents", "file_extension": null, "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "SedarFiling",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["cad"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Planning-only. Reporting issuers only; per-issuer PDFs (CAD, IFRS/ASPE). No clean open bulk. Link issuer -> corporation number / BN by name+jurisdiction."
+  },
+  "keys": { "primary_keys": ["issuer", "filing_date"], "join_keys": ["business_number", "corporation_number", "name"], "dedupe_keys": ["issuer", "filing_date"] },
+  "mapping_rules": {
+    "financials": "Reporting issuers only: financial statements (CAD, IFRS/ASPE). Join issuer -> corporation number / BN.",
+    "scope": "Public companies + investment funds only; private-company financials not available."
+  },
+  "fixture_requirements": ["planning-only: synthetic reporting-issuer annual financial statements"],
+  "live_test_plan": {
+    "smoke": "Search SEDAR+ for one issuer; fetch its latest financial statements.",
+    "full": "Per-issuer collection; respect CSA/SEDAR+ redistribution terms."
+  },
+  "blockers": [
+    "Reporting issuers only (public companies / funds); not the company universe.",
+    "No clean open bulk API; per-issuer PDFs.",
+    "Private-company financials are not public."
+  ]
+}

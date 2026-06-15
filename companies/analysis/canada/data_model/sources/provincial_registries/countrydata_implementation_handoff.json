@@ -1,0 +1,63 @@
+{
+  "country": "Canada",
+  "country_slug": "canada",
+  "source_slug": "provincial_registries",
+  "source_identity": "canada_provincial_registries",
+  "source_package": "caprovincial",
+  "env_prefix": "CA_PROVINCIAL",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Provincial corporate registries (Québec REQ, BC OrgBook, Ontario, Alberta, ...)",
+    "source_type": "official_registry",
+    "organization": "Provincial/territorial registrars (13 jurisdictions)",
+    "source_url": "https://www.orgbook.gov.bc.ca/",
+    "license": "varies by province",
+    "access": "mixed (some open, some paid)",
+    "data_freshness": "varies",
+    "attribution": "per province"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": null,
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "json", "html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per province"
+  },
+  "snapshot": { "strategy": "per_province_source", "file_extension": null, "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "ProvincialCorporation",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Umbrella source — implement per province. Québec REQ (Données Québec, open; NEQ) and BC OrgBook (open API) are the strong open ones; Ontario/Alberta etc. vary (some paid). Join to federal via BN/name."
+  },
+  "keys": { "primary_keys": ["provincial_registry_number"], "join_keys": ["business_number", "name"], "dedupe_keys": ["provincial_registry_number"] },
+  "mapping_rules": {
+    "company_id": "Use the provincial registry number (e.g. Québec NEQ); namespace by province.",
+    "tax_id": "Use the Business Number (BN) where present.",
+    "join": "BN (where shared) or name; companies here are NOT in the federal dataset."
+  },
+  "fixture_requirements": [
+    "Québec REQ record (NEQ)",
+    "BC OrgBook record",
+    "a paid-province placeholder (Ontario/Alberta)"
+  ],
+  "live_test_plan": {
+    "smoke": "For each open province, fetch one record (Québec Données Québec CSV; BC OrgBook API).",
+    "full": "Per-province ingestion behind env gates; budget for paid provinces; merge with federal by BN."
+  },
+  "blockers": [
+    "13 separate jurisdictions; access/format/licence vary per province.",
+    "Some provinces (Ontario, Alberta) charge for searches/bulk.",
+    "Director/officer data (where present) is personal data."
+  ]
+}
