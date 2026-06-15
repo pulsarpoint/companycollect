@@ -1,0 +1,20 @@
+[
+  {
+    "name": "AJPES PRS — business register (OPSI CSV)",
+    "slug": "ajpes_prs",
+    "type": "bulk",
+    "url": "https://podatki.gov.si/dataset/9ee1a9aa-c224-4995-b2ad-3760d7af0748/resource/beb70929-3d0d-41c6-9af2-25d525d906d3/download/opsiprs.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "FURS tax payers — legal entities (CSV ZIP)",
+    "slug": "furs_zavezanci_po",
+    "type": "bulk",
+    "url": "https://www.fu.gov.si/fileadmin/prenosi/DURS_zavezanci_PO_csv.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
