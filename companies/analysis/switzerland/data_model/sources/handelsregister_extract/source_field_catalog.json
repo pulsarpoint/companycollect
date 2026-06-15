@@ -1,0 +1,22 @@
+{
+  "country": "Switzerland",
+  "country_slug": "switzerland",
+  "source_slug": "handelsregister_extract",
+  "source_name": "Handelsregisterauszug / cantonal register extracts",
+  "source_type": "official_registry",
+  "organization": "Cantonal commercial registers (26 cantons)",
+  "source_url": "https://www.zefix.ch/",
+  "license": "paid extracts",
+  "access": "paid",
+  "data_freshness": "real-time",
+  "record_shape": "paid_certified_extract_planning_only",
+  "primary_keys": ["uid"],
+  "join_keys": ["uid", "chid"],
+  "field_count": 4,
+  "fields": [
+    { "path": "officers[]", "source_field": "Personen / signatories", "english_name": "officers", "meaning": "Officers, signatories, and their signing rights.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "de/fr/it", "limitations": "PLANNING-ONLY; paid; PERSONAL DATA.", "source_confidence": "low", "analysis_notes": "Authoritative officers/signing rights." },
+    { "path": "capital", "source_field": "Kapital", "english_name": "share_capital", "meaning": "Registered share capital + paid-in.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY; paid. Registered capital, not financial statements.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "journal[]", "source_field": "Tagebuch / journal entries", "english_name": "register_journal", "meaning": "Full chronological register journal (Tagebuch) entries.", "data_type": "array", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "de/fr/it", "limitations": "PLANNING-ONLY; paid.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "purpose_full", "source_field": "Zweck", "english_name": "purpose_full", "meaning": "Full statutory purpose text.", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "de/fr/it", "limitations": "PLANNING-ONLY; paid (also in Zefix open data).", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "country": "Switzerland",
+  "country_slug": "switzerland",
+  "country_profile_version": "2026-06-15",
+  "registration": {
+    "uid": "CHE-242.294.601",
+    "chid": "CH03640617915",
+    "ehraid": "1198554"
+  },
+  "tax_identifiers": {
+    "vat_id": "CHE-242.294.601 MWST"
+  },
+  "legal_identity": {
+    "legal_name": "Zazuko GmbH",
+    "legal_form": "Gesellschaft mit beschränkter Haftung GmbH / Sàrl",
+    "purpose": "Die Gesellschaft bezweckt das Herstellen von Produkten, den Handel, die Beratung und Dienstleistungen im Bereich Informatik und Daten",
+    "website": "https://zazuko.com/"
+  },
+  "status": {
+    "status": null
+  },
+  "registered_location": {
+    "street_address": "Winkelstrasse 20",
+    "postal_code": "2502",
+    "locality": "Biel/Bienne",
+    "municipality": "Biel/Bienne"
+  },
+  "share_capital": {
+    "amount": null,
+    "currency": "CHF"
+  },
+  "officers": [
+    { "name": "[PLANNING-ONLY — SOGC (free credentialed) / paid extract; personal data]", "role": null }
+  ],
+  "register_events": [
+    { "publication_date": null, "event_type": "[free credentialed — Zefix REST /sogc]" }
+  ],
+  "financial_statements": [
+    { "fiscal_year": 2024, "balance_sheet": null, "income_statement": null, "currency": "CHF" }
+  ],
+  "source_provenance": [
+    { "source_slug": "zefix_lindas", "section": "registration/tax_identifiers/legal_identity/registered_location", "source_url": "https://lindas.admin.ch/query", "access": "public", "license": "OGD / Open use", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "zefix_rest_api", "section": "status/share_capital", "source_url": "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/", "access": "free credentialed", "license": "OGD / Open use", "retrieved_at": "2026-06-15T00:00:00Z" },
+    { "source_slug": "six_listed_financials", "section": "financial_statements", "source_url": "https://www.six-group.com/", "access": "listed only", "license": "issuer publications", "retrieved_at": "2026-06-15T00:00:00Z" }
+  ]
+}

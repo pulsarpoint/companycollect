@@ -1,0 +1,63 @@
+{
+  "country": "Switzerland",
+  "country_slug": "switzerland",
+  "source_slug": "handelsregister_extract",
+  "source_identity": "switzerland_handelsregister_extract",
+  "source_package": "hrextract",
+  "env_prefix": "HR_EXTRACT",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Handelsregisterauszug / cantonal register extracts",
+    "source_type": "official_registry",
+    "organization": "Cantonal commercial registers",
+    "source_url": "https://www.zefix.ch/",
+    "license": "paid extracts",
+    "access": "paid",
+    "data_freshness": "real-time",
+    "attribution": "Cantonal commercial register"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["HR_EXTRACT_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": null,
+    "download_url": null,
+    "http_method": null,
+    "headers_required": [],
+    "formats": ["pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown"
+  },
+  "snapshot": { "strategy": "not_applicable_paid", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "HandelsregisterExtract",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": ["chf"],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Paid per-company certified extracts/documents from the cantonal registers. No transport implemented."
+  },
+  "keys": { "primary_keys": ["uid"], "join_keys": ["uid", "chid"], "dedupe_keys": ["uid"] },
+  "mapping_rules": {
+    "officers": "Planning-only: officers + signing rights (PII).",
+    "share_capital": "Planning-only: registered capital (not financial statements).",
+    "documents": "Planning-only: register journal (Tagebuch)."
+  },
+  "fixture_requirements": ["planning-only: synthetic certified extract with officers + capital + journal"],
+  "live_test_plan": {
+    "smoke": "Not applicable — paid.",
+    "full": "Not applicable — paid per-extract via cantonal registers."
+  },
+  "blockers": [
+    "Paid per-company certified extracts.",
+    "Officers/signatories are personal data (FADP/GDPR).",
+    "Most non-personal fields already available openly via Zefix/SOGC."
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "country": "Switzerland",
+  "country_slug": "switzerland",
+  "source_slug": "zefix_rest_api",
+  "source_identity": "switzerland_zefix_rest_api",
+  "source_package": "zefixrest",
+  "env_prefix": "ZEFIX_REST",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Zefix Public REST API",
+    "source_type": "official_registry",
+    "organization": "EHRA",
+    "source_url": "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/",
+    "license": "OGD / Open use (attribution)",
+    "access": "restricted",
+    "data_freshness": "daily",
+    "attribution": "EHRA / Zefix"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["ZEFIX_REST_USER", "ZEFIX_REST_PASSWORD"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Authorization: Basic", "Accept: application/json"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "page_number", "page_param": "page", "page_start": 0, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per credentials"
+  },
+  "snapshot": { "strategy": "one_json_per_uid", "file_extension": ".json", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "ZefixCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Global HTTP Basic security (Zefix-Credentials); 401 without creds (verified). Use to enrich status/capital/SOGC per UID; LINDAS for open bulk. Verify field keys against a real credentialed response before hardcoding."
+  },
+  "keys": { "primary_keys": ["uid"], "join_keys": ["uid", "chid", "ehraid"], "dedupe_keys": ["uid"] },
+  "mapping_rules": {
+    "status": "Use status (fills the LINDAS gap).",
+    "share_capital": "Use capitalNominal + capitalCurrency (registered capital, not financials).",
+    "documents": "Use sogcPublications[] -> sogc_shab events.",
+    "join": "uid == zefix_lindas.uid."
+  },
+  "fixture_requirements": [
+    "documented-only: active company with status + capital + SOGC refs",
+    "documented-only: deleted/cancelled company",
+    "documented-only: company/search by name response"
+  ],
+  "live_test_plan": {
+    "smoke": "With credentials: GET /company/uid/{uid}; assert status + legalFormId present.",
+    "full": "Enrich the UID universe (from LINDAS) with status/capital/SOGC at the credentialed rate."
+  },
+  "blockers": [
+    "Requires free HTTP Basic credentials (Zefix-Credentials); all endpoints 401 without them.",
+    "Fields documented from OpenAPI 2.7, not verified against a live credentialed response."
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "country": "Switzerland",
+  "country_slug": "switzerland",
+  "source_slug": "six_listed_financials",
+  "source_identity": "switzerland_six_listed_financials",
+  "source_package": "sixfinancials",
+  "env_prefix": "SIX_FINANCIALS",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "SIX Swiss Exchange — listed-company financial reports",
+    "source_type": "stock_exchange",
+    "organization": "SIX Group",
+    "source_url": "https://www.six-group.com/",
+    "license": "issuer publications (open to view; redistribution per SIX/issuer terms)",
+    "access": "public",
+    "data_freshness": "annual/interim",
+    "attribution": "SIX Swiss Exchange / issuer"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.six-group.com/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xbrl", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unknown"
+  },
+  "snapshot": { "strategy": "per_issuer_report_documents", "file_extension": null, "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "SixIssuerReport",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": ["chf"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Planning-only. Listed issuers only; format varies (XBRL/PDF). Link ISIN/issuer to Zefix UID by name. No uniform open API for the full set."
+  },
+  "keys": { "primary_keys": ["isin"], "join_keys": ["uid", "isin"], "dedupe_keys": ["isin", "fiscal_year"] },
+  "mapping_rules": {
+    "financials": "Planning-only: balance sheet + income statement for listed issuers (CHF). Join to UID via issuer name.",
+    "scope": "Listed companies only — private-company financials are not available."
+  },
+  "fixture_requirements": ["planning-only: synthetic listed-issuer annual report (balance sheet + income statement)"],
+  "live_test_plan": {
+    "smoke": "Fetch one listed issuer's published annual report; map to UID.",
+    "full": "Per-issuer collection; respect SIX/issuer redistribution terms."
+  },
+  "blockers": [
+    "Covers only listed issuers (~few hundred); not the private universe.",
+    "No uniform open API/bulk; per-issuer documents (XBRL/PDF).",
+    "Redistribution governed by SIX/issuer terms."
+  ]
+}

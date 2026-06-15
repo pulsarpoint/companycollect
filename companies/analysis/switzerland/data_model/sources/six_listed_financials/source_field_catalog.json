@@ -1,0 +1,22 @@
+{
+  "country": "Switzerland",
+  "country_slug": "switzerland",
+  "source_slug": "six_listed_financials",
+  "source_name": "SIX Swiss Exchange — listed-company financial reports",
+  "source_type": "stock_exchange",
+  "organization": "SIX Group",
+  "source_url": "https://www.six-group.com/en/products-services/the-swiss-stock-exchange/market-data/news-tools/official-publications.html",
+  "license": "issuer publications (open to view; redistribution per SIX/issuer terms)",
+  "access": "public",
+  "data_freshness": "annual/interim",
+  "record_shape": "issuer_reports_xbrl_pdf",
+  "primary_keys": ["isin"],
+  "join_keys": ["uid", "isin"],
+  "field_count": 4,
+  "fields": [
+    { "path": "balance_sheet", "source_field": "balance sheet", "english_name": "balance_sheet", "meaning": "Consolidated/standalone balance sheet (assets, equity, liabilities).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en/de", "limitations": "LISTED issuers only (~few hundred). XBRL/PDF; format varies by issuer.", "source_confidence": "medium", "analysis_notes": "The only broadly-open Swiss financials." },
+    { "path": "income_statement", "source_field": "income statement", "english_name": "income_statement", "meaning": "Income statement (revenue, profit).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en/de", "limitations": "Listed only.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "fiscal_year", "source_field": "reporting period", "english_name": "fiscal_year", "meaning": "Reporting year/period.", "data_type": "integer", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Annual (IFA) + interim (IFI).", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "isin", "source_field": "ISIN", "english_name": "isin", "meaning": "Security ISIN (issuer identifier on SIX).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Maps to issuer; link to UID via the company name/register.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

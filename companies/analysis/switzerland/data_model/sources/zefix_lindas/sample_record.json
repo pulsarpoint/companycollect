@@ -1,0 +1,13 @@
+{
+  "company_uri": "https://register.ld.admin.ch/zefix/company/240345",
+  "legalName": "Kaufmännischer Verband Schweiz",
+  "uid": "CHE105840918",
+  "uid_formatted": "CHE-105.840.918",
+  "legalForm": "Verein",
+  "address": {
+    "streetAddress": "Reitergasse 9",
+    "postalCode": "8004",
+    "addressLocality": "Zürich"
+  },
+  "_note": "Real Zefix LINDAS SPARQL binding for a public legal entity (Kaufmännischer Verband Schweiz). Company-level data only."
+}

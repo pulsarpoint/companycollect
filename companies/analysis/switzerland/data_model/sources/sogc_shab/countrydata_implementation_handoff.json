@@ -1,0 +1,63 @@
+{
+  "country": "Switzerland",
+  "country_slug": "switzerland",
+  "source_slug": "sogc_shab",
+  "source_identity": "switzerland_sogc_shab",
+  "source_package": "sogcshab",
+  "env_prefix": "SOGC_SHAB",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "SOGC / SHAB — Swiss Official Gazette of Commerce",
+    "source_type": "official_gazette",
+    "organization": "SECO / EHRA",
+    "source_url": "https://www.shab.ch/",
+    "license": "OGD / Open use",
+    "access": "restricted",
+    "data_freshness": "daily",
+    "attribution": "SOGC/SHAB (SECO/EHRA)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["ZEFIX_REST_USER", "ZEFIX_REST_PASSWORD"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/sogc/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Authorization: Basic", "Accept: application/json"],
+    "formats": ["json", "html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "date", "page_param": "bydate/{YYYY-MM-DD}", "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per credentials"
+  },
+  "snapshot": { "strategy": "ndjson_one_publication_per_line", "file_extension": ".ndjson", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "SogcPublication",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Documented-only. Access via Zefix REST /sogc/bydate/{date} (Basic auth) or shab.ch. Officer names are personal data — redact. Verify keys against a live credentialed response."
+  },
+  "keys": { "primary_keys": ["sogc_publication_id"], "join_keys": ["uid"], "dedupe_keys": ["sogc_publication_id"] },
+  "mapping_rules": {
+    "incorporation_date": "Earliest incorporation event for the UID.",
+    "dissolution_date": "Dissolution/cancellation event for the UID.",
+    "officers": "From persons[] (redact PII).",
+    "join": "uid == zefix_lindas.uid."
+  },
+  "fixture_requirements": ["documented-only: incorporation event", "documented-only: officer-change mutation", "documented-only: dissolution event"],
+  "live_test_plan": {
+    "smoke": "With credentials: GET /sogc/bydate/{recent date}; parse a publication.",
+    "full": "Daily pull of /sogc/bydate; build event history per UID; redact officer PII."
+  },
+  "blockers": [
+    "Same free Basic-auth gate as the Zefix REST API.",
+    "Officer names are personal data (FADP/GDPR) — redact."
+  ]
+}

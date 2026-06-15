@@ -1,0 +1,23 @@
+{
+  "country": "Switzerland",
+  "country_slug": "switzerland",
+  "source_slug": "sogc_shab",
+  "source_name": "SOGC / SHAB — Swiss Official Gazette of Commerce",
+  "source_type": "official_gazette",
+  "organization": "SECO / EHRA",
+  "source_url": "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/sogc/",
+  "license": "OGD / Open use",
+  "access": "restricted",
+  "data_freshness": "daily",
+  "record_shape": "gazette_publication_per_registry_event",
+  "primary_keys": ["sogc_publication_id"],
+  "join_keys": ["uid"],
+  "field_count": 5,
+  "fields": [
+    { "path": "publicationDate", "source_field": "publicationDate", "english_name": "publication_date", "meaning": "Date the registry event was published.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Via Zefix REST /sogc (Basic auth) or shab.ch.", "source_confidence": "medium", "analysis_notes": "Documented." },
+    { "path": "mutationType", "source_field": "mutationType / Meldungstyp", "english_name": "event_type", "meaning": "Type of register event (incorporation, mutation, dissolution, …).", "data_type": "string", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "de/fr/it", "limitations": "Documented.", "source_confidence": "medium", "analysis_notes": "Drives incorporation/dissolution dates." },
+    { "path": "uid", "source_field": "uid", "english_name": "uid", "meaning": "UID of the affected entity.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": "Join to Zefix." },
+    { "path": "officers[]", "source_field": "persons / Personen", "english_name": "officers", "meaning": "Officers/signatories named in the publication.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "de/fr/it", "limitations": "Documented; PERSONAL DATA — redact.", "source_confidence": "low", "analysis_notes": "The open-ish route to officers (free creds)." },
+    { "path": "text", "source_field": "text", "english_name": "publication_text", "meaning": "Full publication text.", "data_type": "string", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "de/fr/it", "limitations": "Documented; free text.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

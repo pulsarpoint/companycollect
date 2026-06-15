@@ -1,0 +1,67 @@
+{
+  "country": "Switzerland",
+  "country_slug": "switzerland",
+  "source_slug": "zefix_lindas",
+  "source_identity": "switzerland_zefix_lindas",
+  "source_package": "zefixlindas",
+  "env_prefix": "ZEFIX_LINDAS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Zefix via LINDAS Linked Data (SPARQL)",
+    "source_type": "official_registry",
+    "organization": "EHRA / FOJ; published on LINDAS",
+    "source_url": "https://lindas.admin.ch/query",
+    "license": "OGD / Open use (attribution required)",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Eidgenössisches Amt für das Handelsregister (EHRA) / Zefix"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://lindas.admin.ch/query",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Accept: application/sparql-results+json", "Content-Type: application/x-www-form-urlencoded"],
+    "formats": ["sparql-results+json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "results.bindings",
+    "total_results_path": null,
+    "pagination": { "type": "offset", "page_param": "OFFSET (in query)", "page_start": 0, "page_size": 10000, "page_size_param": "LIMIT (in query)", "next_page_path": null },
+    "rate_limit": "shared public endpoint — page politely with ORDER BY ?company"
+  },
+  "snapshot": { "strategy": "ndjson_one_org_per_line", "file_extension": ".ndjson", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "ZefixOrganisation",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "SPARQL SELECT over admin:ZefixOrganisation. UID via schema:identifier node where schema:name='CompanyUID' (schema:value). Legal form via schema:additionalType (eCH-0097 URI + multilingual label). Filter literal language (de/fr/it). Page with ORDER BY ?company OFFSET/LIMIT. Resolve municipality URI to name."
+  },
+  "keys": { "primary_keys": ["uid"], "join_keys": ["uid", "chid", "ehraid"], "dedupe_keys": ["uid"] },
+  "mapping_rules": {
+    "company_id": "Use UID (CompanyUID).",
+    "registration_number": "Use UID (or CHID).",
+    "tax_id": "Use UID.",
+    "vat_id": "Compose UID + ' MWST'/'TVA'/'IVA' (confirm VAT registration separately).",
+    "legal_name": "Use schema:legalName.",
+    "legal_form": "Use schema:additionalType (eCH-0097 code + label).",
+    "registered_address": "Compose streetAddress + postalCode + addressLocality.",
+    "status": "Not here — credentialed REST (LINDAS ≈ active set).",
+    "activity_code": "Not available in the open set.",
+    "financials": "Not available (no public filing for private companies)."
+  },
+  "fixture_requirements": [
+    "GmbH with UID + address + website (e.g. Zazuko GmbH)",
+    "AG entity",
+    "Verein / association (non-company legal form)",
+    "entity with multilingual name labels"
+  ],
+  "live_test_plan": {
+    "smoke": "POST a SELECT with LIMIT 100; assert UID + legalName + legalForm parse.",
+    "full": "Page ORDER BY ?company OFFSET/LIMIT across ~789k entities; resolve municipality + legal-form codes from cached vocabularies."
+  },
+  "blockers": []
+}
