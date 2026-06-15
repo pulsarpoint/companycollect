@@ -1,0 +1,14 @@
+[
+  {
+    "name": "GSXT — National Enterprise Credit Information Publicity System (real-name + CAPTCHA gated; no open bulk)",
+    "slug": "gsxt_search",
+    "type": "api_page",
+    "url": "https://www.gsxt.gov.cn/index.html",
+    "method": "GET",
+    "headers": { "Accept-Language": "zh-CN" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Official register; queries require real-name authentication (since 2021) and a CAPTCHA. No documented open API or bulk download. Often unreachable externally (HTTP 521). Do not bypass the controls."
+  }
+]
