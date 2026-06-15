@@ -27,7 +27,8 @@ Included:
   - `company`
   - `financials`
   - `company_websites`
-- JSON run manifest and `latest.json` pointer.
+- JSON run manifest stored beside the Parquet outputs.
+- Prefect run metadata and a Markdown artifact for UI-visible run summaries.
 - Focused validation and smoke-test workflow execution.
 
 Excluded:
@@ -56,7 +57,6 @@ companycollect/processor/
     io.py
   output/
     finland/
-      latest.json
       <run_id>/
         raw/
         structured/
@@ -73,6 +73,8 @@ The flow uses Prefect for:
 - task boundaries;
 - retries around remote downloads;
 - logs and run status;
+- run names, parameters, and tags for lightweight partition-like organization;
+- Markdown artifacts with output paths and row counts;
 - parameterized local execution.
 
 The transform code stays framework-agnostic so it can later be reused from tests,
@@ -129,7 +131,10 @@ dbt pre-processing scripts, or another orchestrator.
 - Output directory creation.
 - Parquet writes for structured and canonical frames.
 - Manifest writing.
-- `latest.json` update.
+
+`manifest.json` remains because it travels with the generated dataset. It is the
+portable record that dbt, scripts, or a human can inspect without querying the Prefect
+API or UI.
 
 ## Data Flow
 
@@ -151,7 +156,19 @@ dbt pre-processing scripts, or another orchestrator.
 11. Write canonical Parquet files under `canonical/`.
 12. Write `manifest.json` with parameters, raw counts, table shapes, output paths,
     validation results, and parse failures if any.
-13. Update `latest.json` to point at the finished run.
+13. Create a Prefect Markdown artifact with the run ID, parameters, row counts, and
+    output path.
+
+Prefect is used for operational metadata rather than a separate `latest.json` pointer.
+The flow should set a clear run name, such as:
+
+```text
+finland-local-{run_id}
+```
+
+The XBRL date window acts as the local experiment's partition-like dimension. Later,
+the flow can add an explicit `partition_key`, such as `2025-01`, if monthly XBRL
+windows become the main execution unit.
 
 The walkthrough's YTJ URL placeholder is not copied. The Prefect project uses the
 verified PRH endpoint:
@@ -195,7 +212,8 @@ Verification should stay focused on the local experiment:
   - all expected canonical files exist;
   - canonical schemas match;
   - unique keys are unique where required;
-  - `manifest.json` and `latest.json` exist and contain the run ID.
+  - `manifest.json` exists and contains the run ID.
+- Verify the Prefect flow creates a Markdown artifact summarizing the run.
 
 The demo Prefect scripts already in `processor` should be left alone unless they
 block imports or tests.
@@ -224,7 +242,8 @@ can be compared against the Dagster implementation.
 
 - `companycollect/processor` contains a self-contained Finland Prefect workflow.
 - The workflow can run locally with a small bounded sample.
-- The workflow writes raw, structured, canonical, manifest, and latest outputs.
+- The workflow writes raw, structured, canonical, and manifest outputs.
+- The workflow creates a Prefect run summary artifact.
 - The four canonical tables match the walkthrough's intended outputs.
 - Validation catches schema and key failures.
 - The implementation remains plain Python plus Prefect task boundaries, with no
