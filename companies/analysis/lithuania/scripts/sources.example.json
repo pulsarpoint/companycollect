@@ -1,0 +1,50 @@
+[
+  {
+    "name": "RC JAR registered legal entities (JuridinisAsmuo)",
+    "slug": "jar_juridinis_asmuo",
+    "type": "api_page",
+    "url": "https://get.data.gov.lt/datasets/gov/rc/jar/iregistruoti/JuridinisAsmuo?limit(1000)",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "No API key. Keyset pagination via the _page.next cursor (append &page('<cursor>')). Identity keyed on ja_kodas (9-digit). Resolve forma/statusas _id refs against formos_statusai/Forma and /Statusas."
+  },
+  {
+    "name": "RC JAR addresses (Buveine)",
+    "slug": "jar_buveine",
+    "type": "api_page",
+    "url": "https://get.data.gov.lt/datasets/gov/rc/jar/buveines/Buveine?limit(1000)",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Addresses linked to a company by juridinis_asmuo. No key."
+  },
+  {
+    "name": "RC JAR balance sheets (BalansoAtaskaita)",
+    "slug": "jar_balanso_ataskaita",
+    "type": "api_page",
+    "url": "https://get.data.gov.lt/datasets/gov/rc/jar/balanso_ataskaitos/BalansoAtaskaita?limit(1000)",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Open balance-sheet line items (EUR), linked by juridinis_asmuo._id. Aggregate per company + period. No key."
+  },
+  {
+    "name": "RC JAR profit & loss (PelnoAtaskaita)",
+    "slug": "jar_pelno_ataskaita",
+    "type": "api_page",
+    "url": "https://get.data.gov.lt/datasets/gov/rc/jar/pelno_ataskaitos/PelnoAtaskaita?limit(1000)",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Open P&L line items (EUR). Same shape as the balance-sheet model. No key."
+  }
+]
