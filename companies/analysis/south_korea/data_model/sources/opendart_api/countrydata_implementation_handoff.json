@@ -1,0 +1,85 @@
+{
+  "country": "South Korea",
+  "country_slug": "south_korea",
+  "source_slug": "opendart_api",
+  "source_identity": "south_korea_opendart_api",
+  "source_package": "opendartapi",
+  "env_prefix": "OPENDART",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "OpenDART API (FSS electronic disclosure)",
+    "source_type": "financial_disclosure",
+    "organization": "Financial Supervisory Service (금융감독원) / DART",
+    "source_url": "https://opendart.fss.or.kr/api/",
+    "license": "public_disclosure_reusable",
+    "access": "public_with_free_key",
+    "data_freshness": "live (filing-driven)",
+    "attribution": "DART / Financial Supervisory Service"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["OPENDART_CRTFC_KEY"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://opendart.fss.or.kr/api/",
+    "download_url": "https://opendart.fss.or.kr/api/corpCode.xml",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "xml", "zip"],
+    "compression": "zip (corpCode.xml)",
+    "encoding": "utf-8",
+    "record_path": "list",
+    "total_results_path": "total_count",
+    "pagination": { "type": "page_number", "page_param": "page_no", "page_start": 1, "page_size": 100, "page_size_param": "page_count", "next_page_path": null },
+    "rate_limit": "~20,000 calls/day per crtfc_key"
+  },
+  "snapshot": {
+    "strategy": "corpcode_xml_then_per_company_json",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "OpenDartCompany",
+    "date_formats": ["20060102"],
+    "datetime_formats": [],
+    "number_formats": ["krw_integer_with_commas"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "All endpoints need crtfc_key (status 900 / 302 without it). Flow: GET corpCode.xml (ZIP -> CORPCODE.xml: corp_code/name/stock_code) -> company.json?corp_code= (identity incl. jurir_no/bizr_no/ceo_nm/est_dt/adres/induty_code) -> fnlttSinglAcntAll.json?corp_code=&bsns_year=&reprt_code=11011&fs_div=CFS (financials, KRW). Dates YYYYMMDD. Amounts are strings with commas -> strip. Redact ceo_nm (PIPA)."
+  },
+  "keys": {
+    "primary_keys": ["corp_code"],
+    "join_keys": ["corp_code", "jurir_no", "bizr_no", "stock_code"],
+    "dedupe_keys": ["corp_code"]
+  },
+  "mapping_rules": {
+    "company_id": "corp_code (DART) and/or jurir_no (registration).",
+    "registration_number": "jurir_no (법인등록번호, 13-digit).",
+    "tax_id": "bizr_no (사업자등록번호, 10-digit).",
+    "vat_id": "bizr_no (same value; no separate VAT id).",
+    "legal_name": "corp_name (+ corp_name_eng).",
+    "legal_form": "corp_cls (Y/K/N/E) + form word in name.",
+    "incorporation_date": "est_dt (YYYYMMDD).",
+    "registered_address": "adres.",
+    "activity_code": "induty_code (KSIC).",
+    "financials": "fnlttSinglAcntAll rows (sj_div/account_nm + thstrm_amount), KRW, per bsns_year/reprt_code/fs_div.",
+    "officers": "ceo_nm (PERSONAL DATA — redact)."
+  },
+  "fixture_requirements": [
+    "corpCode.xml entry (listed, with stock_code)",
+    "corpCode.xml entry (external-audit, no stock_code)",
+    "company.json identity with jurir_no + bizr_no (assert ceo_nm redaction)",
+    "fnlttSinglAcntAll annual consolidated (CFS) statement",
+    "fnlttSinglAcnt key-accounts response"
+  ],
+  "live_test_plan": {
+    "smoke": "With a free OPENDART_CRTFC_KEY, download corpCode.xml, then company.json + fnlttSinglAcntAll for one corp_code.",
+    "full": "Iterate corpCode.xml -> company + annual financials per corp_code; redact ceo_nm; gate behind env and respect the daily call quota."
+  },
+  "blockers": [
+    "Free crtfc_key required (status 900 / 302 without it).",
+    "Coverage limited to DART-registered companies (listed + external-audit), not all companies.",
+    "ceo_nm is personal data (PIPA) — redact."
+  ]
+}

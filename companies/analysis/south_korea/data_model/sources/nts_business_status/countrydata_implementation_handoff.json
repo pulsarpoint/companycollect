@@ -1,0 +1,62 @@
+{
+  "country": "South Korea",
+  "country_slug": "south_korea",
+  "source_slug": "nts_business_status",
+  "source_identity": "south_korea_nts_business_status",
+  "source_package": "ntsbusinessstatus",
+  "env_prefix": "NTS_STATUS",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "NTS business registration status API",
+    "source_type": "tax_registry",
+    "organization": "National Tax Service (국세청) via data.go.kr / odcloud",
+    "source_url": "https://api.odcloud.kr/api/nts-businessman/v1/status",
+    "license": "kogl_or_dataset_terms",
+    "access": "public_with_free_key",
+    "data_freshness": "live lookup",
+    "attribution": "National Tax Service / data.go.kr (KOGL)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["NTS_STATUS_SERVICE_KEY"]
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://api.odcloud.kr/api/nts-businessman/v1/status",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Content-Type: application/json"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "data",
+    "total_results_path": "match_cnt",
+    "pagination": { "type": "batch_request_body", "page_param": null, "page_start": null, "page_size": 100, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per data.go.kr service-key quota; up to 100 b_no per request"
+  },
+  "snapshot": { "strategy": "ndjson_one_record_per_line", "file_extension": ".ndjson", "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "NtsBusinessStatus",
+    "date_formats": ["20060102"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "POST {\"b_no\":[\"<10-digit>\", ...]} with serviceKey query param. Returns data[] with b_stt/b_stt_cd (active/suspended/closed), tax_type, end_dt. 401 '인증키는 필수 항목 입니다' without the key. Batch up to 100 numbers per call."
+  },
+  "keys": { "primary_keys": ["b_no"], "join_keys": ["b_no"], "dedupe_keys": ["b_no"] },
+  "mapping_rules": {
+    "status": "b_stt_cd -> active(01)/suspended(02)/closed(03); end_dt = closure date.",
+    "tax_type": "tax_type (VAT taxpayer classification).",
+    "join": "b_no = OpenDART bizr_no (business registration number)."
+  },
+  "fixture_requirements": ["active business response", "closed business with end_dt", "not-registered b_no response"],
+  "live_test_plan": {
+    "smoke": "With a free NTS_STATUS_SERVICE_KEY, POST one b_no and read b_stt.",
+    "full": "Batch-validate business registration numbers (100/call) to refresh operating status; gate behind env."
+  },
+  "blockers": [
+    "Free data.go.kr service key required (401 without it).",
+    "Status lookup only — not a company master; needs the b_no from OpenDART or elsewhere."
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "country": "South Korea",
+  "country_slug": "south_korea",
+  "country_profile_version": "2026-06-15",
+  "_note": "SCHEMATIC EXAMPLE. OpenDART and the NTS API are key-gated (status 900 / 401 without a free key), so identity/financial values here are PLACEHOLDERS, not copied from any record. Two ids: corp_registration_number (법인등록번호, 13-digit, court) and business_registration_number (사업자등록번호, 10-digit, NTS = tax id = VAT number). market_class E = external-audit (non-listed but disclosure-obligated). capital + exact legal_form are paid (court registry). CEO/director names are personal data (PIPA) and are redacted.",
+  "registration": {
+    "corp_registration_number": "1101110000000",
+    "business_registration_number": "0000000000",
+    "dart_corp_code": "00000000",
+    "stock_code": "000000"
+  },
+  "tax_identifiers": {
+    "tax_id": "0000000000",
+    "vat_id": "0000000000"
+  },
+  "legal_identity": {
+    "legal_name": "예시전자주식회사",
+    "legal_name_en": "Example Electronics Co., Ltd.",
+    "market_class": "Y",
+    "legal_form": "주식회사"
+  },
+  "status": {
+    "business_status": "계속사업자",
+    "tax_type": null,
+    "closure_date": null
+  },
+  "incorporation": {
+    "establishment_date": "1980-01-01"
+  },
+  "activity": {
+    "industry_code_ksic": "26410"
+  },
+  "registered_location": {
+    "registered_address": "서울특별시 ...",
+    "homepage": "https://example.co.kr"
+  },
+  "capital": {
+    "registered_capital_krw": null
+  },
+  "financial_statements": [
+    {
+      "bsns_year": "2023",
+      "reprt_code": "11011",
+      "fs_div": "CFS",
+      "accounts": [
+        { "sj_div": "IS", "account_nm": "매출액", "thstrm_amount": "0" },
+        { "sj_div": "IS", "account_nm": "당기순이익", "thstrm_amount": "0" }
+      ],
+      "currency": "KRW"
+    }
+  ],
+  "officers": [
+    { "name": "[REDACTED — CEO/representative, personal data (PIPA)]", "role": "representative_director" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "opendart_api",
+      "section": "registration / tax_identifiers / legal_identity / incorporation / activity / registered_location / financial_statements / officers(CEO)",
+      "source_url": "https://opendart.fss.or.kr/api/company.json",
+      "access": "free API key (crtfc_key) required",
+      "license": "public_disclosure_reusable",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "nts_business_status",
+      "section": "status (business_status / tax_type / closure_date)",
+      "source_url": "https://api.odcloud.kr/api/nts-businessman/v1/status",
+      "access": "free data.go.kr service key required",
+      "license": "kogl_or_dataset_terms",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "iros_court_register",
+      "section": "legal_identity.legal_form / capital / officers (planning-only; paid)",
+      "source_url": "https://www.iros.go.kr/",
+      "access": "paid per-document",
+      "license": "restricted",
+      "retrieved_at": null
+    }
+  ]
+}

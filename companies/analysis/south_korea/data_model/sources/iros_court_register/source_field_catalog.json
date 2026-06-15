@@ -1,0 +1,25 @@
+{
+  "country": "South Korea",
+  "country_slug": "south_korea",
+  "source_slug": "iros_court_register",
+  "source_name": "IROS — Supreme Court commercial registry (등기)",
+  "source_type": "official_registry",
+  "organization": "Supreme Court of Korea (대법원 인터넷등기소)",
+  "source_url": "https://www.iros.go.kr/",
+  "license": "restricted",
+  "access": "paid",
+  "data_freshness": "live register",
+  "record_shape": "per_company_registry_certificate",
+  "primary_keys": ["corp_registration_number"],
+  "join_keys": ["corp_registration_number"],
+  "field_count": 7,
+  "fields": [
+    { "path": "registry.corp_registration_number", "source_field": "법인등록번호", "english_name": "corp_registration_number", "meaning": "Corporate registration number (13-digit), court-issued.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY (paid). Cataloged from public docs.", "source_confidence": "low", "analysis_notes": "= OpenDART jurir_no; join key." },
+    { "path": "registry.company_name", "source_field": "상호", "english_name": "company_name", "meaning": "Registered trade name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Korean", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "registry.company_type", "source_field": "회사성립의 종류 / 종류", "english_name": "company_type", "meaning": "Legal form (주식회사 stock company / 유한회사 limited / 합자 / 합명 / 유한책임).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "주식회사 / 유한회사 / 합자회사 / 합명회사 / 유한책임회사", "language": "Korean", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": "Exact legal form (not fully in OpenDART)." },
+    { "path": "registry.head_office", "source_field": "본점", "english_name": "head_office", "meaning": "Registered head-office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Korean", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "registry.capital", "source_field": "자본금의 액", "english_name": "capital", "meaning": "Registered capital (KRW).", "data_type": "integer", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "registry.directors", "source_field": "임원에 관한 사항", "english_name": "directors_officers", "meaning": "Directors / representative directors and officer records.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Korean", "limitations": "PLANNING-ONLY (paid). PERSONAL DATA (PIPA) — redact.", "source_confidence": "low", "analysis_notes": "Only source of full officer list; not open." },
+    { "path": "registry.establishment_date", "source_field": "회사성립연월일", "english_name": "establishment_date", "meaning": "Date of incorporation.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": "Authoritative incorporation date." }
+  ]
+}

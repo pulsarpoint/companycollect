@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "South Korea Company Profile",
+  "description": "Country-specific company profile for South Korea. Two registration identifiers: 법인등록번호 (corporate registration number, 13-digit, court-issued) and 사업자등록번호 (business registration number, 10-digit, NTS-issued = tax id AND VAT number; Korea has VAT but no separate VAT id). Identity + financials come from the OpenDART API (FSS), which needs a free crtfc_key, so the open layer is key-gated/planning-only here and covers the disclosure-obligated universe (listed + external-audit companies). The NTS business-status API (free data.go.kr key) adds tax-registration status. The full unlisted register, exact legal form, capital, and directors are fee-based at the court registry (IROS) — planning-only. CEO/director names are personal data (PIPA).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "South Korea" },
+    "country_slug": { "type": "string", "const": "south_korea" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["corp_registration_number"],
+      "properties": {
+        "corp_registration_number": {
+          "type": ["string", "null"],
+          "description": "법인등록번호 (13-digit, court-issued). Company registration id.",
+          "x-source": "opendart_api",
+          "x-source-path": "company.jurir_no",
+          "x-join-key": true
+        },
+        "business_registration_number": {
+          "type": ["string", "null"],
+          "description": "사업자등록번호 (10-digit, NTS-issued). Tax id = VAT number.",
+          "x-source": "opendart_api",
+          "x-source-path": "company.bizr_no",
+          "x-join-key": true
+        },
+        "dart_corp_code": {
+          "type": ["string", "null"],
+          "description": "DART internal 8-digit code (OpenDART join key).",
+          "x-source": "opendart_api",
+          "x-source-path": "corpCode.corp_code"
+        },
+        "stock_code": { "type": ["string", "null"], "description": "6-digit listing code (listed only).", "x-source": "opendart_api", "x-source-path": "company.stock_code" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= business registration number.", "x-source": "opendart_api", "x-source-path": "company.bizr_no" },
+        "vat_id": { "type": ["string", "null"], "description": "= business registration number (no separate VAT id).", "x-source": "opendart_api", "x-source-path": "company.bizr_no" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "opendart_api", "x-source-path": "company.corp_name" },
+        "legal_name_en": { "type": ["string", "null"], "x-source": "opendart_api", "x-source-path": "company.corp_name_eng" },
+        "market_class": { "type": ["string", "null"], "description": "Y=KOSPI / K=KOSDAQ / N=KONEX / E=other (external-audit).", "x-source": "opendart_api", "x-source-path": "company.corp_cls" },
+        "legal_form": { "type": ["string", "null"], "description": "Exact form (주식회사/유한회사/…) — court registry.", "x-source": "iros_court_register", "x-source-path": "registry.company_type", "x-access": "paid" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "business_status": { "type": ["string", "null"], "description": "active/suspended/closed (NTS).", "x-source": "nts_business_status", "x-source-path": "data[].b_stt", "x-access": "free_key" },
+        "tax_type": { "type": ["string", "null"], "x-source": "nts_business_status", "x-source-path": "data[].tax_type", "x-access": "free_key" },
+        "closure_date": { "type": ["string", "null"], "format": "date", "x-source": "nts_business_status", "x-source-path": "data[].end_dt" }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "establishment_date": { "type": ["string", "null"], "format": "date", "x-source": "opendart_api", "x-source-path": "company.est_dt" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "industry_code_ksic": { "type": ["string", "null"], "x-source": "opendart_api", "x-source-path": "company.induty_code" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "opendart_api", "x-source-path": "company.adres" },
+        "homepage": { "type": ["string", "null"], "x-source": "opendart_api", "x-source-path": "company.hm_url" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "description": "Registered capital from the court registry (paid; planning-only).",
+      "properties": {
+        "registered_capital_krw": { "type": ["integer", "null"], "x-source": "iros_court_register", "x-source-path": "registry.capital", "x-access": "paid" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "OpenDART XBRL financials (BS/IS/CIS/CF/SCE) in KRW, per fiscal year/report. Free key; DART-registered companies only.",
+      "x-source": "opendart_api",
+      "x-access": "free_key",
+      "items": {
+        "type": "object",
+        "properties": {
+          "bsns_year": { "type": ["string", "null"] },
+          "reprt_code": { "type": ["string", "null"], "description": "11011 annual / 11012 H1 / 11013 Q1 / 11014 Q3." },
+          "fs_div": { "type": ["string", "null"], "description": "CFS consolidated / OFS separate." },
+          "accounts": { "type": "array", "items": { "type": "object", "properties": { "sj_div": { "type": ["string", "null"] }, "account_nm": { "type": ["string", "null"] }, "thstrm_amount": { "type": ["string", "null"] } } } },
+          "currency": { "type": "string", "const": "KRW" }
+        }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY. CEO from OpenDART (personal data); full director list only via the paid court registry. PERSONAL DATA (PIPA) — redact.",
+      "x-source": "opendart_api / iros_court_register",
+      "x-access": "gated_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

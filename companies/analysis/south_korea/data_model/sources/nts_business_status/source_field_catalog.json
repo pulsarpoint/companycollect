@@ -1,0 +1,24 @@
+{
+  "country": "South Korea",
+  "country_slug": "south_korea",
+  "source_slug": "nts_business_status",
+  "source_name": "NTS business registration status API",
+  "source_type": "tax_registry",
+  "organization": "National Tax Service (국세청) via data.go.kr / odcloud",
+  "source_url": "https://api.odcloud.kr/api/nts-businessman/v1/status",
+  "license": "kogl_or_dataset_terms",
+  "access": "public_with_free_key",
+  "data_freshness": "live lookup",
+  "record_shape": "json_status_array_keyed_by_b_no",
+  "primary_keys": ["b_no"],
+  "join_keys": ["b_no"],
+  "field_count": 6,
+  "fields": [
+    { "path": "data[].b_no", "source_field": "b_no", "english_name": "business_registration_number", "meaning": "사업자등록번호 (10-digit business registration number / tax id).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: API key-gated (401); schema from data.go.kr docs.", "source_confidence": "high", "analysis_notes": "Join key to OpenDART bizr_no." },
+    { "path": "data[].b_stt", "source_field": "b_stt", "english_name": "business_status", "meaning": "Business status (text).", "data_type": "string", "semantic_type": "status", "example_values": ["계속사업자", "폐업자", "휴업자"], "nullable": true, "repeatable": true, "code_list": "계속사업자 active / 휴업자 suspended / 폐업자 closed", "language": "Korean", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": "Tax-registration status." },
+    { "path": "data[].b_stt_cd", "source_field": "b_stt_cd", "english_name": "business_status_code", "meaning": "Business status code.", "data_type": "string", "semantic_type": "status", "example_values": ["01", "02", "03"], "nullable": true, "repeatable": true, "code_list": "01 active / 02 suspended / 03 closed", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "data[].tax_type", "source_field": "tax_type", "english_name": "tax_type", "meaning": "VAT taxpayer type (text).", "data_type": "string", "semantic_type": "license_or_terms", "example_values": [], "nullable": true, "repeatable": true, "code_list": "general / simplified / tax-exempt / not registered", "language": "Korean", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": "부가가치세 (VAT) taxpayer classification." },
+    { "path": "data[].end_dt", "source_field": "end_dt", "english_name": "closure_date", "meaning": "Business closure date (if closed).", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY; YYYYMMDD.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "data[].utcc_yn", "source_field": "utcc_yn", "english_name": "unit_taxation_flag", "meaning": "Whether a unit-taxation business.", "data_type": "string", "semantic_type": "metadata", "example_values": ["Y", "N"], "nullable": true, "repeatable": true, "code_list": "Y/N", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}
