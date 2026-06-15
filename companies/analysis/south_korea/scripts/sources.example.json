@@ -1,0 +1,48 @@
+[
+  {
+    "name": "OpenDART corpCode (bulk entity list) - needs free key",
+    "slug": "opendart_corpcode",
+    "type": "bulk",
+    "url": "https://opendart.fss.or.kr/api/corpCode.xml?crtfc_key=<freeKey>",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Returns a ZIP containing CORPCODE.xml (corp_code, corp_name, corp_eng_name, stock_code, modify_date) for every DART entity. 302 without crtfc_key. Register free at opendart.fss.or.kr."
+  },
+  {
+    "name": "OpenDART company info (identity) - needs free key",
+    "slug": "opendart_company",
+    "type": "api_page",
+    "url": "https://opendart.fss.or.kr/api/company.json?corp_code={corp_code}&crtfc_key=<freeKey>",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Replace {corp_code} with an 8-digit DART code from corpCode.xml. Returns jurir_no (corp reg no), bizr_no (business/tax reg no), corp_cls, ceo_nm (PII), est_dt, adres, induty_code. status 900 without key."
+  },
+  {
+    "name": "OpenDART financial statements (full) - needs free key",
+    "slug": "opendart_fnltt_all",
+    "type": "api_page",
+    "url": "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json?corp_code={corp_code}&bsns_year=2023&reprt_code=11011&fs_div=CFS&crtfc_key=<freeKey>",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Full financial statements (BS/IS/CIS/CF/SCE) in KRW. reprt_code 11011=annual. fs_div CFS=consolidated/OFS=separate. status 900 without key."
+  },
+  {
+    "name": "NTS business-registration status - needs free data.go.kr key",
+    "slug": "nts_business_status",
+    "type": "api_page",
+    "url": "https://api.odcloud.kr/api/nts-businessman/v1/status?serviceKey=<freeServiceKey>",
+    "method": "POST",
+    "headers": { "Content-Type": "application/json", "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "POST body {\"b_no\":[\"<10-digit business reg no>\"]}. Returns b_stt (active/suspended/closed) + tax_type. 401 '인증키는 필수 항목 입니다' without serviceKey."
+  }
+]
