@@ -1,0 +1,29 @@
+[
+  {
+    "name": "ABR / ABN Lookup Bulk Extract — Part 1 (XML in ZIP)",
+    "slug": "abr_bulk_extract_part1",
+    "type": "bulk",
+    "url": "https://data.gov.au/data/dataset/5bd7fcab-e315-42cb-8daf-50b7efc2027e/resource/0ae4d427-6fa8-4d40-8e76-c6909b5a071b/download/public_split_1_10.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "ABR / ABN Lookup Bulk Extract — Part 2 (XML in ZIP)",
+    "slug": "abr_bulk_extract_part2",
+    "type": "bulk",
+    "url": "https://data.gov.au/data/dataset/5bd7fcab-e315-42cb-8daf-50b7efc2027e/resource/635fcb95-7864-4509-9fa7-a62a6e32b62d/download/public_split_11_20.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "ABR Bulk Extract Schema (XSD)",
+    "slug": "abr_bulk_extract_xsd",
+    "type": "bulk",
+    "url": "https://data.gov.au/data/dataset/5bd7fcab-e315-42cb-8daf-50b7efc2027e/resource/f3f8f8a1-590c-4d87-8285-806b093c2c69/download/bulkextract.xsd",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]
