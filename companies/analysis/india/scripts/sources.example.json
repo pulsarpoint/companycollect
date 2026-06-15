@@ -1,0 +1,26 @@
+[
+  {
+    "name": "OGD list MCA Company Master Data resources",
+    "slug": "ogd_mca_lists",
+    "type": "api_page",
+    "url": "https://api.data.gov.in/lists?format=json&filters[org]=Ministry%20of%20Corporate%20Affairs&filters[title]=company%20master&limit=50",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "offset",
+    "page_start": 0,
+    "max_pages": 3,
+    "note": "Append &api-key=<freeKey>. Enumerates the 128 state x year MCA resources; each record has index_name (resource_id) + field list. Public sample key 579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b works for testing."
+  },
+  {
+    "name": "OGD MCA Company Master Data resource (per state x year)",
+    "slug": "ogd_mca_resource",
+    "type": "api_page",
+    "url": "https://api.data.gov.in/resource/{resource_id}?format=json&limit=100",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "offset",
+    "page_start": 0,
+    "max_pages": 5,
+    "note": "Append &api-key=<freeKey>. Replace {resource_id} with an index_name from the lists call (e.g. 87f853c6-59ee-41dd-aaa2-2fbdfb660ced = Mizoram 2021). Use format=csv for CSV. Keyed on CIN. Redact email_addr (PII)."
+  }
+]
