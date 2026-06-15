@@ -1,0 +1,32 @@
+[
+  {
+    "name": "NZBN API - entity search (needs free subscription key)",
+    "slug": "nzbn_entities_search",
+    "type": "api_page",
+    "url": "https://api.business.govt.nz/gateway/nzbn/v5/entities?search-term=example",
+    "method": "GET",
+    "headers": {
+      "Accept": "application/json",
+      "Ocp-Apim-Subscription-Key": "<freeSubscriptionKey>"
+    },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Returns HTTP 401 without a subscription key. Register on the api.business.govt.nz developer portal for a free key. Paginated; itemsPerPage param controls page size."
+  },
+  {
+    "name": "NZBN API - entity detail by NZBN (needs free subscription key)",
+    "slug": "nzbn_entity_detail",
+    "type": "api_page",
+    "url": "https://api.business.govt.nz/gateway/nzbn/v5/entities/{nzbn}",
+    "method": "GET",
+    "headers": {
+      "Accept": "application/json",
+      "Ocp-Apim-Subscription-Key": "<freeSubscriptionKey>"
+    },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Replace {nzbn} with a 13-digit NZBN. Returns the publicly available entity data (name, type, status, addresses, tradingNames, industryClassifications, companyDetails incl. company number)."
+  }
+]
