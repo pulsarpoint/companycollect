@@ -2,6 +2,7 @@ import json
 
 import duckdb
 
+from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.clickhouse.resolved import RESOLVED_DATABASE
 from dagster_v3.defs.finland_resolved.assets import build_finland_ytj_resolved_tables
 from dagster_v3.defs.finland_resolved import tables
@@ -288,3 +289,11 @@ def test_build_finland_ytj_resolved_tables_normalizes_realistic_main_business_li
         "82200",
         "82200",
     )
+
+
+def test_finland_resolved_clickhouse_asset_is_registered() -> None:
+    repository = load_project_defs().get_repository_def()
+    asset_keys = {key.path[-1] for key in repository.asset_graph.get_all_asset_keys()}
+
+    assert "finland_ytj_resolved_duckdb" in asset_keys
+    assert "finland_ytj_resolved_clickhouse" in asset_keys

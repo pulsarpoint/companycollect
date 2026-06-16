@@ -3,9 +3,16 @@ from __future__ import annotations
 import json
 
 import dagster as dg
+from dagster_clickhouse import ClickhouseResource
 
+from dagster_v3.defs.clickhouse.resolved import (
+    RESOLVED_DATABASE,
+    assert_clickhouse_tables_exist,
+    export_duckdb_table_to_clickhouse,
+)
 from dagster_v3.defs.finland_resolved import tables
 from dagster_v3.defs.finland_ytj.resources import LocalDuckDBResource
+from dagster_v3.defs.nace import assets as nace_assets
 
 RESOLVED_DUCKDB_SCHEMA = "finland_resolved"
 YTJ_DUCKDB_SCHEMA = "finland_prhytj"
@@ -52,7 +59,49 @@ def finland_ytj_resolved_duckdb(
     )
 
 
-defs = dg.Definitions(assets=[finland_ytj_resolved_duckdb])
+@dg.asset(
+    deps=[finland_ytj_resolved_duckdb],
+    group_name="finland_resolved",
+    kinds={"python", "duckdb", "clickhouse"},
+    description="Exports resolved Finland YTJ DuckDB tables to migrated ClickHouse tables.",
+)
+def finland_ytj_resolved_clickhouse(
+    clickhouse: ClickhouseResource,
+    ytj_duckdb: LocalDuckDBResource,
+) -> dg.MaterializeResult:
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=RESOLVED_DATABASE,
+        tables=tables.FINLAND_YTJ_RESOLVED_TABLES,
+    )
+    with clickhouse.get_connection() as client:
+        row_counts = {
+            table: export_duckdb_table_to_clickhouse(
+                duckdb_path=ytj_duckdb.path(),
+                clickhouse_client=client,
+                duckdb_schema=RESOLVED_DUCKDB_SCHEMA,
+                duckdb_table=table,
+                clickhouse_database=RESOLVED_DATABASE,
+                clickhouse_table=table,
+                columns=tables.RESOLVED_TABLE_COLUMNS[table],
+                truncate=True,
+            )
+            for table in tables.FINLAND_YTJ_RESOLVED_TABLES
+        }
+    return dg.MaterializeResult(
+        metadata={f"{table}_row_count": count for table, count in row_counts.items()}
+    )
+
+
+defs = dg.Definitions(
+    assets=[
+        finland_ytj_resolved_duckdb,
+        finland_ytj_resolved_clickhouse,
+    ],
+    resources={
+        "clickhouse": nace_assets.defs.resources["clickhouse"],
+    },
+)
 
 
 def _fi_companies_sql() -> str:

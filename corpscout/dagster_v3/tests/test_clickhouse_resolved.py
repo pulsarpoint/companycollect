@@ -1,11 +1,13 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+import duckdb
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import (
     REQUIRED_FINLAND_RESOLVED_TABLES,
     assert_clickhouse_tables_exist,
+    export_duckdb_table_to_clickhouse,
 )
 
 
@@ -81,3 +83,58 @@ def test_assert_clickhouse_tables_exist_reports_missing_tables(monkeypatch) -> N
         assert str(exc) == "Missing ClickHouse tables in corpscout_resolved: fi_websites"
     else:
         raise AssertionError("expected missing table error")
+
+
+def test_export_duckdb_table_to_clickhouse_inserts_rows_in_column_order(tmp_path) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar,
+                country_iso2 varchar,
+                source_system varchar
+            )
+            """
+        )
+        connection.execute(
+            "insert into finland_resolved.fi_companies values ('1234567-8', 'FI', 'finland_prhytj')"
+        )
+
+    client = FakeInsertClickHouseClient()
+
+    row_count = export_duckdb_table_to_clickhouse(
+        duckdb_path=database_path,
+        clickhouse_client=client,
+        duckdb_schema="finland_resolved",
+        duckdb_table="fi_companies",
+        clickhouse_database="corpscout_resolved",
+        clickhouse_table="fi_companies",
+        columns=("business_id", "country_iso2", "source_system"),
+        truncate=True,
+    )
+
+    assert row_count == 1
+    assert client.statements == ["TRUNCATE TABLE `corpscout_resolved`.`fi_companies`"]
+    assert client.insert_calls == [
+        (
+            "INSERT INTO `corpscout_resolved`.`fi_companies` (`business_id`, `country_iso2`, `source_system`) VALUES",
+            [("1234567-8", "FI", "finland_prhytj")],
+        )
+    ]
+
+
+class FakeInsertClickHouseClient(FakeClickHouseClient):
+    def __init__(self) -> None:
+        super().__init__(set())
+        self.insert_calls: list[tuple[str, list[tuple[object, ...]]]] = []
+
+    def execute(self, sql: str, params: object | None = None) -> list[tuple[str]]:
+        if sql.startswith("INSERT INTO"):
+            if not isinstance(params, list):
+                raise AssertionError("insert params must be a list of row tuples")
+            self.insert_calls.append((sql, params))
+            return []
+        self.statements.append(sql)
+        return []
