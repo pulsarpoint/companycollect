@@ -1,0 +1,26 @@
+[
+  {
+    "name": "data.gov.sg dataset search (find ACRA A-Z datasets)",
+    "slug": "datagovsg_search",
+    "type": "api_page",
+    "url": "https://api-production.data.gov.sg/v2/public/api/datasets?query=ACRA%20Information%20on%20Corporate%20Entities",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 3,
+    "note": "No key. Returns datasetId for each ACRA entities dataset (split by first letter A-Z + others). Collect all datasetIds."
+  },
+  {
+    "name": "data.gov.sg poll-download (ACRA entities CSV per dataset)",
+    "slug": "acra_entities_download",
+    "type": "api_page",
+    "url": "https://api-open.data.gov.sg/v1/public/api/datasets/{datasetId}/poll-download",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "No key. Returns data.url = a signed (time-limited) S3 CSV URL; then GET that URL to download the CSV (53 cols, keyed on uen). Example: 'B' = d_3a3807c023c61ddfba947dc069eb53f2. Iterate all A-Z datasetIds."
+  }
+]
