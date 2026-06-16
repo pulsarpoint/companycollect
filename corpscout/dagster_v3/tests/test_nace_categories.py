@@ -166,3 +166,57 @@ def test_build_nace_rows_preserves_hierarchy_and_versions() -> None:
     assert rows[3]["valid_from"] == "2025-01-01"
     assert rows[3]["valid_to"] is None
     assert rows[3]["is_current"] == 1
+
+
+def test_build_nace_rows_uses_normalized_keys_for_punctuation_variant_hierarchy() -> None:
+    scheme = NaceScheme(
+        classification_version="NACE_REV_2_1",
+        scheme_uri="http://data.europa.eu/ux2/nace2.1/nace2.1",
+        valid_from="2025-01-01",
+        valid_to=None,
+        is_current=1,
+    )
+    source_rows = [
+        {
+            "concept": "http://data.europa.eu/ux2/nace2.1/A",
+            "notation": "A",
+            "label": "A AGRICULTURE, FORESTRY AND FISHING",
+            "broader": "",
+        },
+        {
+            "concept": "http://data.europa.eu/ux2/nace2.1/01",
+            "notation": "01",
+            "label": "01 Crop and animal production, hunting and related service activities",
+            "broader": "http://data.europa.eu/ux2/nace2.1/A",
+        },
+        {
+            "concept": "http://data.europa.eu/ux2/nace2.1/011",
+            "notation": "01/1",
+            "label": "01/1 Growing of non-perennial crops",
+            "broader": "http://data.europa.eu/ux2/nace2.1/01",
+        },
+        {
+            "concept": "http://data.europa.eu/ux2/nace2.1/0111",
+            "notation": "01-11",
+            "label": "01-11 Growing of cereals, other than rice",
+            "broader": "http://data.europa.eu/ux2/nace2.1/011",
+        },
+    ]
+
+    rows = build_nace_rows(
+        scheme=scheme,
+        source_rows=source_rows,
+        source_url="https://publications.europa.eu/webapi/rdf/sparql",
+        source_payload_hash="b" * 64,
+        source_run_id="run-2",
+        pulled_at="2026-06-16T00:00:00.000Z",
+    )
+
+    assert rows[2]["code"] == "01/1"
+    assert rows[2]["normalized_code"] == "011"
+    assert rows[2]["parent_code"] == "01"
+    assert rows[2]["section_code"] == "A"
+    assert rows[3]["code"] == "01-11"
+    assert rows[3]["normalized_code"] == "0111"
+    assert rows[3]["parent_code"] == "01.1"
+    assert rows[3]["section_code"] == "A"
