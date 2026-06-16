@@ -117,7 +117,7 @@ def test_nace_dlt_source_yields_both_versions_with_version_metadata() -> None:
     session = FakeSparqlSession()
 
     source = nace_source.nace_categories_source(
-        run_id="test-run",
+        source_run_id="test-run",
         pulled_at="2026-06-16T00:00:00.000Z",
         session=session,
     )

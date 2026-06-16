@@ -145,7 +145,7 @@ def nace_categories_source(
     max_retries: int = NACE_REQUEST_MAX_ATTEMPTS,
     retry_initial_delay_seconds: float = NACE_RETRY_INITIAL_DELAY_SECONDS,
     retry_max_delay_seconds: float = NACE_RETRY_MAX_DELAY_SECONDS,
-    run_id: str = "",
+    source_run_id: str = "",
     pulled_at: str | None = None,
     session: HttpClient | None = None,
 ) -> DltResource:
@@ -157,7 +157,7 @@ def nace_categories_source(
         max_retries=max_retries,
         retry_initial_delay_seconds=retry_initial_delay_seconds,
         retry_max_delay_seconds=retry_max_delay_seconds,
-        run_id=run_id,
+        source_run_id=source_run_id,
         pulled_at=pulled_at,
         session=session,
     )
@@ -177,7 +177,7 @@ def _nace_categories_resource(
     max_retries: int,
     retry_initial_delay_seconds: float,
     retry_max_delay_seconds: float,
-    run_id: str,
+    source_run_id: str,
     pulled_at: str | None,
     session: HttpClient | None,
 ) -> Iterator[dict[str, Any]]:
@@ -198,7 +198,7 @@ def _nace_categories_resource(
             source_rows=source_rows,
             source_url=source_url,
             source_payload_hash=source_payload_hash,
-            source_run_id=run_id,
+            source_run_id=source_run_id,
             pulled_at=effective_pulled_at,
         )
 
