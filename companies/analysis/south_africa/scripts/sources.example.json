@@ -1,0 +1,26 @@
+[
+  {
+    "name": "eTenders OCDS releases (open procurement)",
+    "slug": "etenders_ocds_releases",
+    "type": "api_page",
+    "url": "https://ocds-api.etenders.gov.za/api/OCDSReleases?PageSize=50&dateFrom=2025-01-01&dateTo=2025-12-31",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "PageNumber",
+    "page_start": 1,
+    "max_pages": 3,
+    "note": "No key. Requires dateFrom/dateTo + PageNumber/PageSize. Public domain (ODC-PDDL). Extract awards[].suppliers[].name + value (ZAR) + buyer.name + tender.title. Supplier id is legalName only (no CIPC registration number)."
+  },
+  {
+    "name": "CIPC company disclosure (PAID — needs customer code)",
+    "slug": "cipc_disclosure",
+    "type": "api_page",
+    "url": "https://eservices.cipc.co.za/",
+    "method": "GET",
+    "headers": {},
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "PLANNING-ONLY. The authoritative registry (registration number, status, type, directors, AFS). Paid per-transaction via CIPC eServices (customer code + fees). No open bulk/API. Do not fetch without lawful paid access."
+  }
+]
