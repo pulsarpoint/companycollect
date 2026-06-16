@@ -1,5 +1,11 @@
+import json
+
+import duckdb
+
 from dagster_v3.defs.clickhouse.resolved import RESOLVED_DATABASE
+from dagster_v3.defs.finland_resolved.assets import build_finland_ytj_resolved_tables
 from dagster_v3.defs.finland_resolved import tables
+from dagster_v3.defs.finland_ytj.resources import LocalDuckDBResource
 
 
 def test_finland_resolved_table_names_match_clickhouse_contract() -> None:
@@ -96,3 +102,189 @@ def test_finland_industries_keeps_nace_keys_without_labels() -> None:
     } <= industry_columns
     assert "nace_title_en" not in industry_columns
     assert "nace_description_en" not in industry_columns
+
+
+def test_build_finland_ytj_resolved_tables_creates_company_website_and_industry_tables(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_prhytj")
+        connection.execute(
+            """
+            create table finland_prhytj.all_companies (
+                country_iso2 varchar,
+                source_slug varchar,
+                source_run_id varchar,
+                source_record_id varchar,
+                source_payload_hash varchar,
+                business_id varchar,
+                registration_date varchar,
+                end_date varchar,
+                lifecycle_status varchar,
+                is_active boolean,
+                primary_name varchar,
+                website_url varchar,
+                website_normalized_url varchar,
+                website_host varchar,
+                website_path varchar,
+                website_registered_on varchar,
+                website_ended_on varchar,
+                raw_company varchar
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into finland_prhytj.all_companies values (
+                'FI',
+                'finland_prhytj',
+                'run-1',
+                '1234567-8',
+                repeat('a', 64),
+                '1234567-8',
+                '2024-01-02',
+                '',
+                'active',
+                true,
+                'Example Oy',
+                'https://example.fi',
+                'https://example.fi',
+                'example.fi',
+                '',
+                '2024-01-03',
+                '',
+                '{"businessLine":{"code":"0111","codeSet":"NACE_REV_2_1","description":"Viljely"}}'
+            )
+            """
+        )
+
+    row_counts = build_finland_ytj_resolved_tables(
+        LocalDuckDBResource(database_path=str(database_path))
+    )
+
+    assert row_counts == {
+        "fi_companies": 1,
+        "fi_websites": 1,
+        "fi_industries": 1,
+    }
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        company = connection.execute(
+            "select business_id, name, primary_website_host from finland_resolved.fi_companies"
+        ).fetchone()
+        website = connection.execute(
+            "select business_id, website_host, is_primary from finland_resolved.fi_websites"
+        ).fetchone()
+        industry = connection.execute(
+            """
+            select business_id, nace_revision, nace_normalized_code, description_original
+            from finland_resolved.fi_industries
+            """
+        ).fetchone()
+
+    assert company == ("1234567-8", "Example Oy", "example.fi")
+    assert website == ("1234567-8", "example.fi", True)
+    assert industry == ("1234567-8", "NACE_REV_2_1", "0111", "Viljely")
+
+
+def test_build_finland_ytj_resolved_tables_normalizes_realistic_main_business_line(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    raw_company = {
+        "mainBusinessLine": {
+            "type": "82200",
+            "typeCodeSet": "TOIMI4",
+            "descriptions": [
+                {"languageCode": "3", "description": "Activities of call centres"},
+                {"languageCode": "1", "description": "Puhelinpalvelukeskusten toiminta"},
+            ],
+        }
+    }
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_prhytj")
+        connection.execute(
+            """
+            create table finland_prhytj.all_companies (
+                country_iso2 varchar,
+                source_slug varchar,
+                source_run_id varchar,
+                source_record_id varchar,
+                source_payload_hash varchar,
+                business_id varchar,
+                registration_date varchar,
+                end_date varchar,
+                lifecycle_status varchar,
+                is_active boolean,
+                primary_name varchar,
+                website_url varchar,
+                website_normalized_url varchar,
+                website_host varchar,
+                website_path varchar,
+                website_registered_on varchar,
+                website_ended_on varchar,
+                raw_company varchar
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into finland_prhytj.all_companies values (
+                'FI',
+                'finland_prhytj',
+                'run-1',
+                '7654321-0',
+                repeat('b', 64),
+                '7654321-0',
+                '2024-01-02',
+                '',
+                'active',
+                true,
+                'Call Centre Oy',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                ?
+            )
+            """,
+            [json.dumps(raw_company)],
+        )
+
+    row_counts = build_finland_ytj_resolved_tables(
+        LocalDuckDBResource(database_path=str(database_path))
+    )
+
+    assert row_counts == {
+        "fi_companies": 1,
+        "fi_websites": 0,
+        "fi_industries": 1,
+    }
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        industry = connection.execute(
+            """
+            select
+              source_industry_code,
+              source_industry_code_set,
+              description_original,
+              description_language,
+              nace_revision,
+              nace_code,
+              nace_normalized_code
+            from finland_resolved.fi_industries
+            """
+        ).fetchone()
+
+    assert industry == (
+        "82200",
+        "TOIMI4",
+        "Puhelinpalvelukeskusten toiminta",
+        "fi",
+        "TOIMI4",
+        "82200",
+        "82200",
+    )
