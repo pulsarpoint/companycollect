@@ -275,6 +275,8 @@ def test_build_finland_ytj_resolved_tables_normalizes_realistic_main_business_li
               source_industry_code_set,
               description_original,
               description_language,
+              nace_mapping_method,
+              nace_mapping_status,
               nace_revision,
               nace_code,
               nace_normalized_code
@@ -287,9 +289,11 @@ def test_build_finland_ytj_resolved_tables_normalizes_realistic_main_business_li
         "TOIMI4",
         "Puhelinpalvelukeskusten toiminta",
         "fi",
-        "TOIMI4",
-        "82200",
-        "82200",
+        "none",
+        "unmapped_source_code_set",
+        None,
+        None,
+        None,
     )
 
 

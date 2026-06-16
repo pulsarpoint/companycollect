@@ -181,6 +181,7 @@ def replace_duckdb_tables_in_clickhouse(
             exchanged_tables.append(clickhouse_table)
     except Exception as exc:
         primary_error = exc
+        rollback_failures: list[str] = []
         for clickhouse_table in reversed(exchanged_tables):
             try:
                 clickhouse_client.execute(
@@ -188,7 +189,17 @@ def replace_duckdb_tables_in_clickhouse(
                     f"AND {clickhouse_qualified_tables[clickhouse_table]}"
                 )
             except Exception:
-                pass
+                rollback_failures.append(
+                    f"{clickhouse_table} "
+                    f"({clickhouse_qualified_stage_tables[clickhouse_table]} <-> "
+                    f"{clickhouse_qualified_tables[clickhouse_table]})"
+                )
+        if rollback_failures:
+            raise RuntimeError(
+                "Rollback failed after ClickHouse publish error; ClickHouse may be inconsistent. "
+                "Failed rollback exchange(s): "
+                + ", ".join(rollback_failures)
+            ) from exc
         raise
     finally:
         _drop_clickhouse_stage_tables(
