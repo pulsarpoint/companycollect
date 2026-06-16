@@ -1,0 +1,73 @@
+{
+  "country": "Brazil",
+  "country_slug": "brazil",
+  "source_slug": "cvm_dfp_itr",
+  "source_identity": "brazil_cvm_dfp_itr",
+  "source_package": "cvmdfpitr",
+  "env_prefix": "CVM_DFP",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "CVM Dados Abertos — DFP/ITR listed-company financial statements",
+    "source_type": "financial_statements",
+    "organization": "Comissão de Valores Mobiliários (CVM)",
+    "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/",
+    "license": "open_cc_by",
+    "access": "public",
+    "data_freshness": "annual (DFP) + quarterly (ITR)",
+    "attribution": "CVM"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/",
+    "download_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/dfp_cia_aberta_{YYYY}.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "zip"],
+    "compression": "zip",
+    "encoding": "latin-1",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "per_year_files", "page_param": "YYYY", "page_start": 2022, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "no key; per-year ZIPs (DFP + ITR)"
+  },
+  "snapshot": {
+    "strategy": "preserve_zip_then_extract_statement_csvs",
+    "file_extension": ".zip",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "CvmFinancialLine",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["brl_decimal_scaled_by_escala_moeda"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Latin-1, ;-delimited, header row. Per-year ZIP: index (dfp_cia_aberta_{YYYY}.csv) + statement CSVs BPA/BPP/DRE/DFC_MD/DFC_MI/DMPL/DRA/DVA (_con consolidated / _ind individual) + composicao_capital + parecer. One row per account line: group by CNPJ_CIA + DT_REFER + GRUPO_DFP + ORDEM_EXERC, pivot on CD_CONTA/DS_CONTA. Filter ORDEM_EXERC=ÚLTIMO for the latest year. Multiply VL_CONTA by 1000 when ESCALA_MOEDA=MIL. Strip CNPJ_CIA formatting to join to RFB CNPJ. ITR is the quarterly equivalent (same schema)."
+  },
+  "keys": {
+    "primary_keys": ["CNPJ_CIA", "CD_CVM", "DT_REFER", "GRUPO_DFP", "CD_CONTA"],
+    "join_keys": ["CNPJ_CIA", "CD_CVM"],
+    "dedupe_keys": ["CNPJ_CIA", "DT_REFER", "GRUPO_DFP", "CD_CONTA", "ORDEM_EXERC"]
+  },
+  "mapping_rules": {
+    "financials": "Aggregate account lines into financial_statements[] per period; map CD_CONTA 1 -> total_assets, 3.01 -> revenue, etc.; VL_CONTA × scale (BRL).",
+    "join": "CNPJ_CIA (strip dots/slash/dash) = RFB CNPJ (14-digit) -> registry profile.",
+    "legal_name": "DENOM_CIA (cross-check with razao_social)."
+  },
+  "fixture_requirements": [
+    "index row (DFP) with CNPJ_CIA + CD_CVM",
+    "BPA balance-sheet asset line (Ativo Total)",
+    "DRE income line (Receita)",
+    "consolidated vs individual (_con/_ind) lines",
+    "ÚLTIMO + PENÚLTIMO for one company"
+  ],
+  "live_test_plan": {
+    "smoke": "Download dfp_cia_aberta_{YYYY}.zip; parse index + BPA_con; assemble one company's totals.",
+    "full": "Ingest DFP + ITR per year; aggregate per company+period; join to RFB CNPJ on CNPJ. No key."
+  },
+  "blockers": []
+}

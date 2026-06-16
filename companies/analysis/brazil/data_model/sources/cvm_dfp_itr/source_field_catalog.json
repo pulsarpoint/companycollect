@@ -1,0 +1,32 @@
+{
+  "country": "Brazil",
+  "country_slug": "brazil",
+  "source_slug": "cvm_dfp_itr",
+  "source_name": "CVM Dados Abertos — DFP/ITR listed-company financial statements",
+  "source_type": "financial_statements",
+  "organization": "Comissão de Valores Mobiliários (CVM)",
+  "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/dfp_cia_aberta_{YYYY}.zip",
+  "license": "open_cc_by",
+  "access": "public",
+  "data_freshness": "annual (DFP) + quarterly (ITR)",
+  "record_shape": "per_year_zip_index_plus_statement_csvs_one_row_per_account_line",
+  "primary_keys": ["CNPJ_CIA", "CD_CVM", "DT_REFER", "GRUPO_DFP", "CD_CONTA"],
+  "join_keys": ["CNPJ_CIA", "CD_CVM"],
+  "field_count": 14,
+  "fields": [
+    { "path": "index.CNPJ_CIA", "source_field": "CNPJ_CIA", "english_name": "company_cnpj", "meaning": "The company's CNPJ (formatted).", "data_type": "string", "semantic_type": "identifier", "example_values": ["00.000.000/0001-91"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "JOIN KEY to the RFB CNPJ registry (strip formatting)." },
+    { "path": "index.DENOM_CIA", "source_field": "DENOM_CIA", "english_name": "company_name", "meaning": "Company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["BCO BRASIL S.A.", "CARAMURU ALIMENTOS S.A."], "nullable": false, "repeatable": false, "code_list": null, "language": "Portuguese", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "index.CD_CVM", "source_field": "CD_CVM", "english_name": "cvm_code", "meaning": "CVM issuer code.", "data_type": "string", "semantic_type": "identifier", "example_values": ["001023"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Secondary join key within CVM datasets." },
+    { "path": "index.CATEG_DOC", "source_field": "CATEG_DOC", "english_name": "doc_category", "meaning": "Document category.", "data_type": "string", "semantic_type": "document", "example_values": ["DFP", "ITR"], "nullable": false, "repeatable": false, "code_list": "DFP annual / ITR quarterly", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "index.DT_RECEB", "source_field": "DT_RECEB", "english_name": "received_date", "meaning": "Filing received date.", "data_type": "date", "semantic_type": "date", "example_values": ["2026-02-11"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "index.LINK_DOC", "source_field": "LINK_DOC", "english_name": "document_link", "meaning": "Link to the filed document.", "data_type": "string", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "statement.DT_REFER", "source_field": "DT_REFER", "english_name": "reference_date", "meaning": "Reporting reference date.", "data_type": "date", "semantic_type": "date", "example_values": ["2025-12-31"], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "statement.GRUPO_DFP", "source_field": "GRUPO_DFP", "english_name": "statement_group", "meaning": "Statement group / type.", "data_type": "string", "semantic_type": "financial", "example_values": ["DF Consolidado - Balanço Patrimonial Ativo"], "nullable": false, "repeatable": true, "code_list": "BPA/BPP/DRE/DFC/DMPL/DRA/DVA (con/ind)", "language": "Portuguese", "limitations": null, "source_confidence": "high", "analysis_notes": "Distinguishes balance sheet / income / cash flow / etc." },
+    { "path": "statement.MOEDA", "source_field": "MOEDA", "english_name": "currency", "meaning": "Currency.", "data_type": "string", "semantic_type": "financial", "example_values": ["REAL"], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "BRL." },
+    { "path": "statement.ESCALA_MOEDA", "source_field": "ESCALA_MOEDA", "english_name": "currency_scale", "meaning": "Currency scale.", "data_type": "string", "semantic_type": "financial", "example_values": ["MIL", "UNIDADE"], "nullable": false, "repeatable": true, "code_list": "MIL (thousands) / UNIDADE", "language": "n/a", "limitations": "Multiply by 1000 when MIL.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "statement.ORDEM_EXERC", "source_field": "ORDEM_EXERC", "english_name": "exercise_order", "meaning": "Which exercise the value belongs to.", "data_type": "string", "semantic_type": "metadata", "example_values": ["ÚLTIMO", "PENÚLTIMO"], "nullable": false, "repeatable": true, "code_list": "ÚLTIMO (current) / PENÚLTIMO (prior)", "language": "Portuguese", "limitations": null, "source_confidence": "high", "analysis_notes": "Filter ÚLTIMO for the latest year." },
+    { "path": "statement.CD_CONTA", "source_field": "CD_CONTA", "english_name": "account_code", "meaning": "Account code (standardized chart).", "data_type": "string", "semantic_type": "financial", "example_values": ["1", "3.01"], "nullable": false, "repeatable": true, "code_list": "CVM standardized account plan", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "1 = Ativo Total; 3.01 = Receita." },
+    { "path": "statement.DS_CONTA", "source_field": "DS_CONTA", "english_name": "account_name", "meaning": "Account name.", "data_type": "string", "semantic_type": "financial", "example_values": ["Ativo Total", "Receita de Venda de Bens e/ou Serviços"], "nullable": false, "repeatable": true, "code_list": null, "language": "Portuguese", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "statement.VL_CONTA", "source_field": "VL_CONTA", "english_name": "account_value", "meaning": "Account value (BRL, per ESCALA_MOEDA).", "data_type": "decimal", "semantic_type": "financial", "example_values": ["2398719197.0000000000"], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "Scale in ESCALA_MOEDA (usually MIL = thousands).", "source_confidence": "high", "analysis_notes": "The reported amount." }
+  ]
+}

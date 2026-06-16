@@ -1,0 +1,75 @@
+{
+  "country": "Brazil",
+  "country_slug": "brazil",
+  "country_profile_version": "2026-06-16",
+  "_note": "registration.cnpj, legal_identity.legal_name and financial_statements are REAL data from the open CVM DFP 2025 dataset (Banco do Brasil S.A., CNPJ 00.000.000/0001-91, CD_CVM 001023). The RFB-CNPJ-only fields (legal_nature, company_size, status, CNAE, capital, address, owners, tax_regime) are left null/empty here because the CNPJ bulk ZIPs were not fetchable headlessly (SERPRO+ JS portal) — at ingest they populate from the open Empresas/Estabelecimentos/Sócios files and join on CNPJ. Owners (Sócios) are personal data (LGPD) and are redacted/empty.",
+  "registration": {
+    "cnpj": "00.000.000/0001-91",
+    "cnpj_basico": "00000000",
+    "nire": null
+  },
+  "tax_identifiers": {
+    "tax_id": "00000000000191",
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "BCO BRASIL S.A.",
+    "trade_name": null,
+    "legal_nature": null,
+    "company_size": null
+  },
+  "status": {
+    "status_code": null,
+    "status": null,
+    "status_date": null
+  },
+  "incorporation": {
+    "activity_start_date": null
+  },
+  "activity": {
+    "cnae_primary": null
+  },
+  "capital": {
+    "share_capital_brl": null
+  },
+  "registered_location": {
+    "registered_address": null,
+    "municipality": null,
+    "uf": null
+  },
+  "tax_regime": {
+    "simples": null,
+    "mei": null
+  },
+  "owners": [],
+  "financial_statements": [
+    {
+      "reference_date": "2025-12-31",
+      "cvm_code": "001023",
+      "statement_group": "DF Consolidado - Balanço Patrimonial Ativo",
+      "currency": "BRL",
+      "scale": "MIL",
+      "accounts": [
+        { "code": "1", "name": "Ativo Total", "value": 2455143253 }
+      ]
+    }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "rfb_cnpj",
+      "section": "registration / legal_identity / status / activity / capital / registered_location / tax_regime / owners",
+      "source_url": "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/",
+      "access": "public (bulk via SERPRO+ portal)",
+      "license": "open_lai_cc_by",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "cvm_dfp_itr",
+      "section": "financial_statements (listed; real)",
+      "source_url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/dfp_cia_aberta_2025.zip",
+      "access": "public (no key)",
+      "license": "open_cc_by",
+      "retrieved_at": "2026-06-16T00:00:00Z"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "_comment": "Real CVM DFP record (open, CC-BY) from dfp_cia_aberta_2025.zip. Index row + selected balance-sheet asset lines for BCO BRASIL S.A. Keyed on CNPJ_CIA (joins to RFB CNPJ) + CD_CVM. BRL, scale MIL (thousands).",
+  "index": {
+    "CNPJ_CIA": "00.000.000/0001-91",
+    "DT_REFER": "2025-12-31",
+    "DENOM_CIA": "BCO BRASIL S.A.",
+    "CD_CVM": "001023",
+    "CATEG_DOC": "DFP",
+    "DT_RECEB": "2026-02-11"
+  },
+  "balanco_ativo_lines": [
+    {
+      "GRUPO_DFP": "DF Consolidado - Balanço Patrimonial Ativo",
+      "MOEDA": "REAL",
+      "ESCALA_MOEDA": "MIL",
+      "DT_FIM_EXERC": "2025-12-31",
+      "CD_CONTA": "1",
+      "DS_CONTA": "Ativo Total",
+      "VL_CONTA": "2455143253.0000000000"
+    },
+    {
+      "GRUPO_DFP": "DF Consolidado - Balanço Patrimonial Ativo",
+      "MOEDA": "REAL",
+      "ESCALA_MOEDA": "MIL",
+      "DT_FIM_EXERC": "2025-12-31",
+      "CD_CONTA": "1.01",
+      "DS_CONTA": "Caixa e Equivalentes de Caixa",
+      "VL_CONTA": "59635525.0000000000"
+    },
+    {
+      "GRUPO_DFP": "DF Consolidado - Balanço Patrimonial Ativo",
+      "MOEDA": "REAL",
+      "ESCALA_MOEDA": "MIL",
+      "DT_FIM_EXERC": "2025-12-31",
+      "CD_CONTA": "1.02",
+      "DS_CONTA": "Ativos Financeiros",
+      "VL_CONTA": "2201148106.0000000000"
+    }
+  ]
+}

@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Brazil Company Profile",
+  "description": "Country-specific company profile for Brazil — a top-tier open-data country. Keyed on the CNPJ (Cadastro Nacional da Pessoa Jurídica, 14-digit), which is the company id AND the federal tax id; the 8-digit root (cnpj_basico) is the legal entity and 0001 is the HQ. Identity, status, activity (CNAE), capital, and partners come openly from the Receita Federal CNPJ bulk data (Empresas/Estabelecimentos/Sócios/Simples + reference tables). Financial statements for LISTED companies come openly from CVM (DFP/ITR), joined on the CNPJ. Brazil has no single VAT (ICMS uses a separate Inscrição Estadual not in the open data). Partners/officers are personal data (LGPD).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Brazil" },
+    "country_slug": { "type": "string", "const": "brazil" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["cnpj"],
+      "properties": {
+        "cnpj": {
+          "type": "string",
+          "description": "14-digit CNPJ (formatted 00.000.000/0001-91). Company id, federal tax id, universal join key.",
+          "x-source": "rfb_cnpj",
+          "x-source-path": "Estabelecimentos.cnpj_basico+cnpj_ordem+cnpj_dv",
+          "x-join-key": true,
+          "x-freshness": "monthly"
+        },
+        "cnpj_basico": { "type": ["string", "null"], "description": "8-digit root (the legal entity).", "x-source": "rfb_cnpj", "x-source-path": "Empresas.cnpj_basico" },
+        "nire": { "type": ["string", "null"], "description": "State commercial-registry id (Junta Comercial).", "x-source": "junta_comercial_nire", "x-access": "paid" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= CNPJ (federal tax id).", "x-source": "rfb_cnpj", "x-source-path": "cnpj" },
+        "vat_id": { "type": ["string", "null"], "description": "No single VAT; ICMS via Inscrição Estadual (state-level, not in open data).", "x-access": "not_available" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "rfb_cnpj", "x-source-path": "Empresas.razao_social" },
+        "trade_name": { "type": ["string", "null"], "x-source": "rfb_cnpj", "x-source-path": "Estabelecimentos.nome_fantasia" },
+        "legal_nature": { "type": ["string", "null"], "description": "natureza_juridica resolved via Naturezas.", "x-source": "rfb_cnpj", "x-source-path": "Empresas.natureza_juridica" },
+        "company_size": { "type": ["string", "null"], "description": "porte (micro/small/other).", "x-source": "rfb_cnpj", "x-source-path": "Empresas.porte" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_code": { "type": ["string", "null"], "description": "situacao_cadastral (02 ativa / 08 baixada / …).", "x-source": "rfb_cnpj", "x-source-path": "Estabelecimentos.situacao_cadastral" },
+        "status": { "type": ["string", "null"], "enum": ["active", "suspended", "unfit", "closed", "null", null] },
+        "status_date": { "type": ["string", "null"], "format": "date", "x-source": "rfb_cnpj", "x-source-path": "Estabelecimentos.data_situacao_cadastral" }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "activity_start_date": { "type": ["string", "null"], "format": "date", "description": "data_inicio_atividade (≈ incorporation).", "x-source": "rfb_cnpj", "x-source-path": "Estabelecimentos.data_inicio_atividade" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "cnae_primary": { "type": ["string", "null"], "description": "cnae_fiscal_principal (→ Cnaes).", "x-source": "rfb_cnpj", "x-source-path": "Estabelecimentos.cnae_fiscal_principal" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "properties": {
+        "share_capital_brl": { "type": ["number", "null"], "x-source": "rfb_cnpj", "x-source-path": "Empresas.capital_social" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "rfb_cnpj", "x-source-path": "Estabelecimentos.address" },
+        "municipality": { "type": ["string", "null"], "x-source": "rfb_cnpj", "x-source-path": "Estabelecimentos.municipio" },
+        "uf": { "type": ["string", "null"], "description": "State.", "x-source": "rfb_cnpj", "x-source-path": "Estabelecimentos.uf" }
+      }
+    },
+    "tax_regime": {
+      "type": "object",
+      "properties": {
+        "simples": { "type": ["boolean", "null"], "x-source": "rfb_cnpj", "x-source-path": "Simples.opcao_simples" },
+        "mei": { "type": ["boolean", "null"], "x-source": "rfb_cnpj", "x-source-path": "Simples.opcao_mei" }
+      }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Partners / owners from the RFB Sócios file. PERSONAL DATA (LGPD) — redact. CPF is masked.",
+      "x-source": "rfb_cnpj",
+      "x-access": "open_but_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "doc": { "type": ["string", "null"], "x-personal-data": true }, "qualification": { "type": ["string", "null"] } } }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "CVM DFP/ITR — LISTED companies only, joined on CNPJ. Account lines aggregated per period; BRL (scale MIL).",
+      "x-source": "cvm_dfp_itr",
+      "x-access": "open_listed_only",
+      "items": {
+        "type": "object",
+        "properties": {
+          "reference_date": { "type": ["string", "null"], "format": "date" },
+          "cvm_code": { "type": ["string", "null"] },
+          "statement_group": { "type": ["string", "null"] },
+          "currency": { "type": "string", "const": "BRL" },
+          "scale": { "type": ["string", "null"] },
+          "accounts": { "type": "array", "items": { "type": "object", "properties": { "code": { "type": ["string", "null"] }, "name": { "type": ["string", "null"] }, "value": { "type": ["number", "null"] } } } }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

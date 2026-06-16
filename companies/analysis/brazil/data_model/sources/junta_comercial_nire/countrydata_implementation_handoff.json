@@ -1,0 +1,70 @@
+{
+  "country": "Brazil",
+  "country_slug": "brazil",
+  "source_slug": "junta_comercial_nire",
+  "source_identity": "brazil_junta_comercial_nire",
+  "source_package": "juntacomercial",
+  "env_prefix": "JUNTA_COMERCIAL",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Juntas Comerciais (state commercial registries) — NIRE",
+    "source_type": "official_registry",
+    "organization": "Juntas Comerciais estaduais / DREI",
+    "source_url": "https://www.gov.br/empresas-e-negocios/pt-br/drei",
+    "license": "varies_per_state",
+    "access": "public_search_per_document",
+    "data_freshness": "live register",
+    "attribution": "Junta Comercial estadual / DREI"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": true,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.gov.br/empresas-e-negocios/pt-br/drei",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per-state portals; certified extracts fee-based"
+  },
+  "snapshot": { "strategy": "not_applicable_paid", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "JuntaComercialRecord",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["brl_decimal"],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. State commercial registries (NIRE), 27 separate Juntas coordinated by DREI; acts/extracts per-document and fee-based. No single open bulk. Officers (administradores) are personal data (LGPD). Use the RFB CNPJ data for the open registry layer; this for incorporation acts / officers enrichment."
+  },
+  "keys": {
+    "primary_keys": ["nire"],
+    "join_keys": ["nire", "cnpj"],
+    "dedupe_keys": ["nire"]
+  },
+  "mapping_rules": {
+    "registration_number": "nire (state registry id; complements the CNPJ).",
+    "legal_form": "tipo_juridico.",
+    "incorporation_date": "data_constituicao.",
+    "officers": "administradores (PERSONAL DATA — redact).",
+    "join": "nire / cnpj."
+  },
+  "fixture_requirements": ["documented-only: registration act with NIRE + administradores", "documented-only: incorporation date + legal form"],
+  "live_test_plan": {
+    "smoke": "Not applicable — per-document, fee-based.",
+    "full": "Not applicable for open bulk ingestion; use RFB CNPJ for the open layer."
+  },
+  "blockers": [
+    "27 separate state Juntas; no single open bulk.",
+    "Certified acts/extracts are fee-based.",
+    "Administrators are personal data (LGPD) — redact.",
+    "RFB CNPJ already covers core registry fields openly."
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "country": "Brazil",
+  "country_slug": "brazil",
+  "source_slug": "rfb_cnpj",
+  "source_identity": "brazil_rfb_cnpj",
+  "source_package": "rfbcnpj",
+  "env_prefix": "RFB_CNPJ",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Receita Federal — Dados Públicos CNPJ",
+    "source_type": "official_registry",
+    "organization": "Receita Federal do Brasil (RFB) / SERPRO",
+    "source_url": "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/",
+    "license": "open_lai_cc_by",
+    "access": "public",
+    "data_freshness": "monthly",
+    "attribution": "Receita Federal do Brasil"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/{YYYY-MM}/",
+    "download_url": "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/{YYYY-MM}/Empresas0.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv", "zip"],
+    "compression": "zip",
+    "encoding": "latin-1",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "split_files", "page_param": "file_index", "page_start": 0, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "monthly bulk; files now served via SERPRO+ JS portal (may need a browser-capable fetch). Data is open (no auth/payment)."
+  },
+  "snapshot": {
+    "strategy": "preserve_zip_then_extract_csv",
+    "file_extension": ".zip",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "CnpjRecord",
+    "date_formats": ["20060102"],
+    "datetime_formats": [],
+    "number_formats": ["brl_comma_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Latin-1, ;-delimited, NO header — map columns by position per the RFB layout. Files: Empresas0..9, Estabelecimentos0..9, Socios0..9, Simples, + reference tables (Cnaes/Naturezas/Municipios/Paises/Qualificacoes/Motivos). Join on cnpj_basico. Full CNPJ = cnpj_basico+cnpj_ordem+cnpj_dv. situacao_cadastral 02=ativa/08=baixada. Resolve code lists. Redact Socios (names, masked CPF) + contact fields (LGPD). NOTE: bulk host is now a SERPRO+ JS app; a browser-capable retrieval step may be required."
+  },
+  "keys": {
+    "primary_keys": ["cnpj_basico"],
+    "join_keys": ["cnpj_basico", "cnpj_full_14"],
+    "dedupe_keys": ["cnpj_full_14"]
+  },
+  "mapping_rules": {
+    "company_id": "cnpj (14-digit) / cnpj_basico (8-digit root for the entity).",
+    "tax_id": "cnpj (federal tax id).",
+    "vat_id": "null (no single VAT; ICMS via Inscrição Estadual, not in open data).",
+    "legal_name": "Empresas.razao_social.",
+    "trade_name": "Estabelecimentos.nome_fantasia.",
+    "status": "Estabelecimentos.situacao_cadastral (02 ativa -> active, 08 baixada -> closed).",
+    "legal_form": "Empresas.natureza_juridica (Naturezas) + porte.",
+    "incorporation_date": "Estabelecimentos.data_inicio_atividade.",
+    "activity_code": "Estabelecimentos.cnae_fiscal_principal (Cnaes).",
+    "capital": "Empresas.capital_social (BRL).",
+    "owners": "Socios.* (PERSONAL DATA — redact)."
+  },
+  "fixture_requirements": [
+    "Empresas row (entity)",
+    "Estabelecimentos HQ (matriz, situacao 02 ativa)",
+    "Estabelecimentos branch (filial)",
+    "Estabelecimentos closed (situacao 08 baixada)",
+    "Socios row (assert redaction)",
+    "reference-table row (e.g. Cnaes)"
+  ],
+  "live_test_plan": {
+    "smoke": "Fetch one reference table (e.g. Cnaes.zip) + Empresas0.zip; parse by position; resolve a few codes.",
+    "full": "Download Empresas0..9 + Estabelecimentos0..9 + Socios0..9 + Simples + reference tables; join on cnpj_basico; redact Socios; gate behind env. Browser-capable fetch may be needed for the SERPRO+ portal."
+  },
+  "blockers": [
+    "Bulk ZIPs now served via Receita's SERPRO+ JS portal — a browser-capable retrieval step may be required (data itself is open, no auth/payment)."
+  ]
+}

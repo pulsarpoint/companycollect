@@ -1,0 +1,24 @@
+{
+  "country": "Brazil",
+  "country_slug": "brazil",
+  "source_slug": "junta_comercial_nire",
+  "source_name": "Juntas Comerciais (state commercial registries) — NIRE",
+  "source_type": "official_registry",
+  "organization": "Juntas Comerciais estaduais / DREI",
+  "source_url": "https://www.gov.br/empresas-e-negocios/pt-br/drei",
+  "license": "varies_per_state",
+  "access": "public_search_per_document",
+  "data_freshness": "live register",
+  "record_shape": "per_company_registration_acts",
+  "primary_keys": ["nire"],
+  "join_keys": ["nire", "cnpj"],
+  "field_count": 6,
+  "fields": [
+    { "path": "junta.nire", "source_field": "NIRE", "english_name": "nire", "meaning": "Número de Identificação do Registro de Empresas (state registry id).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: per-document, fee-based; cataloged from public docs.", "source_confidence": "low", "analysis_notes": "State commercial-registry id; complements the CNPJ." },
+    { "path": "junta.denominacao", "source_field": "Denominação / Nome empresarial", "english_name": "legal_name", "meaning": "Registered company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Portuguese", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "junta.tipo_juridico", "source_field": "Natureza jurídica / Tipo", "english_name": "company_type", "meaning": "Legal form (LTDA, S.A., EIRELI, etc.).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Portuguese", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "junta.data_constituicao", "source_field": "Data de constituição / arquivamento", "english_name": "incorporation_date", "meaning": "Date of incorporation / filing.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Authoritative incorporation act date." },
+    { "path": "junta.administradores", "source_field": "Administradores / Sócios", "english_name": "officers", "meaning": "Administrators / partners named in the acts.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Portuguese", "limitations": "PLANNING-ONLY. PERSONAL DATA (LGPD) — redact.", "source_confidence": "low", "analysis_notes": "Officer detail beyond the RFB Sócios file." },
+    { "path": "junta.atos", "source_field": "Atos arquivados", "english_name": "filed_acts", "meaning": "Filed corporate acts (incorporation, amendments, dissolution).", "data_type": "array", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Portuguese", "limitations": "PLANNING-ONLY; certified copies fee-based.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}
