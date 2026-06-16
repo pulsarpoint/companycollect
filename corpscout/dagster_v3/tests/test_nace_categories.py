@@ -1,5 +1,5 @@
 from dagster_v3.defs.nace import tables
-from dagster_v3.defs.nace.resources import ClickHouseResource, prepare_nace_categories_table
+from dagster_v3.defs.nace.clickhouse import prepare_nace_categories_table
 
 
 def test_dlt_clickhouse_destination_dependencies_are_available() -> None:
@@ -8,6 +8,12 @@ def test_dlt_clickhouse_destination_dependencies_are_available() -> None:
 
     assert clickhouse_connect
     assert hasattr(dlt.destinations, "clickhouse")
+
+
+def test_dagster_clickhouse_resource_dependency_is_available() -> None:
+    from dagster_clickhouse import ClickhouseResource
+
+    assert ClickhouseResource
 
 
 def test_nace_categories_clickhouse_schema_contract() -> None:
@@ -39,26 +45,50 @@ def test_nace_categories_clickhouse_schema_contract() -> None:
 
 class FakeClickHouseClient:
     def __init__(self) -> None:
-        self.commands: list[str] = []
-        self.inserts: list[tuple[str, list[list[object]], list[str]]] = []
+        self.statements: list[str] = []
 
-    def command(self, sql: str) -> None:
-        self.commands.append(sql)
-
-    def insert(self, table: str, data: list[list[object]], column_names: list[str]) -> None:
-        self.inserts.append((table, data, column_names))
+    def execute(self, sql: str) -> None:
+        self.statements.append(sql)
 
 
-def test_clickhouse_resource_reuses_supplied_client_for_table_setup() -> None:
-    client = FakeClickHouseClient()
-    resource = ClickHouseResource(
-        host="localhost",
-        password="secret",
-        clickhouse_client=client,
-    )
+class FakeConnection:
+    def __init__(self, client: FakeClickHouseClient) -> None:
+        self.client = client
+
+    def __enter__(self) -> FakeClickHouseClient:
+        return self.client
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        return None
+
+
+class FakeClickhouseResource:
+    def __init__(self) -> None:
+        self.client = FakeClickHouseClient()
+
+    def get_connection(self) -> FakeConnection:
+        return FakeConnection(self.client)
+
+
+def test_prepare_nace_categories_table_uses_official_resource_connection() -> None:
+    resource = FakeClickhouseResource()
 
     prepare_nace_categories_table(resource)
 
-    assert client.commands[0] == "CREATE DATABASE IF NOT EXISTS reference"
-    assert client.commands[1].startswith("CREATE TABLE IF NOT EXISTS reference.nace_categories")
-    assert client.commands[2] == "TRUNCATE TABLE reference.nace_categories"
+    assert resource.client.statements == [
+        "CREATE DATABASE IF NOT EXISTS reference",
+        tables.NACE_CATEGORIES_DDL.strip(),
+        "TRUNCATE TABLE reference.nace_categories",
+    ]
+
+
+def test_prepare_nace_categories_table_strips_ddl_whitespace() -> None:
+    client = FakeClickHouseClient()
+    resource = FakeClickhouseResource()
+    resource.client = client
+
+    prepare_nace_categories_table(resource)
+
+    ddl = client.statements[1]
+    assert ddl == ddl.strip()
+    assert ddl.startswith("CREATE TABLE IF NOT EXISTS reference.nace_categories")
