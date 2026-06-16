@@ -1,4 +1,5 @@
 import hashlib
+from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import get_type_hints
@@ -203,6 +204,20 @@ def test_nace_categories_asset_is_registered_as_dlt_clickhouse_asset() -> None:
         repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
         is ClickhouseResource
     )
+
+
+def test_nace_rows_support_materialization_metadata_counts() -> None:
+    rows = [
+        {"classification_version": "NACE_REV_2", "level": "section"},
+        {"classification_version": "NACE_REV_2", "level": "division"},
+        {"classification_version": "NACE_REV_2_1", "level": "section"},
+    ]
+
+    by_version = Counter(row["classification_version"] for row in rows)
+    by_level = Counter(row["level"] for row in rows)
+
+    assert dict(by_version) == {"NACE_REV_2": 2, "NACE_REV_2_1": 1}
+    assert dict(by_level) == {"section": 2, "division": 1}
 
 
 class FakeClickHouseClient:

@@ -43,7 +43,9 @@ def nace_categories_asset(
     dlt: DagsterDltResource,
     clickhouse: ClickhouseResource,
 ) -> Iterator[Any]:
+    context.log.info("Preparing ClickHouse table reference.nace_categories")
     prepare_nace_categories_table(clickhouse)
+    context.log.info("Loading NACE reference categories into ClickHouse with dlt")
     yield from dlt.run(
         context=context,
         dlt_source=nace_categories_source(source_run_id=context.run_id),
