@@ -70,6 +70,8 @@ The asset should run idempotent DDL before loading:
 - `CREATE TABLE IF NOT EXISTS reference.nace_categories (...)`
 - `TRUNCATE TABLE reference.nace_categories`
 
+Use Dagster's official `dagster_clickhouse.ClickhouseResource` for this DDL work rather than a custom ClickHouse resource wrapper.
+
 Use dlt `write_disposition="append"` after truncation so ClickHouse DDL remains the schema contract and the table still represents the latest official snapshot.
 
 ## Automation

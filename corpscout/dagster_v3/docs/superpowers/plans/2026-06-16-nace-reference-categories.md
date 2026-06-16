@@ -14,11 +14,11 @@
 
 - Create `src/dagster_v3/defs/nace/__init__.py`: package marker.
 - Create `src/dagster_v3/defs/nace/tables.py`: ClickHouse table name, column list, DDL, and version constants.
-- Create `src/dagster_v3/defs/nace/resources.py`: ClickHouse resource copied/adapted from older Dagster code with test-injected client support.
+- Create `src/dagster_v3/defs/nace/clickhouse.py`: ClickHouse schema helper using Dagster's official `dagster_clickhouse.ClickhouseResource` protocol.
 - Create `src/dagster_v3/defs/nace/source.py`: SPARQL query definitions, row parser, dlt source/resource, and dlt pipeline factory.
 - Create `src/dagster_v3/defs/nace/assets.py`: Dagster dlt asset, translator, schema creation call, and definitions object.
 - Create `tests/test_nace_categories.py`: parser, dlt source, asset graph, DDL, and resource tests.
-- Modify `pyproject.toml`: install the ClickHouse Python driver used by dlt's ClickHouse destination.
+- Modify `pyproject.toml`: install the ClickHouse Python driver used by dlt's ClickHouse destination and Dagster's official ClickHouse integration.
 
 ## Source Constants
 
@@ -244,10 +244,10 @@ git add src/dagster_v3/defs/nace/__init__.py src/dagster_v3/defs/nace/tables.py 
 git commit -m "Define NACE ClickHouse table contract"
 ```
 
-## Task 3: Add ClickHouse Resource And DDL Helper
+## Task 3: Add Official Dagster ClickHouse Resource Usage And DDL Helper
 
 **Files:**
-- Create: `src/dagster_v3/defs/nace/resources.py`
+- Create: `src/dagster_v3/defs/nace/clickhouse.py`
 - Test: `tests/test_nace_categories.py`
 
 - [ ] **Step 1: Write failing resource tests**
@@ -255,28 +255,37 @@ git commit -m "Define NACE ClickHouse table contract"
 Append:
 
 ```python
-from dagster_v3.defs.nace.resources import ClickHouseResource, prepare_nace_categories_table
+from contextlib import contextmanager
+
+from dagster_clickhouse import ClickhouseResource
+
+from dagster_v3.defs.nace.clickhouse import prepare_nace_categories_table
 
 
 class FakeClickHouseClient:
     def __init__(self) -> None:
         self.commands: list[str] = []
-        self.inserts: list[tuple[str, list[list[object]], list[str]]] = []
 
-    def command(self, sql: str) -> None:
+    def execute(self, sql: str) -> None:
         self.commands.append(sql)
 
-    def insert(self, table: str, data: list[list[object]], column_names: list[str]) -> None:
-        self.inserts.append((table, data, column_names))
+
+class FakeClickHouseResource:
+    def __init__(self, client: FakeClickHouseClient) -> None:
+        self.client = client
+
+    @contextmanager
+    def get_connection(self):
+        yield self.client
+
+
+def test_dagster_clickhouse_resource_is_available() -> None:
+    assert ClickhouseResource
 
 
 def test_clickhouse_resource_reuses_supplied_client_for_table_setup() -> None:
     client = FakeClickHouseClient()
-    resource = ClickHouseResource(
-        host="localhost",
-        password="secret",
-        clickhouse_client=client,
-    )
+    resource = FakeClickHouseResource(client)
 
     prepare_nace_categories_table(resource)
 
@@ -293,65 +302,38 @@ Run:
 uv run pytest tests/test_nace_categories.py::test_clickhouse_resource_reuses_supplied_client_for_table_setup -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError` or missing resource symbol.
+Expected: FAIL with `ModuleNotFoundError` or missing helper symbol.
 
 - [ ] **Step 3: Implement resource**
 
-Create `src/dagster_v3/defs/nace/resources.py`:
+Create `src/dagster_v3/defs/nace/clickhouse.py`:
 
 ```python
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any, Protocol
+from contextlib import AbstractContextManager
+from typing import Protocol
 
-import clickhouse_connect
-import dagster as dg
-from pydantic import PrivateAttr
+from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.nace import tables
 
 
-class ClickHouseClient(Protocol):
-    def command(self, sql: str) -> Any:
-        ...
-
-    def insert(self, table: str, data: Sequence[Sequence[Any]], column_names: Sequence[str]) -> Any:
+class ClickHouseConnection(Protocol):
+    def execute(self, sql: str) -> object:
         ...
 
 
-class ClickHouseResource(dg.ConfigurableResource):
-    host: str
-    port: str = "8123"
-    username: str = "default"
-    password: str
-    database: str = "default"
-    secure: str = "false"
-
-    _client: ClickHouseClient | None = PrivateAttr(default=None)
-
-    def __init__(self, clickhouse_client: ClickHouseClient | None = None, **data: Any) -> None:
-        super().__init__(**data)
-        self._client = clickhouse_client
-
-    def client(self) -> ClickHouseClient:
-        if self._client is None:
-            self._client = clickhouse_connect.get_client(
-                host=self.host,
-                port=int(self.port),
-                username=self.username,
-                password=self.password,
-                database=self.database,
-                secure=self.secure.lower() == "true",
-            )
-        return self._client
+class ClickHouseResourceLike(Protocol):
+    def get_connection(self) -> AbstractContextManager[ClickHouseConnection]:
+        ...
 
 
-def prepare_nace_categories_table(clickhouse: ClickHouseResource) -> None:
-    client = clickhouse.client()
-    client.command(f"CREATE DATABASE IF NOT EXISTS {tables.NACE_DATABASE}")
-    client.command(tables.NACE_CATEGORIES_DDL)
-    client.command(f"TRUNCATE TABLE {tables.QUALIFIED_NACE_CATEGORIES_TABLE}")
+def prepare_nace_categories_table(clickhouse: ClickHouseResource | ClickHouseResourceLike) -> None:
+    with clickhouse.get_connection() as client:
+        client.execute(f"CREATE DATABASE IF NOT EXISTS {tables.NACE_DATABASE}")
+        client.execute(tables.NACE_CATEGORIES_DDL.strip())
+        client.execute(f"TRUNCATE TABLE {tables.QUALIFIED_NACE_CATEGORIES_TABLE}")
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -367,8 +349,9 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/dagster_v3/defs/nace/resources.py tests/test_nace_categories.py
-git commit -m "Add ClickHouse resource for NACE schema setup"
+git add pyproject.toml uv.lock src/dagster_v3/defs/nace/clickhouse.py tests/test_nace_categories.py
+git rm --ignore-unmatch src/dagster_v3/defs/nace/resources.py
+git commit -m "Use Dagster ClickHouse resource for NACE"
 ```
 
 ## Task 4: Implement NACE Row Parser
@@ -854,7 +837,9 @@ import dagster as dg
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
-from dagster_v3.defs.nace.resources import ClickHouseResource, prepare_nace_categories_table
+from dagster_clickhouse import ClickhouseResource
+
+from dagster_v3.defs.nace.clickhouse import prepare_nace_categories_table
 from dagster_v3.defs.nace.source import (
     NACE_CATEGORIES_DLT_TABLE,
     nace_categories_source,
@@ -886,7 +871,7 @@ class NaceDltTranslator(DagsterDltTranslator):
 def nace_categories_asset(
     context: dg.AssetExecutionContext,
     dlt: DagsterDltResource,
-    clickhouse: ClickHouseResource,
+    clickhouse: ClickhouseResource,
 ) -> Iterator[Any]:
     prepare_nace_categories_table(clickhouse)
     yield from dlt.run(
@@ -899,7 +884,7 @@ def nace_categories_asset(
 defs = dg.Definitions(
     assets=[nace_categories_asset],
     resources={
-        "clickhouse": ClickHouseResource(
+        "clickhouse": ClickhouseResource(
             host=dg.EnvVar("CLICKHOUSE_HOST"),
             port=dg.EnvVar("CLICKHOUSE_PORT"),
             username=dg.EnvVar("CLICKHOUSE_USER"),
@@ -1103,4 +1088,4 @@ Expected: both versions include `section`, `division`, `group`, and `class`.
 
 - Spec coverage: source, direct ClickHouse load, table DDL, versioned schema, observability, tests, and no DuckDB staging are covered.
 - Placeholder scan: no placeholder implementation steps remain.
-- Type consistency: `ClickHouseResource`, `prepare_nace_categories_table`, `NaceScheme`, `nace_categories_source`, `nace_clickhouse_pipeline`, and table constants are named consistently across tasks.
+- Type consistency: `ClickhouseResource`, `prepare_nace_categories_table`, `NaceScheme`, `nace_categories_source`, `nace_clickhouse_pipeline`, and table constants are named consistently across tasks.
