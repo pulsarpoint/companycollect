@@ -3,11 +3,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import get_type_hints
 
+import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
+from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.nace import source as nace_source
 from dagster_v3.defs.nace import tables
 from dagster_v3.defs.nace.clickhouse import prepare_nace_categories_table
+from dagster_v3.defs.nace.assets import NaceDltTranslator
 from dagster_v3.defs.nace.source import NaceScheme, build_nace_rows, normalize_nace_code
 
 
@@ -166,6 +169,40 @@ def test_nace_clickhouse_pipeline_targets_reference_dataset() -> None:
     assert pipeline.dataset_name == "reference"
     assert pipeline.dev_mode is False
     assert pipeline.destination.destination_name == "clickhouse"
+
+
+def test_nace_dlt_translator_maps_asset_contract() -> None:
+    source = nace_source.nace_categories_source(schemes=())
+    resource = source.resources[nace_source.NACE_CATEGORIES_DLT_TABLE]
+    data = type(
+        "TranslatorData",
+        (),
+        {
+            "resource": resource,
+            "destination": nace_source.nace_clickhouse_pipeline().destination,
+        },
+    )()
+
+    spec = NaceDltTranslator().get_asset_spec(data)
+
+    assert spec.key == dg.AssetKey("nace_categories")
+    assert spec.group_name == "nace"
+    assert spec.deps == []
+    assert {"python", "dlt", "clickhouse", "reference"}.issubset(spec.kinds)
+
+
+def test_nace_categories_asset_is_registered_as_dlt_clickhouse_asset() -> None:
+    repository = load_project_defs().get_repository_def()
+    asset_keys = {key.path[-1] for key in repository.asset_graph.get_all_asset_keys()}
+    resource_keys = repository.get_top_level_resources().keys()
+
+    assert "nace_categories" in asset_keys
+    assert "dlt" in resource_keys
+    assert "clickhouse" in resource_keys
+    assert (
+        repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
+        is ClickhouseResource
+    )
 
 
 class FakeClickHouseClient:
