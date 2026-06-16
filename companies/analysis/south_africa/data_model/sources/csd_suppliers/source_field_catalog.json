@@ -1,0 +1,24 @@
+{
+  "country": "South Africa",
+  "country_slug": "south_africa",
+  "source_slug": "csd_suppliers",
+  "source_name": "National Treasury Central Supplier Database (CSD)",
+  "source_type": "supplier_registry",
+  "organization": "National Treasury / OCPO",
+  "source_url": "https://secure.csd.gov.za/",
+  "license": "restricted",
+  "access": "authenticated",
+  "data_freshness": "live",
+  "record_shape": "per_supplier_record",
+  "primary_keys": ["csd_number"],
+  "join_keys": ["csd_number", "registration_number"],
+  "field_count": 6,
+  "fields": [
+    { "path": "supplier.csd_number", "source_field": "CSD number (MAAA…)", "english_name": "csd_number", "meaning": "Central Supplier Database registration id.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: login-gated; cataloged from public docs.", "source_confidence": "low", "analysis_notes": "CSD id; complements CIPC reg number." },
+    { "path": "supplier.supplier_name", "source_field": "Supplier / Legal name", "english_name": "supplier_name", "meaning": "Registered supplier name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "supplier.registration_number", "source_field": "CIPC registration number", "english_name": "registration_number", "meaning": "CIPC registration number (links to the register).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "The CSD links CIPC + SARS; the join key to CIPC." },
+    { "path": "supplier.tax_status", "source_field": "Tax compliance status", "english_name": "tax_status", "meaning": "SARS tax-compliance status.", "data_type": "string", "semantic_type": "license_or_terms", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "supplier.bee_status", "source_field": "B-BBEE status", "english_name": "bee_status", "meaning": "Broad-Based Black Economic Empowerment level.", "data_type": "string", "semantic_type": "license_or_terms", "example_values": [], "nullable": true, "repeatable": false, "code_list": "B-BBEE levels 1-8 / non-compliant", "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "SA-specific procurement attribute." },
+    { "path": "supplier.bank_status", "source_field": "Bank verification status", "english_name": "bank_status", "meaning": "Bank-account verification status.", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

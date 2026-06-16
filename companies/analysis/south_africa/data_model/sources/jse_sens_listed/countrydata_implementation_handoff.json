@@ -1,0 +1,66 @@
+{
+  "country": "South Africa",
+  "country_slug": "south_africa",
+  "source_slug": "jse_sens_listed",
+  "source_identity": "south_africa_jse_sens_listed",
+  "source_package": "jsesenslisted",
+  "env_prefix": "JSE_SENS",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "JSE / SENS listed-company financial disclosures",
+    "source_type": "financial_disclosure",
+    "organization": "Johannesburg Stock Exchange (JSE)",
+    "source_url": "https://www.jse.co.za/",
+    "license": "exchange_terms",
+    "access": "public_exchange_terms",
+    "data_freshness": "event-driven / periodic",
+    "attribution": "JSE / SENS"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.jse.co.za/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf", "html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "exchange website terms"
+  },
+  "snapshot": { "strategy": "preserve_filing_documents", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "JseIssuerResult",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["zar_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Planning-only. Listed issuers only. Financial results / SENS announcements (PDF/HTML), ZAR, IFRS. Verify JSE/SENS terms before fetching/redistribution. Join by issuer name / registration number / share code."
+  },
+  "keys": {
+    "primary_keys": ["share_code"],
+    "join_keys": ["registration_number", "issuer_name", "share_code"],
+    "dedupe_keys": ["share_code", "results.period"]
+  },
+  "mapping_rules": {
+    "financials": "Map results.revenue/headline_earnings per period into financial_statements[] for listed issuers (ZAR).",
+    "join": "issuer name / registration number / share code -> rest of profile."
+  },
+  "fixture_requirements": ["documented-only: results announcement", "documented-only: annual report entry"],
+  "live_test_plan": {
+    "smoke": "Not run — verify JSE/SENS terms first.",
+    "full": "Out of scope until terms/access path confirmed; listed-only coverage."
+  },
+  "blockers": [
+    "Listed issuers only (~250 companies).",
+    "Reuse governed by JSE/SENS terms of use.",
+    "Private-company financials not open (CIPC AFS paid)."
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "ocid": "ocds-9t57fa-125224",
+  "id": "ocds-9t57fa-125224-2025-03-31",
+  "tag": [
+    "compiled"
+  ],
+  "date": "2025-03-31T00:00:00Z",
+  "buyer": {
+    "id": "597",
+    "name": "Solplaatje Local Municipality"
+  },
+  "parties": [
+    {
+      "name": "GRASSROOTS HOLDINGS",
+      "roles": [
+        "supplier"
+      ],
+      "identifier": {
+        "legalName": "GRASSROOTS HOLDINGS"
+      }
+    }
+  ],
+  "awards": [
+    {
+      "date": null,
+      "value": {
+        "amount": 2490000.0,
+        "currency": "ZAR"
+      },
+      "suppliers": [
+        {
+          "name": "GRASSROOTS HOLDINGS"
+        }
+      ]
+    }
+  ],
+  "_comment": "Real OCDS release from the National Treasury eTenders API (Open Data Commons PDDL / public domain). Procurement award; the supplier is an awarded company (name only, no CIPC registration number)."
+}

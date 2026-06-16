@@ -1,0 +1,26 @@
+{
+  "country": "South Africa",
+  "country_slug": "south_africa",
+  "source_slug": "cipc_registry",
+  "source_name": "CIPC company register (eServices / BizPortal)",
+  "source_type": "official_registry",
+  "organization": "Companies and Intellectual Property Commission (CIPC)",
+  "source_url": "https://eservices.cipc.co.za/",
+  "license": "restricted",
+  "access": "paid",
+  "data_freshness": "live register",
+  "record_shape": "per_company_disclosure_and_afs",
+  "primary_keys": ["registration_number"],
+  "join_keys": ["registration_number", "enterprise_name"],
+  "field_count": 8,
+  "fields": [
+    { "path": "company.registration_number", "source_field": "Registration number", "english_name": "registration_number", "meaning": "CIPC registration number (YYYY/NNNNNN/NN).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: paid; cataloged from public docs.", "source_confidence": "low", "analysis_notes": "Authoritative id. Suffix denotes type (/07 private, /06 public, /08 NPC, ...)." },
+    { "path": "company.enterprise_name", "source_field": "Enterprise name", "english_name": "enterprise_name", "meaning": "Registered company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "company.company_status", "source_field": "Company status", "english_name": "company_status", "meaning": "Registration status.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": false, "repeatable": false, "code_list": "In Business / Deregistered / In Liquidation / Final Deregistration / In Business (AR Deregistration) / ...", "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "company.company_type", "source_field": "Company type", "english_name": "company_type", "meaning": "Legal form.", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Private Company / Public Company / Non Profit Company / External Company / Co-operative / Personal Liability ...", "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Also inferable from the reg-number suffix." },
+    { "path": "company.registration_date", "source_field": "Registration date", "english_name": "registration_date", "meaning": "Date of incorporation/registration.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "company.registered_address", "source_field": "Registered address", "english_name": "registered_address", "meaning": "Registered office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "company.directors", "source_field": "Directors", "english_name": "directors", "meaning": "Directors (names + ID numbers).", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY (paid). PERSONAL DATA (POPIA) — redact.", "source_confidence": "low", "analysis_notes": "Only source of directors." },
+    { "path": "company.annual_financial_statements", "source_field": "Annual Financial Statements (AFS / iXBRL)", "english_name": "financial_statements", "meaning": "Filed annual financial statements (iXBRL).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY (paid). ZAR.", "source_confidence": "low", "analysis_notes": "Private-company financials; not openly published." }
+  ]
+}

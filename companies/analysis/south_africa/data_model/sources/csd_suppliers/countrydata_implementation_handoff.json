@@ -1,0 +1,68 @@
+{
+  "country": "South Africa",
+  "country_slug": "south_africa",
+  "source_slug": "csd_suppliers",
+  "source_identity": "south_africa_csd_suppliers",
+  "source_package": "csdsuppliers",
+  "env_prefix": "CSD",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "National Treasury Central Supplier Database (CSD)",
+    "source_type": "supplier_registry",
+    "organization": "National Treasury / OCPO",
+    "source_url": "https://secure.csd.gov.za/",
+    "license": "restricted",
+    "access": "authenticated",
+    "data_freshness": "live",
+    "attribution": "National Treasury / OCPO"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["CSD_USERNAME", "CSD_PASSWORD"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://secure.csd.gov.za/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "login-gated"
+  },
+  "snapshot": { "strategy": "not_applicable_gated", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "CsdSupplier",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Login-gated mandatory government-supplier database; links CIPC registration number + SARS tax status + B-BBEE level. No open bulk. The open downstream view is the eTenders OCDS data. Do not bypass the login."
+  },
+  "keys": {
+    "primary_keys": ["csd_number"],
+    "join_keys": ["csd_number", "registration_number"],
+    "dedupe_keys": ["csd_number"]
+  },
+  "mapping_rules": {
+    "registration_number": "supplier.registration_number (links to CIPC).",
+    "legal_name": "supplier.supplier_name.",
+    "bee_status": "supplier.bee_status (SA-specific).",
+    "join": "csd_number / registration_number."
+  },
+  "fixture_requirements": ["documented-only: supplier record with CSD number + reg number + B-BBEE"],
+  "live_test_plan": {
+    "smoke": "Not applicable — login-gated.",
+    "full": "Not applicable for open ingestion; use OCDS for the open layer."
+  },
+  "blockers": [
+    "Login-gated (registered suppliers / government users); no open bulk.",
+    "Carries the registration number OCDS lacks, but is not openly accessible.",
+    "Supplier records may include sole proprietors (personal data, POPIA)."
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "country": "South Africa",
+  "country_slug": "south_africa",
+  "source_slug": "etenders_ocds",
+  "source_name": "National Treasury eTenders — OCDS procurement API",
+  "source_type": "procurement",
+  "organization": "National Treasury (South Africa)",
+  "source_url": "https://ocds-api.etenders.gov.za/api/OCDSReleases",
+  "license": "odc_pddl_public_domain",
+  "access": "public",
+  "data_freshness": "ongoing (procurement-driven)",
+  "record_shape": "ocds_release_package_with_releases_array",
+  "primary_keys": ["ocid"],
+  "join_keys": ["awards.suppliers.name (legalName)"],
+  "field_count": 12,
+  "fields": [
+    { "path": "releases[].ocid", "source_field": "ocid", "english_name": "ocid", "meaning": "Open Contracting ID — the release/process key.", "data_type": "string", "semantic_type": "identifier", "example_values": ["ocds-9t57fa-125224"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Process id, not a company id.", "source_confidence": "high", "analysis_notes": "Primary key for the procurement process." },
+    { "path": "releases[].tag", "source_field": "tag", "english_name": "tag", "meaning": "Release stage.", "data_type": "array", "semantic_type": "metadata", "example_values": ["compiled", "award", "tender", "planning", "contract"], "nullable": false, "repeatable": true, "code_list": "OCDS tags", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Supplier/award data is in award/compiled releases." },
+    { "path": "releases[].date", "source_field": "date", "english_name": "release_date", "meaning": "Release date.", "data_type": "datetime", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "releases[].tender.title", "source_field": "tender.title", "english_name": "tender_title", "meaning": "Tender title (procurement context).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": null, "source_confidence": "high", "analysis_notes": "Describes what was procured." },
+    { "path": "releases[].buyer.name", "source_field": "buyer.name", "english_name": "buyer_name", "meaning": "Procuring entity (government dept / municipality / SOE).", "data_type": "string", "semantic_type": "relationship", "example_values": ["ESKOM", "Johannesburg Water", "Solplaatje Local Municipality"], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": null, "source_confidence": "high", "analysis_notes": "The government buyer, not the supplier." },
+    { "path": "releases[].parties[].name", "source_field": "parties[].name", "english_name": "party_name", "meaning": "A party to the process (supplier / buyer / procuringEntity / tenderer).", "data_type": "string", "semantic_type": "legal_name", "example_values": ["GRASSROOTS HOLDINGS", "AMESTRA HOLDINGS"], "nullable": false, "repeatable": true, "code_list": null, "language": "English", "limitations": "Identity is name-based.", "source_confidence": "high", "analysis_notes": "Filter roles for 'supplier'." },
+    { "path": "releases[].parties[].roles", "source_field": "parties[].roles", "english_name": "party_roles", "meaning": "Party roles.", "data_type": "array", "semantic_type": "metadata", "example_values": ["supplier", "buyer", "procuringEntity", "tenderer"], "nullable": false, "repeatable": true, "code_list": "OCDS party roles", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "releases[].parties[].identifier.legalName", "source_field": "parties[].identifier.legalName", "english_name": "party_legal_name", "meaning": "Party legal name (the only identifier present).", "data_type": "string", "semantic_type": "legal_name", "example_values": ["GRASSROOTS HOLDINGS"], "nullable": true, "repeatable": false, "code_list": null, "language": "English", "limitations": "No scheme / registration number observed (no CIPC reg number).", "source_confidence": "high", "analysis_notes": "Supplier join is name-based only." },
+    { "path": "releases[].awards[].suppliers[].name", "source_field": "awards[].suppliers[].name", "english_name": "supplier_name", "meaning": "Awarded supplier company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["AMESTRA HOLDINGS", "BASIL KE YONA CONSTRUCTION AND MULTI SERVICES"], "nullable": false, "repeatable": true, "code_list": null, "language": "English", "limitations": "Name only.", "source_confidence": "high", "analysis_notes": "The company that won the award." },
+    { "path": "releases[].awards[].value.amount", "source_field": "awards[].value.amount", "english_name": "award_amount", "meaning": "Award value amount.", "data_type": "decimal", "semantic_type": "financial", "example_values": ["2490000.0", "7724415731.0"], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "Award value — NOT company financials.", "source_confidence": "high", "analysis_notes": "Procurement value, not revenue." },
+    { "path": "releases[].awards[].value.currency", "source_field": "awards[].value.currency", "english_name": "award_currency", "meaning": "Award currency.", "data_type": "string", "semantic_type": "financial", "example_values": ["ZAR"], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "releases[].awards[].date", "source_field": "awards[].date", "english_name": "award_date", "meaning": "Award date.", "data_type": "datetime", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null }
+  ]
+}

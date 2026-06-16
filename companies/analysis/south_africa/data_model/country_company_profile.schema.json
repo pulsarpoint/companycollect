@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "South Africa Company Profile",
+  "description": "Country-specific company profile for South Africa. The authoritative key is the CIPC registration number (YYYY/NNNNNN/NN; the /NN suffix denotes type), but CIPC is PAID (no open bulk) and the registration number is NOT in the open data. The realistic OPEN layer is government procurement (eTenders OCDS, public domain): company NAMES + ZAR award values + government buyers — partial coverage, name-keyed (no registration number). So there is NO open join key; cross-source links are name-based. South Africa has VAT (10-digit, starts 4) and a SARS income tax number, but neither is openly published. Private-company financials are paid (CIPC AFS/iXBRL); listed financials are open via JSE/SENS. Directors are personal data (POPIA).",
+  "type": "object",
+  "required": ["country", "country_slug", "identity", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "South Africa" },
+    "country_slug": { "type": "string", "const": "south_africa" },
+    "country_profile_version": { "type": "string" },
+    "identity": {
+      "type": "object",
+      "required": ["legal_name"],
+      "properties": {
+        "legal_name": { "type": "string", "description": "Company name (open: OCDS supplier name; authoritative: CIPC enterprise name).", "x-source": "etenders_ocds", "x-source-path": "awards[].suppliers[].name", "x-join-key": true },
+        "registration_number": { "type": ["string", "null"], "description": "CIPC registration number YYYY/NNNNNN/NN. NOT in the open data (paid CIPC).", "x-source": "cipc_registry", "x-access": "paid" },
+        "csd_number": { "type": ["string", "null"], "description": "Central Supplier Database id (gated).", "x-source": "csd_suppliers", "x-access": "gated" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "income_tax_number": { "type": ["string", "null"], "description": "SARS income tax number (10-digit). NOT openly published.", "x-access": "not_available" },
+        "vat_id": { "type": ["string", "null"], "description": "SARS VAT number (10-digit, starts 4). NOT openly published.", "x-access": "not_available" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "description": "From the paid CIPC registry (planning-only).",
+      "x-source": "cipc_registry",
+      "x-access": "paid",
+      "properties": {
+        "company_status": { "type": ["string", "null"], "x-source-path": "company.company_status" },
+        "company_type": { "type": ["string", "null"], "description": "Private/Public/NPC/External/Co-op (also inferable from the reg-number suffix).", "x-source-path": "company.company_type" },
+        "registration_date": { "type": ["string", "null"], "format": "date", "x-source-path": "company.registration_date" },
+        "registered_address": { "type": ["string", "null"], "x-source-path": "company.registered_address" }
+      }
+    },
+    "procurement": {
+      "type": "array",
+      "description": "OPEN government-procurement activity (eTenders OCDS, public domain). Award value is the contract value, NOT company revenue.",
+      "x-source": "etenders_ocds",
+      "x-access": "open",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ocid": { "type": ["string", "null"] },
+          "buyer": { "type": ["string", "null"], "description": "Government department / municipality / SOE." },
+          "tender_title": { "type": ["string", "null"] },
+          "award_amount": { "type": ["number", "null"] },
+          "award_currency": { "type": "string", "const": "ZAR" },
+          "award_date": { "type": ["string", "null"], "format": "date" }
+        }
+      }
+    },
+    "bee_status": {
+      "type": ["string", "null"],
+      "description": "B-BBEE empowerment level (SA-specific). From the gated CSD.",
+      "x-source": "csd_suppliers",
+      "x-access": "gated"
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Directors only via the paid CIPC registry. PERSONAL DATA (POPIA) — redact.",
+      "x-source": "cipc_registry",
+      "x-access": "paid_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "id_number": { "type": ["string", "null"], "x-personal-data": true } } }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Private financials are paid (CIPC AFS/iXBRL); listed via JSE/SENS. ZAR.",
+      "x-source": "cipc_registry / jse_sens_listed",
+      "x-access": "paid_or_listed_only",
+      "items": {
+        "type": "object",
+        "properties": {
+          "period": { "type": ["string", "null"] },
+          "revenue": { "type": ["number", "null"] },
+          "currency": { "type": "string", "const": "ZAR" },
+          "source": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

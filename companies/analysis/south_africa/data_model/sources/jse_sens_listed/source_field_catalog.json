@@ -1,0 +1,24 @@
+{
+  "country": "South Africa",
+  "country_slug": "south_africa",
+  "source_slug": "jse_sens_listed",
+  "source_name": "JSE / SENS listed-company financial disclosures",
+  "source_type": "financial_disclosure",
+  "organization": "Johannesburg Stock Exchange (JSE)",
+  "source_url": "https://www.jse.co.za/",
+  "license": "exchange_terms",
+  "access": "public_exchange_terms",
+  "data_freshness": "event-driven / periodic",
+  "record_shape": "per_issuer_announcements_and_results",
+  "primary_keys": ["share_code"],
+  "join_keys": ["registration_number", "issuer_name", "share_code"],
+  "field_count": 6,
+  "fields": [
+    { "path": "issuer.share_code", "source_field": "Share code / Alpha code", "english_name": "share_code", "meaning": "JSE share/alpha code.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: cataloged from public docs.", "source_confidence": "low", "analysis_notes": "Listed issuers only." },
+    { "path": "issuer.name", "source_field": "Issuer name", "english_name": "issuer_name", "meaning": "Listed issuer name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Join to CIPC by name / reg number." },
+    { "path": "results.period", "source_field": "Reporting period", "english_name": "period", "meaning": "Reporting period.", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "results.revenue", "source_field": "Revenue", "english_name": "revenue", "meaning": "Revenue for the period (ZAR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "IFRS", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "results.headline_earnings", "source_field": "Headline earnings / EPS", "english_name": "headline_earnings", "meaning": "Headline earnings (ZAR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "JSE HEPS", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "JSE-specific earnings measure." },
+    { "path": "filing.sens_announcement", "source_field": "SENS announcement", "english_name": "sens_announcement", "meaning": "SENS regulatory announcement.", "data_type": "object", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Results, AR, corporate actions." }
+  ]
+}

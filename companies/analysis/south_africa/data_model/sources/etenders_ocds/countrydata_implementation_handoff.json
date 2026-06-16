@@ -1,0 +1,73 @@
+{
+  "country": "South Africa",
+  "country_slug": "south_africa",
+  "source_slug": "etenders_ocds",
+  "source_identity": "south_africa_etenders_ocds",
+  "source_package": "etendersocds",
+  "env_prefix": "ETENDERS_OCDS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "National Treasury eTenders — OCDS procurement API",
+    "source_type": "procurement",
+    "organization": "National Treasury (South Africa)",
+    "source_url": "https://ocds-api.etenders.gov.za/api/OCDSReleases",
+    "license": "odc_pddl_public_domain",
+    "access": "public",
+    "data_freshness": "ongoing (procurement-driven)",
+    "attribution": "National Treasury (South Africa) (PDDL — attribution optional)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://ocds-api.etenders.gov.za/api/OCDSReleases",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "releases",
+    "total_results_path": null,
+    "pagination": { "type": "page_number", "page_param": "PageNumber", "page_start": 1, "page_size": 50, "page_size_param": "PageSize", "next_page_path": "links.next" },
+    "rate_limit": "no key; requires dateFrom & dateTo query params"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_release_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "OcdsRelease",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": ["2006-01-02T15:04:05Z07:00"],
+    "number_formats": ["zar_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "OCDS release package; iterate releases[]. Required query params dateFrom & dateTo (e.g. yyyy-mm-dd) plus PageNumber/PageSize. Extract awards[].suppliers[].name + value (ZAR) + buyer.name + tender.title; filter parties by roles contains 'supplier'. Supplier identity is the legalName only (no CIPC registration number) — dedupe/join by normalised name. Some supplier names may be sole proprietors (POPIA)."
+  },
+  "keys": {
+    "primary_keys": ["ocid"],
+    "join_keys": ["supplier_name_normalised"],
+    "dedupe_keys": ["supplier_name_normalised"]
+  },
+  "mapping_rules": {
+    "legal_name": "awards[].suppliers[].name (or parties[] with role supplier).",
+    "procurement": "awards[].value (ZAR) + awards[].date + buyer.name + tender.title.",
+    "company_id": "null — no registration number; key on normalised name.",
+    "join": "name-based to CIPC (no shared id in OCDS)."
+  },
+  "fixture_requirements": [
+    "award release with supplier + ZAR value",
+    "compiled release with multiple parties (supplier + buyer)",
+    "tender/planning release without an award",
+    "supplier name that looks like a sole proprietor (POPIA handling)"
+  ],
+  "live_test_plan": {
+    "smoke": "GET OCDSReleases?PageNumber=1&PageSize=5&dateFrom=...&dateTo=...; extract suppliers + awards.",
+    "full": "Page the date range; collect supplier names + procurement aggregates; dedupe by normalised name. No key."
+  },
+  "blockers": []
+}

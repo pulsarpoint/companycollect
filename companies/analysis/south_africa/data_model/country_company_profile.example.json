@@ -1,0 +1,60 @@
+{
+  "country": "South Africa",
+  "country_slug": "south_africa",
+  "country_profile_version": "2026-06-16",
+  "_note": "identity.legal_name and procurement are REAL data from the open eTenders OCDS API (Open Data Commons PDDL / public domain) — supplier AMESTRA HOLDINGS, awarded by ESKOM. registration_number / csd_number / legal_identity (CIPC, paid) / income tax & VAT (SARS, not open) / officers (CIPC, POPIA) / financial_statements (CIPC paid or JSE listed) are NULL/empty here. There is no open join key: OCDS keys suppliers on name only.",
+  "identity": {
+    "legal_name": "AMESTRA HOLDINGS",
+    "registration_number": null,
+    "csd_number": null
+  },
+  "tax_identifiers": {
+    "income_tax_number": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "company_status": null,
+    "company_type": null,
+    "registration_date": null,
+    "registered_address": null
+  },
+  "procurement": [
+    {
+      "ocid": "(ocid from the OCDS release)",
+      "buyer": "ESKOM",
+      "tender_title": "(tender title)",
+      "award_amount": 7724415731.0,
+      "award_currency": "ZAR",
+      "award_date": null
+    }
+  ],
+  "bee_status": null,
+  "officers": [],
+  "financial_statements": [],
+  "source_provenance": [
+    {
+      "source_slug": "etenders_ocds",
+      "section": "identity.legal_name / procurement",
+      "source_url": "https://ocds-api.etenders.gov.za/api/OCDSReleases",
+      "access": "public (no key)",
+      "license": "odc_pddl_public_domain",
+      "retrieved_at": "2026-06-16T00:00:00Z"
+    },
+    {
+      "source_slug": "cipc_registry",
+      "section": "identity.registration_number / legal_identity / officers / financial_statements (planning-only; paid)",
+      "source_url": "https://eservices.cipc.co.za/",
+      "access": "paid per-transaction",
+      "license": "restricted",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "jse_sens_listed",
+      "section": "financial_statements (planning-only; listed only)",
+      "source_url": "https://www.jse.co.za/",
+      "access": "public (exchange terms)",
+      "license": "exchange_terms",
+      "retrieved_at": null
+    }
+  ]
+}
