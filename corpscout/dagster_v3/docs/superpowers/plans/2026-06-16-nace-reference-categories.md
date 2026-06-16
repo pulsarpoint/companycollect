@@ -18,7 +18,7 @@
 - Create `src/dagster_v3/defs/nace/source.py`: SPARQL query definitions, row parser, dlt source/resource, and dlt pipeline factory.
 - Create `src/dagster_v3/defs/nace/assets.py`: Dagster dlt asset, translator, schema creation call, and definitions object.
 - Create `tests/test_nace_categories.py`: parser, dlt source, asset graph, DDL, and resource tests.
-- Modify `pyproject.toml`: install dlt ClickHouse support.
+- Modify `pyproject.toml`: install the ClickHouse Python driver used by dlt's ClickHouse destination.
 
 ## Source Constants
 
@@ -86,17 +86,19 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'clickhouse_connect'`.
 
 - [ ] **Step 3: Update dependency**
 
-In `pyproject.toml`, replace:
+In `pyproject.toml`, keep:
 
 ```toml
 "dlt[duckdb]>=1.27.2",
 ```
 
-with:
+and add:
 
 ```toml
-"dlt[clickhouse,duckdb]>=1.27.2",
+"clickhouse-connect>=0.10.0",
 ```
+
+Do not use `dlt[clickhouse]`: in this project it conflicts with `boto3>=1.43.29` through `s3fs` / `aiobotocore` / `botocore` constraints. The installed `dlt` package already exposes `dlt.destinations.clickhouse`; the missing runtime dependency is the ClickHouse driver.
 
 - [ ] **Step 4: Sync and verify**
 
