@@ -1,0 +1,7 @@
+concept,namespace,local_name,fact_count,sample_file_count,numeric_count,text_count,unit_refs,period_types,example_values
+fi_met:mi53,http://www.suomi.fi/xbrl/crr/dict/met,mi53,542,10,542,0,"{""ISO4217_EUR"": 542}","{""instant"": 542}","[""96423.82"", ""338047.03"", ""341085.34""]"
+fi_met:di120,http://www.suomi.fi/xbrl/crr/dict/met,di120,10,10,0,10,"{""(none)"": 10}","{""instant"": 10}","[""2023-11-01"", ""2023-10-01"", ""2023-04-01""]"
+fi_met:di121,http://www.suomi.fi/xbrl/crr/dict/met,di121,10,10,0,10,"{""(none)"": 10}","{""instant"": 10}","[""2024-10-31"", ""2024-09-30"", ""2024-03-31""]"
+fi_met:si168,http://www.suomi.fi/xbrl/crr/dict/met,si168,10,10,0,10,"{""(none)"": 10}","{""instant"": 10}","[""H. Kuokkasen Peruukkiliike Oy"", ""Kello-Optiikka Nyyssönen Oy"", ""Riihimäen Öljypoltinhuolto Oy""]"
+fi_met:si289,http://www.suomi.fi/xbrl/crr/dict/met,si289,10,10,0,10,"{""(none)"": 10}","{""instant"": 10}","[""0104539-0"", ""0144206-2"", ""0152307-3""]"
+fi_met:md103,http://www.suomi.fi/xbrl/crr/dict/met,md103,276,9,276,0,"{""ISO4217_EUR"": 276}","{""instant"": 276}","[""801301.28"", ""800484.80"", ""10889.65""]"

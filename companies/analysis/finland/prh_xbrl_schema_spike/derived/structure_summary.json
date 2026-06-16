@@ -1,0 +1,1112 @@
+{
+  "parser": "lxml",
+  "lxml_version": "5.4.0.0",
+  "samples_count": 10,
+  "total_xml_size_bytes": 475559,
+  "total_contexts": 828,
+  "total_units": 10,
+  "total_facts": 858,
+  "total_numeric_facts": 818,
+  "total_text_facts": 40,
+  "unique_concepts": 6,
+  "unique_financial_line_members": 74,
+  "schema_refs": {
+    "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd": 10
+  },
+  "fact_namespaces": {
+    "http://www.suomi.fi/xbrl/crr/dict/met": 858
+  },
+  "context_period_types": {
+    "instant": 828
+  },
+  "context_dimension_count_distribution": {
+    "0": 10,
+    "1": 424,
+    "2": 394
+  },
+  "units": {
+    "iso4217:EUR": 10
+  },
+  "top_dimensions": [
+    {
+      "dimension": "fi_dim:MCY",
+      "count": 818
+    },
+    {
+      "dimension": "fi_dim:REF",
+      "count": 394
+    }
+  ],
+  "top_dimension_members": [
+    {
+      "dimension": "fi_dim:REF",
+      "member": "fi_RF:x4",
+      "contexts": 256,
+      "facts": 0
+    },
+    {
+      "dimension": "fi_dim:REF",
+      "member": "fi_RF:x53",
+      "contexts": 138,
+      "facts": 0
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x513",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1768",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x438",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x399",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x435",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x360",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x4116",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x932",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x2895",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x376",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1825",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1811",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x424",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x481",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1869",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x689",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x12",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x738",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x740",
+      "contexts": 20,
+      "facts": 20
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1742",
+      "contexts": 18,
+      "facts": 18
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x583",
+      "contexts": 18,
+      "facts": 18
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x4046",
+      "contexts": 18,
+      "facts": 18
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1819",
+      "contexts": 16,
+      "facts": 16
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x673",
+      "contexts": 16,
+      "facts": 16
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x4014",
+      "contexts": 16,
+      "facts": 16
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1769",
+      "contexts": 14,
+      "facts": 14
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1771",
+      "contexts": 14,
+      "facts": 14
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1826",
+      "contexts": 14,
+      "facts": 14
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x9",
+      "contexts": 14,
+      "facts": 14
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x5",
+      "contexts": 14,
+      "facts": 14
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x4133",
+      "contexts": 14,
+      "facts": 14
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x816",
+      "contexts": 14,
+      "facts": 14
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1775",
+      "contexts": 12,
+      "facts": 12
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x10",
+      "contexts": 12,
+      "facts": 12
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x758",
+      "contexts": 12,
+      "facts": 12
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x6",
+      "contexts": 12,
+      "facts": 12
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x541",
+      "contexts": 12,
+      "facts": 12
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x449",
+      "contexts": 12,
+      "facts": 12
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x448",
+      "contexts": 12,
+      "facts": 12
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x49",
+      "contexts": 10,
+      "facts": 10
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x8",
+      "contexts": 10,
+      "facts": 10
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1830",
+      "contexts": 10,
+      "facts": 10
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x3023",
+      "contexts": 10,
+      "facts": 10
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x755",
+      "contexts": 8,
+      "facts": 8
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x2308",
+      "contexts": 8,
+      "facts": 8
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x2334",
+      "contexts": 8,
+      "facts": 8
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1036",
+      "contexts": 8,
+      "facts": 8
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x2934",
+      "contexts": 8,
+      "facts": 8
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1729",
+      "contexts": 6,
+      "facts": 6
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x2233",
+      "contexts": 6,
+      "facts": 6
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1757",
+      "contexts": 4,
+      "facts": 4
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x807",
+      "contexts": 4,
+      "facts": 4
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x544",
+      "contexts": 4,
+      "facts": 4
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1761",
+      "contexts": 4,
+      "facts": 4
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1770",
+      "contexts": 4,
+      "facts": 4
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x933",
+      "contexts": 4,
+      "facts": 4
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x2920",
+      "contexts": 4,
+      "facts": 4
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1737",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x2548",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x3051",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x3952",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x4003",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x48",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1758",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1764",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x2191",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x578",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1805",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1117",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1893",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x551",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1806",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x1818",
+      "contexts": 2,
+      "facts": 2
+    },
+    {
+      "dimension": "fi_dim:MCY",
+      "member": "fi_MC:x520",
+      "contexts": 2,
+      "facts": 2
+    }
+  ],
+  "samples": [
+    {
+      "sample_file": "samples/01__0104539-0__2024-10-31.xml",
+      "business_id": "0104539-0",
+      "financial_date": "2024-10-31",
+      "registration_date": "2025-01-18",
+      "root": "xbrl",
+      "root_namespace": "http://www.xbrl.org/2003/instance",
+      "namespaces": {
+        "": "http://www.xbrl.org/2003/instance",
+        "fi_MC": "http://www.suomi.fi/xbrl/crr/dict/dom/MC",
+        "fi_RF": "http://www.suomi.fi/xbrl/crr/dict/dom/RF",
+        "fi_SC": "http://www.suomi.fi/xbrl/crr/dict/dom/SC",
+        "fi_dim": "http://www.suomi.fi/xbrl/crr/dict/dim",
+        "fi_met": "http://www.suomi.fi/xbrl/crr/dict/met",
+        "iso4217": "http://www.xbrl.org/2003/iso4217",
+        "link": "http://www.xbrl.org/2003/linkbase",
+        "negated": "http://www.xbrl.org/2009/role/negated",
+        "net": "http://www.xbrl.org/2009/role/net",
+        "nonnum": "http://www.xbrl.org/dtr/type/non-numeric",
+        "num": "http://www.xbrl.org/dtr/type/numeric",
+        "vk_mod_oytp_gaap_ind": "http://www.valtiokonttori.fi/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind",
+        "xbrldi": "http://xbrl.org/2006/xbrldi",
+        "xbrldt": "http://xbrl.org/2005/xbrldt",
+        "xbrli": "http://www.xbrl.org/2003/instance",
+        "xl": "http://www.xbrl.org/2003/XLink",
+        "xlink": "http://www.w3.org/1999/xlink",
+        "xsd": "http://www.w3.org/2001/XMLSchema",
+        "xsi": "http://www.w3.org/2001/XMLSchema-instance"
+      },
+      "schema_refs": [
+        "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd"
+      ],
+      "contexts_count": 85,
+      "contexts_with_dimensions": 84,
+      "max_dimensions_in_context": 2,
+      "units_count": 1,
+      "facts_count": 88,
+      "numeric_facts_count": 84,
+      "text_facts_count": 4,
+      "unique_concepts_count": 6,
+      "unique_financial_line_members": 42,
+      "period_types": {
+        "instant": 88
+      },
+      "unit_refs": {
+        "(none)": 4,
+        "ISO4217_EUR": 84
+      }
+    },
+    {
+      "sample_file": "samples/02__0144206-2__2024-09-30.xml",
+      "business_id": "0144206-2",
+      "financial_date": "2024-09-30",
+      "registration_date": "2025-01-30",
+      "root": "xbrl",
+      "root_namespace": "http://www.xbrl.org/2003/instance",
+      "namespaces": {
+        "": "http://www.xbrl.org/2003/instance",
+        "fi_MC": "http://www.suomi.fi/xbrl/crr/dict/dom/MC",
+        "fi_RF": "http://www.suomi.fi/xbrl/crr/dict/dom/RF",
+        "fi_SC": "http://www.suomi.fi/xbrl/crr/dict/dom/SC",
+        "fi_dim": "http://www.suomi.fi/xbrl/crr/dict/dim",
+        "fi_met": "http://www.suomi.fi/xbrl/crr/dict/met",
+        "iso4217": "http://www.xbrl.org/2003/iso4217",
+        "link": "http://www.xbrl.org/2003/linkbase",
+        "negated": "http://www.xbrl.org/2009/role/negated",
+        "net": "http://www.xbrl.org/2009/role/net",
+        "nonnum": "http://www.xbrl.org/dtr/type/non-numeric",
+        "num": "http://www.xbrl.org/dtr/type/numeric",
+        "vk_mod_oytp_gaap_ind": "http://www.valtiokonttori.fi/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind",
+        "xbrldi": "http://xbrl.org/2006/xbrldi",
+        "xbrldt": "http://xbrl.org/2005/xbrldt",
+        "xbrli": "http://www.xbrl.org/2003/instance",
+        "xl": "http://www.xbrl.org/2003/XLink",
+        "xlink": "http://www.w3.org/1999/xlink",
+        "xsd": "http://www.w3.org/2001/XMLSchema",
+        "xsi": "http://www.w3.org/2001/XMLSchema-instance"
+      },
+      "schema_refs": [
+        "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd"
+      ],
+      "contexts_count": 73,
+      "contexts_with_dimensions": 72,
+      "max_dimensions_in_context": 2,
+      "units_count": 1,
+      "facts_count": 76,
+      "numeric_facts_count": 72,
+      "text_facts_count": 4,
+      "unique_concepts_count": 6,
+      "unique_financial_line_members": 36,
+      "period_types": {
+        "instant": 76
+      },
+      "unit_refs": {
+        "(none)": 4,
+        "ISO4217_EUR": 72
+      }
+    },
+    {
+      "sample_file": "samples/03__0152307-3__2024-03-31.xml",
+      "business_id": "0152307-3",
+      "financial_date": "2024-03-31",
+      "registration_date": "2025-01-10",
+      "root": "xbrl",
+      "root_namespace": "http://www.xbrl.org/2003/instance",
+      "namespaces": {
+        "": "http://www.xbrl.org/2003/instance",
+        "fi_MC": "http://www.suomi.fi/xbrl/crr/dict/dom/MC",
+        "fi_RF": "http://www.suomi.fi/xbrl/crr/dict/dom/RF",
+        "fi_SC": "http://www.suomi.fi/xbrl/crr/dict/dom/SC",
+        "fi_dim": "http://www.suomi.fi/xbrl/crr/dict/dim",
+        "fi_met": "http://www.suomi.fi/xbrl/crr/dict/met",
+        "iso4217": "http://www.xbrl.org/2003/iso4217",
+        "link": "http://www.xbrl.org/2003/linkbase",
+        "negated": "http://www.xbrl.org/2009/role/negated",
+        "net": "http://www.xbrl.org/2009/role/net",
+        "nonnum": "http://www.xbrl.org/dtr/type/non-numeric",
+        "num": "http://www.xbrl.org/dtr/type/numeric",
+        "vk_mod_oytp_gaap_ind": "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd",
+        "xbrldi": "http://xbrl.org/2006/xbrldi",
+        "xbrldt": "http://xbrl.org/2005/xbrldt",
+        "xbrli": "http://www.xbrl.org/2003/instance",
+        "xl": "http://www.xbrl.org/2003/XLink",
+        "xlink": "http://www.w3.org/1999/xlink",
+        "xsd": "http://www.w3.org/2001/XMLSchema",
+        "xsi": "http://www.w3.org/2001/XMLSchema-instance"
+      },
+      "schema_refs": [
+        "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd"
+      ],
+      "contexts_count": 115,
+      "contexts_with_dimensions": 114,
+      "max_dimensions_in_context": 2,
+      "units_count": 1,
+      "facts_count": 118,
+      "numeric_facts_count": 114,
+      "text_facts_count": 4,
+      "unique_concepts_count": 6,
+      "unique_financial_line_members": 57,
+      "period_types": {
+        "instant": 118
+      },
+      "unit_refs": {
+        "(none)": 4,
+        "ISO4217_EUR": 114
+      }
+    },
+    {
+      "sample_file": "samples/04__0159948-1__2024-12-31.xml",
+      "business_id": "0159948-1",
+      "financial_date": "2024-12-31",
+      "registration_date": "2025-01-30",
+      "root": "xbrl",
+      "root_namespace": "http://www.xbrl.org/2003/instance",
+      "namespaces": {
+        "": "http://www.xbrl.org/2003/instance",
+        "fi_MC": "http://www.suomi.fi/xbrl/crr/dict/dom/MC",
+        "fi_RF": "http://www.suomi.fi/xbrl/crr/dict/dom/RF",
+        "fi_SC": "http://www.suomi.fi/xbrl/crr/dict/dom/SC",
+        "fi_dim": "http://www.suomi.fi/xbrl/crr/dict/dim",
+        "fi_met": "http://www.suomi.fi/xbrl/crr/dict/met",
+        "iso4217": "http://www.xbrl.org/2003/iso4217",
+        "link": "http://www.xbrl.org/2003/linkbase",
+        "negated": "http://www.xbrl.org/2009/role/negated",
+        "net": "http://www.xbrl.org/2009/role/net",
+        "nonnum": "http://www.xbrl.org/dtr/type/non-numeric",
+        "num": "http://www.xbrl.org/dtr/type/numeric",
+        "vk_mod_oytp_gaap_ind": "http://www.valtiokonttori.fi/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind",
+        "xbrldi": "http://xbrl.org/2006/xbrldi",
+        "xbrldt": "http://xbrl.org/2005/xbrldt",
+        "xbrli": "http://www.xbrl.org/2003/instance",
+        "xl": "http://www.xbrl.org/2003/XLink",
+        "xlink": "http://www.w3.org/1999/xlink",
+        "xsd": "http://www.w3.org/2001/XMLSchema",
+        "xsi": "http://www.w3.org/2001/XMLSchema-instance"
+      },
+      "schema_refs": [
+        "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd"
+      ],
+      "contexts_count": 85,
+      "contexts_with_dimensions": 84,
+      "max_dimensions_in_context": 2,
+      "units_count": 1,
+      "facts_count": 88,
+      "numeric_facts_count": 84,
+      "text_facts_count": 4,
+      "unique_concepts_count": 6,
+      "unique_financial_line_members": 42,
+      "period_types": {
+        "instant": 88
+      },
+      "unit_refs": {
+        "(none)": 4,
+        "ISO4217_EUR": 84
+      }
+    },
+    {
+      "sample_file": "samples/05__0163207-7__2024-12-31.xml",
+      "business_id": "0163207-7",
+      "financial_date": "2024-12-31",
+      "registration_date": "2025-01-21",
+      "root": "xbrl",
+      "root_namespace": "http://www.xbrl.org/2003/instance",
+      "namespaces": {
+        "": "http://www.xbrl.org/2003/instance",
+        "fi_MC": "http://www.suomi.fi/xbrl/crr/dict/dom/MC",
+        "fi_RF": "http://www.suomi.fi/xbrl/crr/dict/dom/RF",
+        "fi_SC": "http://www.suomi.fi/xbrl/crr/dict/dom/SC",
+        "fi_dim": "http://www.suomi.fi/xbrl/crr/dict/dim",
+        "fi_met": "http://www.suomi.fi/xbrl/crr/dict/met",
+        "iso4217": "http://www.xbrl.org/2003/iso4217",
+        "link": "http://www.xbrl.org/2003/linkbase",
+        "negated": "http://www.xbrl.org/2009/role/negated",
+        "net": "http://www.xbrl.org/2009/role/net",
+        "nonnum": "http://www.xbrl.org/dtr/type/non-numeric",
+        "num": "http://www.xbrl.org/dtr/type/numeric",
+        "vk_mod_oytp_gaap_ind": "http://www.valtiokonttori.fi/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind",
+        "xbrldi": "http://xbrl.org/2006/xbrldi",
+        "xbrldt": "http://xbrl.org/2005/xbrldt",
+        "xbrli": "http://www.xbrl.org/2003/instance",
+        "xl": "http://www.xbrl.org/2003/XLink",
+        "xlink": "http://www.w3.org/1999/xlink",
+        "xsd": "http://www.w3.org/2001/XMLSchema",
+        "xsi": "http://www.w3.org/2001/XMLSchema-instance"
+      },
+      "schema_refs": [
+        "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd"
+      ],
+      "contexts_count": 57,
+      "contexts_with_dimensions": 56,
+      "max_dimensions_in_context": 2,
+      "units_count": 1,
+      "facts_count": 60,
+      "numeric_facts_count": 56,
+      "text_facts_count": 4,
+      "unique_concepts_count": 6,
+      "unique_financial_line_members": 28,
+      "period_types": {
+        "instant": 60
+      },
+      "unit_refs": {
+        "(none)": 4,
+        "ISO4217_EUR": 56
+      }
+    },
+    {
+      "sample_file": "samples/06__0176460-0__2023-09-30.xml",
+      "business_id": "0176460-0",
+      "financial_date": "2023-09-30",
+      "registration_date": "2025-01-23",
+      "root": "xbrl",
+      "root_namespace": "http://www.xbrl.org/2003/instance",
+      "namespaces": {
+        "": "http://www.xbrl.org/2003/instance",
+        "fi_MC": "http://www.suomi.fi/xbrl/crr/dict/dom/MC",
+        "fi_RF": "http://www.suomi.fi/xbrl/crr/dict/dom/RF",
+        "fi_SC": "http://www.suomi.fi/xbrl/crr/dict/dom/SC",
+        "fi_dim": "http://www.suomi.fi/xbrl/crr/dict/dim",
+        "fi_met": "http://www.suomi.fi/xbrl/crr/dict/met",
+        "iso4217": "http://www.xbrl.org/2003/iso4217",
+        "link": "http://www.xbrl.org/2003/linkbase",
+        "negated": "http://www.xbrl.org/2009/role/negated",
+        "net": "http://www.xbrl.org/2009/role/net",
+        "nonnum": "http://www.xbrl.org/dtr/type/non-numeric",
+        "num": "http://www.xbrl.org/dtr/type/numeric",
+        "vk_mod_oytp_gaap_ind": "http://www.valtiokonttori.fi/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind",
+        "xbrldi": "http://xbrl.org/2006/xbrldi",
+        "xbrldt": "http://xbrl.org/2005/xbrldt",
+        "xbrli": "http://www.xbrl.org/2003/instance",
+        "xl": "http://www.xbrl.org/2003/XLink",
+        "xlink": "http://www.w3.org/1999/xlink",
+        "xsd": "http://www.w3.org/2001/XMLSchema",
+        "xsi": "http://www.w3.org/2001/XMLSchema-instance"
+      },
+      "schema_refs": [
+        "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd"
+      ],
+      "contexts_count": 85,
+      "contexts_with_dimensions": 84,
+      "max_dimensions_in_context": 2,
+      "units_count": 1,
+      "facts_count": 88,
+      "numeric_facts_count": 84,
+      "text_facts_count": 4,
+      "unique_concepts_count": 6,
+      "unique_financial_line_members": 42,
+      "period_types": {
+        "instant": 88
+      },
+      "unit_refs": {
+        "(none)": 4,
+        "ISO4217_EUR": 84
+      }
+    },
+    {
+      "sample_file": "samples/07__0176460-0__2024-09-30.xml",
+      "business_id": "0176460-0",
+      "financial_date": "2024-09-30",
+      "registration_date": "2025-01-23",
+      "root": "xbrl",
+      "root_namespace": "http://www.xbrl.org/2003/instance",
+      "namespaces": {
+        "": "http://www.xbrl.org/2003/instance",
+        "fi_MC": "http://www.suomi.fi/xbrl/crr/dict/dom/MC",
+        "fi_RF": "http://www.suomi.fi/xbrl/crr/dict/dom/RF",
+        "fi_SC": "http://www.suomi.fi/xbrl/crr/dict/dom/SC",
+        "fi_dim": "http://www.suomi.fi/xbrl/crr/dict/dim",
+        "fi_met": "http://www.suomi.fi/xbrl/crr/dict/met",
+        "iso4217": "http://www.xbrl.org/2003/iso4217",
+        "link": "http://www.xbrl.org/2003/linkbase",
+        "negated": "http://www.xbrl.org/2009/role/negated",
+        "net": "http://www.xbrl.org/2009/role/net",
+        "nonnum": "http://www.xbrl.org/dtr/type/non-numeric",
+        "num": "http://www.xbrl.org/dtr/type/numeric",
+        "vk_mod_oytp_gaap_ind": "http://www.valtiokonttori.fi/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind",
+        "xbrldi": "http://xbrl.org/2006/xbrldi",
+        "xbrldt": "http://xbrl.org/2005/xbrldt",
+        "xbrli": "http://www.xbrl.org/2003/instance",
+        "xl": "http://www.xbrl.org/2003/XLink",
+        "xlink": "http://www.w3.org/1999/xlink",
+        "xsd": "http://www.w3.org/2001/XMLSchema",
+        "xsi": "http://www.w3.org/2001/XMLSchema-instance"
+      },
+      "schema_refs": [
+        "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd"
+      ],
+      "contexts_count": 83,
+      "contexts_with_dimensions": 82,
+      "max_dimensions_in_context": 2,
+      "units_count": 1,
+      "facts_count": 86,
+      "numeric_facts_count": 82,
+      "text_facts_count": 4,
+      "unique_concepts_count": 6,
+      "unique_financial_line_members": 41,
+      "period_types": {
+        "instant": 86
+      },
+      "unit_refs": {
+        "(none)": 4,
+        "ISO4217_EUR": 82
+      }
+    },
+    {
+      "sample_file": "samples/08__0186191-0__2024-06-30.xml",
+      "business_id": "0186191-0",
+      "financial_date": "2024-06-30",
+      "registration_date": "2025-01-17",
+      "root": "xbrl",
+      "root_namespace": "http://www.xbrl.org/2003/instance",
+      "namespaces": {
+        "": "http://www.xbrl.org/2003/instance",
+        "fi_MC": "http://www.suomi.fi/xbrl/crr/dict/dom/MC",
+        "fi_RF": "http://www.suomi.fi/xbrl/crr/dict/dom/RF",
+        "fi_SC": "http://www.suomi.fi/xbrl/crr/dict/dom/SC",
+        "fi_dim": "http://www.suomi.fi/xbrl/crr/dict/dim",
+        "fi_met": "http://www.suomi.fi/xbrl/crr/dict/met",
+        "iso4217": "http://www.xbrl.org/2003/iso4217",
+        "link": "http://www.xbrl.org/2003/linkbase",
+        "negated": "http://www.xbrl.org/2009/role/negated",
+        "net": "http://www.xbrl.org/2009/role/net",
+        "nonnum": "http://www.xbrl.org/dtr/type/non-numeric",
+        "num": "http://www.xbrl.org/dtr/type/numeric",
+        "vk_mod_oytp_gaap_ind": "http://www.valtiokonttori.fi/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind",
+        "xbrldi": "http://xbrl.org/2006/xbrldi",
+        "xbrldt": "http://xbrl.org/2005/xbrldt",
+        "xbrli": "http://www.xbrl.org/2003/instance",
+        "xl": "http://www.xbrl.org/2003/XLink",
+        "xlink": "http://www.w3.org/1999/xlink",
+        "xsd": "http://www.w3.org/2001/XMLSchema",
+        "xsi": "http://www.w3.org/2001/XMLSchema-instance"
+      },
+      "schema_refs": [
+        "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd"
+      ],
+      "contexts_count": 95,
+      "contexts_with_dimensions": 94,
+      "max_dimensions_in_context": 2,
+      "units_count": 1,
+      "facts_count": 98,
+      "numeric_facts_count": 94,
+      "text_facts_count": 4,
+      "unique_concepts_count": 5,
+      "unique_financial_line_members": 47,
+      "period_types": {
+        "instant": 98
+      },
+      "unit_refs": {
+        "(none)": 4,
+        "ISO4217_EUR": 94
+      }
+    },
+    {
+      "sample_file": "samples/09__0200510-4__2024-12-31.xml",
+      "business_id": "0200510-4",
+      "financial_date": "2024-12-31",
+      "registration_date": "2025-01-30",
+      "root": "xbrl",
+      "root_namespace": "http://www.xbrl.org/2003/instance",
+      "namespaces": {
+        "": "http://www.xbrl.org/2003/instance",
+        "fi_MC": "http://www.suomi.fi/xbrl/crr/dict/dom/MC",
+        "fi_RF": "http://www.suomi.fi/xbrl/crr/dict/dom/RF",
+        "fi_SC": "http://www.suomi.fi/xbrl/crr/dict/dom/SC",
+        "fi_dim": "http://www.suomi.fi/xbrl/crr/dict/dim",
+        "fi_met": "http://www.suomi.fi/xbrl/crr/dict/met",
+        "iso4217": "http://www.xbrl.org/2003/iso4217",
+        "link": "http://www.xbrl.org/2003/linkbase",
+        "negated": "http://www.xbrl.org/2009/role/negated",
+        "net": "http://www.xbrl.org/2009/role/net",
+        "nonnum": "http://www.xbrl.org/dtr/type/non-numeric",
+        "num": "http://www.xbrl.org/dtr/type/numeric",
+        "vk_mod_oytp_gaap_ind": "http://www.valtiokonttori.fi/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind",
+        "xbrldi": "http://xbrl.org/2006/xbrldi",
+        "xbrldt": "http://xbrl.org/2005/xbrldt",
+        "xbrli": "http://www.xbrl.org/2003/instance",
+        "xl": "http://www.xbrl.org/2003/XLink",
+        "xlink": "http://www.w3.org/1999/xlink",
+        "xsd": "http://www.w3.org/2001/XMLSchema",
+        "xsi": "http://www.w3.org/2001/XMLSchema-instance"
+      },
+      "schema_refs": [
+        "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd"
+      ],
+      "contexts_count": 71,
+      "contexts_with_dimensions": 70,
+      "max_dimensions_in_context": 2,
+      "units_count": 1,
+      "facts_count": 74,
+      "numeric_facts_count": 70,
+      "text_facts_count": 4,
+      "unique_concepts_count": 6,
+      "unique_financial_line_members": 35,
+      "period_types": {
+        "instant": 74
+      },
+      "unit_refs": {
+        "(none)": 4,
+        "ISO4217_EUR": 70
+      }
+    },
+    {
+      "sample_file": "samples/10__0202458-3__2024-09-30.xml",
+      "business_id": "0202458-3",
+      "financial_date": "2024-09-30",
+      "registration_date": "2025-01-02",
+      "root": "xbrl",
+      "root_namespace": "http://www.xbrl.org/2003/instance",
+      "namespaces": {
+        "": "http://www.xbrl.org/2003/instance",
+        "fi_MC": "http://www.suomi.fi/xbrl/crr/dict/dom/MC",
+        "fi_RF": "http://www.suomi.fi/xbrl/crr/dict/dom/RF",
+        "fi_SC": "http://www.suomi.fi/xbrl/crr/dict/dom/SC",
+        "fi_dim": "http://www.suomi.fi/xbrl/crr/dict/dim",
+        "fi_met": "http://www.suomi.fi/xbrl/crr/dict/met",
+        "iso4217": "http://www.xbrl.org/2003/iso4217",
+        "link": "http://www.xbrl.org/2003/linkbase",
+        "negated": "http://www.xbrl.org/2009/role/negated",
+        "net": "http://www.xbrl.org/2009/role/net",
+        "nonnum": "http://www.xbrl.org/dtr/type/non-numeric",
+        "num": "http://www.xbrl.org/dtr/type/numeric",
+        "vk_mod_oytp_gaap_ind": "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd",
+        "xbrldi": "http://xbrl.org/2006/xbrldi",
+        "xbrldt": "http://xbrl.org/2005/xbrldt",
+        "xbrli": "http://www.xbrl.org/2003/instance",
+        "xl": "http://www.xbrl.org/2003/XLink",
+        "xlink": "http://www.w3.org/1999/xlink",
+        "xsd": "http://www.w3.org/2001/XMLSchema",
+        "xsi": "http://www.w3.org/2001/XMLSchema-instance"
+      },
+      "schema_refs": [
+        "http://www.valtiokonttori.fi/fi/fr/xbrl/crr/fws/oytp/kpl-2016-12/2019-03-28/mod/oytp_gaap_ind.xsd"
+      ],
+      "contexts_count": 79,
+      "contexts_with_dimensions": 78,
+      "max_dimensions_in_context": 2,
+      "units_count": 1,
+      "facts_count": 82,
+      "numeric_facts_count": 78,
+      "text_facts_count": 4,
+      "unique_concepts_count": 6,
+      "unique_financial_line_members": 39,
+      "period_types": {
+        "instant": 82
+      },
+      "unit_refs": {
+        "(none)": 4,
+        "ISO4217_EUR": 78
+      }
+    }
+  ],
+  "top_concepts": [
+    {
+      "concept": "fi_met:mi53",
+      "namespace": "http://www.suomi.fi/xbrl/crr/dict/met",
+      "local_name": "mi53",
+      "fact_count": 542,
+      "sample_file_count": 10,
+      "numeric_count": 542,
+      "text_count": 0,
+      "unit_refs": {
+        "ISO4217_EUR": 542
+      },
+      "period_types": {
+        "instant": 542
+      },
+      "example_values": [
+        "96423.82",
+        "338047.03",
+        "341085.34"
+      ]
+    },
+    {
+      "concept": "fi_met:di120",
+      "namespace": "http://www.suomi.fi/xbrl/crr/dict/met",
+      "local_name": "di120",
+      "fact_count": 10,
+      "sample_file_count": 10,
+      "numeric_count": 0,
+      "text_count": 10,
+      "unit_refs": {
+        "(none)": 10
+      },
+      "period_types": {
+        "instant": 10
+      },
+      "example_values": [
+        "2023-11-01",
+        "2023-10-01",
+        "2023-04-01"
+      ]
+    },
+    {
+      "concept": "fi_met:di121",
+      "namespace": "http://www.suomi.fi/xbrl/crr/dict/met",
+      "local_name": "di121",
+      "fact_count": 10,
+      "sample_file_count": 10,
+      "numeric_count": 0,
+      "text_count": 10,
+      "unit_refs": {
+        "(none)": 10
+      },
+      "period_types": {
+        "instant": 10
+      },
+      "example_values": [
+        "2024-10-31",
+        "2024-09-30",
+        "2024-03-31"
+      ]
+    },
+    {
+      "concept": "fi_met:si168",
+      "namespace": "http://www.suomi.fi/xbrl/crr/dict/met",
+      "local_name": "si168",
+      "fact_count": 10,
+      "sample_file_count": 10,
+      "numeric_count": 0,
+      "text_count": 10,
+      "unit_refs": {
+        "(none)": 10
+      },
+      "period_types": {
+        "instant": 10
+      },
+      "example_values": [
+        "H. Kuokkasen Peruukkiliike Oy",
+        "Kello-Optiikka Nyyssönen Oy",
+        "Riihimäen Öljypoltinhuolto Oy"
+      ]
+    },
+    {
+      "concept": "fi_met:si289",
+      "namespace": "http://www.suomi.fi/xbrl/crr/dict/met",
+      "local_name": "si289",
+      "fact_count": 10,
+      "sample_file_count": 10,
+      "numeric_count": 0,
+      "text_count": 10,
+      "unit_refs": {
+        "(none)": 10
+      },
+      "period_types": {
+        "instant": 10
+      },
+      "example_values": [
+        "0104539-0",
+        "0144206-2",
+        "0152307-3"
+      ]
+    },
+    {
+      "concept": "fi_met:md103",
+      "namespace": "http://www.suomi.fi/xbrl/crr/dict/met",
+      "local_name": "md103",
+      "fact_count": 276,
+      "sample_file_count": 9,
+      "numeric_count": 276,
+      "text_count": 0,
+      "unit_refs": {
+        "ISO4217_EUR": 276
+      },
+      "period_types": {
+        "instant": 276
+      },
+      "example_values": [
+        "801301.28",
+        "800484.80",
+        "10889.65"
+      ]
+    }
+  ]
+}

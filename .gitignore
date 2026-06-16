@@ -22,9 +22,14 @@ companies/data/*/countrydata/
 **/.pytest_cache/
 **/.mypy_cache/
 **/.ruff_cache/
+**/.dg/
+**/.dagster_home/
+**/.tmp_dagster_home*/
 **/dist/
 **/build/
 corpscout/ui/.react-router/
+.worktrees/
+claude-code-plugins-plus-skills/
 
 # Go build outputs.
 **/bin/

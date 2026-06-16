@@ -1,0 +1,3626 @@
+{
+  "fi_dim:MCY": [
+    {
+      "code": "fi_dim:MCY",
+      "sheet": "y-t03.01",
+      "row": 3,
+      "values": [
+        "Toimintakertomuksen teksimuotoinen tieto",
+        "fi_dim:MCY (Pääkategoria)"
+      ],
+      "row_text": "Toimintakertomuksen teksimuotoinen tieto | fi_dim:MCY (Pääkategoria)"
+    },
+    {
+      "code": "fi_dim:MCY",
+      "sheet": "y-t04.01",
+      "row": 3,
+      "values": [
+        "Päättynyt tilikausi",
+        "End of previous accounting year",
+        "Metrics",
+        "fi_dim:MCY (Pääkategoria)"
+      ],
+      "row_text": "Päättynyt tilikausi | End of previous accounting year | Metrics | fi_dim:MCY (Pääkategoria)"
+    },
+    {
+      "code": "fi_dim:MCY",
+      "sheet": "y-t04.02",
+      "row": 3,
+      "values": [
+        "Päättynyt tilikausi",
+        "Edellisen tilikauden lopussa",
+        "Metrics",
+        "fi_dim:SCO (Konsolidoinnin laajuus)",
+        "fi_dim:MCY (Pääkategoria)"
+      ],
+      "row_text": "Päättynyt tilikausi | Edellisen tilikauden lopussa | Metrics | fi_dim:SCO (Konsolidoinnin laajuus) | fi_dim:MCY (Pääkategoria)"
+    },
+    {
+      "code": "fi_dim:MCY",
+      "sheet": "y-t04.03",
+      "row": 3,
+      "values": [
+        "Tilikauden lopussa",
+        "Edellisen tilikauden lopussa",
+        "Metrics",
+        "fi_dim:MCY (Pääkategoria)"
+      ],
+      "row_text": "Tilikauden lopussa | Edellisen tilikauden lopussa | Metrics | fi_dim:MCY (Pääkategoria)"
+    },
+    {
+      "code": "fi_dim:MCY",
+      "sheet": "y-t04.04",
+      "row": 3,
+      "values": [
+        "Tilikauden lopussa",
+        "Edellisen tilikauden lopussa",
+        "Metrics",
+        "fi_dim:MCY (Pääkategoria)"
+      ],
+      "row_text": "Tilikauden lopussa | Edellisen tilikauden lopussa | Metrics | fi_dim:MCY (Pääkategoria)"
+    }
+  ],
+  "fi_MC:x551": [
+    {
+      "code": "fi_MC:x551",
+      "sheet": "y-t04.01",
+      "row": 5,
+      "values": [
+        "Tase vastaavaa",
+        "Pysyvät vastaavat",
+        "Aineettomat hyödykkeet",
+        "R0030",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x551 (Aineettomat hyödykkeet)"
+      ],
+      "row_text": "Tase vastaavaa | Pysyvät vastaavat | Aineettomat hyödykkeet | R0030 | mi53 (Kirjanpitoarvo) | fi_MC:x551 (Aineettomat hyödykkeet)"
+    },
+    {
+      "code": "fi_MC:x551",
+      "sheet": "y-t04.02",
+      "row": 5,
+      "values": [
+        "Tase vastaavaa",
+        "Pysyvät vastaavat",
+        "Aineettomat hyödykkeet",
+        "R0030",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_SC:x7 (Konsolidoitu)",
+        "fi_MC:x551 (Aineettomat hyödykkeet)"
+      ],
+      "row_text": "Tase vastaavaa | Pysyvät vastaavat | Aineettomat hyödykkeet | R0030 | mi53 (Kirjanpitoarvo) | fi_SC:x7 (Konsolidoitu) | fi_MC:x551 (Aineettomat hyödykkeet)"
+    },
+    {
+      "code": "fi_MC:x551",
+      "sheet": "y-t04.03",
+      "row": 7,
+      "values": [
+        "Aineettomat hyödykkeet",
+        "R0030",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x551 (Aineettomat hyödykkeet)"
+      ],
+      "row_text": "Aineettomat hyödykkeet | R0030 | mi53 (Kirjanpitoarvo) | fi_MC:x551 (Aineettomat hyödykkeet)"
+    },
+    {
+      "code": "fi_MC:x551",
+      "sheet": "y-t04.04",
+      "row": 7,
+      "values": [
+        "Aineettomat hyödykkeet",
+        "R0030",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x551 (Aineettomat hyödykkeet)"
+      ],
+      "row_text": "Aineettomat hyödykkeet | R0030 | mi53 (Kirjanpitoarvo) | fi_MC:x551 (Aineettomat hyödykkeet)"
+    },
+    {
+      "code": "fi_MC:x551",
+      "sheet": "y-t04.05",
+      "row": 7,
+      "values": [
+        "Aineettomat hyödykkeet",
+        "R0030",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x551 (Aineettomat hyödykkeet)"
+      ],
+      "row_text": "Aineettomat hyödykkeet | R0030 | mi53 (Kirjanpitoarvo) | fi_MC:x551 (Aineettomat hyödykkeet)"
+    }
+  ],
+  "fi_MC:x816": [
+    {
+      "code": "fi_MC:x816",
+      "sheet": "y-t04.01",
+      "row": 6,
+      "values": [
+        "Aineelliset hyödykkeet",
+        "R0040",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x816 (Aineelliset hyödykkeet)"
+      ],
+      "row_text": "Aineelliset hyödykkeet | R0040 | mi53 (Kirjanpitoarvo) | fi_MC:x816 (Aineelliset hyödykkeet)"
+    },
+    {
+      "code": "fi_MC:x816",
+      "sheet": "y-t04.02",
+      "row": 6,
+      "values": [
+        "Aineelliset hyödykkeet",
+        "R0040",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_SC:x7 (Konsolidoitu)",
+        "fi_MC:x816 (Aineelliset hyödykkeet)"
+      ],
+      "row_text": "Aineelliset hyödykkeet | R0040 | mi53 (Kirjanpitoarvo) | fi_SC:x7 (Konsolidoitu) | fi_MC:x816 (Aineelliset hyödykkeet)"
+    },
+    {
+      "code": "fi_MC:x816",
+      "sheet": "y-t04.03",
+      "row": 16,
+      "values": [
+        "Aineelliset hyödykkeet",
+        "R0120",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x816 (Aineelliset hyödykkeet)"
+      ],
+      "row_text": "Aineelliset hyödykkeet | R0120 | mi53 (Kirjanpitoarvo) | fi_MC:x816 (Aineelliset hyödykkeet)"
+    },
+    {
+      "code": "fi_MC:x816",
+      "sheet": "y-t04.04",
+      "row": 16,
+      "values": [
+        "Aineelliset hyödykkeet",
+        "R0120",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x816 (Aineelliset hyödykkeet)"
+      ],
+      "row_text": "Aineelliset hyödykkeet | R0120 | mi53 (Kirjanpitoarvo) | fi_MC:x816 (Aineelliset hyödykkeet)"
+    },
+    {
+      "code": "fi_MC:x816",
+      "sheet": "y-t04.05",
+      "row": 15,
+      "values": [
+        "Aineelliset hyödykkeet",
+        "R0110",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x816 (Aineelliset hyödykkeet)"
+      ],
+      "row_text": "Aineelliset hyödykkeet | R0110 | mi53 (Kirjanpitoarvo) | fi_MC:x816 (Aineelliset hyödykkeet)"
+    }
+  ],
+  "fi_MC:x583": [
+    {
+      "code": "fi_MC:x583",
+      "sheet": "y-t04.01",
+      "row": 7,
+      "values": [
+        "Sijoitukset",
+        "R0050",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x583 (Sijoitukset)"
+      ],
+      "row_text": "Sijoitukset | R0050 | mi53 (Kirjanpitoarvo) | fi_MC:x583 (Sijoitukset)"
+    },
+    {
+      "code": "fi_MC:x583",
+      "sheet": "y-t04.02",
+      "row": 7,
+      "values": [
+        "Sijoitukset",
+        "R0050",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_SC:x7 (Konsolidoitu)",
+        "fi_MC:x583 (Sijoitukset)"
+      ],
+      "row_text": "Sijoitukset | R0050 | mi53 (Kirjanpitoarvo) | fi_SC:x7 (Konsolidoitu) | fi_MC:x583 (Sijoitukset)"
+    },
+    {
+      "code": "fi_MC:x583",
+      "sheet": "y-t04.03",
+      "row": 22,
+      "values": [
+        "Sijoitukset",
+        "R0180",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x583 (Sijoitukset)"
+      ],
+      "row_text": "Sijoitukset | R0180 | mi53 (Kirjanpitoarvo) | fi_MC:x583 (Sijoitukset)"
+    },
+    {
+      "code": "fi_MC:x583",
+      "sheet": "y-t04.04",
+      "row": 22,
+      "values": [
+        "Sijoitukset",
+        "R0180",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x583 (Sijoitukset)"
+      ],
+      "row_text": "Sijoitukset | R0180 | mi53 (Kirjanpitoarvo) | fi_MC:x583 (Sijoitukset)"
+    },
+    {
+      "code": "fi_MC:x583",
+      "sheet": "y-t04.05",
+      "row": 25,
+      "values": [
+        "Sijoitukset",
+        "R0210",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x583 (Sijoitukset)"
+      ],
+      "row_text": "Sijoitukset | R0210 | mi53 (Kirjanpitoarvo) | fi_MC:x583 (Sijoitukset)"
+    }
+  ],
+  "fi_MC:x513": [
+    {
+      "code": "fi_MC:x513",
+      "sheet": "y-t04.01",
+      "row": 8,
+      "values": [
+        "Pysyvät vastaavat yhteensä",
+        "R0060",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x513 (Pysyvät vastaavat)"
+      ],
+      "row_text": "Pysyvät vastaavat yhteensä | R0060 | mi53 (Kirjanpitoarvo) | fi_MC:x513 (Pysyvät vastaavat)"
+    },
+    {
+      "code": "fi_MC:x513",
+      "sheet": "y-t04.02",
+      "row": 8,
+      "values": [
+        "Pysyvät vastaavat yhteensä",
+        "R0060",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_SC:x7 (Konsolidoitu)",
+        "fi_MC:x513 (Pysyvät vastaavat)"
+      ],
+      "row_text": "Pysyvät vastaavat yhteensä | R0060 | mi53 (Kirjanpitoarvo) | fi_SC:x7 (Konsolidoitu) | fi_MC:x513 (Pysyvät vastaavat)"
+    },
+    {
+      "code": "fi_MC:x513",
+      "sheet": "y-t04.03",
+      "row": 6,
+      "values": [
+        "Pysyvät vastaavat",
+        "R0020",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x513 (Pysyvät vastaavat)"
+      ],
+      "row_text": "Pysyvät vastaavat | R0020 | mi53 (Kirjanpitoarvo) | fi_MC:x513 (Pysyvät vastaavat)"
+    },
+    {
+      "code": "fi_MC:x513",
+      "sheet": "y-t04.04",
+      "row": 6,
+      "values": [
+        "Pysyvät vastaavat",
+        "R0020",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x513 (Pysyvät vastaavat)"
+      ],
+      "row_text": "Pysyvät vastaavat | R0020 | mi53 (Kirjanpitoarvo) | fi_MC:x513 (Pysyvät vastaavat)"
+    },
+    {
+      "code": "fi_MC:x513",
+      "sheet": "y-t04.05",
+      "row": 6,
+      "values": [
+        "Pysyvät vastaavat",
+        "R0020",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x513 (Pysyvät vastaavat)"
+      ],
+      "row_text": "Pysyvät vastaavat | R0020 | mi53 (Kirjanpitoarvo) | fi_MC:x513 (Pysyvät vastaavat)"
+    }
+  ],
+  "fi_MC:x807": [
+    {
+      "code": "fi_MC:x807",
+      "sheet": "y-t04.01",
+      "row": 9,
+      "values": [
+        "Vaihtuvat vastaavat",
+        "Vaihto-omaisuus",
+        "R0080",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x807 (Vaihto-omaisuus)"
+      ],
+      "row_text": "Vaihtuvat vastaavat | Vaihto-omaisuus | R0080 | mi53 (Kirjanpitoarvo) | fi_MC:x807 (Vaihto-omaisuus)"
+    },
+    {
+      "code": "fi_MC:x807",
+      "sheet": "y-t04.02",
+      "row": 9,
+      "values": [
+        "Vaihtuvat vastaavat",
+        "Vaihto-omaisuus",
+        "R0080",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_SC:x7 (Konsolidoitu)",
+        "fi_MC:x807 (Vaihto-omaisuus)"
+      ],
+      "row_text": "Vaihtuvat vastaavat | Vaihto-omaisuus | R0080 | mi53 (Kirjanpitoarvo) | fi_SC:x7 (Konsolidoitu) | fi_MC:x807 (Vaihto-omaisuus)"
+    },
+    {
+      "code": "fi_MC:x807",
+      "sheet": "y-t04.03",
+      "row": 30,
+      "values": [
+        "Vaihto-omaisuus",
+        "R0260",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x807 (Vaihto-omaisuus)"
+      ],
+      "row_text": "Vaihto-omaisuus | R0260 | mi53 (Kirjanpitoarvo) | fi_MC:x807 (Vaihto-omaisuus)"
+    },
+    {
+      "code": "fi_MC:x807",
+      "sheet": "y-t04.04",
+      "row": 30,
+      "values": [
+        "Vaihto-omaisuus",
+        "R0260",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x807 (Vaihto-omaisuus)"
+      ],
+      "row_text": "Vaihto-omaisuus | R0260 | mi53 (Kirjanpitoarvo) | fi_MC:x807 (Vaihto-omaisuus)"
+    },
+    {
+      "code": "fi_MC:x807",
+      "sheet": "y-t04.05",
+      "row": 34,
+      "values": [
+        "Vaihto-omaisuus",
+        "R0300",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x807 (Vaihto-omaisuus)"
+      ],
+      "row_text": "Vaihto-omaisuus | R0300 | mi53 (Kirjanpitoarvo) | fi_MC:x807 (Vaihto-omaisuus)"
+    }
+  ],
+  "fi_MC:x438": [
+    {
+      "code": "fi_MC:x438",
+      "sheet": "y-t04.01",
+      "row": 10,
+      "values": [
+        "Saamiset",
+        "R0090",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x438 (Saamiset)"
+      ],
+      "row_text": "Saamiset | R0090 | mi53 (Kirjanpitoarvo) | fi_MC:x438 (Saamiset)"
+    },
+    {
+      "code": "fi_MC:x438",
+      "sheet": "y-t04.02",
+      "row": 10,
+      "values": [
+        "Saamiset",
+        "R0090",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_SC:x7 (Konsolidoitu)",
+        "fi_MC:x438 (Saamiset)"
+      ],
+      "row_text": "Saamiset | R0090 | mi53 (Kirjanpitoarvo) | fi_SC:x7 (Konsolidoitu) | fi_MC:x438 (Saamiset)"
+    },
+    {
+      "code": "fi_MC:x438",
+      "sheet": "y-t04.03",
+      "row": 36,
+      "values": [
+        "Saamiset",
+        "R0320",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x438 (Saamiset)"
+      ],
+      "row_text": "Saamiset | R0320 | mi53 (Kirjanpitoarvo) | fi_MC:x438 (Saamiset)"
+    },
+    {
+      "code": "fi_MC:x438",
+      "sheet": "y-t04.04",
+      "row": 36,
+      "values": [
+        "Saamiset",
+        "R0320",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x438 (Saamiset)"
+      ],
+      "row_text": "Saamiset | R0320 | mi53 (Kirjanpitoarvo) | fi_MC:x438 (Saamiset)"
+    },
+    {
+      "code": "fi_MC:x438",
+      "sheet": "y-t04.05",
+      "row": 40,
+      "values": [
+        "Saamiset",
+        "R0360",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x438 (Saamiset)"
+      ],
+      "row_text": "Saamiset | R0360 | mi53 (Kirjanpitoarvo) | fi_MC:x438 (Saamiset)"
+    }
+  ],
+  "fi_MC:x578": [
+    {
+      "code": "fi_MC:x578",
+      "sheet": "y-t04.01",
+      "row": 11,
+      "values": [
+        "Rahoitusarvopaperit",
+        "R0100",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x578 (Rahoitusarvopaperit)"
+      ],
+      "row_text": "Rahoitusarvopaperit | R0100 | mi53 (Kirjanpitoarvo) | fi_MC:x578 (Rahoitusarvopaperit)"
+    },
+    {
+      "code": "fi_MC:x578",
+      "sheet": "y-t04.02",
+      "row": 11,
+      "values": [
+        "Rahoitusarvopaperit",
+        "R0100",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_SC:x7 (Konsolidoitu)",
+        "fi_MC:x578 (Rahoitusarvopaperit)"
+      ],
+      "row_text": "Rahoitusarvopaperit | R0100 | mi53 (Kirjanpitoarvo) | fi_SC:x7 (Konsolidoitu) | fi_MC:x578 (Rahoitusarvopaperit)"
+    },
+    {
+      "code": "fi_MC:x578",
+      "sheet": "y-t04.03",
+      "row": 44,
+      "values": [
+        "Rahoitusarvopaperit",
+        "R0400",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x578 (Rahoitusarvopaperit)"
+      ],
+      "row_text": "Rahoitusarvopaperit | R0400 | mi53 (Kirjanpitoarvo) | fi_MC:x578 (Rahoitusarvopaperit)"
+    },
+    {
+      "code": "fi_MC:x578",
+      "sheet": "y-t04.04",
+      "row": 44,
+      "values": [
+        "Rahoitusarvopaperit",
+        "R0400",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x578 (Rahoitusarvopaperit)"
+      ],
+      "row_text": "Rahoitusarvopaperit | R0400 | mi53 (Kirjanpitoarvo) | fi_MC:x578 (Rahoitusarvopaperit)"
+    },
+    {
+      "code": "fi_MC:x578",
+      "sheet": "y-t04.05",
+      "row": 57,
+      "values": [
+        "Rahoitusarvopaperit",
+        "R0530",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x578 (Rahoitusarvopaperit)"
+      ],
+      "row_text": "Rahoitusarvopaperit | R0530 | mi53 (Kirjanpitoarvo) | fi_MC:x578 (Rahoitusarvopaperit)"
+    }
+  ],
+  "fi_MC:x399": [
+    {
+      "code": "fi_MC:x399",
+      "sheet": "y-t04.01",
+      "row": 12,
+      "values": [
+        "Rahat ja pankkisaamiset",
+        "R0110",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x399 (Rahat ja pankkisaamiset)"
+      ],
+      "row_text": "Rahat ja pankkisaamiset | R0110 | mi53 (Kirjanpitoarvo) | fi_MC:x399 (Rahat ja pankkisaamiset)"
+    },
+    {
+      "code": "fi_MC:x399",
+      "sheet": "y-t04.02",
+      "row": 12,
+      "values": [
+        "Rahat ja pankkisaamiset",
+        "R0110",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_SC:x7 (Konsolidoitu)",
+        "fi_MC:x399 (Rahat ja pankkisaamiset)"
+      ],
+      "row_text": "Rahat ja pankkisaamiset | R0110 | mi53 (Kirjanpitoarvo) | fi_SC:x7 (Konsolidoitu) | fi_MC:x399 (Rahat ja pankkisaamiset)"
+    },
+    {
+      "code": "fi_MC:x399",
+      "sheet": "y-t04.03",
+      "row": 48,
+      "values": [
+        "Rahat ja pankkisaamiset",
+        "R0440",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x399 (Rahat ja pankkisaamiset)"
+      ],
+      "row_text": "Rahat ja pankkisaamiset | R0440 | mi53 (Kirjanpitoarvo) | fi_MC:x399 (Rahat ja pankkisaamiset)"
+    },
+    {
+      "code": "fi_MC:x399",
+      "sheet": "y-t04.04",
+      "row": 48,
+      "values": [
+        "Rahat ja pankkisaamiset",
+        "R0440",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x399 (Rahat ja pankkisaamiset)"
+      ],
+      "row_text": "Rahat ja pankkisaamiset | R0440 | mi53 (Kirjanpitoarvo) | fi_MC:x399 (Rahat ja pankkisaamiset)"
+    },
+    {
+      "code": "fi_MC:x399",
+      "sheet": "y-t04.05",
+      "row": 61,
+      "values": [
+        "Rahat ja pankkisaamiset",
+        "R0570",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x399 (Rahat ja pankkisaamiset)"
+      ],
+      "row_text": "Rahat ja pankkisaamiset | R0570 | mi53 (Kirjanpitoarvo) | fi_MC:x399 (Rahat ja pankkisaamiset)"
+    }
+  ],
+  "fi_MC:x435": [
+    {
+      "code": "fi_MC:x435",
+      "sheet": "y-t04.01",
+      "row": 13,
+      "values": [
+        "Vaihtuvat vastaavat yhteensä",
+        "R0120",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x435 (Vaihtuvat vastaavat)"
+      ],
+      "row_text": "Vaihtuvat vastaavat yhteensä | R0120 | mi53 (Kirjanpitoarvo) | fi_MC:x435 (Vaihtuvat vastaavat)"
+    },
+    {
+      "code": "fi_MC:x435",
+      "sheet": "y-t04.02",
+      "row": 13,
+      "values": [
+        "Vaihtuvat vastaavat yhteensä",
+        "R0120",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_SC:x7 (Konsolidoitu)",
+        "fi_MC:x435 (Vaihtuvat vastaavat)"
+      ],
+      "row_text": "Vaihtuvat vastaavat yhteensä | R0120 | mi53 (Kirjanpitoarvo) | fi_SC:x7 (Konsolidoitu) | fi_MC:x435 (Vaihtuvat vastaavat)"
+    },
+    {
+      "code": "fi_MC:x435",
+      "sheet": "y-t04.03",
+      "row": 29,
+      "values": [
+        "Vaihtuvat vastaavat",
+        "R0250",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x435 (Vaihtuvat vastaavat)"
+      ],
+      "row_text": "Vaihtuvat vastaavat | R0250 | mi53 (Kirjanpitoarvo) | fi_MC:x435 (Vaihtuvat vastaavat)"
+    },
+    {
+      "code": "fi_MC:x435",
+      "sheet": "y-t04.04",
+      "row": 29,
+      "values": [
+        "Vaihtuvat vastaavat",
+        "R0250",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x435 (Vaihtuvat vastaavat)"
+      ],
+      "row_text": "Vaihtuvat vastaavat | R0250 | mi53 (Kirjanpitoarvo) | fi_MC:x435 (Vaihtuvat vastaavat)"
+    },
+    {
+      "code": "fi_MC:x435",
+      "sheet": "y-t04.05",
+      "row": 33,
+      "values": [
+        "Vaihtuvat vastaavat",
+        "R0290",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x435 (Vaihtuvat vastaavat)"
+      ],
+      "row_text": "Vaihtuvat vastaavat | R0290 | mi53 (Kirjanpitoarvo) | fi_MC:x435 (Vaihtuvat vastaavat)"
+    }
+  ],
+  "fi_MC:x360": [
+    {
+      "code": "fi_MC:x360",
+      "sheet": "y-t04.01",
+      "row": 14,
+      "values": [
+        "Vastaavaa",
+        "R0130",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x360 (Vastaavaa)"
+      ],
+      "row_text": "Vastaavaa | R0130 | mi53 (Kirjanpitoarvo) | fi_MC:x360 (Vastaavaa)"
+    },
+    {
+      "code": "fi_MC:x360",
+      "sheet": "y-t04.02",
+      "row": 14,
+      "values": [
+        "Vastaavaa",
+        "R0130",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x360 (Vastaavaa)"
+      ],
+      "row_text": "Vastaavaa | R0130 | mi53 (Kirjanpitoarvo) | fi_MC:x360 (Vastaavaa)"
+    },
+    {
+      "code": "fi_MC:x360",
+      "sheet": "y-t04.03",
+      "row": 5,
+      "values": [
+        "Vastaavaa",
+        "R0010",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x360 (Vastaavaa)"
+      ],
+      "row_text": "Vastaavaa | R0010 | mi53 (Kirjanpitoarvo) | fi_MC:x360 (Vastaavaa)"
+    },
+    {
+      "code": "fi_MC:x360",
+      "sheet": "y-t04.04",
+      "row": 5,
+      "values": [
+        "Vastaavaa",
+        "R0010",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x360 (Vastaavaa)"
+      ],
+      "row_text": "Vastaavaa | R0010 | mi53 (Kirjanpitoarvo) | fi_MC:x360 (Vastaavaa)"
+    },
+    {
+      "code": "fi_MC:x360",
+      "sheet": "y-t04.05",
+      "row": 5,
+      "values": [
+        "Vastaavaa",
+        "R0010",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x360 (Vastaavaa)"
+      ],
+      "row_text": "Vastaavaa | R0010 | mi53 (Kirjanpitoarvo) | fi_MC:x360 (Vastaavaa)"
+    }
+  ],
+  "fi_MC:x376": [
+    {
+      "code": "fi_MC:x376",
+      "sheet": "y-t04.01",
+      "row": 15,
+      "values": [
+        "Tase vastattavaa",
+        "Oma pääoma",
+        "R0150",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x376 (Oma pääoma)"
+      ],
+      "row_text": "Tase vastattavaa | Oma pääoma | R0150 | mi53 (Kirjanpitoarvo) | fi_MC:x376 (Oma pääoma)"
+    },
+    {
+      "code": "fi_MC:x376",
+      "sheet": "y-t04.02",
+      "row": 15,
+      "values": [
+        "Tase vastattavaa",
+        "Oma pääoma",
+        "R0150",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_SC:x7 (Konsolidoitu)",
+        "fi_MC:x376 (Oma pääoma)"
+      ],
+      "row_text": "Tase vastattavaa | Oma pääoma | R0150 | mi53 (Kirjanpitoarvo) | fi_SC:x7 (Konsolidoitu) | fi_MC:x376 (Oma pääoma)"
+    },
+    {
+      "code": "fi_MC:x376",
+      "sheet": "y-t04.03",
+      "row": 50,
+      "values": [
+        "Oma pääoma",
+        "R0460",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x376 (Oma pääoma)"
+      ],
+      "row_text": "Oma pääoma | R0460 | mi53 (Kirjanpitoarvo) | fi_MC:x376 (Oma pääoma)"
+    },
+    {
+      "code": "fi_MC:x376",
+      "sheet": "y-t04.04",
+      "row": 50,
+      "values": [
+        "Oma pääoma",
+        "R0460",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x376 (Oma pääoma)"
+      ],
+      "row_text": "Oma pääoma | R0460 | mi53 (Kirjanpitoarvo) | fi_MC:x376 (Oma pääoma)"
+    },
+    {
+      "code": "fi_MC:x376",
+      "sheet": "y-t04.05",
+      "row": 63,
+      "values": [
+        "Oma pääoma",
+        "R0590",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x376 (Oma pääoma)"
+      ],
+      "row_text": "Oma pääoma | R0590 | mi53 (Kirjanpitoarvo) | fi_MC:x376 (Oma pääoma)"
+    }
+  ],
+  "fi_MC:x424": [
+    {
+      "code": "fi_MC:x424",
+      "sheet": "y-t04.01",
+      "row": 18,
+      "values": [
+        "Vieras pääoma",
+        "R0180",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x424 (Vieras pääoma)"
+      ],
+      "row_text": "Vieras pääoma | R0180 | mi53 (Kirjanpitoarvo) | fi_MC:x424 (Vieras pääoma)"
+    },
+    {
+      "code": "fi_MC:x424",
+      "sheet": "y-t04.02",
+      "row": 20,
+      "values": [
+        "Vieras pääoma",
+        "R0200",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_SC:x7 (Konsolidoitu)",
+        "fi_MC:x424 (Vieras pääoma)"
+      ],
+      "row_text": "Vieras pääoma | R0200 | mi53 (Kirjanpitoarvo) | fi_SC:x7 (Konsolidoitu) | fi_MC:x424 (Vieras pääoma)"
+    },
+    {
+      "code": "fi_MC:x424",
+      "sheet": "y-t04.03",
+      "row": 71,
+      "values": [
+        "Vieras pääoma",
+        "R0670",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x424 (Vieras pääoma)"
+      ],
+      "row_text": "Vieras pääoma | R0670 | mi53 (Kirjanpitoarvo) | fi_MC:x424 (Vieras pääoma)"
+    },
+    {
+      "code": "fi_MC:x424",
+      "sheet": "y-t04.04",
+      "row": 71,
+      "values": [
+        "Vieras pääoma",
+        "R0670",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x424 (Vieras pääoma)"
+      ],
+      "row_text": "Vieras pääoma | R0670 | mi53 (Kirjanpitoarvo) | fi_MC:x424 (Vieras pääoma)"
+    },
+    {
+      "code": "fi_MC:x424",
+      "sheet": "y-t04.05",
+      "row": 83,
+      "values": [
+        "Vieras pääoma",
+        "R0790",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x424 (Vieras pääoma)"
+      ],
+      "row_text": "Vieras pääoma | R0790 | mi53 (Kirjanpitoarvo) | fi_MC:x424 (Vieras pääoma)"
+    }
+  ],
+  "fi_MC:x481": [
+    {
+      "code": "fi_MC:x481",
+      "sheet": "y-t04.01",
+      "row": 19,
+      "values": [
+        "Vastattavaa",
+        "R0190",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x481 (Vastattavaa)"
+      ],
+      "row_text": "Vastattavaa | R0190 | mi53 (Kirjanpitoarvo) | fi_MC:x481 (Vastattavaa)"
+    },
+    {
+      "code": "fi_MC:x481",
+      "sheet": "y-t04.02",
+      "row": 21,
+      "values": [
+        "Vastattavaa",
+        "R0210",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x481 (Vastattavaa)"
+      ],
+      "row_text": "Vastattavaa | R0210 | mi53 (Kirjanpitoarvo) | fi_MC:x481 (Vastattavaa)"
+    },
+    {
+      "code": "fi_MC:x481",
+      "sheet": "y-t04.03",
+      "row": 49,
+      "values": [
+        "Vastattavaa",
+        "R0450",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x481 (Vastattavaa)"
+      ],
+      "row_text": "Vastattavaa | R0450 | mi53 (Kirjanpitoarvo) | fi_MC:x481 (Vastattavaa)"
+    },
+    {
+      "code": "fi_MC:x481",
+      "sheet": "y-t04.04",
+      "row": 49,
+      "values": [
+        "Vastattavaa",
+        "R0450",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x481 (Vastattavaa)"
+      ],
+      "row_text": "Vastattavaa | R0450 | mi53 (Kirjanpitoarvo) | fi_MC:x481 (Vastattavaa)"
+    },
+    {
+      "code": "fi_MC:x481",
+      "sheet": "y-t04.05",
+      "row": 62,
+      "values": [
+        "Vastattavaa",
+        "R0580",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x481 (Vastattavaa)"
+      ],
+      "row_text": "Vastattavaa | R0580 | mi53 (Kirjanpitoarvo) | fi_MC:x481 (Vastattavaa)"
+    }
+  ],
+  "fi_RF:x4": [
+    {
+      "code": "fi_RF:x4",
+      "sheet": "y-t04.01",
+      "row": 20,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x4 (Tilikauden loppussa T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x4 (Tilikauden loppussa T-1)"
+    },
+    {
+      "code": "fi_RF:x4",
+      "sheet": "y-t04.02",
+      "row": 22,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x4 (Tilikauden loppussa T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x4 (Tilikauden loppussa T-1)"
+    },
+    {
+      "code": "fi_RF:x4",
+      "sheet": "y-t04.03",
+      "row": 83,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x4 (Tilikauden loppussa T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x4 (Tilikauden loppussa T-1)"
+    },
+    {
+      "code": "fi_RF:x4",
+      "sheet": "y-t04.04",
+      "row": 84,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x4 (Tilikauden loppussa T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x4 (Tilikauden loppussa T-1)"
+    },
+    {
+      "code": "fi_RF:x4",
+      "sheet": "y-t04.05",
+      "row": 112,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x4 (Tilikauden loppussa T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x4 (Tilikauden loppussa T-1)"
+    }
+  ],
+  "fi_dim:REF": [
+    {
+      "code": "fi_dim:REF",
+      "sheet": "y-t04.01",
+      "row": 20,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x4 (Tilikauden loppussa T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x4 (Tilikauden loppussa T-1)"
+    },
+    {
+      "code": "fi_dim:REF",
+      "sheet": "y-t04.02",
+      "row": 22,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x4 (Tilikauden loppussa T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x4 (Tilikauden loppussa T-1)"
+    },
+    {
+      "code": "fi_dim:REF",
+      "sheet": "y-t04.03",
+      "row": 83,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x4 (Tilikauden loppussa T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x4 (Tilikauden loppussa T-1)"
+    },
+    {
+      "code": "fi_dim:REF",
+      "sheet": "y-t04.04",
+      "row": 84,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x4 (Tilikauden loppussa T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x4 (Tilikauden loppussa T-1)"
+    },
+    {
+      "code": "fi_dim:REF",
+      "sheet": "y-t04.05",
+      "row": 112,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x4 (Tilikauden loppussa T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x4 (Tilikauden loppussa T-1)"
+    }
+  ],
+  "fi_MC:x1893": [
+    {
+      "code": "fi_MC:x1893",
+      "sheet": "y-t04.03",
+      "row": 12,
+      "values": [
+        "Liikearvo",
+        "R0080",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1893 (Liikearvo)"
+      ],
+      "row_text": "Liikearvo | R0080 | mi53 (Kirjanpitoarvo) | fi_MC:x1893 (Liikearvo)"
+    },
+    {
+      "code": "fi_MC:x1893",
+      "sheet": "y-t04.04",
+      "row": 12,
+      "values": [
+        "Liikearvo",
+        "R0080",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1893 (Liikearvo)"
+      ],
+      "row_text": "Liikearvo | R0080 | mi53 (Kirjanpitoarvo) | fi_MC:x1893 (Liikearvo)"
+    },
+    {
+      "code": "fi_MC:x1893",
+      "sheet": "y-t04.05",
+      "row": 12,
+      "values": [
+        "Liikearvo",
+        "R0080",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1893 (Liikearvo)"
+      ],
+      "row_text": "Liikearvo | R0080 | mi53 (Kirjanpitoarvo) | fi_MC:x1893 (Liikearvo)"
+    },
+    {
+      "code": "fi_MC:x1893",
+      "sheet": "y-t04.06",
+      "row": 12,
+      "values": [
+        "Liikearvo",
+        "R0080",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1893 (Liikearvo)"
+      ],
+      "row_text": "Liikearvo | R0080 | mi53 (Kirjanpitoarvo) | fi_MC:x1893 (Liikearvo)"
+    }
+  ],
+  "fi_MC:x1036": [
+    {
+      "code": "fi_MC:x1036",
+      "sheet": "y-t04.03",
+      "row": 19,
+      "values": [
+        "Koneet ja kalusto",
+        "R0150",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1036 (Koneet ja kalusto)"
+      ],
+      "row_text": "Koneet ja kalusto | R0150 | mi53 (Kirjanpitoarvo) | fi_MC:x1036 (Koneet ja kalusto)"
+    },
+    {
+      "code": "fi_MC:x1036",
+      "sheet": "y-t04.04",
+      "row": 19,
+      "values": [
+        "Koneet ja kalusto",
+        "R0150",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1036 (Koneet ja kalusto)"
+      ],
+      "row_text": "Koneet ja kalusto | R0150 | mi53 (Kirjanpitoarvo) | fi_MC:x1036 (Koneet ja kalusto)"
+    },
+    {
+      "code": "fi_MC:x1036",
+      "sheet": "y-t04.05",
+      "row": 22,
+      "values": [
+        "Koneet ja kalusto",
+        "R0180",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1036 (Koneet ja kalusto)"
+      ],
+      "row_text": "Koneet ja kalusto | R0180 | mi53 (Kirjanpitoarvo) | fi_MC:x1036 (Koneet ja kalusto)"
+    },
+    {
+      "code": "fi_MC:x1036",
+      "sheet": "y-t04.06",
+      "row": 23,
+      "values": [
+        "Koneet ja kalusto",
+        "R0190",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1036 (Koneet ja kalusto)"
+      ],
+      "row_text": "Koneet ja kalusto | R0190 | mi53 (Kirjanpitoarvo) | fi_MC:x1036 (Koneet ja kalusto)"
+    }
+  ],
+  "fi_MC:x1729": [
+    {
+      "code": "fi_MC:x1729",
+      "sheet": "y-t04.03",
+      "row": 20,
+      "values": [
+        "Muut aineelliset hyödykkeet",
+        "R0160",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1729 (Muut aineelliset hyödykkeet)"
+      ],
+      "row_text": "Muut aineelliset hyödykkeet | R0160 | mi53 (Kirjanpitoarvo) | fi_MC:x1729 (Muut aineelliset hyödykkeet)"
+    },
+    {
+      "code": "fi_MC:x1729",
+      "sheet": "y-t04.04",
+      "row": 20,
+      "values": [
+        "Muut aineelliset hyödykkeet",
+        "R0160",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1729 (Muut aineelliset hyödykkeet)"
+      ],
+      "row_text": "Muut aineelliset hyödykkeet | R0160 | mi53 (Kirjanpitoarvo) | fi_MC:x1729 (Muut aineelliset hyödykkeet)"
+    },
+    {
+      "code": "fi_MC:x1729",
+      "sheet": "y-t04.05",
+      "row": 23,
+      "values": [
+        "Muut aineelliset hyödykkeet",
+        "R0190",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1729 (Muut aineelliset hyödykkeet)"
+      ],
+      "row_text": "Muut aineelliset hyödykkeet | R0190 | mi53 (Kirjanpitoarvo) | fi_MC:x1729 (Muut aineelliset hyödykkeet)"
+    },
+    {
+      "code": "fi_MC:x1729",
+      "sheet": "y-t04.06",
+      "row": 24,
+      "values": [
+        "Muut aineelliset hyödykkeet",
+        "R0200",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1729 (Muut aineelliset hyödykkeet)"
+      ],
+      "row_text": "Muut aineelliset hyödykkeet | R0200 | mi53 (Kirjanpitoarvo) | fi_MC:x1729 (Muut aineelliset hyödykkeet)"
+    }
+  ],
+  "fi_MC:x1737": [
+    {
+      "code": "fi_MC:x1737",
+      "sheet": "y-t04.03",
+      "row": 23,
+      "values": [
+        "Osakkeet ja osuudet tytäryhteisöissä",
+        "R0190",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1737 (Osakkeet ja osuudet tytäryhteisöissä)"
+      ],
+      "row_text": "Osakkeet ja osuudet tytäryhteisöissä | R0190 | mi53 (Kirjanpitoarvo) | fi_MC:x1737 (Osakkeet ja osuudet tytäryhteisöissä)"
+    },
+    {
+      "code": "fi_MC:x1737",
+      "sheet": "y-t04.04",
+      "row": 23,
+      "values": [
+        "Osakkeet ja osuudet tytäryhteisöissä",
+        "R0190",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1737 (Osakkeet ja osuudet tytäryhteisöissä)"
+      ],
+      "row_text": "Osakkeet ja osuudet tytäryhteisöissä | R0190 | mi53 (Kirjanpitoarvo) | fi_MC:x1737 (Osakkeet ja osuudet tytäryhteisöissä)"
+    },
+    {
+      "code": "fi_MC:x1737",
+      "sheet": "y-t04.05",
+      "row": 26,
+      "values": [
+        "Osakkeet ja osuudet tytäryhteisöissä",
+        "R0220",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1737 (Osakkeet ja osuudet tytäryhteisöissä)"
+      ],
+      "row_text": "Osakkeet ja osuudet tytäryhteisöissä | R0220 | mi53 (Kirjanpitoarvo) | fi_MC:x1737 (Osakkeet ja osuudet tytäryhteisöissä)"
+    },
+    {
+      "code": "fi_MC:x1737",
+      "sheet": "y-t04.06",
+      "row": 27,
+      "values": [
+        "Osakkeet ja osuudet tytäryhteisöissä",
+        "R0230",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1737 (Osakkeet ja osuudet tytäryhteisöissä)"
+      ],
+      "row_text": "Osakkeet ja osuudet tytäryhteisöissä | R0230 | mi53 (Kirjanpitoarvo) | fi_MC:x1737 (Osakkeet ja osuudet tytäryhteisöissä)"
+    }
+  ],
+  "fi_MC:x1742": [
+    {
+      "code": "fi_MC:x1742",
+      "sheet": "y-t04.03",
+      "row": 27,
+      "values": [
+        "Muut osakkeet ja osuudet",
+        "R0230",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1742 (Muut osakkeet ja osuudet)"
+      ],
+      "row_text": "Muut osakkeet ja osuudet | R0230 | mi53 (Kirjanpitoarvo) | fi_MC:x1742 (Muut osakkeet ja osuudet)"
+    },
+    {
+      "code": "fi_MC:x1742",
+      "sheet": "y-t04.04",
+      "row": 27,
+      "values": [
+        "Muut osakkeet ja osuudet",
+        "R0230",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1742 (Muut osakkeet ja osuudet)"
+      ],
+      "row_text": "Muut osakkeet ja osuudet | R0230 | mi53 (Kirjanpitoarvo) | fi_MC:x1742 (Muut osakkeet ja osuudet)"
+    },
+    {
+      "code": "fi_MC:x1742",
+      "sheet": "y-t04.05",
+      "row": 30,
+      "values": [
+        "Muut osakkeet ja osuudet",
+        "R0260",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1742 (Muut osakkeet ja osuudet)"
+      ],
+      "row_text": "Muut osakkeet ja osuudet | R0260 | mi53 (Kirjanpitoarvo) | fi_MC:x1742 (Muut osakkeet ja osuudet)"
+    },
+    {
+      "code": "fi_MC:x1742",
+      "sheet": "y-t04.06",
+      "row": 31,
+      "values": [
+        "Muut osakkeet ja osuudet",
+        "R0270",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1742 (Muut osakkeet ja osuudet)"
+      ],
+      "row_text": "Muut osakkeet ja osuudet | R0270 | mi53 (Kirjanpitoarvo) | fi_MC:x1742 (Muut osakkeet ja osuudet)"
+    }
+  ],
+  "fi_MC:x1757": [
+    {
+      "code": "fi_MC:x1757",
+      "sheet": "y-t04.03",
+      "row": 31,
+      "values": [
+        "Aineet ja tarvikkeet",
+        "R0270",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1757 (Aineet ja tarvikkeet)"
+      ],
+      "row_text": "Aineet ja tarvikkeet | R0270 | mi53 (Kirjanpitoarvo) | fi_MC:x1757 (Aineet ja tarvikkeet)"
+    },
+    {
+      "code": "fi_MC:x1757",
+      "sheet": "y-t04.04",
+      "row": 31,
+      "values": [
+        "Aineet ja tarvikkeet",
+        "R0270",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1757 (Aineet ja tarvikkeet)"
+      ],
+      "row_text": "Aineet ja tarvikkeet | R0270 | mi53 (Kirjanpitoarvo) | fi_MC:x1757 (Aineet ja tarvikkeet)"
+    },
+    {
+      "code": "fi_MC:x1757",
+      "sheet": "y-t04.05",
+      "row": 35,
+      "values": [
+        "Aineet ja tarvikkeet",
+        "R0310",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1757 (Aineet ja tarvikkeet)"
+      ],
+      "row_text": "Aineet ja tarvikkeet | R0310 | mi53 (Kirjanpitoarvo) | fi_MC:x1757 (Aineet ja tarvikkeet)"
+    },
+    {
+      "code": "fi_MC:x1757",
+      "sheet": "y-t04.06",
+      "row": 36,
+      "values": [
+        "Aineet ja tarvikkeet",
+        "R0320",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1757 (Aineet ja tarvikkeet)"
+      ],
+      "row_text": "Aineet ja tarvikkeet | R0320 | mi53 (Kirjanpitoarvo) | fi_MC:x1757 (Aineet ja tarvikkeet)"
+    }
+  ],
+  "fi_MC:x1758": [
+    {
+      "code": "fi_MC:x1758",
+      "sheet": "y-t04.03",
+      "row": 32,
+      "values": [
+        "Keskeneräiset tuotteet",
+        "R0280",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1758 (Keskeneräiset tuotteet)"
+      ],
+      "row_text": "Keskeneräiset tuotteet | R0280 | mi53 (Kirjanpitoarvo) | fi_MC:x1758 (Keskeneräiset tuotteet)"
+    },
+    {
+      "code": "fi_MC:x1758",
+      "sheet": "y-t04.04",
+      "row": 32,
+      "values": [
+        "Keskeneräiset tuotteet",
+        "R0280",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1758 (Keskeneräiset tuotteet)"
+      ],
+      "row_text": "Keskeneräiset tuotteet | R0280 | mi53 (Kirjanpitoarvo) | fi_MC:x1758 (Keskeneräiset tuotteet)"
+    },
+    {
+      "code": "fi_MC:x1758",
+      "sheet": "y-t04.05",
+      "row": 36,
+      "values": [
+        "Keskeneräiset tuotteet",
+        "R0320",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1758 (Keskeneräiset tuotteet)"
+      ],
+      "row_text": "Keskeneräiset tuotteet | R0320 | mi53 (Kirjanpitoarvo) | fi_MC:x1758 (Keskeneräiset tuotteet)"
+    },
+    {
+      "code": "fi_MC:x1758",
+      "sheet": "y-t04.06",
+      "row": 37,
+      "values": [
+        "Keskeneräiset tuotteet",
+        "R0330",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1758 (Keskeneräiset tuotteet)"
+      ],
+      "row_text": "Keskeneräiset tuotteet | R0330 | mi53 (Kirjanpitoarvo) | fi_MC:x1758 (Keskeneräiset tuotteet)"
+    }
+  ],
+  "fi_MC:x2191": [
+    {
+      "code": "fi_MC:x2191",
+      "sheet": "y-t04.03",
+      "row": 46,
+      "values": [
+        "Muut osakkeet ja osuudet, rahoitusarvopaperit",
+        "R0420",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2191 (Muut osakkeet ja osuudet, rahoitusarvopaperit)"
+      ],
+      "row_text": "Muut osakkeet ja osuudet, rahoitusarvopaperit | R0420 | mi53 (Kirjanpitoarvo) | fi_MC:x2191 (Muut osakkeet ja osuudet, rahoitusarvopaperit)"
+    },
+    {
+      "code": "fi_MC:x2191",
+      "sheet": "y-t04.04",
+      "row": 46,
+      "values": [
+        "Muut osakkeet ja osuudet, rahoitusarvopaperit",
+        "R0420",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2191 (Muut osakkeet ja osuudet, rahoitusarvopaperit)"
+      ],
+      "row_text": "Muut osakkeet ja osuudet, rahoitusarvopaperit | R0420 | mi53 (Kirjanpitoarvo) | fi_MC:x2191 (Muut osakkeet ja osuudet, rahoitusarvopaperit)"
+    },
+    {
+      "code": "fi_MC:x2191",
+      "sheet": "y-t04.05",
+      "row": 59,
+      "values": [
+        "Muut osakkeet ja osuudet, rahoitusarvopaperit",
+        "R0550",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2191 (Muut osakkeet ja osuudet, rahoitusarvopaperit)"
+      ],
+      "row_text": "Muut osakkeet ja osuudet, rahoitusarvopaperit | R0550 | mi53 (Kirjanpitoarvo) | fi_MC:x2191 (Muut osakkeet ja osuudet, rahoitusarvopaperit)"
+    },
+    {
+      "code": "fi_MC:x2191",
+      "sheet": "y-t04.06",
+      "row": 60,
+      "values": [
+        "Muut osakkeet ja osuudet, rahoitusarvopaperit",
+        "R0560",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2191 (Muut osakkeet ja osuudet, rahoitusarvopaperit)"
+      ],
+      "row_text": "Muut osakkeet ja osuudet, rahoitusarvopaperit | R0560 | mi53 (Kirjanpitoarvo) | fi_MC:x2191 (Muut osakkeet ja osuudet, rahoitusarvopaperit)"
+    }
+  ],
+  "fi_MC:x4116": [
+    {
+      "code": "fi_MC:x4116",
+      "sheet": "y-t04.03",
+      "row": 51,
+      "values": [
+        "Osake-, osuus- tai muu vastaava pääoma",
+        "R0470",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x4116 (Osake-, osuus- tai muu vastaava pääoma)"
+      ],
+      "row_text": "Osake-, osuus- tai muu vastaava pääoma | R0470 | mi53 (Kirjanpitoarvo) | fi_MC:x4116 (Osake-, osuus- tai muu vastaava pääoma)"
+    },
+    {
+      "code": "fi_MC:x4116",
+      "sheet": "y-t04.04",
+      "row": 51,
+      "values": [
+        "Osake-, osuus- tai muu vastaava pääoma",
+        "R0470",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x4116 (Osake-, osuus- tai muu vastaava pääoma)"
+      ],
+      "row_text": "Osake-, osuus- tai muu vastaava pääoma | R0470 | mi53 (Kirjanpitoarvo) | fi_MC:x4116 (Osake-, osuus- tai muu vastaava pääoma)"
+    },
+    {
+      "code": "fi_MC:x4116",
+      "sheet": "y-t04.05",
+      "row": 64,
+      "values": [
+        "Osake-, osuus- tai muu vastaava pääoma",
+        "R0600",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x4116 (Osake-, osuus- tai muu vastaava pääoma)"
+      ],
+      "row_text": "Osake-, osuus- tai muu vastaava pääoma | R0600 | mi53 (Kirjanpitoarvo) | fi_MC:x4116 (Osake-, osuus- tai muu vastaava pääoma)"
+    },
+    {
+      "code": "fi_MC:x4116",
+      "sheet": "y-t04.06",
+      "row": 65,
+      "values": [
+        "Osake-, osuus- tai muu vastaava pääoma",
+        "R0610",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x4116 (Osake-, osuus- tai muu vastaava pääoma)"
+      ],
+      "row_text": "Osake-, osuus- tai muu vastaava pääoma | R0610 | mi53 (Kirjanpitoarvo) | fi_MC:x4116 (Osake-, osuus- tai muu vastaava pääoma)"
+    }
+  ],
+  "fi_MC:x933": [
+    {
+      "code": "fi_MC:x933",
+      "sheet": "y-t04.03",
+      "row": 53,
+      "values": [
+        "Arvonkorotusrahasto",
+        "R0490",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x933 (Arvonkorotusrahasto)"
+      ],
+      "row_text": "Arvonkorotusrahasto | R0490 | mi53 (Kirjanpitoarvo) | fi_MC:x933 (Arvonkorotusrahasto)"
+    },
+    {
+      "code": "fi_MC:x933",
+      "sheet": "y-t04.04",
+      "row": 53,
+      "values": [
+        "Arvonkorotusrahasto",
+        "R0490",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x933 (Arvonkorotusrahasto)"
+      ],
+      "row_text": "Arvonkorotusrahasto | R0490 | mi53 (Kirjanpitoarvo) | fi_MC:x933 (Arvonkorotusrahasto)"
+    },
+    {
+      "code": "fi_MC:x933",
+      "sheet": "y-t04.05",
+      "row": 66,
+      "values": [
+        "Arvonkorotusrahasto",
+        "R0620",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x933 (Arvonkorotusrahasto)"
+      ],
+      "row_text": "Arvonkorotusrahasto | R0620 | mi53 (Kirjanpitoarvo) | fi_MC:x933 (Arvonkorotusrahasto)"
+    },
+    {
+      "code": "fi_MC:x933",
+      "sheet": "y-t04.06",
+      "row": 67,
+      "values": [
+        "Arvonkorotusrahasto",
+        "R0630",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x933 (Arvonkorotusrahasto)"
+      ],
+      "row_text": "Arvonkorotusrahasto | R0630 | mi53 (Kirjanpitoarvo) | fi_MC:x933 (Arvonkorotusrahasto)"
+    },
+    {
+      "code": "fi_MC:x933",
+      "sheet": "y-t07.02",
+      "row": 8,
+      "values": [
+        "Arvonkorotusrahasto",
+        "R.0040",
+        "fi_MC:x933 (Arvonkorotusrahasto)"
+      ],
+      "row_text": "Arvonkorotusrahasto | R.0040 | fi_MC:x933 (Arvonkorotusrahasto)"
+    }
+  ],
+  "fi_MC:x932": [
+    {
+      "code": "fi_MC:x932",
+      "sheet": "y-t04.03",
+      "row": 60,
+      "values": [
+        "Edellisten tilikausien voitto (tappio)",
+        "R0560",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x932 (Edellisten tilikausien voitto (tappio))"
+      ],
+      "row_text": "Edellisten tilikausien voitto (tappio) | R0560 | mi53 (Kirjanpitoarvo) | fi_MC:x932 (Edellisten tilikausien voitto (tappio))"
+    },
+    {
+      "code": "fi_MC:x932",
+      "sheet": "y-t04.04",
+      "row": 60,
+      "values": [
+        "Edellisten tilikausien voitto (tappio)",
+        "R0560",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x932 (Edellisten tilikausien voitto (tappio))"
+      ],
+      "row_text": "Edellisten tilikausien voitto (tappio) | R0560 | mi53 (Kirjanpitoarvo) | fi_MC:x932 (Edellisten tilikausien voitto (tappio))"
+    },
+    {
+      "code": "fi_MC:x932",
+      "sheet": "y-t04.05",
+      "row": 73,
+      "values": [
+        "Edellisten tilikausien voitto (tappio)",
+        "R0690",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x932 (Edellisten tilikausien voitto (tappio))"
+      ],
+      "row_text": "Edellisten tilikausien voitto (tappio) | R0690 | mi53 (Kirjanpitoarvo) | fi_MC:x932 (Edellisten tilikausien voitto (tappio))"
+    },
+    {
+      "code": "fi_MC:x932",
+      "sheet": "y-t04.06",
+      "row": 74,
+      "values": [
+        "Edellisten tilikausien voitto (tappio)",
+        "R0700",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x932 (Edellisten tilikausien voitto (tappio))"
+      ],
+      "row_text": "Edellisten tilikausien voitto (tappio) | R0700 | mi53 (Kirjanpitoarvo) | fi_MC:x932 (Edellisten tilikausien voitto (tappio))"
+    }
+  ],
+  "fi_MC:x2895": [
+    {
+      "code": "fi_MC:x2895",
+      "sheet": "y-t04.03",
+      "row": 61,
+      "values": [
+        "Tilikauden voitto (tappio)",
+        "R0570",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2895 (Tilikauden voitto (tappio), oma pääoma)"
+      ],
+      "row_text": "Tilikauden voitto (tappio) | R0570 | mi53 (Kirjanpitoarvo) | fi_MC:x2895 (Tilikauden voitto (tappio), oma pääoma)"
+    },
+    {
+      "code": "fi_MC:x2895",
+      "sheet": "y-t04.04",
+      "row": 61,
+      "values": [
+        "Tilikauden voitto (tappio)",
+        "R0570",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2895 (Tilikauden voitto (tappio), oma pääoma)"
+      ],
+      "row_text": "Tilikauden voitto (tappio) | R0570 | mi53 (Kirjanpitoarvo) | fi_MC:x2895 (Tilikauden voitto (tappio), oma pääoma)"
+    },
+    {
+      "code": "fi_MC:x2895",
+      "sheet": "y-t04.05",
+      "row": 74,
+      "values": [
+        "Tilikauden voitto (tappio)",
+        "R0700",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2895 (Tilikauden voitto (tappio), oma pääoma)"
+      ],
+      "row_text": "Tilikauden voitto (tappio) | R0700 | mi53 (Kirjanpitoarvo) | fi_MC:x2895 (Tilikauden voitto (tappio), oma pääoma)"
+    },
+    {
+      "code": "fi_MC:x2895",
+      "sheet": "y-t04.06",
+      "row": 75,
+      "values": [
+        "Tilikauden voitto (tappio)",
+        "R0710",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2895 (Tilikauden voitto (tappio), oma pääoma)"
+      ],
+      "row_text": "Tilikauden voitto (tappio) | R0710 | mi53 (Kirjanpitoarvo) | fi_MC:x2895 (Tilikauden voitto (tappio), oma pääoma)"
+    }
+  ],
+  "fi_MC:x2308": [
+    {
+      "code": "fi_MC:x2308",
+      "sheet": "y-t04.05",
+      "row": 17,
+      "values": [
+        "Maa- ja vesialueet, Omistetut",
+        "R0130",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2308 (Maa- ja vesialueet, Omistetut)"
+      ],
+      "row_text": "Maa- ja vesialueet, Omistetut | R0130 | mi53 (Kirjanpitoarvo) | fi_MC:x2308 (Maa- ja vesialueet, Omistetut)"
+    },
+    {
+      "code": "fi_MC:x2308",
+      "sheet": "y-t04.06",
+      "row": 18,
+      "values": [
+        "Maa- ja vesialueet, Omistetut",
+        "R0140",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2308 (Maa- ja vesialueet, Omistetut)"
+      ],
+      "row_text": "Maa- ja vesialueet, Omistetut | R0140 | mi53 (Kirjanpitoarvo) | fi_MC:x2308 (Maa- ja vesialueet, Omistetut)"
+    }
+  ],
+  "fi_MC:x2334": [
+    {
+      "code": "fi_MC:x2334",
+      "sheet": "y-t04.05",
+      "row": 20,
+      "values": [
+        "Rakennukset ja rakennelmat, Omistetut",
+        "R0160",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2334 (Rakennukset ja rakennelmat, Omistetut)"
+      ],
+      "row_text": "Rakennukset ja rakennelmat, Omistetut | R0160 | mi53 (Kirjanpitoarvo) | fi_MC:x2334 (Rakennukset ja rakennelmat, Omistetut)"
+    },
+    {
+      "code": "fi_MC:x2334",
+      "sheet": "y-t04.06",
+      "row": 21,
+      "values": [
+        "Rakennukset ja rakennelmat, Omistetut",
+        "R0170",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2334 (Rakennukset ja rakennelmat, Omistetut)"
+      ],
+      "row_text": "Rakennukset ja rakennelmat, Omistetut | R0170 | mi53 (Kirjanpitoarvo) | fi_MC:x2334 (Rakennukset ja rakennelmat, Omistetut)"
+    }
+  ],
+  "fi_MC:x1761": [
+    {
+      "code": "fi_MC:x1761",
+      "sheet": "y-t04.05",
+      "row": 41,
+      "values": [
+        "Pitkäaikaiset saamiset",
+        "R0370",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1761 (Pitkäaikaiset saamiset)"
+      ],
+      "row_text": "Pitkäaikaiset saamiset | R0370 | mi53 (Kirjanpitoarvo) | fi_MC:x1761 (Pitkäaikaiset saamiset)"
+    },
+    {
+      "code": "fi_MC:x1761",
+      "sheet": "y-t04.06",
+      "row": 42,
+      "values": [
+        "Pitkäaikaiset saamiset",
+        "R0380",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1761 (Pitkäaikaiset saamiset)"
+      ],
+      "row_text": "Pitkäaikaiset saamiset | R0380 | mi53 (Kirjanpitoarvo) | fi_MC:x1761 (Pitkäaikaiset saamiset)"
+    }
+  ],
+  "fi_MC:x2548": [
+    {
+      "code": "fi_MC:x2548",
+      "sheet": "y-t04.05",
+      "row": 43,
+      "values": [
+        "Pitkäaikaiset saamiset saman konsernin yrityksiltä",
+        "R0390",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2548 (Pitkäaikaiset saamiset saman konsernin yrityksiltä)"
+      ],
+      "row_text": "Pitkäaikaiset saamiset saman konsernin yrityksiltä | R0390 | mi53 (Kirjanpitoarvo) | fi_MC:x2548 (Pitkäaikaiset saamiset saman konsernin yrityksiltä)"
+    },
+    {
+      "code": "fi_MC:x2548",
+      "sheet": "y-t04.06",
+      "row": 44,
+      "values": [
+        "Pitkäaikaiset saamiset saman konsernin yrityksiltä",
+        "R0400",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2548 (Pitkäaikaiset saamiset saman konsernin yrityksiltä)"
+      ],
+      "row_text": "Pitkäaikaiset saamiset saman konsernin yrityksiltä | R0400 | mi53 (Kirjanpitoarvo) | fi_MC:x2548 (Pitkäaikaiset saamiset saman konsernin yrityksiltä)"
+    }
+  ],
+  "fi_MC:x1764": [
+    {
+      "code": "fi_MC:x1764",
+      "sheet": "y-t04.05",
+      "row": 46,
+      "values": [
+        "Pitkäaikaiset muut saamiset",
+        "R0420",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1764 (Pitkäaikaiset muut saamiset)"
+      ],
+      "row_text": "Pitkäaikaiset muut saamiset | R0420 | mi53 (Kirjanpitoarvo) | fi_MC:x1764 (Pitkäaikaiset muut saamiset)"
+    },
+    {
+      "code": "fi_MC:x1764",
+      "sheet": "y-t04.06",
+      "row": 47,
+      "values": [
+        "Pitkäaikaiset muut saamiset",
+        "R0430",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1764 (Pitkäaikaiset muut saamiset)"
+      ],
+      "row_text": "Pitkäaikaiset muut saamiset | R0430 | mi53 (Kirjanpitoarvo) | fi_MC:x1764 (Pitkäaikaiset muut saamiset)"
+    }
+  ],
+  "fi_MC:x1768": [
+    {
+      "code": "fi_MC:x1768",
+      "sheet": "y-t04.05",
+      "row": 49,
+      "values": [
+        "Lyhytaikaiset saamiset",
+        "R0450",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1768 (Lyhytaikaiset saamiset)"
+      ],
+      "row_text": "Lyhytaikaiset saamiset | R0450 | mi53 (Kirjanpitoarvo) | fi_MC:x1768 (Lyhytaikaiset saamiset)"
+    },
+    {
+      "code": "fi_MC:x1768",
+      "sheet": "y-t04.06",
+      "row": 50,
+      "values": [
+        "Lyhytaikaiset saamiset",
+        "R0460",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1768 (Lyhytaikaiset saamiset)"
+      ],
+      "row_text": "Lyhytaikaiset saamiset | R0460 | mi53 (Kirjanpitoarvo) | fi_MC:x1768 (Lyhytaikaiset saamiset)"
+    }
+  ],
+  "fi_MC:x1769": [
+    {
+      "code": "fi_MC:x1769",
+      "sheet": "y-t04.05",
+      "row": 50,
+      "values": [
+        "Lyhytaikaiset myyntisaamiset",
+        "R0460",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1769 (Lyhytaikaiset myyntisaamiset)"
+      ],
+      "row_text": "Lyhytaikaiset myyntisaamiset | R0460 | mi53 (Kirjanpitoarvo) | fi_MC:x1769 (Lyhytaikaiset myyntisaamiset)"
+    },
+    {
+      "code": "fi_MC:x1769",
+      "sheet": "y-t04.06",
+      "row": 51,
+      "values": [
+        "Lyhytaikaiset myyntisaamiset",
+        "R0470",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1769 (Lyhytaikaiset myyntisaamiset)"
+      ],
+      "row_text": "Lyhytaikaiset myyntisaamiset | R0470 | mi53 (Kirjanpitoarvo) | fi_MC:x1769 (Lyhytaikaiset myyntisaamiset)"
+    }
+  ],
+  "fi_MC:x1770": [
+    {
+      "code": "fi_MC:x1770",
+      "sheet": "y-t04.05",
+      "row": 53,
+      "values": [
+        "Lyhytaikaiset lainasaamiset",
+        "R0490",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1770 (Lyhytaikaiset lainasaamiset)"
+      ],
+      "row_text": "Lyhytaikaiset lainasaamiset | R0490 | mi53 (Kirjanpitoarvo) | fi_MC:x1770 (Lyhytaikaiset lainasaamiset)"
+    },
+    {
+      "code": "fi_MC:x1770",
+      "sheet": "y-t04.06",
+      "row": 54,
+      "values": [
+        "Lyhytaikaiset lainasaamiset",
+        "R0500",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1770 (Lyhytaikaiset lainasaamiset)"
+      ],
+      "row_text": "Lyhytaikaiset lainasaamiset | R0500 | mi53 (Kirjanpitoarvo) | fi_MC:x1770 (Lyhytaikaiset lainasaamiset)"
+    }
+  ],
+  "fi_MC:x1771": [
+    {
+      "code": "fi_MC:x1771",
+      "sheet": "y-t04.05",
+      "row": 54,
+      "values": [
+        "Lyhytaikaiset muut saamiset",
+        "R0500",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1771 (Lyhytaikaiset muut saamiset)"
+      ],
+      "row_text": "Lyhytaikaiset muut saamiset | R0500 | mi53 (Kirjanpitoarvo) | fi_MC:x1771 (Lyhytaikaiset muut saamiset)"
+    },
+    {
+      "code": "fi_MC:x1771",
+      "sheet": "y-t04.06",
+      "row": 55,
+      "values": [
+        "Lyhytaikaiset muut saamiset",
+        "R0510",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1771 (Lyhytaikaiset muut saamiset)"
+      ],
+      "row_text": "Lyhytaikaiset muut saamiset | R0510 | mi53 (Kirjanpitoarvo) | fi_MC:x1771 (Lyhytaikaiset muut saamiset)"
+    }
+  ],
+  "fi_MC:x1775": [
+    {
+      "code": "fi_MC:x1775",
+      "sheet": "y-t04.05",
+      "row": 56,
+      "values": [
+        "Lyhytaikaiset siirtosaamiset",
+        "R0520",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1775 (Lyhytaikaiset siirtosaamiset)"
+      ],
+      "row_text": "Lyhytaikaiset siirtosaamiset | R0520 | mi53 (Kirjanpitoarvo) | fi_MC:x1775 (Lyhytaikaiset siirtosaamiset)"
+    },
+    {
+      "code": "fi_MC:x1775",
+      "sheet": "y-t04.06",
+      "row": 57,
+      "values": [
+        "Lyhytaikaiset siirtosaamiset",
+        "R0530",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1775 (Lyhytaikaiset siirtosaamiset)"
+      ],
+      "row_text": "Lyhytaikaiset siirtosaamiset | R0530 | mi53 (Kirjanpitoarvo) | fi_MC:x1775 (Lyhytaikaiset siirtosaamiset)"
+    }
+  ],
+  "fi_MC:x1830": [
+    {
+      "code": "fi_MC:x1830",
+      "sheet": "y-t04.05",
+      "row": 84,
+      "values": [
+        "Pitkäaikainen vieras pääoma",
+        "R0800",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1830 (Pitkäaikainen vieras pääoma)"
+      ],
+      "row_text": "Pitkäaikainen vieras pääoma | R0800 | mi53 (Kirjanpitoarvo) | fi_MC:x1830 (Pitkäaikainen vieras pääoma)"
+    },
+    {
+      "code": "fi_MC:x1830",
+      "sheet": "y-t04.06",
+      "row": 87,
+      "values": [
+        "Pitkäaikainen vieras pääoma",
+        "R0830",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1830 (Pitkäaikainen vieras pääoma)"
+      ],
+      "row_text": "Pitkäaikainen vieras pääoma | R0830 | mi53 (Kirjanpitoarvo) | fi_MC:x1830 (Pitkäaikainen vieras pääoma)"
+    }
+  ],
+  "fi_MC:x2920": [
+    {
+      "code": "fi_MC:x2920",
+      "sheet": "y-t04.05",
+      "row": 85,
+      "values": [
+        "Pitkäaikaiset pääomalainat",
+        "R0810",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2920 (Pitkäaikaiset pääomalainat)"
+      ],
+      "row_text": "Pitkäaikaiset pääomalainat | R0810 | mi53 (Kirjanpitoarvo) | fi_MC:x2920 (Pitkäaikaiset pääomalainat)"
+    },
+    {
+      "code": "fi_MC:x2920",
+      "sheet": "y-t04.06",
+      "row": 88,
+      "values": [
+        "Pitkäaikaiset pääomalainat",
+        "R0840",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2920 (Pitkäaikaiset pääomalainat)"
+      ],
+      "row_text": "Pitkäaikaiset pääomalainat | R0840 | mi53 (Kirjanpitoarvo) | fi_MC:x2920 (Pitkäaikaiset pääomalainat)"
+    }
+  ],
+  "fi_MC:x2934": [
+    {
+      "code": "fi_MC:x2934",
+      "sheet": "y-t04.05",
+      "row": 88,
+      "values": [
+        "Pitkäaikaiset lainat rahoituslaitoksilta",
+        "R0840",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2934 (Pitkäaikaiset lainat rahoituslaitoksilta)"
+      ],
+      "row_text": "Pitkäaikaiset lainat rahoituslaitoksilta | R0840 | mi53 (Kirjanpitoarvo) | fi_MC:x2934 (Pitkäaikaiset lainat rahoituslaitoksilta)"
+    },
+    {
+      "code": "fi_MC:x2934",
+      "sheet": "y-t04.06",
+      "row": 91,
+      "values": [
+        "Pitkäaikaiset lainat rahoituslaitoksilta",
+        "R0870",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2934 (Pitkäaikaiset lainat rahoituslaitoksilta)"
+      ],
+      "row_text": "Pitkäaikaiset lainat rahoituslaitoksilta | R0870 | mi53 (Kirjanpitoarvo) | fi_MC:x2934 (Pitkäaikaiset lainat rahoituslaitoksilta)"
+    }
+  ],
+  "fi_MC:x1805": [
+    {
+      "code": "fi_MC:x1805",
+      "sheet": "y-t04.05",
+      "row": 90,
+      "values": [
+        "Pitkäaikaiset saadut ennakot",
+        "R0860",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1805 (Pitkäaikaiset saadut ennakot)"
+      ],
+      "row_text": "Pitkäaikaiset saadut ennakot | R0860 | mi53 (Kirjanpitoarvo) | fi_MC:x1805 (Pitkäaikaiset saadut ennakot)"
+    },
+    {
+      "code": "fi_MC:x1805",
+      "sheet": "y-t04.06",
+      "row": 93,
+      "values": [
+        "Pitkäaikaiset saadut ennakot",
+        "R0890",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1805 (Pitkäaikaiset saadut ennakot)"
+      ],
+      "row_text": "Pitkäaikaiset saadut ennakot | R0890 | mi53 (Kirjanpitoarvo) | fi_MC:x1805 (Pitkäaikaiset saadut ennakot)"
+    }
+  ],
+  "fi_MC:x1806": [
+    {
+      "code": "fi_MC:x1806",
+      "sheet": "y-t04.05",
+      "row": 91,
+      "values": [
+        "Pitkäaikaiset ostovelat",
+        "R0870",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1806 (Pitkäaikaiset ostovelat)"
+      ],
+      "row_text": "Pitkäaikaiset ostovelat | R0870 | mi53 (Kirjanpitoarvo) | fi_MC:x1806 (Pitkäaikaiset ostovelat)"
+    },
+    {
+      "code": "fi_MC:x1806",
+      "sheet": "y-t04.06",
+      "row": 94,
+      "values": [
+        "Pitkäaikaiset ostovelat",
+        "R0900",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1806 (Pitkäaikaiset ostovelat)"
+      ],
+      "row_text": "Pitkäaikaiset ostovelat | R0900 | mi53 (Kirjanpitoarvo) | fi_MC:x1806 (Pitkäaikaiset ostovelat)"
+    }
+  ],
+  "fi_MC:x2233": [
+    {
+      "code": "fi_MC:x2233",
+      "sheet": "y-t04.05",
+      "row": 97,
+      "values": [
+        "Pitkäaikaiset muut velat",
+        "R0930",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2233 (Pitkäaikaiset muut velat)"
+      ],
+      "row_text": "Pitkäaikaiset muut velat | R0930 | mi53 (Kirjanpitoarvo) | fi_MC:x2233 (Pitkäaikaiset muut velat)"
+    },
+    {
+      "code": "fi_MC:x2233",
+      "sheet": "y-t04.06",
+      "row": 100,
+      "values": [
+        "Pitkäaikaiset muut velat",
+        "R0960",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x2233 (Pitkäaikaiset muut velat)"
+      ],
+      "row_text": "Pitkäaikaiset muut velat | R0960 | mi53 (Kirjanpitoarvo) | fi_MC:x2233 (Pitkäaikaiset muut velat)"
+    }
+  ],
+  "fi_MC:x1811": [
+    {
+      "code": "fi_MC:x1811",
+      "sheet": "y-t04.05",
+      "row": 98,
+      "values": [
+        "Lyhytaikainen vieras pääoma",
+        "R0940",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1811 (Lyhytaikainen vieras pääoma)"
+      ],
+      "row_text": "Lyhytaikainen vieras pääoma | R0940 | mi53 (Kirjanpitoarvo) | fi_MC:x1811 (Lyhytaikainen vieras pääoma)"
+    },
+    {
+      "code": "fi_MC:x1811",
+      "sheet": "y-t04.06",
+      "row": 101,
+      "values": [
+        "Lyhytaikainen vieras pääoma",
+        "R0970",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1811 (Lyhytaikainen vieras pääoma)"
+      ],
+      "row_text": "Lyhytaikainen vieras pääoma | R0970 | mi53 (Kirjanpitoarvo) | fi_MC:x1811 (Lyhytaikainen vieras pääoma)"
+    }
+  ],
+  "fi_MC:x3023": [
+    {
+      "code": "fi_MC:x3023",
+      "sheet": "y-t04.05",
+      "row": 102,
+      "values": [
+        "Lyhytaikaiset lainat rahoituslaitoksilta",
+        "R0980",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x3023 (Lyhytaikaiset lainat rahoituslaitoksilta)"
+      ],
+      "row_text": "Lyhytaikaiset lainat rahoituslaitoksilta | R0980 | mi53 (Kirjanpitoarvo) | fi_MC:x3023 (Lyhytaikaiset lainat rahoituslaitoksilta)"
+    },
+    {
+      "code": "fi_MC:x3023",
+      "sheet": "y-t04.06",
+      "row": 105,
+      "values": [
+        "Lyhytaikaiset lainat rahoituslaitoksilta",
+        "R1010",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x3023 (Lyhytaikaiset lainat rahoituslaitoksilta)"
+      ],
+      "row_text": "Lyhytaikaiset lainat rahoituslaitoksilta | R1010 | mi53 (Kirjanpitoarvo) | fi_MC:x3023 (Lyhytaikaiset lainat rahoituslaitoksilta)"
+    }
+  ],
+  "fi_MC:x1818": [
+    {
+      "code": "fi_MC:x1818",
+      "sheet": "y-t04.05",
+      "row": 104,
+      "values": [
+        "Lyhytaikaiset saadut ennakot",
+        "R1000",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1818 (Lyhytaikaiset saadut ennakot)"
+      ],
+      "row_text": "Lyhytaikaiset saadut ennakot | R1000 | mi53 (Kirjanpitoarvo) | fi_MC:x1818 (Lyhytaikaiset saadut ennakot)"
+    },
+    {
+      "code": "fi_MC:x1818",
+      "sheet": "y-t04.06",
+      "row": 107,
+      "values": [
+        "Lyhytaikaiset saadut ennakot",
+        "R1030",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1818 (Lyhytaikaiset saadut ennakot)"
+      ],
+      "row_text": "Lyhytaikaiset saadut ennakot | R1030 | mi53 (Kirjanpitoarvo) | fi_MC:x1818 (Lyhytaikaiset saadut ennakot)"
+    }
+  ],
+  "fi_MC:x1819": [
+    {
+      "code": "fi_MC:x1819",
+      "sheet": "y-t04.05",
+      "row": 105,
+      "values": [
+        "Lyhytaikaiset ostovelat",
+        "R1010",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1819 (Lyhytaikaiset ostovelat)"
+      ],
+      "row_text": "Lyhytaikaiset ostovelat | R1010 | mi53 (Kirjanpitoarvo) | fi_MC:x1819 (Lyhytaikaiset ostovelat)"
+    },
+    {
+      "code": "fi_MC:x1819",
+      "sheet": "y-t04.06",
+      "row": 108,
+      "values": [
+        "Lyhytaikaiset ostovelat",
+        "R1040",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1819 (Lyhytaikaiset ostovelat)"
+      ],
+      "row_text": "Lyhytaikaiset ostovelat | R1040 | mi53 (Kirjanpitoarvo) | fi_MC:x1819 (Lyhytaikaiset ostovelat)"
+    }
+  ],
+  "fi_MC:x3051": [
+    {
+      "code": "fi_MC:x3051",
+      "sheet": "y-t04.05",
+      "row": 107,
+      "values": [
+        "Lyhytaikaiset velat saman konsernin yrityksille",
+        "R1030",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x3051 (Lyhytaikaiset velat saman konsernin yrityksille)"
+      ],
+      "row_text": "Lyhytaikaiset velat saman konsernin yrityksille | R1030 | mi53 (Kirjanpitoarvo) | fi_MC:x3051 (Lyhytaikaiset velat saman konsernin yrityksille)"
+    },
+    {
+      "code": "fi_MC:x3051",
+      "sheet": "y-t04.06",
+      "row": 110,
+      "values": [
+        "Lyhytaikaiset velat saman konsernin yrityksille",
+        "R1060",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x3051 (Lyhytaikaiset velat saman konsernin yrityksille)"
+      ],
+      "row_text": "Lyhytaikaiset velat saman konsernin yrityksille | R1060 | mi53 (Kirjanpitoarvo) | fi_MC:x3051 (Lyhytaikaiset velat saman konsernin yrityksille)"
+    }
+  ],
+  "fi_MC:x1826": [
+    {
+      "code": "fi_MC:x1826",
+      "sheet": "y-t04.05",
+      "row": 110,
+      "values": [
+        "Lyhytaikaiset siirtovelat",
+        "R1060",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1826 (Lyhytaikaiset siirtovelat)"
+      ],
+      "row_text": "Lyhytaikaiset siirtovelat | R1060 | mi53 (Kirjanpitoarvo) | fi_MC:x1826 (Lyhytaikaiset siirtovelat)"
+    },
+    {
+      "code": "fi_MC:x1826",
+      "sheet": "y-t04.06",
+      "row": 113,
+      "values": [
+        "Lyhytaikaiset siirtovelat",
+        "R1090",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1826 (Lyhytaikaiset siirtovelat)"
+      ],
+      "row_text": "Lyhytaikaiset siirtovelat | R1090 | mi53 (Kirjanpitoarvo) | fi_MC:x1826 (Lyhytaikaiset siirtovelat)"
+    }
+  ],
+  "fi_MC:x1825": [
+    {
+      "code": "fi_MC:x1825",
+      "sheet": "y-t04.05",
+      "row": 111,
+      "values": [
+        "Lyhytaikaiset muut velat",
+        "R1070",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1825 (Lyhytaikaiset muut velat)"
+      ],
+      "row_text": "Lyhytaikaiset muut velat | R1070 | mi53 (Kirjanpitoarvo) | fi_MC:x1825 (Lyhytaikaiset muut velat)"
+    },
+    {
+      "code": "fi_MC:x1825",
+      "sheet": "y-t04.06",
+      "row": 114,
+      "values": [
+        "Lyhytaikaiset muut velat",
+        "R1100",
+        "mi53 (Kirjanpitoarvo)",
+        "fi_MC:x1825 (Lyhytaikaiset muut velat)"
+      ],
+      "row_text": "Lyhytaikaiset muut velat | R1100 | mi53 (Kirjanpitoarvo) | fi_MC:x1825 (Lyhytaikaiset muut velat)"
+    }
+  ],
+  "fi_MC:x673": [
+    {
+      "code": "fi_MC:x673",
+      "sheet": "y-t05.01",
+      "row": 5,
+      "values": [
+        "Liikevaihto",
+        "R0010",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x673 (Liikevaihto)"
+      ],
+      "row_text": "Liikevaihto | R0010 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x673 (Liikevaihto)"
+    },
+    {
+      "code": "fi_MC:x673",
+      "sheet": "y-t05.02",
+      "row": 5,
+      "values": [
+        "Liikevaihto",
+        "R0010",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x673 (Liikevaihto)"
+      ],
+      "row_text": "Liikevaihto | R0010 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x673 (Liikevaihto)"
+    },
+    {
+      "code": "fi_MC:x673",
+      "sheet": "y-t05.03",
+      "row": 5,
+      "values": [
+        "Liikevaihto",
+        "R0010",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x673 (Liikevaihto)"
+      ],
+      "row_text": "Liikevaihto | R0010 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x673 (Liikevaihto)"
+    },
+    {
+      "code": "fi_MC:x673",
+      "sheet": "y-t05.05",
+      "row": 5,
+      "values": [
+        "Liikevaihto",
+        "R0010",
+        "fi_MC:x673 (Liikevaihto)"
+      ],
+      "row_text": "Liikevaihto | R0010 | fi_MC:x673 (Liikevaihto)"
+    },
+    {
+      "code": "fi_MC:x673",
+      "sheet": "y-t05.06",
+      "row": 5,
+      "values": [
+        "Liikevaihto",
+        "R0010",
+        "fi_MC:x673 (Liikevaihto)"
+      ],
+      "row_text": "Liikevaihto | R0010 | fi_MC:x673 (Liikevaihto)"
+    }
+  ],
+  "fi_MC:x49": [
+    {
+      "code": "fi_MC:x49",
+      "sheet": "y-t05.01",
+      "row": 8,
+      "values": [
+        "Liiketoiminnan muut tuotot",
+        "R0040",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x49 (Liiketoiminnan muut tuotot)"
+      ],
+      "row_text": "Liiketoiminnan muut tuotot | R0040 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x49 (Liiketoiminnan muut tuotot)"
+    },
+    {
+      "code": "fi_MC:x49",
+      "sheet": "y-t05.02",
+      "row": 8,
+      "values": [
+        "Liiketoiminnan muut tuotot",
+        "R0040",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x49 (Liiketoiminnan muut tuotot)"
+      ],
+      "row_text": "Liiketoiminnan muut tuotot | R0040 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x49 (Liiketoiminnan muut tuotot)"
+    },
+    {
+      "code": "fi_MC:x49",
+      "sheet": "y-t05.03",
+      "row": 10,
+      "values": [
+        "Liiketoiminnan muut tuotot",
+        "R0060",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x49 (Liiketoiminnan muut tuotot)"
+      ],
+      "row_text": "Liiketoiminnan muut tuotot | R0060 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x49 (Liiketoiminnan muut tuotot)"
+    },
+    {
+      "code": "fi_MC:x49",
+      "sheet": "y-t05.04",
+      "row": 10,
+      "values": [
+        "Liiketoiminnan muut tuotot",
+        "R0060",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x49 (Liiketoiminnan muut tuotot)"
+      ],
+      "row_text": "Liiketoiminnan muut tuotot | R0060 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x49 (Liiketoiminnan muut tuotot)"
+    },
+    {
+      "code": "fi_MC:x49",
+      "sheet": "y-t05.05",
+      "row": 8,
+      "values": [
+        "Liiketoiminnan muut tuotot",
+        "R0040",
+        "fi_MC:x49 (Liiketoiminnan muut tuotot)"
+      ],
+      "row_text": "Liiketoiminnan muut tuotot | R0040 | fi_MC:x49 (Liiketoiminnan muut tuotot)"
+    }
+  ],
+  "fi_MC:x755": [
+    {
+      "code": "fi_MC:x755",
+      "sheet": "y-t05.01",
+      "row": 10,
+      "values": [
+        "Materiaalit ja palvelut",
+        "Aineet, tarvikkeet ja tavarat",
+        "Ostot tilikauden aikana",
+        "R0080",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x755 (Ostot tilikauden aikana)"
+      ],
+      "row_text": "Materiaalit ja palvelut | Aineet, tarvikkeet ja tavarat | Ostot tilikauden aikana | R0080 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x755 (Ostot tilikauden aikana)"
+    },
+    {
+      "code": "fi_MC:x755",
+      "sheet": "y-t05.02",
+      "row": 10,
+      "values": [
+        "Materiaalit ja palvelut",
+        "Aineet, tarvikkeet ja tavarat",
+        "Ostot tilikauden aikana",
+        "R0080",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x755 (Ostot tilikauden aikana)",
+        "fi_SC:x7 (Konsolidoitu)"
+      ],
+      "row_text": "Materiaalit ja palvelut | Aineet, tarvikkeet ja tavarat | Ostot tilikauden aikana | R0080 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x755 (Ostot tilikauden aikana) | fi_SC:x7 (Konsolidoitu)"
+    },
+    {
+      "code": "fi_MC:x755",
+      "sheet": "y-t05.05",
+      "row": 12,
+      "values": [
+        "Ostot tilikauden aikana",
+        "R0080",
+        "fi_MC:x755 (Ostot tilikauden aikana)"
+      ],
+      "row_text": "Ostot tilikauden aikana | R0080 | fi_MC:x755 (Ostot tilikauden aikana)"
+    },
+    {
+      "code": "fi_MC:x755",
+      "sheet": "y-t05.06",
+      "row": 12,
+      "values": [
+        "Ostot tilikauden aikana",
+        "R0080",
+        "fi_MC:x755 (Ostot tilikauden aikana)"
+      ],
+      "row_text": "Ostot tilikauden aikana | R0080 | fi_MC:x755 (Ostot tilikauden aikana)"
+    }
+  ],
+  "fi_MC:x544": [
+    {
+      "code": "fi_MC:x544",
+      "sheet": "y-t05.01",
+      "row": 11,
+      "values": [
+        "Varastojen lisäys (vähennys)",
+        "R0090",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x544 (Varastojen lisäys (vähennys))"
+      ],
+      "row_text": "Varastojen lisäys (vähennys) | R0090 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x544 (Varastojen lisäys (vähennys))"
+    },
+    {
+      "code": "fi_MC:x544",
+      "sheet": "y-t05.02",
+      "row": 11,
+      "values": [
+        "Varastojen lisäys (vähennys)",
+        "R0090",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x544 (Varastojen lisäys (vähennys))",
+        "fi_SC:x7 (Konsolidoitu)"
+      ],
+      "row_text": "Varastojen lisäys (vähennys) | R0090 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x544 (Varastojen lisäys (vähennys)) | fi_SC:x7 (Konsolidoitu)"
+    },
+    {
+      "code": "fi_MC:x544",
+      "sheet": "y-t05.05",
+      "row": 13,
+      "values": [
+        "Varastojen lisäys (vähennys)",
+        "R0090",
+        "fi_MC:x544 (Varastojen lisäys (vähennys))"
+      ],
+      "row_text": "Varastojen lisäys (vähennys) | R0090 | fi_MC:x544 (Varastojen lisäys (vähennys))"
+    },
+    {
+      "code": "fi_MC:x544",
+      "sheet": "y-t05.06",
+      "row": 13,
+      "values": [
+        "Varastojen lisäys (vähennys)",
+        "R0090",
+        "fi_MC:x544 (Varastojen lisäys (vähennys))"
+      ],
+      "row_text": "Varastojen lisäys (vähennys) | R0090 | fi_MC:x544 (Varastojen lisäys (vähennys))"
+    }
+  ],
+  "fi_MC:x10": [
+    {
+      "code": "fi_MC:x10",
+      "sheet": "y-t05.01",
+      "row": 13,
+      "values": [
+        "Ulkopuoliset palvelut",
+        "R0110",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x10 (Palvelujen ostot)"
+      ],
+      "row_text": "Ulkopuoliset palvelut | R0110 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x10 (Palvelujen ostot)"
+    },
+    {
+      "code": "fi_MC:x10",
+      "sheet": "y-t05.02",
+      "row": 13,
+      "values": [
+        "Ulkopuoliset palvelut",
+        "R0110",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x10 (Palvelujen ostot)",
+        "fi_SC:x7 (Konsolidoitu)"
+      ],
+      "row_text": "Ulkopuoliset palvelut | R0110 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x10 (Palvelujen ostot) | fi_SC:x7 (Konsolidoitu)"
+    },
+    {
+      "code": "fi_MC:x10",
+      "sheet": "y-t05.05",
+      "row": 14,
+      "values": [
+        "Palvelujen ostot",
+        "R0100",
+        "fi_MC:x10 (Palvelujen ostot)"
+      ],
+      "row_text": "Palvelujen ostot | R0100 | fi_MC:x10 (Palvelujen ostot)"
+    },
+    {
+      "code": "fi_MC:x10",
+      "sheet": "y-t05.06",
+      "row": 14,
+      "values": [
+        "Palvelujen ostot",
+        "R0100",
+        "fi_MC:x10 (Palvelujen ostot)"
+      ],
+      "row_text": "Palvelujen ostot | R0100 | fi_MC:x10 (Palvelujen ostot)"
+    }
+  ],
+  "fi_MC:x6": [
+    {
+      "code": "fi_MC:x6",
+      "sheet": "y-t05.01",
+      "row": 16,
+      "values": [
+        "Henkilöstökulut",
+        "Palkat ja palkkiot",
+        "R0150",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x6 (Palkat ja palkkiot)"
+      ],
+      "row_text": "Henkilöstökulut | Palkat ja palkkiot | R0150 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x6 (Palkat ja palkkiot)"
+    },
+    {
+      "code": "fi_MC:x6",
+      "sheet": "y-t05.02",
+      "row": 16,
+      "values": [
+        "Henkilöstökulut",
+        "Palkat ja palkkiot",
+        "R0150",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x6 (Palkat ja palkkiot)",
+        "fi_SC:x7 (Konsolidoitu)"
+      ],
+      "row_text": "Henkilöstökulut | Palkat ja palkkiot | R0150 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x6 (Palkat ja palkkiot) | fi_SC:x7 (Konsolidoitu)"
+    },
+    {
+      "code": "fi_MC:x6",
+      "sheet": "y-t05.05",
+      "row": 17,
+      "values": [
+        "Palkat ja palkkiot",
+        "R0130",
+        "fi_MC:x6 (Palkat ja palkkiot)"
+      ],
+      "row_text": "Palkat ja palkkiot | R0130 | fi_MC:x6 (Palkat ja palkkiot)"
+    },
+    {
+      "code": "fi_MC:x6",
+      "sheet": "y-t05.06",
+      "row": 17,
+      "values": [
+        "Palkat ja palkkiot",
+        "R0130",
+        "fi_MC:x6 (Palkat ja palkkiot)"
+      ],
+      "row_text": "Palkat ja palkkiot | R0130 | fi_MC:x6 (Palkat ja palkkiot)"
+    }
+  ],
+  "fi_MC:x8": [
+    {
+      "code": "fi_MC:x8",
+      "sheet": "y-t05.01",
+      "row": 17,
+      "values": [
+        "Henkilösivukulut",
+        "Eläkekulut",
+        "R0170",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x8 (Eläkekulut)"
+      ],
+      "row_text": "Henkilösivukulut | Eläkekulut | R0170 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x8 (Eläkekulut)"
+    },
+    {
+      "code": "fi_MC:x8",
+      "sheet": "y-t05.02",
+      "row": 17,
+      "values": [
+        "Henkilösivukulut",
+        "Eläkekulut",
+        "R0170",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x8 (Eläkekulut)",
+        "fi_SC:x7 (Konsolidoitu)"
+      ],
+      "row_text": "Henkilösivukulut | Eläkekulut | R0170 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x8 (Eläkekulut) | fi_SC:x7 (Konsolidoitu)"
+    },
+    {
+      "code": "fi_MC:x8",
+      "sheet": "y-t05.05",
+      "row": 19,
+      "values": [
+        "Eläkekulut",
+        "R0150",
+        "fi_MC:x8 (Eläkekulut)"
+      ],
+      "row_text": "Eläkekulut | R0150 | fi_MC:x8 (Eläkekulut)"
+    },
+    {
+      "code": "fi_MC:x8",
+      "sheet": "y-t05.06",
+      "row": 19,
+      "values": [
+        "Eläkekulut",
+        "R0150",
+        "fi_MC:x8 (Eläkekulut)"
+      ],
+      "row_text": "Eläkekulut | R0150 | fi_MC:x8 (Eläkekulut)"
+    }
+  ],
+  "fi_MC:x9": [
+    {
+      "code": "fi_MC:x9",
+      "sheet": "y-t05.01",
+      "row": 18,
+      "values": [
+        "Muut henkilösivukulut",
+        "R0180",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x9 (Muut henkilösivukulut)"
+      ],
+      "row_text": "Muut henkilösivukulut | R0180 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x9 (Muut henkilösivukulut)"
+    },
+    {
+      "code": "fi_MC:x9",
+      "sheet": "y-t05.02",
+      "row": 18,
+      "values": [
+        "Muut henkilösivukulut",
+        "R0180",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x9 (Muut henkilösivukulut)",
+        "fi_SC:x7 (Konsolidoitu)"
+      ],
+      "row_text": "Muut henkilösivukulut | R0180 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x9 (Muut henkilösivukulut) | fi_SC:x7 (Konsolidoitu)"
+    },
+    {
+      "code": "fi_MC:x9",
+      "sheet": "y-t05.05",
+      "row": 20,
+      "values": [
+        "Muut henkilösivukulut",
+        "R0160",
+        "fi_MC:x9 (Muut henkilösivukulut)"
+      ],
+      "row_text": "Muut henkilösivukulut | R0160 | fi_MC:x9 (Muut henkilösivukulut)"
+    },
+    {
+      "code": "fi_MC:x9",
+      "sheet": "y-t05.06",
+      "row": 20,
+      "values": [
+        "Muut henkilösivukulut",
+        "R0160",
+        "fi_MC:x9 (Muut henkilösivukulut)"
+      ],
+      "row_text": "Muut henkilösivukulut | R0160 | fi_MC:x9 (Muut henkilösivukulut)"
+    }
+  ],
+  "fi_MC:x449": [
+    {
+      "code": "fi_MC:x449",
+      "sheet": "y-t05.01",
+      "row": 21,
+      "values": [
+        "Poistot ja arvonalentumiset",
+        "Suunnitelman mukaiset poistot",
+        "R0220",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x449 (Suunnitelman mukaiset poistot)"
+      ],
+      "row_text": "Poistot ja arvonalentumiset | Suunnitelman mukaiset poistot | R0220 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x449 (Suunnitelman mukaiset poistot)"
+    },
+    {
+      "code": "fi_MC:x449",
+      "sheet": "y-t05.02",
+      "row": 21,
+      "values": [
+        "Poistot ja arvonalentumiset",
+        "Suunnitelman mukaiset poistot",
+        "R0220",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x449 (Suunnitelman mukaiset poistot)",
+        "fi_SC:x7 (Konsolidoitu)"
+      ],
+      "row_text": "Poistot ja arvonalentumiset | Suunnitelman mukaiset poistot | R0220 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x449 (Suunnitelman mukaiset poistot) | fi_SC:x7 (Konsolidoitu)"
+    },
+    {
+      "code": "fi_MC:x449",
+      "sheet": "y-t05.05",
+      "row": 22,
+      "values": [
+        "Suunnitelman mukaiset poistot",
+        "R0180",
+        "fi_MC:x449 (Suunnitelman mukaiset poistot)"
+      ],
+      "row_text": "Suunnitelman mukaiset poistot | R0180 | fi_MC:x449 (Suunnitelman mukaiset poistot)"
+    },
+    {
+      "code": "fi_MC:x449",
+      "sheet": "y-t05.06",
+      "row": 22,
+      "values": [
+        "Suunnitelman mukaiset poistot",
+        "R0180",
+        "fi_MC:x449 (Suunnitelman mukaiset poistot)"
+      ],
+      "row_text": "Suunnitelman mukaiset poistot | R0180 | fi_MC:x449 (Suunnitelman mukaiset poistot)"
+    },
+    {
+      "code": "fi_MC:x449",
+      "sheet": "y-t06.03",
+      "row": 7,
+      "values": [
+        "Oikaisut",
+        "Suunnitelman mukaiset poistot",
+        "R0050",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x449 (Suunnitelman mukaiset poistot)"
+      ],
+      "row_text": "Oikaisut | Suunnitelman mukaiset poistot | R0050 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x449 (Suunnitelman mukaiset poistot)"
+    }
+  ],
+  "fi_MC:x689": [
+    {
+      "code": "fi_MC:x689",
+      "sheet": "y-t05.01",
+      "row": 28,
+      "values": [
+        "Liikevoitto (-tappio)",
+        "R0290",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x689 (Liikevoitto (-tappio))"
+      ],
+      "row_text": "Liikevoitto (-tappio) | R0290 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x689 (Liikevoitto (-tappio))"
+    },
+    {
+      "code": "fi_MC:x689",
+      "sheet": "y-t05.02",
+      "row": 28,
+      "values": [
+        "Liikevoitto (-tappio)",
+        "R0290",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x689 (Liikevoitto (-tappio))"
+      ],
+      "row_text": "Liikevoitto (-tappio) | R0290 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x689 (Liikevoitto (-tappio))"
+    },
+    {
+      "code": "fi_MC:x689",
+      "sheet": "y-t05.03",
+      "row": 13,
+      "values": [
+        "Liikevoitto (-tappio)",
+        "R0090",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x689 (Liikevoitto (-tappio))"
+      ],
+      "row_text": "Liikevoitto (-tappio) | R0090 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x689 (Liikevoitto (-tappio))"
+    },
+    {
+      "code": "fi_MC:x689",
+      "sheet": "y-t05.05",
+      "row": 26,
+      "values": [
+        "Liikevoitto (-tappio)",
+        "R0220",
+        "fi_MC:x689 (Liikevoitto (-tappio))"
+      ],
+      "row_text": "Liikevoitto (-tappio) | R0220 | fi_MC:x689 (Liikevoitto (-tappio))"
+    },
+    {
+      "code": "fi_MC:x689",
+      "sheet": "y-t05.06",
+      "row": 28,
+      "values": [
+        "Liikevoitto (-tappio)",
+        "R0240",
+        "fi_MC:x689 (Liikevoitto (-tappio))"
+      ],
+      "row_text": "Liikevoitto (-tappio) | R0240 | fi_MC:x689 (Liikevoitto (-tappio))"
+    }
+  ],
+  "fi_MC:x738": [
+    {
+      "code": "fi_MC:x738",
+      "sheet": "y-t05.01",
+      "row": 32,
+      "values": [
+        "Voitto (tappio) ennen tilinpäätössiirtoja ja veroja",
+        "R0340",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x738 (Voitto (tappio) ennen tilinpäätössiirtoja ja veroja)"
+      ],
+      "row_text": "Voitto (tappio) ennen tilinpäätössiirtoja ja veroja | R0340 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x738 (Voitto (tappio) ennen tilinpäätössiirtoja ja veroja)"
+    },
+    {
+      "code": "fi_MC:x738",
+      "sheet": "y-t05.02",
+      "row": 32,
+      "values": [
+        "Voitto (tappio) ennen tilinpäätössiirtoja ja veroja",
+        "R0340",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x738 (Voitto (tappio) ennen tilinpäätössiirtoja ja veroja)"
+      ],
+      "row_text": "Voitto (tappio) ennen tilinpäätössiirtoja ja veroja | R0340 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x738 (Voitto (tappio) ennen tilinpäätössiirtoja ja veroja)"
+    },
+    {
+      "code": "fi_MC:x738",
+      "sheet": "y-t05.03",
+      "row": 17,
+      "values": [
+        "Voitto (tappio) ennen tilinpäätössiirtoja ja veroja",
+        "R0140",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x738 (Voitto (tappio) ennen tilinpäätössiirtoja ja veroja)"
+      ],
+      "row_text": "Voitto (tappio) ennen tilinpäätössiirtoja ja veroja | R0140 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x738 (Voitto (tappio) ennen tilinpäätössiirtoja ja veroja)"
+    },
+    {
+      "code": "fi_MC:x738",
+      "sheet": "y-t05.05",
+      "row": 42,
+      "values": [
+        "Voitto (tappio) ennen tilinpäätössiirtoja ja veroja",
+        "R0380",
+        "fi_MC:x738 (Voitto (tappio) ennen tilinpäätössiirtoja ja veroja)"
+      ],
+      "row_text": "Voitto (tappio) ennen tilinpäätössiirtoja ja veroja | R0380 | fi_MC:x738 (Voitto (tappio) ennen tilinpäätössiirtoja ja veroja)"
+    },
+    {
+      "code": "fi_MC:x738",
+      "sheet": "y-t05.06",
+      "row": 44,
+      "values": [
+        "Voitto (tappio) ennen tilinpäätössiirtoja ja veroja",
+        "R0400",
+        "fi_MC:x738 (Voitto (tappio) ennen tilinpäätössiirtoja ja veroja)"
+      ],
+      "row_text": "Voitto (tappio) ennen tilinpäätössiirtoja ja veroja | R0400 | fi_MC:x738 (Voitto (tappio) ennen tilinpäätössiirtoja ja veroja)"
+    }
+  ],
+  "fi_MC:x541": [
+    {
+      "code": "fi_MC:x541",
+      "sheet": "y-t05.01",
+      "row": 39,
+      "values": [
+        "Tuloverot yhteensä",
+        "R0440",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x541 (Tuloverot)"
+      ],
+      "row_text": "Tuloverot yhteensä | R0440 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x541 (Tuloverot)"
+    },
+    {
+      "code": "fi_MC:x541",
+      "sheet": "y-t05.02",
+      "row": 39,
+      "values": [
+        "Tuloverot yhteensä",
+        "R0440",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x541 (Tuloverot)",
+        "fi_SC:x7 (Konsolidoitu)"
+      ],
+      "row_text": "Tuloverot yhteensä | R0440 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x541 (Tuloverot) | fi_SC:x7 (Konsolidoitu)"
+    },
+    {
+      "code": "fi_MC:x541",
+      "sheet": "y-t05.03",
+      "row": 24,
+      "values": [
+        "Tuloverot yhteensä",
+        "R0240",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x541 (Tuloverot)"
+      ],
+      "row_text": "Tuloverot yhteensä | R0240 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x541 (Tuloverot)"
+    },
+    {
+      "code": "fi_MC:x541",
+      "sheet": "y-t05.04",
+      "row": 24,
+      "values": [
+        "Tuloverot yhteensä",
+        "R0240",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_SC:x7 (Konsolidoitu)",
+        "fi_MC:x541 (Tuloverot)"
+      ],
+      "row_text": "Tuloverot yhteensä | R0240 | md103 (Tilikauden rahallinen kertymä) | fi_SC:x7 (Konsolidoitu) | fi_MC:x541 (Tuloverot)"
+    },
+    {
+      "code": "fi_MC:x541",
+      "sheet": "y-t05.05",
+      "row": 47,
+      "values": [
+        "Tuloverot",
+        "R0430",
+        "fi_MC:x541 (Tuloverot)"
+      ],
+      "row_text": "Tuloverot | R0430 | fi_MC:x541 (Tuloverot)"
+    }
+  ],
+  "fi_MC:x740": [
+    {
+      "code": "fi_MC:x740",
+      "sheet": "y-t05.01",
+      "row": 43,
+      "values": [
+        "Tilikauden voitto (tappio)",
+        "R0480",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x740 (Tilikauden voitto (tappio))"
+      ],
+      "row_text": "Tilikauden voitto (tappio) | R0480 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x740 (Tilikauden voitto (tappio))"
+    },
+    {
+      "code": "fi_MC:x740",
+      "sheet": "y-t05.02",
+      "row": 43,
+      "values": [
+        "Tilikauden voitto (tappio)",
+        "R0480",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x740 (Tilikauden voitto (tappio))"
+      ],
+      "row_text": "Tilikauden voitto (tappio) | R0480 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x740 (Tilikauden voitto (tappio))"
+    },
+    {
+      "code": "fi_MC:x740",
+      "sheet": "y-t05.03",
+      "row": 28,
+      "values": [
+        "Tilikauden voitto (tappio)",
+        "R0280",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x740 (Tilikauden voitto (tappio))"
+      ],
+      "row_text": "Tilikauden voitto (tappio) | R0280 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x740 (Tilikauden voitto (tappio))"
+    },
+    {
+      "code": "fi_MC:x740",
+      "sheet": "y-t05.04",
+      "row": 28,
+      "values": [
+        "Tilikauden voitto (tappio)",
+        "R0280",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x740 (Tilikauden voitto (tappio))"
+      ],
+      "row_text": "Tilikauden voitto (tappio) | R0280 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x740 (Tilikauden voitto (tappio))"
+    },
+    {
+      "code": "fi_MC:x740",
+      "sheet": "y-t05.05",
+      "row": 48,
+      "values": [
+        "Tilikauden voitto (tappio)",
+        "R0440",
+        "fi_MC:x740 (Tilikauden voitto (tappio))"
+      ],
+      "row_text": "Tilikauden voitto (tappio) | R0440 | fi_MC:x740 (Tilikauden voitto (tappio))"
+    }
+  ],
+  "fi_RF:x53": [
+    {
+      "code": "fi_RF:x53",
+      "sheet": "y-t05.01",
+      "row": 44,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x53 (Edellinen tilikausi T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x53 (Edellinen tilikausi T-1)"
+    },
+    {
+      "code": "fi_RF:x53",
+      "sheet": "y-t05.02",
+      "row": 44,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x53 (Edellinen tilikausi T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x53 (Edellinen tilikausi T-1)"
+    },
+    {
+      "code": "fi_RF:x53",
+      "sheet": "y-t05.03",
+      "row": 29,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x53 (Edellinen tilikausi T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x53 (Edellinen tilikausi T-1)"
+    },
+    {
+      "code": "fi_RF:x53",
+      "sheet": "y-t05.04",
+      "row": 29,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x53 (Edellinen tilikausi T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x53 (Edellinen tilikausi T-1)"
+    },
+    {
+      "code": "fi_RF:x53",
+      "sheet": "y-t05.05",
+      "row": 50,
+      "values": [
+        "fi_dim:REF (Viite ajankohta tai -kausi)",
+        "fi_RF:x53 (Edellinen tilikausi T-1)"
+      ],
+      "row_text": "fi_dim:REF (Viite ajankohta tai -kausi) | fi_RF:x53 (Edellinen tilikausi T-1)"
+    }
+  ],
+  "fi_MC:x1869": [
+    {
+      "code": "fi_MC:x1869",
+      "sheet": "y-t05.01",
+      "row": 26,
+      "values": [
+        "Liiketoiminnan muut kulut",
+        "R0270",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x1869 (Liiketoiminnan muut kulut)"
+      ],
+      "row_text": "Liiketoiminnan muut kulut | R0270 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x1869 (Liiketoiminnan muut kulut)"
+    },
+    {
+      "code": "fi_MC:x1869",
+      "sheet": "y-t05.03",
+      "row": 11,
+      "values": [
+        "Liiketoiminnan muut kulut",
+        "R0070",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x1869 (Liiketoiminnan muut kulut)"
+      ],
+      "row_text": "Liiketoiminnan muut kulut | R0070 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x1869 (Liiketoiminnan muut kulut)"
+    },
+    {
+      "code": "fi_MC:x1869",
+      "sheet": "y-t05.04",
+      "row": 11,
+      "values": [
+        "Liiketoiminnan muut kulut",
+        "R0070",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x1869 (Liiketoiminnan muut kulut)"
+      ],
+      "row_text": "Liiketoiminnan muut kulut | R0070 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x1869 (Liiketoiminnan muut kulut)"
+    },
+    {
+      "code": "fi_MC:x1869",
+      "sheet": "y-t05.05",
+      "row": 25,
+      "values": [
+        "Liiketoiminnan muut kulut",
+        "R0210",
+        "fi_MC:x1869 (Liiketoiminnan muut kulut)"
+      ],
+      "row_text": "Liiketoiminnan muut kulut | R0210 | fi_MC:x1869 (Liiketoiminnan muut kulut)"
+    },
+    {
+      "code": "fi_MC:x1869",
+      "sheet": "y-t05.06",
+      "row": 26,
+      "values": [
+        "Liiketoiminnan muut kulut",
+        "R0220",
+        "fi_MC:x1869 (Liiketoiminnan muut kulut)"
+      ],
+      "row_text": "Liiketoiminnan muut kulut | R0220 | fi_MC:x1869 (Liiketoiminnan muut kulut)"
+    }
+  ],
+  "fi_MC:x12": [
+    {
+      "code": "fi_MC:x12",
+      "sheet": "y-t05.01",
+      "row": 31,
+      "values": [
+        "Rahoitustuotot (-kulut) yhteensä",
+        "R0330",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x12 (Rahoitustuotot ja -kulut + (-))"
+      ],
+      "row_text": "Rahoitustuotot (-kulut) yhteensä | R0330 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x12 (Rahoitustuotot ja -kulut + (-))"
+    },
+    {
+      "code": "fi_MC:x12",
+      "sheet": "y-t05.03",
+      "row": 16,
+      "values": [
+        "Rahoitustuotot (-kulut) yhteensä",
+        "R0130",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x12 (Rahoitustuotot ja -kulut + (-))"
+      ],
+      "row_text": "Rahoitustuotot (-kulut) yhteensä | R0130 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x12 (Rahoitustuotot ja -kulut + (-))"
+    },
+    {
+      "code": "fi_MC:x12",
+      "sheet": "y-t05.04",
+      "row": 16,
+      "values": [
+        "Rahoitustuotot (-kulut) yhteensä",
+        "R0130",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x12 (Rahoitustuotot ja -kulut + (-))"
+      ],
+      "row_text": "Rahoitustuotot (-kulut) yhteensä | R0130 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x12 (Rahoitustuotot ja -kulut + (-))"
+    },
+    {
+      "code": "fi_MC:x12",
+      "sheet": "y-t05.05",
+      "row": 27,
+      "values": [
+        "Rahoitustuotot ja -kulut + (-)",
+        "R0230",
+        "fi_MC:x12 (Rahoitustuotot ja -kulut + (-))"
+      ],
+      "row_text": "Rahoitustuotot ja -kulut + (-) | R0230 | fi_MC:x12 (Rahoitustuotot ja -kulut + (-))"
+    },
+    {
+      "code": "fi_MC:x12",
+      "sheet": "y-t05.06",
+      "row": 29,
+      "values": [
+        "Rahoitustuotot ja -kulut + (-)",
+        "R0250",
+        "fi_MC:x12 (Rahoitustuotot ja -kulut + (-))"
+      ],
+      "row_text": "Rahoitustuotot ja -kulut + (-) | R0250 | fi_MC:x12 (Rahoitustuotot ja -kulut + (-))"
+    }
+  ],
+  "fi_MC:x48": [
+    {
+      "code": "fi_MC:x48",
+      "sheet": "y-t05.01",
+      "row": 6,
+      "values": [
+        "Valmiiden ja keskeneräisten tuotteiden varastojen lisäys (vähennys)",
+        "R0020",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x48 (Valmistevarastojen muutos)"
+      ],
+      "row_text": "Valmiiden ja keskeneräisten tuotteiden varastojen lisäys (vähennys) | R0020 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x48 (Valmistevarastojen muutos)"
+    },
+    {
+      "code": "fi_MC:x48",
+      "sheet": "y-t05.05",
+      "row": 6,
+      "values": [
+        "Valmiiden ja keskeneräisten tuotteiden varastojen lisäys (vähennys)",
+        "R0020",
+        "fi_MC:x48 (Valmistevarastojen muutos)"
+      ],
+      "row_text": "Valmiiden ja keskeneräisten tuotteiden varastojen lisäys (vähennys) | R0020 | fi_MC:x48 (Valmistevarastojen muutos)"
+    },
+    {
+      "code": "fi_MC:x48",
+      "sheet": "y-t05.06",
+      "row": 6,
+      "values": [
+        "Valmiiden ja keskeneräisten tuotteiden varastojen lisäys (vähennys)",
+        "R0020",
+        "fi_MC:x48 (Valmistevarastojen muutos)"
+      ],
+      "row_text": "Valmiiden ja keskeneräisten tuotteiden varastojen lisäys (vähennys) | R0020 | fi_MC:x48 (Valmistevarastojen muutos)"
+    }
+  ],
+  "fi_MC:x758": [
+    {
+      "code": "fi_MC:x758",
+      "sheet": "y-t05.01",
+      "row": 14,
+      "values": [
+        "Materiaalit ja palvelut yhteensä",
+        "R0120",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x758 (Materiaalit ja palvelut)"
+      ],
+      "row_text": "Materiaalit ja palvelut yhteensä | R0120 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x758 (Materiaalit ja palvelut)"
+    },
+    {
+      "code": "fi_MC:x758",
+      "sheet": "y-t05.05",
+      "row": 10,
+      "values": [
+        "Materiaalit ja palvelut",
+        "R0060",
+        "fi_MC:x758 (Materiaalit ja palvelut)"
+      ],
+      "row_text": "Materiaalit ja palvelut | R0060 | fi_MC:x758 (Materiaalit ja palvelut)"
+    },
+    {
+      "code": "fi_MC:x758",
+      "sheet": "y-t05.06",
+      "row": 10,
+      "values": [
+        "Materiaalit ja palvelut",
+        "R0060",
+        "fi_MC:x758 (Materiaalit ja palvelut)"
+      ],
+      "row_text": "Materiaalit ja palvelut | R0060 | fi_MC:x758 (Materiaalit ja palvelut)"
+    }
+  ],
+  "fi_MC:x520": [
+    {
+      "code": "fi_MC:x520",
+      "sheet": "y-t05.01",
+      "row": 15,
+      "values": [
+        "Bruttotulos",
+        "R0130",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x520 (Bruttotulos)"
+      ],
+      "row_text": "Bruttotulos | R0130 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x520 (Bruttotulos)"
+    },
+    {
+      "code": "fi_MC:x520",
+      "sheet": "y-t05.05",
+      "row": 15,
+      "values": [
+        "Bruttotulos",
+        "R0110",
+        "fi_MC:x520 (Bruttotulos)"
+      ],
+      "row_text": "Bruttotulos | R0110 | fi_MC:x520 (Bruttotulos)"
+    },
+    {
+      "code": "fi_MC:x520",
+      "sheet": "y-t05.06",
+      "row": 15,
+      "values": [
+        "Bruttotulos",
+        "R0110",
+        "fi_MC:x520 (Bruttotulos)"
+      ],
+      "row_text": "Bruttotulos | R0110 | fi_MC:x520 (Bruttotulos)"
+    },
+    {
+      "code": "fi_MC:x520",
+      "sheet": "y-t05.09",
+      "row": 5,
+      "values": [
+        "Bruttotulos",
+        "R0010",
+        "fi_MC:x520 (Bruttotulos)"
+      ],
+      "row_text": "Bruttotulos | R0010 | fi_MC:x520 (Bruttotulos)"
+    },
+    {
+      "code": "fi_MC:x520",
+      "sheet": "y-t05.10",
+      "row": 5,
+      "values": [
+        "Bruttotulos",
+        "R0010",
+        "fi_MC:x520 (Bruttotulos)"
+      ],
+      "row_text": "Bruttotulos | R0010 | fi_MC:x520 (Bruttotulos)"
+    }
+  ],
+  "fi_MC:x5": [
+    {
+      "code": "fi_MC:x5",
+      "sheet": "y-t05.01",
+      "row": 20,
+      "values": [
+        "Henkilöstökulut yhteensä",
+        "R0200",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x5 (Henkilöstökulut)"
+      ],
+      "row_text": "Henkilöstökulut yhteensä | R0200 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x5 (Henkilöstökulut)"
+    },
+    {
+      "code": "fi_MC:x5",
+      "sheet": "y-t05.05",
+      "row": 16,
+      "values": [
+        "Henkilöstökulut",
+        "R0120",
+        "fi_MC:x5 (Henkilöstökulut)"
+      ],
+      "row_text": "Henkilöstökulut | R0120 | fi_MC:x5 (Henkilöstökulut)"
+    },
+    {
+      "code": "fi_MC:x5",
+      "sheet": "y-t05.06",
+      "row": 16,
+      "values": [
+        "Henkilöstökulut",
+        "R0120",
+        "fi_MC:x5 (Henkilöstökulut)"
+      ],
+      "row_text": "Henkilöstökulut | R0120 | fi_MC:x5 (Henkilöstökulut)"
+    },
+    {
+      "code": "fi_MC:x5",
+      "sheet": "y-t05.11",
+      "row": 6,
+      "values": [
+        "Henkilöstökulut",
+        "R0020",
+        "fi_MC:x5 (Henkilöstökulut)"
+      ],
+      "row_text": "Henkilöstökulut | R0020 | fi_MC:x5 (Henkilöstökulut)"
+    },
+    {
+      "code": "fi_MC:x5",
+      "sheet": "y-t05.12",
+      "row": 6,
+      "values": [
+        "Henkilöstökulut",
+        "R0020",
+        "fi_MC:x5 (Henkilöstökulut)"
+      ],
+      "row_text": "Henkilöstökulut | R0020 | fi_MC:x5 (Henkilöstökulut)"
+    }
+  ],
+  "fi_MC:x448": [
+    {
+      "code": "fi_MC:x448",
+      "sheet": "y-t05.01",
+      "row": 25,
+      "values": [
+        "Poistot ja arvonalentumiset yhteensä",
+        "R0260",
+        "md103 (Tilikauden rahallinen kertymä)",
+        "fi_MC:x448 (Poistot ja arvonalentumiset)"
+      ],
+      "row_text": "Poistot ja arvonalentumiset yhteensä | R0260 | md103 (Tilikauden rahallinen kertymä) | fi_MC:x448 (Poistot ja arvonalentumiset)"
+    },
+    {
+      "code": "fi_MC:x448",
+      "sheet": "y-t05.05",
+      "row": 21,
+      "values": [
+        "Poistot ja arvonalentumiset",
+        "R0170",
+        "fi_MC:x448 (Poistot ja arvonalentumiset)"
+      ],
+      "row_text": "Poistot ja arvonalentumiset | R0170 | fi_MC:x448 (Poistot ja arvonalentumiset)"
+    },
+    {
+      "code": "fi_MC:x448",
+      "sheet": "y-t05.06",
+      "row": 21,
+      "values": [
+        "Poistot ja arvonalentumiset",
+        "R0170",
+        "fi_MC:x448 (Poistot ja arvonalentumiset)"
+      ],
+      "row_text": "Poistot ja arvonalentumiset | R0170 | fi_MC:x448 (Poistot ja arvonalentumiset)"
+    },
+    {
+      "code": "fi_MC:x448",
+      "sheet": "y-t05.11",
+      "row": 7,
+      "values": [
+        "Poistot ja arvonalentumiset",
+        "R0030",
+        "fi_MC:x448 (Poistot ja arvonalentumiset)"
+      ],
+      "row_text": "Poistot ja arvonalentumiset | R0030 | fi_MC:x448 (Poistot ja arvonalentumiset)"
+    },
+    {
+      "code": "fi_MC:x448",
+      "sheet": "y-t05.12",
+      "row": 7,
+      "values": [
+        "Poistot ja arvonalentumiset",
+        "R0030",
+        "fi_MC:x448 (Poistot ja arvonalentumiset)"
+      ],
+      "row_text": "Poistot ja arvonalentumiset | R0030 | fi_MC:x448 (Poistot ja arvonalentumiset)"
+    }
+  ],
+  "fi_MC:x3952": [
+    {
+      "code": "fi_MC:x3952",
+      "sheet": "y-t05.05",
+      "row": 28,
+      "values": [
+        "Tuotot osuuksista saman konsernin yrityksissä",
+        "R0240",
+        "fi_MC:x3952 (Tuotot osuuksista saman konsernin yrityksissä)"
+      ],
+      "row_text": "Tuotot osuuksista saman konsernin yrityksissä | R0240 | fi_MC:x3952 (Tuotot osuuksista saman konsernin yrityksissä)"
+    },
+    {
+      "code": "fi_MC:x3952",
+      "sheet": "y-t05.06",
+      "row": 30,
+      "values": [
+        "Tuotot osuuksista saman konsernin yrityksissä",
+        "R0260",
+        "fi_MC:x3952 (Tuotot osuuksista saman konsernin yrityksissä)"
+      ],
+      "row_text": "Tuotot osuuksista saman konsernin yrityksissä | R0260 | fi_MC:x3952 (Tuotot osuuksista saman konsernin yrityksissä)"
+    },
+    {
+      "code": "fi_MC:x3952",
+      "sheet": "y-t05.07",
+      "row": 14,
+      "values": [
+        "Tuotot osuuksista saman konsernin yrityksissä",
+        "R0100",
+        "fi_MC:x3952 (Tuotot osuuksista saman konsernin yrityksissä)"
+      ],
+      "row_text": "Tuotot osuuksista saman konsernin yrityksissä | R0100 | fi_MC:x3952 (Tuotot osuuksista saman konsernin yrityksissä)"
+    },
+    {
+      "code": "fi_MC:x3952",
+      "sheet": "y-t05.08",
+      "row": 15,
+      "values": [
+        "Tuotot osuuksista saman konsernin yrityksissä",
+        "R0110",
+        "fi_MC:x3952 (Tuotot osuuksista saman konsernin yrityksissä)"
+      ],
+      "row_text": "Tuotot osuuksista saman konsernin yrityksissä | R0110 | fi_MC:x3952 (Tuotot osuuksista saman konsernin yrityksissä)"
+    }
+  ],
+  "fi_MC:x4133": [
+    {
+      "code": "fi_MC:x4133",
+      "sheet": "y-t05.05",
+      "row": 32,
+      "values": [
+        "Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut",
+        "R0280",
+        "fi_MC:x4133 (Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut)"
+      ],
+      "row_text": "Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut | R0280 | fi_MC:x4133 (Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut)"
+    },
+    {
+      "code": "fi_MC:x4133",
+      "sheet": "y-t05.06",
+      "row": 34,
+      "values": [
+        "Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut",
+        "R0300",
+        "fi_MC:x4133 (Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut)"
+      ],
+      "row_text": "Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut | R0300 | fi_MC:x4133 (Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut)"
+    },
+    {
+      "code": "fi_MC:x4133",
+      "sheet": "y-t05.07",
+      "row": 18,
+      "values": [
+        "Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut",
+        "R0140",
+        "fi_MC:x4133 (Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut)"
+      ],
+      "row_text": "Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut | R0140 | fi_MC:x4133 (Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut)"
+    },
+    {
+      "code": "fi_MC:x4133",
+      "sheet": "y-t05.08",
+      "row": 19,
+      "values": [
+        "Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut",
+        "R0150",
+        "fi_MC:x4133 (Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut)"
+      ],
+      "row_text": "Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut | R0150 | fi_MC:x4133 (Tuotot muista pysyvien vastaavien sijoituksista, muilta yrityksiltä saadut)"
+    }
+  ],
+  "fi_MC:x4014": [
+    {
+      "code": "fi_MC:x4014",
+      "sheet": "y-t05.05",
+      "row": 35,
+      "values": [
+        "Muut korko- ja rahoitustuotot muilta",
+        "R0310",
+        "fi_MC:x4014 (Muut korko- ja rahoitustuotot muilta kuin saman konsernin yrityksiltä)"
+      ],
+      "row_text": "Muut korko- ja rahoitustuotot muilta | R0310 | fi_MC:x4014 (Muut korko- ja rahoitustuotot muilta kuin saman konsernin yrityksiltä)"
+    },
+    {
+      "code": "fi_MC:x4014",
+      "sheet": "y-t05.06",
+      "row": 36,
+      "values": [
+        "Muut korko- ja rahoitustuotot muilta",
+        "R0320",
+        "fi_MC:x4014 (Muut korko- ja rahoitustuotot muilta kuin saman konsernin yrityksiltä)"
+      ],
+      "row_text": "Muut korko- ja rahoitustuotot muilta | R0320 | fi_MC:x4014 (Muut korko- ja rahoitustuotot muilta kuin saman konsernin yrityksiltä)"
+    },
+    {
+      "code": "fi_MC:x4014",
+      "sheet": "y-t05.07",
+      "row": 21,
+      "values": [
+        "Muut korko- ja rahoitustuotot muilta",
+        "R0170",
+        "fi_MC:x4014 (Muut korko- ja rahoitustuotot muilta kuin saman konsernin yrityksiltä)"
+      ],
+      "row_text": "Muut korko- ja rahoitustuotot muilta | R0170 | fi_MC:x4014 (Muut korko- ja rahoitustuotot muilta kuin saman konsernin yrityksiltä)"
+    },
+    {
+      "code": "fi_MC:x4014",
+      "sheet": "y-t05.08",
+      "row": 22,
+      "values": [
+        "Muut korko- ja rahoitustuotot muilta",
+        "R0180",
+        "fi_MC:x4014 (Muut korko- ja rahoitustuotot muilta kuin saman konsernin yrityksiltä)"
+      ],
+      "row_text": "Muut korko- ja rahoitustuotot muilta | R0180 | fi_MC:x4014 (Muut korko- ja rahoitustuotot muilta kuin saman konsernin yrityksiltä)"
+    }
+  ],
+  "fi_MC:x4003": [
+    {
+      "code": "fi_MC:x4003",
+      "sheet": "y-t05.05",
+      "row": 34,
+      "values": [
+        "Muut korko- ja rahoitustuotot saman konsernin yrityksiltä",
+        "R0300",
+        "fi_MC:x4003 (Muut korko- ja rahoitustuotot saman konsernin yrityksiltä)"
+      ],
+      "row_text": "Muut korko- ja rahoitustuotot saman konsernin yrityksiltä | R0300 | fi_MC:x4003 (Muut korko- ja rahoitustuotot saman konsernin yrityksiltä)"
+    },
+    {
+      "code": "fi_MC:x4003",
+      "sheet": "y-t05.06",
+      "row": 37,
+      "values": [
+        "Muut korko- ja rahoitustuotot saman konsernin yrityksiltä",
+        "R0330",
+        "fi_MC:x4003 (Muut korko- ja rahoitustuotot saman konsernin yrityksiltä)"
+      ],
+      "row_text": "Muut korko- ja rahoitustuotot saman konsernin yrityksiltä | R0330 | fi_MC:x4003 (Muut korko- ja rahoitustuotot saman konsernin yrityksiltä)"
+    },
+    {
+      "code": "fi_MC:x4003",
+      "sheet": "y-t05.07",
+      "row": 20,
+      "values": [
+        "Muut korko- ja rahoitustuotot saman konsernin yrityksiltä",
+        "R0160",
+        "fi_MC:x4003 (Muut korko- ja rahoitustuotot saman konsernin yrityksiltä)"
+      ],
+      "row_text": "Muut korko- ja rahoitustuotot saman konsernin yrityksiltä | R0160 | fi_MC:x4003 (Muut korko- ja rahoitustuotot saman konsernin yrityksiltä)"
+    },
+    {
+      "code": "fi_MC:x4003",
+      "sheet": "y-t05.08",
+      "row": 21,
+      "values": [
+        "Muut korko- ja rahoitustuotot saman konsernin yrityksiltä",
+        "R0170",
+        "fi_MC:x4003 (Muut korko- ja rahoitustuotot saman konsernin yrityksiltä)"
+      ],
+      "row_text": "Muut korko- ja rahoitustuotot saman konsernin yrityksiltä | R0170 | fi_MC:x4003 (Muut korko- ja rahoitustuotot saman konsernin yrityksiltä)"
+    }
+  ],
+  "fi_MC:x1117": [
+    {
+      "code": "fi_MC:x1117",
+      "sheet": "y-t05.05",
+      "row": 36,
+      "values": [
+        "Arvonalentumiset pysyvien vastaavien sijoituksista",
+        "R0320",
+        "fi_MC:x1117 (Arvonalentumiset pysyvien vastaavien sijoituksista)"
+      ],
+      "row_text": "Arvonalentumiset pysyvien vastaavien sijoituksista | R0320 | fi_MC:x1117 (Arvonalentumiset pysyvien vastaavien sijoituksista)"
+    },
+    {
+      "code": "fi_MC:x1117",
+      "sheet": "y-t05.06",
+      "row": 38,
+      "values": [
+        "Arvonalentumiset pysyvien vastaavien sijoituksista",
+        "R0340",
+        "fi_MC:x1117 (Arvonalentumiset pysyvien vastaavien sijoituksista)"
+      ],
+      "row_text": "Arvonalentumiset pysyvien vastaavien sijoituksista | R0340 | fi_MC:x1117 (Arvonalentumiset pysyvien vastaavien sijoituksista)"
+    },
+    {
+      "code": "fi_MC:x1117",
+      "sheet": "y-t05.07",
+      "row": 22,
+      "values": [
+        "Arvonalentumiset pysyvien vastaavien sijoituksista",
+        "R0180",
+        "fi_MC:x1117 (Arvonalentumiset pysyvien vastaavien sijoituksista)"
+      ],
+      "row_text": "Arvonalentumiset pysyvien vastaavien sijoituksista | R0180 | fi_MC:x1117 (Arvonalentumiset pysyvien vastaavien sijoituksista)"
+    },
+    {
+      "code": "fi_MC:x1117",
+      "sheet": "y-t05.08",
+      "row": 23,
+      "values": [
+        "Arvonalentumiset pysyvien vastaavien sijoituksista",
+        "R0190",
+        "fi_MC:x1117 (Arvonalentumiset pysyvien vastaavien sijoituksista)"
+      ],
+      "row_text": "Arvonalentumiset pysyvien vastaavien sijoituksista | R0190 | fi_MC:x1117 (Arvonalentumiset pysyvien vastaavien sijoituksista)"
+    }
+  ],
+  "fi_MC:x4046": [
+    {
+      "code": "fi_MC:x4046",
+      "sheet": "y-t05.05",
+      "row": 40,
+      "values": [
+        "Korkokulut ja muut rahoituskulut muille",
+        "R0360",
+        "fi_MC:x4046 (Korkokulut- ja muut rahoituskulut muille kuin saman konsernin yrityksille)"
+      ],
+      "row_text": "Korkokulut ja muut rahoituskulut muille | R0360 | fi_MC:x4046 (Korkokulut- ja muut rahoituskulut muille kuin saman konsernin yrityksille)"
+    },
+    {
+      "code": "fi_MC:x4046",
+      "sheet": "y-t05.06",
+      "row": 42,
+      "values": [
+        "Korkokulut ja muut rahoituskulut muille",
+        "R0380",
+        "fi_MC:x4046 (Korkokulut- ja muut rahoituskulut muille kuin saman konsernin yrityksille)"
+      ],
+      "row_text": "Korkokulut ja muut rahoituskulut muille | R0380 | fi_MC:x4046 (Korkokulut- ja muut rahoituskulut muille kuin saman konsernin yrityksille)"
+    },
+    {
+      "code": "fi_MC:x4046",
+      "sheet": "y-t05.07",
+      "row": 26,
+      "values": [
+        "Korkokulut ja muut rahoituskulut muille",
+        "R0220",
+        "fi_MC:x4046 (Korkokulut- ja muut rahoituskulut muille kuin saman konsernin yrityksille)"
+      ],
+      "row_text": "Korkokulut ja muut rahoituskulut muille | R0220 | fi_MC:x4046 (Korkokulut- ja muut rahoituskulut muille kuin saman konsernin yrityksille)"
+    },
+    {
+      "code": "fi_MC:x4046",
+      "sheet": "y-t05.08",
+      "row": 27,
+      "values": [
+        "Korkokulut ja muut rahoituskulut muille",
+        "R0230",
+        "fi_MC:x4046 (Korkokulut- ja muut rahoituskulut muille kuin saman konsernin yrityksille)"
+      ],
+      "row_text": "Korkokulut ja muut rahoituskulut muille | R0230 | fi_MC:x4046 (Korkokulut- ja muut rahoituskulut muille kuin saman konsernin yrityksille)"
+    }
+  ]
+}
