@@ -1,6 +1,3 @@
-from __future__ import annotations
-
-import os
 import json
 
 import dagster as dg
@@ -11,14 +8,16 @@ from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
     export_duckdb_table_to_clickhouse,
 )
+from dagster_v3.defs.clickhouse.resources import (
+    CLICKHOUSE_RESOURCE,
+    clickhouse_resource_from_env,
+)
 from dagster_v3.defs.finland_resolved import tables
 from dagster_v3.defs.finland_ytj.resources import LocalDuckDBResource
-from dagster_v3.defs.nace import assets as nace_assets
 
 RESOLVED_DUCKDB_SCHEMA = "finland_resolved"
 YTJ_DUCKDB_SCHEMA = "finland_prhytj"
 YTJ_ALL_COMPANIES_TABLE = "all_companies"
-DEFAULT_CLICKHOUSE_NATIVE_PORT = 9002
 
 
 def build_finland_ytj_resolved_tables(
@@ -93,29 +92,6 @@ def finland_ytj_resolved_clickhouse(
     return dg.MaterializeResult(
         metadata={f"{table}_row_count": count for table, count in row_counts.items()}
     )
-
-
-def clickhouse_resource_from_env() -> ClickhouseResource:
-    return ClickhouseResource(
-        host=dg.EnvVar("CLICKHOUSE_HOST"),
-        port=_int_env("CLICKHOUSE_NATIVE_PORT", DEFAULT_CLICKHOUSE_NATIVE_PORT),
-        user=dg.EnvVar("CLICKHOUSE_USER"),
-        password=dg.EnvVar("CLICKHOUSE_PASSWORD"),
-        database=dg.EnvVar("CLICKHOUSE_DATABASE"),
-        secure=_bool_env("CLICKHOUSE_SECURE", False),
-    )
-
-
-def _int_env(name: str, default: int) -> int:
-    value = os.getenv(name)
-    return default if value is None or value.strip() == "" else int(value)
-
-
-def _bool_env(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None or value.strip() == "":
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _fi_companies_sql() -> str:
@@ -290,16 +266,12 @@ def _business_line_language(language_code: object) -> str | None:
     }.get(str(language_code))
 
 
-_CLICKHOUSE_RESOURCE = clickhouse_resource_from_env()
-nace_assets.defs.resources["clickhouse"] = _CLICKHOUSE_RESOURCE
-
-
 defs = dg.Definitions(
     assets=[
         finland_ytj_resolved_duckdb,
         finland_ytj_resolved_clickhouse,
     ],
     resources={
-        "clickhouse": _CLICKHOUSE_RESOURCE,
+        "clickhouse": CLICKHOUSE_RESOURCE,
     },
 )
