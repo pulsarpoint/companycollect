@@ -64,6 +64,34 @@ date, so weekends and holidays use the previous available reference-rate date.
 Returned rate objects include the effective rate date and source components used
 for the USD conversion.
 
+## Norway Brreg Assets
+
+`dagster_v3.defs.norway_brreg` starts the Norway company spine from the Brreg
+Enhetsregisteret bulk JSON gzip endpoint:
+
+```text
+https://data.brreg.no/enhetsregisteret/api/enheter/lastned
+  -> norway_brreg_entities_duckdb
+  -> norway_brreg_financial_statements_duckdb
+```
+
+The asset loads `norway_brreg.entities` in `data/norway_brreg.duckdb` with dlt.
+Rows preserve the raw source record and extract stable company-spine fields such
+as organization number, legal name, legal form, NACE-like activity codes,
+business address, status flags, employee count, and latest submitted accounts
+year. Original Norwegian descriptions are retained next to `_en` translation
+columns for legal form, industry descriptions, articles purpose, activity text,
+and company description.
+
+`norway_brreg_financial_statements_duckdb` reads active entities with websites
+and a latest submitted accounts year from `norway_brreg.entities`, then calls
+Regnskapsregisteret per organization number. It writes
+`norway_brreg.financial_statements` with original-currency financial amounts,
+USD conversions from the local exchange-rate package, FX metadata, and the raw
+financial record JSON.
+
+Attribution: `Kilde: Bronnoysundregistrene (NLOD 2.0)`.
+
 ## Local Environment
 
 Create a local `.env` from the example and fill in the MinIO/S3 credentials:
