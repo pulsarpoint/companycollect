@@ -4,9 +4,9 @@
 
 **Goal:** Add a separate Dagster exchange-rate section that fetches online exchange rates and stores them in ClickHouse.
 
-**Architecture:** Create `src/dagster_v3/defs/exchange_rates` as a shared reference package, parallel to the existing `nace` reference package. The asset uses dlt's REST API source to fetch rates from Norges Bank, normalizes each response into a stable row shape, and loads those rows into `reference.exchange_rates` in ClickHouse. Downstream query APIs and USD conversion helpers are intentionally deferred until this sync path is working and verifiable.
+**Architecture:** Create `src/dagster_v3/defs/exchange_rates` as a shared reference package, parallel to the existing `nace` reference package. The asset uses dlt's REST API source to fetch ECB euro foreign exchange reference rates, normalizes each response into a stable row shape, and loads those rows into `reference.exchange_rates` in ClickHouse. Downstream query APIs and USD conversion helpers are intentionally deferred until this sync path is working and verifiable.
 
-**Tech Stack:** Dagster 1.13, dagster-dlt, dlt REST API source, dlt ClickHouse destination, `dagster_clickhouse.ClickhouseResource`, ClickHouse `MergeTree`, Norges Bank EXR API, Python `decimal.Decimal`, pytest, dg CLI.
+**Tech Stack:** Dagster 1.13, dagster-dlt, dlt REST API source, dlt ClickHouse destination, `dagster_clickhouse.ClickhouseResource`, ClickHouse `MergeTree`, ECB Data Portal EXR API, Python `decimal.Decimal`, pytest, dg CLI.
 
 ---
 
@@ -15,7 +15,7 @@
 - Create `src/dagster_v3/defs/exchange_rates/__init__.py`: package marker.
 - Create `src/dagster_v3/defs/exchange_rates/tables.py`: database/table names, columns, and ClickHouse DDL.
 - Create `src/dagster_v3/defs/exchange_rates/clickhouse.py`: schema preparation helper using `dagster_clickhouse.ClickhouseResource`.
-- Create `src/dagster_v3/defs/exchange_rates/source.py`: dlt REST API configuration, Norges Bank payload parser, NOK identity resource, and ClickHouse pipeline factory.
+- Create `src/dagster_v3/defs/exchange_rates/source.py`: dlt REST API configuration, ECB SDMX JSON payload parser, EUR identity resource, and ClickHouse pipeline factory.
 - Create `src/dagster_v3/defs/exchange_rates/assets.py`: Dagster dlt asset, translator, ClickHouse resource wiring, and `defs`.
 - Create `tests/test_exchange_rates_assets.py`: payload parser, REST API config, ClickHouse DDL, dlt source, asset graph, and resource tests.
 - Modify `README.md`: document the exchange-rate reference sync section.
@@ -46,17 +46,17 @@ _dlt_id
 
 Canonical shape:
 
-- Store rates as `base_currency -> quote_currency`.
-- Use `quote_currency = "NOK"` for Norges Bank rows.
-- Insert an identity row for `NOK -> NOK`.
+- Store rates as `base_currency -> quote_currency`, where `rate` means one unit of `base_currency` equals `rate` units of `quote_currency`.
+- Use `base_currency = "EUR"` for ECB rows because ECB series such as `D.USD.EUR.SP00.A` represent the USD value of one EUR.
+- Insert an identity row for `EUR -> EUR`.
 - Do not expose a downstream conversion API in this milestone. The only deliverable is online source sync into ClickHouse.
 
 ## Deferred Work
 
-After `reference.exchange_rates` is materialized reliably, create a separate plan for downstream access patterns:
+After `reference.exchange_rates` is materialized reliably, country pipelines can use
+the plain `dagster_v3.exchange_rates` client package for lookup and conversion.
+Create a separate plan for country-specific financial metric wiring:
 
-- A small API for other source packages to request rates by date/currency.
-- Currency conversion rules for derived USD values.
 - Financial metric schemas that retain original currency amount, converted USD amount, rate date, source, and rate used.
 
 ## Task 1: Define ClickHouse Table Contract
@@ -222,6 +222,7 @@ def test_prepare_exchange_rates_table_uses_reference_database(monkeypatch) -> No
     assert client.statements == [
         "CREATE DATABASE IF NOT EXISTS reference",
         tables.EXCHANGE_RATES_DDL.strip(),
+        "TRUNCATE TABLE reference.exchange_rates",
     ]
 
 ```
@@ -252,6 +253,7 @@ def prepare_exchange_rates_table(clickhouse: ClickhouseResource) -> None:
     with clickhouse.get_connection() as client:
         client.execute(f"CREATE DATABASE IF NOT EXISTS {tables.EXCHANGE_RATES_DATABASE}")
         client.execute(tables.EXCHANGE_RATES_DDL.strip())
+        client.execute(f"TRUNCATE TABLE {tables.QUALIFIED_EXCHANGE_RATES_TABLE}")
 ```
 
 - [ ] **Step 4: Run focused tests**
@@ -285,25 +287,23 @@ Append:
 from dagster_v3.defs.exchange_rates import source as fx_source
 
 
-def _norges_bank_payload(value: float = 11.3573) -> dict:
+def _ecb_payload(value: float = 1.0389) -> dict:
     return {
-        "data": {
-            "dataSets": [
-                {
-                    "series": {
-                        "0:0:0:0": {
-                            "observations": {
-                                "0": [value],
-                            }
+        "dataSets": [
+            {
+                "series": {
+                    "0:0:0:0:0": {
+                        "observations": {
+                            "0": [value, 0, 0, None, None],
                         }
                     }
                 }
-            ]
-        }
+            }
+        ]
     }
 
 
-def test_exchange_rate_rest_api_config_models_norges_bank_endpoint() -> None:
+def test_exchange_rate_rest_api_config_models_ecb_endpoint() -> None:
     config = fx_source.exchange_rate_rest_api_config(
         rate_dates=["2024-12-31"],
         currencies=["USD"],
@@ -311,42 +311,43 @@ def test_exchange_rate_rest_api_config_models_norges_bank_endpoint() -> None:
         pulled_at="2026-06-16T00:00:00.000Z",
     )
 
-    assert config["client"]["base_url"] == "https://data.norges-bank.no/api/data/EXR/"
+    resources = {resource["name"]: resource for resource in config["resources"]}
+    usd_resource = resources["exchange_rates_usd_2024_12_31"]
+
+    assert config["client"]["base_url"] == "https://data-api.ecb.europa.eu/service/data/EXR/"
     assert config["client"]["headers"] == {"User-Agent": "corpscout-dagster-v3-dev/0.1"}
-    assert config["resources"][0]["name"] == "exchange_rates_usd_2024_12_31"
-    assert config["resources"][0]["table_name"] == "exchange_rates"
-    assert config["resources"][0]["endpoint"] == {
-        "path": "B.USD.NOK.SP",
+    assert usd_resource["table_name"] == "exchange_rates"
+    assert usd_resource["endpoint"] == {
+        "path": "D.USD.EUR.SP00.A",
         "params": {
-            "format": "sdmx-json",
+            "format": "jsondata",
             "startPeriod": "2024-12-31",
             "endPeriod": "2024-12-31",
-            "locale": "en",
         },
         "paginator": "single_page",
     }
-    assert config["resources"][0]["processing_steps"]
+    assert usd_resource["processing_steps"]
 
 
-def test_norges_bank_rate_row_from_payload_returns_reference_row() -> None:
-    row = fx_source.norges_bank_rate_row_from_payload(
-        _norges_bank_payload(),
-        base_currency="USD",
+def test_ecb_rate_row_from_payload_returns_reference_row() -> None:
+    row = fx_source.ecb_rate_row_from_payload(
+        _ecb_payload(),
+        quote_currency="USD",
         rate_date="2024-12-31",
-        source_url="https://data.norges-bank.no/api/data/EXR/B.USD.NOK.SP",
+        source_url="https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A",
         source_run_id="run-1",
         pulled_at="2026-06-16T00:00:00.000Z",
     )
 
     assert row["rate_date"] == "2024-12-31"
-    assert row["base_currency"] == "USD"
-    assert row["quote_currency"] == "NOK"
-    assert row["rate"] == "11.3573"
-    assert row["source"] == "Norges Bank EXR"
+    assert row["base_currency"] == "EUR"
+    assert row["quote_currency"] == "USD"
+    assert row["rate"] == "1.0389"
+    assert row["source"] == "ECB EXR"
     assert len(row["source_payload_hash"]) == 64
 
 
-def test_identity_exchange_rates_resource_yields_nok_rows() -> None:
+def test_identity_exchange_rates_resource_yields_eur_rows() -> None:
     resource = fx_source.identity_exchange_rates_resource(
         rate_dates=["2024-12-31"],
         source_run_id="run-1",
@@ -356,8 +357,8 @@ def test_identity_exchange_rates_resource_yields_nok_rows() -> None:
     assert list(resource) == [
         {
             "rate_date": "2024-12-31",
-            "base_currency": "NOK",
-            "quote_currency": "NOK",
+            "base_currency": "EUR",
+            "quote_currency": "EUR",
             "rate": "1",
             "source": "identity",
             "source_url": "",
@@ -373,7 +374,7 @@ def test_identity_exchange_rates_resource_yields_nok_rows() -> None:
 Run:
 
 ```bash
-uv run pytest tests/test_exchange_rates_assets.py::test_exchange_rate_rest_api_config_models_norges_bank_endpoint tests/test_exchange_rates_assets.py::test_norges_bank_rate_row_from_payload_returns_reference_row tests/test_exchange_rates_assets.py::test_identity_exchange_rates_resource_yields_nok_rows -v
+uv run pytest tests/test_exchange_rates_assets.py::test_exchange_rate_rest_api_config_models_ecb_endpoint tests/test_exchange_rates_assets.py::test_ecb_rate_row_from_payload_returns_reference_row tests/test_exchange_rates_assets.py::test_identity_exchange_rates_resource_yields_eur_rows -v
 ```
 
 Expected: FAIL because `source.py` does not exist.
@@ -401,11 +402,11 @@ from dlt.sources.rest_api.typing import RESTAPIConfig
 
 from dagster_v3.defs.exchange_rates import tables
 
-NORGES_BANK_EXR_BASE_URL = "https://data.norges-bank.no/api/data/EXR"
+ECB_EXR_BASE_URL = "https://data-api.ecb.europa.eu/service/data/EXR"
 EXCHANGE_RATES_DLT_PIPELINE_NAME = "reference_exchange_rates"
 EXCHANGE_RATES_DLT_TABLE = "exchange_rates"
 EXCHANGE_RATES_DLT_DATASET_NAME: str | None = None
-FX_SOURCE_NAME = "Norges Bank EXR"
+FX_SOURCE_NAME = "ECB EXR"
 DEFAULT_CLICKHOUSE_NATIVE_PORT = 9002
 DEFAULT_CLICKHOUSE_HTTP_PORT = 8123
 DEFAULT_USER_AGENT = "corpscout-dagster-v3-dev/0.1"
@@ -423,17 +424,17 @@ def exchange_rates_source(
     pulled_at: str | None = None,
 ) -> list[DltResource]:
     effective_pulled_at = pulled_at or _utc_now_iso()
-    norges_bank_source = rest_api_source(
+    ecb_source = rest_api_source(
         config=exchange_rate_rest_api_config(
             rate_dates=rate_dates,
             currencies=currencies,
             source_run_id=source_run_id,
             pulled_at=effective_pulled_at,
         ),
-        name="exchange_rates_norges_bank",
+        name="exchange_rates_ecb",
     )
     return [
-        *norges_bank_source.resources.values(),
+        *ecb_source.resources.values(),
         identity_exchange_rates_resource(
             rate_dates=rate_dates,
             source_run_id=source_run_id,
@@ -452,31 +453,30 @@ def exchange_rate_rest_api_config(
 ) -> RESTAPIConfig:
     resources: list[Any] = []
     for rate_date in sorted(set(rate_dates)):
-        for currency in sorted({currency.upper() for currency in currencies} | {"USD"}):
-            if currency == "NOK":
+        for currency in sorted({currency.upper() for currency in currencies} | {"USD", "NOK"}):
+            if currency == "EUR":
                 continue
             resource_name = f"exchange_rates_{currency.lower()}_{rate_date.replace('-', '_')}"
-            source_url = f"{NORGES_BANK_EXR_BASE_URL}/B.{currency}.NOK.SP"
+            source_url = f"{ECB_EXR_BASE_URL}/D.{currency}.EUR.SP00.A"
             resources.append(
                 {
                     "name": resource_name,
                     "table_name": EXCHANGE_RATES_DLT_TABLE,
                     "write_disposition": "append",
-                    "primary_key": ("rate_date", "base_currency", "quote_currency", "source"),
+                    "primary_key": ["rate_date", "base_currency", "quote_currency", "source"],
                     "endpoint": {
-                        "path": f"B.{currency}.NOK.SP",
+                        "path": f"D.{currency}.EUR.SP00.A",
                         "params": {
-                            "format": "sdmx-json",
+                            "format": "jsondata",
                             "startPeriod": rate_date,
                             "endPeriod": rate_date,
-                            "locale": "en",
                         },
                         "paginator": "single_page",
                     },
                     "processing_steps": [
                         {
-                            "yield_map": _norges_bank_mapper(
-                                base_currency=currency,
+                            "yield_map": _ecb_mapper(
+                                quote_currency=currency,
                                 rate_date=rate_date,
                                 source_url=source_url,
                                 source_run_id=source_run_id,
@@ -488,7 +488,7 @@ def exchange_rate_rest_api_config(
             )
     return {
         "client": {
-            "base_url": f"{NORGES_BANK_EXR_BASE_URL}/",
+            "base_url": f"{ECB_EXR_BASE_URL}/",
             "headers": {"User-Agent": user_agent},
         },
         "resources": resources,
@@ -506,7 +506,7 @@ def identity_exchange_rates_resource(
 ) -> DltResource:
     return dlt.resource(
         [
-            identity_nok_row(
+            identity_eur_row(
                 rate_date=rate_date,
                 source_run_id=source_run_id,
                 pulled_at=pulled_at,
@@ -516,22 +516,22 @@ def identity_exchange_rates_resource(
         name="exchange_rates_identity",
         table_name=EXCHANGE_RATES_DLT_TABLE,
         write_disposition="append",
-        primary_key=("rate_date", "base_currency", "quote_currency", "source"),
+        primary_key=["rate_date", "base_currency", "quote_currency", "source"],
     )
 
 
-def _norges_bank_mapper(
+def _ecb_mapper(
     *,
-    base_currency: str,
+    quote_currency: str,
     rate_date: str,
     source_url: str,
     source_run_id: str,
     pulled_at: str,
 ) -> Any:
     def mapper(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        yield norges_bank_rate_row_from_payload(
+        yield ecb_rate_row_from_payload(
             payload,
-            base_currency=base_currency,
+            quote_currency=quote_currency,
             rate_date=rate_date,
             source_url=source_url,
             source_run_id=source_run_id,
@@ -541,10 +541,10 @@ def _norges_bank_mapper(
     return mapper
 
 
-def norges_bank_rate_row_from_payload(
+def ecb_rate_row_from_payload(
     payload: dict[str, Any],
     *,
-    base_currency: str,
+    quote_currency: str,
     rate_date: str,
     source_url: str,
     source_run_id: str,
@@ -552,12 +552,12 @@ def norges_bank_rate_row_from_payload(
 ) -> dict[str, Any]:
     values = _extract_observation_values(payload)
     if not values:
-        raise ValueError(f"Norges Bank returned no {base_currency}/NOK rate for {rate_date}")
+        raise ValueError(f"ECB returned no EUR/{quote_currency} rate for {rate_date}")
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return {
         "rate_date": rate_date,
-        "base_currency": base_currency.upper(),
-        "quote_currency": "NOK",
+        "base_currency": "EUR",
+        "quote_currency": quote_currency.upper(),
         "rate": str(values[-1]),
         "source": FX_SOURCE_NAME,
         "source_url": source_url,
@@ -567,11 +567,11 @@ def norges_bank_rate_row_from_payload(
     }
 
 
-def identity_nok_row(*, rate_date: str, source_run_id: str, pulled_at: str) -> dict[str, Any]:
+def identity_eur_row(*, rate_date: str, source_run_id: str, pulled_at: str) -> dict[str, Any]:
     return {
         "rate_date": rate_date,
-        "base_currency": "NOK",
-        "quote_currency": "NOK",
+        "base_currency": "EUR",
+        "quote_currency": "EUR",
         "rate": "1",
         "source": "identity",
         "source_url": "",
@@ -613,10 +613,13 @@ def clickhouse_destination_credentials_from_env() -> dict[str, Any]:
 
 
 def _extract_observation_values(payload: dict[str, Any]) -> list[Decimal]:
-    data_sets = payload.get("data", {}).get("dataSets", [])
-    if not data_sets:
-        return []
-    series = data_sets[0].get("series", {})
+    if "series" in payload:
+        series = payload["series"]
+    else:
+        data_sets = payload.get("dataSets", [])
+        if not data_sets:
+            return []
+        series = data_sets[0].get("series", {})
     values: list[Decimal] = []
     for series_payload in series.values():
         observations = series_payload.get("observations", {})
@@ -790,7 +793,9 @@ def exchange_rates_asset(
     )
 ```
 
-Append resource wiring:
+Append the optional ClickHouse resource helper and asset definitions. Do not register a
+`clickhouse` resource in this module because the existing project definitions already
+provide the shared top-level `clickhouse` resource key.
 
 ```python
 def clickhouse_resource_from_env() -> ClickhouseResource:
@@ -818,7 +823,6 @@ def _bool_env(name: str, default: bool) -> bool:
 
 defs = dg.Definitions(
     assets=[exchange_rates_asset],
-    resources={"clickhouse": clickhouse_resource_from_env()},
 )
 ```
 
@@ -860,8 +864,8 @@ The asset key is `exchange_rates`, group `exchange_rates`.
 
 Source:
 
-- Norges Bank EXR API for currency-to-NOK rates.
-- Identity rows for NOK-to-NOK.
+- ECB Data Portal EXR API for EUR-to-currency reference rates.
+- Identity rows for EUR-to-EUR.
 
 Deferred:
 

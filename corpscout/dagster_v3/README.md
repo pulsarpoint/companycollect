@@ -22,6 +22,48 @@ PRH YTJ /all_companies
 The PRH response may be a zip file, so the dlt source handles unzip plus row
 projection before loading into DuckDB.
 
+## Exchange Rate Reference Asset
+
+`dagster_v3.defs.exchange_rates` loads online exchange rates into ClickHouse table
+`reference.exchange_rates`. This section only owns online sync and storage of
+exchange-rate reference rows.
+
+The asset key is `exchange_rates`, group `exchange_rates`.
+
+Source:
+
+- ECB Data Portal EXR API for EUR-to-currency reference rates.
+- Identity rows for EUR-to-EUR.
+
+Financial metric table changes that retain original currency values alongside
+converted USD values are handled by country-specific pipelines.
+
+## Exchange Rate Client
+
+`dagster_v3.exchange_rates` is a plain Python package for reading exchange rates
+from ClickHouse. It does not depend on Dagster resources, so Finland, Norway, and
+other pipelines can use it directly after the `exchange_rates` asset has loaded
+`reference.exchange_rates`.
+
+```python
+from decimal import Decimal
+
+from dagster_v3.exchange_rates import ExchangeRateClient
+
+fx = ExchangeRateClient.from_env()
+rate = fx.usd_rate(currency="NOK", rate_date="2024-12-31")
+amount_usd = fx.convert_to_usd(
+    amount=Decimal("1250000"),
+    currency="NOK",
+    rate_date="2024-12-31",
+)
+```
+
+The client resolves the latest common ECB rate date on or before the requested
+date, so weekends and holidays use the previous available reference-rate date.
+Returned rate objects include the effective rate date and source components used
+for the USD conversion.
+
 ## Local Environment
 
 Create a local `.env` from the example and fill in the MinIO/S3 credentials:
