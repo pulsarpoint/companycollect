@@ -1,0 +1,83 @@
+{
+  "country": "Singapore",
+  "country_slug": "singapore",
+  "source_slug": "acra_entities",
+  "source_identity": "singapore_acra_entities",
+  "source_package": "acraentities",
+  "env_prefix": "ACRA_ENTITIES",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "ACRA Information on Corporate Entities (data.gov.sg)",
+    "source_type": "official_registry",
+    "organization": "ACRA via data.gov.sg / GovTech",
+    "source_url": "https://data.gov.sg/datasets/d_3a3807c023c61ddfba947dc069eb53f2/view",
+    "license": "singapore_open_data_licence",
+    "access": "public",
+    "data_freshness": "updated periodically (monthly-ish)",
+    "attribution": "ACRA / data.gov.sg (attribution required)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://api-open.data.gov.sg/v1/public/api/datasets/{datasetId}/poll-download",
+    "download_url": "(poll-download returns a signed S3 CSV URL in data.url)",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "split_az_datasets", "page_param": "datasetId", "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "no key; poll-download returns a time-limited signed URL"
+  },
+  "snapshot": {
+    "strategy": "preserve_csv_per_letter",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "AcraEntity",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Two-step: GET data.gov.sg dataset search to collect all ACRA 'Information on Corporate Entities' datasetIds (split A-Z + others), then GET /poll-download/{datasetId} -> data.url (signed S3 CSV) -> download. 53 columns, UTF-8, header row; empty values often 'na'. Collect former_entity_name1..15 and name_of_audit_firm1..5 into arrays. no_of_officers is a count only (no names). Map entity_status_description 'Live'->active."
+  },
+  "keys": {
+    "primary_keys": ["uen"],
+    "join_keys": ["uen"],
+    "dedupe_keys": ["uen"]
+  },
+  "mapping_rules": {
+    "company_id": "uen.",
+    "registration_number": "uen.",
+    "tax_id": "uen (entity tax reference).",
+    "vat_id": "null (GST country; GST reg = UEN, no separate VAT).",
+    "legal_name": "entity_name.",
+    "former_names": "former_entity_name1..15 (non-empty).",
+    "company_type": "entity_type_description (+ company_type_description / business_constitution_description).",
+    "status": "entity_status_description (Live -> active; Terminated/Cancelled/Ceased/Struck Off -> closed).",
+    "incorporation_date": "registration_incorporation_date.",
+    "registered_address": "block + street_name + level/unit + building_name + postal_code (address_type LOCAL/FOREIGN).",
+    "activity_code": "primary_ssic_code (+ secondary_ssic_code).",
+    "auditors": "name_of_audit_firm1..5 (+ uen_of_audit_firm1..5)."
+  },
+  "fixture_requirements": [
+    "Live local company (e.g. Pte Ltd)",
+    "Terminated sole proprietorship",
+    "entity with multiple former names",
+    "entity with audit firms populated",
+    "foreign-address entity (address_type FOREIGN)",
+    "row with 'na' values"
+  ],
+  "live_test_plan": {
+    "smoke": "Search datasets for 'ACRA Information on Corporate Entities'; poll-download one letter; parse 53 cols.",
+    "full": "Iterate all A-Z datasetIds; download + parse each CSV; keyed on UEN. No key."
+  },
+  "blockers": []
+}

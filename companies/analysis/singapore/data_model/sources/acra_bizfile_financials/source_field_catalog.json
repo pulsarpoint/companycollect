@@ -1,0 +1,26 @@
+{
+  "country": "Singapore",
+  "country_slug": "singapore",
+  "source_slug": "acra_bizfile_financials",
+  "source_name": "ACRA BizFile+ — business profiles & financial statements (XBRL)",
+  "source_type": "financial_disclosure",
+  "organization": "Accounting and Corporate Regulatory Authority (ACRA)",
+  "source_url": "https://www.bizfile.gov.sg/",
+  "license": "restricted",
+  "access": "paid",
+  "data_freshness": "filing-driven",
+  "record_shape": "per_entity_business_profile_and_xbrl_financials",
+  "primary_keys": ["uen"],
+  "join_keys": ["uen"],
+  "field_count": 8,
+  "fields": [
+    { "path": "profile.uen", "source_field": "UEN", "english_name": "uen", "meaning": "Unique Entity Number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: paid per-document; cataloged from public docs.", "source_confidence": "low", "analysis_notes": "Join key to ACRA entities." },
+    { "path": "profile.officers", "source_field": "Officers / Directors", "english_name": "officers", "meaning": "Directors / officers (names + roles).", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY (paid). PERSONAL DATA (PDPA) — redact.", "source_confidence": "low", "analysis_notes": "Officer names; the open dataset has only the count." },
+    { "path": "profile.shareholders", "source_field": "Shareholders", "english_name": "shareholders", "meaning": "Shareholders and shareholdings.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY (paid). PERSONAL DATA where individuals — redact.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "profile.share_capital", "source_field": "Issued / Paid-up capital", "english_name": "share_capital", "meaning": "Issued / paid-up share capital (SGD).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "financials.revenue", "source_field": "Revenue", "english_name": "revenue", "meaning": "Revenue for the year (SGD).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "ACRA XBRL taxonomy (BizFinx)", "language": "n/a", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": "From the filed XBRL financial statements." },
+    { "path": "financials.profit", "source_field": "Profit / (Loss)", "english_name": "profit", "meaning": "Net profit/loss (SGD).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "ACRA XBRL taxonomy", "language": "n/a", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "financials.total_assets", "source_field": "Total assets", "english_name": "total_assets", "meaning": "Total assets (SGD).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "ACRA XBRL taxonomy", "language": "n/a", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "financials.financial_year_end", "source_field": "Financial year end", "english_name": "financial_year_end", "meaning": "Reporting period end.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Singapore Company Profile",
+  "description": "Country-specific company profile for Singapore. Keyed on the UEN (Unique Entity Number), which is the company id, registration number, AND the entity's tax reference (Singapore has GST, not VAT; the GST registration is generally the UEN, so there is no separate VAT number). Identity, status, activity (SSIC), address, former names, auditors, and the officer COUNT come openly from the ACRA Information on Corporate Entities dataset on data.gov.sg (split A-Z). Officer/shareholder NAMES, share capital, and private-company financial statements are paid (ACRA BizFile+, XBRL) — planning-only. Listed-company financials are open via SGX. Officer/shareholder names are personal data (PDPA) and absent from the open dataset.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Singapore" },
+    "country_slug": { "type": "string", "const": "singapore" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["uen"],
+      "properties": {
+        "uen": {
+          "type": "string",
+          "description": "Unique Entity Number — company id, registration number, and tax reference.",
+          "x-source": "acra_entities",
+          "x-source-path": "uen",
+          "x-join-key": true,
+          "x-freshness": "monthly-ish"
+        },
+        "issuance_agency": { "type": ["string", "null"], "x-source": "acra_entities", "x-source-path": "issuance_agency_id" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= UEN (entity tax reference).", "x-source": "acra_entities", "x-source-path": "uen" },
+        "vat_id": { "type": ["string", "null"], "description": "No separate VAT; GST registration is generally the UEN.", "x-access": "not_available" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "acra_entities", "x-source-path": "entity_name" },
+        "former_names": { "type": "array", "items": { "type": "string" }, "description": "Up to 15 former names.", "x-source": "acra_entities", "x-source-path": "former_entity_name1..15" },
+        "entity_type": { "type": ["string", "null"], "description": "Local Company / Sole Proprietorship / Partnership / LLP / …", "x-source": "acra_entities", "x-source-path": "entity_type_description" },
+        "company_type": { "type": ["string", "null"], "x-source": "acra_entities", "x-source-path": "company_type_description" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_raw": { "type": ["string", "null"], "x-source": "acra_entities", "x-source-path": "entity_status_description" },
+        "status": { "type": ["string", "null"], "enum": ["active", "closed", null], "description": "Live -> active; Terminated/Cancelled/Ceased/Struck Off/In Liquidation -> closed." }
+      }
+    },
+    "incorporation": {
+      "type": "object",
+      "properties": {
+        "registration_incorporation_date": { "type": ["string", "null"], "format": "date", "x-source": "acra_entities", "x-source-path": "registration_incorporation_date" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "primary_ssic_code": { "type": ["string", "null"], "x-source": "acra_entities", "x-source-path": "primary_ssic_code" },
+        "primary_ssic_description": { "type": ["string", "null"], "x-source": "acra_entities", "x-source-path": "primary_ssic_description" },
+        "secondary_ssic_code": { "type": ["string", "null"], "x-source": "acra_entities", "x-source-path": "secondary_ssic_code" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "acra_entities", "x-source-path": "block+street_name+level_no+unit_no+building_name" },
+        "postal_code": { "type": ["string", "null"], "x-source": "acra_entities", "x-source-path": "postal_code" }
+      }
+    },
+    "officers_summary": {
+      "type": "object",
+      "description": "Open dataset gives only the COUNT; officer names are paid (BizFile, PDPA).",
+      "properties": {
+        "no_of_officers": { "type": ["integer", "null"], "x-source": "acra_entities", "x-source-path": "no_of_officers" }
+      }
+    },
+    "auditors": {
+      "type": "array",
+      "description": "Up to 5 appointed audit firms (UEN + name).",
+      "x-source": "acra_entities",
+      "x-source-path": "name_of_audit_firm1..5",
+      "items": { "type": "object", "properties": { "uen": { "type": ["string", "null"] }, "name": { "type": ["string", "null"] } } }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Officer/director NAMES only via the paid BizFile profile. PERSONAL DATA (PDPA) — redact. Not in the open dataset.",
+      "x-source": "acra_bizfile_financials",
+      "x-access": "paid_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Private-company financials are paid (BizFile XBRL); listed via SGX. SGD.",
+      "x-source": "acra_bizfile_financials / sgx_listed_financials",
+      "x-access": "paid_or_listed_only",
+      "items": {
+        "type": "object",
+        "properties": {
+          "financial_year_end": { "type": ["string", "null"], "format": "date" },
+          "revenue": { "type": ["number", "null"] },
+          "profit": { "type": ["number", "null"] },
+          "total_assets": { "type": ["number", "null"] },
+          "currency": { "type": "string", "const": "SGD" },
+          "source": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

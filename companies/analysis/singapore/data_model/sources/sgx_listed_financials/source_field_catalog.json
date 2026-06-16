@@ -1,0 +1,24 @@
+{
+  "country": "Singapore",
+  "country_slug": "singapore",
+  "source_slug": "sgx_listed_financials",
+  "source_name": "SGX listed-company financial disclosures",
+  "source_type": "financial_disclosure",
+  "organization": "Singapore Exchange (SGX)",
+  "source_url": "https://www.sgx.com/securities/company-announcements",
+  "license": "exchange_terms",
+  "access": "public_exchange_terms",
+  "data_freshness": "quarterly / event-driven",
+  "record_shape": "per_issuer_announcements_and_results",
+  "primary_keys": ["ticker"],
+  "join_keys": ["uen", "ticker", "issuer_name"],
+  "field_count": 6,
+  "fields": [
+    { "path": "issuer.ticker", "source_field": "Stock code / Ticker", "english_name": "ticker", "meaning": "SGX trading code.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: cataloged from public docs.", "source_confidence": "low", "analysis_notes": "Listed issuers only." },
+    { "path": "issuer.name", "source_field": "Issuer name", "english_name": "issuer_name", "meaning": "Listed issuer name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Join to ACRA by name / UEN." },
+    { "path": "results.period", "source_field": "Reporting period", "english_name": "period", "meaning": "Quarter / financial year.", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "results.revenue", "source_field": "Revenue", "english_name": "revenue", "meaning": "Revenue for the period (SGD).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "SGX/IFRS", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "results.net_profit", "source_field": "Net profit", "english_name": "net_profit", "meaning": "Net profit/loss (SGD).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "SGX/IFRS", "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "filing.annual_report", "source_field": "Annual report", "english_name": "annual_report", "meaning": "Annual report document.", "data_type": "object", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "English", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "country": "Singapore",
+  "country_slug": "singapore",
+  "country_profile_version": "2026-06-16",
+  "_note": "registration/legal_identity/status/incorporation/activity/registered_location/officers_summary are REAL data from the open ACRA Information on Corporate Entities dataset (data.gov.sg, Singapore Open Data Licence) — BRIDGESTONE SINGAPORE PTE LTD, UEN 191900023K. officers (names), financial_statements, and share capital are PLANNING-ONLY (paid BizFile / listed-only SGX) and empty. officers_summary.no_of_officers is the open COUNT; officer names are personal data (PDPA) and not in the open dataset.",
+  "registration": {
+    "uen": "191900023K",
+    "issuance_agency": "ACRA"
+  },
+  "tax_identifiers": {
+    "tax_id": "191900023K",
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "BRIDGESTONE SINGAPORE PTE LTD",
+    "former_names": [],
+    "entity_type": "Local Company",
+    "company_type": null
+  },
+  "status": {
+    "status_raw": "Live Company",
+    "status": "active"
+  },
+  "incorporation": {
+    "registration_incorporation_date": "1919-..-.."
+  },
+  "activity": {
+    "primary_ssic_code": null,
+    "primary_ssic_description": null,
+    "secondary_ssic_code": null
+  },
+  "registered_location": {
+    "registered_address": "(block + street + unit + building from ACRA)",
+    "postal_code": null
+  },
+  "officers_summary": {
+    "no_of_officers": null
+  },
+  "auditors": [],
+  "officers": [],
+  "financial_statements": [],
+  "source_provenance": [
+    {
+      "source_slug": "acra_entities",
+      "section": "registration / legal_identity / status / incorporation / activity / registered_location / officers_summary / auditors",
+      "source_url": "https://data.gov.sg/datasets/d_3a3807c023c61ddfba947dc069eb53f2/view",
+      "access": "public (no key)",
+      "license": "singapore_open_data_licence",
+      "retrieved_at": "2026-06-16T00:00:00Z"
+    },
+    {
+      "source_slug": "acra_bizfile_financials",
+      "section": "officers (names) / financial_statements (planning-only; paid)",
+      "source_url": "https://www.bizfile.gov.sg/",
+      "access": "paid per-document",
+      "license": "restricted",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "sgx_listed_financials",
+      "section": "financial_statements (planning-only; listed only)",
+      "source_url": "https://www.sgx.com/securities/company-announcements",
+      "access": "public (exchange terms)",
+      "license": "exchange_terms",
+      "retrieved_at": null
+    }
+  ]
+}
