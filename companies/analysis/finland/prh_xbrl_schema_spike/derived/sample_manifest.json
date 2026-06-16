@@ -1,0 +1,122 @@
+[
+  {
+    "business_id": "0104539-0",
+    "financial_date": "2024-10-31",
+    "registration_date": "2025-01-18",
+    "discovery_window_start": "2025-01-01",
+    "discovery_window_end": "2025-01-31",
+    "discovery_page": 1,
+    "source_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial?businessId=0104539-0&financialDate=2024-10-31",
+    "sample_file": "samples/01__0104539-0__2024-10-31.xml",
+    "xml_sha256": "639397c5bbb8632bca22d84d417af989fc86ed46fa92a2ee09c37450c2f349e3",
+    "xml_size_bytes": 43685
+  },
+  {
+    "business_id": "0144206-2",
+    "financial_date": "2024-09-30",
+    "registration_date": "2025-01-30",
+    "discovery_window_start": "2025-01-01",
+    "discovery_window_end": "2025-01-31",
+    "discovery_page": 1,
+    "source_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial?businessId=0144206-2&financialDate=2024-09-30",
+    "sample_file": "samples/02__0144206-2__2024-09-30.xml",
+    "xml_sha256": "db9e65084ca657c9e4deff841d8142bf64b9bc0fd2a12c318b83ad1ae5382fcd",
+    "xml_size_bytes": 37677
+  },
+  {
+    "business_id": "0152307-3",
+    "financial_date": "2024-03-31",
+    "registration_date": "2025-01-10",
+    "discovery_window_start": "2025-01-01",
+    "discovery_window_end": "2025-01-31",
+    "discovery_page": 1,
+    "source_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial?businessId=0152307-3&financialDate=2024-03-31",
+    "sample_file": "samples/03__0152307-3__2024-03-31.xml",
+    "xml_sha256": "446de7e0a4b4aef0e76f6f0c54d8f338feb978fedc4d9866156ac8eddf1f19e9",
+    "xml_size_bytes": 89073
+  },
+  {
+    "business_id": "0159948-1",
+    "financial_date": "2024-12-31",
+    "registration_date": "2025-01-30",
+    "discovery_window_start": "2025-01-01",
+    "discovery_window_end": "2025-01-31",
+    "discovery_page": 1,
+    "source_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial?businessId=0159948-1&financialDate=2024-12-31",
+    "sample_file": "samples/04__0159948-1__2024-12-31.xml",
+    "xml_sha256": "f2ae43bb5cded60e85ffb72c65df3dfc536ef3284011b1e7ce2aff9603bb5682",
+    "xml_size_bytes": 43676
+  },
+  {
+    "business_id": "0163207-7",
+    "financial_date": "2024-12-31",
+    "registration_date": "2025-01-21",
+    "discovery_window_start": "2025-01-01",
+    "discovery_window_end": "2025-01-31",
+    "discovery_page": 1,
+    "source_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial?businessId=0163207-7&financialDate=2024-12-31",
+    "sample_file": "samples/05__0163207-7__2024-12-31.xml",
+    "xml_sha256": "5dc24c1c6503778dd985d7c30db599261cf04158ce2d7c67e816285c9013a8c2",
+    "xml_size_bytes": 29739
+  },
+  {
+    "business_id": "0176460-0",
+    "financial_date": "2023-09-30",
+    "registration_date": "2025-01-23",
+    "discovery_window_start": "2025-01-01",
+    "discovery_window_end": "2025-01-31",
+    "discovery_page": 1,
+    "source_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial?businessId=0176460-0&financialDate=2023-09-30",
+    "sample_file": "samples/06__0176460-0__2023-09-30.xml",
+    "xml_sha256": "a4bf54e09a29dc844bcb80292bc10fe1322549524d77c5dcbb71ace43eddb9fb",
+    "xml_size_bytes": 43703
+  },
+  {
+    "business_id": "0176460-0",
+    "financial_date": "2024-09-30",
+    "registration_date": "2025-01-23",
+    "discovery_window_start": "2025-01-01",
+    "discovery_window_end": "2025-01-31",
+    "discovery_page": 1,
+    "source_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial?businessId=0176460-0&financialDate=2024-09-30",
+    "sample_file": "samples/07__0176460-0__2024-09-30.xml",
+    "xml_sha256": "c65c9357720a97b906125aa3c408e499bc57ddc1f2ac6dffc3f2119a7e800739",
+    "xml_size_bytes": 42694
+  },
+  {
+    "business_id": "0186191-0",
+    "financial_date": "2024-06-30",
+    "registration_date": "2025-01-17",
+    "discovery_window_start": "2025-01-01",
+    "discovery_window_end": "2025-01-31",
+    "discovery_page": 1,
+    "source_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial?businessId=0186191-0&financialDate=2024-06-30",
+    "sample_file": "samples/08__0186191-0__2024-06-30.xml",
+    "xml_sha256": "737137eda424b587bd0980b407ea8a8f5305312ee5c66687c127b15453e53350",
+    "xml_size_bytes": 47245
+  },
+  {
+    "business_id": "0200510-4",
+    "financial_date": "2024-12-31",
+    "registration_date": "2025-01-30",
+    "discovery_window_start": "2025-01-01",
+    "discovery_window_end": "2025-01-31",
+    "discovery_page": 1,
+    "source_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial?businessId=0200510-4&financialDate=2024-12-31",
+    "sample_file": "samples/09__0200510-4__2024-12-31.xml",
+    "xml_sha256": "85611eb5486506a26103d2024ef640dd1c0bf49eee267f765fe8bcecadd885ec",
+    "xml_size_bytes": 36610
+  },
+  {
+    "business_id": "0202458-3",
+    "financial_date": "2024-09-30",
+    "registration_date": "2025-01-02",
+    "discovery_window_start": "2025-01-01",
+    "discovery_window_end": "2025-01-31",
+    "discovery_page": 1,
+    "source_url": "https://avoindata.prh.fi/opendata-xbrl-api/v3/financial?businessId=0202458-3&financialDate=2024-09-30",
+    "sample_file": "samples/10__0202458-3__2024-09-30.xml",
+    "xml_sha256": "ace4c12bb1ad6c5cccf815e4b34754eb352f888be87dfb9d686aa133584d121c",
+    "xml_size_bytes": 61457
+  }
+]

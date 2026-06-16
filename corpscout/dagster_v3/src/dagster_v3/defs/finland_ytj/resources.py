@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Protocol
+
+import boto3
+import dagster as dg
+import duckdb
+from botocore.config import Config
+from pydantic import PrivateAttr
+
+
+class S3Client(Protocol):
+    def create_bucket(self, Bucket: str) -> Any:
+        ...
+
+    def head_object(self, Bucket: str, Key: str) -> Any:
+        ...
+
+    def put_object(self, Bucket: str, Key: str, Body: bytes | str) -> Any:
+        ...
+
+    def get_object(self, Bucket: str, Key: str) -> Mapping[str, Any]:
+        ...
+
+
+class ObjectStoreResource(dg.ConfigurableResource):
+    bucket: str = "source-finland-prhytj"
+    endpoint_url: str = dg.EnvVar("CORPSCOUT_S3_ENDPOINT")
+    access_key: str = dg.EnvVar("CORPSCOUT_S3_ACCESS_KEY")
+    secret_key: str = dg.EnvVar("CORPSCOUT_S3_SECRET_KEY")
+    region_name: str = "us-east-1"
+
+    _s3_client: S3Client | None = PrivateAttr(default=None)
+
+    def __init__(self, s3_client: S3Client | None = None, **data: Any) -> None:
+        super().__init__(**data)
+        self._s3_client = s3_client
+
+    def client(self) -> S3Client:
+        if self._s3_client is None:
+            self._s3_client = boto3.client(
+                "s3",
+                endpoint_url=self.endpoint_url,
+                aws_access_key_id=self.access_key,
+                aws_secret_access_key=self.secret_key,
+                region_name=self.region_name,
+                config=Config(s3={"addressing_style": "path"}),
+            )
+        return self._s3_client
+
+    def ensure_bucket(self, bucket: str | None = None) -> None:
+        target_bucket = bucket or self.bucket
+        try:
+            self.client().create_bucket(Bucket=target_bucket)
+        except Exception as exc:
+            if _error_code(exc) not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
+                raise
+
+    def exists(self, key: str, bucket: str | None = None) -> bool:
+        target_bucket = bucket or self.bucket
+        try:
+            self.client().head_object(Bucket=target_bucket, Key=key)
+            return True
+        except Exception as exc:
+            if _error_code(exc) in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise
+
+    def write_bytes(self, key: str, body: bytes, bucket: str | None = None) -> None:
+        target_bucket = bucket or self.bucket
+        self.client().put_object(Bucket=target_bucket, Key=key, Body=body)
+
+    def write_json(self, key: str, body: str, bucket: str | None = None) -> None:
+        target_bucket = bucket or self.bucket
+        self.client().put_object(Bucket=target_bucket, Key=key, Body=body)
+
+    def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
+        target_bucket = bucket or self.bucket
+        return self.client().get_object(Bucket=target_bucket, Key=key)["Body"].read()
+
+
+class LocalDuckDBResource(dg.ConfigurableResource):
+    database_path: str = "data/finland_ytj.duckdb"
+
+    def path(self) -> Path:
+        return Path(self.database_path)
+
+    @contextmanager
+    def connect(self, *, read_only: bool = False) -> Iterator[Any]:
+        path = self.path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        connection = duckdb.connect(str(path), read_only=read_only)
+        try:
+            yield connection
+        finally:
+            connection.close()
+
+
+def _error_code(exc: Exception) -> str:
+    response = getattr(exc, "response", {})
+    error = response.get("Error", {}) if isinstance(response, dict) else {}
+    return str(error.get("Code", ""))

@@ -1,0 +1,74 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.23.9",
+    "script_metadata_hash": null
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "87c24ba846f3b80f3941c1097b1a7168",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "f102578f978220a2d9acbb0646593237",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "application/json": "[{\"snapshot_key\": \"runs/ref-2025-01/source.ndjson\", \"companies\": 500, \"code_list_keys\": [\"runs/ref-2025-01/codelists/REK.en.tsv\", \"runs/ref-2025-01/codelists/REK_KDI.en.tsv\", \"runs/ref-2025-01/codelists/VIRANOM.en.tsv\", \"runs/ref-2025-01/codelists/TLAJI.en.tsv\", \"runs/ref-2025-01/codelists/YRMU.en.tsv\", \"runs/ref-2025-01/codelists/STATUS3.en.tsv\", \"runs/ref-2025-01/codelists/KIELI.en.tsv\"]}, {\"listing_key\": \"windows/2025-01-01/listing.json\", \"documents\": 178}]"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "edbd814ba4a802d59a284d4dba0eda91",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "ef4b6ef038317a3a8c92b6c18bc84665",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "726d4ee2c6766c74080b554f43b02647",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "application/json": "{\"company\": 500, \"registrations\": 500, \"financials\": 3540, \"company_websites\": 63, \"distinct_companies\": 500, \"financial_periods\": 15}"
+          }
+        }
+      ],
+      "console": []
+    }
+  ]
+}

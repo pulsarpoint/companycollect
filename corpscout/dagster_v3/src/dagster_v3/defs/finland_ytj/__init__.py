@@ -1,0 +1,1 @@
+"""Finland PRH YTJ assets."""

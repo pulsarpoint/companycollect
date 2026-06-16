@@ -1,5 +1,6 @@
 import marimo
 
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -76,20 +77,40 @@ def _(dt):
         "revenue", "operating_profit_loss", "profit_loss",
         "personnel_expenses", "wages_and_salaries",
     }
-    return (COUNTRY, DURATION_METRICS, MAX_COMPANIES, METRIC_MAP, NOW,
-            PRH_XBRL_BASE_URL, PRH_YTJ_COMPANIES_URL, RUN_ID, USER_AGENT,
-            XBRL_END, XBRL_START)
+    return (
+        DURATION_METRICS,
+        MAX_COMPANIES,
+        METRIC_MAP,
+        NOW,
+        PRH_XBRL_BASE_URL,
+        PRH_YTJ_COMPANIES_URL,
+        RUN_ID,
+        USER_AGENT,
+        XBRL_END,
+        XBRL_START,
+    )
 
 
 @app.cell
 def _(mo):
-    mo.md("## 1. Download a bounded live sample (in-memory)")
+    mo.md("""
+    ## 1. Download a bounded live sample (in-memory)
+    """)
     return
 
 
 @app.cell
-def _(json, time, requests, MAX_COMPANIES, PRH_XBRL_BASE_URL,
-      PRH_YTJ_COMPANIES_URL, USER_AGENT, XBRL_END, XBRL_START):
+def _(
+    MAX_COMPANIES,
+    PRH_XBRL_BASE_URL,
+    PRH_YTJ_COMPANIES_URL,
+    USER_AGENT,
+    XBRL_END,
+    XBRL_START,
+    json,
+    requests,
+    time,
+):
     _session = requests.Session()
     _session.headers["User-Agent"] = USER_AGENT
 
@@ -149,16 +170,14 @@ def _(json, time, requests, MAX_COMPANIES, PRH_XBRL_BASE_URL,
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## 2. prh_ytj JSONL → structured (native Polars)
+    mo.md("""
+    ## 2. prh_ytj JSONL → structured (native Polars)
 
-        `pl.read_ndjson` reads the JSONL into nested struct/list columns; we reshape
-        with vectorized expressions. Domain rules are expressed inline: liveness from
-        `tradeRegisterStatus`/`endDate` (never the constant `status` field), current
-        primary name = `type==1 & endDate null`, URL normalization, lowercased host.
-        """
-    )
+    `pl.read_ndjson` reads the JSONL into nested struct/list columns; we reshape
+    with vectorized expressions. Domain rules are expressed inline: liveness from
+    `tradeRegisterStatus`/`endDate` (never the constant `status` field), current
+    primary name = `type==1 & endDate null`, URL normalization, lowercased host.
+    """)
     return
 
 
@@ -244,15 +263,13 @@ def _(pl, ytj_ndjson):
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## 3. prh_xbrl XML → facts (inline lxml parser)
+    mo.md("""
+    ## 3. prh_xbrl XML → facts (inline lxml parser)
 
-        XML is not tabular, so this is a real parser (not Polars). Each fact is an
-        `fi_met:*` element whose financial-statement line item lives in the referenced
-        context as an `fi_dim:MCY` member; `fi_dim:REF` marks current vs prior period.
-        """
-    )
+    XML is not tabular, so this is a real parser (not Polars). Each fact is an
+    `fi_met:*` element whose financial-statement line item lives in the referenced
+    context as an `fi_dim:MCY` member; `fi_dim:REF` marks current vs prior period.
+    """)
     return
 
 
@@ -327,15 +344,13 @@ def _(etree, hashlib, pl, xbrl_statements):
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## 4. Build the canonical tables
+    mo.md("""
+    ## 4. Build the canonical tables
 
-        `company_uid` = `"c:" + sha1("FI:" + business_id)` (no LEI in YTJ open data);
-        `registration_uid` = `"FI:" + business_id`. We compute them once over the
-        unique business ids and join them in (Polars has no native sha1).
-        """
-    )
+    `company_uid` = `"c:" + sha1("FI:" + business_id)` (no LEI in YTJ open data);
+    `registration_uid` = `"FI:" + business_id`. We compute them once over the
+    unique business ids and join them in (Polars has no native sha1).
+    """)
     return
 
 
@@ -352,7 +367,17 @@ def _(hashlib, pl, statuses):
 
 
 @app.cell
-def _(NOW, RUN_ID, addresses_df, lines_df, names_df, pl, statuses, uid_map, websites_df):
+def _(
+    NOW,
+    RUN_ID,
+    addresses_df,
+    lines_df,
+    names_df,
+    pl,
+    statuses,
+    uid_map,
+    websites_df,
+):
     # one-per-company reductions
     _primary_name = (
         names_df.filter(pl.col("name_type_code") == "1")
@@ -518,7 +543,9 @@ def _(NOW, hashlib, pl, uid_map, websites_df):
 
 @app.cell
 def _(mo):
-    mo.md("## 5. Validate keys + write canonical Parquet")
+    mo.md("""
+    ## 5. Validate keys + write canonical Parquet
+    """)
     return
 
 

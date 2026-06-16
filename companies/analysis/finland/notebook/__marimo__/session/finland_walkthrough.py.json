@@ -1,0 +1,174 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.23.9",
+    "script_metadata_hash": null
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "767d3f791ac242634ca5700bc29f8aa6",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"finland-conformance-inline-walkthrough\">Finland conformance \u2014 inline walkthrough</h1>\n<span class=\"paragraph\">The <strong>whole pipeline in one place</strong>, with every step written out in cells \u2014\nno <code>conformance</code> package imports. Downloads a small live sample straight into\nmemory (the production notebook persists raw to S3 first), then:</span>\n<ol>\n<li><strong>prh_ytj JSONL \u2192 structured</strong> with native Polars</li>\n<li><strong>prh_xbrl XML \u2192 facts</strong> with an inline lxml parser</li>\n<li><strong>build the 4 canonical tables</strong> (<code>registrations</code>, <code>company</code>, <code>financials</code>, <code>company_websites</code>)</li>\n<li><strong>validate + write Parquet</strong></li>\n</ol>\n<span class=\"paragraph\">The other 4 canonical tables (<code>persons</code>, <code>company_people</code>, <code>company_contacts</code>,\n<code>company_relationships</code>) are <em>known-absent</em> in Finland open data.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "47d66ebaa284c80957d90bbc25ee2965",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "586810b63c08965e21f25b13ed4f9f9a",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "d2770dfa9e705705d3c9c4aa3992e021",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"1-download-a-bounded-live-sample-in-memory\">1. Download a bounded live sample (in-memory)</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "8792ea4f7b0920cd74376f8c9ff53b8c",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "application/json": "{\"ytj_bytes\": 544915, \"xbrl_statements\": 103}"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "PKri",
+      "code_hash": "ce827726ff4264ce6f4f7b13e544e63a",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"2-prh_ytj-jsonl-structured-native-polars\">2. prh_ytj JSONL \u2192 structured (native Polars)</h2>\n<span class=\"paragraph\"><code>pl.read_ndjson</code> reads the JSONL into nested struct/list columns; we reshape\nwith vectorized expressions. Domain rules are expressed inline: liveness from\n<code>tradeRegisterStatus</code>/<code>endDate</code> (never the constant <code>status</code> field), current\nprimary name = <code>type==1 &amp; endDate null</code>, URL normalization, lowercased host.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Xref",
+      "code_hash": "b002155e19079b17427c11e4c873ef5d",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "bf01b577b315908f4102549bc89a985d",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"3-prh_xbrl-xml-facts-inline-lxml-parser\">3. prh_xbrl XML \u2192 facts (inline lxml parser)</h2>\n<span class=\"paragraph\">XML is not tabular, so this is a real parser (not Polars). Each fact is an\n<code>fi_met:*</code> element whose financial-statement line item lives in the referenced\ncontext as an <code>fi_dim:MCY</code> member; <code>fi_dim:REF</code> marks current vs prior period.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "d4bdf0491322ac10b5e2686bd248ad76",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "77d4583f8b990ad7e8af502e10364d9e",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"4-build-the-canonical-tables\">4. Build the canonical tables</h2>\n<span class=\"paragraph\"><code>company_uid</code> = <code>\"c:\" + sha1(\"FI:\" + business_id)</code> (no LEI in YTJ open data);\n<code>registration_uid</code> = <code>\"FI:\" + business_id</code>. We compute them once over the\nunique business ids and join them in (Polars has no native sha1).</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Kclp",
+      "code_hash": "a67248e3b6cde443c6a926b9d4805129",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "emfo",
+      "code_hash": "7f0c5ee2b39d73d09c4fc55b73278735",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "Hstk",
+      "code_hash": "3f491ec879af74ca1bd40b837f4fda99",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "nWHF",
+      "code_hash": "33daef92699fce12f056121c15bfb3d4",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "iLit",
+      "code_hash": "417b134010d0417e973c3f92e48b5c82",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "ZHCJ",
+      "code_hash": "6bcca4ff7b190337c887de1fef987621",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"5-validate-keys-write-canonical-parquet\">5. Validate keys + write canonical Parquet</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ROlb",
+      "code_hash": "d280e7256b3a1a7c569b478143c4e61f",
+      "outputs": [],
+      "console": []
+    }
+  ]
+}
