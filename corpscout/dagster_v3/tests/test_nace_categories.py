@@ -8,10 +8,10 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.definitions import defs as load_project_defs
+from dagster_v3.defs.nace import assets as nace_assets
 from dagster_v3.defs.nace import source as nace_source
 from dagster_v3.defs.nace import tables
 from dagster_v3.defs.nace.clickhouse import prepare_nace_categories_table
-from dagster_v3.defs.nace.assets import NaceDltTranslator
 from dagster_v3.defs.nace.source import NaceScheme, build_nace_rows, normalize_nace_code
 
 
@@ -29,8 +29,11 @@ def test_dagster_clickhouse_resource_dependency_is_available() -> None:
 
 def test_nace_source_constants_define_official_versions() -> None:
     assert nace_source.SPARQL_ENDPOINT == "https://publications.europa.eu/webapi/rdf/sparql"
+    assert nace_source.NACE_DLT_PIPELINE_NAME == "nace_reference_categories"
     assert nace_source.NACE_CATEGORIES_DLT_TABLE == "nace_categories"
-    assert nace_source.NACE_DLT_DATASET_NAME == "reference"
+    assert nace_source.NACE_DLT_DATASET_NAME is None
+    assert nace_source.DEFAULT_CLICKHOUSE_NATIVE_PORT == 9002
+    assert nace_source.DEFAULT_CLICKHOUSE_HTTP_PORT == 8123
     assert nace_source.NACE_SCHEMES == (
         NaceScheme(
             "NACE_REV_2",
@@ -71,6 +74,8 @@ def test_nace_categories_clickhouse_schema_contract() -> None:
         "is_current",
         "source_run_id",
         "pulled_at",
+        "_dlt_load_id",
+        "_dlt_id",
     )
     assert "CREATE TABLE IF NOT EXISTS reference.nace_categories" in tables.NACE_CATEGORIES_DDL
     assert "ORDER BY (classification_version, normalized_code)" in tables.NACE_CATEGORIES_DDL
@@ -163,11 +168,32 @@ def test_nace_http_client_uses_dlt_retry_client() -> None:
     assert client._retry_kwargs["max_delay"] == 120.0
 
 
-def test_nace_clickhouse_pipeline_targets_reference_dataset() -> None:
+def test_nace_clickhouse_destination_credentials_use_native_port_and_reference_database(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CLICKHOUSE_HOST", "companycollect")
+    monkeypatch.setenv("CLICKHOUSE_PORT", "8123")
+    monkeypatch.setenv("CLICKHOUSE_NATIVE_PORT", "9002")
+    monkeypatch.setenv("CLICKHOUSE_USER", "default")
+    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "password123")
+    monkeypatch.setenv("CLICKHOUSE_SECURE", "false")
+
+    credentials = nace_source.clickhouse_destination_credentials_from_env()
+
+    assert credentials["host"] == "companycollect"
+    assert credentials["port"] == 9002
+    assert credentials["http_port"] == 8123
+    assert credentials["username"] == "default"
+    assert credentials["password"] == "password123"
+    assert credentials["database"] == "reference"
+    assert credentials["secure"] == 0
+
+
+def test_nace_clickhouse_pipeline_targets_reference_database_without_dataset_prefix() -> None:
     pipeline = nace_source.nace_clickhouse_pipeline()
 
-    assert pipeline.pipeline_name == "nace_categories"
-    assert pipeline.dataset_name == "reference"
+    assert pipeline.pipeline_name == "nace_reference_categories"
+    assert pipeline.dataset_name is None
     assert pipeline.dev_mode is False
     assert pipeline.destination.destination_name == "clickhouse"
 
@@ -184,7 +210,7 @@ def test_nace_dlt_translator_maps_asset_contract() -> None:
         },
     )()
 
-    spec = NaceDltTranslator().get_asset_spec(data)
+    spec = nace_assets.NaceDltTranslator().get_asset_spec(data)
 
     assert spec.key == dg.AssetKey("nace_categories")
     assert spec.group_name == "nace"
@@ -204,6 +230,16 @@ def test_nace_categories_asset_is_registered_as_dlt_clickhouse_asset() -> None:
         repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
         is ClickhouseResource
     )
+
+
+def test_nace_clickhouse_resource_uses_native_driver_port(monkeypatch) -> None:
+    monkeypatch.setenv("CLICKHOUSE_NATIVE_PORT", "9002")
+    monkeypatch.setenv("CLICKHOUSE_SECURE", "false")
+
+    resource = nace_assets.clickhouse_resource_from_env()
+
+    assert resource.port == 9002
+    assert resource.secure is False
 
 
 def test_nace_rows_support_materialization_metadata_counts() -> None:

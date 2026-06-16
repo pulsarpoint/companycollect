@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -13,13 +14,18 @@ from dlt.extract.resource import DltResource
 from dlt.pipeline.pipeline import Pipeline
 from dlt.sources.helpers.requests import Client as DltRequestsClient
 
+from dagster_v3.defs.nace import tables
+
 SPARQL_ENDPOINT = "https://publications.europa.eu/webapi/rdf/sparql"
+NACE_DLT_PIPELINE_NAME = "nace_reference_categories"
 NACE_CATEGORIES_DLT_TABLE = "nace_categories"
-NACE_DLT_DATASET_NAME = "reference"
+NACE_DLT_DATASET_NAME: str | None = None
 NACE_TIMEOUT_SECONDS = 120
 NACE_REQUEST_MAX_ATTEMPTS = 5
 NACE_RETRY_INITIAL_DELAY_SECONDS = 10.0
 NACE_RETRY_MAX_DELAY_SECONDS = 120.0
+DEFAULT_CLICKHOUSE_NATIVE_PORT = 9002
+DEFAULT_CLICKHOUSE_HTTP_PORT = 8123
 
 
 @dataclass(frozen=True)
@@ -203,13 +209,42 @@ def _nace_categories_resource(
         )
 
 
-def nace_clickhouse_pipeline() -> Pipeline:
+def nace_clickhouse_pipeline(credentials: dict[str, Any] | None = None) -> Pipeline:
     return dlt.pipeline(
-        pipeline_name="nace_categories",
-        destination=dlt.destinations.clickhouse(),
+        pipeline_name=NACE_DLT_PIPELINE_NAME,
+        destination=dlt.destinations.clickhouse(
+            credentials=credentials or clickhouse_destination_credentials_from_env()
+        ),
         dataset_name=NACE_DLT_DATASET_NAME,
         dev_mode=False,
     )
+
+
+def clickhouse_destination_credentials_from_env() -> dict[str, Any]:
+    return {
+        "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
+        "port": _int_env("CLICKHOUSE_NATIVE_PORT", DEFAULT_CLICKHOUSE_NATIVE_PORT),
+        "http_port": _int_env(
+            "CLICKHOUSE_HTTP_PORT",
+            _int_env("CLICKHOUSE_PORT", DEFAULT_CLICKHOUSE_HTTP_PORT),
+        ),
+        "username": os.getenv("CLICKHOUSE_USER", "default"),
+        "password": os.getenv("CLICKHOUSE_PASSWORD") or None,
+        "database": tables.NACE_DATABASE,
+        "secure": 1 if _bool_env("CLICKHOUSE_SECURE", False) else 0,
+    }
+
+
+def _int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    return default if value is None or value.strip() == "" else int(value)
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _utc_now_iso() -> str:

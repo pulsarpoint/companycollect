@@ -20,6 +20,8 @@ NACE_CATEGORIES_COLUMNS = (
     "is_current",
     "source_run_id",
     "pulled_at",
+    "_dlt_load_id",
+    "_dlt_id",
 )
 
 NACE_CATEGORIES_DDL = f"""
@@ -41,7 +43,9 @@ CREATE TABLE IF NOT EXISTS {QUALIFIED_NACE_CATEGORIES_TABLE}
     valid_to Nullable(Date),
     is_current UInt8,
     source_run_id String,
-    pulled_at DateTime64(3, 'UTC')
+    pulled_at DateTime64(3, 'UTC'),
+    _dlt_load_id String,
+    _dlt_id String
 )
 ENGINE = MergeTree
 ORDER BY (classification_version, normalized_code)
