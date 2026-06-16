@@ -4,7 +4,7 @@
 
 Add a shared Dagster section for NACE category reference data. This section is independent from Finland YTJ and XBRL assets because the NACE list should be reusable by many company sources and countries.
 
-The first implementation should pull official NACE classification data, process it into a stable analytical table, and make it available for later company-to-industry mapping. ClickHouse loading is in scope after the DuckDB table shape is verified.
+The first implementation should pull official NACE classification data, process it into a stable analytical table, and make it available for later company-to-industry mapping. NACE is small shared reference data, so it should load directly from dlt to ClickHouse instead of creating a staging DuckDB asset.
 
 ## Source
 
@@ -26,7 +26,7 @@ Initial asset:
 
 `nace_categories`
 
-This is a DuckDB-backed reference table containing both NACE Rev. 2 and NACE Rev. 2.1 when the source format supports both. If the selected official endpoint requires separate pulls, each revision can be pulled separately and loaded into the same normalized table.
+This is a ClickHouse-backed reference table containing both NACE Rev. 2 and NACE Rev. 2.1. The asset should ensure the ClickHouse database/table exists, truncate the table, then run a dlt pipeline that appends the current official snapshot into the canonical table. If the selected official endpoint requires separate pulls, each revision can be pulled separately and loaded into the same normalized table.
 
 Expected columns:
 
@@ -37,35 +37,46 @@ Expected columns:
 - `level`: hierarchy level such as section, division, group, or class
 - `section_code`: top-level section code
 - `description_en`: English category description
+- `concept_uri`: official concept URI
+- `parent_concept_uri`: official parent concept URI when available
+- `source_scheme_uri`: official scheme URI
 - `valid_from`: first date this classification version should be used
 - `valid_to`: nullable end date
+- `is_current`: current-version flag
 - `source_url`: URL used to pull the record
 - `source_payload_hash`: hash of the source payload used for change detection
+- `source_run_id`: Dagster run id
 - `pulled_at`: UTC timestamp of the load
 
 Optional columns can be added if they are directly available from the source without extra inference, such as multilingual labels or explanatory notes.
 
 ## Data Flow
 
-The source fetch step downloads the official classification payloads and records source URLs and payload hashes. The transform step parses the payloads into a canonical NACE table with stable column names and explicit versioning. The load step writes the result into the local DuckDB database used by `dagster_v3`.
+The source fetch step downloads the official classification payloads and records source URLs and payload hashes. The transform step parses the payloads into a canonical NACE table with stable column names and explicit versioning. The load step writes the result directly to ClickHouse through dlt.
 
 Later source-specific company assets should join their raw activity codes against `nace_categories` using `classification_version` and `normalized_code`. For Finland YTJ, the raw code set must still be stored because Finnish registry data may expose national TOL / TOIMI codes that are NACE-compatible but not always identical in naming or versioning.
 
 ## ClickHouse
 
-After the DuckDB shape is verified, add a ClickHouse asset that loads the same canonical table into ClickHouse. The ClickHouse asset should depend on `nace_categories` and should not re-fetch Eurostat data.
-
-Suggested ClickHouse table:
+The `nace_categories` asset owns this ClickHouse table:
 
 `reference.nace_categories`
 
 The ClickHouse schema should keep `classification_version` and `normalized_code` as first-class join keys.
 
+The asset should run idempotent DDL before loading:
+
+- `CREATE DATABASE IF NOT EXISTS reference`
+- `CREATE TABLE IF NOT EXISTS reference.nace_categories (...)`
+- `TRUNCATE TABLE reference.nace_categories`
+
+Use dlt `write_disposition="append"` after truncation so ClickHouse DDL remains the schema contract and the table still represents the latest official snapshot.
+
 ## Automation
 
 This dataset changes slowly. In production, schedule it weekly or monthly. For the local dev spike, no schedule is required until the asset is verified.
 
-If scheduled later, the schedule should materialize only the NACE reference asset and its ClickHouse export, not the Finland YTJ or XBRL assets.
+If scheduled later, the schedule should materialize only the NACE reference asset, not the Finland YTJ or XBRL assets.
 
 ## Error Handling And Observability
 
