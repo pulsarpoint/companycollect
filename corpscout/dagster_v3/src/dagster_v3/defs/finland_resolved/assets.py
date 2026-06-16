@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 
 import dagster as dg
@@ -17,6 +18,7 @@ from dagster_v3.defs.nace import assets as nace_assets
 RESOLVED_DUCKDB_SCHEMA = "finland_resolved"
 YTJ_DUCKDB_SCHEMA = "finland_prhytj"
 YTJ_ALL_COMPANIES_TABLE = "all_companies"
+DEFAULT_CLICKHOUSE_NATIVE_PORT = 9002
 
 
 def build_finland_ytj_resolved_tables(
@@ -93,15 +95,27 @@ def finland_ytj_resolved_clickhouse(
     )
 
 
-defs = dg.Definitions(
-    assets=[
-        finland_ytj_resolved_duckdb,
-        finland_ytj_resolved_clickhouse,
-    ],
-    resources={
-        "clickhouse": nace_assets.defs.resources["clickhouse"],
-    },
-)
+def clickhouse_resource_from_env() -> ClickhouseResource:
+    return ClickhouseResource(
+        host=dg.EnvVar("CLICKHOUSE_HOST"),
+        port=_int_env("CLICKHOUSE_NATIVE_PORT", DEFAULT_CLICKHOUSE_NATIVE_PORT),
+        user=dg.EnvVar("CLICKHOUSE_USER"),
+        password=dg.EnvVar("CLICKHOUSE_PASSWORD"),
+        database=dg.EnvVar("CLICKHOUSE_DATABASE"),
+        secure=_bool_env("CLICKHOUSE_SECURE", False),
+    )
+
+
+def _int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    return default if value is None or value.strip() == "" else int(value)
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _fi_companies_sql() -> str:
@@ -274,3 +288,18 @@ def _business_line_language(language_code: object) -> str | None:
         "2": "sv",
         "3": "en",
     }.get(str(language_code))
+
+
+_CLICKHOUSE_RESOURCE = clickhouse_resource_from_env()
+nace_assets.defs.resources["clickhouse"] = _CLICKHOUSE_RESOURCE
+
+
+defs = dg.Definitions(
+    assets=[
+        finland_ytj_resolved_duckdb,
+        finland_ytj_resolved_clickhouse,
+    ],
+    resources={
+        "clickhouse": _CLICKHOUSE_RESOURCE,
+    },
+)

@@ -1,9 +1,11 @@
 import json
 
 import duckdb
+from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.clickhouse.resolved import RESOLVED_DATABASE
+from dagster_v3.defs.finland_resolved import assets as finland_resolved_assets
 from dagster_v3.defs.finland_resolved.assets import build_finland_ytj_resolved_tables
 from dagster_v3.defs.finland_resolved import tables
 from dagster_v3.defs.finland_ytj.resources import LocalDuckDBResource
@@ -294,6 +296,21 @@ def test_build_finland_ytj_resolved_tables_normalizes_realistic_main_business_li
 def test_finland_resolved_clickhouse_asset_is_registered() -> None:
     repository = load_project_defs().get_repository_def()
     asset_keys = {key.path[-1] for key in repository.asset_graph.get_all_asset_keys()}
+    resource_keys = repository.get_top_level_resources().keys()
 
     assert "finland_ytj_resolved_duckdb" in asset_keys
     assert "finland_ytj_resolved_clickhouse" in asset_keys
+    assert "clickhouse" in resource_keys
+    assert (
+        repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
+        is ClickhouseResource
+    )
+
+
+def test_finland_resolved_clickhouse_resource_defaults_native_port(monkeypatch) -> None:
+    monkeypatch.delenv("CLICKHOUSE_NATIVE_PORT", raising=False)
+
+    resource = finland_resolved_assets.clickhouse_resource_from_env()
+
+    assert resource.port == 9002
+    assert resource.secure is False

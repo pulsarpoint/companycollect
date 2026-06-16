@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -56,11 +58,6 @@ def export_duckdb_table_to_clickhouse(
     columns: Sequence[str],
     truncate: bool,
 ) -> int:
-    if truncate:
-        clickhouse_client.execute(
-            f"TRUNCATE TABLE {_quote_clickhouse_identifier(clickhouse_database)}.{_quote_clickhouse_identifier(clickhouse_table)}"
-        )
-
     duckdb_columns = ", ".join(_quote_duckdb_identifier(column) for column in columns)
     duckdb_qualified_table = (
         f"{_quote_duckdb_identifier(duckdb_schema)}.{_quote_duckdb_identifier(duckdb_table)}"
@@ -74,13 +71,38 @@ def export_duckdb_table_to_clickhouse(
         return 0
 
     clickhouse_columns = ", ".join(_quote_clickhouse_identifier(column) for column in columns)
-    clickhouse_client.execute(
-        (
-            f"INSERT INTO {_quote_clickhouse_identifier(clickhouse_database)}."
-            f"{_quote_clickhouse_identifier(clickhouse_table)} ({clickhouse_columns}) VALUES"
-        ),
-        rows,
+    clickhouse_qualified_table = (
+        f"{_quote_clickhouse_identifier(clickhouse_database)}."
+        f"{_quote_clickhouse_identifier(clickhouse_table)}"
     )
+    if not truncate:
+        clickhouse_client.execute(
+            f"INSERT INTO {clickhouse_qualified_table} ({clickhouse_columns}) VALUES",
+            rows,
+        )
+        return len(rows)
+
+    clickhouse_stage_table = f"_tmp_{clickhouse_table}_{uuid.uuid4().hex}"
+    clickhouse_qualified_stage_table = (
+        f"{_quote_clickhouse_identifier(clickhouse_database)}."
+        f"{_quote_clickhouse_identifier(clickhouse_stage_table)}"
+    )
+    clickhouse_client.execute(
+        f"CREATE TABLE {clickhouse_qualified_stage_table} AS {clickhouse_qualified_table}"
+    )
+    try:
+        clickhouse_client.execute(
+            f"INSERT INTO {clickhouse_qualified_stage_table} ({clickhouse_columns}) VALUES",
+            rows,
+        )
+        clickhouse_client.execute(
+            f"EXCHANGE TABLES {clickhouse_qualified_stage_table} AND {clickhouse_qualified_table}"
+        )
+    finally:
+        with suppress(Exception):
+            clickhouse_client.execute(
+                f"DROP TABLE IF EXISTS {clickhouse_qualified_stage_table}"
+            )
     return len(rows)
 
 

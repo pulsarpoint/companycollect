@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import duckdb
 from dagster_clickhouse import ClickhouseResource
 
+from dagster_v3.defs.clickhouse import resolved as clickhouse_resolved
 from dagster_v3.defs.clickhouse.resolved import (
     REQUIRED_FINLAND_RESOLVED_TABLES,
     assert_clickhouse_tables_exist,
@@ -112,15 +113,185 @@ def test_export_duckdb_table_to_clickhouse_inserts_rows_in_column_order(tmp_path
         clickhouse_database="corpscout_resolved",
         clickhouse_table="fi_companies",
         columns=("business_id", "country_iso2", "source_system"),
-        truncate=True,
+        truncate=False,
     )
 
     assert row_count == 1
-    assert client.statements == ["TRUNCATE TABLE `corpscout_resolved`.`fi_companies`"]
+    assert client.statements == []
     assert client.insert_calls == [
         (
             "INSERT INTO `corpscout_resolved`.`fi_companies` (`business_id`, `country_iso2`, `source_system`) VALUES",
             [("1234567-8", "FI", "finland_prhytj")],
+        )
+    ]
+
+
+def test_export_duckdb_table_to_clickhouse_uses_stage_then_exchange_for_truncate(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar,
+                source_system varchar
+            )
+            """
+        )
+        connection.execute(
+            "insert into finland_resolved.fi_companies values ('1234567-8', 'finland_prhytj')"
+        )
+
+    monkeypatch.setattr(
+        clickhouse_resolved.uuid,
+        "uuid4",
+        lambda: type("U", (), {"hex": "deadbeef"})(),
+    )
+    client = FakeInsertClickHouseClient()
+
+    row_count = export_duckdb_table_to_clickhouse(
+        duckdb_path=database_path,
+        clickhouse_client=client,
+        duckdb_schema="finland_resolved",
+        duckdb_table="fi_companies",
+        clickhouse_database="corpscout_resolved",
+        clickhouse_table="fi_companies",
+        columns=("business_id", "source_system"),
+        truncate=True,
+    )
+
+    assert row_count == 1
+    assert client.statements == [
+        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_deadbeef` AS `corpscout_resolved`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_deadbeef` AND `corpscout_resolved`.`fi_companies`",
+        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_deadbeef`",
+    ]
+    assert client.insert_calls == [
+        (
+            "INSERT INTO `corpscout_resolved`.`_tmp_fi_companies_deadbeef` (`business_id`, `source_system`) VALUES",
+            [("1234567-8", "finland_prhytj")],
+        )
+    ]
+
+
+def test_export_duckdb_table_to_clickhouse_returns_zero_for_empty_table(tmp_path) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar,
+                source_system varchar
+            )
+            """
+        )
+
+    client = FakeInsertClickHouseClient()
+
+    row_count = export_duckdb_table_to_clickhouse(
+        duckdb_path=database_path,
+        clickhouse_client=client,
+        duckdb_schema="finland_resolved",
+        duckdb_table="fi_companies",
+        clickhouse_database="corpscout_resolved",
+        clickhouse_table="fi_companies",
+        columns=("business_id", "source_system"),
+        truncate=True,
+    )
+
+    assert row_count == 0
+    assert client.statements == []
+    assert client.insert_calls == []
+
+
+def test_export_duckdb_table_to_clickhouse_escapes_identifiers(tmp_path) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute('create schema "schema""name"')
+        connection.execute(
+            '''
+            create table "schema""name"."table""name" (
+                "column""name" varchar
+            )
+            '''
+        )
+        connection.execute(
+            '''
+            insert into "schema""name"."table""name" values ('value')
+            '''
+        )
+
+    client = FakeInsertClickHouseClient()
+
+    row_count = export_duckdb_table_to_clickhouse(
+        duckdb_path=database_path,
+        clickhouse_client=client,
+        duckdb_schema='schema"name',
+        duckdb_table='table"name',
+        clickhouse_database="corp`scout",
+        clickhouse_table="fi`companies",
+        columns=('column"name',),
+        truncate=False,
+    )
+
+    assert row_count == 1
+    assert client.insert_calls == [
+        (
+            "INSERT INTO `corp``scout`.`fi``companies` (`column\"name`) VALUES",
+            [("value",)],
+        )
+    ]
+
+
+def test_export_duckdb_table_to_clickhouse_cleanup_attempts_drop_on_insert_failure(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar
+            )
+            """
+        )
+        connection.execute("insert into finland_resolved.fi_companies values ('1234567-8')")
+
+    monkeypatch.setattr(
+        clickhouse_resolved.uuid,
+        "uuid4",
+        lambda: type("U", (), {"hex": "deadbeef"})(),
+    )
+    client = FailingInsertClickHouseClient()
+
+    try:
+        export_duckdb_table_to_clickhouse(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema="finland_resolved",
+            duckdb_table="fi_companies",
+            clickhouse_database="corpscout_resolved",
+            clickhouse_table="fi_companies",
+            columns=("business_id",),
+            truncate=True,
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "insert failed"
+    else:
+        raise AssertionError("expected insert failure")
+
+    assert client.statements == [
+        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_deadbeef` AS `corpscout_resolved`.`fi_companies`",
+        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_deadbeef`",
+    ]
+    assert client.insert_calls == [
+        (
+            "INSERT INTO `corpscout_resolved`.`_tmp_fi_companies_deadbeef` (`business_id`) VALUES",
+            [("1234567-8",)],
         )
     ]
 
@@ -138,3 +309,11 @@ class FakeInsertClickHouseClient(FakeClickHouseClient):
             return []
         self.statements.append(sql)
         return []
+
+
+class FailingInsertClickHouseClient(FakeInsertClickHouseClient):
+    def execute(self, sql: str, params: object | None = None) -> list[tuple[str]]:
+        if sql.startswith("INSERT INTO"):
+            super().execute(sql, params)
+            raise RuntimeError("insert failed")
+        return super().execute(sql, params)
