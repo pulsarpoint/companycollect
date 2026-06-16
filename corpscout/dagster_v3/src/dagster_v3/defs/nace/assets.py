@@ -1,5 +1,4 @@
 from collections.abc import Iterator
-import os
 from typing import Any
 
 import dagster as dg
@@ -8,10 +7,10 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
+from dagster_v3.defs.clickhouse.resources import clickhouse_resource_from_env
 from dagster_v3.defs.nace.clickhouse import prepare_nace_categories_table
 from dagster_v3.defs.nace.source import (
     NACE_CATEGORIES_DLT_TABLE,
-    DEFAULT_CLICKHOUSE_NATIVE_PORT,
     nace_categories_source,
     nace_clickhouse_pipeline,
 )
@@ -55,32 +54,8 @@ def nace_categories_asset(
     )
 
 
-def clickhouse_resource_from_env() -> ClickhouseResource:
-    return ClickhouseResource(
-        host=dg.EnvVar("CLICKHOUSE_HOST"),
-        port=_int_env("CLICKHOUSE_NATIVE_PORT", DEFAULT_CLICKHOUSE_NATIVE_PORT),
-        user=dg.EnvVar("CLICKHOUSE_USER"),
-        password=dg.EnvVar("CLICKHOUSE_PASSWORD"),
-        database=dg.EnvVar("CLICKHOUSE_DATABASE"),
-        secure=_bool_env("CLICKHOUSE_SECURE", False),
+@dg.definitions
+def defs() -> dg.Definitions:
+    return dg.Definitions(
+        assets=[nace_categories_asset],
     )
-
-
-def _int_env(name: str, default: int) -> int:
-    value = os.getenv(name)
-    return default if value is None or value.strip() == "" else int(value)
-
-
-def _bool_env(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None or value.strip() == "":
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-defs = dg.Definitions(
-    assets=[nace_categories_asset],
-    resources={
-        "clickhouse": clickhouse_resource_from_env(),
-    },
-)
