@@ -127,6 +127,53 @@ def test_export_duckdb_table_to_clickhouse_inserts_rows_in_column_order(tmp_path
     ]
 
 
+def test_export_duckdb_table_to_clickhouse_inserts_rows_in_batches(tmp_path) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into finland_resolved.fi_companies values
+              ('1000001-1'),
+              ('1000002-2'),
+              ('1000003-3')
+            """
+        )
+
+    client = FakeInsertClickHouseClient()
+
+    row_count = export_duckdb_table_to_clickhouse(
+        duckdb_path=database_path,
+        clickhouse_client=client,
+        duckdb_schema="finland_resolved",
+        duckdb_table="fi_companies",
+        clickhouse_database="corpscout_resolved",
+        clickhouse_table="fi_companies",
+        columns=("business_id",),
+        truncate=False,
+        batch_size=2,
+    )
+
+    assert row_count == 3
+    assert client.insert_calls == [
+        (
+            "INSERT INTO `corpscout_resolved`.`fi_companies` (`business_id`) VALUES",
+            [("1000001-1",), ("1000002-2",)],
+        ),
+        (
+            "INSERT INTO `corpscout_resolved`.`fi_companies` (`business_id`) VALUES",
+            [("1000003-3",)],
+        ),
+    ]
+
+
 def test_export_duckdb_table_to_clickhouse_uses_stage_then_exchange_for_truncate(
     tmp_path, monkeypatch
 ) -> None:
@@ -429,6 +476,90 @@ def test_replace_duckdb_tables_in_clickhouse_rolls_back_on_exchange_failure(
         (
             "INSERT INTO `corpscout_resolved`.`_tmp_fi_websites_second` (`business_id`) VALUES",
             [("1234567-8",)],
+        ),
+    ]
+
+
+def test_replace_duckdb_tables_in_clickhouse_loads_stages_in_batches(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table finland_resolved.fi_websites (
+                business_id varchar
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into finland_resolved.fi_companies values
+              ('1000001-1'),
+              ('1000002-2'),
+              ('1000003-3')
+            """
+        )
+        connection.execute(
+            """
+            insert into finland_resolved.fi_websites values
+              ('2000001-1'),
+              ('2000002-2')
+            """
+        )
+
+    stage_names = iter(["first", "second"])
+    monkeypatch.setattr(
+        clickhouse_resolved.uuid,
+        "uuid4",
+        lambda: type("U", (), {"hex": next(stage_names)})(),
+    )
+    client = FakeInsertClickHouseClient()
+
+    row_counts = replace_duckdb_tables_in_clickhouse(
+        duckdb_path=database_path,
+        clickhouse_client=client,
+        duckdb_schema="finland_resolved",
+        clickhouse_database="corpscout_resolved",
+        tables=(
+            ("fi_companies", ("business_id",)),
+            ("fi_websites", ("business_id",)),
+        ),
+        batch_size=2,
+    )
+
+    assert row_counts == {
+        "fi_companies": 3,
+        "fi_websites": 2,
+    }
+    assert client.statements == [
+        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_first` AS `corpscout_resolved`.`fi_companies`",
+        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_websites_second` AS `corpscout_resolved`.`fi_websites`",
+        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_first` AND `corpscout_resolved`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_websites_second` AND `corpscout_resolved`.`fi_websites`",
+        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_websites_second`",
+        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_first`",
+    ]
+    assert client.insert_calls == [
+        (
+            "INSERT INTO `corpscout_resolved`.`_tmp_fi_companies_first` (`business_id`) VALUES",
+            [("1000001-1",), ("1000002-2",)],
+        ),
+        (
+            "INSERT INTO `corpscout_resolved`.`_tmp_fi_companies_first` (`business_id`) VALUES",
+            [("1000003-3",)],
+        ),
+        (
+            "INSERT INTO `corpscout_resolved`.`_tmp_fi_websites_second` (`business_id`) VALUES",
+            [("2000001-1",), ("2000002-2",)],
         ),
     ]
 
