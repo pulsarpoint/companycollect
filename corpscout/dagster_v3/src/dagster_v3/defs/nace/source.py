@@ -15,7 +15,7 @@ class NaceScheme:
 
 def normalize_nace_code(code: str) -> str:
     stripped = code.strip()
-    return stripped if stripped.isalpha() else stripped.replace(".", "")
+    return stripped if stripped.isalpha() else "".join(char for char in stripped if char.isalnum())
 
 
 def nace_level(code: str) -> str:

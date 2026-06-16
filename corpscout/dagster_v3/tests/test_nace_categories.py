@@ -108,6 +108,8 @@ def test_normalize_nace_code_preserves_sections_and_strips_numeric_punctuation()
     assert normalize_nace_code("01") == "01"
     assert normalize_nace_code("01.1") == "011"
     assert normalize_nace_code("01.11") == "0111"
+    assert normalize_nace_code("01-11") == "0111"
+    assert normalize_nace_code("01/11") == "0111"
 
 
 def test_build_nace_rows_preserves_hierarchy_and_versions() -> None:
