@@ -67,7 +67,7 @@ def export_duckdb_table_to_clickhouse(
             f"select {duckdb_columns} from {duckdb_qualified_table}"
         ).fetchall()
 
-    if not rows:
+    if not rows and not truncate:
         return 0
 
     clickhouse_columns = ", ".join(_quote_clickhouse_identifier(column) for column in columns)
@@ -82,19 +82,20 @@ def export_duckdb_table_to_clickhouse(
         )
         return len(rows)
 
-    clickhouse_stage_table = f"_tmp_{clickhouse_table}_{uuid.uuid4().hex}"
-    clickhouse_qualified_stage_table = (
-        f"{_quote_clickhouse_identifier(clickhouse_database)}."
-        f"{_quote_clickhouse_identifier(clickhouse_stage_table)}"
+    clickhouse_stage_table = _clickhouse_stage_table_name(clickhouse_table)
+    clickhouse_qualified_stage_table = _quote_clickhouse_qualified_table(
+        clickhouse_database,
+        clickhouse_stage_table,
     )
     clickhouse_client.execute(
         f"CREATE TABLE {clickhouse_qualified_stage_table} AS {clickhouse_qualified_table}"
     )
     try:
-        clickhouse_client.execute(
-            f"INSERT INTO {clickhouse_qualified_stage_table} ({clickhouse_columns}) VALUES",
-            rows,
-        )
+        if rows:
+            clickhouse_client.execute(
+                f"INSERT INTO {clickhouse_qualified_stage_table} ({clickhouse_columns}) VALUES",
+                rows,
+            )
         clickhouse_client.execute(
             f"EXCHANGE TABLES {clickhouse_qualified_stage_table} AND {clickhouse_qualified_table}"
         )
@@ -106,6 +107,91 @@ def export_duckdb_table_to_clickhouse(
     return len(rows)
 
 
+def replace_duckdb_tables_in_clickhouse(
+    *,
+    duckdb_path: str | Path,
+    clickhouse_client: Any,
+    duckdb_schema: str,
+    clickhouse_database: str,
+    tables: Sequence[tuple[str, Sequence[str]]],
+) -> dict[str, int]:
+    duckdb_path = Path(duckdb_path)
+    requested_tables = tuple(tables)
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        exports = [
+            (
+                clickhouse_table,
+                tuple(columns),
+                connection.execute(
+                    "select "
+                    + ", ".join(_quote_duckdb_identifier(column) for column in columns)
+                    + " from "
+                    + f"{_quote_duckdb_identifier(duckdb_schema)}."
+                    + f"{_quote_duckdb_identifier(clickhouse_table)}"
+                ).fetchall(),
+            )
+            for clickhouse_table, columns in requested_tables
+        ]
+
+    clickhouse_columns_by_table = {
+        clickhouse_table: ", ".join(_quote_clickhouse_identifier(column) for column in columns)
+        for clickhouse_table, columns, _ in exports
+    }
+    clickhouse_qualified_tables = {
+        clickhouse_table: _quote_clickhouse_qualified_table(clickhouse_database, clickhouse_table)
+        for clickhouse_table, _, _ in exports
+    }
+    clickhouse_qualified_stage_tables: dict[str, str] = {}
+    created_stage_tables: list[str] = []
+    exchanged_tables: list[str] = []
+
+    try:
+        for clickhouse_table, _, _ in exports:
+            clickhouse_stage_table = _clickhouse_stage_table_name(clickhouse_table)
+            clickhouse_qualified_stage_table = _quote_clickhouse_qualified_table(
+                clickhouse_database,
+                clickhouse_stage_table,
+            )
+            clickhouse_qualified_stage_tables[clickhouse_table] = clickhouse_qualified_stage_table
+            created_stage_tables.append(clickhouse_table)
+            clickhouse_client.execute(
+                f"CREATE TABLE {clickhouse_qualified_stage_table} AS "
+                f"{clickhouse_qualified_tables[clickhouse_table]}"
+            )
+
+        for clickhouse_table, _, rows in exports:
+            if rows:
+                clickhouse_client.execute(
+                    "INSERT INTO "
+                    f"{clickhouse_qualified_stage_tables[clickhouse_table]} "
+                    f"({clickhouse_columns_by_table[clickhouse_table]}) VALUES",
+                    rows,
+                )
+
+        for clickhouse_table, _, _ in exports:
+            clickhouse_client.execute(
+                f"EXCHANGE TABLES {clickhouse_qualified_stage_tables[clickhouse_table]} "
+                f"AND {clickhouse_qualified_tables[clickhouse_table]}"
+            )
+            exchanged_tables.append(clickhouse_table)
+    except Exception:
+        for clickhouse_table in reversed(exchanged_tables):
+            with suppress(Exception):
+                clickhouse_client.execute(
+                    f"EXCHANGE TABLES {clickhouse_qualified_stage_tables[clickhouse_table]} "
+                    f"AND {clickhouse_qualified_tables[clickhouse_table]}"
+                )
+        raise
+    finally:
+        for clickhouse_table in reversed(created_stage_tables):
+            with suppress(Exception):
+                clickhouse_client.execute(
+                    f"DROP TABLE IF EXISTS {clickhouse_qualified_stage_tables[clickhouse_table]}"
+                )
+
+    return {clickhouse_table: len(rows) for clickhouse_table, _, rows in exports}
+
+
 def _quote_duckdb_identifier(identifier: str) -> str:
     escaped = identifier.replace('"', '""')
     return f'"{escaped}"'
@@ -114,3 +200,14 @@ def _quote_duckdb_identifier(identifier: str) -> str:
 def _quote_clickhouse_identifier(identifier: str) -> str:
     escaped = identifier.replace("`", "``")
     return f"`{escaped}`"
+
+
+def _quote_clickhouse_qualified_table(database: str, table: str) -> str:
+    return (
+        f"{_quote_clickhouse_identifier(database)}."
+        f"{_quote_clickhouse_identifier(table)}"
+    )
+
+
+def _clickhouse_stage_table_name(table: str) -> str:
+    return f"_tmp_{table}_{uuid.uuid4().hex}"

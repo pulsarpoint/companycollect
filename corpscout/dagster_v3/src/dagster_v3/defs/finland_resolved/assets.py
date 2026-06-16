@@ -6,7 +6,7 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
     assert_clickhouse_tables_exist,
-    export_duckdb_table_to_clickhouse,
+    replace_duckdb_tables_in_clickhouse,
 )
 from dagster_v3.defs.clickhouse.resources import (
     CLICKHOUSE_RESOURCE,
@@ -76,19 +76,19 @@ def finland_ytj_resolved_clickhouse(
         tables=tables.FINLAND_YTJ_RESOLVED_TABLES,
     )
     with clickhouse.get_connection() as client:
-        row_counts = {
-            table: export_duckdb_table_to_clickhouse(
-                duckdb_path=ytj_duckdb.path(),
-                clickhouse_client=client,
-                duckdb_schema=RESOLVED_DUCKDB_SCHEMA,
-                duckdb_table=table,
-                clickhouse_database=RESOLVED_DATABASE,
-                clickhouse_table=table,
-                columns=tables.RESOLVED_TABLE_COLUMNS[table],
-                truncate=True,
-            )
-            for table in tables.FINLAND_YTJ_RESOLVED_TABLES
-        }
+        row_counts = replace_duckdb_tables_in_clickhouse(
+            duckdb_path=ytj_duckdb.path(),
+            clickhouse_client=client,
+            duckdb_schema=RESOLVED_DUCKDB_SCHEMA,
+            clickhouse_database=RESOLVED_DATABASE,
+            tables=tuple(
+                (
+                    table,
+                    tables.RESOLVED_TABLE_COLUMNS[table],
+                )
+                for table in tables.FINLAND_YTJ_RESOLVED_TABLES
+            ),
+        )
     return dg.MaterializeResult(
         metadata={f"{table}_row_count": count for table, count in row_counts.items()}
     )
