@@ -1,0 +1,82 @@
+FI_COMPANIES_TABLE = "fi_companies"
+FI_WEBSITES_TABLE = "fi_websites"
+FI_INDUSTRIES_TABLE = "fi_industries"
+
+FINLAND_YTJ_RESOLVED_TABLES = (
+    FI_COMPANIES_TABLE,
+    FI_WEBSITES_TABLE,
+    FI_INDUSTRIES_TABLE,
+)
+
+AUDIT_COLUMNS = {
+    "source_system",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "resolved_at",
+}
+
+RESOLVED_TABLE_COLUMNS = {
+    FI_COMPANIES_TABLE: (
+        "business_id",
+        "country_iso2",
+        "name",
+        "name_normalized",
+        "registration_date",
+        "end_date",
+        "lifecycle_status",
+        "is_active",
+        "legal_form_code",
+        "legal_form_description_original",
+        "legal_form_description_language",
+        "legal_form_description_en",
+        "legal_form_description_translated_at",
+        "legal_form_description_translation_provider",
+        "legal_form_description_translation_model",
+        "primary_website_url",
+        "primary_website_host",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "resolved_at",
+    ),
+    FI_WEBSITES_TABLE: (
+        "business_id",
+        "website_url",
+        "website_normalized_url",
+        "website_host",
+        "website_path",
+        "registered_on",
+        "ended_on",
+        "is_current",
+        "is_primary",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "resolved_at",
+    ),
+    FI_INDUSTRIES_TABLE: (
+        "business_id",
+        "source_industry_code",
+        "source_industry_code_set",
+        "description_original",
+        "description_language",
+        "description_en",
+        "description_translated_at",
+        "description_translation_provider",
+        "description_translation_model",
+        "nace_revision",
+        "nace_code",
+        "nace_normalized_code",
+        "nace_mapping_method",
+        "nace_mapping_status",
+        "is_primary",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "resolved_at",
+    ),
+}
