@@ -7,10 +7,7 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
-from dagster_v3.defs.clickhouse.resources import (
-    CLICKHOUSE_RESOURCE,
-    clickhouse_resource_from_env,
-)
+from dagster_v3.defs.clickhouse.resources import clickhouse_resource_from_env
 from dagster_v3.defs.nace.clickhouse import prepare_nace_categories_table
 from dagster_v3.defs.nace.source import (
     NACE_CATEGORIES_DLT_TABLE,
@@ -57,9 +54,8 @@ def nace_categories_asset(
     )
 
 
-defs = dg.Definitions(
-    assets=[nace_categories_asset],
-    resources={
-        "clickhouse": CLICKHOUSE_RESOURCE,
-    },
-)
+@dg.definitions
+def defs() -> dg.Definitions:
+    return dg.Definitions(
+        assets=[nace_categories_asset],
+    )

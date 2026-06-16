@@ -307,10 +307,25 @@ def test_finland_resolved_clickhouse_asset_is_registered() -> None:
     )
 
 
-def test_finland_resolved_clickhouse_resource_defaults_native_port(monkeypatch) -> None:
-    monkeypatch.delenv("CLICKHOUSE_NATIVE_PORT", raising=False)
+def test_finland_resolved_clickhouse_resource_reads_non_default_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("CLICKHOUSE_NATIVE_PORT", "9440")
+    monkeypatch.setenv("CLICKHOUSE_SECURE", "yes")
 
     resource = finland_resolved_assets.clickhouse_resource_from_env()
 
-    assert resource.port == 9002
-    assert resource.secure is False
+    assert resource.port == 9440
+    assert resource.secure is True
+
+
+def test_finland_resolved_registered_clickhouse_resource_reads_env_at_definition_time(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CLICKHOUSE_NATIVE_PORT", "9440")
+    monkeypatch.setenv("CLICKHOUSE_SECURE", "yes")
+
+    repository = load_project_defs().get_repository_def()
+    resource = repository.get_top_level_resources()["clickhouse"].resource_fn.__self__
+
+    assert isinstance(resource, ClickhouseResource)
+    assert resource.port == 9440
+    assert resource.secure is True

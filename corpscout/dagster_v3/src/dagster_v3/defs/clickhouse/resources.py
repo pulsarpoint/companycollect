@@ -29,6 +29,3 @@ def _bool_env(name: str, default: bool) -> bool:
     if value is None or value.strip() == "":
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-CLICKHOUSE_RESOURCE = clickhouse_resource_from_env()

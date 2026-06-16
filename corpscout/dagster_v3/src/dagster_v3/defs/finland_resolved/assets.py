@@ -8,10 +8,7 @@ from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
     replace_duckdb_tables_in_clickhouse,
 )
-from dagster_v3.defs.clickhouse.resources import (
-    CLICKHOUSE_RESOURCE,
-    clickhouse_resource_from_env,
-)
+from dagster_v3.defs.clickhouse.resources import clickhouse_resource_from_env
 from dagster_v3.defs.finland_resolved import tables
 from dagster_v3.defs.finland_ytj.resources import LocalDuckDBResource
 
@@ -266,12 +263,11 @@ def _business_line_language(language_code: object) -> str | None:
     }.get(str(language_code))
 
 
-defs = dg.Definitions(
-    assets=[
-        finland_ytj_resolved_duckdb,
-        finland_ytj_resolved_clickhouse,
-    ],
-    resources={
-        "clickhouse": CLICKHOUSE_RESOURCE,
-    },
-)
+@dg.definitions
+def defs() -> dg.Definitions:
+    return dg.Definitions(
+        assets=[
+            finland_ytj_resolved_duckdb,
+            finland_ytj_resolved_clickhouse,
+        ],
+    )

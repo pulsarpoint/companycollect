@@ -232,14 +232,28 @@ def test_nace_categories_asset_is_registered_as_dlt_clickhouse_asset() -> None:
     )
 
 
-def test_nace_clickhouse_resource_uses_native_driver_port(monkeypatch) -> None:
-    monkeypatch.setenv("CLICKHOUSE_NATIVE_PORT", "9002")
-    monkeypatch.setenv("CLICKHOUSE_SECURE", "false")
+def test_nace_clickhouse_resource_reads_non_default_env_values(monkeypatch) -> None:
+    monkeypatch.setenv("CLICKHOUSE_NATIVE_PORT", "9440")
+    monkeypatch.setenv("CLICKHOUSE_SECURE", "on")
 
     resource = nace_assets.clickhouse_resource_from_env()
 
-    assert resource.port == 9002
-    assert resource.secure is False
+    assert resource.port == 9440
+    assert resource.secure is True
+
+
+def test_nace_registered_clickhouse_resource_reads_env_at_definition_time(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CLICKHOUSE_NATIVE_PORT", "9440")
+    monkeypatch.setenv("CLICKHOUSE_SECURE", "on")
+
+    repository = load_project_defs().get_repository_def()
+    resource = repository.get_top_level_resources()["clickhouse"].resource_fn.__self__
+
+    assert isinstance(resource, ClickhouseResource)
+    assert resource.port == 9440
+    assert resource.secure is True
 
 
 def test_nace_rows_support_materialization_metadata_counts() -> None:

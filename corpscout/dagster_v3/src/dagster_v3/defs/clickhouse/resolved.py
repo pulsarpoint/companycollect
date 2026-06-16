@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +89,7 @@ def export_duckdb_table_to_clickhouse(
     clickhouse_client.execute(
         f"CREATE TABLE {clickhouse_qualified_stage_table} AS {clickhouse_qualified_table}"
     )
+    primary_error: Exception | None = None
     try:
         if rows:
             clickhouse_client.execute(
@@ -99,11 +99,15 @@ def export_duckdb_table_to_clickhouse(
         clickhouse_client.execute(
             f"EXCHANGE TABLES {clickhouse_qualified_stage_table} AND {clickhouse_qualified_table}"
         )
+    except Exception as exc:
+        primary_error = exc
+        raise
     finally:
-        with suppress(Exception):
-            clickhouse_client.execute(
-                f"DROP TABLE IF EXISTS {clickhouse_qualified_stage_table}"
-            )
+        _drop_clickhouse_stage_tables(
+            clickhouse_client,
+            (clickhouse_qualified_stage_table,),
+            suppress_errors=primary_error is not None,
+        )
     return len(rows)
 
 
@@ -144,6 +148,7 @@ def replace_duckdb_tables_in_clickhouse(
     clickhouse_qualified_stage_tables: dict[str, str] = {}
     created_stage_tables: list[str] = []
     exchanged_tables: list[str] = []
+    primary_error: Exception | None = None
 
     try:
         for clickhouse_table, _, _ in exports:
@@ -174,20 +179,26 @@ def replace_duckdb_tables_in_clickhouse(
                 f"AND {clickhouse_qualified_tables[clickhouse_table]}"
             )
             exchanged_tables.append(clickhouse_table)
-    except Exception:
+    except Exception as exc:
+        primary_error = exc
         for clickhouse_table in reversed(exchanged_tables):
-            with suppress(Exception):
+            try:
                 clickhouse_client.execute(
                     f"EXCHANGE TABLES {clickhouse_qualified_stage_tables[clickhouse_table]} "
                     f"AND {clickhouse_qualified_tables[clickhouse_table]}"
                 )
+            except Exception:
+                pass
         raise
     finally:
-        for clickhouse_table in reversed(created_stage_tables):
-            with suppress(Exception):
-                clickhouse_client.execute(
-                    f"DROP TABLE IF EXISTS {clickhouse_qualified_stage_tables[clickhouse_table]}"
-                )
+        _drop_clickhouse_stage_tables(
+            clickhouse_client,
+            tuple(
+                clickhouse_qualified_stage_tables[clickhouse_table]
+                for clickhouse_table in reversed(created_stage_tables)
+            ),
+            suppress_errors=primary_error is not None,
+        )
 
     return {clickhouse_table: len(rows) for clickhouse_table, _, rows in exports}
 
@@ -211,3 +222,29 @@ def _quote_clickhouse_qualified_table(database: str, table: str) -> str:
 
 def _clickhouse_stage_table_name(table: str) -> str:
     return f"_tmp_{table}_{uuid.uuid4().hex}"
+
+
+def _drop_clickhouse_stage_tables(
+    clickhouse_client: Any,
+    qualified_stage_tables: Sequence[str],
+    *,
+    suppress_errors: bool,
+) -> None:
+    failed_stage_tables: list[str] = []
+    first_error: Exception | None = None
+
+    for qualified_stage_table in qualified_stage_tables:
+        try:
+            clickhouse_client.execute(f"DROP TABLE IF EXISTS {qualified_stage_table}")
+        except Exception as exc:
+            if suppress_errors:
+                continue
+            if first_error is None:
+                first_error = exc
+            failed_stage_tables.append(qualified_stage_table)
+
+    if failed_stage_tables and first_error is not None:
+        raise RuntimeError(
+            "Failed to drop ClickHouse stage table(s): "
+            + ", ".join(failed_stage_tables)
+        ) from first_error

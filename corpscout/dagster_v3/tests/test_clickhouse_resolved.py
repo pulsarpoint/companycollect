@@ -308,6 +308,63 @@ def test_export_duckdb_table_to_clickhouse_cleanup_attempts_drop_on_insert_failu
     ]
 
 
+def test_export_duckdb_table_to_clickhouse_raises_cleanup_error_after_successful_exchange(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar
+            )
+            """
+        )
+        connection.execute("insert into finland_resolved.fi_companies values ('1234567-8')")
+
+    monkeypatch.setattr(
+        clickhouse_resolved.uuid,
+        "uuid4",
+        lambda: type("U", (), {"hex": "deadbeef"})(),
+    )
+    client = FailingDropClickHouseClient(
+        failing_drops=(
+            "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_deadbeef`",
+        ),
+    )
+
+    try:
+        export_duckdb_table_to_clickhouse(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema="finland_resolved",
+            duckdb_table="fi_companies",
+            clickhouse_database="corpscout_resolved",
+            clickhouse_table="fi_companies",
+            columns=("business_id",),
+            truncate=True,
+        )
+    except RuntimeError as exc:
+        assert (
+            str(exc)
+            == "Failed to drop ClickHouse stage table(s): `corpscout_resolved`.`_tmp_fi_companies_deadbeef`"
+        )
+        assert isinstance(exc.__cause__, RuntimeError)
+        assert str(exc.__cause__) == (
+            "drop failed for "
+            "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_deadbeef`"
+        )
+    else:
+        raise AssertionError("expected cleanup failure")
+
+    assert client.statements == [
+        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_deadbeef` AS `corpscout_resolved`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_deadbeef` AND `corpscout_resolved`.`fi_companies`",
+        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_deadbeef`",
+    ]
+
+
 def test_replace_duckdb_tables_in_clickhouse_rolls_back_on_exchange_failure(
     tmp_path, monkeypatch
 ) -> None:
@@ -376,6 +433,78 @@ def test_replace_duckdb_tables_in_clickhouse_rolls_back_on_exchange_failure(
     ]
 
 
+def test_replace_duckdb_tables_in_clickhouse_raises_cleanup_error_after_successful_exchange(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table finland_resolved.fi_websites (
+                business_id varchar
+            )
+            """
+        )
+        connection.execute("insert into finland_resolved.fi_companies values ('1234567-8')")
+        connection.execute("insert into finland_resolved.fi_websites values ('1234567-8')")
+
+    stage_names = iter(["first", "second"])
+    monkeypatch.setattr(
+        clickhouse_resolved.uuid,
+        "uuid4",
+        lambda: type("U", (), {"hex": next(stage_names)})(),
+    )
+    client = FailingDropClickHouseClient(
+        failing_drops=(
+            "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_websites_second`",
+            "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_first`",
+        ),
+    )
+
+    try:
+        replace_duckdb_tables_in_clickhouse(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema="finland_resolved",
+            clickhouse_database="corpscout_resolved",
+            tables=(
+                ("fi_companies", ("business_id",)),
+                ("fi_websites", ("business_id",)),
+            ),
+        )
+    except RuntimeError as exc:
+        assert (
+            str(exc)
+            == "Failed to drop ClickHouse stage table(s): "
+            "`corpscout_resolved`.`_tmp_fi_websites_second`, "
+            "`corpscout_resolved`.`_tmp_fi_companies_first`"
+        )
+        assert isinstance(exc.__cause__, RuntimeError)
+        assert str(exc.__cause__) == (
+            "drop failed for "
+            "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_websites_second`"
+        )
+    else:
+        raise AssertionError("expected cleanup failure")
+
+    assert client.statements == [
+        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_first` AS `corpscout_resolved`.`fi_companies`",
+        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_websites_second` AS `corpscout_resolved`.`fi_websites`",
+        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_first` AND `corpscout_resolved`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_websites_second` AND `corpscout_resolved`.`fi_websites`",
+        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_websites_second`",
+        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_first`",
+    ]
+
+
 class FakeInsertClickHouseClient(FakeClickHouseClient):
     def __init__(self) -> None:
         super().__init__(set())
@@ -410,4 +539,18 @@ class FailingSecondExchangeClickHouseClient(FakeInsertClickHouseClient):
             if self._exchange_count == 2:
                 super().execute(sql, params)
                 raise RuntimeError("exchange failed")
+        return super().execute(sql, params)
+
+
+class FailingDropClickHouseClient(FakeInsertClickHouseClient):
+    def __init__(self, *, failing_drops: tuple[str, ...]) -> None:
+        super().__init__()
+        self._failing_drops = set(failing_drops)
+
+    def execute(self, sql: str, params: object | None = None) -> list[tuple[str]]:
+        if sql.startswith("DROP TABLE IF EXISTS"):
+            super().execute(sql, params)
+            if sql in self._failing_drops:
+                raise RuntimeError(f"drop failed for {sql}")
+            return []
         return super().execute(sql, params)
