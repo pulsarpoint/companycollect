@@ -1,3 +1,9 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import get_type_hints
+
+from dagster_clickhouse import ClickhouseResource
+
 from dagster_v3.defs.nace import tables
 from dagster_v3.defs.nace.clickhouse import prepare_nace_categories_table
 
@@ -11,8 +17,6 @@ def test_dlt_clickhouse_destination_dependencies_are_available() -> None:
 
 
 def test_dagster_clickhouse_resource_dependency_is_available() -> None:
-    from dagster_clickhouse import ClickhouseResource
-
     assert ClickhouseResource
 
 
@@ -51,44 +55,48 @@ class FakeClickHouseClient:
         self.statements.append(sql)
 
 
-class FakeConnection:
-    def __init__(self, client: FakeClickHouseClient) -> None:
-        self.client = client
+def test_prepare_nace_categories_table_is_typed_for_official_resource() -> None:
+    annotations = get_type_hints(prepare_nace_categories_table)
 
-    def __enter__(self) -> FakeClickHouseClient:
-        return self.client
-
-    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
-        return None
+    assert annotations["clickhouse"] is ClickhouseResource
 
 
-class FakeClickhouseResource:
-    def __init__(self) -> None:
-        self.client = FakeClickHouseClient()
+def test_prepare_nace_categories_table_uses_official_resource_connection(monkeypatch) -> None:
+    resource = ClickhouseResource(host="localhost")
+    client = FakeClickHouseClient()
+    connection_calls: list[ClickhouseResource] = []
 
-    def get_connection(self) -> FakeConnection:
-        return FakeConnection(self.client)
+    @contextmanager
+    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
+        connection_calls.append(self)
+        yield client
 
-
-def test_prepare_nace_categories_table_uses_official_resource_connection() -> None:
-    resource = FakeClickhouseResource()
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
     prepare_nace_categories_table(resource)
 
-    assert resource.client.statements == [
+    assert connection_calls == [resource]
+    assert client.statements[0] == "CREATE DATABASE IF NOT EXISTS reference"
+    assert client.statements[1].startswith("CREATE TABLE IF NOT EXISTS reference.nace_categories")
+    assert client.statements[2] == "TRUNCATE TABLE reference.nace_categories"
+
+
+def test_prepare_nace_categories_table_strips_ddl_whitespace(monkeypatch) -> None:
+    resource = ClickhouseResource(host="localhost")
+    client = FakeClickHouseClient()
+
+    @contextmanager
+    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    prepare_nace_categories_table(resource)
+
+    assert client.statements == [
         "CREATE DATABASE IF NOT EXISTS reference",
         tables.NACE_CATEGORIES_DDL.strip(),
         "TRUNCATE TABLE reference.nace_categories",
     ]
-
-
-def test_prepare_nace_categories_table_strips_ddl_whitespace() -> None:
-    client = FakeClickHouseClient()
-    resource = FakeClickhouseResource()
-    resource.client = client
-
-    prepare_nace_categories_table(resource)
-
     ddl = client.statements[1]
     assert ddl == ddl.strip()
-    assert ddl.startswith("CREATE TABLE IF NOT EXISTS reference.nace_categories")
