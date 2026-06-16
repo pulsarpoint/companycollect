@@ -1,0 +1,32 @@
+[
+  {
+    "name": "RFB CNPJ — Empresas (legal entities) bulk ZIP",
+    "slug": "rfb_cnpj_empresas",
+    "type": "bulk",
+    "url": "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/{YYYY-MM}/Empresas0.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Empresas split Empresas0..9.zip; also Estabelecimentos0..9, Socios0..9, Simples, and reference tables (Cnaes/Naturezas/Municipios/Paises/Qualificacoes/Motivos). Latin-1, ;-delimited, NO header. Replace {YYYY-MM} with the latest month. NOTE: now served via Receita's SERPRO+ portal (JS app) — may need browser-based retrieval; the data is open (no auth/payment)."
+  },
+  {
+    "name": "CVM DFP — listed-company annual financial statements (per year)",
+    "slug": "cvm_dfp_year",
+    "type": "bulk",
+    "url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/dfp_cia_aberta_2025.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Per-year ZIP with index + BPA/BPP/DRE/DFC/DMPL/DRA/DVA (_con/_ind) + capital + parecer. Keyed on CNPJ_CIA + CD_CVM. Latin-1, ;-delimited, header row. Currency BRL, scale MIL. No key."
+  },
+  {
+    "name": "CVM ITR — listed-company quarterly statements (per year)",
+    "slug": "cvm_itr_year",
+    "type": "bulk",
+    "url": "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS/itr_cia_aberta_2025.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Quarterly equivalent of DFP. Same schema. No key."
+  }
+]
