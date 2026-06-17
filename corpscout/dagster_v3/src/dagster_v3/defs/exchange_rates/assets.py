@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 import hashlib
 import json
 import os
@@ -258,7 +258,7 @@ def normalize_exchange_rates_ecb_duckdb(
                 quote_currencies=json.loads(quote_currencies_json),
                 source_url=source_url,
                 source_run_id=source_run_id,
-                pulled_at=str(pulled_at),
+                pulled_at=_pulled_at_utc_string(pulled_at),
             )
             normalized_rows.extend(_exchange_rate_row_tuple(row) for row in rows)
         if normalized_rows:
@@ -303,7 +303,7 @@ def generate_exchange_rates_identity_duckdb(
                 identity_eur_row(
                     rate_date=str(rate_date),
                     source_run_id=str(source_run_id),
-                    pulled_at=str(pulled_at),
+                    pulled_at=_pulled_at_utc_string(pulled_at),
                 )
             )
             for rate_date, source_run_id, pulled_at in source_dates
@@ -421,12 +421,73 @@ def clickhouse_resource_from_env() -> ClickhouseResource:
 def _ensure_exchange_rates_duckdb_schema(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(f"create schema if not exists {EXCHANGE_RATES_DUCKDB_DATASET_NAME}")
     for table in (ECB_RATES_TABLE, IDENTITY_RATES_TABLE):
+        _ensure_exchange_rates_derived_table(connection, table)
+
+
+def _ensure_exchange_rates_derived_table(
+    connection: duckdb.DuckDBPyConnection,
+    table: str,
+) -> None:
+    try:
         create_duckdb_table_from_contract(
             connection,
             schema=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
             table=table,
             contract=tables.EXCHANGE_RATES_DUCKDB_CONTRACT,
         )
+    except ValueError:
+        _repair_exchange_rates_derived_table(connection, table)
+        validate_duckdb_table_contract(
+            connection,
+            schema=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
+            table=table,
+            contract=tables.EXCHANGE_RATES_DUCKDB_CONTRACT,
+        )
+
+
+def _repair_exchange_rates_derived_table(
+    connection: duckdb.DuckDBPyConnection,
+    table: str,
+) -> None:
+    repaired_table = f"{table}__contract_repair"
+    connection.execute(
+        f"drop table if exists {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{repaired_table}"
+    )
+    create_duckdb_table_from_contract(
+        connection,
+        schema=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
+        table=repaired_table,
+        contract=tables.EXCHANGE_RATES_DUCKDB_CONTRACT,
+    )
+    select_columns = ", ".join(
+        _exchange_rates_contract_cast_expression(column.name, column.duckdb_type)
+        for column in tables.EXCHANGE_RATES_DUCKDB_CONTRACT.columns
+    )
+    connection.execute(
+        f"""
+        insert into {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{repaired_table}
+        ({", ".join(tables.EXCHANGE_RATES_COLUMNS)})
+        select {select_columns}
+        from {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{table}
+        """
+    )
+    connection.execute(f"drop table {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{table}")
+    connection.execute(
+        f"""
+        alter table {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{repaired_table}
+        rename to {table}
+        """
+    )
+
+
+def _exchange_rates_contract_cast_expression(column_name: str, duckdb_type: str) -> str:
+    quoted_column = f'"{column_name}"'
+    if column_name == "pulled_at":
+        return (
+            f"cast(cast({quoted_column} as timestamp with time zone) "
+            "at time zone 'UTC' as timestamp)"
+        )
+    return f"cast({quoted_column} as {duckdb_type})"
 
 
 def _validate_exchange_rates_duckdb_table(
@@ -479,6 +540,16 @@ def _sql_string(value: str) -> str:
 
 def _duckdb_string(value: str) -> str:
     return value.replace("'", "''")
+
+
+def _pulled_at_utc_string(value: Any) -> str:
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(UTC).replace(tzinfo=None).isoformat(
+                timespec="milliseconds"
+            )
+        return value.isoformat(timespec="milliseconds")
+    return str(value)
 
 
 defs = dg.Definitions(

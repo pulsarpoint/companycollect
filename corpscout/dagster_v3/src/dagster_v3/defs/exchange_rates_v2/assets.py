@@ -32,12 +32,16 @@ from dagster_v3.defs.exchange_rates_v2.source import (
 )
 
 GROUP_NAME = "exchange_rates_v2"
-EXCHANGE_RATES_V2_DUCKDB_PATH = Path("data/exchange_rates_v2_source.duckdb")
+EXCHANGE_RATES_V2_DUCKDB_PATH = Path(
+    os.environ.get("EXCHANGE_RATES_V2_DUCKDB_PATH", "data/exchange_rates_v2_source.duckdb")
+).expanduser()
+if not EXCHANGE_RATES_V2_DUCKDB_PATH.is_absolute():
+    EXCHANGE_RATES_V2_DUCKDB_PATH = EXCHANGE_RATES_V2_DUCKDB_PATH.resolve()
 EXCHANGE_RATES_V2_PARTITIONS = dg.DailyPartitionsDefinition(start_date="2023-01-01")
 EXCHANGE_RATES_V2_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
 CLICKHOUSE_EXPORT_TABLE = "clickhouse_exchange_rates"
 
-os.environ.setdefault("EXCHANGE_RATES_V2_DUCKDB_PATH", str(EXCHANGE_RATES_V2_DUCKDB_PATH))
+os.environ["EXCHANGE_RATES_V2_DUCKDB_PATH"] = str(EXCHANGE_RATES_V2_DUCKDB_PATH)
 exchange_rates_v2_dbt_project = DbtProject(
     project_dir=EXCHANGE_RATES_V2_DBT_PROJECT_DIR,
     profiles_dir=EXCHANGE_RATES_V2_DBT_PROJECT_DIR,

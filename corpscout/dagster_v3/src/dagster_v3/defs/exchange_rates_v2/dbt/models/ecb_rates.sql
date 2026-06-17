@@ -54,7 +54,7 @@ typed_rows as (
         source_url,
         source_payload_hash,
         source_run_id,
-        cast(replace(pulled_at, 'Z', '') as timestamp) as pulled_at
+        cast(cast(pulled_at as timestamp with time zone) at time zone 'UTC' as timestamp) as pulled_at
     from observations
     where observation_value is not null
 )

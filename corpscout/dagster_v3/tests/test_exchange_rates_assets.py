@@ -369,7 +369,7 @@ def test_normalize_exchange_rates_ecb_duckdb_preserves_rows_outside_window(
     ]
 
 
-def test_normalize_exchange_rates_ecb_duckdb_fails_on_stale_schema(
+def test_normalize_exchange_rates_ecb_duckdb_repairs_stale_derived_schema(
     tmp_path: Path,
 ) -> None:
     from dagster_v3.defs.exchange_rates import assets as fx_assets
@@ -378,12 +378,28 @@ def test_normalize_exchange_rates_ecb_duckdb_fails_on_stale_schema(
     _create_raw_payload_table(duckdb_path)
     _create_stale_exchange_rates_table(duckdb_path, fx_assets.ECB_RATES_TABLE)
 
-    with pytest.raises(ValueError, match="ecb_rates does not match contract"):
-        fx_assets.normalize_exchange_rates_ecb_duckdb(
-            duckdb_path=duckdb_path,
-            start_date="2024-12-01",
-            end_date="2024-12-31",
+    counts = fx_assets.normalize_exchange_rates_ecb_duckdb(
+        duckdb_path=duckdb_path,
+        start_date="2024-12-01",
+        end_date="2024-12-31",
+    )
+
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        column_types = dict(
+            connection.execute(
+                """
+                select column_name, data_type
+                from information_schema.columns
+                where table_schema = 'exchange_rates_stage'
+                  and table_name = 'ecb_rates'
+                """
+            ).fetchall()
         )
+
+    assert counts == {"raw_payloads": 1, "ecb_rates": 4}
+    assert column_types["rate_date"] == "DATE"
+    assert column_types["rate"] == "DECIMAL(38,12)"
+    assert column_types["pulled_at"] == "TIMESTAMP"
 
 
 def test_generate_exchange_rates_identity_duckdb_uses_ecb_rate_dates(tmp_path: Path) -> None:

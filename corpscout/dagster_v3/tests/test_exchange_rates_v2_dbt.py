@@ -99,6 +99,13 @@ def test_exchange_rates_v2_dependencies_are_available() -> None:
     assert dbt
 
 
+def test_exchange_rates_v2_dbt_uses_absolute_default_duckdb_path() -> None:
+    from dagster_v3.defs.exchange_rates_v2 import assets as fx_v2_assets
+
+    assert fx_v2_assets.EXCHANGE_RATES_V2_DUCKDB_PATH.is_absolute()
+    assert Path(os.environ["EXCHANGE_RATES_V2_DUCKDB_PATH"]).is_absolute()
+
+
 def test_exchange_rates_v2_raw_resource_fetches_endpoint_and_yields_raw_payload(
     monkeypatch,
 ) -> None:
@@ -239,7 +246,7 @@ def _create_raw_payload_table(duckdb_path: Path) -> None:
               source_payload_json varchar,
               source_payload_hash varchar,
               source_run_id varchar,
-              pulled_at varchar
+              pulled_at timestamp with time zone
             )
             """
         )
