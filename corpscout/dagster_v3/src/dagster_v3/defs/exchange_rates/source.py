@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -83,6 +83,7 @@ def exchange_rate_rest_api_config(
                             "endPeriod": rate_date,
                         },
                         "paginator": "single_page",
+                        "data_selector": "$",
                     },
                     "processing_steps": [
                         {
@@ -106,7 +107,106 @@ def exchange_rate_rest_api_config(
     }
 
 
+@dlt.source(name="exchange_rates")
+def exchange_rates_range_source(
+    *,
+    start_date: str,
+    end_date: str,
+    currencies: list[str],
+    source_run_id: str = "",
+    pulled_at: str | None = None,
+) -> list[DltResource]:
+    effective_pulled_at = pulled_at or _utc_now_iso()
+    ecb_source = rest_api_source(
+        config=exchange_rate_range_rest_api_config(
+            start_date=start_date,
+            end_date=end_date,
+            currencies=currencies,
+            source_run_id=source_run_id,
+            pulled_at=effective_pulled_at,
+        ),
+        name="exchange_rates_ecb",
+    )
+    return [
+        *ecb_source.resources.values(),
+        identity_exchange_rates_for_range_resource(
+            start_date=start_date,
+            end_date=end_date,
+            source_run_id=source_run_id,
+            pulled_at=effective_pulled_at,
+        ),
+    ]
+
+
+def exchange_rate_range_rest_api_config(
+    *,
+    start_date: str,
+    end_date: str,
+    currencies: list[str],
+    source_run_id: str,
+    pulled_at: str,
+    user_agent: str = DEFAULT_USER_AGENT,
+) -> RESTAPIConfig:
+    quote_currencies = [
+        currency
+        for currency in sorted({currency.upper() for currency in currencies} | {"USD", "NOK"})
+        if currency != "EUR"
+    ]
+    currency_key = "+".join(quote_currencies)
+    source_url = f"{ECB_EXR_BASE_URL}/D.{currency_key}.EUR.SP00.A"
+    resource_name = (
+        f"exchange_rates_ecb_{start_date.replace('-', '_')}_{end_date.replace('-', '_')}"
+    )
+    return {
+        "client": {
+            "base_url": f"{ECB_EXR_BASE_URL}/",
+            "headers": {"User-Agent": user_agent},
+        },
+        "resources": [
+            {
+                "name": resource_name,
+                "table_name": EXCHANGE_RATES_DLT_TABLE,
+                "write_disposition": "append",
+                "primary_key": ["rate_date", "base_currency", "quote_currency", "source"],
+                "endpoint": {
+                    "path": f"D.{currency_key}.EUR.SP00.A",
+                    "params": {
+                        "format": "jsondata",
+                        "startPeriod": start_date,
+                        "endPeriod": end_date,
+                    },
+                    "paginator": "single_page",
+                    "data_selector": "$",
+                },
+                "processing_steps": [
+                    {
+                        "yield_map": _ecb_range_mapper(
+                            quote_currencies=quote_currencies,
+                            source_url=source_url,
+                            source_run_id=source_run_id,
+                            pulled_at=pulled_at,
+                        )
+                    }
+                ],
+            }
+        ],
+    }
+
+
 def identity_exchange_rates_resource(
+    *,
+    rate_dates: list[str],
+    source_run_id: str,
+    pulled_at: str,
+) -> DltResource:
+    return identity_exchange_rates_for_dates_resource(
+        rate_dates=rate_dates,
+        source_run_id=source_run_id,
+        pulled_at=pulled_at,
+    )
+
+
+def identity_exchange_rates_for_dates_resource(
     *,
     rate_dates: list[str],
     source_run_id: str,
@@ -128,6 +228,20 @@ def identity_exchange_rates_resource(
     )
 
 
+def identity_exchange_rates_for_range_resource(
+    *,
+    start_date: str,
+    end_date: str,
+    source_run_id: str,
+    pulled_at: str,
+) -> DltResource:
+    return identity_exchange_rates_for_dates_resource(
+        rate_dates=_date_range(start_date=start_date, end_date=end_date),
+        source_run_id=source_run_id,
+        pulled_at=pulled_at,
+    )
+
+
 def _ecb_mapper(
     *,
     quote_currency: str,
@@ -141,6 +255,25 @@ def _ecb_mapper(
             payload,
             quote_currency=quote_currency,
             rate_date=rate_date,
+            source_url=source_url,
+            source_run_id=source_run_id,
+            pulled_at=pulled_at,
+        )
+
+    return mapper
+
+
+def _ecb_range_mapper(
+    *,
+    quote_currencies: list[str],
+    source_url: str,
+    source_run_id: str,
+    pulled_at: str,
+) -> Any:
+    def mapper(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        yield from ecb_rate_rows_from_range_payload(
+            payload,
+            quote_currencies=quote_currencies,
             source_url=source_url,
             source_run_id=source_run_id,
             pulled_at=pulled_at,
@@ -173,6 +306,55 @@ def ecb_rate_row_from_payload(
         "source_run_id": source_run_id,
         "pulled_at": pulled_at,
     }
+
+
+def ecb_rate_rows_from_range_payload(
+    payload: dict[str, Any],
+    *,
+    quote_currencies: list[str],
+    source_url: str,
+    source_run_id: str,
+    pulled_at: str,
+) -> list[dict[str, Any]]:
+    currency_dimension_index, currency_ids = _series_dimension_ids(
+        payload,
+        dimension_id="CURRENCY",
+    )
+    rate_dates = _observation_dates(payload)
+    series = _payload_series(payload)
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    payload_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+    rows: list[dict[str, Any]] = []
+    allowed_currencies = {currency.upper() for currency in quote_currencies}
+    for series_key, series_payload in series.items():
+        series_indexes = str(series_key).split(":")
+        if len(series_indexes) <= currency_dimension_index:
+            continue
+        currency_index = int(series_indexes[currency_dimension_index])
+        quote_currency = currency_ids[currency_index].upper()
+        if quote_currency not in allowed_currencies:
+            continue
+        observations = series_payload.get("observations", {})
+        for observation_key in sorted(observations, key=_observation_sort_key):
+            observation = observations[observation_key]
+            if not observation:
+                continue
+            rate_date = rate_dates[int(observation_key)]
+            rows.append(
+                {
+                    "rate_date": rate_date,
+                    "base_currency": "EUR",
+                    "quote_currency": quote_currency,
+                    "rate": str(Decimal(str(observation[0]))),
+                    "source": FX_SOURCE_NAME,
+                    "source_url": source_url,
+                    "source_payload_hash": payload_hash,
+                    "source_run_id": source_run_id,
+                    "pulled_at": pulled_at,
+                }
+            )
+    return rows
 
 
 def identity_eur_row(*, rate_date: str, source_run_id: str, pulled_at: str) -> dict[str, Any]:
@@ -231,6 +413,43 @@ def _extract_observation_values(payload: dict[str, Any]) -> list[Decimal]:
             if observation:
                 values.append(Decimal(str(observation[0])))
     return values
+
+
+def _payload_series(payload: dict[str, Any]) -> dict[str, Any]:
+    data_sets = payload.get("dataSets", [])
+    if not data_sets:
+        return {}
+    return data_sets[0].get("series", {})
+
+
+def _series_dimension_ids(payload: dict[str, Any], *, dimension_id: str) -> tuple[int, list[str]]:
+    dimensions = payload.get("structure", {}).get("dimensions", {})
+    series_dimensions = dimensions.get("series", [])
+    if not series_dimensions:
+        return 0, []
+    for dimension_index, dimension in enumerate(series_dimensions):
+        if str(dimension.get("id", "")).upper() == dimension_id.upper():
+            return dimension_index, [str(value["id"]) for value in dimension.get("values", [])]
+    return 0, [str(value["id"]) for value in series_dimensions[0].get("values", [])]
+
+
+def _observation_dates(payload: dict[str, Any]) -> list[str]:
+    dimensions = payload.get("structure", {}).get("dimensions", {})
+    observation_dimensions = dimensions.get("observation", [])
+    if not observation_dimensions:
+        return []
+    return [str(value["id"]) for value in observation_dimensions[0].get("values", [])]
+
+
+def _date_range(*, start_date: str, end_date: str) -> list[str]:
+    start = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    dates: list[str] = []
+    current = start
+    while current <= end:
+        dates.append(current.isoformat())
+        current += timedelta(days=1)
+    return dates
 
 
 def _observation_sort_key(value: str) -> tuple[int, str]:

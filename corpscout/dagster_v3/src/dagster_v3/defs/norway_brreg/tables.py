@@ -1,3 +1,5 @@
+from typing import Any
+
 NORWAY_BRREG_DATABASE = "norway_brreg"
 COMPANIES_TABLE = "companies"
 FINANCIAL_STATEMENTS_TABLE = "financial_statements"
@@ -5,6 +7,122 @@ QUALIFIED_COMPANIES_TABLE = f"{NORWAY_BRREG_DATABASE}.{COMPANIES_TABLE}"
 QUALIFIED_FINANCIAL_STATEMENTS_TABLE = (
     f"{NORWAY_BRREG_DATABASE}.{FINANCIAL_STATEMENTS_TABLE}"
 )
+
+BRREG_ENTITIES_COLUMNS: dict[str, dict[str, Any]] = {
+    "country_iso2": {"data_type": "text"},
+    "source_slug": {"data_type": "text"},
+    "source_run_id": {"data_type": "text"},
+    "source_line_number": {"data_type": "bigint"},
+    "source_record_id": {"data_type": "text"},
+    "source_payload_hash": {"data_type": "text"},
+    "org_number": {"data_type": "text", "nullable": False},
+    "vat_id": {"data_type": "text"},
+    "legal_name": {"data_type": "text"},
+    "legal_form_code": {"data_type": "text"},
+    "legal_form_description_original": {"data_type": "text"},
+    "legal_form_description_en": {"data_type": "text"},
+    "registration_date": {"data_type": "text"},
+    "incorporation_date": {"data_type": "text"},
+    "website": {"data_type": "text"},
+    "phone": {"data_type": "text"},
+    "nace1_code": {"data_type": "text"},
+    "nace1_description_original": {"data_type": "text"},
+    "nace1_description_en": {"data_type": "text"},
+    "nace2_code": {"data_type": "text"},
+    "nace2_description_original": {"data_type": "text"},
+    "nace2_description_en": {"data_type": "text"},
+    "nace3_code": {"data_type": "text"},
+    "nace3_description_original": {"data_type": "text"},
+    "nace3_description_en": {"data_type": "text"},
+    "articles_purpose_original": {"data_type": "text"},
+    "articles_purpose_en": {"data_type": "text"},
+    "activity_text_original": {"data_type": "text"},
+    "activity_text_en": {"data_type": "text"},
+    "company_description_original": {"data_type": "text"},
+    "company_description_en": {"data_type": "text"},
+    "employee_count": {"data_type": "bigint"},
+    "has_registered_employee_count": {"data_type": "bool"},
+    "business_address_lines": {"data_type": "text"},
+    "business_postal_code": {"data_type": "text"},
+    "business_city": {"data_type": "text"},
+    "business_municipality": {"data_type": "text"},
+    "business_municipality_code": {"data_type": "text"},
+    "business_country_code": {"data_type": "text"},
+    "is_vat_registered": {"data_type": "bool"},
+    "is_enterprise_register_registered": {"data_type": "bool"},
+    "is_group_member": {"data_type": "bool"},
+    "parent_org_number": {"data_type": "text"},
+    "last_submitted_accounts_year": {"data_type": "text"},
+    "status": {"data_type": "text"},
+    "is_active": {"data_type": "bool"},
+    "source_url": {"data_type": "text"},
+    "raw_entity": {"data_type": "text"},
+}
+
+
+BRREG_FINANCIAL_STATEMENTS_COLUMNS: dict[str, dict[str, Any]] = {
+    "country_iso2": {"data_type": "text"},
+    "source_slug": {"data_type": "text"},
+    "source_run_id": {"data_type": "text"},
+    "source_line_number": {"data_type": "bigint"},
+    "source_record_id": {"data_type": "text"},
+    "source_payload_hash": {"data_type": "text"},
+    "org_number": {"data_type": "text", "nullable": False},
+    "legal_name": {"data_type": "text"},
+    "website": {"data_type": "text"},
+    "last_submitted_accounts_year": {"data_type": "text"},
+    "filing_id": {"data_type": "bigint"},
+    "journal_number": {"data_type": "text"},
+    "accounts_type": {"data_type": "text"},
+    "legal_form_code": {"data_type": "text"},
+    "is_parent_company": {"data_type": "bool"},
+    "period_start_date": {"data_type": "date"},
+    "period_end_date": {"data_type": "date"},
+    "fiscal_year": {"data_type": "bigint"},
+    "currency": {"data_type": "text"},
+    "liquidation_accounts": {"data_type": "bool"},
+    "statement_layout": {"data_type": "text"},
+    "is_not_audited": {"data_type": "bool"},
+    "opted_out_audit": {"data_type": "bool"},
+    "is_small_enterprise": {"data_type": "bool"},
+    "accounting_rules": {"data_type": "text"},
+    "operating_revenue_amount_original": {"data_type": "decimal"},
+    "operating_revenue_amount_usd": {"data_type": "decimal"},
+    "operating_costs_amount_original": {"data_type": "decimal"},
+    "operating_costs_amount_usd": {"data_type": "decimal"},
+    "operating_result_amount_original": {"data_type": "decimal"},
+    "operating_result_amount_usd": {"data_type": "decimal"},
+    "net_financial_items_amount_original": {"data_type": "decimal"},
+    "net_financial_items_amount_usd": {"data_type": "decimal"},
+    "pretax_result_amount_original": {"data_type": "decimal"},
+    "pretax_result_amount_usd": {"data_type": "decimal"},
+    "net_result_amount_original": {"data_type": "decimal"},
+    "net_result_amount_usd": {"data_type": "decimal"},
+    "total_assets_amount_original": {"data_type": "decimal"},
+    "total_assets_amount_usd": {"data_type": "decimal"},
+    "current_assets_amount_original": {"data_type": "decimal"},
+    "current_assets_amount_usd": {"data_type": "decimal"},
+    "fixed_assets_amount_original": {"data_type": "decimal"},
+    "fixed_assets_amount_usd": {"data_type": "decimal"},
+    "equity_amount_original": {"data_type": "decimal"},
+    "equity_amount_usd": {"data_type": "decimal"},
+    "total_debt_amount_original": {"data_type": "decimal"},
+    "total_debt_amount_usd": {"data_type": "decimal"},
+    "current_liabilities_amount_original": {"data_type": "decimal"},
+    "current_liabilities_amount_usd": {"data_type": "decimal"},
+    "long_term_liabilities_amount_original": {"data_type": "decimal"},
+    "long_term_liabilities_amount_usd": {"data_type": "decimal"},
+    "fx_rate_to_usd": {"data_type": "decimal"},
+    "fx_rate_date": {"data_type": "date"},
+    "fx_source": {"data_type": "text"},
+    "source_url": {"data_type": "text"},
+    "raw_financial_record": {"data_type": "text"},
+}
+
+
+def copy_dlt_columns(columns: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {name: dict(spec) for name, spec in columns.items()}
+
 
 COMPANIES_COLUMNS = (
     "country_iso2",
@@ -168,7 +286,7 @@ CREATE TABLE IF NOT EXISTS {QUALIFIED_COMPANIES_TABLE}
     source_url String,
     raw_entity String
 )
-ENGINE = MergeTree
+ENGINE = ReplacingMergeTree
 ORDER BY (org_number)
 """
 
@@ -232,6 +350,6 @@ CREATE TABLE IF NOT EXISTS {QUALIFIED_FINANCIAL_STATEMENTS_TABLE}
     source_url String,
     raw_financial_record String
 )
-ENGINE = MergeTree
+ENGINE = ReplacingMergeTree
 ORDER BY (org_number, period_end_date, accounts_type)
 """

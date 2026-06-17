@@ -4,9 +4,9 @@
 
 **Goal:** Build the smallest isolated proof that a Temporal workflow can send 50 text fragments to the real local OpenAI-compatible LLM endpoint and receive parseable JSON translations.
 
-**Architecture:** This chunk does not touch Dagster assets, DuckDB queues, BRREG tables, or ClickHouse. It creates a plain translation client, a Temporal workflow/activity pair, a local worker entrypoint, and an opt-in integration test that runs against the real Temporal server at `companycollect:8089` and the local LLM endpoint configured through environment variables.
+**Architecture:** This chunk does not touch Dagster assets, DuckDB queues, BRREG tables, or ClickHouse. It creates a plain translation client, a Temporal workflow/activity pair, a local worker entrypoint, and an opt-in integration test that runs against the real Temporal frontend gRPC endpoint at `companycollect:7233` and the local LLM endpoint configured through environment variables.
 
-**Tech Stack:** Python, Temporal Python SDK, requests, pytest, OpenAI-compatible chat completions API.
+**Tech Stack:** Python, Temporal Python SDK, OpenAI Python SDK, pytest, OpenAI-compatible chat completions API.
 
 ---
 
@@ -17,7 +17,7 @@ This plan is intentionally narrow. It proves only this loop:
 ```text
 pytest integration test
   -> start Temporal worker in-process
-  -> start Temporal workflow on companycollect:8089
+  -> start Temporal workflow on companycollect:7233
   -> workflow executes one activity
   -> activity sends 50 entries to local OpenAI-compatible LLM
   -> activity parses strict JSON
@@ -39,18 +39,17 @@ Those belong in later smaller plans after this smoke test works.
 Create `companycollect/corpscout/dagster_v3/.env` locally with:
 
 ```bash
-TEMPORAL_ADDRESS=companycollect:8089
-TRANSLATION_PROVIDER=local_openai_compatible
-TRANSLATION_PROVIDER_LOCAL_BASE_URL=http://100.77.62.33:8888
+TEMPORAL_ADDRESS=companycollect:7233
+TRANSLATION_PROVIDER_LOCAL_BASE_URL=http://100.77.62.33:8888/v1
 TRANSLATION_PROVIDER_LOCAL_MODEL=qwen3:6b
-TRANSLATION_PROVIDER_LOCAL_API_KEY=
+TRANSLATION_PROVIDER_LOCAL_API_KEY=not-needed
 ```
 
 The implementation also works if these values are exported in the shell. The `.env` file should not be committed unless this project already commits non-secret local defaults.
 
 ## File Structure
 
-- Modify `companycollect/corpscout/dagster_v3/pyproject.toml` and `uv.lock` to add `temporalio`.
+- Modify `companycollect/corpscout/dagster_v3/pyproject.toml` and `uv.lock` to add `temporalio` and `openai`.
 - Create `companycollect/corpscout/dagster_v3/src/dagster_v3/translations/__init__.py` to export translation smoke-test primitives.
 - Create `companycollect/corpscout/dagster_v3/src/dagster_v3/translations/smoke.py` for request/response dataclasses, prompt creation, response parsing, and local OpenAI-compatible provider.
 - Create `companycollect/corpscout/dagster_v3/src/dagster_v3/temporal/__init__.py`.
@@ -61,37 +60,36 @@ The implementation also works if these values are exported in the shell. The `.e
 
 ---
 
-### Task 1: Add Temporal Dependency And Env Example
+### Task 1: Add Temporal And OpenAI Dependencies
 
 **Files:**
 - Modify: `companycollect/corpscout/dagster_v3/pyproject.toml`
 - Modify: `companycollect/corpscout/dagster_v3/uv.lock`
 - Create: `companycollect/corpscout/dagster_v3/.env.example`
 
-- [ ] **Step 1: Add Temporal SDK**
+- [ ] **Step 1: Add Temporal SDK and OpenAI SDK**
 
 Run:
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3
-uv add temporalio
+uv add temporalio openai
 ```
 
-Expected: `pyproject.toml` includes `temporalio` and `uv.lock` changes.
+Expected: `pyproject.toml` includes `temporalio` and `openai`, and `uv.lock` changes.
 
 - [ ] **Step 2: Create `.env.example`**
 
 Create `companycollect/corpscout/dagster_v3/.env.example`:
 
 ```bash
-TEMPORAL_ADDRESS=companycollect:8089
-TRANSLATION_PROVIDER=local_openai_compatible
-TRANSLATION_PROVIDER_LOCAL_BASE_URL=http://100.77.62.33:8888
+TEMPORAL_ADDRESS=companycollect:7233
+TRANSLATION_PROVIDER_LOCAL_BASE_URL=http://100.77.62.33:8888/v1
 TRANSLATION_PROVIDER_LOCAL_MODEL=qwen3:6b
-TRANSLATION_PROVIDER_LOCAL_API_KEY=
+TRANSLATION_PROVIDER_LOCAL_API_KEY=not-needed
 ```
 
-- [ ] **Step 3: Verify Temporal imports**
+- [ ] **Step 3: Verify Temporal and OpenAI imports**
 
 Run:
 
@@ -100,14 +98,15 @@ cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3
 uv run python - <<'PY'
 from temporalio.client import Client
 from temporalio.worker import Worker
-print(Client.__name__, Worker.__name__)
+from openai import OpenAI
+print(Client.__name__, Worker.__name__, OpenAI.__name__)
 PY
 ```
 
 Expected output:
 
 ```text
-Client Worker
+Client Worker OpenAI
 ```
 
 - [ ] **Step 4: Commit**
@@ -115,7 +114,7 @@ Client Worker
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3
 git add pyproject.toml uv.lock .env.example
-git commit -m "chore: add temporal smoke test dependency"
+git commit -m "chore: add temporal openai smoke test dependencies"
 ```
 
 ---
@@ -201,9 +200,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from typing import Any, Protocol
 
-import requests
+from openai import OpenAI
 
 
 @dataclass(frozen=True)
@@ -216,10 +214,6 @@ class SmokeTranslationInput:
 class SmokeTranslationResult:
     item_id: str
     translated_text: str
-
-
-class HttpSession(Protocol):
-    def post(self, url: str, *, json: dict[str, Any], headers: dict[str, str], timeout: int) -> Any: ...
 
 
 def build_smoke_translation_prompt(items: list[SmokeTranslationInput]) -> str:
@@ -280,13 +274,16 @@ class LocalOpenAICompatibleTranslationProvider:
         *,
         base_url: str,
         model: str,
-        api_key: str = "",
-        session: HttpSession | None = None,
+        api_key: str,
+        client: OpenAI | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
-        self.session = session or requests.Session()
+        self.client = client or OpenAI(
+            base_url=self.base_url,
+            api_key=self.api_key,
+        )
 
     def translate(
         self,
@@ -295,22 +292,15 @@ class LocalOpenAICompatibleTranslationProvider:
         timeout_seconds: int,
     ) -> list[SmokeTranslationResult]:
         prompt = build_smoke_translation_prompt(items)
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        response = self.session.post(
-            f"{self.base_url}/v1/chat/completions",
-            json={
-                "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0,
-                "stream": False,
-            },
-            headers=headers,
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
             timeout=timeout_seconds,
         )
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+        content = response.choices[0].message.content
+        if content is None:
+            raise ValueError("translation response content is empty")
         return parse_smoke_translation_response(
             content,
             expected_item_ids={item.item_id for item in items},
@@ -450,7 +440,7 @@ def translate_smoke_batch(params: SmokeWorkflowInput) -> list[SmokeTranslationRe
     provider = LocalOpenAICompatibleTranslationProvider(
         base_url=os.environ["TRANSLATION_PROVIDER_LOCAL_BASE_URL"],
         model=os.environ["TRANSLATION_PROVIDER_LOCAL_MODEL"],
-        api_key=os.getenv("TRANSLATION_PROVIDER_LOCAL_API_KEY", ""),
+        api_key=os.getenv("TRANSLATION_PROVIDER_LOCAL_API_KEY", "not-needed"),
     )
     return provider.translate(
         build_smoke_items(),
@@ -588,11 +578,10 @@ Expected: unit tests pass and the real Temporal/LLM test is not executed.
 Create or update `companycollect/corpscout/dagster_v3/.env`:
 
 ```bash
-TEMPORAL_ADDRESS=companycollect:8089
-TRANSLATION_PROVIDER=local_openai_compatible
-TRANSLATION_PROVIDER_LOCAL_BASE_URL=http://100.77.62.33:8888
+TEMPORAL_ADDRESS=companycollect:7233
+TRANSLATION_PROVIDER_LOCAL_BASE_URL=http://100.77.62.33:8888/v1
 TRANSLATION_PROVIDER_LOCAL_MODEL=qwen3:6b
-TRANSLATION_PROVIDER_LOCAL_API_KEY=
+TRANSLATION_PROVIDER_LOCAL_API_KEY=not-needed
 ```
 
 - [ ] **Step 4: Run real Temporal + local LLM integration test**
@@ -604,7 +593,7 @@ cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3
 uv run pytest tests/test_translation_temporal_smoke.py::test_real_temporal_workflow_translates_50_items_with_local_llm -q -s
 ```
 
-Expected: the test starts an in-process Temporal worker, starts one workflow on `companycollect:8089`, calls `http://100.77.62.33:8888/v1/chat/completions` with model `qwen3:6b`, and passes with 50 translated results.
+Expected: the test starts an in-process Temporal worker, starts one workflow on `companycollect:7233`, uses the OpenAI Python SDK with `base_url=http://100.77.62.33:8888/v1` and model `qwen3:6b`, and passes with 50 translated results.
 
 - [ ] **Step 5: Commit**
 

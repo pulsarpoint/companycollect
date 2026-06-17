@@ -8,14 +8,21 @@ from pathlib import Path
 from typing import Any
 from typing import get_type_hints
 
+import dagster as dg
+import dlt
 import duckdb
+import pyarrow as pa
+from temporalio.client import WorkflowExecutionStatus
 from dagster_clickhouse import ClickhouseResource
 
 import dagster_v3.defs.norway_brreg.assets as brreg_assets
 from dagster_v3.definitions import defs as load_project_defs
+from dagster_v3.defs.norway_brreg import resources as brreg_resources
+from dagster_v3.defs.norway_brreg import sensors as brreg_sensors
 from dagster_v3.defs.norway_brreg import tables as brreg_tables
 from dagster_v3.defs.norway_brreg.clickhouse import (
-    prepare_norway_brreg_clickhouse_tables,
+    prepare_norway_brreg_clickhouse_companies_table,
+    prepare_norway_brreg_clickhouse_financial_statements_table,
 )
 
 
@@ -35,11 +42,21 @@ class FakeResponse:
     def json(self) -> Any:
         return json.loads(self.text)
 
+    def iter_content(self, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
+        for index in range(0, len(self.content), chunk_size):
+            yield self.content[index : index + chunk_size]
+
 
 class FakeHttpSession:
-    def __init__(self, content: bytes = b"", json_by_url: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        content: bytes = b"",
+        json_by_url: dict[str, Any] | None = None,
+        status_by_url: dict[str, int] | None = None,
+    ) -> None:
         self.content = content
         self.json_by_url = json_by_url or {}
+        self.status_by_url = status_by_url or {}
         self.calls: list[tuple[str, dict[str, Any] | None, int]] = []
         self.headers: dict[str, str] = {}
 
@@ -48,15 +65,55 @@ class FakeHttpSession:
         url: str,
         params: dict[str, Any] | None = None,
         timeout: int = 120,
+        stream: bool = False,
     ) -> FakeResponse:
         self.calls.append((url, params, timeout))
+        status_code = self.status_by_url.get(url, 200)
         if url in self.json_by_url:
-            return FakeResponse(content=json.dumps(self.json_by_url[url]).encode("utf-8"))
-        return FakeResponse(content=self.content)
+            return FakeResponse(
+                content=json.dumps(self.json_by_url[url]).encode("utf-8"),
+                status_code=status_code,
+            )
+        return FakeResponse(content=self.content, status_code=status_code)
 
 
 def _gzip_json_array(records: list[dict[str, Any]]) -> bytes:
     return gzip.compress(json.dumps(records).encode("utf-8"))
+
+
+def _run_entities_dlt_pipeline_for_test(
+    *,
+    database_path: str | Path,
+    session: brreg_resources.HttpSession,
+) -> Any:
+    database_file = Path(database_path)
+    database_file.parent.mkdir(parents=True, exist_ok=True)
+    return dlt.pipeline(
+        pipeline_name="test_norway_brreg_entities",
+        destination=dlt.destinations.duckdb(str(database_file)),
+        dataset_name=brreg_resources.DLT_DATASET_NAME,
+        dev_mode=False,
+    ).run(brreg_resources.norway_brreg_entities_source(session=session))
+
+
+def _run_financial_fetches_dlt_pipeline_for_test(
+    *,
+    database_path: str | Path,
+    client: Any,
+) -> Any:
+    database_file = Path(database_path)
+    database_file.parent.mkdir(parents=True, exist_ok=True)
+    return dlt.pipeline(
+        pipeline_name="test_norway_brreg_financial_fetches",
+        destination=dlt.destinations.duckdb(str(database_file)),
+        dataset_name=brreg_resources.DLT_DATASET_NAME,
+        dev_mode=False,
+    ).run(
+        brreg_resources.norway_brreg_financial_fetches_source(
+            database_path=database_file,
+            client=client,
+        )
+    )
 
 
 def _entity_record(**overrides: Any) -> dict[str, Any]:
@@ -168,10 +225,55 @@ class FakeUsdRate:
 
 
 class FakeExchangeRates:
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str]] = []
+
+    def usd_rates(self, requests):
+        self.requests.extend((request.currency, request.rate_date) for request in requests)
+        return {
+            (request.currency, request.rate_date): FakeUsdRate()
+            for request in requests
+        }
+
     def usd_rate(self, *, currency: str, rate_date: str) -> FakeUsdRate:
         assert currency == "NOK"
         assert rate_date == "2024-12-31"
         return FakeUsdRate()
+
+
+class FakeTemporalWorkflowDescription:
+    def __init__(self, *, run_id: str, status: WorkflowExecutionStatus) -> None:
+        self.run_id = run_id
+        self.status = status
+
+
+class FakeTemporalWorkflowHandle:
+    id = "translation-norway-brreg"
+    result_run_id = "temporal-run-123"
+
+    def __init__(self, description: FakeTemporalWorkflowDescription) -> None:
+        self.description = description
+
+    async def describe(self) -> FakeTemporalWorkflowDescription:
+        return self.description
+
+
+class FakeTemporalClient:
+    def __init__(self, description: FakeTemporalWorkflowDescription) -> None:
+        self.description = description
+
+    async def start_workflow(self, *args: Any, **kwargs: Any) -> FakeTemporalWorkflowHandle:
+        return FakeTemporalWorkflowHandle(self.description)
+
+    def get_workflow_handle(self, workflow_id: str) -> FakeTemporalWorkflowHandle:
+        assert workflow_id == "translation-norway-brreg"
+        return FakeTemporalWorkflowHandle(self.description)
+
+
+class MissingWorkflowTemporalClient:
+    def get_workflow_handle(self, workflow_id: str) -> FakeTemporalWorkflowHandle:
+        assert workflow_id == "translation-norway-brreg"
+        raise RuntimeError("workflow not found")
 
 
 class FakeClickHouseClient:
@@ -199,19 +301,16 @@ def test_streaming_json_dependency_is_available() -> None:
 
 
 def test_norway_duckdb_path_is_a_source_constant_not_custom_resource() -> None:
-    assert brreg_assets.NORWAY_BRREG_DUCKDB_PATH == Path("data/norway_brreg.duckdb")
+    assert brreg_assets.NORWAY_BRREG_DUCKDB_PATH == Path("data/norway_brreg_source.duckdb")
+    assert brreg_assets.NORWAY_BRREG_DUCKDB_PATH.stem != brreg_assets.DLT_DATASET_NAME
     assert "NorwayDuckDBResource" not in brreg_assets.__dict__
 
 
 def test_entity_resource_declares_explicit_table_schema() -> None:
-    source = brreg_assets.norway_brreg_entities_source(
-        session=FakeHttpSession(),
-        run_id="test-run",
-    )
-    schema = source.resources[brreg_assets.ENTITIES_TABLE].compute_table_schema()
-    columns = schema["columns"]
-    row = brreg_assets.build_entity_rows([_entity_record()], run_id="test-run")[0]
+    columns = brreg_resources.BRREG_ENTITIES_COLUMNS
+    row = brreg_resources.build_entity_rows([_entity_record()], run_id="test-run")[0]
 
+    assert brreg_resources.BRREG_ENTITIES_COLUMNS is brreg_tables.BRREG_ENTITIES_COLUMNS
     assert set(columns) == set(row)
     assert columns["org_number"]["data_type"] == "text"
     assert columns["source_line_number"]["data_type"] == "bigint"
@@ -221,8 +320,63 @@ def test_entity_resource_declares_explicit_table_schema() -> None:
     assert columns["raw_entity"]["data_type"] == "text"
 
 
+def test_norway_table_schema_constants_are_not_mutated_by_dlt(tmp_path: Path) -> None:
+    assert "name" not in brreg_tables.BRREG_ENTITIES_COLUMNS["org_number"]
+
+    _run_entities_dlt_pipeline_for_test(
+        database_path=tmp_path / "norway.duckdb",
+        session=FakeHttpSession(_gzip_json_array([_entity_record()])),
+    )
+
+    assert "name" not in brreg_tables.BRREG_ENTITIES_COLUMNS["org_number"]
+
+
+def test_norway_brreg_entities_uses_resources_module_for_dlt_source() -> None:
+    assert "norway_brreg_entities_source" not in brreg_assets.__dict__
+    assert "_entities_resource" not in brreg_assets.__dict__
+    assert "norway_brreg_pipeline" not in brreg_assets.__dict__
+
+
+def test_norway_brreg_dlt_sources_are_defined_in_resources_module() -> None:
+    assert "norway_brreg_entities_source" in brreg_resources.__dict__
+    assert "norway_brreg_financial_fetches_source" in brreg_resources.__dict__
+    assert "_entities_resource" in brreg_resources.__dict__
+    assert "_financial_fetches_resource" in brreg_resources.__dict__
+
+    entity_source = brreg_resources.norway_brreg_entities_source(
+        session=FakeHttpSession(_gzip_json_array([_entity_record()]))
+    )
+    financial_source = brreg_resources.norway_brreg_financial_fetches_source(
+        database_path="data/test.duckdb",
+        client=FakeHttpSession(),
+    )
+
+    assert entity_source.name == "norway_brreg_entities"
+    assert financial_source.name == "norway_brreg_financial_fetches"
+    assert brreg_resources.ENTITIES_TABLE in entity_source.resources
+    assert brreg_resources.FINANCIAL_FETCHES_TABLE in financial_source.resources
+
+
+def test_norway_brreg_assets_do_not_expose_pipeline_helpers() -> None:
+    assert "run_norway_brreg_entities_dlt_pipeline" not in brreg_assets.__dict__
+    assert "run_norway_brreg_financial_fetches_dlt_pipeline" not in brreg_assets.__dict__
+    assert "run_norway_brreg_entities_dlt_pipeline" not in brreg_resources.__dict__
+    assert "run_norway_brreg_financial_fetches_dlt_pipeline" not in brreg_resources.__dict__
+
+
+def test_norway_brreg_translation_sensor_is_defined_in_sensors_module() -> None:
+    assert "norway_brreg_translation_completion_sensor" not in brreg_assets.__dict__
+    assert "build_norway_brreg_translation_completion_sensor_result" not in brreg_assets.__dict__
+    assert brreg_sensors.norway_brreg_translation_completion_sensor.name == (
+        "norway_brreg_translation_completion_sensor"
+    )
+    assert brreg_sensors.norway_brreg_translation_completion_sensor.default_status == (
+        dg.DefaultSensorStatus.RUNNING
+    )
+
+
 def test_entity_rows_extract_company_spine_fields() -> None:
-    rows = brreg_assets.build_entity_rows([_entity_record()], run_id="test-run")
+    rows = brreg_resources.build_entity_rows([_entity_record()], run_id="test-run")
 
     assert rows[0]["country_iso2"] == "NO"
     assert rows[0]["source_slug"] == "norway_brregenhet"
@@ -234,7 +388,7 @@ def test_entity_rows_extract_company_spine_fields() -> None:
     assert rows[0]["legal_name"] == "EQUINOR ASA"
     assert rows[0]["legal_form_code"] == "ASA"
     assert rows[0]["legal_form_description_original"] == "Allmennaksjeselskap"
-    assert rows[0]["legal_form_description_en"] == ""
+    assert rows[0]["legal_form_description_en"] == "Public limited company"
     assert rows[0]["nace1_code"] == "06.100"
     assert rows[0]["nace1_description_original"] == "Utvinning av raolje"
     assert rows[0]["nace1_description_en"] == ""
@@ -267,8 +421,222 @@ def test_entity_rows_extract_company_spine_fields() -> None:
     assert json.loads(rows[0]["raw_entity"])["organisasjonsnummer"] == "923609016"
 
 
+def test_norway_legal_form_description_en_uses_deterministic_mapping() -> None:
+    rows = brreg_resources.build_entity_rows(
+        [
+            _entity_record(
+                organisasjonsform={
+                    "kode": "ENK",
+                    "beskrivelse": "Enkeltpersonforetak",
+                }
+            )
+        ],
+        run_id="test-run",
+    )
+
+    assert rows[0]["legal_form_description_en"] == "Sole proprietorship"
+
+
+def test_unknown_norway_legal_form_description_en_is_empty() -> None:
+    rows = brreg_resources.build_entity_rows(
+        [
+            _entity_record(
+                organisasjonsform={
+                    "kode": "UNKNOWN",
+                    "beskrivelse": "Ukjent",
+                }
+            )
+        ],
+        run_id="test-run",
+    )
+
+    assert rows[0]["legal_form_description_en"] == ""
+
+
+def test_build_norway_brreg_translation_queue_items_excludes_reference_fields() -> None:
+    row = brreg_resources.build_entity_rows([_entity_record()], run_id="test-run")[0]
+
+    items = brreg_assets.build_norway_brreg_translation_queue_items(
+        [row],
+        source_duckdb_path="data/norway_brreg_source.duckdb",
+    )
+
+    assert {item.source_field for item in items} == {
+        "articles_purpose_original",
+        "activity_text_original",
+        "company_description_original",
+    }
+    assert "legal_form_description_original" not in {item.source_field for item in items}
+    assert "nace1_description_original" not in {item.source_field for item in items}
+    assert all(item.source_table == "norway_brreg.entities" for item in items)
+    assert all(item.source_pk == "923609016" for item in items)
+    assert all(item.target_language == "en" for item in items)
+
+
+def test_build_norway_brreg_translation_queue_items_skips_existing_translations() -> None:
+    row = brreg_resources.build_entity_rows([_entity_record()], run_id="test-run")[0]
+    row["activity_text_en"] = "Already translated"
+
+    items = brreg_assets.build_norway_brreg_translation_queue_items(
+        [row],
+        source_duckdb_path="data/norway_brreg_source.duckdb",
+    )
+
+    assert {item.source_field for item in items} == {
+        "articles_purpose_original",
+        "company_description_original",
+    }
+
+
+def test_seed_norway_brreg_translation_queue_reads_entities_duckdb(tmp_path: Path) -> None:
+    source_duckdb_path = tmp_path / "norway_source.duckdb"
+    queue_duckdb_path = tmp_path / "translation_queue.duckdb"
+    rows = brreg_resources.build_entity_rows([_entity_record()], run_id="test-run")
+
+    with duckdb.connect(str(source_duckdb_path)) as connection:
+        connection.execute("create schema norway_brreg")
+        connection.register("entity_rows", pa.Table.from_pylist(rows))
+        connection.execute("create table norway_brreg.entities as select * from entity_rows")
+
+    counts = brreg_assets.seed_norway_brreg_translation_queue(
+        source_duckdb_path=source_duckdb_path,
+        queue_duckdb_path=queue_duckdb_path,
+    )
+
+    assert counts["source_rows"] == 1
+    assert counts["candidate_items"] == 3
+    assert counts["queue_total_items"] == 3
+
+
+def test_seed_norway_brreg_translation_queue_only_needs_translation_columns(
+    tmp_path: Path,
+) -> None:
+    source_duckdb_path = tmp_path / "norway_source.duckdb"
+    queue_duckdb_path = tmp_path / "translation_queue.duckdb"
+    log_messages: list[str] = []
+
+    with duckdb.connect(str(source_duckdb_path)) as connection:
+        connection.execute("create schema norway_brreg")
+        connection.execute(
+            """
+            create table norway_brreg.entities (
+              org_number text,
+              articles_purpose_original text,
+              articles_purpose_en text,
+              activity_text_original text,
+              activity_text_en text,
+              company_description_original text,
+              company_description_en text
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into norway_brreg.entities values
+              ('923609016', 'Formaal', '', 'Aktivitet', '', 'Beskrivelse', ''),
+              ('999999999', 'Ferdig', 'Done', '', '', null, '')
+            """
+        )
+
+    counts = brreg_assets.seed_norway_brreg_translation_queue(
+        source_duckdb_path=source_duckdb_path,
+        queue_duckdb_path=queue_duckdb_path,
+        log=lambda message, *args: log_messages.append(message % args),
+    )
+
+    assert counts["source_rows"] == 2
+    assert counts["candidate_items"] == 3
+    assert counts["queue_total_items"] == 3
+    assert any("Counting Norway Brreg translation candidates" in message for message in log_messages)
+    assert any("Inserted Norway Brreg translation queue candidates" in message for message in log_messages)
+
+
+def test_apply_norway_brreg_translation_queue_results_updates_free_text_fields(
+    tmp_path: Path,
+) -> None:
+    source_duckdb_path, queue_duckdb_path = _source_and_completed_translation_queue(tmp_path)
+
+    counts = brreg_assets.apply_norway_brreg_translation_queue_results(
+        source_duckdb_path=source_duckdb_path,
+        queue_duckdb_path=queue_duckdb_path,
+    )
+
+    assert counts["completed_translations"] == 3
+    assert counts["rows_updated"] == 1
+    assert counts["fields_updated"] == 3
+    with duckdb.connect(str(source_duckdb_path), read_only=True) as connection:
+        row = connection.execute(
+            """
+            select
+              legal_form_description_en,
+              nace1_description_en,
+              articles_purpose_en,
+              activity_text_en,
+              company_description_en
+            from norway_brreg.entities
+            where org_number = '923609016'
+            """
+        ).fetchone()
+
+    assert row == (
+        "Public limited company",
+        "",
+        "Purpose translated",
+        "Activity translated",
+        "Company description translated",
+    )
+
+
+def test_apply_norway_brreg_translation_queue_results_is_idempotent(tmp_path: Path) -> None:
+    source_duckdb_path, queue_duckdb_path = _source_and_completed_translation_queue(tmp_path)
+
+    first = brreg_assets.apply_norway_brreg_translation_queue_results(
+        source_duckdb_path=source_duckdb_path,
+        queue_duckdb_path=queue_duckdb_path,
+    )
+    second = brreg_assets.apply_norway_brreg_translation_queue_results(
+        source_duckdb_path=source_duckdb_path,
+        queue_duckdb_path=queue_duckdb_path,
+    )
+
+    assert first["fields_updated"] == 3
+    assert second["fields_updated"] == 0
+    assert second["rows_updated"] == 0
+
+
+def test_apply_norway_brreg_translation_queue_results_ignores_reference_fields(
+    tmp_path: Path,
+) -> None:
+    source_duckdb_path, queue_duckdb_path = _source_and_completed_translation_queue(tmp_path)
+    brreg_assets._insert_completed_translation_for_test(
+        queue_duckdb_path=queue_duckdb_path,
+        source_duckdb_path=source_duckdb_path,
+        source_pk="923609016",
+        source_field="nace1_description_original",
+        source_text="Utvinning av raolje",
+        translated_text="Extraction of crude petroleum",
+    )
+
+    counts = brreg_assets.apply_norway_brreg_translation_queue_results(
+        source_duckdb_path=source_duckdb_path,
+        queue_duckdb_path=queue_duckdb_path,
+    )
+
+    assert counts["completed_translations"] == 4
+    assert counts["skipped_non_free_text"] == 1
+    with duckdb.connect(str(source_duckdb_path), read_only=True) as connection:
+        nace_en = connection.execute(
+            """
+            select nace1_description_en
+            from norway_brreg.entities
+            where org_number = '923609016'
+            """
+        ).fetchone()[0]
+    assert nace_en == ""
+
+
 def test_entity_rows_serialize_decimal_values_from_streaming_parser() -> None:
-    rows = brreg_assets.build_entity_rows(
+    rows = brreg_resources.build_entity_rows(
         [_entity_record(sourceDecimal=Decimal("1.25"))],
         run_id="test-run",
     )
@@ -277,49 +645,32 @@ def test_entity_rows_serialize_decimal_values_from_streaming_parser() -> None:
     assert json.loads(rows[0]["raw_entity"])["sourceDecimal"] == 1.25
 
 
-def test_financial_orgs_resource_filters_entities_from_duckdb(tmp_path: Path) -> None:
-    database_path = tmp_path / "norway.duckdb"
-    brreg_assets.run_norway_brreg_entities_dlt_pipeline(
-        database_path=database_path,
-        run_id="entity-run",
-        session=FakeHttpSession(
-            _gzip_json_array(
-                [
-                    _entity_record(),
-                    _entity_record(organisasjonsnummer="inactive", konkurs=True),
-                    _entity_record(organisasjonsnummer="no-website", hjemmeside=""),
-                    _entity_record(
-                        organisasjonsnummer="no-accounts",
-                        sisteInnsendteAarsregnskap="",
-                    ),
-                ]
-            )
-        ),
+def _source_and_completed_translation_queue(tmp_path: Path) -> tuple[Path, Path]:
+    source_duckdb_path = tmp_path / "norway_source.duckdb"
+    queue_duckdb_path = tmp_path / "translation_queue.duckdb"
+    rows = brreg_resources.build_entity_rows([_entity_record()], run_id="test-run")
+    with duckdb.connect(str(source_duckdb_path)) as connection:
+        connection.execute("create schema norway_brreg")
+        connection.register("entity_rows", pa.Table.from_pylist(rows))
+        connection.execute("create table norway_brreg.entities as select * from entity_rows")
+
+    brreg_assets.seed_norway_brreg_translation_queue(
+        source_duckdb_path=source_duckdb_path,
+        queue_duckdb_path=queue_duckdb_path,
     )
-
-    rows = list(
-        brreg_assets.norway_brreg_financial_orgs_resource(database_path=database_path)
+    brreg_assets._complete_all_translation_queue_items_for_test(
+        queue_duckdb_path=queue_duckdb_path,
+        translations_by_field={
+            "articles_purpose_original": "Purpose translated",
+            "activity_text_original": "Activity translated",
+            "company_description_original": "Company description translated",
+        },
     )
-
-    assert rows == [
-        {
-            "org_number": "923609016",
-            "legal_name": "EQUINOR ASA",
-            "website": "www.equinor.com",
-            "last_submitted_accounts_year": "2024",
-        }
-    ]
+    return source_duckdb_path, queue_duckdb_path
 
 
-def test_financial_statement_resource_declares_explicit_table_schema(tmp_path: Path) -> None:
-    source = brreg_assets.norway_brreg_financial_statements_source(
-        database_path=tmp_path / "norway.duckdb",
-        session=FakeHttpSession(),
-        exchange_rates=FakeExchangeRates(),
-        run_id="financial-run",
-    )
-    schema = source.resources[brreg_assets.FINANCIAL_STATEMENTS_TABLE].compute_table_schema()
-    columns = schema["columns"]
+def test_financial_statement_schema_matches_normalized_rows() -> None:
+    columns = brreg_assets.BRREG_FINANCIAL_STATEMENTS_COLUMNS
     row = brreg_assets.build_financial_statement_rows(
         [_financial_record()],
         org={
@@ -333,6 +684,10 @@ def test_financial_statement_resource_declares_explicit_table_schema(tmp_path: P
         source_url="https://data.brreg.no/regnskapsregisteret/regnskap/923609016",
     )[0]
 
+    assert (
+        brreg_assets.BRREG_FINANCIAL_STATEMENTS_COLUMNS
+        is brreg_tables.BRREG_FINANCIAL_STATEMENTS_COLUMNS
+    )
     assert set(columns) == set(row)
     assert columns["org_number"]["data_type"] == "text"
     assert columns["filing_id"]["data_type"] == "bigint"
@@ -385,14 +740,13 @@ def test_financial_rows_serialize_decimal_values_from_streaming_parser() -> None
     assert json.loads(rows[0]["raw_financial_record"])["sourceDecimal"] == 2.5
 
 
-def test_financial_dlt_pipeline_loads_statements_table(tmp_path: Path) -> None:
+def test_financial_fetch_and_normalize_pipeline_loads_statements_table(tmp_path: Path) -> None:
     database_path = tmp_path / "norway.duckdb"
-    brreg_assets.run_norway_brreg_entities_dlt_pipeline(
+    _run_entities_dlt_pipeline_for_test(
         database_path=database_path,
-        run_id="entity-run",
         session=FakeHttpSession(_gzip_json_array([_entity_record()])),
     )
-    session = FakeHttpSession(
+    client = FakeHttpSession(
         json_by_url={
             "https://data.brreg.no/regnskapsregisteret/regnskap/923609016": [
                 _financial_record()
@@ -400,14 +754,22 @@ def test_financial_dlt_pipeline_loads_statements_table(tmp_path: Path) -> None:
         }
     )
 
-    load_info = brreg_assets.run_norway_brreg_financial_statements_dlt_pipeline(
+    load_info = _run_financial_fetches_dlt_pipeline_for_test(
         database_path=database_path,
-        run_id="financial-run",
-        session=session,
+        client=client,
+    )
+    counts = brreg_assets.normalize_norway_brreg_financial_statements_duckdb(
+        database_path=database_path,
         exchange_rates=FakeExchangeRates(),
     )
 
     assert load_info
+    assert counts == {
+        "financial_fetches": 1,
+        "financial_statements": 1,
+        "successful_fetches": 1,
+        "failed_fetches": 0,
+    }
     with duckdb.connect(str(database_path), read_only=True) as connection:
         rows = connection.execute(
             """
@@ -426,6 +788,67 @@ def test_financial_dlt_pipeline_loads_statements_table(tmp_path: Path) -> None:
             Decimal("7254300000.000"),
         )
     ]
+
+
+def test_financial_fetch_pipeline_persists_not_found_and_server_errors(tmp_path: Path) -> None:
+    database_path = tmp_path / "norway.duckdb"
+    _run_entities_dlt_pipeline_for_test(
+        database_path=database_path,
+        session=FakeHttpSession(
+            _gzip_json_array(
+                [
+                    _entity_record(organisasjonsnummer="811685852"),
+                    _entity_record(organisasjonsnummer="814115232"),
+                    _entity_record(organisasjonsnummer="923609016"),
+                ]
+            )
+        ),
+    )
+    client = FakeHttpSession(
+        json_by_url={
+            "https://data.brreg.no/regnskapsregisteret/regnskap/923609016": [
+                _financial_record()
+            ]
+        },
+        status_by_url={
+            "https://data.brreg.no/regnskapsregisteret/regnskap/811685852": 404,
+            "https://data.brreg.no/regnskapsregisteret/regnskap/814115232": 500,
+        },
+    )
+
+    _run_financial_fetches_dlt_pipeline_for_test(
+        database_path=database_path,
+        client=client,
+    )
+    counts = brreg_assets.normalize_norway_brreg_financial_statements_duckdb(
+        database_path=database_path,
+        exchange_rates=FakeExchangeRates(),
+    )
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        fetch_rows = connection.execute(
+            """
+            select org_number, fetch_status, http_status
+            from norway_brreg.financial_fetches
+            order by org_number
+            """
+        ).fetchall()
+        statement_rows = connection.execute(
+            "select org_number from norway_brreg.financial_statements order by org_number"
+        ).fetchall()
+
+    assert fetch_rows == [
+        ("811685852", "not_found", 404),
+        ("814115232", "server_error", 500),
+        ("923609016", "success", 200),
+    ]
+    assert statement_rows == [("923609016",)]
+    assert counts == {
+        "financial_fetches": 3,
+        "financial_statements": 1,
+        "successful_fetches": 1,
+        "failed_fetches": 2,
+    }
 
 
 def test_norway_brreg_clickhouse_schema_contract() -> None:
@@ -451,15 +874,25 @@ def test_norway_brreg_clickhouse_schema_contract() -> None:
         "CREATE TABLE IF NOT EXISTS norway_brreg.financial_statements"
         in brreg_tables.FINANCIAL_STATEMENTS_DDL
     )
+    assert "ENGINE = ReplacingMergeTree" in brreg_tables.COMPANIES_DDL
+    assert "ENGINE = ReplacingMergeTree" in brreg_tables.FINANCIAL_STATEMENTS_DDL
+    assert "ENGINE = MergeTree" not in brreg_tables.COMPANIES_DDL
+    assert "ENGINE = MergeTree" not in brreg_tables.FINANCIAL_STATEMENTS_DDL
 
 
-def test_prepare_norway_brreg_clickhouse_tables_is_typed_for_official_resource() -> None:
-    annotations = get_type_hints(prepare_norway_brreg_clickhouse_tables)
+def test_prepare_norway_brreg_clickhouse_tables_are_typed_for_official_resource() -> None:
+    companies_annotations = get_type_hints(
+        prepare_norway_brreg_clickhouse_companies_table
+    )
+    financials_annotations = get_type_hints(
+        prepare_norway_brreg_clickhouse_financial_statements_table
+    )
 
-    assert annotations["clickhouse"] is ClickhouseResource
+    assert companies_annotations["clickhouse"] is ClickhouseResource
+    assert financials_annotations["clickhouse"] is ClickhouseResource
 
 
-def test_prepare_norway_brreg_clickhouse_tables_uses_official_resource_connection(
+def test_prepare_norway_brreg_clickhouse_companies_uses_official_resource_connection(
     monkeypatch,
 ) -> None:
     resource = ClickhouseResource(host="localhost")
@@ -473,15 +906,35 @@ def test_prepare_norway_brreg_clickhouse_tables_uses_official_resource_connectio
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    prepare_norway_brreg_clickhouse_tables(resource)
+    prepare_norway_brreg_clickhouse_companies_table(resource)
 
     assert connection_calls == [resource]
     assert client.statements == [
         "CREATE DATABASE IF NOT EXISTS norway_brreg",
         brreg_tables.COMPANIES_DDL.strip(),
+    ]
+
+
+def test_prepare_norway_brreg_clickhouse_financials_uses_official_resource_connection(
+    monkeypatch,
+) -> None:
+    resource = ClickhouseResource(host="localhost")
+    client = FakeClickHouseClient()
+    connection_calls: list[ClickhouseResource] = []
+
+    @contextmanager
+    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
+        connection_calls.append(self)
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    prepare_norway_brreg_clickhouse_financial_statements_table(resource)
+
+    assert connection_calls == [resource]
+    assert client.statements == [
+        "CREATE DATABASE IF NOT EXISTS norway_brreg",
         brreg_tables.FINANCIAL_STATEMENTS_DDL.strip(),
-        "TRUNCATE TABLE norway_brreg.companies",
-        "TRUNCATE TABLE norway_brreg.financial_statements",
     ]
 
 
@@ -490,21 +943,22 @@ def test_export_norway_brreg_clickhouse_tables_reads_duckdb_and_inserts(
     monkeypatch,
 ) -> None:
     database_path = tmp_path / "norway.duckdb"
-    brreg_assets.run_norway_brreg_entities_dlt_pipeline(
+    _run_entities_dlt_pipeline_for_test(
         database_path=database_path,
-        run_id="entity-run",
         session=FakeHttpSession(_gzip_json_array([_entity_record()])),
     )
-    brreg_assets.run_norway_brreg_financial_statements_dlt_pipeline(
+    _run_financial_fetches_dlt_pipeline_for_test(
         database_path=database_path,
-        run_id="financial-run",
-        session=FakeHttpSession(
+        client=FakeHttpSession(
             json_by_url={
                 "https://data.brreg.no/regnskapsregisteret/regnskap/923609016": [
                     _financial_record()
                 ]
             }
         ),
+    )
+    brreg_assets.normalize_norway_brreg_financial_statements_duckdb(
+        database_path=database_path,
         exchange_rates=FakeExchangeRates(),
     )
     resource = ClickhouseResource(host="localhost")
@@ -545,34 +999,104 @@ def test_export_norway_brreg_clickhouse_tables_reads_duckdb_and_inserts(
     assert financial_row["period_end_date"] == date(2024, 12, 31)
     assert financial_row["operating_revenue_amount_original"] == Decimal("72543000000.000")
     assert financial_row["operating_revenue_amount_usd"] == Decimal("7254300000.000")
-    assert log_messages == [
+    assert (
         (
-            "Preparing Norway Brreg ClickHouse tables: database=norway_brreg, "
-            "companies_table=norway_brreg.companies, "
-            "financial_statements_table=norway_brreg.financial_statements"
-        ),
-        f"Opening Norway Brreg DuckDB staging database: path={database_path}",
-        "Reading Norway Brreg company rows from DuckDB: table=norway_brreg.entities",
-        "Read Norway Brreg company rows from DuckDB: rows=1",
+            "Preparing Norway Brreg companies ClickHouse table: database=norway_brreg, "
+            "table=norway_brreg.companies"
+        )
+        in log_messages
+    )
+    assert (
         (
-            "Reading Norway Brreg financial statement rows from DuckDB: "
-            "table=norway_brreg.financial_statements"
-        ),
-        "Read Norway Brreg financial statement rows from DuckDB: rows=1",
-        (
-            "Inserting Norway Brreg company rows into ClickHouse: "
-            "table=norway_brreg.companies, rows=1"
-        ),
-        (
-            "Inserting Norway Brreg financial statement rows into ClickHouse: "
-            "table=norway_brreg.financial_statements, rows=1"
-        ),
-        "Finished Norway Brreg ClickHouse export: companies=1, financial_statements=1",
+            "Preparing Norway Brreg financial statements ClickHouse table: "
+            "database=norway_brreg, table=norway_brreg.financial_statements"
+        )
+        in log_messages
+    )
+
+
+def test_export_norway_brreg_clickhouse_companies_touches_only_company_table(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "norway.duckdb"
+    _run_entities_dlt_pipeline_for_test(
+        database_path=database_path,
+        session=FakeHttpSession(_gzip_json_array([_entity_record()])),
+    )
+    resource = ClickhouseResource(host="localhost")
+    client = FakeClickHouseClient()
+
+    @contextmanager
+    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    rows = brreg_assets.export_norway_brreg_clickhouse_companies(
+        database_path=database_path,
+        clickhouse=resource,
+    )
+
+    assert rows == 1
+    assert client.statements == [
+        "CREATE DATABASE IF NOT EXISTS norway_brreg",
+        brreg_tables.COMPANIES_DDL.strip(),
     ]
+    assert [insert[0] for insert in client.inserts] == ["norway_brreg.companies"]
+    assert client.inserts[0][2] == brreg_tables.COMPANIES_COLUMNS
+
+
+def test_export_norway_brreg_clickhouse_financials_touches_only_financial_table(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "norway.duckdb"
+    _run_entities_dlt_pipeline_for_test(
+        database_path=database_path,
+        session=FakeHttpSession(_gzip_json_array([_entity_record()])),
+    )
+    _run_financial_fetches_dlt_pipeline_for_test(
+        database_path=database_path,
+        client=FakeHttpSession(
+            json_by_url={
+                "https://data.brreg.no/regnskapsregisteret/regnskap/923609016": [
+                    _financial_record()
+                ]
+            }
+        ),
+    )
+    brreg_assets.normalize_norway_brreg_financial_statements_duckdb(
+        database_path=database_path,
+        exchange_rates=FakeExchangeRates(),
+    )
+    resource = ClickhouseResource(host="localhost")
+    client = FakeClickHouseClient()
+
+    @contextmanager
+    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    rows = brreg_assets.export_norway_brreg_clickhouse_financial_statements(
+        database_path=database_path,
+        clickhouse=resource,
+    )
+
+    assert rows == 1
+    assert client.statements == [
+        "CREATE DATABASE IF NOT EXISTS norway_brreg",
+        brreg_tables.FINANCIAL_STATEMENTS_DDL.strip(),
+    ]
+    assert [insert[0] for insert in client.inserts] == [
+        "norway_brreg.financial_statements"
+    ]
+    assert client.inserts[0][2] == brreg_tables.FINANCIAL_STATEMENTS_COLUMNS
 
 
 def test_entity_status_derivation_handles_liquidation_and_bankruptcy() -> None:
-    rows = brreg_assets.build_entity_rows(
+    rows = brreg_resources.build_entity_rows(
         [
             _entity_record(organisasjonsnummer="1", konkurs=True),
             _entity_record(organisasjonsnummer="2", underAvvikling=True),
@@ -592,7 +1116,7 @@ def test_entity_status_derivation_handles_liquidation_and_bankruptcy() -> None:
     assert [row["is_active"] for row in rows] == [False, False, False]
 
 
-def test_brreg_entity_source_downloads_gzip_and_yields_rows() -> None:
+def test_iter_brreg_entity_rows_downloads_gzip_and_yields_rows() -> None:
     session = FakeHttpSession(
         _gzip_json_array(
             [
@@ -602,22 +1126,60 @@ def test_brreg_entity_source_downloads_gzip_and_yields_rows() -> None:
         )
     )
 
-    source = brreg_assets.norway_brreg_entities_source(session=session, run_id="test-run")
-    rows = list(source.resources[brreg_assets.ENTITIES_TABLE])
+    rows = list(brreg_resources.iter_brreg_entity_rows(session=session, run_id="test-run"))
 
     assert [row["org_number"] for row in rows] == ["923609016", "999999999"]
     assert session.calls == [
         ("https://data.brreg.no/enhetsregisteret/api/enheter/lastned", None, 120)
     ]
-    assert session.headers["User-Agent"] == brreg_assets.DEFAULT_USER_AGENT
+    assert session.headers["User-Agent"] == brreg_resources.DEFAULT_USER_AGENT
+
+
+def test_iter_brreg_entity_rows_logs_every_1000_rows() -> None:
+    records = [
+        _entity_record(organisasjonsnummer=str(900000000 + index))
+        for index in range(2001)
+    ]
+    messages: list[str] = []
+
+    rows = list(
+        brreg_resources.iter_brreg_entity_rows(
+            session=FakeHttpSession(_gzip_json_array(records)),
+            log=lambda message, *args: messages.append(message % args),
+        )
+    )
+
+    assert len(rows) == 2001
+    assert messages == [
+        "Processed Norway Brreg entity rows: rows=1000",
+        "Processed Norway Brreg entity rows: rows=2000",
+    ]
+
+
+def test_download_bytes_logs_progress_by_byte_threshold() -> None:
+    messages: list[str] = []
+
+    body = brreg_resources._download_bytes(
+        url="https://data.brreg.no/enhetsregisteret/api/enheter/lastned",
+        timeout_seconds=120,
+        user_agent="test-agent",
+        session=FakeHttpSession(b"abcdefghij"),
+        log=lambda message, *args: messages.append(message % args),
+        progress_every_bytes=4,
+    )
+
+    assert body == b"abcdefghij"
+    assert messages == [
+        "Downloaded Norway Brreg entity archive: downloaded_bytes=4 downloaded_mb=0.0",
+        "Downloaded Norway Brreg entity archive: downloaded_bytes=8 downloaded_mb=0.0",
+    ]
 
 
 def test_entity_dlt_pipeline_loads_entities_table(tmp_path: Path) -> None:
     session = FakeHttpSession(_gzip_json_array([_entity_record()]))
 
-    load_info = brreg_assets.run_norway_brreg_entities_dlt_pipeline(
+    load_info = _run_entities_dlt_pipeline_for_test(
         database_path=tmp_path / "norway.duckdb",
-        run_id="test-run",
         session=session,
     )
 
@@ -636,6 +1198,253 @@ def test_norway_entity_asset_is_registered() -> None:
     asset_names = {key.path[-1] for key in asset_graph.get_all_asset_keys()}
 
     assert "norway_brreg_entities_duckdb" in asset_names
+    assert "norway_brreg_financial_fetches_duckdb" in asset_names
     assert "norway_brreg_financial_statements_duckdb" in asset_names
-    assert "norway_brreg_clickhouse_tables" in asset_names
+    assert "norway_brreg_financial_statements_duckdb_asset" not in asset_names
+    assert "norway_brreg_translation_queue" in asset_names
+    assert "norway_brreg_translation_queue_seeded" not in asset_names
+    assert "norway_brreg_translation_workflow_started" not in asset_names
+    assert "norway_brreg_translation_workflow_status" in asset_names
+    assert "norway_brreg_translation_workflow_completed" not in asset_names
+    assert "norway_brreg_translations_applied" in asset_names
+    assert "norway_brreg_clickhouse_tables" not in asset_names
+    assert "norway_brreg_clickhouse_companies" in asset_names
+    assert "norway_brreg_clickhouse_financial_statements" in asset_names
+    queue_node = asset_graph.get(brreg_assets.norway_brreg_translation_queue.key)
+    applied_node = asset_graph.get(brreg_assets.norway_brreg_translations_applied.key)
+    workflow_status_node = asset_graph.get(
+        brreg_assets.NORWAY_BRREG_TRANSLATION_WORKFLOW_STATUS_ASSET_KEY
+    )
+    assert queue_node.group_name == "norway_brreg"
+    assert workflow_status_node.tags["system"] == "temporal"
+    assert workflow_status_node.tags["temporal"] == "true"
+    assert workflow_status_node.tags["dagster/kind/temporal"] == ""
+    assert "temporal" in workflow_status_node.to_asset_spec().kinds
+    assert {key.path[-1] for key in queue_node.parent_keys} == {"norway_brreg_entities_duckdb"}
+    assert {key.path[-1] for key in applied_node.parent_keys} == {
+        "norway_brreg_translation_queue",
+        "norway_brreg_translation_workflow_status",
+    }
+    fetches_node = asset_graph.get(brreg_assets.norway_brreg_financial_fetches_duckdb_asset.key)
+    statements_node = asset_graph.get(
+        brreg_assets.norway_brreg_financial_statements_duckdb_asset.key
+    )
+    assert {key.path[-1] for key in fetches_node.parent_keys} == {
+        "norway_brreg_entities_duckdb"
+    }
+    assert {key.path[-1] for key in statements_node.parent_keys} == {
+        "norway_brreg_financial_fetches_duckdb"
+    }
+    clickhouse_companies_node = asset_graph.get(
+        dg.AssetKey("norway_brreg_clickhouse_companies")
+    )
+    clickhouse_financial_node = asset_graph.get(
+        dg.AssetKey("norway_brreg_clickhouse_financial_statements")
+    )
+    assert {key.path[-1] for key in clickhouse_companies_node.parent_keys} == {
+        "norway_brreg_translations_applied",
+    }
+    assert {key.path[-1] for key in clickhouse_financial_node.parent_keys} == {
+        "norway_brreg_financial_statements_duckdb",
+    }
+    assert "norway_brreg_translation_completion_job" in repository.job_names
+    assert "norway_brreg_apply_translations_job" not in repository.job_names
     assert "norway_duckdb" not in repository.get_top_level_resources().keys()
+
+
+def test_norway_translation_config_exposes_operator_tunable_defaults() -> None:
+    config = brreg_assets.NorwayBrregTranslationConfig()
+
+    assert config.batch_size == 50
+    assert config.timeout_seconds == 120
+    assert config.max_batch_failures == 0
+    assert config.worker_id == "translation-temporal-worker"
+    assert config.max_tokens == 4096
+    assert config.extra_body_json == '{"chat_template_kwargs":{"enable_thinking":false}}'
+    assert config.initialize_timeout_seconds == 300
+    assert config.batch_timeout_buffer_seconds == 30
+    assert config.summarize_timeout_seconds == 30
+    assert config.activity_maximum_attempts == 1
+    assert config.temporal_address == ""
+    assert "norway_brreg_translation_start_config" not in brreg_assets.__dict__
+
+
+def test_norway_translation_completion_sensor_skips_running_workflow() -> None:
+    context = dg.build_sensor_context()
+    result = brreg_sensors.build_norway_brreg_translation_completion_sensor_result(
+        context,
+        temporal_client=FakeTemporalClient(
+            FakeTemporalWorkflowDescription(
+                run_id="temporal-run-123",
+                status=WorkflowExecutionStatus.RUNNING,
+            )
+        ),
+    )
+
+    assert result.run_requests == []
+    assert "not complete" in result.skip_reason.skip_message
+    assert len(result.asset_events) == 1
+    assert (
+        result.asset_events[0].asset_key
+        == brreg_assets.NORWAY_BRREG_TRANSLATION_WORKFLOW_STATUS_ASSET_KEY
+    )
+    assert result.asset_events[0].metadata["workflow_status"].value == "RUNNING"
+    assert result.asset_events[0].metadata["workflow_complete"].value is False
+
+
+def test_norway_translation_completion_sensor_skips_missing_workflow() -> None:
+    result = brreg_sensors.build_norway_brreg_translation_completion_sensor_result(
+        dg.build_sensor_context(),
+        temporal_client=MissingWorkflowTemporalClient(),
+    )
+
+    assert result.run_requests == []
+    assert "not available" in result.skip_reason.skip_message
+    assert len(result.asset_events) == 1
+    assert (
+        result.asset_events[0].asset_key
+        == brreg_assets.NORWAY_BRREG_TRANSLATION_WORKFLOW_STATUS_ASSET_KEY
+    )
+    assert result.asset_events[0].metadata["workflow_status"].value == "unavailable"
+    assert result.asset_events[0].metadata["workflow_available"].value is False
+
+
+def test_norway_translations_applied_skips_when_workflow_is_running(monkeypatch) -> None:
+    def fail_if_called(**kwargs: Any) -> dict[str, int]:
+        raise AssertionError("translation queue results should not be applied")
+
+    monkeypatch.setattr(
+        brreg_assets,
+        "describe_norway_brreg_translation_workflow",
+        lambda: {
+            "workflow_id": "translation-norway-brreg",
+            "workflow_run_id": "temporal-run-123",
+            "workflow_status": "RUNNING",
+        },
+    )
+    monkeypatch.setattr(
+        brreg_assets,
+        "apply_norway_brreg_translation_queue_results",
+        fail_if_called,
+    )
+
+    result = brreg_assets.norway_brreg_translations_applied(dg.build_asset_context())
+
+    assert result.metadata["applied"] is False
+    assert result.metadata["workflow_status"] == "RUNNING"
+    assert result.metadata["workflow_run_id"] == "temporal-run-123"
+
+
+def test_norway_translations_applied_reports_unavailable_workflow(monkeypatch) -> None:
+    def fail_if_called(**kwargs: Any) -> dict[str, int]:
+        raise AssertionError("translation queue results should not be applied")
+
+    def raise_workflow_error() -> dict[str, str]:
+        raise RuntimeError("workflow not found")
+
+    monkeypatch.setattr(
+        brreg_assets,
+        "describe_norway_brreg_translation_workflow",
+        raise_workflow_error,
+    )
+    monkeypatch.setattr(
+        brreg_assets,
+        "apply_norway_brreg_translation_queue_results",
+        fail_if_called,
+    )
+
+    result = brreg_assets.norway_brreg_translations_applied(dg.build_asset_context())
+
+    assert result.metadata["applied"] is False
+    assert result.metadata["workflow_status"] == "unavailable"
+    assert result.metadata["workflow_error"] == "workflow not found"
+
+
+def test_norway_translations_applied_applies_when_workflow_is_completed(monkeypatch) -> None:
+    applied_calls: list[dict[str, Any]] = []
+
+    def apply_results(**kwargs: Any) -> dict[str, int]:
+        applied_calls.append(kwargs)
+        return {
+            "completed_translations": 3,
+            "rows_updated": 1,
+            "fields_updated": 3,
+            "skipped_non_norway": 0,
+            "skipped_non_free_text": 0,
+            "skipped_missing_source_row": 0,
+            "skipped_already_applied": 0,
+        }
+
+    monkeypatch.setattr(
+        brreg_assets,
+        "describe_norway_brreg_translation_workflow",
+        lambda: {
+            "workflow_id": "translation-norway-brreg",
+            "workflow_run_id": "temporal-run-123",
+            "workflow_status": "COMPLETED",
+        },
+    )
+    monkeypatch.setattr(
+        brreg_assets,
+        "apply_norway_brreg_translation_queue_results",
+        apply_results,
+    )
+
+    result = brreg_assets.norway_brreg_translations_applied(dg.build_asset_context())
+
+    assert len(applied_calls) == 1
+    assert result.metadata["applied"] is True
+    assert result.metadata["workflow_status"] == "COMPLETED"
+    assert result.metadata["fields_updated"] == 3
+
+
+def test_norway_translation_completion_sensor_launches_apply_once() -> None:
+    context = dg.build_sensor_context()
+    result = brreg_sensors.build_norway_brreg_translation_completion_sensor_result(
+        context,
+        temporal_client=FakeTemporalClient(
+            FakeTemporalWorkflowDescription(
+                run_id="temporal-run-123",
+                status=WorkflowExecutionStatus.COMPLETED,
+            )
+        ),
+    )
+
+    assert len(result.run_requests) == 1
+    assert result.run_requests[0].run_key == "translation-norway-brreg:temporal-run-123"
+    assert result.cursor == "translation-norway-brreg:temporal-run-123"
+    assert len(result.asset_events) == 1
+    assert result.asset_events[0].metadata["workflow_status"].value == "COMPLETED"
+
+    duplicate = brreg_sensors.build_norway_brreg_translation_completion_sensor_result(
+        dg.build_sensor_context(cursor=result.cursor),
+        temporal_client=FakeTemporalClient(
+            FakeTemporalWorkflowDescription(
+                run_id="temporal-run-123",
+                status=WorkflowExecutionStatus.COMPLETED,
+            )
+        ),
+    )
+
+    assert duplicate.run_requests == []
+    assert "already triggered" in duplicate.skip_reason.skip_message
+    assert len(duplicate.asset_events) == 1
+    assert duplicate.asset_events[0].metadata["workflow_status"].value == "COMPLETED"
+
+
+def test_norway_translation_workflow_status_observe_result(monkeypatch) -> None:
+    monkeypatch.setattr(
+        brreg_assets,
+        "describe_norway_brreg_translation_workflow",
+        lambda: {
+            "workflow_id": "translation-norway-brreg",
+            "workflow_run_id": "temporal-run-123",
+            "workflow_status": "RUNNING",
+        },
+    )
+
+    result = brreg_assets.norway_brreg_translation_workflow_status.observe_fn()
+
+    assert result.metadata["workflow_status"] == "RUNNING"
+    assert result.metadata["workflow_run_id"] == "temporal-run-123"
+    assert result.metadata["workflow_complete"] is False
