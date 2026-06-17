@@ -355,7 +355,6 @@ def test_finland_resolved_migrations_use_corpscout_database() -> None:
 def test_clickhouse_migrations_match_existing_python_ddl_constants() -> None:
     expected_ddl_by_file = {
         "000001_reference_nace_categories.up.sql": nace_tables.NACE_CATEGORIES_DDL,
-        "000002_reference_exchange_rates.up.sql": exchange_rate_tables.EXCHANGE_RATES_DDL,
         "000003_norway_brreg_companies.up.sql": norway_brreg_tables.COMPANIES_DDL,
         "000004_norway_brreg_financial_statements.up.sql": (
             norway_brreg_tables.FINANCIAL_STATEMENTS_DDL
@@ -364,6 +363,17 @@ def test_clickhouse_migrations_match_existing_python_ddl_constants() -> None:
 
     for migration_file, expected_ddl in expected_ddl_by_file.items():
         assert _normalize_sql(expected_ddl) in _normalize_sql(_migration_sql(migration_file))
+
+
+def test_exchange_rate_migration_defines_reference_table_schema() -> None:
+    sql = _migration_sql("000002_reference_exchange_rates.up.sql")
+
+    assert "CREATE DATABASE IF NOT EXISTS reference" in sql
+    assert "CREATE TABLE IF NOT EXISTS reference.exchange_rates" in sql
+    assert "ENGINE = ReplacingMergeTree(pulled_at)" in sql
+    assert "ORDER BY (quote_currency, base_currency, rate_date, source)" in sql
+    for column in exchange_rate_tables.EXCHANGE_RATES_COLUMNS:
+        assert column in sql
 
 
 def test_finland_resolved_migrations_cover_exported_columns() -> None:
