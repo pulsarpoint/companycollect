@@ -51,6 +51,17 @@ class FakeClickHouseResource:
         yield self.client
 
 
+class FakeHttpResponse:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict:
+        return self.payload
+
+
 class DuckDbBackedDltResource:
     def __init__(self, duckdb_path: Path, clickhouse: FakeClickHouseResource) -> None:
         self.duckdb_path = duckdb_path
@@ -208,37 +219,82 @@ def _ecb_range_payload() -> dict:
     }
 
 
-def test_exchange_rate_rest_api_config_models_ecb_endpoint() -> None:
-    config = fx_source.exchange_rate_rest_api_config(
-        rate_dates=["2024-12-31"],
-        currencies=["USD"],
-        source_run_id="run-1",
-        pulled_at="2026-06-16T00:00:00.000Z",
+def test_ecb_exchange_rates_range_resource_fetches_endpoint_and_yields_rows(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_get(url: str, *, params: dict, headers: dict, timeout: int) -> FakeHttpResponse:
+        calls.append({"url": url, "params": params, "headers": headers, "timeout": timeout})
+        return FakeHttpResponse(_ecb_range_payload())
+
+    monkeypatch.setattr(fx_source.requests, "get", fake_get)
+
+    rows = list(
+        fx_source.ecb_exchange_rates_range_resource(
+            start_date="2024-12-01",
+            end_date="2024-12-31",
+            currencies=["USD", "NOK"],
+            source_run_id="run-1",
+            pulled_at="2026-06-16T00:00:00.000Z",
+        )
     )
 
-    resources = {resource["name"]: resource for resource in config["resources"]}
-    usd_resource = resources["exchange_rates_usd_2024_12_31"]
-    nok_resource = resources["exchange_rates_nok_2024_12_31"]
+    assert calls == [
+        {
+            "url": "https://data-api.ecb.europa.eu/service/data/EXR/D.NOK+USD.EUR.SP00.A",
+            "params": {
+                "format": "jsondata",
+                "startPeriod": "2024-12-01",
+                "endPeriod": "2024-12-31",
+            },
+            "headers": {"User-Agent": "corpscout-dagster-v3-dev/0.1"},
+            "timeout": 30,
+        }
+    ]
+    assert [(row["rate_date"], row["quote_currency"], row["rate"]) for row in rows] == [
+        ("2024-12-30", "NOK", "11.8"),
+        ("2024-12-31", "NOK", "11.79"),
+        ("2024-12-30", "USD", "1.04"),
+        ("2024-12-31", "USD", "1.0389"),
+    ]
 
-    assert config["client"]["base_url"] == "https://data-api.ecb.europa.eu/service/data/EXR/"
-    assert config["client"]["headers"] == {"User-Agent": "corpscout-dagster-v3-dev/0.1"}
-    assert usd_resource["table_name"] == "exchange_rates"
-    assert usd_resource["endpoint"] == {
-        "path": "D.USD.EUR.SP00.A",
-        "params": {
-            "format": "jsondata",
-            "startPeriod": "2024-12-31",
-            "endPeriod": "2024-12-31",
-        },
-        "paginator": "single_page",
-        "data_selector": "$",
-    }
-    assert usd_resource["processing_steps"]
-    assert nok_resource["endpoint"]["path"] == "D.NOK.EUR.SP00.A"
+
+def test_ecb_exchange_rates_resource_fetches_single_date_endpoint_and_yields_row(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_get(url: str, *, params: dict, headers: dict, timeout: int) -> FakeHttpResponse:
+        calls.append({"url": url, "params": params, "headers": headers, "timeout": timeout})
+        return FakeHttpResponse(_ecb_payload())
+
+    monkeypatch.setattr(fx_source.requests, "get", fake_get)
+
+    rows = list(
+        fx_source.ecb_exchange_rates_resource(
+            rate_date="2024-12-31",
+            quote_currency="USD",
+            source_run_id="run-1",
+            pulled_at="2026-06-16T00:00:00.000Z",
+        )
+    )
+
+    assert calls == [
+        {
+            "url": "https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A",
+            "params": {
+                "format": "jsondata",
+                "startPeriod": "2024-12-31",
+                "endPeriod": "2024-12-31",
+            },
+            "headers": {"User-Agent": "corpscout-dagster-v3-dev/0.1"},
+            "timeout": 30,
+        }
+    ]
+    assert [(row["rate_date"], row["quote_currency"], row["rate"]) for row in rows] == [
+        ("2024-12-31", "USD", "1.0389"),
+    ]
 
 
-def test_exchange_rate_range_rest_api_config_models_bulk_ecb_endpoint() -> None:
-    config = fx_source.exchange_rate_range_rest_api_config(
+def test_ecb_exchange_rates_range_resource_exposes_dlt_table_contract() -> None:
+    resource = fx_source.ecb_exchange_rates_range_resource(
         start_date="2024-12-01",
         end_date="2024-12-31",
         currencies=["USD", "NOK"],
@@ -246,23 +302,8 @@ def test_exchange_rate_range_rest_api_config_models_bulk_ecb_endpoint() -> None:
         pulled_at="2026-06-16T00:00:00.000Z",
     )
 
-    resources = {resource["name"]: resource for resource in config["resources"]}
-    resource = resources["exchange_rates_ecb_2024_12_01_2024_12_31"]
-
-    assert config["client"]["base_url"] == "https://data-api.ecb.europa.eu/service/data/EXR/"
-    assert config["client"]["headers"] == {"User-Agent": "corpscout-dagster-v3-dev/0.1"}
-    assert resource["table_name"] == "exchange_rates"
-    assert resource["endpoint"] == {
-        "path": "D.NOK+USD.EUR.SP00.A",
-        "params": {
-            "format": "jsondata",
-            "startPeriod": "2024-12-01",
-            "endPeriod": "2024-12-31",
-        },
-        "paginator": "single_page",
-        "data_selector": "$",
-    }
-    assert resource["processing_steps"]
+    assert resource.name == "exchange_rates_ecb_2024_12_01_2024_12_31"
+    assert resource.table_name == "exchange_rates"
 
 
 def test_ecb_rate_row_from_payload_returns_reference_row() -> None:
@@ -464,8 +505,8 @@ def test_exchange_rates_source_exposes_ecb_and_identity_resources() -> None:
     )
 
     assert {
-        "exchange_rates_usd_2024_12_31",
-        "exchange_rates_nok_2024_12_31",
+        "exchange_rates_ecb_usd_2024_12_31",
+        "exchange_rates_ecb_nok_2024_12_31",
         "exchange_rates_identity",
     }.issubset(source.resources.keys())
 

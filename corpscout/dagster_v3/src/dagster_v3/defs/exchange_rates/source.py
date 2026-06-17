@@ -9,10 +9,9 @@ from decimal import Decimal
 from typing import Any
 
 import dlt
+import requests
 from dlt.extract.resource import DltResource
 from dlt.pipeline.pipeline import Pipeline
-from dlt.sources.rest_api import rest_api_source
-from dlt.sources.rest_api.typing import RESTAPIConfig
 
 from dagster_v3.defs.exchange_rates import tables
 
@@ -24,6 +23,8 @@ FX_SOURCE_NAME = "ECB EXR"
 DEFAULT_CLICKHOUSE_NATIVE_PORT = 9002
 DEFAULT_CLICKHOUSE_HTTP_PORT = 8123
 DEFAULT_USER_AGENT = "corpscout-dagster-v3-dev/0.1"
+DEFAULT_ECB_TIMEOUT_SECONDS = 30
+EXCHANGE_RATES_PRIMARY_KEY = ["rate_date", "base_currency", "quote_currency", "source"]
 
 
 @dlt.source(name="exchange_rates")
@@ -35,76 +36,23 @@ def exchange_rates_source(
     pulled_at: str | None = None,
 ) -> list[DltResource]:
     effective_pulled_at = pulled_at or _utc_now_iso()
-    ecb_source = rest_api_source(
-        config=exchange_rate_rest_api_config(
-            rate_dates=rate_dates,
-            currencies=currencies,
-            source_run_id=source_run_id,
-            pulled_at=effective_pulled_at,
-        ),
-        name="exchange_rates_ecb",
-    )
     return [
-        *ecb_source.resources.values(),
+        *[
+            ecb_exchange_rates_resource(
+                rate_date=rate_date,
+                quote_currency=currency,
+                source_run_id=source_run_id,
+                pulled_at=effective_pulled_at,
+            )
+            for rate_date in sorted(set(rate_dates))
+            for currency in _quote_currencies(currencies)
+        ],
         identity_exchange_rates_resource(
             rate_dates=rate_dates,
             source_run_id=source_run_id,
             pulled_at=effective_pulled_at,
         ),
     ]
-
-
-def exchange_rate_rest_api_config(
-    *,
-    rate_dates: list[str],
-    currencies: list[str],
-    source_run_id: str,
-    pulled_at: str,
-    user_agent: str = DEFAULT_USER_AGENT,
-) -> RESTAPIConfig:
-    resources: list[Any] = []
-    for rate_date in sorted(set(rate_dates)):
-        for currency in sorted({currency.upper() for currency in currencies} | {"USD", "NOK"}):
-            if currency == "EUR":
-                continue
-            resource_name = f"exchange_rates_{currency.lower()}_{rate_date.replace('-', '_')}"
-            source_url = f"{ECB_EXR_BASE_URL}/D.{currency}.EUR.SP00.A"
-            resources.append(
-                {
-                    "name": resource_name,
-                    "table_name": EXCHANGE_RATES_DLT_TABLE,
-                    "write_disposition": "append",
-                    "primary_key": ["rate_date", "base_currency", "quote_currency", "source"],
-                    "endpoint": {
-                        "path": f"D.{currency}.EUR.SP00.A",
-                        "params": {
-                            "format": "jsondata",
-                            "startPeriod": rate_date,
-                            "endPeriod": rate_date,
-                        },
-                        "paginator": "single_page",
-                        "data_selector": "$",
-                    },
-                    "processing_steps": [
-                        {
-                            "yield_map": _ecb_mapper(
-                                quote_currency=currency,
-                                rate_date=rate_date,
-                                source_url=source_url,
-                                source_run_id=source_run_id,
-                                pulled_at=pulled_at,
-                            )
-                        }
-                    ],
-                }
-            )
-    return {
-        "client": {
-            "base_url": f"{ECB_EXR_BASE_URL}/",
-            "headers": {"User-Agent": user_agent},
-        },
-        "resources": resources,
-    }
 
 
 @dlt.source(name="exchange_rates")
@@ -117,18 +65,14 @@ def exchange_rates_range_source(
     pulled_at: str | None = None,
 ) -> list[DltResource]:
     effective_pulled_at = pulled_at or _utc_now_iso()
-    ecb_source = rest_api_source(
-        config=exchange_rate_range_rest_api_config(
+    return [
+        ecb_exchange_rates_range_resource(
             start_date=start_date,
             end_date=end_date,
             currencies=currencies,
             source_run_id=source_run_id,
             pulled_at=effective_pulled_at,
         ),
-        name="exchange_rates_ecb",
-    )
-    return [
-        *ecb_source.resources.values(),
         identity_exchange_rates_for_range_resource(
             start_date=start_date,
             end_date=end_date,
@@ -138,59 +82,89 @@ def exchange_rates_range_source(
     ]
 
 
-def exchange_rate_range_rest_api_config(
+def ecb_exchange_rates_resource(
+    *,
+    rate_date: str,
+    quote_currency: str,
+    source_run_id: str,
+    pulled_at: str,
+) -> DltResource:
+    quote_currency = quote_currency.upper()
+    source_url = f"{ECB_EXR_BASE_URL}/D.{quote_currency}.EUR.SP00.A"
+    resource_name = f"exchange_rates_ecb_{quote_currency.lower()}_{rate_date.replace('-', '_')}"
+
+    def rows() -> Iterator[dict[str, Any]]:
+        response = requests.get(
+            source_url,
+            params={
+                "format": "jsondata",
+                "startPeriod": rate_date,
+                "endPeriod": rate_date,
+            },
+            headers={"User-Agent": DEFAULT_USER_AGENT},
+            timeout=DEFAULT_ECB_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        yield ecb_rate_row_from_payload(
+            response.json(),
+            quote_currency=quote_currency,
+            rate_date=rate_date,
+            source_url=source_url,
+            source_run_id=source_run_id,
+            pulled_at=pulled_at,
+        )
+
+    return dlt.resource(
+        rows,
+        name=resource_name,
+        table_name=EXCHANGE_RATES_DLT_TABLE,
+        write_disposition="append",
+        primary_key=EXCHANGE_RATES_PRIMARY_KEY,
+    )
+
+
+def ecb_exchange_rates_range_resource(
     *,
     start_date: str,
     end_date: str,
     currencies: list[str],
     source_run_id: str,
     pulled_at: str,
-    user_agent: str = DEFAULT_USER_AGENT,
-) -> RESTAPIConfig:
-    quote_currencies = [
-        currency
-        for currency in sorted({currency.upper() for currency in currencies} | {"USD", "NOK"})
-        if currency != "EUR"
-    ]
+) -> DltResource:
+    quote_currencies = _quote_currencies(currencies)
     currency_key = "+".join(quote_currencies)
     source_url = f"{ECB_EXR_BASE_URL}/D.{currency_key}.EUR.SP00.A"
     resource_name = (
         f"exchange_rates_ecb_{start_date.replace('-', '_')}_{end_date.replace('-', '_')}"
     )
-    return {
-        "client": {
-            "base_url": f"{ECB_EXR_BASE_URL}/",
-            "headers": {"User-Agent": user_agent},
-        },
-        "resources": [
-            {
-                "name": resource_name,
-                "table_name": EXCHANGE_RATES_DLT_TABLE,
-                "write_disposition": "append",
-                "primary_key": ["rate_date", "base_currency", "quote_currency", "source"],
-                "endpoint": {
-                    "path": f"D.{currency_key}.EUR.SP00.A",
-                    "params": {
-                        "format": "jsondata",
-                        "startPeriod": start_date,
-                        "endPeriod": end_date,
-                    },
-                    "paginator": "single_page",
-                    "data_selector": "$",
-                },
-                "processing_steps": [
-                    {
-                        "yield_map": _ecb_range_mapper(
-                            quote_currencies=quote_currencies,
-                            source_url=source_url,
-                            source_run_id=source_run_id,
-                            pulled_at=pulled_at,
-                        )
-                    }
-                ],
-            }
-        ],
-    }
+
+    def rows() -> Iterator[dict[str, Any]]:
+        response = requests.get(
+            source_url,
+            params={
+                "format": "jsondata",
+                "startPeriod": start_date,
+                "endPeriod": end_date,
+            },
+            headers={"User-Agent": DEFAULT_USER_AGENT},
+            timeout=DEFAULT_ECB_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        yield from ecb_rate_rows_from_range_payload(
+            response.json(),
+            quote_currencies=quote_currencies,
+            source_url=source_url,
+            source_run_id=source_run_id,
+            pulled_at=pulled_at,
+        )
+
+    return dlt.resource(
+        rows,
+        name=resource_name,
+        table_name=EXCHANGE_RATES_DLT_TABLE,
+        write_disposition="append",
+        primary_key=EXCHANGE_RATES_PRIMARY_KEY,
+    )
 
 
 def identity_exchange_rates_resource(
@@ -224,7 +198,7 @@ def identity_exchange_rates_for_dates_resource(
         name="exchange_rates_identity",
         table_name=EXCHANGE_RATES_DLT_TABLE,
         write_disposition="append",
-        primary_key=["rate_date", "base_currency", "quote_currency", "source"],
+        primary_key=EXCHANGE_RATES_PRIMARY_KEY,
     )
 
 
@@ -240,46 +214,6 @@ def identity_exchange_rates_for_range_resource(
         source_run_id=source_run_id,
         pulled_at=pulled_at,
     )
-
-
-def _ecb_mapper(
-    *,
-    quote_currency: str,
-    rate_date: str,
-    source_url: str,
-    source_run_id: str,
-    pulled_at: str,
-) -> Any:
-    def mapper(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        yield ecb_rate_row_from_payload(
-            payload,
-            quote_currency=quote_currency,
-            rate_date=rate_date,
-            source_url=source_url,
-            source_run_id=source_run_id,
-            pulled_at=pulled_at,
-        )
-
-    return mapper
-
-
-def _ecb_range_mapper(
-    *,
-    quote_currencies: list[str],
-    source_url: str,
-    source_run_id: str,
-    pulled_at: str,
-) -> Any:
-    def mapper(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        yield from ecb_rate_rows_from_range_payload(
-            payload,
-            quote_currencies=quote_currencies,
-            source_url=source_url,
-            source_run_id=source_run_id,
-            pulled_at=pulled_at,
-        )
-
-    return mapper
 
 
 def ecb_rate_row_from_payload(
@@ -450,6 +384,14 @@ def _date_range(*, start_date: str, end_date: str) -> list[str]:
         dates.append(current.isoformat())
         current += timedelta(days=1)
     return dates
+
+
+def _quote_currencies(currencies: list[str]) -> list[str]:
+    return [
+        currency
+        for currency in sorted({currency.upper() for currency in currencies} | {"USD", "NOK"})
+        if currency != "EUR"
+    ]
 
 
 def _observation_sort_key(value: str) -> tuple[int, str]:
