@@ -201,6 +201,7 @@ __marimo__/
 
 # Local dlt/DuckDB artifacts
 .dlt/
+.telemetry/
 data/*.duckdb
 data/*.duckdb.wal
 

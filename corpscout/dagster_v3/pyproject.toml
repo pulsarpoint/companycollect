@@ -9,6 +9,7 @@ dependencies = [
     "dagster==1.13.9",
     "dagster-clickhouse>=0.29.9",
     "dagster-dlt>=0.29.9",
+    "dagster-postgres>=0.29.9",
     "dlt[duckdb]>=1.27.2",
     "duckdb>=1.5.3",
     "ijson>=3.4.0",
