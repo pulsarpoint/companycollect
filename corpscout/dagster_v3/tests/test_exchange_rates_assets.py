@@ -326,14 +326,23 @@ def test_normalize_exchange_rates_ecb_duckdb_reads_raw_payloads(tmp_path: Path) 
     ]
 
 
-def test_normalize_exchange_rates_ecb_duckdb_recreates_disposable_stale_table(
+def test_normalize_exchange_rates_ecb_duckdb_preserves_rows_outside_window(
     tmp_path: Path,
 ) -> None:
     from dagster_v3.defs.exchange_rates import assets as fx_assets
 
     duckdb_path = tmp_path / "exchange_rates.duckdb"
     _create_raw_payload_table(duckdb_path)
-    _create_stale_exchange_rates_table(duckdb_path, fx_assets.ECB_RATES_TABLE)
+    _create_typed_exchange_rates_table(duckdb_path, fx_assets.ECB_RATES_TABLE)
+    _insert_exchange_rate_row(
+        duckdb_path,
+        fx_assets.ECB_RATES_TABLE,
+        rate_date="2024-11-29",
+        quote_currency="USD",
+        rate="1.01",
+        source="ECB EXR",
+        row_id="old-row",
+    )
 
     counts = fx_assets.normalize_exchange_rates_ecb_duckdb(
         duckdb_path=duckdb_path,
@@ -342,16 +351,39 @@ def test_normalize_exchange_rates_ecb_duckdb_recreates_disposable_stale_table(
     )
 
     with duckdb.connect(str(duckdb_path), read_only=True) as connection:
-        column_types = _duckdb_column_types(connection, fx_assets.ECB_RATES_TABLE)
-        row_count = connection.execute(
-            "select count(*) from exchange_rates_stage.ecb_rates"
-        ).fetchone()[0]
+        rows = connection.execute(
+            """
+            select rate_date, quote_currency, rate, source
+            from exchange_rates_stage.ecb_rates
+            order by rate_date, quote_currency
+            """
+        ).fetchall()
 
     assert counts == {"raw_payloads": 1, "ecb_rates": 4}
-    assert row_count == 4
-    assert column_types["rate_date"] == "DATE"
-    assert column_types["rate"] == "DECIMAL(38,12)"
-    assert column_types["pulled_at"] == "TIMESTAMP"
+    assert rows == [
+        (date(2024, 11, 29), "USD", Decimal("1.010000000000"), "ECB EXR"),
+        (date(2024, 12, 30), "NOK", Decimal("11.800000000000"), "ECB EXR"),
+        (date(2024, 12, 30), "USD", Decimal("1.040000000000"), "ECB EXR"),
+        (date(2024, 12, 31), "NOK", Decimal("11.790000000000"), "ECB EXR"),
+        (date(2024, 12, 31), "USD", Decimal("1.038900000000"), "ECB EXR"),
+    ]
+
+
+def test_normalize_exchange_rates_ecb_duckdb_fails_on_stale_schema(
+    tmp_path: Path,
+) -> None:
+    from dagster_v3.defs.exchange_rates import assets as fx_assets
+
+    duckdb_path = tmp_path / "exchange_rates.duckdb"
+    _create_raw_payload_table(duckdb_path)
+    _create_stale_exchange_rates_table(duckdb_path, fx_assets.ECB_RATES_TABLE)
+
+    with pytest.raises(ValueError, match="ecb_rates does not match contract"):
+        fx_assets.normalize_exchange_rates_ecb_duckdb(
+            duckdb_path=duckdb_path,
+            start_date="2024-12-01",
+            end_date="2024-12-31",
+        )
 
 
 def test_generate_exchange_rates_identity_duckdb_uses_ecb_rate_dates(tmp_path: Path) -> None:
@@ -382,14 +414,23 @@ def test_generate_exchange_rates_identity_duckdb_uses_ecb_rate_dates(tmp_path: P
     ]
 
 
-def test_generate_exchange_rates_identity_duckdb_recreates_disposable_stale_table(
+def test_generate_exchange_rates_identity_duckdb_preserves_rows_outside_window(
     tmp_path: Path,
 ) -> None:
     from dagster_v3.defs.exchange_rates import assets as fx_assets
 
     duckdb_path = tmp_path / "exchange_rates.duckdb"
     _create_ecb_rates_table(duckdb_path)
-    _create_stale_exchange_rates_table(duckdb_path, fx_assets.IDENTITY_RATES_TABLE)
+    _create_typed_exchange_rates_table(duckdb_path, fx_assets.IDENTITY_RATES_TABLE)
+    _insert_exchange_rate_row(
+        duckdb_path,
+        fx_assets.IDENTITY_RATES_TABLE,
+        rate_date="2024-11-29",
+        quote_currency="EUR",
+        rate="1",
+        source="identity",
+        row_id="old-identity-row",
+    )
 
     counts = fx_assets.generate_exchange_rates_identity_duckdb(
         duckdb_path=duckdb_path,
@@ -398,16 +439,20 @@ def test_generate_exchange_rates_identity_duckdb_recreates_disposable_stale_tabl
     )
 
     with duckdb.connect(str(duckdb_path), read_only=True) as connection:
-        column_types = _duckdb_column_types(connection, fx_assets.IDENTITY_RATES_TABLE)
-        row_count = connection.execute(
-            "select count(*) from exchange_rates_stage.identity_rates"
-        ).fetchone()[0]
+        rows = connection.execute(
+            """
+            select rate_date, base_currency, quote_currency, rate, source
+            from exchange_rates_stage.identity_rates
+            order by rate_date
+            """
+        ).fetchall()
 
     assert counts == {"identity_rates": 2}
-    assert row_count == 2
-    assert column_types["rate_date"] == "DATE"
-    assert column_types["rate"] == "DECIMAL(38,12)"
-    assert column_types["pulled_at"] == "TIMESTAMP"
+    assert rows == [
+        (date(2024, 11, 29), "EUR", "EUR", Decimal("1.000000000000"), "identity"),
+        (date(2024, 12, 30), "EUR", "EUR", Decimal("1.000000000000"), "identity"),
+        (date(2024, 12, 31), "EUR", "EUR", Decimal("1.000000000000"), "identity"),
+    ]
 
 
 def test_export_exchange_rates_clickhouse_reads_duckdb_and_inserts_union(
@@ -658,11 +703,7 @@ def _create_raw_payload_table(duckdb_path: Path) -> None:
 def _create_ecb_rates_table(duckdb_path: Path) -> None:
     with duckdb.connect(str(duckdb_path)) as connection:
         connection.execute("create schema exchange_rates_stage")
-        columns = ", ".join(
-            f"{column} {tables.EXCHANGE_RATES_DUCKDB_COLUMN_TYPES[column]}"
-            for column in tables.EXCHANGE_RATES_COLUMNS
-        )
-        connection.execute(f"create table exchange_rates_stage.ecb_rates ({columns})")
+        _create_typed_exchange_rates_table_with_connection(connection, "ecb_rates")
         connection.execute(
             f"""
             insert into exchange_rates_stage.ecb_rates
@@ -675,6 +716,44 @@ def _create_ecb_rates_table(duckdb_path: Path) -> None:
                'https://ecb.example', repeat('a', 64), 'run-1',
                '2026-06-16T00:00:00.000Z', '', 'row-usd')
             """
+        )
+
+
+def _create_typed_exchange_rates_table(duckdb_path: Path, table: str) -> None:
+    with duckdb.connect(str(duckdb_path)) as connection:
+        _create_typed_exchange_rates_table_with_connection(connection, table)
+
+
+def _create_typed_exchange_rates_table_with_connection(
+    connection: duckdb.DuckDBPyConnection,
+    table: str,
+) -> None:
+    columns = ", ".join(
+        f"{column} {tables.EXCHANGE_RATES_DUCKDB_COLUMN_TYPES[column]}"
+        for column in tables.EXCHANGE_RATES_COLUMNS
+    )
+    connection.execute(f"create table exchange_rates_stage.{table} ({columns})")
+
+
+def _insert_exchange_rate_row(
+    duckdb_path: Path,
+    table: str,
+    *,
+    rate_date: str,
+    quote_currency: str,
+    rate: str,
+    source: str,
+    row_id: str,
+) -> None:
+    with duckdb.connect(str(duckdb_path)) as connection:
+        connection.execute(
+            f"""
+            insert into exchange_rates_stage.{table}
+            ({", ".join(tables.EXCHANGE_RATES_COLUMNS)})
+            values (?, 'EUR', ?, ?, ?, 'https://ecb.example', repeat('a', 64),
+                    'run-old', '2026-06-16T00:00:00.000Z', '', ?)
+            """,
+            [rate_date, quote_currency, rate, source, row_id],
         )
 
 
@@ -692,19 +771,3 @@ def _create_stale_exchange_rates_table(duckdb_path: Path, table: str) -> None:
                '2024-01-01T00:00:00.000Z', '', 'old-row')
             """
         )
-
-
-def _duckdb_column_types(
-    connection: duckdb.DuckDBPyConnection,
-    table: str,
-) -> dict[str, str]:
-    rows = connection.execute(
-        """
-        select column_name, data_type
-        from information_schema.columns
-        where table_schema = 'exchange_rates_stage'
-          and table_name = ?
-        """,
-        [table],
-    ).fetchall()
-    return {str(column_name): str(data_type).upper().replace(" ", "") for column_name, data_type in rows}

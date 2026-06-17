@@ -231,7 +231,6 @@ def normalize_exchange_rates_ecb_duckdb(
 ) -> dict[str, int | str]:
     with duckdb.connect(str(duckdb_path)) as connection:
         _ensure_exchange_rates_duckdb_schema(connection)
-        _reset_exchange_rates_duckdb_table(connection, ECB_RATES_TABLE)
         connection.execute(
             f"""
             delete from {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{ECB_RATES_TABLE}
@@ -282,8 +281,6 @@ def generate_exchange_rates_identity_duckdb(
 ) -> dict[str, int]:
     with duckdb.connect(str(duckdb_path)) as connection:
         _ensure_exchange_rates_duckdb_schema(connection)
-        _validate_exchange_rates_duckdb_table(connection, ECB_RATES_TABLE)
-        _reset_exchange_rates_duckdb_table(connection, IDENTITY_RATES_TABLE)
         connection.execute(
             f"""
             delete from {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{IDENTITY_RATES_TABLE}
@@ -423,21 +420,13 @@ def clickhouse_resource_from_env() -> ClickhouseResource:
 
 def _ensure_exchange_rates_duckdb_schema(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(f"create schema if not exists {EXCHANGE_RATES_DUCKDB_DATASET_NAME}")
-
-
-def _reset_exchange_rates_duckdb_table(
-    connection: duckdb.DuckDBPyConnection,
-    table: str,
-) -> None:
-    connection.execute(
-        f"drop table if exists {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{table}"
-    )
-    create_duckdb_table_from_contract(
-        connection,
-        schema=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
-        table=table,
-        contract=tables.EXCHANGE_RATES_DUCKDB_CONTRACT,
-    )
+    for table in (ECB_RATES_TABLE, IDENTITY_RATES_TABLE):
+        create_duckdb_table_from_contract(
+            connection,
+            schema=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
+            table=table,
+            contract=tables.EXCHANGE_RATES_DUCKDB_CONTRACT,
+        )
 
 
 def _validate_exchange_rates_duckdb_table(
