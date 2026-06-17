@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import dagster as dg
+import dlt
 import duckdb
 from dagster_clickhouse import ClickhouseResource
 
@@ -168,17 +169,6 @@ def test_exchange_rates_raw_range_source_exposes_raw_resource() -> None:
 
     assert list(source.resources.keys()) == ["ecb_raw_payloads"]
     assert source.resources["ecb_raw_payloads"].table_name == "ecb_raw_payloads"
-
-
-def test_exchange_rates_duckdb_pipeline_targets_duckdb_dataset(tmp_path: Path) -> None:
-    pipeline = fx_source.exchange_rates_duckdb_pipeline(
-        destination_path=str(tmp_path / "exchange_rates.duckdb")
-    )
-
-    assert pipeline.pipeline_name == "exchange_rates_raw"
-    assert pipeline.dataset_name == "exchange_rates_stage"
-    assert pipeline.dev_mode is False
-    assert pipeline.destination.destination_name == "duckdb"
 
 
 def test_ecb_rate_row_from_payload_returns_reference_row() -> None:
@@ -389,9 +379,7 @@ def test_exchange_rate_dlt_translator_maps_raw_asset_contract() -> None:
         (),
         {
             "resource": resource,
-            "destination": fx_source.exchange_rates_duckdb_pipeline(
-                destination_path="data/test.duckdb"
-            ).destination,
+            "destination": dlt.destinations.duckdb("data/test.duckdb"),
         },
     )()
 

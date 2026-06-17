@@ -10,7 +10,6 @@ from typing import Any
 import dlt
 import requests
 from dlt.extract.resource import DltResource
-from dlt.pipeline.pipeline import Pipeline
 
 ECB_EXR_BASE_URL = "https://data-api.ecb.europa.eu/service/data/EXR"
 EXCHANGE_RATES_DUCKDB_PIPELINE_NAME = "exchange_rates_raw"
@@ -178,15 +177,6 @@ def identity_eur_row(*, rate_date: str, source_run_id: str, pulled_at: str) -> d
         "source_run_id": source_run_id,
         "pulled_at": pulled_at,
     }
-
-
-def exchange_rates_duckdb_pipeline(*, destination_path: str) -> Pipeline:
-    return dlt.pipeline(
-        pipeline_name=EXCHANGE_RATES_DUCKDB_PIPELINE_NAME,
-        destination=dlt.destinations.duckdb(destination_path),
-        dataset_name=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
-        dev_mode=False,
-    )
 
 
 def _extract_observation_values(payload: dict[str, Any]) -> list[Decimal]:

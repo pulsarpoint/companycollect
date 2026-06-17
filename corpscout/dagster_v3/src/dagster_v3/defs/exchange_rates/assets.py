@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import dagster as dg
+import dlt
 import duckdb
 from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
@@ -17,10 +18,10 @@ from dagster_v3.defs.clickhouse.resolved import export_duckdb_table_to_clickhous
 from dagster_v3.defs.exchange_rates import tables
 from dagster_v3.defs.exchange_rates.source import (
     DEFAULT_CLICKHOUSE_NATIVE_PORT,
+    EXCHANGE_RATES_DUCKDB_PIPELINE_NAME,
     EXCHANGE_RATES_DUCKDB_DATASET_NAME,
     EXCHANGE_RATES_RAW_DLT_TABLE,
     ecb_rate_rows_from_range_payload,
-    exchange_rates_duckdb_pipeline,
     exchange_rates_raw_range_source,
     identity_eur_row,
 )
@@ -99,7 +100,12 @@ def day_partition_range_window(
         end_date="2023-01-01",
         currencies=[],
     ),
-    dlt_pipeline=exchange_rates_duckdb_pipeline(destination_path=str(EXCHANGE_RATES_DUCKDB_PATH)),
+    dlt_pipeline=dlt.pipeline(
+        pipeline_name=EXCHANGE_RATES_DUCKDB_PIPELINE_NAME,
+        destination=dlt.destinations.duckdb(str(EXCHANGE_RATES_DUCKDB_PATH)),
+        dataset_name=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
+        dev_mode=False,
+    ),
     name="exchange_rates_raw_duckdb",
     dagster_dlt_translator=ExchangeRatesDltTranslator(
         asset_key="exchange_rates_raw_duckdb",
@@ -130,8 +136,11 @@ def exchange_rates_raw_duckdb_asset(
             currencies=config.currencies,
             source_run_id=context.run_id,
         ),
-        dlt_pipeline=exchange_rates_duckdb_pipeline(
-            destination_path=str(EXCHANGE_RATES_DUCKDB_PATH)
+        dlt_pipeline=dlt.pipeline(
+            pipeline_name=EXCHANGE_RATES_DUCKDB_PIPELINE_NAME,
+            destination=dlt.destinations.duckdb(str(EXCHANGE_RATES_DUCKDB_PATH)),
+            dataset_name=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
+            dev_mode=False,
         ),
     )
 
