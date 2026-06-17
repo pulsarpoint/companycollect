@@ -361,14 +361,34 @@ def delete_exchange_rates_window(
     )
 
 
+exchange_rates_selection = dg.AssetSelection.assets("exchange_rates_clickhouse").upstream()
+
+exchange_rates_backfill_job = dg.define_asset_job(
+    "exchange_rates_backfill_job",
+    selection=exchange_rates_selection,
+)
 exchange_rates_daily_job = dg.define_asset_job(
     "exchange_rates_daily_job",
-    selection=dg.AssetSelection.assets("exchange_rates_clickhouse"),
+    selection=exchange_rates_selection,
 )
-exchange_rates_daily_schedule = dg.build_schedule_from_partitioned_job(
-    exchange_rates_daily_job,
+
+
+@dg.schedule(
     name="exchange_rates_daily_schedule",
+    cron_schedule="30 18 * * 1-5",
+    execution_timezone="Europe/Belgrade",
+    job=exchange_rates_daily_job,
 )
+def exchange_rates_daily_schedule(
+    context: dg.ScheduleEvaluationContext,
+) -> dg.RunRequest:
+    scheduled_time = context.scheduled_execution_time
+    partition_key = (
+        scheduled_time.date().isoformat()
+        if scheduled_time is not None
+        else date.today().isoformat()
+    )
+    return dg.RunRequest(partition_key=partition_key)
 
 
 def clickhouse_resource_from_env() -> ClickhouseResource:
@@ -441,5 +461,6 @@ defs = dg.Definitions(
         exchange_rates_identity_rates_duckdb,
         exchange_rates_clickhouse,
     ],
+    jobs=[exchange_rates_backfill_job, exchange_rates_daily_job],
     schedules=[exchange_rates_daily_schedule],
 )

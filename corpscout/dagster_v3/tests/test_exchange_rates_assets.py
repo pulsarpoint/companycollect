@@ -436,10 +436,16 @@ def test_exchange_rate_dlt_translator_maps_raw_asset_contract() -> None:
     assert {"python", "dlt", "duckdb", "reference", "fx"}.issubset(spec.kinds)
 
 
-def test_exchange_rates_assets_and_daily_schedule_are_registered() -> None:
+def test_exchange_rates_assets_and_jobs_are_registered() -> None:
     repository = load_project_defs().get_repository_def()
     asset_keys = {key.path[-1] for key in repository.asset_graph.get_all_asset_keys()}
+    job_names = set(repository.job_names)
     schedule_names = {schedule.name for schedule in repository.schedule_defs}
+    daily_schedule = next(
+        schedule
+        for schedule in repository.schedule_defs
+        if schedule.name == "exchange_rates_daily_schedule"
+    )
     resource_keys = repository.get_top_level_resources().keys()
 
     assert "exchange_rates_raw_duckdb" in asset_keys
@@ -448,7 +454,12 @@ def test_exchange_rates_assets_and_daily_schedule_are_registered() -> None:
     assert "exchange_rates_clickhouse" in asset_keys
     assert "exchange_rates_backfill" not in asset_keys
     assert "exchange_rates_daily" not in asset_keys
+    assert "exchange_rates_backfill_job" in job_names
+    assert "exchange_rates_daily_job" in job_names
     assert "exchange_rates_daily_schedule" in schedule_names
+    assert daily_schedule.job_name == "exchange_rates_daily_job"
+    assert daily_schedule.cron_schedule == "30 18 * * 1-5"
+    assert daily_schedule.execution_timezone == "Europe/Belgrade"
     assert "dlt" in resource_keys
     assert "clickhouse" in resource_keys
     assert (
