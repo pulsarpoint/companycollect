@@ -1,5 +1,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import date, datetime
+from decimal import Decimal
 import json
 from pathlib import Path
 
@@ -30,6 +32,19 @@ def test_exchange_rates_clickhouse_schema_contract() -> None:
         "_dlt_load_id",
         "_dlt_id",
     )
+    assert tables.EXCHANGE_RATES_DUCKDB_COLUMN_TYPES == {
+        "rate_date": "DATE",
+        "base_currency": "VARCHAR",
+        "quote_currency": "VARCHAR",
+        "rate": "DECIMAL(38, 12)",
+        "source": "VARCHAR",
+        "source_url": "VARCHAR",
+        "source_payload_hash": "VARCHAR",
+        "source_run_id": "VARCHAR",
+        "pulled_at": "TIMESTAMP",
+        "_dlt_load_id": "VARCHAR",
+        "_dlt_id": "VARCHAR",
+    }
     assert not hasattr(tables, "EXCHANGE_RATES_DDL")
 
 
@@ -277,10 +292,10 @@ def test_normalize_exchange_rates_ecb_duckdb_reads_raw_payloads(tmp_path: Path) 
 
     assert counts == {"raw_payloads": 1, "ecb_rates": 4}
     assert rows == [
-        ("2024-12-30", "NOK", "11.8", "ECB EXR"),
-        ("2024-12-30", "USD", "1.04", "ECB EXR"),
-        ("2024-12-31", "NOK", "11.79", "ECB EXR"),
-        ("2024-12-31", "USD", "1.0389", "ECB EXR"),
+        (date(2024, 12, 30), "NOK", Decimal("11.800000000000"), "ECB EXR"),
+        (date(2024, 12, 30), "USD", Decimal("1.040000000000"), "ECB EXR"),
+        (date(2024, 12, 31), "NOK", Decimal("11.790000000000"), "ECB EXR"),
+        (date(2024, 12, 31), "USD", Decimal("1.038900000000"), "ECB EXR"),
     ]
 
 
@@ -307,8 +322,8 @@ def test_generate_exchange_rates_identity_duckdb_uses_ecb_rate_dates(tmp_path: P
 
     assert counts == {"identity_rates": 2}
     assert rows == [
-        ("2024-12-30", "EUR", "EUR", "1", "identity"),
-        ("2024-12-31", "EUR", "EUR", "1", "identity"),
+        (date(2024, 12, 30), "EUR", "EUR", Decimal("1.000000000000"), "identity"),
+        (date(2024, 12, 31), "EUR", "EUR", Decimal("1.000000000000"), "identity"),
     ]
 
 
@@ -347,11 +362,35 @@ def test_export_exchange_rates_clickhouse_reads_duckdb_and_inserts_union(
         "`quote_currency`, `rate`, `source`, `source_url`, `source_payload_hash`, "
         "`source_run_id`, `pulled_at`, `_dlt_load_id`, `_dlt_id`) VALUES"
     )
-    assert [(row[0], row[2], row[3], row[4]) for row in client.insert_calls[0][1]] == [
-        ("2024-12-30", "NOK", "11.8", "ECB EXR"),
-        ("2024-12-31", "USD", "1.0389", "ECB EXR"),
-        ("2024-12-30", "EUR", "1", "identity"),
-        ("2024-12-31", "EUR", "1", "identity"),
+    assert [(row[0], row[2], row[3], row[4], row[8]) for row in client.insert_calls[0][1]] == [
+        (
+            date(2024, 12, 30),
+            "NOK",
+            Decimal("11.800000000000"),
+            "ECB EXR",
+            datetime(2026, 6, 16, 0, 0),
+        ),
+        (
+            date(2024, 12, 31),
+            "USD",
+            Decimal("1.038900000000"),
+            "ECB EXR",
+            datetime(2026, 6, 16, 0, 0),
+        ),
+        (
+            date(2024, 12, 30),
+            "EUR",
+            Decimal("1.000000000000"),
+            "identity",
+            datetime(2026, 6, 16, 0, 0),
+        ),
+        (
+            date(2024, 12, 31),
+            "EUR",
+            Decimal("1.000000000000"),
+            "identity",
+            datetime(2026, 6, 16, 0, 0),
+        ),
     ]
 
 
@@ -520,7 +559,10 @@ def _create_raw_payload_table(duckdb_path: Path) -> None:
 def _create_ecb_rates_table(duckdb_path: Path) -> None:
     with duckdb.connect(str(duckdb_path)) as connection:
         connection.execute("create schema exchange_rates_stage")
-        columns = ", ".join(f"{column} varchar" for column in tables.EXCHANGE_RATES_COLUMNS)
+        columns = ", ".join(
+            f"{column} {tables.EXCHANGE_RATES_DUCKDB_COLUMN_TYPES[column]}"
+            for column in tables.EXCHANGE_RATES_COLUMNS
+        )
         connection.execute(f"create table exchange_rates_stage.ecb_rates ({columns})")
         connection.execute(
             f"""

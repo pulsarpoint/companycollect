@@ -404,7 +404,10 @@ def clickhouse_resource_from_env() -> ClickhouseResource:
 
 def _ensure_exchange_rates_duckdb_schema(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(f"create schema if not exists {EXCHANGE_RATES_DUCKDB_DATASET_NAME}")
-    columns = ", ".join(f"{column} varchar" for column in tables.EXCHANGE_RATES_COLUMNS)
+    columns = ", ".join(
+        f"{column} {tables.EXCHANGE_RATES_DUCKDB_COLUMN_TYPES[column]}"
+        for column in tables.EXCHANGE_RATES_COLUMNS
+    )
     for table in (ECB_RATES_TABLE, IDENTITY_RATES_TABLE):
         connection.execute(
             f"""
