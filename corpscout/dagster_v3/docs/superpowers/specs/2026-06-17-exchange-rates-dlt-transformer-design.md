@@ -1,16 +1,14 @@
-# Exchange Rates dlt Transformer Design
+# Exchange Rates Direct dlt Resource Design
 
 ## Purpose
 
-The exchange-rate source should be simple to read and operate. The current implementation hides a direct ECB API request and JSON-to-row conversion behind `rest_api_source`, generated REST config dictionaries, and mapper factory functions. That indirection does not pay for itself for this source.
+The exchange-rate source should be direct: call the ECB API once, parse the raw ECB JSON, and yield rows that dlt can load into ClickHouse. The current implementation hides that simple flow behind generated REST API configuration dictionaries and mapper factories.
 
-This design replaces the generated REST config layer with explicit dlt resources and dlt transformers:
+This design replaces the config-builder layer with explicit dlt resources:
 
-- one resource yields ECB request specs,
-- one transformer fetches ECB payloads and yields final exchange-rate rows,
-- one identity resource yields EUR identity rows.
-
-The Dagster assets stay the orchestration boundary. The dlt source stays the API extraction and row transformation boundary.
+- one ECB resource calls the ECB API and yields final exchange-rate rows,
+- one identity resource yields deterministic EUR/EUR rows,
+- the Dagster dlt translator remains only for Dagster asset metadata.
 
 ## Current Problem
 
@@ -25,183 +23,149 @@ exchange_rates_range_source
           -> ecb_rate_rows_from_range_payload
 ```
 
-For a single ECB endpoint this is too indirect. Important behavior is spread across config dictionaries and nested closure factories, so reading the source requires jumping through several layers before reaching the actual transformation.
-
-The source does not need multiple Dagster assets because there is no durable intermediate state that operators need to inspect or retry independently. The intermediate ECB payload is source-local extraction state.
+This is too much indirection for one ECB endpoint. It also makes tests assert REST config dictionary shape instead of source behavior.
 
 ## Selected Approach
 
-Use `dlt.resource` and `dlt.transformer` directly.
+Use plain dlt resources that do the source-local extraction and transformation directly.
 
 ```mermaid
 flowchart LR
     dagster["Dagster partition/config"]
-    specs["dlt resource: ECB request specs"]
-    transformer["dlt transformer: fetch ECB JSON and map rows"]
-    identity["dlt resource: EUR identity rows"]
+    ecb["dlt resource: call ECB API once and parse rows"]
+    identity["dlt resource: generate EUR/EUR rows"]
     clickhouse["ClickHouse reference.exchange_rates"]
 
-    dagster --> specs
-    specs --> transformer
+    dagster --> ecb
     dagster --> identity
-    transformer --> clickhouse
+    ecb --> clickhouse
     identity --> clickhouse
 ```
 
-The dlt source will return two loadable resources:
+The dlt source returns:
 
 ```text
 exchange_rates_ecb_<start>_<end>
 exchange_rates_identity
 ```
 
-`exchange_rates_ecb_<start>_<end>` is a transformer pipeline:
+Both resources produce rows for the same dlt table:
 
 ```text
-ecb_exchange_rate_request_specs(...) | ecb_exchange_rate_rows(...)
+exchange_rates
 ```
 
-The request-spec resource is not selected for loading. It only feeds the transformer.
+## Role Of `dagster_dlt_translator`
 
-## Alternatives Considered
+`dagster_dlt_translator` is not a data transformer. It maps dlt metadata into Dagster metadata:
 
-### Option 1: Keep `rest_api_source`
+- asset key,
+- group,
+- description,
+- kinds,
+- dependencies.
 
-This keeps dlt REST integration, but it preserves the config-builder and mapper-factory nesting. Tests also end up asserting config dictionary shape instead of business behavior. This is not a good fit for a source with one ECB endpoint and a custom SDMX payload parser.
-
-### Option 2: Use Direct dlt Resources Only
-
-This is simpler than the current code, but it mixes request construction, HTTP fetch, and row transformation in one resource. It is acceptable, but it does not use the dlt transformer abstraction that is designed for source-local transformations.
-
-### Option 3: Use dlt Resource Plus dlt Transformer
-
-This is the selected approach. It keeps the transformation visible as a first-class dlt step without promoting the raw payload to a separate Dagster asset or ClickHouse table.
+It should not call APIs, parse payloads, or produce rows.
 
 ## Source Design
 
-### Request Spec Resource
+### ECB Range Resource
 
-The request-spec resource yields one or more dictionaries with enough information to fetch ECB payloads:
+`exchange_rates_range_source(...)` returns an ECB resource that:
 
-```python
-{
-    "resource_name": "exchange_rates_ecb_2024_12_01_2024_12_31",
-    "source_url": "https://data-api.ecb.europa.eu/service/data/EXR/D.NOK+USD.EUR.SP00.A",
-    "start_date": "2024-12-01",
-    "end_date": "2024-12-31",
-    "quote_currencies": ["NOK", "USD"],
-    "source_run_id": "run-1",
-    "pulled_at": "2026-06-16T00:00:00.000Z",
-}
-```
+1. builds the ECB URL from `currencies`,
+2. calls the ECB API once with `startPeriod` and `endPeriod`,
+3. calls the pure parser for the returned payload,
+4. yields final rows shaped for `reference.exchange_rates`.
 
-This resource is internal to the source and should be `selected=False` or only exposed through the pipe into the transformer. It should not create a destination table.
+The HTTP call stays inside the resource because it is source extraction behavior.
 
-### Transformer
+### ECB Single-Date Source
 
-The transformer receives one request spec, performs the ECB HTTP call, and yields final rows for `reference.exchange_rates`.
+`exchange_rates_source(...)` can keep its current public API for tests or future single-date loads, but it should also use direct ECB resources instead of REST config builders.
 
-It owns:
+### Payload Parsing
 
-- HTTP request execution,
-- status check,
-- payload parsing,
-- row generation,
-- target dlt table hints.
-
-The transformer should set:
+ECB payload parsing should stay as pure Python transformation functions:
 
 ```python
-name=<stable resource name>
-table_name="exchange_rates"
-write_disposition="append"
-primary_key=["rate_date", "base_currency", "quote_currency", "source"]
+ecb_rate_row_from_payload(...)
+ecb_rate_rows_from_range_payload(...)
 ```
+
+These functions should not import dlt, Dagster, requests, or ClickHouse clients.
 
 ### Identity Resource
 
-The EUR identity rows remain a plain dlt resource because they do not need an upstream request payload.
+The EUR identity resource remains internally generated data:
 
-## Dagster Asset Design
-
-No new Dagster assets are introduced.
-
-The existing `exchange_rates_backfill` and `exchange_rates_daily` assets continue to call:
-
-```python
-exchange_rates_range_source(
-    start_date=start_date,
-    end_date=end_date,
-    currencies=config.currencies,
-    source_run_id=context.run_id,
-)
+```text
+EUR -> EUR = 1
 ```
 
-The source returns dlt resources that produce final `exchange_rates` rows. Dagster remains responsible for:
-
-- partition window selection,
-- run config,
-- deleting the ClickHouse date window before load,
-- executing dlt.
+This is not another external source. It is deterministic data inserted into the same `exchange_rates` table so downstream conversion logic does not need a special case for EUR amounts.
 
 ## ClickHouse Schema Ownership
 
-The dlt source does not own ClickHouse table DDL.
-
-ClickHouse table creation stays in:
+ClickHouse table creation stays in migrations:
 
 ```text
 corpscout/clickhouse/migrations/000002_reference_exchange_rates.up.sql
 ```
 
-The dlt transformer should emit rows compatible with that migrated table. It should not execute `CREATE TABLE`, and it should not duplicate DDL constants in Python.
+The dlt source emits rows compatible with that migrated table. It must not execute ClickHouse DDL and must not duplicate DDL constants in Python.
 
 ## Testing Strategy
 
-Tests should verify behavior, not config forwarding.
+Tests should verify behavior, not forwarding/config dictionary shape.
 
-Remove tests that inspect `exchange_rate_rest_api_config` and `exchange_rate_range_rest_api_config`.
+Remove tests that inspect:
+
+```text
+exchange_rate_rest_api_config
+exchange_rate_range_rest_api_config
+```
 
 Add tests that verify:
 
-- the range transformer calls the expected ECB URL with expected query params,
-- the transformer yields expected rows from a fake ECB payload,
-- `exchange_rates_range_source` exposes the loadable ECB transformer resource and identity resource,
-- `exchange_rates_source` for single-date loads exposes direct dlt resources for each requested date/currency plus identity rows,
-- existing Dagster asset materialization test still passes with the fake dlt resource,
+- the ECB range resource calls the expected ECB URL with expected query params,
+- the ECB range resource yields expected rows from a fake ECB payload,
+- `exchange_rates_range_source` exposes direct ECB and identity resources,
+- `exchange_rates_source` exposes direct ECB and identity resources for single-date loads,
+- existing Dagster asset materialization test still passes,
 - `uv run dg check defs` still loads definitions.
 
 ## Error Handling
 
-The HTTP fetch should call `response.raise_for_status()`.
+The ECB HTTP call should call:
 
-If ECB returns no observations for a requested currency/date range, the parser should keep the current behavior:
+```python
+response.raise_for_status()
+```
 
-- single-date parser raises `ValueError`,
-- range parser yields no rows for missing series.
+The existing parser behavior should remain:
 
-This keeps failures visible when a specific expected single-date rate is missing while allowing range calls to handle sparse ECB data.
+- single-date parsing raises `ValueError` if no observations are returned,
+- range parsing yields rows only for available observations.
 
 ## Non-Goals
 
 This change does not:
 
-- add a raw ECB payload table,
+- add raw ECB payload persistence,
 - add a DuckDB staging table,
 - add another Dagster asset,
+- add a dlt transformer,
 - change ClickHouse migrations,
 - change partition definitions,
 - change the final `reference.exchange_rates` schema.
-
-## Open Decision
-
-Use internal-only request specs and payloads. Do not persist raw ECB payloads unless a later operational need appears, such as audit replay or debugging external API changes.
 
 ## Acceptance Criteria
 
 - `rest_api_source` is no longer imported or used by the exchange-rate source.
 - `exchange_rate_rest_api_config`, `exchange_rate_range_rest_api_config`, `_ecb_mapper`, and `_ecb_range_mapper` are removed.
-- Source code shows the flow directly as resource-to-transformer.
+- The exchange-rate source reads as direct dlt resources.
+- The ECB API is called once per ECB resource execution.
 - Exchange-rate tests pass.
 - ClickHouse migration tests pass.
 - Dagster definitions load successfully.
