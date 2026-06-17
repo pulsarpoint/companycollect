@@ -1,21 +1,36 @@
 from collections.abc import Iterator
 from datetime import date, timedelta
+import hashlib
+import json
 import os
+from pathlib import Path
 from typing import Any
 
 import dagster as dg
+import duckdb
 from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
+from dagster_v3.defs.clickhouse.resolved import export_duckdb_table_to_clickhouse
 from dagster_v3.defs.exchange_rates import tables
 from dagster_v3.defs.exchange_rates.source import (
     DEFAULT_CLICKHOUSE_NATIVE_PORT,
-    EXCHANGE_RATES_DLT_TABLE,
-    exchange_rates_clickhouse_pipeline,
-    exchange_rates_range_source,
+    EXCHANGE_RATES_DUCKDB_DATASET_NAME,
+    EXCHANGE_RATES_RAW_DLT_TABLE,
+    ecb_rate_rows_from_range_payload,
+    exchange_rates_duckdb_pipeline,
+    exchange_rates_raw_range_source,
+    identity_eur_row,
 )
+
+GROUP_NAME = "exchange_rates"
+EXCHANGE_RATES_DUCKDB_PATH = Path("data/exchange_rates_source.duckdb")
+ECB_RATES_TABLE = "ecb_rates"
+IDENTITY_RATES_TABLE = "identity_rates"
+CLICKHOUSE_EXPORT_TABLE = "clickhouse_exchange_rates"
+EXCHANGE_RATES_PARTITIONS = dg.DailyPartitionsDefinition(start_date="2023-01-01")
 
 
 class ExchangeRatesDltTranslator(DagsterDltTranslator):
@@ -26,28 +41,19 @@ class ExchangeRatesDltTranslator(DagsterDltTranslator):
 
     def get_asset_spec(self, data: DltResourceTranslatorData) -> dg.AssetSpec:
         spec = super().get_asset_spec(data)
-        if data.resource.table_name != EXCHANGE_RATES_DLT_TABLE:
+        if data.resource.table_name != EXCHANGE_RATES_RAW_DLT_TABLE:
             return spec
         return spec.replace_attributes(
             key=self._asset_key,
             deps=[],
-            group_name="exchange_rates",
+            group_name=GROUP_NAME,
             description=self._description,
-            kinds={"python", "dlt", "clickhouse", "reference", "fx"},
+            kinds={"python", "dlt", "duckdb", "reference", "fx"},
         )
 
 
 class ExchangeRatesConfig(dg.Config):
     currencies: list[str] = ["NOK", "USD", "EUR", "GBP", "SEK", "DKK"]
-
-
-EXCHANGE_RATES_BACKFILL_PARTITIONS = dg.MonthlyPartitionsDefinition(
-    start_date="2023-01-01",
-    end_date=date.today().isoformat(),
-)
-EXCHANGE_RATES_DAILY_PARTITIONS = dg.DailyPartitionsDefinition(
-    start_date=date.today().isoformat(),
-)
 
 
 def month_partition_window(partition_key: str, *, today: date | None = None) -> tuple[str, str]:
@@ -84,154 +90,271 @@ def day_partition_range_window(
     return start_date, end_date
 
 
-def delete_exchange_rates_window(
-    client: Any,
-    *,
-    start_date: str,
-    end_date: str,
-    currencies: list[str],
-) -> None:
-    quote_currencies = sorted({currency.upper() for currency in currencies} | {"EUR", "NOK", "USD"})
-    quoted_currencies = ", ".join(f"'{_sql_string(currency)}'" for currency in quote_currencies)
-    client.execute(
-        "ALTER TABLE reference.exchange_rates DELETE WHERE "
-        "source IN ('ECB EXR', 'identity') "
-        f"AND rate_date >= '{_sql_string(start_date)}' "
-        f"AND rate_date <= '{_sql_string(end_date)}' "
-        f"AND quote_currency IN ({quoted_currencies})"
-    )
-
-
-# dagster-dlt inspects this decorator source when definitions are loaded, before
-# a Dagster run has partition keys, config, or a run id. The fixed dates below are
-# only a valid definition-time placeholder so Dagster can derive the dlt table and
-# asset spec. Runtime data windows are built in `_run_exchange_rates_partition`
-# and passed to `dlt.run(...)`.
+# dagster-dlt needs a concrete source and pipeline when definitions are loaded.
+# These fixed dates are only the definition-time shape; runtime partitions,
+# currencies, and run id are passed to dlt.run inside the asset function.
 @dlt_assets(
-    dlt_source=exchange_rates_range_source(
+    dlt_source=exchange_rates_raw_range_source(
         start_date="2023-01-01",
         end_date="2023-01-01",
         currencies=[],
     ),
-    dlt_pipeline=exchange_rates_clickhouse_pipeline(),
-    name="exchange_rates_backfill",
+    dlt_pipeline=exchange_rates_duckdb_pipeline(destination_path=str(EXCHANGE_RATES_DUCKDB_PATH)),
+    name="exchange_rates_raw_duckdb",
     dagster_dlt_translator=ExchangeRatesDltTranslator(
-        asset_key="exchange_rates_backfill",
-        description="Monthly backfill of shared exchange rates loaded to ClickHouse from ECB.",
+        asset_key="exchange_rates_raw_duckdb",
+        description="Raw ECB exchange-rate API payloads stored in DuckDB.",
     ),
-    partitions_def=EXCHANGE_RATES_BACKFILL_PARTITIONS,
+    partitions_def=EXCHANGE_RATES_PARTITIONS,
 )
-def exchange_rates_backfill_asset(
+def exchange_rates_raw_duckdb_asset(
     context: AssetExecutionContext,
     config: ExchangeRatesConfig,
     dlt: DagsterDltResource,
-    clickhouse: ClickhouseResource,
 ) -> Iterator[Any]:
-    partition_key_range = context.partition_key_range
-    start_date, end_date = month_partition_range_window(
-        start_partition_key=partition_key_range.start,
-        end_partition_key=partition_key_range.end,
-    )
-    yield from _run_exchange_rates_partition(
-        context=context,
-        config=config,
-        dlt=dlt,
-        clickhouse=clickhouse,
-        start_date=start_date,
-        end_date=end_date,
-        asset_label="backfill",
-    )
-
-
-@dlt_assets(
-    dlt_source=exchange_rates_range_source(
-        start_date=date.today().isoformat(),
-        end_date=date.today().isoformat(),
-        currencies=[],
-    ),
-    dlt_pipeline=exchange_rates_clickhouse_pipeline(),
-    name="exchange_rates_daily",
-    dagster_dlt_translator=ExchangeRatesDltTranslator(
-        asset_key="exchange_rates_daily",
-        description="Daily refresh of shared exchange rates loaded to ClickHouse from ECB.",
-    ),
-    partitions_def=EXCHANGE_RATES_DAILY_PARTITIONS,
-)
-def exchange_rates_daily_asset(
-    context: AssetExecutionContext,
-    config: ExchangeRatesConfig,
-    dlt: DagsterDltResource,
-    clickhouse: ClickhouseResource,
-) -> Iterator[Any]:
-    partition_key_range = context.partition_key_range
-    start_date, end_date = day_partition_range_window(
-        start_partition_key=partition_key_range.start,
-        end_partition_key=partition_key_range.end,
-    )
-    yield from _run_exchange_rates_partition(
-        context=context,
-        config=config,
-        dlt=dlt,
-        clickhouse=clickhouse,
-        start_date=start_date,
-        end_date=end_date,
-        asset_label="daily",
-    )
-
-
-def _run_exchange_rates_partition(
-    *,
-    context: AssetExecutionContext,
-    config: ExchangeRatesConfig,
-    dlt: DagsterDltResource,
-    clickhouse: ClickhouseResource,
-    start_date: str,
-    end_date: str,
-    asset_label: str,
-) -> Iterator[Any]:
+    start_date, end_date = _context_partition_range(context)
+    EXCHANGE_RATES_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
     context.log.info(
-        "Deleting existing exchange-rate rows: table=%s, start_date=%s, end_date=%s, "
-        "currencies=%s",
-        tables.QUALIFIED_EXCHANGE_RATES_TABLE,
-        start_date,
-        end_date,
-        sorted({currency.upper() for currency in config.currencies} | {"EUR", "NOK", "USD"}),
-    )
-    with clickhouse.get_connection() as client:
-        delete_exchange_rates_window(
-            client,
-            start_date=start_date,
-            end_date=end_date,
-            currencies=config.currencies,
-        )
-    context.log.info(
-        "Loading ECB exchange rates into ClickHouse: start_date=%s, end_date=%s, "
-        "currencies=%s",
+        "Loading raw ECB exchange-rate payload to DuckDB: duckdb_path=%s, start_date=%s, "
+        "end_date=%s, currencies=%s",
+        EXCHANGE_RATES_DUCKDB_PATH,
         start_date,
         end_date,
         config.currencies,
     )
     yield from dlt.run(
         context=context,
-        dlt_source=exchange_rates_range_source(
+        dlt_source=exchange_rates_raw_range_source(
             start_date=start_date,
             end_date=end_date,
             currencies=config.currencies,
             source_run_id=context.run_id,
         ),
-        dlt_pipeline=exchange_rates_clickhouse_pipeline(),
+        dlt_pipeline=exchange_rates_duckdb_pipeline(
+            destination_path=str(EXCHANGE_RATES_DUCKDB_PATH)
+        ),
     )
-    context.log.info(
-        "Completed exchange-rate %s partition: start_date=%s, end_date=%s",
-        asset_label,
-        start_date,
-        end_date,
+
+
+@dg.asset(
+    deps=[dg.AssetKey("exchange_rates_raw_duckdb")],
+    partitions_def=EXCHANGE_RATES_PARTITIONS,
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    description="Normalized ECB exchange-rate rows parsed from raw ECB payloads in DuckDB.",
+)
+def exchange_rates_ecb_rates_duckdb(context: AssetExecutionContext) -> dg.MaterializeResult:
+    start_date, end_date = _context_partition_range(context)
+    counts = normalize_exchange_rates_ecb_duckdb(
+        duckdb_path=EXCHANGE_RATES_DUCKDB_PATH,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    context.log.info("Normalized ECB exchange-rate rows in DuckDB", extra=counts)
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    deps=[dg.AssetKey("exchange_rates_ecb_rates_duckdb")],
+    partitions_def=EXCHANGE_RATES_PARTITIONS,
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    description="Generated EUR/EUR identity exchange-rate rows in DuckDB.",
+)
+def exchange_rates_identity_rates_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    start_date, end_date = _context_partition_range(context)
+    counts = generate_exchange_rates_identity_duckdb(
+        duckdb_path=EXCHANGE_RATES_DUCKDB_PATH,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    context.log.info("Generated identity exchange-rate rows in DuckDB", extra=counts)
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    deps=[
+        dg.AssetKey("exchange_rates_ecb_rates_duckdb"),
+        dg.AssetKey("exchange_rates_identity_rates_duckdb"),
+    ],
+    partitions_def=EXCHANGE_RATES_PARTITIONS,
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    description="Exchange-rate reference rows exported from DuckDB to migrated ClickHouse table.",
+)
+def exchange_rates_clickhouse(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    start_date, end_date = _context_partition_range(context)
+    counts = export_exchange_rates_clickhouse(
+        duckdb_path=EXCHANGE_RATES_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    context.log.info("Exported exchange-rate rows to ClickHouse", extra=counts)
+    return dg.MaterializeResult(metadata=counts)
+
+
+def normalize_exchange_rates_ecb_duckdb(
+    *,
+    duckdb_path: str | Path,
+    start_date: str,
+    end_date: str,
+) -> dict[str, int | str]:
+    with duckdb.connect(str(duckdb_path)) as connection:
+        _ensure_exchange_rates_duckdb_schema(connection)
+        connection.execute(
+            f"""
+            delete from {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{ECB_RATES_TABLE}
+            where rate_date >= ? and rate_date <= ?
+            """,
+            [start_date, end_date],
+        )
+        raw_rows = connection.execute(
+            f"""
+            select
+              source_payload_json,
+              quote_currencies_json,
+              source_url,
+              source_run_id,
+              pulled_at
+            from {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{EXCHANGE_RATES_RAW_DLT_TABLE}
+            where start_date >= ? and end_date <= ?
+            """,
+            [start_date, end_date],
+        ).fetchall()
+        normalized_rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str]] = []
+        for payload_json, quote_currencies_json, source_url, source_run_id, pulled_at in raw_rows:
+            rows = ecb_rate_rows_from_range_payload(
+                json.loads(payload_json),
+                quote_currencies=json.loads(quote_currencies_json),
+                source_url=source_url,
+                source_run_id=source_run_id,
+                pulled_at=str(pulled_at),
+            )
+            normalized_rows.extend(_exchange_rate_row_tuple(row) for row in rows)
+        if normalized_rows:
+            connection.executemany(
+                f"""
+                insert into {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{ECB_RATES_TABLE}
+                ({", ".join(tables.EXCHANGE_RATES_COLUMNS)})
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                normalized_rows,
+            )
+    return {"raw_payloads": len(raw_rows), "ecb_rates": len(normalized_rows)}
+
+
+def generate_exchange_rates_identity_duckdb(
+    *,
+    duckdb_path: str | Path,
+    start_date: str,
+    end_date: str,
+) -> dict[str, int]:
+    with duckdb.connect(str(duckdb_path)) as connection:
+        _ensure_exchange_rates_duckdb_schema(connection)
+        connection.execute(
+            f"""
+            delete from {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{IDENTITY_RATES_TABLE}
+            where rate_date >= ? and rate_date <= ?
+            """,
+            [start_date, end_date],
+        )
+        source_dates = connection.execute(
+            f"""
+            select rate_date, min(source_run_id), min(pulled_at)
+            from {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{ECB_RATES_TABLE}
+            where rate_date >= ? and rate_date <= ?
+            group by rate_date
+            order by rate_date
+            """,
+            [start_date, end_date],
+        ).fetchall()
+        identity_rows = [
+            _exchange_rate_row_tuple(
+                identity_eur_row(
+                    rate_date=str(rate_date),
+                    source_run_id=str(source_run_id),
+                    pulled_at=str(pulled_at),
+                )
+            )
+            for rate_date, source_run_id, pulled_at in source_dates
+        ]
+        if identity_rows:
+            connection.executemany(
+                f"""
+                insert into {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{IDENTITY_RATES_TABLE}
+                ({", ".join(tables.EXCHANGE_RATES_COLUMNS)})
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                identity_rows,
+            )
+    return {"identity_rates": len(identity_rows)}
+
+
+def export_exchange_rates_clickhouse(
+    *,
+    duckdb_path: str | Path,
+    clickhouse: ClickhouseResource,
+    start_date: str,
+    end_date: str,
+) -> dict[str, int | str]:
+    with duckdb.connect(str(duckdb_path)) as connection:
+        _ensure_exchange_rates_duckdb_schema(connection)
+        connection.execute(
+            f"""
+            create or replace table {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{CLICKHOUSE_EXPORT_TABLE}
+            as
+            select {", ".join(tables.EXCHANGE_RATES_COLUMNS)}
+            from {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{ECB_RATES_TABLE}
+            where rate_date >= '{_duckdb_string(start_date)}' and rate_date <= '{_duckdb_string(end_date)}'
+            union all
+            select {", ".join(tables.EXCHANGE_RATES_COLUMNS)}
+            from {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{IDENTITY_RATES_TABLE}
+            where rate_date >= '{_duckdb_string(start_date)}' and rate_date <= '{_duckdb_string(end_date)}'
+            """
+        )
+    with clickhouse.get_connection() as client:
+        delete_exchange_rates_window(client, start_date=start_date, end_date=end_date)
+        row_count = export_duckdb_table_to_clickhouse(
+            duckdb_path=duckdb_path,
+            clickhouse_client=client,
+            duckdb_schema=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
+            duckdb_table=CLICKHOUSE_EXPORT_TABLE,
+            clickhouse_database=tables.EXCHANGE_RATES_DATABASE,
+            clickhouse_table=tables.EXCHANGE_RATES_TABLE,
+            columns=tables.EXCHANGE_RATES_COLUMNS,
+            truncate=False,
+        )
+    return {
+        "rows": row_count,
+        "table": tables.QUALIFIED_EXCHANGE_RATES_TABLE,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
+
+def delete_exchange_rates_window(
+    client: Any,
+    *,
+    start_date: str,
+    end_date: str,
+) -> None:
+    client.execute(
+        "ALTER TABLE reference.exchange_rates DELETE WHERE "
+        "source IN ('ECB EXR', 'identity') "
+        f"AND rate_date >= '{_sql_string(start_date)}' "
+        f"AND rate_date <= '{_sql_string(end_date)}'"
     )
 
 
 exchange_rates_daily_job = dg.define_asset_job(
     "exchange_rates_daily_job",
-    selection=dg.AssetSelection.assets("exchange_rates_daily"),
+    selection=dg.AssetSelection.assets("exchange_rates_clickhouse"),
 )
 exchange_rates_daily_schedule = dg.build_schedule_from_partitioned_job(
     exchange_rates_daily_job,
@@ -247,6 +370,38 @@ def clickhouse_resource_from_env() -> ClickhouseResource:
         password=dg.EnvVar("CLICKHOUSE_PASSWORD"),
         database=dg.EnvVar("CLICKHOUSE_DATABASE"),
         secure=_bool_env("CLICKHOUSE_SECURE", False),
+    )
+
+
+def _ensure_exchange_rates_duckdb_schema(connection: duckdb.DuckDBPyConnection) -> None:
+    connection.execute(f"create schema if not exists {EXCHANGE_RATES_DUCKDB_DATASET_NAME}")
+    columns = ", ".join(f"{column} varchar" for column in tables.EXCHANGE_RATES_COLUMNS)
+    for table in (ECB_RATES_TABLE, IDENTITY_RATES_TABLE):
+        connection.execute(
+            f"""
+            create table if not exists {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{table}
+            ({columns})
+            """
+        )
+
+
+def _exchange_rate_row_tuple(row: dict[str, Any]) -> tuple[str, str, str, str, str, str, str, str, str, str, str]:
+    dlt_id_source = "|".join(
+        str(row.get(column, "")) for column in tables.EXCHANGE_RATES_COLUMNS[:-2]
+    )
+    row_with_dlt = {
+        **row,
+        "_dlt_load_id": "",
+        "_dlt_id": hashlib.sha256(dlt_id_source.encode("utf-8")).hexdigest(),
+    }
+    return tuple(str(row_with_dlt.get(column, "")) for column in tables.EXCHANGE_RATES_COLUMNS)
+
+
+def _context_partition_range(context: AssetExecutionContext) -> tuple[str, str]:
+    partition_key_range = context.partition_key_range
+    return day_partition_range_window(
+        start_partition_key=partition_key_range.start,
+        end_partition_key=partition_key_range.end,
     )
 
 
@@ -266,7 +421,16 @@ def _sql_string(value: str) -> str:
     return value.replace("'", "''")
 
 
+def _duckdb_string(value: str) -> str:
+    return value.replace("'", "''")
+
+
 defs = dg.Definitions(
-    assets=[exchange_rates_backfill_asset, exchange_rates_daily_asset],
+    assets=[
+        exchange_rates_raw_duckdb_asset,
+        exchange_rates_ecb_rates_duckdb,
+        exchange_rates_identity_rates_duckdb,
+        exchange_rates_clickhouse,
+    ],
     schedules=[exchange_rates_daily_schedule],
 )

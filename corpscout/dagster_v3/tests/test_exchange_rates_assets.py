@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+import json
 from pathlib import Path
 
 import dagster as dg
@@ -34,12 +35,14 @@ def test_exchange_rates_clickhouse_schema_contract() -> None:
 class FakeClickHouseClient:
     def __init__(self) -> None:
         self.statements: list[str] = []
-        self.inserted_rows: list[tuple] = []
+        self.insert_calls: list[tuple[str, list[tuple]]] = []
 
-    def execute(self, sql: str, params: list[tuple] | None = None) -> None:
-        self.statements.append(sql)
-        if params is not None:
-            self.inserted_rows.extend(params)
+    def execute(self, sql: str, params: list[tuple] | None = None) -> list[tuple]:
+        if params is None:
+            self.statements.append(sql)
+        else:
+            self.insert_calls.append((sql, params))
+        return []
 
 
 class FakeClickHouseResource:
@@ -60,111 +63,6 @@ class FakeHttpResponse:
 
     def json(self) -> dict:
         return self.payload
-
-
-class DuckDbBackedDltResource:
-    def __init__(self, duckdb_path: Path, clickhouse: FakeClickHouseResource) -> None:
-        self.duckdb_path = duckdb_path
-        self.clickhouse = clickhouse
-
-    def run(self, **_: object) -> Iterator[dg.MaterializeResult]:
-        with duckdb.connect(str(self.duckdb_path), read_only=True) as connection:
-            rows = connection.execute(
-                """
-                select
-                  rate_date,
-                  base_currency,
-                  quote_currency,
-                  rate,
-                  source,
-                  source_url,
-                  source_payload_hash,
-                  source_run_id,
-                  pulled_at,
-                  _dlt_load_id,
-                  _dlt_id
-                from reference.exchange_rates
-                order by rate_date, quote_currency
-                """
-            ).fetchall()
-        with self.clickhouse.get_connection() as client:
-            client.execute(
-                "INSERT INTO reference.exchange_rates VALUES",
-                rows,
-            )
-        yield dg.MaterializeResult(metadata={"inserted_rows": len(rows)})
-
-
-def _create_exchange_rates_duckdb_fixture(duckdb_path: Path) -> None:
-    with duckdb.connect(str(duckdb_path)) as connection:
-        connection.execute("create schema reference")
-        connection.execute(
-            """
-            create table reference.exchange_rates (
-              rate_date date,
-              base_currency varchar,
-              quote_currency varchar,
-              rate decimal(18, 8),
-              source varchar,
-              source_url varchar,
-              source_payload_hash varchar,
-              source_run_id varchar,
-              pulled_at timestamp,
-              _dlt_load_id varchar,
-              _dlt_id varchar
-            )
-            """
-        )
-        connection.execute(
-            """
-            insert into reference.exchange_rates values
-              ('2026-05-01', 'EUR', 'USD', 1.15800000, 'ECB EXR',
-               'https://ecb.example/USD', repeat('a', 64), 'run-test',
-               '2026-05-01 12:00:00', 'load-1', 'row-1'),
-              ('2026-05-01', 'EUR', 'EUR', 1.00000000, 'identity',
-               '', repeat('0', 64), 'run-test', '2026-05-01 12:00:00',
-               'load-1', 'row-2')
-            """
-        )
-
-
-def test_exchange_rates_backfill_materialization_loads_duckdb_rows_without_runtime_ddl(
-    tmp_path: Path,
-) -> None:
-    from dagster_v3.defs.exchange_rates import assets as fx_assets
-
-    duckdb_path = tmp_path / "exchange_rates.duckdb"
-    _create_exchange_rates_duckdb_fixture(duckdb_path)
-    client = FakeClickHouseClient()
-    clickhouse = FakeClickHouseResource(client)
-    dlt_resource = DuckDbBackedDltResource(duckdb_path, clickhouse)
-
-    result = dg.materialize(
-        [fx_assets.exchange_rates_backfill_asset],
-        partition_key="2026-05-01",
-        resources={
-            "clickhouse": clickhouse,
-            "dlt": dlt_resource,
-        },
-        run_config={
-            "ops": {
-                "exchange_rates_backfill": {
-                    "config": {
-                        "currencies": ["USD"],
-                    }
-                }
-            }
-        },
-    )
-
-    assert result.success
-    assert not any(statement.upper().startswith("CREATE ") for statement in client.statements)
-    assert client.statements[0].startswith("ALTER TABLE reference.exchange_rates DELETE WHERE")
-    assert client.statements[1] == "INSERT INTO reference.exchange_rates VALUES"
-    assert [(row[0].isoformat(), row[1], row[2], str(row[3])) for row in client.inserted_rows] == [
-        ("2026-05-01", "EUR", "EUR", "1.00000000"),
-        ("2026-05-01", "EUR", "USD", "1.15800000"),
-    ]
 
 
 def _ecb_payload(value: float = 1.0389) -> dict:
@@ -219,7 +117,9 @@ def _ecb_range_payload() -> dict:
     }
 
 
-def test_ecb_exchange_rates_range_resource_fetches_endpoint_and_yields_rows(monkeypatch) -> None:
+def test_ecb_exchange_rate_raw_resource_fetches_endpoint_and_yields_raw_payload(
+    monkeypatch,
+) -> None:
     calls: list[dict] = []
 
     def fake_get(url: str, *, params: dict, headers: dict, timeout: int) -> FakeHttpResponse:
@@ -229,7 +129,7 @@ def test_ecb_exchange_rates_range_resource_fetches_endpoint_and_yields_rows(monk
     monkeypatch.setattr(fx_source.requests, "get", fake_get)
 
     rows = list(
-        fx_source.ecb_exchange_rates_range_resource(
+        fx_source.ecb_exchange_rate_raw_resource(
             start_date="2024-12-01",
             end_date="2024-12-31",
             currencies=["USD", "NOK"],
@@ -250,60 +150,35 @@ def test_ecb_exchange_rates_range_resource_fetches_endpoint_and_yields_rows(monk
             "timeout": 30,
         }
     ]
-    assert [(row["rate_date"], row["quote_currency"], row["rate"]) for row in rows] == [
-        ("2024-12-30", "NOK", "11.8"),
-        ("2024-12-31", "NOK", "11.79"),
-        ("2024-12-30", "USD", "1.04"),
-        ("2024-12-31", "USD", "1.0389"),
-    ]
+    assert rows[0]["start_date"] == "2024-12-01"
+    assert rows[0]["end_date"] == "2024-12-31"
+    assert rows[0]["quote_currencies_json"] == '["NOK","USD"]'
+    assert json.loads(rows[0]["source_payload_json"]) == _ecb_range_payload()
+    assert len(rows[0]["source_payload_hash"]) == 64
 
 
-def test_ecb_exchange_rates_resource_fetches_single_date_endpoint_and_yields_row(monkeypatch) -> None:
-    calls: list[dict] = []
-
-    def fake_get(url: str, *, params: dict, headers: dict, timeout: int) -> FakeHttpResponse:
-        calls.append({"url": url, "params": params, "headers": headers, "timeout": timeout})
-        return FakeHttpResponse(_ecb_payload())
-
-    monkeypatch.setattr(fx_source.requests, "get", fake_get)
-
-    rows = list(
-        fx_source.ecb_exchange_rates_resource(
-            rate_date="2024-12-31",
-            quote_currency="USD",
-            source_run_id="run-1",
-            pulled_at="2026-06-16T00:00:00.000Z",
-        )
-    )
-
-    assert calls == [
-        {
-            "url": "https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A",
-            "params": {
-                "format": "jsondata",
-                "startPeriod": "2024-12-31",
-                "endPeriod": "2024-12-31",
-            },
-            "headers": {"User-Agent": "corpscout-dagster-v3-dev/0.1"},
-            "timeout": 30,
-        }
-    ]
-    assert [(row["rate_date"], row["quote_currency"], row["rate"]) for row in rows] == [
-        ("2024-12-31", "USD", "1.0389"),
-    ]
-
-
-def test_ecb_exchange_rates_range_resource_exposes_dlt_table_contract() -> None:
-    resource = fx_source.ecb_exchange_rates_range_resource(
+def test_exchange_rates_raw_range_source_exposes_raw_resource() -> None:
+    source = fx_source.exchange_rates_raw_range_source(
         start_date="2024-12-01",
         end_date="2024-12-31",
-        currencies=["USD", "NOK"],
+        currencies=["USD"],
         source_run_id="run-1",
         pulled_at="2026-06-16T00:00:00.000Z",
     )
 
-    assert resource.name == "exchange_rates_ecb_2024_12_01_2024_12_31"
-    assert resource.table_name == "exchange_rates"
+    assert list(source.resources.keys()) == ["ecb_raw_payloads"]
+    assert source.resources["ecb_raw_payloads"].table_name == "ecb_raw_payloads"
+
+
+def test_exchange_rates_duckdb_pipeline_targets_duckdb_dataset(tmp_path: Path) -> None:
+    pipeline = fx_source.exchange_rates_duckdb_pipeline(
+        destination_path=str(tmp_path / "exchange_rates.duckdb")
+    )
+
+    assert pipeline.pipeline_name == "exchange_rates_raw"
+    assert pipeline.dataset_name == "exchange_rates_stage"
+    assert pipeline.dev_mode is False
+    assert pipeline.destination.destination_name == "duckdb"
 
 
 def test_ecb_rate_row_from_payload_returns_reference_row() -> None:
@@ -322,21 +197,6 @@ def test_ecb_rate_row_from_payload_returns_reference_row() -> None:
     assert row["rate"] == "1.0389"
     assert row["source"] == "ECB EXR"
     assert len(row["source_payload_hash"]) == 64
-
-
-def test_ecb_rate_row_from_dlt_selected_dataset_returns_reference_row() -> None:
-    row = fx_source.ecb_rate_row_from_payload(
-        _ecb_dataset_payload(),
-        quote_currency="USD",
-        rate_date="2024-12-31",
-        source_url="https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A",
-        source_run_id="run-1",
-        pulled_at="2026-06-16T00:00:00.000Z",
-    )
-
-    assert row["base_currency"] == "EUR"
-    assert row["quote_currency"] == "USD"
-    assert row["rate"] == "1.0389"
 
 
 def test_ecb_rate_rows_from_range_payload_returns_dated_rows() -> None:
@@ -362,82 +222,105 @@ def test_ecb_rate_rows_from_range_payload_returns_dated_rows() -> None:
     assert all(len(row["source_payload_hash"]) == 64 for row in rows)
 
 
-def test_identity_exchange_rates_resource_yields_eur_rows() -> None:
-    resource = fx_source.identity_exchange_rates_resource(
-        rate_dates=["2024-12-31"],
-        source_run_id="run-1",
-        pulled_at="2026-06-16T00:00:00.000Z",
+def test_normalize_exchange_rates_ecb_duckdb_reads_raw_payloads(tmp_path: Path) -> None:
+    from dagster_v3.defs.exchange_rates import assets as fx_assets
+
+    duckdb_path = tmp_path / "exchange_rates.duckdb"
+    _create_raw_payload_table(duckdb_path)
+
+    counts = fx_assets.normalize_exchange_rates_ecb_duckdb(
+        duckdb_path=duckdb_path,
+        start_date="2024-12-01",
+        end_date="2024-12-31",
     )
 
-    assert list(resource) == [
-        {
-            "rate_date": "2024-12-31",
-            "base_currency": "EUR",
-            "quote_currency": "EUR",
-            "rate": "1",
-            "source": "identity",
-            "source_url": "",
-            "source_payload_hash": "0" * 64,
-            "source_run_id": "run-1",
-            "pulled_at": "2026-06-16T00:00:00.000Z",
-        }
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        rows = connection.execute(
+            """
+            select rate_date, quote_currency, rate, source
+            from exchange_rates_stage.ecb_rates
+            order by rate_date, quote_currency
+            """
+        ).fetchall()
+
+    assert counts == {"raw_payloads": 1, "ecb_rates": 4}
+    assert rows == [
+        ("2024-12-30", "NOK", "11.8", "ECB EXR"),
+        ("2024-12-30", "USD", "1.04", "ECB EXR"),
+        ("2024-12-31", "NOK", "11.79", "ECB EXR"),
+        ("2024-12-31", "USD", "1.0389", "ECB EXR"),
     ]
 
 
-def test_identity_exchange_rates_for_dates_resource_yields_actual_rate_dates() -> None:
-    resource = fx_source.identity_exchange_rates_for_dates_resource(
-        rate_dates=["2024-12-30", "2024-12-31"],
-        source_run_id="run-1",
-        pulled_at="2026-06-16T00:00:00.000Z",
-    )
+def test_generate_exchange_rates_identity_duckdb_uses_ecb_rate_dates(tmp_path: Path) -> None:
+    from dagster_v3.defs.exchange_rates import assets as fx_assets
 
-    rows = list(resource)
+    duckdb_path = tmp_path / "exchange_rates.duckdb"
+    _create_ecb_rates_table(duckdb_path)
 
-    assert [row["rate_date"] for row in rows] == ["2024-12-30", "2024-12-31"]
-    assert {row["quote_currency"] for row in rows} == {"EUR"}
-
-
-def test_exchange_rates_range_source_exposes_bulk_resource_and_identity_resource() -> None:
-    source = fx_source.exchange_rates_range_source(
-        start_date="2024-12-01",
+    counts = fx_assets.generate_exchange_rates_identity_duckdb(
+        duckdb_path=duckdb_path,
+        start_date="2024-12-30",
         end_date="2024-12-31",
-        currencies=["USD"],
-        source_run_id="run-1",
-        pulled_at="2026-06-16T00:00:00.000Z",
     )
 
-    assert "exchange_rates_ecb_2024_12_01_2024_12_31" in source.resources.keys()
-    assert "exchange_rates_identity" in source.resources.keys()
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        rows = connection.execute(
+            """
+            select rate_date, base_currency, quote_currency, rate, source
+            from exchange_rates_stage.identity_rates
+            order by rate_date
+            """
+        ).fetchall()
+
+    assert counts == {"identity_rates": 2}
+    assert rows == [
+        ("2024-12-30", "EUR", "EUR", "1", "identity"),
+        ("2024-12-31", "EUR", "EUR", "1", "identity"),
+    ]
 
 
-def test_exchange_rates_clickhouse_destination_credentials_use_reference_database(
-    monkeypatch,
+def test_export_exchange_rates_clickhouse_reads_duckdb_and_inserts_union(
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("CLICKHOUSE_HOST", "companycollect")
-    monkeypatch.setenv("CLICKHOUSE_PORT", "8123")
-    monkeypatch.setenv("CLICKHOUSE_NATIVE_PORT", "9002")
-    monkeypatch.setenv("CLICKHOUSE_USER", "default")
-    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "password123")
-    monkeypatch.setenv("CLICKHOUSE_SECURE", "false")
+    from dagster_v3.defs.exchange_rates import assets as fx_assets
 
-    credentials = fx_source.clickhouse_destination_credentials_from_env()
+    duckdb_path = tmp_path / "exchange_rates.duckdb"
+    _create_ecb_rates_table(duckdb_path)
+    fx_assets.generate_exchange_rates_identity_duckdb(
+        duckdb_path=duckdb_path,
+        start_date="2024-12-30",
+        end_date="2024-12-31",
+    )
+    client = FakeClickHouseClient()
 
-    assert credentials["host"] == "companycollect"
-    assert credentials["port"] == 9002
-    assert credentials["http_port"] == 8123
-    assert credentials["username"] == "default"
-    assert credentials["password"] == "password123"
-    assert credentials["database"] == "reference"
-    assert credentials["secure"] == 0
+    counts = fx_assets.export_exchange_rates_clickhouse(
+        duckdb_path=duckdb_path,
+        clickhouse=FakeClickHouseResource(client),
+        start_date="2024-12-30",
+        end_date="2024-12-31",
+    )
 
-
-def test_exchange_rates_clickhouse_pipeline_targets_reference_database_without_dataset_prefix() -> None:
-    pipeline = fx_source.exchange_rates_clickhouse_pipeline()
-
-    assert pipeline.pipeline_name == "reference_exchange_rates"
-    assert pipeline.dataset_name is None
-    assert pipeline.dev_mode is False
-    assert pipeline.destination.destination_name == "clickhouse"
+    assert counts["rows"] == 4
+    assert client.statements == [
+        (
+            "ALTER TABLE reference.exchange_rates DELETE WHERE "
+            "source IN ('ECB EXR', 'identity') "
+            "AND rate_date >= '2024-12-30' "
+            "AND rate_date <= '2024-12-31'"
+        )
+    ]
+    assert client.insert_calls[0][0] == (
+        "INSERT INTO `reference`.`exchange_rates` (`rate_date`, `base_currency`, "
+        "`quote_currency`, `rate`, `source`, `source_url`, `source_payload_hash`, "
+        "`source_run_id`, `pulled_at`, `_dlt_load_id`, `_dlt_id`) VALUES"
+    )
+    assert [(row[0], row[2], row[3], row[4]) for row in client.insert_calls[0][1]] == [
+        ("2024-12-30", "NOK", "11.8", "ECB EXR"),
+        ("2024-12-31", "USD", "1.0389", "ECB EXR"),
+        ("2024-12-30", "EUR", "1", "identity"),
+        ("2024-12-31", "EUR", "1", "identity"),
+    ]
 
 
 def test_exchange_rate_month_partition_window() -> None:
@@ -449,10 +332,6 @@ def test_exchange_rate_month_partition_window() -> None:
         "2024-02-01",
         today=date(2024, 6, 16),
     ) == ("2024-02-01", "2024-02-29")
-    assert fx_assets.month_partition_window(
-        "2024-06-01",
-        today=date(2024, 6, 16),
-    ) == ("2024-06-01", "2024-06-16")
     assert fx_assets.month_partition_range_window(
         start_partition_key="2024-02-01",
         end_partition_key="2024-04-01",
@@ -473,7 +352,7 @@ def test_exchange_rate_day_partition_window() -> None:
     ) == ("2024-12-30", "2024-12-31")
 
 
-def test_delete_exchange_rates_window_targets_source_dates_and_currencies() -> None:
+def test_delete_exchange_rates_window_targets_source_dates() -> None:
     from dagster_v3.defs.exchange_rates import assets as fx_assets
 
     client = FakeClickHouseClient()
@@ -482,7 +361,6 @@ def test_delete_exchange_rates_window_targets_source_dates_and_currencies() -> N
         client,
         start_date="2024-12-01",
         end_date="2024-12-31",
-        currencies=["NOK", "USD", "EUR"],
     )
 
     assert client.statements == [
@@ -490,56 +368,42 @@ def test_delete_exchange_rates_window_targets_source_dates_and_currencies() -> N
             "ALTER TABLE reference.exchange_rates DELETE WHERE "
             "source IN ('ECB EXR', 'identity') "
             "AND rate_date >= '2024-12-01' "
-            "AND rate_date <= '2024-12-31' "
-            "AND quote_currency IN ('EUR', 'NOK', 'USD')"
+            "AND rate_date <= '2024-12-31'"
         )
     ]
 
 
-def test_exchange_rates_source_exposes_ecb_and_identity_resources() -> None:
-    source = fx_source.exchange_rates_source(
-        rate_dates=["2024-12-31"],
-        currencies=["USD"],
-        source_run_id="run-1",
-        pulled_at="2026-06-16T00:00:00.000Z",
-    )
-
-    assert {
-        "exchange_rates_ecb_usd_2024_12_31",
-        "exchange_rates_ecb_nok_2024_12_31",
-        "exchange_rates_identity",
-    }.issubset(source.resources.keys())
-
-
-def test_exchange_rate_dlt_translator_maps_backfill_asset_contract() -> None:
+def test_exchange_rate_dlt_translator_maps_raw_asset_contract() -> None:
     from dagster_v3.defs.exchange_rates import assets as fx_assets
 
-    source = fx_source.exchange_rates_range_source(
+    source = fx_source.exchange_rates_raw_range_source(
         start_date="2024-12-01",
         end_date="2024-12-31",
         currencies=["USD"],
         source_run_id="run-1",
         pulled_at="2026-06-16T00:00:00.000Z",
     )
-    resource = source.resources["exchange_rates_ecb_2024_12_01_2024_12_31"]
+    resource = source.resources["ecb_raw_payloads"]
     data = type(
         "TranslatorData",
         (),
         {
             "resource": resource,
-            "destination": fx_source.exchange_rates_clickhouse_pipeline().destination,
+            "destination": fx_source.exchange_rates_duckdb_pipeline(
+                destination_path="data/test.duckdb"
+            ).destination,
         },
     )()
 
     spec = fx_assets.ExchangeRatesDltTranslator(
-        asset_key="exchange_rates_backfill",
-        description="Backfill shared exchange rates.",
+        asset_key="exchange_rates_raw_duckdb",
+        description="Raw shared exchange rates.",
     ).get_asset_spec(data)
 
-    assert spec.key == dg.AssetKey("exchange_rates_backfill")
+    assert spec.key == dg.AssetKey("exchange_rates_raw_duckdb")
     assert spec.group_name == "exchange_rates"
     assert spec.deps == []
-    assert {"python", "dlt", "clickhouse", "reference", "fx"}.issubset(spec.kinds)
+    assert {"python", "dlt", "duckdb", "reference", "fx"}.issubset(spec.kinds)
 
 
 def test_exchange_rates_assets_and_daily_schedule_are_registered() -> None:
@@ -548,9 +412,12 @@ def test_exchange_rates_assets_and_daily_schedule_are_registered() -> None:
     schedule_names = {schedule.name for schedule in repository.schedule_defs}
     resource_keys = repository.get_top_level_resources().keys()
 
-    assert "exchange_rates_backfill" in asset_keys
-    assert "exchange_rates_daily" in asset_keys
-    assert "exchange_rates" not in asset_keys
+    assert "exchange_rates_raw_duckdb" in asset_keys
+    assert "exchange_rates_ecb_rates_duckdb" in asset_keys
+    assert "exchange_rates_identity_rates_duckdb" in asset_keys
+    assert "exchange_rates_clickhouse" in asset_keys
+    assert "exchange_rates_backfill" not in asset_keys
+    assert "exchange_rates_daily" not in asset_keys
     assert "exchange_rates_daily_schedule" in schedule_names
     assert "dlt" in resource_keys
     assert "clickhouse" in resource_keys
@@ -570,3 +437,60 @@ def test_exchange_rates_clickhouse_resource_uses_native_driver_port(monkeypatch)
 
     assert resource.port == 9002
     assert resource.secure is False
+
+
+def _create_raw_payload_table(duckdb_path: Path) -> None:
+    with duckdb.connect(str(duckdb_path)) as connection:
+        connection.execute("create schema exchange_rates_stage")
+        connection.execute(
+            """
+            create table exchange_rates_stage.ecb_raw_payloads (
+              start_date varchar,
+              end_date varchar,
+              quote_currencies_json varchar,
+              source_url varchar,
+              request_params_json varchar,
+              source_payload_json varchar,
+              source_payload_hash varchar,
+              source_run_id varchar,
+              pulled_at varchar
+            )
+            """
+        )
+        payload_json = json.dumps(_ecb_range_payload(), sort_keys=True, separators=(",", ":"))
+        connection.execute(
+            """
+            insert into exchange_rates_stage.ecb_raw_payloads values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                "2024-12-01",
+                "2024-12-31",
+                '["NOK","USD"]',
+                "https://data-api.ecb.europa.eu/service/data/EXR/D.NOK+USD.EUR.SP00.A",
+                '{"endPeriod":"2024-12-31","format":"jsondata","startPeriod":"2024-12-01"}',
+                payload_json,
+                "a" * 64,
+                "run-1",
+                "2026-06-16T00:00:00.000Z",
+            ],
+        )
+
+
+def _create_ecb_rates_table(duckdb_path: Path) -> None:
+    with duckdb.connect(str(duckdb_path)) as connection:
+        connection.execute("create schema exchange_rates_stage")
+        columns = ", ".join(f"{column} varchar" for column in tables.EXCHANGE_RATES_COLUMNS)
+        connection.execute(f"create table exchange_rates_stage.ecb_rates ({columns})")
+        connection.execute(
+            f"""
+            insert into exchange_rates_stage.ecb_rates
+            ({", ".join(tables.EXCHANGE_RATES_COLUMNS)})
+            values
+              ('2024-12-30', 'EUR', 'NOK', '11.8', 'ECB EXR',
+               'https://ecb.example', repeat('a', 64), 'run-1',
+               '2026-06-16T00:00:00.000Z', '', 'row-nok'),
+              ('2024-12-31', 'EUR', 'USD', '1.0389', 'ECB EXR',
+               'https://ecb.example', repeat('a', 64), 'run-1',
+               '2026-06-16T00:00:00.000Z', '', 'row-usd')
+            """
+        )
