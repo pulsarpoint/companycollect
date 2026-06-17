@@ -1,0 +1,12 @@
+name: exchange_rates_v2
+version: "1.0"
+config-version: 2
+profile: exchange_rates_v2
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  exchange_rates_v2:
+    +materialized: incremental

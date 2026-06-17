@@ -1,0 +1,7 @@
+exchange_rates_v2:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('EXCHANGE_RATES_V2_DUCKDB_PATH', 'data/exchange_rates_v2_source.duckdb') }}"
+      schema: exchange_rates_v2_stage
