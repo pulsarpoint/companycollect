@@ -9,17 +9,17 @@ from dagster_v3.defs.norway_brreg import tables as norway_brreg_tables
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
 
 EXPECTED_MIGRATIONS = (
-    "0001_reference_nace_categories.sql",
-    "0002_reference_exchange_rates.sql",
-    "0003_norway_brreg_companies.sql",
-    "0004_norway_brreg_financial_statements.sql",
-    "0005_corpscout_fi_companies.sql",
-    "0006_corpscout_fi_websites.sql",
-    "0007_corpscout_fi_industries.sql",
-    "0008_corpscout_fi_financial_statements.sql",
-    "0009_corpscout_fi_financial_metrics.sql",
-    "0010_corpscout_finland_ytj_registry_tables.sql",
-    "0011_corpscout_finland_xbrl_raw_tables.sql",
+    "000001_reference_nace_categories",
+    "000002_reference_exchange_rates",
+    "000003_norway_brreg_companies",
+    "000004_norway_brreg_financial_statements",
+    "000005_corpscout_fi_companies",
+    "000006_corpscout_fi_websites",
+    "000007_corpscout_fi_industries",
+    "000008_corpscout_fi_financial_statements",
+    "000009_corpscout_fi_financial_metrics",
+    "000010_corpscout_finland_ytj_registry_tables",
+    "000011_corpscout_finland_xbrl_raw_tables",
 )
 
 FINLAND_COMPANY_AUGMENT_COLUMNS = (
@@ -315,35 +315,49 @@ FINLAND_FINANCIAL_METRIC_COLUMNS = (
 
 def test_clickhouse_migration_files_are_explicit() -> None:
     migration_files = tuple(path.name for path in sorted(MIGRATIONS_DIR.glob("*.sql")))
+    expected_files = tuple(
+        file_name
+        for migration_name in EXPECTED_MIGRATIONS
+        for file_name in (f"{migration_name}.down.sql", f"{migration_name}.up.sql")
+    )
 
-    assert migration_files == EXPECTED_MIGRATIONS
+    assert migration_files == expected_files
 
 
 def test_clickhouse_migrations_create_databases_and_tables() -> None:
     for migration_file in EXPECTED_MIGRATIONS:
-        sql = _migration_sql(migration_file)
+        sql = _migration_sql(f"{migration_file}.up.sql")
 
         assert "CREATE DATABASE IF NOT EXISTS" in sql
         assert "CREATE TABLE IF NOT EXISTS" in sql
         assert "TRUNCATE" not in sql.upper()
 
 
+def test_clickhouse_migrations_have_down_files() -> None:
+    for migration_file in EXPECTED_MIGRATIONS:
+        sql = _migration_sql(f"{migration_file}.down.sql")
+
+        assert "DROP TABLE IF EXISTS" in sql or "ALTER TABLE" in sql
+
+
 def test_finland_resolved_migrations_use_corpscout_database() -> None:
     for migration_file in EXPECTED_MIGRATIONS:
-        sql = _migration_sql(migration_file)
+        sql = _migration_sql(f"{migration_file}.up.sql")
 
         assert "corpscout_resolved" not in sql
 
     for migration_file in EXPECTED_MIGRATIONS[4:]:
-        assert "CREATE DATABASE IF NOT EXISTS corpscout" in _migration_sql(migration_file)
+        assert "CREATE DATABASE IF NOT EXISTS corpscout" in _migration_sql(
+            f"{migration_file}.up.sql"
+        )
 
 
 def test_clickhouse_migrations_match_existing_python_ddl_constants() -> None:
     expected_ddl_by_file = {
-        "0001_reference_nace_categories.sql": nace_tables.NACE_CATEGORIES_DDL,
-        "0002_reference_exchange_rates.sql": exchange_rate_tables.EXCHANGE_RATES_DDL,
-        "0003_norway_brreg_companies.sql": norway_brreg_tables.COMPANIES_DDL,
-        "0004_norway_brreg_financial_statements.sql": (
+        "000001_reference_nace_categories.up.sql": nace_tables.NACE_CATEGORIES_DDL,
+        "000002_reference_exchange_rates.up.sql": exchange_rate_tables.EXCHANGE_RATES_DDL,
+        "000003_norway_brreg_companies.up.sql": norway_brreg_tables.COMPANIES_DDL,
+        "000004_norway_brreg_financial_statements.up.sql": (
             norway_brreg_tables.FINANCIAL_STATEMENTS_DDL
         ),
     }
@@ -355,13 +369,13 @@ def test_clickhouse_migrations_match_existing_python_ddl_constants() -> None:
 def test_finland_resolved_migrations_cover_exported_columns() -> None:
     migration_file_by_table = {
         finland_resolved_tables.FI_COMPANIES_TABLE: (
-            "0005_corpscout_fi_companies.sql"
+            "000005_corpscout_fi_companies.up.sql"
         ),
         finland_resolved_tables.FI_WEBSITES_TABLE: (
-            "0006_corpscout_fi_websites.sql"
+            "000006_corpscout_fi_websites.up.sql"
         ),
         finland_resolved_tables.FI_INDUSTRIES_TABLE: (
-            "0007_corpscout_fi_industries.sql"
+            "000007_corpscout_fi_industries.up.sql"
         ),
     }
 
@@ -376,9 +390,9 @@ def test_finland_resolved_migrations_cover_exported_columns() -> None:
 
 def test_finland_financial_migrations_cover_statements_and_usd_metrics() -> None:
     financial_statements_sql = _migration_sql(
-        "0008_corpscout_fi_financial_statements.sql"
+        "000008_corpscout_fi_financial_statements.up.sql"
     )
-    financial_metrics_sql = _migration_sql("0009_corpscout_fi_financial_metrics.sql")
+    financial_metrics_sql = _migration_sql("000009_corpscout_fi_financial_metrics.up.sql")
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.fi_financial_statements" in (
         financial_statements_sql
@@ -395,7 +409,7 @@ def test_finland_financial_migrations_cover_statements_and_usd_metrics() -> None
 
 
 def test_finland_ytj_registry_migration_covers_source_structures() -> None:
-    sql = _migration_sql("0010_corpscout_finland_ytj_registry_tables.sql")
+    sql = _migration_sql("000010_corpscout_finland_ytj_registry_tables.up.sql")
 
     for column_name in FINLAND_COMPANY_AUGMENT_COLUMNS:
         assert f"ADD COLUMN IF NOT EXISTS {column_name} " in sql
@@ -407,7 +421,7 @@ def test_finland_ytj_registry_migration_covers_source_structures() -> None:
 
 
 def test_finland_xbrl_raw_first_migration_covers_reprocessible_statement_data() -> None:
-    sql = _migration_sql("0011_corpscout_finland_xbrl_raw_tables.sql")
+    sql = _migration_sql("000011_corpscout_finland_xbrl_raw_tables.up.sql")
 
     for column_name in FINLAND_XBRL_STATEMENT_AUGMENT_COLUMNS:
         assert f"ADD COLUMN IF NOT EXISTS {column_name} " in sql

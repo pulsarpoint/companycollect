@@ -60,4 +60,4 @@ CREATE TABLE IF NOT EXISTS norway_brreg.financial_statements
     raw_financial_record String
 )
 ENGINE = ReplacingMergeTree
-ORDER BY (org_number, period_end_date, accounts_type);
+ORDER BY (org_number, accounts_type, source_record_id);
