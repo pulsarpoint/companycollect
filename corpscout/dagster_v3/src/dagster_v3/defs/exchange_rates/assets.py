@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import dagster as dg
-import dlt
+import dlt as dlt_lib
 import duckdb
 from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
@@ -100,9 +100,9 @@ def day_partition_range_window(
         end_date="2023-01-01",
         currencies=[],
     ),
-    dlt_pipeline=dlt.pipeline(
+    dlt_pipeline=dlt_lib.pipeline(
         pipeline_name=EXCHANGE_RATES_DUCKDB_PIPELINE_NAME,
-        destination=dlt.destinations.duckdb(str(EXCHANGE_RATES_DUCKDB_PATH)),
+        destination=dlt_lib.destinations.duckdb(str(EXCHANGE_RATES_DUCKDB_PATH)),
         dataset_name=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
         dev_mode=False,
     ),
@@ -136,9 +136,9 @@ def exchange_rates_raw_duckdb_asset(
             currencies=config.currencies,
             source_run_id=context.run_id,
         ),
-        dlt_pipeline=dlt.pipeline(
+        dlt_pipeline=dlt_lib.pipeline(
             pipeline_name=EXCHANGE_RATES_DUCKDB_PIPELINE_NAME,
-            destination=dlt.destinations.duckdb(str(EXCHANGE_RATES_DUCKDB_PATH)),
+            destination=dlt_lib.destinations.duckdb(str(EXCHANGE_RATES_DUCKDB_PATH)),
             dataset_name=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
             dev_mode=False,
         ),

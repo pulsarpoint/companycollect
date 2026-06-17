@@ -66,6 +66,16 @@ class FakeHttpResponse:
         return self.payload
 
 
+class FakeDagsterDltResource:
+    def __init__(self) -> None:
+        self.pipeline_names: list[str] = []
+
+    def run(self, **kwargs: object) -> Iterator[dg.MaterializeResult]:
+        pipeline = kwargs["dlt_pipeline"]
+        self.pipeline_names.append(pipeline.pipeline_name)
+        yield dg.MaterializeResult(metadata={"pipeline_name": pipeline.pipeline_name})
+
+
 def _ecb_payload(value: float = 1.0389) -> dict:
     return {
         "dataSets": [
@@ -169,6 +179,38 @@ def test_exchange_rates_raw_range_source_exposes_raw_resource() -> None:
 
     assert list(source.resources.keys()) == ["ecb_raw_payloads"]
     assert source.resources["ecb_raw_payloads"].table_name == "ecb_raw_payloads"
+
+
+def test_exchange_rates_raw_duckdb_materialization_uses_dlt_module_pipeline(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from dagster_v3.defs.exchange_rates import assets as fx_assets
+
+    dlt_resource = FakeDagsterDltResource()
+    monkeypatch.setattr(
+        fx_assets,
+        "EXCHANGE_RATES_DUCKDB_PATH",
+        tmp_path / "exchange_rates.duckdb",
+    )
+
+    result = dg.materialize(
+        [fx_assets.exchange_rates_raw_duckdb_asset],
+        partition_key="2024-12-31",
+        resources={"dlt": dlt_resource},
+        run_config={
+            "ops": {
+                "exchange_rates_raw_duckdb": {
+                    "config": {
+                        "currencies": ["USD"],
+                    }
+                }
+            }
+        },
+    )
+
+    assert result.success
+    assert dlt_resource.pipeline_names == ["exchange_rates_raw"]
 
 
 def test_ecb_rate_row_from_payload_returns_reference_row() -> None:
