@@ -18,7 +18,227 @@ EXPECTED_MIGRATIONS = (
     "0007_corpscout_fi_industries.sql",
     "0008_corpscout_fi_financial_statements.sql",
     "0009_corpscout_fi_financial_metrics.sql",
+    "0010_corpscout_finland_ytj_registry_tables.sql",
+    "0011_corpscout_finland_xbrl_raw_tables.sql",
 )
+
+FINLAND_COMPANY_AUGMENT_COLUMNS = (
+    "business_id_registration_date",
+    "eu_id",
+    "vat_id",
+    "trade_register_status",
+    "raw_status_code",
+    "last_modified",
+    "is_vat_registered",
+    "is_employer_registered",
+    "is_prepayment_registered",
+)
+
+FINLAND_YTJ_TABLE_COLUMNS = {
+    "fi_names": (
+        "business_id",
+        "name",
+        "name_type_code",
+        "name_type_description_original",
+        "name_type_description_en",
+        "registration_date",
+        "end_date",
+        "version",
+        "is_current",
+        "is_primary",
+        "source_code",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "resolved_at",
+    ),
+    "fi_addresses": (
+        "business_id",
+        "address_type_code",
+        "street",
+        "post_code",
+        "city",
+        "city_language_code",
+        "municipality_code",
+        "post_office_box",
+        "building_number",
+        "entrance",
+        "apartment_number",
+        "apartment_id_suffix",
+        "co",
+        "country",
+        "free_address_line",
+        "registration_date",
+        "source_code",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "resolved_at",
+    ),
+    "fi_legal_forms": (
+        "business_id",
+        "legal_form_code",
+        "description_original",
+        "description_language",
+        "description_en",
+        "registration_date",
+        "end_date",
+        "version",
+        "is_current",
+        "source_code",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "resolved_at",
+    ),
+    "fi_registered_entries": (
+        "business_id",
+        "entry_type_code",
+        "entry_type_description_original",
+        "entry_type_description_en",
+        "register_code",
+        "authority_code",
+        "registration_date",
+        "end_date",
+        "is_current",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "resolved_at",
+    ),
+    "fi_tax_registrations": (
+        "business_id",
+        "tax_registration_type",
+        "register_code",
+        "entry_type_code",
+        "registration_date",
+        "end_date",
+        "is_current",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "resolved_at",
+    ),
+    "fi_company_situations": (
+        "business_id",
+        "situation_type_code",
+        "registration_date",
+        "end_date",
+        "is_current",
+        "source_code",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "resolved_at",
+    ),
+}
+
+FINLAND_XBRL_STATEMENT_AUGMENT_COLUMNS = (
+    "root_name",
+    "schema_refs",
+    "taxonomy_entrypoint",
+    "parsed_at",
+)
+
+FINLAND_XBRL_RAW_TABLE_COLUMNS = {
+    "fi_xbrl_contexts": (
+        "statement_key",
+        "context_id",
+        "entity_identifier",
+        "entity_scheme",
+        "period_type",
+        "instant_date",
+        "period_start",
+        "period_end",
+        "dimensions",
+        "mcy_member_code",
+        "mcy_member_label_fi",
+        "ref_member_code",
+        "ref_member_label_fi",
+        "is_comparative",
+        "parsed_at",
+    ),
+    "fi_xbrl_units": (
+        "statement_key",
+        "unit_id",
+        "measures",
+        "is_divide",
+        "raw_xml",
+        "parsed_at",
+    ),
+    "fi_xbrl_facts_raw": (
+        "statement_key",
+        "business_id",
+        "financial_date",
+        "fact_ordinal",
+        "concept_qname",
+        "concept_namespace",
+        "concept_local_name",
+        "context_id",
+        "unit_id",
+        "decimals",
+        "precision",
+        "value_kind",
+        "raw_value",
+        "numeric_value",
+        "date_value",
+        "text_value",
+        "mcy_member_code",
+        "mcy_member_label_fi",
+        "ref_member_code",
+        "ref_member_label_fi",
+        "is_comparative",
+        "dimensions",
+        "parser_version",
+        "parsed_at",
+    ),
+    "fi_xbrl_taxonomy_codes": (
+        "taxonomy_version",
+        "code",
+        "code_kind",
+        "namespace_hint",
+        "label_fi",
+        "label_en",
+        "metric_name_hint",
+        "template_sheet",
+        "template_row",
+        "template_row_text",
+        "source_artifact",
+        "loaded_at",
+    ),
+    "fi_financial_metrics_long": (
+        "statement_key",
+        "business_id",
+        "financial_date",
+        "period_start",
+        "period_end",
+        "metric_key",
+        "metric_label",
+        "period_reference",
+        "amount_original",
+        "currency_original",
+        "amount_usd",
+        "fx_rate_to_usd",
+        "fx_rate_date",
+        "fx_converted_at",
+        "source_concept_qname",
+        "source_mcy_member_code",
+        "source_ref_member_code",
+        "source_fact_ordinal",
+        "mapping_version",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "derived_at",
+    ),
+}
 
 FINLAND_FINANCIAL_STATEMENT_COLUMNS = (
     "statement_key",
@@ -172,6 +392,30 @@ def test_finland_financial_migrations_cover_statements_and_usd_metrics() -> None
 
     for column_name in FINLAND_FINANCIAL_METRIC_COLUMNS:
         assert f"    {column_name} " in financial_metrics_sql
+
+
+def test_finland_ytj_registry_migration_covers_source_structures() -> None:
+    sql = _migration_sql("0010_corpscout_finland_ytj_registry_tables.sql")
+
+    for column_name in FINLAND_COMPANY_AUGMENT_COLUMNS:
+        assert f"ADD COLUMN IF NOT EXISTS {column_name} " in sql
+
+    for table_name, column_names in FINLAND_YTJ_TABLE_COLUMNS.items():
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in sql
+        for column_name in column_names:
+            assert f"    {column_name} " in sql
+
+
+def test_finland_xbrl_raw_first_migration_covers_reprocessible_statement_data() -> None:
+    sql = _migration_sql("0011_corpscout_finland_xbrl_raw_tables.sql")
+
+    for column_name in FINLAND_XBRL_STATEMENT_AUGMENT_COLUMNS:
+        assert f"ADD COLUMN IF NOT EXISTS {column_name} " in sql
+
+    for table_name, column_names in FINLAND_XBRL_RAW_TABLE_COLUMNS.items():
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in sql
+        for column_name in column_names:
+            assert f"    {column_name} " in sql
 
 
 def _migration_sql(file_name: str) -> str:
