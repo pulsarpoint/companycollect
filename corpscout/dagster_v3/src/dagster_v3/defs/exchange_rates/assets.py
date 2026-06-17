@@ -18,6 +18,7 @@ from dagster_v3.defs.clickhouse.resolved import export_duckdb_table_to_clickhous
 from dagster_v3.defs.duckdb.schema_contract import (
     create_duckdb_table_from_contract,
     dagster_table_schema_from_contract,
+    validate_duckdb_table_contract,
 )
 from dagster_v3.defs.exchange_rates import tables
 from dagster_v3.defs.exchange_rates.source import (
@@ -230,6 +231,7 @@ def normalize_exchange_rates_ecb_duckdb(
 ) -> dict[str, int | str]:
     with duckdb.connect(str(duckdb_path)) as connection:
         _ensure_exchange_rates_duckdb_schema(connection)
+        _reset_exchange_rates_duckdb_table(connection, ECB_RATES_TABLE)
         connection.execute(
             f"""
             delete from {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{ECB_RATES_TABLE}
@@ -280,6 +282,8 @@ def generate_exchange_rates_identity_duckdb(
 ) -> dict[str, int]:
     with duckdb.connect(str(duckdb_path)) as connection:
         _ensure_exchange_rates_duckdb_schema(connection)
+        _validate_exchange_rates_duckdb_table(connection, ECB_RATES_TABLE)
+        _reset_exchange_rates_duckdb_table(connection, IDENTITY_RATES_TABLE)
         connection.execute(
             f"""
             delete from {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{IDENTITY_RATES_TABLE}
@@ -327,7 +331,8 @@ def export_exchange_rates_clickhouse(
     end_date: str,
 ) -> dict[str, int | str]:
     with duckdb.connect(str(duckdb_path)) as connection:
-        _ensure_exchange_rates_duckdb_schema(connection)
+        _validate_exchange_rates_duckdb_table(connection, ECB_RATES_TABLE)
+        _validate_exchange_rates_duckdb_table(connection, IDENTITY_RATES_TABLE)
         connection.execute(
             f"""
             create or replace table {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{CLICKHOUSE_EXPORT_TABLE}
@@ -418,13 +423,33 @@ def clickhouse_resource_from_env() -> ClickhouseResource:
 
 def _ensure_exchange_rates_duckdb_schema(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(f"create schema if not exists {EXCHANGE_RATES_DUCKDB_DATASET_NAME}")
-    for table in (ECB_RATES_TABLE, IDENTITY_RATES_TABLE):
-        create_duckdb_table_from_contract(
-            connection,
-            schema=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
-            table=table,
-            contract=tables.EXCHANGE_RATES_DUCKDB_CONTRACT,
-        )
+
+
+def _reset_exchange_rates_duckdb_table(
+    connection: duckdb.DuckDBPyConnection,
+    table: str,
+) -> None:
+    connection.execute(
+        f"drop table if exists {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{table}"
+    )
+    create_duckdb_table_from_contract(
+        connection,
+        schema=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
+        table=table,
+        contract=tables.EXCHANGE_RATES_DUCKDB_CONTRACT,
+    )
+
+
+def _validate_exchange_rates_duckdb_table(
+    connection: duckdb.DuckDBPyConnection,
+    table: str,
+) -> None:
+    validate_duckdb_table_contract(
+        connection,
+        schema=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
+        table=table,
+        contract=tables.EXCHANGE_RATES_DUCKDB_CONTRACT,
+    )
 
 
 def _exchange_rate_row_tuple(row: dict[str, Any]) -> tuple[str, str, str, str, str, str, str, str, str, str, str]:
