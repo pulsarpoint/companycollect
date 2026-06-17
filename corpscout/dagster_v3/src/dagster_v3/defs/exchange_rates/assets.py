@@ -102,6 +102,11 @@ def delete_exchange_rates_window(
     )
 
 
+# dagster-dlt inspects this decorator source when definitions are loaded, before
+# a Dagster run has partition keys, config, or a run id. The fixed dates below are
+# only a valid definition-time placeholder so Dagster can derive the dlt table and
+# asset spec. Runtime data windows are built in `_run_exchange_rates_partition`
+# and passed to `dlt.run(...)`.
 @dlt_assets(
     dlt_source=exchange_rates_range_source(
         start_date="2023-01-01",
