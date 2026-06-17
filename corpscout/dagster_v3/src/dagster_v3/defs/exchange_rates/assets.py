@@ -15,6 +15,10 @@ from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
 from dagster_v3.defs.clickhouse.resolved import export_duckdb_table_to_clickhouse
+from dagster_v3.defs.duckdb.schema_contract import (
+    create_duckdb_table_from_contract,
+    dagster_table_schema_from_contract,
+)
 from dagster_v3.defs.exchange_rates import tables
 from dagster_v3.defs.exchange_rates.source import (
     DEFAULT_CLICKHOUSE_NATIVE_PORT,
@@ -150,6 +154,11 @@ def exchange_rates_raw_duckdb_asset(
     partitions_def=EXCHANGE_RATES_PARTITIONS,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
+    metadata={
+        "dagster/column_schema": dagster_table_schema_from_contract(
+            tables.EXCHANGE_RATES_DUCKDB_CONTRACT
+        )
+    },
     description="Normalized ECB exchange-rate rows parsed from raw ECB payloads in DuckDB.",
 )
 def exchange_rates_ecb_rates_duckdb(context: AssetExecutionContext) -> dg.MaterializeResult:
@@ -168,6 +177,11 @@ def exchange_rates_ecb_rates_duckdb(context: AssetExecutionContext) -> dg.Materi
     partitions_def=EXCHANGE_RATES_PARTITIONS,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
+    metadata={
+        "dagster/column_schema": dagster_table_schema_from_contract(
+            tables.EXCHANGE_RATES_DUCKDB_CONTRACT
+        )
+    },
     description="Generated EUR/EUR identity exchange-rate rows in DuckDB.",
 )
 def exchange_rates_identity_rates_duckdb(
@@ -404,16 +418,12 @@ def clickhouse_resource_from_env() -> ClickhouseResource:
 
 def _ensure_exchange_rates_duckdb_schema(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(f"create schema if not exists {EXCHANGE_RATES_DUCKDB_DATASET_NAME}")
-    columns = ", ".join(
-        f"{column} {tables.EXCHANGE_RATES_DUCKDB_COLUMN_TYPES[column]}"
-        for column in tables.EXCHANGE_RATES_COLUMNS
-    )
     for table in (ECB_RATES_TABLE, IDENTITY_RATES_TABLE):
-        connection.execute(
-            f"""
-            create table if not exists {EXCHANGE_RATES_DUCKDB_DATASET_NAME}.{table}
-            ({columns})
-            """
+        create_duckdb_table_from_contract(
+            connection,
+            schema=EXCHANGE_RATES_DUCKDB_DATASET_NAME,
+            table=table,
+            contract=tables.EXCHANGE_RATES_DUCKDB_CONTRACT,
         )
 
 

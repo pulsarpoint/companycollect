@@ -45,6 +45,10 @@ def test_exchange_rates_clickhouse_schema_contract() -> None:
         "_dlt_load_id": "VARCHAR",
         "_dlt_id": "VARCHAR",
     }
+    assert tables.EXCHANGE_RATES_DUCKDB_CONTRACT.column_names == tables.EXCHANGE_RATES_COLUMNS
+    assert tables.EXCHANGE_RATES_DUCKDB_CONTRACT.column_types == (
+        tables.EXCHANGE_RATES_DUCKDB_COLUMN_TYPES
+    )
     assert not hasattr(tables, "EXCHANGE_RATES_DDL")
 
 
@@ -194,6 +198,28 @@ def test_exchange_rates_raw_range_source_exposes_raw_resource() -> None:
 
     assert list(source.resources.keys()) == ["ecb_raw_payloads"]
     assert source.resources["ecb_raw_payloads"].table_name == "ecb_raw_payloads"
+
+
+def test_exchange_rates_duckdb_assets_expose_schema_metadata() -> None:
+    from dagster_v3.defs.exchange_rates import assets as fx_assets
+
+    expected_columns = [
+        (column, tables.EXCHANGE_RATES_DUCKDB_COLUMN_TYPES[column])
+        for column in tables.EXCHANGE_RATES_COLUMNS
+    ]
+
+    for asset_def, asset_key in (
+        (
+            fx_assets.exchange_rates_ecb_rates_duckdb,
+            dg.AssetKey("exchange_rates_ecb_rates_duckdb"),
+        ),
+        (
+            fx_assets.exchange_rates_identity_rates_duckdb,
+            dg.AssetKey("exchange_rates_identity_rates_duckdb"),
+        ),
+    ):
+        schema = asset_def.metadata_by_key[asset_key]["dagster/column_schema"]
+        assert [(column.name, column.type) for column in schema.columns] == expected_columns
 
 
 def test_exchange_rates_raw_duckdb_materialization_uses_dlt_module_pipeline(
