@@ -47,6 +47,6 @@ CREATE TABLE IF NOT EXISTS {QUALIFIED_NACE_CATEGORIES_TABLE}
     _dlt_load_id String,
     _dlt_id String
 )
-ENGINE = MergeTree
+ENGINE = ReplacingMergeTree(pulled_at)
 ORDER BY (classification_version, normalized_code)
 """

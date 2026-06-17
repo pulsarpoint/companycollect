@@ -78,6 +78,7 @@ def test_nace_categories_clickhouse_schema_contract() -> None:
         "_dlt_id",
     )
     assert "CREATE TABLE IF NOT EXISTS reference.nace_categories" in tables.NACE_CATEGORIES_DDL
+    assert "ENGINE = ReplacingMergeTree(pulled_at)" in tables.NACE_CATEGORIES_DDL
     assert "ORDER BY (classification_version, normalized_code)" in tables.NACE_CATEGORIES_DDL
 
 

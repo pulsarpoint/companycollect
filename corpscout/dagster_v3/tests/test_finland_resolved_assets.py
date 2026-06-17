@@ -12,7 +12,7 @@ from dagster_v3.defs.finland_ytj.resources import LocalDuckDBResource
 
 
 def test_finland_resolved_table_names_match_clickhouse_contract() -> None:
-    assert RESOLVED_DATABASE == "corpscout_resolved"
+    assert RESOLVED_DATABASE == "corpscout"
     assert tables.FI_COMPANIES_TABLE == "fi_companies"
     assert tables.FI_WEBSITES_TABLE == "fi_websites"
     assert tables.FI_INDUSTRIES_TABLE == "fi_industries"

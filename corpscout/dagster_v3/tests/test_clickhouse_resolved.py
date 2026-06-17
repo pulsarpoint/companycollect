@@ -47,7 +47,7 @@ def test_required_finland_resolved_tables_are_explicit() -> None:
 def test_assert_clickhouse_tables_exist_uses_official_resource(monkeypatch) -> None:
     resource = ClickhouseResource(host="localhost")
     client = FakeClickHouseClient(
-        {"corpscout_resolved.fi_companies", "corpscout_resolved.fi_websites"}
+        {"corpscout.fi_companies", "corpscout.fi_websites"}
     )
 
     @contextmanager
@@ -58,7 +58,7 @@ def test_assert_clickhouse_tables_exist_uses_official_resource(monkeypatch) -> N
 
     assert_clickhouse_tables_exist(
         resource,
-        database="corpscout_resolved",
+        database="corpscout",
         tables=("fi_companies", "fi_websites"),
     )
 
@@ -67,7 +67,7 @@ def test_assert_clickhouse_tables_exist_uses_official_resource(monkeypatch) -> N
 
 def test_assert_clickhouse_tables_exist_reports_missing_tables(monkeypatch) -> None:
     resource = ClickhouseResource(host="localhost")
-    client = FakeClickHouseClient({"corpscout_resolved.fi_companies"})
+    client = FakeClickHouseClient({"corpscout.fi_companies"})
 
     @contextmanager
     def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
@@ -78,11 +78,11 @@ def test_assert_clickhouse_tables_exist_reports_missing_tables(monkeypatch) -> N
     try:
         assert_clickhouse_tables_exist(
             resource,
-            database="corpscout_resolved",
+            database="corpscout",
             tables=("fi_companies", "fi_websites"),
         )
     except ValueError as exc:
-        assert str(exc) == "Missing ClickHouse tables in corpscout_resolved: fi_websites"
+        assert str(exc) == "Missing ClickHouse tables in corpscout: fi_websites"
     else:
         raise AssertionError("expected missing table error")
 
@@ -111,7 +111,7 @@ def test_export_duckdb_table_to_clickhouse_inserts_rows_in_column_order(tmp_path
         clickhouse_client=client,
         duckdb_schema="finland_resolved",
         duckdb_table="fi_companies",
-        clickhouse_database="corpscout_resolved",
+        clickhouse_database="corpscout",
         clickhouse_table="fi_companies",
         columns=("business_id", "country_iso2", "source_system"),
         truncate=False,
@@ -121,7 +121,7 @@ def test_export_duckdb_table_to_clickhouse_inserts_rows_in_column_order(tmp_path
     assert client.statements == []
     assert client.insert_calls == [
         (
-            "INSERT INTO `corpscout_resolved`.`fi_companies` (`business_id`, `country_iso2`, `source_system`) VALUES",
+            "INSERT INTO `corpscout`.`fi_companies` (`business_id`, `country_iso2`, `source_system`) VALUES",
             [("1234567-8", "FI", "finland_prhytj")],
         )
     ]
@@ -154,7 +154,7 @@ def test_export_duckdb_table_to_clickhouse_inserts_rows_in_batches(tmp_path) -> 
         clickhouse_client=client,
         duckdb_schema="finland_resolved",
         duckdb_table="fi_companies",
-        clickhouse_database="corpscout_resolved",
+        clickhouse_database="corpscout",
         clickhouse_table="fi_companies",
         columns=("business_id",),
         truncate=False,
@@ -164,11 +164,11 @@ def test_export_duckdb_table_to_clickhouse_inserts_rows_in_batches(tmp_path) -> 
     assert row_count == 3
     assert client.insert_calls == [
         (
-            "INSERT INTO `corpscout_resolved`.`fi_companies` (`business_id`) VALUES",
+            "INSERT INTO `corpscout`.`fi_companies` (`business_id`) VALUES",
             [("1000001-1",), ("1000002-2",)],
         ),
         (
-            "INSERT INTO `corpscout_resolved`.`fi_companies` (`business_id`) VALUES",
+            "INSERT INTO `corpscout`.`fi_companies` (`business_id`) VALUES",
             [("1000003-3",)],
         ),
     ]
@@ -204,7 +204,7 @@ def test_export_duckdb_table_to_clickhouse_uses_stage_then_exchange_for_truncate
         clickhouse_client=client,
         duckdb_schema="finland_resolved",
         duckdb_table="fi_companies",
-        clickhouse_database="corpscout_resolved",
+        clickhouse_database="corpscout",
         clickhouse_table="fi_companies",
         columns=("business_id", "source_system"),
         truncate=True,
@@ -212,13 +212,13 @@ def test_export_duckdb_table_to_clickhouse_uses_stage_then_exchange_for_truncate
 
     assert row_count == 1
     assert client.statements == [
-        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_deadbeef` AS `corpscout_resolved`.`fi_companies`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_deadbeef` AND `corpscout_resolved`.`fi_companies`",
-        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_deadbeef`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_companies_deadbeef` AS `corpscout`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_companies_deadbeef` AND `corpscout`.`fi_companies`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_deadbeef`",
     ]
     assert client.insert_calls == [
         (
-            "INSERT INTO `corpscout_resolved`.`_tmp_fi_companies_deadbeef` (`business_id`, `source_system`) VALUES",
+            "INSERT INTO `corpscout`.`_tmp_fi_companies_deadbeef` (`business_id`, `source_system`) VALUES",
             [("1234567-8", "finland_prhytj")],
         )
     ]
@@ -251,7 +251,7 @@ def test_export_duckdb_table_to_clickhouse_returns_zero_for_empty_table(
         clickhouse_client=client,
         duckdb_schema="finland_resolved",
         duckdb_table="fi_companies",
-        clickhouse_database="corpscout_resolved",
+        clickhouse_database="corpscout",
         clickhouse_table="fi_companies",
         columns=("business_id", "source_system"),
         truncate=True,
@@ -259,9 +259,9 @@ def test_export_duckdb_table_to_clickhouse_returns_zero_for_empty_table(
 
     assert row_count == 0
     assert client.statements == [
-        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_deadbeef` AS `corpscout_resolved`.`fi_companies`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_deadbeef` AND `corpscout_resolved`.`fi_companies`",
-        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_deadbeef`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_companies_deadbeef` AS `corpscout`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_companies_deadbeef` AND `corpscout`.`fi_companies`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_deadbeef`",
     ]
     assert client.insert_calls == []
 
@@ -333,7 +333,7 @@ def test_export_duckdb_table_to_clickhouse_cleanup_attempts_drop_on_insert_failu
             clickhouse_client=client,
             duckdb_schema="finland_resolved",
             duckdb_table="fi_companies",
-            clickhouse_database="corpscout_resolved",
+            clickhouse_database="corpscout",
             clickhouse_table="fi_companies",
             columns=("business_id",),
             truncate=True,
@@ -344,12 +344,12 @@ def test_export_duckdb_table_to_clickhouse_cleanup_attempts_drop_on_insert_failu
         raise AssertionError("expected insert failure")
 
     assert client.statements == [
-        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_deadbeef` AS `corpscout_resolved`.`fi_companies`",
-        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_deadbeef`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_companies_deadbeef` AS `corpscout`.`fi_companies`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_deadbeef`",
     ]
     assert client.insert_calls == [
         (
-            "INSERT INTO `corpscout_resolved`.`_tmp_fi_companies_deadbeef` (`business_id`) VALUES",
+            "INSERT INTO `corpscout`.`_tmp_fi_companies_deadbeef` (`business_id`) VALUES",
             [("1234567-8",)],
         )
     ]
@@ -377,7 +377,7 @@ def test_export_duckdb_table_to_clickhouse_raises_cleanup_error_after_successful
     )
     client = FailingDropClickHouseClient(
         failing_drops=(
-            "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_deadbeef`",
+            "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_deadbeef`",
         ),
     )
 
@@ -387,7 +387,7 @@ def test_export_duckdb_table_to_clickhouse_raises_cleanup_error_after_successful
             clickhouse_client=client,
             duckdb_schema="finland_resolved",
             duckdb_table="fi_companies",
-            clickhouse_database="corpscout_resolved",
+            clickhouse_database="corpscout",
             clickhouse_table="fi_companies",
             columns=("business_id",),
             truncate=True,
@@ -395,20 +395,20 @@ def test_export_duckdb_table_to_clickhouse_raises_cleanup_error_after_successful
     except RuntimeError as exc:
         assert (
             str(exc)
-            == "Failed to drop ClickHouse stage table(s): `corpscout_resolved`.`_tmp_fi_companies_deadbeef`"
+            == "Failed to drop ClickHouse stage table(s): `corpscout`.`_tmp_fi_companies_deadbeef`"
         )
         assert isinstance(exc.__cause__, RuntimeError)
         assert str(exc.__cause__) == (
             "drop failed for "
-            "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_deadbeef`"
+            "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_deadbeef`"
         )
     else:
         raise AssertionError("expected cleanup failure")
 
     assert client.statements == [
-        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_deadbeef` AS `corpscout_resolved`.`fi_companies`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_deadbeef` AND `corpscout_resolved`.`fi_companies`",
-        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_deadbeef`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_companies_deadbeef` AS `corpscout`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_companies_deadbeef` AND `corpscout`.`fi_companies`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_deadbeef`",
     ]
 
 
@@ -448,7 +448,7 @@ def test_replace_duckdb_tables_in_clickhouse_rolls_back_on_exchange_failure(
             duckdb_path=database_path,
             clickhouse_client=client,
             duckdb_schema="finland_resolved",
-            clickhouse_database="corpscout_resolved",
+            clickhouse_database="corpscout",
             tables=(
                 ("fi_companies", ("business_id",)),
                 ("fi_websites", ("business_id",)),
@@ -460,21 +460,21 @@ def test_replace_duckdb_tables_in_clickhouse_rolls_back_on_exchange_failure(
         raise AssertionError("expected exchange failure")
 
     assert client.statements == [
-        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_first` AS `corpscout_resolved`.`fi_companies`",
-        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_websites_second` AS `corpscout_resolved`.`fi_websites`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_first` AND `corpscout_resolved`.`fi_companies`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_websites_second` AND `corpscout_resolved`.`fi_websites`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_first` AND `corpscout_resolved`.`fi_companies`",
-        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_websites_second`",
-        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_first`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_companies_first` AS `corpscout`.`fi_companies`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_websites_second` AS `corpscout`.`fi_websites`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_companies_first` AND `corpscout`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_websites_second` AND `corpscout`.`fi_websites`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_companies_first` AND `corpscout`.`fi_companies`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_websites_second`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_first`",
     ]
     assert client.insert_calls == [
         (
-            "INSERT INTO `corpscout_resolved`.`_tmp_fi_companies_first` (`business_id`) VALUES",
+            "INSERT INTO `corpscout`.`_tmp_fi_companies_first` (`business_id`) VALUES",
             [("1234567-8",)],
         ),
         (
-            "INSERT INTO `corpscout_resolved`.`_tmp_fi_websites_second` (`business_id`) VALUES",
+            "INSERT INTO `corpscout`.`_tmp_fi_websites_second` (`business_id`) VALUES",
             [("1234567-8",)],
         ),
     ]
@@ -528,7 +528,7 @@ def test_replace_duckdb_tables_in_clickhouse_loads_stages_in_batches(
         duckdb_path=database_path,
         clickhouse_client=client,
         duckdb_schema="finland_resolved",
-        clickhouse_database="corpscout_resolved",
+        clickhouse_database="corpscout",
         tables=(
             ("fi_companies", ("business_id",)),
             ("fi_websites", ("business_id",)),
@@ -541,24 +541,24 @@ def test_replace_duckdb_tables_in_clickhouse_loads_stages_in_batches(
         "fi_websites": 2,
     }
     assert client.statements == [
-        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_first` AS `corpscout_resolved`.`fi_companies`",
-        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_websites_second` AS `corpscout_resolved`.`fi_websites`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_first` AND `corpscout_resolved`.`fi_companies`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_websites_second` AND `corpscout_resolved`.`fi_websites`",
-        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_websites_second`",
-        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_first`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_companies_first` AS `corpscout`.`fi_companies`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_websites_second` AS `corpscout`.`fi_websites`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_companies_first` AND `corpscout`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_websites_second` AND `corpscout`.`fi_websites`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_websites_second`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_first`",
     ]
     assert client.insert_calls == [
         (
-            "INSERT INTO `corpscout_resolved`.`_tmp_fi_companies_first` (`business_id`) VALUES",
+            "INSERT INTO `corpscout`.`_tmp_fi_companies_first` (`business_id`) VALUES",
             [("1000001-1",), ("1000002-2",)],
         ),
         (
-            "INSERT INTO `corpscout_resolved`.`_tmp_fi_companies_first` (`business_id`) VALUES",
+            "INSERT INTO `corpscout`.`_tmp_fi_companies_first` (`business_id`) VALUES",
             [("1000003-3",)],
         ),
         (
-            "INSERT INTO `corpscout_resolved`.`_tmp_fi_websites_second` (`business_id`) VALUES",
+            "INSERT INTO `corpscout`.`_tmp_fi_websites_second` (`business_id`) VALUES",
             [("2000001-1",), ("2000002-2",)],
         ),
     ]
@@ -600,7 +600,7 @@ def test_replace_duckdb_tables_in_clickhouse_surfaces_rollback_exchange_failures
             duckdb_path=database_path,
             clickhouse_client=client,
             duckdb_schema="finland_resolved",
-            clickhouse_database="corpscout_resolved",
+            clickhouse_database="corpscout",
             tables=(
                 ("fi_companies", ("business_id",)),
                 ("fi_websites", ("business_id",)),
@@ -611,7 +611,7 @@ def test_replace_duckdb_tables_in_clickhouse_surfaces_rollback_exchange_failures
             str(exc)
             == "Rollback failed after ClickHouse publish error; ClickHouse may be inconsistent. "
             "Failed rollback exchange(s): fi_companies "
-            "(`corpscout_resolved`.`_tmp_fi_companies_first` <-> `corpscout_resolved`.`fi_companies`)"
+            "(`corpscout`.`_tmp_fi_companies_first` <-> `corpscout`.`fi_companies`)"
         )
         assert isinstance(exc.__cause__, RuntimeError)
         assert str(exc.__cause__) == "exchange failed"
@@ -620,21 +620,21 @@ def test_replace_duckdb_tables_in_clickhouse_surfaces_rollback_exchange_failures
         raise AssertionError("expected rollback failure")
 
     assert client.statements == [
-        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_first` AS `corpscout_resolved`.`fi_companies`",
-        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_websites_second` AS `corpscout_resolved`.`fi_websites`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_first` AND `corpscout_resolved`.`fi_companies`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_websites_second` AND `corpscout_resolved`.`fi_websites`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_first` AND `corpscout_resolved`.`fi_companies`",
-        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_websites_second`",
-        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_first`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_companies_first` AS `corpscout`.`fi_companies`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_websites_second` AS `corpscout`.`fi_websites`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_companies_first` AND `corpscout`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_websites_second` AND `corpscout`.`fi_websites`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_companies_first` AND `corpscout`.`fi_companies`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_websites_second`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_first`",
     ]
     assert client.insert_calls == [
         (
-            "INSERT INTO `corpscout_resolved`.`_tmp_fi_companies_first` (`business_id`) VALUES",
+            "INSERT INTO `corpscout`.`_tmp_fi_companies_first` (`business_id`) VALUES",
             [("1234567-8",)],
         ),
         (
-            "INSERT INTO `corpscout_resolved`.`_tmp_fi_websites_second` (`business_id`) VALUES",
+            "INSERT INTO `corpscout`.`_tmp_fi_websites_second` (`business_id`) VALUES",
             [("1234567-8",)],
         ),
     ]
@@ -671,8 +671,8 @@ def test_replace_duckdb_tables_in_clickhouse_raises_cleanup_error_after_successf
     )
     client = FailingDropClickHouseClient(
         failing_drops=(
-            "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_websites_second`",
-            "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_first`",
+            "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_websites_second`",
+            "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_first`",
         ),
     )
 
@@ -681,7 +681,7 @@ def test_replace_duckdb_tables_in_clickhouse_raises_cleanup_error_after_successf
             duckdb_path=database_path,
             clickhouse_client=client,
             duckdb_schema="finland_resolved",
-            clickhouse_database="corpscout_resolved",
+            clickhouse_database="corpscout",
             tables=(
                 ("fi_companies", ("business_id",)),
                 ("fi_websites", ("business_id",)),
@@ -691,24 +691,24 @@ def test_replace_duckdb_tables_in_clickhouse_raises_cleanup_error_after_successf
         assert (
             str(exc)
             == "Failed to drop ClickHouse stage table(s): "
-            "`corpscout_resolved`.`_tmp_fi_websites_second`, "
-            "`corpscout_resolved`.`_tmp_fi_companies_first`"
+            "`corpscout`.`_tmp_fi_websites_second`, "
+            "`corpscout`.`_tmp_fi_companies_first`"
         )
         assert isinstance(exc.__cause__, RuntimeError)
         assert str(exc.__cause__) == (
             "drop failed for "
-            "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_websites_second`"
+            "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_websites_second`"
         )
     else:
         raise AssertionError("expected cleanup failure")
 
     assert client.statements == [
-        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_companies_first` AS `corpscout_resolved`.`fi_companies`",
-        "CREATE TABLE `corpscout_resolved`.`_tmp_fi_websites_second` AS `corpscout_resolved`.`fi_websites`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_companies_first` AND `corpscout_resolved`.`fi_companies`",
-        "EXCHANGE TABLES `corpscout_resolved`.`_tmp_fi_websites_second` AND `corpscout_resolved`.`fi_websites`",
-        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_websites_second`",
-        "DROP TABLE IF EXISTS `corpscout_resolved`.`_tmp_fi_companies_first`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_companies_first` AS `corpscout`.`fi_companies`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_websites_second` AS `corpscout`.`fi_websites`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_companies_first` AND `corpscout`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_websites_second` AND `corpscout`.`fi_websites`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_websites_second`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_first`",
     ]
 
 

@@ -8,7 +8,7 @@ from typing import Any
 import duckdb
 from dagster_clickhouse import ClickhouseResource
 
-RESOLVED_DATABASE = "corpscout_resolved"
+RESOLVED_DATABASE = "corpscout"
 
 REQUIRED_FINLAND_RESOLVED_TABLES = (
     "fi_companies",

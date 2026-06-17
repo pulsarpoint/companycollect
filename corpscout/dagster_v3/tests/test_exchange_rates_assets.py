@@ -29,6 +29,7 @@ def test_exchange_rates_clickhouse_schema_contract() -> None:
         "_dlt_id",
     )
     assert "CREATE TABLE IF NOT EXISTS reference.exchange_rates" in tables.EXCHANGE_RATES_DDL
+    assert "ENGINE = ReplacingMergeTree(pulled_at)" in tables.EXCHANGE_RATES_DDL
     assert "ORDER BY (quote_currency, base_currency, rate_date, source)" in (
         tables.EXCHANGE_RATES_DDL
     )

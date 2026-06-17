@@ -31,6 +31,6 @@ CREATE TABLE IF NOT EXISTS {QUALIFIED_EXCHANGE_RATES_TABLE}
     _dlt_load_id String,
     _dlt_id String
 )
-ENGINE = MergeTree
+ENGINE = ReplacingMergeTree(pulled_at)
 ORDER BY (quote_currency, base_currency, rate_date, source)
 """
