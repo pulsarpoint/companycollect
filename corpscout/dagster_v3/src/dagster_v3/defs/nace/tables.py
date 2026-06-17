@@ -1,3 +1,8 @@
+from dagster_v3.defs.duckdb.schema_contract import (
+    DuckDBColumnContract,
+    DuckDBTableContract,
+)
+
 NACE_DATABASE = "reference"
 NACE_CATEGORIES_TABLE = "nace_categories"
 QUALIFIED_NACE_CATEGORIES_TABLE = f"{NACE_DATABASE}.{NACE_CATEGORIES_TABLE}"
@@ -23,6 +28,31 @@ NACE_CATEGORIES_COLUMNS = (
     "_dlt_load_id",
     "_dlt_id",
 )
+
+NACE_CATEGORIES_DUCKDB_CONTRACT = DuckDBTableContract(
+    columns=(
+        DuckDBColumnContract("classification_version", "VARCHAR"),
+        DuckDBColumnContract("code", "VARCHAR"),
+        DuckDBColumnContract("normalized_code", "VARCHAR"),
+        DuckDBColumnContract("parent_code", "VARCHAR"),
+        DuckDBColumnContract("level", "VARCHAR"),
+        DuckDBColumnContract("section_code", "VARCHAR"),
+        DuckDBColumnContract("description_en", "VARCHAR"),
+        DuckDBColumnContract("concept_uri", "VARCHAR"),
+        DuckDBColumnContract("parent_concept_uri", "VARCHAR"),
+        DuckDBColumnContract("source_scheme_uri", "VARCHAR"),
+        DuckDBColumnContract("source_url", "VARCHAR"),
+        DuckDBColumnContract("source_payload_hash", "VARCHAR"),
+        DuckDBColumnContract("valid_from", "DATE"),
+        DuckDBColumnContract("valid_to", "DATE"),
+        DuckDBColumnContract("is_current", "UTINYINT"),
+        DuckDBColumnContract("source_run_id", "VARCHAR"),
+        DuckDBColumnContract("pulled_at", "TIMESTAMP"),
+        DuckDBColumnContract("_dlt_load_id", "VARCHAR"),
+        DuckDBColumnContract("_dlt_id", "VARCHAR"),
+    )
+)
+NACE_CATEGORIES_DUCKDB_COLUMN_TYPES = NACE_CATEGORIES_DUCKDB_CONTRACT.column_types
 
 NACE_CATEGORIES_DDL = f"""
 CREATE TABLE IF NOT EXISTS {QUALIFIED_NACE_CATEGORIES_TABLE}

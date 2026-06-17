@@ -1,26 +1,23 @@
 import hashlib
-from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import get_type_hints
 
 import dagster as dg
+import dlt as dlt_lib
+import duckdb
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.nace import assets as nace_assets
 from dagster_v3.defs.nace import source as nace_source
 from dagster_v3.defs.nace import tables
-from dagster_v3.defs.nace.clickhouse import prepare_nace_categories_table
 from dagster_v3.defs.nace.source import NaceScheme, build_nace_rows, normalize_nace_code
 
 
-def test_dlt_clickhouse_destination_dependencies_are_available() -> None:
-    import clickhouse_connect
+def test_dlt_duckdb_destination_dependencies_are_available() -> None:
     import dlt
 
-    assert clickhouse_connect
-    assert hasattr(dlt.destinations, "clickhouse")
+    assert hasattr(dlt.destinations, "duckdb")
 
 
 def test_dagster_clickhouse_resource_dependency_is_available() -> None:
@@ -29,11 +26,9 @@ def test_dagster_clickhouse_resource_dependency_is_available() -> None:
 
 def test_nace_source_constants_define_official_versions() -> None:
     assert nace_source.SPARQL_ENDPOINT == "https://publications.europa.eu/webapi/rdf/sparql"
-    assert nace_source.NACE_DLT_PIPELINE_NAME == "nace_reference_categories"
-    assert nace_source.NACE_CATEGORIES_DLT_TABLE == "nace_categories"
-    assert nace_source.NACE_DLT_DATASET_NAME is None
-    assert nace_source.DEFAULT_CLICKHOUSE_NATIVE_PORT == 9002
-    assert nace_source.DEFAULT_CLICKHOUSE_HTTP_PORT == 8123
+    assert nace_source.NACE_DUCKDB_PIPELINE_NAME == "nace_raw"
+    assert nace_source.NACE_DUCKDB_DATASET_NAME == "nace_stage"
+    assert nace_source.NACE_RAW_DLT_TABLE == "raw_sparql_payloads"
     assert nace_source.NACE_SCHEMES == (
         NaceScheme(
             "NACE_REV_2",
@@ -52,7 +47,7 @@ def test_nace_source_constants_define_official_versions() -> None:
     )
 
 
-def test_nace_categories_clickhouse_schema_contract() -> None:
+def test_nace_categories_schema_contracts() -> None:
     assert tables.NACE_DATABASE == "reference"
     assert tables.NACE_CATEGORIES_TABLE == "nace_categories"
     assert tables.QUALIFIED_NACE_CATEGORIES_TABLE == "reference.nace_categories"
@@ -77,6 +72,11 @@ def test_nace_categories_clickhouse_schema_contract() -> None:
         "_dlt_load_id",
         "_dlt_id",
     )
+    assert tables.NACE_CATEGORIES_DUCKDB_CONTRACT.column_names == (
+        tables.NACE_CATEGORIES_COLUMNS
+    )
+    assert tables.NACE_CATEGORIES_DUCKDB_COLUMN_TYPES["valid_from"] == "DATE"
+    assert tables.NACE_CATEGORIES_DUCKDB_COLUMN_TYPES["pulled_at"] == "TIMESTAMP"
     assert "CREATE TABLE IF NOT EXISTS reference.nace_categories" in tables.NACE_CATEGORIES_DDL
     assert "ENGINE = ReplacingMergeTree(pulled_at)" in tables.NACE_CATEGORIES_DDL
     assert "ORDER BY (classification_version, normalized_code)" in tables.NACE_CATEGORIES_DDL
@@ -105,7 +105,31 @@ def test_parse_sparql_csv_reads_csv_bindings() -> None:
     ]
 
 
-def test_fetch_nace_scheme_rows_sends_csv_query_and_hashes_payload() -> None:
+def test_fetch_nace_scheme_payload_sends_csv_query_and_hashes_payload() -> None:
+    session = FakeSparqlSession()
+
+    payload = nace_source.fetch_nace_scheme_payload(
+        scheme=nace_source.NACE_SCHEMES[0],
+        session=session,
+        user_agent="test-agent",
+    )
+
+    assert payload["classification_version"] == "NACE_REV_2"
+    assert payload["source_url"] == nace_source.SPARQL_ENDPOINT
+    assert payload["response_csv"] == session.bodies[0]
+    assert payload["source_payload_hash"] == hashlib.sha256(
+        session.bodies[0].encode("utf-8")
+    ).hexdigest()
+    assert payload["valid_from"] == "2008-01-01"
+    assert payload["valid_to"] == "2024-12-31"
+    assert payload["is_current"] == 0
+    assert session.headers["User-Agent"] == "test-agent"
+    assert session.calls[0][0] == nace_source.SPARQL_ENDPOINT
+    assert session.calls[0][1]["format"] == "text/csv"
+    assert "<http://data.europa.eu/ux2/nace2/nace2>" in session.calls[0][1]["query"]
+
+
+def test_fetch_nace_scheme_rows_parses_raw_payload() -> None:
     session = FakeSparqlSession()
 
     rows, source_url, payload_hash = nace_source.fetch_nace_scheme_rows(
@@ -117,39 +141,33 @@ def test_fetch_nace_scheme_rows_sends_csv_query_and_hashes_payload() -> None:
     assert [row["notation"] for row in rows] == ["A", "01"]
     assert source_url == nace_source.SPARQL_ENDPOINT
     assert payload_hash == hashlib.sha256(session.bodies[0].encode("utf-8")).hexdigest()
-    assert session.headers["User-Agent"] == "test-agent"
-    assert session.calls[0][0] == nace_source.SPARQL_ENDPOINT
-    assert session.calls[0][1]["format"] == "text/csv"
-    assert "<http://data.europa.eu/ux2/nace2/nace2>" in session.calls[0][1]["query"]
 
 
-def test_nace_dlt_source_yields_both_versions_with_version_metadata() -> None:
+def test_nace_raw_dlt_source_yields_one_payload_per_version() -> None:
     session = FakeSparqlSession()
 
-    source = nace_source.nace_categories_source(
+    source = nace_source.nace_raw_source(
         source_run_id="test-run",
         pulled_at="2026-06-16T00:00:00.000Z",
         session=session,
     )
-    rows = list(source.resources[nace_source.NACE_CATEGORIES_DLT_TABLE])
+    rows = list(source.resources[nace_source.NACE_RAW_DLT_TABLE])
 
     assert [row["classification_version"] for row in rows] == [
         "NACE_REV_2",
-        "NACE_REV_2",
-        "NACE_REV_2_1",
         "NACE_REV_2_1",
     ]
+    assert rows[0]["response_csv"] == session.bodies[0]
     assert rows[0]["valid_from"] == "2008-01-01"
     assert rows[0]["valid_to"] == "2024-12-31"
     assert rows[0]["is_current"] == 0
-    assert rows[2]["valid_from"] == "2025-01-01"
-    assert rows[2]["valid_to"] is None
-    assert rows[2]["is_current"] == 1
+    assert rows[1]["response_csv"] == session.bodies[1]
+    assert rows[1]["valid_from"] == "2025-01-01"
+    assert rows[1]["valid_to"] is None
+    assert rows[1]["is_current"] == 1
     assert {row["source_run_id"] for row in rows} == {"test-run"}
     assert all(len(row["source_payload_hash"]) == 64 for row in rows)
     assert [call[1]["format"] for call in session.calls] == ["text/csv", "text/csv"]
-    assert "<http://data.europa.eu/ux2/nace2/nace2>" in session.calls[0][1]["query"]
-    assert "<http://data.europa.eu/ux2/nace2.1/nace2.1>" in session.calls[1][1]["query"]
 
 
 def test_nace_http_client_uses_dlt_retry_client() -> None:
@@ -169,62 +187,41 @@ def test_nace_http_client_uses_dlt_retry_client() -> None:
     assert client._retry_kwargs["max_delay"] == 120.0
 
 
-def test_nace_clickhouse_destination_credentials_use_native_port_and_reference_database(
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv("CLICKHOUSE_HOST", "companycollect")
-    monkeypatch.setenv("CLICKHOUSE_PORT", "8123")
-    monkeypatch.setenv("CLICKHOUSE_NATIVE_PORT", "9002")
-    monkeypatch.setenv("CLICKHOUSE_USER", "default")
-    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "password123")
-    monkeypatch.setenv("CLICKHOUSE_SECURE", "false")
-
-    credentials = nace_source.clickhouse_destination_credentials_from_env()
-
-    assert credentials["host"] == "companycollect"
-    assert credentials["port"] == 9002
-    assert credentials["http_port"] == 8123
-    assert credentials["username"] == "default"
-    assert credentials["password"] == "password123"
-    assert credentials["database"] == "reference"
-    assert credentials["secure"] == 0
-
-
-def test_nace_clickhouse_pipeline_targets_reference_database_without_dataset_prefix() -> None:
-    pipeline = nace_source.nace_clickhouse_pipeline()
-
-    assert pipeline.pipeline_name == "nace_reference_categories"
-    assert pipeline.dataset_name is None
-    assert pipeline.dev_mode is False
-    assert pipeline.destination.destination_name == "clickhouse"
-
-
-def test_nace_dlt_translator_maps_asset_contract() -> None:
-    source = nace_source.nace_categories_source(schemes=())
-    resource = source.resources[nace_source.NACE_CATEGORIES_DLT_TABLE]
+def test_nace_dlt_translator_maps_raw_duckdb_asset_contract() -> None:
+    source = nace_source.nace_raw_source(schemes=())
+    resource = source.resources[nace_source.NACE_RAW_DLT_TABLE]
+    pipeline = dlt_lib.pipeline(
+        pipeline_name="test_nace_raw",
+        destination=dlt_lib.destinations.duckdb(":memory:"),
+        dataset_name=nace_source.NACE_DUCKDB_DATASET_NAME,
+        dev_mode=False,
+    )
     data = type(
         "TranslatorData",
         (),
         {
             "resource": resource,
-            "destination": nace_source.nace_clickhouse_pipeline().destination,
+            "destination": pipeline.destination,
         },
     )()
 
     spec = nace_assets.NaceDltTranslator().get_asset_spec(data)
 
-    assert spec.key == dg.AssetKey("nace_categories")
+    assert spec.key == dg.AssetKey("nace_raw_duckdb")
     assert spec.group_name == "nace"
     assert spec.deps == []
-    assert {"python", "dlt", "clickhouse", "reference"}.issubset(spec.kinds)
+    assert {"dlt", "duckdb", "reference"}.issubset(spec.kinds)
 
 
-def test_nace_categories_asset_is_registered_as_dlt_clickhouse_asset() -> None:
+def test_nace_assets_are_registered_as_staged_flow() -> None:
     repository = load_project_defs().get_repository_def()
     asset_keys = {key.path[-1] for key in repository.asset_graph.get_all_asset_keys()}
     resource_keys = repository.get_top_level_resources().keys()
 
-    assert "nace_categories" in asset_keys
+    assert "nace_raw_duckdb" in asset_keys
+    assert "nace_categories_duckdb" in asset_keys
+    assert "nace_categories_clickhouse" in asset_keys
+    assert "nace_categories" not in asset_keys
     assert "dlt" in resource_keys
     assert "clickhouse" in resource_keys
     assert (
@@ -257,26 +254,134 @@ def test_nace_registered_clickhouse_resource_reads_env_at_definition_time(
     assert resource.secure is True
 
 
-def test_nace_rows_support_materialization_metadata_counts() -> None:
-    rows = [
-        {"classification_version": "NACE_REV_2", "level": "section"},
-        {"classification_version": "NACE_REV_2", "level": "division"},
-        {"classification_version": "NACE_REV_2_1", "level": "section"},
+def test_normalize_nace_categories_duckdb_reads_raw_payloads(tmp_path) -> None:
+    duckdb_path = tmp_path / "nace.duckdb"
+    with duckdb.connect(str(duckdb_path)) as connection:
+        connection.execute(f"create schema {nace_source.NACE_DUCKDB_DATASET_NAME}")
+        connection.execute(
+            f"""
+            create table {nace_source.NACE_DUCKDB_DATASET_NAME}.{nace_source.NACE_RAW_DLT_TABLE} (
+              classification_version varchar,
+              source_scheme_uri varchar,
+              source_url varchar,
+              request_query varchar,
+              response_csv varchar,
+              source_payload_hash varchar,
+              valid_from date,
+              valid_to date,
+              is_current utinyint,
+              source_run_id varchar,
+              pulled_at timestamp
+            )
+            """
+        )
+        for scheme, body in zip(nace_source.NACE_SCHEMES, FakeSparqlSession().bodies):
+            connection.execute(
+                f"""
+                insert into {nace_source.NACE_DUCKDB_DATASET_NAME}.{nace_source.NACE_RAW_DLT_TABLE}
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    scheme.classification_version,
+                    scheme.scheme_uri,
+                    nace_source.SPARQL_ENDPOINT,
+                    nace_source.nace_sparql_query(scheme.scheme_uri),
+                    body,
+                    hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                    scheme.valid_from,
+                    scheme.valid_to,
+                    scheme.is_current,
+                    "run-1",
+                    "2026-06-16T00:00:00.000",
+                ],
+            )
+
+    counts = nace_assets.normalize_nace_categories_duckdb(duckdb_path=duckdb_path)
+
+    assert counts == {"raw_payloads": 2, "rows": 4}
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        rows = connection.execute(
+            f"""
+            select classification_version, code, normalized_code, parent_code, section_code, description_en
+            from {nace_source.NACE_DUCKDB_DATASET_NAME}.{tables.NACE_CATEGORIES_TABLE}
+            order by classification_version, normalized_code
+            """
+        ).fetchall()
+
+    assert rows == [
+        ("NACE_REV_2", "01", "01", "A", "A", "01 Crops"),
+        ("NACE_REV_2", "A", "A", None, "A", "A Agriculture"),
+        ("NACE_REV_2_1", "05", "05", "B", "B", "05 Coal"),
+        ("NACE_REV_2_1", "B", "B", None, "B", "B Mining"),
     ]
 
-    by_version = Counter(row["classification_version"] for row in rows)
-    by_level = Counter(row["level"] for row in rows)
 
-    assert dict(by_version) == {"NACE_REV_2": 2, "NACE_REV_2_1": 1}
-    assert dict(by_level) == {"section": 2, "division": 1}
+def test_export_nace_categories_clickhouse_replaces_from_duckdb(tmp_path, monkeypatch) -> None:
+    duckdb_path = tmp_path / "nace.duckdb"
+    with duckdb.connect(str(duckdb_path)) as connection:
+        connection.execute(f"create schema {nace_source.NACE_DUCKDB_DATASET_NAME}")
+        nace_assets._ensure_nace_duckdb_schema(connection)
+        connection.execute(
+            f"""
+            insert into {nace_source.NACE_DUCKDB_DATASET_NAME}.{tables.NACE_CATEGORIES_TABLE}
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                "NACE_REV_2_1",
+                "A",
+                "A",
+                None,
+                "section",
+                "A",
+                "A Agriculture",
+                "http://example.test/A",
+                None,
+                "http://example.test/scheme",
+                nace_source.SPARQL_ENDPOINT,
+                "a" * 64,
+                "2025-01-01",
+                None,
+                1,
+                "run-1",
+                "2026-06-16T00:00:00.000",
+                "",
+                "row-id",
+            ],
+        )
+    resource = ClickhouseResource(host="localhost")
+    client = FakeClickHouseClient()
+
+    @contextmanager
+    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
+        yield client
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    counts = nace_assets.export_nace_categories_clickhouse(
+        duckdb_path=duckdb_path,
+        clickhouse=resource,
+    )
+
+    assert counts == {"rows": 1, "table": "reference.nace_categories"}
+    assert client.statements[0].startswith("CREATE TABLE `reference`.`_tmp_nace_categories_")
+    assert client.statements[0].endswith(" AS `reference`.`nace_categories`")
+    assert client.statements[1].startswith("INSERT INTO `reference`.`_tmp_nace_categories_")
+    assert client.statements[2].startswith("EXCHANGE TABLES `reference`.`_tmp_nace_categories_")
+    assert client.statements[2].endswith(" AND `reference`.`nace_categories`")
+    assert client.statements[3].startswith("DROP TABLE IF EXISTS `reference`.`_tmp_nace_categories_")
+    assert client.inserted_rows[0][0][:3] == ("NACE_REV_2_1", "A", "A")
 
 
 class FakeClickHouseClient:
     def __init__(self) -> None:
         self.statements: list[str] = []
+        self.inserted_rows: list[list[tuple]] = []
 
-    def execute(self, sql: str) -> None:
+    def execute(self, sql: str, params: object | None = None) -> list[tuple]:
         self.statements.append(sql)
+        if params is not None:
+            self.inserted_rows.append(list(params))
+        return []
 
 
 class FakeSparqlResponse:
@@ -314,53 +419,6 @@ class FakeSparqlSession:
         assert params is not None
         self.calls.append((url, params, timeout))
         return self.responses.pop(0)
-
-
-def test_prepare_nace_categories_table_is_typed_for_official_resource() -> None:
-    annotations = get_type_hints(prepare_nace_categories_table)
-
-    assert annotations["clickhouse"] is ClickhouseResource
-
-
-def test_prepare_nace_categories_table_uses_official_resource_connection(monkeypatch) -> None:
-    resource = ClickhouseResource(host="localhost")
-    client = FakeClickHouseClient()
-    connection_calls: list[ClickhouseResource] = []
-
-    @contextmanager
-    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
-        connection_calls.append(self)
-        yield client
-
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
-
-    prepare_nace_categories_table(resource)
-
-    assert connection_calls == [resource]
-    assert client.statements[0] == "CREATE DATABASE IF NOT EXISTS reference"
-    assert client.statements[1].startswith("CREATE TABLE IF NOT EXISTS reference.nace_categories")
-    assert client.statements[2] == "TRUNCATE TABLE reference.nace_categories"
-
-
-def test_prepare_nace_categories_table_strips_ddl_whitespace(monkeypatch) -> None:
-    resource = ClickhouseResource(host="localhost")
-    client = FakeClickHouseClient()
-
-    @contextmanager
-    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
-        yield client
-
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
-
-    prepare_nace_categories_table(resource)
-
-    assert client.statements == [
-        "CREATE DATABASE IF NOT EXISTS reference",
-        tables.NACE_CATEGORIES_DDL.strip(),
-        "TRUNCATE TABLE reference.nace_categories",
-    ]
-    ddl = client.statements[1]
-    assert ddl == ddl.strip()
 
 
 def test_normalize_nace_code_preserves_sections_and_strips_numeric_punctuation() -> None:

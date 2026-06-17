@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import hashlib
-import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,21 +10,16 @@ from typing import Any, Protocol
 
 import dlt
 from dlt.extract.resource import DltResource
-from dlt.pipeline.pipeline import Pipeline
 from dlt.sources.helpers.requests import Client as DltRequestsClient
 
-from dagster_v3.defs.nace import tables
-
 SPARQL_ENDPOINT = "https://publications.europa.eu/webapi/rdf/sparql"
-NACE_DLT_PIPELINE_NAME = "nace_reference_categories"
-NACE_CATEGORIES_DLT_TABLE = "nace_categories"
-NACE_DLT_DATASET_NAME: str | None = None
+NACE_DUCKDB_PIPELINE_NAME = "nace_raw"
+NACE_DUCKDB_DATASET_NAME = "nace_stage"
+NACE_RAW_DLT_TABLE = "raw_sparql_payloads"
 NACE_TIMEOUT_SECONDS = 120
 NACE_REQUEST_MAX_ATTEMPTS = 5
 NACE_RETRY_INITIAL_DELAY_SECONDS = 10.0
 NACE_RETRY_MAX_DELAY_SECONDS = 120.0
-DEFAULT_CLICKHOUSE_NATIVE_PORT = 9002
-DEFAULT_CLICKHOUSE_HTTP_PORT = 8123
 
 
 @dataclass(frozen=True)
@@ -119,6 +113,34 @@ def fetch_nace_scheme_rows(
     retry_max_delay_seconds: float = NACE_RETRY_MAX_DELAY_SECONDS,
     session: HttpClient | None = None,
 ) -> tuple[list[dict[str, str]], str, str]:
+    payload = fetch_nace_scheme_payload(
+        scheme=scheme,
+        endpoint_url=endpoint_url,
+        timeout_seconds=timeout_seconds,
+        user_agent=user_agent,
+        max_retries=max_retries,
+        retry_initial_delay_seconds=retry_initial_delay_seconds,
+        retry_max_delay_seconds=retry_max_delay_seconds,
+        session=session,
+    )
+    return (
+        parse_sparql_csv(str(payload["response_csv"])),
+        str(payload["source_url"]),
+        str(payload["source_payload_hash"]),
+    )
+
+
+def fetch_nace_scheme_payload(
+    *,
+    scheme: NaceScheme,
+    endpoint_url: str = SPARQL_ENDPOINT,
+    timeout_seconds: int = NACE_TIMEOUT_SECONDS,
+    user_agent: str = "corpscout-dagster-v3-dev/0.1",
+    max_retries: int = NACE_REQUEST_MAX_ATTEMPTS,
+    retry_initial_delay_seconds: float = NACE_RETRY_INITIAL_DELAY_SECONDS,
+    retry_max_delay_seconds: float = NACE_RETRY_MAX_DELAY_SECONDS,
+    session: HttpClient | None = None,
+) -> dict[str, str | int | None]:
     http_client = session or _nace_http_client(
         timeout_seconds=timeout_seconds,
         user_agent=user_agent,
@@ -137,12 +159,21 @@ def fetch_nace_scheme_rows(
     )
     response.raise_for_status()
     body = response.text
-    payload_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    return parse_sparql_csv(body), endpoint_url, payload_hash
+    return {
+        "classification_version": scheme.classification_version,
+        "source_scheme_uri": scheme.scheme_uri,
+        "source_url": endpoint_url,
+        "request_query": nace_sparql_query(scheme.scheme_uri),
+        "response_csv": body,
+        "source_payload_hash": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        "valid_from": scheme.valid_from,
+        "valid_to": scheme.valid_to,
+        "is_current": scheme.is_current,
+    }
 
 
-@dlt.source(name="nace")
-def nace_categories_source(
+@dlt.source(name="nace_raw")
+def nace_raw_source(
     *,
     schemes: tuple[NaceScheme, ...] = NACE_SCHEMES,
     endpoint_url: str = SPARQL_ENDPOINT,
@@ -155,7 +186,7 @@ def nace_categories_source(
     pulled_at: str | None = None,
     session: HttpClient | None = None,
 ) -> DltResource:
-    return _nace_categories_resource(
+    return _nace_raw_payloads_resource(
         schemes=schemes,
         endpoint_url=endpoint_url,
         timeout_seconds=timeout_seconds,
@@ -170,11 +201,11 @@ def nace_categories_source(
 
 
 @dlt.resource(
-    name=NACE_CATEGORIES_DLT_TABLE,
-    write_disposition="append",
-    primary_key=("classification_version", "normalized_code"),
+    name=NACE_RAW_DLT_TABLE,
+    write_disposition="replace",
+    primary_key=("classification_version", "source_payload_hash"),
 )
-def _nace_categories_resource(
+def _nace_raw_payloads_resource(
     *,
     schemes: tuple[NaceScheme, ...],
     endpoint_url: str,
@@ -189,7 +220,7 @@ def _nace_categories_resource(
 ) -> Iterator[dict[str, Any]]:
     effective_pulled_at = pulled_at or _utc_now_iso()
     for scheme in schemes:
-        source_rows, source_url, source_payload_hash = fetch_nace_scheme_rows(
+        payload = fetch_nace_scheme_payload(
             scheme=scheme,
             endpoint_url=endpoint_url,
             timeout_seconds=timeout_seconds,
@@ -199,52 +230,11 @@ def _nace_categories_resource(
             retry_max_delay_seconds=retry_max_delay_seconds,
             session=session,
         )
-        yield from build_nace_rows(
-            scheme=scheme,
-            source_rows=source_rows,
-            source_url=source_url,
-            source_payload_hash=source_payload_hash,
-            source_run_id=source_run_id,
-            pulled_at=effective_pulled_at,
-        )
-
-
-def nace_clickhouse_pipeline(credentials: dict[str, Any] | None = None) -> Pipeline:
-    return dlt.pipeline(
-        pipeline_name=NACE_DLT_PIPELINE_NAME,
-        destination=dlt.destinations.clickhouse(
-            credentials=credentials or clickhouse_destination_credentials_from_env()
-        ),
-        dataset_name=NACE_DLT_DATASET_NAME,
-        dev_mode=False,
-    )
-
-
-def clickhouse_destination_credentials_from_env() -> dict[str, Any]:
-    return {
-        "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
-        "port": _int_env("CLICKHOUSE_NATIVE_PORT", DEFAULT_CLICKHOUSE_NATIVE_PORT),
-        "http_port": _int_env(
-            "CLICKHOUSE_HTTP_PORT",
-            _int_env("CLICKHOUSE_PORT", DEFAULT_CLICKHOUSE_HTTP_PORT),
-        ),
-        "username": os.getenv("CLICKHOUSE_USER", "default"),
-        "password": os.getenv("CLICKHOUSE_PASSWORD") or None,
-        "database": tables.NACE_DATABASE,
-        "secure": 1 if _bool_env("CLICKHOUSE_SECURE", False) else 0,
-    }
-
-
-def _int_env(name: str, default: int) -> int:
-    value = os.getenv(name)
-    return default if value is None or value.strip() == "" else int(value)
-
-
-def _bool_env(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None or value.strip() == "":
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+        yield {
+            **payload,
+            "source_run_id": source_run_id,
+            "pulled_at": effective_pulled_at,
+        }
 
 
 def _utc_now_iso() -> str:

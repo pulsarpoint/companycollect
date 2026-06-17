@@ -108,7 +108,7 @@ Purpose:
 
 DuckDB table:
 
-- `nace_stage.categories`
+- `nace_stage.nace_categories`
 
 Fields:
 
