@@ -10,7 +10,6 @@ from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
 from dagster_v3.defs.exchange_rates import tables
-from dagster_v3.defs.exchange_rates.clickhouse import prepare_exchange_rates_table
 from dagster_v3.defs.exchange_rates.source import (
     DEFAULT_CLICKHOUSE_NATIVE_PORT,
     EXCHANGE_RATES_DLT_TABLE,
@@ -185,12 +184,6 @@ def _run_exchange_rates_partition(
     end_date: str,
     asset_label: str,
 ) -> Iterator[Any]:
-    context.log.info(
-        "Preparing ClickHouse table %s for exchange-rate %s partition",
-        tables.QUALIFIED_EXCHANGE_RATES_TABLE,
-        asset_label,
-    )
-    prepare_exchange_rates_table(clickhouse)
     context.log.info(
         "Deleting existing exchange-rate rows: table=%s, start_date=%s, end_date=%s, "
         "currencies=%s",

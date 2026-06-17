@@ -1,13 +1,13 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import get_type_hints
+from pathlib import Path
 
 import dagster as dg
+import duckdb
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.exchange_rates import source as fx_source
-from dagster_v3.defs.exchange_rates.clickhouse import prepare_exchange_rates_table
 from dagster_v3.defs.exchange_rates import tables
 
 
@@ -38,32 +38,125 @@ def test_exchange_rates_clickhouse_schema_contract() -> None:
 class FakeClickHouseClient:
     def __init__(self) -> None:
         self.statements: list[str] = []
+        self.inserted_rows: list[tuple] = []
 
-    def execute(self, sql: str) -> None:
+    def execute(self, sql: str, params: list[tuple] | None = None) -> None:
         self.statements.append(sql)
+        if params is not None:
+            self.inserted_rows.extend(params)
 
 
-def test_prepare_exchange_rates_table_is_typed_for_official_resource() -> None:
-    annotations = get_type_hints(prepare_exchange_rates_table)
-
-    assert annotations["clickhouse"] is ClickhouseResource
-
-
-def test_prepare_exchange_rates_table_uses_reference_database(monkeypatch) -> None:
-    resource = ClickhouseResource(host="localhost")
-    client = FakeClickHouseClient()
+class FakeClickHouseResource:
+    def __init__(self, client: FakeClickHouseClient) -> None:
+        self.client = client
 
     @contextmanager
-    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
-        yield client
+    def get_connection(self) -> Iterator[FakeClickHouseClient]:
+        yield self.client
 
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    prepare_exchange_rates_table(resource)
+class DuckDbBackedDltResource:
+    def __init__(self, duckdb_path: Path, clickhouse: FakeClickHouseResource) -> None:
+        self.duckdb_path = duckdb_path
+        self.clickhouse = clickhouse
 
-    assert client.statements == [
-        "CREATE DATABASE IF NOT EXISTS reference",
-        tables.EXCHANGE_RATES_DDL.strip(),
+    def run(self, **_: object) -> Iterator[dg.MaterializeResult]:
+        with duckdb.connect(str(self.duckdb_path), read_only=True) as connection:
+            rows = connection.execute(
+                """
+                select
+                  rate_date,
+                  base_currency,
+                  quote_currency,
+                  rate,
+                  source,
+                  source_url,
+                  source_payload_hash,
+                  source_run_id,
+                  pulled_at,
+                  _dlt_load_id,
+                  _dlt_id
+                from reference.exchange_rates
+                order by rate_date, quote_currency
+                """
+            ).fetchall()
+        with self.clickhouse.get_connection() as client:
+            client.execute(
+                "INSERT INTO reference.exchange_rates VALUES",
+                rows,
+            )
+        yield dg.MaterializeResult(metadata={"inserted_rows": len(rows)})
+
+
+def _create_exchange_rates_duckdb_fixture(duckdb_path: Path) -> None:
+    with duckdb.connect(str(duckdb_path)) as connection:
+        connection.execute("create schema reference")
+        connection.execute(
+            """
+            create table reference.exchange_rates (
+              rate_date date,
+              base_currency varchar,
+              quote_currency varchar,
+              rate decimal(18, 8),
+              source varchar,
+              source_url varchar,
+              source_payload_hash varchar,
+              source_run_id varchar,
+              pulled_at timestamp,
+              _dlt_load_id varchar,
+              _dlt_id varchar
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into reference.exchange_rates values
+              ('2026-05-01', 'EUR', 'USD', 1.15800000, 'ECB EXR',
+               'https://ecb.example/USD', repeat('a', 64), 'run-test',
+               '2026-05-01 12:00:00', 'load-1', 'row-1'),
+              ('2026-05-01', 'EUR', 'EUR', 1.00000000, 'identity',
+               '', repeat('0', 64), 'run-test', '2026-05-01 12:00:00',
+               'load-1', 'row-2')
+            """
+        )
+
+
+def test_exchange_rates_backfill_materialization_loads_duckdb_rows_without_runtime_ddl(
+    tmp_path: Path,
+) -> None:
+    from dagster_v3.defs.exchange_rates import assets as fx_assets
+
+    duckdb_path = tmp_path / "exchange_rates.duckdb"
+    _create_exchange_rates_duckdb_fixture(duckdb_path)
+    client = FakeClickHouseClient()
+    clickhouse = FakeClickHouseResource(client)
+    dlt_resource = DuckDbBackedDltResource(duckdb_path, clickhouse)
+
+    result = dg.materialize(
+        [fx_assets.exchange_rates_backfill_asset],
+        partition_key="2026-05-01",
+        resources={
+            "clickhouse": clickhouse,
+            "dlt": dlt_resource,
+        },
+        run_config={
+            "ops": {
+                "exchange_rates_backfill": {
+                    "config": {
+                        "currencies": ["USD"],
+                    }
+                }
+            }
+        },
+    )
+
+    assert result.success
+    assert not any(statement.upper().startswith("CREATE ") for statement in client.statements)
+    assert client.statements[0].startswith("ALTER TABLE reference.exchange_rates DELETE WHERE")
+    assert client.statements[1] == "INSERT INTO reference.exchange_rates VALUES"
+    assert [(row[0].isoformat(), row[1], row[2], str(row[3])) for row in client.inserted_rows] == [
+        ("2026-05-01", "EUR", "EUR", "1.00000000"),
+        ("2026-05-01", "EUR", "USD", "1.15800000"),
     ]
 
 
