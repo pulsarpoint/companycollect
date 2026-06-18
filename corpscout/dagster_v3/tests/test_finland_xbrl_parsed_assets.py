@@ -616,3 +616,70 @@ def test_parse_asset_is_monthly_partitioned():
     assert type(node.partitions_def).__name__ == "MonthlyPartitionsDefinition"
     metrics = graph.get(AssetKey(["fi_prh_xbrl_financial_metrics"]))
     assert metrics.partitions_def is None
+
+
+def _seed_catalog(s3_client, object_store, docs):
+    for d in docs:
+        s3_client.objects[("source-finland-prh-xbrl", d["xml_object_key"])] = SAMPLE_XML
+    output = BytesIO()
+    pl.DataFrame(docs).write_parquet(output)
+    s3_client.objects[("source-finland-prh-xbrl", RAW_XML_DOCUMENTS_OBJECT_KEY)] = output.getvalue()
+
+
+def _run_partition(res, object_store, window_start, window_end):
+    documents, _ = xbrl.load_xbrl_document_manifest(
+        object_store=object_store, documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY
+    )
+    in_window = xbrl.documents_in_registration_window(
+        documents, window_start=window_start, window_end=window_end
+    )
+    to_parse = xbrl.unparsed_documents(
+        in_window, parsed_object_keys=xbrl.load_parsed_object_keys(res)
+    )
+    if to_parse:
+        xbrl.run_finland_xbrl_arelle_dlt_pipeline(
+            database_path=res.path(),
+            object_store=object_store,
+            documents=to_parse,
+            run_id="t",
+            parser=_fake_arelle_parser,
+        )
+    return len(to_parse)
+
+
+def _statement_count(res):
+    with duckdb.connect(str(res.path()), read_only=True) as conn:
+        return conn.execute(
+            f"select count(*) from {XBRL_DLT_DATASET_NAME}.{STATEMENT_DOCUMENTS_TABLE}"
+        ).fetchone()[0]
+
+
+def test_partitioned_parse_is_incremental_and_resumable(tmp_path):
+    s3_client = FakeS3Client()
+    object_store = ObjectStoreResource(bucket="source-finland-prh-xbrl", s3_client=s3_client)
+    res = _xbrl_resource(tmp_path)
+    march = {
+        "business_id": "a",
+        "financial_date": "2023-12-31",
+        "registration_date": "2024-03-10",
+        "source_url": "",
+        "xml_object_key": "companies/a/2023-12-31.xml",
+    }
+    april = {
+        "business_id": "b",
+        "financial_date": "2023-12-31",
+        "registration_date": "2024-04-02",
+        "source_url": "",
+        "xml_object_key": "companies/b/2023-12-31.xml",
+    }
+    _seed_catalog(s3_client, object_store, [march, april])
+
+    # March partition: only the March document is parsed.
+    assert _run_partition(res, object_store, date(2024, 3, 1), date(2024, 4, 1)) == 1
+    assert _statement_count(res) == 1
+    # Re-running March is a no-op (the March document is already parsed).
+    assert _run_partition(res, object_store, date(2024, 3, 1), date(2024, 4, 1)) == 0
+    assert _statement_count(res) == 1
+    # April partition: adds the April document while the March row remains.
+    assert _run_partition(res, object_store, date(2024, 4, 1), date(2024, 5, 1)) == 1
+    assert _statement_count(res) == 2
