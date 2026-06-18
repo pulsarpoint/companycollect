@@ -71,7 +71,8 @@ def test_financial_metrics_model(tmp_path, monkeypatch):
           ) as t(statement_key,business_id,financial_date,reported_period_start,reported_period_end)""",
         """create table finland_prh_xbrl.fi_prh_xbrl_facts_raw as select * from (values
             ('k1','fi_met:md103','fi_MC:x673','numeric','125000', false),
-            ('k1','fi_met:zzz','fi_MC:zzz','numeric','1', false)
+            ('k1','fi_met:zzz','fi_MC:zzz','numeric','1', false),
+            ('k1','fi_met:md103','fi_MC:x673','numeric','110000', true)
           ) as t(statement_key,concept_qname,mcy_member_code,value_kind,numeric_value,is_comparative)""",
     ])
     _dbt(
@@ -81,7 +82,19 @@ def test_financial_metrics_model(tmp_path, monkeypatch):
     )
     conn = duckdb.connect(str(db), read_only=True)
     row = conn.execute(
-        "select revenue, mapped_fact_count, unmapped_numeric_fact_count, mapping_version "
+        "select revenue, source_fact_count, mapped_fact_count, unmapped_numeric_fact_count, "
+        "metric_warnings, period_start, period_end, mapping_version "
         "from finland_prh_xbrl.fi_prh_xbrl_financial_metrics where statement_key='k1'"
     ).fetchone()
-    assert row == (125000.0, 1, 1, "finland-prh-xbrl-metrics-v1")
+    # revenue is the current (non-comparative) 125000; the is_comparative=true prior-period
+    # 110000 row is excluded from the pivot but still counted in source_fact_count (all 3 facts).
+    assert row == (
+        125000.0,
+        3,
+        1,
+        1,
+        '["unmapped numeric facts: 1"]',
+        "2022-10-01",
+        "2023-09-30",
+        "finland-prh-xbrl-metrics-v1",
+    )
