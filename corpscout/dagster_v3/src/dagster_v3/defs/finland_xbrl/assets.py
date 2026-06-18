@@ -1,6 +1,7 @@
 import json
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from hashlib import sha256
 from io import BytesIO
@@ -431,6 +432,13 @@ def download_finland_xbrl_raw_xml_documents(
     )
 
 
+@dataclass(frozen=True)
+class XbrlParseRunResult:
+    load_info: Any
+    parsed: int
+    failed: int
+
+
 def run_finland_xbrl_arelle_dlt_pipeline(
     *,
     database_path: str | Path,
@@ -440,10 +448,18 @@ def run_finland_xbrl_arelle_dlt_pipeline(
     parser: ArelleStatementParser = parse_statement_xml_with_arelle,
     log_info: Callable[[str], None] | None = None,
     progress_interval: int = 25,
-) -> Any:
+) -> XbrlParseRunResult:
     database_file = Path(database_path)
     database_file.parent.mkdir(parents=True, exist_ok=True)
     _log_parse_progress(log_info, f"Parsing {len(documents)} XBRL XML documents")
+    statement_rows, fact_rows, failed = parse_xbrl_documents(
+        documents,
+        object_store=object_store,
+        run_id=run_id,
+        parser=parser,
+        log_info=log_info,
+        progress_interval=progress_interval,
+    )
     pipeline = dlt.pipeline(
         pipeline_name="finland_xbrl_arelle_parsed_tables",
         destination=dlt.destinations.duckdb(str(database_file)),
@@ -452,18 +468,18 @@ def run_finland_xbrl_arelle_dlt_pipeline(
     )
     load_info = pipeline.run(
         finland_xbrl_arelle_source(
-            object_store=object_store,
-            documents=documents,
-            run_id=run_id,
-            parser=parser,
-            log_info=log_info,
-            progress_interval=progress_interval,
+            statement_rows=statement_rows,
+            fact_rows=fact_rows,
         )
     )
     _ensure_parsed_duckdb_tables(database_file)
     if log_info is not None:
         log_info("dlt loaded parsed XBRL tables into DuckDB")
-    return load_info
+    return XbrlParseRunResult(
+        load_info=load_info,
+        parsed=len(statement_rows),
+        failed=len(failed),
+    )
 
 
 def _parse_registration_date(raw: object) -> date | None:
@@ -514,54 +530,53 @@ def unparsed_documents(
     ]
 
 
-@dlt.source(name="finland_xbrl_arelle")
-def finland_xbrl_arelle_source(
+def parse_xbrl_documents(
+    documents: list[dict[str, Any]],
     *,
     object_store: ObjectStoreResource,
-    documents: list[dict[str, Any]],
     run_id: str,
     parser: ArelleStatementParser = parse_statement_xml_with_arelle,
     log_info: Callable[[str], None] | None = None,
     progress_interval: int = 25,
-) -> list[DltResource]:
-    return _finland_xbrl_arelle_resources(
-        object_store=object_store,
-        documents=documents,
-        run_id=run_id,
-        parser=parser,
-        log_info=log_info,
-        progress_interval=progress_interval,
-    )
-
-
-def _finland_xbrl_arelle_resources(
-    *,
-    object_store: ObjectStoreResource,
-    documents: list[dict[str, Any]],
-    run_id: str,
-    parser: ArelleStatementParser,
-    log_info: Callable[[str], None] | None,
-    progress_interval: int,
-) -> list[DltResource]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     parsed_at = datetime.now(UTC)
     total_documents = len(documents)
     statement_rows: list[dict[str, Any]] = []
     fact_rows: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
     warning_count = 0
     started_at = datetime.now(UTC)
     for document_index, document in enumerate(documents, start=1):
         xml_object_key = document["xml_object_key"]
-        body = object_store.read_bytes(xml_object_key, bucket=XBRL_BUCKET)
-        parsed = parser(
-            business_id=document["business_id"],
-            financial_date=document["financial_date"],
-            registration_date=document.get("registration_date"),
-            source_url=document.get("source_url", ""),
-            xml_object_key=xml_object_key,
-            source_run_id=run_id,
-            body=body,
-            parsed_at=parsed_at,
-        )
+        try:
+            body = object_store.read_bytes(xml_object_key, bucket=XBRL_BUCKET)
+            parsed = parser(
+                business_id=document["business_id"],
+                financial_date=document["financial_date"],
+                registration_date=document.get("registration_date"),
+                source_url=document.get("source_url", ""),
+                xml_object_key=xml_object_key,
+                source_run_id=run_id,
+                body=body,
+                parsed_at=parsed_at,
+            )
+        except Exception as exc:  # noqa: BLE001 - skip and record one bad document
+            failed.append(
+                {
+                    "xml_object_key": xml_object_key,
+                    "business_id": document["business_id"],
+                    "financial_date": document["financial_date"],
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            _log_parse_progress(
+                log_info,
+                f"Skipping unparseable XBRL document {xml_object_key}: "
+                f"business_id={document['business_id']} "
+                f"financial_date={document['financial_date']} "
+                f"error={type(exc).__name__}: {exc}",
+            )
+            continue
         warning_count += len(parsed.warnings)
         statement_rows.append(
             _table_row(tables.STATEMENT_DOCUMENTS_TABLE, parsed.statement_document)
@@ -591,10 +606,30 @@ def _finland_xbrl_arelle_resources(
         f"documents={total_documents} "
         f"statement_rows={len(statement_rows)} "
         f"fact_rows={len(fact_rows)} "
+        f"failed={len(failed)} "
         f"parser_warnings={warning_count} "
         f"elapsed_seconds={elapsed_seconds:.1f}",
     )
+    return statement_rows, fact_rows, failed
 
+
+@dlt.source(name="finland_xbrl_arelle")
+def finland_xbrl_arelle_source(
+    *,
+    statement_rows: list[dict[str, Any]],
+    fact_rows: list[dict[str, Any]],
+) -> list[DltResource]:
+    return _finland_xbrl_arelle_resources(
+        statement_rows=statement_rows,
+        fact_rows=fact_rows,
+    )
+
+
+def _finland_xbrl_arelle_resources(
+    *,
+    statement_rows: list[dict[str, Any]],
+    fact_rows: list[dict[str, Any]],
+) -> list[DltResource]:
     return [
         dlt.resource(
             statement_rows,

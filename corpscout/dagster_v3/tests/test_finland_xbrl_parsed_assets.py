@@ -536,6 +536,37 @@ from datetime import date
 import dagster_v3.defs.finland_xbrl.assets as xbrl
 
 
+def _raising_parser(**kwargs):
+    if kwargs["business_id"] == "bad":
+        raise ValueError("boom: unparseable XBRL")
+    return _fake_arelle_parser(**kwargs)
+
+
+def test_parse_skips_bad_document_and_keeps_good_ones(tmp_path):
+    s3 = FakeS3Client()
+    object_store = ObjectStoreResource(bucket="source-finland-prh-xbrl", s3_client=s3)
+    s3.objects[("source-finland-prh-xbrl", "companies/good/2023-12-31.xml")] = SAMPLE_XML
+    s3.objects[("source-finland-prh-xbrl", "companies/bad/2023-12-31.xml")] = SAMPLE_XML
+    good = {"business_id": "good", "financial_date": "2023-12-31", "registration_date": "2024-03-10",
+            "source_url": "", "xml_object_key": "companies/good/2023-12-31.xml"}
+    bad = {"business_id": "bad", "financial_date": "2023-12-31", "registration_date": "2024-03-11",
+           "source_url": "", "xml_object_key": "companies/bad/2023-12-31.xml"}
+    db = tmp_path / "source.duckdb"
+
+    result = run_finland_xbrl_arelle_dlt_pipeline(
+        database_path=db, object_store=object_store,
+        documents=[good, bad], run_id="r1", parser=_raising_parser,
+    )
+
+    assert result.parsed == 1
+    assert result.failed == 1
+    with duckdb.connect(str(db), read_only=True) as conn:
+        keys = [r[0] for r in conn.execute(
+            f"select xml_object_key from {XBRL_DLT_DATASET_NAME}.{STATEMENT_DOCUMENTS_TABLE}"
+        ).fetchall()]
+    assert keys == ["companies/good/2023-12-31.xml"]
+
+
 def _doc(business_id, financial_date, registration_date):
     return {
         "business_id": business_id,
