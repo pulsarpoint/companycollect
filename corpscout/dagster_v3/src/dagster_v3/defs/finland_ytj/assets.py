@@ -144,6 +144,9 @@ def finland_ytj_pipeline(
     dlt_pipeline=finland_ytj_pipeline(DEFAULT_DUCKDB_PATH),  # spec-only; body re-creates with injected path
     name="finland_ytj_all_companies_duckdb",
     dagster_dlt_translator=FinlandYtjDltTranslator(),
+    # Serialize this op: concurrent loads would race on the single-writer DuckDB
+    # file and the dlt working dir. Set the pool limit to 1 in the instance.
+    pool="finland_ytj_duckdb",
 )
 def finland_ytj_all_companies_duckdb_asset(
     context: dg.AssetExecutionContext,
