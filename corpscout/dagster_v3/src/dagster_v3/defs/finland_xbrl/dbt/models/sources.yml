@@ -29,3 +29,7 @@ models:
     columns:
       - name: business_id
         data_tests: [not_null]
+  - name: fi_prh_xbrl_financial_metrics
+    columns:
+      - name: statement_key
+        data_tests: [not_null]

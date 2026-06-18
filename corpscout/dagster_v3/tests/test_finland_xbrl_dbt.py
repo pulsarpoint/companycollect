@@ -60,3 +60,28 @@ def test_eligible_model(tmp_path, monkeypatch):
         "select business_id, primary_name from finland_prh_xbrl.eligible_financial_reports order by business_id"
     ).fetchall()
     assert rows == [("a", "A Oy")]  # b is inactive -> excluded
+
+
+def test_financial_metrics_model(tmp_path, monkeypatch):
+    db = tmp_path / "finland_ytj.duckdb"
+    _seed(db, [
+        "create schema if not exists finland_prh_xbrl",
+        """create table finland_prh_xbrl.fi_prh_xbrl_statement_documents as select * from (values
+            ('k1','a','2023-12-31','2022-10-01','2023-09-30')
+          ) as t(statement_key,business_id,financial_date,reported_period_start,reported_period_end)""",
+        """create table finland_prh_xbrl.fi_prh_xbrl_facts_raw as select * from (values
+            ('k1','fi_met:md103','fi_MC:x673','numeric','125000', false),
+            ('k1','fi_met:zzz','fi_MC:zzz','numeric','1', false)
+          ) as t(statement_key,concept_qname,mcy_member_code,value_kind,numeric_value,is_comparative)""",
+    ])
+    _dbt(
+        ["build", "--select", "fi_prh_xbrl_financial_metrics", "xbrl_metric_map"],
+        db,
+        monkeypatch,
+    )
+    conn = duckdb.connect(str(db), read_only=True)
+    row = conn.execute(
+        "select revenue, mapped_fact_count, unmapped_numeric_fact_count, mapping_version "
+        "from finland_prh_xbrl.fi_prh_xbrl_financial_metrics where statement_key='k1'"
+    ).fetchone()
+    assert row == (125000.0, 1, 1, "finland-prh-xbrl-metrics-v1")
