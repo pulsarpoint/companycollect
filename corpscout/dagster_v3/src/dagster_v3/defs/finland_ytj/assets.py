@@ -145,10 +145,23 @@ def finland_ytj_all_companies_duckdb_asset(
     )
 
 
+@dg.asset_check(asset="finland_ytj_all_companies_duckdb", name="all_companies_non_empty")
+def all_companies_non_empty(ytj_duckdb: LocalDuckDBResource) -> dg.AssetCheckResult:
+    with ytj_duckdb.connect(read_only=True) as connection:
+        row_count = connection.execute(
+            f"select count(*) from {DLT_DATASET_NAME}.{DLT_COMPANIES_TABLE}"
+        ).fetchone()[0]
+    return dg.AssetCheckResult(
+        passed=row_count > 0,
+        metadata={"row_count": int(row_count)},
+    )
+
+
 defs = dg.Definitions(
     assets=[
         finland_ytj_all_companies_duckdb_asset,
     ],
+    asset_checks=[all_companies_non_empty],
     resources={
         "ytj_duckdb": LocalDuckDBResource(),
     },

@@ -209,3 +209,22 @@ def test_dlt_duckdb_asset_loads_all_companies_table(tmp_path: Path) -> None:
         ("active-1", "active", "Active One Oy", ""),
         ("ceased-1", "ceased", "Ceased One Oy", ""),
     ]
+
+
+def test_non_empty_check_reports_count(tmp_path: Path) -> None:
+    database_path = tmp_path / "finland_ytj.duckdb"
+    ytj_assets.run_finland_ytj_dlt_pipeline(
+        database_path=database_path,
+        run_id="run-1",
+        session=_session({"companies": [{"businessId": {"value": "a"}}]}),
+    )
+    resource = ytj_assets.LocalDuckDBResource(database_path=str(database_path))
+    result = ytj_assets.all_companies_non_empty(resource)
+    assert result.passed is True
+    assert result.metadata["row_count"].value == 1
+
+
+def test_non_empty_check_and_asset_registered() -> None:
+    repository = load_project_defs().get_repository_def()
+    check_names = {key.name for key in repository.asset_graph.asset_check_keys}
+    assert "all_companies_non_empty" in check_names
