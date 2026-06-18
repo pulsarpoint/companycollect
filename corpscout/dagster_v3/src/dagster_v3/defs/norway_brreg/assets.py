@@ -780,21 +780,23 @@ def _complete_all_translation_queue_items_for_test(
     translations_by_field: dict[str, str],
 ) -> None:
     queue = TranslationQueue(queue_duckdb_path)
-    claimed = queue.claim_batch(limit=1000, worker_id="test-worker")
-    translations = [
-        SmokeTranslationResult(
-            item_id=item.item_id,
-            translated_text=translations_by_field[item.source_field],
+    while True:
+        claimed = queue.claim_batch(limit=1000, worker_id="test-worker", model="test-model")
+        if not claimed:
+            break
+        queue.complete_batch(
+            claimed,
+            [
+                SmokeTranslationResult(
+                    item_id=item.item_id,
+                    translated_text=translations_by_field[item.source_field],
+                )
+                for item in claimed
+            ],
+            provider="test",
+            model="test-model",
+            duration_seconds=0.0,
         )
-        for item in claimed
-        if item.source_field in translations_by_field
-    ]
-    queue.complete_batch(
-        claimed,
-        translations,
-        provider="test",
-        duration_seconds=0.0,
-    )
 
 
 def _insert_completed_translation_for_test(
@@ -817,11 +819,12 @@ def _insert_completed_translation_for_test(
         target_language="en",
     )
     queue.enqueue_items([item])
-    claimed = queue.claim_batch(limit=1, worker_id="test-worker")
+    claimed = queue.claim_batch(limit=1, worker_id="test-worker", model="test-model")
     queue.complete_batch(
         claimed,
         [SmokeTranslationResult(item_id=claimed[0].item_id, translated_text=translated_text)],
         provider="test",
+        model="test-model",
         duration_seconds=0.0,
     )
 

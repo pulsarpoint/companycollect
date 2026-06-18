@@ -111,9 +111,10 @@ def run_translation_queue_smoke(
     provider_failure_count = 0
     batch_durations: list[float] = []
     started_at = time.perf_counter()
+    model = str(getattr(provider, "model", type(provider).__name__))
 
     while True:
-        claimed = queue.claim_batch(limit=batch_size, worker_id=worker_id)
+        claimed = queue.claim_batch(limit=batch_size, worker_id=worker_id, model=model)
         if not claimed:
             break
 
@@ -168,6 +169,7 @@ def run_translation_queue_smoke(
             claimed,
             mapped_translations,
             provider=type(provider).__name__,
+            model=model,
             duration_seconds=duration_seconds,
         )
         summary = queue.summary()
