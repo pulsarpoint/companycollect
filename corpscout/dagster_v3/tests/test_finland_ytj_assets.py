@@ -228,3 +228,20 @@ def test_non_empty_check_and_asset_registered() -> None:
     repository = load_project_defs().get_repository_def()
     check_names = {key.name for key in repository.asset_graph.asset_check_keys}
     assert "all_companies_non_empty" in check_names
+
+
+def test_pipeline_working_dir_isolated_per_duckdb_location(tmp_path: Path) -> None:
+    # Each duckdb location must get its own dlt working/staging dir, so concurrent
+    # runs across worktrees/branches cannot clobber each other's load packages.
+    p1 = ytj_assets.finland_ytj_pipeline(tmp_path / "wt_a" / "finland_ytj.duckdb")
+    p2 = ytj_assets.finland_ytj_pipeline(tmp_path / "wt_b" / "finland_ytj.duckdb")
+    assert p1.working_dir != p2.working_dir
+    assert str(tmp_path / "wt_a") in p1.working_dir
+
+
+def test_pipeline_working_dir_override(tmp_path: Path) -> None:
+    custom = tmp_path / "custom_dlt"
+    pipeline = ytj_assets.finland_ytj_pipeline(
+        tmp_path / "finland_ytj.duckdb", pipelines_dir=custom
+    )
+    assert str(custom) in pipeline.working_dir

@@ -108,20 +108,34 @@ def run_finland_ytj_dlt_pipeline(
     database_path: str | Path,
     run_id: str,
     session: HttpSession | None = None,
+    pipelines_dir: str | Path | None = None,
 ) -> Any:
-    return finland_ytj_pipeline(database_path).run(
+    return finland_ytj_pipeline(database_path, pipelines_dir=pipelines_dir).run(
         finland_ytj_source(run_id=run_id, session=session)
     )
 
 
-def finland_ytj_pipeline(database_path: str | Path) -> Pipeline:
+def finland_ytj_pipeline(
+    database_path: str | Path,
+    *,
+    pipelines_dir: str | Path | None = None,
+) -> Pipeline:
     database_file = Path(database_path)
     database_file.parent.mkdir(parents=True, exist_ok=True)
+    # Co-locate dlt's working/staging dir with the DuckDB destination instead of
+    # the global ~/.dlt singleton (keyed only on pipeline_name). Otherwise runs
+    # from different worktrees/branches share one staging dir and clobber each
+    # other's load packages mid-run (LoadPackageNotFound / FileNotFoundError).
+    working_dir = (
+        Path(pipelines_dir) if pipelines_dir is not None else database_file.parent / ".dlt"
+    )
+    working_dir.mkdir(parents=True, exist_ok=True)
     return dlt.pipeline(
         pipeline_name="finland_ytj_all_companies",
         destination=dlt.destinations.duckdb(str(database_file)),
         dataset_name=DLT_DATASET_NAME,
         dev_mode=False,
+        pipelines_dir=str(working_dir),
     )
 
 
