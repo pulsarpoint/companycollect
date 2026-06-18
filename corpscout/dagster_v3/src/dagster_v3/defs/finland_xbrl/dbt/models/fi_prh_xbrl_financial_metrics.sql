@@ -1,5 +1,7 @@
 {{ config(materialized='table') }}
 
+{# 'employees' is a placeholder column: no XBRL fact maps to it (absent from
+   xbrl_metric_map), so it always resolves to NULL — matches the original. #}
 {% set metric_columns = [
     'revenue', 'operating_profit_loss', 'profit_loss', 'total_assets', 'equity',
     'liabilities', 'cash_and_bank', 'current_assets', 'current_receivables',
@@ -58,7 +60,7 @@ select
         else '[]'
     end as metric_warnings,
     'finland-prh-xbrl-metrics-v1' as mapping_version,
-    now() as built_at
+    cast(now() as varchar) as built_at  -- varchar to match the original ISO-string built_at
 from {{ source('finland_prh_xbrl', 'fi_prh_xbrl_statement_documents') }} as statements
 left join fact_counts on statements.statement_key = fact_counts.statement_key
 left join metric_pivot as metrics on statements.statement_key = metrics.statement_key
