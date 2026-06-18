@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 
 import duckdb
+import pytest
+from dbt.cli.main import dbtRunner
 
 from dagster_v3.defs.finland_resolved import dbt_plugin
 
@@ -25,13 +27,8 @@ def test_plugin_registers_primary_industry_udf() -> None:
     assert conn.execute("select fi_primary_industry_json(null)").fetchone()[0] is None
 
 
-import os
-import duckdb as _duckdb
-from dbt.cli.main import dbtRunner
-
-
 def _seed_all_companies(db_path: Path) -> None:
-    conn = _duckdb.connect(str(db_path))
+    conn = duckdb.connect(str(db_path))
     conn.execute("create schema if not exists finland_prhytj")
     conn.execute(
         """
@@ -51,19 +48,19 @@ def _seed_all_companies(db_path: Path) -> None:
     conn.close()
 
 
-def _dbt_build(db_path: Path) -> None:
-    os.environ["FINLAND_YTJ_DUCKDB_PATH"] = str(db_path)
+def _dbt_build(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FINLAND_YTJ_DUCKDB_PATH", str(db_path))
     res = dbtRunner().invoke(
         ["build", "--project-dir", str(DBT_DIR), "--profiles-dir", str(DBT_DIR)]
     )
     assert res.success, res.exception
 
 
-def test_fi_companies_model(tmp_path: Path) -> None:
+def test_fi_companies_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = tmp_path / "finland_ytj.duckdb"
     _seed_all_companies(db)
-    _dbt_build(db)
-    conn = _duckdb.connect(str(db), read_only=True)
+    _dbt_build(db, monkeypatch)
+    conn = duckdb.connect(str(db), read_only=True)
     rows = conn.execute(
         "select business_id, name, name_normalized, is_active, primary_website_host "
         "from finland_resolved.fi_companies order by business_id"
