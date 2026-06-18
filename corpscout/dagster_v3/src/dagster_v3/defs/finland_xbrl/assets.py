@@ -21,7 +21,6 @@ from dagster_v3.defs.finland_xbrl import tables
 from dagster_v3.defs.finland_xbrl.arelle_parser import (
     ArelleStatementParser,
     parse_statement_xml_with_arelle,
-    statement_key_for,
 )
 from dagster_v3.defs.finland_xbrl.resources import HttpSession, XbrlApiResource
 from dagster_v3.defs.finland_ytj.assets import DLT_COMPANIES_TABLE, DLT_DATASET_NAME
@@ -487,18 +486,13 @@ def documents_in_registration_window(
 def unparsed_documents(
     documents: list[dict[str, Any]],
     *,
-    parsed_statement_keys: set[str],
+    parsed_object_keys: set[str],
 ) -> list[dict[str, Any]]:
-    """Drop docs whose content-addressed statement_key is already parsed."""
+    """Drop docs whose S3 object key is already present in the parsed output."""
     return [
         document
         for document in documents
-        if statement_key_for(
-            document["business_id"],
-            document["financial_date"],
-            document.get("xml_sha256", ""),
-        )
-        not in parsed_statement_keys
+        if document["xml_object_key"] not in parsed_object_keys
     ]
 
 
@@ -1587,7 +1581,6 @@ def _normalize_xml_document_row(row: dict[str, Any]) -> dict[str, Any]:
         "registration_date": row.get("registration_date"),
         "source_url": str(row.get("source_url") or ""),
         "xml_object_key": xml_object_key,
-        "xml_sha256": str(row.get("xml_sha256") or ""),
     }
 
 
