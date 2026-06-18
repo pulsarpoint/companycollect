@@ -8,7 +8,7 @@ from dagster_v3.defs.clickhouse.resolved import RESOLVED_DATABASE
 from dagster_v3.defs.finland_resolved import assets as finland_resolved_assets
 from dagster_v3.defs.finland_resolved.assets import build_finland_ytj_resolved_tables
 from dagster_v3.defs.finland_resolved import tables
-from dagster_v3.defs.finland_ytj.resources import LocalDuckDBResource
+from dagster_v3.defs.common.resources import LocalDuckDBResource
 
 
 def test_finland_resolved_table_names_match_clickhouse_contract() -> None:
