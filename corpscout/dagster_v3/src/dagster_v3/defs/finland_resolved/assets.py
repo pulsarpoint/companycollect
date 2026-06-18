@@ -29,7 +29,10 @@ FINLAND_RESOLVED_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
 _DEFAULT_DUCKDB_PATH = Path(LocalDuckDBResource().database_path).expanduser()
 if not _DEFAULT_DUCKDB_PATH.is_absolute():
     _DEFAULT_DUCKDB_PATH = _DEFAULT_DUCKDB_PATH.resolve()
-os.environ.setdefault("FINLAND_YTJ_DUCKDB_PATH", str(_DEFAULT_DUCKDB_PATH))
+# dbt reads FINLAND_YTJ_DUCKDB_PATH (profiles.yml) while finland_ytj_resolved_clickhouse
+# reads ytj_duckdb.path(). Set it unconditionally from the resource default so the two
+# never disagree (a stale env var must not silently point dbt at a different file).
+os.environ["FINLAND_YTJ_DUCKDB_PATH"] = str(_DEFAULT_DUCKDB_PATH)
 
 finland_resolved_dbt_project = DbtProject(
     project_dir=FINLAND_RESOLVED_DBT_PROJECT_DIR,
