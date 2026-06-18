@@ -594,3 +594,16 @@ def test_load_parsed_object_keys_returns_distinct_keys(tmp_path):
         "companies/a/2023-12-31.xml",
         "companies/b/2023-12-31.xml",
     }
+
+
+from dagster import AssetKey
+from dagster_v3.definitions import defs as load_project_defs
+
+
+def test_parse_asset_is_monthly_partitioned():
+    graph = load_project_defs().get_repository_def().asset_graph
+    node = graph.get(AssetKey(["fi_prh_xbrl_statement_documents"]))
+    assert node.partitions_def is not None
+    assert type(node.partitions_def).__name__ == "MonthlyPartitionsDefinition"
+    metrics = graph.get(AssetKey(["fi_prh_xbrl_financial_metrics"]))
+    assert metrics.partitions_def is None

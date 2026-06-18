@@ -42,6 +42,8 @@ DEFAULT_XBRL_REQUEST_DELAY_SECONDS = 1.0
 DEFAULT_XBRL_REQUEST_MAX_ATTEMPTS = 5
 DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS = 10.0
 DEFAULT_XBRL_RETRY_MAX_DELAY_SECONDS = 120.0
+FI_XBRL_PARSE_PARTITION_START = "2014-01-01"  # earliest registration month in scope; widen if needed
+fi_xbrl_parse_partitions = dg.MonthlyPartitionsDefinition(start_date=FI_XBRL_PARSE_PARTITION_START)
 XBRL_FINANCIAL_METRICS_MAPPING_VERSION = "finland-prh-xbrl-metrics-v1"
 XBRL_FINANCIAL_METRIC_MAP = {
     ("fi_met:md103", "fi_MC:x673"): "revenue",
@@ -686,6 +688,8 @@ def finland_xbrl_xml_documents(object_store: ObjectStoreResource) -> dg.Material
         )
         for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE)
     ],
+    partitions_def=fi_xbrl_parse_partitions,
+    pool="finland_ytj_duckdb",
 )
 def finland_xbrl_parsed_tables(
     context: dg.AssetExecutionContext,
@@ -693,35 +697,46 @@ def finland_xbrl_parsed_tables(
     object_store: ObjectStoreResource,
     source_duckdb: LocalDuckDBResource,
 ) -> Iterator[dg.MaterializeResult]:
-    documents_key = resolve_xbrl_documents_key(
-        config=config,
+    documents_key = resolve_xbrl_documents_key(config=config)
+    window = context.partition_time_window
+    window_start = window.start.date()
+    window_end = window.end.date()
+
+    documents, _meta = load_xbrl_document_manifest(
+        object_store=object_store, documents_key=documents_key
     )
-    documents, _ = load_xbrl_document_manifest(
-        object_store=object_store,
-        documents_key=documents_key,
+    in_window = documents_in_registration_window(
+        documents, window_start=window_start, window_end=window_end
     )
-    run_finland_xbrl_arelle_dlt_pipeline(
-        database_path=source_duckdb.path(),
-        object_store=object_store,
-        documents=documents,
-        run_id=context.run_id,
-        log_info=context.log.info,
+    to_parse = unparsed_documents(
+        in_window, parsed_object_keys=load_parsed_object_keys(source_duckdb)
     )
+    context.log.info(
+        "XBRL parse partition %s: %d catalog docs, %d in window, %d to parse",
+        context.partition_key, len(documents), len(in_window), len(to_parse),
+    )
+
+    if to_parse:
+        run_finland_xbrl_arelle_dlt_pipeline(
+            database_path=source_duckdb.path(),
+            object_store=object_store,
+            documents=to_parse,
+            run_id=context.run_id,
+            log_info=context.log.info,
+        )
+
     row_counts = parsed_duckdb_row_counts(source_duckdb)
-    observability_metadata = parsed_duckdb_observability_metadata(
-        object_store=object_store,
-        source_duckdb=source_duckdb,
-        documents_key=documents_key,
-    )
     for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE):
         yield dg.MaterializeResult(
             asset_key=table,
             metadata={
                 "duckdb_schema": XBRL_DLT_DATASET_NAME,
                 "duckdb_table": table,
+                "partition": context.partition_key,
+                "documents_in_window": len(in_window),
+                "documents_parsed_this_run": len(to_parse),
                 "row_count": row_counts[table],
                 "xml_documents_object_key": documents_key,
-                **observability_metadata,
             },
         )
 
