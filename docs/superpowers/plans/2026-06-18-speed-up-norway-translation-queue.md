@@ -51,3 +51,42 @@ cd /Users/graovic/pulsarpoint/ppoint/companycollect
 git add docs/superpowers/plans/2026-06-18-speed-up-norway-translation-queue.md corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets.py corpscout/dagster_v3/tests/test_norway_brreg_assets.py
 git commit -m "fix: skip reseeding existing norway translation queue"
 ```
+
+### Task 2: Make Fast Path Read-Only And Timed
+
+**Files:**
+- Modify: `corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets.py`
+- Test: `corpscout/dagster_v3/tests/test_norway_brreg_assets.py`
+
+- [x] **Step 1: Write a regression test proving the skip path does not initialize the queue**
+
+Create a seeded queue DuckDB, monkeypatch `TranslationQueue.initialize` to raise, and assert `seed_norway_brreg_translation_queue(...)` still returns `source_scan_skipped=True`.
+
+- [x] **Step 2: Replace `TranslationQueue.initialize()` in the skip path**
+
+Open the queue DuckDB with `duckdb.connect(str(queue_path), read_only=True)` and use `_translation_queue_summary_from_connection(connection, table_prefix="main")`.
+
+- [x] **Step 3: Add timing logs around queue seed and Temporal workflow start**
+
+Log before/after `seed_norway_brreg_translation_queue(...)` and before/after `start_translation_workflow(...)` in `norway_brreg_translation_queue`.
+
+- [x] **Step 4: Verify**
+
+Run:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3
+uv run pytest tests/test_norway_brreg_assets.py::test_seed_norway_brreg_translation_queue_skips_seeded_queue_source_scan tests/test_norway_brreg_assets.py::test_seed_norway_brreg_translation_queue_does_not_initialize_seeded_queue tests/test_norway_brreg_assets.py::test_seed_norway_brreg_translation_queue_refreshes_seeded_queue_when_configured -q
+uv run pytest tests/test_norway_brreg_assets.py tests/test_translation_queue.py -q
+uv run dg check defs
+```
+
+Expected: tests pass and definitions load.
+
+- [x] **Step 5: Commit**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect
+git add docs/superpowers/plans/2026-06-18-speed-up-norway-translation-queue.md corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets.py corpscout/dagster_v3/tests/test_norway_brreg_assets.py
+git commit -m "fix: make norway translation queue skip path read only"
+```

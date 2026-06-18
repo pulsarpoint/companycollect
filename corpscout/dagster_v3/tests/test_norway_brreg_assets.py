@@ -12,6 +12,7 @@ import dagster as dg
 import dlt
 import duckdb
 import pyarrow as pa
+import pytest
 from temporalio.client import WorkflowExecutionStatus
 from dagster_clickhouse import ClickhouseResource
 
@@ -578,6 +579,42 @@ def test_seed_norway_brreg_translation_queue_skips_seeded_queue_source_scan(
     assert counts["queue_total_items"] == 1
     assert counts["queue_location_items"] == 1
     assert counts["queue_pending_items"] == 1
+
+
+def test_seed_norway_brreg_translation_queue_does_not_initialize_seeded_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_duckdb_path = tmp_path / "missing_source.duckdb"
+    queue_duckdb_path = tmp_path / "translation_queue.duckdb"
+    queue = brreg_assets.TranslationQueue(queue_duckdb_path)
+    queue.initialize()
+    queue.enqueue_items(
+        [
+            brreg_assets.TranslationQueueItem(
+                source_duckdb_path=str(source_duckdb_path),
+                source_table="norway_brreg.entities",
+                source_pk="923609016",
+                source_field="activity_text_original",
+                source_text="Aktivitet",
+                target_language="en",
+            )
+        ]
+    )
+
+    def fail_initialize(self: object) -> None:
+        raise AssertionError("seeded queue fast path must not initialize queue tables")
+
+    monkeypatch.setattr(brreg_assets.TranslationQueue, "initialize", fail_initialize)
+
+    counts = brreg_assets.seed_norway_brreg_translation_queue(
+        source_duckdb_path=source_duckdb_path,
+        queue_duckdb_path=queue_duckdb_path,
+    )
+
+    assert counts["source_scan_skipped"] is True
+    assert counts["queue_total_items"] == 1
+    assert counts["queue_location_items"] == 1
 
 
 def test_seed_norway_brreg_translation_queue_refreshes_seeded_queue_when_configured(

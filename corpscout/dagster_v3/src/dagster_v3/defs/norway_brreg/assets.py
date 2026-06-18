@@ -304,11 +304,34 @@ def norway_brreg_translation_queue(
     context: AssetExecutionContext,
     config: NorwayBrregTranslationConfig,
 ) -> dg.MaterializeResult:
+    seed_started = perf_counter()
+    context.log.info(
+        "Starting Norway Brreg translation queue seed: queue_duckdb_path=%s "
+        "source_duckdb_path=%s refresh_existing_queue=%s",
+        NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
+        NORWAY_BRREG_DUCKDB_PATH,
+        config.refresh_existing_queue,
+    )
     counts = seed_norway_brreg_translation_queue(
         source_duckdb_path=NORWAY_BRREG_DUCKDB_PATH,
         queue_duckdb_path=NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
         log=context.log.info,
         refresh_existing_queue=config.refresh_existing_queue,
+    )
+    context.log.info(
+        "Finished Norway Brreg translation queue seed: elapsed_seconds=%.3f "
+        "source_scan_skipped=%s queue_total_items=%s queue_location_items=%s "
+        "queue_remaining_items=%s",
+        perf_counter() - seed_started,
+        counts["source_scan_skipped"],
+        counts["queue_total_items"],
+        counts["queue_location_items"],
+        counts["queue_remaining_items"],
+    )
+    workflow_started = perf_counter()
+    context.log.info(
+        "Starting Norway Brreg translation Temporal workflow: workflow_id=%s",
+        NORWAY_BRREG_TRANSLATION_WORKFLOW_ID,
     )
     workflow = start_translation_workflow(
         workflow_id=NORWAY_BRREG_TRANSLATION_WORKFLOW_ID,
@@ -326,6 +349,14 @@ def norway_brreg_translation_queue(
             activity_maximum_attempts=config.activity_maximum_attempts,
         ),
         temporal_address=config.temporal_address,
+    )
+    context.log.info(
+        "Finished Norway Brreg translation Temporal workflow start: elapsed_seconds=%.3f "
+        "workflow_id=%s workflow_run_id=%s workflow_task_queue=%s",
+        perf_counter() - workflow_started,
+        workflow["workflow_id"],
+        workflow["run_id"],
+        workflow["task_queue"],
     )
     metadata = {
         **counts,
@@ -654,10 +685,15 @@ def seed_norway_brreg_translation_queue(
     source_table = f"{DLT_DATASET_NAME}.{ENTITIES_TABLE}"
     start = perf_counter()
     if Path(queue_path).exists() and not refresh_existing_queue:
-        queue = TranslationQueue(queue_path)
-        queue.initialize()
-        summary = queue.summary()
-        if summary.location_items > 0:
+        try:
+            with duckdb.connect(str(queue_path), read_only=True) as connection:
+                summary = _translation_queue_summary_from_connection(
+                    connection,
+                    table_prefix="main",
+                )
+        except duckdb.CatalogException:
+            summary = None
+        if summary is not None and summary.location_items > 0:
             remaining_items = (
                 summary.pending_items + summary.leased_items + summary.failed_retryable_items
             )
