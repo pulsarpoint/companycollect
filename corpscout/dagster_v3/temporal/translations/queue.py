@@ -33,6 +33,7 @@ class TranslationQueueWorkflowInput:
 @dataclass(frozen=True)
 class TranslationQueueWorkflowOutput:
     total_items: int
+    location_items: int
     completed_items: int
     failed_retryable_items: int
     successful_batches: int
@@ -93,7 +94,7 @@ def process_translation_batch_once(
         if provider is None
         else str(getattr(provider, "model", type(provider).__name__))
     )
-    claimed = queue.claim_batch(limit=params.batch_size, worker_id=params.worker_id, model=model)
+    claimed = queue.claim_batch(limit=params.batch_size, worker_id=params.worker_id)
     if not claimed:
         return ProcessTranslationBatchResult(
             status="empty",
@@ -222,6 +223,7 @@ class TranslationQueueWorkflow:
         )
         return TranslationQueueWorkflowOutput(
             total_items=summary["total_items"],
+            location_items=summary["location_items"],
             completed_items=summary["completed_items"],
             failed_retryable_items=summary["failed_retryable_items"],
             successful_batches=summary["successful_batches"],
@@ -242,6 +244,7 @@ def summarize_translation_queue_once(duckdb_path: str) -> dict[str, int]:
     summary = TranslationQueue(duckdb_path).summary()
     return {
         "total_items": summary.total_items,
+        "location_items": summary.location_items,
         "pending_items": summary.pending_items,
         "leased_items": summary.leased_items,
         "completed_items": summary.completed_items,

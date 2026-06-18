@@ -32,6 +32,11 @@ class TranslationQueueItem:
 
     @property
     def item_id(self) -> str:
+        raw_id = "|".join([self.source_text_hash, self.target_language])
+        return hashlib.sha256(raw_id.encode("utf-8")).hexdigest()
+
+    @property
+    def location_id(self) -> str:
         raw_id = "|".join(
             [
                 self.source_duckdb_path,
@@ -49,7 +54,6 @@ class TranslationQueueItem:
 class ClaimedTranslationItem:
     item_id: str
     batch_id: str
-    source_field: str
     source_text: str
     target_language: str
     attempt_count: int
@@ -58,6 +62,7 @@ class ClaimedTranslationItem:
 @dataclass(frozen=True)
 class TranslationQueueSummary:
     total_items: int
+    location_items: int
     pending_items: int
     leased_items: int
     completed_items: int
@@ -96,14 +101,11 @@ class TranslationQueue:
         table_prefix: str = "",
     ) -> None:
         qualified_prefix = f"{table_prefix}." if table_prefix else ""
+        _migrate_legacy_location_item_schema(conn, qualified_prefix)
         conn.execute(
             f"""
             create table if not exists {qualified_prefix}translation_items (
                 item_id text primary key,
-                source_duckdb_path text not null,
-                source_table text not null,
-                source_pk text not null,
-                source_field text not null,
                 source_text text not null,
                 source_text_hash text not null,
                 target_language text not null,
@@ -121,23 +123,26 @@ class TranslationQueue:
         )
         conn.execute(
             f"""
-            create table if not exists {qualified_prefix}translation_results (
-                item_id text primary key,
-                translated_text text not null,
-                provider text not null,
-                completed_at timestamp not null
+            create table if not exists {qualified_prefix}translation_locations (
+                location_id text primary key,
+                item_id text not null,
+                source_duckdb_path text not null,
+                source_table text not null,
+                source_pk text not null,
+                source_field text not null,
+                created_at timestamp not null,
+                updated_at timestamp not null
             )
             """
         )
         conn.execute(
             f"""
-            create table if not exists {qualified_prefix}translation_cache (
-                model text not null,
-                source_text_hash text not null,
-                source_text text not null,
+            create table if not exists {qualified_prefix}translation_results (
+                item_id text primary key,
                 translated_text text not null,
-                completed_at timestamp not null,
-                primary key (model, source_text_hash)
+                provider text not null,
+                model text not null,
+                completed_at timestamp not null
             )
             """
         )
@@ -161,18 +166,29 @@ class TranslationQueue:
         if not items:
             return 0
         now = _now()
-        rows = [
+        item_rows = list(
+            {
+                item.item_id: (
+                    item.item_id,
+                    item.source_text,
+                    item.source_text_hash,
+                    item.target_language,
+                    QUEUE_STATUS_PENDING,
+                    0,
+                    now,
+                    now,
+                )
+                for item in items
+            }.values()
+        )
+        location_rows = [
             (
+                item.location_id,
                 item.item_id,
                 item.source_duckdb_path,
                 item.source_table,
                 item.source_pk,
                 item.source_field,
-                item.source_text,
-                item.source_text_hash,
-                item.target_language,
-                QUEUE_STATUS_PENDING,
-                0,
                 now,
                 now,
             )
@@ -183,10 +199,6 @@ class TranslationQueue:
                 """
                 insert into translation_items (
                     item_id,
-                    source_duckdb_path,
-                    source_table,
-                    source_pk,
-                    source_field,
                     source_text,
                     source_text_hash,
                     target_language,
@@ -195,35 +207,47 @@ class TranslationQueue:
                     created_at,
                     updated_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict (item_id) do nothing
                 """,
-                rows,
+                item_rows,
             )
-            return len(rows)
+            conn.executemany(
+                """
+                insert into translation_locations (
+                    location_id,
+                    item_id,
+                    source_duckdb_path,
+                    source_table,
+                    source_pk,
+                    source_field,
+                    created_at,
+                    updated_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict (location_id) do nothing
+                """,
+                location_rows,
+            )
+            return len(item_rows)
 
     def claim_batch(
         self,
         *,
         limit: int,
         worker_id: str,
-        model: str,
     ) -> list[ClaimedTranslationItem]:
         batch_id = str(uuid4())
         now = _now()
         with self._connect() as conn:
-            self._complete_cached_items(conn, model=model, status=QUEUE_STATUS_PENDING)
-            self._complete_cached_items(conn, model=model, status=QUEUE_STATUS_FAILED_RETRYABLE)
-            rows = self._claimable_uncached_rows(
+            rows = self._claimable_rows(
                 conn,
-                model=model,
                 status=QUEUE_STATUS_PENDING,
                 limit=limit,
             )
             if not rows:
-                rows = self._claimable_uncached_rows(
+                rows = self._claimable_rows(
                     conn,
-                    model=model,
                     status=QUEUE_STATUS_FAILED_RETRYABLE,
                     limit=limit,
                 )
@@ -258,10 +282,9 @@ class TranslationQueue:
                 ClaimedTranslationItem(
                     item_id=row[0],
                     batch_id=batch_id,
-                    source_field=row[1],
-                    source_text=row[2],
-                    target_language=row[3],
-                    attempt_count=row[4],
+                    source_text=row[1],
+                    target_language=row[2],
+                    attempt_count=row[3],
                 )
                 for row in rows
             ]
@@ -291,37 +314,17 @@ class TranslationQueue:
                     item_id,
                     translated_text,
                     provider,
-                    completed_at
-                )
-                values (?, ?, ?, ?)
-                """,
-                [
-                    (
-                        item.item_id,
-                        translation_by_id[item.item_id].translated_text,
-                        provider,
-                        now,
-                    )
-                    for item in items
-                ],
-            )
-            conn.executemany(
-                """
-                insert or replace into translation_cache (
                     model,
-                    source_text_hash,
-                    source_text,
-                    translated_text,
                     completed_at
                 )
                 values (?, ?, ?, ?, ?)
                 """,
                 [
                     (
-                        model,
-                        hashlib.sha256(item.source_text.encode("utf-8")).hexdigest(),
-                        item.source_text,
+                        item.item_id,
                         translation_by_id[item.item_id].translated_text,
+                        provider,
+                        model,
                         now,
                     )
                     for item in items
@@ -406,6 +409,7 @@ class TranslationQueue:
         with self._connect() as conn:
             return TranslationQueueSummary(
                 total_items=self._count(conn, "translation_items", None),
+                location_items=self._count(conn, "translation_locations", None),
                 pending_items=self._count(conn, "translation_items", QUEUE_STATUS_PENDING),
                 leased_items=self._count(conn, "translation_items", QUEUE_STATUS_LEASED),
                 completed_items=self._count(conn, "translation_items", QUEUE_STATUS_COMPLETED),
@@ -422,27 +426,24 @@ class TranslationQueue:
         with self._connect() as conn:
             return self._count(conn, "translation_results", None)
 
-    def cache_count(self) -> int:
-        with self._connect() as conn:
-            return self._count(conn, "translation_cache", None)
-
     def completed_results(self) -> list[CompletedTranslationQueueResult]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 select
-                    i.item_id,
-                    i.source_duckdb_path,
-                    i.source_table,
-                    i.source_pk,
-                    i.source_field,
+                    l.location_id,
+                    l.source_duckdb_path,
+                    l.source_table,
+                    l.source_pk,
+                    l.source_field,
                     i.source_text_hash,
                     i.target_language,
                     r.translated_text
                 from translation_items i
+                join translation_locations l on l.item_id = i.item_id
                 join translation_results r on r.item_id = i.item_id
                 where i.status = ?
-                order by i.source_table, i.source_pk, i.source_field, i.item_id
+                order by l.source_table, l.source_pk, l.source_field, l.location_id
                 """,
                 [QUEUE_STATUS_COMPLETED],
             ).fetchall()
@@ -463,95 +464,22 @@ class TranslationQueue:
     def _connect(self) -> duckdb.DuckDBPyConnection:
         return duckdb.connect(str(self.duckdb_path))
 
-    def _complete_cached_items(
+    def _claimable_rows(
         self,
         conn: duckdb.DuckDBPyConnection,
         *,
-        model: str,
-        status: str,
-    ) -> None:
-        now = _now()
-        conn.execute(
-            """
-            insert or replace into translation_results (
-                item_id,
-                translated_text,
-                provider,
-                completed_at
-            )
-            select
-                i.item_id,
-                c.translated_text,
-                'cache',
-                ?
-            from translation_items i
-            join translation_cache c
-              on c.model = ?
-             and c.source_text_hash = i.source_text_hash
-            where i.status = ?
-            """,
-            [now, model, status],
-        )
-        conn.execute(
-            """
-            update translation_items
-            set
-                status = ?,
-                leased_by = null,
-                leased_at = null,
-                batch_id = null,
-                last_error_category = null,
-                last_error_message = null,
-                updated_at = ?
-            where status = ?
-              and exists (
-                  select 1
-                  from translation_cache c
-                  where c.model = ?
-                    and c.source_text_hash = translation_items.source_text_hash
-              )
-            """,
-            [QUEUE_STATUS_COMPLETED, now, status, model],
-        )
-
-    def _claimable_uncached_rows(
-        self,
-        conn: duckdb.DuckDBPyConnection,
-        *,
-        model: str,
         status: str,
         limit: int,
-    ) -> list[tuple[str, str, str, str, int]]:
+    ) -> list[tuple[str, str, str, int]]:
         return conn.execute(
             """
-            select item_id, source_field, source_text, target_language, attempt_count
-            from (
-                select
-                    item_id,
-                    source_field,
-                    source_text,
-                    target_language,
-                    attempt_count,
-                    source_table,
-                    source_pk,
-                    row_number() over (
-                        partition by source_text_hash
-                        order by source_table, source_pk, source_field, item_id
-                    ) as source_text_rank
-                from translation_items
-                where status = ?
-                  and not exists (
-                      select 1
-                      from translation_cache c
-                      where c.model = ?
-                        and c.source_text_hash = translation_items.source_text_hash
-                  )
-            )
-            where source_text_rank = 1
-            order by source_table, source_pk, source_field, item_id
+            select item_id, source_text, target_language, attempt_count
+            from translation_items
+            where status = ?
+            order by created_at, item_id
             limit ?
             """,
-            [status, model, limit],
+            [status, limit],
         ).fetchall()
 
     def _insert_batch_attempt(
@@ -616,6 +544,117 @@ def _single_batch_id(items: list[ClaimedTranslationItem]) -> str:
     if len(batch_ids) != 1:
         raise ValueError(f"expected one batch_id, got {sorted(batch_ids)}")
     return next(iter(batch_ids))
+
+
+def _migrate_legacy_location_item_schema(
+    conn: duckdb.DuckDBPyConnection,
+    qualified_prefix: str,
+) -> None:
+    columns = _table_columns(conn, qualified_prefix, "translation_items")
+    if not {"source_table", "source_pk", "source_field"}.issubset(columns):
+        return
+
+    conn.execute(f"drop table if exists {qualified_prefix}translation_items_migrated")
+    conn.execute(f"drop table if exists {qualified_prefix}translation_locations_migrated")
+    conn.execute(f"drop table if exists {qualified_prefix}translation_results_migrated")
+    conn.execute(
+        f"""
+        create table {qualified_prefix}translation_locations_migrated as
+        select
+            item_id as location_id,
+            sha256(concat_ws('|', source_text_hash, target_language)) as item_id,
+            source_duckdb_path,
+            source_table,
+            source_pk,
+            source_field,
+            created_at,
+            updated_at
+        from {qualified_prefix}translation_items
+        """
+    )
+    conn.execute(
+        f"""
+        create table {qualified_prefix}translation_results_migrated as
+        select
+            item_id,
+            translated_text,
+            provider,
+            'legacy' as model,
+            completed_at
+        from (
+            select
+                sha256(concat_ws('|', i.source_text_hash, i.target_language)) as item_id,
+                r.translated_text,
+                r.provider,
+                r.completed_at,
+                row_number() over (
+                    partition by sha256(concat_ws('|', i.source_text_hash, i.target_language))
+                    order by r.completed_at desc, i.item_id
+                ) as result_rank
+            from {qualified_prefix}translation_items i
+            join {qualified_prefix}translation_results r on r.item_id = i.item_id
+        )
+        where result_rank = 1
+        """
+    )
+    conn.execute(
+        f"""
+        create table {qualified_prefix}translation_items_migrated as
+        select
+            sha256(concat_ws('|', i.source_text_hash, i.target_language)) as item_id,
+            any_value(i.source_text) as source_text,
+            i.source_text_hash,
+            i.target_language,
+            case
+                when r.item_id is not null then 'completed'
+                when max(case when i.status = 'failed_retryable' then 1 else 0 end) = 1
+                    then 'failed_retryable'
+                else 'pending'
+            end as status,
+            max(i.attempt_count) as attempt_count,
+            null::text as leased_by,
+            null::timestamp as leased_at,
+            null::text as batch_id,
+            max(i.last_error_category) as last_error_category,
+            max(i.last_error_message) as last_error_message,
+            min(i.created_at) as created_at,
+            current_timestamp as updated_at
+        from {qualified_prefix}translation_items i
+        left join {qualified_prefix}translation_results_migrated r
+          on r.item_id = sha256(concat_ws('|', i.source_text_hash, i.target_language))
+        group by
+            sha256(concat_ws('|', i.source_text_hash, i.target_language)),
+            i.source_text_hash,
+            i.target_language,
+            r.item_id
+        """
+    )
+    conn.execute(f"drop table {qualified_prefix}translation_items")
+    conn.execute(f"drop table {qualified_prefix}translation_results")
+    conn.execute(f"drop table if exists {qualified_prefix}translation_locations")
+    conn.execute(f"drop table if exists {qualified_prefix}translation_cache")
+    conn.execute(
+        f"alter table {qualified_prefix}translation_items_migrated rename to translation_items"
+    )
+    conn.execute(
+        f"alter table {qualified_prefix}translation_locations_migrated rename to translation_locations"
+    )
+    conn.execute(
+        f"alter table {qualified_prefix}translation_results_migrated rename to translation_results"
+    )
+
+
+def _table_columns(
+    conn: duckdb.DuckDBPyConnection,
+    qualified_prefix: str,
+    table_name: str,
+) -> set[str]:
+    qualified_name = f"{qualified_prefix}{table_name}"
+    try:
+        rows = conn.execute(f"pragma table_info('{qualified_name}')").fetchall()
+    except duckdb.CatalogException:
+        return set()
+    return {str(row[1]) for row in rows}
 
 
 def _now() -> datetime:

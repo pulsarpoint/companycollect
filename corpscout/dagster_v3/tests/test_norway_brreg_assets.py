@@ -497,7 +497,8 @@ def test_seed_norway_brreg_translation_queue_reads_entities_duckdb(tmp_path: Pat
 
     assert counts["source_rows"] == 1
     assert counts["candidate_items"] == 3
-    assert counts["queue_total_items"] == 3
+    assert counts["queue_total_items"] == 2
+    assert counts["queue_location_items"] == 3
 
 
 def test_seed_norway_brreg_translation_queue_only_needs_translation_columns(
@@ -539,6 +540,7 @@ def test_seed_norway_brreg_translation_queue_only_needs_translation_columns(
     assert counts["source_rows"] == 2
     assert counts["candidate_items"] == 3
     assert counts["queue_total_items"] == 3
+    assert counts["queue_location_items"] == 3
     assert any("Counting Norway Brreg translation candidates" in message for message in log_messages)
     assert any("Inserted Norway Brreg translation queue candidates" in message for message in log_messages)
 
@@ -1267,31 +1269,18 @@ def _queue_status_metadata_for_test(**overrides: Any) -> dict[str, Any]:
         "queue_available": True,
         "queue_duckdb_path": "test-translation-queue.duckdb",
         "queue_total_items": 10,
+        "queue_location_items": 14,
         "queue_remaining_items": 7,
         "queue_pending_items": 6,
         "queue_leased_items": 1,
         "queue_completed_items": 3,
         "queue_failed_retryable_items": 0,
         "queue_result_items": 3,
-        "queue_cache_items": 2,
         "queue_batch_attempts": 5,
         "queue_successful_batches": 5,
         "queue_failed_batches": 0,
         "queue_completed_percent": 30.0,
         "queue_error": "",
-        "queue_translation_model": "qwen3:6b",
-        "queue_cache_model_scope": "qwen3:6b",
-        "queue_unique_source_texts": 5,
-        "queue_cached_unique_source_texts": 3,
-        "queue_uncached_unique_source_texts": 2,
-        "queue_completed_unique_source_texts": 2,
-        "queue_remaining_unique_source_texts": 4,
-        "queue_remaining_cached_unique_source_texts": 2,
-        "queue_remaining_uncached_unique_source_texts": 2,
-        "queue_remaining_cached_items": 4,
-        "queue_remaining_uncached_items": 3,
-        "queue_unique_source_texts_translated_percent": 60.0,
-        "queue_remaining_unique_source_texts_translated_percent": 50.0,
     }
     metadata.update(overrides)
     return metadata
@@ -1539,7 +1528,7 @@ def test_norway_translation_queue_status_metadata_reports_progress(tmp_path: Pat
             ),
         ]
     )
-    claimed = queue.claim_batch(limit=1, worker_id="test-worker", model="qwen3:6b")
+    claimed = queue.claim_batch(limit=1, worker_id="test-worker")
     queue.complete_batch(
         claimed,
         [
@@ -1555,31 +1544,15 @@ def test_norway_translation_queue_status_metadata_reports_progress(tmp_path: Pat
 
     metadata = brreg_assets.norway_brreg_translation_queue_status_metadata(
         queue_duckdb_path=queue_duckdb_path,
-        translation_model="qwen3:6b",
     )
 
     assert metadata["queue_available"] is True
-    assert metadata["queue_total_items"] == 3
-    assert metadata["queue_total_rows"] == 3
-    assert metadata["queue_remaining_items"] == 2
-    assert metadata["queue_remaining_rows"] == 2
-    assert metadata["queue_pending_items"] == 2
+    assert metadata["queue_total_items"] == 2
+    assert metadata["queue_location_items"] == 3
+    assert metadata["queue_remaining_items"] == 1
+    assert metadata["queue_pending_items"] == 1
     assert metadata["queue_completed_items"] == 1
     assert metadata["queue_result_items"] == 1
-    assert metadata["queue_cache_items"] == 1
     assert metadata["queue_batch_attempts"] == 1
     assert metadata["queue_successful_batches"] == 1
-    assert metadata["queue_completed_percent"] == 33.333
-    assert metadata["queue_translation_model"] == "qwen3:6b"
-    assert metadata["queue_cache_model_scope"] == "qwen3:6b"
-    assert metadata["queue_unique_source_texts"] == 2
-    assert metadata["queue_cached_unique_source_texts"] == 1
-    assert metadata["queue_uncached_unique_source_texts"] == 1
-    assert metadata["queue_completed_unique_source_texts"] == 1
-    assert metadata["queue_remaining_unique_source_texts"] == 2
-    assert metadata["queue_remaining_cached_unique_source_texts"] == 1
-    assert metadata["queue_remaining_uncached_unique_source_texts"] == 1
-    assert metadata["queue_remaining_cached_items"] == 1
-    assert metadata["queue_remaining_uncached_items"] == 1
-    assert metadata["queue_unique_source_texts_translated_percent"] == 50.0
-    assert metadata["queue_remaining_unique_source_texts_translated_percent"] == 50.0
+    assert metadata["queue_completed_percent"] == 50.0
