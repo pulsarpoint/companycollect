@@ -1,0 +1,9 @@
+finland_resolved:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('FINLAND_YTJ_DUCKDB_PATH', 'data/finland_ytj.duckdb') }}"
+      schema: finland_resolved
+      plugins:
+        - module: dagster_v3.defs.finland_resolved.dbt_plugin

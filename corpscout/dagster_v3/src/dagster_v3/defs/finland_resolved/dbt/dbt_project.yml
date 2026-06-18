@@ -1,0 +1,12 @@
+name: finland_resolved
+version: "1.0"
+config-version: 2
+profile: finland_resolved
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  finland_resolved:
+    +materialized: table
