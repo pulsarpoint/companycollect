@@ -735,7 +735,7 @@ def finland_xbrl_parsed_tables(
                 "partition": context.partition_key,
                 "documents_in_window": len(in_window),
                 "documents_parsed_this_run": len(to_parse),
-                "row_count": row_counts[table],
+                "total_table_row_count": row_counts[table],
                 "xml_documents_object_key": documents_key,
             },
         )
@@ -1029,14 +1029,21 @@ def load_parsed_table_frame(source_duckdb: LocalDuckDBResource, *, table: str) -
 
 
 def parsed_duckdb_row_counts(source_duckdb: LocalDuckDBResource) -> dict[str, int]:
+    parsed_tables = (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE)
+    if not source_duckdb.path().exists():
+        return {table: 0 for table in parsed_tables}
     with source_duckdb.connect(read_only=True) as connection:
         return {
-            table: int(
-                connection.execute(
-                    f"select count(*) from {XBRL_DLT_DATASET_NAME}.{table}"
-                ).fetchone()[0]
+            table: (
+                int(
+                    connection.execute(
+                        f"select count(*) from {XBRL_DLT_DATASET_NAME}.{table}"
+                    ).fetchone()[0]
+                )
+                if _duckdb_table_exists(connection, table=table)
+                else 0
             )
-            for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE)
+            for table in parsed_tables
         }
 
 

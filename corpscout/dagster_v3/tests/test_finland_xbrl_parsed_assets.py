@@ -576,6 +576,15 @@ def test_load_parsed_object_keys_empty_when_no_table(tmp_path):
     assert xbrl.load_parsed_object_keys(res) == set()
 
 
+def test_parsed_duckdb_row_counts_zero_on_missing_db(tmp_path):
+    # An empty partition skips the parse, so the tables/db may not exist yet.
+    res = _xbrl_resource(tmp_path)
+    assert xbrl.parsed_duckdb_row_counts(res) == {
+        xbrl.tables.STATEMENT_DOCUMENTS_TABLE: 0,
+        xbrl.tables.FACTS_TABLE: 0,
+    }
+
+
 def test_load_parsed_object_keys_returns_distinct_keys(tmp_path):
     res = _xbrl_resource(tmp_path)
     with res.connect() as conn:
