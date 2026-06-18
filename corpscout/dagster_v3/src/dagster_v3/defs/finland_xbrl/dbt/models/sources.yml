@@ -1,0 +1,31 @@
+version: 2
+
+sources:
+  - name: finland_prh_xbrl
+    schema: finland_prh_xbrl
+    tables:
+      - name: financial_reports
+        meta:
+          dagster:
+            asset_key: ["finland_xbrl_financial_reports_duckdb"]
+      - name: fi_prh_xbrl_statement_documents
+        meta:
+          dagster:
+            asset_key: ["fi_prh_xbrl_statement_documents"]
+      - name: fi_prh_xbrl_facts_raw
+        meta:
+          dagster:
+            asset_key: ["fi_prh_xbrl_facts_raw"]
+  - name: finland_prhytj
+    schema: finland_prhytj
+    tables:
+      - name: all_companies
+        meta:
+          dagster:
+            asset_key: ["finland_ytj_all_companies_duckdb"]
+
+models:
+  - name: eligible_financial_reports
+    columns:
+      - name: business_id
+        data_tests: [not_null]
