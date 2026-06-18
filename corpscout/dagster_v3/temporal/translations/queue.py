@@ -101,13 +101,17 @@ def process_translation_batch_once(
         provider_input.item_id: claimed_item.item_id
         for provider_input, claimed_item in zip(provider_inputs, claimed, strict=True)
     }
-    active_provider = provider or LocalOpenAICompatibleTranslationProvider(
-        base_url=os.environ["TRANSLATION_PROVIDER_LOCAL_BASE_URL"],
-        model=os.environ["TRANSLATION_PROVIDER_LOCAL_MODEL"],
-        api_key=os.getenv("TRANSLATION_PROVIDER_LOCAL_API_KEY", "not-needed"),
-        max_tokens=params.max_tokens,
-        extra_body=_parse_extra_body(params.extra_body_json),
-    )
+    close_provider = provider is None
+    if provider is None:
+        active_provider = LocalOpenAICompatibleTranslationProvider(
+            base_url=os.environ["TRANSLATION_PROVIDER_LOCAL_BASE_URL"],
+            model=os.environ["TRANSLATION_PROVIDER_LOCAL_MODEL"],
+            api_key=os.getenv("TRANSLATION_PROVIDER_LOCAL_API_KEY", "not-needed"),
+            max_tokens=params.max_tokens,
+            extra_body=_parse_extra_body(params.extra_body_json),
+        )
+    else:
+        active_provider = provider
 
     started_at = time.perf_counter()
     try:
@@ -119,6 +123,8 @@ def process_translation_batch_once(
         duration_seconds = _elapsed_seconds(started_at)
         error_category = _categorize_exception(exc)
         error_message = str(exc)
+        if close_provider:
+            active_provider.close()
         queue.fail_batch(
             claimed,
             error_category=error_category,
@@ -134,6 +140,8 @@ def process_translation_batch_once(
         )
 
     duration_seconds = _elapsed_seconds(started_at)
+    if close_provider:
+        active_provider.close()
     queue.complete_batch(
         claimed,
         _map_provider_results_to_queue_ids(

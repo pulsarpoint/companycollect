@@ -49,6 +49,42 @@ class _FailingProvider:
         raise ValueError("invalid json")
 
 
+class _CloseTrackingSuccessfulProvider:
+    instances: list["_CloseTrackingSuccessfulProvider"] = []
+
+    def __init__(self, **kwargs: object) -> None:
+        self.closed = False
+        self.seen_kwargs = kwargs
+        self.instances.append(self)
+
+    def translate(
+        self,
+        items: list[SmokeTranslationInput],
+        *,
+        timeout_seconds: int,
+    ) -> list[SmokeTranslationResult]:
+        return [
+            SmokeTranslationResult(
+                item_id=item.item_id,
+                translated_text=f"English {item.source_text}",
+            )
+            for item in items
+        ]
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _CloseTrackingFailingProvider(_CloseTrackingSuccessfulProvider):
+    def translate(
+        self,
+        items: list[SmokeTranslationInput],
+        *,
+        timeout_seconds: int,
+    ) -> list[SmokeTranslationResult]:
+        raise ValueError("invalid json")
+
+
 EXTRA_BODY_JSON = '{"chat_template_kwargs":{"enable_thinking":false}}'
 
 
@@ -179,6 +215,82 @@ def test_process_translation_batch_once_marks_failed_batch_retryable(tmp_path) -
     assert summary.completed_items == 0
     assert summary.failed_retryable_items == 50
     assert summary.failed_batches == 1
+
+
+def test_process_translation_batch_once_closes_owned_provider_on_success(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import translations.smoke as smoke
+
+    _CloseTrackingSuccessfulProvider.instances = []
+    monkeypatch.setattr(
+        smoke,
+        "LocalOpenAICompatibleTranslationProvider",
+        _CloseTrackingSuccessfulProvider,
+    )
+    monkeypatch.setenv("TRANSLATION_PROVIDER_LOCAL_BASE_URL", "http://example.test/v1")
+    monkeypatch.setenv("TRANSLATION_PROVIDER_LOCAL_MODEL", "qwen3:6b")
+    duckdb_path = tmp_path / "translations.duckdb"
+    queue = TranslationQueue(duckdb_path)
+    queue.initialize()
+    queue.enqueue_items(
+        generate_synthetic_translation_items(2, source_duckdb_path=str(duckdb_path))
+    )
+
+    result = process_translation_batch_once(
+        ProcessTranslationBatchInput(
+            duckdb_path=str(duckdb_path),
+            batch_size=2,
+            timeout_seconds=30,
+            worker_id="worker-a",
+            max_tokens=4096,
+            extra_body_json=EXTRA_BODY_JSON,
+        )
+    )
+
+    assert result.status == "success"
+    assert len(_CloseTrackingSuccessfulProvider.instances) == 1
+    assert _CloseTrackingSuccessfulProvider.instances[0].closed is True
+    assert queue.summary().completed_items == 2
+
+
+def test_process_translation_batch_once_closes_owned_provider_on_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import translations.smoke as smoke
+
+    _CloseTrackingFailingProvider.instances = []
+    monkeypatch.setattr(
+        smoke,
+        "LocalOpenAICompatibleTranslationProvider",
+        _CloseTrackingFailingProvider,
+    )
+    monkeypatch.setenv("TRANSLATION_PROVIDER_LOCAL_BASE_URL", "http://example.test/v1")
+    monkeypatch.setenv("TRANSLATION_PROVIDER_LOCAL_MODEL", "qwen3:6b")
+    duckdb_path = tmp_path / "translations.duckdb"
+    queue = TranslationQueue(duckdb_path)
+    queue.initialize()
+    queue.enqueue_items(
+        generate_synthetic_translation_items(2, source_duckdb_path=str(duckdb_path))
+    )
+
+    result = process_translation_batch_once(
+        ProcessTranslationBatchInput(
+            duckdb_path=str(duckdb_path),
+            batch_size=2,
+            timeout_seconds=30,
+            worker_id="worker-a",
+            max_tokens=4096,
+            extra_body_json=EXTRA_BODY_JSON,
+        )
+    )
+
+    assert result.status == "failed"
+    assert len(_CloseTrackingFailingProvider.instances) == 1
+    assert _CloseTrackingFailingProvider.instances[0].closed is True
+    assert queue.summary().failed_retryable_items == 2
 
 
 def test_process_translation_batch_once_returns_empty_when_no_work(tmp_path) -> None:

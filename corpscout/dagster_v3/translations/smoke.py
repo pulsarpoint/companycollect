@@ -84,11 +84,15 @@ class LocalOpenAICompatibleTranslationProvider:
         self.api_key = api_key
         self.max_tokens = max_tokens
         self.extra_body = extra_body if extra_body is not None else DEFAULT_EXTRA_BODY
-        self.client = client or OpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            max_retries=0,
-        )
+        self._owns_client = client is None
+        if client is None:
+            self.client = OpenAI(
+                base_url=self.base_url,
+                api_key=self.api_key,
+                max_retries=0,
+            )
+        else:
+            self.client = client
 
     def translate(
         self,
@@ -112,6 +116,10 @@ class LocalOpenAICompatibleTranslationProvider:
             content,
             expected_item_ids={item.item_id for item in items},
         )
+
+    def close(self) -> None:
+        if self._owns_client:
+            self.client.close()
 
 
 def _strip_json_fence(response_text: str) -> str:

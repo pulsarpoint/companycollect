@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from translations.provider_smoke import run_translation_provider_smoke
+import translations.smoke as smoke
 from translations.smoke import (
     LocalOpenAICompatibleTranslationProvider,
     build_smoke_translation_prompt,
@@ -55,6 +56,10 @@ class _FakeOpenAIClient:
     def __init__(self) -> None:
         self.completions = _FakeChatCompletions()
         self.chat = self
+        self.close_called = False
+
+    def close(self) -> None:
+        self.close_called = True
 
 
 class _FakeOpenAIResponse:
@@ -139,6 +144,34 @@ def test_local_provider_defaults_to_qwen_thinking_disabled_and_large_batch_token
     assert client.completions.kwargs["extra_body"] == {
         "chat_template_kwargs": {"enable_thinking": False}
     }
+
+
+def test_local_provider_closes_owned_client(monkeypatch) -> None:
+    client = _FakeOpenAIClient()
+    monkeypatch.setattr(smoke, "OpenAI", lambda **kwargs: client)
+    provider = LocalOpenAICompatibleTranslationProvider(
+        base_url="http://example.test/v1",
+        model="qwen3:6b",
+        api_key="not-needed",
+    )
+
+    provider.close()
+
+    assert client.close_called is True
+
+
+def test_local_provider_does_not_close_injected_client() -> None:
+    client = _FakeOpenAIClient()
+    provider = LocalOpenAICompatibleTranslationProvider(
+        base_url="http://example.test/v1",
+        model="qwen3:6b",
+        api_key="not-needed",
+        client=client,
+    )
+
+    provider.close()
+
+    assert client.close_called is False
 
 
 def test_run_translation_provider_smoke_records_success_for_each_batch_size() -> None:
