@@ -454,6 +454,16 @@ def test_norway_resolved_migration_covers_exported_columns() -> None:
             assert f"    {column_name} " in sql
 
 
+def test_norway_financial_statements_sort_key_avoids_nullable_fiscal_year() -> None:
+    sql = _migration_sql("000012_corpscout_norway_resolved_and_domains.up.sql")
+
+    assert "ORDER BY (org_number, fiscal_year, accounts_type, source_record_id)" not in sql
+    assert (
+        "ORDER BY (org_number, ifNull(fiscal_year, 0), accounts_type, source_record_id)"
+        in sql
+    )
+
+
 def test_country_domain_migration_covers_exported_columns() -> None:
     sql = _migration_sql("000012_corpscout_norway_resolved_and_domains.up.sql")
 

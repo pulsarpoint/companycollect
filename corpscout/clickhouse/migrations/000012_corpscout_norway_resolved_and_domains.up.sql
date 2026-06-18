@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS corpscout.no_financial_statements
     resolved_at DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(resolved_at)
-ORDER BY (org_number, fiscal_year, accounts_type, source_record_id);
+ORDER BY (org_number, ifNull(fiscal_year, 0), accounts_type, source_record_id);
 
 CREATE TABLE IF NOT EXISTS corpscout.company_website_domains
 (
