@@ -131,6 +131,18 @@ class TranslationQueue:
         )
         conn.execute(
             f"""
+            create table if not exists {qualified_prefix}translation_cache (
+                model text not null,
+                source_text_hash text not null,
+                source_text text not null,
+                translated_text text not null,
+                completed_at timestamp not null,
+                primary key (model, source_text_hash)
+            )
+            """
+        )
+        conn.execute(
+            f"""
             create table if not exists {qualified_prefix}translation_batch_attempts (
                 batch_id text primary key,
                 worker_id text not null,
@@ -190,31 +202,31 @@ class TranslationQueue:
             )
             return len(rows)
 
-    def claim_batch(self, *, limit: int, worker_id: str) -> list[ClaimedTranslationItem]:
+    def claim_batch(
+        self,
+        *,
+        limit: int,
+        worker_id: str,
+        model: str,
+    ) -> list[ClaimedTranslationItem]:
         batch_id = str(uuid4())
         now = _now()
         with self._connect() as conn:
-            rows = conn.execute(
-                """
-                select item_id, source_field, source_text, target_language, attempt_count
-                from translation_items
-                where status = ?
-                order by source_table, source_pk, source_field, item_id
-                limit ?
-                """,
-                [QUEUE_STATUS_PENDING, limit],
-            ).fetchall()
+            self._complete_cached_items(conn, model=model, status=QUEUE_STATUS_PENDING)
+            self._complete_cached_items(conn, model=model, status=QUEUE_STATUS_FAILED_RETRYABLE)
+            rows = self._claimable_uncached_rows(
+                conn,
+                model=model,
+                status=QUEUE_STATUS_PENDING,
+                limit=limit,
+            )
             if not rows:
-                rows = conn.execute(
-                    """
-                    select item_id, source_field, source_text, target_language, attempt_count
-                    from translation_items
-                    where status = ?
-                    order by source_table, source_pk, source_field, item_id
-                    limit ?
-                    """,
-                    [QUEUE_STATUS_FAILED_RETRYABLE, limit],
-                ).fetchall()
+                rows = self._claimable_uncached_rows(
+                    conn,
+                    model=model,
+                    status=QUEUE_STATUS_FAILED_RETRYABLE,
+                    limit=limit,
+                )
             if not rows:
                 return []
 
@@ -260,6 +272,7 @@ class TranslationQueue:
         translations: list[SmokeTranslationResult],
         *,
         provider: str,
+        model: str,
         duration_seconds: float,
     ) -> None:
         if not items:
@@ -287,6 +300,28 @@ class TranslationQueue:
                         item.item_id,
                         translation_by_id[item.item_id].translated_text,
                         provider,
+                        now,
+                    )
+                    for item in items
+                ],
+            )
+            conn.executemany(
+                """
+                insert or replace into translation_cache (
+                    model,
+                    source_text_hash,
+                    source_text,
+                    translated_text,
+                    completed_at
+                )
+                values (?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        model,
+                        hashlib.sha256(item.source_text.encode("utf-8")).hexdigest(),
+                        item.source_text,
+                        translation_by_id[item.item_id].translated_text,
                         now,
                     )
                     for item in items
@@ -387,6 +422,10 @@ class TranslationQueue:
         with self._connect() as conn:
             return self._count(conn, "translation_results", None)
 
+    def cache_count(self) -> int:
+        with self._connect() as conn:
+            return self._count(conn, "translation_cache", None)
+
     def completed_results(self) -> list[CompletedTranslationQueueResult]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -423,6 +462,97 @@ class TranslationQueue:
 
     def _connect(self) -> duckdb.DuckDBPyConnection:
         return duckdb.connect(str(self.duckdb_path))
+
+    def _complete_cached_items(
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        *,
+        model: str,
+        status: str,
+    ) -> None:
+        now = _now()
+        conn.execute(
+            """
+            insert or replace into translation_results (
+                item_id,
+                translated_text,
+                provider,
+                completed_at
+            )
+            select
+                i.item_id,
+                c.translated_text,
+                'cache',
+                ?
+            from translation_items i
+            join translation_cache c
+              on c.model = ?
+             and c.source_text_hash = i.source_text_hash
+            where i.status = ?
+            """,
+            [now, model, status],
+        )
+        conn.execute(
+            """
+            update translation_items
+            set
+                status = ?,
+                leased_by = null,
+                leased_at = null,
+                batch_id = null,
+                last_error_category = null,
+                last_error_message = null,
+                updated_at = ?
+            where status = ?
+              and exists (
+                  select 1
+                  from translation_cache c
+                  where c.model = ?
+                    and c.source_text_hash = translation_items.source_text_hash
+              )
+            """,
+            [QUEUE_STATUS_COMPLETED, now, status, model],
+        )
+
+    def _claimable_uncached_rows(
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        *,
+        model: str,
+        status: str,
+        limit: int,
+    ) -> list[tuple[str, str, str, str, int]]:
+        return conn.execute(
+            """
+            select item_id, source_field, source_text, target_language, attempt_count
+            from (
+                select
+                    item_id,
+                    source_field,
+                    source_text,
+                    target_language,
+                    attempt_count,
+                    source_table,
+                    source_pk,
+                    row_number() over (
+                        partition by source_text_hash
+                        order by source_table, source_pk, source_field, item_id
+                    ) as source_text_rank
+                from translation_items
+                where status = ?
+                  and not exists (
+                      select 1
+                      from translation_cache c
+                      where c.model = ?
+                        and c.source_text_hash = translation_items.source_text_hash
+                  )
+            )
+            where source_text_rank = 1
+            order by source_table, source_pk, source_field, item_id
+            limit ?
+            """,
+            [status, model, limit],
+        ).fetchall()
 
     def _insert_batch_attempt(
         self,

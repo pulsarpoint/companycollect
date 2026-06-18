@@ -88,7 +88,12 @@ def process_translation_batch_once(
 
     queue = TranslationQueue(params.duckdb_path)
     queue.initialize()
-    claimed = queue.claim_batch(limit=params.batch_size, worker_id=params.worker_id)
+    model = (
+        os.environ["TRANSLATION_PROVIDER_LOCAL_MODEL"]
+        if provider is None
+        else str(getattr(provider, "model", type(provider).__name__))
+    )
+    claimed = queue.claim_batch(limit=params.batch_size, worker_id=params.worker_id, model=model)
     if not claimed:
         return ProcessTranslationBatchResult(
             status="empty",
@@ -105,7 +110,7 @@ def process_translation_batch_once(
     if provider is None:
         active_provider = LocalOpenAICompatibleTranslationProvider(
             base_url=os.environ["TRANSLATION_PROVIDER_LOCAL_BASE_URL"],
-            model=os.environ["TRANSLATION_PROVIDER_LOCAL_MODEL"],
+            model=model,
             api_key=os.getenv("TRANSLATION_PROVIDER_LOCAL_API_KEY", "not-needed"),
             max_tokens=params.max_tokens,
             extra_body=_parse_extra_body(params.extra_body_json),
@@ -149,6 +154,7 @@ def process_translation_batch_once(
             queue_id_by_provider_id=queue_id_by_provider_id,
         ),
         provider=type(active_provider).__name__,
+        model=model,
         duration_seconds=duration_seconds,
     )
     return ProcessTranslationBatchResult(

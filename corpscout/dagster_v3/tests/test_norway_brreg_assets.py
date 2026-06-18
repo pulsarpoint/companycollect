@@ -575,7 +575,7 @@ def test_apply_norway_brreg_translation_queue_results_updates_free_text_fields(
         "",
         "Purpose translated",
         "Activity translated",
-        "Company description translated",
+        "Activity translated",
     )
 
 
