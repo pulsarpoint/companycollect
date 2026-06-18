@@ -2,3 +2,8 @@ storage:
   postgres:
     postgres_url:
       env: DAGSTER_PG_URL
+
+concurrency:
+  pools:
+    granularity: op
+    default_limit: 1

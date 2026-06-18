@@ -161,6 +161,7 @@ class TranslationQueue:
             )
             """
         )
+        _ensure_unique_indexes(conn, qualified_prefix)
 
     def enqueue_items(self, items: list[TranslationQueueItem]) -> int:
         if not items:
@@ -310,7 +311,7 @@ class TranslationQueue:
         with self._connect() as conn:
             conn.executemany(
                 """
-                insert or replace into translation_results (
+                insert into translation_results (
                     item_id,
                     translated_text,
                     provider,
@@ -318,6 +319,11 @@ class TranslationQueue:
                     completed_at
                 )
                 values (?, ?, ?, ?, ?)
+                on conflict (item_id) do update set
+                    translated_text = excluded.translated_text,
+                    provider = excluded.provider,
+                    model = excluded.model,
+                    completed_at = excluded.completed_at
                 """,
                 [
                     (
@@ -497,7 +503,7 @@ class TranslationQueue:
         now = _now()
         conn.execute(
             """
-            insert or replace into translation_batch_attempts (
+            insert into translation_batch_attempts (
                 batch_id,
                 worker_id,
                 item_count,
@@ -509,6 +515,15 @@ class TranslationQueue:
                 error_message
             )
             values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict (batch_id) do update set
+                worker_id = excluded.worker_id,
+                item_count = excluded.item_count,
+                status = excluded.status,
+                started_at = excluded.started_at,
+                finished_at = excluded.finished_at,
+                duration_seconds = excluded.duration_seconds,
+                error_category = excluded.error_category,
+                error_message = excluded.error_message
             """,
             [
                 batch_id,
@@ -641,6 +656,36 @@ def _migrate_legacy_location_item_schema(
     )
     conn.execute(
         f"alter table {qualified_prefix}translation_results_migrated rename to translation_results"
+    )
+
+
+def _ensure_unique_indexes(
+    conn: duckdb.DuckDBPyConnection,
+    qualified_prefix: str,
+) -> None:
+    conn.execute(
+        f"""
+        create unique index if not exists translation_items_item_id_uq
+        on {qualified_prefix}translation_items(item_id)
+        """
+    )
+    conn.execute(
+        f"""
+        create unique index if not exists translation_locations_location_id_uq
+        on {qualified_prefix}translation_locations(location_id)
+        """
+    )
+    conn.execute(
+        f"""
+        create unique index if not exists translation_results_item_id_uq
+        on {qualified_prefix}translation_results(item_id)
+        """
+    )
+    conn.execute(
+        f"""
+        create unique index if not exists translation_batch_attempts_batch_id_uq
+        on {qualified_prefix}translation_batch_attempts(batch_id)
+        """
     )
 
 

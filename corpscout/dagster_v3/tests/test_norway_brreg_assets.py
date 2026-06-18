@@ -1230,11 +1230,27 @@ def test_norway_entity_asset_is_registered() -> None:
     assert {key.path[-1] for key in statements_node.parent_keys} == {
         "norway_brreg_financial_fetches_duckdb"
     }
+    assert brreg_assets.norway_brreg_entities_duckdb_asset.op.pool == "norway_brreg_duckdb"
+    assert (
+        brreg_assets.norway_brreg_financial_fetches_duckdb_asset.op.pool
+        == "norway_brreg_duckdb"
+    )
+    assert (
+        brreg_assets.norway_brreg_financial_statements_duckdb_asset.op.pool
+        == "norway_brreg_duckdb"
+    )
+    assert brreg_assets.norway_brreg_translation_queue.op.pool == "norway_brreg_duckdb"
+    assert brreg_assets.norway_brreg_translations_applied.op.pool == "norway_brreg_duckdb"
     clickhouse_companies_node = asset_graph.get(
         dg.AssetKey("norway_brreg_clickhouse_companies")
     )
     clickhouse_financial_node = asset_graph.get(
         dg.AssetKey("norway_brreg_clickhouse_financial_statements")
+    )
+    assert brreg_assets.norway_brreg_clickhouse_companies.op.pool == "norway_brreg_duckdb"
+    assert (
+        brreg_assets.norway_brreg_clickhouse_financial_statements.op.pool
+        == "norway_brreg_duckdb"
     )
     assert {key.path[-1] for key in clickhouse_companies_node.parent_keys} == {
         "norway_brreg_translations_applied",

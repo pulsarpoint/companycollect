@@ -334,6 +334,88 @@ def test_queue_initialization_migrates_legacy_location_items(tmp_path) -> None:
         }
 
 
+def test_queue_initialization_adds_conflict_indexes_to_current_schema(tmp_path) -> None:
+    duckdb_path = tmp_path / "current_schema_without_constraints.duckdb"
+    with duckdb.connect(str(duckdb_path)) as connection:
+        connection.execute(
+            """
+            create table translation_items (
+                item_id text,
+                source_text text not null,
+                source_text_hash text not null,
+                target_language text not null,
+                status text not null,
+                attempt_count integer not null,
+                leased_by text,
+                leased_at timestamp,
+                batch_id text,
+                last_error_category text,
+                last_error_message text,
+                created_at timestamp not null,
+                updated_at timestamp not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table translation_locations (
+                location_id text,
+                item_id text not null,
+                source_duckdb_path text not null,
+                source_table text not null,
+                source_pk text not null,
+                source_field text not null,
+                created_at timestamp not null,
+                updated_at timestamp not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table translation_results (
+                item_id text,
+                translated_text text not null,
+                provider text not null,
+                model text not null,
+                completed_at timestamp not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table translation_batch_attempts (
+                batch_id text,
+                worker_id text not null,
+                item_count integer not null,
+                status text not null,
+                started_at timestamp not null,
+                finished_at timestamp not null,
+                duration_seconds double not null,
+                error_category text,
+                error_message text
+            )
+            """
+        )
+
+    queue = TranslationQueue(duckdb_path)
+    queue.initialize()
+    item = TranslationQueueItem(
+        source_duckdb_path="/tmp/source.duckdb",
+        source_table="synthetic_companies",
+        source_pk="org-0001",
+        source_field="description_original",
+        source_text="Bygging av boliger",
+        target_language="en",
+    )
+
+    queue.enqueue_items([item])
+    queue.enqueue_items([item])
+
+    summary = queue.summary()
+    assert summary.total_items == 1
+    assert summary.location_items == 1
+
+
 def _items(count: int) -> list[TranslationQueueItem]:
     return [
         TranslationQueueItem(

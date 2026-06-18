@@ -53,6 +53,7 @@ DLT_DATASET_NAME = resources.DLT_DATASET_NAME
 ENTITIES_TABLE = resources.ENTITIES_TABLE
 
 GROUP_NAME = "norway_brreg"
+NORWAY_BRREG_DUCKDB_POOL = "norway_brreg_duckdb"
 FINANCIAL_STATEMENTS_TABLE = "financial_statements"
 FINANCIAL_SOURCE_SLUG = "norway_brregregnskap"
 NORWAY_BRREG_TRANSLATION_SOURCE_SLUG = "norway-brreg"
@@ -113,6 +114,7 @@ class NorwayBrregDltTranslator(DagsterDltTranslator):
     ),
     name="norway_brreg_entities_duckdb",
     dagster_dlt_translator=NorwayBrregDltTranslator(),
+    pool=NORWAY_BRREG_DUCKDB_POOL,
 )
 def norway_brreg_entities_duckdb_asset(
     context: AssetExecutionContext,
@@ -148,6 +150,7 @@ def norway_brreg_entities_duckdb_asset(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     description="Resumable Norway Brreg annual-account fetch outcomes stored in DuckDB.",
+    pool=NORWAY_BRREG_DUCKDB_POOL,
 )
 def norway_brreg_financial_fetches_duckdb_asset(
     context: AssetExecutionContext,
@@ -195,6 +198,7 @@ def norway_brreg_financial_fetches_duckdb_asset(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     description="Norway Brreg normalized annual-account rows derived from successful fetch outcomes.",
+    pool=NORWAY_BRREG_DUCKDB_POOL,
 )
 def norway_brreg_financial_statements_duckdb_asset(
     context: AssetExecutionContext,
@@ -222,6 +226,7 @@ def norway_brreg_financial_statements_duckdb_asset(
     kinds={"duckdb", "clickhouse"},
     description="Norway Brreg final companies table exported to ClickHouse.",
     metadata={"table": tables.QUALIFIED_COMPANIES_TABLE},
+    pool=NORWAY_BRREG_DUCKDB_POOL,
 )
 def norway_brreg_clickhouse_companies(
     context: AssetExecutionContext,
@@ -255,6 +260,7 @@ def norway_brreg_clickhouse_companies(
     kinds={"duckdb", "clickhouse"},
     description="Norway Brreg final financial statements table exported to ClickHouse.",
     metadata={"table": tables.QUALIFIED_FINANCIAL_STATEMENTS_TABLE},
+    pool=NORWAY_BRREG_DUCKDB_POOL,
 )
 def norway_brreg_clickhouse_financial_statements(
     context: AssetExecutionContext,
@@ -291,6 +297,7 @@ def norway_brreg_clickhouse_financial_statements(
         "Seed the Norway Brreg translation queue table and start or reuse the "
         "serialized Temporal translation workflow."
     ),
+    pool=NORWAY_BRREG_DUCKDB_POOL,
 )
 def norway_brreg_translation_queue(
     context: AssetExecutionContext,
@@ -398,6 +405,7 @@ def norway_brreg_translation_workflow_status(
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     description="Apply completed Norway Brreg translation queue results back to entity _en fields.",
+    pool=NORWAY_BRREG_DUCKDB_POOL,
 )
 def norway_brreg_translations_applied(context: AssetExecutionContext) -> dg.MaterializeResult:
     try:
