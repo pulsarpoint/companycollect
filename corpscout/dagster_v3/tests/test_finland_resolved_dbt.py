@@ -69,3 +69,16 @@ def test_fi_companies_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         ("fi-1", "Active One Oy", "active one oy", True, "example.fi"),
         ("fi-2", "Ceased Two Oy", "ceased two oy", False, None),
     ]
+
+
+def test_fi_websites_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db = tmp_path / "finland_ytj.duckdb"
+    _seed_all_companies(db)
+    _dbt_build(db, monkeypatch)
+    conn = duckdb.connect(str(db), read_only=True)
+    rows = conn.execute(
+        "select business_id, website_normalized_url, website_host, is_current, is_primary "
+        "from finland_resolved.fi_websites order by business_id"
+    ).fetchall()
+    # Only fi-1 has a website; fi-2 is filtered out (empty normalized url)
+    assert rows == [("fi-1", "https://example.fi/path", "example.fi", True, True)]
