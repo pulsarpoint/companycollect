@@ -299,6 +299,7 @@ def finland_xbrl_financial_reports_pipeline(database_path: str | Path) -> Pipeli
     dlt_pipeline=finland_xbrl_financial_reports_pipeline(LocalDuckDBResource().path()),
     name="finland_xbrl_financial_reports_duckdb",
     dagster_dlt_translator=FinlandXbrlDltTranslator(),
+    pool="finland_ytj_duckdb",
 )
 def finland_xbrl_financial_reports_duckdb_asset(
     context: dg.AssetExecutionContext,
@@ -633,6 +634,7 @@ def _log_parse_progress(log_info: Callable[[str], None] | None, message: str) ->
     group_name="finland_xbrl",
     deps=["finland_ytj_all_companies_duckdb", "finland_xbrl_financial_reports_duckdb"],
     kinds={"python", "duckdb", "sql"},
+    pool="finland_ytj_duckdb",
 )
 def finland_xbrl_eligible_financial_reports(
     source_duckdb: LocalDuckDBResource,
@@ -770,6 +772,7 @@ def finland_xbrl_parsed_tables(
     group_name="finland_xbrl",
     deps=[tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE],
     kinds={"python", "duckdb", "sql"},
+    pool="finland_ytj_duckdb",
 )
 def finland_xbrl_financial_metrics(
     source_duckdb: LocalDuckDBResource,

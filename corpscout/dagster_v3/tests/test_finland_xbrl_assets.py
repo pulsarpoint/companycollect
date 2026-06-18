@@ -4,6 +4,7 @@ from pathlib import Path
 
 import dagster as dg
 import duckdb
+from dagster import AssetKey
 import polars as pl
 import pytest
 from pydantic import ValidationError
@@ -748,3 +749,15 @@ def _eligible_financial_reports() -> list[dict]:
             "discovery_registered_date_end": "2026-06-30",
         },
     ]
+
+
+def test_duckdb_xbrl_assets_share_the_finland_ytj_duckdb_pool():
+    graph = load_project_defs().get_repository_def().asset_graph
+    for key in (
+        "finland_xbrl_financial_reports_duckdb",
+        "finland_xbrl_eligible_financial_reports",
+        "fi_prh_xbrl_statement_documents",
+        "fi_prh_xbrl_financial_metrics",
+    ):
+        node = graph.get(AssetKey([key]))
+        assert "finland_ytj_duckdb" in node.pools, f"{key} missing pool"
