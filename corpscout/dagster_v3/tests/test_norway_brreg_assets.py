@@ -545,6 +545,81 @@ def test_seed_norway_brreg_translation_queue_only_needs_translation_columns(
     assert any("Inserted Norway Brreg translation queue candidates" in message for message in log_messages)
 
 
+def test_seed_norway_brreg_translation_queue_skips_seeded_queue_source_scan(
+    tmp_path: Path,
+) -> None:
+    source_duckdb_path = tmp_path / "missing_source.duckdb"
+    queue_duckdb_path = tmp_path / "translation_queue.duckdb"
+    queue = brreg_assets.TranslationQueue(queue_duckdb_path)
+    queue.initialize()
+    queue.enqueue_items(
+        [
+            brreg_assets.TranslationQueueItem(
+                source_duckdb_path=str(source_duckdb_path),
+                source_table="norway_brreg.entities",
+                source_pk="923609016",
+                source_field="activity_text_original",
+                source_text="Aktivitet",
+                target_language="en",
+            )
+        ]
+    )
+
+    counts = brreg_assets.seed_norway_brreg_translation_queue(
+        source_duckdb_path=source_duckdb_path,
+        queue_duckdb_path=queue_duckdb_path,
+    )
+
+    assert counts["source_scan_skipped"] is True
+    assert counts["source_rows"] == 0
+    assert counts["candidate_items"] == 0
+    assert counts["inserted_items"] == 0
+    assert counts["inserted_locations"] == 0
+    assert counts["queue_total_items"] == 1
+    assert counts["queue_location_items"] == 1
+    assert counts["queue_pending_items"] == 1
+
+
+def test_seed_norway_brreg_translation_queue_refreshes_seeded_queue_when_configured(
+    tmp_path: Path,
+) -> None:
+    source_duckdb_path = tmp_path / "norway_source.duckdb"
+    queue_duckdb_path = tmp_path / "translation_queue.duckdb"
+    queue = brreg_assets.TranslationQueue(queue_duckdb_path)
+    queue.initialize()
+    queue.enqueue_items(
+        [
+            brreg_assets.TranslationQueueItem(
+                source_duckdb_path=str(source_duckdb_path),
+                source_table="norway_brreg.entities",
+                source_pk="existing",
+                source_field="activity_text_original",
+                source_text="Already queued",
+                target_language="en",
+            )
+        ]
+    )
+    rows = brreg_resources.build_entity_rows([_entity_record()], run_id="test-run")
+    with duckdb.connect(str(source_duckdb_path)) as connection:
+        connection.execute("create schema norway_brreg")
+        connection.register("entity_rows", pa.Table.from_pylist(rows))
+        connection.execute("create table norway_brreg.entities as select * from entity_rows")
+
+    counts = brreg_assets.seed_norway_brreg_translation_queue(
+        source_duckdb_path=source_duckdb_path,
+        queue_duckdb_path=queue_duckdb_path,
+        refresh_existing_queue=True,
+    )
+
+    assert counts["source_scan_skipped"] is False
+    assert counts["source_rows"] == 1
+    assert counts["candidate_items"] == 3
+    assert counts["inserted_items"] == 2
+    assert counts["inserted_locations"] == 3
+    assert counts["queue_total_items"] == 3
+    assert counts["queue_location_items"] == 4
+
+
 def test_apply_norway_brreg_translation_queue_results_updates_free_text_fields(
     tmp_path: Path,
 ) -> None:

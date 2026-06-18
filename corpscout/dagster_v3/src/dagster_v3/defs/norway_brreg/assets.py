@@ -75,6 +75,7 @@ class NorwayBrregTranslationConfig(dg.Config):
     batch_size: int = 50
     timeout_seconds: int = 120
     max_batch_failures: int = 0
+    refresh_existing_queue: bool = False
     worker_id: str = "translation-temporal-worker"
     max_tokens: int = 4096
     extra_body_json: str = '{"chat_template_kwargs":{"enable_thinking":false}}'
@@ -307,6 +308,7 @@ def norway_brreg_translation_queue(
         source_duckdb_path=NORWAY_BRREG_DUCKDB_PATH,
         queue_duckdb_path=NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
         log=context.log.info,
+        refresh_existing_queue=config.refresh_existing_queue,
     )
     workflow = start_translation_workflow(
         workflow_id=NORWAY_BRREG_TRANSLATION_WORKFLOW_ID,
@@ -332,13 +334,15 @@ def norway_brreg_translation_queue(
         "workflow_task_queue": workflow["task_queue"],
     }
     context.log.info(
-        "Norway Brreg translation queue status: source_rows=%s candidate_items=%s "
+        "Norway Brreg translation queue status: source_scan_skipped=%s "
+        "source_rows=%s candidate_items=%s "
         "inserted_items=%s inserted_locations=%s queue_total_items=%s "
         "queue_location_items=%s queue_remaining_items=%s queue_pending_items=%s "
         "queue_completed_items=%s queue_leased_items=%s queue_failed_retryable_items=%s "
         "results=%s batch_attempts=%s "
         "successful_batches=%s failed_batches=%s workflow_id=%s workflow_run_id=%s "
         "workflow_task_queue=%s",
+        metadata["source_scan_skipped"],
         metadata["source_rows"],
         metadata["candidate_items"],
         metadata["inserted_items"],
@@ -642,12 +646,50 @@ def seed_norway_brreg_translation_queue(
     queue_duckdb_path: str | Path,
     log: Callable[..., None] | None = None,
     lock_timeout_seconds: float = 120.0,
-) -> dict[str, int]:
+    refresh_existing_queue: bool = False,
+) -> dict[str, Any]:
     source_path = str(source_duckdb_path)
     queue_path = str(queue_duckdb_path)
     Path(queue_path).parent.mkdir(parents=True, exist_ok=True)
     source_table = f"{DLT_DATASET_NAME}.{ENTITIES_TABLE}"
     start = perf_counter()
+    if Path(queue_path).exists() and not refresh_existing_queue:
+        queue = TranslationQueue(queue_path)
+        queue.initialize()
+        summary = queue.summary()
+        if summary.location_items > 0:
+            remaining_items = (
+                summary.pending_items + summary.leased_items + summary.failed_retryable_items
+            )
+            _log(
+                log,
+                "Skipping Norway Brreg translation queue source scan because queue is already "
+                "seeded: queue_duckdb_path=%s queue_total_items=%s queue_location_items=%s "
+                "queue_remaining_items=%s elapsed_seconds=%.3f",
+                queue_path,
+                summary.total_items,
+                summary.location_items,
+                remaining_items,
+                perf_counter() - start,
+            )
+            return {
+                "source_scan_skipped": True,
+                "source_rows": 0,
+                "candidate_items": 0,
+                "inserted_items": 0,
+                "inserted_locations": 0,
+                "queue_total_items": summary.total_items,
+                "queue_location_items": summary.location_items,
+                "queue_remaining_items": remaining_items,
+                "queue_pending_items": summary.pending_items,
+                "queue_leased_items": summary.leased_items,
+                "queue_completed_items": summary.completed_items,
+                "queue_failed_retryable_items": summary.failed_retryable_items,
+                "queue_result_items": summary.result_items,
+                "queue_batch_attempts": summary.batch_attempts,
+                "queue_successful_batches": summary.successful_batches,
+                "queue_failed_batches": summary.failed_batches,
+            }
     _log(
         log,
         "Counting Norway Brreg translation candidates: source_duckdb_path=%s, "
@@ -798,6 +840,7 @@ def seed_norway_brreg_translation_queue(
     )
     remaining_items = summary.pending_items + summary.leased_items + summary.failed_retryable_items
     return {
+        "source_scan_skipped": False,
         "source_rows": source_rows,
         "candidate_items": candidate_items,
         "inserted_items": inserted_items,
