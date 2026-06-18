@@ -45,6 +45,12 @@ def _session(payload: dict) -> FakeHttpSession:
     return session
 
 
+def test_prh_code_constants_drive_classification() -> None:
+    assert ytj_assets.PRH_NAME_TYPE_PRIMARY == "1"
+    assert ytj_assets.PRH_TRADE_REGISTER_STATUS_CEASED == "3"
+    assert ytj_assets.DEFAULT_DUCKDB_PATH == "data/finland_ytj.duckdb"
+
+
 def test_ytj_api_is_modeled_as_dlt_source_not_dagster_resource() -> None:
     repository = load_project_defs().get_repository_def()
     resource_keys = repository.get_top_level_resources().keys()

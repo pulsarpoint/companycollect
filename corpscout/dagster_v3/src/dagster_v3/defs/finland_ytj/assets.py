@@ -23,6 +23,9 @@ YTJ_BASE_URL = "https://avoindata.prh.fi/opendata-ytj-api/v3"
 YTJ_TIMEOUT_SECONDS = 120
 DLT_DATASET_NAME = "finland_prhytj"
 DLT_COMPANIES_TABLE = "all_companies"
+DEFAULT_DUCKDB_PATH = "data/finland_ytj.duckdb"
+PRH_NAME_TYPE_PRIMARY = "1"             # PRH name "type": current primary trade name
+PRH_TRADE_REGISTER_STATUS_CEASED = "3"  # PRH tradeRegisterStatus: removed from trade register
 
 
 class HttpSession(Protocol):
@@ -107,7 +110,7 @@ def finland_ytj_pipeline(database_path: str | Path) -> Pipeline:
 
 @dlt_assets(
     dlt_source=finland_ytj_source(),
-    dlt_pipeline=finland_ytj_pipeline(LocalDuckDBResource().path()),
+    dlt_pipeline=finland_ytj_pipeline(DEFAULT_DUCKDB_PATH),  # spec-only; body re-creates with injected path
     name="finland_ytj_all_companies_duckdb",
     dagster_dlt_translator=FinlandYtjDltTranslator(),
 )
@@ -239,7 +242,7 @@ def _primary_name(company: dict[str, Any]) -> str:
     current_primary_names = [
         name
         for name in (_dict(value) for value in names)
-        if _string(name.get("type")) == "1" and not _string(name.get("endDate"))
+        if _string(name.get("type")) == PRH_NAME_TYPE_PRIMARY and not _string(name.get("endDate"))
     ]
     if current_primary_names:
         return _string(current_primary_names[0].get("name"))
@@ -249,7 +252,7 @@ def _primary_name(company: dict[str, Any]) -> str:
 
 
 def _lifecycle_status(company: dict[str, Any]) -> str:
-    if _string(company.get("endDate")) or _string(company.get("tradeRegisterStatus")) == "3":
+    if _string(company.get("endDate")) or _string(company.get("tradeRegisterStatus")) == PRH_TRADE_REGISTER_STATUS_CEASED:
         return "ceased"
     return "active"
 
