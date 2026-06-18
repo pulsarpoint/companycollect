@@ -432,7 +432,7 @@ def run_finland_xbrl_arelle_dlt_pipeline(
     *,
     database_path: str | Path,
     object_store: ObjectStoreResource,
-    documents_key: str,
+    documents: list[dict[str, Any]],
     run_id: str,
     parser: ArelleStatementParser = parse_statement_xml_with_arelle,
     log_info: Callable[[str], None] | None = None,
@@ -440,6 +440,7 @@ def run_finland_xbrl_arelle_dlt_pipeline(
 ) -> Any:
     database_file = Path(database_path)
     database_file.parent.mkdir(parents=True, exist_ok=True)
+    _log_parse_progress(log_info, f"Parsing {len(documents)} XBRL XML documents")
     pipeline = dlt.pipeline(
         pipeline_name="finland_xbrl_arelle_parsed_tables",
         destination=dlt.destinations.duckdb(str(database_file)),
@@ -449,7 +450,7 @@ def run_finland_xbrl_arelle_dlt_pipeline(
     load_info = pipeline.run(
         finland_xbrl_arelle_source(
             object_store=object_store,
-            documents_key=documents_key,
+            documents=documents,
             run_id=run_id,
             parser=parser,
             log_info=log_info,
@@ -500,7 +501,7 @@ def unparsed_documents(
 def finland_xbrl_arelle_source(
     *,
     object_store: ObjectStoreResource,
-    documents_key: str,
+    documents: list[dict[str, Any]],
     run_id: str,
     parser: ArelleStatementParser = parse_statement_xml_with_arelle,
     log_info: Callable[[str], None] | None = None,
@@ -508,7 +509,7 @@ def finland_xbrl_arelle_source(
 ) -> list[DltResource]:
     return _finland_xbrl_arelle_resources(
         object_store=object_store,
-        documents_key=documents_key,
+        documents=documents,
         run_id=run_id,
         parser=parser,
         log_info=log_info,
@@ -519,23 +520,14 @@ def finland_xbrl_arelle_source(
 def _finland_xbrl_arelle_resources(
     *,
     object_store: ObjectStoreResource,
-    documents_key: str,
+    documents: list[dict[str, Any]],
     run_id: str,
     parser: ArelleStatementParser,
     log_info: Callable[[str], None] | None,
     progress_interval: int,
 ) -> list[DltResource]:
     parsed_at = datetime.now(UTC)
-    documents, manifest_metadata = load_xbrl_document_manifest(
-        object_store=object_store,
-        documents_key=documents_key,
-    )
-    del manifest_metadata
     total_documents = len(documents)
-    _log_parse_progress(
-        log_info,
-        f"Loaded {total_documents} XBRL XML document manifest rows from {documents_key}",
-    )
     statement_rows: list[dict[str, Any]] = []
     fact_rows: list[dict[str, Any]] = []
     warning_count = 0
@@ -590,13 +582,13 @@ def _finland_xbrl_arelle_resources(
         dlt.resource(
             statement_rows,
             name=tables.STATEMENT_DOCUMENTS_TABLE,
-            write_disposition="replace",
+            write_disposition="append",
             primary_key="statement_key",
         ),
         dlt.resource(
             fact_rows,
             name=tables.FACTS_TABLE,
-            write_disposition="replace",
+            write_disposition="append",
             primary_key=("statement_key", "fact_ordinal"),
         ),
     ]
@@ -704,10 +696,14 @@ def finland_xbrl_parsed_tables(
     documents_key = resolve_xbrl_documents_key(
         config=config,
     )
+    documents, _ = load_xbrl_document_manifest(
+        object_store=object_store,
+        documents_key=documents_key,
+    )
     run_finland_xbrl_arelle_dlt_pipeline(
         database_path=source_duckdb.path(),
         object_store=object_store,
-        documents_key=documents_key,
+        documents=documents,
         run_id=context.run_id,
         log_info=context.log.info,
     )

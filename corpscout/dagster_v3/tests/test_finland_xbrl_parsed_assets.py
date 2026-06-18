@@ -15,6 +15,7 @@ from dagster_v3.defs.finland_xbrl.assets import (
     XBRL_DLT_DATASET_NAME,
     build_concept_profile_rows,
     build_parse_quality_row,
+    load_xbrl_document_manifest,
     parsed_duckdb_observability_metadata,
     run_finland_xbrl_arelle_dlt_pipeline,
 )
@@ -103,10 +104,13 @@ def test_parsed_xbrl_asset_loads_statement_and_fact_duckdb_tables(tmp_path: Path
     ).write_parquet(output)
     s3_client.objects[("source-finland-prh-xbrl", RAW_XML_DOCUMENTS_OBJECT_KEY)] = output.getvalue()
 
+    documents, _ = load_xbrl_document_manifest(
+        object_store=object_store, documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY
+    )
     run_finland_xbrl_arelle_dlt_pipeline(
         database_path=tmp_path / "source.duckdb",
         object_store=object_store,
-        documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY,
+        documents=documents,
         run_id="test-run",
         parser=_fake_arelle_parser,
     )
@@ -150,17 +154,20 @@ def test_parsed_xbrl_pipeline_logs_manifest_progress_and_summary(tmp_path: Path)
     s3_client.objects[("source-finland-prh-xbrl", RAW_XML_DOCUMENTS_OBJECT_KEY)] = output.getvalue()
     log_messages: list[str] = []
 
+    documents, _ = load_xbrl_document_manifest(
+        object_store=object_store, documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY
+    )
     run_finland_xbrl_arelle_dlt_pipeline(
         database_path=tmp_path / "source.duckdb",
         object_store=object_store,
-        documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY,
+        documents=documents,
         run_id="test-run",
         parser=_fake_arelle_parser,
         log_info=log_messages.append,
         progress_interval=1,
     )
 
-    assert any("Loaded 1 XBRL XML document manifest rows" in message for message in log_messages)
+    assert any("Parsing 1 XBRL XML documents" in message for message in log_messages)
     assert any("Parsed XBRL XML document 1/1" in message for message in log_messages)
     assert any("Parsed XBRL XML documents complete" in message for message in log_messages)
     assert any("dlt loaded parsed XBRL tables" in message for message in log_messages)
@@ -186,10 +193,13 @@ def test_parsed_xbrl_observability_metadata_summarizes_quality_without_extra_tab
     ).write_parquet(output)
     s3_client.objects[("source-finland-prh-xbrl", RAW_XML_DOCUMENTS_OBJECT_KEY)] = output.getvalue()
     database_path = tmp_path / "source.duckdb"
+    documents, _ = load_xbrl_document_manifest(
+        object_store=object_store, documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY
+    )
     run_finland_xbrl_arelle_dlt_pipeline(
         database_path=database_path,
         object_store=object_store,
-        documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY,
+        documents=documents,
         run_id="test-run",
         parser=_fake_arelle_parser,
     )
@@ -213,13 +223,51 @@ def test_parsed_xbrl_asset_reports_missing_xml_documents_manifest() -> None:
     object_store = ObjectStoreResource(bucket="source-finland-prh-xbrl", s3_client=s3_client)
 
     with pytest.raises(ValueError, match="finland_xbrl_raw_xml_documents"):
-        run_finland_xbrl_arelle_dlt_pipeline(
-            database_path=":memory:",
-            object_store=object_store,
-            documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY,
-            run_id="test-run",
-            parser=_fake_arelle_parser,
+        load_xbrl_document_manifest(
+            object_store=object_store, documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY
         )
+
+
+def test_pipeline_appends_documents_across_calls(tmp_path: Path) -> None:
+    s3_client = FakeS3Client()
+    object_store = ObjectStoreResource(bucket="source-finland-prh-xbrl", s3_client=s3_client)
+    s3_client.objects[("source-finland-prh-xbrl", "companies/a/2023-12-31.xml")] = SAMPLE_XML
+    s3_client.objects[("source-finland-prh-xbrl", "companies/b/2023-12-31.xml")] = SAMPLE_XML
+    doc_a = {
+        "business_id": "a",
+        "financial_date": "2023-12-31",
+        "registration_date": "2024-03-10",
+        "source_url": "",
+        "xml_object_key": "companies/a/2023-12-31.xml",
+    }
+    doc_b = {
+        "business_id": "b",
+        "financial_date": "2023-12-31",
+        "registration_date": "2024-04-02",
+        "source_url": "",
+        "xml_object_key": "companies/b/2023-12-31.xml",
+    }
+    db = tmp_path / "source.duckdb"
+    run_finland_xbrl_arelle_dlt_pipeline(
+        database_path=db,
+        object_store=object_store,
+        documents=[doc_a],
+        run_id="r1",
+        parser=_fake_arelle_parser,
+    )
+    run_finland_xbrl_arelle_dlt_pipeline(
+        database_path=db,
+        object_store=object_store,
+        documents=[doc_b],
+        run_id="r2",
+        parser=_fake_arelle_parser,
+    )
+
+    with duckdb.connect(str(db), read_only=True) as conn:
+        n = conn.execute(
+            f"select count(*) from {XBRL_DLT_DATASET_NAME}.{STATEMENT_DOCUMENTS_TABLE}"
+        ).fetchone()[0]
+    assert n == 2  # append, not replace
 
 
 def test_arelle_parser_falls_back_to_instance_facts_when_taxonomy_facts_are_unavailable(
@@ -425,9 +473,10 @@ def test_concept_profile_groups_facts_by_concept() -> None:
 
 def _fake_arelle_parser(**kwargs: Any) -> ArelleParsedStatement:
     parsed_at = kwargs["parsed_at"].isoformat()
+    statement_key = f"{kwargs['business_id']}-{kwargs['financial_date']}"
     return ArelleParsedStatement(
         statement_document={
-            "statement_key": "statement-1",
+            "statement_key": statement_key,
             "source_run_id": kwargs["source_run_id"],
             "business_id": kwargs["business_id"],
             "financial_date": kwargs["financial_date"],
@@ -452,7 +501,7 @@ def _fake_arelle_parser(**kwargs: Any) -> ArelleParsedStatement:
         },
         facts=[
             {
-                "statement_key": "statement-1",
+                "statement_key": statement_key,
                 "business_id": kwargs["business_id"],
                 "financial_date": kwargs["financial_date"],
                 "fact_ordinal": 1,
