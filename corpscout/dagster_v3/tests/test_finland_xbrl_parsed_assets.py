@@ -557,6 +557,16 @@ def test_documents_in_registration_window_filters_by_month():
     assert [d["business_id"] for d in got] == ["a"]
 
 
+def test_documents_missing_registration_date_flags_empty_and_invalid():
+    docs = [
+        _doc("a", "2023-12-31", "2024-03-10"),
+        _doc("b", "2023-12-31", ""),
+        _doc("c", "2023-12-31", "not-a-date"),
+    ]
+    missing = xbrl.documents_missing_registration_date(docs)
+    assert [d["business_id"] for d in missing] == ["b", "c"]
+
+
 def test_unparsed_documents_skips_by_object_key():
     docs = [
         _doc("a", "2023-12-31", "2024-03-10"),

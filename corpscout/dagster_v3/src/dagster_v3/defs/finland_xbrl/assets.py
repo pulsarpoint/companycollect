@@ -465,6 +465,15 @@ def run_finland_xbrl_arelle_dlt_pipeline(
     return load_info
 
 
+def _parse_registration_date(raw: object) -> date | None:
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(str(raw)[:10])
+    except ValueError:
+        return None
+
+
 def documents_in_registration_window(
     documents: list[dict[str, Any]],
     *,
@@ -474,16 +483,21 @@ def documents_in_registration_window(
     """Keep docs whose registration_date is in [window_start, window_end)."""
     selected: list[dict[str, Any]] = []
     for document in documents:
-        raw = document.get("registration_date")
-        if not raw:
-            continue
-        try:
-            registered = date.fromisoformat(str(raw)[:10])
-        except ValueError:
-            continue
-        if window_start <= registered < window_end:
+        registered = _parse_registration_date(document.get("registration_date"))
+        if registered is not None and window_start <= registered < window_end:
             selected.append(document)
     return selected
+
+
+def documents_missing_registration_date(
+    documents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Docs with no/unparseable registration_date — excluded from every month partition."""
+    return [
+        document
+        for document in documents
+        if _parse_registration_date(document.get("registration_date")) is None
+    ]
 
 
 def unparsed_documents(
@@ -705,6 +719,15 @@ def finland_xbrl_parsed_tables(
     documents, _meta = load_xbrl_document_manifest(
         object_store=object_store, documents_key=documents_key
     )
+    # Docs without a parseable registration_date fall outside every month partition,
+    # so they are never parsed. Surface that gap rather than dropping it silently.
+    missing_registration = len(documents_missing_registration_date(documents))
+    if missing_registration:
+        context.log.warning(
+            "XBRL parse partition %s: %d catalog docs have no parseable registration_date "
+            "and are excluded from all month partitions",
+            context.partition_key, missing_registration,
+        )
     in_window = documents_in_registration_window(
         documents, window_start=window_start, window_end=window_end
     )
@@ -735,6 +758,7 @@ def finland_xbrl_parsed_tables(
                 "partition": context.partition_key,
                 "documents_in_window": len(in_window),
                 "documents_parsed_this_run": len(to_parse),
+                "documents_missing_registration_date": missing_registration,
                 "total_table_row_count": row_counts[table],
                 "xml_documents_object_key": documents_key,
             },
