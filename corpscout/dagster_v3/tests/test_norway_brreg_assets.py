@@ -285,19 +285,17 @@ class MissingWorkflowTemporalClient:
 class FakeClickHouseClient:
     def __init__(self) -> None:
         self.statements: list[str] = []
-        self.inserts: list[tuple[str, list[tuple[Any, ...]], tuple[str, ...]]] = []
+        self.insert_calls: list[tuple[str, list[tuple[Any, ...]]]] = []
 
-    def execute(self, sql: str) -> None:
-        self.statements.append(sql)
-
-    def insert(
+    def execute(
         self,
-        table: str,
-        data: list[tuple[Any, ...]],
-        *,
-        column_names: tuple[str, ...],
+        sql: str,
+        params: list[tuple[Any, ...]] | None = None,
     ) -> None:
-        self.inserts.append((table, data, column_names))
+        if params is None:
+            self.statements.append(sql)
+        else:
+            self.insert_calls.append((sql, params))
 
 
 def test_streaming_json_dependency_is_available() -> None:
@@ -1129,16 +1127,14 @@ def test_export_norway_brreg_clickhouse_tables_reads_duckdb_and_inserts(
     )
 
     assert result == {"companies": 1, "financial_statements": 1}
-    assert [insert[0] for insert in client.inserts] == [
-        "norway_brreg.companies",
-        "norway_brreg.financial_statements",
+    assert [insert[0].split(" (", 1)[0] for insert in client.insert_calls] == [
+        "INSERT INTO `norway_brreg`.`companies`",
+        "INSERT INTO `norway_brreg`.`financial_statements`",
     ]
-    assert client.inserts[0][2] == brreg_tables.COMPANIES_COLUMNS
-    assert client.inserts[1][2] == brreg_tables.FINANCIAL_STATEMENTS_COLUMNS
 
-    company_row = dict(zip(brreg_tables.COMPANIES_COLUMNS, client.inserts[0][1][0]))
+    company_row = dict(zip(brreg_tables.COMPANIES_COLUMNS, client.insert_calls[0][1][0]))
     financial_row = dict(
-        zip(brreg_tables.FINANCIAL_STATEMENTS_COLUMNS, client.inserts[1][1][0])
+        zip(brreg_tables.FINANCIAL_STATEMENTS_COLUMNS, client.insert_calls[1][1][0])
     )
     assert company_row["org_number"] == "923609016"
     assert company_row["legal_name"] == "EQUINOR ASA"
@@ -1191,8 +1187,11 @@ def test_export_norway_brreg_clickhouse_companies_touches_only_company_table(
         "CREATE DATABASE IF NOT EXISTS norway_brreg",
         brreg_tables.COMPANIES_DDL.strip(),
     ]
-    assert [insert[0] for insert in client.inserts] == ["norway_brreg.companies"]
-    assert client.inserts[0][2] == brreg_tables.COMPANIES_COLUMNS
+    assert [insert[0].split(" (", 1)[0] for insert in client.insert_calls] == [
+        "INSERT INTO `norway_brreg`.`companies`"
+    ]
+    company_row = dict(zip(brreg_tables.COMPANIES_COLUMNS, client.insert_calls[0][1][0]))
+    assert company_row["org_number"] == "923609016"
 
 
 def test_export_norway_brreg_clickhouse_financials_touches_only_financial_table(
@@ -1237,10 +1236,13 @@ def test_export_norway_brreg_clickhouse_financials_touches_only_financial_table(
         "CREATE DATABASE IF NOT EXISTS norway_brreg",
         brreg_tables.FINANCIAL_STATEMENTS_DDL.strip(),
     ]
-    assert [insert[0] for insert in client.inserts] == [
-        "norway_brreg.financial_statements"
+    assert [insert[0].split(" (", 1)[0] for insert in client.insert_calls] == [
+        "INSERT INTO `norway_brreg`.`financial_statements`"
     ]
-    assert client.inserts[0][2] == brreg_tables.FINANCIAL_STATEMENTS_COLUMNS
+    financial_row = dict(
+        zip(brreg_tables.FINANCIAL_STATEMENTS_COLUMNS, client.insert_calls[0][1][0])
+    )
+    assert financial_row["org_number"] == "923609016"
 
 
 def test_entity_status_derivation_handles_liquidation_and_bankruptcy() -> None:

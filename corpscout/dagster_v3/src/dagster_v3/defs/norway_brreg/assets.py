@@ -15,6 +15,7 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
+from dagster_v3.defs.clickhouse.resolved import export_duckdb_table_to_clickhouse
 from dagster_v3.defs.norway_brreg import resources
 from dagster_v3.defs.norway_brreg import tables
 from dagster_v3.defs.norway_brreg.clickhouse import (
@@ -1236,40 +1237,20 @@ def export_norway_brreg_clickhouse_companies(
         tables.QUALIFIED_COMPANIES_TABLE,
     )
     prepare_norway_brreg_clickhouse_companies_table(clickhouse)
-    _log(log, "Opening Norway Brreg DuckDB staging database: path=%s", database_path)
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        _log(
-            log,
-            "Reading Norway Brreg company rows from DuckDB: table=%s.%s",
-            DLT_DATASET_NAME,
-            ENTITIES_TABLE,
-        )
-        company_rows = _fetch_duckdb_rows(
-            connection,
-            dataset=DLT_DATASET_NAME,
-            table=ENTITIES_TABLE,
-            columns=tables.COMPANIES_COLUMNS,
-        )
-        _log(log, "Read Norway Brreg company rows from DuckDB: rows=%s", len(company_rows))
-
     with clickhouse.get_connection() as client:
-        if company_rows:
-            _log(
-                log,
-                "Inserting Norway Brreg company rows into ClickHouse: table=%s, rows=%s",
-                tables.QUALIFIED_COMPANIES_TABLE,
-                len(company_rows),
-            )
-            client.insert(
-                tables.QUALIFIED_COMPANIES_TABLE,
-                company_rows,
-                column_names=tables.COMPANIES_COLUMNS,
-            )
-        else:
-            _log(log, "Skipping Norway Brreg company ClickHouse insert: rows=0")
+        rows = export_duckdb_table_to_clickhouse(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema=DLT_DATASET_NAME,
+            duckdb_table=ENTITIES_TABLE,
+            clickhouse_database=tables.NORWAY_BRREG_DATABASE,
+            clickhouse_table=tables.COMPANIES_TABLE,
+            columns=tables.COMPANIES_COLUMNS,
+            truncate=False,
+        )
 
-    _log(log, "Finished Norway Brreg companies ClickHouse export: rows=%s", len(company_rows))
-    return len(company_rows)
+    _log(log, "Finished Norway Brreg companies ClickHouse export: rows=%s", rows)
+    return rows
 
 
 def export_norway_brreg_clickhouse_financial_statements(
@@ -1285,49 +1266,24 @@ def export_norway_brreg_clickhouse_financial_statements(
         tables.QUALIFIED_FINANCIAL_STATEMENTS_TABLE,
     )
     prepare_norway_brreg_clickhouse_financial_statements_table(clickhouse)
-    _log(log, "Opening Norway Brreg DuckDB staging database: path=%s", database_path)
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        _log(
-            log,
-            "Reading Norway Brreg financial statement rows from DuckDB: table=%s.%s",
-            DLT_DATASET_NAME,
-            FINANCIAL_STATEMENTS_TABLE,
-        )
-        financial_rows = _fetch_duckdb_rows(
-            connection,
-            dataset=DLT_DATASET_NAME,
-            table=FINANCIAL_STATEMENTS_TABLE,
-            columns=tables.FINANCIAL_STATEMENTS_COLUMNS,
-        )
-        _log(
-            log,
-            "Read Norway Brreg financial statement rows from DuckDB: rows=%s",
-            len(financial_rows),
-        )
-
     with clickhouse.get_connection() as client:
-        if financial_rows:
-            _log(
-                log,
-                "Inserting Norway Brreg financial statement rows into ClickHouse: "
-                "table=%s, rows=%s",
-                tables.QUALIFIED_FINANCIAL_STATEMENTS_TABLE,
-                len(financial_rows),
-            )
-            client.insert(
-                tables.QUALIFIED_FINANCIAL_STATEMENTS_TABLE,
-                financial_rows,
-                column_names=tables.FINANCIAL_STATEMENTS_COLUMNS,
-            )
-        else:
-            _log(log, "Skipping Norway Brreg financial statement ClickHouse insert: rows=0")
+        rows = export_duckdb_table_to_clickhouse(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema=DLT_DATASET_NAME,
+            duckdb_table=FINANCIAL_STATEMENTS_TABLE,
+            clickhouse_database=tables.NORWAY_BRREG_DATABASE,
+            clickhouse_table=tables.FINANCIAL_STATEMENTS_TABLE,
+            columns=tables.FINANCIAL_STATEMENTS_COLUMNS,
+            truncate=False,
+        )
 
     _log(
         log,
         "Finished Norway Brreg financial statements ClickHouse export: rows=%s",
-        len(financial_rows),
+        rows,
     )
-    return len(financial_rows)
+    return rows
 
 
 def _duckdb_string_literal(value: str) -> str:
