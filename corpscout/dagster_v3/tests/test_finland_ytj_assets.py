@@ -4,6 +4,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 import duckdb
+import pytest
 
 import dagster_v3.defs.finland_ytj.assets as ytj_assets
 from dagster_v3.definitions import defs as load_project_defs
@@ -14,22 +15,31 @@ DLT_DATASET_NAME = "finland_prhytj"
 
 class FakeResponse:
     def __init__(self, content: bytes, status_code: int = 200) -> None:
-        self.content = content
+        self._content = content
         self.status_code = status_code
+
+    def __enter__(self) -> "FakeResponse":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise RuntimeError(f"HTTP {self.status_code}")
 
+    def iter_content(self, chunk_size: int = 1 << 20):
+        for start in range(0, len(self._content), chunk_size):
+            yield self._content[start : start + chunk_size]
+
 
 class FakeHttpSession:
     def __init__(self, content: bytes) -> None:
         self.content = content
-        self.calls: list[tuple[str, dict | None, int]] = []
-        self.headers: dict[str, str] = {}
+        self.calls: list[tuple[str, dict | None]] = []
 
-    def get(self, url: str, params: dict | None = None, timeout: int = 120) -> FakeResponse:
-        self.calls.append((url, params, timeout))
+    def get(self, url: str, *, headers: dict | None = None, stream: bool = False, timeout: int = 120) -> FakeResponse:
+        self.calls.append((url, headers))
         return FakeResponse(self.content)
 
 
@@ -41,8 +51,7 @@ def _zip_json(name: str, payload: dict) -> bytes:
 
 
 def _session(payload: dict) -> FakeHttpSession:
-    session = FakeHttpSession(_zip_json("companies.json", payload))
-    return session
+    return FakeHttpSession(_zip_json("companies.json", payload))
 
 
 def test_prh_code_constants_drive_classification() -> None:
@@ -64,24 +73,44 @@ def test_ytj_api_is_modeled_as_dlt_source_not_dagster_resource() -> None:
     assert "dlt" in ytj_assets.finland_ytj_all_companies_duckdb_asset.required_resource_keys
 
 
-def test_ytj_dlt_source_downloads_zip_and_yields_company_rows() -> None:
-    session = _session(
-        {
-            "companies": [
-                {"businessId": {"value": "old"}, "registrationDate": "2023-12-31"},
-                {"businessId": {"value": "latest"}, "registrationDate": "2026-06-15"},
-            ]
-        }
-    )
-
+def test_source_streams_company_rows_from_zip() -> None:
+    session = _session({"companies": [
+        {"businessId": {"value": "old"}, "registrationDate": "2023-12-31"},
+        {"businessId": {"value": "latest"}, "registrationDate": "2026-06-15"},
+    ]})
     source = ytj_assets.finland_ytj_source(session=session, run_id="test-run")
     rows = list(source.resources[DLT_COMPANIES_TABLE])
 
     assert [row["business_id"] for row in rows] == ["old", "latest"]
     assert rows[0]["source_run_id"] == "test-run"
     assert session.calls == [
-        ("https://avoindata.prh.fi/opendata-ytj-api/v3/all_companies", None, 120)
+        ("https://avoindata.prh.fi/opendata-ytj-api/v3/all_companies",
+         {"User-Agent": "corpscout-dagster-v3-dev/0.1"})
     ]
+
+
+def test_source_handles_bare_json_array_without_zip() -> None:
+    raw = json.dumps([{"businessId": {"value": "x"}}]).encode("utf-8")
+    session = FakeHttpSession(raw)
+    source = ytj_assets.finland_ytj_source(session=session, run_id="r")
+    rows = list(source.resources[DLT_COMPANIES_TABLE])
+    assert [row["business_id"] for row in rows] == ["x"]
+
+
+def test_source_does_not_mutate_caller_session() -> None:
+    session = _session({"companies": [{"businessId": {"value": "x"}}]})
+    list(ytj_assets.finland_ytj_source(session=session, run_id="r").resources[DLT_COMPANIES_TABLE])
+    assert not hasattr(session, "headers")
+
+
+def test_empty_feed_raises_before_yielding() -> None:
+    session = _session({"companies": []})
+    source = ytj_assets.finland_ytj_source(session=session, run_id="r")
+    # dlt 1.28 wraps any exception raised during resource extraction in
+    # ResourceExtractionError; the original ValueError is preserved as __cause__.
+    with pytest.raises(Exception, match="no companies") as excinfo:
+        list(source.resources[DLT_COMPANIES_TABLE])
+    assert isinstance(excinfo.value.__cause__, ValueError)
 
 
 def test_dlt_company_rows_keep_raw_payload_and_extract_eligibility_fields() -> None:
