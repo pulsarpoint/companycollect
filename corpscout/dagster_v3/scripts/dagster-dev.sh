@@ -21,4 +21,4 @@ fi
 
 export DAGSTER_HOME="${DAGSTER_HOME:-$PWD}"
 
-exec uv run dg dev "$@"
+exec uv run dg dev --db-pool-max-overflow 50 "$@"
