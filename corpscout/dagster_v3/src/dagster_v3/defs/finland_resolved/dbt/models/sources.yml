@@ -1,0 +1,17 @@
+version: 2
+
+sources:
+  - name: finland_prhytj
+    schema: finland_prhytj
+    tables:
+      - name: all_companies
+        meta:
+          dagster:
+            asset_key: ["finland_ytj_all_companies_duckdb"]
+
+models:
+  - name: fi_companies
+    columns:
+      - name: business_id
+        data_tests:
+          - not_null
