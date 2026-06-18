@@ -15,7 +15,6 @@ from dagster_v3.defs.finland_xbrl.assets import (
     RAW_XML_DOCUMENTS_OBJECT_KEY,
     XbrlParsedConfig,
     XbrlRawConfig,
-    build_xbrl_financial_metrics,
     download_finland_xbrl_raw_xml_documents,
     resolve_xbrl_documents_key,
 )
@@ -28,9 +27,6 @@ from dagster_v3.defs.finland_xbrl.tables import (
     XML_DOCUMENTS_TABLE,
 )
 from dagster_v3.defs.common.resources import LocalDuckDBResource, ObjectStoreResource
-
-DLT_COMPANIES_TABLE = "all_companies"
-DLT_DATASET_NAME = "finland_prhytj"
 
 
 class FakeResponse:
@@ -153,6 +149,20 @@ def test_xbrl_raw_config_treats_blank_optional_dates_as_missing() -> None:
     assert config.financial_start_date is None
 
 
+def test_xbrl_transforms_are_dbt_assets():
+    graph = load_project_defs().get_repository_def().asset_graph
+    keys = {k.path[-1] for k in graph.get_all_asset_keys()}
+    assert "finland_xbrl_eligible_financial_reports" in keys
+    assert "fi_prh_xbrl_financial_metrics" in keys
+    # the download re-pointed to the dbt eligible model
+    deps = graph.get(AssetKey(["finland_xbrl_raw_xml_documents"])).parent_keys
+    assert AssetKey(["finland_xbrl_eligible_financial_reports"]) in deps
+    # eligible model depends on its two sources
+    eligible_deps = graph.get(AssetKey(["finland_xbrl_eligible_financial_reports"])).parent_keys
+    dep_names = {k.path[-1] for k in eligible_deps}
+    assert {"finland_xbrl_financial_reports_duckdb", "finland_ytj_all_companies_duckdb"} <= dep_names
+
+
 @pytest.mark.parametrize("value", [0, -1])
 def test_xbrl_raw_config_rejects_non_positive_max_reports(value: int) -> None:
     with pytest.raises(ValidationError):
@@ -272,79 +282,6 @@ def test_xbrl_dlt_pipeline_loads_financial_reports_table(tmp_path: Path) -> None
     ]
 
 
-def test_xbrl_eligible_financial_reports_join_uses_duckdb_tables(tmp_path: Path) -> None:
-    database_path = tmp_path / "source.duckdb"
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(f"create schema {DLT_DATASET_NAME}")
-        connection.execute(
-            f"""
-            create table {DLT_DATASET_NAME}.{DLT_COMPANIES_TABLE} (
-                business_id varchar,
-                is_active boolean,
-                primary_name varchar,
-                website_normalized_url varchar
-            )
-            """
-        )
-        connection.execute(
-            f"""
-            insert into {DLT_DATASET_NAME}.{DLT_COMPANIES_TABLE} values
-            ('active-with-site', true, 'Active With Site Oy', 'https://active.fi'),
-            ('active-without-site', true, 'Active Without Site Oy', ''),
-            ('ceased-with-site', false, 'Ceased With Site Oy', 'https://ceased.fi')
-            """
-        )
-        connection.execute(f"create schema {xbrl_assets.XBRL_DLT_DATASET_NAME}")
-        connection.execute(
-            f"""
-            create table {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE} (
-                business_id varchar,
-                financial_date varchar,
-                registration_date varchar,
-                discovery_registered_date_start varchar,
-                discovery_registered_date_end varchar,
-                source_run_id varchar,
-                source_record_number integer
-            )
-            """
-        )
-        connection.execute(
-            f"""
-            insert into {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE} values
-            ('active-with-site', '2026-05-31', '2026-06-01', '2026-06-01', '2026-06-30', 'run-1', 1),
-            ('active-without-site', '2026-05-31', '2026-06-01', '2026-06-01', '2026-06-30', 'run-1', 2),
-            ('ceased-with-site', '2026-05-31', '2026-06-01', '2026-06-01', '2026-06-30', 'run-1', 3)
-            """
-        )
-
-    result = xbrl_assets.build_xbrl_eligible_financial_reports(
-        LocalDuckDBResource(database_path=str(database_path))
-    )
-
-    assert result.metadata["eligible_reports_count"] == 1
-    assert result.metadata["eligible_companies_count"] == 1
-    assert result.metadata["min_financial_date"] == "2026-05-31"
-    assert result.metadata["max_financial_date"] == "2026-05-31"
-
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        rows = connection.execute(
-            f"""
-            select business_id, financial_date, registration_date, primary_name, website_normalized_url
-            from {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE}
-            """
-        ).fetchall()
-
-    assert rows == [
-        (
-            "active-with-site",
-            "2026-05-31",
-            "2026-06-01",
-            "Active With Site Oy",
-            "https://active.fi",
-        )
-    ]
-
-
 def test_xbrl_asset_graph_models_xml_documents_catalog_as_bridge() -> None:
     asset_graph = load_project_defs().resolve_asset_graph()
 
@@ -373,115 +310,14 @@ def test_xbrl_asset_graph_keeps_quality_and_concept_profile_as_metadata_not_asse
 def test_xbrl_asset_graph_models_financial_metrics_downstream_of_parsed_tables() -> None:
     asset_graph = load_project_defs().resolve_asset_graph()
 
-    assert asset_graph.get(dg.AssetKey(FINANCIAL_METRICS_TABLE)).parent_keys == {
+    # fi_prh_xbrl_financial_metrics is now a dbt model: its parents are the two
+    # parsed-table sources plus the xbrl_metric_map seed.
+    parent_keys = asset_graph.get(dg.AssetKey(FINANCIAL_METRICS_TABLE)).parent_keys
+    assert {
         dg.AssetKey(STATEMENT_DOCUMENTS_TABLE),
         dg.AssetKey(FACTS_TABLE),
-    }
-
-
-def test_xbrl_financial_metrics_pivots_mapped_current_numeric_facts(
-    tmp_path: Path,
-) -> None:
-    database_path = tmp_path / "source.duckdb"
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(f"create schema {xbrl_assets.XBRL_DLT_DATASET_NAME}")
-        _create_xbrl_table(connection, STATEMENT_DOCUMENTS_TABLE)
-        _create_xbrl_table(connection, FACTS_TABLE)
-        connection.execute(
-            f"""
-            insert into {xbrl_assets.XBRL_DLT_DATASET_NAME}.{STATEMENT_DOCUMENTS_TABLE}
-            (statement_key, source_run_id, business_id, financial_date, registration_date,
-             source_url, xml_object_key, xml_sha256, xml_size_bytes, root_name,
-             schema_refs, taxonomy_entrypoint, reported_business_id, reported_company_name,
-             reported_period_start, reported_period_end, contexts_count, units_count,
-             facts_count, validation_warnings, parser_version, parsed_at)
-            values
-            ('statement-1', 'run-1', '0176460-0', '2023-09-30', '2026-05-20',
-             'https://example.test/financial', 'companies/0176460-0/2023-09-30.xml',
-             'sha', 100, 'xbrl', '[]', '', '0176460-0', 'Testi Oy',
-             '2022-10-01', '2023-09-30', 3, 1, 4, '[]', 'arelle-test',
-             '2026-06-16T00:00:00+00:00')
-            """
-        )
-        connection.execute(
-            f"""
-            insert into {xbrl_assets.XBRL_DLT_DATASET_NAME}.{FACTS_TABLE}
-            (statement_key, business_id, financial_date, fact_ordinal, concept_qname,
-             concept_namespace, concept_local_name, context_id, unit_id, decimals,
-             precision, value_kind, raw_value, numeric_value, date_value, text_value,
-             mcy_member_code, mcy_member_label_fi, ref_member_code, ref_member_label_fi,
-             is_comparative, dimensions, parser_version, parsed_at)
-            values
-            ('statement-1', '0176460-0', '2023-09-30', 1, 'fi_met:md103',
-             'http://www.suomi.fi/xbrl/crr/dict/met', 'md103', 'ctx-revenue',
-             'EUR', '0', '', 'numeric', '125000', '125000', '', '',
-             'fi_MC:x673', '', '', '', false, '[]', 'arelle-test',
-             '2026-06-16T00:00:00+00:00'),
-            ('statement-1', '0176460-0', '2023-09-30', 2, 'fi_met:mi53',
-             'http://www.suomi.fi/xbrl/crr/dict/met', 'mi53', 'ctx-assets',
-             'EUR', '0', '', 'numeric', '300000', '300000', '', '',
-             'fi_MC:x360', '', '', '', false, '[]', 'arelle-test',
-             '2026-06-16T00:00:00+00:00'),
-            ('statement-1', '0176460-0', '2023-09-30', 3, 'fi_met:mi53',
-             'http://www.suomi.fi/xbrl/crr/dict/met', 'mi53', 'ctx-equity',
-             'EUR', '0', '', 'numeric', '120000', '120000', '', '',
-             'fi_MC:x376', '', '', '', false, '[]', 'arelle-test',
-             '2026-06-16T00:00:00+00:00'),
-            ('statement-1', '0176460-0', '2023-09-30', 4, 'fi_met:md999',
-             'http://www.suomi.fi/xbrl/crr/dict/met', 'md999', 'ctx-unmapped',
-             'EUR', '0', '', 'numeric', '7', '7', '', '',
-             'fi_MC:unknown', '', '', '', false, '[]', 'arelle-test',
-             '2026-06-16T00:00:00+00:00'),
-            ('statement-1', '0176460-0', '2023-09-30', 5, 'fi_met:md103',
-             'http://www.suomi.fi/xbrl/crr/dict/met', 'md103', 'ctx-prior',
-             'EUR', '0', '', 'numeric', '110000', '110000', '', '',
-             'fi_MC:x673', '', 'fi_RF:x4', '', true, '[]', 'arelle-test',
-             '2026-06-16T00:00:00+00:00')
-            """
-        )
-
-    result = build_xbrl_financial_metrics(
-        LocalDuckDBResource(database_path=str(database_path))
-    )
-
-    assert result.metadata["row_count"] == 1
-    assert result.metadata["mapped_fact_count"] == 3
-    assert result.metadata["unmapped_numeric_fact_count"] == 1
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        row = connection.execute(
-            f"""
-            select business_id, financial_date, period_start, period_end, revenue,
-                   total_assets, equity, profit_loss, source_fact_count,
-                   mapped_fact_count, unmapped_numeric_fact_count, metric_warnings
-            from {xbrl_assets.XBRL_DLT_DATASET_NAME}.{FINANCIAL_METRICS_TABLE}
-            """
-        ).fetchone()
-
-    assert row == (
-        "0176460-0",
-        "2023-09-30",
-        "2022-10-01",
-        "2023-09-30",
-        125000.0,
-        300000.0,
-        120000.0,
-        None,
-        5,
-        3,
-        1,
-        '["unmapped numeric facts: 1"]',
-    )
-
-
-def test_xbrl_financial_metrics_reports_missing_parsed_tables(tmp_path: Path) -> None:
-    database_path = tmp_path / "source.duckdb"
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(f"create schema {xbrl_assets.XBRL_DLT_DATASET_NAME}")
-
-    with pytest.raises(ValueError, match="Materialize fi_prh_xbrl_statement_documents"):
-        build_xbrl_financial_metrics(
-            LocalDuckDBResource(database_path=str(database_path))
-        )
+    } <= parent_keys
+    assert dg.AssetKey("xbrl_metric_map") in parent_keys
 
 
 def test_xbrl_api_resource_only_keeps_xml_download_methods() -> None:
@@ -703,33 +539,6 @@ def _xml_document_column_dtype(column: str) -> pl.DataType:
     if column in {"downloaded", "reused"}:
         return pl.Boolean
     return pl.Utf8
-
-
-def _create_xbrl_table(connection: duckdb.DuckDBPyConnection, table: str) -> None:
-    column_definitions = ", ".join(
-        f"{column} {_test_duckdb_column_type(column)}" for column in TABLE_COLUMNS[table]
-    )
-    connection.execute(
-        f"create table {xbrl_assets.XBRL_DLT_DATASET_NAME}.{table} ({column_definitions})"
-    )
-
-
-def _test_duckdb_column_type(column: str) -> str:
-    if column in {
-        "downloaded",
-        "reused",
-        "is_comparative",
-    }:
-        return "boolean"
-    if column in {
-        "xml_size_bytes",
-        "contexts_count",
-        "units_count",
-        "facts_count",
-        "fact_ordinal",
-    }:
-        return "bigint"
-    return "varchar"
 
 
 def _eligible_financial_reports() -> list[dict]:

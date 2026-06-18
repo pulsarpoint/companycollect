@@ -1,6 +1,7 @@
 import json
+import os
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from hashlib import sha256
@@ -12,6 +13,12 @@ import dagster as dg
 import dlt
 import polars as pl
 from dateutil.relativedelta import relativedelta
+from dagster_dbt import (
+    DagsterDbtTranslator,
+    DbtCliResource,
+    DbtProject,
+    dbt_assets,
+)
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 from dlt.extract.resource import DltResource
@@ -24,7 +31,6 @@ from dagster_v3.defs.finland_xbrl.arelle_parser import (
     parse_statement_xml_with_arelle,
 )
 from dagster_v3.defs.finland_xbrl.resources import HttpSession, XbrlApiResource
-from dagster_v3.defs.finland_ytj.assets import DLT_COMPANIES_TABLE, DLT_DATASET_NAME
 from dagster_v3.defs.common.resources import LocalDuckDBResource, ObjectStoreResource
 from pydantic import ConfigDict, field_validator
 
@@ -45,36 +51,43 @@ DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS = 10.0
 DEFAULT_XBRL_RETRY_MAX_DELAY_SECONDS = 120.0
 FI_XBRL_PARSE_PARTITION_START = "2014-01-01"  # earliest registration month in scope; widen if needed
 fi_xbrl_parse_partitions = dg.MonthlyPartitionsDefinition(start_date=FI_XBRL_PARSE_PARTITION_START)
-XBRL_FINANCIAL_METRICS_MAPPING_VERSION = "finland-prh-xbrl-metrics-v1"
-XBRL_FINANCIAL_METRIC_MAP = {
-    ("fi_met:md103", "fi_MC:x673"): "revenue",
-    ("fi_met:md103", "fi_MC:x689"): "operating_profit_loss",
-    ("fi_met:md103", "fi_MC:x740"): "profit_loss",
-    ("fi_met:mi53", "fi_MC:x360"): "total_assets",
-    ("fi_met:mi53", "fi_MC:x376"): "equity",
-    ("fi_met:mi53", "fi_MC:x424"): "liabilities",
-    ("fi_met:mi53", "fi_MC:x399"): "cash_and_bank",
-    ("fi_met:mi53", "fi_MC:x435"): "current_assets",
-    ("fi_met:mi53", "fi_MC:x1768"): "current_receivables",
-    ("fi_met:mi53", "fi_MC:x1811"): "current_liabilities",
-    ("fi_met:md103", "fi_MC:x5"): "personnel_expenses",
-    ("fi_met:md103", "fi_MC:x6"): "wages_and_salaries",
-}
-XBRL_FINANCIAL_METRIC_COLUMNS = (
-    "revenue",
-    "operating_profit_loss",
-    "profit_loss",
-    "total_assets",
-    "equity",
-    "liabilities",
-    "cash_and_bank",
-    "current_assets",
-    "current_receivables",
-    "current_liabilities",
-    "personnel_expenses",
-    "wages_and_salaries",
-    "employees",
+
+FINLAND_XBRL_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
+_XBRL_DUCKDB_PATH = Path(LocalDuckDBResource().database_path).expanduser()
+if not _XBRL_DUCKDB_PATH.is_absolute():
+    _XBRL_DUCKDB_PATH = _XBRL_DUCKDB_PATH.resolve()
+os.environ["FINLAND_XBRL_DUCKDB_PATH"] = str(_XBRL_DUCKDB_PATH)
+
+finland_xbrl_dbt_project = DbtProject(
+    project_dir=FINLAND_XBRL_DBT_PROJECT_DIR,
+    profiles_dir=FINLAND_XBRL_DBT_PROJECT_DIR,
 )
+finland_xbrl_dbt_project.prepare_if_dev()
+
+
+class FinlandXbrlDbtTranslator(DagsterDbtTranslator):
+    def get_asset_key(self, props: Mapping[str, Any]) -> dg.AssetKey:
+        if props["resource_type"] == "source":
+            return super().get_asset_key(props)
+        if props["name"] == "eligible_financial_reports":
+            return dg.AssetKey("finland_xbrl_eligible_financial_reports")
+        return dg.AssetKey(props["name"])  # fi_prh_xbrl_financial_metrics keeps its name
+
+    def get_group_name(self, props: Mapping[str, Any]) -> str:
+        return "finland_xbrl"
+
+
+@dbt_assets(
+    manifest=finland_xbrl_dbt_project.manifest_path,
+    project=finland_xbrl_dbt_project,
+    dagster_dbt_translator=FinlandXbrlDbtTranslator(),
+    pool="finland_ytj_duckdb",
+)
+def finland_xbrl_dbt_assets(
+    context: dg.AssetExecutionContext,
+    finland_xbrl_dbt: DbtCliResource,
+):
+    yield from finland_xbrl_dbt.cli(["build"], context=context).stream()
 
 
 class FinlandXbrlDltTranslator(DagsterDltTranslator):
@@ -665,23 +678,9 @@ def _log_parse_progress(log_info: Callable[[str], None] | None, message: str) ->
 
 
 @dg.asset(
-    name="finland_xbrl_eligible_financial_reports",
-    group_name="finland_xbrl",
-    deps=["finland_ytj_all_companies_duckdb", "finland_xbrl_financial_reports_duckdb"],
-    kinds={"python", "duckdb", "sql"},
-    pool="finland_ytj_duckdb",
-)
-def finland_xbrl_eligible_financial_reports(
-    source_duckdb: LocalDuckDBResource,
-) -> dg.MaterializeResult:
-    """XBRL financial reports for active Finland YTJ companies that have websites."""
-    return build_xbrl_eligible_financial_reports(source_duckdb)
-
-
-@dg.asset(
     name="finland_xbrl_raw_xml_documents",
     group_name="finland_xbrl",
-    deps=[finland_xbrl_eligible_financial_reports],
+    deps=["finland_xbrl_eligible_financial_reports"],
     kinds={"python", "s3", "xml"},
 )
 def finland_xbrl_raw_xml_documents(
@@ -815,33 +814,22 @@ def finland_xbrl_parsed_tables(
         )
 
 
-@dg.asset(
-    name=tables.FINANCIAL_METRICS_TABLE,
-    group_name="finland_xbrl",
-    deps=[tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE],
-    kinds={"python", "duckdb", "sql"},
-    pool="finland_ytj_duckdb",
-)
-def finland_xbrl_financial_metrics(
-    source_duckdb: LocalDuckDBResource,
-) -> dg.MaterializeResult:
-    """Statement-level financial metrics mapped from raw Finland PRH XBRL facts."""
-    return build_xbrl_financial_metrics(source_duckdb)
-
-
 defs = dg.Definitions(
     assets=[
         finland_xbrl_financial_reports_duckdb_asset,
-        finland_xbrl_eligible_financial_reports,
+        finland_xbrl_dbt_assets,
         finland_xbrl_raw_xml_documents,
         finland_xbrl_xml_documents,
         finland_xbrl_parsed_tables,
-        finland_xbrl_financial_metrics,
     ],
     resources={
         "xbrl_api": XbrlApiResource(),
         "object_store": ObjectStoreResource(),
         "source_duckdb": LocalDuckDBResource(),
+        "finland_xbrl_dbt": DbtCliResource(
+            project_dir=finland_xbrl_dbt_project,
+            profiles_dir=FINLAND_XBRL_DBT_PROJECT_DIR,
+        ),
     },
 )
 
@@ -934,56 +922,6 @@ def _dlt_financial_report_row(
 def _source_payload_hash(payload: dict[str, Any]) -> str:
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return sha256(body.encode("utf-8")).hexdigest()
-
-
-def build_xbrl_eligible_financial_reports(
-    source_duckdb: LocalDuckDBResource,
-) -> dg.MaterializeResult:
-    with source_duckdb.connect() as connection:
-        connection.execute(f"create schema if not exists {XBRL_DLT_DATASET_NAME}")
-        connection.execute(
-            f"""
-            create or replace table {XBRL_DLT_DATASET_NAME}.{XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE} as
-            select
-                reports.business_id,
-                reports.financial_date,
-                reports.registration_date,
-                companies.primary_name,
-                companies.website_normalized_url,
-                reports.discovery_registered_date_start,
-                reports.discovery_registered_date_end,
-                reports.source_run_id,
-                reports.source_record_number
-            from {XBRL_DLT_DATASET_NAME}.{XBRL_DLT_FINANCIAL_REPORTS_TABLE} as reports
-            inner join {DLT_DATASET_NAME}.{DLT_COMPANIES_TABLE} as companies
-                on reports.business_id = companies.business_id
-            where companies.is_active = true
-              and coalesce(companies.website_normalized_url, '') <> ''
-            order by reports.business_id, reports.financial_date
-            """
-        )
-        row = connection.execute(
-            f"""
-            select
-                count(*) as eligible_reports_count,
-                count(distinct business_id) as eligible_companies_count,
-                min(financial_date) as min_financial_date,
-                max(financial_date) as max_financial_date
-            from {XBRL_DLT_DATASET_NAME}.{XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE}
-            """
-        ).fetchone()
-
-    eligible_reports_count, eligible_companies_count, min_financial_date, max_financial_date = row
-    return dg.MaterializeResult(
-        metadata={
-            "duckdb_schema": XBRL_DLT_DATASET_NAME,
-            "duckdb_table": XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE,
-            "eligible_reports_count": int(eligible_reports_count or 0),
-            "eligible_companies_count": int(eligible_companies_count or 0),
-            "min_financial_date": str(min_financial_date or ""),
-            "max_financial_date": str(max_financial_date or ""),
-        }
-    )
 
 
 def load_eligible_financial_report_rows(
@@ -1184,108 +1122,6 @@ def parsed_duckdb_observability_metadata(
     }
 
 
-def build_xbrl_financial_metrics(
-    source_duckdb: LocalDuckDBResource,
-) -> dg.MaterializeResult:
-    built_at = datetime.now(UTC).isoformat()
-    with source_duckdb.connect() as connection:
-        connection.execute(f"create schema if not exists {XBRL_DLT_DATASET_NAME}")
-        _require_parsed_xbrl_tables(connection)
-        _create_metric_mapping_table(connection)
-        metric_projection = ",\n                ".join(
-            _metric_projection(metric_code) for metric_code in XBRL_FINANCIAL_METRIC_COLUMNS
-        )
-        connection.execute(
-            f"""
-            create or replace table {XBRL_DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_TABLE} as
-            with fact_counts as (
-                select
-                    statement_key,
-                    count(*) as source_fact_count
-                from {XBRL_DLT_DATASET_NAME}.{tables.FACTS_TABLE}
-                group by statement_key
-            ),
-            current_numeric_facts as (
-                select
-                    facts.statement_key,
-                    facts.concept_qname,
-                    facts.mcy_member_code,
-                    try_cast(nullif(facts.numeric_value, '') as double) as numeric_value,
-                    mapping.metric_code
-                from {XBRL_DLT_DATASET_NAME}.{tables.FACTS_TABLE} as facts
-                left join xbrl_metric_mapping as mapping
-                    on facts.concept_qname = mapping.concept_qname
-                   and facts.mcy_member_code = mapping.mcy_member_code
-                where facts.value_kind = 'numeric'
-                  and coalesce(facts.is_comparative, false) = false
-            ),
-            metric_pivot as (
-                select
-                    statement_key,
-                    count(*) filter (where metric_code is not null) as mapped_fact_count,
-                    count(*) filter (where metric_code is null) as unmapped_numeric_fact_count,
-                    {metric_projection}
-                from current_numeric_facts
-                group by statement_key
-            )
-            select
-                statements.statement_key,
-                statements.business_id,
-                statements.financial_date,
-                nullif(statements.reported_period_start, '') as period_start,
-                coalesce(
-                    nullif(statements.reported_period_end, ''),
-                    nullif(statements.financial_date, '')
-                ) as period_end,
-                {", ".join(f"metrics.{column}" for column in XBRL_FINANCIAL_METRIC_COLUMNS)},
-                coalesce(fact_counts.source_fact_count, 0) as source_fact_count,
-                coalesce(metrics.mapped_fact_count, 0) as mapped_fact_count,
-                coalesce(metrics.unmapped_numeric_fact_count, 0) as unmapped_numeric_fact_count,
-                case
-                    when coalesce(metrics.unmapped_numeric_fact_count, 0) > 0
-                        then concat(
-                            '["unmapped numeric facts: ',
-                            coalesce(metrics.unmapped_numeric_fact_count, 0)::varchar,
-                            '"]'
-                        )
-                    when coalesce(metrics.mapped_fact_count, 0) = 0
-                        then '["no mapped metrics"]'
-                    else '[]'
-                end as metric_warnings,
-                ? as mapping_version,
-                ? as built_at
-            from {XBRL_DLT_DATASET_NAME}.{tables.STATEMENT_DOCUMENTS_TABLE} as statements
-            left join fact_counts
-                on statements.statement_key = fact_counts.statement_key
-            left join metric_pivot as metrics
-                on statements.statement_key = metrics.statement_key
-            order by statements.business_id, statements.financial_date, statements.statement_key
-            """,
-            [XBRL_FINANCIAL_METRICS_MAPPING_VERSION, built_at],
-        )
-        row = connection.execute(
-            f"""
-            select
-                count(*) as row_count,
-                coalesce(sum(mapped_fact_count), 0) as mapped_fact_count,
-                coalesce(sum(unmapped_numeric_fact_count), 0) as unmapped_numeric_fact_count
-            from {XBRL_DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_TABLE}
-            """
-        ).fetchone()
-
-    row_count, mapped_fact_count, unmapped_numeric_fact_count = row
-    return dg.MaterializeResult(
-        metadata={
-            "duckdb_schema": XBRL_DLT_DATASET_NAME,
-            "duckdb_table": tables.FINANCIAL_METRICS_TABLE,
-            "row_count": int(row_count or 0),
-            "mapped_fact_count": int(mapped_fact_count or 0),
-            "unmapped_numeric_fact_count": int(unmapped_numeric_fact_count or 0),
-            "mapping_version": XBRL_FINANCIAL_METRICS_MAPPING_VERSION,
-        }
-    )
-
-
 def _ensure_parsed_duckdb_tables(database_path: Path) -> None:
     with LocalDuckDBResource(database_path=str(database_path)).connect() as connection:
         connection.execute(f"create schema if not exists {XBRL_DLT_DATASET_NAME}")
@@ -1297,46 +1133,6 @@ def _ensure_parsed_duckdb_tables(database_path: Path) -> None:
             connection.execute(
                 f"create table if not exists {XBRL_DLT_DATASET_NAME}.{table} ({column_definitions})"
             )
-
-
-def _create_metric_mapping_table(connection: Any) -> None:
-    connection.execute(
-        """
-        create or replace temp table xbrl_metric_mapping (
-            concept_qname varchar,
-            mcy_member_code varchar,
-            metric_code varchar
-        )
-        """
-    )
-    connection.executemany(
-        "insert into xbrl_metric_mapping values (?, ?, ?)",
-        [
-            (concept_qname, mcy_member_code, metric_code)
-            for (concept_qname, mcy_member_code), metric_code in XBRL_FINANCIAL_METRIC_MAP.items()
-        ],
-    )
-
-
-def _require_parsed_xbrl_tables(connection: Any) -> None:
-    required_tables = (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE)
-    missing_tables = [
-        table for table in required_tables if not _duckdb_table_exists(connection, table=table)
-    ]
-    if missing_tables:
-        missing = ", ".join(f"{XBRL_DLT_DATASET_NAME}.{table}" for table in missing_tables)
-        raise ValueError(
-            f"XBRL financial metrics require parsed DuckDB tables: {missing}. "
-            "Materialize fi_prh_xbrl_statement_documents and fi_prh_xbrl_facts_raw first, "
-            "or launch the metrics asset with upstream selection +fi_prh_xbrl_financial_metrics."
-        )
-
-
-def _metric_projection(metric_code: str) -> str:
-    return (
-        "max(numeric_value) filter "
-        f"(where metric_code = '{metric_code}') as {metric_code}"
-    )
 
 
 def _duckdb_table_exists(connection: Any, *, table: str) -> bool:
@@ -1733,7 +1529,7 @@ def _xbrl_column_dtype(column: str) -> pl.DataType:
         "unmapped_numeric_fact_count",
     }:
         return pl.Int64
-    if column == "facts_per_statement_avg" or column in XBRL_FINANCIAL_METRIC_COLUMNS:
+    if column == "facts_per_statement_avg":
         return pl.Float64
     if column in {"downloaded", "reused", "is_comparative"}:
         return pl.Boolean
