@@ -1,0 +1,7 @@
+finland_xbrl:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('FINLAND_XBRL_DUCKDB_PATH', 'data/finland_ytj.duckdb') }}"
+      schema: finland_prh_xbrl

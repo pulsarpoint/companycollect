@@ -1,0 +1,13 @@
+name: finland_xbrl
+version: "1.0"
+config-version: 2
+profile: finland_xbrl
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  finland_xbrl:
+    +materialized: table
