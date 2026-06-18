@@ -38,6 +38,7 @@ EXCHANGE_RATES_V2_DUCKDB_PATH = Path(
 if not EXCHANGE_RATES_V2_DUCKDB_PATH.is_absolute():
     EXCHANGE_RATES_V2_DUCKDB_PATH = EXCHANGE_RATES_V2_DUCKDB_PATH.resolve()
 EXCHANGE_RATES_V2_PARTITIONS = dg.DailyPartitionsDefinition(start_date="2023-01-01")
+EXCHANGE_RATES_V2_BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
 EXCHANGE_RATES_V2_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
 CLICKHOUSE_EXPORT_TABLE = "clickhouse_exchange_rates"
 
@@ -107,6 +108,7 @@ def day_partition_range_window(
     name="exchange_rates_v2_raw_duckdb",
     dagster_dlt_translator=ExchangeRatesV2DltTranslator(),
     partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
+    backfill_policy=EXCHANGE_RATES_V2_BACKFILL_POLICY,
 )
 def exchange_rates_v2_raw_duckdb_asset(
     context: AssetExecutionContext,
@@ -145,6 +147,7 @@ def exchange_rates_v2_raw_duckdb_asset(
     project=exchange_rates_v2_dbt_project,
     dagster_dbt_translator=ExchangeRatesV2DbtTranslator(),
     partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
+    backfill_policy=EXCHANGE_RATES_V2_BACKFILL_POLICY,
 )
 def exchange_rates_v2_dbt_assets(
     context: AssetExecutionContext,
@@ -167,6 +170,7 @@ def exchange_rates_v2_dbt_assets(
         get_asset_key_for_model([exchange_rates_v2_dbt_assets], "identity_rates"),
     ],
     partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
+    backfill_policy=EXCHANGE_RATES_V2_BACKFILL_POLICY,
     group_name=GROUP_NAME,
     kinds={"duckdb", "clickhouse"},
     description="Exchange-rate v2 dbt rows exported from DuckDB to migrated ClickHouse table.",

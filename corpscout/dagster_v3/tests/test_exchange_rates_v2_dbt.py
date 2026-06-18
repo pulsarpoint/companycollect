@@ -217,6 +217,15 @@ def test_exchange_rates_v2_assets_and_job_are_registered() -> None:
     asset_keys = {key.path[-1] for key in repository.asset_graph.get_all_asset_keys()}
     job_names = set(repository.job_names)
     resource_keys = repository.get_top_level_resources().keys()
+    exchange_rates_v2_keys = {
+        key
+        for key in repository.asset_graph.get_all_asset_keys()
+        if key.path[-1].startswith("exchange_rates_v2")
+    }
+    backfill_policies = {
+        repository.asset_graph.get(key).backfill_policy
+        for key in exchange_rates_v2_keys
+    }
 
     assert "exchange_rates_v2_raw_duckdb" in asset_keys
     assert "exchange_rates_v2_ecb_rates" in asset_keys
@@ -230,6 +239,9 @@ def test_exchange_rates_v2_assets_and_job_are_registered() -> None:
         repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
         is ClickhouseResource
     )
+    assert backfill_policies == {
+        dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
+    }
 
 
 def _create_raw_payload_table(duckdb_path: Path) -> None:
