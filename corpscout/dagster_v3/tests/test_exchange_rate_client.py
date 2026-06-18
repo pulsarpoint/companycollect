@@ -44,6 +44,8 @@ def test_exchange_rate_client_aliases_available_date_columns_for_clickhouse() ->
     assert "requested_rates.request_currency AS request_currency" in sql
     assert "requested_rates.requested_rate_date AS requested_rate_date" in sql
     assert "exchange_rates.rate_date AS rate_date" in sql
+    assert "FROM requested_rates" in sql
+    assert "INNER JOIN reference.exchange_rates AS exchange_rates" in sql
 
 
 def test_exchange_rate_client_handles_usd_and_eur_without_extra_cross_rate() -> None:

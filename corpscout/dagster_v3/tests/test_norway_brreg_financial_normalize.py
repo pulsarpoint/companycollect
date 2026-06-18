@@ -25,6 +25,21 @@ class FakeExchangeRates:
         }
 
 
+class FakeExchangeRatesWithMissing:
+    def __init__(self) -> None:
+        self.requests: list[list[tuple[str, str]]] = []
+
+    def usd_rates(self, requests):
+        request_keys = [(request.currency, request.rate_date) for request in requests]
+        self.requests.append(request_keys)
+        if any(currency == "USN" for currency, _ in request_keys):
+            raise LookupError("No USD exchange rate for USN on, before, or after 2024-12-31")
+        return {
+            (request.currency, request.rate_date): FakeUsdRate()
+            for request in requests
+        }
+
+
 def test_build_financial_statement_rows_from_fetch_rows_uses_batched_fx() -> None:
     exchange_rates = FakeExchangeRates()
     fetch_rows = [
@@ -52,6 +67,37 @@ def test_build_financial_statement_rows_from_fetch_rows_uses_batched_fx() -> Non
     assert rows[0]["operating_revenue_amount_original"] == Decimal("72543000000")
     assert rows[0]["operating_revenue_amount_usd"] == Decimal("7254300000.00")
     assert exchange_rates.requests == [("NOK", "2024-12-31")]
+
+
+def test_build_financial_statement_rows_keeps_rows_without_fx_rate() -> None:
+    exchange_rates = FakeExchangeRatesWithMissing()
+    unsupported_record = _financial_record()
+    unsupported_record["id"] = 5667198
+    unsupported_record["valuta"] = "USN"
+
+    rows = financial_normalize.build_financial_statement_rows_from_fetch_rows(
+        [
+            {
+                "org_number": "923609016",
+                "legal_name": "EQUINOR ASA",
+                "website": "www.equinor.com",
+                "last_submitted_accounts_year": "2024",
+                "source_run_id": "run-1",
+                "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/923609016",
+                "fetch_status": "success",
+                "raw_response": json.dumps([_financial_record(), unsupported_record]),
+            }
+        ],
+        exchange_rates=exchange_rates,
+    )
+
+    assert [row["currency"] for row in rows] == ["NOK", "USN"]
+    assert rows[0]["operating_revenue_amount_usd"] == Decimal("7254300000.00")
+    assert rows[1]["operating_revenue_amount_original"] == Decimal("72543000000")
+    assert rows[1]["operating_revenue_amount_usd"] is None
+    assert rows[1]["fx_rate_to_usd"] is None
+    assert rows[1]["fx_rate_date"] == ""
+    assert rows[1]["fx_source"] == ""
 
 
 def test_build_financial_statement_rows_from_fetch_rows_skips_unsuccessful_fetches() -> None:

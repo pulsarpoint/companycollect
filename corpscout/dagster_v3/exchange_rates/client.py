@@ -19,14 +19,8 @@ DEFAULT_CLICKHOUSE_HTTP_PORT = 8123
 
 
 class ExchangeRateClient:
-    def __init__(
-        self,
-        clickhouse_client: Any,
-        *,
-        table: str = DEFAULT_EXCHANGE_RATES_TABLE,
-    ) -> None:
+    def __init__(self, clickhouse_client: Any) -> None:
         self._clickhouse_client = clickhouse_client
-        self._table = table
 
     @classmethod
     def from_env(cls) -> ExchangeRateClient:
@@ -105,7 +99,7 @@ class ExchangeRateClient:
                     exchange_rates.rate_date AS rate_date,
                     if(exchange_rates.rate_date <= requested_rates.requested_rate_date, 0, 1) AS priority
                 FROM requested_rates
-                INNER JOIN {self._table} AS exchange_rates
+                INNER JOIN {DEFAULT_EXCHANGE_RATES_TABLE} AS exchange_rates
                     ON exchange_rates.base_currency = 'EUR'
                    AND exchange_rates.quote_currency = requested_rates.quote_currency
                 INNER JOIN requested_counts
@@ -145,7 +139,7 @@ class ExchangeRateClient:
             INNER JOIN requested_rates
                 ON requested_rates.request_currency = selected_dates.request_currency
                AND requested_rates.requested_rate_date = selected_dates.requested_rate_date
-            INNER JOIN {self._table} AS exchange_rates
+            INNER JOIN {DEFAULT_EXCHANGE_RATES_TABLE} AS exchange_rates
                 ON exchange_rates.base_currency = 'EUR'
                AND exchange_rates.quote_currency = requested_rates.quote_currency
                AND exchange_rates.rate_date = selected_dates.selected_rate_date

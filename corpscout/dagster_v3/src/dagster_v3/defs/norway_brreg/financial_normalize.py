@@ -40,7 +40,7 @@ def build_financial_statement_rows_from_fetch_rows(
                 )
             successful_records.append((fetch_row, record, line_number))
 
-    rates = exchange_rates.usd_rates(list(rate_requests_by_key.values()))
+    rates = _load_available_usd_rates(exchange_rates, list(rate_requests_by_key.values()))
     rows: list[dict[str, Any]] = []
     for fetch_row, record, line_number in successful_records:
         currency = _string(record.get("valuta")).upper()
@@ -50,7 +50,7 @@ def build_financial_statement_rows_from_fetch_rows(
                 record,
                 org=fetch_row,
                 line_number=line_number,
-                fx_rate=rates[(currency, period_end_date)],
+                fx_rate=rates.get((currency, period_end_date)),
                 run_id=_string(fetch_row.get("source_run_id")),
                 source_url=_string(fetch_row.get("source_url")),
             )
@@ -80,6 +80,24 @@ def build_financial_statement_rows(
         [fetch_row],
         exchange_rates=exchange_rates,
     )
+
+
+def _load_available_usd_rates(
+    exchange_rates: ExchangeRates,
+    requests: list[ExchangeRateRequest],
+) -> dict[tuple[str, str], Any]:
+    if not requests:
+        return {}
+    try:
+        return exchange_rates.usd_rates(requests)
+    except LookupError:
+        rates: dict[tuple[str, str], Any] = {}
+        for request in requests:
+            try:
+                rates.update(exchange_rates.usd_rates([request]))
+            except LookupError:
+                continue
+        return rates
 
 
 def _financial_statement_row(
@@ -154,15 +172,17 @@ def _financial_statement_row(
         "opted_out_audit": _bool(revisjon.get("fravalgRevisjon")),
         "is_small_enterprise": _bool(principles.get("smaaForetak")),
         "accounting_rules": _string(principles.get("regnskapsregler")),
-        "fx_rate_to_usd": fx_rate.rate,
-        "fx_rate_date": fx_rate.rate_date,
-        "fx_source": fx_rate.source,
+        "fx_rate_to_usd": None if fx_rate is None else fx_rate.rate,
+        "fx_rate_date": "" if fx_rate is None else fx_rate.rate_date,
+        "fx_source": "" if fx_rate is None else fx_rate.source,
         "source_url": source_url,
         "raw_financial_record": _json_dumps(record),
     }
     for field_name, amount in amounts.items():
         row[f"{field_name}_amount_original"] = amount
-        row[f"{field_name}_amount_usd"] = None if amount is None else fx_rate.convert(amount)
+        row[f"{field_name}_amount_usd"] = (
+            None if amount is None or fx_rate is None else fx_rate.convert(amount)
+        )
     return row
 
 
