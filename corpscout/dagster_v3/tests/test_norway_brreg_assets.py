@@ -1279,6 +1279,19 @@ def _queue_status_metadata_for_test(**overrides: Any) -> dict[str, Any]:
         "queue_failed_batches": 0,
         "queue_completed_percent": 30.0,
         "queue_error": "",
+        "queue_translation_model": "qwen3:6b",
+        "queue_cache_model_scope": "qwen3:6b",
+        "queue_unique_source_texts": 5,
+        "queue_cached_unique_source_texts": 3,
+        "queue_uncached_unique_source_texts": 2,
+        "queue_completed_unique_source_texts": 2,
+        "queue_remaining_unique_source_texts": 4,
+        "queue_remaining_cached_unique_source_texts": 2,
+        "queue_remaining_uncached_unique_source_texts": 2,
+        "queue_remaining_cached_items": 4,
+        "queue_remaining_uncached_items": 3,
+        "queue_unique_source_texts_translated_percent": 60.0,
+        "queue_remaining_unique_source_texts_translated_percent": 50.0,
     }
     metadata.update(overrides)
     return metadata
@@ -1511,6 +1524,14 @@ def test_norway_translation_queue_status_metadata_reports_progress(tmp_path: Pat
             brreg_assets.TranslationQueueItem(
                 source_duckdb_path="source.duckdb",
                 source_table="source.entities",
+                source_pk="1-duplicate",
+                source_field="company_description_original",
+                source_text="Konsulenttjenester",
+                target_language="en",
+            ),
+            brreg_assets.TranslationQueueItem(
+                source_duckdb_path="source.duckdb",
+                source_table="source.entities",
                 source_pk="2",
                 source_field="activity_text_original",
                 source_text="Utvikling av programvare",
@@ -1533,16 +1554,32 @@ def test_norway_translation_queue_status_metadata_reports_progress(tmp_path: Pat
     )
 
     metadata = brreg_assets.norway_brreg_translation_queue_status_metadata(
-        queue_duckdb_path=queue_duckdb_path
+        queue_duckdb_path=queue_duckdb_path,
+        translation_model="qwen3:6b",
     )
 
     assert metadata["queue_available"] is True
-    assert metadata["queue_total_items"] == 2
-    assert metadata["queue_remaining_items"] == 1
-    assert metadata["queue_pending_items"] == 1
+    assert metadata["queue_total_items"] == 3
+    assert metadata["queue_total_rows"] == 3
+    assert metadata["queue_remaining_items"] == 2
+    assert metadata["queue_remaining_rows"] == 2
+    assert metadata["queue_pending_items"] == 2
     assert metadata["queue_completed_items"] == 1
     assert metadata["queue_result_items"] == 1
     assert metadata["queue_cache_items"] == 1
     assert metadata["queue_batch_attempts"] == 1
     assert metadata["queue_successful_batches"] == 1
-    assert metadata["queue_completed_percent"] == 50.0
+    assert metadata["queue_completed_percent"] == 33.333
+    assert metadata["queue_translation_model"] == "qwen3:6b"
+    assert metadata["queue_cache_model_scope"] == "qwen3:6b"
+    assert metadata["queue_unique_source_texts"] == 2
+    assert metadata["queue_cached_unique_source_texts"] == 1
+    assert metadata["queue_uncached_unique_source_texts"] == 1
+    assert metadata["queue_completed_unique_source_texts"] == 1
+    assert metadata["queue_remaining_unique_source_texts"] == 2
+    assert metadata["queue_remaining_cached_unique_source_texts"] == 1
+    assert metadata["queue_remaining_uncached_unique_source_texts"] == 1
+    assert metadata["queue_remaining_cached_items"] == 1
+    assert metadata["queue_remaining_uncached_items"] == 1
+    assert metadata["queue_unique_source_texts_translated_percent"] == 50.0
+    assert metadata["queue_remaining_unique_source_texts_translated_percent"] == 50.0

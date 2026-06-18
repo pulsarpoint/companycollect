@@ -326,14 +326,25 @@ def norway_brreg_translation_queue(
     }
     context.log.info(
         "Norway Brreg translation queue status: source_rows=%s candidate_items=%s "
-        "inserted_items=%s total=%s pending=%s completed=%s leased=%s "
-        "failed_retryable=%s results=%s cache=%s batch_attempts=%s "
+        "inserted_items=%s queue_total_rows=%s queue_remaining_rows=%s "
+        "queue_unique_source_texts=%s queue_cached_unique_source_texts=%s "
+        "queue_remaining_unique_source_texts=%s "
+        "queue_remaining_uncached_unique_source_texts=%s "
+        "queue_remaining_cached_unique_source_texts=%s "
+        "queue_pending_rows=%s queue_completed_rows=%s queue_leased_rows=%s "
+        "queue_failed_retryable_rows=%s results=%s cache=%s batch_attempts=%s "
         "successful_batches=%s failed_batches=%s workflow_id=%s workflow_run_id=%s "
-        "workflow_task_queue=%s",
+        "workflow_task_queue=%s translation_model=%s",
         metadata["source_rows"],
         metadata["candidate_items"],
         metadata["inserted_items"],
         metadata["queue_total_items"],
+        metadata["queue_remaining_items"],
+        metadata["queue_unique_source_texts"],
+        metadata["queue_cached_unique_source_texts"],
+        metadata["queue_remaining_unique_source_texts"],
+        metadata["queue_remaining_uncached_unique_source_texts"],
+        metadata["queue_remaining_cached_unique_source_texts"],
         metadata["queue_pending_items"],
         metadata["queue_completed_items"],
         metadata["queue_leased_items"],
@@ -346,6 +357,7 @@ def norway_brreg_translation_queue(
         metadata["workflow_id"],
         metadata["workflow_run_id"],
         metadata["workflow_task_queue"],
+        metadata["queue_translation_model"],
     )
     return dg.MaterializeResult(metadata=metadata)
 
@@ -496,23 +508,32 @@ def norway_brreg_translation_workflow_status_metadata(
 def norway_brreg_translation_queue_status_metadata(
     *,
     queue_duckdb_path: str | Path = NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
+    translation_model: str | None = None,
 ) -> dict[str, Any]:
     queue_path = Path(queue_duckdb_path)
+    model = _translation_queue_cache_model(translation_model)
     if not queue_path.exists():
         return _empty_translation_queue_status_metadata(
             queue_available=False,
             queue_error=f"queue DuckDB does not exist: {queue_path}",
             queue_duckdb_path=queue_path,
+            translation_model=model,
         )
     try:
         with duckdb.connect(str(queue_path), read_only=True) as connection:
             summary = _translation_queue_summary_from_connection(connection, table_prefix="main")
             cache_items = _count_translation_cache_rows(connection, table_prefix="main")
+            text_progress = _translation_queue_text_progress_metadata(
+                connection,
+                table_prefix="main",
+                translation_model=model,
+            )
     except Exception as exc:
         return _empty_translation_queue_status_metadata(
             queue_available=False,
             queue_error=str(exc),
             queue_duckdb_path=queue_path,
+            translation_model=model,
         )
     remaining_items = (
         summary.pending_items + summary.leased_items + summary.failed_retryable_items
@@ -526,7 +547,9 @@ def norway_brreg_translation_queue_status_metadata(
         "queue_available": True,
         "queue_duckdb_path": str(queue_path),
         "queue_total_items": summary.total_items,
+        "queue_total_rows": summary.total_items,
         "queue_remaining_items": remaining_items,
+        "queue_remaining_rows": remaining_items,
         "queue_pending_items": summary.pending_items,
         "queue_leased_items": summary.leased_items,
         "queue_completed_items": summary.completed_items,
@@ -538,6 +561,7 @@ def norway_brreg_translation_queue_status_metadata(
         "queue_failed_batches": summary.failed_batches,
         "queue_completed_percent": completed_percent,
         "queue_error": "",
+        **text_progress,
     }
 
 
@@ -546,12 +570,15 @@ def _empty_translation_queue_status_metadata(
     queue_available: bool,
     queue_error: str,
     queue_duckdb_path: str | Path = NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
+    translation_model: str = "",
 ) -> dict[str, Any]:
     return {
         "queue_available": queue_available,
         "queue_duckdb_path": str(queue_duckdb_path),
         "queue_total_items": 0,
+        "queue_total_rows": 0,
         "queue_remaining_items": 0,
+        "queue_remaining_rows": 0,
         "queue_pending_items": 0,
         "queue_leased_items": 0,
         "queue_completed_items": 0,
@@ -563,6 +590,176 @@ def _empty_translation_queue_status_metadata(
         "queue_failed_batches": 0,
         "queue_completed_percent": 0.0,
         "queue_error": queue_error,
+        "queue_translation_model": translation_model,
+        "queue_cache_model_scope": translation_model or "all_models",
+        "queue_unique_source_texts": 0,
+        "queue_cached_unique_source_texts": 0,
+        "queue_uncached_unique_source_texts": 0,
+        "queue_completed_unique_source_texts": 0,
+        "queue_remaining_unique_source_texts": 0,
+        "queue_remaining_cached_unique_source_texts": 0,
+        "queue_remaining_uncached_unique_source_texts": 0,
+        "queue_remaining_cached_items": 0,
+        "queue_remaining_uncached_items": 0,
+        "queue_unique_source_texts_translated_percent": 0.0,
+        "queue_remaining_unique_source_texts_translated_percent": 0.0,
+    }
+
+
+def _translation_queue_cache_model(translation_model: str | None) -> str:
+    if translation_model is not None:
+        return translation_model.strip()
+    return os.environ.get("TRANSLATION_PROVIDER_LOCAL_MODEL", "").strip()
+
+
+def _translation_queue_text_progress_metadata(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    table_prefix: str,
+    translation_model: str,
+) -> dict[str, Any]:
+    qualified_prefix = f"{table_prefix}." if table_prefix else ""
+    items_table = f"{qualified_prefix}translation_items"
+    cache_table = f"{qualified_prefix}translation_cache"
+    cache_scope = translation_model or "all_models"
+    cache_model_condition = "and c.model = ?" if translation_model else ""
+    cache_model_params = [translation_model] if translation_model else []
+
+    unique_source_texts = int(
+        connection.execute(
+            f"select count(distinct source_text_hash) from {items_table}"
+        ).fetchone()[0]
+    )
+    completed_unique_source_texts = int(
+        connection.execute(
+            f"""
+            select count(distinct source_text_hash)
+            from {items_table}
+            where status = 'completed'
+            """
+        ).fetchone()[0]
+    )
+    remaining_unique_source_texts = int(
+        connection.execute(
+            f"""
+            select count(distinct source_text_hash)
+            from {items_table}
+            where status in ('pending', 'leased', 'failed_retryable')
+            """
+        ).fetchone()[0]
+    )
+    cached_unique_source_texts = int(
+        connection.execute(
+            f"""
+            select count(*) from (
+                select distinct i.source_text_hash
+                from {items_table} i
+                where exists (
+                    select 1
+                    from {cache_table} c
+                    where c.source_text_hash = i.source_text_hash
+                      {cache_model_condition}
+                )
+            )
+            """,
+            cache_model_params,
+        ).fetchone()[0]
+    )
+    remaining_cached_unique_source_texts = int(
+        connection.execute(
+            f"""
+            select count(*) from (
+                select distinct i.source_text_hash
+                from {items_table} i
+                where i.status in ('pending', 'leased', 'failed_retryable')
+                  and exists (
+                    select 1
+                    from {cache_table} c
+                    where c.source_text_hash = i.source_text_hash
+                      {cache_model_condition}
+                )
+            )
+            """,
+            cache_model_params,
+        ).fetchone()[0]
+    )
+    remaining_cached_items = int(
+        connection.execute(
+            f"""
+            select count(*)
+            from {items_table} i
+            where i.status in ('pending', 'leased', 'failed_retryable')
+              and exists (
+                select 1
+                from {cache_table} c
+                where c.source_text_hash = i.source_text_hash
+                  {cache_model_condition}
+            )
+            """,
+            cache_model_params,
+        ).fetchone()[0]
+    )
+    remaining_uncached_unique_source_texts = int(
+        connection.execute(
+            f"""
+            select count(*) from (
+                select distinct i.source_text_hash
+                from {items_table} i
+                where i.status in ('pending', 'leased', 'failed_retryable')
+                  and not exists (
+                    select 1
+                    from {cache_table} c
+                    where c.source_text_hash = i.source_text_hash
+                      {cache_model_condition}
+                )
+            )
+            """,
+            cache_model_params,
+        ).fetchone()[0]
+    )
+    remaining_uncached_items = int(
+        connection.execute(
+            f"""
+            select count(*)
+            from {items_table} i
+            where i.status in ('pending', 'leased', 'failed_retryable')
+              and not exists (
+                select 1
+                from {cache_table} c
+                where c.source_text_hash = i.source_text_hash
+                  {cache_model_condition}
+            )
+            """,
+            cache_model_params,
+        ).fetchone()[0]
+    )
+    uncached_unique_source_texts = unique_source_texts - cached_unique_source_texts
+    unique_translated_percent = (
+        round((cached_unique_source_texts / unique_source_texts) * 100, 3)
+        if unique_source_texts > 0
+        else 0.0
+    )
+    remaining_unique_translated_percent = (
+        round((remaining_cached_unique_source_texts / remaining_unique_source_texts) * 100, 3)
+        if remaining_unique_source_texts > 0
+        else 0.0
+    )
+    return {
+        "queue_translation_model": translation_model,
+        "queue_cache_model_scope": cache_scope,
+        "queue_unique_source_texts": unique_source_texts,
+        "queue_cached_unique_source_texts": cached_unique_source_texts,
+        "queue_uncached_unique_source_texts": uncached_unique_source_texts,
+        "queue_completed_unique_source_texts": completed_unique_source_texts,
+        "queue_remaining_unique_source_texts": remaining_unique_source_texts,
+        "queue_remaining_cached_unique_source_texts": remaining_cached_unique_source_texts,
+        "queue_remaining_uncached_unique_source_texts": remaining_uncached_unique_source_texts,
+        "queue_remaining_cached_items": remaining_cached_items,
+        "queue_remaining_uncached_items": remaining_uncached_items,
+        "queue_unique_source_texts_translated_percent": unique_translated_percent,
+        "queue_remaining_unique_source_texts_translated_percent": (
+            remaining_unique_translated_percent
+        ),
     }
 
 
@@ -573,17 +770,27 @@ def log_norway_brreg_translation_workflow_status(
     _log(
         log,
         "Norway Brreg translation workflow status: workflow_status=%s "
-        "workflow_run_id=%s queue_available=%s queue_total_items=%s "
-        "queue_remaining_items=%s queue_pending_items=%s queue_leased_items=%s "
-        "queue_completed_items=%s queue_failed_retryable_items=%s "
+        "workflow_run_id=%s queue_available=%s queue_total_rows=%s "
+        "queue_remaining_rows=%s queue_unique_source_texts=%s "
+        "queue_cached_unique_source_texts=%s queue_remaining_unique_source_texts=%s "
+        "queue_remaining_uncached_unique_source_texts=%s "
+        "queue_remaining_cached_unique_source_texts=%s "
+        "queue_pending_rows=%s queue_leased_rows=%s "
+        "queue_completed_rows=%s queue_failed_retryable_rows=%s "
         "queue_result_items=%s queue_cache_items=%s queue_batch_attempts=%s "
         "queue_successful_batches=%s queue_failed_batches=%s "
-        "queue_completed_percent=%s queue_error=%s",
+        "queue_completed_percent=%s queue_unique_source_texts_translated_percent=%s "
+        "translation_model=%s queue_error=%s",
         metadata.get("workflow_status", ""),
         metadata.get("workflow_run_id", ""),
         metadata.get("queue_available", False),
         metadata.get("queue_total_items", 0),
         metadata.get("queue_remaining_items", 0),
+        metadata.get("queue_unique_source_texts", 0),
+        metadata.get("queue_cached_unique_source_texts", 0),
+        metadata.get("queue_remaining_unique_source_texts", 0),
+        metadata.get("queue_remaining_uncached_unique_source_texts", 0),
+        metadata.get("queue_remaining_cached_unique_source_texts", 0),
         metadata.get("queue_pending_items", 0),
         metadata.get("queue_leased_items", 0),
         metadata.get("queue_completed_items", 0),
@@ -594,6 +801,8 @@ def log_norway_brreg_translation_workflow_status(
         metadata.get("queue_successful_batches", 0),
         metadata.get("queue_failed_batches", 0),
         metadata.get("queue_completed_percent", 0.0),
+        metadata.get("queue_unique_source_texts_translated_percent", 0.0),
+        metadata.get("queue_translation_model", ""),
         metadata.get("queue_error", ""),
     )
 
@@ -731,17 +940,32 @@ def seed_norway_brreg_translation_queue(
         )
         summary = _translation_queue_summary_from_connection(connection, table_prefix="queue_db")
         cache_items = _count_translation_cache_rows(connection, table_prefix="queue_db")
+        text_progress = _translation_queue_text_progress_metadata(
+            connection,
+            table_prefix="queue_db",
+            translation_model=_translation_queue_cache_model(None),
+        )
 
     inserted_items = queue_items_after - queue_items_before
     _log(
         log,
         "Inserted Norway Brreg translation queue candidates: inserted_items=%s, "
-        "queue_total_items=%s, queue_pending_items=%s, queue_completed_items=%s, "
-        "queue_leased_items=%s, queue_failed_retryable_items=%s, queue_result_items=%s, "
-        "queue_cache_items=%s, queue_batch_attempts=%s, queue_successful_batches=%s, "
-        "queue_failed_batches=%s, elapsed_seconds=%.3f",
+        "queue_total_rows=%s, queue_remaining_rows=%s, queue_unique_source_texts=%s, "
+        "queue_cached_unique_source_texts=%s, queue_remaining_unique_source_texts=%s, "
+        "queue_remaining_uncached_unique_source_texts=%s, "
+        "queue_remaining_cached_unique_source_texts=%s, queue_pending_rows=%s, "
+        "queue_completed_rows=%s, queue_leased_rows=%s, queue_failed_retryable_rows=%s, "
+        "queue_result_items=%s, queue_cache_items=%s, queue_batch_attempts=%s, "
+        "queue_successful_batches=%s, queue_failed_batches=%s, translation_model=%s, "
+        "elapsed_seconds=%.3f",
         inserted_items,
         summary.total_items,
+        summary.pending_items + summary.leased_items + summary.failed_retryable_items,
+        text_progress["queue_unique_source_texts"],
+        text_progress["queue_cached_unique_source_texts"],
+        text_progress["queue_remaining_unique_source_texts"],
+        text_progress["queue_remaining_uncached_unique_source_texts"],
+        text_progress["queue_remaining_cached_unique_source_texts"],
         summary.pending_items,
         summary.completed_items,
         summary.leased_items,
@@ -751,13 +975,18 @@ def seed_norway_brreg_translation_queue(
         summary.batch_attempts,
         summary.successful_batches,
         summary.failed_batches,
+        text_progress["queue_translation_model"],
         perf_counter() - start,
     )
+    remaining_items = summary.pending_items + summary.leased_items + summary.failed_retryable_items
     return {
         "source_rows": source_rows,
         "candidate_items": candidate_items,
         "inserted_items": inserted_items,
         "queue_total_items": summary.total_items,
+        "queue_total_rows": summary.total_items,
+        "queue_remaining_items": remaining_items,
+        "queue_remaining_rows": remaining_items,
         "queue_pending_items": summary.pending_items,
         "queue_leased_items": summary.leased_items,
         "queue_completed_items": summary.completed_items,
@@ -767,6 +996,7 @@ def seed_norway_brreg_translation_queue(
         "queue_batch_attempts": summary.batch_attempts,
         "queue_successful_batches": summary.successful_batches,
         "queue_failed_batches": summary.failed_batches,
+        **text_progress,
     }
 
 
