@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -101,65 +101,6 @@ def financial_fetch_failure_row(
         fetched_at=fetched_at,
         raw_response=raw_response,
     )
-
-
-def iter_brreg_financial_statement_fetch_rows(
-    *,
-    database_path: str | Path,
-    source_run_id: str,
-    base_url: str = BRREG_REGNSKAP_BASE_URL,
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
-    user_agent: str = DEFAULT_USER_AGENT,
-    fetched_at: str | None = None,
-    client: Any | None = None,
-    log: Callable[..., None] | None = None,
-    progress_every_rows: int = FINANCIAL_FETCH_PROGRESS_LOG_EVERY_ROWS,
-) -> Iterator[dict[str, Any]]:
-    http_client = client or _default_financial_fetch_http_client(
-        timeout_seconds=timeout_seconds,
-        user_agent=user_agent,
-    )
-    fetch_timestamp = fetched_at or _utc_now_iso()
-    candidates = _financial_fetch_candidates(database_path)
-    progress_log = log
-    if progress_log is not None:
-        progress_log(
-            "Prepared Norway Brreg financial fetch candidates: candidates=%s",
-            len(candidates),
-        )
-    status_counts: dict[str, int] = {}
-    for source_line_number, org in enumerate(candidates, start=1):
-        source_url = f"{base_url}/{org['org_number']}"
-        row = _fetch_brreg_financial_statement(
-            client=http_client,
-            org=org,
-            source_url=source_url,
-            source_run_id=source_run_id,
-            source_line_number=source_line_number,
-            timeout_seconds=timeout_seconds,
-            fetched_at=fetch_timestamp,
-        )
-        fetch_status = _string(row.get("fetch_status"))
-        status_counts[fetch_status] = status_counts.get(fetch_status, 0) + 1
-        if (
-            progress_log is not None
-            and progress_every_rows > 0
-            and source_line_number % progress_every_rows == 0
-        ):
-            progress_log(
-                "Fetched Norway Brreg financial statements: processed=%s total=%s statuses=%s",
-                source_line_number,
-                len(candidates),
-                status_counts,
-            )
-        yield row
-    if progress_log is not None:
-        progress_log(
-            "Completed Norway Brreg financial statement fetches: processed=%s total=%s statuses=%s",
-            len(candidates),
-            len(candidates),
-            status_counts,
-        )
 
 
 def run_brreg_financial_statement_fetches(
