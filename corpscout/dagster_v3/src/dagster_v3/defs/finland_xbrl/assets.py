@@ -776,14 +776,26 @@ def finland_xbrl_parsed_tables(
         context.partition_key, len(documents), len(in_window), len(to_parse),
     )
 
+    parsed_this_run = 0
+    failed_this_run = 0
     if to_parse:
-        run_finland_xbrl_arelle_dlt_pipeline(
+        result = run_finland_xbrl_arelle_dlt_pipeline(
             database_path=source_duckdb.path(),
             object_store=object_store,
             documents=to_parse,
             run_id=context.run_id,
             log_info=context.log.info,
         )
+        parsed_this_run = result.parsed
+        failed_this_run = result.failed
+        if failed_this_run:
+            # Failed docs are not written, so they are re-attempted on the next run
+            # (and keep failing until the source document is fixed/removed).
+            context.log.warning(
+                "XBRL parse partition %s: %d documents failed to parse and were skipped "
+                "(will retry next run)",
+                context.partition_key, failed_this_run,
+            )
 
     row_counts = parsed_duckdb_row_counts(source_duckdb)
     for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE):
@@ -794,7 +806,8 @@ def finland_xbrl_parsed_tables(
                 "duckdb_table": table,
                 "partition": context.partition_key,
                 "documents_in_window": len(in_window),
-                "documents_parsed_this_run": len(to_parse),
+                "documents_parsed_this_run": parsed_this_run,
+                "documents_failed_this_run": failed_this_run,
                 "documents_missing_registration_date": missing_registration,
                 "total_table_row_count": row_counts[table],
                 "xml_documents_object_key": documents_key,

@@ -695,6 +695,57 @@ def _statement_count(res):
         ).fetchone()[0]
 
 
+def test_parse_metadata_reports_failed_and_parsed_counts(tmp_path):
+    # The body of finland_xbrl_parsed_tables maps the runner result onto the
+    # per-table MaterializeResult metadata:
+    #   documents_parsed_this_run -> result.parsed
+    #   documents_failed_this_run -> result.failed
+    # Drive the same runner with one good and one poison doc and assert the
+    # counts that feed that metadata are accurate (parsed != attempted).
+    s3_client = FakeS3Client()
+    object_store = ObjectStoreResource(bucket="source-finland-prh-xbrl", s3_client=s3_client)
+    res = _xbrl_resource(tmp_path)
+    good = {
+        "business_id": "good",
+        "financial_date": "2023-12-31",
+        "registration_date": "2024-03-10",
+        "source_url": "",
+        "xml_object_key": "companies/good/2023-12-31.xml",
+    }
+    bad = {
+        "business_id": "bad",
+        "financial_date": "2023-12-31",
+        "registration_date": "2024-03-11",
+        "source_url": "",
+        "xml_object_key": "companies/bad/2023-12-31.xml",
+    }
+    _seed_catalog(s3_client, object_store, [good, bad])
+
+    documents, _ = xbrl.load_xbrl_document_manifest(
+        object_store=object_store, documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY
+    )
+    to_parse = xbrl.documents_in_registration_window(
+        documents, window_start=date(2024, 3, 1), window_end=date(2024, 4, 1)
+    )
+    assert len(to_parse) == 2  # both attempted
+
+    result = xbrl.run_finland_xbrl_arelle_dlt_pipeline(
+        database_path=res.path(),
+        object_store=object_store,
+        documents=to_parse,
+        run_id="t",
+        parser=_raising_parser,
+    )
+
+    # Metadata semantics: parsed count reflects rows actually written, not
+    # attempts (len(to_parse) would overcount), and failures are surfaced.
+    documents_parsed_this_run = result.parsed
+    documents_failed_this_run = result.failed
+    assert documents_parsed_this_run == 1
+    assert documents_failed_this_run == 1
+    assert documents_parsed_this_run != len(to_parse)
+
+
 def test_partitioned_parse_is_incremental_and_resumable(tmp_path):
     s3_client = FakeS3Client()
     object_store = ObjectStoreResource(bucket="source-finland-prh-xbrl", s3_client=s3_client)
