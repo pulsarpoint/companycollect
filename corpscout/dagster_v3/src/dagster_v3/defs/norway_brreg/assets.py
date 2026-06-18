@@ -324,7 +324,29 @@ def norway_brreg_translation_queue(
         "workflow_run_id": workflow["run_id"],
         "workflow_task_queue": workflow["task_queue"],
     }
-    context.log.info("Seeded Norway Brreg translation queue and started workflow", extra=metadata)
+    context.log.info(
+        "Norway Brreg translation queue status: source_rows=%s candidate_items=%s "
+        "inserted_items=%s total=%s pending=%s completed=%s leased=%s "
+        "failed_retryable=%s results=%s cache=%s batch_attempts=%s "
+        "successful_batches=%s failed_batches=%s workflow_id=%s workflow_run_id=%s "
+        "workflow_task_queue=%s",
+        metadata["source_rows"],
+        metadata["candidate_items"],
+        metadata["inserted_items"],
+        metadata["queue_total_items"],
+        metadata["queue_pending_items"],
+        metadata["queue_completed_items"],
+        metadata["queue_leased_items"],
+        metadata["queue_failed_retryable_items"],
+        metadata["queue_result_items"],
+        metadata["queue_cache_items"],
+        metadata["queue_batch_attempts"],
+        metadata["queue_successful_batches"],
+        metadata["queue_failed_batches"],
+        metadata["workflow_id"],
+        metadata["workflow_run_id"],
+        metadata["workflow_task_queue"],
+    )
     return dg.MaterializeResult(metadata=metadata)
 
 
@@ -583,15 +605,27 @@ def seed_norway_brreg_translation_queue(
             connection.execute("select count(*) from queue_db.translation_items").fetchone()[0]
         )
         summary = _translation_queue_summary_from_connection(connection, table_prefix="queue_db")
+        cache_items = _count_translation_cache_rows(connection, table_prefix="queue_db")
 
     inserted_items = queue_items_after - queue_items_before
     _log(
         log,
         "Inserted Norway Brreg translation queue candidates: inserted_items=%s, "
-        "queue_total_items=%s, queue_pending_items=%s, elapsed_seconds=%.3f",
+        "queue_total_items=%s, queue_pending_items=%s, queue_completed_items=%s, "
+        "queue_leased_items=%s, queue_failed_retryable_items=%s, queue_result_items=%s, "
+        "queue_cache_items=%s, queue_batch_attempts=%s, queue_successful_batches=%s, "
+        "queue_failed_batches=%s, elapsed_seconds=%.3f",
         inserted_items,
         summary.total_items,
         summary.pending_items,
+        summary.completed_items,
+        summary.leased_items,
+        summary.failed_retryable_items,
+        summary.result_items,
+        cache_items,
+        summary.batch_attempts,
+        summary.successful_batches,
+        summary.failed_batches,
         perf_counter() - start,
     )
     return {
@@ -600,8 +634,14 @@ def seed_norway_brreg_translation_queue(
         "inserted_items": inserted_items,
         "queue_total_items": summary.total_items,
         "queue_pending_items": summary.pending_items,
+        "queue_leased_items": summary.leased_items,
         "queue_completed_items": summary.completed_items,
         "queue_failed_retryable_items": summary.failed_retryable_items,
+        "queue_result_items": summary.result_items,
+        "queue_cache_items": cache_items,
+        "queue_batch_attempts": summary.batch_attempts,
+        "queue_successful_batches": summary.successful_batches,
+        "queue_failed_batches": summary.failed_batches,
     }
 
 
@@ -688,6 +728,14 @@ def _count_attached_translation_queue_rows(
             [status],
         ).fetchone()[0]
     )
+
+
+def _count_translation_cache_rows(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    table_prefix: str,
+) -> int:
+    return int(connection.execute(f"select count(*) from {table_prefix}.translation_cache").fetchone()[0])
 
 
 def _norway_brreg_translation_candidates_sql() -> str:
