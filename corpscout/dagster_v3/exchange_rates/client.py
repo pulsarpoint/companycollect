@@ -100,9 +100,9 @@ class ExchangeRateClient:
             ),
             available_dates AS (
                 SELECT
-                    requested_rates.request_currency,
-                    requested_rates.requested_rate_date,
-                    exchange_rates.rate_date,
+                    requested_rates.request_currency AS request_currency,
+                    requested_rates.requested_rate_date AS requested_rate_date,
+                    exchange_rates.rate_date AS rate_date,
                     if(exchange_rates.rate_date <= requested_rates.requested_rate_date, 0, 1) AS priority
                 FROM requested_rates
                 INNER JOIN {self._table} AS exchange_rates

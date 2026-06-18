@@ -29,6 +29,23 @@ def test_exchange_rate_client_resolves_latest_common_usd_cross_rate() -> None:
     assert "toDate('2024-12-31')" in clickhouse.queries[0].sql
 
 
+def test_exchange_rate_client_aliases_available_date_columns_for_clickhouse() -> None:
+    clickhouse = FakeNativeClickHouseClient(rows=[])
+    client = ExchangeRateClient(clickhouse)
+
+    try:
+        client.usd_rate(currency="NOK", rate_date="2024-12-31")
+    except LookupError:
+        pass
+    else:
+        raise AssertionError("Expected missing rate to raise LookupError")
+
+    sql = clickhouse.queries[0].sql
+    assert "requested_rates.request_currency AS request_currency" in sql
+    assert "requested_rates.requested_rate_date AS requested_rate_date" in sql
+    assert "exchange_rates.rate_date AS rate_date" in sql
+
+
 def test_exchange_rate_client_handles_usd_and_eur_without_extra_cross_rate() -> None:
     clickhouse = FakeNativeClickHouseClient(
         rows=[
