@@ -20,3 +20,8 @@ models:
       - name: business_id
         data_tests:
           - not_null
+  - name: fi_industries
+    columns:
+      - name: business_id
+        data_tests:
+          - not_null

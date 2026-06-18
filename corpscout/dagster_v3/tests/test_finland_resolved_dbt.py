@@ -82,3 +82,25 @@ def test_fi_websites_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     ).fetchall()
     # Only fi-1 has a website; fi-2 is filtered out (empty normalized url)
     assert rows == [("fi-1", "https://example.fi/path", "example.fi", True, True)]
+
+
+def test_fi_industries_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db = tmp_path / "finland_ytj.duckdb"
+    _seed_all_companies(db)
+    _dbt_build(db, monkeypatch)
+    conn = duckdb.connect(str(db), read_only=True)
+    row = conn.execute(
+        "select source_industry_code, source_industry_code_set, description_original, "
+        "description_language, nace_revision, nace_code, nace_normalized_code, "
+        "nace_mapping_method, nace_mapping_status, is_primary "
+        "from finland_resolved.fi_industries where business_id = 'fi-1'"
+    ).fetchone()
+    assert row == (
+        "62010", "NACE_REV_2", "Ohjelmistot", "fi",
+        "NACE_REV_2", "62010", "62010", "direct_code", "mapped", True,
+    )
+    miss = conn.execute(
+        "select source_industry_code, nace_mapping_method, nace_mapping_status "
+        "from finland_resolved.fi_industries where business_id = 'fi-2'"
+    ).fetchone()
+    assert miss == (None, "none", "missing_source_code")
