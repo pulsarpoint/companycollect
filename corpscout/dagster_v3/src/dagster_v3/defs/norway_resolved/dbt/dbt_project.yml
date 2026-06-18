@@ -1,0 +1,12 @@
+name: norway_resolved
+version: "1.0"
+config-version: 2
+profile: norway_resolved
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  norway_resolved:
+    +materialized: table

@@ -77,11 +77,12 @@ def test_fi_websites_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     _dbt_build(db, monkeypatch)
     conn = duckdb.connect(str(db), read_only=True)
     rows = conn.execute(
-        "select business_id, website_normalized_url, website_host, is_current, is_primary "
+        "select business_id, website_normalized_url, website_host, root_domain, "
+        "is_current, is_primary "
         "from finland_resolved.fi_websites order by business_id"
     ).fetchall()
     # Only fi-1 has a website; fi-2 is filtered out (empty normalized url)
-    assert rows == [("fi-1", "https://example.fi/path", "example.fi", True, True)]
+    assert rows == [("fi-1", "https://example.fi/path", "example.fi", "example.fi", True, True)]
 
 
 def test_fi_industries_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

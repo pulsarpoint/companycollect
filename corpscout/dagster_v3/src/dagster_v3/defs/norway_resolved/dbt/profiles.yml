@@ -1,0 +1,9 @@
+norway_resolved:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('NORWAY_BRREG_DUCKDB_PATH', 'data/norway_brreg_source.duckdb') }}"
+      schema: norway_resolved
+      plugins:
+        - module: dagster_v3.defs.norway_resolved.dbt_plugin

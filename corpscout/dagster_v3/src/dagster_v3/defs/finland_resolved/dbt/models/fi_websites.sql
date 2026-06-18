@@ -5,6 +5,7 @@ select
   website_url,
   website_normalized_url,
   website_host,
+  root_domain(website_host) as root_domain,
   website_path,
   try_cast(nullif(website_registered_on, '') as date) as registered_on,
   try_cast(nullif(website_ended_on, '') as date) as ended_on,

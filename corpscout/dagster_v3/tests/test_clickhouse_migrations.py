@@ -1,9 +1,11 @@
 from pathlib import Path
 
 from dagster_v3.defs.exchange_rates import tables as exchange_rate_tables
+from dagster_v3.defs.country_domains import tables as country_domain_tables
 from dagster_v3.defs.finland_resolved import tables as finland_resolved_tables
 from dagster_v3.defs.nace import tables as nace_tables
 from dagster_v3.defs.norway_brreg import tables as norway_brreg_tables
+from dagster_v3.defs.norway_resolved import tables as norway_resolved_tables
 
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
@@ -20,6 +22,7 @@ EXPECTED_MIGRATIONS = (
     "000009_corpscout_fi_financial_metrics",
     "000010_corpscout_finland_ytj_registry_tables",
     "000011_corpscout_finland_xbrl_raw_tables",
+    "000012_corpscout_norway_resolved_and_domains",
 )
 
 FINLAND_COMPANY_AUGMENT_COLUMNS = (
@@ -440,6 +443,27 @@ def test_finland_xbrl_raw_first_migration_covers_reprocessible_statement_data() 
         assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in sql
         for column_name in column_names:
             assert f"    {column_name} " in sql
+
+
+def test_norway_resolved_migration_covers_exported_columns() -> None:
+    sql = _migration_sql("000012_corpscout_norway_resolved_and_domains.up.sql")
+
+    for table_name in norway_resolved_tables.NORWAY_RESOLVED_TABLES:
+        assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in sql
+        for column_name in norway_resolved_tables.RESOLVED_TABLE_COLUMNS[table_name]:
+            assert f"    {column_name} " in sql
+
+
+def test_country_domain_migration_covers_exported_columns() -> None:
+    sql = _migration_sql("000012_corpscout_norway_resolved_and_domains.up.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.country_domains" in sql
+    for column_name in country_domain_tables.COUNTRY_DOMAINS_COLUMNS:
+        assert f"    {column_name} " in sql
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.company_website_domains" in sql
+    for column_name in country_domain_tables.COMPANY_WEBSITE_DOMAINS_COLUMNS:
+        assert f"    {column_name} " in sql
 
 
 def _migration_sql(file_name: str) -> str:

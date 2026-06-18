@@ -46,6 +46,7 @@ RESOLVED_TABLE_COLUMNS = {
         "website_url",
         "website_normalized_url",
         "website_host",
+        "root_domain",
         "website_path",
         "registered_on",
         "ended_on",
