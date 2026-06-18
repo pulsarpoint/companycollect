@@ -21,6 +21,7 @@ from dagster_v3.defs.finland_xbrl import tables
 from dagster_v3.defs.finland_xbrl.arelle_parser import (
     ArelleStatementParser,
     parse_statement_xml_with_arelle,
+    statement_key_for,
 )
 from dagster_v3.defs.finland_xbrl.resources import HttpSession, XbrlApiResource
 from dagster_v3.defs.finland_ytj.assets import DLT_COMPANIES_TABLE, DLT_DATASET_NAME
@@ -460,6 +461,45 @@ def run_finland_xbrl_arelle_dlt_pipeline(
     if log_info is not None:
         log_info("dlt loaded parsed XBRL tables into DuckDB")
     return load_info
+
+
+def documents_in_registration_window(
+    documents: list[dict[str, Any]],
+    *,
+    window_start: date,
+    window_end: date,
+) -> list[dict[str, Any]]:
+    """Keep docs whose registration_date is in [window_start, window_end)."""
+    selected: list[dict[str, Any]] = []
+    for document in documents:
+        raw = document.get("registration_date")
+        if not raw:
+            continue
+        try:
+            registered = date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            continue
+        if window_start <= registered < window_end:
+            selected.append(document)
+    return selected
+
+
+def unparsed_documents(
+    documents: list[dict[str, Any]],
+    *,
+    parsed_statement_keys: set[str],
+) -> list[dict[str, Any]]:
+    """Drop docs whose content-addressed statement_key is already parsed."""
+    return [
+        document
+        for document in documents
+        if statement_key_for(
+            document["business_id"],
+            document["financial_date"],
+            document.get("xml_sha256", ""),
+        )
+        not in parsed_statement_keys
+    ]
 
 
 @dlt.source(name="finland_xbrl_arelle")
@@ -1547,6 +1587,7 @@ def _normalize_xml_document_row(row: dict[str, Any]) -> dict[str, Any]:
         "registration_date": row.get("registration_date"),
         "source_url": str(row.get("source_url") or ""),
         "xml_object_key": xml_object_key,
+        "xml_sha256": str(row.get("xml_sha256") or ""),
     }
 
 

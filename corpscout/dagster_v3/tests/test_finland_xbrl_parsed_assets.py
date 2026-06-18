@@ -480,3 +480,41 @@ def _fake_arelle_parser(**kwargs: Any) -> ArelleParsedStatement:
         ],
         warnings=[],
     )
+
+
+from datetime import date
+
+import dagster_v3.defs.finland_xbrl.assets as xbrl
+from dagster_v3.defs.finland_xbrl.arelle_parser import statement_key_for
+
+
+def _doc(business_id, financial_date, registration_date, sha):
+    return {
+        "business_id": business_id,
+        "financial_date": financial_date,
+        "registration_date": registration_date,
+        "xml_object_key": f"companies/{business_id}/{financial_date}.xml",
+        "xml_sha256": sha,
+    }
+
+
+def test_documents_in_registration_window_filters_by_month():
+    docs = [
+        _doc("a", "2023-12-31", "2024-03-10", "sha-a"),
+        _doc("b", "2023-12-31", "2024-04-02", "sha-b"),
+        _doc("c", "2023-12-31", "", "sha-c"),
+    ]
+    got = xbrl.documents_in_registration_window(
+        docs, window_start=date(2024, 3, 1), window_end=date(2024, 4, 1)
+    )
+    assert [d["business_id"] for d in got] == ["a"]
+
+
+def test_unparsed_documents_skips_already_parsed_by_content_key():
+    docs = [
+        _doc("a", "2023-12-31", "2024-03-10", "sha-a"),
+        _doc("b", "2023-12-31", "2024-03-11", "sha-b"),
+    ]
+    already = {statement_key_for("a", "2023-12-31", "sha-a")}
+    got = xbrl.unparsed_documents(docs, parsed_statement_keys=already)
+    assert [d["business_id"] for d in got] == ["b"]
