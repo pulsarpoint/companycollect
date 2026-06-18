@@ -240,6 +240,13 @@ class FakeExchangeRates:
         return FakeUsdRate()
 
 
+class FakeExchangeRatesWithMissing(FakeExchangeRates):
+    def usd_rates(self, requests):
+        if any(request.currency == "USN" for request in requests):
+            raise LookupError("No USD exchange rate for USN on, before, or after 2024-12-31")
+        return super().usd_rates(requests)
+
+
 class FakeTemporalWorkflowDescription:
     def __init__(self, *, run_id: str, status: WorkflowExecutionStatus) -> None:
         self.run_id = run_id
@@ -894,6 +901,41 @@ def test_financial_fetch_and_normalize_pipeline_loads_statements_table(tmp_path:
             Decimal("7254300000.000"),
         )
     ]
+
+
+def test_financial_normalize_persists_missing_fx_as_null_dates(tmp_path: Path) -> None:
+    database_path = tmp_path / "norway.duckdb"
+    _run_entities_dlt_pipeline_for_test(
+        database_path=database_path,
+        session=FakeHttpSession(_gzip_json_array([_entity_record()])),
+    )
+    client = FakeHttpSession(
+        json_by_url={
+            "https://data.brreg.no/regnskapsregisteret/regnskap/923609016": [
+                _financial_record(valuta="USN")
+            ]
+        }
+    )
+
+    _run_financial_fetches_for_test(
+        database_path=database_path,
+        client=client,
+    )
+    counts = brreg_assets.normalize_norway_brreg_financial_statements_duckdb(
+        database_path=database_path,
+        exchange_rates=FakeExchangeRatesWithMissing(),
+    )
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        rows = connection.execute(
+            """
+            select currency, fx_rate_to_usd, fx_rate_date, operating_revenue_amount_usd
+            from norway_brreg.financial_statements
+            """
+        ).fetchall()
+
+    assert counts["financial_statements"] == 1
+    assert rows == [("USN", None, None, None)]
 
 
 def test_financial_fetch_pipeline_persists_not_found_and_server_errors(tmp_path: Path) -> None:

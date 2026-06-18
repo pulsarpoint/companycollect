@@ -173,7 +173,7 @@ def _financial_statement_row(
         "is_small_enterprise": _bool(principles.get("smaaForetak")),
         "accounting_rules": _string(principles.get("regnskapsregler")),
         "fx_rate_to_usd": None if fx_rate is None else fx_rate.rate,
-        "fx_rate_date": "" if fx_rate is None else fx_rate.rate_date,
+        "fx_rate_date": None if fx_rate is None else fx_rate.rate_date,
         "fx_source": "" if fx_rate is None else fx_rate.source,
         "source_url": source_url,
         "raw_financial_record": _json_dumps(record),

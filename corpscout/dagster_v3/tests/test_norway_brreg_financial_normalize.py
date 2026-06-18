@@ -96,7 +96,7 @@ def test_build_financial_statement_rows_keeps_rows_without_fx_rate() -> None:
     assert rows[1]["operating_revenue_amount_original"] == Decimal("72543000000")
     assert rows[1]["operating_revenue_amount_usd"] is None
     assert rows[1]["fx_rate_to_usd"] is None
-    assert rows[1]["fx_rate_date"] == ""
+    assert rows[1]["fx_rate_date"] is None
     assert rows[1]["fx_source"] == ""
 
 
