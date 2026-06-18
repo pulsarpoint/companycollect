@@ -1262,7 +1262,34 @@ def test_norway_translation_config_exposes_operator_tunable_defaults() -> None:
     assert "norway_brreg_translation_start_config" not in brreg_assets.__dict__
 
 
-def test_norway_translation_completion_sensor_skips_running_workflow() -> None:
+def _queue_status_metadata_for_test(**overrides: Any) -> dict[str, Any]:
+    metadata = {
+        "queue_available": True,
+        "queue_duckdb_path": "test-translation-queue.duckdb",
+        "queue_total_items": 10,
+        "queue_remaining_items": 7,
+        "queue_pending_items": 6,
+        "queue_leased_items": 1,
+        "queue_completed_items": 3,
+        "queue_failed_retryable_items": 0,
+        "queue_result_items": 3,
+        "queue_cache_items": 2,
+        "queue_batch_attempts": 5,
+        "queue_successful_batches": 5,
+        "queue_failed_batches": 0,
+        "queue_completed_percent": 30.0,
+        "queue_error": "",
+    }
+    metadata.update(overrides)
+    return metadata
+
+
+def test_norway_translation_completion_sensor_skips_running_workflow(monkeypatch) -> None:
+    monkeypatch.setattr(
+        brreg_sensors,
+        "norway_brreg_translation_queue_status_metadata",
+        _queue_status_metadata_for_test,
+    )
     context = dg.build_sensor_context()
     result = brreg_sensors.build_norway_brreg_translation_completion_sensor_result(
         context,
@@ -1283,9 +1310,16 @@ def test_norway_translation_completion_sensor_skips_running_workflow() -> None:
     )
     assert result.asset_events[0].metadata["workflow_status"].value == "RUNNING"
     assert result.asset_events[0].metadata["workflow_complete"].value is False
+    assert result.asset_events[0].metadata["queue_remaining_items"].value == 7
+    assert result.asset_events[0].metadata["queue_batch_attempts"].value == 5
 
 
-def test_norway_translation_completion_sensor_skips_missing_workflow() -> None:
+def test_norway_translation_completion_sensor_skips_missing_workflow(monkeypatch) -> None:
+    monkeypatch.setattr(
+        brreg_sensors,
+        "norway_brreg_translation_queue_status_metadata",
+        _queue_status_metadata_for_test,
+    )
     result = brreg_sensors.build_norway_brreg_translation_completion_sensor_result(
         dg.build_sensor_context(),
         temporal_client=MissingWorkflowTemporalClient(),
@@ -1300,6 +1334,7 @@ def test_norway_translation_completion_sensor_skips_missing_workflow() -> None:
     )
     assert result.asset_events[0].metadata["workflow_status"].value == "unavailable"
     assert result.asset_events[0].metadata["workflow_available"].value is False
+    assert result.asset_events[0].metadata["queue_completed_items"].value == 3
 
 
 def test_norway_translations_applied_skips_when_workflow_is_running(monkeypatch) -> None:
@@ -1391,7 +1426,12 @@ def test_norway_translations_applied_applies_when_workflow_is_completed(monkeypa
     assert result.metadata["fields_updated"] == 3
 
 
-def test_norway_translation_completion_sensor_launches_apply_once() -> None:
+def test_norway_translation_completion_sensor_launches_apply_once(monkeypatch) -> None:
+    monkeypatch.setattr(
+        brreg_sensors,
+        "norway_brreg_translation_queue_status_metadata",
+        _queue_status_metadata_for_test,
+    )
     context = dg.build_sensor_context()
     result = brreg_sensors.build_norway_brreg_translation_completion_sensor_result(
         context,
@@ -1408,6 +1448,7 @@ def test_norway_translation_completion_sensor_launches_apply_once() -> None:
     assert result.cursor == "translation-norway-brreg:temporal-run-123"
     assert len(result.asset_events) == 1
     assert result.asset_events[0].metadata["workflow_status"].value == "COMPLETED"
+    assert result.asset_events[0].metadata["queue_completed_percent"].value == 30.0
 
     duplicate = brreg_sensors.build_norway_brreg_translation_completion_sensor_result(
         dg.build_sensor_context(cursor=result.cursor),
@@ -1423,6 +1464,7 @@ def test_norway_translation_completion_sensor_launches_apply_once() -> None:
     assert "already triggered" in duplicate.skip_reason.skip_message
     assert len(duplicate.asset_events) == 1
     assert duplicate.asset_events[0].metadata["workflow_status"].value == "COMPLETED"
+    assert duplicate.asset_events[0].metadata["queue_remaining_items"].value == 7
 
 
 def test_norway_translation_workflow_status_observe_result(monkeypatch) -> None:
@@ -1435,9 +1477,72 @@ def test_norway_translation_workflow_status_observe_result(monkeypatch) -> None:
             "workflow_status": "RUNNING",
         },
     )
+    monkeypatch.setattr(
+        brreg_assets,
+        "norway_brreg_translation_queue_status_metadata",
+        _queue_status_metadata_for_test,
+    )
 
-    result = brreg_assets.norway_brreg_translation_workflow_status.observe_fn()
+    result = brreg_assets.norway_brreg_translation_workflow_status.observe_fn(
+        dg.build_asset_context()
+    )
 
     assert result.metadata["workflow_status"] == "RUNNING"
     assert result.metadata["workflow_run_id"] == "temporal-run-123"
     assert result.metadata["workflow_complete"] is False
+    assert result.metadata["queue_remaining_items"] == 7
+    assert result.metadata["queue_completed_percent"] == 30.0
+
+
+def test_norway_translation_queue_status_metadata_reports_progress(tmp_path: Path) -> None:
+    queue_duckdb_path = tmp_path / "translation_queue.duckdb"
+    queue = brreg_assets.TranslationQueue(queue_duckdb_path)
+    queue.initialize()
+    queue.enqueue_items(
+        [
+            brreg_assets.TranslationQueueItem(
+                source_duckdb_path="source.duckdb",
+                source_table="source.entities",
+                source_pk="1",
+                source_field="activity_text_original",
+                source_text="Konsulenttjenester",
+                target_language="en",
+            ),
+            brreg_assets.TranslationQueueItem(
+                source_duckdb_path="source.duckdb",
+                source_table="source.entities",
+                source_pk="2",
+                source_field="activity_text_original",
+                source_text="Utvikling av programvare",
+                target_language="en",
+            ),
+        ]
+    )
+    claimed = queue.claim_batch(limit=1, worker_id="test-worker", model="qwen3:6b")
+    queue.complete_batch(
+        claimed,
+        [
+            brreg_assets.SmokeTranslationResult(
+                item_id=claimed[0].item_id,
+                translated_text="Consulting services",
+            )
+        ],
+        provider="test-provider",
+        model="qwen3:6b",
+        duration_seconds=0.1,
+    )
+
+    metadata = brreg_assets.norway_brreg_translation_queue_status_metadata(
+        queue_duckdb_path=queue_duckdb_path
+    )
+
+    assert metadata["queue_available"] is True
+    assert metadata["queue_total_items"] == 2
+    assert metadata["queue_remaining_items"] == 1
+    assert metadata["queue_pending_items"] == 1
+    assert metadata["queue_completed_items"] == 1
+    assert metadata["queue_result_items"] == 1
+    assert metadata["queue_cache_items"] == 1
+    assert metadata["queue_batch_attempts"] == 1
+    assert metadata["queue_successful_batches"] == 1
+    assert metadata["queue_completed_percent"] == 50.0

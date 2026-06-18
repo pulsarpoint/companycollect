@@ -154,7 +154,7 @@ def exchange_rates_raw_duckdb_asset(
     deps=[dg.AssetKey("exchange_rates_raw_duckdb")],
     partitions_def=EXCHANGE_RATES_PARTITIONS,
     group_name=GROUP_NAME,
-    kinds={"python", "duckdb"},
+    kinds={"duckdb"},
     metadata={
         "dagster/column_schema": dagster_table_schema_from_contract(
             tables.EXCHANGE_RATES_DUCKDB_CONTRACT
@@ -205,7 +205,7 @@ def exchange_rates_identity_rates_duckdb(
     ],
     partitions_def=EXCHANGE_RATES_PARTITIONS,
     group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse"},
+    kinds={"duckdb", "clickhouse"},
     description="Exchange-rate reference rows exported from DuckDB to migrated ClickHouse table.",
 )
 def exchange_rates_clickhouse(

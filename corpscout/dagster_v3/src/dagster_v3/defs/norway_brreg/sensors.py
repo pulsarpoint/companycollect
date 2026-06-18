@@ -5,7 +5,9 @@ from dagster_v3.defs.norway_brreg.assets import (
     NORWAY_BRREG_TRANSLATION_WORKFLOW_ID,
     NORWAY_BRREG_TRANSLATION_WORKFLOW_STATUS_ASSET_KEY,
     describe_norway_brreg_translation_workflow,
+    log_norway_brreg_translation_workflow_status,
     norway_brreg_translation_completion_job,
+    norway_brreg_translation_queue_status_metadata,
     norway_brreg_translation_workflow_status_metadata,
 )
 from dagster_v3.defs.translations.assets import TemporalClient
@@ -27,13 +29,18 @@ def build_norway_brreg_translation_completion_sensor_result(
     *,
     temporal_client: TemporalClient | None = None,
 ) -> dg.SensorResult:
+    queue_metadata = norway_brreg_translation_queue_status_metadata()
     try:
         workflow = describe_norway_brreg_translation_workflow(temporal_client=temporal_client)
     except Exception as exc:
-        context.log.info("Norway Brreg translation workflow status not available: %s", exc)
+        metadata = norway_brreg_translation_workflow_status_metadata(
+            error=str(exc),
+            queue_metadata=queue_metadata,
+        )
+        log_norway_brreg_translation_workflow_status(context.log.info, metadata)
         observation = dg.AssetObservation(
             asset_key=NORWAY_BRREG_TRANSLATION_WORKFLOW_STATUS_ASSET_KEY,
-            metadata=norway_brreg_translation_workflow_status_metadata(error=str(exc)),
+            metadata=metadata,
         )
         return dg.SensorResult(
             skip_reason=f"Norway Brreg translation workflow status not available: {exc}",
@@ -43,9 +50,14 @@ def build_norway_brreg_translation_completion_sensor_result(
     status = workflow["workflow_status"]
     run_id = workflow["workflow_run_id"]
     cursor = f"{NORWAY_BRREG_TRANSLATION_WORKFLOW_ID}:{run_id}"
+    metadata = norway_brreg_translation_workflow_status_metadata(
+        workflow,
+        queue_metadata=queue_metadata,
+    )
+    log_norway_brreg_translation_workflow_status(context.log.info, metadata)
     observation = dg.AssetObservation(
         asset_key=NORWAY_BRREG_TRANSLATION_WORKFLOW_STATUS_ASSET_KEY,
-        metadata=norway_brreg_translation_workflow_status_metadata(workflow),
+        metadata=metadata,
     )
     if status != "COMPLETED":
         return dg.SensorResult(

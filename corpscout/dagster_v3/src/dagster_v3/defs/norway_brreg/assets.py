@@ -361,15 +361,28 @@ def norway_brreg_translation_queue(
         "source_slug": NORWAY_BRREG_TRANSLATION_SOURCE_SLUG,
     },
 )
-def norway_brreg_translation_workflow_status() -> dg.ObserveResult:
+def norway_brreg_translation_workflow_status(
+    context: AssetExecutionContext,
+) -> dg.ObserveResult:
+    queue_metadata = norway_brreg_translation_queue_status_metadata()
     try:
         workflow = describe_norway_brreg_translation_workflow()
     except Exception as exc:
-        return dg.ObserveResult(
-            metadata=norway_brreg_translation_workflow_status_metadata(error=str(exc))
+        metadata = norway_brreg_translation_workflow_status_metadata(
+            error=str(exc),
+            queue_metadata=queue_metadata,
         )
+        log_norway_brreg_translation_workflow_status(context.log.info, metadata)
+        return dg.ObserveResult(
+            metadata=metadata
+        )
+    metadata = norway_brreg_translation_workflow_status_metadata(
+        workflow,
+        queue_metadata=queue_metadata,
+    )
+    log_norway_brreg_translation_workflow_status(context.log.info, metadata)
     return dg.ObserveResult(
-        metadata=norway_brreg_translation_workflow_status_metadata(workflow)
+        metadata=metadata
     )
 
 
@@ -456,13 +469,19 @@ def norway_brreg_translation_workflow_status_metadata(
     workflow: dict[str, str] | None = None,
     *,
     error: str = "",
+    queue_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    queue_status = queue_metadata or _empty_translation_queue_status_metadata(
+        queue_available=False,
+        queue_error="queue status not loaded",
+    )
     if workflow is None:
         return {
             "workflow_id": NORWAY_BRREG_TRANSLATION_WORKFLOW_ID,
             "workflow_status": "unavailable",
             "workflow_available": False,
             "workflow_error": error,
+            **queue_status,
         }
     return {
         "workflow_id": workflow["workflow_id"],
@@ -470,7 +489,113 @@ def norway_brreg_translation_workflow_status_metadata(
         "workflow_status": workflow["workflow_status"],
         "workflow_available": True,
         "workflow_complete": workflow["workflow_status"] == "COMPLETED",
+        **queue_status,
     }
+
+
+def norway_brreg_translation_queue_status_metadata(
+    *,
+    queue_duckdb_path: str | Path = NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
+) -> dict[str, Any]:
+    queue_path = Path(queue_duckdb_path)
+    if not queue_path.exists():
+        return _empty_translation_queue_status_metadata(
+            queue_available=False,
+            queue_error=f"queue DuckDB does not exist: {queue_path}",
+            queue_duckdb_path=queue_path,
+        )
+    try:
+        with duckdb.connect(str(queue_path), read_only=True) as connection:
+            summary = _translation_queue_summary_from_connection(connection, table_prefix="main")
+            cache_items = _count_translation_cache_rows(connection, table_prefix="main")
+    except Exception as exc:
+        return _empty_translation_queue_status_metadata(
+            queue_available=False,
+            queue_error=str(exc),
+            queue_duckdb_path=queue_path,
+        )
+    remaining_items = (
+        summary.pending_items + summary.leased_items + summary.failed_retryable_items
+    )
+    completed_percent = (
+        round((summary.completed_items / summary.total_items) * 100, 3)
+        if summary.total_items > 0
+        else 0.0
+    )
+    return {
+        "queue_available": True,
+        "queue_duckdb_path": str(queue_path),
+        "queue_total_items": summary.total_items,
+        "queue_remaining_items": remaining_items,
+        "queue_pending_items": summary.pending_items,
+        "queue_leased_items": summary.leased_items,
+        "queue_completed_items": summary.completed_items,
+        "queue_failed_retryable_items": summary.failed_retryable_items,
+        "queue_result_items": summary.result_items,
+        "queue_cache_items": cache_items,
+        "queue_batch_attempts": summary.batch_attempts,
+        "queue_successful_batches": summary.successful_batches,
+        "queue_failed_batches": summary.failed_batches,
+        "queue_completed_percent": completed_percent,
+        "queue_error": "",
+    }
+
+
+def _empty_translation_queue_status_metadata(
+    *,
+    queue_available: bool,
+    queue_error: str,
+    queue_duckdb_path: str | Path = NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
+) -> dict[str, Any]:
+    return {
+        "queue_available": queue_available,
+        "queue_duckdb_path": str(queue_duckdb_path),
+        "queue_total_items": 0,
+        "queue_remaining_items": 0,
+        "queue_pending_items": 0,
+        "queue_leased_items": 0,
+        "queue_completed_items": 0,
+        "queue_failed_retryable_items": 0,
+        "queue_result_items": 0,
+        "queue_cache_items": 0,
+        "queue_batch_attempts": 0,
+        "queue_successful_batches": 0,
+        "queue_failed_batches": 0,
+        "queue_completed_percent": 0.0,
+        "queue_error": queue_error,
+    }
+
+
+def log_norway_brreg_translation_workflow_status(
+    log: Callable[..., None] | None,
+    metadata: dict[str, Any],
+) -> None:
+    _log(
+        log,
+        "Norway Brreg translation workflow status: workflow_status=%s "
+        "workflow_run_id=%s queue_available=%s queue_total_items=%s "
+        "queue_remaining_items=%s queue_pending_items=%s queue_leased_items=%s "
+        "queue_completed_items=%s queue_failed_retryable_items=%s "
+        "queue_result_items=%s queue_cache_items=%s queue_batch_attempts=%s "
+        "queue_successful_batches=%s queue_failed_batches=%s "
+        "queue_completed_percent=%s queue_error=%s",
+        metadata.get("workflow_status", ""),
+        metadata.get("workflow_run_id", ""),
+        metadata.get("queue_available", False),
+        metadata.get("queue_total_items", 0),
+        metadata.get("queue_remaining_items", 0),
+        metadata.get("queue_pending_items", 0),
+        metadata.get("queue_leased_items", 0),
+        metadata.get("queue_completed_items", 0),
+        metadata.get("queue_failed_retryable_items", 0),
+        metadata.get("queue_result_items", 0),
+        metadata.get("queue_cache_items", 0),
+        metadata.get("queue_batch_attempts", 0),
+        metadata.get("queue_successful_batches", 0),
+        metadata.get("queue_failed_batches", 0),
+        metadata.get("queue_completed_percent", 0.0),
+        metadata.get("queue_error", ""),
+    )
 
 
 def build_norway_brreg_translation_queue_items(
