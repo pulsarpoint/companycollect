@@ -15,7 +15,7 @@ from dagster_dlt.translator import DltResourceTranslatorData
 from dlt.extract.resource import DltResource
 from dlt.pipeline.pipeline import Pipeline
 
-from dagster_v3.defs.finland_ytj.resources import LocalDuckDBResource
+from dagster_v3.defs.common.resources import LocalDuckDBResource
 
 COUNTRY = "FI"
 SOURCE = "finland_prhytj"

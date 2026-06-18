@@ -10,7 +10,7 @@ from dagster_v3.defs.clickhouse.resolved import (
 )
 from dagster_v3.defs.clickhouse.resources import clickhouse_resource_from_env
 from dagster_v3.defs.finland_resolved import tables
-from dagster_v3.defs.finland_ytj.resources import LocalDuckDBResource
+from dagster_v3.defs.common.resources import LocalDuckDBResource
 
 RESOLVED_DUCKDB_SCHEMA = "finland_resolved"
 YTJ_DUCKDB_SCHEMA = "finland_prhytj"

@@ -19,7 +19,7 @@ from dagster_v3.defs.finland_xbrl.assets import (
     run_finland_xbrl_arelle_dlt_pipeline,
 )
 from dagster_v3.defs.finland_xbrl.tables import FACTS_TABLE, STATEMENT_DOCUMENTS_TABLE
-from dagster_v3.defs.finland_ytj.resources import LocalDuckDBResource, ObjectStoreResource
+from dagster_v3.defs.common.resources import LocalDuckDBResource, ObjectStoreResource
 
 
 SAMPLE_XML = b"""<xbrl xmlns="http://www.xbrl.org/2003/instance"

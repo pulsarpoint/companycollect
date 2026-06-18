@@ -24,7 +24,7 @@ from dagster_v3.defs.finland_xbrl.arelle_parser import (
 )
 from dagster_v3.defs.finland_xbrl.resources import HttpSession, XbrlApiResource
 from dagster_v3.defs.finland_ytj.assets import DLT_COMPANIES_TABLE, DLT_DATASET_NAME
-from dagster_v3.defs.finland_ytj.resources import LocalDuckDBResource, ObjectStoreResource
+from dagster_v3.defs.common.resources import LocalDuckDBResource, ObjectStoreResource
 from pydantic import ConfigDict, field_validator
 
 XBRL_BUCKET = "source-finland-prh-xbrl"

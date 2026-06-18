@@ -26,7 +26,7 @@ from dagster_v3.defs.finland_xbrl.tables import (
     TABLE_COLUMNS,
     XML_DOCUMENTS_TABLE,
 )
-from dagster_v3.defs.finland_ytj.resources import LocalDuckDBResource, ObjectStoreResource
+from dagster_v3.defs.common.resources import LocalDuckDBResource, ObjectStoreResource
 
 DLT_COMPANIES_TABLE = "all_companies"
 DLT_DATASET_NAME = "finland_prhytj"
