@@ -20,6 +20,9 @@ from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.norway_brreg import resources as brreg_resources
 from dagster_v3.defs.norway_brreg import sensors as brreg_sensors
 from dagster_v3.defs.norway_brreg import tables as brreg_tables
+from dagster_v3.defs.norway_brreg.financial_fetches import (
+    run_brreg_financial_statement_fetches,
+)
 from dagster_v3.defs.norway_brreg.clickhouse import (
     prepare_norway_brreg_clickhouse_companies_table,
     prepare_norway_brreg_clickhouse_financial_statements_table,
@@ -96,23 +99,18 @@ def _run_entities_dlt_pipeline_for_test(
     ).run(brreg_resources.norway_brreg_entities_source(session=session))
 
 
-def _run_financial_fetches_dlt_pipeline_for_test(
+def _run_financial_fetches_for_test(
     *,
     database_path: str | Path,
     client: Any,
 ) -> Any:
     database_file = Path(database_path)
     database_file.parent.mkdir(parents=True, exist_ok=True)
-    return dlt.pipeline(
-        pipeline_name="test_norway_brreg_financial_fetches",
-        destination=dlt.destinations.duckdb(str(database_file)),
-        dataset_name=brreg_resources.DLT_DATASET_NAME,
-        dev_mode=False,
-    ).run(
-        brreg_resources.norway_brreg_financial_fetches_source(
-            database_path=database_file,
-            client=client,
-        )
+    return run_brreg_financial_statement_fetches(
+        database_path=database_file,
+        source_run_id="test-run",
+        client=client,
+        commit_every_rows=1,
     )
 
 
@@ -337,24 +335,18 @@ def test_norway_brreg_entities_uses_resources_module_for_dlt_source() -> None:
     assert "norway_brreg_pipeline" not in brreg_assets.__dict__
 
 
-def test_norway_brreg_dlt_sources_are_defined_in_resources_module() -> None:
+def test_norway_brreg_entity_dlt_source_is_defined_in_resources_module() -> None:
     assert "norway_brreg_entities_source" in brreg_resources.__dict__
-    assert "norway_brreg_financial_fetches_source" in brreg_resources.__dict__
     assert "_entities_resource" in brreg_resources.__dict__
-    assert "_financial_fetches_resource" in brreg_resources.__dict__
+    assert "norway_brreg_financial_fetches_source" not in brreg_resources.__dict__
+    assert "_financial_fetches_resource" not in brreg_resources.__dict__
 
     entity_source = brreg_resources.norway_brreg_entities_source(
         session=FakeHttpSession(_gzip_json_array([_entity_record()]))
     )
-    financial_source = brreg_resources.norway_brreg_financial_fetches_source(
-        database_path="data/test.duckdb",
-        client=FakeHttpSession(),
-    )
 
     assert entity_source.name == "norway_brreg_entities"
-    assert financial_source.name == "norway_brreg_financial_fetches"
     assert brreg_resources.ENTITIES_TABLE in entity_source.resources
-    assert brreg_resources.FINANCIAL_FETCHES_TABLE in financial_source.resources
 
 
 def test_norway_brreg_assets_do_not_expose_pipeline_helpers() -> None:
@@ -754,7 +746,7 @@ def test_financial_fetch_and_normalize_pipeline_loads_statements_table(tmp_path:
         }
     )
 
-    load_info = _run_financial_fetches_dlt_pipeline_for_test(
+    load_info = _run_financial_fetches_for_test(
         database_path=database_path,
         client=client,
     )
@@ -816,7 +808,7 @@ def test_financial_fetch_pipeline_persists_not_found_and_server_errors(tmp_path:
         },
     )
 
-    _run_financial_fetches_dlt_pipeline_for_test(
+    _run_financial_fetches_for_test(
         database_path=database_path,
         client=client,
     )
@@ -947,7 +939,7 @@ def test_export_norway_brreg_clickhouse_tables_reads_duckdb_and_inserts(
         database_path=database_path,
         session=FakeHttpSession(_gzip_json_array([_entity_record()])),
     )
-    _run_financial_fetches_dlt_pipeline_for_test(
+    _run_financial_fetches_for_test(
         database_path=database_path,
         client=FakeHttpSession(
             json_by_url={
@@ -1056,7 +1048,7 @@ def test_export_norway_brreg_clickhouse_financials_touches_only_financial_table(
         database_path=database_path,
         session=FakeHttpSession(_gzip_json_array([_entity_record()])),
     )
-    _run_financial_fetches_dlt_pipeline_for_test(
+    _run_financial_fetches_for_test(
         database_path=database_path,
         client=FakeHttpSession(
             json_by_url={
@@ -1229,6 +1221,7 @@ def test_norway_entity_asset_is_registered() -> None:
     statements_node = asset_graph.get(
         brreg_assets.norway_brreg_financial_statements_duckdb_asset.key
     )
+    assert fetches_node.to_asset_spec().kinds == {"python", "duckdb"}
     assert {key.path[-1] for key in fetches_node.parent_keys} == {
         "norway_brreg_entities_duckdb"
     }

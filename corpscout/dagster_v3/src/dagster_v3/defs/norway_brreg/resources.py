@@ -8,7 +8,6 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from decimal import Decimal
 from io import BytesIO
-from pathlib import Path
 from typing import Any, Protocol
 
 import dlt
@@ -17,12 +16,6 @@ import requests
 from dlt.extract.source import DltSource
 
 from dagster_v3.defs.norway_brreg import tables
-from dagster_v3.defs.norway_brreg.financial_fetches import (
-    BRREG_FINANCIAL_FETCHES_COLUMNS,
-    FINANCIAL_FETCHES_TABLE,
-    FINANCIAL_FETCH_PROGRESS_LOG_EVERY_ROWS,
-    iter_brreg_financial_statement_fetch_rows,
-)
 
 COUNTRY = "NO"
 DLT_DATASET_NAME = "norway_brreg"
@@ -107,56 +100,6 @@ def _entities_resource(
         log=log,
         progress_every_rows=progress_every_rows,
         download_progress_every_bytes=download_progress_every_bytes,
-    )
-
-
-@dlt.source(name="norway_brreg_financial_fetches")
-def norway_brreg_financial_fetches_source(
-    *,
-    database_path: str | Path,
-    base_url: str = BRREG_REGNSKAP_BASE_URL,
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
-    user_agent: str = DEFAULT_USER_AGENT,
-    client: Any | None = None,
-    log: Callable[..., None] | None = None,
-    progress_every_rows: int = FINANCIAL_FETCH_PROGRESS_LOG_EVERY_ROWS,
-) -> DltSource:
-    return _financial_fetches_resource(
-        database_path=database_path,
-        base_url=base_url,
-        timeout_seconds=timeout_seconds,
-        user_agent=user_agent,
-        client=client,
-        log=log,
-        progress_every_rows=progress_every_rows,
-    )
-
-
-@dlt.resource(
-    name=FINANCIAL_FETCHES_TABLE,
-    write_disposition="replace",
-    primary_key=["org_number", "source_run_id"],
-    columns=tables.copy_dlt_columns(BRREG_FINANCIAL_FETCHES_COLUMNS),
-)
-def _financial_fetches_resource(
-    *,
-    database_path: str | Path,
-    base_url: str = BRREG_REGNSKAP_BASE_URL,
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
-    user_agent: str = DEFAULT_USER_AGENT,
-    client: Any | None = None,
-    log: Callable[..., None] | None = None,
-    progress_every_rows: int = FINANCIAL_FETCH_PROGRESS_LOG_EVERY_ROWS,
-) -> Iterator[dict[str, Any]]:
-    yield from iter_brreg_financial_statement_fetch_rows(
-        database_path=database_path,
-        source_run_id="",
-        base_url=base_url,
-        timeout_seconds=timeout_seconds,
-        user_agent=user_agent,
-        client=client,
-        log=log,
-        progress_every_rows=progress_every_rows,
     )
 
 

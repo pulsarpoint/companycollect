@@ -24,6 +24,7 @@ from dagster_v3.defs.norway_brreg.clickhouse import (
 from dagster_v3.defs.norway_brreg.financial_fetches import (
     BRREG_FINANCIAL_FETCHES_COLUMNS,
     FINANCIAL_FETCHES_TABLE,
+    run_brreg_financial_statement_fetches,
 )
 from dagster_v3.defs.norway_brreg.financial_normalize import (
     build_financial_statement_rows as build_normalized_financial_statement_rows,
@@ -99,14 +100,6 @@ class NorwayBrregDltTranslator(DagsterDltTranslator):
                 description="Norway Brreg entity bulk data loaded to local DuckDB with dlt.",
                 kinds={"python", "dlt", "duckdb"},
             )
-        if resource_name == FINANCIAL_FETCHES_TABLE:
-            return spec.replace_attributes(
-                key=dg.AssetKey("norway_brreg_financial_fetches_duckdb"),
-                deps=[dg.AssetKey("norway_brreg_entities_duckdb")],
-                group_name=GROUP_NAME,
-                description="Norway Brreg annual-account fetch outcomes loaded to local DuckDB with dlt.",
-                kinds={"python", "dlt", "duckdb"},
-            )
         return spec
 
 
@@ -149,23 +142,16 @@ def norway_brreg_entities_duckdb_asset(
     )
 
 
-@dlt_assets(
-    dlt_source=resources.norway_brreg_financial_fetches_source(
-        database_path=NORWAY_BRREG_DUCKDB_PATH
-    ),
-    dlt_pipeline=dlt.pipeline(
-        pipeline_name="norway_brreg_financial_fetches",
-        destination=dlt.destinations.duckdb(str(NORWAY_BRREG_DUCKDB_PATH)),
-        dataset_name=DLT_DATASET_NAME,
-        dev_mode=False,
-    ),
+@dg.asset(
     name="norway_brreg_financial_fetches_duckdb",
-    dagster_dlt_translator=NorwayBrregDltTranslator(),
+    deps=[dg.AssetKey("norway_brreg_entities_duckdb")],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    description="Resumable Norway Brreg annual-account fetch outcomes stored in DuckDB.",
 )
 def norway_brreg_financial_fetches_duckdb_asset(
     context: AssetExecutionContext,
-    dlt: DagsterDltResource,
-) -> Iterator[Any]:
+) -> dg.MaterializeResult:
     NORWAY_BRREG_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
     context.log.info(
         "Starting Norway Brreg financial fetch load: source_url=%s, duckdb_path=%s, "
@@ -177,12 +163,11 @@ def norway_brreg_financial_fetches_duckdb_asset(
         DLT_DATASET_NAME,
         FINANCIAL_FETCHES_TABLE,
     )
-    yield from dlt.run(
-        context=context,
-        dlt_source=resources.norway_brreg_financial_fetches_source(
-            database_path=NORWAY_BRREG_DUCKDB_PATH,
-            log=context.log.info,
-        ),
+    counts = run_brreg_financial_statement_fetches(
+        database_path=NORWAY_BRREG_DUCKDB_PATH,
+        source_run_id=context.run_id,
+        base_url=BRREG_REGNSKAP_BASE_URL,
+        log=context.log.info,
     )
     row_count = _duckdb_table_count(
         database_path=NORWAY_BRREG_DUCKDB_PATH,
@@ -201,6 +186,7 @@ def norway_brreg_financial_fetches_duckdb_asset(
         row_count,
         status_counts,
     )
+    return dg.MaterializeResult(metadata={**counts, "rows": row_count})
 
 
 @dg.asset(

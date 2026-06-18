@@ -18,7 +18,7 @@ flowchart TD
 
   financial_candidates["Active entities with website and last submitted accounts year"]
   brreg_financial_api["BRREG Regnskapsregisteret API<br/>GET /regnskap/{org_number}"]
-  financial_fetches["norway_brreg_financial_fetches_duckdb<br/>dlt asset"]
+  financial_fetches["norway_brreg_financial_fetches_duckdb<br/>resumable regular asset"]
   duckdb_fetches["DuckDB norway_brreg.financial_fetches"]
   financial_normalized["norway_brreg_financial_statements_duckdb<br/>regular asset"]
   duckdb_financial["DuckDB norway_brreg.financial_statements"]
@@ -54,8 +54,8 @@ flowchart TD
 | File | Responsibility |
 | --- | --- |
 | `assets.py` | Dagster assets, asset jobs, Temporal workflow status lookup, translation queue seeding/application, financial normalization, ClickHouse exports. |
-| `resources.py` | dlt source/resource definitions for BRREG entity bulk data and BRREG financial fetches, plus entity row shaping. |
-| `financial_fetches.py` | Financial API candidate selection and one fetch outcome row per organization. |
+| `resources.py` | dlt source/resource definitions for BRREG entity bulk data, plus entity row shaping. |
+| `financial_fetches.py` | Resumable financial API candidate selection, fetch outcome upserts, and one fetch outcome row per organization. |
 | `financial_normalize.py` | Converts successful financial fetch payloads into normalized financial statement rows and USD amounts. |
 | `tables.py` | DuckDB/dlt schemas, ClickHouse column order, and ClickHouse DDL. |
 | `clickhouse.py` | ClickHouse table preparation helpers using `dagster_clickhouse.ClickhouseResource`. |
@@ -102,9 +102,9 @@ Progress logging:
 
 ### `norway_brreg_financial_fetches_duckdb`
 
-Type: `@dlt_assets`
+Type: regular `@dg.asset`
 
-Kinds: `python`, `dlt`, `duckdb`
+Kinds: `python`, `duckdb`
 
 Upstreams:
 
@@ -115,7 +115,7 @@ Output:
 - DuckDB file: `data/norway_brreg_source.duckdb`
 - Dataset/table: `norway_brreg.financial_fetches`
 
-This asset reads candidate organizations from `norway_brreg.entities` and calls BRREG Regnskapsregisteret once per candidate.
+This asset reads candidate organizations from `norway_brreg.entities` and calls BRREG Regnskapsregisteret once per missing candidate.
 
 Candidate filter:
 
@@ -125,7 +125,7 @@ where is_active = true
   and nullif(trim(last_submitted_accounts_year), '') is not null
 ```
 
-Each API call writes a fetch outcome row. Successful responses preserve the full raw JSON response. Failures are also stored instead of aborting the whole load.
+Each API call writes a fetch outcome row directly to `norway_brreg.financial_fetches` in DuckDB. Successful responses preserve the full raw JSON response. Failures are also stored instead of aborting the whole load.
 
 Fetch statuses:
 
@@ -135,7 +135,7 @@ Fetch statuses:
 - `network_error`
 - `invalid_payload`
 
-The financial fetch table is a durable audit layer. It separates API retrieval from financial normalization so failures and retries are visible.
+The financial fetch table is both a durable checkpoint and an audit layer. On rerun, the asset skips `org_number` values that already exist in `norway_brreg.financial_fetches`, so an interrupted materialization resumes from missing organizations instead of starting the API crawl from the beginning.
 
 ### `norway_brreg_financial_statements_duckdb`
 
@@ -568,6 +568,7 @@ norway_brreg_clickhouse_companies <- ['norway_brreg_translations_applied']
 ## Design Notes
 
 - dlt source/resource definitions live in `resources.py`; dlt pipelines are defined inline in the `@dlt_assets` decorators in `assets.py`.
+- Long per-organization API crawls should not use dlt replace extraction unless there is a separate durable checkpoint. Norway financial fetches are a regular asset for this reason.
 - There is no custom DuckDB Dagster resource. DuckDB paths are source constants and local connections are opened directly where needed.
 - The translation workflow status is modeled as an observable source asset, not as a manually materializable "completed" asset.
 - The financial ClickHouse export is independent from company translations.
