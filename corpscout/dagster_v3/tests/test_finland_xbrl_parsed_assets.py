@@ -516,3 +516,32 @@ def test_unparsed_documents_skips_by_object_key():
     already = {"companies/a/2023-12-31.xml"}
     got = xbrl.unparsed_documents(docs, parsed_object_keys=already)
     assert [d["business_id"] for d in got] == ["b"]
+
+
+def _xbrl_resource(tmp_path):
+    return LocalDuckDBResource(database_path=str(tmp_path / "finland_ytj.duckdb"))
+
+
+def test_load_parsed_object_keys_empty_when_no_table(tmp_path):
+    res = _xbrl_resource(tmp_path)
+    assert xbrl.load_parsed_object_keys(res) == set()
+
+
+def test_load_parsed_object_keys_returns_distinct_keys(tmp_path):
+    res = _xbrl_resource(tmp_path)
+    with res.connect() as conn:
+        conn.execute(f"create schema if not exists {xbrl.XBRL_DLT_DATASET_NAME}")
+        conn.execute(
+            f"create table {xbrl.XBRL_DLT_DATASET_NAME}.{xbrl.tables.STATEMENT_DOCUMENTS_TABLE} "
+            "(statement_key varchar, xml_object_key varchar)"
+        )
+        conn.execute(
+            f"insert into {xbrl.XBRL_DLT_DATASET_NAME}.{xbrl.tables.STATEMENT_DOCUMENTS_TABLE} values "
+            "('k1','companies/a/2023-12-31.xml'),"
+            "('k2','companies/b/2023-12-31.xml'),"
+            "('k1b','companies/a/2023-12-31.xml')"
+        )
+    assert xbrl.load_parsed_object_keys(res) == {
+        "companies/a/2023-12-31.xml",
+        "companies/b/2023-12-31.xml",
+    }

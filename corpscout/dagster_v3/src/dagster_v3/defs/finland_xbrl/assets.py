@@ -1029,6 +1029,20 @@ def parsed_duckdb_row_counts(source_duckdb: LocalDuckDBResource) -> dict[str, in
         }
 
 
+def load_parsed_object_keys(source_duckdb: LocalDuckDBResource) -> set[str]:
+    """Set of xml_object_keys already present in the parsed statement table."""
+    if not source_duckdb.path().exists():
+        return set()
+    with source_duckdb.connect(read_only=True) as connection:
+        if not _duckdb_table_exists(connection, table=tables.STATEMENT_DOCUMENTS_TABLE):
+            return set()
+        rows = connection.execute(
+            f"select distinct xml_object_key "
+            f"from {XBRL_DLT_DATASET_NAME}.{tables.STATEMENT_DOCUMENTS_TABLE}"
+        ).fetchall()
+    return {row[0] for row in rows}
+
+
 def parsed_duckdb_observability_metadata(
     *,
     object_store: ObjectStoreResource,
