@@ -370,7 +370,7 @@ def delete_exchange_rates_window(
     end_date: str,
 ) -> None:
     client.execute(
-        "ALTER TABLE reference.exchange_rates DELETE WHERE "
+        f"ALTER TABLE {tables.QUALIFIED_EXCHANGE_RATES_TABLE} DELETE WHERE "
         "source IN ('ECB EXR', 'identity') "
         f"AND rate_date >= '{_sql_string(start_date)}' "
         f"AND rate_date <= '{_sql_string(end_date)}'"
