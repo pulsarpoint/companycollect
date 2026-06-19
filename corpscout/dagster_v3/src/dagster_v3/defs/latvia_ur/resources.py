@@ -31,20 +31,32 @@ PROGRESS_LOG_EVERY_ROWS = 50000
 CSV_DELIMITER = ";"
 LOGGER = logging.getLogger(__name__)
 
-# Common Latvian legal forms (code -> English description). Unknown -> "".
+# Latvian legal-form codes -> English description (codes verified against the live
+# register; legal_form_text preserves the original Latvian label). Unknown -> "".
 LATVIA_LEGAL_FORM_DESCRIPTION_EN_BY_CODE = {
     "SIA": "Private limited company",
-    "AS": "Public limited company",
+    "ZEM": "Farmer's holding",
+    "BDR": "Association",
     "IK": "Individual merchant (sole trader)",
-    "IU": "Individual undertaking",
-    "ZS": "Farm holding",
-    "ZemnSaimn": "Farm holding",
-    "KS": "Limited partnership",
+    "IND": "Individual undertaking",
+    "MIL": "Mass medium",
+    "KB": "Cooperative society",
+    "AS": "Joint-stock company",
+    "PAR": "Foreign merchant representative office",
+    "SAB": "Public organisation",
+    "FIL": "Branch",
+    "NOD": "Foundation",
+    "AKF": "Foreign merchant branch",
+    "VU": "State enterprise",
     "PS": "General partnership",
-    "BO": "Association or foundation",
-    "NO": "Association or foundation",
-    "VAS": "State joint-stock company",
-    "PAS": "Municipal joint-stock company",
+    "PSV": "Municipal enterprise",
+    "DRZ": "Religious congregation",
+    "PAJ": "Share (paju) company",
+    "KS": "Limited partnership",
+    "KAT": "Catholic church public-law legal person",
+    "ARB": "Trade union",
+    "SKT": "Arbitration court",
+    "LIG": "Contractual partnership with full liability",
 }
 
 
