@@ -12,6 +12,7 @@ from dagster_dlt.translator import DltResourceTranslatorData
 
 from dagster_v3.defs.latvia_ur import resources, tables
 from dagster_v3.defs.latvia_ur.clickhouse import export_latvia_ur_clickhouse_companies
+from dagster_v3.defs.latvia_ur.financials import load_latvia_ur_financial_csv
 
 GROUP_NAME = "latvia_ur"
 LATVIA_UR_DUCKDB_POOL = "latvia_ur_duckdb"
@@ -126,6 +127,101 @@ def latvia_ur_clickhouse_companies(
     context.log.info("Completed Latvia UR companies ClickHouse export: rows=%s", rows)
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_LV_COMPANIES_TABLE},
+    )
+
+
+def _load_financial_raw(
+    context: AssetExecutionContext,
+    *,
+    raw_table: str,
+    download_url: str,
+) -> dg.MaterializeResult:
+    context.log.info(
+        "Loading Latvia UR financial CSV: url=%s, duckdb_path=%s, table=%s.%s",
+        download_url,
+        LATVIA_UR_DUCKDB_PATH,
+        DLT_DATASET_NAME,
+        raw_table,
+    )
+    rows = load_latvia_ur_financial_csv(
+        database_path=LATVIA_UR_DUCKDB_PATH,
+        download_url=download_url,
+        raw_table=raw_table,
+    )
+    context.log.info(
+        "Loaded Latvia UR financial CSV: table=%s.%s, rows=%s",
+        DLT_DATASET_NAME,
+        raw_table,
+        rows,
+    )
+    return dg.MaterializeResult(metadata={"rows": rows, "table": f"{DLT_DATASET_NAME}.{raw_table}"})
+
+
+@dg.asset(
+    name="latvia_ur_financial_statements_raw_duckdb",
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=LATVIA_UR_DUCKDB_POOL,
+    description="Latvia UR annual-report metadata CSV loaded raw into DuckDB (checkpoint).",
+)
+def latvia_ur_financial_statements_raw_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    return _load_financial_raw(
+        context,
+        raw_table=tables.FINANCIAL_STATEMENTS_RAW_TABLE,
+        download_url=tables.FINANCIAL_STATEMENTS_URL,
+    )
+
+
+@dg.asset(
+    name="latvia_ur_balance_sheets_raw_duckdb",
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=LATVIA_UR_DUCKDB_POOL,
+    description="Latvia UR balance-sheet CSV loaded raw into DuckDB (checkpoint).",
+)
+def latvia_ur_balance_sheets_raw_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    return _load_financial_raw(
+        context,
+        raw_table=tables.BALANCE_SHEETS_RAW_TABLE,
+        download_url=tables.BALANCE_SHEETS_URL,
+    )
+
+
+@dg.asset(
+    name="latvia_ur_income_statements_raw_duckdb",
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=LATVIA_UR_DUCKDB_POOL,
+    description="Latvia UR income-statement CSV loaded raw into DuckDB (checkpoint).",
+)
+def latvia_ur_income_statements_raw_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    return _load_financial_raw(
+        context,
+        raw_table=tables.INCOME_STATEMENTS_RAW_TABLE,
+        download_url=tables.INCOME_STATEMENTS_URL,
+    )
+
+
+@dg.asset(
+    name="latvia_ur_cash_flow_statements_raw_duckdb",
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=LATVIA_UR_DUCKDB_POOL,
+    description="Latvia UR cash-flow CSV loaded raw into DuckDB (checkpoint).",
+)
+def latvia_ur_cash_flow_statements_raw_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    return _load_financial_raw(
+        context,
+        raw_table=tables.CASH_FLOW_STATEMENTS_RAW_TABLE,
+        download_url=tables.CASH_FLOW_STATEMENTS_URL,
     )
 
 
