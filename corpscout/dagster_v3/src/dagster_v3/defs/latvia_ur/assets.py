@@ -6,10 +6,12 @@ import dagster as dg
 import dlt
 import duckdb
 from dagster import AssetExecutionContext
+from dagster_clickhouse import ClickhouseResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
 from dagster_v3.defs.latvia_ur import resources, tables
+from dagster_v3.defs.latvia_ur.clickhouse import export_latvia_ur_clickhouse_companies
 
 GROUP_NAME = "latvia_ur"
 LATVIA_UR_DUCKDB_POOL = "latvia_ur_duckdb"
@@ -96,6 +98,34 @@ def latvia_ur_entities_duckdb_asset(
         DLT_DATASET_NAME,
         ENTITIES_TABLE,
         row_count,
+    )
+
+
+@dg.asset(
+    deps=[dg.AssetKey(ENTITIES_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=LATVIA_UR_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_LV_COMPANIES_TABLE},
+    description="Latvia UR register companies exported to ClickHouse corpscout.lv_companies.",
+)
+def latvia_ur_clickhouse_companies(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    context.log.info(
+        "Starting Latvia UR companies ClickHouse export: duckdb_path=%s, table=%s",
+        LATVIA_UR_DUCKDB_PATH,
+        tables.QUALIFIED_LV_COMPANIES_TABLE,
+    )
+    rows = export_latvia_ur_clickhouse_companies(
+        database_path=LATVIA_UR_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    context.log.info("Completed Latvia UR companies ClickHouse export: rows=%s", rows)
+    return dg.MaterializeResult(
+        metadata={"rows": rows, "table": tables.QUALIFIED_LV_COMPANIES_TABLE},
     )
 
 

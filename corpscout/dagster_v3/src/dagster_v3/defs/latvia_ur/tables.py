@@ -39,3 +39,12 @@ LATVIA_UR_ENTITIES_COLUMNS: dict[str, dict[str, Any]] = {
 
 def copy_dlt_columns(columns: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {name: dict(spec) for name, spec in columns.items()}
+
+
+# ClickHouse export target (schema owned by clickhouse/migrations/000015_corpscout_lv_companies).
+LATVIA_UR_DATABASE = "corpscout"
+LV_COMPANIES_TABLE = "lv_companies"
+QUALIFIED_LV_COMPANIES_TABLE = f"{LATVIA_UR_DATABASE}.{LV_COMPANIES_TABLE}"
+
+# Column order must match the DuckDB entities table and the 000015 migration.
+LV_COMPANIES_COLUMNS = tuple(LATVIA_UR_ENTITIES_COLUMNS)
