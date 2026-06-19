@@ -1,11 +1,29 @@
+from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
 
 import duckdb
+from dagster_clickhouse import ClickhouseResource
 
+from dagster_v3.defs.latvia_ur import clickhouse as latvia_ur_clickhouse
 from dagster_v3.defs.latvia_ur import metrics, tables
 from dagster_v3.defs.latvia_ur.financials import build_latvia_ur_financial_statements
 from tests.test_latvia_ur_financials import _seed_raw  # reuse the raw seed helper
+
+
+class _FakeClickHouse:
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+        self.inserts: list[tuple[str, list]] = []
+
+    def execute(self, sql, params=None):
+        if "system.tables" in sql:
+            return [(tables.LV_FINANCIAL_METRICS_TABLE,)]
+        if isinstance(params, (list, tuple)):
+            self.inserts.append((sql, list(params)))
+            return None
+        self.statements.append(sql)
+        return None
 
 
 class _StubRate:
@@ -87,3 +105,34 @@ def test_unknown_rounding_factor_defaults_to_one(tmp_path: Path):
             f"select revenue_amount_original from {metrics_table} where statement_id = '709390'"
         ).fetchone()[0]
     assert value == Decimal("135.00")  # unknown factor -> 1, value unchanged
+
+
+def test_export_financial_metrics_replaces_clickhouse_table(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "latvia_ur_source.duckdb"
+    _seed_raw(db_path)
+    build_latvia_ur_financial_statements(database_path=db_path, source_run_id="run-1")
+    metrics.build_latvia_ur_financial_metrics(
+        database_path=db_path,
+        source_run_id="run-1",
+        exchange_rates=_StubExchangeRates(),
+    )
+
+    fake = _FakeClickHouse()
+
+    @contextmanager
+    def fake_get_connection(self):
+        yield fake
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    rows = latvia_ur_clickhouse.export_latvia_ur_clickhouse_financial_metrics(
+        database_path=db_path,
+        clickhouse=ClickhouseResource(host="localhost"),
+    )
+
+    assert rows == 2
+    assert any("EXCHANGE TABLES" in stmt for stmt in fake.statements)
+    assert fake.inserts, "expected a batched INSERT of the metrics"
+    _, inserted_rows = fake.inserts[0]
+    assert len(inserted_rows) == 2
+    assert len(inserted_rows[0]) == len(tables.LV_FINANCIAL_METRICS_COLUMNS)

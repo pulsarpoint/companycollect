@@ -83,3 +83,37 @@ def export_latvia_ur_clickhouse_financial_statements(
     if log is not None:
         log("Finished Latvia UR financial statements ClickHouse export: rows=%s", rows)
     return rows
+
+
+def export_latvia_ur_clickhouse_financial_metrics(
+    *,
+    database_path: str | Path,
+    clickhouse: ClickhouseResource,
+    log: Callable[..., object] | None = None,
+) -> int:
+    """Replace corpscout.lv_financial_metrics with the DuckDB metrics table."""
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.LATVIA_UR_DATABASE,
+        tables=(tables.LV_FINANCIAL_METRICS_TABLE,),
+    )
+    if log is not None:
+        log(
+            "Exporting Latvia UR financial metrics to ClickHouse: duckdb_path=%s, table=%s",
+            database_path,
+            tables.QUALIFIED_LV_FINANCIAL_METRICS_TABLE,
+        )
+    with clickhouse.get_connection() as client:
+        rows = export_duckdb_table_to_clickhouse(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema=DLT_DATASET_NAME,
+            duckdb_table=tables.FINANCIAL_METRICS_WIDE_TABLE,
+            clickhouse_database=tables.LATVIA_UR_DATABASE,
+            clickhouse_table=tables.LV_FINANCIAL_METRICS_TABLE,
+            columns=tables.LV_FINANCIAL_METRICS_COLUMNS,
+            truncate=True,
+        )
+    if log is not None:
+        log("Finished Latvia UR financial metrics ClickHouse export: rows=%s", rows)
+    return rows

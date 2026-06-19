@@ -13,12 +13,14 @@ from dagster_dlt.translator import DltResourceTranslatorData
 from dagster_v3.defs.latvia_ur import resources, tables
 from dagster_v3.defs.latvia_ur.clickhouse import (
     export_latvia_ur_clickhouse_companies,
+    export_latvia_ur_clickhouse_financial_metrics,
     export_latvia_ur_clickhouse_financial_statements,
 )
 from dagster_v3.defs.latvia_ur.financials import (
     build_latvia_ur_financial_statements,
     load_latvia_ur_financial_csv,
 )
+from dagster_v3.defs.latvia_ur.metrics import build_latvia_ur_financial_metrics
 
 GROUP_NAME = "latvia_ur"
 LATVIA_UR_DUCKDB_POOL = "latvia_ur_duckdb"
@@ -291,6 +293,64 @@ def latvia_ur_clickhouse_financial_statements(
     )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_LV_FINANCIAL_STATEMENTS_TABLE},
+    )
+
+
+@dg.asset(
+    name="latvia_ur_financial_metrics_duckdb",
+    deps=[dg.AssetKey("latvia_ur_financial_statements_duckdb")],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=LATVIA_UR_DUCKDB_POOL,
+    description="Latvia UR headline financial metrics (EUR + USD) from the wide statements.",
+)
+def latvia_ur_financial_metrics_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    from exchange_rates import ExchangeRateClient
+
+    context.log.info(
+        "Building Latvia UR financial metrics: duckdb_path=%s, table=%s.%s",
+        LATVIA_UR_DUCKDB_PATH,
+        DLT_DATASET_NAME,
+        tables.FINANCIAL_METRICS_WIDE_TABLE,
+    )
+    counts = build_latvia_ur_financial_metrics(
+        database_path=LATVIA_UR_DUCKDB_PATH,
+        source_run_id=context.run_id,
+        exchange_rates=ExchangeRateClient.from_env(),
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    deps=[dg.AssetKey("latvia_ur_financial_metrics_duckdb")],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=LATVIA_UR_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_LV_FINANCIAL_METRICS_TABLE},
+    description=(
+        "Latvia UR financial metrics exported to ClickHouse corpscout.lv_financial_metrics."
+    ),
+)
+def latvia_ur_clickhouse_financial_metrics(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    context.log.info(
+        "Starting Latvia UR financial metrics ClickHouse export: duckdb_path=%s, table=%s",
+        LATVIA_UR_DUCKDB_PATH,
+        tables.QUALIFIED_LV_FINANCIAL_METRICS_TABLE,
+    )
+    rows = export_latvia_ur_clickhouse_financial_metrics(
+        database_path=LATVIA_UR_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    context.log.info("Completed Latvia UR financial metrics ClickHouse export: rows=%s", rows)
+    return dg.MaterializeResult(
+        metadata={"rows": rows, "table": tables.QUALIFIED_LV_FINANCIAL_METRICS_TABLE},
     )
 
 
