@@ -101,16 +101,19 @@ def build_latvia_ur_financial_metrics(
 def _load_rates(
     exchange_rates: ExchangeRates, requests: list[Any]
 ) -> dict[tuple[str, str], Any]:
+    # Mirrors norway_brreg.financial_normalize._load_available_usd_rates: try the
+    # batch, and on a missing-rate LookupError fall back to per-request so one
+    # absent rate doesn't drop the whole batch.
     if not requests:
         return {}
     try:
         return exchange_rates.usd_rates(requests)
-    except Exception:
+    except LookupError:
         rates: dict[tuple[str, str], Any] = {}
         for request in requests:
             try:
                 rates.update(exchange_rates.usd_rates([request]))
-            except Exception:
+            except LookupError:
                 continue
         return rates
 
