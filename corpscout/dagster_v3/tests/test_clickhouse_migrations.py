@@ -27,6 +27,9 @@ EXPECTED_MIGRATIONS = (
     "000014_corpscout_fi_names_history_order_key",
     "000015_corpscout_lv_companies",
     "000016_corpscout_lv_financial_statements",
+    "000017_corpscout_wikidata_company_country",
+    "000018_corpscout_wikidata_company_augmentations",
+    "000019_corpscout_lv_financial_metrics",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -525,11 +528,72 @@ def test_wikidata_company_seed_migration_creates_all_wikidata_tables() -> None:
     down_sql = _migration_sql("000013_corpscout_wikidata_company_seed.down.sql")
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.wikidata_companies" in sql
+    for column_name in (
+        "company_description",
+        "headquarters_wikidata_id",
+        "headquarters_country_wikidata_id",
+        "headquarters_country_label",
+        "headquarters_country_iso2",
+        "country_resolution_method",
+        "country_resolution_confidence",
+        "inception_date",
+        "legal_form_wikidata_id",
+        "legal_form_label",
+        "employee_count",
+        "employee_count_point_in_time",
+        "logo_image",
+        "logo_image_url",
+        "industry_wikidata_id",
+    ):
+        assert f"    {column_name} " in sql
     assert "CREATE TABLE IF NOT EXISTS corpscout.wikidata_company_listings" in sql
+    assert "    wikidata_property_id LowCardinality(String)" in sql
     assert "CREATE TABLE IF NOT EXISTS corpscout.wikidata_company_websites" in sql
     assert "CREATE TABLE IF NOT EXISTS corpscout.wikidata_company_relationships" in sql
     assert "DROP TABLE IF EXISTS corpscout.wikidata_company_relationships" in down_sql
     assert "DROP TABLE IF EXISTS corpscout.wikidata_company_websites" in down_sql
+
+
+def test_wikidata_company_country_migration_adds_headquarters_country_columns() -> None:
+    sql = _migration_sql("000017_corpscout_wikidata_company_country.up.sql")
+    down_sql = _migration_sql("000017_corpscout_wikidata_company_country.down.sql")
+
+    assert "ALTER TABLE corpscout.wikidata_companies" in sql
+    for column_name in (
+        "company_description",
+        "headquarters_wikidata_id",
+        "headquarters_country_wikidata_id",
+        "headquarters_country_label",
+        "headquarters_country_iso2",
+        "country_resolution_method",
+        "country_resolution_confidence",
+    ):
+        assert f"ADD COLUMN IF NOT EXISTS {column_name} " in sql
+        assert f"DROP COLUMN IF EXISTS {column_name}" in down_sql
+
+
+def test_wikidata_company_augmentations_migration_adds_profile_and_property_columns() -> None:
+    sql = _migration_sql("000018_corpscout_wikidata_company_augmentations.up.sql")
+    down_sql = _migration_sql("000018_corpscout_wikidata_company_augmentations.down.sql")
+
+    assert "ALTER TABLE corpscout.wikidata_companies" in sql
+    for column_name in (
+        "inception_date",
+        "legal_form_wikidata_id",
+        "legal_form_label",
+        "employee_count",
+        "employee_count_point_in_time",
+        "logo_image",
+        "logo_image_url",
+        "industry_wikidata_id",
+    ):
+        assert f"ADD COLUMN IF NOT EXISTS {column_name} " in sql
+        assert f"DROP COLUMN IF EXISTS {column_name}" in down_sql
+
+    assert "ALTER TABLE corpscout.wikidata_company_identifiers" in sql
+    assert "ADD COLUMN IF NOT EXISTS wikidata_property_id " in sql
+    assert "ALTER TABLE corpscout.wikidata_company_relationships" in sql
+    assert "DROP COLUMN IF EXISTS wikidata_property_id" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:
