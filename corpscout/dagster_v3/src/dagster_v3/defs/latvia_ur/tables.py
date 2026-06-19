@@ -205,3 +205,58 @@ LV_FINANCIAL_STATEMENTS_COLUMNS = (
     + CASHFLOW_NUMERIC_COLUMNS
     + ("source_url", "raw_financial_record")
 )
+
+
+# --- Financial metrics (Module 3, Phase 1) ---------------------------------
+
+FINANCIAL_METRICS_WIDE_TABLE = "financial_metrics"
+LV_FINANCIAL_METRICS_TABLE = "lv_financial_metrics"
+QUALIFIED_LV_FINANCIAL_METRICS_TABLE = (
+    f"{LATVIA_UR_DATABASE}.{LV_FINANCIAL_METRICS_TABLE}"
+)
+
+# canonical metric name -> source column in FINANCIAL_STATEMENTS_WIDE_TABLE
+FINANCIAL_METRIC_SOURCE_COLUMNS = {
+    "revenue": "net_turnover",
+    "gross_profit": "by_function_gross_profit",
+    "pretax_result": "income_before_income_taxes",
+    "net_result": "net_income",
+    "total_assets": "total_assets",
+    "current_assets": "total_current_assets",
+    "non_current_assets": "total_non_current_assets",
+    "equity": "equity",
+    "current_liabilities": "current_liabilities",
+    "non_current_liabilities": "non_current_liabilities",
+}
+FINANCIAL_METRIC_NAMES = tuple(FINANCIAL_METRIC_SOURCE_COLUMNS)
+
+# rounded_to_nearest -> multiplier applied to EUR values before FX conversion.
+ROUNDED_TO_NEAREST_FACTORS = {"ONES": 1, "THOUSANDS": 1000, "MILLIONS": 1_000_000}
+
+_METRIC_AMOUNT_COLUMNS = tuple(
+    col
+    for metric in FINANCIAL_METRIC_NAMES
+    for col in (f"{metric}_amount_original", f"{metric}_amount_usd")
+)
+
+# Column order must match the DuckDB metrics table and the 000019 migration.
+LV_FINANCIAL_METRICS_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "statement_id",
+    "regcode",
+    "fiscal_year",
+    "period_start_date",
+    "period_end_date",
+    "employees",
+    "currency",
+    "rounded_to_nearest",
+    *_METRIC_AMOUNT_COLUMNS,
+    "fx_rate_to_usd",
+    "fx_rate_date",
+    "fx_source",
+    "resolved_at",
+)
