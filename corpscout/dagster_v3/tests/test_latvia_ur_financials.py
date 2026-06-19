@@ -1,8 +1,26 @@
+from contextlib import contextmanager
 from pathlib import Path
 
 import duckdb
+from dagster_clickhouse import ClickhouseResource
 
+from dagster_v3.defs.latvia_ur import clickhouse as latvia_ur_clickhouse
 from dagster_v3.defs.latvia_ur import financials, tables
+
+
+class _FakeClickHouse:
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+        self.inserts: list[tuple[str, list]] = []
+
+    def execute(self, sql, params=None):
+        if "system.tables" in sql:
+            return [(tables.LV_FINANCIAL_STATEMENTS_TABLE,)]
+        if isinstance(params, (list, tuple)):
+            self.inserts.append((sql, list(params)))
+            return None
+        self.statements.append(sql)
+        return None
 
 
 class _FakeResponse:
@@ -166,3 +184,31 @@ def test_pivot_builds_wide_table_and_counts_orphans(tmp_path: Path):
     assert row[5] == -3860  # net_income
     assert row[6] is None  # net_increase (no cash flow for this statement)
     assert set(cols) == set(tables.LV_FINANCIAL_STATEMENTS_COLUMNS)
+
+
+def test_export_financial_statements_replaces_clickhouse_table(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "latvia_ur_source.duckdb"
+    _seed_raw(db_path)
+    financials.build_latvia_ur_financial_statements(
+        database_path=db_path, source_run_id="run-1"
+    )
+
+    fake = _FakeClickHouse()
+
+    @contextmanager
+    def fake_get_connection(self):
+        yield fake
+
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
+
+    rows = latvia_ur_clickhouse.export_latvia_ur_clickhouse_financial_statements(
+        database_path=db_path,
+        clickhouse=ClickhouseResource(host="localhost"),
+    )
+
+    assert rows == 2
+    assert any("EXCHANGE TABLES" in stmt for stmt in fake.statements)
+    assert fake.inserts, "expected a batched INSERT of the wide statements"
+    _, inserted_rows = fake.inserts[0]
+    assert len(inserted_rows) == 2
+    assert len(inserted_rows[0]) == len(tables.LV_FINANCIAL_STATEMENTS_COLUMNS)

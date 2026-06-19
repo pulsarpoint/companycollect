@@ -11,7 +11,10 @@ from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
 from dagster_v3.defs.latvia_ur import resources, tables
-from dagster_v3.defs.latvia_ur.clickhouse import export_latvia_ur_clickhouse_companies
+from dagster_v3.defs.latvia_ur.clickhouse import (
+    export_latvia_ur_clickhouse_companies,
+    export_latvia_ur_clickhouse_financial_statements,
+)
 from dagster_v3.defs.latvia_ur.financials import (
     build_latvia_ur_financial_statements,
     load_latvia_ur_financial_csv,
@@ -256,6 +259,39 @@ def latvia_ur_financial_statements_duckdb(
         log=context.log.info,
     )
     return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    deps=[dg.AssetKey("latvia_ur_financial_statements_duckdb")],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=LATVIA_UR_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_LV_FINANCIAL_STATEMENTS_TABLE},
+    description=(
+        "Latvia UR financial statements exported to ClickHouse "
+        "corpscout.lv_financial_statements."
+    ),
+)
+def latvia_ur_clickhouse_financial_statements(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    context.log.info(
+        "Starting Latvia UR financial statements ClickHouse export: duckdb_path=%s, table=%s",
+        LATVIA_UR_DUCKDB_PATH,
+        tables.QUALIFIED_LV_FINANCIAL_STATEMENTS_TABLE,
+    )
+    rows = export_latvia_ur_clickhouse_financial_statements(
+        database_path=LATVIA_UR_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    context.log.info(
+        "Completed Latvia UR financial statements ClickHouse export: rows=%s", rows
+    )
+    return dg.MaterializeResult(
+        metadata={"rows": rows, "table": tables.QUALIFIED_LV_FINANCIAL_STATEMENTS_TABLE},
+    )
 
 
 def _duckdb_table_count(*, database_path: str | Path, table_name: str) -> int:
