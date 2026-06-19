@@ -59,15 +59,10 @@ class FakeHttpSession:
 
 
 class FakePagedFinancialReportsSession:
-    def __init__(self) -> None:
+    def __init__(self, financials_by_page: dict[int, list[dict]] | None = None) -> None:
         self.calls: list[tuple[str, dict | None, int]] = []
         self.headers: dict[str, str] = {}
-
-    def get(self, url: str, params: dict | None = None, timeout: int = 120) -> FakeResponse:
-        self.calls.append((url, params, timeout))
-        assert url.endswith("/all_financial_statements")
-        page = int(params["page"])
-        financials_by_page = {
+        self._financials_by_page = financials_by_page or {
             1: [
                 {
                     "businessId": "active-web",
@@ -84,10 +79,16 @@ class FakePagedFinancialReportsSession:
             ],
             3: [],
         }
+
+    def get(self, url: str, params: dict | None = None, timeout: int = 120) -> FakeResponse:
+        self.calls.append((url, params, timeout))
+        assert url.endswith("/all_financial_statements")
+        page = int(params["page"])
+        financials = self._financials_by_page.get(page, [])
         return FakeResponse(
             payload={
-                "totalResults": 2,
-                "financials": financials_by_page[page],
+                "totalResults": len(financials),
+                "financials": financials,
             }
         )
 
@@ -124,12 +125,73 @@ def _object_store() -> tuple[ObjectStoreResource, FakeS3Client]:
 def test_xbrl_financial_reports_config_has_launchpad_defaults() -> None:
     config = xbrl_assets.XbrlFinancialReportsConfig()
 
-    assert config.registered_date_start == xbrl_assets.DEFAULT_XBRL_REGISTERED_DATE_START
-    assert config.registered_date_end == xbrl_assets.DEFAULT_XBRL_REGISTERED_DATE_END
     assert config.request_delay_seconds == 1.0
     assert config.max_retries == 5
     assert config.retry_initial_delay_seconds == 10.0
     assert config.retry_max_delay_seconds == 120.0
+
+
+def test_financial_reports_asset_is_monthly_partitioned():
+    node = load_project_defs().get_repository_def().asset_graph.get(
+        AssetKey(["finland_xbrl_financial_reports_duckdb"])
+    )
+    assert node.partitions_def is not None
+    assert type(node.partitions_def).__name__ == "MonthlyPartitionsDefinition"
+
+
+def test_financial_reports_merge_accumulates_across_windows(tmp_path: Path) -> None:
+    db = tmp_path / "finland_ytj.duckdb"
+    window_one_session = FakePagedFinancialReportsSession(
+        {
+            1: [
+                {
+                    "businessId": "a",
+                    "financialDate": "2024-02-29",
+                    "registrationDate": "2024-03-15",
+                }
+            ],
+            2: [],
+        }
+    )
+    window_two_session = FakePagedFinancialReportsSession(
+        {
+            1: [
+                {
+                    "businessId": "b",
+                    "financialDate": "2024-03-31",
+                    "registrationDate": "2024-04-15",
+                }
+            ],
+            2: [],
+        }
+    )
+
+    xbrl_assets.run_finland_xbrl_financial_reports_dlt_pipeline(
+        database_path=db,
+        registered_date_start="2024-03-01",
+        registered_date_end="2024-03-31",
+        run_id="r1",
+        session=window_one_session,
+    )
+    xbrl_assets.run_finland_xbrl_financial_reports_dlt_pipeline(
+        database_path=db,
+        registered_date_start="2024-04-01",
+        registered_date_end="2024-04-30",
+        run_id="r2",
+        session=window_two_session,
+    )
+
+    with duckdb.connect(str(db), read_only=True) as conn:
+        ids = [
+            row[0]
+            for row in conn.execute(
+                f"select business_id from "
+                f"{xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE} "
+                f"order by business_id"
+            ).fetchall()
+        ]
+
+    assert ids == ["a", "b"]
 
 
 def test_xbrl_raw_config_uses_duckdb_selection_by_default() -> None:

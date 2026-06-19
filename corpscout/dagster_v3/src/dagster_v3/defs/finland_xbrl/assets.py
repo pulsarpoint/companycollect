@@ -3,7 +3,7 @@ import os
 import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -41,10 +41,6 @@ XBRL_TIMEOUT_SECONDS = 120
 XBRL_DLT_DATASET_NAME = "finland_prh_xbrl"
 XBRL_DLT_FINANCIAL_REPORTS_TABLE = "financial_reports"
 XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE = "eligible_financial_reports"
-DEFAULT_XBRL_REGISTERED_DATE_END = date.today().isoformat()
-DEFAULT_XBRL_REGISTERED_DATE_START = (
-    date.fromisoformat(DEFAULT_XBRL_REGISTERED_DATE_END) - relativedelta(months=1)
-).isoformat()
 DEFAULT_XBRL_REQUEST_DELAY_SECONDS = 1.0
 DEFAULT_XBRL_REQUEST_MAX_ATTEMPTS = 5
 DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS = 10.0
@@ -105,17 +101,10 @@ class FinlandXbrlDltTranslator(DagsterDltTranslator):
 
 
 class XbrlFinancialReportsConfig(dg.Config):
-    registered_date_start: str = DEFAULT_XBRL_REGISTERED_DATE_START
-    registered_date_end: str = DEFAULT_XBRL_REGISTERED_DATE_END
     request_delay_seconds: float = DEFAULT_XBRL_REQUEST_DELAY_SECONDS
     max_retries: int = DEFAULT_XBRL_REQUEST_MAX_ATTEMPTS
     retry_initial_delay_seconds: float = DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS
     retry_max_delay_seconds: float = DEFAULT_XBRL_RETRY_MAX_DELAY_SECONDS
-
-    @field_validator("registered_date_start", "registered_date_end")
-    @classmethod
-    def validate_required_iso_date(cls, value: str) -> str:
-        return _required_iso_date(value, field_name="registered date")
 
     @field_validator(
         "request_delay_seconds",
@@ -212,7 +201,7 @@ def finland_xbrl_financial_reports_source(
 
 @dlt.resource(
     name=XBRL_DLT_FINANCIAL_REPORTS_TABLE,
-    write_disposition="replace",
+    write_disposition="merge",
     primary_key=("business_id", "financial_date", "registration_date"),
 )
 def _financial_reports_resource(
@@ -313,6 +302,7 @@ def finland_xbrl_financial_reports_pipeline(database_path: str | Path) -> Pipeli
     dlt_pipeline=finland_xbrl_financial_reports_pipeline(LocalDuckDBResource().path()),
     name="finland_xbrl_financial_reports_duckdb",
     dagster_dlt_translator=FinlandXbrlDltTranslator(),
+    partitions_def=fi_xbrl_parse_partitions,
     pool="finland_ytj_duckdb",
 )
 def finland_xbrl_financial_reports_duckdb_asset(
@@ -322,11 +312,19 @@ def finland_xbrl_financial_reports_duckdb_asset(
     source_duckdb: LocalDuckDBResource,
 ) -> Iterator[Any]:
     """Load PRH XBRL financial report listings to a local DuckDB database with dlt."""
+    window = context.partition_time_window
+    registered_date_start = window.start.date().isoformat()
+    registered_date_end = (window.end.date() - timedelta(days=1)).isoformat()  # inclusive last day of month
+    context.log.info(
+        "Loading XBRL financial reports registered %s..%s",
+        registered_date_start,
+        registered_date_end,
+    )
     yield from dlt.run(
         context=context,
         dlt_source=finland_xbrl_financial_reports_source(
-            registered_date_start=config.registered_date_start,
-            registered_date_end=config.registered_date_end,
+            registered_date_start=registered_date_start,
+            registered_date_end=registered_date_end,
             request_delay_seconds=config.request_delay_seconds,
             max_retries=config.max_retries,
             retry_initial_delay_seconds=config.retry_initial_delay_seconds,
@@ -973,18 +971,6 @@ def document_object_key(business_id: str, financial_date: str) -> str:
     return f"companies/{business_id}/{financial_date}.xml"
 
 
-def resolve_registration_window(
-    *,
-    run_date: date,
-    registered_date_start: str,
-    registered_date_end: str | None,
-) -> tuple[str, str]:
-    return (
-        registered_date_start,
-        registered_date_end or run_date.isoformat(),
-    )
-
-
 def resolve_xbrl_documents_key(
     *,
     config: XbrlParsedConfig,
@@ -1417,14 +1403,6 @@ def _example_values(frame: pl.DataFrame, *, column: str, limit: int) -> list[str
         .to_series()
         .to_list()
     )
-
-
-def _required_iso_date(value: str, *, field_name: str) -> str:
-    stripped = value.strip()
-    if not stripped:
-        raise ValueError(f"{field_name} is required")
-    _parse_iso_date(stripped, field_name=field_name)
-    return stripped
 
 
 def _optional_iso_date(value: object) -> str | None:
