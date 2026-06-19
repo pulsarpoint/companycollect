@@ -12,7 +12,10 @@ from dagster_dlt.translator import DltResourceTranslatorData
 
 from dagster_v3.defs.latvia_ur import resources, tables
 from dagster_v3.defs.latvia_ur.clickhouse import export_latvia_ur_clickhouse_companies
-from dagster_v3.defs.latvia_ur.financials import load_latvia_ur_financial_csv
+from dagster_v3.defs.latvia_ur.financials import (
+    build_latvia_ur_financial_statements,
+    load_latvia_ur_financial_csv,
+)
 
 GROUP_NAME = "latvia_ur"
 LATVIA_UR_DUCKDB_POOL = "latvia_ur_duckdb"
@@ -223,6 +226,36 @@ def latvia_ur_cash_flow_statements_raw_duckdb(
         raw_table=tables.CASH_FLOW_STATEMENTS_RAW_TABLE,
         download_url=tables.CASH_FLOW_STATEMENTS_URL,
     )
+
+
+@dg.asset(
+    name="latvia_ur_financial_statements_duckdb",
+    deps=[
+        dg.AssetKey("latvia_ur_financial_statements_raw_duckdb"),
+        dg.AssetKey("latvia_ur_balance_sheets_raw_duckdb"),
+        dg.AssetKey("latvia_ur_income_statements_raw_duckdb"),
+        dg.AssetKey("latvia_ur_cash_flow_statements_raw_duckdb"),
+    ],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=LATVIA_UR_DUCKDB_POOL,
+    description="Latvia UR wide financial statements pivoted from the four raw tables on statement_id.",
+)
+def latvia_ur_financial_statements_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    context.log.info(
+        "Building Latvia UR wide financial statements: duckdb_path=%s, table=%s.%s",
+        LATVIA_UR_DUCKDB_PATH,
+        DLT_DATASET_NAME,
+        tables.FINANCIAL_STATEMENTS_WIDE_TABLE,
+    )
+    counts = build_latvia_ur_financial_statements(
+        database_path=LATVIA_UR_DUCKDB_PATH,
+        source_run_id=context.run_id,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=counts)
 
 
 def _duckdb_table_count(*, database_path: str | Path, table_name: str) -> int:
