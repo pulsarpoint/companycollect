@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from dagster_v3.defs.exchange_rates import tables as exchange_rate_tables
-from dagster_v3.defs.country_domains import tables as country_domain_tables
+from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.finland_resolved import tables as finland_resolved_tables
 from dagster_v3.defs.nace import tables as nace_tables
 from dagster_v3.defs.norway_brreg import tables as norway_brreg_tables
@@ -23,6 +23,23 @@ EXPECTED_MIGRATIONS = (
     "000010_corpscout_finland_ytj_registry_tables",
     "000011_corpscout_finland_xbrl_raw_tables",
     "000012_corpscout_norway_resolved_and_domains",
+    "000013_corpscout_wikidata_company_seed",
+    "000014_corpscout_fi_names_history_order_key",
+    "000015_corpscout_lv_companies",
+    "000016_corpscout_lv_financial_statements",
+)
+
+OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
+    "reference.",
+    "norway_brreg.",
+    "corpscout_reference.",
+    "corpscout_resolved.",
+    "corpscout_sources.",
+    "CREATE DATABASE IF NOT EXISTS reference",
+    "CREATE DATABASE IF NOT EXISTS norway_brreg",
+    "CREATE DATABASE IF NOT EXISTS corpscout_reference",
+    "CREATE DATABASE IF NOT EXISTS corpscout_resolved",
+    "CREATE DATABASE IF NOT EXISTS corpscout_sources",
 )
 
 FINLAND_COMPANY_AUGMENT_COLUMNS = (
@@ -349,10 +366,20 @@ def test_finland_resolved_migrations_use_corpscout_database() -> None:
 
         assert "corpscout_resolved" not in sql
 
-    for migration_file in EXPECTED_MIGRATIONS[4:]:
+    for migration_file in EXPECTED_MIGRATIONS:
         assert "CREATE DATABASE IF NOT EXISTS corpscout" in _migration_sql(
             f"{migration_file}.up.sql"
         )
+
+
+def test_clickhouse_migrations_only_target_corpscout_database() -> None:
+    for migration_file in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        sql = migration_file.read_text()
+
+        for obsolete_reference in OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES:
+            assert obsolete_reference not in sql, (
+                f"{migration_file.name} still references {obsolete_reference}"
+            )
 
 
 def test_clickhouse_migrations_match_existing_python_ddl_constants() -> None:
@@ -371,8 +398,8 @@ def test_clickhouse_migrations_match_existing_python_ddl_constants() -> None:
 def test_exchange_rate_migration_defines_reference_table_schema() -> None:
     sql = _migration_sql("000002_reference_exchange_rates.up.sql")
 
-    assert "CREATE DATABASE IF NOT EXISTS reference" in sql
-    assert "CREATE TABLE IF NOT EXISTS reference.exchange_rates" in sql
+    assert "CREATE DATABASE IF NOT EXISTS corpscout" in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.exchange_rates" in sql
     assert "ENGINE = ReplacingMergeTree(pulled_at)" in sql
     assert "ORDER BY (quote_currency, base_currency, rate_date, source)" in sql
     for column in exchange_rate_tables.EXCHANGE_RATES_COLUMNS:
@@ -389,6 +416,9 @@ def test_finland_resolved_migrations_cover_exported_columns() -> None:
         ),
         finland_resolved_tables.FI_INDUSTRIES_TABLE: (
             "000007_corpscout_fi_industries.up.sql"
+        ),
+        finland_resolved_tables.FI_NAMES_TABLE: (
+            "000010_corpscout_finland_ytj_registry_tables.up.sql"
         ),
     }
 
@@ -433,6 +463,19 @@ def test_finland_ytj_registry_migration_covers_source_structures() -> None:
             assert f"    {column_name} " in sql
 
 
+def test_finland_names_history_order_key_preserves_versions() -> None:
+    sql = _migration_sql("000014_corpscout_fi_names_history_order_key.up.sql")
+    down_sql = _migration_sql("000014_corpscout_fi_names_history_order_key.down.sql")
+
+    assert (
+        "ORDER BY (business_id, name_type_code, name, ifNull(version, 0), source_record_id)"
+        in sql
+    )
+    assert "INSERT INTO corpscout.fi_names__history_order_key" in sql
+    assert "EXCHANGE TABLES corpscout.fi_names__history_order_key AND corpscout.fi_names" in sql
+    assert "DROP TABLE IF EXISTS corpscout.fi_names__history_order_key;" in down_sql
+
+
 def test_finland_xbrl_raw_first_migration_covers_reprocessible_statement_data() -> None:
     sql = _migration_sql("000011_corpscout_finland_xbrl_raw_tables.up.sql")
 
@@ -464,16 +507,29 @@ def test_norway_financial_statements_sort_key_avoids_nullable_fiscal_year() -> N
     )
 
 
-def test_country_domain_migration_covers_exported_columns() -> None:
+def test_domain_migration_covers_exported_columns() -> None:
     sql = _migration_sql("000012_corpscout_norway_resolved_and_domains.up.sql")
 
-    assert "CREATE TABLE IF NOT EXISTS corpscout.country_domains" in sql
-    for column_name in country_domain_tables.COUNTRY_DOMAINS_COLUMNS:
+    assert "CREATE TABLE IF NOT EXISTS corpscout.country_domains" not in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.domains" in sql
+    for column_name in domain_tables.DOMAINS_COLUMNS:
         assert f"    {column_name} " in sql
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.company_website_domains" in sql
-    for column_name in country_domain_tables.COMPANY_WEBSITE_DOMAINS_COLUMNS:
+    for column_name in domain_tables.COMPANY_WEBSITE_DOMAINS_COLUMNS:
         assert f"    {column_name} " in sql
+
+
+def test_wikidata_company_seed_migration_creates_all_wikidata_tables() -> None:
+    sql = _migration_sql("000013_corpscout_wikidata_company_seed.up.sql")
+    down_sql = _migration_sql("000013_corpscout_wikidata_company_seed.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.wikidata_companies" in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.wikidata_company_listings" in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.wikidata_company_websites" in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.wikidata_company_relationships" in sql
+    assert "DROP TABLE IF EXISTS corpscout.wikidata_company_relationships" in down_sql
+    assert "DROP TABLE IF EXISTS corpscout.wikidata_company_websites" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

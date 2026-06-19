@@ -9,52 +9,53 @@ from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
     assert_clickhouse_tables_exist,
 )
-from dagster_v3.defs.country_domains import tables
+from dagster_v3.defs.domains import tables
 
-GROUP_NAME = "country_domains"
+GROUP_NAME = "domains"
 
 
 @dg.asset(
     deps=[
         dg.AssetKey("finland_ytj_resolved_clickhouse"),
         dg.AssetKey("norway_resolved_clickhouse"),
+        dg.AssetKey("wikidata_company_seed_clickhouse"),
     ],
     group_name=GROUP_NAME,
     kinds={"clickhouse"},
     description=(
-        "Builds cross-country website domain dimension and company-to-domain links "
-        "from resolved Finland and Norway website tables."
+        "Builds the website domain dimension and company-to-domain links from "
+        "resolved source website tables."
     ),
 )
-def country_domains_clickhouse(
+def domains_clickhouse(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse,
         database=RESOLVED_DATABASE,
-        tables=tables.COUNTRY_DOMAIN_TABLES,
+        tables=tables.DOMAIN_TABLES,
     )
     with clickhouse.get_connection() as client:
-        row_counts = replace_country_domain_clickhouse_tables(client)
+        row_counts = replace_domain_clickhouse_tables(client)
 
-    context.log.info("Completed country domain ClickHouse rebuild: row_counts=%s", row_counts)
+    context.log.info("Completed domain ClickHouse rebuild: row_counts=%s", row_counts)
     return dg.MaterializeResult(metadata=row_counts)
 
 
-def replace_country_domain_clickhouse_tables(clickhouse_client: Any) -> dict[str, int]:
-    country_domains_stage = _stage_table_name(tables.COUNTRY_DOMAINS_TABLE)
+def replace_domain_clickhouse_tables(clickhouse_client: Any) -> dict[str, int]:
+    domains_stage = _stage_table_name(tables.DOMAINS_TABLE)
     company_links_stage = _stage_table_name(tables.COMPANY_WEBSITE_DOMAINS_TABLE)
     created_stage_tables = [
         _qualified_table(company_links_stage),
-        _qualified_table(country_domains_stage),
+        _qualified_table(domains_stage),
     ]
     primary_error: Exception | None = None
 
     try:
         clickhouse_client.execute(
-            f"CREATE TABLE {_qualified_table(country_domains_stage)} AS "
-            f"{_qualified_table(tables.COUNTRY_DOMAINS_TABLE)}"
+            f"CREATE TABLE {_qualified_table(domains_stage)} AS "
+            f"{_qualified_table(tables.DOMAINS_TABLE)}"
         )
         clickhouse_client.execute(
             f"CREATE TABLE {_qualified_table(company_links_stage)} AS "
@@ -62,13 +63,11 @@ def replace_country_domain_clickhouse_tables(clickhouse_client: Any) -> dict[str
         )
 
         clickhouse_client.execute(_company_website_domains_insert_sql(company_links_stage))
-        clickhouse_client.execute(
-            _country_domains_insert_sql(country_domains_stage, company_links_stage)
-        )
+        clickhouse_client.execute(_domains_insert_sql(domains_stage, company_links_stage))
 
         clickhouse_client.execute(
-            f"EXCHANGE TABLES {_qualified_table(country_domains_stage)} "
-            f"AND {_qualified_table(tables.COUNTRY_DOMAINS_TABLE)}"
+            f"EXCHANGE TABLES {_qualified_table(domains_stage)} "
+            f"AND {_qualified_table(tables.DOMAINS_TABLE)}"
         )
         clickhouse_client.execute(
             f"EXCHANGE TABLES {_qualified_table(company_links_stage)} "
@@ -76,9 +75,9 @@ def replace_country_domain_clickhouse_tables(clickhouse_client: Any) -> dict[str
         )
 
         return {
-            tables.COUNTRY_DOMAINS_TABLE: _table_count(
+            tables.DOMAINS_TABLE: _table_count(
                 clickhouse_client,
-                tables.COUNTRY_DOMAINS_TABLE,
+                tables.DOMAINS_TABLE,
             ),
             tables.COMPANY_WEBSITE_DOMAINS_TABLE: _table_count(
                 clickhouse_client,
@@ -101,6 +100,8 @@ def _company_website_domains_insert_sql(stage_table: str) -> str:
     return f"""
     INSERT INTO {_qualified_table(stage_table)} ({columns})
     SELECT
+        source_website_table,
+        source_website_id,
         country_iso2,
         source_slug,
         company_id_type,
@@ -115,6 +116,11 @@ def _company_website_domains_insert_sql(stage_table: str) -> str:
     FROM
     (
         SELECT
+            'fi_websites' AS source_website_table,
+            ifNull(
+                nullIf(trim(websites.source_record_id), ''),
+                concat('fi_websites:', websites.business_id, ':', websites.website_normalized_url)
+            ) AS source_website_id,
             'FI' AS country_iso2,
             'finland_ytj' AS source_slug,
             'business_id' AS company_id_type,
@@ -131,6 +137,11 @@ def _company_website_domains_insert_sql(stage_table: str) -> str:
         UNION ALL
 
         SELECT
+            'no_websites' AS source_website_table,
+            ifNull(
+                nullIf(trim(websites.source_record_id), ''),
+                concat('no_websites:', websites.org_number, ':', websites.website_normalized_url)
+            ) AS source_website_id,
             'NO' AS country_iso2,
             'norway_brreg' AS source_slug,
             'org_number' AS company_id_type,
@@ -143,25 +154,49 @@ def _company_website_domains_insert_sql(stage_table: str) -> str:
             websites.is_primary AS is_primary
         FROM {_qualified_table("no_websites")} AS websites
         WHERE nullIf(trim(websites.root_domain), '') IS NOT NULL
+
+        UNION ALL
+
+        SELECT
+            'wikidata_company_websites' AS source_website_table,
+            ifNull(
+                nullIf(trim(websites.source_record_id), ''),
+                concat(
+                    'wikidata_company_websites:',
+                    websites.wikidata_id,
+                    ':',
+                    websites.website_normalized_url
+                )
+            ) AS source_website_id,
+            CAST(NULL AS Nullable(String)) AS country_iso2,
+            'wikidata' AS source_slug,
+            'wikidata_id' AS company_id_type,
+            websites.wikidata_id AS company_id,
+            websites.website_url AS website_url,
+            websites.website_normalized_url AS website_normalized_url,
+            websites.website_host AS website_host,
+            websites.root_domain AS root_domain,
+            1 AS is_current,
+            websites.is_primary_candidate AS is_primary
+        FROM {_qualified_table("wikidata_company_websites")} AS websites
+        WHERE nullIf(trim(websites.root_domain), '') IS NOT NULL
     )
     """
 
 
-def _country_domains_insert_sql(stage_table: str, company_links_stage: str) -> str:
-    columns = _column_list(tables.COUNTRY_DOMAINS_COLUMNS)
+def _domains_insert_sql(stage_table: str, company_links_stage: str) -> str:
+    columns = _column_list(tables.DOMAINS_COLUMNS)
     return f"""
     INSERT INTO {_qualified_table(stage_table)} ({columns})
     SELECT
-        country_iso2,
         root_domain,
         countDistinct(company_id) AS company_count,
         countDistinct(website_normalized_url) AS website_count,
         countDistinct(source_slug) AS source_slug_count,
+        countDistinct(country_iso2) AS country_count,
         now64(3) AS resolved_at
     FROM {_qualified_table(company_links_stage)}
-    GROUP BY
-        country_iso2,
-        root_domain
+    GROUP BY root_domain
     """
 
 
@@ -190,7 +225,7 @@ def _drop_stage_tables(
 
     if first_error is not None:
         raise RuntimeError(
-            "Failed to drop country domain stage table(s): " + ", ".join(failed_tables)
+            "Failed to drop domain stage table(s): " + ", ".join(failed_tables)
         ) from first_error
 
 
@@ -213,4 +248,4 @@ def _quote_identifier(identifier: str) -> str:
 
 @dg.definitions
 def defs() -> dg.Definitions:
-    return dg.Definitions(assets=[country_domains_clickhouse])
+    return dg.Definitions(assets=[domains_clickhouse])
