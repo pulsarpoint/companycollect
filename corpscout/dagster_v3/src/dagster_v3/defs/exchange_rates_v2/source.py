@@ -11,6 +11,15 @@ import requests
 from dlt.extract.resource import DltResource
 
 ECB_EXR_BASE_URL = "https://data-api.ecb.europa.eu/service/data/EXR"
+# The full ECB euro foreign-exchange reference-rate currency set (EUR base). The
+# whole multi-year history for all of them is ~1 MB in one request, so we pull
+# them all once: any country we add then already has EUR->its-currency available
+# for USD conversion (X->USD = (EUR->USD)/(EUR->X)), with no per-country re-fetch.
+ECB_REFERENCE_CURRENCIES = (
+    "AUD", "BGN", "BRL", "CAD", "CHF", "CNY", "CZK", "DKK", "GBP", "HKD",
+    "HUF", "IDR", "ILS", "INR", "ISK", "JPY", "KRW", "MXN", "MYR", "NOK",
+    "NZD", "PHP", "PLN", "RON", "SEK", "SGD", "THB", "TRY", "USD", "ZAR",
+)
 EXCHANGE_RATES_V2_DUCKDB_PIPELINE_NAME = "exchange_rates_v2_raw"
 EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME = "exchange_rates_v2_stage"
 EXCHANGE_RATES_V2_RAW_DLT_TABLE = "ecb_raw_payloads"

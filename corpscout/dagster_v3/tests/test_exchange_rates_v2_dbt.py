@@ -123,6 +123,16 @@ def test_exchange_rates_v2_uses_monthly_partitions() -> None:
     )
 
 
+def test_config_defaults_to_full_ecb_reference_set() -> None:
+    cfg = fx_v2_assets.ExchangeRatesV2Config()
+    assert set(cfg.currencies) == set(fx_v2_source.ECB_REFERENCE_CURRENCIES)
+    # covers the currencies of the target countries (Poland, Czechia, Hungary,
+    # Switzerland, UK, Nordics, ...) so adding a country needs no rate re-fetch.
+    assert {"USD", "PLN", "CZK", "HUF", "RON", "CHF", "GBP", "NOK", "SEK", "DKK"} <= set(
+        cfg.currencies
+    )
+
+
 def test_quote_currencies_force_usd_only_not_nok() -> None:
     # USD is always required (canonical conversion target); no other currency is
     # forced. EUR (the base) is never a quote currency.

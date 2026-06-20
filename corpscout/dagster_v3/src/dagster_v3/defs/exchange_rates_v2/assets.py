@@ -24,6 +24,7 @@ from dagster_v3.defs.clickhouse.resolved import export_duckdb_table_to_clickhous
 from dagster_v3.defs.duckdb.schema_contract import validate_duckdb_table_contract
 from dagster_v3.defs.exchange_rates_v2 import tables
 from dagster_v3.defs.exchange_rates_v2.source import (
+    ECB_REFERENCE_CURRENCIES,
     EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME,
     EXCHANGE_RATES_V2_DUCKDB_PIPELINE_NAME,
     EXCHANGE_RATES_V2_RAW_DLT_TABLE,
@@ -92,9 +93,10 @@ class ExchangeRatesV2DbtTranslator(DagsterDbtTranslator):
 
 
 class ExchangeRatesV2Config(dg.Config):
-    # USD is always fetched (required base); EUR is the base currency and is never
-    # a quote, so it is intentionally not listed here.
-    currencies: list[str] = ["USD", "NOK", "GBP", "SEK", "DKK"]
+    # Pull the full ECB euro reference-rate currency set so every country we add
+    # already has EUR->its-currency for USD conversion — no per-country re-fetch.
+    # USD is always fetched regardless; EUR is the base and is never a quote.
+    currencies: list[str] = list(ECB_REFERENCE_CURRENCIES)
 
 
 def month_partition_window(partition_key: str) -> tuple[str, str]:
