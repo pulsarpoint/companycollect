@@ -107,20 +107,12 @@ def test_exchange_rates_v2_dbt_uses_absolute_default_duckdb_path() -> None:
     assert Path(os.environ["EXCHANGE_RATES_V2_DUCKDB_PATH"]).is_absolute()
 
 
-def test_month_partition_window_maps_to_full_month() -> None:
-    # a monthly partition key (first-of-month) -> [first day, last day]
-    assert fx_v2_assets.month_partition_window("2024-02-01") == ("2024-02-01", "2024-02-29")
-    assert fx_v2_assets.month_partition_window("2023-12-01") == ("2023-12-01", "2023-12-31")
-    # a multi-month range spans first-of-start-month .. last-of-end-month
-    assert fx_v2_assets.month_partition_range_window(
-        start_partition_key="2023-01-01", end_partition_key="2026-06-01"
-    ) == ("2023-01-01", "2026-06-30")
-
-
-def test_exchange_rates_v2_uses_monthly_partitions() -> None:
-    assert isinstance(
-        fx_v2_assets.EXCHANGE_RATES_V2_PARTITIONS, dg.MonthlyPartitionsDefinition
-    )
+def test_exchange_rates_v2_is_not_partitioned() -> None:
+    # No partitions: a single run pulls the whole window in one ECB request.
+    assert not hasattr(fx_v2_assets, "EXCHANGE_RATES_V2_PARTITIONS")
+    start, end = fx_v2_assets._full_range()
+    assert start == fx_v2_assets.EXCHANGE_RATES_V2_START_DATE == "2023-01-01"
+    assert end >= start  # [START_DATE, today]
 
 
 def test_config_defaults_to_full_ecb_reference_set() -> None:
@@ -257,8 +249,8 @@ def test_exchange_rates_v2_assets_and_job_are_registered() -> None:
         for key in repository.asset_graph.get_all_asset_keys()
         if key.path[-1].startswith("exchange_rates_v2")
     }
-    backfill_policies = {
-        repository.asset_graph.get(key).backfill_policy
+    partitions_defs = {
+        repository.asset_graph.get(key).partitions_def
         for key in exchange_rates_v2_keys
     }
 
@@ -274,11 +266,10 @@ def test_exchange_rates_v2_assets_and_job_are_registered() -> None:
         repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
         is ClickhouseResource
     )
-    assert backfill_policies == {
-        dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
-    }
-    # all DuckDB-touching assets share one pool so partition runs serialize
-    # (single-writer DuckDB) and a backfill is throttled internally.
+    # de-partitioned: every v2 asset is non-partitioned now.
+    assert partitions_defs == {None}
+    # all DuckDB-touching assets still share one pool so overlapping runs
+    # serialize against the single-writer DuckDB file.
     pools = {
         asset_def.op.pool
         for asset_def in (
@@ -288,6 +279,13 @@ def test_exchange_rates_v2_assets_and_job_are_registered() -> None:
         )
     }
     assert pools == {fx_v2_assets.EXCHANGE_RATES_V2_DUCKDB_POOL}
+
+
+def test_exchange_rates_v2_daily_schedule_registered() -> None:
+    repository = load_project_defs().get_repository_def()
+    sched = repository.get_schedule_def("exchange_rates_v2_daily_schedule")
+    assert sched.cron_schedule == "30 18 * * 1-5"
+    assert sched.job.name == "exchange_rates_v2_job"
 
 
 def _create_raw_payload_table(duckdb_path: Path) -> None:

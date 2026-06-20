@@ -1,5 +1,5 @@
 from collections.abc import Iterator, Mapping
-from datetime import date, timedelta
+from datetime import date
 import json
 import os
 from pathlib import Path
@@ -37,25 +37,16 @@ EXCHANGE_RATES_V2_DUCKDB_PATH = Path(
 ).expanduser()
 if not EXCHANGE_RATES_V2_DUCKDB_PATH.is_absolute():
     EXCHANGE_RATES_V2_DUCKDB_PATH = EXCHANGE_RATES_V2_DUCKDB_PATH.resolve()
-# Monthly (not daily) partitions: this is a tiny daily-grained reference dataset,
-# but per-partition materialization bookkeeping is written to the Postgres event
-# log, so a daily full-history backfill emits ~1265 events and exhausts Postgres
-# connections. Monthly cuts that ~30x while each partition still fetches/builds a
-# whole month of daily rates. end_offset=1 keeps the in-progress current month a
-# valid partition so a daily schedule can refresh month-to-date.
-EXCHANGE_RATES_V2_PARTITIONS = dg.MonthlyPartitionsDefinition(
-    start_date="2023-01-01", end_offset=1
-)
-# multi_run (one partition per run) + a concurrency pool is how partition
-# materialization is throttled internally: a UI/daemon backfill of N months
-# creates N small runs (~2 materializations each, so no event-log connection
-# spike), and the pool caps how many run at once. The instance defaults every
-# pool to limit 1 (dagster.yaml concurrency.pools.default_limit), so the runs
-# execute one at a time — which is also required because all three assets write
-# one single-writer DuckDB file. Raise the pool limit to run more concurrently
-# (`dagster instance concurrency set exchange_rates_v2_duckdb N`), but N>1 needs
-# per-run DuckDB isolation to be safe.
-EXCHANGE_RATES_V2_BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
+# No partitions. The ECB API returns the whole multi-year history for every
+# reference currency in ONE ~1 MB request, so a single non-partitioned run pulls
+# [START_DATE, today], rebuilds the DuckDB dbt tables, and republishes the entire
+# ClickHouse window. This also means one materialization event per asset per run
+# (not one per month), so it can never storm the shared Postgres event log — the
+# original reason partitions existed. The daily schedule just re-runs the full
+# pull; ReplacingMergeTree(pulled_at) + the per-run DELETE window keep it idempotent.
+EXCHANGE_RATES_V2_START_DATE = "2023-01-01"
+# All three DuckDB-writing assets share one pool so overlapping runs (e.g. a
+# manual run racing the daily schedule) serialize against the single-writer file.
 EXCHANGE_RATES_V2_DUCKDB_POOL = "exchange_rates_v2_duckdb"
 EXCHANGE_RATES_V2_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
 CLICKHOUSE_EXPORT_TABLE = "clickhouse_exchange_rates"
@@ -99,28 +90,6 @@ class ExchangeRatesV2Config(dg.Config):
     currencies: list[str] = list(ECB_REFERENCE_CURRENCIES)
 
 
-def month_partition_window(partition_key: str) -> tuple[str, str]:
-    """Map a monthly partition key (first-of-month) to its [first, last] day."""
-    first = date.fromisoformat(partition_key)
-    next_first = (
-        first.replace(year=first.year + 1, month=1)
-        if first.month == 12
-        else first.replace(month=first.month + 1)
-    )
-    last = next_first - timedelta(days=1)
-    return first.isoformat(), last.isoformat()
-
-
-def month_partition_range_window(
-    *,
-    start_partition_key: str,
-    end_partition_key: str,
-) -> tuple[str, str]:
-    start_date, _ = month_partition_window(start_partition_key)
-    _, end_date = month_partition_window(end_partition_key)
-    return start_date, end_date
-
-
 @dlt_assets(
     dlt_source=exchange_rates_v2_raw_range_source(
         start_date="2023-01-01",
@@ -135,8 +104,6 @@ def month_partition_range_window(
     ),
     name="exchange_rates_v2_raw_duckdb",
     dagster_dlt_translator=ExchangeRatesV2DltTranslator(),
-    partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
-    backfill_policy=EXCHANGE_RATES_V2_BACKFILL_POLICY,
     pool=EXCHANGE_RATES_V2_DUCKDB_POOL,
 )
 def exchange_rates_v2_raw_duckdb_asset(
@@ -144,7 +111,7 @@ def exchange_rates_v2_raw_duckdb_asset(
     config: ExchangeRatesV2Config,
     dlt: DagsterDltResource,
 ) -> Iterator[Any]:
-    start_date, end_date = _context_partition_range(context)
+    start_date, end_date = _full_range()
     EXCHANGE_RATES_V2_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
     context.log.info(
         "Loading raw ECB exchange-rate v2 payload to DuckDB: duckdb_path=%s, "
@@ -175,15 +142,13 @@ def exchange_rates_v2_raw_duckdb_asset(
     manifest=exchange_rates_v2_dbt_project.manifest_path,
     project=exchange_rates_v2_dbt_project,
     dagster_dbt_translator=ExchangeRatesV2DbtTranslator(),
-    partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
-    backfill_policy=EXCHANGE_RATES_V2_BACKFILL_POLICY,
     pool=EXCHANGE_RATES_V2_DUCKDB_POOL,
 )
 def exchange_rates_v2_dbt_assets(
     context: AssetExecutionContext,
     dbt: DbtCliResource,
 ) -> Iterator[Any]:
-    start_date, end_date = _context_partition_range(context)
+    start_date, end_date = _full_range()
     yield from dbt.cli(
         [
             "build",
@@ -199,8 +164,6 @@ def exchange_rates_v2_dbt_assets(
         get_asset_key_for_model([exchange_rates_v2_dbt_assets], "ecb_rates"),
         get_asset_key_for_model([exchange_rates_v2_dbt_assets], "identity_rates"),
     ],
-    partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
-    backfill_policy=EXCHANGE_RATES_V2_BACKFILL_POLICY,
     pool=EXCHANGE_RATES_V2_DUCKDB_POOL,
     group_name=GROUP_NAME,
     kinds={"duckdb", "clickhouse"},
@@ -210,7 +173,7 @@ def exchange_rates_v2_clickhouse(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    start_date, end_date = _context_partition_range(context)
+    start_date, end_date = _full_range()
     counts = export_exchange_rates_v2_clickhouse(
         duckdb_path=EXCHANGE_RATES_V2_DUCKDB_PATH,
         clickhouse=clickhouse,
@@ -285,14 +248,17 @@ exchange_rates_v2_selection = dg.AssetSelection.assets(
 exchange_rates_v2_job = dg.define_asset_job(
     "exchange_rates_v2_job",
     selection=exchange_rates_v2_selection,
-    # Explicitly partition the job: the selection spans partitioned assets and
-    # non-partitioned upstream nodes, so without this the job resolves
-    # non-partitioned and the assets fail on context.partition_key_range. Pin it
-    # to the asset partitions so it runs per-partition. To repopulate history,
-    # launch a UI/daemon backfill over the month range: the multi_run policy
-    # makes one small run per partition and the exchange_rates_v2_duckdb pool
-    # throttles how many run at once (default 1).
-    partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
+)
+
+# Replaces the retired v1 daily schedule. Weekdays 18:30 Belgrade, after ECB's
+# ~16:00 CET reference-rate publish. Non-partitioned: each run re-pulls the full
+# [START_DATE, today] window in one request, so it both backfills history and
+# picks up the new day.
+exchange_rates_v2_daily_schedule = dg.ScheduleDefinition(
+    name="exchange_rates_v2_daily_schedule",
+    job=exchange_rates_v2_job,
+    cron_schedule="30 18 * * 1-5",
+    execution_timezone="Europe/Belgrade",
 )
 
 
@@ -308,12 +274,9 @@ def _validate_exchange_rates_v2_duckdb_table(
     )
 
 
-def _context_partition_range(context: AssetExecutionContext) -> tuple[str, str]:
-    partition_key_range = context.partition_key_range
-    return month_partition_range_window(
-        start_partition_key=partition_key_range.start,
-        end_partition_key=partition_key_range.end,
-    )
+def _full_range() -> tuple[str, str]:
+    """The whole reference window: [START_DATE, today]. One ECB request covers it."""
+    return EXCHANGE_RATES_V2_START_DATE, date.today().isoformat()
 
 
 def _sql_escape(value: str) -> str:
@@ -327,6 +290,7 @@ defs = dg.Definitions(
         exchange_rates_v2_clickhouse,
     ],
     jobs=[exchange_rates_v2_job],
+    schedules=[exchange_rates_v2_daily_schedule],
     resources={
         "dbt": DbtCliResource(
             project_dir=exchange_rates_v2_dbt_project,
