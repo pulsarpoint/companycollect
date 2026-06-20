@@ -30,6 +30,11 @@ When adding a source, mirror the nearest existing module: `finland_ytj` (registe
   duplicate DDL in Python. Pin the export column order with a contract test that greps the migration file.
 - **Refuse to replace on empty input** — `raise ValueError` when a download yields zero rows, so a bad fetch
   can't blank a populated table.
+- **A non-nullable ClickHouse `String`/`LowCardinality(String)` column must get `''`, never `NULL`.** The native
+  driver calls `.encode()` per value and dies on `None` (`'NoneType' object has no attribute 'encode'`). Coalesce
+  string columns to `''` in the producing SQL (e.g. `coalesce(spine.source_type,'')`); only make the migration
+  column `Nullable(...)` if NULL is semantically meaningful. Numeric/date NULLs are fine **iff** the column is
+  `Nullable(...)`. A small unit test won't catch this — it only fires when real data has a NULL in that column.
 - **Don't export `raw_*` JSON or `source_payload_hash` to ClickHouse.** The full source JSON (`raw_entity`,
   `raw_financial_record`) is the biggest column, and the per-row SHA256 hash is *incompressible* (one unique
   value/row); nothing queries them — together ~60% of table size (dropping both shrank `lv_companies` 119→43 MiB).
@@ -79,6 +84,11 @@ When adding a source, mirror the nearest existing module: `finland_ytj` (registe
   `fx_rate_to_usd`/`fx_rate_date`/`fx_source`. Mirror `norway_brreg/financial_normalize.py`.
 - Apply `rounded_to_nearest` scaling **before** FX. Keep values signed. Catch `LookupError` for the per-request
   rate fallback (don't swallow real connection errors).
+- **Batch the `ExchangeRateClient.usd_rates()` request set** (≈50 pairs/call). The client builds one `UNION ALL`
+  branch per `(currency, date)` pair, so a single call with a source's full date span (Latvia ≈ 1k distinct
+  `period_end_date`s) overflows ClickHouse's query-plan optimizer → `code 572 TOO_MANY_QUERY_PLAN_OPTIMIZATIONS`.
+  See `latvia_ur/metrics.py:_load_rates`. (The shared client's UNION-ALL construction is the root cause and will
+  bite any source with many distinct dates until it's reworked to a values/array join.)
 
 ## Connections & scaling (target: 100+ sources)
 - The Dagster Postgres (`companycollect`) is **shared with Temporal** — connection pressure is the main scaling
