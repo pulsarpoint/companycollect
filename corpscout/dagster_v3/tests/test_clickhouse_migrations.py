@@ -30,6 +30,7 @@ EXPECTED_MIGRATIONS = (
     "000017_corpscout_wikidata_company_country",
     "000018_corpscout_wikidata_company_augmentations",
     "000019_corpscout_lv_financial_metrics",
+    "000020_corpscout_lv_financial_statements_repair",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
