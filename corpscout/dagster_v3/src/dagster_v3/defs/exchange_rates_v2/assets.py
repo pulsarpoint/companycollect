@@ -45,11 +45,17 @@ if not EXCHANGE_RATES_V2_DUCKDB_PATH.is_absolute():
 EXCHANGE_RATES_V2_PARTITIONS = dg.MonthlyPartitionsDefinition(
     start_date="2023-01-01", end_offset=1
 )
-# single_run: these assets process a whole partition_key_range in one pass (the
-# ECB source fetches start..end in one request, dbt builds the range, and the
-# ClickHouse export delete+inserts the window), so a range backfill should be one
-# run, not one-run-per-day. This also lets `dg launch --partition-range` work.
-EXCHANGE_RATES_V2_BACKFILL_POLICY = dg.BackfillPolicy.single_run()
+# multi_run (one partition per run) + a concurrency pool is how partition
+# materialization is throttled internally: a UI/daemon backfill of N months
+# creates N small runs (~2 materializations each, so no event-log connection
+# spike), and the pool caps how many run at once. The instance defaults every
+# pool to limit 1 (dagster.yaml concurrency.pools.default_limit), so the runs
+# execute one at a time — which is also required because all three assets write
+# one single-writer DuckDB file. Raise the pool limit to run more concurrently
+# (`dagster instance concurrency set exchange_rates_v2_duckdb N`), but N>1 needs
+# per-run DuckDB isolation to be safe.
+EXCHANGE_RATES_V2_BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
+EXCHANGE_RATES_V2_DUCKDB_POOL = "exchange_rates_v2_duckdb"
 EXCHANGE_RATES_V2_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
 CLICKHOUSE_EXPORT_TABLE = "clickhouse_exchange_rates"
 
@@ -129,6 +135,7 @@ def month_partition_range_window(
     dagster_dlt_translator=ExchangeRatesV2DltTranslator(),
     partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
     backfill_policy=EXCHANGE_RATES_V2_BACKFILL_POLICY,
+    pool=EXCHANGE_RATES_V2_DUCKDB_POOL,
 )
 def exchange_rates_v2_raw_duckdb_asset(
     context: AssetExecutionContext,
@@ -168,6 +175,7 @@ def exchange_rates_v2_raw_duckdb_asset(
     dagster_dbt_translator=ExchangeRatesV2DbtTranslator(),
     partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
     backfill_policy=EXCHANGE_RATES_V2_BACKFILL_POLICY,
+    pool=EXCHANGE_RATES_V2_DUCKDB_POOL,
 )
 def exchange_rates_v2_dbt_assets(
     context: AssetExecutionContext,
@@ -191,6 +199,7 @@ def exchange_rates_v2_dbt_assets(
     ],
     partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
     backfill_policy=EXCHANGE_RATES_V2_BACKFILL_POLICY,
+    pool=EXCHANGE_RATES_V2_DUCKDB_POOL,
     group_name=GROUP_NAME,
     kinds={"duckdb", "clickhouse"},
     description="Exchange-rate v2 dbt rows exported from DuckDB to migrated ClickHouse table.",
@@ -277,9 +286,10 @@ exchange_rates_v2_job = dg.define_asset_job(
     # Explicitly partition the job: the selection spans partitioned assets and
     # non-partitioned upstream nodes, so without this the job resolves
     # non-partitioned and the assets fail on context.partition_key_range. Pin it
-    # to the asset partitions so it runs per-partition; with the single_run
-    # backfill policy a partition-range backfill repopulates the whole range in
-    # one run (CLI: dg launch --partition-range, or a UI backfill).
+    # to the asset partitions so it runs per-partition. To repopulate history,
+    # launch a UI/daemon backfill over the month range: the multi_run policy
+    # makes one small run per partition and the exchange_rates_v2_duckdb pool
+    # throttles how many run at once (default 1).
     partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
 )
 

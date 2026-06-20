@@ -264,7 +264,20 @@ def test_exchange_rates_v2_assets_and_job_are_registered() -> None:
         repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
         is ClickhouseResource
     )
-    assert backfill_policies == {dg.BackfillPolicy.single_run()}
+    assert backfill_policies == {
+        dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
+    }
+    # all DuckDB-touching assets share one pool so partition runs serialize
+    # (single-writer DuckDB) and a backfill is throttled internally.
+    pools = {
+        asset_def.op.pool
+        for asset_def in (
+            fx_v2_assets.exchange_rates_v2_raw_duckdb_asset,
+            fx_v2_assets.exchange_rates_v2_dbt_assets,
+            fx_v2_assets.exchange_rates_v2_clickhouse,
+        )
+    }
+    assert pools == {fx_v2_assets.EXCHANGE_RATES_V2_DUCKDB_POOL}
 
 
 def _create_raw_payload_table(duckdb_path: Path) -> None:
