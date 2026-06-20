@@ -141,13 +141,6 @@ def exchange_rates_v2_raw_duckdb_asset(
         ),
     )
 
-exchange_rates_selection2 = dg.AssetSelection.assets("exchange_rates_v2_clickhouse").upstream()
-
-exchange_rates_daily_job2 = dg.define_asset_job(
-    "exchange_rates_daily_job2",
-    selection=exchange_rates_selection2,
-)
-
 
 @dbt_assets(
     manifest=exchange_rates_v2_dbt_project.manifest_path,
