@@ -32,7 +32,9 @@ Postgres 17 (ppoint-postgres) — also serves temporal / corpscout directly
 **Files (on `companycollect`, in the compose stack dir `/opt/corpscout_db`):**
 - Modify: the compose file (add a `pgbouncer` service — no separate config files needed)
 
-**Auth approach (simplified):** the `edoburu/pgbouncer` image generates its own `pgbouncer.ini` + userlist from env vars, so it reads the **plaintext** `CORPSCOUT_USER` / `CORPSCOUT_PASSWORD` already in the server's compose `.env`. No SCRAM-hash extraction, no hand-maintained `userlist.txt`. Dagster then connects through PgBouncer **as `corpscout`** (the container superuser, full access to the `dagster` DB). *Least-privilege alternative:* keep Dagster connecting as the `dagster` user and configure PgBouncer with `auth_user=corpscout` + `auth_query` — more config, deferred.
+**Auth approach:** the `edoburu/pgbouncer` image sets `DB_USER`/`DB_PASSWORD` (from `CORPSCOUT_USER`/`CORPSCOUT_PASSWORD` in the server `.env`) as the PgBouncer **`auth_user`** — the superuser identity it uses only to run the `auth_query` that looks up *any* connecting user's credentials from `pg_shadow`. The generated `[databases]` line (`* = host=ppoint-postgres port=5432 auth_user=corpscout`) has **no `user=`**, so the backend connection is opened **as the client's user**.
+
+**Therefore Dagster should connect as the dedicated, least-privilege `dagster` user** — NOT as `corpscout`. Don't run Dagster as the DB superuser: this Postgres also hosts `temporal`/`temporal_visibility`/`corpscout`, and `dagster` only needs its own DB. No PgBouncer change is required for this — only `DAGSTER_PG_URL` uses the `dagster` creds; `corpscout` remains the auth-lookup/admin identity.
 
 ### Task 1: PgBouncer service (env-driven)
 
@@ -51,6 +53,8 @@ Postgres 17 (ppoint-postgres) — also serves temporal / corpscout directly
       DB_PORT: "5432"
       DB_USER: ${CORPSCOUT_USER}        # from /opt/corpscout_db/.env
       DB_PASSWORD: ${CORPSCOUT_PASSWORD}
+      LISTEN_PORT: "6432"               # REQUIRED: edoburu defaults to 5432 inside the
+                                        # container; must match the published 6432 mapping.
       # No DB_NAME -> wildcard "*" database, so the client-requested db (dagster)
       # is passed through to the backend.
       POOL_MODE: transaction
@@ -86,14 +90,14 @@ docker compose up -d pgbouncer
 docker logs --tail 20 ppoint-pgbouncer        # should show "process up" / listening on 6432, no auth errors
 ```
 
-- [ ] **Step 2: Verify a real query goes through PgBouncer** (from the Mac, via Tailscale, as `corpscout`):
+- [ ] **Step 2: Verify a real query goes through PgBouncer as the `dagster` user** (from the Mac, via Tailscale):
 
 ```bash
 docker run --rm postgres:16-alpine psql \
-  "postgresql://corpscout:<corpscout-password>@100.85.212.113:6432/dagster" \
-  -c "SELECT 'pgbouncer ok', current_database();"
+  "postgresql://dagster:<dagster-password>@100.85.212.113:6432/dagster" \
+  -c "SELECT current_user, current_database();"
 ```
-Expected: returns the row. If it errors with `unsupported startup parameter`, the `IGNORE_STARTUP_PARAMETERS` env is wrong/missing.
+Expected: `dagster | dagster` (PgBouncer authenticated `dagster` via `corpscout`'s auth_query, backend opened as `dagster`). If it errors with `unsupported startup parameter`, the `IGNORE_STARTUP_PARAMETERS` env is wrong/missing.
 
 - [ ] **Step 3: Inspect PgBouncer pools** (admin db `pgbouncer`):
 
@@ -114,12 +118,12 @@ docker run --rm postgres:16-alpine psql \
 
 ### Task 3: Repoint `DAGSTER_PG_URL`
 
-- [ ] **Step 1: Point at PgBouncer as `corpscout`** in `dagster_v3/.env` (Mac dev env) — port `6432` and the `corpscout` creds you already have:
+- [ ] **Step 1: Point at PgBouncer as the `dagster` user** in `dagster_v3/.env` (Mac dev env) — only the port changes vs the original direct URL (`5432` → `6432`):
 
 ```
-DAGSTER_PG_URL=postgresql://corpscout:<corpscout-password>@companycollect:6432/dagster
+DAGSTER_PG_URL=postgresql://dagster:<dagster-password>@companycollect:6432/dagster
 ```
-(Same `dagster` database, just reached through PgBouncer as the superuser. PgBouncer is otherwise transparent to Dagster.)
+(PgBouncer authenticates `dagster` via `corpscout`'s auth_query and opens the backend as `dagster` — least privilege, no superuser. Otherwise transparent to Dagster.)
 
 - [ ] **Step 2: Restart `dg dev`** via `./scripts/dagster-dev.sh` and confirm it loads with no connection errors, and the UI is responsive. Live run-log tailing now updates on refresh rather than streaming (expected — see gotchas).
 
