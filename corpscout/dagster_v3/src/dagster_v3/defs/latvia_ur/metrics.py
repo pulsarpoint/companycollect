@@ -1,6 +1,4 @@
 from collections.abc import Callable
-from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -13,10 +11,6 @@ WIDE_STATEMENTS = tables.FINANCIAL_STATEMENTS_WIDE_TABLE
 METRICS_TABLE = tables.FINANCIAL_METRICS_WIDE_TABLE
 SOURCE_SLUG = "latvia_ur_financials"
 
-_DECIMAL_AMOUNT_COLUMNS = {
-    f"{metric}_amount_original" for metric in tables.FINANCIAL_METRIC_NAMES
-} | {f"{metric}_amount_usd" for metric in tables.FINANCIAL_METRIC_NAMES}
-
 
 class ExchangeRates(Protocol):
     def usd_rates(self, requests: list[Any]) -> dict[tuple[str, str], Any]: ...
@@ -27,17 +21,6 @@ def _request(currency: str, rate_date: str) -> Any:
     from exchange_rates import ExchangeRateRequest
 
     return ExchangeRateRequest(currency=currency, rate_date=rate_date)
-
-
-def _decimal(value: Any) -> Decimal | None:
-    if value is None or value == "":
-        return None
-    if isinstance(value, Decimal):
-        return value
-    try:
-        return Decimal(str(value))
-    except (InvalidOperation, ValueError):
-        return None
 
 
 def build_latvia_ur_financial_metrics(
@@ -53,35 +36,81 @@ def build_latvia_ur_financial_metrics(
     exchange_rates table is populated; the *_usd and fx_* columns are left empty
     here and filled by that step.
     """
-    metric_cols = ", ".join(
-        f"{src} as {name}"
-        for name, src in tables.FINANCIAL_METRIC_SOURCE_COLUMNS.items()
+    factor_case = "\n".join(
+        f"                    when '{unit}' then {factor}"
+        for unit, factor in tables.ROUNDED_TO_NEAREST_FACTORS.items()
     )
-    select_sql = f"""
+    metric_select = ",\n            ".join(
+        expr
+        for name in tables.FINANCIAL_METRIC_NAMES
+        for expr in (
+            f"cast({tables.FINANCIAL_METRIC_SOURCE_COLUMNS[name]} * _factor as "
+            f"decimal(38, 2)) as {name}_amount_original",
+            f"cast(null as decimal(38, 2)) as {name}_amount_usd",
+        )
+    )
+    qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
+    # Native DuckDB set-based build: scale each native amount by rounded_to_nearest
+    # in one CREATE TABLE AS. (Was a fetchall() + per-row Python Decimal loop over
+    # ~2M rows — tens of minutes; this runs in seconds.) USD/fx columns are left
+    # empty for the separate apply_latvia_ur_usd_conversion step. The output column
+    # order matches tables.LV_FINANCIAL_METRICS_COLUMNS.
+    build_sql = f"""
+        create or replace table {qualified} as
+        with scaled as (
+            select
+                *,
+                case upper(coalesce(rounded_to_nearest, ''))
+{factor_case}
+                    else 1
+                end as _factor
+            from {DLT_DATASET_NAME}.{WIDE_STATEMENTS}
+        )
         select
-            statement_id, regcode, fiscal_year, period_start_date, period_end_date,
-            employees, currency, rounded_to_nearest, source_payload_hash,
-            {metric_cols}
-        from {DLT_DATASET_NAME}.{WIDE_STATEMENTS}
+            'LV' as country_iso2,
+            '{SOURCE_SLUG}' as source_slug,
+            cast(? as varchar) as source_run_id,
+            statement_id as source_record_id,
+            source_payload_hash,
+            statement_id,
+            regcode,
+            fiscal_year,
+            period_start_date,
+            period_end_date,
+            employees,
+            upper(coalesce(currency, '')) as currency,
+            rounded_to_nearest,
+            {metric_select},
+            cast(null as decimal(38, 12)) as fx_rate_to_usd,
+            cast(null as date) as fx_rate_date,
+            '' as fx_source,
+            cast(now() as timestamp) as resolved_at
+        from scaled
     """
+    known_units = ", ".join(f"'{unit}'" for unit in tables.ROUNDED_TO_NEAREST_FACTORS)
     with duckdb.connect(str(database_path)) as connection:
-        cursor = connection.execute(select_sql)
-        names = [d[0] for d in cursor.description]
-        records = [dict(zip(names, r, strict=True)) for r in cursor.fetchall()]
-
-    unknown_units: set[str] = set()
-    rows = [
-        _metric_row(rec, source_run_id=source_run_id, unknown_units=unknown_units)
-        for rec in records
-    ]
-    _write_metrics_table(database_path, rows)
+        connection.execute(build_sql, [source_run_id])
+        metrics = int(
+            connection.execute(f"select count(*) from {qualified}").fetchone()[0]
+        )
+        unknown_units = [
+            row[0]
+            for row in connection.execute(
+                f"""
+                select distinct rounded_to_nearest
+                from {qualified}
+                where coalesce(rounded_to_nearest, '') <> ''
+                  and upper(rounded_to_nearest) not in ({known_units})
+                """
+            ).fetchall()
+        ]
 
     if unknown_units and log is not None:
         log(
             "Latvia UR metrics: unknown rounded_to_nearest units defaulted to factor 1: %s",
             sorted(unknown_units),
         )
-    counts = {"metrics": len(rows)}
+    counts = {"metrics": metrics}
     if log is not None:
         log("Built Latvia UR financial metrics (native): metrics=%s", counts["metrics"])
     return counts
@@ -113,44 +142,6 @@ def _load_rates(
                 except LookupError:
                     continue
     return rates
-
-
-def _metric_row(
-    rec: dict[str, Any],
-    *,
-    source_run_id: str,
-    unknown_units: set[str],
-) -> dict[str, Any]:
-    unit = str(rec["rounded_to_nearest"] or "").upper()
-    if unit and unit not in tables.ROUNDED_TO_NEAREST_FACTORS:
-        unknown_units.add(unit)
-    factor = tables.ROUNDED_TO_NEAREST_FACTORS.get(unit, 1)
-
-    row: dict[str, Any] = {
-        "country_iso2": "LV",
-        "source_slug": SOURCE_SLUG,
-        "source_run_id": source_run_id,
-        "source_record_id": rec["statement_id"],
-        "source_payload_hash": rec["source_payload_hash"],
-        "statement_id": rec["statement_id"],
-        "regcode": rec["regcode"],
-        "fiscal_year": rec["fiscal_year"],
-        "period_start_date": rec["period_start_date"],
-        "period_end_date": rec["period_end_date"],
-        "employees": rec["employees"],
-        "currency": str(rec["currency"] or "").upper(),
-        "rounded_to_nearest": rec["rounded_to_nearest"],
-        # FX columns are filled by the separate apply_latvia_ur_usd_conversion step.
-        "fx_rate_to_usd": None,
-        "fx_rate_date": None,
-        "fx_source": "",
-        "resolved_at": datetime.now(timezone.utc),
-    }
-    for metric in tables.FINANCIAL_METRIC_NAMES:
-        raw = _decimal(rec[metric])
-        row[f"{metric}_amount_original"] = None if raw is None else (raw * factor)
-        row[f"{metric}_amount_usd"] = None
-    return row
 
 
 def apply_latvia_ur_usd_conversion(
@@ -240,35 +231,3 @@ def apply_latvia_ur_usd_conversion(
             counts["rows_converted"],
         )
     return counts
-
-
-def _write_metrics_table(database_path: str | Path, rows: list[dict[str, Any]]) -> None:
-    columns = tables.LV_FINANCIAL_METRICS_COLUMNS
-
-    def ddl_type(col: str) -> str:
-        if col in _DECIMAL_AMOUNT_COLUMNS:
-            return "decimal(38, 2)"
-        if col == "fx_rate_to_usd":
-            return "decimal(38, 12)"
-        if col in {"period_start_date", "period_end_date", "fx_rate_date"}:
-            return "date"
-        if col == "fiscal_year":
-            return "integer"
-        if col == "employees":
-            return "bigint"
-        if col == "resolved_at":
-            return "timestamp"
-        return "varchar"
-
-    col_defs = ", ".join(f"{c} {ddl_type(c)}" for c in columns)
-    placeholders = ", ".join("?" for _ in columns)
-    qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
-        connection.execute(f"drop table if exists {qualified}")
-        connection.execute(f"create table {qualified} ({col_defs})")
-        if rows:
-            connection.executemany(
-                f"insert into {qualified} ({', '.join(columns)}) values ({placeholders})",
-                [tuple(row.get(col) for col in columns) for row in rows],
-            )
