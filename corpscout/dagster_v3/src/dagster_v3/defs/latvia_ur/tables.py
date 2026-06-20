@@ -260,3 +260,22 @@ LV_FINANCIAL_METRICS_COLUMNS = (
     "fx_source",
     "resolved_at",
 )
+
+
+# Columns kept in DuckDB staging but NOT exported to ClickHouse. The full source
+# JSON (raw_*) and the per-row source_payload_hash dominate table size on disk —
+# raw_* compresses ~6x but is huge; the SHA256 hash is incompressible (one unique
+# value per row) — and nothing queries them. The ClickHouse export uses the
+# *_EXPORT_COLUMNS subsets; the migration drops the columns from the live tables.
+CLICKHOUSE_EXCLUDED_COLUMNS = frozenset(
+    {"raw_entity", "raw_financial_record", "source_payload_hash"}
+)
+
+
+def _export_columns(columns: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(c for c in columns if c not in CLICKHOUSE_EXCLUDED_COLUMNS)
+
+
+LV_COMPANIES_EXPORT_COLUMNS = _export_columns(LV_COMPANIES_COLUMNS)
+LV_FINANCIAL_STATEMENTS_EXPORT_COLUMNS = _export_columns(LV_FINANCIAL_STATEMENTS_COLUMNS)
+LV_FINANCIAL_METRICS_EXPORT_COLUMNS = _export_columns(LV_FINANCIAL_METRICS_COLUMNS)

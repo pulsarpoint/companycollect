@@ -43,7 +43,7 @@ def export_latvia_ur_clickhouse_companies(
             duckdb_table=ENTITIES_TABLE,
             clickhouse_database=tables.LATVIA_UR_DATABASE,
             clickhouse_table=tables.LV_COMPANIES_TABLE,
-            columns=tables.LV_COMPANIES_COLUMNS,
+            columns=tables.LV_COMPANIES_EXPORT_COLUMNS,
             truncate=True,
         )
     if log is not None:
@@ -77,7 +77,7 @@ def export_latvia_ur_clickhouse_financial_statements(
             duckdb_table=tables.FINANCIAL_STATEMENTS_WIDE_TABLE,
             clickhouse_database=tables.LATVIA_UR_DATABASE,
             clickhouse_table=tables.LV_FINANCIAL_STATEMENTS_TABLE,
-            columns=tables.LV_FINANCIAL_STATEMENTS_COLUMNS,
+            columns=tables.LV_FINANCIAL_STATEMENTS_EXPORT_COLUMNS,
             truncate=True,
         )
     if log is not None:
@@ -111,7 +111,7 @@ def export_latvia_ur_clickhouse_financial_metrics(
             duckdb_table=tables.FINANCIAL_METRICS_WIDE_TABLE,
             clickhouse_database=tables.LATVIA_UR_DATABASE,
             clickhouse_table=tables.LV_FINANCIAL_METRICS_TABLE,
-            columns=tables.LV_FINANCIAL_METRICS_COLUMNS,
+            columns=tables.LV_FINANCIAL_METRICS_EXPORT_COLUMNS,
             truncate=True,
         )
     if log is not None:

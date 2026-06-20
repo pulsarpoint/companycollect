@@ -55,6 +55,25 @@ def test_each_metric_source_column_exists_in_wide_schema():
         assert source_col in tables.LV_FINANCIAL_STATEMENTS_COLUMNS
 
 
+def test_export_columns_drop_large_provenance_columns():
+    assert tables.CLICKHOUSE_EXCLUDED_COLUMNS == {
+        "raw_entity",
+        "raw_financial_record",
+        "source_payload_hash",
+    }
+    # the ClickHouse export omits the big/incompressible provenance columns ...
+    for export in (
+        tables.LV_COMPANIES_EXPORT_COLUMNS,
+        tables.LV_FINANCIAL_STATEMENTS_EXPORT_COLUMNS,
+        tables.LV_FINANCIAL_METRICS_EXPORT_COLUMNS,
+    ):
+        assert not (set(export) & tables.CLICKHOUSE_EXCLUDED_COLUMNS)
+    # ... but they remain in the full DuckDB/migration tuples (staging keeps them).
+    assert "raw_entity" in tables.LV_COMPANIES_COLUMNS
+    assert "raw_financial_record" in tables.LV_FINANCIAL_STATEMENTS_COLUMNS
+    assert "source_payload_hash" in tables.LV_FINANCIAL_METRICS_COLUMNS
+
+
 def test_raw_sources_cover_four_files():
     assert set(tables.FINANCIAL_RAW_SOURCES) == {
         tables.FINANCIAL_STATEMENTS_RAW_TABLE,

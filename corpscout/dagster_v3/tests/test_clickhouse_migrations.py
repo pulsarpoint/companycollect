@@ -31,6 +31,7 @@ EXPECTED_MIGRATIONS = (
     "000018_corpscout_wikidata_company_augmentations",
     "000019_corpscout_lv_financial_metrics",
     "000020_corpscout_lv_financial_statements_repair",
+    "000021_corpscout_lv_drop_provenance_columns",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -353,7 +354,8 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
         sql = _migration_sql(f"{migration_file}.up.sql")
 
         assert "CREATE DATABASE IF NOT EXISTS" in sql
-        assert "CREATE TABLE IF NOT EXISTS" in sql
+        # Every migration creates tables, except pure ALTER (schema-change) migrations.
+        assert "CREATE TABLE IF NOT EXISTS" in sql or "ALTER TABLE" in sql
         assert "TRUNCATE" not in sql.upper()
 
 

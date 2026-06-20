@@ -211,4 +211,4 @@ def test_export_financial_statements_replaces_clickhouse_table(tmp_path: Path, m
     assert fake.inserts, "expected a batched INSERT of the wide statements"
     _, inserted_rows = fake.inserts[0]
     assert len(inserted_rows) == 2
-    assert len(inserted_rows[0]) == len(tables.LV_FINANCIAL_STATEMENTS_COLUMNS)
+    assert len(inserted_rows[0]) == len(tables.LV_FINANCIAL_STATEMENTS_EXPORT_COLUMNS)

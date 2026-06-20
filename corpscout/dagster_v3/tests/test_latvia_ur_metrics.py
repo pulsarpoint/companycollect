@@ -175,4 +175,4 @@ def test_export_financial_metrics_replaces_clickhouse_table(tmp_path: Path, monk
     assert fake.inserts, "expected a batched INSERT of the metrics"
     _, inserted_rows = fake.inserts[0]
     assert len(inserted_rows) == 2
-    assert len(inserted_rows[0]) == len(tables.LV_FINANCIAL_METRICS_COLUMNS)
+    assert len(inserted_rows[0]) == len(tables.LV_FINANCIAL_METRICS_EXPORT_COLUMNS)

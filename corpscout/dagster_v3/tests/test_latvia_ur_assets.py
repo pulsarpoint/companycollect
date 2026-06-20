@@ -137,4 +137,4 @@ def test_export_companies_replaces_clickhouse_table(tmp_path: Path, monkeypatch)
     assert fake.inserts, "expected a batched INSERT of the register rows"
     _, inserted_rows = fake.inserts[0]
     assert len(inserted_rows) == 2
-    assert len(inserted_rows[0]) == len(tables.LV_COMPANIES_COLUMNS)
+    assert len(inserted_rows[0]) == len(tables.LV_COMPANIES_EXPORT_COLUMNS)
