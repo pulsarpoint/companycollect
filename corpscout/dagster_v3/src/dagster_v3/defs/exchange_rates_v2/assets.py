@@ -38,7 +38,11 @@ EXCHANGE_RATES_V2_DUCKDB_PATH = Path(
 if not EXCHANGE_RATES_V2_DUCKDB_PATH.is_absolute():
     EXCHANGE_RATES_V2_DUCKDB_PATH = EXCHANGE_RATES_V2_DUCKDB_PATH.resolve()
 EXCHANGE_RATES_V2_PARTITIONS = dg.DailyPartitionsDefinition(start_date="2023-01-01")
-EXCHANGE_RATES_V2_BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
+# single_run: these assets process a whole partition_key_range in one pass (the
+# ECB source fetches start..end in one request, dbt builds the range, and the
+# ClickHouse export delete+inserts the window), so a range backfill should be one
+# run, not one-run-per-day. This also lets `dg launch --partition-range` work.
+EXCHANGE_RATES_V2_BACKFILL_POLICY = dg.BackfillPolicy.single_run()
 EXCHANGE_RATES_V2_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
 CLICKHOUSE_EXPORT_TABLE = "clickhouse_exchange_rates"
 
@@ -257,8 +261,9 @@ exchange_rates_v2_job = dg.define_asset_job(
     # Explicitly partition the job: the selection spans partitioned assets and
     # non-partitioned upstream nodes, so without this the job resolves
     # non-partitioned and the assets fail on context.partition_key_range. Pin it
-    # to the asset partitions so it runs per-partition and a backfill over the
-    # full range repopulates every missing day (BackfillPolicy = 1 partition/run).
+    # to the asset partitions so it runs per-partition; with the single_run
+    # backfill policy a partition-range backfill repopulates the whole range in
+    # one run (CLI: dg launch --partition-range, or a UI backfill).
     partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
 )
 

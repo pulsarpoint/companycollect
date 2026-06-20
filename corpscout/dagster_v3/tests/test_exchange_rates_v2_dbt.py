@@ -198,14 +198,14 @@ def test_exchange_rates_v2_clickhouse_export_reads_dbt_tables(tmp_path: Path) ->
     assert counts["rows"] == 6
     assert client.statements == [
         (
-            "ALTER TABLE reference.exchange_rates DELETE WHERE "
+            "ALTER TABLE corpscout.exchange_rates DELETE WHERE "
             "source IN ('ECB EXR', 'identity') "
             "AND rate_date >= '2024-12-30' "
             "AND rate_date <= '2024-12-31'"
         )
     ]
     assert client.insert_calls[0][0] == (
-        "INSERT INTO `reference`.`exchange_rates` (`rate_date`, `base_currency`, "
+        "INSERT INTO `corpscout`.`exchange_rates` (`rate_date`, `base_currency`, "
         "`quote_currency`, `rate`, `source`, `source_url`, `source_payload_hash`, "
         "`source_run_id`, `pulled_at`, `_dlt_load_id`, `_dlt_id`) VALUES"
     )
@@ -239,9 +239,7 @@ def test_exchange_rates_v2_assets_and_job_are_registered() -> None:
         repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
         is ClickhouseResource
     )
-    assert backfill_policies == {
-        dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
-    }
+    assert backfill_policies == {dg.BackfillPolicy.single_run()}
 
 
 def _create_raw_payload_table(duckdb_path: Path) -> None:
