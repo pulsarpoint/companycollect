@@ -1,6 +1,7 @@
 from decimal import Decimal
 from typing import Any
 
+import exchange_rates.client as exchange_rate_client_module
 from exchange_rates import ExchangeRateClient, ExchangeRateRequest
 
 
@@ -23,10 +24,12 @@ def test_exchange_rate_client_resolves_latest_common_usd_cross_rate() -> None:
     assert rate.eur_to_currency == Decimal("11.8000")
     assert rate.source == "ECB EXR"
     assert [component.quote_currency for component in rate.components] == ["USD", "NOK"]
-    assert clickhouse.queries[0].parameters == {}
+    assert clickhouse.queries[0].parameters["req_currency"] == ["NOK", "NOK"]
+    assert clickhouse.queries[0].parameters["req_date"] == ["2024-12-31", "2024-12-31"]
+    assert clickhouse.queries[0].parameters["quote_currency"] == ["NOK", "USD"]
     assert "requested_rates" in clickhouse.queries[0].sql
     assert "selected_dates" in clickhouse.queries[0].sql
-    assert "toDate('2024-12-31')" in clickhouse.queries[0].sql
+    assert "arrayJoin(" in clickhouse.queries[0].sql
 
 
 def test_exchange_rate_client_aliases_available_date_columns_for_clickhouse() -> None:
@@ -45,7 +48,27 @@ def test_exchange_rate_client_aliases_available_date_columns_for_clickhouse() ->
     assert "requested_rates.requested_rate_date AS requested_rate_date" in sql
     assert "exchange_rates.rate_date AS rate_date" in sql
     assert "FROM requested_rates" in sql
-    assert "INNER JOIN reference.exchange_rates AS exchange_rates" in sql
+    assert "INNER JOIN corpscout.exchange_rates AS exchange_rates" in sql
+
+
+def test_exchange_rate_client_from_env_defaults_to_corpscout_database(monkeypatch) -> None:
+    captured_kwargs: dict[str, Any] = {}
+
+    def fake_get_client(**kwargs: Any) -> FakeNativeClickHouseClient:
+        captured_kwargs.update(kwargs)
+        return FakeNativeClickHouseClient(rows=[])
+
+    monkeypatch.delenv("CLICKHOUSE_DATABASE", raising=False)
+    monkeypatch.setattr(
+        exchange_rate_client_module.clickhouse_connect,
+        "get_client",
+        fake_get_client,
+    )
+
+    client = exchange_rate_client_module.ExchangeRateClient.from_env()
+
+    assert isinstance(client._clickhouse_client, FakeNativeClickHouseClient)
+    assert captured_kwargs["database"] == "corpscout"
 
 
 def test_exchange_rate_client_handles_usd_and_eur_without_extra_cross_rate() -> None:
@@ -164,8 +187,11 @@ def test_exchange_rate_client_uses_earliest_common_rate_when_request_predates_da
     assert rate.requested_rate_date == "2022-12-31"
     assert rate.rate_date == "2023-01-02"
     assert rate.rate == Decimal("0.1014476212216325210675493161")
-    assert client._clickhouse_client.queries[0].parameters == {}
-    assert "toDate('2022-12-31')" in client._clickhouse_client.queries[0].sql
+    assert client._clickhouse_client.queries[0].parameters["req_date"] == [
+        "2022-12-31",
+        "2022-12-31",
+    ]
+    assert "arrayJoin(" in client._clickhouse_client.queries[0].sql
 
 
 def test_exchange_rate_client_batches_unique_currency_date_requests() -> None:
@@ -232,6 +258,36 @@ def test_exchange_rate_client_batches_unique_currency_date_requests() -> None:
     assert len(clickhouse.queries) == 1
     assert "requested_rates" in clickhouse.queries[0].sql
     assert "selected_dates" in clickhouse.queries[0].sql
+
+
+def test_usd_rates_uses_array_params_not_union_all_at_scale() -> None:
+    # Regression: a source spanning ~1k distinct dates used to build one
+    # `SELECT ... UNION ALL` branch per pair, overflowing ClickHouse's query-plan
+    # optimizer (code 572). The rework must stay a single array-parameterized
+    # query whose SQL size is independent of the request count.
+    clickhouse = FakeNativeClickHouseClient(rows=[])
+    client = ExchangeRateClient(clickhouse)
+    requests = [
+        ExchangeRateRequest(currency="NOK", rate_date=f"20{10 + i // 12:02d}-{i % 12 + 1:02d}-28")
+        for i in range(300)
+    ]
+
+    try:
+        client.usd_rates(requests)  # fake returns no rows; we only assert the query shape
+    except LookupError:
+        pass
+
+    query = clickhouse.queries[0]
+    assert len(clickhouse.queries) == 1
+    assert "UNION ALL" not in query.sql
+    assert "arrayJoin(" in query.sql and "arrayZip(" in query.sql
+    # 300 distinct dates x {USD, NOK} = 600 triples, carried as data not SQL.
+    assert len(query.parameters["req_currency"]) == 600
+    assert (
+        len(query.parameters["req_date"])
+        == len(query.parameters["quote_currency"])
+        == 600
+    )
 
 
 def test_exchange_rate_client_raises_when_rate_is_missing() -> None:

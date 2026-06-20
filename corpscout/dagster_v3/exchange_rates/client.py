@@ -14,7 +14,7 @@ from exchange_rates.models import (
     UsdExchangeRate,
 )
 
-DEFAULT_EXCHANGE_RATES_TABLE = "reference.exchange_rates"
+DEFAULT_EXCHANGE_RATES_TABLE = "corpscout.exchange_rates"
 DEFAULT_CLICKHOUSE_HTTP_PORT = 8123
 
 
@@ -33,7 +33,7 @@ class ExchangeRateClient:
                 ),
                 username=os.getenv("CLICKHOUSE_USER", "default"),
                 password=os.getenv("CLICKHOUSE_PASSWORD", ""),
-                database=os.getenv("CLICKHOUSE_DATABASE", "reference"),
+                database=os.getenv("CLICKHOUSE_DATABASE", "corpscout"),
                 secure=_bool_env("CLICKHOUSE_SECURE", False),
             )
         )
@@ -78,11 +78,23 @@ class ExchangeRateClient:
         *,
         requests: list[ExchangeRateRequest],
     ) -> dict[tuple[str, str, str], ExchangeRateComponent]:
-        requested_components_sql = _requested_components_sql(requests)
+        req_currency, req_date, quote_currency = _requested_triples(requests)
         result = self._clickhouse_client.query(
             f"""
             WITH requested_rates AS (
-                {requested_components_sql}
+                SELECT
+                    triple.1 AS request_currency,
+                    toDate(triple.2) AS requested_rate_date,
+                    triple.3 AS quote_currency
+                FROM (
+                    SELECT arrayJoin(
+                        arrayZip(
+                            {{req_currency:Array(String)}},
+                            {{req_date:Array(String)}},
+                            {{quote_currency:Array(String)}}
+                        )
+                    ) AS triple
+                )
             ),
             requested_counts AS (
                 SELECT
@@ -148,7 +160,11 @@ class ExchangeRateClient:
                 selected_dates.requested_rate_date,
                 exchange_rates.quote_currency
             """,
-            parameters={},
+            parameters={
+                "req_currency": req_currency,
+                "req_date": req_date,
+                "quote_currency": quote_currency,
+            },
         )
         rows = getattr(result, "result_rows", result)
         return {
@@ -220,24 +236,36 @@ class ExchangeRateClient:
         )
 
 
-def _requested_components_sql(requests: list[ExchangeRateRequest]) -> str:
-    rows: list[str] = []
+def _requested_triples(
+    requests: list[ExchangeRateRequest],
+) -> tuple[list[str], list[str], list[str]]:
+    """Flatten the requests into three parallel arrays of the unique
+    (request_currency, requested_rate_date, quote_currency) triples.
+
+    These are passed as ClickHouse `Array(String)` query parameters and expanded
+    server-side with `arrayJoin(arrayZip(...))`. The previous implementation built
+    one `SELECT ... UNION ALL` branch per triple; a source spanning ~1k distinct
+    dates produced a multi-thousand-branch CTE joined three times, overflowing the
+    query-plan optimizer (code 572 TOO_MANY_QUERY_PLAN_OPTIMIZATIONS). The array
+    form is a single O(1)-plan query regardless of request count, and parameter
+    binding removes the need to escape values into SQL.
+    """
+    req_currency: list[str] = []
+    req_date: list[str] = []
+    quote_currency: list[str] = []
     seen: set[tuple[str, str, str]] = set()
     for request in requests:
         request_currency = _sql_currency(request.currency)
         requested_rate_date = _sql_date(request.rate_date)
-        for quote_currency in sorted(_required_currencies(request_currency)):
-            key = (request_currency, requested_rate_date, quote_currency)
+        for quote in sorted(_required_currencies(request_currency)):
+            key = (request_currency, requested_rate_date, quote)
             if key in seen:
                 continue
-            rows.append(
-                "SELECT "
-                f"'{request_currency}' AS request_currency, "
-                f"toDate('{requested_rate_date}') AS requested_rate_date, "
-                f"'{quote_currency}' AS quote_currency"
-            )
             seen.add(key)
-    return "\nUNION ALL\n".join(rows)
+            req_currency.append(request_currency)
+            req_date.append(requested_rate_date)
+            quote_currency.append(quote)
+    return req_currency, req_date, quote_currency
 
 
 def _sql_currency(currency: str) -> str:

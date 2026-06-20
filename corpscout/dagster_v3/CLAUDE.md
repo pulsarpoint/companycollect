@@ -84,11 +84,14 @@ When adding a source, mirror the nearest existing module: `finland_ytj` (registe
   `fx_rate_to_usd`/`fx_rate_date`/`fx_source`. Mirror `norway_brreg/financial_normalize.py`.
 - Apply `rounded_to_nearest` scaling **before** FX. Keep values signed. Catch `LookupError` for the per-request
   rate fallback (don't swallow real connection errors).
-- **Batch the `ExchangeRateClient.usd_rates()` request set** (≈50 pairs/call). The client builds one `UNION ALL`
-  branch per `(currency, date)` pair, so a single call with a source's full date span (Latvia ≈ 1k distinct
-  `period_end_date`s) overflows ClickHouse's query-plan optimizer → `code 572 TOO_MANY_QUERY_PLAN_OPTIMIZATIONS`.
-  See `latvia_ur/metrics.py:_load_rates`. (The shared client's UNION-ALL construction is the root cause and will
-  bite any source with many distinct dates until it's reworked to a values/array join.)
+- **`ExchangeRateClient.usd_rates()` takes an arbitrarily large request set in one call** — it binds the requested
+  `(currency, date)` pairs as ClickHouse `Array(String)` params expanded with `arrayJoin(arrayZip(...))`, a single
+  O(1)-plan query. (It previously built one `SELECT ... UNION ALL` branch per pair, so a source's full date span —
+  Latvia ≈ 1k distinct `period_end_date`s — overflowed the query-plan optimizer → `code 572
+  TOO_MANY_QUERY_PLAN_OPTIMIZATIONS`. No longer chunk requests for plan size.) `usd_rates` still raises `LookupError`
+  if *any* requested rate is missing, so `latvia_ur/metrics.py:_load_rates` batches (≈50/call) purely to bound the
+  per-request fallback when a source has a currency absent from the rate table (e.g. Latvia's pre-euro LVL) — a
+  missing rate then degrades one batch, not the whole set.
 
 ## Connections & scaling (target: 100+ sources)
 - The Dagster Postgres (`companycollect`) is **shared with Temporal** — connection pressure is the main scaling
