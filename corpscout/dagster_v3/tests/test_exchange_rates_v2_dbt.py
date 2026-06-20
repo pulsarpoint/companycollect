@@ -106,6 +106,14 @@ def test_exchange_rates_v2_dbt_uses_absolute_default_duckdb_path() -> None:
     assert Path(os.environ["EXCHANGE_RATES_V2_DUCKDB_PATH"]).is_absolute()
 
 
+def test_quote_currencies_force_usd_only_not_nok() -> None:
+    # USD is always required (canonical conversion target); no other currency is
+    # forced. EUR (the base) is never a quote currency.
+    assert fx_v2_source._quote_currencies(["JPY"]) == ["JPY", "USD"]
+    assert fx_v2_source._quote_currencies(["EUR"]) == ["USD"]
+    assert fx_v2_source._quote_currencies(["usd", "nok"]) == ["NOK", "USD"]
+
+
 def test_exchange_rates_v2_raw_resource_fetches_endpoint_and_yields_raw_payload(
     monkeypatch,
 ) -> None:

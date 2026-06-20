@@ -14,7 +14,6 @@ ECB_EXR_BASE_URL = "https://data-api.ecb.europa.eu/service/data/EXR"
 EXCHANGE_RATES_V2_DUCKDB_PIPELINE_NAME = "exchange_rates_v2_raw"
 EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME = "exchange_rates_v2_stage"
 EXCHANGE_RATES_V2_RAW_DLT_TABLE = "ecb_raw_payloads"
-DEFAULT_CLICKHOUSE_NATIVE_PORT = 9002
 DEFAULT_USER_AGENT = "corpscout-dagster-v3-dev/0.1"
 DEFAULT_ECB_TIMEOUT_SECONDS = 30
 
@@ -89,9 +88,13 @@ def ecb_exchange_rate_v2_raw_resource(
 
 
 def _quote_currencies(currencies: list[str]) -> list[str]:
+    # USD is always required: it is the canonical conversion target every
+    # ExchangeRateClient lookup needs (EUR->USD). Everything else is purely
+    # config-driven; no country-specific currency is forced here. EUR is the
+    # base, so it is never a quote currency.
     return [
         currency
-        for currency in sorted({currency.upper() for currency in currencies} | {"USD", "NOK"})
+        for currency in sorted({currency.upper() for currency in currencies} | {"USD"})
         if currency != "EUR"
     ]
 

@@ -24,7 +24,6 @@ from dagster_v3.defs.clickhouse.resolved import export_duckdb_table_to_clickhous
 from dagster_v3.defs.duckdb.schema_contract import validate_duckdb_table_contract
 from dagster_v3.defs.exchange_rates_v2 import tables
 from dagster_v3.defs.exchange_rates_v2.source import (
-    DEFAULT_CLICKHOUSE_NATIVE_PORT,
     EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME,
     EXCHANGE_RATES_V2_DUCKDB_PIPELINE_NAME,
     EXCHANGE_RATES_V2_RAW_DLT_TABLE,
@@ -79,7 +78,9 @@ class ExchangeRatesV2DbtTranslator(DagsterDbtTranslator):
 
 
 class ExchangeRatesV2Config(dg.Config):
-    currencies: list[str] = ["NOK", "USD", "EUR", "GBP", "SEK", "DKK"]
+    # USD is always fetched (required base); EUR is the base currency and is never
+    # a quote, so it is intentionally not listed here.
+    currencies: list[str] = ["USD", "NOK", "GBP", "SEK", "DKK"]
 
 
 def day_partition_window(partition_key: str) -> tuple[str, str]:
@@ -210,11 +211,11 @@ def export_exchange_rates_v2_clickhouse(
             as
             select {", ".join(tables.EXCHANGE_RATES_V2_COLUMNS)}
             from {EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME}.ecb_rates
-            where rate_date >= '{_duckdb_string(start_date)}' and rate_date <= '{_duckdb_string(end_date)}'
+            where rate_date >= '{_sql_escape(start_date)}' and rate_date <= '{_sql_escape(end_date)}'
             union all
             select {", ".join(tables.EXCHANGE_RATES_V2_COLUMNS)}
             from {EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME}.identity_rates
-            where rate_date >= '{_duckdb_string(start_date)}' and rate_date <= '{_duckdb_string(end_date)}'
+            where rate_date >= '{_sql_escape(start_date)}' and rate_date <= '{_sql_escape(end_date)}'
             """
         )
     with clickhouse.get_connection() as client:
@@ -246,8 +247,8 @@ def delete_exchange_rates_v2_window(
     client.execute(
         f"ALTER TABLE {tables.QUALIFIED_EXCHANGE_RATES_V2_TABLE} DELETE WHERE "
         "source IN ('ECB EXR', 'identity') "
-        f"AND rate_date >= '{_sql_string(start_date)}' "
-        f"AND rate_date <= '{_sql_string(end_date)}'"
+        f"AND rate_date >= '{_sql_escape(start_date)}' "
+        f"AND rate_date <= '{_sql_escape(end_date)}'"
     )
 
 
@@ -266,17 +267,6 @@ exchange_rates_v2_job = dg.define_asset_job(
     # one run (CLI: dg launch --partition-range, or a UI backfill).
     partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
 )
-
-
-def clickhouse_resource_from_env() -> ClickhouseResource:
-    return ClickhouseResource(
-        host=dg.EnvVar("CLICKHOUSE_HOST"),
-        port=_int_env("CLICKHOUSE_NATIVE_PORT", DEFAULT_CLICKHOUSE_NATIVE_PORT),
-        user=dg.EnvVar("CLICKHOUSE_USER"),
-        password=dg.EnvVar("CLICKHOUSE_PASSWORD"),
-        database=dg.EnvVar("CLICKHOUSE_DATABASE"),
-        secure=_bool_env("CLICKHOUSE_SECURE", False),
-    )
 
 
 def _validate_exchange_rates_v2_duckdb_table(
@@ -299,23 +289,7 @@ def _context_partition_range(context: AssetExecutionContext) -> tuple[str, str]:
     )
 
 
-def _int_env(name: str, default: int) -> int:
-    value = os.getenv(name)
-    return default if value is None or value.strip() == "" else int(value)
-
-
-def _bool_env(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None or value.strip() == "":
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _sql_string(value: str) -> str:
-    return value.replace("'", "''")
-
-
-def _duckdb_string(value: str) -> str:
+def _sql_escape(value: str) -> str:
     return value.replace("'", "''")
 
 
