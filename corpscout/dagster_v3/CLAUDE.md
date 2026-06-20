@@ -109,6 +109,15 @@ When adding a source, mirror the nearest existing module: `finland_ytj` (registe
   `docker exec ppoint-postgres psql -U corpscout -c "SELECT usename,state,count(*) FROM pg_stat_activity GROUP BY 1,2 ORDER BY 3 DESC;"`.
   PgBouncer is the real fix.
 - `DAGSTER_HOME=$PWD` writes daemon/sensor artifacts into the repo — keep `dagster_v3/storage/` gitignored.
+- **A run stuck `QUEUED` forever while the daemon keeps cycling = a leaked op-concurrency pool slot.** When a run
+  crashes ungracefully (`RUN_EXCEPTION`/`PIPELINE_FAILURE`, not a clean step failure) Dagster can fail to release
+  its pool slot; the limit-1 pool then blocks every later run whose root step needs it. Diagnose:
+  `els.get_concurrency_info("<pool>")` (via `DagsterInstance.get()`) — a `claimed_slots`/`pending_steps` entry
+  whose `run_id` is a long-finished/FAILED run is the leak. Free it: `instance.event_log_storage`
+  `.free_concurrency_slots_for_run("<dead_run_id>")`; the QueuedRunCoordinator dequeues the waiter within a cycle.
+- **Cancel in-flight backfills BEFORE changing an asset's `partitions_def`** (e.g. de-partitioning). A queued
+  partition run that starts after the partitions are gone fails with `RUN_EXCEPTION` and can leak its pool slot
+  (see above). Check `bulk_actions` / `run_tags key='dagster/backfill'` for stragglers first.
 
 ## Workflow
 - Mirror the nearest existing source module. TDD where practical; `uv run dg check defs` before finishing.
