@@ -1,4 +1,6 @@
 import json
+import zipfile
+from io import BytesIO
 from pathlib import Path
 
 import duckdb
@@ -144,15 +146,97 @@ def test_manifest_for_run_prefers_current_run_over_existing_newer_snapshot() -> 
     assert duckdb_state._manifest_for_run(object_store, "run-current")["run_id"] == "run-current"
 
 
+def test_refresh_duckdb_state_streams_raw_zip_objects_without_read_bytes(tmp_path: Path) -> None:
+    source_key = (
+        "gleif/raw/load_mode=full/publish_date=2026-06-20T16-00-00Z/"
+        "run_id=run-full/file_kind=lei_records/source.json.zip"
+    )
+    manifest_key = (
+        "gleif/raw/load_mode=full/publish_date=2026-06-20T16-00-00Z/"
+        "run_id=run-full/manifest.json"
+    )
+    object_store = _FakeObjectStore(
+        {
+            manifest_key: {
+                "load_mode": "full",
+                "publish_date": "2026-06-20T16:00:00+00:00",
+                "pulled_at": "2026-06-20T17:00:00+00:00",
+                "run_id": "run-full",
+                "files": [{"file_kind": "lei_records", "s3_key": source_key}],
+            }
+        },
+        blobs={
+            source_key: _zip_json(
+                "lei2.json",
+                {
+                    "records": [
+                        {
+                            "LEI": "LEI0000000000000001",
+                            "Entity": {
+                                "LegalName": {"$": "Alpha Inc.", "@lang": "en"},
+                                "EntityStatus": "ACTIVE",
+                                "LegalAddress": {"Country": "US"},
+                            },
+                            "Registration": {"RegistrationStatus": "ISSUED"},
+                        }
+                    ]
+                },
+            )
+        },
+    )
+
+    result = duckdb_state.refresh_gleif_duckdb_state(
+        context=_FakeContext("run-full"),
+        object_store=object_store,
+        database_path=tmp_path / "gleif.duckdb",
+    )
+
+    assert result.metadata["gleif_lei_records_row_count"] == 1
+    assert source_key not in object_store.read_bytes_keys
+    assert object_store.state["last_full_publish_date"] == "2026-06-20T16:00:00+00:00"
+
+
 class _FakeObjectStore:
-    def __init__(self, objects: dict[str, dict]) -> None:
+    def __init__(self, objects: dict[str, dict], blobs: dict[str, bytes] | None = None) -> None:
         self.objects = objects
+        self.blobs = blobs or {}
+        self.read_bytes_keys: list[str] = []
+        self.state: dict | None = None
 
     def list_keys(self, prefix: str, *, bucket: str) -> list[str]:
         return sorted(key for key in self.objects if key.startswith(prefix))
 
     def read_bytes(self, key: str, *, bucket: str) -> bytes:
+        self.read_bytes_keys.append(key)
+        if key in self.blobs:
+            raise AssertionError("raw ZIP blobs must be streamed through the S3 client")
         return json.dumps(self.objects[key]).encode()
+
+    def write_json(self, key: str, body: str, *, bucket: str) -> None:
+        self.state = json.loads(body)
+
+    def client(self) -> "_FakeS3Client":
+        return _FakeS3Client(self.blobs)
+
+
+class _FakeS3Client:
+    def __init__(self, blobs: dict[str, bytes]) -> None:
+        self.blobs = blobs
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict:
+        return {"Body": BytesIO(self.blobs[Key])}
+
+
+class _FakeContext:
+    def __init__(self, run_id: str) -> None:
+        self.run_id = run_id
+
+
+def _zip_json(member_name: str, payload: dict) -> bytes:
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(member_name, json.dumps(payload))
+    return buffer.getvalue()
 
 
 def _minimal_lei_record(lei: str, legal_name: str, source_run_id: str) -> dict:

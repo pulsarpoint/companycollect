@@ -1,6 +1,7 @@
 import json
 import zipfile
 from io import BytesIO
+from pathlib import Path
 
 from dagster_v3.defs.gleif import parser
 
@@ -142,3 +143,45 @@ def test_parse_reporting_exceptions_zip_normalizes_exception_rows() -> None:
 
     assert rows.reporting_exceptions[0]["lei"] == "CHILDLEI12345678901"
     assert rows.reporting_exceptions[0]["exception_category"] == "NO_KNOWN_PERSON"
+
+
+def test_iter_lei_records_zip_path_yields_one_normalized_record_at_a_time(tmp_path: Path) -> None:
+    zip_path = tmp_path / "lei2.json.zip"
+    payload = {
+        "records": [
+            {
+                "LEI": "LEI0000000000000001",
+                "Entity": {
+                    "LegalName": {"$": "Alpha Inc.", "@lang": "en"},
+                    "EntityStatus": "ACTIVE",
+                    "LegalAddress": {"Country": "US"},
+                },
+                "Registration": {"RegistrationStatus": "ISSUED"},
+            },
+            {
+                "LEI": "LEI0000000000000002",
+                "Entity": {
+                    "LegalName": {"$": "Beta Inc.", "@lang": "en"},
+                    "EntityStatus": "ACTIVE",
+                    "LegalAddress": {"Country": "GB"},
+                },
+                "Registration": {"RegistrationStatus": "ISSUED"},
+            },
+        ]
+    }
+    zip_path.write_bytes(_zip_json("lei2.json", payload))
+
+    row_groups = list(
+        parser.iter_lei_record_rows_from_zip_path(
+            zip_path,
+            source_run_id="run-1",
+            retrieved_at="2026-06-20T17:00:00+00:00",
+            resolved_at="2026-06-20T17:01:00+00:00",
+            golden_copy_publish_date="2026-06-20T16:00:00+00:00",
+        )
+    )
+
+    assert [group.lei_records[0]["legal_name"] for group in row_groups] == [
+        "Alpha Inc.",
+        "Beta Inc.",
+    ]
