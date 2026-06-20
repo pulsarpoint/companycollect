@@ -21,4 +21,9 @@ fi
 
 export DAGSTER_HOME="${DAGSTER_HOME:-$PWD}"
 
-exec uv run dg dev --db-pool-max-overflow 50 "$@"
+# Keep Dagster's connection pool small: this Postgres (max_connections=100) is
+# shared with Temporal and PostgREST. The previous overflow of 50 left ~50 idle
+# connections held by the dev server, so backfills (which open a burst of
+# event-log connections) hit "remaining connection slots reserved for SUPERUSER".
+# Overridable via DAGSTER_DB_POOL_MAX_OVERFLOW.
+exec uv run dg dev --db-pool-max-overflow "${DAGSTER_DB_POOL_MAX_OVERFLOW:-5}" "$@"
