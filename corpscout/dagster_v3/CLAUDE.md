@@ -30,6 +30,13 @@ When adding a source, mirror the nearest existing module: `finland_ytj` (registe
   duplicate DDL in Python. Pin the export column order with a contract test that greps the migration file.
 - **Refuse to replace on empty input** — `raise ValueError` when a download yields zero rows, so a bad fetch
   can't blank a populated table.
+- **Don't export `raw_*` JSON or `source_payload_hash` to ClickHouse.** The full source JSON (`raw_entity`,
+  `raw_financial_record`) is the biggest column, and the per-row SHA256 hash is *incompressible* (one unique
+  value/row); nothing queries them — together ~60% of table size (dropping both shrank `lv_companies` 119→43 MiB).
+  Keep them in the **DuckDB staging** tables; define a `*_EXPORT_COLUMNS` subset (full tuple minus
+  `CLICKHOUSE_EXCLUDED_COLUMNS`) for the exporter. Keep the cheap lineage columns
+  (`source_url`/`source_run_id`/`source_record_id`). `source_url` is *constant* → compresses to ~nothing, so
+  it's fine. Only reinstate `source_payload_hash` if a table moves to hash-based incremental/SCD2.
 
 ## Downloads (HTTP)
 - Use **`dlt.sources.helpers.requests`** (`Session`/`Client`) as the HTTP session — built-in retry/backoff on
