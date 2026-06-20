@@ -21,9 +21,12 @@ fi
 
 export DAGSTER_HOME="${DAGSTER_HOME:-$PWD}"
 
-# Keep Dagster's connection pool small: this Postgres (max_connections=100) is
-# shared with Temporal and PostgREST. The previous overflow of 50 left ~50 idle
-# connections held by the dev server, so backfills (which open a burst of
-# event-log connections) hit "remaining connection slots reserved for SUPERUSER".
-# Overridable via DAGSTER_DB_POOL_MAX_OVERFLOW.
-exec uv run dg dev --db-pool-max-overflow "${DAGSTER_DB_POOL_MAX_OVERFLOW:-5}" "$@"
+# Connection-pool overflow for the dev server on a Postgres (max_connections=100)
+# shared with Temporal/PostgREST. Too high (e.g. 50) holds ~50 idle connections
+# and starves the shared DB; too low (e.g. 5) starves the daemon's OWN pool
+# ("QueuePool limit ... reached") because it runs many sensors + the run queue
+# concurrently. 20 is a balance: enough per process, while leaving headroom on
+# the shared DB (partition backfills are throttled via multi_run + the
+# exchange_rates_v2_duckdb pool + concurrency.runs.max_concurrent_runs, so they
+# no longer spike connections). Overridable via DAGSTER_DB_POOL_MAX_OVERFLOW.
+exec uv run dg dev --db-pool-max-overflow "${DAGSTER_DB_POOL_MAX_OVERFLOW:-20}" "$@"
