@@ -115,6 +115,8 @@ When adding a source, mirror the nearest existing module: `finland_ytj` (registe
   `els.get_concurrency_info("<pool>")` (via `DagsterInstance.get()`) — a `claimed_slots`/`pending_steps` entry
   whose `run_id` is a long-finished/FAILED run is the leak. Free it: `instance.event_log_storage`
   `.free_concurrency_slots_for_run("<dead_run_id>")`; the QueuedRunCoordinator dequeues the waiter within a cycle.
+  **`uv run python scripts/dagster-health-check.py`** detects all of this (leaked slots + stuck-QUEUED +
+  stale-STARTED runs) and exits non-zero for cron alerting; add `--fix` to free leaked slots automatically.
 - **Cancel in-flight backfills BEFORE changing an asset's `partitions_def`** (e.g. de-partitioning). A queued
   partition run that starts after the partitions are gone fails with `RUN_EXCEPTION` and can leak its pool slot
   (see above). Check `bulk_actions` / `run_tags key='dagster/backfill'` for stragglers first.
