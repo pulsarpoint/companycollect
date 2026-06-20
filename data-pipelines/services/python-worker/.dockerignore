@@ -1,9 +1,0 @@
-.env
-.env.*
-__pycache__/
-.pytest_cache/
-*.pyc
-test_*.py
-pytest.ini
-docker-compose.yml
-Makefile
