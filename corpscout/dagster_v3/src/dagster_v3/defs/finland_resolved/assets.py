@@ -67,6 +67,7 @@ def finland_resolved_dbt_assets(
 @dg.asset(
     deps=[
         get_asset_key_for_model([finland_resolved_dbt_assets], "fi_companies"),
+        get_asset_key_for_model([finland_resolved_dbt_assets], "fi_names"),
         get_asset_key_for_model([finland_resolved_dbt_assets], "fi_websites"),
         get_asset_key_for_model([finland_resolved_dbt_assets], "fi_industries"),
     ],
@@ -91,7 +92,7 @@ def finland_ytj_resolved_clickhouse(
             duckdb_schema=RESOLVED_DUCKDB_SCHEMA,
             clickhouse_database=RESOLVED_DATABASE,
             tables=tuple(
-                (table, tables.RESOLVED_TABLE_COLUMNS[table])
+                (table, tables.RESOLVED_EXPORT_COLUMNS[table])
                 for table in tables.FINLAND_YTJ_RESOLVED_TABLES
             ),
         )

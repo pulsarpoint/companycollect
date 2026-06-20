@@ -81,9 +81,10 @@ class NorwayBrregTranslationConfig(dg.Config):
     max_tokens: int = 4096
     extra_body_json: str = '{"chat_template_kwargs":{"enable_thinking":false}}'
     initialize_timeout_seconds: int = 300
-    batch_timeout_buffer_seconds: int = 30
+    batch_timeout_buffer_seconds: int = 600
     summarize_timeout_seconds: int = 30
     activity_maximum_attempts: int = 1
+    lease_timeout_seconds: int = 1800
     temporal_address: str = ""
 
 
@@ -348,6 +349,7 @@ def norway_brreg_translation_queue(
             batch_timeout_buffer_seconds=config.batch_timeout_buffer_seconds,
             summarize_timeout_seconds=config.summarize_timeout_seconds,
             activity_maximum_attempts=config.activity_maximum_attempts,
+            lease_timeout_seconds=config.lease_timeout_seconds,
         ),
         temporal_address=config.temporal_address,
     )
@@ -1245,7 +1247,7 @@ def export_norway_brreg_clickhouse_companies(
             duckdb_table=ENTITIES_TABLE,
             clickhouse_database=tables.NORWAY_BRREG_DATABASE,
             clickhouse_table=tables.COMPANIES_TABLE,
-            columns=tables.COMPANIES_COLUMNS,
+            columns=tables.COMPANIES_EXPORT_COLUMNS,
             truncate=False,
         )
 
@@ -1274,7 +1276,7 @@ def export_norway_brreg_clickhouse_financial_statements(
             duckdb_table=FINANCIAL_STATEMENTS_TABLE,
             clickhouse_database=tables.NORWAY_BRREG_DATABASE,
             clickhouse_table=tables.FINANCIAL_STATEMENTS_TABLE,
-            columns=tables.FINANCIAL_STATEMENTS_COLUMNS,
+            columns=tables.FINANCIAL_STATEMENTS_EXPORT_COLUMNS,
             truncate=False,
         )
 

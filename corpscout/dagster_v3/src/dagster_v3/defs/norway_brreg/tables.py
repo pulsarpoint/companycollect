@@ -1,6 +1,6 @@
 from typing import Any
 
-NORWAY_BRREG_DATABASE = "norway_brreg"
+NORWAY_BRREG_DATABASE = "corpscout"
 COMPANIES_TABLE = "companies"
 FINANCIAL_STATEMENTS_TABLE = "financial_statements"
 QUALIFIED_COMPANIES_TABLE = f"{NORWAY_BRREG_DATABASE}.{COMPANIES_TABLE}"
@@ -233,6 +233,23 @@ FINANCIAL_STATEMENTS_COLUMNS = (
     "source_url",
     "raw_financial_record",
 )
+
+# Big/incompressible provenance columns that stay in DuckDB staging but are not
+# exported to ClickHouse: raw_* is the full source JSON (largest column) and
+# source_payload_hash is a per-row SHA256 that cannot compress. Nothing queries
+# them. See dagster_v3/CLAUDE.md. The full tuples above remain the DuckDB +
+# migration/DDL contract; the *_EXPORT_COLUMNS subsets drive the ClickHouse insert.
+CLICKHOUSE_EXCLUDED_COLUMNS = frozenset(
+    {"raw_entity", "raw_financial_record", "source_payload_hash"}
+)
+
+
+def _export_columns(columns: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(column for column in columns if column not in CLICKHOUSE_EXCLUDED_COLUMNS)
+
+
+COMPANIES_EXPORT_COLUMNS = _export_columns(COMPANIES_COLUMNS)
+FINANCIAL_STATEMENTS_EXPORT_COLUMNS = _export_columns(FINANCIAL_STATEMENTS_COLUMNS)
 
 COMPANIES_DDL = f"""
 CREATE TABLE IF NOT EXISTS {QUALIFIED_COMPANIES_TABLE}

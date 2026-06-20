@@ -998,11 +998,11 @@ def test_financial_fetch_pipeline_persists_not_found_and_server_errors(tmp_path:
 
 
 def test_norway_brreg_clickhouse_schema_contract() -> None:
-    assert brreg_tables.NORWAY_BRREG_DATABASE == "norway_brreg"
-    assert brreg_tables.QUALIFIED_COMPANIES_TABLE == "norway_brreg.companies"
+    assert brreg_tables.NORWAY_BRREG_DATABASE == "corpscout"
+    assert brreg_tables.QUALIFIED_COMPANIES_TABLE == "corpscout.companies"
     assert (
         brreg_tables.QUALIFIED_FINANCIAL_STATEMENTS_TABLE
-        == "norway_brreg.financial_statements"
+        == "corpscout.financial_statements"
     )
     assert "org_number" in brreg_tables.COMPANIES_COLUMNS
     assert "company_description_original" in brreg_tables.COMPANIES_COLUMNS
@@ -1013,11 +1013,11 @@ def test_norway_brreg_clickhouse_schema_contract() -> None:
     assert "operating_revenue_amount_usd" in brreg_tables.FINANCIAL_STATEMENTS_COLUMNS
     assert "fx_rate_to_usd" in brreg_tables.FINANCIAL_STATEMENTS_COLUMNS
     assert (
-        "CREATE TABLE IF NOT EXISTS norway_brreg.companies"
+        "CREATE TABLE IF NOT EXISTS corpscout.companies"
         in brreg_tables.COMPANIES_DDL
     )
     assert (
-        "CREATE TABLE IF NOT EXISTS norway_brreg.financial_statements"
+        "CREATE TABLE IF NOT EXISTS corpscout.financial_statements"
         in brreg_tables.FINANCIAL_STATEMENTS_DDL
     )
     assert "ENGINE = ReplacingMergeTree" in brreg_tables.COMPANIES_DDL
@@ -1056,7 +1056,7 @@ def test_prepare_norway_brreg_clickhouse_companies_uses_official_resource_connec
 
     assert connection_calls == [resource]
     assert client.statements == [
-        "CREATE DATABASE IF NOT EXISTS norway_brreg",
+        "CREATE DATABASE IF NOT EXISTS corpscout",
         brreg_tables.COMPANIES_DDL.strip(),
     ]
 
@@ -1079,7 +1079,7 @@ def test_prepare_norway_brreg_clickhouse_financials_uses_official_resource_conne
 
     assert connection_calls == [resource]
     assert client.statements == [
-        "CREATE DATABASE IF NOT EXISTS norway_brreg",
+        "CREATE DATABASE IF NOT EXISTS corpscout",
         brreg_tables.FINANCIAL_STATEMENTS_DDL.strip(),
     ]
 
@@ -1128,13 +1128,13 @@ def test_export_norway_brreg_clickhouse_tables_reads_duckdb_and_inserts(
 
     assert result == {"companies": 1, "financial_statements": 1}
     assert [insert[0].split(" (", 1)[0] for insert in client.insert_calls] == [
-        "INSERT INTO `norway_brreg`.`companies`",
-        "INSERT INTO `norway_brreg`.`financial_statements`",
+        "INSERT INTO `corpscout`.`companies`",
+        "INSERT INTO `corpscout`.`financial_statements`",
     ]
 
-    company_row = dict(zip(brreg_tables.COMPANIES_COLUMNS, client.insert_calls[0][1][0]))
+    company_row = dict(zip(brreg_tables.COMPANIES_EXPORT_COLUMNS, client.insert_calls[0][1][0]))
     financial_row = dict(
-        zip(brreg_tables.FINANCIAL_STATEMENTS_COLUMNS, client.insert_calls[1][1][0])
+        zip(brreg_tables.FINANCIAL_STATEMENTS_EXPORT_COLUMNS, client.insert_calls[1][1][0])
     )
     assert company_row["org_number"] == "923609016"
     assert company_row["legal_name"] == "EQUINOR ASA"
@@ -1145,15 +1145,15 @@ def test_export_norway_brreg_clickhouse_tables_reads_duckdb_and_inserts(
     assert financial_row["operating_revenue_amount_usd"] == Decimal("7254300000.000")
     assert (
         (
-            "Preparing Norway Brreg companies ClickHouse table: database=norway_brreg, "
-            "table=norway_brreg.companies"
+            "Preparing Norway Brreg companies ClickHouse table: database=corpscout, "
+            "table=corpscout.companies"
         )
         in log_messages
     )
     assert (
         (
             "Preparing Norway Brreg financial statements ClickHouse table: "
-            "database=norway_brreg, table=norway_brreg.financial_statements"
+            "database=corpscout, table=corpscout.financial_statements"
         )
         in log_messages
     )
@@ -1184,13 +1184,13 @@ def test_export_norway_brreg_clickhouse_companies_touches_only_company_table(
 
     assert rows == 1
     assert client.statements == [
-        "CREATE DATABASE IF NOT EXISTS norway_brreg",
+        "CREATE DATABASE IF NOT EXISTS corpscout",
         brreg_tables.COMPANIES_DDL.strip(),
     ]
     assert [insert[0].split(" (", 1)[0] for insert in client.insert_calls] == [
-        "INSERT INTO `norway_brreg`.`companies`"
+        "INSERT INTO `corpscout`.`companies`"
     ]
-    company_row = dict(zip(brreg_tables.COMPANIES_COLUMNS, client.insert_calls[0][1][0]))
+    company_row = dict(zip(brreg_tables.COMPANIES_EXPORT_COLUMNS, client.insert_calls[0][1][0]))
     assert company_row["org_number"] == "923609016"
 
 
@@ -1233,14 +1233,14 @@ def test_export_norway_brreg_clickhouse_financials_touches_only_financial_table(
 
     assert rows == 1
     assert client.statements == [
-        "CREATE DATABASE IF NOT EXISTS norway_brreg",
+        "CREATE DATABASE IF NOT EXISTS corpscout",
         brreg_tables.FINANCIAL_STATEMENTS_DDL.strip(),
     ]
     assert [insert[0].split(" (", 1)[0] for insert in client.insert_calls] == [
-        "INSERT INTO `norway_brreg`.`financial_statements`"
+        "INSERT INTO `corpscout`.`financial_statements`"
     ]
     financial_row = dict(
-        zip(brreg_tables.FINANCIAL_STATEMENTS_COLUMNS, client.insert_calls[0][1][0])
+        zip(brreg_tables.FINANCIAL_STATEMENTS_EXPORT_COLUMNS, client.insert_calls[0][1][0])
     )
     assert financial_row["org_number"] == "923609016"
 
@@ -1429,9 +1429,10 @@ def test_norway_translation_config_exposes_operator_tunable_defaults() -> None:
     assert config.max_tokens == 4096
     assert config.extra_body_json == '{"chat_template_kwargs":{"enable_thinking":false}}'
     assert config.initialize_timeout_seconds == 300
-    assert config.batch_timeout_buffer_seconds == 30
+    assert config.batch_timeout_buffer_seconds == 600
     assert config.summarize_timeout_seconds == 30
     assert config.activity_maximum_attempts == 1
+    assert config.lease_timeout_seconds == 1800
     assert config.temporal_address == ""
     assert "norway_brreg_translation_start_config" not in brreg_assets.__dict__
 

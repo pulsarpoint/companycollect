@@ -95,7 +95,7 @@ def norway_resolved_clickhouse(
             duckdb_schema=NORWAY_RESOLVED_DUCKDB_SCHEMA,
             clickhouse_database=RESOLVED_DATABASE,
             tables=tuple(
-                (table, tables.RESOLVED_TABLE_COLUMNS[table])
+                (table, tables.RESOLVED_EXPORT_COLUMNS[table])
                 for table in tables.NORWAY_RESOLVED_TABLES
             ),
         )

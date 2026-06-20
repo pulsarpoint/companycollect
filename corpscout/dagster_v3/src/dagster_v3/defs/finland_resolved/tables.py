@@ -1,9 +1,11 @@
 FI_COMPANIES_TABLE = "fi_companies"
+FI_NAMES_TABLE = "fi_names"
 FI_WEBSITES_TABLE = "fi_websites"
 FI_INDUSTRIES_TABLE = "fi_industries"
 
 FINLAND_YTJ_RESOLVED_TABLES = (
     FI_COMPANIES_TABLE,
+    FI_NAMES_TABLE,
     FI_WEBSITES_TABLE,
     FI_INDUSTRIES_TABLE,
 )
@@ -15,6 +17,12 @@ AUDIT_COLUMNS = {
     "source_payload_hash",
     "resolved_at",
 }
+
+# source_payload_hash is a per-row SHA256 that cannot compress and nothing
+# queries; keep it in DuckDB/dbt staging but drop it from the ClickHouse export.
+# See dagster_v3/CLAUDE.md. RESOLVED_TABLE_COLUMNS stays the full migration
+# contract; RESOLVED_EXPORT_COLUMNS drives the ClickHouse insert.
+CLICKHOUSE_EXCLUDED_COLUMNS = frozenset({"source_payload_hash"})
 
 RESOLVED_TABLE_COLUMNS = {
     FI_COMPANIES_TABLE: (
@@ -35,6 +43,24 @@ RESOLVED_TABLE_COLUMNS = {
         "legal_form_description_translation_model",
         "primary_website_url",
         "primary_website_host",
+        "source_system",
+        "source_run_id",
+        "source_record_id",
+        "source_payload_hash",
+        "resolved_at",
+    ),
+    FI_NAMES_TABLE: (
+        "business_id",
+        "name",
+        "name_type_code",
+        "name_type_description_original",
+        "name_type_description_en",
+        "registration_date",
+        "end_date",
+        "version",
+        "is_current",
+        "is_primary",
+        "source_code",
         "source_system",
         "source_run_id",
         "source_record_id",
@@ -80,4 +106,11 @@ RESOLVED_TABLE_COLUMNS = {
         "source_payload_hash",
         "resolved_at",
     ),
+}
+
+RESOLVED_EXPORT_COLUMNS = {
+    table: tuple(
+        column for column in columns if column not in CLICKHOUSE_EXCLUDED_COLUMNS
+    )
+    for table, columns in RESOLVED_TABLE_COLUMNS.items()
 }

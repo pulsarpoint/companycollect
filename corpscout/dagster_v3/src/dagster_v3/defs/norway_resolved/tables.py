@@ -10,6 +10,12 @@ NORWAY_RESOLVED_TABLES = (
     NO_FINANCIAL_STATEMENTS_TABLE,
 )
 
+# source_payload_hash is a per-row SHA256 that cannot compress and nothing
+# queries; keep it in DuckDB/dbt staging but drop it from the ClickHouse export.
+# See dagster_v3/CLAUDE.md. RESOLVED_TABLE_COLUMNS stays the full migration
+# contract; RESOLVED_EXPORT_COLUMNS drives the ClickHouse insert.
+CLICKHOUSE_EXCLUDED_COLUMNS = frozenset({"source_payload_hash"})
+
 RESOLVED_TABLE_COLUMNS = {
     NO_COMPANIES_TABLE: (
         "org_number",
@@ -130,4 +136,11 @@ RESOLVED_TABLE_COLUMNS = {
         "source_url",
         "resolved_at",
     ),
+}
+
+RESOLVED_EXPORT_COLUMNS = {
+    table: tuple(
+        column for column in columns if column not in CLICKHOUSE_EXCLUDED_COLUMNS
+    )
+    for table, columns in RESOLVED_TABLE_COLUMNS.items()
 }
