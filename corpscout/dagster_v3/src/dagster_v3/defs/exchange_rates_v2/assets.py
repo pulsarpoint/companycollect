@@ -141,6 +141,13 @@ def exchange_rates_v2_raw_duckdb_asset(
         ),
     )
 
+exchange_rates_selection2 = dg.AssetSelection.assets("exchange_rates_v2_clickhouse").upstream()
+
+exchange_rates_daily_job2 = dg.define_asset_job(
+    "exchange_rates_daily_job2",
+    selection=exchange_rates_selection2,
+)
+
 
 @dbt_assets(
     manifest=exchange_rates_v2_dbt_project.manifest_path,
@@ -240,7 +247,7 @@ def delete_exchange_rates_v2_window(
     end_date: str,
 ) -> None:
     client.execute(
-        "ALTER TABLE reference.exchange_rates DELETE WHERE "
+        f"ALTER TABLE {tables.QUALIFIED_EXCHANGE_RATES_V2_TABLE} DELETE WHERE "
         "source IN ('ECB EXR', 'identity') "
         f"AND rate_date >= '{_sql_string(start_date)}' "
         f"AND rate_date <= '{_sql_string(end_date)}'"
@@ -254,6 +261,12 @@ exchange_rates_v2_selection = dg.AssetSelection.assets(
 exchange_rates_v2_job = dg.define_asset_job(
     "exchange_rates_v2_job",
     selection=exchange_rates_v2_selection,
+    # Explicitly partition the job: the selection spans partitioned assets and
+    # non-partitioned upstream nodes, so without this the job resolves
+    # non-partitioned and the assets fail on context.partition_key_range. Pin it
+    # to the asset partitions so it runs per-partition and a backfill over the
+    # full range repopulates every missing day (BackfillPolicy = 1 partition/run).
+    partitions_def=EXCHANGE_RATES_V2_PARTITIONS,
 )
 
 
