@@ -129,6 +129,33 @@ def test_usd_conversion_no_rates_leaves_usd_null(tmp_path: Path):
     assert usd is None
 
 
+def test_load_rates_batches_to_bound_clickhouse_query_plan():
+    # The shared client builds one UNION ALL branch per (currency, date) pair, so a
+    # ~1k-pair Latvia request overflows ClickHouse's plan optimizer (code 572).
+    # _load_rates must chunk so no single usd_rates() call exceeds the batch size.
+    requests = [
+        metrics._request("EUR", f"20{10 + i // 12:02d}-{i % 12 + 1:02d}-28")
+        for i in range(130)
+    ]
+
+    class _BatchSpy:
+        def __init__(self) -> None:
+            self.sizes: list[int] = []
+
+        def usd_rates(self, requests):
+            self.sizes.append(len(requests))
+            return {
+                (r.currency, r.rate_date): _StubRate(Decimal("1.10"), r.rate_date)
+                for r in requests
+            }
+
+    spy = _BatchSpy()
+    out = metrics._load_rates(spy, requests)
+    assert max(spy.sizes) <= metrics._RATE_REQUEST_BATCH
+    assert len(spy.sizes) >= 3  # 130 pairs / 50 -> at least 3 calls
+    assert len(out) == 130  # every pair resolved across the batches
+
+
 def test_unknown_rounding_factor_defaults_to_one(tmp_path: Path):
     db_path = tmp_path / "latvia_ur_source.duckdb"
     _seed_raw(db_path)

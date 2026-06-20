@@ -87,24 +87,32 @@ def build_latvia_ur_financial_metrics(
     return counts
 
 
+# The shared client builds one `UNION ALL` branch per requested (currency, date)
+# pair, and ClickHouse's query-plan optimizer rejects very wide plans (code 572
+# TOO_MANY_QUERY_PLAN_OPTIMIZATIONS). Latvia spans ~1k distinct period_end dates,
+# so the request set must be chunked. 50 keeps each plan small with large margin
+# even if optimization count grows super-linearly in the union width.
+_RATE_REQUEST_BATCH = 50
+
+
 def _load_rates(
     exchange_rates: ExchangeRates, requests: list[Any]
 ) -> dict[tuple[str, str], Any]:
-    # Mirrors norway_brreg.financial_normalize._load_available_usd_rates: try the
-    # batch, and on a missing-rate LookupError fall back to per-request so one
-    # absent rate doesn't drop the whole batch.
-    if not requests:
-        return {}
-    try:
-        return exchange_rates.usd_rates(requests)
-    except LookupError:
-        rates: dict[tuple[str, str], Any] = {}
-        for request in requests:
-            try:
-                rates.update(exchange_rates.usd_rates([request]))
-            except LookupError:
-                continue
-        return rates
+    # Batch the pairs (see _RATE_REQUEST_BATCH); within a batch, fall back to
+    # per-request on a missing-rate LookupError so one absent rate doesn't drop
+    # the rest (mirrors norway_brreg.financial_normalize._load_available_usd_rates).
+    rates: dict[tuple[str, str], Any] = {}
+    for start in range(0, len(requests), _RATE_REQUEST_BATCH):
+        batch = requests[start : start + _RATE_REQUEST_BATCH]
+        try:
+            rates.update(exchange_rates.usd_rates(batch))
+        except LookupError:
+            for request in batch:
+                try:
+                    rates.update(exchange_rates.usd_rates([request]))
+                except LookupError:
+                    continue
+    return rates
 
 
 def _metric_row(

@@ -127,7 +127,10 @@ def build_latvia_ur_financial_statements(
         spine.file_id as file_id,
         spine.legal_entity_registration_number as regcode,
         spine.source_schema as source_schema,
-        spine.source_type as source_type,
+        -- source_type is NULL for ~35% of statements (pre-euro filings); the
+        -- ClickHouse column is a non-nullable LowCardinality(String), so empty
+        -- must be '' not NULL or the native-protocol insert hits None.encode().
+        coalesce(spine.source_type, '') as source_type,
         try_cast(spine.year as integer) as fiscal_year,
         try_cast(spine.year_started_on as date) as period_start_date,
         try_cast(spine.year_ended_on as date) as period_end_date,

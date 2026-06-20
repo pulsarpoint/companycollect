@@ -186,6 +186,30 @@ def test_pivot_builds_wide_table_and_counts_orphans(tmp_path: Path):
     assert set(cols) == set(tables.LV_FINANCIAL_STATEMENTS_COLUMNS)
 
 
+def test_wide_build_coalesces_null_source_type(tmp_path: Path):
+    # ~35% of real statements (pre-euro filings) have no source_type. The ClickHouse
+    # column is a non-nullable LowCardinality(String), so the wide build must emit ''
+    # not NULL, otherwise the native-protocol insert dies on None.encode().
+    db_path = tmp_path / "latvia_ur_source.duckdb"
+    _seed_raw(db_path)
+    raw = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_STATEMENTS_RAW_TABLE}"
+    with duckdb.connect(str(db_path)) as conn:
+        conn.execute(f"update {raw} set source_type = NULL")
+    financials.build_latvia_ur_financial_statements(
+        database_path=db_path, source_run_id="run-1"
+    )
+    wide = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_STATEMENTS_WIDE_TABLE}"
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        nulls = conn.execute(
+            f"select count(*) from {wide} where source_type is null"
+        ).fetchone()[0]
+        distinct = conn.execute(
+            f"select distinct source_type from {wide}"
+        ).fetchall()
+    assert nulls == 0
+    assert distinct == [("",)]
+
+
 def test_export_financial_statements_replaces_clickhouse_table(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "latvia_ur_source.duckdb"
     _seed_raw(db_path)
