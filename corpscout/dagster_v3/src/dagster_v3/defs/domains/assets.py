@@ -168,7 +168,7 @@ def _company_website_domains_insert_sql(stage_table: str) -> str:
                     websites.website_normalized_url
                 )
             ) AS source_website_id,
-            CAST(NULL AS Nullable(String)) AS country_iso2,
+            nullIf(trim(ifNull(companies.headquarters_country_iso2, '')), '') AS country_iso2,
             'wikidata' AS source_slug,
             'wikidata_id' AS company_id_type,
             websites.wikidata_id AS company_id,
@@ -179,6 +179,8 @@ def _company_website_domains_insert_sql(stage_table: str) -> str:
             1 AS is_current,
             websites.is_primary_candidate AS is_primary
         FROM {_qualified_table("wikidata_company_websites")} AS websites
+        LEFT JOIN {_qualified_table("wikidata_companies")} AS companies
+            ON companies.wikidata_id = websites.wikidata_id
         WHERE nullIf(trim(websites.root_domain), '') IS NOT NULL
     )
     """
@@ -193,7 +195,7 @@ def _domains_insert_sql(stage_table: str, company_links_stage: str) -> str:
         countDistinct(company_id) AS company_count,
         countDistinct(website_normalized_url) AS website_count,
         countDistinct(source_slug) AS source_slug_count,
-        countDistinct(country_iso2) AS country_count,
+        countDistinctIf(country_iso2, country_iso2 IS NOT NULL) AS country_count,
         now64(3) AS resolved_at
     FROM {_qualified_table(company_links_stage)}
     GROUP BY root_domain

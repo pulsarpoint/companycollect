@@ -1,0 +1,92 @@
+2026-06-20 21:31:49 +0200 - dagster - DEBUG - __ASSET_JOB - 9142fab3-8cb5-4f1e-bc39-b319e01955b0 - 30573 - LOGS_CAPTURED - Capturing logs for process (pid: 30573).
+2026-06-20 21:31:49 +0200 - dagster - DEBUG - __ASSET_JOB - 9142fab3-8cb5-4f1e-bc39-b319e01955b0 - 30573 - latvia_ur_clickhouse_financial_statements - STEP_START - Started execution of step "latvia_ur_clickhouse_financial_statements".
+2026-06-20 21:31:49 +0200 - dagster - INFO - __ASSET_JOB - 9142fab3-8cb5-4f1e-bc39-b319e01955b0 - latvia_ur_clickhouse_financial_statements - Starting Latvia UR financial statements ClickHouse export: duckdb_path=data/latvia_ur_source.duckdb, table=corpscout.lv_financial_statements
+2026-06-20 21:31:49 +0200 - dagster - INFO - __ASSET_JOB - 9142fab3-8cb5-4f1e-bc39-b319e01955b0 - latvia_ur_clickhouse_financial_statements - Exporting Latvia UR financial statements to ClickHouse: duckdb_path=data/latvia_ur_source.duckdb, table=corpscout.lv_financial_statements
+2026-06-20 21:31:51 +0200 - dagster - ERROR - __ASSET_JOB - 9142fab3-8cb5-4f1e-bc39-b319e01955b0 - 30573 - latvia_ur_clickhouse_financial_statements - STEP_FAILURE - Execution of step "latvia_ur_clickhouse_financial_statements" failed.
+
+dagster._core.errors.DagsterExecutionStepExecutionError: Error occurred while executing op "latvia_ur_clickhouse_financial_statements"::
+
+AttributeError: 'NoneType' object has no attribute 'encode'
+
+Stack Trace:
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/dagster/_core/execution/plan/utils.py", line 57, in op_execution_error_boundary
+    yield
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/dagster/_utils/__init__.py", line 394, in iterate_with_context
+    next_output = next(iterator)
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/dagster/_core/execution/plan/compute_generator.py", line 136, in _coerce_op_compute_fn_to_iterator
+    result = invoke_compute_fn(
+        fn, context, kwargs, context_arg_provided, config_arg_class, resource_arg_mapping
+    )
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/dagster/_core/execution/plan/compute_generator.py", line 116, in invoke_compute_fn
+    return fn(context, **args_to_pass) if context_arg_provided else fn(**args_to_pass)
+           ~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/src/dagster_v3/defs/latvia_ur/assets.py", line 289, in latvia_ur_clickhouse_financial_statements
+    rows = export_latvia_ur_clickhouse_financial_statements(
+        database_path=LATVIA_UR_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/src/dagster_v3/defs/latvia_ur/clickhouse.py", line 73, in export_latvia_ur_clickhouse_financial_statements
+    rows = export_duckdb_table_to_clickhouse(
+        duckdb_path=database_path,
+    ...<6 lines>...
+        truncate=True,
+    )
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/src/dagster_v3/defs/clickhouse/resolved.py", line 93, in export_duckdb_table_to_clickhouse
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/src/dagster_v3/defs/clickhouse/resolved.py", line 94, in export_duckdb_table_to_clickhouse
+    row_count = _insert_duckdb_rows_in_batches(
+        duckdb_connection=connection,
+    ...<6 lines>...
+        batch_size=batch_size,
+    )
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/src/dagster_v3/defs/clickhouse/resolved.py", line 243, in _insert_duckdb_rows_in_batches
+    clickhouse_client.execute(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^
+        f"INSERT INTO {clickhouse_qualified_table} ({clickhouse_columns}) VALUES",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        rows,
+        ^^^^^
+    )
+    ^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/clickhouse_driver/client.py", line 376, in execute
+    rv = self.process_insert_query(
+        query, params, external_tables=external_tables,
+        query_id=query_id, types_check=types_check,
+        columnar=columnar
+    )
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/clickhouse_driver/client.py", line 607, in process_insert_query
+    rv = self.send_data(sample_block, data,
+                        types_check=types_check, columnar=columnar)
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/clickhouse_driver/client.py", line 660, in send_data
+    self.connection.send_data(block)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/clickhouse_driver/connection.py", line 720, in send_data
+    self.block_out.write(block)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/clickhouse_driver/streams/native.py", line 48, in write
+    write_column(self.context, col_name, col_type, items,
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                 self.fout, types_check=block.types_check)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/clickhouse_driver/columns/service.py", line 167, in write_column
+    column.write_data(items, buf)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/clickhouse_driver/columns/base.py", line 145, in write_data
+    self._write_data(items, buf)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/clickhouse_driver/columns/lowcardinalitycolumn.py", line 116, in _write_data
+    self.nested_column.write_data(index, buf)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/clickhouse_driver/columns/base.py", line 145, in write_data
+    self._write_data(items, buf)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/clickhouse_driver/columns/base.py", line 149, in _write_data
+    self.write_items(prepared, buf)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/clickhouse_driver/columns/stringcolumn.py", line 18, in write_items
+    buf.write_strings(items, encoding=self.encoding)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "clickhouse_driver/bufferedwriter.pyx", line 54, in clickhouse_driver.bufferedwriter.BufferedWriter.write_strings
+

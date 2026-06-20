@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -106,6 +107,7 @@ def test_translation_queue_workflow_input_requires_explicit_runtime_values() -> 
         "batch_timeout_buffer_seconds",
         "summarize_timeout_seconds",
         "activity_maximum_attempts",
+        "lease_timeout_seconds",
     }
     assert all(default is dataclasses.MISSING for default in field_defaults.values())
 
@@ -123,9 +125,10 @@ def test_translation_queue_workflow_input_requires_explicit_runtime_values() -> 
         max_tokens=4096,
         extra_body_json=EXTRA_BODY_JSON,
         initialize_timeout_seconds=300,
-        batch_timeout_buffer_seconds=30,
+        batch_timeout_buffer_seconds=600,
         summarize_timeout_seconds=30,
         activity_maximum_attempts=1,
+        lease_timeout_seconds=1800,
     )
 
     assert asdict(params) == {
@@ -137,9 +140,10 @@ def test_translation_queue_workflow_input_requires_explicit_runtime_values() -> 
         "max_tokens": 4096,
         "extra_body_json": EXTRA_BODY_JSON,
         "initialize_timeout_seconds": 300,
-        "batch_timeout_buffer_seconds": 30,
+        "batch_timeout_buffer_seconds": 600,
         "summarize_timeout_seconds": 30,
         "activity_maximum_attempts": 1,
+        "lease_timeout_seconds": 1800,
     }
     assert LOCAL_LLM_TRANSLATION_TASK_QUEUE == "translation-local-llm"
 
@@ -172,6 +176,7 @@ def test_process_translation_batch_once_completes_one_batch(tmp_path) -> None:
             worker_id="worker-a",
             max_tokens=4096,
             extra_body_json=EXTRA_BODY_JSON,
+            lease_timeout_seconds=1800,
         ),
         provider=provider,
     )
@@ -204,6 +209,7 @@ def test_process_translation_batch_once_marks_failed_batch_retryable(tmp_path) -
             worker_id="worker-a",
             max_tokens=4096,
             extra_body_json=EXTRA_BODY_JSON,
+            lease_timeout_seconds=1800,
         ),
         provider=_FailingProvider(),
     )
@@ -246,6 +252,7 @@ def test_process_translation_batch_once_closes_owned_provider_on_success(
             worker_id="worker-a",
             max_tokens=4096,
             extra_body_json=EXTRA_BODY_JSON,
+            lease_timeout_seconds=1800,
         )
     )
 
@@ -284,6 +291,7 @@ def test_process_translation_batch_once_closes_owned_provider_on_failure(
             worker_id="worker-a",
             max_tokens=4096,
             extra_body_json=EXTRA_BODY_JSON,
+            lease_timeout_seconds=1800,
         )
     )
 
@@ -306,9 +314,49 @@ def test_process_translation_batch_once_returns_empty_when_no_work(tmp_path) -> 
             worker_id="worker-a",
             max_tokens=4096,
             extra_body_json=EXTRA_BODY_JSON,
+            lease_timeout_seconds=1800,
         ),
         provider=_SuccessfulProvider(),
     )
 
     assert result.status == "empty"
     assert result.item_count == 0
+
+
+def test_process_translation_batch_once_reclaims_stale_leases_before_claiming(
+    tmp_path,
+) -> None:
+    duckdb_path = tmp_path / "translations.duckdb"
+    queue = TranslationQueue(duckdb_path)
+    queue.initialize()
+    queue.enqueue_items(
+        generate_synthetic_translation_items(2, source_duckdb_path=str(duckdb_path))
+    )
+    queue.claim_batch(limit=2, worker_id="old-worker")
+    with queue._connect() as conn:
+        conn.execute(
+            """
+            update translation_items
+            set leased_at = ?
+            """,
+            [datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=2)],
+        )
+    provider = _SuccessfulProvider()
+
+    result = process_translation_batch_once(
+        ProcessTranslationBatchInput(
+            duckdb_path=str(duckdb_path),
+            batch_size=2,
+            timeout_seconds=30,
+            worker_id="worker-a",
+            max_tokens=4096,
+            extra_body_json=EXTRA_BODY_JSON,
+            lease_timeout_seconds=1800,
+        ),
+        provider=provider,
+    )
+
+    assert result.status == "success"
+    assert result.item_count == 2
+    assert queue.summary().completed_items == 2
+    assert queue.summary().leased_items == 0

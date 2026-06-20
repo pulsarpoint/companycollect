@@ -3,7 +3,7 @@ from dagster_v3.defs.duckdb.schema_contract import (
     DuckDBTableContract,
 )
 
-EXCHANGE_RATES_V2_DATABASE = "reference"
+EXCHANGE_RATES_V2_DATABASE = "corpscout"
 EXCHANGE_RATES_V2_TABLE = "exchange_rates"
 QUALIFIED_EXCHANGE_RATES_V2_TABLE = (
     f"{EXCHANGE_RATES_V2_DATABASE}.{EXCHANGE_RATES_V2_TABLE}"

@@ -3,7 +3,7 @@ from dagster_v3.defs.duckdb.schema_contract import (
     DuckDBTableContract,
 )
 
-NACE_DATABASE = "reference"
+NACE_DATABASE = "corpscout"
 NACE_CATEGORIES_TABLE = "nace_categories"
 QUALIFIED_NACE_CATEGORIES_TABLE = f"{NACE_DATABASE}.{NACE_CATEGORIES_TABLE}"
 

@@ -1,0 +1,7 @@
+2026-06-20 21:40:25 +0200 - dagster - DEBUG - __ASSET_JOB - a589fb4c-4c2e-4482-92ca-32ef520cd6cb - 49176 - LOGS_CAPTURED - Capturing logs for process (pid: 49176).
+2026-06-20 21:40:25 +0200 - dagster - DEBUG - __ASSET_JOB - a589fb4c-4c2e-4482-92ca-32ef520cd6cb - 49176 - latvia_ur_financial_metrics_usd_duckdb - STEP_START - Started execution of step "latvia_ur_financial_metrics_usd_duckdb".
+2026-06-20 21:40:25 +0200 - dagster - INFO - __ASSET_JOB - a589fb4c-4c2e-4482-92ca-32ef520cd6cb - latvia_ur_financial_metrics_usd_duckdb - Applying Latvia UR USD conversion: duckdb_path=data/latvia_ur_source.duckdb, table=latvia_ur.financial_metrics
+2026-06-20 21:41:15 +0200 - dagster - INFO - __ASSET_JOB - a589fb4c-4c2e-4482-92ca-32ef520cd6cb - latvia_ur_financial_metrics_usd_duckdb - Applied Latvia UR USD conversion: rate_pairs=1077 rates_found=851 rows_converted=1583243
+2026-06-20 21:41:15 +0200 - dagster - DEBUG - __ASSET_JOB - a589fb4c-4c2e-4482-92ca-32ef520cd6cb - 49176 - latvia_ur_financial_metrics_usd_duckdb - STEP_OUTPUT - Yielded output "result" of type "Any". (Type check passed).
+2026-06-20 21:41:16 +0200 - dagster - DEBUG - __ASSET_JOB - a589fb4c-4c2e-4482-92ca-32ef520cd6cb - 49176 - latvia_ur_financial_metrics_usd_duckdb - ASSET_MATERIALIZATION - Materialized value latvia_ur_financial_metrics_usd_duckdb.
+2026-06-20 21:41:16 +0200 - dagster - DEBUG - __ASSET_JOB - a589fb4c-4c2e-4482-92ca-32ef520cd6cb - 49176 - latvia_ur_financial_metrics_usd_duckdb - STEP_SUCCESS - Finished execution of step "latvia_ur_financial_metrics_usd_duckdb" in 50.54s.

@@ -33,6 +33,7 @@ EXPECTED_MIGRATIONS = (
     "000020_corpscout_lv_financial_statements_repair",
     "000021_corpscout_lv_drop_provenance_columns",
     "000022_corpscout_norway_finland_drop_provenance_columns",
+    "000023_corpscout_gleif_reference_data",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

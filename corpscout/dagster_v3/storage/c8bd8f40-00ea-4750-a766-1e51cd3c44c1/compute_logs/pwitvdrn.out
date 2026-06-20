@@ -1,0 +1,14 @@
+Running with dbt=1.8.9
+Registered adapter: duckdb=1.8.4
+Found 2 models, 2 data tests, 1 seed, 4 sources, 421 macros
+
+Concurrency: 1 threads (target='dev')
+
+1 of 1 START seed file finland_prh_xbrl.xbrl_metric_map ........................ [RUN]
+1 of 1 OK loaded seed file finland_prh_xbrl.xbrl_metric_map .................... [[32mINSERT 12[0m in 0.04s]
+
+Finished running 1 seed in 0 hours 0 minutes and 0.19 seconds (0.19s).
+
+[32mCompleted successfully[0m
+
+Done. PASS=1 WARN=0 ERROR=0 SKIP=0 TOTAL=1

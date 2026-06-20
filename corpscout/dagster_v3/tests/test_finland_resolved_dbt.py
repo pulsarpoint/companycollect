@@ -1,4 +1,5 @@
 import json
+from datetime import date
 from pathlib import Path
 
 import duckdb
@@ -36,7 +37,7 @@ def _seed_all_companies(db_path: Path) -> None:
           ('fi-1','FI','Active One Oy','2024-01-01','', 'active', true,
            'https://example.fi/path','https://example.fi/path','example.fi','/path','2024-01-02','',
            'finland_prhytj','run-1','fi-1','hash1',
-           '{"mainBusinessLine":{"code":"62010","codeSet":"NACE_REV_2","descriptions":[{"languageCode":"1","description":"Ohjelmistot"}]}}'),
+           '{"names":[{"name":"Active One Oy","type":"1","registrationDate":"2024-01-01","endDate":null,"version":1,"source":"1"},{"name":"Active One old Oy","type":"1","registrationDate":"2020-01-01","endDate":"2023-12-31","version":2,"source":"1"}],"mainBusinessLine":{"code":"62010","codeSet":"NACE_REV_2","descriptions":[{"languageCode":"1","description":"Ohjelmistot"}]}}'),
           ('fi-2','FI','Ceased Two Oy','2020-01-01','2025-01-01','ceased', false,
            '','','','','','',
            'finland_prhytj','run-1','fi-2','hash2','{}')
@@ -83,6 +84,47 @@ def test_fi_websites_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     ).fetchall()
     # Only fi-1 has a website; fi-2 is filtered out (empty normalized url)
     assert rows == [("fi-1", "https://example.fi/path", "example.fi", "example.fi", True, True)]
+
+
+def test_fi_names_model_extracts_name_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = tmp_path / "finland_ytj.duckdb"
+    _seed_all_companies(db)
+    _dbt_build(db, monkeypatch)
+    conn = duckdb.connect(str(db), read_only=True)
+    rows = conn.execute(
+        "select business_id, name, name_type_code, registration_date, end_date, "
+        "version, is_current, is_primary, source_code, source_record_id "
+        "from finland_resolved.fi_names order by business_id, version"
+    ).fetchall()
+    assert rows == [
+        (
+            "fi-1",
+            "Active One Oy",
+            "1",
+            date(2024, 1, 1),
+            None,
+            1,
+            True,
+            True,
+            "1",
+            "fi-1:name:0",
+        ),
+        (
+            "fi-1",
+            "Active One old Oy",
+            "1",
+            date(2020, 1, 1),
+            date(2023, 12, 31),
+            2,
+            False,
+            False,
+            "1",
+            "fi-1:name:1",
+        ),
+    ]
 
 
 def test_fi_industries_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

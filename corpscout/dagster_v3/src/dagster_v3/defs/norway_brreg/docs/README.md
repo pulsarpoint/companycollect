@@ -225,9 +225,10 @@ Configurable Dagster launch settings are defined in `NorwayBrregTranslationConfi
 | `max_tokens` | `4096` | LLM response token limit. |
 | `extra_body_json` | `{"chat_template_kwargs":{"enable_thinking":false}}` | Extra OpenAI-compatible provider request body. |
 | `initialize_timeout_seconds` | `300` | Temporal initialize activity timeout. |
-| `batch_timeout_buffer_seconds` | `30` | Extra timeout buffer around batch translation. |
+| `batch_timeout_buffer_seconds` | `600` | Extra timeout buffer around batch translation and queue writes. |
 | `summarize_timeout_seconds` | `30` | Queue summary activity timeout. |
 | `activity_maximum_attempts` | `1` | Temporal activity retry maximum attempts. |
+| `lease_timeout_seconds` | `1800` | Age after which stale leased queue rows can be reclaimed. |
 | `temporal_address` | empty | Empty means the runtime default is used. |
 
 ### `norway_brreg_translation_workflow_status`

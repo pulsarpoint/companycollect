@@ -61,6 +61,8 @@ def test_replace_domain_clickhouse_tables_uses_stage_exchange(
         and "`corpscout`.`fi_websites`" in statement
         and "`corpscout`.`no_websites`" in statement
         and "`corpscout`.`wikidata_company_websites`" in statement
+        and "`corpscout`.`wikidata_companies`" in statement
+        and "companies.headquarters_country_iso2" in statement
         and "source_website_table" in statement
         and "source_website_id" in statement
         for statement in client.statements

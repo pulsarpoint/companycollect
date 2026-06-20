@@ -43,7 +43,8 @@ def test_parse_start_args_builds_workflow_input() -> None:
         max_tokens=4096,
         extra_body_json='{"chat_template_kwargs":{"enable_thinking":false}}',
         initialize_timeout_seconds=300,
-        batch_timeout_buffer_seconds=30,
+        batch_timeout_buffer_seconds=600,
         summarize_timeout_seconds=30,
         activity_maximum_attempts=1,
+        lease_timeout_seconds=1800,
     )

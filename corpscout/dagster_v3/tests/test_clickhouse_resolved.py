@@ -305,6 +305,43 @@ def test_export_duckdb_table_to_clickhouse_escapes_identifiers(tmp_path) -> None
     ]
 
 
+def test_export_duckdb_table_to_clickhouse_supports_dotted_schema_qualifier(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "wikidata.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema wikidata.wikidata")
+        connection.execute(
+            """
+            create table wikidata.wikidata.wikidata_companies (
+                wikidata_id varchar
+            )
+            """
+        )
+        connection.execute("insert into wikidata.wikidata.wikidata_companies values ('Q1')")
+
+    client = FakeInsertClickHouseClient()
+
+    row_count = export_duckdb_table_to_clickhouse(
+        duckdb_path=database_path,
+        clickhouse_client=client,
+        duckdb_schema="wikidata.wikidata",
+        duckdb_table="wikidata_companies",
+        clickhouse_database="corpscout",
+        clickhouse_table="wikidata_companies",
+        columns=("wikidata_id",),
+        truncate=False,
+    )
+
+    assert row_count == 1
+    assert client.insert_calls == [
+        (
+            "INSERT INTO `corpscout`.`wikidata_companies` (`wikidata_id`) VALUES",
+            [("Q1",)],
+        )
+    ]
+
+
 def test_export_duckdb_table_to_clickhouse_cleanup_attempts_drop_on_insert_failure(
     tmp_path, monkeypatch
 ) -> None:

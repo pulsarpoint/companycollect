@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 from pathlib import Path
 from uuid import uuid4
@@ -289,6 +289,44 @@ class TranslationQueue:
                 )
                 for row in rows
             ]
+
+    def release_stale_leases(self, *, older_than_seconds: int) -> int:
+        if older_than_seconds <= 0:
+            return 0
+
+        cutoff = _now() - timedelta(seconds=older_than_seconds)
+        now = _now()
+        with self._connect() as conn:
+            stale_count = int(
+                conn.execute(
+                    """
+                    select count(*)
+                    from translation_items
+                    where status = ?
+                      and leased_at is not null
+                      and leased_at < ?
+                    """,
+                    [QUEUE_STATUS_LEASED, cutoff],
+                ).fetchone()[0]
+            )
+            if stale_count == 0:
+                return 0
+            conn.execute(
+                """
+                update translation_items
+                set
+                    status = ?,
+                    leased_by = null,
+                    leased_at = null,
+                    batch_id = null,
+                    updated_at = ?
+                where status = ?
+                  and leased_at is not null
+                  and leased_at < ?
+                """,
+                [QUEUE_STATUS_PENDING, now, QUEUE_STATUS_LEASED, cutoff],
+            )
+            return stale_count
 
     def complete_batch(
         self,

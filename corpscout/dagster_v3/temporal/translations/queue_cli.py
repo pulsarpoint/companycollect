@@ -38,9 +38,10 @@ def parse_start_args(argv: list[str] | None = None) -> tuple[str, TranslationQue
     parser.add_argument("--max-batch-failures", default=0, type=int)
     parser.add_argument("--worker-id", default="translation-temporal-worker")
     parser.add_argument("--initialize-timeout-seconds", default=300, type=int)
-    parser.add_argument("--batch-timeout-buffer-seconds", default=30, type=int)
+    parser.add_argument("--batch-timeout-buffer-seconds", default=600, type=int)
     parser.add_argument("--summarize-timeout-seconds", default=30, type=int)
     parser.add_argument("--activity-maximum-attempts", default=1, type=int)
+    parser.add_argument("--lease-timeout-seconds", default=1800, type=int)
     parser.add_argument(
         "--max-tokens",
         default=int(os.getenv("TRANSLATION_PROVIDER_MAX_TOKENS", "2048")),
@@ -69,6 +70,7 @@ def parse_start_args(argv: list[str] | None = None) -> tuple[str, TranslationQue
         batch_timeout_buffer_seconds=args.batch_timeout_buffer_seconds,
         summarize_timeout_seconds=args.summarize_timeout_seconds,
         activity_maximum_attempts=args.activity_maximum_attempts,
+        lease_timeout_seconds=args.lease_timeout_seconds,
     )
 
 

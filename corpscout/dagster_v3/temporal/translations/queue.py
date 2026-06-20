@@ -28,6 +28,7 @@ class TranslationQueueWorkflowInput:
     batch_timeout_buffer_seconds: int
     summarize_timeout_seconds: int
     activity_maximum_attempts: int
+    lease_timeout_seconds: int
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,7 @@ class ProcessTranslationBatchInput:
     worker_id: str
     max_tokens: int
     extra_body_json: str
+    lease_timeout_seconds: int
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,7 @@ def process_translation_batch_once(
 
     queue = TranslationQueue(params.duckdb_path)
     queue.initialize()
+    queue.release_stale_leases(older_than_seconds=params.lease_timeout_seconds)
     model = (
         os.environ["TRANSLATION_PROVIDER_LOCAL_MODEL"]
         if provider is None
@@ -200,6 +203,7 @@ class TranslationQueueWorkflow:
                     worker_id=params.worker_id,
                     max_tokens=params.max_tokens,
                     extra_body_json=params.extra_body_json,
+                    lease_timeout_seconds=params.lease_timeout_seconds,
                 ),
                 start_to_close_timeout=timedelta(
                     seconds=params.timeout_seconds + params.batch_timeout_buffer_seconds

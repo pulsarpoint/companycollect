@@ -1,0 +1,6 @@
+[32m2026-06-19 18:29:05 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 49e4cb93-1ae0-4b17-84ef-7814894110d7 - 2903 - LOGS_CAPTURED - Capturing logs for process (pid: 2903).
+[32m2026-06-19 18:29:05 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 49e4cb93-1ae0-4b17-84ef-7814894110d7 - 2903 - country_domains_clickhouse - STEP_START - Started execution of step "country_domains_clickhouse".
+[32m2026-06-19 18:29:05 +0200[0m - dagster - [34mINFO[0m - __ASSET_JOB - 49e4cb93-1ae0-4b17-84ef-7814894110d7 - country_domains_clickhouse - Completed country domain ClickHouse rebuild: row_counts={'country_domains': 0, 'company_website_domains': 0}
+[32m2026-06-19 18:29:05 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 49e4cb93-1ae0-4b17-84ef-7814894110d7 - 2903 - country_domains_clickhouse - STEP_OUTPUT - Yielded output "result" of type "Any". (Type check passed).
+[32m2026-06-19 18:29:06 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 49e4cb93-1ae0-4b17-84ef-7814894110d7 - 2903 - country_domains_clickhouse - ASSET_MATERIALIZATION - Materialized value country_domains_clickhouse.
+[32m2026-06-19 18:29:06 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 49e4cb93-1ae0-4b17-84ef-7814894110d7 - 2903 - country_domains_clickhouse - STEP_SUCCESS - Finished execution of step "country_domains_clickhouse" in 1.18s.

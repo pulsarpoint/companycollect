@@ -48,9 +48,9 @@ def test_nace_source_constants_define_official_versions() -> None:
 
 
 def test_nace_categories_schema_contracts() -> None:
-    assert tables.NACE_DATABASE == "reference"
+    assert tables.NACE_DATABASE == "corpscout"
     assert tables.NACE_CATEGORIES_TABLE == "nace_categories"
-    assert tables.QUALIFIED_NACE_CATEGORIES_TABLE == "reference.nace_categories"
+    assert tables.QUALIFIED_NACE_CATEGORIES_TABLE == "corpscout.nace_categories"
     assert tables.NACE_CATEGORIES_COLUMNS == (
         "classification_version",
         "code",
@@ -77,7 +77,7 @@ def test_nace_categories_schema_contracts() -> None:
     )
     assert tables.NACE_CATEGORIES_DUCKDB_COLUMN_TYPES["valid_from"] == "DATE"
     assert tables.NACE_CATEGORIES_DUCKDB_COLUMN_TYPES["pulled_at"] == "TIMESTAMP"
-    assert "CREATE TABLE IF NOT EXISTS reference.nace_categories" in tables.NACE_CATEGORIES_DDL
+    assert "CREATE TABLE IF NOT EXISTS corpscout.nace_categories" in tables.NACE_CATEGORIES_DDL
     assert "ENGINE = ReplacingMergeTree(pulled_at)" in tables.NACE_CATEGORIES_DDL
     assert "ORDER BY (classification_version, normalized_code)" in tables.NACE_CATEGORIES_DDL
 
@@ -362,13 +362,13 @@ def test_export_nace_categories_clickhouse_replaces_from_duckdb(tmp_path, monkey
         clickhouse=resource,
     )
 
-    assert counts == {"rows": 1, "table": "reference.nace_categories"}
-    assert client.statements[0].startswith("CREATE TABLE `reference`.`_tmp_nace_categories_")
-    assert client.statements[0].endswith(" AS `reference`.`nace_categories`")
-    assert client.statements[1].startswith("INSERT INTO `reference`.`_tmp_nace_categories_")
-    assert client.statements[2].startswith("EXCHANGE TABLES `reference`.`_tmp_nace_categories_")
-    assert client.statements[2].endswith(" AND `reference`.`nace_categories`")
-    assert client.statements[3].startswith("DROP TABLE IF EXISTS `reference`.`_tmp_nace_categories_")
+    assert counts == {"rows": 1, "table": "corpscout.nace_categories"}
+    assert client.statements[0].startswith("CREATE TABLE `corpscout`.`_tmp_nace_categories_")
+    assert client.statements[0].endswith(" AS `corpscout`.`nace_categories`")
+    assert client.statements[1].startswith("INSERT INTO `corpscout`.`_tmp_nace_categories_")
+    assert client.statements[2].startswith("EXCHANGE TABLES `corpscout`.`_tmp_nace_categories_")
+    assert client.statements[2].endswith(" AND `corpscout`.`nace_categories`")
+    assert client.statements[3].startswith("DROP TABLE IF EXISTS `corpscout`.`_tmp_nace_categories_")
     assert client.inserted_rows[0][0][:3] == ("NACE_REV_2_1", "A", "A")
 
 

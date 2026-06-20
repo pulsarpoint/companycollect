@@ -1,0 +1,5 @@
+[32m2026-06-19 09:27:45 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 1785ca62-2863-460f-aa49-6dde9ecc11de - 31182 - LOGS_CAPTURED - Capturing logs for process (pid: 31182).
+[32m2026-06-19 09:27:45 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 1785ca62-2863-460f-aa49-6dde9ecc11de - 31182 - wikidata_company_seed_raw_objects - STEP_START - Started execution of step "wikidata_company_seed_raw_objects".
+[32m2026-06-19 09:27:47 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 1785ca62-2863-460f-aa49-6dde9ecc11de - 31182 - wikidata_company_seed_raw_objects - STEP_OUTPUT - Yielded output "result" of type "Any". (Type check passed).
+[32m2026-06-19 09:27:47 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 1785ca62-2863-460f-aa49-6dde9ecc11de - 31182 - wikidata_company_seed_raw_objects - ASSET_MATERIALIZATION - Materialized value wikidata_company_seed_raw_objects.
+[32m2026-06-19 09:27:47 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 1785ca62-2863-460f-aa49-6dde9ecc11de - 31182 - wikidata_company_seed_raw_objects - STEP_SUCCESS - Finished execution of step "wikidata_company_seed_raw_objects" in 2.42s.

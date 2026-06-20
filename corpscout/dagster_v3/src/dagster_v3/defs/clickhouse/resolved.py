@@ -228,7 +228,8 @@ def _insert_duckdb_rows_in_batches(
 ) -> int:
     duckdb_columns = ", ".join(_quote_duckdb_identifier(column) for column in columns)
     duckdb_qualified_table = (
-        f"{_quote_duckdb_identifier(duckdb_schema)}.{_quote_duckdb_identifier(duckdb_table)}"
+        f"{_quote_duckdb_qualified_schema(duckdb_schema)}."
+        f"{_quote_duckdb_identifier(duckdb_table)}"
     )
     result = duckdb_connection.execute(
         f"select {duckdb_columns} from {duckdb_qualified_table}"
@@ -254,6 +255,10 @@ def _validate_batch_size(batch_size: int) -> None:
 def _quote_duckdb_identifier(identifier: str) -> str:
     escaped = identifier.replace('"', '""')
     return f'"{escaped}"'
+
+
+def _quote_duckdb_qualified_schema(schema: str) -> str:
+    return ".".join(_quote_duckdb_identifier(part) for part in schema.split("."))
 
 
 def _quote_clickhouse_identifier(identifier: str) -> str:

@@ -19,10 +19,16 @@ class S3Client(Protocol):
     def head_object(self, Bucket: str, Key: str) -> Any:
         ...
 
-    def put_object(self, Bucket: str, Key: str, Body: bytes | str) -> Any:
+    def put_object(self, Bucket: str, Key: str, Body: Any) -> Any:
         ...
 
     def get_object(self, Bucket: str, Key: str) -> Mapping[str, Any]:
+        ...
+
+    def get_paginator(self, operation_name: str) -> Any:
+        ...
+
+    def delete_objects(self, Bucket: str, Delete: Mapping[str, Any]) -> Any:
         ...
 
 
@@ -80,6 +86,30 @@ class ObjectStoreResource(dg.ConfigurableResource):
     def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
         target_bucket = bucket or self.bucket
         return self.client().get_object(Bucket=target_bucket, Key=key)["Body"].read()
+
+    def list_keys(self, prefix: str, bucket: str | None = None) -> list[str]:
+        target_bucket = bucket or self.bucket
+        paginator = self.client().get_paginator("list_objects_v2")
+        return [
+            item["Key"]
+            for page in paginator.paginate(Bucket=target_bucket, Prefix=prefix)
+            for item in page.get("Contents", [])
+        ]
+
+    def delete_keys(self, keys: list[str] | tuple[str, ...], bucket: str | None = None) -> int:
+        if not keys:
+            return 0
+
+        target_bucket = bucket or self.bucket
+        deleted_count = 0
+        for offset in range(0, len(keys), 1000):
+            key_batch = keys[offset : offset + 1000]
+            self.client().delete_objects(
+                Bucket=target_bucket,
+                Delete={"Objects": [{"Key": key} for key in key_batch]},
+            )
+            deleted_count += len(key_batch)
+        return deleted_count
 
 
 class LocalDuckDBResource(dg.ConfigurableResource):
