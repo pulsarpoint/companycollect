@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from dagster_v3.defs.exchange_rates import tables as exchange_rate_tables
+from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.finland_resolved import tables as finland_resolved_tables
 from dagster_v3.defs.nace import tables as nace_tables
@@ -409,7 +409,7 @@ def test_exchange_rate_migration_defines_reference_table_schema() -> None:
     assert "CREATE TABLE IF NOT EXISTS corpscout.exchange_rates" in sql
     assert "ENGINE = ReplacingMergeTree(pulled_at)" in sql
     assert "ORDER BY (quote_currency, base_currency, rate_date, source)" in sql
-    for column in exchange_rate_tables.EXCHANGE_RATES_COLUMNS:
+    for column in exchange_rate_tables.EXCHANGE_RATES_V2_COLUMNS:
         assert column in sql
 
 
