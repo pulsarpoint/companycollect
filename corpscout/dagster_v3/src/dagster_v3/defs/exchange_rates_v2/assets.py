@@ -1,5 +1,5 @@
 from collections.abc import Iterator, Mapping
-from datetime import date
+from datetime import date, timedelta
 import json
 import os
 from pathlib import Path
@@ -36,7 +36,15 @@ EXCHANGE_RATES_V2_DUCKDB_PATH = Path(
 ).expanduser()
 if not EXCHANGE_RATES_V2_DUCKDB_PATH.is_absolute():
     EXCHANGE_RATES_V2_DUCKDB_PATH = EXCHANGE_RATES_V2_DUCKDB_PATH.resolve()
-EXCHANGE_RATES_V2_PARTITIONS = dg.DailyPartitionsDefinition(start_date="2023-01-01")
+# Monthly (not daily) partitions: this is a tiny daily-grained reference dataset,
+# but per-partition materialization bookkeeping is written to the Postgres event
+# log, so a daily full-history backfill emits ~1265 events and exhausts Postgres
+# connections. Monthly cuts that ~30x while each partition still fetches/builds a
+# whole month of daily rates. end_offset=1 keeps the in-progress current month a
+# valid partition so a daily schedule can refresh month-to-date.
+EXCHANGE_RATES_V2_PARTITIONS = dg.MonthlyPartitionsDefinition(
+    start_date="2023-01-01", end_offset=1
+)
 # single_run: these assets process a whole partition_key_range in one pass (the
 # ECB source fetches start..end in one request, dbt builds the range, and the
 # ClickHouse export delete+inserts the window), so a range backfill should be one
@@ -83,18 +91,25 @@ class ExchangeRatesV2Config(dg.Config):
     currencies: list[str] = ["USD", "NOK", "GBP", "SEK", "DKK"]
 
 
-def day_partition_window(partition_key: str) -> tuple[str, str]:
-    day = date.fromisoformat(partition_key)
-    return day.isoformat(), day.isoformat()
+def month_partition_window(partition_key: str) -> tuple[str, str]:
+    """Map a monthly partition key (first-of-month) to its [first, last] day."""
+    first = date.fromisoformat(partition_key)
+    next_first = (
+        first.replace(year=first.year + 1, month=1)
+        if first.month == 12
+        else first.replace(month=first.month + 1)
+    )
+    last = next_first - timedelta(days=1)
+    return first.isoformat(), last.isoformat()
 
 
-def day_partition_range_window(
+def month_partition_range_window(
     *,
     start_partition_key: str,
     end_partition_key: str,
 ) -> tuple[str, str]:
-    start_date, _ = day_partition_window(start_partition_key)
-    _, end_date = day_partition_window(end_partition_key)
+    start_date, _ = month_partition_window(start_partition_key)
+    _, end_date = month_partition_window(end_partition_key)
     return start_date, end_date
 
 
@@ -283,7 +298,7 @@ def _validate_exchange_rates_v2_duckdb_table(
 
 def _context_partition_range(context: AssetExecutionContext) -> tuple[str, str]:
     partition_key_range = context.partition_key_range
-    return day_partition_range_window(
+    return month_partition_range_window(
         start_partition_key=partition_key_range.start,
         end_partition_key=partition_key_range.end,
     )

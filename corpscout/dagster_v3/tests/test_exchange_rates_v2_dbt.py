@@ -13,6 +13,7 @@ import duckdb
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.definitions import defs as load_project_defs
+from dagster_v3.defs.exchange_rates_v2 import assets as fx_v2_assets
 from dagster_v3.defs.exchange_rates_v2 import source as fx_v2_source
 from dagster_v3.defs.exchange_rates_v2 import tables as fx_v2_tables
 
@@ -104,6 +105,22 @@ def test_exchange_rates_v2_dbt_uses_absolute_default_duckdb_path() -> None:
 
     assert fx_v2_assets.EXCHANGE_RATES_V2_DUCKDB_PATH.is_absolute()
     assert Path(os.environ["EXCHANGE_RATES_V2_DUCKDB_PATH"]).is_absolute()
+
+
+def test_month_partition_window_maps_to_full_month() -> None:
+    # a monthly partition key (first-of-month) -> [first day, last day]
+    assert fx_v2_assets.month_partition_window("2024-02-01") == ("2024-02-01", "2024-02-29")
+    assert fx_v2_assets.month_partition_window("2023-12-01") == ("2023-12-01", "2023-12-31")
+    # a multi-month range spans first-of-start-month .. last-of-end-month
+    assert fx_v2_assets.month_partition_range_window(
+        start_partition_key="2023-01-01", end_partition_key="2026-06-01"
+    ) == ("2023-01-01", "2026-06-30")
+
+
+def test_exchange_rates_v2_uses_monthly_partitions() -> None:
+    assert isinstance(
+        fx_v2_assets.EXCHANGE_RATES_V2_PARTITIONS, dg.MonthlyPartitionsDefinition
+    )
 
 
 def test_quote_currencies_force_usd_only_not_nok() -> None:
