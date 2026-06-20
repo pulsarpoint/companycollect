@@ -49,40 +49,84 @@ class _StubExchangeRates:
         }
 
 
-def test_metrics_scale_and_convert(tmp_path: Path):
-    db_path = tmp_path / "latvia_ur_source.duckdb"
+def _build_native_metrics(db_path: Path) -> None:
     _seed_raw(db_path)
     build_latvia_ur_financial_statements(database_path=db_path, source_run_id="run-1")
+    metrics.build_latvia_ur_financial_metrics(database_path=db_path, source_run_id="run-1")
 
-    stub = _StubExchangeRates()
-    counts = metrics.build_latvia_ur_financial_metrics(
-        database_path=db_path,
-        source_run_id="run-1",
-        exchange_rates=stub,
-    )
-    assert counts["metrics"] == 2
-    # one EUR rate request per distinct period_end_date (both rows are 2016-12-31)
-    assert ("EUR", "2016-12-31") in stub.requested
+
+def test_build_native_metrics_no_usd(tmp_path: Path):
+    db_path = tmp_path / "latvia_ur_source.duckdb"
+    _build_native_metrics(db_path)
 
     wide = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_WIDE_TABLE}"
     with duckdb.connect(str(db_path), read_only=True) as conn:
         row = conn.execute(
             "select revenue_amount_original, revenue_amount_usd, "
             "net_result_amount_original, net_result_amount_usd, fx_rate_to_usd, fx_source, "
-            "total_assets_amount_original, equity_amount_original "
+            "currency, total_assets_amount_original, equity_amount_original "
             f"from {wide} where statement_id = '709390'"
         ).fetchone()
         cols = [r[0] for r in conn.execute(f"describe {wide}").fetchall()]
-    # ONES factor -> revenue 135 EUR; USD = 135 * 1.10 = 148.5
-    assert row[0] == Decimal("135.00")
-    assert row[1] == Decimal("148.50")
-    assert row[2] == Decimal("-3860.00")  # net_income, signed
-    assert row[3] == Decimal("-4246.00")  # -3860 * 1.10
-    assert row[4] == Decimal("1.100000000000")
-    assert row[5] == "TEST"
-    assert row[6] == Decimal("5031.00")  # total_assets
-    assert row[7] == Decimal("-15283.00")  # equity, signed
+    # native scaled originals present; USD/fx left empty by the build step
+    assert row[0] == Decimal("135.00")  # revenue (ONES factor)
+    assert row[1] is None  # revenue_usd not filled yet
+    assert row[2] == Decimal("-3860.00")  # net_result, signed
+    assert row[3] is None  # net_result_usd not filled yet
+    assert row[4] is None  # fx_rate_to_usd
+    assert row[5] == ""  # fx_source empty
+    assert row[6] == "EUR"
+    assert row[7] == Decimal("5031.00")
+    assert row[8] == Decimal("-15283.00")
     assert set(cols) == set(tables.LV_FINANCIAL_METRICS_COLUMNS)
+
+
+def test_usd_conversion_step_fills_usd(tmp_path: Path):
+    db_path = tmp_path / "latvia_ur_source.duckdb"
+    _build_native_metrics(db_path)
+
+    stub = _StubExchangeRates()
+    counts = metrics.apply_latvia_ur_usd_conversion(
+        database_path=db_path,
+        exchange_rates=stub,
+    )
+    assert counts["rate_pairs"] == 1  # both rows are EUR / 2016-12-31
+    assert counts["rates_found"] == 1
+    assert counts["rows_converted"] == 2
+    assert ("EUR", "2016-12-31") in stub.requested
+
+    wide = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_WIDE_TABLE}"
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        row = conn.execute(
+            "select revenue_amount_original, revenue_amount_usd, "
+            "net_result_amount_usd, fx_rate_to_usd, fx_source "
+            f"from {wide} where statement_id = '709390'"
+        ).fetchone()
+    assert row[0] == Decimal("135.00")  # original unchanged
+    assert row[1] == Decimal("148.50")  # 135 * 1.10
+    assert row[2] == Decimal("-4246.00")  # -3860 * 1.10, signed
+    assert row[3] == Decimal("1.100000000000")
+    assert row[4] == "TEST"
+
+
+def test_usd_conversion_no_rates_leaves_usd_null(tmp_path: Path):
+    db_path = tmp_path / "latvia_ur_source.duckdb"
+    _build_native_metrics(db_path)
+
+    class _EmptyRates:
+        def usd_rates(self, requests):
+            return {}
+
+    counts = metrics.apply_latvia_ur_usd_conversion(
+        database_path=db_path, exchange_rates=_EmptyRates()
+    )
+    assert counts["rows_converted"] == 0
+    wide = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_WIDE_TABLE}"
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        usd = conn.execute(
+            f"select revenue_amount_usd from {wide} where statement_id = '709390'"
+        ).fetchone()[0]
+    assert usd is None
 
 
 def test_unknown_rounding_factor_defaults_to_one(tmp_path: Path):
@@ -97,7 +141,6 @@ def test_unknown_rounding_factor_defaults_to_one(tmp_path: Path):
     metrics.build_latvia_ur_financial_metrics(
         database_path=db_path,
         source_run_id="run-1",
-        exchange_rates=_StubExchangeRates(),
     )
     metrics_table = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_WIDE_TABLE}"
     with duckdb.connect(str(db_path), read_only=True) as conn:
@@ -109,12 +152,9 @@ def test_unknown_rounding_factor_defaults_to_one(tmp_path: Path):
 
 def test_export_financial_metrics_replaces_clickhouse_table(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "latvia_ur_source.duckdb"
-    _seed_raw(db_path)
-    build_latvia_ur_financial_statements(database_path=db_path, source_run_id="run-1")
-    metrics.build_latvia_ur_financial_metrics(
-        database_path=db_path,
-        source_run_id="run-1",
-        exchange_rates=_StubExchangeRates(),
+    _build_native_metrics(db_path)
+    metrics.apply_latvia_ur_usd_conversion(
+        database_path=db_path, exchange_rates=_StubExchangeRates()
     )
 
     fake = _FakeClickHouse()

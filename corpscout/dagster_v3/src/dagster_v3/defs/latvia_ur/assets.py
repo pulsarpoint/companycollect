@@ -20,7 +20,10 @@ from dagster_v3.defs.latvia_ur.financials import (
     build_latvia_ur_financial_statements,
     load_latvia_ur_financial_csv,
 )
-from dagster_v3.defs.latvia_ur.metrics import build_latvia_ur_financial_metrics
+from dagster_v3.defs.latvia_ur.metrics import (
+    apply_latvia_ur_usd_conversion,
+    build_latvia_ur_financial_metrics,
+)
 
 GROUP_NAME = "latvia_ur"
 LATVIA_UR_DUCKDB_POOL = "latvia_ur_duckdb"
@@ -307,10 +310,8 @@ def latvia_ur_clickhouse_financial_statements(
 def latvia_ur_financial_metrics_duckdb(
     context: AssetExecutionContext,
 ) -> dg.MaterializeResult:
-    from exchange_rates import ExchangeRateClient
-
     context.log.info(
-        "Building Latvia UR financial metrics: duckdb_path=%s, table=%s.%s",
+        "Building Latvia UR native financial metrics: duckdb_path=%s, table=%s.%s",
         LATVIA_UR_DUCKDB_PATH,
         DLT_DATASET_NAME,
         tables.FINANCIAL_METRICS_WIDE_TABLE,
@@ -318,6 +319,35 @@ def latvia_ur_financial_metrics_duckdb(
     counts = build_latvia_ur_financial_metrics(
         database_path=LATVIA_UR_DUCKDB_PATH,
         source_run_id=context.run_id,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    name="latvia_ur_financial_metrics_usd_duckdb",
+    deps=[dg.AssetKey("latvia_ur_financial_metrics_duckdb")],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=LATVIA_UR_DUCKDB_POOL,
+    description=(
+        "Separate step: fill USD + fx columns on the Latvia metrics table via the "
+        "shared exchange-rate client (no-op-safe when exchange_rates is empty)."
+    ),
+)
+def latvia_ur_financial_metrics_usd_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    from exchange_rates import ExchangeRateClient
+
+    context.log.info(
+        "Applying Latvia UR USD conversion: duckdb_path=%s, table=%s.%s",
+        LATVIA_UR_DUCKDB_PATH,
+        DLT_DATASET_NAME,
+        tables.FINANCIAL_METRICS_WIDE_TABLE,
+    )
+    counts = apply_latvia_ur_usd_conversion(
+        database_path=LATVIA_UR_DUCKDB_PATH,
         exchange_rates=ExchangeRateClient.from_env(),
         log=context.log.info,
     )
@@ -325,7 +355,7 @@ def latvia_ur_financial_metrics_duckdb(
 
 
 @dg.asset(
-    deps=[dg.AssetKey("latvia_ur_financial_metrics_duckdb")],
+    deps=[dg.AssetKey("latvia_ur_financial_metrics_usd_duckdb")],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     pool=LATVIA_UR_DUCKDB_POOL,
