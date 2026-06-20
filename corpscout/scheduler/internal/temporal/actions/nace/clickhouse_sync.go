@@ -13,7 +13,7 @@ import (
 	naceworkflow "github.com/pulsarpoint/corpscout/scheduler/internal/temporal/workflow/nace"
 )
 
-const clickHouseReferenceDatabase = "corpscout_reference"
+const clickHouseReferenceDatabase = "corpscout"
 
 func (a *Actions) SyncNACEToClickHouseActivity(ctx context.Context, input SyncNACEToClickHouseActivityInput) (SyncNACEToClickHouseActivityResult, error) {
 	_ = input

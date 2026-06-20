@@ -1,6 +1,6 @@
-CREATE DATABASE IF NOT EXISTS norway_brreg;
+CREATE DATABASE IF NOT EXISTS corpscout;
 
-CREATE TABLE IF NOT EXISTS norway_brreg.companies
+CREATE TABLE IF NOT EXISTS corpscout.companies
 (
     country_iso2 LowCardinality(String),
     source_slug LowCardinality(String),

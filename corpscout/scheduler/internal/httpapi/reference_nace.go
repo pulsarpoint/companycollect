@@ -42,7 +42,7 @@ func (h *Handlers) handleListReferenceNACE(w http.ResponseWriter, r *http.Reques
 	defer reader.Close()
 
 	revision := parseReferenceNACERevision(r.URL.Query().Get("revision"))
-	rows, err := reader.Query(r.Context(), buildReferenceNACEListQuery("corpscout_reference"), revision)
+	rows, err := reader.Query(r.Context(), buildReferenceNACEListQuery("corpscout"), revision)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "list clickhouse reference nace", "revision", revision, "error", err)
 		writeError(w, http.StatusInternalServerError, "list reference NACE failed")

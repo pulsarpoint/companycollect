@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS reference.exchange_rates;
+DROP TABLE IF EXISTS corpscout.exchange_rates;

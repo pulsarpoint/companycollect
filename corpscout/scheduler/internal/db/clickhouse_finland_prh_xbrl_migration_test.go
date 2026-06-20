@@ -16,12 +16,12 @@ func TestClickHouseFinlandPRHXBRLMigrationShape(t *testing.T) {
 
 	sql := string(up)
 	for _, needle := range []string{
-		"CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prh_xbrl_statement_documents`",
-		"CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prh_xbrl_contexts`",
-		"CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prh_xbrl_units`",
-		"CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prh_xbrl_facts_raw`",
-		"CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prh_xbrl_taxonomy_code_map`",
-		"CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prh_xbrl_metrics_long_v1`",
+		"CREATE TABLE IF NOT EXISTS `corpscout`.`fi_prh_xbrl_statement_documents`",
+		"CREATE TABLE IF NOT EXISTS `corpscout`.`fi_prh_xbrl_contexts`",
+		"CREATE TABLE IF NOT EXISTS `corpscout`.`fi_prh_xbrl_units`",
+		"CREATE TABLE IF NOT EXISTS `corpscout`.`fi_prh_xbrl_facts_raw`",
+		"CREATE TABLE IF NOT EXISTS `corpscout`.`fi_prh_xbrl_taxonomy_code_map`",
+		"CREATE TABLE IF NOT EXISTS `corpscout`.`fi_prh_xbrl_metrics_long_v1`",
 		"`statement_key` String",
 		"`business_id` String",
 		"`financial_date` Date",
@@ -42,12 +42,12 @@ func TestClickHouseFinlandPRHXBRLMigrationShape(t *testing.T) {
 
 	downSQL := string(down)
 	for _, needle := range []string{
-		"DROP TABLE IF EXISTS `corpscout_sources`.`fi_prh_xbrl_metrics_long_v1`",
-		"DROP TABLE IF EXISTS `corpscout_sources`.`fi_prh_xbrl_facts_raw`",
-		"DROP TABLE IF EXISTS `corpscout_sources`.`fi_prh_xbrl_taxonomy_code_map`",
-		"DROP TABLE IF EXISTS `corpscout_sources`.`fi_prh_xbrl_units`",
-		"DROP TABLE IF EXISTS `corpscout_sources`.`fi_prh_xbrl_contexts`",
-		"DROP TABLE IF EXISTS `corpscout_sources`.`fi_prh_xbrl_statement_documents`",
+		"DROP TABLE IF EXISTS `corpscout`.`fi_prh_xbrl_metrics_long_v1`",
+		"DROP TABLE IF EXISTS `corpscout`.`fi_prh_xbrl_facts_raw`",
+		"DROP TABLE IF EXISTS `corpscout`.`fi_prh_xbrl_taxonomy_code_map`",
+		"DROP TABLE IF EXISTS `corpscout`.`fi_prh_xbrl_units`",
+		"DROP TABLE IF EXISTS `corpscout`.`fi_prh_xbrl_contexts`",
+		"DROP TABLE IF EXISTS `corpscout`.`fi_prh_xbrl_statement_documents`",
 	} {
 		require.Contains(t, downSQL, needle)
 	}

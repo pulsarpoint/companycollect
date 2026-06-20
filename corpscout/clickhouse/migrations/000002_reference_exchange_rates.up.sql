@@ -1,6 +1,6 @@
-CREATE DATABASE IF NOT EXISTS reference;
+CREATE DATABASE IF NOT EXISTS corpscout;
 
-CREATE TABLE IF NOT EXISTS reference.exchange_rates
+CREATE TABLE IF NOT EXISTS corpscout.exchange_rates
 (
     rate_date Date,
     base_currency LowCardinality(String),

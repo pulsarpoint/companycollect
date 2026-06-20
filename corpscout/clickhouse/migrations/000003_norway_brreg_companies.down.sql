@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS norway_brreg.companies;
+DROP TABLE IF EXISTS corpscout.companies;

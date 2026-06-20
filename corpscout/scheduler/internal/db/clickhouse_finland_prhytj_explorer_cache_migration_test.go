@@ -15,13 +15,13 @@ func TestClickHouseFinlandPRHYTJExplorerCacheMigrationShape(t *testing.T) {
 	require.NoError(t, err)
 
 	sql := string(up)
-	require.Contains(t, sql, "CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prhytj_company_explorer_cache`")
+	require.Contains(t, sql, "CREATE TABLE IF NOT EXISTS `corpscout`.`fi_prhytj_company_explorer_cache`")
 	require.Contains(t, sql, "ENGINE = MergeTree")
 	require.Contains(t, sql, "ORDER BY (`business_id`)")
 	require.Contains(t, sql, "allow_nullable_key = 1")
-	require.Contains(t, sql, "FROM `corpscout_sources`.`fi_prhytj_company_explorer`")
+	require.Contains(t, sql, "FROM `corpscout`.`fi_prhytj_company_explorer`")
 	require.Contains(t, sql, "now64(3, 'UTC') AS refreshed_at")
-	require.Contains(t, string(down), "DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_company_explorer_cache`")
+	require.Contains(t, string(down), "DROP TABLE IF EXISTS `corpscout`.`fi_prhytj_company_explorer_cache`")
 }
 
 func TestClickHouseFinlandPRHYTJExplorerCacheBackfillMigrationShape(t *testing.T) {
@@ -31,11 +31,11 @@ func TestClickHouseFinlandPRHYTJExplorerCacheBackfillMigrationShape(t *testing.T
 	require.NoError(t, err)
 
 	sql := string(up)
-	require.Contains(t, sql, "TRUNCATE TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_company_explorer_cache`")
-	require.Contains(t, sql, "INSERT INTO `corpscout_sources`.`fi_prhytj_company_explorer_cache`")
-	require.Contains(t, sql, "FROM `corpscout_sources`.`fi_prhytj_company_explorer`")
+	require.Contains(t, sql, "TRUNCATE TABLE IF EXISTS `corpscout`.`fi_prhytj_company_explorer_cache`")
+	require.Contains(t, sql, "INSERT INTO `corpscout`.`fi_prhytj_company_explorer_cache`")
+	require.Contains(t, sql, "FROM `corpscout`.`fi_prhytj_company_explorer`")
 	require.Contains(t, sql, "now64(3, 'UTC') AS `refreshed_at`")
-	require.Contains(t, string(down), "TRUNCATE TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_company_explorer_cache`")
+	require.Contains(t, string(down), "TRUNCATE TABLE IF EXISTS `corpscout`.`fi_prhytj_company_explorer_cache`")
 }
 
 func TestClickHouseFinlandPRHYTJIndustryNACEMappingMigrationShape(t *testing.T) {
@@ -46,7 +46,7 @@ func TestClickHouseFinlandPRHYTJIndustryNACEMappingMigrationShape(t *testing.T) 
 
 	sql := string(up)
 	for _, needle := range []string{
-		"CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prhytj_industry_nace_mappings`",
+		"CREATE TABLE IF NOT EXISTS `corpscout`.`fi_prhytj_industry_nace_mappings`",
 		"`source_code_set` Nullable(String)",
 		"`source_code` Nullable(String)",
 		"`source_code_prefix4` Nullable(String)",
@@ -67,7 +67,7 @@ func TestClickHouseFinlandPRHYTJIndustryNACEMappingMigrationShape(t *testing.T) 
 	} {
 		require.Contains(t, sql, needle)
 	}
-	require.Contains(t, string(down), "DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_industry_nace_mappings`")
+	require.Contains(t, string(down), "DROP TABLE IF EXISTS `corpscout`.`fi_prhytj_industry_nace_mappings`")
 	require.Contains(t, string(down), "DROP COLUMN IF EXISTS `nace_revision`")
 	require.Contains(t, string(down), "DROP COLUMN IF EXISTS `nace_mapping_status`")
 }

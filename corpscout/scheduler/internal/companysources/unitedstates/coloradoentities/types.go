@@ -8,7 +8,7 @@ const (
 	SourceName   = "Colorado Business Entities"
 	StateCode    = "CO"
 	countryISO2  = "US"
-	databaseName = "corpscout_sources"
+	databaseName = "corpscout"
 )
 
 type ColoradoEntityRecord struct {

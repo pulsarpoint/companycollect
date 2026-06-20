@@ -62,9 +62,9 @@ func TestListSourcesReturnsReadOnlySourceMetadata(t *testing.T) {
 		RegistryKey:           "finland/prhytj",
 		Enabled:               true,
 		AuthRequired:          false,
-		InputTableName:        "corpscout_sources.fi_prhytj_*",
+		InputTableName:        "corpscout.fi_prhytj_*",
 		StorageKind:           "clickhouse",
-		ClickhouseDatabase:    "corpscout_sources",
+		ClickhouseDatabase:    "corpscout",
 		ClickhouseTablePrefix: "fi_prhytj",
 		SourceUrl:             "https://avoindata.prh.fi/opendata-ytj-api/v3/companies",
 		DocsUrl:               "https://www.prh.fi/en/kaupparekisteri/tietopalvelut/open_data.html",
@@ -88,7 +88,7 @@ func TestListSourcesReturnsReadOnlySourceMetadata(t *testing.T) {
 	require.Equal(t, "finland/prhytj", body[0]["registry_key"])
 	require.Equal(t, false, body[0]["auth_required"])
 	require.Equal(t, "clickhouse", body[0]["storage_kind"])
-	require.Equal(t, "corpscout_sources", body[0]["clickhouse_database"])
+	require.Equal(t, "corpscout", body[0]["clickhouse_database"])
 	require.Equal(t, "fi_prhytj", body[0]["clickhouse_table_prefix"])
 	require.Equal(t, "https://avoindata.prh.fi/opendata-ytj-api/v3/companies", body[0]["source_url"])
 	require.Equal(t, "https://www.prh.fi/en/kaupparekisteri/tietopalvelut/open_data.html", body[0]["docs_url"])
@@ -110,10 +110,10 @@ func TestGetSourceReturnsReadOnlySourceMetadata(t *testing.T) {
 		Country:               "norway",
 		Source:                "brreg",
 		RegistryKey:           "norway/brreg",
-		InputTableName:        "corpscout_sources.brreg_*",
+		InputTableName:        "corpscout.brreg_*",
 		AuthRequired:          true,
 		StorageKind:           "clickhouse",
-		ClickhouseDatabase:    "corpscout_sources",
+		ClickhouseDatabase:    "corpscout",
 		ClickhouseTablePrefix: "brreg",
 		SourceUrl:             "https://data.brreg.no/",
 		DocsUrl:               "https://data.brreg.no/",

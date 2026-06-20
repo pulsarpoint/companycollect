@@ -7,7 +7,7 @@ const (
 	SourceSlug   = "united_states_sec_edgar"
 	SourceName   = "SEC EDGAR company tickers"
 	countryISO2  = "US"
-	databaseName = "corpscout_sources"
+	databaseName = "corpscout"
 )
 
 type CompanyTickerRecord struct {

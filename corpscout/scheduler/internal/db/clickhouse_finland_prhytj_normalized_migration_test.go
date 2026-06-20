@@ -20,10 +20,10 @@ func TestClickHouseFinlandPRHYTJNormalizedMigrationReplacesOldTables(t *testing.
 
 	upSQL := string(up)
 	downSQL := string(down)
-	require.Contains(t, upSQL, "DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_raw_records`")
-	require.Contains(t, upSQL, "DROP TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_companies`")
-	require.NotContains(t, upSQL, "CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prhytj_raw_records`")
-	require.NotContains(t, upSQL, "CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prhytj_companies`")
+	require.Contains(t, upSQL, "DROP TABLE IF EXISTS `corpscout`.`fi_prhytj_raw_records`")
+	require.Contains(t, upSQL, "DROP TABLE IF EXISTS `corpscout`.`fi_prhytj_companies`")
+	require.NotContains(t, upSQL, "CREATE TABLE IF NOT EXISTS `corpscout`.`fi_prhytj_raw_records`")
+	require.NotContains(t, upSQL, "CREATE TABLE IF NOT EXISTS `corpscout`.`fi_prhytj_companies`")
 
 	for _, table := range []string{
 		"fi_prhytj_identifiers",
@@ -41,9 +41,9 @@ func TestClickHouseFinlandPRHYTJNormalizedMigrationReplacesOldTables(t *testing.
 		"fi_prhytj_addresses",
 		"fi_prhytj_address_post_offices",
 	} {
-		require.Contains(t, upSQL, "CREATE TABLE IF NOT EXISTS `corpscout_sources`.`"+table+"`")
-		require.Contains(t, downSQL, "DROP TABLE IF EXISTS `corpscout_sources`.`"+table+"`")
+		require.Contains(t, upSQL, "CREATE TABLE IF NOT EXISTS `corpscout`.`"+table+"`")
+		require.Contains(t, downSQL, "DROP TABLE IF EXISTS `corpscout`.`"+table+"`")
 	}
 
-	require.Equal(t, 14, strings.Count(upSQL, "CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prhytj_"))
+	require.Equal(t, 14, strings.Count(upSQL, "CREATE TABLE IF NOT EXISTS `corpscout`.`fi_prhytj_"))
 }

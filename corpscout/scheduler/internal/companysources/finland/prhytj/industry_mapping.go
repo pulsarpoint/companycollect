@@ -14,7 +14,7 @@ import (
 
 const (
 	IndustryNACEMappingTable = "fi_prhytj_industry_nace_mappings"
-	naceReferenceDatabase    = "corpscout_reference"
+	naceReferenceDatabase    = "corpscout"
 	naceCodesTable           = "nace_codes"
 )
 

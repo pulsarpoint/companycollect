@@ -66,7 +66,7 @@ func TestSyncUpsertsAndPrunesCatalogSources(t *testing.T) {
 		"united_states/irseobmf",
 		"united_states/secedgar",
 	}, store.pruned)
-	require.Equal(t, "corpscout_sources", store.upserts[0].ClickhouseDatabase)
+	require.Equal(t, "corpscout", store.upserts[0].ClickhouseDatabase)
 
 	var prhXBRLAction db.UpsertDataSourceActionFromCatalogParams
 	var foundPRHXBRLAction bool

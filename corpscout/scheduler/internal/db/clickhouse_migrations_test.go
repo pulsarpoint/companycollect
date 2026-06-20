@@ -18,9 +18,9 @@ func TestClickHouseInitialMigrationOnlyCreatesSourcesDatabase(t *testing.T) {
 	down, err := os.ReadFile(downPath)
 	require.NoError(t, err)
 
-	require.Contains(t, string(up), "CREATE DATABASE IF NOT EXISTS corpscout_sources")
+	require.Contains(t, string(up), "CREATE DATABASE IF NOT EXISTS corpscout")
 	require.NotContains(t, string(up), "corpscout_projection")
 	require.Equal(t, 1, strings.Count(string(up), "CREATE DATABASE"))
-	require.Contains(t, string(down), "DROP DATABASE IF EXISTS corpscout_sources")
+	require.Contains(t, string(down), "DROP DATABASE IF EXISTS corpscout")
 	require.NotContains(t, string(down), "corpscout_projection")
 }

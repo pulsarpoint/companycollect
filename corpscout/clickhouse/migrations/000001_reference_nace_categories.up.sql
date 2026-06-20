@@ -1,6 +1,6 @@
-CREATE DATABASE IF NOT EXISTS reference;
+CREATE DATABASE IF NOT EXISTS corpscout;
 
-CREATE TABLE IF NOT EXISTS reference.nace_categories
+CREATE TABLE IF NOT EXISTS corpscout.nace_categories
 (
     classification_version LowCardinality(String),
     code String,

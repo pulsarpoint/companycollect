@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS corpscout.gleif_code_list_entries;
+DROP TABLE IF EXISTS corpscout.gleif_lei_issuers;
+DROP TABLE IF EXISTS corpscout.gleif_lei_reporting_exceptions;
+DROP TABLE IF EXISTS corpscout.gleif_lei_relationship_periods;
+DROP TABLE IF EXISTS corpscout.gleif_lei_relationships;
+DROP TABLE IF EXISTS corpscout.gleif_lei_identifiers;
+DROP TABLE IF EXISTS corpscout.gleif_lei_addresses;
+DROP TABLE IF EXISTS corpscout.gleif_lei_names;
+DROP TABLE IF EXISTS corpscout.gleif_lei_records;

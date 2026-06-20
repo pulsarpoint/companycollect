@@ -325,7 +325,7 @@ LIMIT 1000`
 }
 
 func buildSourceExplorerIndustryFilterOptionsQuery(table string) string {
-	naceReferenceTable := ch.QualifiedTable("corpscout_reference", "nace_codes")
+	naceReferenceTable := ch.QualifiedTable("corpscout", "nace_codes")
 	return `SELECT
   id,
   kind,

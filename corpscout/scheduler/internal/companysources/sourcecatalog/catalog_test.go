@@ -86,7 +86,7 @@ func TestSourceSpecAllowsStatementManifestFile(t *testing.T) {
 		InputTableName:        "financial_xbrl.finland_prh_xbrl_*",
 		Enabled:               true,
 		StorageKind:           "clickhouse",
-		ClickHouseDatabase:    "corpscout_sources",
+		ClickHouseDatabase:    "corpscout",
 		ClickHouseTablePrefix: "fi_prh_xbrl",
 		SourceURL:             "https://avoindata.prh.fi/opendata-xbrl-api/v3",
 		DocsURL:               "https://avoindata.prh.fi/en",

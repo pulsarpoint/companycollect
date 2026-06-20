@@ -101,7 +101,7 @@ func TestCompanyExplorerViewMigrationShape(t *testing.T) {
 	require.NoError(t, err)
 	sql := string(body)
 
-	require.Contains(t, sql, "CREATE OR REPLACE VIEW `corpscout_sources`.`fi_prhytj_company_explorer`")
+	require.Contains(t, sql, "CREATE OR REPLACE VIEW `corpscout`.`fi_prhytj_company_explorer`")
 	for _, column := range []string{
 		"business_id",
 		"name",
@@ -143,7 +143,7 @@ func migrationColumnsAndTypes(sql string) map[string]map[string]string {
 	var currentTable string
 	for _, line := range strings.Split(sql, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "CREATE TABLE IF NOT EXISTS `corpscout_sources`.`fi_prhytj_") {
+		if strings.HasPrefix(trimmed, "CREATE TABLE IF NOT EXISTS `corpscout`.`fi_prhytj_") {
 			parts := strings.Split(trimmed, "`")
 			if len(parts) >= 4 {
 				currentTable = parts[3]

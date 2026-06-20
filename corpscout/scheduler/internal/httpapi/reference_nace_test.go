@@ -6,9 +6,9 @@ import (
 )
 
 func TestBuildReferenceNACEListQuery(t *testing.T) {
-	query := buildReferenceNACEListQuery("corpscout_reference")
+	query := buildReferenceNACEListQuery("corpscout")
 	for _, needle := range []string{
-		"FROM `corpscout_reference`.`nace_codes`",
+		"FROM `corpscout`.`nace_codes`",
 		"WHERE revision = ?",
 		"active = true",
 		"ORDER BY level ASC, normalized_code ASC",

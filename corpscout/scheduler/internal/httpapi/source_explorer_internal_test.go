@@ -17,7 +17,7 @@ func TestSourceExplorerCompanyOrderByKeepsBlankNamesLast(t *testing.T) {
 }
 
 func TestBuildSourceExplorerCompanyListQueryRejectsUnsupportedSort(t *testing.T) {
-	_, _, err := buildSourceExplorerCompanyListQuery("`corpscout_sources`.`fi_prhytj_company_explorer`", sourceExplorerCompanyQuery{
+	_, _, err := buildSourceExplorerCompanyListQuery("`corpscout`.`fi_prhytj_company_explorer`", sourceExplorerCompanyQuery{
 		Limit:     50,
 		Direction: "asc",
 		Sort:      "name; DROP TABLE companies",
@@ -28,7 +28,7 @@ func TestBuildSourceExplorerCompanyListQueryRejectsUnsupportedSort(t *testing.T)
 }
 
 func TestBuildSourceExplorerCompanyListQueryUsesSearchAndActiveFilters(t *testing.T) {
-	query, args, err := buildSourceExplorerCompanyListQuery("`corpscout_sources`.`fi_prhytj_company_explorer`", sourceExplorerCompanyQuery{
+	query, args, err := buildSourceExplorerCompanyListQuery("`corpscout`.`fi_prhytj_company_explorer`", sourceExplorerCompanyQuery{
 		Limit:     50,
 		Search:    "dynava",
 		Active:    "true",
@@ -53,7 +53,7 @@ func TestBuildSourceExplorerCompanyListQueryUsesSearchAndActiveFilters(t *testin
 }
 
 func TestBuildSourceExplorerCompanyListQueryUsesCompanyFormFilters(t *testing.T) {
-	query, args, err := buildSourceExplorerCompanyListQuery("`corpscout_sources`.`fi_prhytj_company_explorer_cache`", sourceExplorerCompanyQuery{
+	query, args, err := buildSourceExplorerCompanyListQuery("`corpscout`.`fi_prhytj_company_explorer_cache`", sourceExplorerCompanyQuery{
 		Limit:            50,
 		CompanyFormCodes: []string{"16", "26"},
 		Sort:             "name",
@@ -74,7 +74,7 @@ func TestBuildSourceExplorerCompanyListQueryUsesCompanyFormFilters(t *testing.T)
 }
 
 func TestBuildSourceExplorerCompanyListQueryUsesIndustryNACEFilters(t *testing.T) {
-	query, args, err := buildSourceExplorerCompanyListQuery("`corpscout_sources`.`fi_prhytj_company_explorer_cache`", sourceExplorerCompanyQuery{
+	query, args, err := buildSourceExplorerCompanyListQuery("`corpscout`.`fi_prhytj_company_explorer_cache`", sourceExplorerCompanyQuery{
 		Limit:        50,
 		IndustryNACE: []string{"68", "68.20", "L"},
 		Sort:         "name",
@@ -106,7 +106,7 @@ func TestBuildSourceExplorerCompanyListQueryUsesIndustryNACEFilters(t *testing.T
 }
 
 func TestBuildSourceExplorerCompanyListQueryUsesSourceIndustryFilters(t *testing.T) {
-	query, args, err := buildSourceExplorerCompanyListQuery("`corpscout_sources`.`fi_prhytj_company_explorer_cache`", sourceExplorerCompanyQuery{
+	query, args, err := buildSourceExplorerCompanyListQuery("`corpscout`.`fi_prhytj_company_explorer_cache`", sourceExplorerCompanyQuery{
 		Limit: 50,
 		SourceIndustries: []sourceExplorerSourceIndustryFilter{
 			{CodeSet: "TOIMI4", Code: "68203"},
@@ -156,12 +156,12 @@ func TestParseSourceExplorerSourceIndustriesSkipsInvalidValues(t *testing.T) {
 }
 
 func TestBuildSourceExplorerFormFilterOptionsQueryUsesCacheTable(t *testing.T) {
-	query := buildSourceExplorerFormFilterOptionsQuery("`corpscout_sources`.`fi_prhytj_company_explorer_cache`")
+	query := buildSourceExplorerFormFilterOptionsQuery("`corpscout`.`fi_prhytj_company_explorer_cache`")
 	for _, needle := range []string{
 		"company_form_code",
 		"company_form_description_en",
 		"GROUP BY form_code",
-		"FROM `corpscout_sources`.`fi_prhytj_company_explorer_cache`",
+		"FROM `corpscout`.`fi_prhytj_company_explorer_cache`",
 	} {
 		if !strings.Contains(query, needle) {
 			t.Fatalf("buildSourceExplorerFormFilterOptionsQuery() = %q, missing %q", query, needle)
@@ -170,11 +170,11 @@ func TestBuildSourceExplorerFormFilterOptionsQueryUsesCacheTable(t *testing.T) {
 }
 
 func TestBuildSourceExplorerIndustryFilterOptionsQueryUsesNACEAndSourceIndustryOptions(t *testing.T) {
-	query := buildSourceExplorerIndustryFilterOptionsQuery("`corpscout_sources`.`fi_prhytj_company_explorer_cache`")
+	query := buildSourceExplorerIndustryFilterOptionsQuery("`corpscout`.`fi_prhytj_company_explorer_cache`")
 	for _, needle := range []string{
 		"'nace' AS kind",
 		"'source_industry' AS kind",
-		"`corpscout_reference`.`nace_codes`",
+		"`corpscout`.`nace_codes`",
 		"nace_division_code",
 		"main_business_line_code_set",
 		"company_count",

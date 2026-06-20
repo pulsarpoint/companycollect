@@ -12,7 +12,7 @@ func TestImportRequiresSelectedSourceFile(t *testing.T) {
 	_, err := Source{}.Import(context.Background(), companysources.ImportOptions{
 		RunDir:              t.TempDir(),
 		Files:               []companysources.SelectedSourceFile{{FileKey: "metadata", Path: "/tmp/metadata.json"}},
-		ClickHouseNativeURL: "clickhouse://companycollect:9002?username=default&database=corpscout_sources",
+		ClickHouseNativeURL: "clickhouse://companycollect:9002?username=default&database=corpscout",
 	})
 
 	require.Error(t, err)

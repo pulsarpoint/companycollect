@@ -25,8 +25,8 @@ func TestClickHouseUSASourceMigrationCreatesRawAndCompanyTables(t *testing.T) {
 		"us_secedgar_raw_records",
 		"us_secedgar_companies",
 	} {
-		require.Contains(t, string(up), "CREATE TABLE IF NOT EXISTS `corpscout_sources`.`"+table+"`")
-		require.Contains(t, string(down), "DROP TABLE IF EXISTS `corpscout_sources`.`"+table+"`;")
+		require.Contains(t, string(up), "CREATE TABLE IF NOT EXISTS `corpscout`.`"+table+"`")
+		require.Contains(t, string(down), "DROP TABLE IF EXISTS `corpscout`.`"+table+"`;")
 	}
 	require.Contains(t, string(up), "`raw_payload_json` Nullable(String)")
 	require.Contains(t, string(up), "`source_export_id` UUID")

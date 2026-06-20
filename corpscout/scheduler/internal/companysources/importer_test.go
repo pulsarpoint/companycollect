@@ -41,7 +41,7 @@ func TestImportRunCallsRegisteredSource(t *testing.T) {
 		Source:              "prhytj",
 		RunDir:              "/tmp/run",
 		Files:               files,
-		ClickHouseNativeURL: "clickhouse://companycollect:9002?username=default&database=corpscout_sources",
+		ClickHouseNativeURL: "clickhouse://companycollect:9002?username=default&database=corpscout",
 	})
 
 	require.NoError(t, err)

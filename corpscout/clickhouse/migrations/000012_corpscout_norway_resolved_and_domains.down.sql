@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS corpscout.domains;
 DROP TABLE IF EXISTS corpscout.country_domains;
 DROP TABLE IF EXISTS corpscout.company_website_domains;
 DROP TABLE IF EXISTS corpscout.no_financial_statements;

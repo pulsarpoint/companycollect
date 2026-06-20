@@ -7,7 +7,7 @@ const (
 	SourceSlug   = "united_states_irs_eo_bmf"
 	SourceName   = "IRS Exempt Organizations Business Master File (EO BMF)"
 	countryISO2  = "US"
-	databaseName = "corpscout_sources"
+	databaseName = "corpscout"
 )
 
 type IrsEoBmfRecord struct {

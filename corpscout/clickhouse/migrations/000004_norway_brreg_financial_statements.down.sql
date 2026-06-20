@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS norway_brreg.financial_statements;
+DROP TABLE IF EXISTS corpscout.financial_statements;

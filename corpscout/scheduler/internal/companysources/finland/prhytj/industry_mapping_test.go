@@ -10,12 +10,12 @@ import (
 
 func TestBuildIndustryNACEMappingInsertQuery(t *testing.T) {
 	mappedAt := time.Date(2026, 6, 10, 13, 10, 5, 987000000, time.UTC)
-	query := buildIndustryNACEMappingInsertQuery("corpscout_sources", "fi_prhytj_industry_nace_mappings_refresh_test", mappedAt)
+	query := buildIndustryNACEMappingInsertQuery("corpscout", "fi_prhytj_industry_nace_mappings_refresh_test", mappedAt)
 
-	require.Contains(t, query, "INSERT INTO `corpscout_sources`.`fi_prhytj_industry_nace_mappings_refresh_test`")
-	require.Contains(t, query, "`corpscout_sources`.`fi_prhytj_business_lines`")
-	require.Contains(t, query, "`corpscout_sources`.`fi_prhytj_business_line_descriptions`")
-	require.Contains(t, query, "`corpscout_reference`.`nace_codes`")
+	require.Contains(t, query, "INSERT INTO `corpscout`.`fi_prhytj_industry_nace_mappings_refresh_test`")
+	require.Contains(t, query, "`corpscout`.`fi_prhytj_business_lines`")
+	require.Contains(t, query, "`corpscout`.`fi_prhytj_business_line_descriptions`")
+	require.Contains(t, query, "`corpscout`.`nace_codes`")
 	require.Contains(t, query, "source_code_set = 'TOIMI4', '2.1'")
 	require.Contains(t, query, "source_code_set = 'TOIMI3', '2'")
 	require.Contains(t, query, "toDateTime64('2026-06-10 13:10:05.987', 3, 'UTC') AS `mapped_at`")

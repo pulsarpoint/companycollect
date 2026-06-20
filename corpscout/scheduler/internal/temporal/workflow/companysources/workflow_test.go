@@ -264,7 +264,7 @@ func TestRefreshSourceExplorerCacheRunsActivity(t *testing.T) {
 		return RefreshSourceExplorerCacheResult{
 			ActionRunID: "action-run-1",
 			SourceName:  "finland_prhytj",
-			CacheTable:  "corpscout_sources.fi_prhytj_company_explorer_cache",
+			CacheTable:  "corpscout.fi_prhytj_company_explorer_cache",
 			Rows:        2,
 			RefreshedAt: "2026-06-10T10:00:00Z",
 		}, nil
@@ -281,7 +281,7 @@ func TestRefreshSourceExplorerCacheRunsActivity(t *testing.T) {
 	var result RefreshSourceExplorerCacheResult
 	require.NoError(t, env.GetWorkflowResult(&result))
 	require.Equal(t, uint64(2), result.Rows)
-	require.Equal(t, "corpscout_sources.fi_prhytj_company_explorer_cache", result.CacheTable)
+	require.Equal(t, "corpscout.fi_prhytj_company_explorer_cache", result.CacheTable)
 }
 
 func TestMapSourceIndustriesToNACERunsActivity(t *testing.T) {
@@ -298,7 +298,7 @@ func TestMapSourceIndustriesToNACERunsActivity(t *testing.T) {
 		return MapSourceIndustriesToNACEResult{
 			ActionRunID:  "action-run-1",
 			SourceName:   "finland_prhytj",
-			MappingTable: "corpscout_sources.fi_prhytj_industry_nace_mappings",
+			MappingTable: "corpscout.fi_prhytj_industry_nace_mappings",
 			Rows:         3,
 			MappedRows:   2,
 			UnmappedRows: 1,
@@ -317,7 +317,7 @@ func TestMapSourceIndustriesToNACERunsActivity(t *testing.T) {
 	var result MapSourceIndustriesToNACEResult
 	require.NoError(t, env.GetWorkflowResult(&result))
 	require.Equal(t, uint64(2), result.MappedRows)
-	require.Equal(t, "corpscout_sources.fi_prhytj_industry_nace_mappings", result.MappingTable)
+	require.Equal(t, "corpscout.fi_prhytj_industry_nace_mappings", result.MappingTable)
 }
 
 func TestDownloadSourceRejectsPreparedActionRunMismatch(t *testing.T) {

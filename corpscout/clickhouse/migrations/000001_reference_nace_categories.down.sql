@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS reference.nace_categories;
+DROP TABLE IF EXISTS corpscout.nace_categories;

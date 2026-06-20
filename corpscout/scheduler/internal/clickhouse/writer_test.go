@@ -11,35 +11,35 @@ import (
 )
 
 func TestParseNativeURL(t *testing.T) {
-	target, err := ParseNativeURL("clickhouse://companycollect:9002?username=default&password=change-me&database=corpscout_sources")
+	target, err := ParseNativeURL("clickhouse://companycollect:9002?username=default&password=change-me&database=corpscout")
 	require.NoError(t, err)
 	require.Equal(t, Target{
 		Host:     "companycollect",
 		Port:     "9002",
 		Username: "default",
 		Password: "change-me",
-		Database: "corpscout_sources",
+		Database: "corpscout",
 	}, target)
 }
 
 func TestBuildInsertQuery(t *testing.T) {
-	query := BuildInsertQuery("corpscout_sources", "fi_prhytj_identifiers", []string{"business_id", "identifier_value"})
-	require.Equal(t, "INSERT INTO `corpscout_sources`.`fi_prhytj_identifiers` (`business_id`, `identifier_value`)", query)
+	query := BuildInsertQuery("corpscout", "fi_prhytj_identifiers", []string{"business_id", "identifier_value"})
+	require.Equal(t, "INSERT INTO `corpscout`.`fi_prhytj_identifiers` (`business_id`, `identifier_value`)", query)
 }
 
 func TestBuildInsertQuerySupportsReferenceDatabase(t *testing.T) {
-	query := BuildInsertQuery("corpscout_reference", "nace_codes", []string{"revision", "code"})
-	require.Equal(t, "INSERT INTO `corpscout_reference`.`nace_codes` (`revision`, `code`)", query)
+	query := BuildInsertQuery("corpscout", "nace_codes", []string{"revision", "code"})
+	require.Equal(t, "INSERT INTO `corpscout`.`nace_codes` (`revision`, `code`)", query)
 }
 
 func TestBuildTruncateQuery(t *testing.T) {
-	query := BuildTruncateQuery("corpscout_sources", "fi_prhytj_identifiers")
-	require.Equal(t, "TRUNCATE TABLE IF EXISTS `corpscout_sources`.`fi_prhytj_identifiers`", query)
+	query := BuildTruncateQuery("corpscout", "fi_prhytj_identifiers")
+	require.Equal(t, "TRUNCATE TABLE IF EXISTS `corpscout`.`fi_prhytj_identifiers`", query)
 }
 
 func TestBuildTruncateQuerySupportsReferenceDatabase(t *testing.T) {
-	query := BuildTruncateQuery("corpscout_reference", "nace_codes")
-	require.Equal(t, "TRUNCATE TABLE IF EXISTS `corpscout_reference`.`nace_codes`", query)
+	query := BuildTruncateQuery("corpscout", "nace_codes")
+	require.Equal(t, "TRUNCATE TABLE IF EXISTS `corpscout`.`nace_codes`", query)
 }
 
 func TestInsertValuesFollowColumnOrder(t *testing.T) {

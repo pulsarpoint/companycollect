@@ -21,8 +21,8 @@ func TestClickHouseResolvedFinlandMigrationCreatesResolvedTables(t *testing.T) {
 	upSQL := string(up)
 	downSQL := string(down)
 
-	require.Contains(t, upSQL, "CREATE DATABASE IF NOT EXISTS `corpscout_resolved`")
-	require.NotContains(t, downSQL, "DROP DATABASE IF EXISTS `corpscout_resolved`")
+	require.Contains(t, upSQL, "CREATE DATABASE IF NOT EXISTS `corpscout`")
+	require.NotContains(t, downSQL, "DROP DATABASE IF EXISTS `corpscout`")
 
 	for _, table := range []string{
 		"fi_companies",
@@ -34,8 +34,8 @@ func TestClickHouseResolvedFinlandMigrationCreatesResolvedTables(t *testing.T) {
 		"fi_financial_statements",
 		"fi_financial_metrics",
 	} {
-		require.Contains(t, upSQL, "CREATE TABLE IF NOT EXISTS `corpscout_resolved`.`"+table+"`")
-		require.Contains(t, downSQL, "DROP TABLE IF EXISTS `corpscout_resolved`.`"+table+"`")
+		require.Contains(t, upSQL, "CREATE TABLE IF NOT EXISTS `corpscout`.`"+table+"`")
+		require.Contains(t, downSQL, "DROP TABLE IF EXISTS `corpscout`.`"+table+"`")
 	}
 
 	for _, column := range []string{
