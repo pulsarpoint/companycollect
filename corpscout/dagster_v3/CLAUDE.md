@@ -50,9 +50,13 @@ When adding a source, mirror the nearest existing module: `finland_ytj` (registe
   malformed row can't crash the load. Never `split(';')`.
 
 ## Partitions & backfills
-- For reference/time-series data use **`MonthlyPartitionsDefinition`**, not daily. Dagster writes one
-  materialization event per partition to the Postgres event log; daily-over-years = thousands of events →
-  connection storms. `end_offset=1` keeps the in-progress current month valid for a refresh schedule.
+- **Don't partition at all if the whole dataset comes back in one request.** `exchange_rates_v2` pulls every
+  ECB reference currency's full multi-year history in a single ~1 MB call, so it's a *non-partitioned*
+  full-refresh asset on a daily schedule — partitions only added event-log churn and backfill ceremony for
+  nothing. Partition only when per-period fetching/bookkeeping is actually needed (large per-period source data).
+- For reference/time-series data that *does* need partitioning use **`MonthlyPartitionsDefinition`**, not daily.
+  Dagster writes one materialization event per partition to the Postgres event log; daily-over-years = thousands
+  of events → connection storms. `end_offset=1` keeps the in-progress current month valid for a refresh schedule.
 - Backfill policy: **`BackfillPolicy.multi_run(max_partitions_per_run=1)` + a per-source op pool.** A UI/daemon
   backfill then runs partitions throttled, one small run each — no connection spike. **Do NOT use
   `single_run()`** (one giant run = event-log connection storm); it only exists to enable
