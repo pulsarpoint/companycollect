@@ -30,56 +30,13 @@ Postgres 17 (ppoint-postgres) — also serves temporal / corpscout directly
 ## Phase 1 — Deploy PgBouncer next to Postgres
 
 **Files (on `companycollect`, in the compose stack dir `/opt/corpscout_db`):**
-- Create: `pgbouncer/pgbouncer.ini`
-- Create: `pgbouncer/userlist.txt`
-- Modify: the compose file (add a `pgbouncer` service)
+- Modify: the compose file (add a `pgbouncer` service — no separate config files needed)
 
-### Task 1: PgBouncer config
+**Auth approach (simplified):** the `edoburu/pgbouncer` image generates its own `pgbouncer.ini` + userlist from env vars, so it reads the **plaintext** `CORPSCOUT_USER` / `CORPSCOUT_PASSWORD` already in the server's compose `.env`. No SCRAM-hash extraction, no hand-maintained `userlist.txt`. Dagster then connects through PgBouncer **as `corpscout`** (the container superuser, full access to the `dagster` DB). *Least-privilege alternative:* keep Dagster connecting as the `dagster` user and configure PgBouncer with `auth_user=corpscout` + `auth_query` — more config, deferred.
 
-- [ ] **Step 1: Get the dagster role's SCRAM hash** (so PgBouncer can auth without storing a plaintext password). `corpscout` is the container superuser:
+### Task 1: PgBouncer service (env-driven)
 
-```bash
-docker exec ppoint-postgres psql -U corpscout -tAc \
-  "SELECT '\"'||rolname||'\" \"'||rolpassword||'\"' FROM pg_authid WHERE rolname='dagster';"
-```
-Copy the output line (looks like `"dagster" "SCRAM-SHA-256$4096:...=$...:..."`).
-
-- [ ] **Step 2: Create `pgbouncer/userlist.txt`** with that line:
-
-```
-"dagster" "SCRAM-SHA-256$4096:....=$....:...."
-```
-
-- [ ] **Step 3: Create `pgbouncer/pgbouncer.ini`:**
-
-```ini
-[databases]
-dagster = host=ppoint-postgres port=5432 dbname=dagster
-
-[pgbouncer]
-listen_addr = 0.0.0.0
-listen_port = 6432
-auth_type = scram-sha-256
-auth_file = /etc/pgbouncer/userlist.txt
-
-pool_mode = transaction
-max_client_conn = 1000
-default_pool_size = 25
-min_pool_size = 5
-reserve_pool_size = 5
-reserve_pool_timeout = 3
-server_idle_timeout = 600
-server_lifetime = 3600
-
-# REQUIRED: psycopg2/SQLAlchemy send these startup params; PgBouncer must ignore them.
-ignore_startup_parameters = extra_float_digits,options
-
-# Health/admin (read-only stats via `SHOW POOLS;` etc.)
-admin_users = dagster
-stats_users = dagster
-```
-
-- [ ] **Step 4: Add the `pgbouncer` service to the compose file** (same network as `ppoint-postgres`):
+- [ ] **Step 1: Add the `pgbouncer` service to the compose file** (same network as `ppoint-postgres`; creds pulled from the existing `.env`):
 
 ```yaml
   pgbouncer:
@@ -89,18 +46,35 @@ stats_users = dagster
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
-      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    environment:
+      DB_HOST: ppoint-postgres          # must match the postgres service/container name
+      DB_PORT: "5432"
+      DB_USER: ${CORPSCOUT_USER}        # from /opt/corpscout_db/.env
+      DB_PASSWORD: ${CORPSCOUT_PASSWORD}
+      # No DB_NAME -> wildcard "*" database, so the client-requested db (dagster)
+      # is passed through to the backend.
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "1000"
+      DEFAULT_POOL_SIZE: "25"
+      MIN_POOL_SIZE: "5"
+      RESERVE_POOL_SIZE: "5"
+      AUTH_TYPE: scram-sha-256
+      ADMIN_USERS: ${CORPSCOUT_USER}    # allows SHOW POOLS / SHOW STATS on the admin db
+      # REQUIRED: psycopg2/SQLAlchemy send these startup params; PgBouncer must ignore them.
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits,options
     ports:
       - "${PGBOUNCER_BIND_ADDR:-0.0.0.0}:${PGBOUNCER_PORT:-6432}:6432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U dagster"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U ${CORPSCOUT_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
 ```
-(`ppoint-postgres` and `pgbouncer` share the compose default network; PgBouncer reaches Postgres by the service name `ppoint-postgres`. Confirm the postgres service's name in the compose — the `host=ppoint-postgres` in the ini must match the **service/container name** reachable on that network.)
+
+Notes:
+- `DB_HOST: ppoint-postgres` must match the **actual postgres service/container name** on the compose network — verify against the `services:` keys.
+- The image authenticates clients as `corpscout` (the env creds) and connects to the backend as `corpscout`; the wildcard `*` database passes the requested db name (`dagster`) straight through.
+- If the env-var image behaviour ever surprises you, the fallback is a mounted `pgbouncer.ini` + a `userlist.txt` containing **`"corpscout" "<plaintext-password>"`** (PgBouncer accepts a plaintext userlist and derives scram itself) — still no hash extraction.
 
 ### Task 2: Bring it up and verify the proxy
 
@@ -112,20 +86,20 @@ docker compose up -d pgbouncer
 docker logs --tail 20 ppoint-pgbouncer        # should show "process up" / listening on 6432, no auth errors
 ```
 
-- [ ] **Step 2: Verify a real query goes through PgBouncer** (from the Mac, via Tailscale):
+- [ ] **Step 2: Verify a real query goes through PgBouncer** (from the Mac, via Tailscale, as `corpscout`):
 
 ```bash
 docker run --rm postgres:16-alpine psql \
-  "postgresql://dagster:<password>@100.85.212.113:6432/dagster" \
+  "postgresql://corpscout:<corpscout-password>@100.85.212.113:6432/dagster" \
   -c "SELECT 'pgbouncer ok', current_database();"
 ```
-Expected: returns the row. If it errors with `unsupported startup parameter`, the `ignore_startup_parameters` line is wrong/missing.
+Expected: returns the row. If it errors with `unsupported startup parameter`, the `IGNORE_STARTUP_PARAMETERS` env is wrong/missing.
 
-- [ ] **Step 3: Inspect PgBouncer pools.**
+- [ ] **Step 3: Inspect PgBouncer pools** (admin db `pgbouncer`):
 
 ```bash
 docker run --rm postgres:16-alpine psql \
-  "postgresql://dagster:<password>@100.85.212.113:6432/pgbouncer" \
+  "postgresql://corpscout:<corpscout-password>@100.85.212.113:6432/pgbouncer" \
   -c "SHOW POOLS;" -c "SHOW DATABASES;"
 ```
 
@@ -140,22 +114,22 @@ docker run --rm postgres:16-alpine psql \
 
 ### Task 3: Repoint `DAGSTER_PG_URL`
 
-- [ ] **Step 1: Change the port 5432 → 6432** in `dagster_v3/.env`:
+- [ ] **Step 1: Point at PgBouncer as `corpscout`** in `dagster_v3/.env` (Mac dev env) — port `6432` and the `corpscout` creds you already have:
 
 ```
-DAGSTER_PG_URL=postgresql://dagster:<password>@companycollect:6432/dagster
+DAGSTER_PG_URL=postgresql://corpscout:<corpscout-password>@companycollect:6432/dagster
 ```
-(Only the port changes. PgBouncer is transparent to the client.)
+(Same `dagster` database, just reached through PgBouncer as the superuser. PgBouncer is otherwise transparent to Dagster.)
 
 - [ ] **Step 2: Restart `dg dev`** via `./scripts/dagster-dev.sh` and confirm it loads with no connection errors, and the UI is responsive. Live run-log tailing now updates on refresh rather than streaming (expected — see gotchas).
 
-- [ ] **Step 3: Confirm multiplexing.** With `dg dev` running, check server-side connections — Dagster should now hold ~`default_pool_size` (≈25), not 50+:
+- [ ] **Step 3: Confirm multiplexing.** With `dg dev` running, check PgBouncer's view — many clients (`cl_active`) but a bounded server pool (`sv_active` ≈ `default_pool_size`):
 
 ```bash
-docker exec ppoint-postgres psql -U corpscout -tAc \
-  "SELECT count(*) FROM pg_stat_activity WHERE usename='dagster';"
+docker run --rm postgres:16-alpine psql \
+  "postgresql://corpscout:<corpscout-password>@100.85.212.113:6432/pgbouncer" -c "SHOW POOLS;"
 ```
-Expected: bounded near 25 even under load (was climbing toward the cap before).
+Expected: `cl_active` rises with Dagster processes/runs while `sv_active` stays ≈25. (Backend connections appear in `pg_stat_activity` as `corpscout` — alongside the existing app connections — so `SHOW POOLS` is the clearer signal.)
 
 ### Task 4: Raise Dagster concurrency now that the server side is bounded
 
