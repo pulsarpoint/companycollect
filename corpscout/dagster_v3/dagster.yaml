@@ -4,6 +4,14 @@ storage:
       env: DAGSTER_PG_URL
 
 concurrency:
+  # Bound how many runs execute at once. With multi_run partition backfills each
+  # partition is its own run, so this caps how many partitions materialize
+  # concurrently — queued runs hold no process/connection, which keeps backfills
+  # from exhausting the shared Postgres connection slots. Tune to taste.
+  runs:
+    max_concurrent_runs: 4
+  # Per-pool op limit (default 1). Assets that share a single-writer DuckDB file
+  # (e.g. pool="exchange_rates_v2_duckdb") are serialized to one writer.
   pools:
     granularity: op
     default_limit: 1
