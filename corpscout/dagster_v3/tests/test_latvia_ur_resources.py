@@ -1,4 +1,8 @@
 import json
+from pathlib import Path
+
+import pytest
+import requests
 
 from dagster_v3.defs.latvia_ur import resources
 
@@ -109,6 +113,100 @@ def test_malformed_overlong_row_does_not_crash():
     assert len(rows) == 1
     assert rows[0]["regcode"] == "40000000003"
     assert rows[0]["status"] == "active"
+
+
+class _FlakyResponse:
+    def __init__(self, body: bytes, fail: bool) -> None:
+        self._body = body
+        self._fail = fail
+        self.content = body
+        self.headers: dict[str, str] = {}
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def iter_content(self, chunk_size: int = 0):
+        if self._fail:
+            raise requests.exceptions.ChunkedEncodingError("connection broken mid-stream")
+        yield self._body
+
+
+class _FlakySession:
+    def __init__(self, body: bytes, fail_times: int) -> None:
+        self._body = body
+        self._fail_times = fail_times
+        self.calls = 0
+
+    def get(self, url: str, *, timeout: int, stream: bool = False) -> _FlakyResponse:
+        self.calls += 1
+        return _FlakyResponse(self._body, fail=self.calls <= self._fail_times)
+
+
+def test_download_retries_transient_failure_then_succeeds(tmp_path: Path):
+    dest = tmp_path / "register.csv"
+    session = _FlakySession(b"regcode;name\n40000000001;X\n", fail_times=2)
+    resources._download_to_path(
+        url="https://data.gov.lv/x.csv",
+        dest=dest,
+        timeout_seconds=10,
+        user_agent="t",
+        session=session,
+        retry_base_seconds=0,
+    )
+    assert dest.read_bytes() == b"regcode;name\n40000000001;X\n"
+    assert session.calls == 3  # 2 transient failures + 1 success
+
+
+def test_download_raises_after_exhausting_retries(tmp_path: Path):
+    dest = tmp_path / "register.csv"
+    session = _FlakySession(b"x", fail_times=99)
+    with pytest.raises(requests.exceptions.ChunkedEncodingError):
+        resources._download_to_path(
+            url="https://data.gov.lv/x.csv",
+            dest=dest,
+            timeout_seconds=10,
+            user_agent="t",
+            session=session,
+            max_attempts=3,
+            retry_base_seconds=0,
+        )
+    assert session.calls == 3
+
+
+def test_download_short_read_vs_content_length_is_retried(tmp_path: Path):
+    # Server advertises more bytes than it delivers -> treat as a retryable failure.
+    class _ShortResponse:
+        def __init__(self) -> None:
+            self.headers = {"Content-Length": "100"}
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int = 0):
+            yield b"only-ten!!"  # 10 bytes, far short of 100
+
+    class _ShortThenOkSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, url, *, timeout, stream=False):
+            self.calls += 1
+            if self.calls == 1:
+                return _ShortResponse()
+            return _FlakyResponse(b"x" * 100, fail=False)
+
+    dest = tmp_path / "register.csv"
+    session = _ShortThenOkSession()
+    resources._download_to_path(
+        url="https://data.gov.lv/x.csv",
+        dest=dest,
+        timeout_seconds=10,
+        user_agent="t",
+        session=session,
+        retry_base_seconds=0,
+    )
+    assert session.calls == 2
+    assert len(dest.read_bytes()) == 100
 
 
 def test_empty_csv_yields_no_rows():

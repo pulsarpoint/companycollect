@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import tempfile
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, Protocol
@@ -13,6 +14,7 @@ from typing import Any, Protocol
 import dlt
 import requests
 from dlt.extract.resource import DltResource
+from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.latvia_ur import tables
 
@@ -27,6 +29,8 @@ REGISTER_DOWNLOAD_URL = (
 DEFAULT_TIMEOUT_SECONDS = 300
 DEFAULT_USER_AGENT = "corpscout-dagster-v3-dev/0.1"
 DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+DOWNLOAD_MAX_ATTEMPTS = 4
+DOWNLOAD_RETRY_BASE_SECONDS = 5
 PROGRESS_LOG_EVERY_ROWS = 50000
 CSV_DELIMITER = ";"
 LOGGER = logging.getLogger(__name__)
@@ -203,6 +207,15 @@ def _status(*, terminated: str, closed: str) -> str:
     return "active"
 
 
+# Transient network failures these large CSV downloads must survive (the remote
+# drops the stream mid-transfer -> ChunkedEncodingError / IncompleteRead).
+_DOWNLOAD_RETRYABLE_ERRORS = (
+    requests.exceptions.ChunkedEncodingError,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+)
+
+
 def _download_to_path(
     *,
     url: str,
@@ -211,18 +224,76 @@ def _download_to_path(
     user_agent: str,
     session: HttpSession | None,
     log: Callable[..., None] | None = None,
+    max_attempts: int = DOWNLOAD_MAX_ATTEMPTS,
+    retry_base_seconds: float = DOWNLOAD_RETRY_BASE_SECONDS,
 ) -> None:
-    http_session = session or requests.Session()
+    """Stream a URL to a file, retrying transient mid-stream failures.
+
+    Each attempt re-truncates the destination, so a broken download never leaves
+    a partial file behind. A short read vs the server's Content-Length is treated
+    as a retryable failure.
+    """
+    progress_log = log or LOGGER.info
+    last_error: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            _stream_download(
+                url=url,
+                dest=dest,
+                timeout_seconds=timeout_seconds,
+                session=session,
+            )
+            return
+        except _DOWNLOAD_RETRYABLE_ERRORS as exc:
+            last_error = exc
+            if attempt >= max_attempts:
+                break
+            wait_seconds = retry_base_seconds * attempt
+            progress_log(
+                "Latvia UR download failed (attempt %s/%s), retrying in %ss: "
+                "url=%s error=%s",
+                attempt,
+                max_attempts,
+                wait_seconds,
+                url,
+                exc,
+            )
+            time.sleep(wait_seconds)
+    assert last_error is not None
+    raise last_error
+
+
+def _stream_download(
+    *,
+    url: str,
+    dest: Path,
+    timeout_seconds: int,
+    session: HttpSession | None,
+) -> None:
+    # dlt's requests client adds retry/backoff on connection errors and 429/5xx
+    # (matches the other source modules). The explicit retry loop above still
+    # handles mid-stream read failures, which request-level retry doesn't cover.
+    http_session = session or dlt_requests.Session()
     response = http_session.get(url, timeout=timeout_seconds, stream=True)
     response.raise_for_status()
     iter_content = getattr(response, "iter_content", None)
+    written = 0
     with dest.open("wb") as out:
         if callable(iter_content):
             for chunk in iter_content(chunk_size=DOWNLOAD_CHUNK_BYTES):
                 if chunk:
                     out.write(chunk)
+                    written += len(chunk)
         else:
-            out.write(response.content)
+            body = response.content
+            out.write(body)
+            written = len(body)
+    headers = getattr(response, "headers", None)
+    expected = headers.get("Content-Length") if hasattr(headers, "get") else None
+    if expected is not None and str(expected).isdigit() and written < int(expected):
+        raise requests.exceptions.ChunkedEncodingError(
+            f"incomplete download: {written}/{expected} bytes from {url}"
+        )
 
 
 def _payload_hash(source_row: dict[str, Any]) -> str:
