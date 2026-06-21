@@ -6,7 +6,15 @@
 
 **Architecture:** GLEIF raw assets download `latest.csv.zip` files to object storage. A Pythonic `@dlt_assets` definition materializes three raw DuckDB table assets from the run manifest, and `gleif_reference_duckdb_state` becomes a pure DuckDB SQL normalization/state asset. The final ClickHouse schema stays unchanged.
 
-**Tech Stack:** Dagster assets, `dagster_dlt.DagsterDltResource`, `@dlt_assets`, dlt filesystem CSV source, dlt DuckDB destination, pandas for dlt CSV reading, DuckDB SQL, ClickHouse publication through the existing helper, pytest.
+**Tech Stack:** Dagster assets, `dagster_dlt.DagsterDltResource`, `@dlt_assets`, dlt filesystem CSV source via **`read_csv_duckdb(use_pyarrow=True)`** (DuckDB multithreaded parser → Arrow → Parquet `COPY`; NOT the pandas `read_csv`), `pyarrow` (already installed transitively — no `pandas`), dlt DuckDB destination, DuckDB SQL, ClickHouse publication through the existing helper, pytest.
+
+> **Reader-choice rationale (decided in review):** Use `dlt.sources.filesystem.read_csv_duckdb` with
+> `use_pyarrow=True`, not `read_csv`. `read_csv` is pandas-based and re-introduces per-row Python
+> materialization for the wide GLEIF CSVs — the cost this plan exists to remove — and would add a heavy
+> `pandas>=3.0.0` pin. `read_csv_duckdb` yields Arrow tables that take dlt's Arrow fast-path (skips JSON
+> normalization). `pyarrow` is already present, so this adds nothing new. This keeps the dlt asset
+> boundary the design requires while matching the repo's proven DuckDB-native wide-CSV bulk pattern in
+> `latvia_ur/financials.py`.
 
 ---
 
@@ -59,7 +67,8 @@ The dlt raw assets should declare dependency edges to both raw S3 assets because
 ## File Structure
 
 - Modify: `corpscout/dagster_v3/pyproject.toml`
-  - Add `pandas>=3.0.0`, required by `dlt.sources.filesystem.read_csv`.
+  - Add an explicit `pyarrow` dependency (already present transitively; pin it because
+    `read_csv_duckdb(use_pyarrow=True)` depends on it). Do **not** add `pandas`.
 - Modify: `corpscout/dagster_v3/uv.lock`
   - Regenerate with `uv lock`.
 - Modify: `corpscout/dagster_v3/src/dagster_v3/defs/gleif/source.py`
@@ -175,20 +184,24 @@ uv run pytest tests/test_gleif_source.py -q
 
 Expected: failure because `GleifRawDownloadConfig.file_format` still defaults to `json`, `DownloadedFile` does not accept `file_format`, and manifest entries do not include `file_format`.
 
-- [ ] **Step 3: Add pandas dependency**
+- [ ] **Step 3: Add pyarrow dependency (NOT pandas)**
 
-Modify `corpscout/dagster_v3/pyproject.toml` dependencies:
+`read_csv_duckdb(use_pyarrow=True)` needs `pyarrow`. It is already installed transitively
+(`pyarrow 24.0.0`), so verify first and only declare it explicitly if it is not already a direct
+dependency:
 
-```toml
-"pandas>=3.0.0",
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3
+uv run python -c "import pyarrow; print(pyarrow.__version__)"
 ```
 
-Place it next to the other data-processing dependencies:
+If `pyarrow` is not already a direct dependency, add it to `corpscout/dagster_v3/pyproject.toml`
+dependencies next to the other data-processing dependencies (do **not** add `pandas`):
 
 ```toml
 "openai>=2.41.1",
-"pandas>=3.0.0",
 "polars[rtcompat]>=1.41.2",
+"pyarrow>=18",
 ```
 
 Regenerate the lockfile:
@@ -385,7 +398,7 @@ from typing import Any, Literal
 import zipfile
 
 import dlt as dlt_lib
-from dlt.sources.filesystem import filesystem, read_csv
+from dlt.sources.filesystem import filesystem, read_csv_duckdb
 
 GLEIF_DLT_PIPELINE_NAME = "gleif_raw_csv_duckdb"
 GLEIF_DLT_RAW_DATASET_NAME = "gleif_raw"
@@ -480,15 +493,22 @@ def gleif_csv_dlt_source(
     resources: list[Any] = []
     for item in extracted_files:
         table_name = RAW_TABLE_BY_FILE_KIND[item.file_kind]
+        # read_csv_duckdb -> DuckDB's multithreaded C++ parser -> Arrow tables ->
+        # dlt Arrow fast-path (Parquet + COPY), skipping per-row Python normalization.
+        # all_varchar keeps the wide GLEIF columns lossless; SQL casts happen later.
         resource = filesystem(
             bucket_url=str(item.csv_path.parent),
             file_glob=item.csv_path.name,
-        ) | read_csv()
+        ) | read_csv_duckdb(use_pyarrow=True, header=True, all_varchar=True)
         resource = resource.with_name(table_name)
         resource.apply_hints(write_disposition="replace")
         resources.append(resource)
     return resources
 ```
+
+> `read_csv_duckdb` signature is `(items, chunk_size=5000, use_pyarrow=False, **duckdb_kwargs)`;
+> `header`/`all_varchar` flow through `duckdb_kwargs` to DuckDB's CSV reader. Verify the resource is
+> Arrow-backed in a test (the yielded items are `pyarrow.Table` chunks, not dicts).
 
 - [ ] **Step 4: Write failing test for dlt source shape**
 
@@ -1099,6 +1119,14 @@ def replace_current_from_dlt_raw_tables(
             publish_date=publish_date,
             run_id=run_id,
         )
+        staged_counts = _staging_row_counts(connection, catalog_name=catalog_name)
+        # CLAUDE.md "refuse to replace on empty input": a header-only / failed lei2
+        # fetch must not blank the current table (which then blanks ClickHouse).
+        if load_mode == "full" and staged_counts.get(tables.GLEIF_LEI_RECORDS_TABLE, 0) == 0:
+            raise ValueError(
+                "GLEIF full normalization produced 0 lei_records rows; "
+                "refusing to replace the current tables"
+            )
         if load_mode == "full":
             _replace_current_tables_from_schema(
                 connection,
@@ -1106,7 +1134,6 @@ def replace_current_from_dlt_raw_tables(
                 source_schema_name=DUCKDB_STAGING_SCHEMA,
             )
         else:
-            staged_counts = _staging_row_counts(connection, catalog_name=catalog_name)
             _upsert_current_tables_from_schema(
                 connection,
                 catalog_name=catalog_name,
@@ -1115,6 +1142,9 @@ def replace_current_from_dlt_raw_tables(
             )
     return _row_counts(database_file)
 ```
+
+> This computes `staged_counts` once (used by both the empty guard and the delta upsert). Add the
+> matching `_staging_row_counts` helper that returns `{table_name: count}` over the staging schema.
 
 - [ ] **Step 4: Add raw table validation**
 
@@ -1174,6 +1204,13 @@ Implement each `_build_*` function with `create or replace table` statements tha
 - `Exception.Reason.1` becomes `exception_reason_1`
 
 Use DuckDB casts such as `try_cast(entity_entity_creation_date as timestamp)` for timestamp columns and `try_cast(relationship_period_1_start_date as date)` for date columns.
+
+**Required (CLAUDE.md ClickHouse rule): coalesce every non-nullable string column to `''`.** The native
+ClickHouse driver calls `.encode()` per value and dies on `None`. Wrap every non-nullable
+`String`/`LowCardinality(String)` output column in `coalesce(<expr>, '')` (the JSON parser this
+replaces already emitted `''`). Numeric/date NULLs are only acceptable where the ClickHouse column is
+`Nullable(...)`. A tidy-fixture unit test will not catch this — add a transform test that seeds a raw
+row with NULL source values and asserts the normalized string columns are `''`, never `None`.
 
 - [ ] **Step 6: Wire duckdb_state to SQL transforms**
 
@@ -1380,3 +1417,18 @@ If Task 6 does not change files, do not create an empty commit.
 - The DuckDB database path is `data/gleif_reference.duckdb`, which gives catalog `gleif_reference` and normalized schema `gleif`.
 - The dlt raw dataset is `gleif_raw`, and normalized staging stays in `gleif_staging`.
 - The raw S3 download assets and the dlt raw DuckDB assets are separate, so retrying the dlt/normalization stage does not re-download Golden Copy files.
+
+### Review corrections incorporated (2026-06-21)
+
+- **CSV reader:** uses `read_csv_duckdb(use_pyarrow=True, header=True, all_varchar=True)` (Arrow
+  fast-path), not the pandas `read_csv`. Dependency is `pyarrow` (already installed), not `pandas`.
+  This honors the design's dlt asset boundary while avoiding the per-row Python cost the change exists
+  to remove, and matches the repo's `latvia_ur/financials.py` DuckDB-native wide-CSV bulk pattern.
+- **NULL → `''` coalesce:** every non-nullable normalized string column is produced with
+  `coalesce(<expr>, '')` so the native ClickHouse driver does not crash on `None`. Covered by a
+  NULL-seed transform test.
+- **Empty-input guard:** full-mode normalization raises `ValueError` when `gleif_lei_records` staging
+  is empty, so a bad CSV fetch cannot blank the current tables (and downstream ClickHouse). Covered by
+  a header-only-CSV test.
+- **`from __future__ import annotations`:** must NOT be added to `assets.py` (it defines `@dlt_assets`
+  / `@dg.asset`); it is fine in `dlt_csv.py` and `csv_transforms.py`, which define no assets/ops.

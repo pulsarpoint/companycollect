@@ -82,6 +82,22 @@ For each file in the manifest, the dlt asset function should:
 4. Create one dlt resource for the extracted CSV.
 5. Run a dlt pipeline with the DuckDB destination into raw tables.
 
+### Reader choice: `read_csv_duckdb`, not `read_csv`
+
+The dlt resource MUST use **`dlt.sources.filesystem.read_csv_duckdb` with `use_pyarrow=True`**, NOT
+`read_csv`. `read_csv` is the pandas reader: it materializes each wide GLEIF CSV through pandas
+DataFrames and dlt's Python normalize/load path, which re-introduces the per-row Python cost this
+design exists to remove (and would add a heavy `pandas` dependency). `read_csv_duckdb` reads the CSV
+with DuckDB's multithreaded C++ parser and yields **Arrow tables**; dlt's Arrow fast-path then writes
+Parquet and `COPY`s into DuckDB, skipping JSON normalization entirely. `pyarrow` is already an
+installed transitive dependency, so this adds nothing new.
+
+Pass DuckDB CSV kwargs through `read_csv_duckdb` (e.g. `header=True`) and keep all raw columns as text
+(`all_varchar`-equivalent) so the load is lossless; the relational casts happen in the DuckDB SQL
+normalization step, not at read time. This mirrors the repo's proven wide-CSV bulk pattern in
+`latvia_ur/financials.py:load_latvia_ur_financial_csv` (DuckDB-native `read_csv(all_varchar=true)`),
+kept here behind the dlt asset boundary the design calls for.
+
 dlt should own the mechanical loading boundary:
 
 ```text
@@ -250,6 +266,21 @@ Full mode should replace current DuckDB tables only after every normalized stagi
 
 Delta mode should upsert current DuckDB tables only after the complete delta staging set has been built successfully.
 
+### Required correctness rules for the SQL transforms (CLAUDE.md)
+
+These are not optional polish; they are existing repo rules the SQL must obey or the ClickHouse export
+breaks at runtime:
+
+- **Coalesce non-nullable string columns to `''`.** The native ClickHouse driver calls `.encode()` per
+  value and dies on `None` (`'NoneType' object has no attribute 'encode'`). Every non-nullable
+  `String`/`LowCardinality(String)` column in the normalized tables must be produced with
+  `coalesce(<expr>, '')` in the staging SQL. The old JSON parser emitted `''`; the SQL must preserve
+  that. Numeric/date NULLs are fine only where the ClickHouse column is `Nullable(...)`.
+- **Refuse to replace/upsert on empty input.** Before the full-mode transactional replace (and before a
+  delta upsert), `raise ValueError` if a normalized staging table that should be populated has zero
+  rows, so a bad CSV fetch (e.g. header-only `lei2`) cannot blank a populated current table and then
+  blank the downstream ClickHouse table. This mirrors `latvia_ur`'s `if not seen: raise`.
+
 ## Observability
 
 Add progress logs around each expensive boundary:
@@ -283,6 +314,9 @@ Add or update tests for:
 - small `rr` CSV ZIP fixture builds relationships and relationship periods.
 - small `repex` CSV ZIP fixture builds reporting exceptions.
 - the CSV processing path does not call the JSON parser row iterator.
+- the dlt CSV resource uses `read_csv_duckdb` (not the pandas `read_csv`), and `pandas` is not a project dependency.
+- a fixture row with NULL source values yields `''` (never `None`) in non-nullable normalized string columns.
+- a header-only / empty `lei2` CSV makes the normalization step `raise ValueError` instead of replacing the current table.
 
 Existing tests for table constants, asset registration, jobs, schedules, and ClickHouse migrations should continue to pass.
 
