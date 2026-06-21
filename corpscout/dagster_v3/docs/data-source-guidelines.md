@@ -161,6 +161,24 @@ Every non-English text/enum field gets an `_en` companion column. Pick the mecha
 - **Proper nouns** (company name, address) → **not translated**.
 - The design doc lists every translated field and its mechanism.
 
+## 8b. Cross-cutting standard C — contact information (ALWAYS pull it)
+**Connecting a company to its internet/contact presence is core to corpscout — capturing *any*
+contact information is mandatory, not optional.** When you analyse a new source, the data inventory
+**must explicitly check for contact data**: website/URL, email, phone, mobile, fax, social handles.
+- It is frequently **not in the basic register** but in a richer "general data"/contacts dataset —
+  *look for it.* Estonia: `lihtandmed` (register CSV) has **none**; `yldandmed` (general data JSON)
+  has `sidevahendid` (`{liik, sisu}` = type, value) with `WWW`/`EMAIL`/`MOB`/`TEL`/`FAX`. If a source
+  truly has no contact data, the design doc must say so explicitly.
+- **Store normalized**: one **`<cc>_company_contacts`** table, one row per contact
+  `(reg_code, contact_type, contact_type_en, contact_value, is_current, …)`, capturing **all** types.
+  Don't fold contacts into the company row; a company has many.
+- **Website is the domain signal** — the rest of the platform discovers/associates domains from the
+  `contact_type='Website'` rows, so prioritise extracting URLs cleanly. A dedicated normalized
+  websites table (with host/root_domain) is the natural downstream artifact.
+- Pull contacts on the source's normal cadence; they sit alongside the register, not the financials.
+- **Mandatory alongside currency (§7) and translation (§8).** Reference impl: `estonia_ar`
+  (`ee_company_contacts` from `yldandmed`).
+
 ## 9. Scheduling (cadence-matched, non-partitioned full-refresh)
 - **Match the schedule to the source's refresh rate**, and split chains that refresh differently into
   separate jobs (register daily/weekly; financials monthly). See CLAUDE.md "Scheduling".

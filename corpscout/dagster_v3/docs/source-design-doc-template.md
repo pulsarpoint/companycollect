@@ -45,6 +45,11 @@
 | description (if any) | … | LLM service | adds `_translated_at/_provider/_model` |
 - Fields deliberately **not** translated (proper nouns): <name, address>.
 
+## 6b. Contacts (§8b) — MANDATORY to assess
+- Contact data found? <yes / no — if no, say why none is available>. Source dataset: <e.g. `yldandmed`
+  `sidevahendid`>. Types present: <Website/Email/Phone/Mobile/Fax/…>.
+- Stored as `<cc>_company_contacts` (1 row per contact). Website coverage: <~N / partial>.
+
 ## 7. Currency (§7)
 - Native currency: <EUR | …>; legacy/unmapped currencies: <e.g. LVL — native-only, `_usd` NULL>.
 - Metrics carry `<metric>_amount_original` + `<metric>_amount_usd` + `fx_rate_to_usd/_date/_source`,
