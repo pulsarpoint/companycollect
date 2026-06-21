@@ -61,16 +61,41 @@ def test_export_columns_match_migration():
         assert f"{metric}_amount_usd" in tables.FI_FINANCIAL_METRICS_COLUMNS
 
 
-def test_job_registered():
+def test_incremental_window_and_cursor(tmp_path):
+    import datetime as dt
+
+    from dagster_v3.defs.finland_financials import incremental
+
+    today = dt.date(2026, 6, 21)
+    # no cursor -> a lookback window ending today.
+    start, end = incremental.incremental_window(None, today, lookback_days=7)
+    assert start == "2026-06-14" and end == "2026-06-21"
+    # with a cursor -> from the cursor to today.
+    assert incremental.incremental_window("2026-06-20", today) == ("2026-06-20", "2026-06-21")
+    # monthly backfill partition -> full month window.
+    assert incremental.month_window("2025-02-01") == ("2025-02-01", "2025-02-28")
+
+    db = tmp_path / "fi.duckdb"
+    assert incremental.read_cursor(db) is None
+    incremental.write_cursor(db, "2026-06-20")
+    assert incremental.read_cursor(db) == "2026-06-20"
+    incremental.write_cursor(db, "2026-06-21")  # upsert
+    assert incremental.read_cursor(db) == "2026-06-21"
+
+
+def test_jobs_and_schedule_registered():
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
-    keys = {
+    inc = {
         k.path[-1]
-        for k in repo.get_job("finland_financials_job").asset_layer.executable_asset_keys
+        for k in repo.get_job("finland_financials_incremental_job").asset_layer.executable_asset_keys
     }
-    assert keys == {
-        "finland_financials_metrics_duckdb",
-        "finland_financials_metrics_usd_duckdb",
-        "finland_financials_clickhouse_metrics",
+    assert inc == {"finland_financials_incremental"}
+    bf = {
+        k.path[-1]
+        for k in repo.get_job("finland_financials_backfill_job").asset_layer.executable_asset_keys
     }
+    assert bf == {"finland_financials_backfill"}
+    sch = repo.get_schedule_def("finland_financials_incremental_schedule")
+    assert sch.cron_schedule == "0 6 * * *"

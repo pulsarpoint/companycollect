@@ -36,10 +36,22 @@ the `finland_xbrl` module.
   (separate step, keyed on `period_end`). Export **appends** (ReplacingMergeTree
   dedups by `business_id/financial_date/statement_key`) so bounded runs accumulate.
 
-## 5. Assets
-- `finland_financials_metrics_duckdb` (discover+fetch+parse+map, config window) →
-  `finland_financials_metrics_usd_duckdb` (EUR→USD) →
-  `finland_financials_clickhouse_metrics` (append). `finland_financials_job`.
+## 5. Update strategy (registration-date driven)
+PRH discovery is windowed by **registration date**, so updates are precise deltas —
+no bulk archives (unlike UK). Two assets, both append (ReplacingMergeTree dedups by
+`business_id/financial_date/statement_key`):
+- **`finland_financials_incremental`** (non-partitioned, cursor) — a cursor (in the
+  source DuckDB) holds the last registration date; each daily run fetches
+  `(cursor, today]`, parses, EUR→USD, appends, then advances the cursor **after** a
+  successful export. Keeps the table current at low volume.
+- **`finland_financials_backfill`** (MonthlyPartitionsDefinition, registration month)
+  — one month per partition. Launch a **Dagster backfill** over the historical range
+  once; `BackfillPolicy.multi_run(1)` + the pool walk it one bounded month-run at a
+  time (resumable, throttled — not a 25h marathon). `BACKFILL_MAX_REPORTS` caps a
+  partition. A polite per-request delay avoids PRH rate-limiting (the cause of an
+  early 17/169 → fixed to 167/169).
+- Amendments: `statement_key` includes the XML hash, so a re-filing is a new row
+  (full version history kept); "latest per company-year" = `argMax(.., resolved_at)`.
 
 ## 6. Status / deferred
 - This supersedes the `finland_xbrl` Arelle metrics path; the old module's
