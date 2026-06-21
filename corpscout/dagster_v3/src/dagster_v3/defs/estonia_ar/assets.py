@@ -387,3 +387,11 @@ estonia_ar_financials_schedule = dg.ScheduleDefinition(
     cron_schedule="0 5 5 * *",
     execution_timezone="Europe/Belgrade",
 )
+
+# Whole-source trigger: register + financials end-to-end in dependency order
+# (all estonia_ar assets, serialized on the pool). For a manual full run or the
+# first backfill. NOT scheduled — the two cadence-split jobs above own recurring runs.
+estonia_ar_full_refresh_job = dg.define_asset_job(
+    "estonia_ar_full_refresh_job",
+    selection=dg.AssetSelection.groups(GROUP_NAME),
+)

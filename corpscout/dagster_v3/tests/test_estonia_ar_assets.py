@@ -112,6 +112,14 @@ def test_schedules_registered_and_jobs_cover_full_chains():
     assert "estonia_ar_key_indicators_2025_raw_duckdb" in financials_keys
     assert "estonia_ar_financial_metrics_usd_duckdb" in financials_keys
 
+    # end-to-end trigger: every estonia_ar asset (register ∪ financials = 15), unscheduled.
+    full_keys = {
+        k.path[-1]
+        for k in repo.get_job("estonia_ar_full_refresh_job").asset_layer.executable_asset_keys
+    }
+    assert full_keys == register_keys | financials_keys
+    assert len(full_keys) == 15
+
 
 def test_export_companies_replaces_clickhouse_table(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "estonia_ar_source.duckdb"
