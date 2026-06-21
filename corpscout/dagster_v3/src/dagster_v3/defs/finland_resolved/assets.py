@@ -101,6 +101,24 @@ def finland_ytj_resolved_clickhouse(
     )
 
 
+# Daily register+resolve refresh (see dagster_v3/CLAUDE.md "Scheduling"). YTJ is a
+# full-snapshot register and the resolved dbt + ClickHouse export are fast.
+# .upstream() pulls the finland_ytj register load (via the dbt source dep) + the
+# dbt models + the export — no translation/Temporal gating. (finland_xbrl
+# financials are a separate, partitioned pipeline with no ClickHouse export yet;
+# scheduled separately once that export path lands.)
+finland_ytj_resolved_job = dg.define_asset_job(
+    "finland_ytj_resolved_job",
+    selection=dg.AssetSelection.assets("finland_ytj_resolved_clickhouse").upstream(),
+)
+finland_ytj_resolved_schedule = dg.ScheduleDefinition(
+    name="finland_ytj_resolved_schedule",
+    job=finland_ytj_resolved_job,
+    cron_schedule="45 4 * * *",  # daily 04:45 (staggered vs other sources)
+    execution_timezone="Europe/Belgrade",
+)
+
+
 @dg.definitions
 def defs() -> dg.Definitions:
     return dg.Definitions(
@@ -108,6 +126,8 @@ def defs() -> dg.Definitions:
             finland_resolved_dbt_assets,
             finland_ytj_resolved_clickhouse,
         ],
+        jobs=[finland_ytj_resolved_job],
+        schedules=[finland_ytj_resolved_schedule],
         resources={
             "finland_resolved_dbt": DbtCliResource(
                 project_dir=finland_resolved_dbt_project,
