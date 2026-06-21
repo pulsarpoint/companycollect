@@ -26,7 +26,7 @@ GLEIF_FILE_KIND_TO_GOLDEN_COPY_KIND = {
 
 
 class GleifRawDownloadConfig(dg.Config):
-    file_format: str = "json"
+    file_format: str = "csv"
     request_timeout_seconds: int = 300
 
     @field_validator("file_format")
@@ -47,6 +47,7 @@ class GleifRawDownloadConfig(dg.Config):
 @dataclass(frozen=True)
 class DownloadedFile:
     file_kind: str
+    file_format: str
     source_url: str
     s3_key: str
     size_bytes: int
@@ -122,6 +123,7 @@ def build_manifest(
         "files": [
             {
                 "file_kind": item.file_kind,
+                "file_format": item.file_format,
                 "source_url": item.source_url,
                 "s3_key": item.s3_key,
                 "size_bytes": item.size_bytes,
@@ -145,6 +147,31 @@ def write_gleif_state(object_store: ObjectStoreResource, state: dict[str, Any]) 
         GLEIF_STATE_OBJECT_KEY,
         json.dumps(state, sort_keys=True),
         bucket=GLEIF_RAW_BUCKET,
+    )
+
+
+def latest_manifest(object_store: ObjectStoreResource) -> dict[str, Any]:
+    manifest_keys = _manifest_keys(object_store)
+    if not manifest_keys:
+        raise ValueError("No GLEIF raw manifest found in object storage")
+    return max(
+        (_read_manifest(object_store, key) for key in manifest_keys),
+        key=_manifest_order_key,
+    )
+
+
+def manifest_for_run(object_store: ObjectStoreResource, run_id: str) -> dict[str, Any]:
+    manifest_keys = _manifest_keys(object_store)
+    run_manifest_keys = [
+        key
+        for key in manifest_keys
+        if f"/run_id={run_id}/" in key
+    ]
+    if not run_manifest_keys:
+        return latest_manifest(object_store)
+    return max(
+        (_read_manifest(object_store, key) for key in run_manifest_keys),
+        key=_manifest_order_key,
     )
 
 
@@ -346,6 +373,7 @@ def _download_one_file(
 
     downloaded_file = DownloadedFile(
         file_kind=file_kind,
+        file_format=file_format,
         source_url=source_url,
         s3_key=s3_key,
         size_bytes=size_bytes,
@@ -366,3 +394,23 @@ def _publish_date_from_response(response: requests.Response) -> str | None:
         if publish_date:
             return publish_date
     return None
+
+
+def _manifest_keys(object_store: ObjectStoreResource) -> list[str]:
+    return [
+        key
+        for key in object_store.list_keys("gleif/raw/", bucket=GLEIF_RAW_BUCKET)
+        if key.endswith("/manifest.json")
+    ]
+
+
+def _read_manifest(object_store: ObjectStoreResource, key: str) -> dict[str, Any]:
+    return json.loads(object_store.read_bytes(key, bucket=GLEIF_RAW_BUCKET))
+
+
+def _manifest_order_key(manifest: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(manifest.get("publish_date") or ""),
+        str(manifest.get("pulled_at") or ""),
+        str(manifest.get("run_id") or ""),
+    )

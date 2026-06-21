@@ -24,11 +24,16 @@ class _FakeResponse:
 
 
 class _FakeSession:
-    def __init__(self, response: _FakeResponse) -> None:
+    def __init__(
+        self,
+        response: _FakeResponse,
+        expected_source_url: str = "https://example.test/latest.csv",
+    ) -> None:
         self.response = response
+        self.expected_source_url = expected_source_url
 
     def get(self, source_url: str, *, timeout: int, stream: bool) -> _FakeResponse:
-        assert source_url == "https://example.test/latest.json"
+        assert source_url == self.expected_source_url
         assert timeout == 30
         assert stream is True
         return self.response
@@ -55,17 +60,34 @@ class _FakeObjectStore:
         return self._s3_client
 
 
+class _FakeManifestObjectStore:
+    def __init__(self, objects: dict[str, dict]) -> None:
+        self.objects = objects
+
+    def list_keys(self, prefix: str, *, bucket: str) -> list[str]:
+        assert bucket == source.GLEIF_RAW_BUCKET
+        return sorted(key for key in self.objects if key.startswith(prefix))
+
+    def read_bytes(self, key: str, *, bucket: str) -> bytes:
+        assert bucket == source.GLEIF_RAW_BUCKET
+        return source.json.dumps(self.objects[key]).encode()
+
+
+def test_raw_download_config_defaults_to_csv() -> None:
+    assert source.GleifRawDownloadConfig().file_format == "csv"
+
+
 def test_golden_copy_url_supports_full_and_delta() -> None:
-    assert source.golden_copy_url(file_kind="lei2", file_format="json", delta=None) == (
-        "https://goldencopy.gleif.org/api/v2/golden-copies/publishes/lei2/latest.json"
+    assert source.golden_copy_url(file_kind="lei2", file_format="csv", delta=None) == (
+        "https://goldencopy.gleif.org/api/v2/golden-copies/publishes/lei2/latest.csv"
     )
     assert source.golden_copy_url(
         file_kind="repex",
-        file_format="json",
+        file_format="csv",
         delta="LastDay",
     ) == (
         "https://goldencopy.gleif.org/api/v2/golden-copies/publishes/"
-        "repex/latest.json?delta=LastDay"
+        "repex/latest.csv?delta=LastDay"
     )
 
 
@@ -76,13 +98,13 @@ def test_raw_object_key_includes_load_mode_publish_date_and_run_id() -> None:
         run_id="run-1",
         file_kind="lei_records",
         delta="LastDay",
-        extension="json.zip",
+        extension="csv.zip",
     )
 
     assert key == (
         "gleif/raw/load_mode=delta/delta=LastDay/"
         "publish_date=2026-06-21T16-00-00Z/run_id=run-1/"
-        "file_kind=lei_records/source.json.zip"
+        "file_kind=lei_records/source.csv.zip"
     )
 
 
@@ -114,13 +136,14 @@ def test_manifest_payload_has_operational_metadata_only() -> None:
         files=[
             source.DownloadedFile(
                 file_kind="lei_records",
+                file_format="csv",
                 source_url=(
                     "https://goldencopy.gleif.org/api/v2/"
-                    "golden-copies/publishes/lei2/latest.json"
+                    "golden-copies/publishes/lei2/latest.csv"
                 ),
                 s3_key=(
                     "gleif/raw/load_mode=full/publish_date=2026-06-20T16-00-00Z/"
-                    "run_id=run-1/file_kind=lei_records/source.json.zip"
+                    "run_id=run-1/file_kind=lei_records/source.csv.zip"
                 ),
                 size_bytes=123,
                 sha256="a" * 64,
@@ -134,7 +157,33 @@ def test_manifest_payload_has_operational_metadata_only() -> None:
     assert manifest["load_mode"] == "full"
     assert manifest["delta"] is None
     assert manifest["files"][0]["file_kind"] == "lei_records"
+    assert manifest["files"][0]["file_format"] == "csv"
     assert "raw_file_manifest" not in manifest
+
+
+def test_manifest_for_run_prefers_current_run_over_existing_newer_snapshot() -> None:
+    object_store = _FakeManifestObjectStore(
+        {
+            (
+                "gleif/raw/load_mode=delta/delta=LastDay/"
+                "publish_date=2026-06-21T16-00-00Z/run_id=run-current/manifest.json"
+            ): {
+                "load_mode": "delta",
+                "publish_date": "2026-06-21T16:00:00+00:00",
+                "run_id": "run-current",
+            },
+            (
+                "gleif/raw/load_mode=delta/delta=LastDay/"
+                "publish_date=2026-06-22T16-00-00Z/run_id=run-other/manifest.json"
+            ): {
+                "load_mode": "delta",
+                "publish_date": "2026-06-22T16:00:00+00:00",
+                "run_id": "run-other",
+            },
+        }
+    )
+
+    assert source.manifest_for_run(object_store, "run-current")["run_id"] == "run-current"
 
 
 def test_delta_requires_existing_current_state() -> None:
@@ -159,7 +208,7 @@ def test_retention_keeps_manifests_and_newest_raw_snapshot() -> None:
     keys = [
         (
             "gleif/raw/load_mode=full/publish_date=2026-06-19T16-00-00Z/"
-            "run_id=old/file_kind=lei_records/source.json.zip"
+            "run_id=old/file_kind=lei_records/source.csv.zip"
         ),
         (
             "gleif/raw/load_mode=full/publish_date=2026-06-19T16-00-00Z/"
@@ -167,7 +216,7 @@ def test_retention_keeps_manifests_and_newest_raw_snapshot() -> None:
         ),
         (
             "gleif/raw/load_mode=full/publish_date=2026-06-20T16-00-00Z/"
-            "run_id=new/file_kind=lei_records/source.json.zip"
+            "run_id=new/file_kind=lei_records/source.csv.zip"
         ),
         (
             "gleif/raw/load_mode=full/publish_date=2026-06-20T16-00-00Z/"
@@ -178,7 +227,7 @@ def test_retention_keeps_manifests_and_newest_raw_snapshot() -> None:
     assert source.select_gleif_raw_keys_for_deletion(keys) == [
         (
             "gleif/raw/load_mode=full/publish_date=2026-06-19T16-00-00Z/"
-            "run_id=old/file_kind=lei_records/source.json.zip"
+            "run_id=old/file_kind=lei_records/source.csv.zip"
         )
     ]
 
@@ -194,9 +243,9 @@ def test_download_uses_publish_date_from_redirect_response_headers() -> None:
     downloaded_file, publish_date = source._download_one_file(
         object_store=_FakeObjectStore(s3_client),
         session=_FakeSession(response),
-        source_url="https://example.test/latest.json",
+        source_url="https://example.test/latest.csv",
         file_kind="lei_records",
-        file_format="json",
+        file_format="csv",
         load_mode="full",
         delta=None,
         run_id="run-1",
@@ -219,9 +268,9 @@ def test_download_streams_temp_file_to_object_store() -> None:
     source._download_one_file(
         object_store=_FakeObjectStore(s3_client),
         session=_FakeSession(response),
-        source_url="https://example.test/latest.json",
+        source_url="https://example.test/latest.csv",
         file_kind="lei_records",
-        file_format="json",
+        file_format="csv",
         load_mode="full",
         delta=None,
         run_id="run-1",

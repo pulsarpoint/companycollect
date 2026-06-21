@@ -6,6 +6,8 @@ from pathlib import Path
 import duckdb
 
 from dagster_v3.defs.gleif import duckdb_state
+from dagster_v3.defs.gleif import source
+from tests.test_gleif_csv_transforms import seed_raw_tables
 
 
 def test_full_refresh_replaces_current_state(tmp_path: Path) -> None:
@@ -118,7 +120,7 @@ def test_latest_manifest_uses_publish_date_not_lexical_load_mode() -> None:
         }
     )
 
-    assert duckdb_state._latest_manifest(object_store)["run_id"] == "run-delta"
+    assert source.latest_manifest(object_store)["run_id"] == "run-delta"
 
 
 def test_manifest_for_run_prefers_current_run_over_existing_newer_snapshot() -> None:
@@ -143,13 +145,17 @@ def test_manifest_for_run_prefers_current_run_over_existing_newer_snapshot() -> 
         }
     )
 
-    assert duckdb_state._manifest_for_run(object_store, "run-current")["run_id"] == "run-current"
+    assert source.manifest_for_run(object_store, "run-current")["run_id"] == "run-current"
 
 
-def test_refresh_duckdb_state_streams_raw_zip_objects_without_read_bytes(tmp_path: Path) -> None:
+def test_refresh_duckdb_state_normalizes_from_dlt_raw_tables(tmp_path: Path) -> None:
+    database_path = tmp_path / "gleif_reference.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        seed_raw_tables(connection)
+
     source_key = (
         "gleif/raw/load_mode=full/publish_date=2026-06-20T16-00-00Z/"
-        "run_id=run-full/file_kind=lei_records/source.json.zip"
+        "run_id=run-full/file_kind=lei_records/source.csv.zip"
     )
     manifest_key = (
         "gleif/raw/load_mode=full/publish_date=2026-06-20T16-00-00Z/"
@@ -162,33 +168,23 @@ def test_refresh_duckdb_state_streams_raw_zip_objects_without_read_bytes(tmp_pat
                 "publish_date": "2026-06-20T16:00:00+00:00",
                 "pulled_at": "2026-06-20T17:00:00+00:00",
                 "run_id": "run-full",
-                "files": [{"file_kind": "lei_records", "s3_key": source_key}],
+                "files": [
+                    {
+                        "file_kind": "lei_records",
+                        "file_format": "csv",
+                        "source_url": "https://example.test/lei2/latest.csv",
+                        "s3_key": source_key,
+                        "sha256": "a" * 64,
+                    }
+                ],
             }
-        },
-        blobs={
-            source_key: _zip_json(
-                "lei2.json",
-                {
-                    "records": [
-                        {
-                            "LEI": "LEI0000000000000001",
-                            "Entity": {
-                                "LegalName": {"$": "Alpha Inc.", "@lang": "en"},
-                                "EntityStatus": "ACTIVE",
-                                "LegalAddress": {"Country": "US"},
-                            },
-                            "Registration": {"RegistrationStatus": "ISSUED"},
-                        }
-                    ]
-                },
-            )
         },
     )
 
     result = duckdb_state.refresh_gleif_duckdb_state(
         context=_FakeContext("run-full"),
         object_store=object_store,
-        database_path=tmp_path / "gleif.duckdb",
+        database_path=database_path,
     )
 
     assert result.metadata["gleif_lei_records_row_count"] == 1
