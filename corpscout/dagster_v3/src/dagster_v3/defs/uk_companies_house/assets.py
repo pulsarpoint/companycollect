@@ -18,6 +18,10 @@ from dagster_v3.defs.uk_companies_house.financials import (
     apply_uk_usd_conversion,
     build_uk_companies_house_financials,
 )
+from dagster_v3.defs.uk_companies_house.incremental import (
+    build_incremental_metrics,
+    write_cursor,
+)
 from dagster_v3.defs.uk_companies_house.industries import (
     build_uk_companies_house_industries,
 )
@@ -212,11 +216,66 @@ def uk_companies_house_clickhouse_financial_metrics(
     rows = export_uk_companies_house_clickhouse_financial_metrics(
         database_path=UK_DUCKDB_PATH,
         clickhouse=clickhouse,
+        truncate=False,  # append; gb_financial_metrics accumulates (ReplacingMergeTree)
         log=context.log.info,
     )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_FINANCIAL_METRICS_TABLE},
     )
+
+
+# --- Forward-only incremental: latest annual report for all filers -----------
+class CompaniesHouseIncrementalConfig(dg.Config):
+    # Max archives to process per run (bounds runtime; catch-up over many runs).
+    max_archives: int = 10
+
+
+@dg.asset(
+    name="uk_companies_house_accounts_incremental",
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=UK_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_FINANCIAL_METRICS_TABLE},
+    description=(
+        "Forward-only incremental: parse the accounts archives published since the "
+        "cursor, GBP+USD, and APPEND to corpscout.gb_financial_metrics. Over ~12 "
+        "months this converges on the latest annual report for every iXBRL filer."
+    ),
+)
+def uk_companies_house_accounts_incremental(
+    context: AssetExecutionContext,
+    config: CompaniesHouseIncrementalConfig,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    from exchange_rates import ExchangeRateClient
+
+    counts = build_incremental_metrics(
+        database_path=UK_DUCKDB_PATH,
+        source_run_id=context.run_id,
+        max_archives=config.max_archives,
+        log=context.log.info,
+    )
+    if not counts["processed_archives"]:
+        context.log.info(
+            "No new UK accounts archives since cursor=%s", counts["cursor_before"]
+        )
+        return dg.MaterializeResult(metadata=counts)
+
+    apply_uk_usd_conversion(
+        database_path=UK_DUCKDB_PATH,
+        exchange_rates=ExchangeRateClient.from_env(),
+        log=context.log.info,
+    )
+    rows = export_uk_companies_house_clickhouse_financial_metrics(
+        database_path=UK_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        truncate=False,
+        log=context.log.info,
+    )
+    # Advance the cursor only after a successful append.
+    write_cursor(UK_DUCKDB_PATH, max(counts["processed_archives"]))
+    context.log.info("Appended UK incremental metrics: rows=%s", rows)
+    return dg.MaterializeResult(metadata={**counts, "exported_rows": rows})
 
 
 # --- On-demand: latest accounts per company via the CH API -------------------
@@ -301,6 +360,18 @@ uk_companies_house_financials_schedule = dg.ScheduleDefinition(
 uk_companies_house_api_financials_job = dg.define_asset_job(
     "uk_companies_house_api_financials_job",
     selection=dg.AssetSelection.assets("uk_companies_house_api_financial_metrics"),
+)
+
+# Forward-only incremental: the daily archives publish daily → daily schedule.
+uk_companies_house_accounts_incremental_job = dg.define_asset_job(
+    "uk_companies_house_accounts_incremental_job",
+    selection=dg.AssetSelection.assets("uk_companies_house_accounts_incremental"),
+)
+uk_companies_house_accounts_incremental_schedule = dg.ScheduleDefinition(
+    name="uk_companies_house_accounts_incremental_schedule",
+    job=uk_companies_house_accounts_incremental_job,
+    cron_schedule="0 9 * * *",  # daily 09:00 (after the new archive publishes)
+    execution_timezone="Europe/Belgrade",
 )
 
 uk_companies_house_full_refresh_job = dg.define_asset_job(

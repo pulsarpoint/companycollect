@@ -62,13 +62,21 @@ mirroring `france_sirene`.
   GBP + **GBP→USD** via the shared `ExchangeRateClient` (separate step, keyed on period_end_date).
 - **Coverage caveat**: balance-sheet items (net assets, fixed/current assets, cash) are broadly
   tagged even by micro-entities; **turnover/profit only by companies that file a P&L** (medium+),
-  so those are frequently NULL. **Phase 1 ingests the latest archive** (full-refresh, ~one day of
-  filings); broader coverage accumulates by ingesting more archives (**incremental = Phase 2**).
-- `uk_companies_house_financials_job` (parse → USD → export) on its own monthly schedule.
+  so those are frequently NULL. **PDF-only filings carry no XBRL** → no metrics.
+- **Three write paths, all → `gb_financial_metrics` (ReplacingMergeTree, no truncate — append +
+  dedup by company):**
+  1. **Latest archive** (`uk_companies_house_financials_job`) — ingest the newest archive (proof / manual).
+  2. **Forward-only incremental** (`uk_companies_house_accounts_incremental`, daily) — a cursor (in the
+     source DuckDB) tracks the last processed archive; each run appends the archives published since.
+     Companies file annually, so over ~12 months this converges on the **latest annual report for every
+     iXBRL filer** — free bulk, no API limits. `max_archives` bounds per-run runtime.
+  3. **On-demand API** (`uk_companies_house_api_financial_metrics`, config `company_numbers`) — fetch a
+     specific company's latest accounts via the CH Filing History + Document API (needs the free
+     `COMPANY_HOUSE` key; reads document metadata and skips PDF-only filings).
 
 ## 10. Deferred
-- **Financials accumulation** (Phase 2): incremental ingest of many archives → latest filing per
-  company toward full coverage. **Contacts** — not in open data. **Officers/PSC** — separate datasets.
+- **12-month backfill** to seed prior filings immediately (the incremental otherwise accrues forward).
+- **Contacts** — not in open data. **Officers/PSC** — separate datasets.
 
 ## 11. Verification
 - `uv run pytest tests/test_uk_companies_house.py tests/test_clickhouse_migrations.py -q` +

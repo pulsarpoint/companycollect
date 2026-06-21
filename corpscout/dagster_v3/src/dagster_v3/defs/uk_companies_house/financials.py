@@ -76,20 +76,7 @@ def build_uk_financials_from_archive(
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     """Parse every iXBRL filing in an accounts archive into native-GBP metrics."""
-    rows: list[tuple[Any, ...]] = []
-    parsed = 0
-    with zipfile.ZipFile(archive_path) as archive:
-        members = [
-            n for n in archive.namelist() if n.lower().endswith(_IXBRL_SUFFIXES)
-        ]
-        for name in members:
-            extracted = _extract_metrics(archive.read(name))
-            if extracted is None:
-                continue
-            parsed += 1
-            company_number, period_end, metrics = extracted
-            rows.append(metrics_row(company_number, period_end, metrics))
-
+    rows, parsed = parse_archive_rows(archive_path)
     counts = write_metrics_table(
         database_path=database_path,
         rows=rows,
@@ -105,6 +92,24 @@ def build_uk_financials_from_archive(
             counts["with_revenue"],
         )
     return counts
+
+
+def parse_archive_rows(archive_path: str | Path) -> tuple[list[tuple[Any, ...]], int]:
+    """Parse every iXBRL filing in one accounts archive → (metric rows, parsed count)."""
+    rows: list[tuple[Any, ...]] = []
+    parsed = 0
+    with zipfile.ZipFile(archive_path) as archive:
+        members = [
+            n for n in archive.namelist() if n.lower().endswith(_IXBRL_SUFFIXES)
+        ]
+        for name in members:
+            extracted = _extract_metrics(archive.read(name))
+            if extracted is None:
+                continue
+            parsed += 1
+            company_number, period_end, metrics = extracted
+            rows.append(metrics_row(company_number, period_end, metrics))
+    return rows, parsed
 
 
 def metrics_row(company_number: str, period_end: Any, metrics: dict[str, Any]) -> tuple[Any, ...]:

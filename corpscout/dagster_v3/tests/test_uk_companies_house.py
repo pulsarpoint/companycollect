@@ -254,6 +254,39 @@ def test_api_missing_company_yields_empty(tmp_path):
     assert counts == {"companies": 0, "with_revenue": 0, "requested": 1, "fetched": 0, "missing": 1}
 
 
+def test_incremental_cursor_and_selection(tmp_path):
+    from dagster_v3.defs.uk_companies_house import incremental
+
+    archives = [
+        ("2026-06-01", "u/a1.zip"),
+        ("2026-06-02", "u/a2.zip"),
+        ("2026-06-03", "u/a3.zip"),
+    ]
+    # forward-only start: no cursor -> only the latest archive.
+    assert incremental.select_new_archives(archives, None, 10) == [archives[-1]]
+    # with a cursor -> only newer, bounded.
+    assert incremental.select_new_archives(archives, "2026-06-01", 10) == archives[1:]
+    assert incremental.select_new_archives(archives, "2026-06-01", 1) == [archives[1]]
+    # caught up -> nothing.
+    assert incremental.select_new_archives(archives, "2026-06-03", 10) == []
+
+    db = tmp_path / "uk.duckdb"
+    assert incremental.read_cursor(db) is None
+    incremental.write_cursor(db, "2026-06-02")
+    assert incremental.read_cursor(db) == "2026-06-02"
+    incremental.write_cursor(db, "2026-06-03")  # upsert
+    assert incremental.read_cursor(db) == "2026-06-03"
+
+
+def test_incremental_schedule_registered():
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    sch = repo.get_schedule_def("uk_companies_house_accounts_incremental_schedule")
+    assert sch.cron_schedule == "0 9 * * *"
+    assert sch.job.name == "uk_companies_house_accounts_incremental_job"
+
+
 def test_register_job_and_schedule():
     from dagster_v3.definitions import defs as load_defs
 
