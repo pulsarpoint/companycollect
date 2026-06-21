@@ -7,6 +7,7 @@ from typing import Any, Literal
 import zipfile
 
 import dlt as dlt_lib
+import duckdb
 from dlt.sources.filesystem import filesystem, read_csv_duckdb
 
 GLEIF_DLT_PIPELINE_NAME = "gleif_raw_csv_duckdb"
@@ -75,6 +76,54 @@ def gleif_csv_dlt_pipeline(database_path: str | Path) -> Any:
         dataset_name=GLEIF_DLT_RAW_DATASET_NAME,
         dev_mode=False,
         pipelines_dir=str(working_dir),
+    )
+
+
+def load_gleif_csv_raw_tables(
+    *,
+    database_path: str | Path,
+    extracted_files: Iterable[ExtractedGleifCsv],
+) -> dict[str, int]:
+    files = list(extracted_files)
+    pipeline = gleif_csv_dlt_pipeline(database_path)
+    pipeline.drop_pending_packages()
+    load_info = pipeline.run(gleif_csv_dlt_source(files))
+    load_info.raise_on_failed_jobs()
+    return raw_table_row_counts(database_path)
+
+
+def raw_table_row_counts(database_path: str | Path) -> dict[str, int]:
+    database_file = Path(database_path)
+    if not database_file.exists():
+        return {table_name: 0 for table_name in RAW_TABLE_BY_FILE_KIND.values()}
+
+    with duckdb.connect(str(database_file), read_only=True) as connection:
+        return {
+            table_name: _raw_table_row_count(connection, table_name)
+            for table_name in RAW_TABLE_BY_FILE_KIND.values()
+        }
+
+
+def _raw_table_row_count(
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str,
+) -> int:
+    exists = connection.execute(
+        """
+        select 1
+        from information_schema.tables
+        where table_schema = ?
+          and table_name = ?
+        limit 1
+        """,
+        [GLEIF_DLT_RAW_DATASET_NAME, table_name],
+    ).fetchone()
+    if exists is None:
+        return 0
+    return int(
+        connection.execute(
+            f'select count(*) from "{GLEIF_DLT_RAW_DATASET_NAME}"."{table_name}"'
+        ).fetchone()[0]
     )
 
 

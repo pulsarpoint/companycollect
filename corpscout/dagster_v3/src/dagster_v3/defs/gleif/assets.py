@@ -7,8 +7,6 @@ from typing import Any, Literal, cast
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
-from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
-from dagster_dlt.translator import DltResourceTranslatorData
 
 from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
@@ -25,9 +23,7 @@ from dagster_v3.defs.gleif.dlt_csv import (
     FileKind,
     RAW_TABLE_BY_FILE_KIND,
     extract_single_csv_member,
-    gleif_csv_dlt_pipeline,
-    gleif_csv_dlt_source,
-    gleif_definition_time_csv_files,
+    load_gleif_csv_raw_tables,
 )
 from dagster_v3.defs.gleif.source import (
     GLEIF_RAW_BUCKET,
@@ -47,29 +43,15 @@ GLEIF_DUCKDB_RAW_ASSET_KEYS = (
     dg.AssetKey("gleif_raw_reporting_exceptions_duckdb"),
 )
 
-GLEIF_DLT_ASSET_BY_TABLE = {
+GLEIF_DUCKDB_RAW_ASSET_BY_TABLE = {
     GLEIF_RAW_LEI_RECORDS_TABLE: "gleif_raw_lei_records_duckdb",
     GLEIF_RAW_RELATIONSHIPS_TABLE: "gleif_raw_relationships_duckdb",
     GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE: "gleif_raw_reporting_exceptions_duckdb",
 }
-
-
-class GleifDltTranslator(DagsterDltTranslator):
-    def get_asset_spec(self, data: DltResourceTranslatorData) -> dg.AssetSpec:
-        spec = super().get_asset_spec(data)
-        asset_key = GLEIF_DLT_ASSET_BY_TABLE.get(data.resource.table_name)
-        if asset_key is None:
-            return spec
-        return spec.replace_attributes(
-            key=asset_key,
-            deps=[
-                dg.AssetKey("gleif_full_raw_reference_files"),
-                dg.AssetKey("gleif_delta_raw_reference_files"),
-            ],
-            group_name=GROUP_NAME,
-            description=f"Raw GLEIF CSV table `{data.resource.table_name}` loaded into DuckDB with dlt.",
-            kinds={"python", "dlt", "duckdb", "gleif"},
-        )
+MIN_FULL_RAW_ROW_COUNTS = {
+    GLEIF_RAW_LEI_RECORDS_TABLE: 5_001,
+    GLEIF_RAW_RELATIONSHIPS_TABLE: 5_001,
+}
 
 
 @dg.asset(
@@ -114,16 +96,24 @@ def gleif_delta_raw_reference_files(
     )
 
 
-@dlt_assets(
-    dlt_source=gleif_csv_dlt_source(gleif_definition_time_csv_files()),
-    dlt_pipeline=gleif_csv_dlt_pipeline(GLEIF_DUCKDB_PATH),
+@dg.multi_asset(
+    outs={
+        asset_name: dg.AssetOut(
+            description=f"Raw GLEIF CSV table `{table_name}` loaded into DuckDB with dlt.",
+            group_name=GROUP_NAME,
+            kinds={"python", "dlt", "duckdb", "gleif"},
+        )
+        for table_name, asset_name in GLEIF_DUCKDB_RAW_ASSET_BY_TABLE.items()
+    },
+    deps=[
+        dg.AssetKey("gleif_full_raw_reference_files"),
+        dg.AssetKey("gleif_delta_raw_reference_files"),
+    ],
     name="gleif_raw_duckdb_dlt",
-    dagster_dlt_translator=GleifDltTranslator(),
     pool=GLEIF_DUCKDB_POOL,
 )
 def gleif_raw_duckdb_dlt_assets(
     context: dg.AssetExecutionContext,
-    dlt: DagsterDltResource,
     object_store: ObjectStoreResource,
 ) -> Iterator[Any]:
     manifest = manifest_for_run(object_store, context.run_id)
@@ -134,10 +124,22 @@ def gleif_raw_duckdb_dlt_assets(
             manifest=manifest,
             temp_dir=Path(temp_path),
         )
-        yield from dlt.run(
-            context=context,
-            dlt_source=gleif_csv_dlt_source(extracted_files),
-            dlt_pipeline=gleif_csv_dlt_pipeline(GLEIF_DUCKDB_PATH),
+        row_counts = load_gleif_csv_raw_tables(
+            database_path=GLEIF_DUCKDB_PATH,
+            extracted_files=extracted_files,
+        )
+        _validate_raw_row_counts(manifest=manifest, row_counts=row_counts)
+
+    for table_name, asset_name in GLEIF_DUCKDB_RAW_ASSET_BY_TABLE.items():
+        yield dg.MaterializeResult(
+            asset_key=dg.AssetKey(asset_name),
+            metadata={
+                "raw_table": table_name,
+                "row_count": row_counts.get(table_name, 0),
+                "load_mode": str(manifest["load_mode"]),
+                "publish_date": str(manifest["publish_date"]),
+                "source_run_id": str(manifest["run_id"]),
+            },
         )
 
 
@@ -308,6 +310,26 @@ def _extract_manifest_csv_files(
             )
         )
     return extracted_files
+
+
+def _validate_raw_row_counts(
+    *,
+    manifest: dict[str, Any],
+    row_counts: dict[str, int],
+) -> None:
+    if manifest.get("load_mode") != "full":
+        return
+
+    invalid_counts = {
+        table_name: row_counts.get(table_name, 0)
+        for table_name, minimum_count in MIN_FULL_RAW_ROW_COUNTS.items()
+        if row_counts.get(table_name, 0) < minimum_count
+    }
+    if invalid_counts:
+        raise ValueError(
+            "GLEIF full raw load produced too few rows; refusing to continue. "
+            f"Counts: {invalid_counts}"
+        )
 
 
 def _copy_s3_object_to_path(

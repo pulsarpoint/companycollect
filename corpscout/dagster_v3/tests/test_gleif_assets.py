@@ -1,7 +1,12 @@
 import dagster as dg
+import pytest
 from dagster import AssetKey
 
 from dagster_v3.defs.gleif import assets
+from dagster_v3.defs.gleif.dlt_csv import (
+    GLEIF_RAW_LEI_RECORDS_TABLE,
+    GLEIF_RAW_RELATIONSHIPS_TABLE,
+)
 
 
 def load_gleif_defs():
@@ -96,3 +101,24 @@ def test_gleif_jobs_and_delta_schedule_are_registered() -> None:
 def test_gleif_clickhouse_export_uses_catalog_qualified_duckdb_schema() -> None:
     assert assets.GLEIF_DUCKDB_PATH.name == "gleif_reference.duckdb"
     assert assets.GLEIF_DUCKDB_SCHEMA == "gleif_reference.gleif"
+
+
+def test_full_raw_count_validation_rejects_single_chunk_load() -> None:
+    with pytest.raises(ValueError, match="too few rows"):
+        assets._validate_raw_row_counts(
+            manifest={"load_mode": "full"},
+            row_counts={
+                GLEIF_RAW_LEI_RECORDS_TABLE: 5_000,
+                GLEIF_RAW_RELATIONSHIPS_TABLE: 476_870,
+            },
+        )
+
+
+def test_delta_raw_count_validation_allows_small_loads() -> None:
+    assets._validate_raw_row_counts(
+        manifest={"load_mode": "delta"},
+        row_counts={
+            GLEIF_RAW_LEI_RECORDS_TABLE: 10,
+            GLEIF_RAW_RELATIONSHIPS_TABLE: 10,
+        },
+    )

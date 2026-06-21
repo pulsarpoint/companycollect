@@ -1,21 +1,13 @@
 from __future__ import annotations
 
-import json
-import shutil
-import tempfile
-from dataclasses import dataclass
-from dataclasses import field
 from pathlib import Path
-from typing import Any
 
 import dagster as dg
 import duckdb
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.gleif import parser
 from dagster_v3.defs.gleif import tables
 from dagster_v3.defs.gleif.source import (
-    GLEIF_RAW_BUCKET,
     ensure_bootstrap_state_for_delta,
     manifest_for_run,
     read_gleif_state,
@@ -24,33 +16,6 @@ from dagster_v3.defs.gleif.source import (
 
 DUCKDB_SCHEMA = "gleif"
 DUCKDB_STAGING_SCHEMA = "gleif_staging"
-DEFAULT_STREAM_BATCH_SIZE = 10_000
-
-
-@dataclass
-class GleifStateRows:
-    lei_records: list[dict[str, Any]] = field(default_factory=list)
-    lei_names: list[dict[str, Any]] = field(default_factory=list)
-    lei_addresses: list[dict[str, Any]] = field(default_factory=list)
-    lei_identifiers: list[dict[str, Any]] = field(default_factory=list)
-    relationships: list[dict[str, Any]] = field(default_factory=list)
-    relationship_periods: list[dict[str, Any]] = field(default_factory=list)
-    reporting_exceptions: list[dict[str, Any]] = field(default_factory=list)
-    lei_issuers: list[dict[str, Any]] = field(default_factory=list)
-    code_list_entries: list[dict[str, Any]] = field(default_factory=list)
-
-
-TABLE_ROW_FIELDS = {
-    tables.GLEIF_LEI_RECORDS_TABLE: "lei_records",
-    tables.GLEIF_LEI_NAMES_TABLE: "lei_names",
-    tables.GLEIF_LEI_ADDRESSES_TABLE: "lei_addresses",
-    tables.GLEIF_LEI_IDENTIFIERS_TABLE: "lei_identifiers",
-    tables.GLEIF_LEI_RELATIONSHIPS_TABLE: "relationships",
-    tables.GLEIF_LEI_RELATIONSHIP_PERIODS_TABLE: "relationship_periods",
-    tables.GLEIF_LEI_REPORTING_EXCEPTIONS_TABLE: "reporting_exceptions",
-    tables.GLEIF_LEI_ISSUERS_TABLE: "lei_issuers",
-    tables.GLEIF_CODE_LIST_ENTRIES_TABLE: "code_list_entries",
-}
 
 TABLE_KEYS = {
     tables.GLEIF_LEI_RECORDS_TABLE: ("lei",),
@@ -91,114 +56,6 @@ DUCKDB_COLUMN_TYPES = {
     "retrieved_at": "timestamp",
     "resolved_at": "timestamp",
 }
-
-
-def replace_current_state(database_path: str | Path, rows: GleifStateRows) -> dict[str, int]:
-    database_file = Path(database_path)
-    database_file.parent.mkdir(parents=True, exist_ok=True)
-    catalog_name = database_file.stem
-    with duckdb.connect(str(database_file)) as connection:
-        _ensure_schema(connection, catalog_name)
-        for table_name in tables.GLEIF_TABLES:
-            _replace_table(
-                connection,
-                catalog_name=catalog_name,
-                table_name=table_name,
-                columns=tables.GLEIF_TABLE_COLUMNS[table_name],
-                rows=_rows_for_table(rows, table_name),
-            )
-    return _row_counts(database_file)
-
-
-def apply_delta_state(database_path: str | Path, rows: GleifStateRows) -> dict[str, int]:
-    database_file = Path(database_path)
-    catalog_name = database_file.stem
-    with duckdb.connect(str(database_file)) as connection:
-        _ensure_schema(connection, catalog_name)
-        _ensure_all_tables(connection, catalog_name=catalog_name, schema_name=DUCKDB_SCHEMA)
-        for table_name in tables.GLEIF_TABLES:
-            table_rows = _rows_for_table(rows, table_name)
-            if not table_rows:
-                continue
-            _upsert_table_rows(
-                connection,
-                catalog_name=catalog_name,
-                table_name=table_name,
-                columns=tables.GLEIF_TABLE_COLUMNS[table_name],
-                key_columns=TABLE_KEYS[table_name],
-                rows=table_rows,
-            )
-    return _row_counts(database_file)
-
-
-def replace_current_state_from_manifest(
-    *,
-    database_path: str | Path,
-    object_store: ObjectStoreResource,
-    manifest: dict[str, Any],
-    batch_size: int = DEFAULT_STREAM_BATCH_SIZE,
-) -> dict[str, int]:
-    database_file = Path(database_path)
-    database_file.parent.mkdir(parents=True, exist_ok=True)
-    catalog_name = database_file.stem
-    with duckdb.connect(str(database_file)) as connection:
-        _ensure_schema(connection, catalog_name, schema_name=DUCKDB_SCHEMA)
-        _ensure_schema(connection, catalog_name, schema_name=DUCKDB_STAGING_SCHEMA)
-        _ensure_empty_tables(
-            connection,
-            catalog_name=catalog_name,
-            schema_name=DUCKDB_STAGING_SCHEMA,
-        )
-        _load_manifest_into_schema(
-            connection,
-            object_store=object_store,
-            manifest=manifest,
-            catalog_name=catalog_name,
-            schema_name=DUCKDB_STAGING_SCHEMA,
-            batch_size=batch_size,
-        )
-        _replace_current_tables_from_schema(
-            connection,
-            catalog_name=catalog_name,
-            source_schema_name=DUCKDB_STAGING_SCHEMA,
-        )
-    return _row_counts(database_file)
-
-
-def apply_delta_state_from_manifest(
-    *,
-    database_path: str | Path,
-    object_store: ObjectStoreResource,
-    manifest: dict[str, Any],
-    batch_size: int = DEFAULT_STREAM_BATCH_SIZE,
-) -> dict[str, int]:
-    database_file = Path(database_path)
-    database_file.parent.mkdir(parents=True, exist_ok=True)
-    catalog_name = database_file.stem
-    with duckdb.connect(str(database_file)) as connection:
-        _ensure_schema(connection, catalog_name, schema_name=DUCKDB_SCHEMA)
-        _ensure_schema(connection, catalog_name, schema_name=DUCKDB_STAGING_SCHEMA)
-        _ensure_all_tables(connection, catalog_name=catalog_name, schema_name=DUCKDB_SCHEMA)
-        _ensure_empty_tables(
-            connection,
-            catalog_name=catalog_name,
-            schema_name=DUCKDB_STAGING_SCHEMA,
-        )
-        staged_counts = _load_manifest_into_schema(
-            connection,
-            object_store=object_store,
-            manifest=manifest,
-            catalog_name=catalog_name,
-            schema_name=DUCKDB_STAGING_SCHEMA,
-            batch_size=batch_size,
-        )
-        _upsert_current_tables_from_schema(
-            connection,
-            catalog_name=catalog_name,
-            source_schema_name=DUCKDB_STAGING_SCHEMA,
-            source_row_counts=staged_counts,
-        )
-    return _row_counts(database_file)
 
 
 def refresh_gleif_duckdb_state(
@@ -265,163 +122,6 @@ def _ensure_empty_tables(
             f"{_qualified_table(table_name, catalog_name=catalog_name, schema_name=schema_name)} "
             f"({_column_sql(tables.GLEIF_TABLE_COLUMNS[table_name])})"
         )
-
-
-def _load_manifest_into_schema(
-    connection: duckdb.DuckDBPyConnection,
-    *,
-    object_store: ObjectStoreResource,
-    manifest: dict[str, Any],
-    catalog_name: str,
-    schema_name: str,
-    batch_size: int,
-) -> dict[str, int]:
-    row_counts = {table_name: 0 for table_name in tables.GLEIF_TABLES}
-    batches = {table_name: [] for table_name in tables.GLEIF_TABLES}
-    for item in manifest.get("files", []):
-        s3_key = str(item["s3_key"])
-        with tempfile.NamedTemporaryFile(suffix=".zip") as temp_file:
-            _copy_s3_object_to_file(object_store, s3_key, temp_file)
-            temp_file.flush()
-            zip_path = Path(temp_file.name)
-            for row_group in _iter_manifest_row_groups(
-                zip_path=zip_path,
-                file_kind=str(item.get("file_kind")),
-                manifest=manifest,
-            ):
-                _append_row_group_to_batches(
-                    connection,
-                    catalog_name=catalog_name,
-                    schema_name=schema_name,
-                    batches=batches,
-                    row_counts=row_counts,
-                    row_group=row_group,
-                    batch_size=batch_size,
-                )
-    _flush_batches(
-        connection,
-        catalog_name=catalog_name,
-        schema_name=schema_name,
-        batches=batches,
-    )
-    return row_counts
-
-
-def _copy_s3_object_to_file(
-    object_store: ObjectStoreResource,
-    s3_key: str,
-    temp_file: Any,
-) -> None:
-    response = object_store.client().get_object(Bucket=GLEIF_RAW_BUCKET, Key=s3_key)
-    body = response["Body"]
-    shutil.copyfileobj(body, temp_file)
-
-
-def _iter_manifest_row_groups(
-    *,
-    zip_path: Path,
-    file_kind: str,
-    manifest: dict[str, Any],
-) -> Any:
-    source_run_id = str(manifest["run_id"])
-    retrieved_at = str(manifest["pulled_at"])
-    resolved_at = str(manifest["pulled_at"])
-    if file_kind == "lei_records":
-        return parser.iter_lei_record_rows_from_zip_path(
-            zip_path,
-            source_run_id=source_run_id,
-            retrieved_at=retrieved_at,
-            resolved_at=resolved_at,
-            golden_copy_publish_date=str(manifest["publish_date"]),
-        )
-    if file_kind == "relationships":
-        return parser.iter_relationship_rows_from_zip_path(
-            zip_path,
-            source_run_id=source_run_id,
-            retrieved_at=retrieved_at,
-            resolved_at=resolved_at,
-        )
-    if file_kind == "reporting_exceptions":
-        return parser.iter_reporting_exception_rows_from_zip_path(
-            zip_path,
-            source_run_id=source_run_id,
-            retrieved_at=retrieved_at,
-            resolved_at=resolved_at,
-        )
-    return iter(())
-
-
-def _append_row_group_to_batches(
-    connection: duckdb.DuckDBPyConnection,
-    *,
-    catalog_name: str,
-    schema_name: str,
-    batches: dict[str, list[dict[str, Any]]],
-    row_counts: dict[str, int],
-    row_group: parser.NormalizedGleifRows,
-    batch_size: int,
-) -> None:
-    for table_name, row_list in _row_lists_from_group(row_group):
-        if not row_list:
-            continue
-        batches[table_name].extend(row_list)
-        row_counts[table_name] += len(row_list)
-        if len(batches[table_name]) >= batch_size:
-            _flush_table_batch(
-                connection,
-                catalog_name=catalog_name,
-                schema_name=schema_name,
-                table_name=table_name,
-                batches=batches,
-            )
-
-
-def _row_lists_from_group(
-    row_group: parser.NormalizedGleifRows,
-) -> tuple[tuple[str, list[dict[str, Any]]], ...]:
-    return tuple(
-        (table_name, getattr(row_group, TABLE_ROW_FIELDS[table_name]))
-        for table_name in tables.GLEIF_TABLES
-    )
-
-
-def _flush_batches(
-    connection: duckdb.DuckDBPyConnection,
-    *,
-    catalog_name: str,
-    schema_name: str,
-    batches: dict[str, list[dict[str, Any]]],
-) -> None:
-    for table_name in tables.GLEIF_TABLES:
-        _flush_table_batch(
-            connection,
-            catalog_name=catalog_name,
-            schema_name=schema_name,
-            table_name=table_name,
-            batches=batches,
-        )
-
-
-def _flush_table_batch(
-    connection: duckdb.DuckDBPyConnection,
-    *,
-    catalog_name: str,
-    schema_name: str,
-    table_name: str,
-    batches: dict[str, list[dict[str, Any]]],
-) -> None:
-    rows = batches[table_name]
-    if not rows:
-        return
-    _insert_rows(
-        connection,
-        catalog_name=catalog_name,
-        schema_name=schema_name,
-        table_name=table_name,
-        columns=tables.GLEIF_TABLE_COLUMNS[table_name],
-        rows=rows,
-    )
-    batches[table_name] = []
 
 
 def _replace_current_tables_from_schema(
@@ -503,88 +203,6 @@ def _upsert_table_from_schema(
     )
 
 
-def _replace_table(
-    connection: duckdb.DuckDBPyConnection,
-    *,
-    catalog_name: str,
-    table_name: str,
-    columns: tuple[str, ...],
-    rows: list[dict[str, Any]],
-    schema_name: str = DUCKDB_SCHEMA,
-) -> None:
-    connection.execute(
-        f"create or replace table "
-        f"{_qualified_table(table_name, catalog_name=catalog_name, schema_name=schema_name)} "
-        f"({_column_sql(columns)})"
-    )
-    _insert_rows(
-        connection,
-        catalog_name=catalog_name,
-        schema_name=schema_name,
-        table_name=table_name,
-        columns=columns,
-        rows=rows,
-    )
-
-
-def _upsert_table_rows(
-    connection: duckdb.DuckDBPyConnection,
-    *,
-    catalog_name: str,
-    table_name: str,
-    columns: tuple[str, ...],
-    key_columns: tuple[str, ...],
-    rows: list[dict[str, Any]],
-    schema_name: str = DUCKDB_SCHEMA,
-) -> None:
-    temp_table = f"delta_{table_name}"
-    connection.execute(f'create or replace temporary table "{temp_table}" ({_column_sql(columns)})')
-    _insert_rows(
-        connection,
-        table_name=temp_table,
-        columns=columns,
-        rows=rows,
-        catalog_name=None,
-        schema_name=None,
-    )
-    join_predicate = " and ".join(
-        f'current."{column}" is not distinct from delta."{column}"'
-        for column in key_columns
-    )
-    connection.execute(
-        f"delete from {_qualified_table(table_name, catalog_name=catalog_name, schema_name=schema_name)} as current "
-        f'using "{temp_table}" as delta where {join_predicate}'
-    )
-    connection.execute(
-        f"insert into {_qualified_table(table_name, catalog_name=catalog_name, schema_name=schema_name)} "
-        f'select {", ".join(_quote(column) for column in columns)} from "{temp_table}"'
-    )
-
-
-def _insert_rows(
-    connection: duckdb.DuckDBPyConnection,
-    *,
-    table_name: str,
-    columns: tuple[str, ...],
-    rows: list[dict[str, Any]],
-    catalog_name: str | None,
-    schema_name: str | None = DUCKDB_SCHEMA,
-) -> None:
-    if not rows:
-        return
-    qualified_table = _qualified_table(
-        table_name,
-        catalog_name=catalog_name,
-        schema_name=schema_name,
-    )
-    parameter_markers = ", ".join("?" for _ in columns)
-    values = [[row.get(column) for column in columns] for row in rows]
-    connection.executemany(
-        f"insert into {qualified_table} values ({parameter_markers})",
-        values,
-    )
-
-
 def _ensure_schema(
     connection: duckdb.DuckDBPyConnection,
     catalog_name: str,
@@ -622,10 +240,6 @@ def _row_counts(database_path: Path) -> dict[str, int]:
         }
 
 
-def _rows_for_table(rows: GleifStateRows, table_name: str) -> list[dict[str, Any]]:
-    return getattr(rows, TABLE_ROW_FIELDS[table_name])
-
-
 def _column_sql(columns: tuple[str, ...]) -> str:
     return ", ".join(f'{_quote(column)} {_duckdb_column_type(column)}' for column in columns)
 
@@ -650,92 +264,3 @@ def _qualified_table(
     if schema_name is None:
         return f"{_quote(catalog_name)}.{quoted_table}"
     return f"{_quote(catalog_name)}.{_quote(schema_name)}.{quoted_table}"
-
-
-def _latest_manifest(object_store: ObjectStoreResource) -> dict[str, Any]:
-    manifest_keys = _manifest_keys(object_store)
-    if not manifest_keys:
-        raise ValueError("No GLEIF raw manifest found in object storage")
-    return max(
-        (_read_manifest(object_store, key) for key in manifest_keys),
-        key=_manifest_order_key,
-    )
-
-
-def _manifest_for_run(object_store: ObjectStoreResource, run_id: str) -> dict[str, Any]:
-    manifest_keys = _manifest_keys(object_store)
-    run_manifest_keys = [
-        key
-        for key in manifest_keys
-        if f"/run_id={run_id}/" in key
-    ]
-    if not run_manifest_keys:
-        return _latest_manifest(object_store)
-    return max(
-        (_read_manifest(object_store, key) for key in run_manifest_keys),
-        key=_manifest_order_key,
-    )
-
-
-def _manifest_keys(object_store: ObjectStoreResource) -> list[str]:
-    return [
-        key
-        for key in object_store.list_keys("gleif/raw/", bucket=GLEIF_RAW_BUCKET)
-        if key.endswith("/manifest.json")
-    ]
-
-
-def _read_manifest(object_store: ObjectStoreResource, key: str) -> dict[str, Any]:
-    return json.loads(object_store.read_bytes(key, bucket=GLEIF_RAW_BUCKET))
-
-
-def _manifest_order_key(manifest: dict[str, Any]) -> tuple[str, str, str]:
-    return (
-        str(manifest.get("publish_date") or ""),
-        str(manifest.get("pulled_at") or ""),
-        str(manifest.get("run_id") or ""),
-    )
-
-
-def _rows_from_manifest(
-    object_store: ObjectStoreResource,
-    manifest: dict[str, Any],
-) -> GleifStateRows:
-    rows = GleifStateRows()
-    retrieved_at = str(manifest["pulled_at"])
-    resolved_at = str(manifest["pulled_at"])
-    source_run_id = str(manifest["run_id"])
-    publish_date = str(manifest["publish_date"])
-    for item in manifest.get("files", []):
-        file_kind = item.get("file_kind")
-        body = object_store.read_bytes(str(item["s3_key"]), bucket=GLEIF_RAW_BUCKET)
-        if file_kind == "lei_records":
-            parsed = parser.parse_lei_records_zip(
-                body,
-                source_run_id=source_run_id,
-                retrieved_at=retrieved_at,
-                resolved_at=resolved_at,
-                golden_copy_publish_date=publish_date,
-            )
-            rows.lei_records.extend(parsed.lei_records)
-            rows.lei_names.extend(parsed.lei_names)
-            rows.lei_addresses.extend(parsed.lei_addresses)
-            rows.lei_identifiers.extend(parsed.lei_identifiers)
-        elif file_kind == "relationships":
-            parsed = parser.parse_relationships_zip(
-                body,
-                source_run_id=source_run_id,
-                retrieved_at=retrieved_at,
-                resolved_at=resolved_at,
-            )
-            rows.relationships.extend(parsed.relationships)
-            rows.relationship_periods.extend(parsed.relationship_periods)
-        elif file_kind == "reporting_exceptions":
-            parsed = parser.parse_reporting_exceptions_zip(
-                body,
-                source_run_id=source_run_id,
-                retrieved_at=retrieved_at,
-                resolved_at=resolved_at,
-            )
-            rows.reporting_exceptions.extend(parsed.reporting_exceptions)
-    return rows
