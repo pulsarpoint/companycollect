@@ -17,6 +17,7 @@ from dagster_v3.defs.gleif import tables
 from dagster_v3.defs.gleif.source import (
     GLEIF_RAW_BUCKET,
     ensure_bootstrap_state_for_delta,
+    manifest_for_run,
     read_gleif_state,
     write_gleif_state,
 )
@@ -206,13 +207,16 @@ def refresh_gleif_duckdb_state(
     object_store: ObjectStoreResource,
     database_path: str | Path,
 ) -> dg.MaterializeResult:
-    manifest = _manifest_for_run(object_store, context.run_id)
+    from dagster_v3.defs.gleif.csv_transforms import replace_current_from_dlt_raw_tables
+
+    manifest = manifest_for_run(object_store, context.run_id)
     load_mode = str(manifest["load_mode"])
     if load_mode == "full":
-        row_counts = replace_current_state_from_manifest(
+        row_counts = replace_current_from_dlt_raw_tables(
             database_path=database_path,
-            object_store=object_store,
-            manifest=manifest,
+            load_mode="full",
+            publish_date=str(manifest["publish_date"]),
+            run_id=str(manifest["run_id"]),
         )
         new_state = {
             "last_full_publish_date": manifest["publish_date"],
@@ -223,10 +227,11 @@ def refresh_gleif_duckdb_state(
     elif load_mode == "delta":
         current_state = read_gleif_state(object_store)
         ensure_bootstrap_state_for_delta(current_state)
-        row_counts = apply_delta_state_from_manifest(
+        row_counts = replace_current_from_dlt_raw_tables(
             database_path=database_path,
-            object_store=object_store,
-            manifest=manifest,
+            load_mode="delta",
+            publish_date=str(manifest["publish_date"]),
+            run_id=str(manifest["run_id"]),
         )
         new_state = {
             **(current_state or {}),
