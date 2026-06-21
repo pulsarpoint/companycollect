@@ -5,6 +5,11 @@ Standard per-source shape: **dlt download → per-source DuckDB file → (dbt tr
 When adding a source, mirror the nearest existing module: `finland_ytj` (register spine), `norway_brreg`
 (registry + financials), `latvia_ur` (bulk CSV + financials + EUR/USD metrics).
 
+**Read `docs/data-source-guidelines.md` first** — it is the authoring standard (ingest-mode decision
+tree, JSON/API/partitioning rules, the mandatory currency + translation cross-cutting steps, scheduling).
+Every new source ships a design doc from `docs/source-design-doc-template.md`. This file (CLAUDE.md) is
+the day-to-day gotcha list that backs that standard.
+
 ## Commands
 - Always use **`uv run`** for `dg`/`pytest`/`dagster` (e.g. `uv run dg check defs`, `uv run pytest tests/...`).
 - Start the dev instance with **`./scripts/dagster-dev.sh`** — it exports `DAGSTER_HOME`, `DAGSTER_PG_URL`
