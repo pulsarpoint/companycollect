@@ -205,7 +205,8 @@ the general-data/financials datasets before concluding it's unavailable.
   `nace_revision` (`NACE_REV_2` / `NACE_REV_2_1`) to match the join.
 - **Unified id target**: `corpscout.nace_categories` (EU SPARQL reference, Rev 2 + Rev 2.1) — must be
   materialized (`nace_categories_clickhouse`). Join on `nace_normalized_code`/`nace_revision`.
-- **Per-source check**: EE/FI/NO **yes**; LV register + annual reports carry **no** per-company NACE
+- **Per-source check**: EE/FI/NO/FR **yes** (FR = NAF, both Rev2 + NAF 2025, strip the sub-letter →
+  NACE); LV register + annual reports carry **no** per-company NACE
   (would need a separate CSP/VID source) — document that explicitly. Reference impl: `estonia_ar`
   (`ee_industries` from `yldandmed.teatatud_tegevusalad`).
 
