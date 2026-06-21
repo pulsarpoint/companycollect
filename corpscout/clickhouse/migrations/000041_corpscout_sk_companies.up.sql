@@ -1,0 +1,27 @@
+CREATE DATABASE IF NOT EXISTS corpscout;
+
+CREATE TABLE IF NOT EXISTS corpscout.sk_companies
+(
+    country_iso2 LowCardinality(String),
+    source_slug LowCardinality(String),
+    source_run_id String,
+    source_record_id String,
+    ico String,
+    name String,
+    legal_form_code LowCardinality(String),
+    legal_form_original String,
+    legal_form_en LowCardinality(String),
+    is_active UInt8,
+    established_date Nullable(Date),
+    terminated_date Nullable(Date),
+    address String,
+    postal_code LowCardinality(String),
+    city LowCardinality(String),
+    street String,
+    municipality_code LowCardinality(String),
+    country_code LowCardinality(String),
+    source_register LowCardinality(String),
+    source_url String
+)
+ENGINE = ReplacingMergeTree
+ORDER BY (ico);
