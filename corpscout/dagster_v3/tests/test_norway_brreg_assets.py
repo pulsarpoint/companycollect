@@ -16,6 +16,40 @@ import pytest
 from temporalio.client import WorkflowExecutionStatus
 from dagster_clickhouse import ClickhouseResource
 
+
+def test_norway_refresh_schedule_and_jobs_respect_translation_flow():
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    sched = repo.get_schedule_def("norway_brreg_refresh_schedule")
+    assert sched.cron_schedule == "0 6 7 * *"  # monthly, staggered
+    assert sched.job.name == "norway_brreg_refresh_job"
+
+    # refresh kicks off translation + financials, sharing one entities load; it
+    # must NOT include translations_applied / clickhouse_companies (sensor-driven).
+    refresh = {
+        k.path[-1]
+        for k in repo.get_job("norway_brreg_refresh_job").asset_layer.executable_asset_keys
+    }
+    assert refresh == {
+        "norway_brreg_entities_duckdb",
+        "norway_brreg_translation_queue",
+        "norway_brreg_financial_fetches_duckdb",
+        "norway_brreg_financial_statements_duckdb",
+        "norway_brreg_clickhouse_financial_statements",
+    }
+    # the sensor's completion job now also exports companies to ClickHouse.
+    completion = {
+        k.path[-1]
+        for k in repo.get_job(
+            "norway_brreg_translation_completion_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert completion == {
+        "norway_brreg_translations_applied",
+        "norway_brreg_clickhouse_companies",
+    }
+
 import dagster_v3.defs.norway_brreg.assets as brreg_assets
 from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.norway_brreg import resources as brreg_resources

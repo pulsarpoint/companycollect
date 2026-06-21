@@ -485,7 +485,30 @@ def norway_brreg_translations_applied(context: AssetExecutionContext) -> dg.Mate
 
 norway_brreg_translation_completion_job = dg.define_asset_job(
     "norway_brreg_translation_completion_job",
-    selection=dg.AssetSelection.assets("norway_brreg_translations_applied"),
+    # translations_applied writes the EN columns into DuckDB; clickhouse_companies
+    # then publishes the final companies table. Run both so the sensor-driven
+    # completion lands companies in ClickHouse automatically when translation finishes.
+    selection=dg.AssetSelection.assets("norway_brreg_translations_applied")
+    | dg.AssetSelection.assets("norway_brreg_clickhouse_companies"),
+)
+
+
+# Monthly coordinated refresh (see dagster_v3/CLAUDE.md "Scheduling"). Loads
+# entities once, then kicks off the start-or-reuse Temporal translation workflow
+# (returns immediately; the workflow runs async) AND runs the financials chain.
+# Companies land via the existing completion sensor when translation finishes.
+# Monthly because the translation is long-running and the per-company financial
+# fetch is heavy. Excludes translations_applied/clickhouse_companies (sensor's job).
+norway_brreg_refresh_job = dg.define_asset_job(
+    "norway_brreg_refresh_job",
+    selection=dg.AssetSelection.assets("norway_brreg_clickhouse_financial_statements").upstream()
+    | dg.AssetSelection.assets("norway_brreg_translation_queue"),
+)
+norway_brreg_refresh_schedule = dg.ScheduleDefinition(
+    name="norway_brreg_refresh_schedule",
+    job=norway_brreg_refresh_job,
+    cron_schedule="0 6 7 * *",  # monthly, 7th 06:00 (staggered vs estonia/latvia)
+    execution_timezone="Europe/Belgrade",
 )
 
 
