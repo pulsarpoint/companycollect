@@ -18,8 +18,8 @@ and extract per-domain intelligence into ClickHouse:
   `cz_companies` / `sk_companies` (Slovak/Czech business sites must publish their IČO:
   SK §3a Obchodný zákonník; CZ §435 občanský zákoník).
 - **Technologies** — via Wappalyzer over the page's HTML + HTTP headers.
-- **Industry / site signals** — title, meta description, language, raw text snippet
-  (for later NACE inference; *capture only* in this phase).
+- **Industry** — an **LLM** classifies the page text into an industry label + coarse NACE
+  hint (the one signal regex can't extract); title/meta/language/text are also captured raw.
 
 Two payoffs: (1) **domain→company linking** where an IČO joins a registry; (2) **standalone
 domain intel** (contacts/tech/industry) for the many countries — France, Germany, US — where
@@ -34,20 +34,22 @@ full top-10M pipeline.
 
 ## 2. Scope
 
-**In (Phase 0 spike) — standalone package only, no Dagster/ClickHouse yet:**
+**In (Phase 0 spike) — standalone package only, single process, no Dagster/Temporal/ClickHouse:**
 - Target: top **100,000** domains by Open PageRank (from `open_page_rank_domains`), all TLDs.
 - Resolve each domain's homepage record in the CommonCrawl index; range-fetch the **WARC**
-  record (full HTTP response + HTML); extract contacts / IČO / technologies / metadata.
+  record (full HTTP response + HTML).
+- **Two extraction arms** (§4), both run on the 100k: a **deterministic arm** (IČO+checksum,
+  contacts, technologies, metadata) and a **measured LLM arm** (industry classification +
+  contact recall on the deterministic-miss residual).
 - Emit the 5 enrichment tables as **Parquet** (the §5 schema) + a metrics JSON, and produce the
-  **hit-rate report** from them. (The schema in §5 is the load target; ClickHouse landing is
-  Phase 1.)
+  hit-rate **and regex-vs-LLM uplift** report. (The schema in §5 is the load target; ClickHouse
+  landing is Phase 1.)
 
 **Out (Phase 1+, noted but not built now):**
 - The Dagster glue: ClickHouse load of the Parquet + `company_website_domains` linking where an
   IČO joins `cz_companies`/`sk_companies`.
-- Scaling to the full top-10M; weekly scheduling.
-- LLM/embedding-based **industry inference** (we only capture raw title/meta/text now).
-- LLM **fallback extraction** for pages where regex finds no IČO/contact.
+- **Temporal-orchestrated chunked execution** for the full top-10M run; weekly scheduling.
+- Full **NACE mapping** of the LLM industry guess (the spike keeps free-text label + coarse hint).
 - Registry joins beyond CZ/SK.
 - Crawling pages beyond the homepage (e.g. `/kontakt`) to raise IČO coverage.
 
@@ -95,12 +97,14 @@ Sources: [CC columnar index](https://commoncrawl.org/columnar-index) ·
 
 ---
 
-## 4. Extraction logic — regex/deterministic first, LLM later
+## 4. Extraction logic — two arms (deterministic + a measured LLM arm)
 
-Identity & contacts are **keyed extraction**, not semantic similarity, so deterministic
-parsing wins on precision, cost, and scale. The spike uses **no LLM**; we *measure* the gap
-an LLM fallback could close.
+Each tool stays where it's strongest. The **deterministic arm** owns keyed extraction (IČO,
+contacts, tech) — exact, free, scales. The **LLM arm** does the things regex can't (industry)
+and boosts recall where regex came up empty (obfuscated/prose contacts). Both run on the full
+100k so the spike measures the LLM's *incremental* value, not a guess.
 
+### Deterministic arm (primary)
 - **IČO** — regex anchored on `IČO`/`IC`/`IČ`/`ICO` labels, capture the 8-digit number,
   then validate the **mod-11 checksum** (CZ and SK share the algorithm). Reject numbers that
   fail the checksum (kills false positives). A page may show several IČOs (agency footer,
@@ -116,9 +120,18 @@ an LLM fallback could close.
 - **Metadata** — `<title>`, `<meta description>`, content language, final URL, capture date,
   HTTP status, TLD, country guess (TLD → else language/signals).
 
-**LLM (future, out of scope):** only as a *fallback* on pages where regex finds no IČO/contact,
-and for industry classification from the captured text. We decide its worth from the spike's
-"regex found nothing" residual.
+### LLM arm (Phase 0, measured)
+Reuse the **local LLM** already wired in the monorepo (the OpenAI-compatible qwen endpoint in
+`uk_companies_house/pdf_extract` — `enable_thinking:False`/`/no_think`), so there's **no API
+cost**, only local GPU time. Per page, on the already-fetched text (no extra fetch):
+- **Industry (primary use)** — classify into a short industry label + a **coarse NACE hint**
+  (e.g. section/division) + confidence. Regex cannot do this; full NACE mapping is Phase 1.
+- **Contact recall (secondary use)** — run only on the **deterministic-miss residual** (pages
+  where regex found no email/phone) to catch obfuscated (`info [at] x [dot] sk`) / prose contacts.
+- **IČO is NOT delegated to the LLM** — it stays deterministic (checksum-exact = the join key).
+- **Structured JSON output**, **truncated** input (~first 2–4k tokens, contact/footer-biased).
+- Every contact row is tagged `source_method` (`regex` | `llm`) so the uplift is directly
+  queryable. Default: run on the full 100k (HTML already fetched; ~1–6h local).
 
 ---
 
@@ -135,6 +148,8 @@ country_guess LowCardinality(String), crawl_id LowCardinality(String), homepage_
 capture_date Nullable(Date), http_status UInt16, content_language LowCardinality(String),
 title String, meta_description String, ico String, dic String, ico_checksum_valid UInt8,
 ico_matched_company UInt8, matched_country_iso2 LowCardinality(String), matched_ico String,
+industry_label String, industry_nace_hint LowCardinality(String), industry_confidence UInt8,
+industry_method LowCardinality(String) /* none | llm */,
 email_count UInt16, phone_count UInt16, social_count UInt16, technology_count UInt16,
 fetch_status LowCardinality(String) /* ok | not_in_index | fetch_failed | non_html */,
 source_system LowCardinality(String), source_run_id String, source_url String,
@@ -142,10 +157,12 @@ resolved_at DateTime64(3,'UTC')`.
 
 **`domain_emails`** — `ORDER BY (root_domain, email)`:
 `root_domain, email, email_local String, email_domain String, is_role UInt8,
+source_method LowCardinality(String) /* regex | llm */,
 source_system, source_run_id, resolved_at`.
 
 **`domain_phones`** — `ORDER BY (root_domain, phone_e164)`:
 `root_domain, phone_raw String, phone_e164 String, country_guess LowCardinality(String),
+source_method LowCardinality(String) /* regex | llm */,
 source_system, source_run_id, resolved_at`.
 
 **`domain_socials`** — `ORDER BY (root_domain, platform, url)`:
@@ -173,7 +190,9 @@ our own scaling notes warn about; and the heavy deps (async HTTP, WARC parsing, 
 would bloat the Dagster image. So we split heavy compute from orchestration, with **Parquet as
 the seam**:
 
-**(A) Standalone package `commoncrawl_enrich` — no Dagster, no ClickHouse deps.**
+**(A) Standalone package `commoncrawl_enrich` — no Dagster/Temporal/ClickHouse deps.**
+Lives in the `dagster_v3` repo but **outside `src/dagster_v3/defs/`** (so Dagster's defs-loader
+doesn't treat it as assets); importable by both a Temporal activity and the Dagster glue.
 - Input: a **domain-batch manifest** (Parquet/CSV of `root_domain` + rank).
 - Does: index resolution (DuckDB over the columnar Parquet index / CDX fallback) → async
   range-fetch (e.g. `aiohttp`, bounded concurrency) → WARC record parse → extract
@@ -187,11 +206,19 @@ the seam**:
   (IČO/contacts/socials/meta), `tech.py` (Wappalyzer), `enrich.py` (orchestrate + write
   Parquet), `metrics.py` (report counts).
 
-**(B) Thin Dagster glue (`defs/commoncrawl`) — the boring, reliable, scheduled part.**
+**(B) Temporal — durable chunk orchestration for the full run (Phase 1).**
+At 10M scale the run is multi-day with per-chunk retries/resume — Temporal's home turf, and
+already in this stack (it shares the `companycollect` Postgres; the Norway translation path
+already bridges Dagster↔Temporal). A workflow fans the manifest into chunks; **one activity per
+batch of ~1k domains** (heavy async concurrency *inside* the activity) calls package (A),
+writing a Parquet shard + per-chunk metrics. **Coarse chunking is deliberate** — one activity
+per domain would flood Temporal's shared-Postgres history (10M events); ~1k/activity keeps it
+to ~10k activities. (This fan-out is also the load to validate against the planned PgBouncer
+ceiling.)
+
+**(C) Thin Dagster glue (`defs/commoncrawl`) — manifests, trigger, load.**
 - `manifests` asset — shard `open_page_rank_domains` into batch manifests (Parquet).
-- Orchestration — trigger the package per batch, **partitioned by batch** for bounded,
-  resumable runs (plain schedule, or **Dagster Pipes** to invoke the external process *with*
-  lineage). For the spike this can be a manual package run.
+- Trigger the Temporal workflow + a **completion sensor** (the existing Norway pattern).
 - `load` asset(s) — **Parquet → DuckDB → ClickHouse** using the existing export pattern
   (DuckDB reads Parquet natively; append; `ReplacingMergeTree` dedups) + the
   `company_website_domains` link for IČO-matched domains.
@@ -202,9 +229,9 @@ the seam**:
 Reuses: `open_page_rank_domains` (input), `company_website_domains` (output link),
 `cz_companies`/`sk_companies` (IČO join), a shared IČO-checksum util.
 
-**Trade-off:** we give up built-in Dagster observability on the heavy step; we mitigate with
-per-batch manifests + metrics JSON (and optionally Dagster Pipes for lineage). **Spike:** run
-only package (A) and inspect its Parquet/metrics; build the Dagster glue (B) in Phase 1.
+**Spike:** run only package (A), single process, and inspect its Parquet/metrics — no Temporal,
+no Dagster, no ClickHouse. Build (B) Temporal orchestration + (C) Dagster glue in Phase 1, when
+durability and scale actually matter.
 
 ---
 
@@ -213,11 +240,15 @@ only package (A) and inspect its Parquet/metrics; build the Dagster glue (B) in 
 Over the 100k sample, report and break down by TLD/country:
 - % **found in the CC index**; % **fetched OK** (200 + HTML).
 - % with a **checksum-valid IČO**; % whose IČO **joins a registry**.
-- % with **≥1 email**; % with **≥1 phone**; % with **≥1 social**.
+- % with **≥1 email**; % with **≥1 phone**; % with **≥1 social** (deterministic arm).
 - % with **≥1 detected technology**; top technologies.
-- size of the **"regex found nothing" residual** → tells us whether an LLM fallback is worth it.
+- **Regex-vs-LLM uplift** — on the deterministic-miss residual, how many *extra* emails/phones
+  the LLM recovered (count + % of the residual), via the `source_method` tag.
+- **Industry coverage** — % of pages the LLM classified at confidence ≥ threshold, label
+  distribution, and a spot-check of plausibility on a manual sample.
 
-These numbers decide go/no-go for the full top-10M build.
+These numbers decide go/no-go for the full top-10M build, and whether the LLM arm earns its
+GPU cost at scale.
 
 ---
 
@@ -237,18 +268,26 @@ These numbers decide go/no-go for the full top-10M build.
   universally followed (micro/personal sites); real hit-rate is empirical.
 - **Identifier ambiguity** — multiple IČOs on one page; pick the host/name-matching one as
   primary, keep the rest.
+- **Temporal chunk granularity (Phase 1)** — ~1k domains/activity to bound Temporal's
+  shared-Postgres history; this 10M fan-out is a load test for the planned PgBouncer ceiling.
+- **LLM throughput/cost** — local GPU time over the page text; bound with truncation +
+  structured-output prompting; confirm the local model returns valid JSON reliably.
+- **Industry→NACE mapping** — deferred to Phase 1; the spike keeps the LLM's free-text label +
+  coarse NACE hint (full mapping likely via embeddings against `nace_categories`).
 
 ---
 
 ## 9. Execution plan (phases)
 - **Phase 0a — mechanics (≈1k domains), package only:** index lookup + range-fetch + WARC parse
   in the standalone package; confirm CC coverage and fetch reliability.
-- **Phase 0b — extraction + report (100k), package only:** add IČO/contacts/socials/tech
-  extraction + Wappalyzer; emit the 5 Parquet tables + metrics JSON; produce the hit-rate
-  report. **Decision gate.** (No Dagster/ClickHouse yet — inspect the Parquet directly.)
-- **Phase 1 (if go):** Dagster glue — manifest sharding, batch-partitioned orchestration of the
-  package (Pipes), Parquet→ClickHouse load assets, `company_website_domains` linking; scale to
-  top-10M; weekly schedule; then LLM/embedding industry inference + LLM fallback extraction.
+- **Phase 0b — extraction + report (100k), package only, single process:** deterministic arm
+  (IČO/contacts/socials/tech + Wappalyzer) **and** the LLM arm (industry + contact recall on the
+  residual); emit the 5 Parquet tables + metrics JSON; produce the hit-rate **+ regex-vs-LLM
+  uplift** report. **Decision gate.** (No Temporal/Dagster/ClickHouse — inspect the Parquet directly.)
+- **Phase 1 (if go):** **Temporal** orchestration of the chunked 10M run (~1k domains/activity
+  calling the package); **Dagster** glue — manifest sharding, workflow trigger + completion
+  sensor, Parquet→ClickHouse load, `company_website_domains` linking; weekly schedule; then full
+  **NACE mapping** of the industry guess (embeddings against `nace_categories`).
 
 **Gating dependency:** the `open_page_rank` dataset must be loaded (it supplies the target
 list/manifests). Until then this stays a design.
