@@ -83,9 +83,18 @@ a documented JSON API with structured numbers and a clean incremental feed. No O
 
 ---
 
-## 3. Proposed `sk_financials` build (when prioritized)
+## 3. `sk_financials` build — IMPLEMENTED (`slovakia_financials` module)
 
-Mirror `estonia_ar`/`finland_financials` shape:
+> **STATUS (2026-06-21): built.** Module `defs/slovakia_financials` →
+> `corpscout.sk_financial_metrics` (migration 000043). Statement-id cursor sweep
+> (`pokracovat-za-id`) over `/uctovne-zavierky`, decode Úč MUJ + Úč POD tables to
+> 6 metrics (revenue, total_assets, equity, liabilities, pretax_result,
+> net_result), EUR→USD, APPEND (ReplacingMergeTree dedups by statement_id). Daily
+> schedule (STOPPED by default); raise `max_statements` / re-run to sweep history.
+> Validated on 60 live statements (52 mapped). Non-POD/MUJ templates (NUJ etc.)
+> are recorded with null metrics — extend `TEMPLATE_METRIC_ROWS` to cover them.
+
+The original plan (mirrors `estonia_ar`/`finland_financials`), for reference:
 
 1. **Resolve entity ids for our companies.** We already have ~1.3M IČOs in `sk_companies`.
    Either (a) map IČO→RÚZ entity id via `/uctovne-jednotky?ico=`, or (b) page the whole
