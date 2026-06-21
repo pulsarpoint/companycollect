@@ -20,6 +20,9 @@ from lxml import etree
 IX_NS = "http://www.xbrl.org/2013/inlineXBRL"
 XBRLI_NS = "http://www.xbrl.org/2003/instance"
 XBRLDI_NS = "http://xbrl.org/2006/xbrldi"
+LINK_NS = "http://www.xbrl.org/2003/linkbase"
+# Namespaces whose elements are structure, not facts (plain-XBRL extraction).
+_NON_FACT_NS = frozenset({XBRLI_NS, XBRLDI_NS, LINK_NS})
 
 _NUM_CLEAN_RE = re.compile(r"[^0-9.\-]")
 
@@ -44,11 +47,17 @@ class Context:
 
 @dataclass
 class Fact:
-    concept: str  # local name, e.g. "NetAssetsLiabilities"
+    concept: str  # local name, e.g. "NetAssetsLiabilities" / "md103"
     namespace: str  # namespace URI
     context_ref: str
     value: Decimal | None
     unit_ref: str | None
+    prefix: str | None = None  # source prefix (plain XBRL), e.g. "fi_met"
+
+    @property
+    def qname(self) -> str:
+        """Prefixed name as it appeared in the source (e.g. 'fi_met:md103')."""
+        return f"{self.prefix}:{self.concept}" if self.prefix else self.concept
 
 
 @dataclass
@@ -176,12 +185,56 @@ def _parse_context(el: etree._Element) -> Context:
     )
 
 
-def parse_ixbrl(content: bytes | str) -> XbrlDocument:
-    """Parse an iXBRL document into contexts + numeric facts."""
+def _parse_root(content: bytes | str) -> etree._Element:
     if isinstance(content, str):
         content = content.encode("utf-8", errors="replace")
     parser = etree.XMLParser(recover=True, huge_tree=True, resolve_entities=False)
     root = etree.fromstring(content, parser=parser)
+    if root is None:
+        raise ValueError("could not parse XBRL document")
+    return root
+
+
+def parse_xbrl(content: bytes | str) -> XbrlDocument:
+    """Parse a *plain* XBRL instance (facts are concept-tagged elements).
+
+    Unlike iXBRL, each fact is its own element whose tag is the concept and whose
+    text is the value (e.g. `<fi_met:md103 contextRef="c" unitRef="u">123</...>`).
+    The line item is often identified by concept + the context's dimension member
+    (the Finnish CRR taxonomy), so contexts carry their explicitMember dimensions.
+    """
+    root = _parse_root(content)
+    contexts: dict[str, Context] = {}
+    facts: list[Fact] = []
+    for el in root.iter():
+        tag = el.tag
+        if not isinstance(tag, str):
+            continue
+        if tag == f"{{{XBRLI_NS}}}context":
+            ctx = _parse_context(el)
+            contexts[ctx.id] = ctx
+            continue
+        if el.get("contextRef") is None:
+            continue
+        qname = etree.QName(el)
+        if qname.namespace in _NON_FACT_NS:
+            continue
+        facts.append(
+            Fact(
+                concept=qname.localname,
+                namespace=qname.namespace or "",
+                context_ref=el.get("contextRef", ""),
+                value=_parse_number("".join(el.itertext()), scale=None, sign=None),
+                unit_ref=el.get("unitRef"),
+                prefix=el.prefix,
+            )
+        )
+    return XbrlDocument(contexts=contexts, facts=facts)
+
+
+def parse_ixbrl(content: bytes | str) -> XbrlDocument:
+    """Parse an iXBRL document into contexts + numeric facts."""
+    root = _parse_root(content)
     if root is None:
         raise ValueError("could not parse iXBRL document")
 
