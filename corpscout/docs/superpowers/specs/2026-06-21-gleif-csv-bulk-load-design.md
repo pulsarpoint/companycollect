@@ -4,37 +4,51 @@ Date: 2026-06-21
 
 ## Problem
 
-The current GLEIF full bootstrap downloads raw Golden Copy files quickly, but the `gleif_reference_duckdb_state` step can run for hours. The slow path is Python row-by-row JSON normalization followed by DuckDB `executemany` inserts. That approach is memory-safe, but it is not appropriate for GLEIF full snapshot scale.
+The current GLEIF full bootstrap downloads raw Golden Copy files quickly, but the `gleif_reference_duckdb_state` step can run for hours. The slow path is Python row-by-row JSON normalization followed by DuckDB `executemany` inserts. That approach is memory-safe, but it does not fit GLEIF full snapshot scale.
 
 The ClickHouse publication path also uses Python row batches from DuckDB into ClickHouse. That can remain as a later optimization, but the immediate blocking issue is the DuckDB state build.
 
 ## Decision
 
-Use GLEIF Golden Copy CSV ZIP files as the canonical raw files for this pipeline. Use dlt to load extracted CSV files into DuckDB raw/staging tables, then build the normalized DuckDB state with set-based DuckDB SQL.
+Use GLEIF Golden Copy CSV ZIP files as the canonical raw files for this pipeline. Put the CSV-to-DuckDB load behind a first-class Dagster dlt asset boundary, then build the normalized DuckDB state with set-based DuckDB SQL.
 
-The final ClickHouse schema remains unchanged. The change is upstream: raw files become `latest.csv.zip`, dlt owns CSV-to-DuckDB ingestion, and DuckDB SQL owns normalized relational transformations instead of Python JSON parsing.
+The final ClickHouse schema remains unchanged. The change is upstream: raw files become `latest.csv.zip`, `@dlt_assets` owns CSV-to-DuckDB ingestion, and DuckDB SQL owns normalized relational transformations instead of Python JSON parsing.
+
+`dagster_dlt.DltLoadCollectionComponent` exists in the installed project, but this source needs runtime S3 manifest discovery and temporary extracted CSV paths. Use the repo's existing Pythonic `@dlt_assets` pattern, already used by NACE, Wikidata, Finland YTJ, Norway BRREG, Latvia UR, Estonia AR, exchange rates, and Finland XBRL.
 
 ## Asset Graph
 
-Keep the existing Dagster graph:
+Use one dlt asset definition, `gleif_raw_duckdb_dlt`, that materializes the three raw table assets:
+
+- `gleif_raw_lei_records_duckdb`
+- `gleif_raw_relationships_duckdb`
+- `gleif_raw_reporting_exceptions_duckdb`
+
+Full bootstrap:
 
 ```text
 gleif_full_raw_reference_files
+  -> gleif_raw_lei_records_duckdb
+  -> gleif_raw_relationships_duckdb
+  -> gleif_raw_reporting_exceptions_duckdb
   -> gleif_reference_duckdb_state
   -> gleif_reference_clickhouse
   -> gleif_raw_retention
 ```
 
-and for daily deltas:
+Daily delta:
 
 ```text
 gleif_delta_raw_reference_files
+  -> gleif_raw_lei_records_duckdb
+  -> gleif_raw_relationships_duckdb
+  -> gleif_raw_reporting_exceptions_duckdb
   -> gleif_reference_duckdb_state
   -> gleif_reference_clickhouse
   -> gleif_raw_retention
 ```
 
-The raw assets still persist source files to object storage first. The DuckDB state asset remains the normalized local state builder. The ClickHouse asset remains the final publisher to `corpscout.gleif_*`.
+The raw assets still persist source files to object storage first. The dlt assets load raw CSV tables into DuckDB. The DuckDB state asset becomes the normalized local state builder and reads only DuckDB raw tables plus the run manifest. The ClickHouse asset remains the final publisher to `corpscout.gleif_*`.
 
 ## Raw Files
 
@@ -60,28 +74,26 @@ The manifest should include `file_format: "csv"` per downloaded file so the proc
 
 ## dlt And DuckDB Processing
 
-For each file in the manifest:
+For each file in the manifest, the dlt asset function should:
 
 1. Copy the raw ZIP from object storage to a temporary directory.
 2. Validate that the ZIP contains exactly one CSV member.
 3. Extract the CSV member to a temporary file.
 4. Create one dlt resource for the extracted CSV.
-5. Run a dlt pipeline with the DuckDB destination into raw/staging tables.
-6. Build normalized staging tables with DuckDB `CREATE TABLE AS SELECT`.
-7. Replace or upsert the current `gleif.*` tables only after all staging work succeeds.
+5. Run a dlt pipeline with the DuckDB destination into raw tables.
 
 dlt should own the mechanical loading boundary:
 
 ```text
 extracted CSV files
 -> dlt resources
--> DuckDB raw/staging tables
+-> DuckDB gleif_raw tables
 ```
 
 DuckDB SQL should own the relational normalization boundary:
 
 ```text
-dlt raw/staging tables
+dlt gleif_raw tables
 -> normalized gleif_staging tables
 -> current gleif tables
 ```
@@ -104,7 +116,15 @@ dlt raw/staging tables
 -> transactionally upsert into current gleif tables
 ```
 
-The current DuckDB database path remains `data/gleif.duckdb`.
+Use a DuckDB file that does not collide with the normalized schema name:
+
+- DuckDB file: `data/gleif_reference.duckdb`
+- DuckDB catalog: `gleif_reference`
+- dlt raw dataset/schema: `gleif_raw`
+- normalized current schema: `gleif`
+- normalized staging schema: `gleif_staging`
+
+This avoids the confusing `gleif.gleif` catalog/schema shape from `data/gleif.duckdb` plus schema `gleif`.
 
 ## Normalized Table Mapping
 
@@ -213,14 +233,18 @@ This means the first performance fix targets the proven bottleneck: Python JSON 
 
 Raw download remains all-or-nothing per Dagster run. If any of the three Golden Copy files fails, the manifest should not represent a complete run.
 
-DuckDB processing must fail before touching current tables when:
+dlt raw loading must fail before touching normalized tables when:
 
 - a manifest file is not `file_format = "csv"`
 - a ZIP contains zero CSV members
 - a ZIP contains more than one CSV member
-- required CSV columns are missing
 - a dlt CSV load fails
-- expected dlt raw/staging tables are missing
+
+DuckDB normalization must fail before touching current tables when:
+
+- required CSV columns are missing from the dlt raw tables
+- expected dlt raw tables are missing
+- normalized staging table creation fails
 
 Full mode should replace current DuckDB tables only after every normalized staging table has been built successfully.
 
@@ -231,11 +255,11 @@ Delta mode should upsert current DuckDB tables only after the complete delta sta
 Add progress logs around each expensive boundary:
 
 ```text
-copying_gleif_raw_file_from_s3 file_kind=<kind> size_bytes=<bytes>
-extracted_gleif_csv file_kind=<kind> csv_path=<path> size_bytes=<bytes>
-loaded_gleif_source_csv_with_dlt file_kind=<kind> table=<table> row_count=<count>
-built_gleif_table table=<table> row_count=<count>
-published_gleif_clickhouse_table table=<table> row_count=<count>
+copying_gleif_raw_file_from_s3 file_kind=lei_records size_bytes=250000000
+extracted_gleif_csv file_kind=lei_records csv_path=/tmp/gleif-dlt-csv-1/lei_records.csv size_bytes=900000000
+loaded_gleif_source_csv_with_dlt file_kind=lei_records raw_asset=gleif_raw_lei_records_duckdb table=gleif_raw_lei_records row_count=2800000
+built_gleif_table table=gleif_lei_records row_count=2800000
+published_gleif_clickhouse_table table=gleif_lei_records row_count=2800000
 ```
 
 These logs should make server runs diagnosable without checking `/tmp` or process internals.
@@ -247,11 +271,12 @@ Add or update tests for:
 - `GleifRawDownloadConfig.file_format` defaults to `csv`.
 - raw object keys use `source.csv.zip`.
 - manifest file entries include `file_format`.
-- CSV manifests are accepted by DuckDB state processing.
+- CSV manifests are accepted by the dlt raw asset function.
 - non-CSV manifests fail with a clear error.
-- ZIPs with zero or multiple CSV members fail before current DuckDB tables are replaced.
+- ZIPs with zero or multiple CSV members fail before dlt writes raw tables.
 - extracted CSV files are loaded through dlt into DuckDB raw/staging tables.
 - a dlt load failure prevents normalized/current table replacement.
+- the asset graph connects raw S3 assets to the three dlt raw DuckDB assets, then to `gleif_reference_duckdb_state`.
 - small `lei2` CSV ZIP fixture builds `gleif_lei_records`.
 - repeated name columns become `gleif_lei_names` rows.
 - legal and headquarters address columns become `gleif_lei_addresses` rows.
