@@ -94,6 +94,9 @@ def test_schedules_registered_and_jobs_cover_full_chains():
     assert reg.job.name == "estonia_ar_register_job"
     assert fin.cron_schedule == "0 5 5 * *"  # financials: 5th of month
     assert fin.job.name == "estonia_ar_financials_job"
+    con = repo.get_schedule_def("estonia_ar_contacts_schedule")
+    assert con.cron_schedule == "0 6 8 * *"  # contacts: monthly (heavy 4.5 GB JSON)
+    assert con.job.name == "estonia_ar_contacts_job"
 
     register_keys = {
         k.path[-1]
@@ -112,13 +115,23 @@ def test_schedules_registered_and_jobs_cover_full_chains():
     assert "estonia_ar_key_indicators_2025_raw_duckdb" in financials_keys
     assert "estonia_ar_financial_metrics_usd_duckdb" in financials_keys
 
-    # end-to-end trigger: every estonia_ar asset (register ∪ financials = 15), unscheduled.
+    # contacts: 2-asset chain (build + export), monthly.
+    contacts_keys = {
+        k.path[-1]
+        for k in repo.get_job("estonia_ar_contacts_job").asset_layer.executable_asset_keys
+    }
+    assert contacts_keys == {
+        "estonia_ar_company_contacts_duckdb",
+        "estonia_ar_clickhouse_company_contacts",
+    }
+
+    # end-to-end trigger: every estonia_ar asset (register ∪ financials ∪ contacts = 17), unscheduled.
     full_keys = {
         k.path[-1]
         for k in repo.get_job("estonia_ar_full_refresh_job").asset_layer.executable_asset_keys
     }
-    assert full_keys == register_keys | financials_keys
-    assert len(full_keys) == 15
+    assert full_keys == register_keys | financials_keys | contacts_keys
+    assert len(full_keys) == 17
 
 
 def test_export_companies_replaces_clickhouse_table(tmp_path: Path, monkeypatch):

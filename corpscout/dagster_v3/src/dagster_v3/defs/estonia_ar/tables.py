@@ -185,3 +185,32 @@ EE_FINANCIAL_METRICS_COLUMNS = (
 
 EE_FINANCIAL_STATEMENTS_EXPORT_COLUMNS = _export_columns(EE_FINANCIAL_STATEMENTS_COLUMNS)
 EE_FINANCIAL_METRICS_EXPORT_COLUMNS = _export_columns(EE_FINANCIAL_METRICS_COLUMNS)
+
+
+# --- Company contacts (websites / email / phone — §8b mandatory) -------------
+# From the richer `yldandmed` general-data JSON (the register CSV has none). Each
+# company has a `sidevahendid` array of {liik, sisu} contacts. Normalized: one row
+# per contact. Website (liik='WWW') is the domain-discovery signal.
+GENERAL_DATA_RAW_TABLE = "company_contacts"  # DuckDB staging (already normalized)
+GENERAL_DATA_URL = (
+    f"{EE_FINANCIAL_BASE_URL}/avaandmed/ettevotja_rekvisiidid__yldandmed.json.zip"
+)
+
+EE_COMPANY_CONTACTS_TABLE = "ee_company_contacts"
+QUALIFIED_EE_COMPANY_CONTACTS_TABLE = (
+    f"{ESTONIA_AR_DATABASE}.{EE_COMPANY_CONTACTS_TABLE}"
+)
+EE_COMPANY_CONTACTS_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "reg_code",
+    "contact_type",
+    "contact_type_en",
+    "contact_value",
+    "is_current",
+    "end_date",
+    "source_url",
+)
+EE_COMPANY_CONTACTS_EXPORT_COLUMNS = _export_columns(EE_COMPANY_CONTACTS_COLUMNS)

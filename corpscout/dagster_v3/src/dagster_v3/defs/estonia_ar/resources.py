@@ -84,6 +84,17 @@ EE_REPORT_CATEGORY_EN_BY_NAME = {
     "Suurettevõtja": "Large enterprise",
 }
 
+# Contact (`sidevahendid`) type codes (`liik`) -> canonical English. Website is the
+# domain-discovery signal. Unknown -> "".
+EE_CONTACT_TYPE_EN_BY_CODE = {
+    "WWW": "Website",
+    "EMAIL": "Email",
+    "MOB": "Mobile",
+    "TEL": "Phone",
+    "FAX": "Fax",
+    "MUU": "Other",
+}
+
 
 class HttpSession(Protocol):
     def get(self, url: str, *, timeout: int, stream: bool = False) -> Any: ...

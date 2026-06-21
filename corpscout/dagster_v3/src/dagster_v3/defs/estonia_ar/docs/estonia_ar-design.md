@@ -63,6 +63,21 @@
 - **Deferred (Phase 3)**: a company description/activity exists in the richer `…__yldandmed.json.zip`
   dataset → would be LLM-translated (`description_en` + `_translated_at/_provider/_model`) when added.
 
+## 6b. Company contacts (§8b mandatory)
+- **Table `ee_company_contacts`** (migration `000027`, `ReplacingMergeTree`,
+  `ORDER BY (reg_code, contact_type, contact_value)`). One row per contact —
+  `contact_type`/`contact_type_en` (`WWW`→Website, `EMAIL`→Email, `MOB`→Mobile, `TEL`→Phone,
+  `FAX`→Fax, `MUU`→Other), `contact_value`, `is_current` (0 once `end_date` set), `source_url`.
+- **Source = the richer `…__yldandmed.json.zip`** (the `lihtandmed` register CSV carries no
+  contacts). Each company's `yldandmed.sidevahendid[]` array holds the contacts. **Website
+  (`contact_type='WWW'`) is the domain-discovery signal** corpscout exists to capture.
+- **Parse**: stream-download the zip → unzip → DuckDB `read_json(format='array', records=true,
+  columns=…)` projecting **only** `ariregistri_kood` + `yldandmed.sidevahendid` out of the ~4.5 GB
+  JSON → `unnest()` the array → one normalized row per contact (blank values dropped). Build SQL
+  inlines literals (consistent with `financials.py`); refuses to replace on zero rows.
+- Assets: `estonia_ar_company_contacts_duckdb` → `estonia_ar_clickhouse_company_contacts`
+  (`contacts.py` + `clickhouse.py`). No `raw_*`/hash columns; export == full tuple.
+
 ## 7. Currency
 - All EUR (Estonia since 2011; reports 2019–2025) → **no legacy/unmapped-currency case**. Metrics
   carry `<metric>_amount_original` + `<metric>_amount_usd` + `fx_rate_to_usd/_date/_source`, keyed on
@@ -72,6 +87,9 @@
 - `estonia_ar_register_job` (entities + companies) — **daily 04:00**.
 - `estonia_ar_financials_job` (full 13-asset chain via `.upstream()`) — **monthly, 5th 05:00**
   (after the new snapshot datestamp publishes). Crons staggered vs other sources; **default STOPPED**.
+- `estonia_ar_contacts_job` (build + export) — **monthly, 8th 06:00**; the ~4.5 GB yldandmed JSON is
+  too heavy for daily, staggered after the financials run.
+- `estonia_ar_full_refresh_job` (all 17 assets via group selection) — unscheduled, manual full run.
 
 ## 9. Issues found during processing
 - **Literal `?` in report-general column names** (`"kas konsolideeritud?"`) collided with DuckDB's
