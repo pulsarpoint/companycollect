@@ -78,3 +78,37 @@ def export_uk_companies_house_clickhouse_industries(
     if log is not None:
         log("Finished UK Companies House industries ClickHouse export: rows=%s", rows)
     return rows
+
+
+def export_uk_companies_house_clickhouse_financial_metrics(
+    *,
+    database_path: str | Path,
+    clickhouse: ClickhouseResource,
+    log: Callable[..., object] | None = None,
+) -> int:
+    """Replace corpscout.gb_financial_metrics with the DuckDB metrics table."""
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.UK_DATABASE,
+        tables=(tables.FINANCIAL_METRICS_TABLE_CH,),
+    )
+    if log is not None:
+        log(
+            "Exporting UK Companies House financial metrics to ClickHouse: duckdb_path=%s, table=%s",
+            database_path,
+            tables.QUALIFIED_FINANCIAL_METRICS_TABLE,
+        )
+    with clickhouse.get_connection() as client:
+        rows = export_duckdb_table_to_clickhouse(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema=DLT_DATASET_NAME,
+            duckdb_table=tables.FINANCIAL_METRICS_TABLE,
+            clickhouse_database=tables.UK_DATABASE,
+            clickhouse_table=tables.FINANCIAL_METRICS_TABLE_CH,
+            columns=tables.GB_FINANCIAL_METRICS_EXPORT_COLUMNS,
+            truncate=True,
+        )
+    if log is not None:
+        log("Finished UK Companies House financial metrics ClickHouse export: rows=%s", rows)
+    return rows

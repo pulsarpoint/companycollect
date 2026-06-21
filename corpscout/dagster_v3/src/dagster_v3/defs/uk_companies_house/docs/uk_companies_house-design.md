@@ -53,11 +53,24 @@ mirroring `france_sirene`.
 - `uk_companies_house_register_job` (companies + industries) from the ONE monthly download (raw →
   both via `.upstream()`) → **monthly**, staggered cron; default STOPPED.
 
-## 9. Deferred
-- **Financials** — full accounts are iXBRL filings (Companies House accounts API / document bulk),
-  a separate XBRL effort. **Contacts** — not in open data. Officers/PSC — separate datasets.
+## 9. Financials — XBRL accounts (Phase 1: latest archive)
+- Source: Companies House **Accounts Data Product** — daily iXBRL archives
+  (`Accounts_Bulk_Data-YYYY-MM-DD.zip`, ~283 MB), URL resolved from the accounts index. Free.
+- Parsed with the shared **`xbrl_common`** extractor (no Arelle). Per filing → company_number
+  (from the iXBRL entity identifier) + reporting period end + a canonical metric set mapped from
+  FRC core concepts (`UK_METRIC_CONCEPTS`). **`gb_financial_metrics`** (migration `000037`), native
+  GBP + **GBP→USD** via the shared `ExchangeRateClient` (separate step, keyed on period_end_date).
+- **Coverage caveat**: balance-sheet items (net assets, fixed/current assets, cash) are broadly
+  tagged even by micro-entities; **turnover/profit only by companies that file a P&L** (medium+),
+  so those are frequently NULL. **Phase 1 ingests the latest archive** (full-refresh, ~one day of
+  filings); broader coverage accumulates by ingesting more archives (**incremental = Phase 2**).
+- `uk_companies_house_financials_job` (parse → USD → export) on its own monthly schedule.
 
-## 10. Verification
+## 10. Deferred
+- **Financials accumulation** (Phase 2): incremental ingest of many archives → latest filing per
+  company toward full coverage. **Contacts** — not in open data. **Officers/PSC** — separate datasets.
+
+## 11. Verification
 - `uv run pytest tests/test_uk_companies_house.py tests/test_clickhouse_migrations.py -q` +
   `uv run dg check defs`. Migrations apply. Materialize live; check `gb_companies` count +
   English category/status + address; `gb_industries` rows join `nace_categories`. TDD; commit by path.

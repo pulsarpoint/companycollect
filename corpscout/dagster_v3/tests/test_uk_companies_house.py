@@ -7,6 +7,9 @@ from dagster_v3.defs.uk_companies_house import industries, resources, tables
 MIG_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
 COMPANIES_MIGRATION = (MIG_DIR / "000035_corpscout_gb_companies.up.sql").read_text()
 INDUSTRIES_MIGRATION = (MIG_DIR / "000036_corpscout_gb_industries.up.sql").read_text()
+FINANCIALS_MIGRATION = (
+    MIG_DIR / "000037_corpscout_gb_financial_metrics.up.sql"
+).read_text()
 
 HEADER = (
     "CompanyName,CompanyNumber,RegAddress.AddressLine1,RegAddress.AddressLine2,"
@@ -125,6 +128,49 @@ def test_resolve_basic_company_data_url():
 
     url = resources.resolve_basic_company_data_url(session=_Session())
     assert url == tables.DOWNLOAD_BASE_URL + "BasicCompanyDataAsOneFile-2026-06-01.zip"
+
+
+def test_financials_build_from_archive(tmp_path):
+    import zipfile
+
+    from dagster_v3.defs.uk_companies_house import financials
+    from tests.test_xbrl_common import SAMPLE  # synthetic filing with revenue/profit
+
+    archive = tmp_path / "accounts.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("Prod_synth_01234567.html", SAMPLE)
+        zf.writestr("ignore.pdf", b"%PDF-1.4 not xbrl")
+    db = tmp_path / "fin.duckdb"
+    counts = financials.build_uk_financials_from_archive(
+        database_path=db, archive_path=archive, source_run_id="r1", source_url="http://x.zip"
+    )
+    assert counts["companies"] == 1 and counts["with_revenue"] == 1
+    with duckdb.connect(str(db), read_only=True) as con:
+        cols = [r[0] for r in con.execute(
+            f"describe {tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_TABLE}"
+        ).fetchall()]
+        assert cols == list(tables.GB_FINANCIAL_METRICS_COLUMNS)
+        row = con.execute(
+            f"select company_number, currency, revenue_amount_original, "
+            f"net_result_amount_original, net_assets_amount_original "
+            f"from {tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_TABLE}"
+        ).fetchone()
+    assert row[0] == "01234567" and row[1] == "GBP"
+    assert row[2] == 1234000  # turnover scale applied
+    assert row[3] == -5000    # profit sign applied
+    assert row[4] == 1495313  # net assets
+
+
+def test_financials_export_columns_match_migration():
+    assert (
+        f"CREATE TABLE IF NOT EXISTS {tables.QUALIFIED_FINANCIAL_METRICS_TABLE}"
+        in FINANCIALS_MIGRATION
+    )
+    for column in tables.GB_FINANCIAL_METRICS_EXPORT_COLUMNS:
+        assert f"    {column} " in FINANCIALS_MIGRATION, f"missing {column} in 000037"
+    for metric in tables.UK_FINANCIAL_METRIC_NAMES:
+        assert f"{metric}_amount_original" in tables.GB_FINANCIAL_METRICS_EXPORT_COLUMNS
+        assert f"{metric}_amount_usd" in tables.GB_FINANCIAL_METRICS_EXPORT_COLUMNS
 
 
 def test_register_job_and_schedule():

@@ -70,3 +70,55 @@ GB_INDUSTRIES_COLUMNS = (
     "resolved_at",
 )
 GB_INDUSTRIES_EXPORT_COLUMNS = _export_columns(GB_INDUSTRIES_COLUMNS)
+
+# --- gb_financial_metrics (XBRL accounts → metrics, GBP + USD) ----------------
+# Companies House Accounts Data Product (daily iXBRL archives). The dated filename
+# is resolved from the accounts index page.
+ACCOUNTS_INDEX_URL = "https://download.companieshouse.gov.uk/en_accountsdata.html"
+ACCOUNTS_FILENAME_RE = r"Accounts_Bulk_Data-\d{4}-\d{2}-\d{2}\.zip"
+FINANCIAL_METRICS_TABLE = "financial_metrics"  # DuckDB normalized
+FINANCIAL_METRICS_TABLE_CH = "gb_financial_metrics"
+QUALIFIED_FINANCIAL_METRICS_TABLE = f"{UK_DATABASE}.{FINANCIAL_METRICS_TABLE_CH}"
+
+# Canonical metric -> FRC core taxonomy concept local-names (first match wins).
+# Balance-sheet items are broadly tagged (even by micro-entities); turnover/profit
+# only by companies that file a P&L (medium+), so those are often NULL.
+UK_METRIC_CONCEPTS: dict[str, tuple[str, ...]] = {
+    "revenue": ("TurnoverRevenue", "Turnover", "Revenue"),
+    "gross_profit": ("GrossProfitLoss",),
+    "operating_profit": ("OperatingProfitLoss",),
+    "pretax_result": ("ProfitLossOnOrdinaryActivitiesBeforeTax", "ProfitLossBeforeTax"),
+    "net_result": ("ProfitLoss",),
+    "total_assets": ("Assets",),
+    "fixed_assets": ("FixedAssets",),
+    "current_assets": ("CurrentAssets",),
+    "cash": ("CashBankOnHand", "CashBankInHand"),
+    "net_assets": (
+        "NetAssetsLiabilities",
+        "NetAssetsLiabilitiesIncludingPensionAssetLiability",
+    ),
+    "equity": ("Equity", "TotalShareholdersFunds", "ShareholdersFunds", "CapitalEmployed"),
+}
+UK_FINANCIAL_METRIC_NAMES = tuple(UK_METRIC_CONCEPTS)
+
+_METRIC_AMOUNT_COLUMNS = tuple(
+    col
+    for metric in UK_FINANCIAL_METRIC_NAMES
+    for col in (f"{metric}_amount_original", f"{metric}_amount_usd")
+)
+GB_FINANCIAL_METRICS_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "company_number",
+    "period_end_date",
+    "fiscal_year",
+    "currency",
+    *_METRIC_AMOUNT_COLUMNS,
+    "fx_rate_to_usd",
+    "fx_rate_date",
+    "fx_source",
+    "resolved_at",
+)
+GB_FINANCIAL_METRICS_EXPORT_COLUMNS = _export_columns(GB_FINANCIAL_METRICS_COLUMNS)

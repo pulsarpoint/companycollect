@@ -7,7 +7,12 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_v3.defs.uk_companies_house import resources, tables
 from dagster_v3.defs.uk_companies_house.clickhouse import (
     export_uk_companies_house_clickhouse_companies,
+    export_uk_companies_house_clickhouse_financial_metrics,
     export_uk_companies_house_clickhouse_industries,
+)
+from dagster_v3.defs.uk_companies_house.financials import (
+    apply_uk_usd_conversion,
+    build_uk_companies_house_financials,
 )
 from dagster_v3.defs.uk_companies_house.industries import (
     build_uk_companies_house_industries,
@@ -139,6 +144,77 @@ def uk_companies_house_clickhouse_industries(
     )
 
 
+# --- Financials (XBRL accounts → metrics, GBP + USD) -------------------------
+# Separate source/cadence from the register: the Accounts Data Product (daily
+# iXBRL archives). Phase 1 ingests the latest archive (full-refresh); broader
+# coverage accumulates by ingesting more archives (incremental = future).
+@dg.asset(
+    name="uk_companies_house_financial_metrics_duckdb",
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=UK_DUCKDB_POOL,
+    description=(
+        "UK Companies House native-GBP financial metrics parsed from the latest "
+        "iXBRL accounts archive (via the shared xbrl_common extractor)."
+    ),
+)
+def uk_companies_house_financial_metrics_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    counts = build_uk_companies_house_financials(
+        database_path=UK_DUCKDB_PATH,
+        source_run_id=context.run_id,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    name="uk_companies_house_financial_metrics_usd_duckdb",
+    deps=[dg.AssetKey("uk_companies_house_financial_metrics_duckdb")],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=UK_DUCKDB_POOL,
+    description="Separate step: fill USD + fx columns via the shared exchange-rate client (GBP→USD).",
+)
+def uk_companies_house_financial_metrics_usd_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    from exchange_rates import ExchangeRateClient
+
+    counts = apply_uk_usd_conversion(
+        database_path=UK_DUCKDB_PATH,
+        exchange_rates=ExchangeRateClient.from_env(),
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    deps=[dg.AssetKey("uk_companies_house_financial_metrics_usd_duckdb")],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=UK_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_FINANCIAL_METRICS_TABLE},
+    description=(
+        "UK Companies House financial metrics exported to ClickHouse "
+        "corpscout.gb_financial_metrics."
+    ),
+)
+def uk_companies_house_clickhouse_financial_metrics(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    rows = export_uk_companies_house_clickhouse_financial_metrics(
+        database_path=UK_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={"rows": rows, "table": tables.QUALIFIED_FINANCIAL_METRICS_TABLE},
+    )
+
+
 # --- Jobs & schedules --------------------------------------------------------
 # Register + industries both derive from the ONE monthly bulk download.
 uk_companies_house_register_job = dg.define_asset_job(
@@ -152,6 +228,20 @@ uk_companies_house_register_schedule = dg.ScheduleDefinition(
     name="uk_companies_house_register_schedule",
     job=uk_companies_house_register_job,
     cron_schedule="0 7 7 * *",  # monthly, 7th 07:00 (after the new snapshot)
+    execution_timezone="Europe/Belgrade",
+)
+
+# Financials (XBRL accounts) refresh on a separate cadence from the register.
+uk_companies_house_financials_job = dg.define_asset_job(
+    "uk_companies_house_financials_job",
+    selection=dg.AssetSelection.assets(
+        "uk_companies_house_clickhouse_financial_metrics"
+    ).upstream(),
+)
+uk_companies_house_financials_schedule = dg.ScheduleDefinition(
+    name="uk_companies_house_financials_schedule",
+    job=uk_companies_house_financials_job,
+    cron_schedule="0 8 8 * *",  # monthly, 8th 08:00
     execution_timezone="Europe/Belgrade",
 )
 
