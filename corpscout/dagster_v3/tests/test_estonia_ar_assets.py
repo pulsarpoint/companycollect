@@ -84,6 +84,35 @@ def test_pipeline_unzips_and_loads_register_rows_into_duckdb(tmp_path: Path):
     assert sample == ("007 Agent OÜ", "Private limited company", "Registered", date(2023, 6, 5))
 
 
+def test_schedules_registered_and_jobs_cover_full_chains():
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    reg = repo.get_schedule_def("estonia_ar_register_schedule")
+    fin = repo.get_schedule_def("estonia_ar_financials_schedule")
+    assert reg.cron_schedule == "0 4 * * *"  # register: daily
+    assert reg.job.name == "estonia_ar_register_job"
+    assert fin.cron_schedule == "0 5 5 * *"  # financials: 5th of month
+    assert fin.job.name == "estonia_ar_financials_job"
+
+    register_keys = {
+        k.path[-1]
+        for k in repo.get_job("estonia_ar_register_job").asset_layer.executable_asset_keys
+    }
+    assert register_keys == {"estonia_ar_entities_duckdb", "estonia_ar_clickhouse_companies"}
+
+    # .upstream() must pull the FULL transitive chain (8 raw + pivot + metrics +
+    # usd + 2 exports = 13), unlike the `dg launch +leaf` 1-hop CLI behavior.
+    financials_keys = {
+        k.path[-1]
+        for k in repo.get_job("estonia_ar_financials_job").asset_layer.executable_asset_keys
+    }
+    assert len(financials_keys) == 13
+    assert "estonia_ar_report_general_raw_duckdb" in financials_keys
+    assert "estonia_ar_key_indicators_2025_raw_duckdb" in financials_keys
+    assert "estonia_ar_financial_metrics_usd_duckdb" in financials_keys
+
+
 def test_export_companies_replaces_clickhouse_table(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "estonia_ar_source.duckdb"
     assets.run_estonia_ar_dlt_pipeline(

@@ -353,3 +353,37 @@ def _duckdb_table_count(*, database_path: str | Path, table_name: str) -> int:
     with duckdb.connect(str(database_path), read_only=True) as connection:
         value = connection.execute(f"select count(*) from {table_name}").fetchone()[0]
     return int(value)
+
+
+# --- Jobs & schedules --------------------------------------------------------
+# Cadence-matched, non-partitioned full-refresh. .upstream() pulls the FULL
+# transitive chain (unlike the `dg launch +leaf` CLI, which resolves one hop).
+# All steps serialize on the estonia_ar_duckdb pool.
+estonia_ar_register_job = dg.define_asset_job(
+    "estonia_ar_register_job",
+    selection=dg.AssetSelection.assets(ENTITIES_ASSET_KEY)
+    | dg.AssetSelection.assets("estonia_ar_clickhouse_companies"),
+)
+estonia_ar_financials_job = dg.define_asset_job(
+    "estonia_ar_financials_job",
+    selection=dg.AssetSelection.assets(
+        "estonia_ar_clickhouse_financial_statements",
+        "estonia_ar_clickhouse_financial_metrics",
+    ).upstream(),
+)
+
+# Register snapshot refreshes daily → daily 04:00. Financials are a monthly
+# cumulative snapshot → run early each month (5th, 05:00) once the new datestamp
+# has published; resolve_financial_url picks up whatever datestamp is current.
+estonia_ar_register_schedule = dg.ScheduleDefinition(
+    name="estonia_ar_register_schedule",
+    job=estonia_ar_register_job,
+    cron_schedule="0 4 * * *",
+    execution_timezone="Europe/Belgrade",
+)
+estonia_ar_financials_schedule = dg.ScheduleDefinition(
+    name="estonia_ar_financials_schedule",
+    job=estonia_ar_financials_job,
+    cron_schedule="0 5 5 * *",
+    execution_timezone="Europe/Belgrade",
+)
