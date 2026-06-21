@@ -60,3 +60,128 @@ def _export_columns(columns: tuple[str, ...]) -> tuple[str, ...]:
 
 
 EE_COMPANIES_EXPORT_COLUMNS = _export_columns(EE_COMPANIES_COLUMNS)
+
+
+# --- Financials (Phase 2) ----------------------------------------------------
+# 9 files: report-general (statement spine) + one Key Indicators (EAV/long) file
+# per report year. Snapshot filenames carry a monthly cumulative datestamp that
+# rotates; resolved live from the dataset index. Refresh EE_FINANCIAL_DATESTAMP /
+# EE_FINANCIAL_SUFFIX when the snapshot rotates (~monthly).
+EE_FINANCIAL_BASE_URL = "https://avaandmed.ariregister.rik.ee/sites/default/files"
+EE_FINANCIAL_DATESTAMP = "31052026"
+EE_FINANCIAL_SUFFIX = "_0"
+EE_FINANCIAL_YEARS = (2019, 2020, 2021, 2022, 2023, 2024, 2025)
+
+REPORT_GENERAL_RAW_TABLE = "report_general_raw"
+REPORT_GENERAL_URL = (
+    f"{EE_FINANCIAL_BASE_URL}/1.aruannete_yldandmed_kuni_"
+    f"{EE_FINANCIAL_DATESTAMP}{EE_FINANCIAL_SUFFIX}.zip"
+)
+
+
+def key_indicators_raw_table(year: int) -> str:
+    return f"key_indicators_{year}_raw"
+
+
+def key_indicators_url(year: int) -> str:
+    return (
+        f"{EE_FINANCIAL_BASE_URL}/4.{year}_aruannete_elemendid_kuni_"
+        f"{EE_FINANCIAL_DATESTAMP}{EE_FINANCIAL_SUFFIX}.zip"
+    )
+
+
+# raw DuckDB staging table -> download URL (report-general + one per year).
+EE_FINANCIAL_RAW_SOURCES: dict[str, str] = {
+    REPORT_GENERAL_RAW_TABLE: REPORT_GENERAL_URL,
+    **{
+        key_indicators_raw_table(year): key_indicators_url(year)
+        for year in EE_FINANCIAL_YEARS
+    },
+}
+KEY_INDICATORS_RAW_TABLES = tuple(
+    key_indicators_raw_table(year) for year in EE_FINANCIAL_YEARS
+)
+
+# canonical metric -> Estonian XBRL element name (`elemendi_nimetus`). gross_profit
+# has no Estonian element and stays NULL. The pivot conditional-aggregates these.
+EE_FINANCIAL_METRIC_ELEMENTS: dict[str, str | None] = {
+    "revenue": "Revenue",
+    "gross_profit": None,
+    "pretax_result": "TotalProfitLossBeforeTax",
+    "net_result": "TotalAnnualPeriodProfitLoss",
+    "total_assets": "Assets",
+    "current_assets": "CurrentAssets",
+    "non_current_assets": "NonCurrentAssets",
+    "equity": "Equity",
+    "current_liabilities": "CurrentLiabilities",
+    "non_current_liabilities": "NonCurrentLiabilities",
+}
+FINANCIAL_METRIC_NAMES = tuple(EE_FINANCIAL_METRIC_ELEMENTS)
+
+# DuckDB wide pivot table + ClickHouse export target (schema owned by migration 000025).
+FINANCIAL_STATEMENTS_WIDE_TABLE = "financial_statements"
+EE_FINANCIAL_STATEMENTS_TABLE = "ee_financial_statements"
+QUALIFIED_EE_FINANCIAL_STATEMENTS_TABLE = (
+    f"{ESTONIA_AR_DATABASE}.{EE_FINANCIAL_STATEMENTS_TABLE}"
+)
+
+# Envelope columns of the wide pivot, in migration 000025 order. The translatable
+# per-report enum is the report size category (valitud aruanne kategooria).
+FINANCIAL_STATEMENT_METADATA_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_line_number",
+    "source_record_id",
+    "source_payload_hash",
+    "report_id",
+    "reg_code",
+    "fiscal_year",
+    "period_start_date",
+    "period_end_date",
+    "submitted_date",
+    "is_consolidated",
+    "is_audited",
+    "report_category_original",
+    "report_category_en",
+    "currency",
+)
+EE_FINANCIAL_STATEMENTS_COLUMNS = (
+    FINANCIAL_STATEMENT_METADATA_COLUMNS
+    + FINANCIAL_METRIC_NAMES
+    + ("source_url", "raw_financial_record")
+)
+
+# DuckDB metrics table + ClickHouse export target (schema owned by migration 000026).
+FINANCIAL_METRICS_WIDE_TABLE = "financial_metrics"
+EE_FINANCIAL_METRICS_TABLE = "ee_financial_metrics"
+QUALIFIED_EE_FINANCIAL_METRICS_TABLE = (
+    f"{ESTONIA_AR_DATABASE}.{EE_FINANCIAL_METRICS_TABLE}"
+)
+
+_METRIC_AMOUNT_COLUMNS = tuple(
+    col
+    for metric in FINANCIAL_METRIC_NAMES
+    for col in (f"{metric}_amount_original", f"{metric}_amount_usd")
+)
+EE_FINANCIAL_METRICS_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "source_payload_hash",
+    "report_id",
+    "reg_code",
+    "fiscal_year",
+    "period_start_date",
+    "period_end_date",
+    "currency",
+    *_METRIC_AMOUNT_COLUMNS,
+    "fx_rate_to_usd",
+    "fx_rate_date",
+    "fx_source",
+    "resolved_at",
+)
+
+EE_FINANCIAL_STATEMENTS_EXPORT_COLUMNS = _export_columns(EE_FINANCIAL_STATEMENTS_COLUMNS)
+EE_FINANCIAL_METRICS_EXPORT_COLUMNS = _export_columns(EE_FINANCIAL_METRICS_COLUMNS)

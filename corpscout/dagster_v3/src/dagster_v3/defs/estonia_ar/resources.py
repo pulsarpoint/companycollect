@@ -75,6 +75,15 @@ EE_STATUS_EN_BY_CODE = {
     "K": "Deleted",
 }
 
+# Annual-report size category (`valitud aruanne kategooria`) -> English. The clean
+# per-report translatable enum on the financial statements. Unknown/blank -> "".
+EE_REPORT_CATEGORY_EN_BY_NAME = {
+    "Mikroettevõtja": "Micro-enterprise",
+    "Väikeettevõtja": "Small enterprise",
+    "Keskmise suurusega ettevõtja": "Medium-sized enterprise",
+    "Suurettevõtja": "Large enterprise",
+}
+
 
 class HttpSession(Protocol):
     def get(self, url: str, *, timeout: int, stream: bool = False) -> Any: ...
