@@ -69,3 +69,46 @@ def test_replace_current_open_page_rank_domains_normalizes_raw_rows(
         "com",
         10.0,
     )
+
+
+def test_replace_current_open_page_rank_domains_derives_extension_when_missing(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "open_page_rank_source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(f'create schema "{OPEN_PAGE_RANK_DLT_DATASET_NAME}"')
+        connection.execute(
+            f'''
+            create table "{OPEN_PAGE_RANK_DLT_DATASET_NAME}"."{OPEN_PAGE_RANK_RAW_TABLE}"
+            (
+                rank varchar,
+                domain varchar,
+                open_page_rank varchar
+            )
+            '''
+        )
+        connection.execute(
+            f'''
+            insert into "{OPEN_PAGE_RANK_DLT_DATASET_NAME}"."{OPEN_PAGE_RANK_RAW_TABLE}"
+            values ('2', 'Example.CO.UK', '7.50')
+            '''
+        )
+
+    row_count = replace_current_open_page_rank_domains(
+        database_path=database_path,
+        source_url="https://www.domcop.com/files/top/top10milliondomains.csv.zip",
+        source_run_id="run-1",
+        retrieved_date="2026-06-21",
+        retrieved_at="2026-06-21T10:30:00+00:00",
+    )
+
+    assert row_count == 1
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        row = connection.execute(
+            f'''
+            select domain, domain_extension
+            from open_page_rank.{OPEN_PAGE_RANK_DOMAINS_TABLE}
+            '''
+        ).fetchone()
+
+    assert row == ("example.co.uk", "uk")

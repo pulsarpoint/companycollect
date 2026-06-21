@@ -124,13 +124,16 @@ def download_raw_file(
 
 
 def manifest_for_run(object_store: ObjectStoreResource, run_id: str) -> dict[str, Any]:
-    manifest_keys = [
+    all_manifest_keys = [
         key
         for key in object_store.list_keys("raw/", bucket=OPEN_PAGE_RANK_RAW_BUCKET)
-        if key.endswith("/manifest.json") and f"/run_id={run_id}/" in key
+        if key.endswith("/manifest.json")
     ]
-    if not manifest_keys:
-        raise ValueError(f"No Open PageRank manifest found for Dagster run_id={run_id}")
+    if not all_manifest_keys:
+        raise ValueError("No Open PageRank manifest found in object storage")
+
+    run_manifest_keys = [key for key in all_manifest_keys if f"/run_id={run_id}/" in key]
+    manifest_keys = run_manifest_keys or all_manifest_keys
     manifests = [
         json.loads(object_store.read_bytes(key, bucket=OPEN_PAGE_RANK_RAW_BUCKET))
         for key in manifest_keys

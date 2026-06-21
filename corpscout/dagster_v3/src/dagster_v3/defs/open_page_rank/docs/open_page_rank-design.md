@@ -13,7 +13,7 @@
 ## 2. Ingest mode (§2 of guidelines) — and why
 - Chosen: bulk file full-refresh.
 - Why: the source publishes one full ZIP CSV, so partitions and API pagination add state without benefit.
-- Format choice: CSV inside ZIP. The source page exposes columns `Rank`, `Domain`, `Open Page Rank`, and `Extension`.
+- Format choice: CSV inside ZIP. The stable loaded columns are `Rank`, `Domain`, and `Open Page Rank`; some examples/documentation also show `Extension`, but the transform treats it as optional.
 - If partitioned: not partitioned; each run replaces the current list.
 
 ## 3. Loading (§3)
@@ -24,7 +24,7 @@
 
 ## 4. Transform (§5)
 - Mechanism: set-based DuckDB SQL.
-- Shape: cast rank to unsigned integer, lower-case `domain` and `extension`, cast Open PageRank to `Float64`, attach run/source metadata.
+- Shape: cast rank to unsigned integer, lower-case `domain`, derive `domain_extension` from the optional `Extension` column or from the final domain label, cast Open PageRank to `Float64`, attach run/source metadata.
 
 ## 5. ClickHouse schema — and DDL deviations
 - Table + grain: `open_page_rank_domains`, one row per `(source_system, source_list_name, source_rank, domain)` in the current source snapshot.
@@ -48,6 +48,7 @@ No monetary amounts.
 ## 9. Issues found during processing
 - The source ZIP is large, so raw download and S3 read/write must use file streaming methods, not `read_bytes` or `write_bytes`.
 - Dagster config annotations in `open_page_rank/assets.py` must not be postponed with `from __future__ import annotations`; this Dagster/Python combination fails to resolve the imported config class when it is stored as a string annotation.
+- The live CSV loaded on 2026-06-21 did not include an `Extension` column, so the transform derives `domain_extension` from `domain` when the source column is absent.
 
 ## 10. Verification
 - Tests: `tests/test_open_page_rank_source.py`, `tests/test_open_page_rank_dlt_csv.py`, `tests/test_open_page_rank_transforms.py`, `tests/test_open_page_rank_assets.py`, `tests/test_clickhouse_migrations.py`.

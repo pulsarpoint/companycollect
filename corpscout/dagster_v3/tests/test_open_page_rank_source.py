@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from io import BytesIO
+import json
 from pathlib import Path
 from typing import Any
 
@@ -121,3 +122,35 @@ def test_open_page_rank_retention_keeps_newest_raw_file_and_manifests() -> None:
     assert select_open_page_rank_raw_keys_for_deletion(keys) == [
         "raw/run_id=old/retrieved_date=2026-06-14/source.csv.zip"
     ]
+
+
+def test_open_page_rank_manifest_for_run_falls_back_to_latest_manifest() -> None:
+    from dagster_v3.defs.open_page_rank.source import manifest_for_run
+
+    object_store = FakeManifestObjectStore(
+        {
+            "raw/run_id=old/retrieved_date=2026-06-14/manifest.json": {
+                "run_id": "old",
+                "retrieved_at": "2026-06-14T10:30:00+00:00",
+            },
+            "raw/run_id=new/retrieved_date=2026-06-21/manifest.json": {
+                "run_id": "new",
+                "retrieved_at": "2026-06-21T10:30:00+00:00",
+            },
+        }
+    )
+
+    assert manifest_for_run(object_store, "downstream-only-run")["run_id"] == "new"
+
+
+class FakeManifestObjectStore:
+    def __init__(self, manifests: dict[str, dict[str, Any]]) -> None:
+        self.manifests = manifests
+
+    def list_keys(self, prefix: str, bucket: str | None = None) -> list[str]:
+        del bucket
+        return [key for key in self.manifests if key.startswith(prefix)]
+
+    def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
+        del bucket
+        return json.dumps(self.manifests[key]).encode()
