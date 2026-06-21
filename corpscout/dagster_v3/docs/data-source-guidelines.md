@@ -36,6 +36,8 @@ Pick the **first** that applies. Record the choice + why in the design doc.
    case where we partition.
 3. **API that returns the whole dataset in one (or a few) request(s)** → non-partitioned
    full-refresh, like `exchange_rates_v2` (don't partition just because it's an API).
+- **Financial filings in XBRL/iXBRL** are a recurring special case with their own hierarchy (often
+  pre-extracted facts exist → no parsing needed) — see **§5b**.
 
 ## 3. Loading (dlt + DuckDB's C++ reader — never row-by-row Python)
 - **dlt owns the ingest boundary** (HTTP session with retry/backoff via
@@ -89,6 +91,41 @@ Pick the lightest that produces the export shape:
    a single pivot.
 - **Never transform with Python row loops** (the 40-min `latvia_ur` metrics regression). If you're
   iterating rows in Python, it belongs in SQL.
+
+## 5b. XBRL / financial-document sources (a recurring special case)
+Many registries publish financials as **XBRL** (XML business reporting; increasingly **inline XBRL /
+iXBRL** under the EU ESEF mandate). Don't reach for a parser reflexively — follow the hierarchy, and
+decouple the stages.
+
+**Ingest hierarchy (best → worst):**
+1. **Registry already publishes the extracted facts (CSV/JSON) → skip XBRL entirely** (bulk-file
+   golden path). *Always check first.* Estonia is this — `elemendi_nimetus`/`vaartus` are already
+   concept+value pairs, so we just pivot, no parser.
+2. **Only raw XBRL/iXBRL → parse with Arelle**, the regulator-grade reference processor (handles
+   taxonomies/dimensions/units/validation and **iXBRL/ESEF**, which is impractical to parse by hand).
+   Finland (`finland_xbrl`) is this. Run it as a **partitioned** extraction stage (§4).
+3. **A lighter `lxml`/`py-xbrl` instance parser** → only for *plain* (non-inline) XBRL at extreme
+   volume, and **only after** measuring Arelle as the bottleneck. You give up iXBRL + validation.
+
+**Decouple three stages — this is what scales XBRL across many countries:**
+- **Extraction** (the parser's only job): XBRL → a generic flat fact table
+  `(concept_qname, context, period, unit, value, dimensions)`. Swappable.
+- **Mapping**: `concept_qname → canonical metric` as a **per-taxonomy lookup table (data, not code)**,
+  applied in SQL/dbt (see `finland_xbrl`'s `xbrl_metric_map`). **A new XBRL country is mostly a new
+  mapping table** — national GAAP / IFRS / ESEF taxonomies all flow through the same shape.
+- **Normalize / USD / translate**: downstream SQL/dbt per the standard (§5–§8).
+
+**Make XBRL extraction a shared component**, not per-country code: a reusable `xbrl_common` Arelle
+wrapper (→ flat fact table) parameterized by `(taxonomy entrypoint, concept→metric map)`. A new XBRL
+country then = configure it + supply a mapping table, rather than re-implementing a parser.
+
+**Scaling Arelle** (it's the heavy stage — mitigate, don't rewrite):
+- **Partition by registration window** (parse incrementally, never the whole corpus).
+- **Parse once, cache the flat fact output** (S3/DuckDB) — never re-parse a filing.
+- **Cache the taxonomy DTS locally** — per-doc cost is dominated by resolving/loading taxonomy files
+  over the network; a warm cache is the big win.
+- **Parallelize** — per-document parsing is embarrassingly parallel → N workers. (Textbook fit for the
+  §4 partitioned-API pattern.)
 
 ## 6. ClickHouse export (normalized, migration-owned)
 - DDL lives in `clickhouse/migrations/` (`.up.sql` + `.down.sql`, registered in
