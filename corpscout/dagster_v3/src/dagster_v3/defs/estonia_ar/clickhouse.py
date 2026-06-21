@@ -185,3 +185,37 @@ def export_estonia_ar_clickhouse_company_domains(
     if log is not None:
         log("Finished Estonia AR company domains ClickHouse export: rows=%s", rows)
     return rows
+
+
+def export_estonia_ar_clickhouse_industries(
+    *,
+    database_path: str | Path,
+    clickhouse: ClickhouseResource,
+    log: Callable[..., object] | None = None,
+) -> int:
+    """Replace corpscout.ee_industries with the DuckDB industries table."""
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.ESTONIA_AR_DATABASE,
+        tables=(tables.EE_INDUSTRIES_TABLE,),
+    )
+    if log is not None:
+        log(
+            "Exporting Estonia AR industries to ClickHouse: duckdb_path=%s, table=%s",
+            database_path,
+            tables.QUALIFIED_EE_INDUSTRIES_TABLE,
+        )
+    with clickhouse.get_connection() as client:
+        rows = export_duckdb_table_to_clickhouse(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema=DLT_DATASET_NAME,
+            duckdb_table=tables.INDUSTRIES_RAW_TABLE,
+            clickhouse_database=tables.ESTONIA_AR_DATABASE,
+            clickhouse_table=tables.EE_INDUSTRIES_TABLE,
+            columns=tables.EE_INDUSTRIES_EXPORT_COLUMNS,
+            truncate=True,
+        )
+    if log is not None:
+        log("Finished Estonia AR industries ClickHouse export: rows=%s", rows)
+    return rows

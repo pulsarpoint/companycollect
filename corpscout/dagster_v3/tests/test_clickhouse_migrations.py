@@ -41,6 +41,7 @@ EXPECTED_MIGRATIONS = (
     "000028_corpscout_ee_company_contacts_domain",
     "000029_corpscout_ee_company_domains",
     "000030_corpscout_company_website_domains_domain_source",
+    "000031_corpscout_ee_industries",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

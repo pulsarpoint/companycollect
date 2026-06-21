@@ -97,6 +97,9 @@ def test_schedules_registered_and_jobs_cover_full_chains():
     con = repo.get_schedule_def("estonia_ar_contacts_schedule")
     assert con.cron_schedule == "0 6 8 * *"  # contacts: monthly (heavy 4.5 GB JSON)
     assert con.job.name == "estonia_ar_contacts_job"
+    ind = repo.get_schedule_def("estonia_ar_industries_schedule")
+    assert ind.cron_schedule == "0 6 9 * *"  # industries: monthly, staggered after contacts
+    assert ind.job.name == "estonia_ar_industries_job"
 
     register_keys = {
         k.path[-1]
@@ -127,13 +130,23 @@ def test_schedules_registered_and_jobs_cover_full_chains():
         "estonia_ar_clickhouse_company_domains",
     }
 
-    # end-to-end trigger: every estonia_ar asset (register ∪ financials ∪ contacts = 19), unscheduled.
+    # industries: build + export, monthly (shares the yldandmed source).
+    industries_keys = {
+        k.path[-1]
+        for k in repo.get_job("estonia_ar_industries_job").asset_layer.executable_asset_keys
+    }
+    assert industries_keys == {
+        "estonia_ar_company_industries_duckdb",
+        "estonia_ar_clickhouse_industries",
+    }
+
+    # end-to-end trigger: every estonia_ar asset (register ∪ financials ∪ contacts ∪ industries = 21).
     full_keys = {
         k.path[-1]
         for k in repo.get_job("estonia_ar_full_refresh_job").asset_layer.executable_asset_keys
     }
-    assert full_keys == register_keys | financials_keys | contacts_keys
-    assert len(full_keys) == 19
+    assert full_keys == register_keys | financials_keys | contacts_keys | industries_keys
+    assert len(full_keys) == 21
 
 
 def test_export_companies_replaces_clickhouse_table(tmp_path: Path, monkeypatch):

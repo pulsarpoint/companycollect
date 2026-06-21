@@ -247,3 +247,35 @@ EE_COMPANY_DOMAINS_COLUMNS = (
     "resolved_at",
 )
 EE_COMPANY_DOMAINS_EXPORT_COLUMNS = _export_columns(EE_COMPANY_DOMAINS_COLUMNS)
+
+
+# --- Industry / NACE (EMTAK → NACE, source-provided) -------------------------
+# From `yldandmed.teatatud_tegevusalad` (sibling of `sidevahendid` in the same
+# general-data JSON). RIK supplies the NACE code directly (`nace_kood`) alongside
+# the national EMTAK code, so no fuzzy mapping is needed. Mirrors no_industries /
+# fi_industries so every source connects to the same unified NACE id.
+INDUSTRIES_RAW_TABLE = "company_industries"  # DuckDB staging
+EE_INDUSTRIES_TABLE = "ee_industries"
+QUALIFIED_EE_INDUSTRIES_TABLE = f"{ESTONIA_AR_DATABASE}.{EE_INDUSTRIES_TABLE}"
+EE_INDUSTRIES_COLUMNS = (
+    "reg_code",
+    "source_industry_code",
+    "source_industry_code_set",
+    "description_original",
+    "description_language",
+    "description_en",
+    "description_translated_at",
+    "description_translation_provider",
+    "description_translation_model",
+    "nace_revision",
+    "nace_code",
+    "nace_normalized_code",
+    "nace_mapping_method",
+    "nace_mapping_status",
+    "is_primary",
+    "source_system",
+    "source_run_id",
+    "source_record_id",
+    "resolved_at",
+)
+EE_INDUSTRIES_EXPORT_COLUMNS = _export_columns(EE_INDUSTRIES_COLUMNS)

@@ -190,6 +190,25 @@ contact information is mandatory, not optional.** When you analyse a new source,
 - **Mandatory alongside currency (§7) and translation (§8).** Reference impl: `estonia_ar`
   (`ee_company_contacts`/`ee_company_domains` from `yldandmed`).
 
+## 8c. Cross-cutting standard D — industry / NACE (ALWAYS connect it)
+**Every company should connect to the unified NACE id.** The data inventory **must check for an
+industry/activity classification** (national registers publish NACE, or a NACE-derived national scheme:
+EE EMTAK, FI TOL2008, NO SN2007, LV NACE). If present, capture it; if absent from the register, look in
+the general-data/financials datasets before concluding it's unavailable.
+- **Store normalized**: one **`<cc>_industries`** table mirroring `no_industries`/`fi_industries` —
+  `(<company_id>, source_industry_code, source_industry_code_set, description_original/_en (+ translation
+  provenance), nace_revision, nace_code, nace_normalized_code, nace_mapping_method, nace_mapping_status,
+  is_primary, …)`. One row per activity; flag the primary.
+- **Map to NACE**: if the source provides the NACE code directly (EE `nace_kood`, NO codes are NACE),
+  `nace_mapping_method='source_provided'`/`'direct_code'`. Otherwise map the national scheme → NACE and
+  record `method`/`status` (`mapped`/`unmapped`). `nace_normalized_code` strips punctuation; pick
+  `nace_revision` (`NACE_REV_2` / `NACE_REV_2_1`) to match the join.
+- **Unified id target**: `corpscout.nace_categories` (EU SPARQL reference, Rev 2 + Rev 2.1) — must be
+  materialized (`nace_categories_clickhouse`). Join on `nace_normalized_code`/`nace_revision`.
+- **Per-source check**: EE/FI/NO **yes**; LV register + annual reports carry **no** per-company NACE
+  (would need a separate CSP/VID source) — document that explicitly. Reference impl: `estonia_ar`
+  (`ee_industries` from `yldandmed.teatatud_tegevusalad`).
+
 ## 9. Scheduling (cadence-matched, non-partitioned full-refresh)
 - **Match the schedule to the source's refresh rate**, and split chains that refresh differently into
   separate jobs (register daily/weekly; financials monthly). See CLAUDE.md "Scheduling".

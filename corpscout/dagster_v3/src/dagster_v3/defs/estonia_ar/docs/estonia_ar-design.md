@@ -94,6 +94,25 @@
   an `ee_company_domains` UNION branch and a new **`domain_source`** column (migration `000030`;
   fi/no/wikidata branches backfilled `'website'`). `domains` rolls up per `root_domain` as before.
 
+## 6c. Industry / NACE (EMTAK → unified NACE)
+- **Table `ee_industries`** (migration `000031`, mirrors `no_industries`/`fi_industries`;
+  `ReplacingMergeTree(resolved_at)`, `ORDER BY (reg_code, source_industry_code)`). One row per
+  currently-declared activity.
+- **Source**: `yldandmed.teatatud_tegevusalad` (sibling of `sidevahendid` in the same general-data
+  JSON we already pull). Each entry has `emtak_kood` + `emtak_tekstina` (national EMTAK) **and
+  `nace_kood` directly** (`"73.11"`) + `on_pohitegevusala` (primary flag) + `lopp_kpv` (validity).
+- **Easiest of any source**: RIK supplies the NACE code, so `nace_mapping_method='source_provided'`,
+  no fuzzy EMTAK→NACE mapping. `nace_revision` derived from EMTAK version (EMTAK 2025 → `NACE_REV_2_1`,
+  earlier → `NACE_REV_2`); `nace_normalized_code` strips the dot. Activities with no `nace_kood` →
+  `nace_mapping_status='unmapped'`. Ended activities (`lopp_kpv` set) are filtered out.
+- **Unified id**: `nace_code`/`nace_revision` join `corpscout.nace_categories` (EU SPARQL reference,
+  2,043 categories across Rev 2 + Rev 2.1). `description_en` is left null (EMTAK text is Estonian →
+  future translation, columns already present).
+- Assets: `estonia_ar_company_industries_duckdb` → `estonia_ar_clickhouse_industries`
+  (`industries.py` + `clickhouse.py`); `estonia_ar_industries_job` monthly (9th 06:00).
+- **Note**: contacts and industries each re-download the 4.5 GB yldandmed → future optimization is a
+  single shared download feeding both.
+
 ## 7. Currency
 - All EUR (Estonia since 2011; reports 2019–2025) → **no legacy/unmapped-currency case**. Metrics
   carry `<metric>_amount_original` + `<metric>_amount_usd` + `fx_rate_to_usd/_date/_source`, keyed on

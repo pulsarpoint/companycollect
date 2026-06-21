@@ -17,9 +17,11 @@ from dagster_v3.defs.estonia_ar.clickhouse import (
     export_estonia_ar_clickhouse_company_domains,
     export_estonia_ar_clickhouse_financial_metrics,
     export_estonia_ar_clickhouse_financial_statements,
+    export_estonia_ar_clickhouse_industries,
 )
 from dagster_v3.defs.estonia_ar.company_domains import build_estonia_ar_company_domains
 from dagster_v3.defs.estonia_ar.contacts import build_estonia_ar_company_contacts
+from dagster_v3.defs.estonia_ar.industries import build_estonia_ar_company_industries
 from dagster_v3.defs.estonia_ar.financials import (
     build_estonia_ar_financial_statements,
     load_estonia_ar_financial_csv,
@@ -470,6 +472,65 @@ def estonia_ar_clickhouse_company_domains(
     )
 
 
+# --- Industry / NACE (EMTAK → NACE, source-provided) -------------------------
+@dg.asset(
+    name="estonia_ar_company_industries_duckdb",
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=ESTONIA_AR_DUCKDB_POOL,
+    description=(
+        "Estonia AR per-company industries from the yldandmed teatatud_tegevusalad "
+        "array (EMTAK + source-provided NACE code), normalized one row per activity."
+    ),
+)
+def estonia_ar_company_industries_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    context.log.info(
+        "Building Estonia AR company industries: duckdb_path=%s, table=%s.%s",
+        ESTONIA_AR_DUCKDB_PATH,
+        DLT_DATASET_NAME,
+        tables.INDUSTRIES_RAW_TABLE,
+    )
+    counts = build_estonia_ar_company_industries(
+        database_path=ESTONIA_AR_DUCKDB_PATH,
+        source_run_id=context.run_id,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    deps=[dg.AssetKey("estonia_ar_company_industries_duckdb")],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=ESTONIA_AR_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_EE_INDUSTRIES_TABLE},
+    description=(
+        "Estonia AR industries exported to ClickHouse corpscout.ee_industries "
+        "(joins nace_categories on nace_code/nace_revision)."
+    ),
+)
+def estonia_ar_clickhouse_industries(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    context.log.info(
+        "Starting Estonia AR industries ClickHouse export: duckdb_path=%s, table=%s",
+        ESTONIA_AR_DUCKDB_PATH,
+        tables.QUALIFIED_EE_INDUSTRIES_TABLE,
+    )
+    rows = export_estonia_ar_clickhouse_industries(
+        database_path=ESTONIA_AR_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    context.log.info("Completed Estonia AR industries ClickHouse export: rows=%s", rows)
+    return dg.MaterializeResult(
+        metadata={"rows": rows, "table": tables.QUALIFIED_EE_INDUSTRIES_TABLE},
+    )
+
+
 def _duckdb_table_count(*, database_path: str | Path, table_name: str) -> int:
     with duckdb.connect(str(database_path), read_only=True) as connection:
         value = connection.execute(f"select count(*) from {table_name}").fetchone()[0]
@@ -523,6 +584,20 @@ estonia_ar_contacts_schedule = dg.ScheduleDefinition(
     name="estonia_ar_contacts_schedule",
     job=estonia_ar_contacts_job,
     cron_schedule="0 6 8 * *",
+    execution_timezone="Europe/Belgrade",
+)
+
+# Industries also come from the ~4.5 GB yldandmed JSON (the teatatud_tegevusalad
+# array) → monthly, staggered after contacts. NOTE: contacts and industries each
+# re-download yldandmed; a future optimization is one shared download for both.
+estonia_ar_industries_job = dg.define_asset_job(
+    "estonia_ar_industries_job",
+    selection=dg.AssetSelection.assets("estonia_ar_clickhouse_industries").upstream(),
+)
+estonia_ar_industries_schedule = dg.ScheduleDefinition(
+    name="estonia_ar_industries_schedule",
+    job=estonia_ar_industries_job,
+    cron_schedule="0 6 9 * *",
     execution_timezone="Europe/Belgrade",
 )
 
