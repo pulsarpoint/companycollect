@@ -10,6 +10,10 @@ from dagster_v3.defs.uk_companies_house.clickhouse import (
     export_uk_companies_house_clickhouse_financial_metrics,
     export_uk_companies_house_clickhouse_industries,
 )
+from dagster_v3.defs.uk_companies_house.documents_api import (
+    CompaniesHouseClient,
+    build_financials_for_company_numbers,
+)
 from dagster_v3.defs.uk_companies_house.financials import (
     apply_uk_usd_conversion,
     build_uk_companies_house_financials,
@@ -215,6 +219,54 @@ def uk_companies_house_clickhouse_financial_metrics(
     )
 
 
+# --- On-demand: latest accounts per company via the CH API -------------------
+class CompaniesHouseApiConfig(dg.Config):
+    # Provided list of company numbers to fetch the latest accounts for.
+    company_numbers: list[str] = []
+
+
+@dg.asset(
+    name="uk_companies_house_api_financial_metrics",
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=UK_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_FINANCIAL_METRICS_TABLE},
+    description=(
+        "On-demand: fetch each provided company's latest accounts iXBRL via the "
+        "Companies House API, parse to metrics (GBP+USD), and APPEND to "
+        "corpscout.gb_financial_metrics (ReplacingMergeTree dedups by company)."
+    ),
+)
+def uk_companies_house_api_financial_metrics(
+    context: AssetExecutionContext,
+    config: CompaniesHouseApiConfig,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    from exchange_rates import ExchangeRateClient
+
+    client = CompaniesHouseClient.from_env()
+    counts = build_financials_for_company_numbers(
+        database_path=UK_DUCKDB_PATH,
+        company_numbers=config.company_numbers,
+        source_run_id=context.run_id,
+        client=client,
+        log=context.log.info,
+    )
+    apply_uk_usd_conversion(
+        database_path=UK_DUCKDB_PATH,
+        exchange_rates=ExchangeRateClient.from_env(),
+        log=context.log.info,
+    )
+    rows = export_uk_companies_house_clickhouse_financial_metrics(
+        database_path=UK_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        truncate=False,  # append; do not wipe the archive-sourced rows
+        log=context.log.info,
+    )
+    context.log.info("Appended UK API financial metrics to ClickHouse: rows=%s", rows)
+    return dg.MaterializeResult(metadata={**counts, "exported_rows": rows})
+
+
 # --- Jobs & schedules --------------------------------------------------------
 # Register + industries both derive from the ONE monthly bulk download.
 uk_companies_house_register_job = dg.define_asset_job(
@@ -243,6 +295,12 @@ uk_companies_house_financials_schedule = dg.ScheduleDefinition(
     job=uk_companies_house_financials_job,
     cron_schedule="0 8 8 * *",  # monthly, 8th 08:00
     execution_timezone="Europe/Belgrade",
+)
+
+# On-demand job: launch with config {company_numbers: [...]}; not scheduled.
+uk_companies_house_api_financials_job = dg.define_asset_job(
+    "uk_companies_house_api_financials_job",
+    selection=dg.AssetSelection.assets("uk_companies_house_api_financial_metrics"),
 )
 
 uk_companies_house_full_refresh_job = dg.define_asset_job(

@@ -88,20 +88,48 @@ def build_uk_financials_from_archive(
                 continue
             parsed += 1
             company_number, period_end, metrics = extracted
-            rows.append(
-                (
-                    company_number,
-                    period_end,
-                    period_end.year,
-                    DEFAULT_CURRENCY,
-                    *(metrics[m] for m in METRIC_NAMES),
-                )
-            )
+            rows.append(metrics_row(company_number, period_end, metrics))
 
+    counts = write_metrics_table(
+        database_path=database_path,
+        rows=rows,
+        source_run_id=source_run_id,
+        source_slug=FINANCIALS_SOURCE_SLUG,
+    )
+    counts["filings_parsed"] = parsed
+    if log is not None:
+        log(
+            "Built UK financial metrics: filings=%s companies=%s with_revenue=%s",
+            parsed,
+            counts["companies"],
+            counts["with_revenue"],
+        )
+    return counts
+
+
+def metrics_row(company_number: str, period_end: Any, metrics: dict[str, Any]) -> tuple[Any, ...]:
+    """One staging row: (company_number, period_end, fiscal_year, currency, *originals)."""
+    return (
+        company_number,
+        period_end,
+        period_end.year,
+        DEFAULT_CURRENCY,
+        *(metrics[m] for m in METRIC_NAMES),
+    )
+
+
+def write_metrics_table(
+    *,
+    database_path: str | Path,
+    rows: list[tuple[Any, ...]],
+    source_run_id: str,
+    source_slug: str,
+    allow_empty: bool = False,
+) -> dict[str, int]:
+    """Write staging metric rows into the DuckDB metrics table (latest period/company)."""
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
     amount_cols = ", ".join(f"{m}_amount_original decimal(38, 2)" for m in METRIC_NAMES)
     placeholders = ", ".join(["?"] * (4 + len(METRIC_NAMES)))
-    # Interleave (original, usd) per metric to match GB_FINANCIAL_METRICS_COLUMNS.
     metric_cols_select = ", ".join(
         f"{m}_amount_original, cast(null as decimal(38, 2)) as {m}_amount_usd"
         for m in METRIC_NAMES
@@ -117,7 +145,6 @@ def build_uk_financials_from_archive(
             connection.executemany(
                 f"insert into _gb_stage values ({placeholders})", rows
             )
-        # one filing per company: keep the latest period.
         connection.execute(
             f"""
             create or replace table {qualified} as
@@ -129,7 +156,7 @@ def build_uk_financials_from_archive(
             )
             select
                 'GB' as country_iso2,
-                '{FINANCIALS_SOURCE_SLUG}' as source_slug,
+                {resources._sql_literal(source_slug)} as source_slug,
                 {resources._sql_literal(source_run_id)} as source_run_id,
                 company_number as source_record_id,
                 company_number,
@@ -152,19 +179,11 @@ def build_uk_financials_from_archive(
                 f"select count(*) from {qualified} where revenue_amount_original is not null"
             ).fetchone()[0]
         )
-    if company_rows == 0:
+    if company_rows == 0 and not allow_empty:
         raise ValueError(
             "UK Companies House accounts produced no metrics; refusing to replace the table"
         )
-    counts = {"filings_parsed": parsed, "companies": company_rows, "with_revenue": with_revenue}
-    if log is not None:
-        log(
-            "Built UK financial metrics: filings=%s companies=%s with_revenue=%s",
-            parsed,
-            company_rows,
-            with_revenue,
-        )
-    return counts
+    return {"companies": company_rows, "with_revenue": with_revenue}
 
 
 def build_uk_companies_house_financials(

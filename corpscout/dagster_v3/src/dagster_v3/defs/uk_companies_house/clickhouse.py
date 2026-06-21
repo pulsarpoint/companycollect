@@ -84,9 +84,14 @@ def export_uk_companies_house_clickhouse_financial_metrics(
     *,
     database_path: str | Path,
     clickhouse: ClickhouseResource,
+    truncate: bool = True,
     log: Callable[..., object] | None = None,
 ) -> int:
-    """Replace corpscout.gb_financial_metrics with the DuckDB metrics table."""
+    """Export the DuckDB metrics table to corpscout.gb_financial_metrics.
+
+    truncate=True replaces the table (archive full-refresh); truncate=False appends
+    (the on-demand API fetcher) — ReplacingMergeTree(resolved_at) dedups by company.
+    """
     assert_clickhouse_tables_exist(
         clickhouse,
         database=tables.UK_DATABASE,
@@ -107,7 +112,7 @@ def export_uk_companies_house_clickhouse_financial_metrics(
             clickhouse_database=tables.UK_DATABASE,
             clickhouse_table=tables.FINANCIAL_METRICS_TABLE_CH,
             columns=tables.GB_FINANCIAL_METRICS_EXPORT_COLUMNS,
-            truncate=True,
+            truncate=truncate,
         )
     if log is not None:
         log("Finished UK Companies House financial metrics ClickHouse export: rows=%s", rows)
