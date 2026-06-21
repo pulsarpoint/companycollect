@@ -48,6 +48,8 @@ EXPECTED_MIGRATIONS = (
     "000035_corpscout_gb_companies",
     "000036_corpscout_gb_industries",
     "000037_corpscout_gb_financial_metrics",
+    "000038_corpscout_cz_companies",
+    "000039_corpscout_cz_industries",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
