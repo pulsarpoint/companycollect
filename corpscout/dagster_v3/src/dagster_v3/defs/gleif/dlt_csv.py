@@ -87,8 +87,9 @@ def load_gleif_csv_raw_tables(
     files = list(extracted_files)
     pipeline = gleif_csv_dlt_pipeline(database_path)
     pipeline.drop_pending_packages()
-    load_info = pipeline.run(gleif_csv_dlt_source(files))
-    load_info.raise_on_failed_jobs()
+    for item in files:
+        load_info = pipeline.run(gleif_csv_dlt_source([item]))
+        load_info.raise_on_failed_jobs()
     return raw_table_row_counts(database_path)
 
 

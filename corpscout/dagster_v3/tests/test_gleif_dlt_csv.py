@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from pathlib import Path
 import zipfile
 
@@ -6,6 +7,7 @@ import pytest
 
 from dagster_v3.defs.gleif.dlt_csv import (
     ExtractedGleifCsv,
+    FileKind,
     GLEIF_DLT_RAW_DATASET_NAME,
     GLEIF_RAW_LEI_RECORDS_TABLE,
     GLEIF_RAW_RELATIONSHIPS_TABLE,
@@ -143,6 +145,79 @@ def test_gleif_csv_dlt_pipeline_loads_more_than_one_csv_chunk(tmp_path: Path) ->
             ).fetchone()[0]
             == row_count
         )
+
+
+def test_gleif_csv_raw_loader_loads_all_chunks_for_multiple_resources(
+    tmp_path: Path,
+) -> None:
+    row_count = 5_001
+    extracted_files = [
+        _write_extracted_csv(
+            tmp_path,
+            file_kind="lei_records",
+            header="LEI,Entity.LegalName,Entity.LegalName.xmllang\n",
+            rows=(
+                f"5493001KJTIIGC8Y{i:08d},Company {i},en\n"
+                for i in range(row_count)
+            ),
+        ),
+        _write_extracted_csv(
+            tmp_path,
+            file_kind="relationships",
+            header=(
+                "Relationship.StartNode.NodeID,Relationship.EndNode.NodeID,"
+                "Relationship.RelationshipType\n"
+            ),
+            rows=(
+                f"5493001KJTIIGC8Y{i:08d},5493001KJTIIGC8P{i:08d},"
+                "IS_DIRECTLY_CONSOLIDATED_BY\n"
+                for i in range(row_count)
+            ),
+        ),
+        _write_extracted_csv(
+            tmp_path,
+            file_kind="reporting_exceptions",
+            header="LEI,Exception.Category,Exception.Reason.1\n",
+            rows=(
+                "5493001KJTIIGC8Y"
+                f"{i:08d},DIRECT_ACCOUNTING_CONSOLIDATION_PARENT,NON_CONSOLIDATING\n"
+                for i in range(row_count)
+            ),
+        ),
+    ]
+
+    database_path = tmp_path / "gleif_reference.duckdb"
+    row_counts = load_gleif_csv_raw_tables(
+        database_path=database_path,
+        extracted_files=extracted_files,
+    )
+
+    assert row_counts == {
+        GLEIF_RAW_LEI_RECORDS_TABLE: row_count,
+        GLEIF_RAW_RELATIONSHIPS_TABLE: row_count,
+        GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE: row_count,
+    }
+
+
+def _write_extracted_csv(
+    tmp_path: Path,
+    *,
+    file_kind: FileKind,
+    header: str,
+    rows: Iterable[str],
+) -> ExtractedGleifCsv:
+    csv_path = tmp_path / f"{file_kind}.csv"
+    csv_path.write_text(header + "".join(rows), encoding="utf-8")
+    return ExtractedGleifCsv(
+        file_kind=file_kind,
+        csv_path=csv_path,
+        source_url=f"https://example.test/{file_kind}/latest.csv",
+        s3_key=f"gleif/raw/run_id=run-1/file_kind={file_kind}/source.csv.zip",
+        source_sha256="a" * 64,
+        publish_date="2026-06-20T16:00:00+00:00",
+        load_mode="full",
+        run_id="run-1",
+    )
 
 
 def write_zip(path: Path, members: dict[str, str]) -> None:
