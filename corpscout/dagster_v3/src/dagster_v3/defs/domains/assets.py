@@ -19,6 +19,7 @@ GROUP_NAME = "domains"
         dg.AssetKey("finland_ytj_resolved_clickhouse"),
         dg.AssetKey("norway_resolved_clickhouse"),
         dg.AssetKey("wikidata_company_seed_clickhouse"),
+        dg.AssetKey("estonia_ar_clickhouse_company_domains"),
     ],
     group_name=GROUP_NAME,
     kinds={"clickhouse"},
@@ -110,6 +111,7 @@ def _company_website_domains_insert_sql(stage_table: str) -> str:
         website_normalized_url,
         website_host,
         root_domain,
+        domain_source,
         is_current,
         is_primary,
         now64(3) AS resolved_at
@@ -129,6 +131,7 @@ def _company_website_domains_insert_sql(stage_table: str) -> str:
             websites.website_normalized_url AS website_normalized_url,
             websites.website_host AS website_host,
             websites.root_domain AS root_domain,
+            'website' AS domain_source,
             websites.is_current AS is_current,
             websites.is_primary AS is_primary
         FROM {_qualified_table("fi_websites")} AS websites
@@ -150,6 +153,7 @@ def _company_website_domains_insert_sql(stage_table: str) -> str:
             websites.website_normalized_url AS website_normalized_url,
             websites.website_host AS website_host,
             websites.root_domain AS root_domain,
+            'website' AS domain_source,
             websites.is_current AS is_current,
             websites.is_primary AS is_primary
         FROM {_qualified_table("no_websites")} AS websites
@@ -176,12 +180,35 @@ def _company_website_domains_insert_sql(stage_table: str) -> str:
             websites.website_normalized_url AS website_normalized_url,
             websites.website_host AS website_host,
             websites.root_domain AS root_domain,
+            'website' AS domain_source,
             1 AS is_current,
             websites.is_primary_candidate AS is_primary
         FROM {_qualified_table("wikidata_company_websites")} AS websites
         LEFT JOIN {_qualified_table("wikidata_companies")} AS companies
             ON companies.wikidata_id = websites.wikidata_id
         WHERE nullIf(trim(websites.root_domain), '') IS NOT NULL
+
+        UNION ALL
+
+        SELECT
+            'ee_company_domains' AS source_website_table,
+            ifNull(
+                nullIf(trim(websites.source_record_id), ''),
+                concat('ee_company_domains:', websites.reg_code, ':', websites.domain)
+            ) AS source_website_id,
+            'EE' AS country_iso2,
+            'estonia_ar' AS source_slug,
+            'reg_code' AS company_id_type,
+            websites.reg_code AS company_id,
+            websites.website_url AS website_url,
+            websites.website_normalized_url AS website_normalized_url,
+            websites.website_host AS website_host,
+            websites.domain AS root_domain,
+            websites.domain_source AS domain_source,
+            websites.is_current AS is_current,
+            websites.is_primary AS is_primary
+        FROM {_qualified_table("ee_company_domains")} AS websites
+        WHERE nullIf(trim(websites.domain), '') IS NOT NULL
     )
     """
 

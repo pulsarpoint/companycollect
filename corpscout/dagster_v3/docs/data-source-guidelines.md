@@ -172,12 +172,23 @@ contact information is mandatory, not optional.** When you analyse a new source,
 - **Store normalized**: one **`<cc>_company_contacts`** table, one row per contact
   `(reg_code, contact_type, contact_type_en, contact_value, is_current, …)`, capturing **all** types.
   Don't fold contacts into the company row; a company has many.
-- **Website is the domain signal** — the rest of the platform discovers/associates domains from the
-  `contact_type='Website'` rows, so prioritise extracting URLs cleanly. A dedicated normalized
-  websites table (with host/root_domain) is the natural downstream artifact.
+- **Website AND email are domain signals.** Add **`domain` + `domain_source`** (`'website'|'email'|''`)
+  to the contacts table, computed at build time:
+  - **Website** → `root_domain(contact_value)` via the shared `dagster_v3.domains` tldextract UDFs
+    (`root_domain`/`normalized_url`/`website_host`) — register them on the DuckDB connection.
+  - **Email** → the email suffix, **but only if it is unique to one company.** Count *distinct
+    companies* per suffix (not contact rows) and drop any suffix used by `> EMAIL_DOMAIN_MAX_COMPANIES`
+    (default 1). This single rule auto-excludes mail providers (gmail, hot.ee) *and* shared
+    accounting/formation-agent domains (one bookkeeper fronting hundreds of shell clients) — no magic
+    threshold. Keep a small provider denylist only as a backstop. **Email matters**: far more companies
+    have a same-domain email than a website (Estonia: ~340k vs ~21k).
+- **Feed the cross-source graph.** Build a deduped **`<cc>_company_domains`** table (one row per
+  `(reg_code, domain)`, website preferred over email, one `is_primary`/company; website rows carry
+  `website_url/_normalized_url/_host`), then add a UNION branch + the `domain_source` column to
+  `domains/assets.py` so it lands in `company_website_domains` → `domains`.
 - Pull contacts on the source's normal cadence; they sit alongside the register, not the financials.
 - **Mandatory alongside currency (§7) and translation (§8).** Reference impl: `estonia_ar`
-  (`ee_company_contacts` from `yldandmed`).
+  (`ee_company_contacts`/`ee_company_domains` from `yldandmed`).
 
 ## 9. Scheduling (cadence-matched, non-partitioned full-refresh)
 - **Match the schedule to the source's refresh rate**, and split chains that refresh differently into

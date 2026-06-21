@@ -95,6 +95,33 @@ EE_CONTACT_TYPE_EN_BY_CODE = {
     "MUU": "Other",
 }
 
+# An email suffix is only treated as a company's own domain if it is unique to a
+# single company (see `domain`/`domain_source` on ee_company_contacts). The
+# uniqueness rule already drops every high-frequency mail provider and shared
+# accounting/formation-agent domain (gmail, hot.ee, kvatro.ee, …) because those
+# appear across thousands of distinct companies. This denylist is only a backstop
+# for a well-known provider that coincidentally shows up for exactly one company.
+EMAIL_PROVIDER_DENYLIST = frozenset(
+    {
+        # global webmail
+        "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+        "msn.com", "yahoo.com", "ymail.com", "rocketmail.com", "icloud.com",
+        "me.com", "mac.com", "aol.com", "gmx.com", "gmx.net", "gmx.de",
+        "mail.com", "zoho.com", "proton.me", "protonmail.com", "pm.me",
+        "fastmail.com", "tutanota.com", "hey.com",
+        # RU/LV webmail (common in EE data)
+        "mail.ru", "list.ru", "bk.ru", "inbox.ru", "internet.ru", "rambler.ru",
+        "yandex.ru", "yandex.com", "ya.ru", "inbox.lv", "one.lv", "apollo.lv",
+        # EE webmail / portals
+        "hot.ee", "mail.ee", "online.ee", "neti.ee", "starman.ee", "eesti.ee",
+    }
+)
+
+# Keep an email suffix as a company domain only when it maps to <= this many
+# distinct companies. 1 = strictly unique (the user's rule); raise to allow
+# small corporate groups sharing one domain.
+EMAIL_DOMAIN_MAX_COMPANIES = 1
+
 
 class HttpSession(Protocol):
     def get(self, url: str, *, timeout: int, stream: bool = False) -> Any: ...

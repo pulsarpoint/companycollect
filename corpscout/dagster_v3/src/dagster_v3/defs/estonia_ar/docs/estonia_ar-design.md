@@ -78,6 +78,22 @@
 - Assets: `estonia_ar_company_contacts_duckdb` → `estonia_ar_clickhouse_company_contacts`
   (`contacts.py` + `clickhouse.py`). No `raw_*`/hash columns; export == full tuple.
 
+### Website/email → domain connection
+- `ee_company_contacts` carries **`domain` + `domain_source`** (`'website'|'email'|''`), computed at
+  build time: `root_domain(contact_value)` (shared `dagster_v3.domains` tldextract UDF) for WWW rows;
+  for EMAIL rows the email suffix **only if it is unique to one company**. Counting *distinct
+  companies* per suffix (migration `000028`) auto-drops every mail provider (gmail @190k companies)
+  and shared accounting/formation-agent domain (kvatro.ee @286) — no magic threshold, just the
+  uniqueness rule (`EMAIL_DOMAIN_MAX_COMPANIES`, default 1) + a small provider denylist backstop.
+- **Why email matters**: only ~21k companies have a website but ~340k have an email on their own
+  domain → email mining is the main domain-coverage source.
+- **`ee_company_domains`** (migration `000029`) — deduped one row per `(reg_code, domain)` feeder
+  (`company_domains.py`), website source preferred over email, exactly one `is_primary` per company;
+  website rows carry `website_url`/`_normalized_url`/`_host`, email rows leave them empty.
+- Flows into the **cross-source `company_website_domains`** graph: the `domains_clickhouse` asset adds
+  an `ee_company_domains` UNION branch and a new **`domain_source`** column (migration `000030`;
+  fi/no/wikidata branches backfilled `'website'`). `domains` rolls up per `root_domain` as before.
+
 ## 7. Currency
 - All EUR (Estonia since 2011; reports 2019–2025) → **no legacy/unmapped-currency case**. Metrics
   carry `<metric>_amount_original` + `<metric>_amount_usd` + `fx_rate_to_usd/_date/_source`, keyed on

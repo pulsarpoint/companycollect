@@ -26,6 +26,7 @@ COMPANY_WEBSITE_DOMAINS_COLUMNS = (
     "website_normalized_url",
     "website_host",
     "root_domain",
+    "domain_source",
     "is_current",
     "is_primary",
     "resolved_at",

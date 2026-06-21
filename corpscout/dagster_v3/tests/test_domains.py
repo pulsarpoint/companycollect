@@ -26,3 +26,18 @@ def test_normalized_url_parts_adds_scheme_and_lowercases_host() -> None:
     assert normalized_url == "https://www.example.no/path"
     assert host == "www.example.no"
     assert path == "/path"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # real garbage from EE contact data: an address mislabeled as a website.
+        "U-Box 240 20229.MALMÖ",
+        "https://foo:bar/x",  # non-numeric port -> urllib ValueError
+        ":::",
+        "http://[invalid",
+    ],
+)
+def test_malformed_urls_degrade_to_empty_not_crash(raw: str) -> None:
+    # Must not raise; a value that carries no parseable host yields no domain.
+    assert root_domain(raw) == ""

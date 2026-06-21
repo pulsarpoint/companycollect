@@ -14,9 +14,11 @@ from dagster_v3.defs.estonia_ar import resources, tables
 from dagster_v3.defs.estonia_ar.clickhouse import (
     export_estonia_ar_clickhouse_companies,
     export_estonia_ar_clickhouse_company_contacts,
+    export_estonia_ar_clickhouse_company_domains,
     export_estonia_ar_clickhouse_financial_metrics,
     export_estonia_ar_clickhouse_financial_statements,
 )
+from dagster_v3.defs.estonia_ar.company_domains import build_estonia_ar_company_domains
 from dagster_v3.defs.estonia_ar.contacts import build_estonia_ar_company_contacts
 from dagster_v3.defs.estonia_ar.financials import (
     build_estonia_ar_financial_statements,
@@ -409,6 +411,65 @@ def estonia_ar_clickhouse_company_contacts(
     )
 
 
+@dg.asset(
+    name="estonia_ar_company_domains_duckdb",
+    deps=[dg.AssetKey("estonia_ar_company_contacts_duckdb")],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=ESTONIA_AR_DUCKDB_POOL,
+    description=(
+        "Estonia AR deduped per-company domain feeder (website-derived + unique "
+        "email-suffix domains) for the cross-source domain graph."
+    ),
+)
+def estonia_ar_company_domains_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    context.log.info(
+        "Building Estonia AR company domains: duckdb_path=%s, table=%s.%s",
+        ESTONIA_AR_DUCKDB_PATH,
+        DLT_DATASET_NAME,
+        tables.COMPANY_DOMAINS_TABLE,
+    )
+    counts = build_estonia_ar_company_domains(
+        database_path=ESTONIA_AR_DUCKDB_PATH,
+        source_run_id=context.run_id,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    deps=[dg.AssetKey("estonia_ar_company_domains_duckdb")],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=ESTONIA_AR_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_EE_COMPANY_DOMAINS_TABLE},
+    description=(
+        "Estonia AR company domains exported to ClickHouse corpscout.ee_company_domains "
+        "(feeds the cross-source company_website_domains graph)."
+    ),
+)
+def estonia_ar_clickhouse_company_domains(
+    context: AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    context.log.info(
+        "Starting Estonia AR company domains ClickHouse export: duckdb_path=%s, table=%s",
+        ESTONIA_AR_DUCKDB_PATH,
+        tables.QUALIFIED_EE_COMPANY_DOMAINS_TABLE,
+    )
+    rows = export_estonia_ar_clickhouse_company_domains(
+        database_path=ESTONIA_AR_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    context.log.info("Completed Estonia AR company domains ClickHouse export: rows=%s", rows)
+    return dg.MaterializeResult(
+        metadata={"rows": rows, "table": tables.QUALIFIED_EE_COMPANY_DOMAINS_TABLE},
+    )
+
+
 def _duckdb_table_count(*, database_path: str | Path, table_name: str) -> int:
     with duckdb.connect(str(database_path), read_only=True) as connection:
         value = connection.execute(f"select count(*) from {table_name}").fetchone()[0]
@@ -449,10 +510,14 @@ estonia_ar_financials_schedule = dg.ScheduleDefinition(
 )
 
 # Contacts come from the ~4.5 GB yldandmed general-data JSON — too heavy for daily.
-# Refresh monthly (8th, 06:00), staggered after the financials snapshot run.
+# Refresh monthly (8th, 06:00), staggered after the financials snapshot run. The
+# domain feeder (websites + unique email suffixes) rides the same chain.
 estonia_ar_contacts_job = dg.define_asset_job(
     "estonia_ar_contacts_job",
-    selection=dg.AssetSelection.assets("estonia_ar_clickhouse_company_contacts").upstream(),
+    selection=dg.AssetSelection.assets(
+        "estonia_ar_clickhouse_company_contacts",
+        "estonia_ar_clickhouse_company_domains",
+    ).upstream(),
 )
 estonia_ar_contacts_schedule = dg.ScheduleDefinition(
     name="estonia_ar_contacts_schedule",

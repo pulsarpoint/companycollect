@@ -212,5 +212,38 @@ EE_COMPANY_CONTACTS_COLUMNS = (
     "is_current",
     "end_date",
     "source_url",
+    # Domain signal derived at build time: root_domain(website) for WWW rows, and
+    # the email suffix for EMAIL rows whose suffix is unique to one company.
+    # `domain_source` is 'website' | 'email' | '' (empty when no domain derived).
+    "domain",
+    "domain_source",
 )
 EE_COMPANY_CONTACTS_EXPORT_COLUMNS = _export_columns(EE_COMPANY_CONTACTS_COLUMNS)
+# Columns added by migration 000028 (ALTER) on top of the 000027 base table.
+EE_COMPANY_CONTACTS_DOMAIN_COLUMNS = ("domain", "domain_source")
+
+
+# --- Company domains (website OR email-derived → cross-source graph feeder) ---
+# Deduped one row per (reg_code, domain). Generalizes the per-source `*_websites`
+# pattern to "domain from website or email"; feeds corpscout.company_website_domains.
+COMPANY_DOMAINS_TABLE = "company_domains"  # DuckDB staging
+EE_COMPANY_DOMAINS_TABLE = "ee_company_domains"
+QUALIFIED_EE_COMPANY_DOMAINS_TABLE = (
+    f"{ESTONIA_AR_DATABASE}.{EE_COMPANY_DOMAINS_TABLE}"
+)
+EE_COMPANY_DOMAINS_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "reg_code",
+    "domain",
+    "domain_source",
+    "website_url",
+    "website_normalized_url",
+    "website_host",
+    "is_current",
+    "is_primary",
+    "resolved_at",
+)
+EE_COMPANY_DOMAINS_EXPORT_COLUMNS = _export_columns(EE_COMPANY_DOMAINS_COLUMNS)

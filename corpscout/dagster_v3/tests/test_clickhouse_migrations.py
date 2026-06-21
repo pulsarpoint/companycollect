@@ -38,6 +38,9 @@ EXPECTED_MIGRATIONS = (
     "000025_corpscout_ee_financial_statements",
     "000026_corpscout_ee_financial_metrics",
     "000027_corpscout_ee_company_contacts",
+    "000028_corpscout_ee_company_contacts_domain",
+    "000029_corpscout_ee_company_domains",
+    "000030_corpscout_company_website_domains_domain_source",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -528,8 +531,17 @@ def test_domain_migration_covers_exported_columns() -> None:
         assert f"    {column_name} " in sql
 
     assert "CREATE TABLE IF NOT EXISTS corpscout.company_website_domains" in sql
+    # domain_source was added later via an ALTER migration (000030); the rest are in the base.
     for column_name in domain_tables.COMPANY_WEBSITE_DOMAINS_COLUMNS:
+        if column_name == "domain_source":
+            continue
         assert f"    {column_name} " in sql
+
+    alter_sql = _migration_sql(
+        "000030_corpscout_company_website_domains_domain_source.up.sql"
+    )
+    assert "ALTER TABLE corpscout.company_website_domains" in alter_sql
+    assert "domain_source" in alter_sql
 
 
 def test_wikidata_company_seed_migration_creates_all_wikidata_tables() -> None:
