@@ -53,6 +53,7 @@ EXPECTED_MIGRATIONS = (
     "000040_corpscout_open_page_rank_domains",
     "000041_corpscout_sk_companies",
     "000042_corpscout_sk_industries",
+    "000043_corpscout_sk_financial_metrics",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
