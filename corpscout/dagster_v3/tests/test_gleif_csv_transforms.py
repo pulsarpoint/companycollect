@@ -114,6 +114,37 @@ def test_relationship_transform_tolerates_missing_deleted_at_column(tmp_path: Pa
         ).fetchall() == [(None,)]
 
 
+def test_reporting_exception_transform_tolerates_missing_registration_columns(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "gleif_reference.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        seed_raw_tables(
+            connection,
+            include_reporting_exception_registration_columns=False,
+        )
+
+    replace_current_from_dlt_raw_tables(
+        database_path=database_path,
+        load_mode="full",
+        publish_date="2026-06-20T16:00:00+00:00",
+        run_id="run-without-exception-registration",
+    )
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        assert connection.execute(
+            """
+            select
+              initial_registration_date,
+              last_update_date,
+              registration_status,
+              next_renewal_date,
+              managing_lou
+            from gleif_reference.gleif.gleif_lei_reporting_exceptions
+            """
+        ).fetchall() == [(None, None, None, None, None)]
+
+
 def seed_raw_tables(
     connection: duckdb.DuckDBPyConnection,
     *,
@@ -122,6 +153,7 @@ def seed_raw_tables(
     entity_status: str | None = "ACTIVE",
     registration_status: str | None = "ISSUED",
     include_relationship_deleted_at: bool = True,
+    include_reporting_exception_registration_columns: bool = True,
 ) -> None:
     connection.execute(f"create schema if not exists {GLEIF_DLT_RAW_DATASET_NAME}")
     connection.execute(f"drop table if exists {GLEIF_DLT_RAW_DATASET_NAME}.{GLEIF_RAW_LEI_RECORDS_TABLE}")
@@ -275,13 +307,13 @@ def seed_raw_tables(
           lei varchar,
           exception_category varchar,
           exception_reason_1 varchar,
-          exception_reference_1 varchar,
-          registration_initial_registration_date varchar,
-          registration_last_update_date varchar,
-          registration_registration_status varchar,
-          registration_next_renewal_date varchar,
-          registration_managing_lou varchar,
-          deleted_at varchar
+          exception_reference_1 varchar
+          {", registration_initial_registration_date varchar" if include_reporting_exception_registration_columns else ""}
+          {", registration_last_update_date varchar" if include_reporting_exception_registration_columns else ""}
+          {", registration_registration_status varchar" if include_reporting_exception_registration_columns else ""}
+          {", registration_next_renewal_date varchar" if include_reporting_exception_registration_columns else ""}
+          {", registration_managing_lou varchar" if include_reporting_exception_registration_columns else ""}
+          {", deleted_at varchar" if include_reporting_exception_registration_columns else ""}
         )
         """
     )
@@ -291,13 +323,13 @@ def seed_raw_tables(
           '5493001KJTIIGC8Y1R12',
           'DIRECT_ACCOUNTING_CONSOLIDATION_PARENT',
           'NO_KNOWN_PERSON',
-          'not-disclosed',
-          '2020-01-02T00:00:00Z',
-          '2026-06-20T00:00:00Z',
-          'PUBLISHED',
-          '2027-06-20T00:00:00Z',
-          '213800WAVVOPS85N2205',
-          null
+          'not-disclosed'
+          {", '2020-01-02T00:00:00Z'" if include_reporting_exception_registration_columns else ""}
+          {", '2026-06-20T00:00:00Z'" if include_reporting_exception_registration_columns else ""}
+          {", 'PUBLISHED'" if include_reporting_exception_registration_columns else ""}
+          {", '2027-06-20T00:00:00Z'" if include_reporting_exception_registration_columns else ""}
+          {", '213800WAVVOPS85N2205'" if include_reporting_exception_registration_columns else ""}
+          {", null" if include_reporting_exception_registration_columns else ""}
         )
         """
     )

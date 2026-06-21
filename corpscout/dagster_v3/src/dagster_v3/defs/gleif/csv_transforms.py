@@ -442,22 +442,62 @@ def _build_reporting_exceptions(
     publish_date: str,
     run_id: str,
 ) -> None:
-    exception_id = "sha256(coalesce(lei, '') || ':' || coalesce(exception_category, ''))"
+    exception_category = _raw_column_or_null(
+        connection,
+        table_name=GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE,
+        column_name="exception_category",
+    )
+    exception_reason = _raw_column_or_null(
+        connection,
+        table_name=GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE,
+        column_name="exception_reason_1",
+    )
+    exception_reference = _raw_column_or_null(
+        connection,
+        table_name=GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE,
+        column_name="exception_reference_1",
+    )
+    initial_registration_date = _raw_column_or_null(
+        connection,
+        table_name=GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE,
+        column_name="registration_initial_registration_date",
+    )
+    last_update_date = _raw_column_or_null(
+        connection,
+        table_name=GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE,
+        column_name="registration_last_update_date",
+    )
+    registration_status = _raw_column_or_null(
+        connection,
+        table_name=GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE,
+        column_name="registration_registration_status",
+    )
+    next_renewal_date = _raw_column_or_null(
+        connection,
+        table_name=GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE,
+        column_name="registration_next_renewal_date",
+    )
+    managing_lou = _raw_column_or_null(
+        connection,
+        table_name=GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE,
+        column_name="registration_managing_lou",
+    )
+    exception_id = f"sha256(coalesce(lei, '') || ':' || coalesce({exception_category}, ''))"
     connection.execute(
         f"""
         create or replace table {_staging_table(catalog_name, tables.GLEIF_LEI_REPORTING_EXCEPTIONS_TABLE)} as
         select
           {exception_id} as exception_record_id,
           coalesce(lei, '') as lei,
-          coalesce(exception_category, '') as parent_relationship_type,
-          coalesce(exception_category, '') as exception_category,
-          nullif(exception_reason_1, '') as exception_reason,
-          nullif(exception_reference_1, '') as exception_reference,
-          try_cast(registration_initial_registration_date as timestamp) as initial_registration_date,
-          try_cast(registration_last_update_date as timestamp) as last_update_date,
-          nullif(registration_registration_status, '') as registration_status,
-          try_cast(registration_next_renewal_date as timestamp) as next_renewal_date,
-          nullif(registration_managing_lou, '') as managing_lou,
+          coalesce({exception_category}, '') as parent_relationship_type,
+          coalesce({exception_category}, '') as exception_category,
+          nullif({exception_reason}, '') as exception_reason,
+          nullif({exception_reference}, '') as exception_reference,
+          try_cast({initial_registration_date} as timestamp) as initial_registration_date,
+          try_cast({last_update_date} as timestamp) as last_update_date,
+          nullif({registration_status}, '') as registration_status,
+          try_cast({next_renewal_date} as timestamp) as next_renewal_date,
+          nullif({managing_lou}, '') as managing_lou,
           'gleif' as source_system,
           {_string_literal(run_id)} as source_run_id,
           {_timestamp_literal(publish_date)} as retrieved_at,
