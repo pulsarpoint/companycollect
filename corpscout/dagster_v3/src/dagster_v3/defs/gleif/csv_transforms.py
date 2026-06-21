@@ -365,6 +365,11 @@ def _build_relationships(
         "coalesce(relationship_relationship_type, '') || ':' || "
         "coalesce(relationship_end_node_node_id, '')"
     )
+    deleted_at_source = _raw_column_or_null(
+        connection,
+        table_name=GLEIF_RAW_RELATIONSHIPS_TABLE,
+        column_name="deleted_at",
+    )
     connection.execute(
         f"""
         create or replace table {_staging_table(catalog_name, tables.GLEIF_LEI_RELATIONSHIPS_TABLE)} as
@@ -386,7 +391,7 @@ def _build_relationships(
           nullif(registration_validation_sources, '') as corroboration_level,
           nullif(registration_validation_documents, '') as corroboration_documents,
           nullif(registration_validation_reference, '') as corroboration_reference,
-          try_cast(deleted_at as timestamp) as deleted_at,
+          try_cast({deleted_at_source} as timestamp) as deleted_at,
           'gleif' as source_system,
           {_string_literal(run_id)} as source_run_id,
           {_timestamp_literal(publish_date)} as retrieved_at,
@@ -479,6 +484,28 @@ def _staging_row_counts(
 
 def _raw_table(table_name: str) -> str:
     return f"{_quote(GLEIF_DLT_RAW_DATASET_NAME)}.{_quote(table_name)}"
+
+
+def _raw_column_or_null(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    table_name: str,
+    column_name: str,
+) -> str:
+    row = connection.execute(
+        """
+        select 1
+        from information_schema.columns
+        where table_schema = ?
+          and table_name = ?
+          and column_name = ?
+        limit 1
+        """,
+        [GLEIF_DLT_RAW_DATASET_NAME, table_name, column_name],
+    ).fetchone()
+    if row is None:
+        return "null"
+    return _quote(column_name)
 
 
 def _staging_table(catalog_name: str, table_name: str) -> str:

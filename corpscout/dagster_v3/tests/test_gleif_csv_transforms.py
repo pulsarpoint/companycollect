@@ -93,6 +93,27 @@ def test_non_nullable_strings_are_coalesced_for_clickhouse(tmp_path: Path) -> No
         ).fetchall() == [("", "", "")]
 
 
+def test_relationship_transform_tolerates_missing_deleted_at_column(tmp_path: Path) -> None:
+    database_path = tmp_path / "gleif_reference.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        seed_raw_tables(connection, include_relationship_deleted_at=False)
+
+    replace_current_from_dlt_raw_tables(
+        database_path=database_path,
+        load_mode="full",
+        publish_date="2026-06-20T16:00:00+00:00",
+        run_id="run-without-deleted-at",
+    )
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        assert connection.execute(
+            """
+            select deleted_at
+            from gleif_reference.gleif.gleif_lei_relationships
+            """
+        ).fetchall() == [(None,)]
+
+
 def seed_raw_tables(
     connection: duckdb.DuckDBPyConnection,
     *,
@@ -100,6 +121,7 @@ def seed_raw_tables(
     legal_name: str | None = "ACME PLC",
     entity_status: str | None = "ACTIVE",
     registration_status: str | None = "ISSUED",
+    include_relationship_deleted_at: bool = True,
 ) -> None:
     connection.execute(f"create schema if not exists {GLEIF_DLT_RAW_DATASET_NAME}")
     connection.execute(f"drop table if exists {GLEIF_DLT_RAW_DATASET_NAME}.{GLEIF_RAW_LEI_RECORDS_TABLE}")
@@ -218,8 +240,8 @@ def seed_raw_tables(
           registration_managing_lou varchar,
           registration_validation_sources varchar,
           registration_validation_documents varchar,
-          registration_validation_reference varchar,
-          deleted_at varchar
+          registration_validation_reference varchar
+          {", deleted_at varchar" if include_relationship_deleted_at else ""}
         )
         """
     )
@@ -242,8 +264,8 @@ def seed_raw_tables(
           '213800WAVVOPS85N2205',
           'FULLY_CORROBORATED',
           'SUPPORTING_DOCUMENTS',
-          'annual-report',
-          null
+          'annual-report'
+          {", null" if include_relationship_deleted_at else ""}
         )
         """
     )
