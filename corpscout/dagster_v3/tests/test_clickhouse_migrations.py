@@ -50,6 +50,9 @@ EXPECTED_MIGRATIONS = (
     "000037_corpscout_gb_financial_metrics",
     "000038_corpscout_cz_companies",
     "000039_corpscout_cz_industries",
+    "000040_corpscout_open_page_rank_domains",
+    "000041_corpscout_sk_companies",
+    "000042_corpscout_sk_industries",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -551,6 +554,36 @@ def test_domain_migration_covers_exported_columns() -> None:
     )
     assert "ALTER TABLE corpscout.company_website_domains" in alter_sql
     assert "domain_source" in alter_sql
+
+
+def test_open_page_rank_domains_migration_creates_current_rank_table() -> None:
+    sql = _migration_sql("000040_corpscout_open_page_rank_domains.up.sql")
+    down_sql = _migration_sql("000040_corpscout_open_page_rank_domains.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.open_page_rank_domains" in sql
+    for column_name in (
+        "source_system",
+        "source_list_name",
+        "source_run_id",
+        "source_record_id",
+        "source_rank",
+        "domain",
+        "root_domain",
+        "domain_extension",
+        "open_page_rank",
+        "source_url",
+        "retrieved_date",
+        "retrieved_at",
+        "resolved_at",
+    ):
+        assert f"    {column_name} " in sql
+
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert (
+        "ORDER BY (root_domain, source_system, source_list_name, domain)"
+        in sql
+    )
+    assert "DROP TABLE IF EXISTS corpscout.open_page_rank_domains" in down_sql
 
 
 def test_wikidata_company_seed_migration_creates_all_wikidata_tables() -> None:

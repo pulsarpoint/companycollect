@@ -22,7 +22,13 @@ class S3Client(Protocol):
     def put_object(self, Bucket: str, Key: str, Body: Any) -> Any:
         ...
 
+    def upload_file(self, Filename: str, Bucket: str, Key: str) -> Any:
+        ...
+
     def get_object(self, Bucket: str, Key: str) -> Mapping[str, Any]:
+        ...
+
+    def download_file(self, Bucket: str, Key: str, Filename: str) -> Any:
         ...
 
     def get_paginator(self, operation_name: str) -> Any:
@@ -83,9 +89,17 @@ class ObjectStoreResource(dg.ConfigurableResource):
         target_bucket = bucket or self.bucket
         self.client().put_object(Bucket=target_bucket, Key=key, Body=body)
 
+    def upload_file(self, key: str, source_path: str | Path, bucket: str | None = None) -> None:
+        target_bucket = bucket or self.bucket
+        self.client().upload_file(str(source_path), target_bucket, key)
+
     def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
         target_bucket = bucket or self.bucket
         return self.client().get_object(Bucket=target_bucket, Key=key)["Body"].read()
+
+    def download_file(self, key: str, target_path: str | Path, bucket: str | None = None) -> None:
+        target_bucket = bucket or self.bucket
+        self.client().download_file(target_bucket, key, str(target_path))
 
     def list_keys(self, prefix: str, bucket: str | None = None) -> list[str]:
         target_bucket = bucket or self.bucket
