@@ -21,6 +21,7 @@ def test_wikidata_clickhouse_asset_is_registered() -> None:
     resource_keys = repository.get_top_level_resources().keys()
 
     assert "wikidata_company_seed_raw_objects" in asset_keys
+    assert "wikidata_domain_index_raw_objects" in asset_keys
     assert "wikidata_listed_companies_duckdb" in asset_keys
     assert "wikidata_company_seed_clickhouse" in asset_keys
     assert "clickhouse" in resource_keys
@@ -85,6 +86,7 @@ def test_wikidata_weekly_refresh_job_and_schedule_are_registered() -> None:
     )
 
     assert "wikidata_company_seed_weekly_job" in job_names
+    assert "wikidata_domain_index_raw_job" in job_names
     assert "wikidata_company_seed_weekly_schedule" in schedule_names
     assert weekly_schedule.job_name == "wikidata_company_seed_weekly_job"
     assert weekly_schedule.cron_schedule == "0 3 * * 1"
@@ -95,16 +97,24 @@ def test_wikidata_raw_object_asset_has_no_upstream_dependencies() -> None:
     repository = load_project_defs().get_repository_def()
 
     raw_asset = repository.asset_graph.get(AssetKey(["wikidata_company_seed_raw_objects"]))
+    domain_index_asset = repository.asset_graph.get(
+        AssetKey(["wikidata_domain_index_raw_objects"])
+    )
 
     assert raw_asset.parent_keys == set()
+    assert domain_index_asset.parent_keys == set()
 
 
 def test_wikidata_raw_object_asset_is_not_partitioned() -> None:
     repository = load_project_defs().get_repository_def()
 
     raw_asset = repository.asset_graph.get(AssetKey(["wikidata_company_seed_raw_objects"]))
+    domain_index_asset = repository.asset_graph.get(
+        AssetKey(["wikidata_domain_index_raw_objects"])
+    )
 
     assert raw_asset.partitions_def is None
+    assert domain_index_asset.partitions_def is None
 
 
 def test_wikidata_listed_companies_duckdb_materialization_uses_dlt_pipeline(
@@ -565,6 +575,113 @@ def test_wikidata_raw_pull_discovers_active_exchanges_before_downloading_pages()
     assert client.company_offsets == {"QEX1": [0, 1], "QEX2": [0, 1]}
 
 
+def test_wikidata_domain_index_query_uses_stable_cursor_pagination() -> None:
+    from dagster_v3.defs.wikidata.domain_index import (
+        build_wikidata_domain_index_query,
+    )
+
+    first_page_query = build_wikidata_domain_index_query(limit=100)
+    cursor_query = build_wikidata_domain_index_query(
+        limit=100,
+        last_entity_iri="http://www.wikidata.org/entity/Q123",
+        last_website_url="https://example.com",
+    )
+
+    assert "?entity wdt:P856 ?website" in first_page_query
+    assert "?entityDescription" in first_page_query
+    assert "ORDER BY ?entity ?website" in first_page_query
+    assert "LIMIT 100" in first_page_query
+    assert "OFFSET" not in first_page_query
+    assert "FILTER (" not in first_page_query
+
+    assert 'STR(?entity) > "http://www.wikidata.org/entity/Q123"' in cursor_query
+    assert 'STR(?entity) = "http://www.wikidata.org/entity/Q123"' in cursor_query
+    assert 'STR(?website) > "https://example.com"' in cursor_query
+    assert cursor_query.index("FILTER (") < cursor_query.index("ORDER BY")
+    assert cursor_query.index("ORDER BY") < cursor_query.index("LIMIT 100")
+
+
+def test_wikidata_domain_index_raw_pull_writes_pages_and_manifest() -> None:
+    from dagster_v3.defs.wikidata.domain_index import (
+        WIKIDATA_DOMAIN_INDEX_RAW_BUCKET,
+        WikidataDomainIndexRawPullConfig,
+    )
+    from dagster_v3.defs.wikidata import assets
+
+    object_store, s3_client = _object_store()
+    old_key = "raw/run_id=old-run/retrieved_date=2026-06-18/page=000001.json"
+    s3_client.objects[(WIKIDATA_DOMAIN_INDEX_RAW_BUCKET, old_key)] = b"old"
+    client = FakeWikidataDomainIndexClient(
+        pages=[
+            _wikidata_response(
+                [
+                    _wikidata_domain_index_binding(
+                        entity_id="Q1",
+                        website="https://alpha.example",
+                    ),
+                    _wikidata_domain_index_binding(
+                        entity_id="Q2",
+                        website="https://beta.example",
+                    ),
+                ]
+            ),
+            _wikidata_response(
+                [
+                    _wikidata_domain_index_binding(
+                        entity_id="Q3",
+                        website="https://gamma.example",
+                    )
+                ]
+            ),
+        ]
+    )
+
+    result = assets.pull_wikidata_domain_index_raw_objects(
+        client=client,
+        object_store=object_store,
+        config=WikidataDomainIndexRawPullConfig(
+            page_size=2,
+            max_pages=None,
+            request_delay_seconds=0.25,
+            user_agent="test-agent",
+        ),
+        run_id="run-123",
+        retrieved_at="2026-06-21T10:00:00+00:00",
+        sleep=lambda _seconds: None,
+    )
+
+    page_one_key = "raw/run_id=run-123/retrieved_date=2026-06-21/page=000001.json"
+    page_two_key = "raw/run_id=run-123/retrieved_date=2026-06-21/page=000002.json"
+    manifest_key = "raw/run_id=run-123/retrieved_date=2026-06-21/manifest.json"
+
+    assert (WIKIDATA_DOMAIN_INDEX_RAW_BUCKET, page_one_key) in s3_client.objects
+    assert (WIKIDATA_DOMAIN_INDEX_RAW_BUCKET, page_two_key) in s3_client.objects
+    assert (WIKIDATA_DOMAIN_INDEX_RAW_BUCKET, manifest_key) in s3_client.objects
+    assert (WIKIDATA_DOMAIN_INDEX_RAW_BUCKET, old_key) not in s3_client.objects
+
+    manifest = json.loads(
+        s3_client.objects[(WIKIDATA_DOMAIN_INDEX_RAW_BUCKET, manifest_key)].decode("utf-8")
+    )
+    assert manifest["source"] == "wikidata"
+    assert manifest["query_mode"] == "official_website_domain_index"
+    assert manifest["page_size"] == 2
+    assert manifest["row_count"] == 3
+    assert manifest["page_count"] == 2
+    assert manifest["objects"] == [page_one_key, page_two_key]
+    assert manifest["last_entity_iri"] == "http://www.wikidata.org/entity/Q3"
+    assert manifest["last_website_url"] == "https://gamma.example"
+    assert len(manifest["query_hash"]) == 64
+
+    assert result.metadata["bucket"] == WIKIDATA_DOMAIN_INDEX_RAW_BUCKET
+    assert result.metadata["row_count"] == 3
+    assert result.metadata["page_count"] == 2
+    assert result.metadata["deleted_old_raw_object_count"] == 1
+    assert len(client.queries) == 2
+    assert "FILTER (" not in client.queries[0]
+    assert 'STR(?entity) > "http://www.wikidata.org/entity/Q2"' in client.queries[1]
+    assert 'STR(?website) > "https://beta.example"' in client.queries[1]
+
+
 def test_wikidata_query_uses_stable_order_for_offset_pagination() -> None:
     from dagster_v3.defs.wikidata.source import (
         build_company_identifier_augmentation_query,
@@ -921,6 +1038,17 @@ class FakeWikidataDltClient:
         return self._company_payloads_by_exchange[exchange_id].pop(0)
 
 
+class FakeWikidataDomainIndexClient:
+    def __init__(self, pages: list[dict[str, Any]]) -> None:
+        self._pages = list(pages)
+        self.queries: list[str] = []
+
+    def fetch(self, query: str, *, user_agent: str) -> dict[str, Any]:
+        assert user_agent == "test-agent"
+        self.queries.append(query)
+        return self._pages.pop(0)
+
+
 class FakeDagsterDltResource:
     def __init__(self) -> None:
         self.pipeline_names: list[str] = []
@@ -1212,6 +1340,19 @@ def _seed_wikidata_listed_companies(database_path: Path) -> None:
 
 def _wikidata_response(bindings: list[dict[str, Any]]) -> dict[str, Any]:
     return {"head": {"vars": ["company"]}, "results": {"bindings": bindings}}
+
+
+def _wikidata_domain_index_binding(
+    *,
+    entity_id: str,
+    website: str,
+) -> dict[str, Any]:
+    return {
+        "entity": {"value": f"http://www.wikidata.org/entity/{entity_id}"},
+        "entityLabel": {"value": f"{entity_id} label"},
+        "entityDescription": {"value": f"{entity_id} description"},
+        "website": {"value": website},
+    }
 
 
 def _wikidata_company_binding(
