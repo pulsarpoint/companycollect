@@ -109,6 +109,12 @@ When adding a source, mirror the nearest existing module: `finland_ytj` (registe
   `docker exec ppoint-postgres psql -U corpscout -c "SELECT usename,state,count(*) FROM pg_stat_activity GROUP BY 1,2 ORDER BY 3 DESC;"`.
   PgBouncer is the real fix.
 - `DAGSTER_HOME=$PWD` writes daemon/sensor artifacts into the repo — keep `dagster_v3/storage/` gitignored.
+- **To materialize a multi-level chain, `dg launch --assets` the FULL explicit asset list — don't rely on `+leaf`.**
+  Despite the docs saying `+expr` = "all upstream", this `dg` build resolved `+asset` (and `+a,+b`) as **one hop**
+  only: the planned set was the leaves + their direct deps, so deeper steps (e.g. the raw downloads, the
+  intermediate build) silently never ran and the chain failed when their inputs didn't exist. List every asset
+  key in the chain (e.g. the 8 raw loaders + pivot + metrics + usd + 2 exports), or verify the planned set with
+  `select count(distinct step_key) ... where dagster_event_type='ASSET_MATERIALIZATION_PLANNED'` before trusting it.
 - **A run stuck `QUEUED` forever while the daemon keeps cycling = a leaked op-concurrency pool slot.** When a run
   crashes ungracefully (`RUN_EXCEPTION`/`PIPELINE_FAILURE`, not a clean step failure) Dagster can fail to release
   its pool slot; the limit-1 pool then blocks every later run whose root step needs it. Diagnose:
