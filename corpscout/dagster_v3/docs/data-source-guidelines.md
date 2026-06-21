@@ -7,9 +7,10 @@ relearning. Deviations are allowed but **must be written down** in the source's 
 decision rules.
 
 ## 0. The golden path (one sentence)
-**dlt-bounded bulk download → DuckDB staging (C++ reader, raw kept as text) → set-based SQL
-transform → migration-owned, normalized ClickHouse tables (atomic full-refresh), with
-`*_usd` currency columns and `_en` translation columns added as standard cross-cutting steps.**
+**dlt-bounded bulk download → DuckDB staging (C++ reader, raw kept as text) → transform *only if
+needed* (direct DuckDB→ClickHouse copy preferred; else set-based SQL; dbt only when earned) →
+migration-owned, normalized ClickHouse tables (atomic full-refresh), with `*_usd` currency columns
+and `_en` translation columns added as standard cross-cutting steps.**
 
 Mirror the nearest existing module: `estonia_ar`/`latvia_ur` (bulk CSV + financials + EUR/USD),
 `finland_ytj`+`finland_resolved` (register + dbt resolve), `norway_brreg` (registry + per-company
@@ -72,15 +73,20 @@ one window instead of re-pulling everything):
   pool slot — see CLAUDE.md Troubleshooting). Reference impl: `finland_xbrl` (registration-date window).
 - Rule of thumb: **bulk file ⇒ non-partitioned full-refresh; per-window API ⇒ partitioned incremental.**
 
-## 5. Transform (set-based SQL is the default; dbt only when it earns it)
-- **Default: set-based DuckDB SQL** in a `<source>/financials.py`/transform module
-  (`CREATE OR REPLACE TABLE … AS SELECT …`). One pivot/normalize is one statement — fast, no project
-  overhead. EAV/long inputs → conditional-aggregate pivot
-  (`max(value) filter (where element = '…')`), see `estonia_ar`/`finland_xbrl`.
-- **Promote to dbt only when** the transform is a genuine multi-model DAG, needs incremental/SCD2
-  models, or wants dbt tests/exposures (e.g. `finland_resolved`, `exchange_rates_v2`). dbt brings a
-  per-source project + manifest (and the manifest-lock failure mode) — don't pay that for a single
-  pivot.
+## 5. Transform — prefer **none → set-based SQL → dbt**, in that order
+Pick the lightest that produces the export shape:
+1. **No transform needed → direct DuckDB→ClickHouse copy.** If the dlt/staging table is already the
+   export shape (typed, normalized columns), do **not** add a transform — export it straight with
+   `export_duckdb_table_to_clickhouse` over the `*_EXPORT_COLUMNS` subset. Cheapest and most uniform;
+   this is how a register/spine usually lands (e.g. `estonia_ar` entities → `ee_companies`). *Preferred.*
+2. **Simple transform → set-based DuckDB SQL** in a `<source>/financials.py` module
+   (`CREATE OR REPLACE TABLE … AS SELECT …`). One pivot/normalize is one statement — fast, no project
+   overhead. EAV/long inputs → conditional-aggregate pivot (`max(value) filter (where element='…')`),
+   see `estonia_ar`/`finland_xbrl`.
+3. **Complex transform → dbt**, *only* when it's a genuine multi-model DAG, needs incremental/SCD2,
+   or wants dbt tests/exposures (e.g. `finland_resolved`, `exchange_rates_v2`). dbt brings a
+   per-source project + manifest (and the manifest-lock failure mode) — don't pay that for a copy or
+   a single pivot.
 - **Never transform with Python row loops** (the 40-min `latvia_ur` metrics regression). If you're
   iterating rows in Python, it belongs in SQL.
 
