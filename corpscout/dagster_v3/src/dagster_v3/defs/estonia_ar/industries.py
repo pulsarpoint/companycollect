@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Callable
-from pathlib import Path
-
 import duckdb
 
-from dagster_v3.defs.estonia_ar import resources, tables
-from dagster_v3.defs.estonia_ar.contacts import _extract_single_json, _sql_literal
+from dagster_v3.defs.estonia_ar import tables
+from dagster_v3.defs.estonia_ar.contacts import _sql_literal
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 INDUSTRIES_TABLE = tables.INDUSTRIES_RAW_TABLE
-DEFAULT_TIMEOUT_SECONDS = resources.DEFAULT_TIMEOUT_SECONDS
 
 # Only ariregistri_kood + yldandmed.teatatud_tegevusalad are projected out of the
 # ~4.5 GB JSON; everything else is ignored by read_json's column projection.
@@ -87,46 +82,3 @@ def _build_industries_from_json(
             ).fetchone()[0]
         )
     return {"industries": rows, "nace_mapped": mapped, "companies": companies}
-
-
-def build_estonia_ar_company_industries(
-    *,
-    database_path: str | Path,
-    source_run_id: str,
-    download_url: str = tables.GENERAL_DATA_URL,
-    session: resources.HttpSession | None = None,
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
-    log: Callable[..., object] | None = None,
-) -> dict[str, int]:
-    """Download the yldandmed general-data JSON and extract per-company industries.
-
-    One row per currently-declared activity from `teatatud_tegevusalad`, carrying
-    the national EMTAK code and the source-provided NACE code. Refuses to replace
-    on empty input.
-    """
-    with tempfile.TemporaryDirectory(prefix="estonia_ar_industries_") as tmpdir:
-        tmp = Path(tmpdir)
-        zip_path = tmp / "yldandmed.json.zip"
-        resources._download_to_path(
-            url=download_url,
-            dest=zip_path,
-            timeout_seconds=timeout_seconds,
-            user_agent=resources.DEFAULT_USER_AGENT,
-            session=session,
-        )
-        json_path = _extract_single_json(zip_path, tmp)
-        counts = _build_industries_from_json(
-            database_path=database_path, json_path=json_path, source_run_id=source_run_id
-        )
-    if counts["industries"] == 0:
-        raise ValueError(
-            "Estonia AR yldandmed produced no industries; refusing to replace the table"
-        )
-    if log is not None:
-        log(
-            "Built Estonia AR company industries: industries=%s nace_mapped=%s companies=%s",
-            counts["industries"],
-            counts["nace_mapped"],
-            counts["companies"],
-        )
-    return counts

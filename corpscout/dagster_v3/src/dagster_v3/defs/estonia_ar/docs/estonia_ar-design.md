@@ -75,8 +75,9 @@
   columns=…)` projecting **only** `ariregistri_kood` + `yldandmed.sidevahendid` out of the ~4.5 GB
   JSON → `unnest()` the array → one normalized row per contact (blank values dropped). Build SQL
   inlines literals (consistent with `financials.py`); refuses to replace on zero rows.
-- Assets: `estonia_ar_company_contacts_duckdb` → `estonia_ar_clickhouse_company_contacts`
-  (`contacts.py` + `clickhouse.py`). No `raw_*`/hash columns; export == full tuple.
+- Assets: `estonia_ar_general_data_duckdb` (single yldandmed download builds the contacts +
+  industries DuckDB tables) → `estonia_ar_clickhouse_company_contacts` (`contacts.py` +
+  `general_data.py` + `clickhouse.py`). No `raw_*`/hash columns; export == full tuple.
 
 ### Website/email → domain connection
 - `ee_company_contacts` carries **`domain` + `domain_source`** (`'website'|'email'|''`), computed at
@@ -108,10 +109,9 @@
 - **Unified id**: `nace_code`/`nace_revision` join `corpscout.nace_categories` (EU SPARQL reference,
   2,043 categories across Rev 2 + Rev 2.1). `description_en` is left null (EMTAK text is Estonian →
   future translation, columns already present).
-- Assets: `estonia_ar_company_industries_duckdb` → `estonia_ar_clickhouse_industries`
-  (`industries.py` + `clickhouse.py`); `estonia_ar_industries_job` monthly (9th 06:00).
-- **Note**: contacts and industries each re-download the 4.5 GB yldandmed → future optimization is a
-  single shared download feeding both.
+- Assets: `estonia_ar_general_data_duckdb` builds the `ee_industries` DuckDB table (alongside
+  contacts, from the **same single download**) → `estonia_ar_clickhouse_industries`
+  (`industries.py` + `general_data.py` + `clickhouse.py`).
 
 ## 7. Currency
 - All EUR (Estonia since 2011; reports 2019–2025) → **no legacy/unmapped-currency case**. Metrics
@@ -122,9 +122,9 @@
 - `estonia_ar_register_job` (entities + companies) — **daily 04:00**.
 - `estonia_ar_financials_job` (full 13-asset chain via `.upstream()`) — **monthly, 5th 05:00**
   (after the new snapshot datestamp publishes). Crons staggered vs other sources; **default STOPPED**.
-- `estonia_ar_contacts_job` (build + export) — **monthly, 8th 06:00**; the ~4.5 GB yldandmed JSON is
-  too heavy for daily, staggered after the financials run.
-- `estonia_ar_full_refresh_job` (all 17 assets via group selection) — unscheduled, manual full run.
+- `estonia_ar_general_data_job` (contacts + domains + industries from **one** yldandmed download) —
+  **monthly, 8th 06:00**; the ~4.5 GB JSON is too heavy for daily, staggered after the financials run.
+- `estonia_ar_full_refresh_job` (all 20 assets via group selection) — unscheduled, manual full run.
 
 ## 9. Issues found during processing
 - **Literal `?` in report-general column names** (`"kas konsolideeritud?"`) collided with DuckDB's

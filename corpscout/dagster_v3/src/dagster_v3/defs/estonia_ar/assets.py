@@ -20,8 +20,7 @@ from dagster_v3.defs.estonia_ar.clickhouse import (
     export_estonia_ar_clickhouse_industries,
 )
 from dagster_v3.defs.estonia_ar.company_domains import build_estonia_ar_company_domains
-from dagster_v3.defs.estonia_ar.contacts import build_estonia_ar_company_contacts
-from dagster_v3.defs.estonia_ar.industries import build_estonia_ar_company_industries
+from dagster_v3.defs.estonia_ar.general_data import build_estonia_ar_general_data
 from dagster_v3.defs.estonia_ar.financials import (
     build_estonia_ar_financial_statements,
     load_estonia_ar_financial_csv,
@@ -355,27 +354,29 @@ def estonia_ar_clickhouse_financial_metrics(
     )
 
 
-# --- Company contacts (websites / email / phone — §8b mandatory) -------------
+# --- General data: contacts + industries from ONE yldandmed download ---------
+# The ~4.5 GB yldandmed JSON carries both `sidevahendid` (contacts) and
+# `teatatud_tegevusalad` (industries); this asset downloads it once and builds
+# both DuckDB tables, so the heavy fetch happens a single time per refresh.
 @dg.asset(
-    name="estonia_ar_company_contacts_duckdb",
+    name="estonia_ar_general_data_duckdb",
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     pool=ESTONIA_AR_DUCKDB_POOL,
     description=(
-        "Estonia AR company contacts (websites/email/phone) extracted from the "
-        "yldandmed general-data JSON `sidevahendid` array, normalized one row per contact."
+        "Estonia AR general data: company contacts (sidevahendid) + industries "
+        "(teatatud_tegevusalad) built from a single yldandmed JSON download."
     ),
 )
-def estonia_ar_company_contacts_duckdb(
+def estonia_ar_general_data_duckdb(
     context: AssetExecutionContext,
 ) -> dg.MaterializeResult:
     context.log.info(
-        "Building Estonia AR company contacts: duckdb_path=%s, table=%s.%s",
+        "Building Estonia AR general data (contacts + industries): duckdb_path=%s, dataset=%s",
         ESTONIA_AR_DUCKDB_PATH,
         DLT_DATASET_NAME,
-        tables.GENERAL_DATA_RAW_TABLE,
     )
-    counts = build_estonia_ar_company_contacts(
+    counts = build_estonia_ar_general_data(
         database_path=ESTONIA_AR_DUCKDB_PATH,
         source_run_id=context.run_id,
         log=context.log.info,
@@ -384,7 +385,7 @@ def estonia_ar_company_contacts_duckdb(
 
 
 @dg.asset(
-    deps=[dg.AssetKey("estonia_ar_company_contacts_duckdb")],
+    deps=[dg.AssetKey("estonia_ar_general_data_duckdb")],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     pool=ESTONIA_AR_DUCKDB_POOL,
@@ -415,7 +416,7 @@ def estonia_ar_clickhouse_company_contacts(
 
 @dg.asset(
     name="estonia_ar_company_domains_duckdb",
-    deps=[dg.AssetKey("estonia_ar_company_contacts_duckdb")],
+    deps=[dg.AssetKey("estonia_ar_general_data_duckdb")],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     pool=ESTONIA_AR_DUCKDB_POOL,
@@ -473,35 +474,10 @@ def estonia_ar_clickhouse_company_domains(
 
 
 # --- Industry / NACE (EMTAK → NACE, source-provided) -------------------------
+# The ee_industries DuckDB table is built by estonia_ar_general_data_duckdb (same
+# yldandmed download as contacts); this asset only exports it.
 @dg.asset(
-    name="estonia_ar_company_industries_duckdb",
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb"},
-    pool=ESTONIA_AR_DUCKDB_POOL,
-    description=(
-        "Estonia AR per-company industries from the yldandmed teatatud_tegevusalad "
-        "array (EMTAK + source-provided NACE code), normalized one row per activity."
-    ),
-)
-def estonia_ar_company_industries_duckdb(
-    context: AssetExecutionContext,
-) -> dg.MaterializeResult:
-    context.log.info(
-        "Building Estonia AR company industries: duckdb_path=%s, table=%s.%s",
-        ESTONIA_AR_DUCKDB_PATH,
-        DLT_DATASET_NAME,
-        tables.INDUSTRIES_RAW_TABLE,
-    )
-    counts = build_estonia_ar_company_industries(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        log=context.log.info,
-    )
-    return dg.MaterializeResult(metadata=counts)
-
-
-@dg.asset(
-    deps=[dg.AssetKey("estonia_ar_company_industries_duckdb")],
+    deps=[dg.AssetKey("estonia_ar_general_data_duckdb")],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     pool=ESTONIA_AR_DUCKDB_POOL,
@@ -570,40 +546,28 @@ estonia_ar_financials_schedule = dg.ScheduleDefinition(
     execution_timezone="Europe/Belgrade",
 )
 
-# Contacts come from the ~4.5 GB yldandmed general-data JSON — too heavy for daily.
-# Refresh monthly (8th, 06:00), staggered after the financials snapshot run. The
-# domain feeder (websites + unique email suffixes) rides the same chain.
-estonia_ar_contacts_job = dg.define_asset_job(
-    "estonia_ar_contacts_job",
+# General data (contacts + domains + industries) all derive from the ~4.5 GB
+# yldandmed JSON — too heavy for daily. ONE monthly job (8th, 06:00) so the
+# download happens a single time and feeds every yldandmed-derived export.
+estonia_ar_general_data_job = dg.define_asset_job(
+    "estonia_ar_general_data_job",
     selection=dg.AssetSelection.assets(
         "estonia_ar_clickhouse_company_contacts",
         "estonia_ar_clickhouse_company_domains",
+        "estonia_ar_clickhouse_industries",
     ).upstream(),
 )
-estonia_ar_contacts_schedule = dg.ScheduleDefinition(
-    name="estonia_ar_contacts_schedule",
-    job=estonia_ar_contacts_job,
+estonia_ar_general_data_schedule = dg.ScheduleDefinition(
+    name="estonia_ar_general_data_schedule",
+    job=estonia_ar_general_data_job,
     cron_schedule="0 6 8 * *",
     execution_timezone="Europe/Belgrade",
 )
 
-# Industries also come from the ~4.5 GB yldandmed JSON (the teatatud_tegevusalad
-# array) → monthly, staggered after contacts. NOTE: contacts and industries each
-# re-download yldandmed; a future optimization is one shared download for both.
-estonia_ar_industries_job = dg.define_asset_job(
-    "estonia_ar_industries_job",
-    selection=dg.AssetSelection.assets("estonia_ar_clickhouse_industries").upstream(),
-)
-estonia_ar_industries_schedule = dg.ScheduleDefinition(
-    name="estonia_ar_industries_schedule",
-    job=estonia_ar_industries_job,
-    cron_schedule="0 6 9 * *",
-    execution_timezone="Europe/Belgrade",
-)
-
-# Whole-source trigger: register + financials end-to-end in dependency order
-# (all estonia_ar assets, serialized on the pool). For a manual full run or the
-# first backfill. NOT scheduled — the two cadence-split jobs above own recurring runs.
+# Whole-source trigger: register + financials + general-data end-to-end in
+# dependency order (all estonia_ar assets, serialized on the pool). For a manual
+# full run or the first backfill. NOT scheduled — the cadence-split jobs above
+# own recurring runs.
 estonia_ar_full_refresh_job = dg.define_asset_job(
     "estonia_ar_full_refresh_job",
     selection=dg.AssetSelection.groups(GROUP_NAME),
