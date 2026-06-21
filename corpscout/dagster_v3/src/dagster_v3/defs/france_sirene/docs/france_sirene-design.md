@@ -76,14 +76,24 @@ principal activity — into DuckDB → ClickHouse, mirroring `estonia_ar`/`latvi
   ride one monthly snapshot → **monthly**, staggered cron; default STOPPED. (NAF + register
   refresh together from the same file → single download builds both, like EE general data.)
 
-## 9. Deferred (NOT in Phase 1)
-- **Phase 2 — siège address** from `stock-stocketablissement-csv.zip` (~40M établissements,
-  ~5 GB): join on `siren` + `nicSiegeUniteLegale`, `etablissementSiege=true`.
-- **Phase 3 — financials** from INPI (Registre National des Entreprises) / BODACC — a separate
-  source/module; then the currency + USD cross-cutting applies (EUR).
+## 9. Phase 2 — siège (HQ) address (DONE)
+- `france_sirene_etablissement_siege_raw_duckdb` downloads `stock-stocketablissement-csv.zip`
+  (~30M établissements, ~5 GB), `read_csv` filtered to `etablissementSiege='true'` → one siège
+  address per `siren` (`france_sirene.etablissement_siege`). Foreign-address fields fall back when
+  the French ones are empty.
+- The companies build LEFT JOINs it on `siren`, adding `address`, `address_supplement`,
+  `postal_code`, `city`, `city_code`, `country_label` to `fr_companies` (migration `000034` ALTER).
+- Both files ride the one monthly register job (legal units + establishments downloaded once each).
+
+## 10. Deferred
+- **Phase 3 — financials** from INPI (Registre National des Entreprises) — a separate source/module
+  needing a free INPI API token; then the currency + USD cross-cutting applies (EUR). (A free but
+  partial revenue/result summary is also available via the recherche-entreprises API.)
+- **Contacts** — not available in French open data (SIRENE + recherche-entreprises both lack
+  email/phone/website); would need a commercial source.
 - VAT id derivation (`FR` + key + siren) if needed.
 
-## 10. Verification
+## 11. Verification
 - `uv run pytest tests/test_france_sirene_*.py tests/test_clickhouse_migrations.py -q` +
   `uv run dg check defs`. Migrations apply (ledger advances). Materialize live; check
   `fr_companies` count + `legal_form_en`/`status_en` populated; `fr_industries` rows join

@@ -95,28 +95,52 @@ FR_LEGAL_FORM_EN_BY_CODE = {
 FR_STATUS_EN_BY_CODE = {"A": "Active", "C": "Ceased"}
 
 
-def resolve_unite_legale_url(
+def _resolve_resource_url(
+    suffix: str,
     *,
-    session: HttpSession | None = None,
-    api_url: str = tables.DATAGOUV_API,
-    timeout_seconds: int = 60,
+    session: HttpSession | None,
+    api_url: str,
+    timeout_seconds: int,
 ) -> str:
-    """Resolve the current (monthly, datestamped) StockUniteLegale zip URL.
-
-    The data.gouv.fr resource URL rotates each month; pick the live one whose URL
-    ends with the legal-units suffix (excluding the *Historique variant).
-    """
+    """Resolve the current (monthly, datestamped) stock zip URL ending with `suffix`."""
     http_session = session or dlt_requests.Session()
     response = http_session.get(api_url, timeout=timeout_seconds)
     response.raise_for_status()
     payload = response.json()
     for resource in payload.get("resources", []):
         url = (resource.get("url") or "").strip()
-        if url.endswith(tables.UNITE_LEGALE_URL_SUFFIX):
+        if url.endswith(suffix):
             return url
-    raise LookupError(
-        f"could not resolve StockUniteLegale URL (suffix {tables.UNITE_LEGALE_URL_SUFFIX}) "
-        f"from {api_url}"
+    raise LookupError(f"could not resolve resource URL (suffix {suffix}) from {api_url}")
+
+
+def resolve_unite_legale_url(
+    *,
+    session: HttpSession | None = None,
+    api_url: str = tables.DATAGOUV_API,
+    timeout_seconds: int = 60,
+) -> str:
+    """Resolve the current StockUniteLegale (legal units) zip URL."""
+    return _resolve_resource_url(
+        tables.UNITE_LEGALE_URL_SUFFIX,
+        session=session,
+        api_url=api_url,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def resolve_etablissement_url(
+    *,
+    session: HttpSession | None = None,
+    api_url: str = tables.DATAGOUV_API,
+    timeout_seconds: int = 60,
+) -> str:
+    """Resolve the current StockEtablissement (establishments) zip URL."""
+    return _resolve_resource_url(
+        tables.ETABLISSEMENT_URL_SUFFIX,
+        session=session,
+        api_url=api_url,
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -238,6 +262,78 @@ def load_france_sirene_unite_legale(
     return count
 
 
+def build_etablissement_siege_from_csv(
+    *, database_path: str | Path, csv_path: str | Path
+) -> int:
+    """Load one siège address per legal unit from a StockEtablissement CSV."""
+    qualified = f"{DLT_DATASET_NAME}.{tables.ETABLISSEMENT_SIEGE_TABLE}"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+        connection.execute(
+            f"""
+            create or replace table {qualified} as
+            select
+                siren,
+                coalesce(nullif(trim(concat_ws(' ',
+                    nullif(trim(numeroVoieEtablissement), ''),
+                    nullif(trim(typeVoieEtablissement), ''),
+                    nullif(trim(libelleVoieEtablissement), ''))), ''), '') as address,
+                coalesce(trim(complementAdresseEtablissement), '') as address_supplement,
+                coalesce(
+                    nullif(trim(codePostalEtablissement), ''),
+                    nullif(trim(codeCedexEtablissement), ''), '') as postal_code,
+                coalesce(
+                    nullif(trim(libelleCommuneEtablissement), ''),
+                    nullif(trim(libelleCommuneEtrangerEtablissement), ''), '') as city,
+                coalesce(trim(codeCommuneEtablissement), '') as city_code,
+                coalesce(trim(libellePaysEtrangerEtablissement), '') as country_label
+            from read_csv(?, header=true, all_varchar=true, quote='"', escape='"')
+            where etablissementSiege = 'true' and siren is not null and trim(siren) <> ''
+            """,
+            [str(csv_path)],
+        )
+        return int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
+
+
+def load_france_sirene_etablissement_siege(
+    *,
+    database_path: str | Path,
+    download_url: str,
+    session: HttpSession | None = None,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    log: Callable[..., object] | None = None,
+) -> int:
+    """Download StockEtablissement and keep one siège (HQ) address per legal unit.
+
+    The establishment file is large (~30M rows); read_csv filters to sièges
+    (`etablissementSiege='true'`) and projects only the address fields, so one row
+    per siren lands. Foreign-address fields fall back when the French ones are empty.
+    """
+    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
+    qualified = f"{DLT_DATASET_NAME}.{tables.ETABLISSEMENT_SIEGE_TABLE}"
+    with tempfile.TemporaryDirectory(prefix="france_sirene_etab_") as tmpdir:
+        tmp = Path(tmpdir)
+        zip_path = tmp / "stock_etablissement.zip"
+        _download_to_path(
+            url=download_url,
+            dest=zip_path,
+            timeout_seconds=timeout_seconds,
+            session=session,
+            log=log if callable(log) else None,
+        )
+        csv_path = _extract_single_csv(zip_path, tmp)
+        count = build_etablissement_siege_from_csv(
+            database_path=database_path, csv_path=csv_path
+        )
+    if count == 0:
+        raise ValueError(
+            "France SIRENE StockEtablissement produced no sièges; refusing to replace the table"
+        )
+    if log is not None:
+        log("Loaded France SIRENE siège addresses: rows=%s", count)
+    return count
+
+
 def _sql_literal(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
@@ -259,6 +355,7 @@ def build_france_sirene_companies(
 ) -> dict[str, int]:
     """Normalize the raw legal-units table into france_sirene.companies."""
     raw = f"{DLT_DATASET_NAME}.{UNITE_LEGALE_RAW_TABLE}"
+    siege = f"{DLT_DATASET_NAME}.{tables.ETABLISSEMENT_SIEGE_TABLE}"
     qualified = f"{DLT_DATASET_NAME}.{COMPANIES_TABLE}"
     legal_form_en = _case_map("categorieJuridiqueUniteLegale", FR_LEGAL_FORM_EN_BY_CODE)
     status_en = _case_map("etatAdministratifUniteLegale", FR_STATUS_EN_BY_CODE)
@@ -268,9 +365,9 @@ def build_france_sirene_companies(
             'FR' as country_iso2,
             '{REGISTER_SOURCE_SLUG}' as source_slug,
             {_sql_literal(source_run_id)} as source_run_id,
-            siren as source_record_id,
+            ul.siren as source_record_id,
             '' as source_payload_hash,
-            siren,
+            ul.siren as siren,
             coalesce(
                 nullif(trim(denominationUniteLegale), ''),
                 nullif(trim(concat_ws(' ', prenomUsuelUniteLegale, nomUniteLegale)), ''),
@@ -295,9 +392,16 @@ def build_france_sirene_companies(
                  then 'NAF2025'
                  else coalesce(nomenclatureActivitePrincipaleUniteLegale, '') end as naf_nomenclature,
             {_sql_literal(source_url)} as source_url,
+            coalesce(es.address, '') as address,
+            coalesce(es.address_supplement, '') as address_supplement,
+            coalesce(es.postal_code, '') as postal_code,
+            coalesce(es.city, '') as city,
+            coalesce(es.city_code, '') as city_code,
+            coalesce(es.country_label, '') as country_label,
             '' as raw_entity
-        from {raw}
-        where siren is not null and trim(siren) <> ''
+        from {raw} ul
+        left join {siege} es on es.siren = ul.siren
+        where ul.siren is not null and trim(ul.siren) <> ''
     """
     with duckdb.connect(str(database_path)) as connection:
         connection.execute(sql)

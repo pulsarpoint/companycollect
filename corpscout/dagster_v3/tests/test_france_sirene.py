@@ -7,6 +7,9 @@ from dagster_v3.defs.france_sirene import industries, resources, tables
 MIG_DIR = Path(__file__).resolve().parents[2] / "clickhouse" / "migrations"
 COMPANIES_MIGRATION = (MIG_DIR / "000032_corpscout_fr_companies.up.sql").read_text()
 INDUSTRIES_MIGRATION = (MIG_DIR / "000033_corpscout_fr_industries.up.sql").read_text()
+COMPANIES_ADDRESS_MIGRATION = (
+    MIG_DIR / "000034_corpscout_fr_companies_address.up.sql"
+).read_text()
 
 HEADER = (
     "siren,statutDiffusionUniteLegale,unitePurgeeUniteLegale,dateCreationUniteLegale,"
@@ -32,7 +35,23 @@ ROWS = [
 ]
 
 
-def _load_raw(tmp_path) -> Path:
+# Minimal StockEtablissement sample: a siège for L'OREAL, a siège for one sole
+# trader, and a NON-siège row that must be filtered out.
+ETAB_HEADER = (
+    "siren,nic,siret,etablissementSiege,complementAdresseEtablissement,numeroVoieEtablissement,"
+    "typeVoieEtablissement,libelleVoieEtablissement,codePostalEtablissement,libelleCommuneEtablissement,"
+    "libelleCommuneEtrangerEtablissement,codeCommuneEtablissement,codeCedexEtablissement,"
+    "libellePaysEtrangerEtablissement"
+)
+ETAB_ROWS = [
+    "552081317,01230,55208131701230,true,,41,RUE,MARTRE,92110,CLICHY,,92024,,",
+    "000325175,00065,00032517500065,true,BAT A,12,AV,DE LA GARE,75012,PARIS,,75112,,",
+    # non-siège establishment for the same company -> must be excluded
+    "552081317,00099,55208131700099,false,,9,RUE,AUTRE,69000,LYON,,69123,,",
+]
+
+
+def _load_raw(tmp_path, *, with_siege: bool = True) -> Path:
     csv = tmp_path / "ul.csv"
     csv.write_text("\n".join([HEADER, *ROWS]) + "\n")
     db = tmp_path / "fr.duckdb"
@@ -43,7 +62,24 @@ def _load_raw(tmp_path) -> Path:
         f"select * from read_csv('{csv}', header=true, all_varchar=true)"
     )
     con.close()
+    if with_siege:
+        etab = tmp_path / "etab.csv"
+        etab.write_text("\n".join([ETAB_HEADER, *ETAB_ROWS]) + "\n")
+        resources.build_etablissement_siege_from_csv(database_path=db, csv_path=etab)
     return db
+
+
+def test_siege_filter_and_address(tmp_path):
+    db = _load_raw(tmp_path)
+    with duckdb.connect(str(db), read_only=True) as con:
+        rows = {r[0]: r for r in con.execute(
+            f"select siren, address, address_supplement, postal_code, city, city_code "
+            f"from {tables.DLT_DATASET_NAME}.{tables.ETABLISSEMENT_SIEGE_TABLE}"
+        ).fetchall()}
+    # non-siège row dropped -> only 2 sièges, one per company.
+    assert set(rows) == {"552081317", "000325175"}
+    assert rows["552081317"][1:] == ("41 RUE MARTRE", "", "92110", "CLICHY", "92024")
+    assert rows["000325175"][1:] == ("12 AV DE LA GARE", "BAT A", "75012", "PARIS", "75112")
 
 
 def test_companies_build(tmp_path):
@@ -64,6 +100,17 @@ def test_companies_build(tmp_path):
     assert rows["000325175"][1:] == ("THIERRY JANOYER", "Sole trader", "Active", True, "32.12Y", "NAF2025", False)
     assert rows["001807254"][2:7] == ("Sole trader", "Ceased", False, "85.59A", "NAFRev2")
     assert rows["552081317"][1:] == ("L OREAL", "Public limited company (SA)", "Active", True, "20.42Z", "NAF2025", True)
+
+    # Phase 2: the siège address is joined onto the company; companies with no
+    # siège row keep empty address strings.
+    with duckdb.connect(str(db), read_only=True) as con:
+        addr = {r[0]: r for r in con.execute(
+            f"select siren, address, postal_code, city, city_code "
+            f"from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}"
+        ).fetchall()}
+    assert addr["552081317"][1:] == ("41 RUE MARTRE", "92110", "CLICHY", "92024")
+    assert addr["000325175"][1:] == ("12 AV DE LA GARE", "75012", "PARIS", "75112")
+    assert addr["001807254"][1:] == ("", "", "", "")
 
 
 def test_industries_build_naf_to_nace(tmp_path):
@@ -92,8 +139,12 @@ def test_companies_export_columns_match_migration():
     assert (
         f"CREATE TABLE IF NOT EXISTS {tables.QUALIFIED_COMPANIES_TABLE}" in COMPANIES_MIGRATION
     )
+    # base columns in 000032; the Phase-2 address columns in the 000034 ALTER.
+    combined = COMPANIES_MIGRATION + "\n" + COMPANIES_ADDRESS_MIGRATION
     for column in tables.FR_COMPANIES_EXPORT_COLUMNS:
-        assert f"    {column} " in COMPANIES_MIGRATION, f"missing {column} in 000032"
+        assert column in combined, f"missing {column} across migrations 000032/000034"
+    for column in tables.FR_COMPANIES_ADDRESS_COLUMNS:
+        assert column in COMPANIES_ADDRESS_MIGRATION
     assert "raw_entity" not in tables.FR_COMPANIES_EXPORT_COLUMNS
     assert "source_payload_hash" not in tables.FR_COMPANIES_EXPORT_COLUMNS
 
@@ -128,6 +179,7 @@ def test_register_job_and_schedule():
     }
     assert keys == {
         "france_sirene_unite_legale_raw_duckdb",
+        "france_sirene_etablissement_siege_raw_duckdb",
         "france_sirene_companies_duckdb",
         "france_sirene_clickhouse_companies",
         "france_sirene_industries_duckdb",

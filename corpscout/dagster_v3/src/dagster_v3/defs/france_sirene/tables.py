@@ -1,5 +1,6 @@
 DLT_DATASET_NAME = "france_sirene"
 UNITE_LEGALE_RAW_TABLE = "unite_legale_raw"  # DuckDB staging (all_varchar read_csv)
+ETABLISSEMENT_SIEGE_TABLE = "etablissement_siege"  # DuckDB: one siège address per siren
 COMPANIES_TABLE = "companies"  # DuckDB normalized
 INDUSTRIES_RAW_TABLE = "industries"  # DuckDB normalized
 
@@ -11,8 +12,19 @@ DATAGOUV_DATASET = "base-sirene-des-entreprises-et-de-leurs-etablissements-siren
 DATAGOUV_API = (
     f"https://www.data.gouv.fr/api/1/datasets/{DATAGOUV_DATASET}/"
 )
-# The legal-units resource URL ends with this; the *Historique variant is excluded.
+# Resource URLs end with these suffixes; the *Historique variants are excluded.
 UNITE_LEGALE_URL_SUFFIX = "stock-stockunitelegale-csv.zip"
+ETABLISSEMENT_URL_SUFFIX = "stock-stocketablissement-csv.zip"
+
+# Siège address columns added to fr_companies by migration 000034 (Phase 2).
+FR_COMPANIES_ADDRESS_COLUMNS = (
+    "address",
+    "address_supplement",
+    "postal_code",
+    "city",
+    "city_code",
+    "country_label",
+)
 
 # --- fr_companies (register) -------------------------------------------------
 EE_EXCLUDED = frozenset({"raw_entity", "source_payload_hash"})
@@ -45,6 +57,13 @@ FR_COMPANIES_COLUMNS = (
     "naf_code",
     "naf_nomenclature",
     "source_url",
+    # Phase 2 siège (registered/HQ) address (migration 000034).
+    "address",
+    "address_supplement",
+    "postal_code",
+    "city",
+    "city_code",
+    "country_label",
     "raw_entity",
 )
 FR_COMPANIES_EXPORT_COLUMNS = _export_columns(FR_COMPANIES_COLUMNS)

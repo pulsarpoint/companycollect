@@ -52,13 +52,45 @@ def france_sirene_unite_legale_raw_duckdb(
     )
 
 
+SIEGE_ASSET_KEY = "france_sirene_etablissement_siege_raw_duckdb"
+
+
 @dg.asset(
-    name="france_sirene_companies_duckdb",
-    deps=[dg.AssetKey(RAW_ASSET_KEY)],
+    name=SIEGE_ASSET_KEY,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     pool=FRANCE_SIRENE_DUCKDB_POOL,
-    description="France SIRENE normalized legal units (name/legal form/status/NAF).",
+    description=(
+        "France SIRENE siège (HQ) addresses — one row per legal unit from the "
+        "StockEtablissement file, filtered to etablissementSiege='true'."
+    ),
+)
+def france_sirene_etablissement_siege_raw_duckdb(
+    context: AssetExecutionContext,
+) -> dg.MaterializeResult:
+    download_url = resources.resolve_etablissement_url()
+    context.log.info(
+        "Loading France SIRENE siège addresses: url=%s, duckdb_path=%s, table=%s.%s",
+        download_url,
+        FRANCE_SIRENE_DUCKDB_PATH,
+        DLT_DATASET_NAME,
+        tables.ETABLISSEMENT_SIEGE_TABLE,
+    )
+    rows = resources.load_france_sirene_etablissement_siege(
+        database_path=FRANCE_SIRENE_DUCKDB_PATH,
+        download_url=download_url,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata={"rows": rows, "source_url": download_url})
+
+
+@dg.asset(
+    name="france_sirene_companies_duckdb",
+    deps=[dg.AssetKey(RAW_ASSET_KEY), dg.AssetKey(SIEGE_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=FRANCE_SIRENE_DUCKDB_POOL,
+    description="France SIRENE normalized legal units (name/legal form/status/NAF/siège address).",
 )
 def france_sirene_companies_duckdb(
     context: AssetExecutionContext,
