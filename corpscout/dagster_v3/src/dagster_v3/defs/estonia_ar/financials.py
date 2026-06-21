@@ -1,12 +1,68 @@
 from __future__ import annotations
 
+import logging
+import re
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
 import duckdb
+from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.estonia_ar import resources, tables
+
+LOGGER = logging.getLogger(__name__)
+
+# The financial snapshot filenames carry a monthly cumulative datestamp (and a
+# Drupal _N suffix) that rotates. Resolve the *current* filenames from the
+# server-rendered dataset index each run; fall back to the pinned constants if
+# the index can't be fetched/parsed.
+EE_FINANCIAL_INDEX_URL = (
+    "https://avaandmed.ariregister.rik.ee/en/downloading-open-data"
+)
+_FINANCIAL_FILE_PATTERNS: dict[str, str] = {
+    tables.REPORT_GENERAL_RAW_TABLE: r"1\.aruannete_yldandmed_kuni_\d+(?:_\d+)?\.zip",
+    **{
+        tables.key_indicators_raw_table(year): (
+            rf"4\.{year}_aruannete_elemendid_kuni_\d+(?:_\d+)?\.zip"
+        )
+        for year in tables.EE_FINANCIAL_YEARS
+    },
+}
+
+
+def resolve_financial_url(
+    raw_table: str,
+    *,
+    session: resources.HttpSession | None = None,
+    index_url: str = EE_FINANCIAL_INDEX_URL,
+    log: Callable[..., object] | None = None,
+) -> str:
+    """Resolve the current download URL for a financial raw table from the index.
+
+    Robust to the monthly datestamp / _N suffix rotation. Falls back to the
+    pinned `tables.EE_FINANCIAL_RAW_SOURCES` URL on any failure.
+    """
+    pinned = tables.EE_FINANCIAL_RAW_SOURCES[raw_table]
+    warn = log or LOGGER.warning
+    pattern = _FINANCIAL_FILE_PATTERNS.get(raw_table)
+    if pattern is None:
+        return pinned
+    try:
+        http = session or dlt_requests.Session()
+        response = http.get(index_url, timeout=DEFAULT_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        html = getattr(response, "text", None) or response.content.decode(
+            "utf-8", "replace"
+        )
+    except Exception as exc:  # noqa: BLE001 - degrade to pinned URL, never block
+        warn("Estonia AR index fetch failed (%s); using pinned URL for %s", exc, raw_table)
+        return pinned
+    match = re.search(pattern, html)
+    if match is None:
+        warn("Estonia AR index missing %s; using pinned URL", raw_table)
+        return pinned
+    return f"{tables.EE_FINANCIAL_BASE_URL}/{match.group(0)}"
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 WIDE_TABLE = tables.FINANCIAL_STATEMENTS_WIDE_TABLE

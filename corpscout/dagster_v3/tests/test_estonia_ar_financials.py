@@ -134,6 +134,62 @@ def test_wide_columns_match_schema(tmp_path: Path):
     assert set(cols) == set(tables.EE_FINANCIAL_STATEMENTS_COLUMNS)
 
 
+class _IndexSession:
+    def __init__(self, *, text: str | None = None, raise_exc: Exception | None = None):
+        self._text = text
+        self._raise = raise_exc
+
+    def get(self, url, *, timeout, stream=False):
+        if self._raise is not None:
+            raise self._raise
+        text = self._text
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+        resp = _Resp()
+        resp.text = text
+        return resp
+
+
+# a *different* datestamp + suffix than the pinned constant, to prove resolution.
+_INDEX_HTML = (
+    '<a href="/sites/default/files/1.aruannete_yldandmed_kuni_30062026_1.zip">x</a>'
+    '<a href="/sites/default/files/4.2024_aruannete_elemendid_kuni_30062026_1.zip">y</a>'
+)
+
+
+def test_resolve_financial_url_reads_current_datestamp_from_index():
+    url = financials.resolve_financial_url(
+        tables.REPORT_GENERAL_RAW_TABLE, session=_IndexSession(text=_INDEX_HTML)
+    )
+    assert url.endswith("/1.aruannete_yldandmed_kuni_30062026_1.zip")
+    ki = financials.resolve_financial_url(
+        tables.key_indicators_raw_table(2024), session=_IndexSession(text=_INDEX_HTML)
+    )
+    assert ki.endswith("/4.2024_aruannete_elemendid_kuni_30062026_1.zip")
+
+
+def test_resolve_financial_url_falls_back_to_pinned_on_failure():
+    pinned = tables.EE_FINANCIAL_RAW_SOURCES[tables.REPORT_GENERAL_RAW_TABLE]
+    # index fetch raises
+    assert (
+        financials.resolve_financial_url(
+            tables.REPORT_GENERAL_RAW_TABLE,
+            session=_IndexSession(raise_exc=RuntimeError("down")),
+        )
+        == pinned
+    )
+    # index reachable but missing the file -> pinned
+    assert (
+        financials.resolve_financial_url(
+            tables.REPORT_GENERAL_RAW_TABLE, session=_IndexSession(text="<html></html>")
+        )
+        == pinned
+    )
+
+
 def test_build_refuses_empty_report_general(tmp_path: Path):
     db_path = tmp_path / "estonia_ar_source.duckdb"
     _seed_raw(db_path, report_general=RG_HEADER)  # header only -> 0 spine rows

@@ -19,6 +19,7 @@ from dagster_v3.defs.estonia_ar.clickhouse import (
 from dagster_v3.defs.estonia_ar.financials import (
     build_estonia_ar_financial_statements,
     load_estonia_ar_financial_csv,
+    resolve_financial_url,
 )
 from dagster_v3.defs.estonia_ar.metrics import (
     apply_estonia_ar_usd_conversion,
@@ -145,8 +146,9 @@ def _load_financial_raw(
     context: AssetExecutionContext,
     *,
     raw_table: str,
-    download_url: str,
 ) -> dg.MaterializeResult:
+    # Resolve the current (datestamp-rotated) snapshot URL from the dataset index.
+    download_url = resolve_financial_url(raw_table, log=context.log.warning)
     context.log.info(
         "Loading Estonia AR financial CSV: url=%s, duckdb_path=%s, table=%s.%s",
         download_url,
@@ -170,9 +172,7 @@ def _load_financial_raw(
     )
 
 
-def _raw_financial_asset(
-    *, asset_key: str, raw_table: str, download_url: str, description: str
-):
+def _raw_financial_asset(*, asset_key: str, raw_table: str, description: str):
     @dg.asset(
         name=asset_key,
         group_name=GROUP_NAME,
@@ -181,9 +181,7 @@ def _raw_financial_asset(
         description=description,
     )
     def _asset(context: AssetExecutionContext) -> dg.MaterializeResult:
-        return _load_financial_raw(
-            context, raw_table=raw_table, download_url=download_url
-        )
+        return _load_financial_raw(context, raw_table=raw_table)
 
     return _asset
 
@@ -193,7 +191,6 @@ REPORT_GENERAL_ASSET_KEY = "estonia_ar_report_general_raw_duckdb"
 estonia_ar_report_general_raw_duckdb = _raw_financial_asset(
     asset_key=REPORT_GENERAL_ASSET_KEY,
     raw_table=tables.REPORT_GENERAL_RAW_TABLE,
-    download_url=tables.REPORT_GENERAL_URL,
     description="Estonia AR annual-report general data (statement spine) loaded raw into DuckDB.",
 )
 
@@ -205,7 +202,6 @@ for _year in tables.EE_FINANCIAL_YEARS:
     globals()[_key] = _raw_financial_asset(
         asset_key=_key,
         raw_table=tables.key_indicators_raw_table(_year),
-        download_url=tables.key_indicators_url(_year),
         description=f"Estonia AR {_year} annual-report key indicators (EAV) loaded raw into DuckDB.",
     )
 
