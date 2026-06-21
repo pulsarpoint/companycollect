@@ -52,7 +52,19 @@ When adding a source, mirror the nearest existing module: `finland_ytj` (registe
 - Split big multi-file downloads into **one raw-load asset per file** (checkpoints), so a failure in one file
   doesn't re-download the others. Pivot/join downstream.
 - Parse CSV with a real `csv` reader (handles quoted delimiters and doubled quotes) and `restkey`/`restval` so a
-  malformed row can't crash the load. Never `split(';')`.
+  malformed row can't crash the load. Never `split(';')`. (This applies to a **narrow** dlt row-resource that
+  builds Python dicts per row — fine for small registers like `latvia_ur/resources.py` `register.csv`.)
+- **For wide/large bulk CSVs, never load row-by-row in Python.** A Python-dict-per-row dlt resource (or pandas)
+  is the slow path that bottlenecks full-snapshot loads. Use DuckDB's multithreaded C++ CSV reader instead, in
+  one of two ways:
+  - **DuckDB-native** (simplest/fastest): `create or replace table <dataset>.<raw> as select * from
+    read_csv(<path>, header=true, all_varchar=true, quote='"', escape='"')`. Keep raw columns text and do the
+    relational casts in downstream SQL. See `latvia_ur/financials.py:load_latvia_ur_financial_csv`.
+  - **Behind a `@dlt_assets` boundary** (when you want dlt to own the load): use
+    `dlt.sources.filesystem.read_csv_duckdb(use_pyarrow=True, header=True, all_varchar=True)`, **not**
+    `read_csv` (the pandas reader). `read_csv_duckdb` yields Arrow tables that take dlt's Arrow fast-path
+    (Parquet + `COPY`), skipping JSON normalization; `pyarrow` is already installed, `pandas` is **not** — do
+    not add it. Then normalize the dlt-loaded raw tables with set-based DuckDB SQL.
 
 ## Partitions & backfills
 - **Don't partition at all if the whole dataset comes back in one request.** `exchange_rates_v2` pulls every
@@ -70,6 +82,20 @@ When adding a source, mirror the nearest existing module: `finland_ytj` (registe
 - **Launch backfills from the UI (or the running daemon)** — NOT `dagster job backfill -m dagster_v3.definitions`
   (it tags runs with code-location `dagster_v3.definitions`, which mismatches `dg dev`'s location name
   `dagster_v3` → orphaned runs the daemon can't launch). Don't mix `dg` and `dagster` CLIs for runs.
+
+## Scheduling (per-source, cadence-matched)
+- The country sources are **full-snapshot** (register refreshed daily at a stable URL, financials a monthly
+  cumulative snapshot) → **non-partitioned full-refresh**, *not* partitioned (see above). Per-module separation
+  already isolates each country (own DuckDB/tables/pool).
+- **Match the schedule to the source's refresh rate**, and split chains that refresh differently into separate
+  jobs. `estonia_ar` is the template: `estonia_ar_register_job` (entities+companies) on a **daily** schedule;
+  `estonia_ar_financials_job` (the full raw→pivot→metrics→usd→export chain) **monthly** (5th, after the new
+  snapshot datestamp publishes — resolved live, see `estonia_ar/financials.py:resolve_financial_url`).
+- **Select job assets with `AssetSelection.assets(...).upstream()`** (Python) — it pulls the *full* transitive
+  chain. The `dg launch --assets +leaf` CLI resolves only **one hop** (see Troubleshooting), so never wire a
+  schedule that way. Jobs + `ScheduleDefinition`s are module-level objects (auto-discovered; no `definitions.py`).
+- At 100+ sources: **stagger the cron minutes** per source, keep `concurrency.runs.max_concurrent_runs` capped,
+  rely on per-source pools to serialize a source's own steps, and PgBouncer for the shared-Postgres ceiling.
 
 ## ClickHouse migrations
 - Schema in `clickhouse/migrations/` (golang-migrate); add each migration name to `EXPECTED_MIGRATIONS` in
