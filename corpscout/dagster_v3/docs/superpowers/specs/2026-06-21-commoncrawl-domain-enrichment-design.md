@@ -125,13 +125,18 @@ and boosts recall where regex came up empty (obfuscated/prose contacts). Both ru
 
 ### LLM arm (Phase 0, measured)
 The LLM client is **OpenAI-compatible and provider-agnostic** (base-URL + model from config).
-Default = the **local** qwen endpoint already wired in the monorepo
-(`uk_companies_house/pdf_extract` — `enable_thinking:False`/`/no_think`), so there's **no API
-cost**, only local GPU time. **If the 10k run shows local throughput is too slow, point the
-same client at a hosted OpenAI-compatible server — a config change, no code change.** Per page,
-on the already-fetched text (no extra fetch):
+Default = the **local** qwen endpoint already wired in the monorepo (the `openai.OpenAI` client
+from `uk_companies_house/pdf_extract`), so there's **no API cost**, only local GPU time. We run
+the model in **thinking mode** — industry classification is a judgment task where reasoning
+improves quality, so we *drop* the `enable_thinking:False` flag the PDF path uses; the existing
+`_parse_json_object` helper already strips the `<think>…</think>` trace before JSON parsing.
+(Thinking mode generates more tokens → higher per-page latency, which the §7 speed metric
+captures and feeds the local-vs-hosted decision.) **If the 10k run shows local throughput is too
+slow, point the same client at a hosted OpenAI-compatible server — a config change, no code
+change.** Per page, on the already-fetched text (no extra fetch):
 - **Industry (primary use)** — classify into a short industry label + a **coarse NACE hint**
-  (e.g. section/division) + confidence. Regex cannot do this; full NACE mapping is Phase 1.
+  (e.g. section/division) + confidence; **thinking mode** helps this judgment. Regex cannot do
+  this; full NACE mapping is Phase 1.
 - **Contact recall (secondary use)** — run only on the **deterministic-miss residual** (pages
   where regex found no email/phone) to catch obfuscated (`info [at] x [dot] sk`) / prose contacts.
 - **IČO is NOT delegated to the LLM** — it stays deterministic (checksum-exact = the join key).
@@ -284,8 +289,9 @@ GPU cost at scale.
   shared-Postgres history; this 10M fan-out is a load test for the planned PgBouncer ceiling.
 - **LLM throughput → local vs hosted** — the 10k run measures local-model speed; if it
   dominates wall-clock, switch the provider-agnostic client to a hosted OpenAI-compatible
-  endpoint (config-only). Bound input with truncation + structured-output prompting; confirm
-  the model returns valid JSON reliably.
+  endpoint (config-only). **Thinking mode** (enabled for industry quality) generates more tokens
+  and raises per-page latency — a deliberate quality/speed trade the 10k timing quantifies. Bound
+  input with truncation + structured-output prompting; confirm the model returns valid JSON.
 - **Industry→NACE mapping** — deferred to Phase 1; the spike keeps the LLM's free-text label +
   coarse NACE hint (full mapping likely via embeddings against `nace_categories`).
 
