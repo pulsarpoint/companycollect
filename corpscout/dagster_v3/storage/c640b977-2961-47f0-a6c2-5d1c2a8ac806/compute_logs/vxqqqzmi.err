@@ -1,0 +1,45 @@
+2026-06-21 08:12:51 +0200 - dagster - DEBUG - __ASSET_JOB - c640b977-2961-47f0-a6c2-5d1c2a8ac806 - 69810 - LOGS_CAPTURED - Capturing logs for process (pid: 69810).
+2026-06-21 08:12:51 +0200 - dagster - DEBUG - __ASSET_JOB - c640b977-2961-47f0-a6c2-5d1c2a8ac806 - 69810 - estonia_ar_financial_metrics_usd_duckdb - STEP_START - Started execution of step "estonia_ar_financial_metrics_usd_duckdb".
+2026-06-21 08:12:51 +0200 - dagster - INFO - __ASSET_JOB - c640b977-2961-47f0-a6c2-5d1c2a8ac806 - estonia_ar_financial_metrics_usd_duckdb - Applying Estonia AR USD conversion: duckdb_path=data/estonia_ar_source.duckdb, table=estonia_ar.financial_metrics
+2026-06-21 08:12:51 +0200 - dagster - ERROR - __ASSET_JOB - c640b977-2961-47f0-a6c2-5d1c2a8ac806 - 69810 - estonia_ar_financial_metrics_usd_duckdb - STEP_FAILURE - Execution of step "estonia_ar_financial_metrics_usd_duckdb" failed.
+
+dagster._core.errors.DagsterExecutionStepExecutionError: Error occurred while executing op "estonia_ar_financial_metrics_usd_duckdb"::
+
+_duckdb.CatalogException: Catalog Error: Table with name financial_metrics does not exist!
+Did you mean "_dlt_pipeline_state"?
+
+LINE 4:             from estonia_ar.financial_metrics
+                         ^
+
+Stack Trace:
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/dagster/_core/execution/plan/utils.py", line 57, in op_execution_error_boundary
+    yield
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/dagster/_utils/__init__.py", line 394, in iterate_with_context
+    next_output = next(iterator)
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/dagster/_core/execution/plan/compute_generator.py", line 136, in _coerce_op_compute_fn_to_iterator
+    result = invoke_compute_fn(
+        fn, context, kwargs, context_arg_provided, config_arg_class, resource_arg_mapping
+    )
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/.venv/lib/python3.14/site-packages/dagster/_core/execution/plan/compute_generator.py", line 116, in invoke_compute_fn
+    return fn(context, **args_to_pass) if context_arg_provided else fn(**args_to_pass)
+           ~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/src/dagster_v3/defs/estonia_ar/assets.py", line 318, in estonia_ar_financial_metrics_usd_duckdb
+    counts = apply_estonia_ar_usd_conversion(
+        database_path=ESTONIA_AR_DUCKDB_PATH,
+        exchange_rates=ExchangeRateClient.from_env(),
+        log=context.log.info,
+    )
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/src/dagster_v3/defs/estonia_ar/metrics.py", line 113, in apply_estonia_ar_usd_conversion
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3/src/dagster_v3/defs/estonia_ar/metrics.py", line 114, in apply_estonia_ar_usd_conversion
+    pairs = connection.execute(
+            ~~~~~~~~~~~~~~~~~~^
+        f"""
+        ^^^^
+    ...<4 lines>...
+        """
+        ^^^
+    ).fetchall()
+    ^
+

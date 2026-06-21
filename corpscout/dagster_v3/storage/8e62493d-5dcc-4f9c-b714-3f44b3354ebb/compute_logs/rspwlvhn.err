@@ -1,0 +1,5 @@
+[32m2026-06-21 02:58:02 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 8e62493d-5dcc-4f9c-b714-3f44b3354ebb - 90562 - LOGS_CAPTURED - Capturing logs for process (pid: 90562).
+[32m2026-06-21 02:58:02 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 8e62493d-5dcc-4f9c-b714-3f44b3354ebb - 90562 - wikidata_company_seed_clickhouse - STEP_START - Started execution of step "wikidata_company_seed_clickhouse".
+[32m2026-06-21 02:58:05 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 8e62493d-5dcc-4f9c-b714-3f44b3354ebb - 90562 - wikidata_company_seed_clickhouse - STEP_OUTPUT - Yielded output "result" of type "Any". (Type check passed).
+[32m2026-06-21 02:58:06 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 8e62493d-5dcc-4f9c-b714-3f44b3354ebb - 90562 - wikidata_company_seed_clickhouse - ASSET_MATERIALIZATION - Materialized value wikidata_company_seed_clickhouse.
+[32m2026-06-21 02:58:06 +0200[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 8e62493d-5dcc-4f9c-b714-3f44b3354ebb - 90562 - wikidata_company_seed_clickhouse - STEP_SUCCESS - Finished execution of step "wikidata_company_seed_clickhouse" in 3.69s.

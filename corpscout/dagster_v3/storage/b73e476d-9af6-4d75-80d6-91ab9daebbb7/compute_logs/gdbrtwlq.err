@@ -1,0 +1,9 @@
+2026-06-21 08:11:23 +0200 - dagster - DEBUG - __ASSET_JOB - b73e476d-9af6-4d75-80d6-91ab9daebbb7 - 68612 - LOGS_CAPTURED - Capturing logs for process (pid: 68612).
+2026-06-21 08:11:23 +0200 - dagster - DEBUG - __ASSET_JOB - b73e476d-9af6-4d75-80d6-91ab9daebbb7 - 68612 - estonia_ar_clickhouse_companies - STEP_START - Started execution of step "estonia_ar_clickhouse_companies".
+2026-06-21 08:11:24 +0200 - dagster - INFO - __ASSET_JOB - b73e476d-9af6-4d75-80d6-91ab9daebbb7 - estonia_ar_clickhouse_companies - Starting Estonia AR companies ClickHouse export: duckdb_path=data/estonia_ar_source.duckdb, table=corpscout.ee_companies
+2026-06-21 08:11:24 +0200 - dagster - INFO - __ASSET_JOB - b73e476d-9af6-4d75-80d6-91ab9daebbb7 - estonia_ar_clickhouse_companies - Exporting Estonia AR companies to ClickHouse: duckdb_path=data/estonia_ar_source.duckdb, table=corpscout.ee_companies
+2026-06-21 08:11:44 +0200 - dagster - INFO - __ASSET_JOB - b73e476d-9af6-4d75-80d6-91ab9daebbb7 - estonia_ar_clickhouse_companies - Finished Estonia AR companies ClickHouse export: rows=373313
+2026-06-21 08:11:44 +0200 - dagster - INFO - __ASSET_JOB - b73e476d-9af6-4d75-80d6-91ab9daebbb7 - estonia_ar_clickhouse_companies - Completed Estonia AR companies ClickHouse export: rows=373313
+2026-06-21 08:11:44 +0200 - dagster - DEBUG - __ASSET_JOB - b73e476d-9af6-4d75-80d6-91ab9daebbb7 - 68612 - estonia_ar_clickhouse_companies - STEP_OUTPUT - Yielded output "result" of type "Any". (Type check passed).
+2026-06-21 08:11:44 +0200 - dagster - DEBUG - __ASSET_JOB - b73e476d-9af6-4d75-80d6-91ab9daebbb7 - 68612 - estonia_ar_clickhouse_companies - ASSET_MATERIALIZATION - Materialized value estonia_ar_clickhouse_companies.
+2026-06-21 08:11:44 +0200 - dagster - DEBUG - __ASSET_JOB - b73e476d-9af6-4d75-80d6-91ab9daebbb7 - 68612 - estonia_ar_clickhouse_companies - STEP_SUCCESS - Finished execution of step "estonia_ar_clickhouse_companies" in 20.7s.

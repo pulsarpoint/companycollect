@@ -1,0 +1,21 @@
+Running with dbt=1.8.9
+Registered adapter: duckdb=1.8.4
+Unable to do partial parsing because config vars, config profile, or config target have changed
+Found 2 models, 5 data tests, 1 source, 421 macros
+
+Concurrency: 1 threads (target='dev')
+
+1 of 4 START sql incremental model exchange_rates_v2_stage.ecb_rates ........... [RUN]
+1 of 4 OK created sql incremental model exchange_rates_v2_stage.ecb_rates ...... [[32mOK[0m in 58.05s]
+2 of 4 START test not_null_ecb_rates_quote_currency ............................ [RUN]
+2 of 4 PASS not_null_ecb_rates_quote_currency .................................. [[32mPASS[0m in 0.03s]
+3 of 4 START test not_null_ecb_rates_rate ...................................... [RUN]
+3 of 4 PASS not_null_ecb_rates_rate ............................................ [[32mPASS[0m in 0.01s]
+4 of 4 START test not_null_ecb_rates_rate_date ................................. [RUN]
+4 of 4 PASS not_null_ecb_rates_rate_date ....................................... [[32mPASS[0m in 0.01s]
+
+Finished running 1 incremental model, 3 data tests in 0 hours 0 minutes and 58.18 seconds (58.18s).
+
+[32mCompleted successfully[0m
+
+Done. PASS=4 WARN=0 ERROR=0 SKIP=0 TOTAL=4

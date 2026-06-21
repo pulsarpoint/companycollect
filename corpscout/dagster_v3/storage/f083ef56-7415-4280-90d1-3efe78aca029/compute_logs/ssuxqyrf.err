@@ -1,0 +1,7 @@
+2026-06-21 08:22:10 +0200 - dagster - DEBUG - __ASSET_JOB - f083ef56-7415-4280-90d1-3efe78aca029 - 76728 - LOGS_CAPTURED - Capturing logs for process (pid: 76728).
+2026-06-21 08:22:10 +0200 - dagster - DEBUG - __ASSET_JOB - f083ef56-7415-4280-90d1-3efe78aca029 - 76728 - estonia_ar_financial_metrics_duckdb - STEP_START - Started execution of step "estonia_ar_financial_metrics_duckdb".
+2026-06-21 08:22:11 +0200 - dagster - INFO - __ASSET_JOB - f083ef56-7415-4280-90d1-3efe78aca029 - estonia_ar_financial_metrics_duckdb - Building Estonia AR native financial metrics: duckdb_path=data/estonia_ar_source.duckdb, table=estonia_ar.financial_metrics
+2026-06-21 08:22:11 +0200 - dagster - INFO - __ASSET_JOB - f083ef56-7415-4280-90d1-3efe78aca029 - estonia_ar_financial_metrics_duckdb - Built Estonia AR financial metrics (native EUR): metrics=1505583
+2026-06-21 08:22:11 +0200 - dagster - DEBUG - __ASSET_JOB - f083ef56-7415-4280-90d1-3efe78aca029 - 76728 - estonia_ar_financial_metrics_duckdb - STEP_OUTPUT - Yielded output "result" of type "Any". (Type check passed).
+2026-06-21 08:22:12 +0200 - dagster - DEBUG - __ASSET_JOB - f083ef56-7415-4280-90d1-3efe78aca029 - 76728 - estonia_ar_financial_metrics_duckdb - ASSET_MATERIALIZATION - Materialized value estonia_ar_financial_metrics_duckdb.
+2026-06-21 08:22:12 +0200 - dagster - DEBUG - __ASSET_JOB - f083ef56-7415-4280-90d1-3efe78aca029 - 76728 - estonia_ar_financial_metrics_duckdb - STEP_SUCCESS - Finished execution of step "estonia_ar_financial_metrics_duckdb" in 1.31s.

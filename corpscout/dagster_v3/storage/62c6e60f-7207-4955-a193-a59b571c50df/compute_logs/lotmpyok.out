@@ -1,0 +1,16 @@
+Running with dbt=1.8.9
+Registered adapter: duckdb=1.8.4
+Found 2 models, 2 data tests, 1 seed, 4 sources, 421 macros
+
+Concurrency: 1 threads (target='dev')
+
+1 of 2 START sql table model finland_prh_xbrl.fi_prh_xbrl_financial_metrics .... [RUN]
+1 of 2 OK created sql table model finland_prh_xbrl.fi_prh_xbrl_financial_metrics  [[32mOK[0m in 0.08s]
+2 of 2 START test not_null_fi_prh_xbrl_financial_metrics_statement_key ......... [RUN]
+2 of 2 PASS not_null_fi_prh_xbrl_financial_metrics_statement_key ............... [[32mPASS[0m in 0.02s]
+
+Finished running 1 table model, 1 test in 0 hours 0 minutes and 0.25 seconds (0.25s).
+
+[32mCompleted successfully[0m
+
+Done. PASS=2 WARN=0 ERROR=0 SKIP=0 TOTAL=2
