@@ -73,6 +73,13 @@ mirroring `france_sirene`.
   3. **On-demand API** (`uk_companies_house_api_financial_metrics`, config `company_numbers`) — fetch a
      specific company's latest accounts via the CH Filing History + Document API (needs the free
      `COMPANY_HOUSE` key; reads document metadata and skips PDF-only filings).
+  4. **PDF-only PoC** (`uk_companies_house_pdf_financial_metrics`, config `company_numbers`) — for
+     companies whose latest accounts are **PDF-only** (often scanned images), OCR the PDF
+     (`pdftoppm` + `tesseract`) and extract metrics with the platform LLM (`pdf_extract.py`, the
+     `TRANSLATION_PROVIDER_LOCAL_*` OpenAI-compatible endpoint; captures currency + unit scale +
+     confidence). Tagged `source_slug='uk_companies_house_accounts_pdf'` — **lower trust than XBRL**
+     (OCR noise, layout variety, model judgement). On-demand only; not bulk. Validated on
+     AstraZeneca's scanned 20-F: revenue $58,739M, operating profit $13,743M (USD, millions, conf 0.95).
 
 ## 10. Deferred
 - **12-month backfill** to seed prior filings immediately (the incremental otherwise accrues forward).

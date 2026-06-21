@@ -287,6 +287,59 @@ def test_incremental_schedule_registered():
     assert sch.job.name == "uk_companies_house_accounts_incremental_job"
 
 
+def test_pdf_extract_parsing_and_scale():
+    from decimal import Decimal
+
+    from dagster_v3.defs.uk_companies_house import pdf_extract
+
+    # reasoning-model output: thinking + fence around the JSON.
+    raw = (
+        "<think>let me find the figures</think>\n```json\n"
+        '{"period_end_date":"2025-12-31","currency":"usd","unit_scale":"millions",'
+        '"confidence":0.9,"revenue":58739,"operating_profit":13743,"net_result":null}\n```'
+    )
+    obj = pdf_extract._parse_json_object(raw)
+    assert obj["revenue"] == 58739 and obj["currency"] == "usd"
+    # scale normalization: millions -> ×1e6.
+    assert pdf_extract._to_decimal(58739, 1_000_000) == Decimal("58739000000")
+    assert pdf_extract._to_decimal(None, 1_000_000) is None
+
+
+def test_pdf_extract_financials_with_fake_llm(monkeypatch):
+    from decimal import Decimal
+
+    from dagster_v3.defs.uk_companies_house import pdf_extract
+
+    # avoid real OCR: feed canned text.
+    monkeypatch.setattr(pdf_extract, "ocr_pdf_bytes", lambda *a, **k: "Revenue 58,739 ...")
+
+    class _Msg:
+        content = (
+            '{"period_end_date":"2025-12-31","currency":"USD","unit_scale":"millions",'
+            '"confidence":0.95,"revenue":58739,"operating_profit":13743}'
+        )
+
+    class _Choice:
+        message = _Msg()
+
+    class _Completions:
+        def create(self, **kwargs):
+            return type("R", (), {"choices": [_Choice()]})()
+
+    class _Chat:
+        completions = _Completions()
+
+    class _FakeLLM:
+        chat = _Chat()
+
+    result = pdf_extract.extract_pdf_financials(
+        b"%PDF", base_url="x", model="m", api_key="k",
+    ) if False else pdf_extract.extract_financials_from_text(
+        "Revenue 58,739", base_url="x", model="m", api_key="k", client=_FakeLLM()
+    )
+    assert result["revenue"] == 58739 and result["currency"] == "USD"
+
+
 def test_register_job_and_schedule():
     from dagster_v3.definitions import defs as load_defs
 

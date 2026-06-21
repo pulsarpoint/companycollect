@@ -98,6 +98,33 @@ class CompaniesHouseClient:
                 continue
         return None
 
+    def latest_accounts_pdf(self, company_number: str) -> bytes | None:
+        """Return the PDF bytes of the company's most recent PDF accounts filing."""
+        cn = company_number.strip()
+        history = self._get_json(
+            f"{API_BASE}/company/{cn}/filing-history?category=accounts&items_per_page=100"
+        )
+        items = history.get("items") or []
+        items.sort(key=lambda it: it.get("date", ""), reverse=True)
+        for item in items:
+            meta_url = (item.get("links") or {}).get("document_metadata")
+            if not meta_url:
+                continue
+            try:
+                meta = self._get_json(meta_url)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("CH document metadata failed for %s: %s", cn, exc)
+                continue
+            if "application/pdf" not in (meta.get("resources") or {}):
+                continue
+            document_url = (meta.get("links") or {}).get("document") or f"{meta_url}/content"
+            try:
+                return self._get_content(document_url, accept="application/pdf")
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("CH PDF fetch failed for %s: %s", cn, exc)
+                continue
+        return None
+
 
 def build_financials_for_company_numbers(
     *,

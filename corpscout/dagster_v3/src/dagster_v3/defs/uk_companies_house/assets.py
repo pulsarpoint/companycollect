@@ -17,7 +17,9 @@ from dagster_v3.defs.uk_companies_house.documents_api import (
 from dagster_v3.defs.uk_companies_house.financials import (
     apply_uk_usd_conversion,
     build_uk_companies_house_financials,
+    write_metrics_table,
 )
+from dagster_v3.defs.uk_companies_house.pdf_extract import extract_pdf_financials
 from dagster_v3.defs.uk_companies_house.incremental import (
     build_incremental_metrics,
     write_cursor,
@@ -224,6 +226,84 @@ def uk_companies_house_clickhouse_financial_metrics(
     )
 
 
+# --- PoC: PDF-only accounts via OCR + LLM ------------------------------------
+class CompaniesHousePdfConfig(dg.Config):
+    company_numbers: list[str] = []
+    max_pages: int = 12
+
+
+@dg.asset(
+    name="uk_companies_house_pdf_financial_metrics",
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=UK_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_FINANCIAL_METRICS_TABLE},
+    description=(
+        "PoC: for companies whose latest accounts are PDF-only (no XBRL), OCR the "
+        "PDF and extract metrics with an LLM. APPENDs to gb_financial_metrics with "
+        "source_slug='uk_companies_house_accounts_pdf' (lower trust than XBRL)."
+    ),
+)
+def uk_companies_house_pdf_financial_metrics(
+    context: AssetExecutionContext,
+    config: CompaniesHousePdfConfig,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    import datetime as dt
+    import os
+
+    from exchange_rates import ExchangeRateClient
+
+    base_url = os.environ["TRANSLATION_PROVIDER_LOCAL_BASE_URL"]
+    model = os.environ["TRANSLATION_PROVIDER_LOCAL_MODEL"]
+    api_key = os.environ["TRANSLATION_PROVIDER_LOCAL_API_KEY"]
+    client = CompaniesHouseClient.from_env()
+
+    rows: list[tuple] = []
+    fetched = 0
+    missing = 0
+    for company_number in config.company_numbers:
+        cn = str(company_number).strip()
+        pdf = client.latest_accounts_pdf(cn)
+        if not pdf:
+            missing += 1
+            continue
+        result = extract_pdf_financials(
+            pdf, base_url=base_url, model=model, api_key=api_key,
+            max_pages=config.max_pages, log=context.log.info,
+        )
+        period = (result or {}).get("period_end_date")
+        try:
+            period_end = dt.date.fromisoformat(period) if period else None
+        except ValueError:
+            period_end = None
+        if not result or period_end is None:
+            missing += 1
+            continue
+        rows.append((
+            cn, period_end, period_end.year, result["currency"],
+            *(result["metrics"].get(m) for m in tables.UK_FINANCIAL_METRIC_NAMES),
+        ))
+        fetched += 1
+        context.log.info("PDF financials for %s: confidence=%s", cn, result.get("confidence"))
+
+    counts = write_metrics_table(
+        database_path=UK_DUCKDB_PATH, rows=rows, source_run_id=context.run_id,
+        source_slug="uk_companies_house_accounts_pdf", allow_empty=True,
+    )
+    if rows:
+        apply_uk_usd_conversion(
+            database_path=UK_DUCKDB_PATH,
+            exchange_rates=ExchangeRateClient.from_env(),
+            log=context.log.info,
+        )
+        export_uk_companies_house_clickhouse_financial_metrics(
+            database_path=UK_DUCKDB_PATH, clickhouse=clickhouse, truncate=False,
+            log=context.log.info,
+        )
+    return dg.MaterializeResult(metadata={**counts, "fetched": fetched, "missing": missing})
+
+
 # --- Forward-only incremental: latest annual report for all filers -----------
 class CompaniesHouseIncrementalConfig(dg.Config):
     # Max archives to process per run (bounds runtime; catch-up over many runs).
@@ -360,6 +440,12 @@ uk_companies_house_financials_schedule = dg.ScheduleDefinition(
 uk_companies_house_api_financials_job = dg.define_asset_job(
     "uk_companies_house_api_financials_job",
     selection=dg.AssetSelection.assets("uk_companies_house_api_financial_metrics"),
+)
+
+# On-demand PDF-only (OCR+LLM) job; launch with config {company_numbers: [...]}.
+uk_companies_house_pdf_financials_job = dg.define_asset_job(
+    "uk_companies_house_pdf_financials_job",
+    selection=dg.AssetSelection.assets("uk_companies_house_pdf_financial_metrics"),
 )
 
 # Forward-only incremental: the daily archives publish daily → daily schedule.
