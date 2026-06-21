@@ -2,8 +2,9 @@
 
 **Status:** design (execution gated on the `open_page_rank` dataset being loaded).
 **Author:** brainstormed 2026-06-21.
-**Scope of this doc:** Phase 0 — a **100k-domain spike** that validates feasibility,
-architected as the seed of a reusable enrichment layer over the top-10M domains.
+**Scope of this doc:** Phase 0 — a domain-enrichment spike that validates feasibility
+(first run **~10k** for numbers **and speed**, then optionally ~100k), architected as the
+seed of a reusable enrichment layer over the top-10M domains.
 
 ---
 
@@ -35,7 +36,9 @@ full top-10M pipeline.
 ## 2. Scope
 
 **In (Phase 0 spike) — standalone package only, single process, no Dagster/Temporal/ClickHouse:**
-- Target: top **100,000** domains by Open PageRank (from `open_page_rank_domains`), all TLDs.
+- Target: **~10,000** domains by Open PageRank (from `open_page_rank_domains`), all TLDs, for
+  the first run — to read **both the hit-rate numbers and the end-to-end speed** (especially
+  local-LLM throughput). Extend to ~100k once speed is acceptable.
 - Resolve each domain's homepage record in the CommonCrawl index; range-fetch the **WARC**
   record (full HTTP response + HTML).
 - **Two extraction arms** (§4), both run on the 100k: a **deterministic arm** (IČO+checksum,
@@ -121,9 +124,12 @@ and boosts recall where regex came up empty (obfuscated/prose contacts). Both ru
   HTTP status, TLD, country guess (TLD → else language/signals).
 
 ### LLM arm (Phase 0, measured)
-Reuse the **local LLM** already wired in the monorepo (the OpenAI-compatible qwen endpoint in
-`uk_companies_house/pdf_extract` — `enable_thinking:False`/`/no_think`), so there's **no API
-cost**, only local GPU time. Per page, on the already-fetched text (no extra fetch):
+The LLM client is **OpenAI-compatible and provider-agnostic** (base-URL + model from config).
+Default = the **local** qwen endpoint already wired in the monorepo
+(`uk_companies_house/pdf_extract` — `enable_thinking:False`/`/no_think`), so there's **no API
+cost**, only local GPU time. **If the 10k run shows local throughput is too slow, point the
+same client at a hosted OpenAI-compatible server — a config change, no code change.** Per page,
+on the already-fetched text (no extra fetch):
 - **Industry (primary use)** — classify into a short industry label + a **coarse NACE hint**
   (e.g. section/division) + confidence. Regex cannot do this; full NACE mapping is Phase 1.
 - **Contact recall (secondary use)** — run only on the **deterministic-miss residual** (pages
@@ -131,7 +137,8 @@ cost**, only local GPU time. Per page, on the already-fetched text (no extra fet
 - **IČO is NOT delegated to the LLM** — it stays deterministic (checksum-exact = the join key).
 - **Structured JSON output**, **truncated** input (~first 2–4k tokens, contact/footer-biased).
 - Every contact row is tagged `source_method` (`regex` | `llm`) so the uplift is directly
-  queryable. Default: run on the full 100k (HTML already fetched; ~1–6h local).
+  queryable. Run on the full ~10k first (HTML already fetched) and **time it** to project the
+  100k / 10M cost and decide local-vs-hosted.
 
 ---
 
@@ -237,7 +244,12 @@ durability and scale actually matter.
 
 ## 7. Success metrics (the spike's deliverable)
 
-Over the 100k sample, report and break down by TLD/country:
+**Speed (first-class, decides local-vs-hosted LLM):** end-to-end domains/sec, median fetch ms,
+median LLM inference ms/page, total wall-clock for the ~10k run, and the **projected wall-clock
+for 100k and 10M**. If the local LLM dominates wall-clock, switch the (provider-agnostic) client
+to a hosted endpoint and re-time.
+
+Over the sample, report and break down by TLD/country:
 - % **found in the CC index**; % **fetched OK** (200 + HTML).
 - % with a **checksum-valid IČO**; % whose IČO **joins a registry**.
 - % with **≥1 email**; % with **≥1 phone**; % with **≥1 social** (deterministic arm).
@@ -270,8 +282,10 @@ GPU cost at scale.
   primary, keep the rest.
 - **Temporal chunk granularity (Phase 1)** — ~1k domains/activity to bound Temporal's
   shared-Postgres history; this 10M fan-out is a load test for the planned PgBouncer ceiling.
-- **LLM throughput/cost** — local GPU time over the page text; bound with truncation +
-  structured-output prompting; confirm the local model returns valid JSON reliably.
+- **LLM throughput → local vs hosted** — the 10k run measures local-model speed; if it
+  dominates wall-clock, switch the provider-agnostic client to a hosted OpenAI-compatible
+  endpoint (config-only). Bound input with truncation + structured-output prompting; confirm
+  the model returns valid JSON reliably.
 - **Industry→NACE mapping** — deferred to Phase 1; the spike keeps the LLM's free-text label +
   coarse NACE hint (full mapping likely via embeddings against `nace_categories`).
 
@@ -280,10 +294,11 @@ GPU cost at scale.
 ## 9. Execution plan (phases)
 - **Phase 0a — mechanics (≈1k domains), package only:** index lookup + range-fetch + WARC parse
   in the standalone package; confirm CC coverage and fetch reliability.
-- **Phase 0b — extraction + report (100k), package only, single process:** deterministic arm
-  (IČO/contacts/socials/tech + Wappalyzer) **and** the LLM arm (industry + contact recall on the
-  residual); emit the 5 Parquet tables + metrics JSON; produce the hit-rate **+ regex-vs-LLM
-  uplift** report. **Decision gate.** (No Temporal/Dagster/ClickHouse — inspect the Parquet directly.)
+- **Phase 0b — extraction + report (~10k first), package only, single process:** deterministic
+  arm (IČO/contacts/socials/tech + Wappalyzer) **and** the LLM arm (industry + contact recall on
+  the residual); emit the 5 Parquet tables + metrics JSON; produce the hit-rate **+ regex-vs-LLM
+  uplift + speed** report. Decide local-vs-hosted LLM from the timings, then optionally extend to
+  ~100k. **Decision gate.** (No Temporal/Dagster/ClickHouse — inspect the Parquet directly.)
 - **Phase 1 (if go):** **Temporal** orchestration of the chunked 10M run (~1k domains/activity
   calling the package); **Dagster** glue — manifest sharding, workflow trigger + completion
   sensor, Parquet→ClickHouse load, `company_website_domains` linking; weekly schedule; then full
