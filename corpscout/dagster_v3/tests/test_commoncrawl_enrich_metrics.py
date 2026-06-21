@@ -27,3 +27,6 @@ def test_report_counts_and_uplift():
     assert report["industry_classified"] == 1
     assert report["domains_per_second"] == 0.3
     assert "projected_100k_hours" in report and "projected_10m_hours" in report
+    # per-call latency medians (default 0.0 when fetch_ms/llm_ms not set on fakes)
+    assert "median_fetch_ms" in report
+    assert "median_llm_ms" in report

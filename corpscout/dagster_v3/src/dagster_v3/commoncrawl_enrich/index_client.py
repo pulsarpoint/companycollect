@@ -1,4 +1,5 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
@@ -56,6 +57,30 @@ def resolve_via_duckdb(domains: list[str], *, crawl_id: str, duckdb_con) -> dict
         if rec is not None:
             out[domain] = rec
     return out
+
+
+def resolve_via_cdx_batch(
+    domains: list[str],
+    *,
+    crawl_id: str,
+    session: requests.Session | None = None,
+    max_workers: int = 8,
+) -> dict[str, IndexRecord]:
+    """Resolve homepage records for a batch of domains via the public CDX HTTP API (no AWS).
+
+    Threads `resolve_via_cdx` per domain and returns only the resolved ones.
+    This is the primary resolver path: the commoncrawl S3 bucket does not allow
+    anonymous access, so the credential-free CDX API is used instead of DuckDB/S3.
+    """
+    http = session or requests.Session()
+
+    def _resolve(domain: str) -> tuple[str, IndexRecord | None]:
+        return domain, resolve_via_cdx(domain, crawl_id=crawl_id, session=http)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        results = list(pool.map(_resolve, domains))
+
+    return {domain: rec for domain, rec in results if rec is not None}
 
 
 def resolve_via_cdx(domain: str, *, crawl_id: str, session: requests.Session | None = None) -> IndexRecord | None:

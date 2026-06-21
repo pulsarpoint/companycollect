@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import duckdb
-import requests
+from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.commoncrawl_enrich import enrich, index_client, metrics, parquet_out, warc
 from dagster_v3.commoncrawl_enrich.llm import from_openai
@@ -38,6 +38,9 @@ def run_pipeline(targets, *, out_dir, resolve, fetch, llm, crawl_id, max_workers
 
 
 def _build_duckdb_connection() -> duckdb.DuckDBPyConnection:
+    # Kept for potential future use if DuckDB gains true anonymous S3 support.
+    # The commoncrawl S3 bucket does not permit anonymous (unsigned) requests;
+    # the primary resolver uses resolve_via_cdx_batch (credential-free CDX HTTP API).
     con = duckdb.connect()
     con.execute("install httpfs; load httpfs; set s3_region='us-east-1'; set s3_use_ssl=true;")
     return con
@@ -54,8 +57,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     targets = load_targets(args.manifest, limit=args.limit)
-    con = _build_duckdb_connection()
-    session = requests.Session()
+    # Use repo-standard dlt session (built-in 429/5xx retry/backoff).
+    session = dlt_requests.Session()
     llm = from_openai(
         base_url=os.environ["COMMONCRAWL_LLM_BASE_URL"],
         model=os.environ["COMMONCRAWL_LLM_MODEL"],
@@ -64,7 +67,11 @@ def main() -> None:
     )
     report = run_pipeline(
         targets, out_dir=args.out,
-        resolve=lambda domains, *, crawl_id: index_client.resolve_via_duckdb(domains, crawl_id=crawl_id, duckdb_con=con),
+        # Resolve via credential-free CDX HTTP API (commoncrawl S3 bucket rejects anonymous
+        # unsigned requests; DuckDB httpfs cannot sign-as-anonymous against that bucket).
+        resolve=lambda domains, *, crawl_id: index_client.resolve_via_cdx_batch(
+            domains, crawl_id=crawl_id, session=session, max_workers=args.max_workers,
+        ),
         fetch=lambda record: warc.fetch_page(record, session=session),
         llm=llm, crawl_id=args.crawl_id, max_workers=args.max_workers,
     )

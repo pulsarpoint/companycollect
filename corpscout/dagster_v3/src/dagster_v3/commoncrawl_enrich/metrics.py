@@ -1,3 +1,5 @@
+import statistics
+
 from dagster_v3.commoncrawl_enrich.models import DomainEnrichment
 
 
@@ -12,6 +14,8 @@ def build_report(enrichments: list[DomainEnrichment], *, wall_clock_seconds: flo
     )
     industry_classified = sum(1 for e in ok if e.industry and e.industry.method == "llm")
     dps = round(total / wall_clock_seconds, 4) if wall_clock_seconds > 0 else 0.0
+    median_fetch_ms = round(statistics.median(e.fetch_ms for e in ok), 2) if ok else 0.0
+    median_llm_ms = round(statistics.median(e.llm_ms for e in ok), 2) if ok else 0.0
     return {
         "total": total,
         "found_in_index": len(found),
@@ -27,4 +31,6 @@ def build_report(enrichments: list[DomainEnrichment], *, wall_clock_seconds: flo
         "domains_per_second": dps,
         "projected_100k_hours": round(100_000 / dps / 3600, 2) if dps else None,
         "projected_10m_hours": round(10_000_000 / dps / 3600, 2) if dps else None,
+        "median_fetch_ms": median_fetch_ms,
+        "median_llm_ms": median_llm_ms,
     }

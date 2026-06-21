@@ -83,3 +83,5 @@ class DomainEnrichment:
     phones: list[Phone] = field(default_factory=list)
     socials: list[Social] = field(default_factory=list)
     technologies: list[Technology] = field(default_factory=list)
+    fetch_ms: float = 0.0   # wall-clock ms for WARC fetch (0 when not fetched)
+    llm_ms: float = 0.0     # wall-clock ms for LLM classify + recover (0 when skipped)
