@@ -55,6 +55,33 @@ class _FakeClickHouse:
         return None
 
 
+def test_schedules_registered_and_jobs_cover_full_chains():
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    reg = repo.get_schedule_def("latvia_ur_register_schedule")
+    fin = repo.get_schedule_def("latvia_ur_financials_schedule")
+    assert reg.cron_schedule == "30 4 * * *"  # daily, staggered
+    assert reg.job.name == "latvia_ur_register_job"
+    assert fin.cron_schedule == "0 5 6 * *"  # monthly
+    assert fin.job.name == "latvia_ur_financials_job"
+
+    register_keys = {
+        k.path[-1]
+        for k in repo.get_job("latvia_ur_register_job").asset_layer.executable_asset_keys
+    }
+    assert register_keys == {"latvia_ur_entities_duckdb", "latvia_ur_clickhouse_companies"}
+
+    # full transitive chain: 4 raw + pivot + metrics + usd + 2 exports = 9
+    financials_keys = {
+        k.path[-1]
+        for k in repo.get_job("latvia_ur_financials_job").asset_layer.executable_asset_keys
+    }
+    assert len(financials_keys) == 9
+    assert "latvia_ur_financial_statements_raw_duckdb" in financials_keys
+    assert "latvia_ur_financial_metrics_usd_duckdb" in financials_keys
+
+
 def test_pipeline_loads_register_rows_into_duckdb(tmp_path: Path):
     db_path = tmp_path / "latvia_ur_source.duckdb"
     pipelines_dir = tmp_path / "dlt"

@@ -388,3 +388,33 @@ def _duckdb_table_count(*, database_path: str | Path, table_name: str) -> int:
     with duckdb.connect(str(database_path), read_only=True) as connection:
         value = connection.execute(f"select count(*) from {table_name}").fetchone()[0]
     return int(value)
+
+
+# --- Jobs & schedules (mirrors estonia_ar; see dagster_v3/CLAUDE.md "Scheduling") -------
+# Cadence-matched, non-partitioned full-refresh. .upstream() pulls the FULL chain
+# (the `dg launch +leaf` CLI only resolves one hop). All steps serialize on the
+# latvia_ur_duckdb pool. Cron minutes are staggered vs other sources.
+latvia_ur_register_job = dg.define_asset_job(
+    "latvia_ur_register_job",
+    selection=dg.AssetSelection.assets(ENTITIES_ASSET_KEY)
+    | dg.AssetSelection.assets("latvia_ur_clickhouse_companies"),
+)
+latvia_ur_financials_job = dg.define_asset_job(
+    "latvia_ur_financials_job",
+    selection=dg.AssetSelection.assets(
+        "latvia_ur_clickhouse_financial_statements",
+        "latvia_ur_clickhouse_financial_metrics",
+    ).upstream(),
+)
+latvia_ur_register_schedule = dg.ScheduleDefinition(
+    name="latvia_ur_register_schedule",
+    job=latvia_ur_register_job,
+    cron_schedule="30 4 * * *",  # daily 04:30 (staggered from estonia's 04:00)
+    execution_timezone="Europe/Belgrade",
+)
+latvia_ur_financials_schedule = dg.ScheduleDefinition(
+    name="latvia_ur_financials_schedule",
+    job=latvia_ur_financials_job,
+    cron_schedule="0 5 6 * *",  # monthly, 6th 05:00 (staggered from estonia's 5th)
+    execution_timezone="Europe/Belgrade",
+)
