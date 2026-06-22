@@ -54,6 +54,8 @@ EXPECTED_MIGRATIONS = (
     "000041_corpscout_sk_companies",
     "000042_corpscout_sk_industries",
     "000043_corpscout_sk_financial_metrics",
+    "000044_corpscout_nace_category_embeddings",
+    "000045_corpscout_page_type_exemplars",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -658,6 +660,58 @@ def test_wikidata_company_augmentations_migration_adds_profile_and_property_colu
     assert "ADD COLUMN IF NOT EXISTS wikidata_property_id " in sql
     assert "ALTER TABLE corpscout.wikidata_company_relationships" in sql
     assert "DROP COLUMN IF EXISTS wikidata_property_id" in down_sql
+
+
+def test_nace_category_embeddings_migration_covers_reference_matrix() -> None:
+    sql = _migration_sql("000044_corpscout_nace_category_embeddings.up.sql")
+    down_sql = _migration_sql("000044_corpscout_nace_category_embeddings.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.nace_category_embeddings" in sql
+    for column_name in (
+        "code",
+        "level",
+        "section_code",
+        "parent_code",
+        "division",
+        "label",
+        "embedding_text",
+        "embedding",
+        "embedding_dim",
+        "embedding_model",
+        "embedding_variant",
+        "classification_version",
+        "source_run_id",
+        "resolved_at",
+    ):
+        assert f"    {column_name} " in sql
+    assert "embedding Array(Float32)" in sql
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert "ORDER BY (code)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.nace_category_embeddings" in down_sql
+
+
+def test_page_type_exemplars_migration_covers_prototypes() -> None:
+    sql = _migration_sql("000045_corpscout_page_type_exemplars.up.sql")
+    down_sql = _migration_sql("000045_corpscout_page_type_exemplars.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.page_type_exemplars" in sql
+    for column_name in (
+        "page_type",
+        "root_domain",
+        "source_url",
+        "signal_source",
+        "text",
+        "embedding",
+        "embedding_dim",
+        "embedding_model",
+        "source_run_id",
+        "resolved_at",
+    ):
+        assert f"    {column_name} " in sql
+    assert "embedding Array(Float32)" in sql
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert "ORDER BY (page_type, root_domain)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.page_type_exemplars" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:
