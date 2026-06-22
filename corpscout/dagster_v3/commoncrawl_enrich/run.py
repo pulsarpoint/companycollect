@@ -8,9 +8,9 @@ from pathlib import Path
 import duckdb
 from dlt.sources.helpers import requests as dlt_requests
 
-from dagster_v3.commoncrawl_enrich import enrich, index_client, metrics, parquet_out, warc
-from dagster_v3.commoncrawl_enrich.llm import from_openai
-from dagster_v3.commoncrawl_enrich.models import DomainTarget
+from commoncrawl_enrich import enrich, index_client, metrics, parquet_out, warc
+from commoncrawl_enrich.llm import from_openai
+from commoncrawl_enrich.models import DomainTarget
 
 LOGGER = logging.getLogger(__name__)
 

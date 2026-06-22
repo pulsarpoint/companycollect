@@ -3,9 +3,9 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
-from dagster_v3.commoncrawl_enrich import extract, tech
-from dagster_v3.commoncrawl_enrich.llm import LLMArm
-from dagster_v3.commoncrawl_enrich.models import DomainEnrichment, DomainTarget, FetchedPage, IndexRecord
+from commoncrawl_enrich import extract, tech
+from commoncrawl_enrich.llm import LLMArm
+from commoncrawl_enrich.models import DomainEnrichment, DomainTarget, FetchedPage, IndexRecord
 
 LOGGER = logging.getLogger(__name__)
 

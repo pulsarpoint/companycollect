@@ -1,5 +1,5 @@
-from dagster_v3.commoncrawl_enrich import extract
-from dagster_v3.commoncrawl_enrich.models import FetchedPage
+from commoncrawl_enrich import extract
+from commoncrawl_enrich.models import FetchedPage
 
 HTML = """
 <html lang="sk"><head><title>Firma s.r.o.</title>

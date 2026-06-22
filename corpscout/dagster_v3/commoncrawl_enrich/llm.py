@@ -2,8 +2,8 @@ import json
 import re
 from collections.abc import Callable
 
-from dagster_v3.commoncrawl_enrich.extract import _to_e164
-from dagster_v3.commoncrawl_enrich.models import Email, IndustryGuess, Phone
+from commoncrawl_enrich.extract import _to_e164
+from commoncrawl_enrich.models import Email, IndustryGuess, Phone
 
 ChatFn = Callable[[str, str], str]
 

@@ -2,7 +2,7 @@ import json
 
 import duckdb
 
-from dagster_v3.commoncrawl_enrich import run
+from commoncrawl_enrich import run
 
 
 def test_load_targets_from_parquet(tmp_path):
@@ -15,7 +15,7 @@ def test_load_targets_from_parquet(tmp_path):
 
 
 def test_run_pipeline_writes_parquet_and_metrics(tmp_path, monkeypatch):
-    from dagster_v3.commoncrawl_enrich.models import DomainEnrichment, DomainTarget
+    from commoncrawl_enrich.models import DomainEnrichment, DomainTarget
 
     def fake_enrich_domains(targets, **_):
         return [DomainEnrichment(target=t, fetch_status="not_in_index") for t in targets]

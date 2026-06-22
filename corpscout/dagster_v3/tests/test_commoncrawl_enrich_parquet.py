@@ -1,7 +1,7 @@
 import duckdb
 
-from dagster_v3.commoncrawl_enrich import parquet_out
-from dagster_v3.commoncrawl_enrich.models import (
+from commoncrawl_enrich import parquet_out
+from commoncrawl_enrich.models import (
     DomainEnrichment, DomainTarget, Email, IndustryGuess, Technology)
 
 

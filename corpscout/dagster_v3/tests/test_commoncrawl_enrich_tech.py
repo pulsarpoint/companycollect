@@ -1,4 +1,4 @@
-from dagster_v3.commoncrawl_enrich import tech
+from commoncrawl_enrich import tech
 
 
 def test_detects_html_and_header_fingerprints():

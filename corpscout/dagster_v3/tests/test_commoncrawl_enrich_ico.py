@@ -1,4 +1,4 @@
-from dagster_v3.commoncrawl_enrich import ico
+from commoncrawl_enrich import ico
 
 
 def test_checksum_valid_known_icos():

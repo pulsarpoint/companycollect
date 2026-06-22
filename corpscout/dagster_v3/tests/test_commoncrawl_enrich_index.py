@@ -1,5 +1,5 @@
-from dagster_v3.commoncrawl_enrich import index_client
-from dagster_v3.commoncrawl_enrich.models import IndexRecord
+from commoncrawl_enrich import index_client
+from commoncrawl_enrich.models import IndexRecord
 
 
 def test_select_best_record_prefers_latest_200_html_homepage():

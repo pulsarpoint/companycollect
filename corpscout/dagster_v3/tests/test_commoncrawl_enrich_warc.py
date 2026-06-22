@@ -4,8 +4,8 @@ import io
 from warcio.statusandheaders import StatusAndHeaders
 from warcio.warcwriter import WARCWriter
 
-from dagster_v3.commoncrawl_enrich import warc
-from dagster_v3.commoncrawl_enrich.models import IndexRecord
+from commoncrawl_enrich import warc
+from commoncrawl_enrich.models import IndexRecord
 
 
 def _make_warc_record_bytes() -> bytes:

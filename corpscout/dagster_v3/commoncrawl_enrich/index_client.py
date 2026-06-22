@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-from dagster_v3.commoncrawl_enrich.models import IndexRecord
+from commoncrawl_enrich.models import IndexRecord
 
 LOGGER = logging.getLogger(__name__)
 

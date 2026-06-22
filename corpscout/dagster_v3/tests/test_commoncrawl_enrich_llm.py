@@ -1,4 +1,4 @@
-from dagster_v3.commoncrawl_enrich import llm
+from commoncrawl_enrich import llm
 
 
 def fake_chat(system: str, user: str) -> str:

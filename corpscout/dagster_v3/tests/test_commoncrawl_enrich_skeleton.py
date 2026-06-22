@@ -1,5 +1,5 @@
 def test_package_imports_and_warcio_available():
     import warcio  # noqa: F401  - dependency must be installed
-    from dagster_v3 import commoncrawl_enrich
+    import commoncrawl_enrich
 
     assert commoncrawl_enrich.__version__ == "0.1.0"

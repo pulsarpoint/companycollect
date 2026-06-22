@@ -1,4 +1,4 @@
-from dagster_v3.commoncrawl_enrich.models import Technology
+from commoncrawl_enrich.models import Technology
 
 # (technology, category, html-substrings)
 _HTML_FINGERPRINTS: list[tuple[str, str, tuple[str, ...]]] = [

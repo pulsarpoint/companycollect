@@ -1,5 +1,5 @@
-from dagster_v3.commoncrawl_enrich import metrics
-from dagster_v3.commoncrawl_enrich.models import (
+from commoncrawl_enrich import metrics
+from commoncrawl_enrich.models import (
     DomainEnrichment, DomainTarget, Email, IndustryGuess)
 
 

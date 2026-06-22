@@ -1,6 +1,6 @@
 import statistics
 
-from dagster_v3.commoncrawl_enrich.models import DomainEnrichment
+from commoncrawl_enrich.models import DomainEnrichment
 
 
 def build_report(enrichments: list[DomainEnrichment], *, wall_clock_seconds: float) -> dict:

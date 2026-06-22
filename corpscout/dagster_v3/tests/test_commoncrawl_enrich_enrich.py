@@ -1,5 +1,5 @@
-from dagster_v3.commoncrawl_enrich import enrich, llm
-from dagster_v3.commoncrawl_enrich.models import DomainTarget, FetchedPage, IndexRecord
+from commoncrawl_enrich import enrich, llm
+from commoncrawl_enrich.models import DomainTarget, FetchedPage, IndexRecord
 
 HTML_WITH_CONTACT = "<html lang='sk'><title>A</title><body>IČO: 31 333 532 info@a.sk</body></html>"
 HTML_NO_CONTACT = "<html lang='sk'><title>B</title><body>Vitajte</body></html>"

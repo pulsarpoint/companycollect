@@ -8,7 +8,7 @@ Standalone, single-process domain enrichment over CommonCrawl. No Dagster/Tempor
    - `COMMONCRAWL_LLM_BASE_URL`, `COMMONCRAWL_LLM_MODEL`, `COMMONCRAWL_LLM_API_KEY` (optional).
 3. Run:
    ```bash
-   uv run python -m dagster_v3.commoncrawl_enrich.run \
+   uv run python -m commoncrawl_enrich.run \
      --manifest top10k.parquet --out ./cc_out --limit 10000 --max-workers 16
    ```
 4. Inspect `./cc_out/metrics.json` (hit-rate, regex-vs-LLM uplift, speed + projected 100k/10M hours)

@@ -1,4 +1,4 @@
-from dagster_v3.commoncrawl_enrich import models as m
+from commoncrawl_enrich import models as m
 
 
 def test_domain_enrichment_defaults_and_construction():

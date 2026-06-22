@@ -4,8 +4,8 @@ from urllib.parse import urlparse
 
 from lxml import html as lxml_html
 
-from dagster_v3.commoncrawl_enrich import ico as ico_mod
-from dagster_v3.commoncrawl_enrich.models import Email, FetchedPage, Phone, Social
+from commoncrawl_enrich import ico as ico_mod
+from commoncrawl_enrich.models import Email, FetchedPage, Phone, Social
 
 _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _EMAIL_NOISE_DOMAINS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")

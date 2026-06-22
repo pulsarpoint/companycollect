@@ -3,7 +3,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from dagster_v3.commoncrawl_enrich.models import DomainEnrichment
+from commoncrawl_enrich.models import DomainEnrichment
 
 # Explicit schemas so that empty tables still carry their columns.
 # pa.Table.from_pylist([]) would produce a 0-column table that DuckDB cannot read back.

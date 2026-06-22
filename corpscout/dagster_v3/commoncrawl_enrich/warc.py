@@ -4,7 +4,7 @@ import logging
 import requests
 from warcio.archiveiterator import ArchiveIterator
 
-from dagster_v3.commoncrawl_enrich.models import FetchedPage, IndexRecord
+from commoncrawl_enrich.models import FetchedPage, IndexRecord
 
 LOGGER = logging.getLogger(__name__)
 
