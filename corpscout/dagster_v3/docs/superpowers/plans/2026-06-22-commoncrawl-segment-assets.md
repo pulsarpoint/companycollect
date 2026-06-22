@@ -8,9 +8,15 @@ processors into one Parquet each, then remove the raw downloads.
 
 **Architecture:** Two Dagster assets in `src/dagster_v3/defs/commoncrawl/` — a **download** asset
 (WET+WARC → local) and a **process** asset (local files → two Parquet, then delete raw). The actual
-extraction is the already-built standalone package `commoncrawl_enrich/segment.py`
-(`process_wet_file` = emails + LLM industry; `process_warc_file` = emails + socials + technologies).
-Scoped to one segment with a dev `limit`; a later wrapper loops all 90k segments.
+extraction is the already-built standalone package `commoncrawl_enrich/segment.py`. The two passes
+are deliberately asymmetric by data granularity:
+- `process_wet_file` = **homepage records only** (`url` path `/`) → homepage emails + **LLM industry
+  (per domain)**. The only LLM work; small.
+- `process_warc_file` = **all pages** → **per-page technologies** (the priority; Wappalyzer/regex is
+  CPU-cheap, so this pass is download-bound, not compute-bound) + socials + emails on every page.
+
+Scoped to one segment with a dev `limit`; a later wrapper loops all segments. Per-page tech means the
+full WARC is processed (no homepage shortcut) — the ~90 TB WARC download is the accepted cost at scale.
 
 **Tech Stack:** Dagster, `commoncrawl_enrich.segment` (warcio + lxml + pyarrow), `tldextract`,
 `commoncrawl_enrich.llm` (OpenAI-compatible vLLM, think-off), DuckDB (test assertions).
@@ -147,7 +153,28 @@ def test_process_wet_file_respects_limit(tmp_path):
     wet.write_bytes(buf.getvalue())
     stats = segment.process_wet_file(str(wet), tmp_path / "o.parquet", llm=None, limit=1)
     assert stats["records"] == 1
+
+
+def test_process_wet_file_homepages_only_skips_subpages(tmp_path):
+    buf = io.BytesIO()
+    writer = WARCWriter(buf, gzip=True)
+    for url in ("https://shop.sk/", "https://shop.sk/products/123"):  # homepage + subpage
+        payload = f"Contact us at hi@shop.sk ({url})".encode()
+        writer.write_record(writer.create_warc_record(
+            url, "conversion", payload=io.BytesIO(payload), length=len(payload),
+            warc_content_type="text/plain"))
+    wet = tmp_path / "mix.warc.wet.gz"
+    wet.write_bytes(buf.getvalue())
+    out = tmp_path / "o.parquet"
+    stats = segment.process_wet_file(str(wet), out, llm=None)  # homepages_only=True by default
+    assert stats["records"] == 1  # only the homepage kept
+    url = duckdb.connect().execute(f"select url from read_parquet('{out}')").fetchone()[0]
+    assert url == "https://shop.sk/"
 ```
+
+Note: `process_wet_file` defaults to `homepages_only=True` — only `/` pages are kept (industry is a
+domain property). `process_warc_file` processes every page (per-page tech). The other WET tests above
+use homepage URLs, so they still pass under the homepage filter.
 
 - [ ] **Step 2: Run it (should PASS against the existing `segment.py`)**
 
@@ -216,11 +243,11 @@ from commoncrawl_enrich.segment import wet_url_to_warc
 LOGGER = logging.getLogger(__name__)
 USER_AGENT = "corpscout-commoncrawl-enrich/0.1 (goran.raovic@gmail.com)"
 DATA_HOST = "https://data.commoncrawl.org"
-DEFAULT_CRAWL = "CC-MAIN-2025-21"
+COLLINFO_URL = "https://index.commoncrawl.org/collinfo.json"  # all crawls, newest first
 
 
 class CommonCrawlSegmentConfig(dg.Config):
-    crawl: str = DEFAULT_CRAWL
+    crawl: str = ""                 # "" -> resolve the latest available crawl (collinfo.json)
     segment_index: int = 0          # which WET path from wet.paths.gz
     local_dir: str = "data/commoncrawl/raw"
     out_dir: str = "data/commoncrawl/parquet"
@@ -228,9 +255,19 @@ class CommonCrawlSegmentConfig(dg.Config):
     run_industry: bool = True
 
 
-def resolve_wet_url(crawl: str, segment_index: int, session: requests.Session | None = None) -> str:
-    """The Nth WET file URL for a crawl, read from its wet.paths.gz manifest."""
+def latest_crawl(session: requests.Session | None = None) -> str:
+    """Id of the newest CommonCrawl crawl (first entry of collinfo.json), e.g. 'CC-MAIN-2026-25'."""
     http = session or requests.Session()
+    resp = http.get(COLLINFO_URL, headers={"User-Agent": USER_AGENT}, timeout=60)
+    resp.raise_for_status()
+    return resp.json()[0]["id"]
+
+
+def resolve_wet_url(crawl: str, segment_index: int, session: requests.Session | None = None) -> str:
+    """The Nth WET file URL for a crawl (latest crawl when `crawl` is empty), from wet.paths.gz."""
+    http = session or requests.Session()
+    if not crawl:
+        crawl = latest_crawl(http)
     resp = http.get(f"{DATA_HOST}/crawl-data/{crawl}/wet.paths.gz",
                     headers={"User-Agent": USER_AGENT}, timeout=60)
     resp.raise_for_status()
