@@ -33,6 +33,9 @@ def test_open_page_rank_defs_register_expected_assets_job_and_schedule() -> None
     assert resolved.get_job("open_page_rank_domains_refresh_job").name == (
         "open_page_rank_domains_refresh_job"
     )
+    assert resolved.get_job("open_page_rank_domains_process_existing_raw_job").name == (
+        "open_page_rank_domains_process_existing_raw_job"
+    )
     assert resolved.get_schedule_def("open_page_rank_domains_weekly").job.name == (
         "open_page_rank_domains_refresh_job"
     )

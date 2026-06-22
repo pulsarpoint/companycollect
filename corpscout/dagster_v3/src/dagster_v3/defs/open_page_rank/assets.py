@@ -167,6 +167,16 @@ open_page_rank_domains_refresh_job = dg.define_asset_job(
     ],
 )
 
+open_page_rank_domains_process_existing_raw_job = dg.define_asset_job(
+    name="open_page_rank_domains_process_existing_raw_job",
+    selection=[
+        "open_page_rank_raw_duckdb",
+        "open_page_rank_domains_duckdb",
+        "open_page_rank_domains_clickhouse",
+        "open_page_rank_raw_retention",
+    ],
+)
+
 open_page_rank_domains_weekly = dg.ScheduleDefinition(
     name="open_page_rank_domains_weekly",
     job=open_page_rank_domains_refresh_job,
@@ -183,6 +193,9 @@ defs = dg.Definitions(
         open_page_rank_domains_clickhouse,
         open_page_rank_raw_retention,
     ],
-    jobs=[open_page_rank_domains_refresh_job],
+    jobs=[
+        open_page_rank_domains_refresh_job,
+        open_page_rank_domains_process_existing_raw_job,
+    ],
     schedules=[open_page_rank_domains_weekly],
 )
