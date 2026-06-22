@@ -126,3 +126,70 @@ def test_mismatched_arrays_raise():
     with pytest.raises(ValueError, match="co-ordered"):
         ne.NaceReference(codes=["a", "b"], labels=["x"], divisions=["1"],
                          matrix=np.eye(2, dtype="float32"))
+
+
+# ---- page-type (structural) layer -------------------------------------------
+def _protos(labels, matrix) -> ne.PrototypeSet:
+    return ne.PrototypeSet(labels=list(labels), sources=["d"] * len(labels),
+                           matrix=_norm(np.asarray(matrix, dtype="float32")))
+
+
+def test_page_type_detected_marks_not_confident_and_keeps_nace():
+    # dim-4 space: NACE on dims 0-1, page-type prototypes on dims 2-3
+    ref = _ref(["62.01", "47.11"], [[1, 0, 0, 0], [0, 1, 0, 0]])
+    protos = _protos(["parked", "directory_listing"], [[0, 0, 1, 0], [0, 0, 0, 1]])
+    P = _norm(np.array([[0.0, 0.0, 1.0, 0.0]]))  # exactly the 'parked' prototype
+    [r] = ne.classify_matrix(P, ref, page_types=protos)
+    assert r.page_type == "parked" and r.is_non_content
+    assert r.page_type_score == pytest.approx(1.0)
+    assert not r.confident          # page-type overrides confidence
+    assert r.top3_codes[0] in ("62.01", "47.11")  # NACE top-3 still retained for inspection
+
+
+def test_real_content_below_threshold_is_not_page_type():
+    ref = _ref(["62.01", "47.11"], [[1, 0, 0, 0], [0, 1, 0, 0]])
+    protos = _protos(["parked"], [[0, 0, 1, 0]])
+    P = _norm(np.array([[1.0, 0.0, 0.0, 0.0]]))  # pure NACE-62, zero page-type similarity
+    [r] = ne.classify_matrix(P, ref, page_types=protos)
+    assert r.page_type == "" and not r.is_non_content
+    assert r.confident and r.code == "62.01"
+
+
+def test_page_type_returns_nearest_class_label():
+    protos = _protos(["parked", "default_server", "directory_listing"], np.eye(3))
+    P = _norm(np.array([[0.1, 0.9, 0.1], [0.9, 0.1, 0.1]]))
+    scores, labels = protos.best(P)
+    assert labels == ["default_server", "parked"]
+    assert scores[0] > scores[1] or scores[0] > 0  # both are valid maxima
+
+
+def test_build_prototype_set_from_rows():
+    rows = [
+        {"signal": "parked", "text": "this domain is for sale", "root_domain": "x.com"},
+        {"signal": "default_server", "text": "Welcome to nginx!", "root_domain": "y.com"},
+    ]
+    emb = FakeEmbedder()
+    ps = ne.build_prototype_set("unused.parquet", emb, rows=rows)
+    assert ps.labels == ["parked", "default_server"]
+    assert ps.sources == ["x.com", "y.com"]
+    assert ps.matrix.shape[0] == 2
+
+
+def test_prototype_set_roundtrip(tmp_path):
+    ps = _protos(["parked", "default_server"], np.eye(2))
+    path = str(tmp_path / "pt.npz")
+    ps.save(path)
+    loaded = ne.PrototypeSet.load(path)
+    assert loaded.labels == ps.labels and loaded.sources == ps.sources
+    assert np.allclose(loaded.matrix, ps.matrix)
+
+
+def test_empty_prototype_set_best_is_zero():
+    ps = ne.PrototypeSet(labels=[], sources=[], matrix=np.zeros((0, 3), dtype="float32"))
+    scores, labels = ps.best(np.ones((2, 3), dtype="float32"))
+    assert list(scores) == [0.0, 0.0] and labels == ["", ""]
+
+
+def test_build_prototype_set_empty_raises():
+    with pytest.raises(ValueError, match="no page-type exemplars"):
+        ne.build_prototype_set("unused.parquet", FakeEmbedder(), rows=[])

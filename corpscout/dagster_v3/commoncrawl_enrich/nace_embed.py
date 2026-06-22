@@ -28,6 +28,7 @@ import numpy as np
 
 PAGE_INSTRUCTION = "Classify the business into its industry category"
 DEFAULT_MARGIN_THRESHOLD = 0.03  # spike: bare + margin>=0.03 -> 100% LLM agreement
+DEFAULT_PAGE_TYPE_THRESHOLD = 0.55  # validation: 0 real-business FP at >=0.55 (real max ~0.49)
 _EMBED_BATCH = 128
 
 
@@ -114,6 +115,59 @@ class NaceReference:
                    divisions=list(d["divisions"]), matrix=d["matrix"])
 
 
+@dataclass
+class PrototypeSet:
+    """Per-vector labelled prototypes for structural PAGE TYPES that carry no classifiable
+    business content (parked / for_sale / directory_listing / default_server /
+    under_construction / ...). This is orthogonal to industry: a page-type match means
+    "no business content here, skip NACE" — it does NOT mean "low-value". Real content,
+    including adult (90.03) or gambling (92.00), is a legitimate industry and never lands
+    here. Mined from WET plaintext, so prototypes share the classification embedding space.
+    Multi-modal by design — the page types form distinct clusters — so detection uses
+    max-similarity to ANY prototype and returns its class label, NOT a single averaged
+    centroid (which would blur the types together)."""
+
+    labels: list[str]    # class label per row
+    matrix: np.ndarray   # (M, dim), L2-normalized
+    sources: list[str]   # provenance (e.g. root_domain) per row, for debugging
+
+    def __post_init__(self) -> None:
+        if not (len(self.labels) == len(self.sources) == self.matrix.shape[0]):
+            raise ValueError("PrototypeSet arrays and matrix must be co-ordered")
+
+    def best(self, P: np.ndarray) -> tuple[np.ndarray, list[str]]:
+        """For each page row of P: (max cosine to any prototype, label of that prototype)."""
+        if self.matrix.shape[0] == 0:
+            return np.zeros(P.shape[0], dtype="float32"), [""] * P.shape[0]
+        sims = P @ self.matrix.T          # (B, M)
+        idx = sims.argmax(axis=1)
+        return sims.max(axis=1), [self.labels[j] for j in idx]
+
+    def save(self, path: str) -> None:
+        np.savez(path, labels=np.array(self.labels), sources=np.array(self.sources),
+                 matrix=self.matrix)
+
+    @classmethod
+    def load(cls, path: str) -> "PrototypeSet":
+        d = np.load(path, allow_pickle=False)
+        return cls(labels=list(d["labels"]), sources=list(d["sources"]), matrix=d["matrix"])
+
+
+def build_prototype_set(exemplar_parquet: str, embedder: Embedder, *,
+                        rows: list[dict] | None = None) -> PrototypeSet:
+    """Embed mined page-type exemplars (label=`signal`, `text`, `root_domain`) into a
+    PrototypeSet. Pass `rows` to skip the parquet read (tests)."""
+    if rows is None:
+        import pyarrow.parquet as pq
+        rows = pq.read_table(exemplar_parquet).to_pylist()
+    if not rows:
+        raise ValueError("no page-type exemplars to embed")
+    labels = [r["signal"] for r in rows]
+    sources = [r.get("root_domain", "") for r in rows]
+    matrix = embedder.embed([r["text"] for r in rows])  # same modality as pages (no instruction)
+    return PrototypeSet(labels=labels, matrix=matrix, sources=sources)
+
+
 @dataclass(frozen=True)
 class NaceClassification:
     code: str            # top-1 NACE code
@@ -122,10 +176,17 @@ class NaceClassification:
     margin: float        # score(top1) - score(top2)
     division: str        # 2-digit division of top-1
     division_consensus: bool  # all top-3 share one division
-    confident: bool      # gate decision (margin or consensus)
+    confident: bool      # gate decision (margin or consensus, AND not a structural page type)
     top3_codes: list[str]
     top3_scores: list[float]
+    page_type: str = ""    # structural page type if detected (parked/directory_listing/...),
+    page_type_score: float = 0.0  # else "" -> page has business content, NACE applies
     method: str = "embedding"
+
+    @property
+    def is_non_content(self) -> bool:
+        """True if a structural page type (no classifiable business content) was detected."""
+        return bool(self.page_type)
 
 
 # ---- NACE reference text + matrix -------------------------------------------
@@ -181,13 +242,24 @@ def build_reference(duckdb_path: str, embedder: Embedder, *, variant: str = "hie
 
 # ---- classification ----------------------------------------------------------
 def classify_matrix(P: np.ndarray, ref: NaceReference, *,
+                    page_types: PrototypeSet | None = None,
+                    page_type_threshold: float = DEFAULT_PAGE_TYPE_THRESHOLD,
                     margin_threshold: float = DEFAULT_MARGIN_THRESHOLD) -> list[NaceClassification]:
-    """Classify already-embedded, normalized page vectors `P` (B x dim) against `ref`."""
+    """Classify already-embedded, normalized page vectors `P` (B x dim) against `ref`.
+
+    If `page_types` is given, a page whose max similarity to a structural page-type
+    prototype reaches `page_type_threshold` is tagged with that type and marked not
+    confident (skip NACE) — without losing the NACE top-3, which stays for inspection.
+    """
     if P.shape[1] != ref.matrix.shape[1]:
         raise ValueError(f"page dim {P.shape[1]} != reference dim {ref.matrix.shape[1]}")
     sims = P @ ref.matrix.T  # (B, N) cosine similarities
     k = min(3, sims.shape[1])
     order = np.argsort(-sims, axis=1)[:, :k]
+    if page_types is not None:
+        pt_scores, pt_labels = page_types.best(P)
+    else:
+        pt_scores, pt_labels = np.zeros(P.shape[0]), [""] * P.shape[0]
     results: list[NaceClassification] = []
     for i in range(sims.shape[0]):
         idx = order[i]
@@ -196,20 +268,27 @@ def classify_matrix(P: np.ndarray, ref: NaceReference, *,
         divs = [ref.divisions[j] for j in idx]
         margin = scores[0] - scores[1] if len(scores) > 1 else scores[0]
         consensus = len(set(divs)) == 1
+        is_page_type = float(pt_scores[i]) >= page_type_threshold
         results.append(NaceClassification(
             code=codes[0], label=ref.labels[idx[0]], score=scores[0], margin=margin,
             division=divs[0], division_consensus=consensus,
-            confident=(margin >= margin_threshold or consensus),
+            confident=((margin >= margin_threshold or consensus) and not is_page_type),
             top3_codes=codes, top3_scores=scores,
+            page_type=pt_labels[i] if is_page_type else "",
+            page_type_score=float(pt_scores[i]),
         ))
     return results
 
 
 def classify_pages(texts: list[str], ref: NaceReference, embedder: Embedder, *,
+                   page_types: PrototypeSet | None = None,
+                   page_type_threshold: float = DEFAULT_PAGE_TYPE_THRESHOLD,
                    instruction: str = PAGE_INSTRUCTION,
                    margin_threshold: float = DEFAULT_MARGIN_THRESHOLD) -> list[NaceClassification]:
-    """Embed page texts (with the query instruction) and classify against `ref`."""
+    """Embed page texts (with the query instruction) and classify against `ref`, optionally
+    detecting structural page types (parked/directory_listing/...) via `page_types`."""
     if not texts:
         return []
     P = embedder.embed(texts, instruction=instruction)
-    return classify_matrix(P, ref, margin_threshold=margin_threshold)
+    return classify_matrix(P, ref, page_types=page_types,
+                           page_type_threshold=page_type_threshold, margin_threshold=margin_threshold)
