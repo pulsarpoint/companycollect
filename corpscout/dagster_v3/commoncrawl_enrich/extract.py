@@ -98,11 +98,15 @@ def extract_phones(text: str) -> list[Phone]:
 def extract_socials(links: list[str]) -> list[Social]:
     seen: dict[tuple[str, str], Social] = {}
     for href in links:
-        host = (urlparse(href).hostname or "").lower().removeprefix("www.")
+        try:  # real-world hrefs include garbage that urlparse rejects (invalid NFKC, etc.)
+            parts = urlparse(href)
+        except ValueError:
+            continue
+        host = (parts.hostname or "").lower().removeprefix("www.")
         platform = _SOCIAL_HOSTS.get(host)
         if not platform:
             continue
-        handle = urlparse(href).path.strip("/").split("/")[-1]
+        handle = parts.path.strip("/").split("/")[-1]
         key = (platform, href)
         if key not in seen:
             seen[key] = Social(platform=platform, url=href, handle=handle)

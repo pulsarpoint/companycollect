@@ -43,6 +43,18 @@ def test_extract_phones_and_socials():
     assert platforms == {"facebook", "linkedin"}
 
 
+def test_extract_socials_survives_urlparse_breaking_href():
+    from urllib.parse import urlparse
+
+    import pytest
+
+    bad = "//x＠evil"  # fullwidth @ in netloc -> urlparse raises under NFKC
+    with pytest.raises(ValueError):
+        urlparse(bad)
+    socials = extract.extract_socials([bad, "https://www.facebook.com/p"])
+    assert [s.platform for s in socials] == ["facebook"]  # garbage skipped, valid kept
+
+
 def test_extract_deterministic_bundles_everything():
     result = extract.extract_deterministic(_page())
     assert result.title == "Firma s.r.o." and result.ico == "31333532"
