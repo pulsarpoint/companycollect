@@ -20,11 +20,16 @@ it beats any vector DB at this scale. The embedder is injected so the matmul and
 gating are unit-testable without a live endpoint.
 """
 
+import os
 import re
 from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
+
+NACE_DATABASE = "corpscout"
+NACE_EMBEDDINGS_TABLE = "nace_category_embeddings"
+PAGE_TYPE_EXEMPLARS_TABLE = "page_type_exemplars"
 
 PAGE_INSTRUCTION = "Classify the business into its industry category"
 DEFAULT_MARGIN_THRESHOLD = 0.03  # spike: bare + margin>=0.03 -> 100% LLM agreement
@@ -67,6 +72,19 @@ class EmbeddingClient:
         self._client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         self._model = model or self._client.models.list().data[0].id
         self._batch = batch
+
+    @classmethod
+    def from_env(cls, *, batch: int = _EMBED_BATCH, timeout: int = 120) -> "EmbeddingClient":
+        """Build from COMMONCRAWL_EMBED_BASE_URL (+ optional COMMONCRAWL_EMBED_MODEL).
+
+        Production endpoint is env-driven — never hardcode a host.
+        """
+        base = os.environ.get("COMMONCRAWL_EMBED_BASE_URL")
+        if not base:
+            raise RuntimeError("COMMONCRAWL_EMBED_BASE_URL is not set")
+        return cls(base_url=base, api_key=os.environ.get("COMMONCRAWL_EMBED_API_KEY", "x"),
+                   model=os.environ.get("COMMONCRAWL_EMBED_MODEL") or None,
+                   batch=batch, timeout=timeout)
 
     @property
     def model(self) -> str:
@@ -117,6 +135,19 @@ class NaceReference:
         return cls(codes=list(d["codes"]), labels=list(d["labels"]),
                    divisions=list(d["divisions"]), matrix=d["matrix"])
 
+    @classmethod
+    def from_rows(cls, rows) -> "NaceReference":
+        """Build from (code, label, division, embedding) rows (embedding = sequence of float).
+        Re-normalizes defensively so a dot product is cosine regardless of stored precision."""
+        codes, labels, divisions, vecs = [], [], [], []
+        for code, label, division, embedding in rows:
+            codes.append(str(code)); labels.append(str(label)); divisions.append(str(division))
+            vecs.append(np.asarray(embedding, dtype="float32"))
+        if not vecs:
+            raise ValueError("no nace embedding rows")
+        return cls(codes=codes, labels=labels, divisions=divisions,
+                   matrix=_normalize(np.vstack(vecs)))
+
 
 @dataclass
 class PrototypeSet:
@@ -154,6 +185,17 @@ class PrototypeSet:
     def load(cls, path: str) -> "PrototypeSet":
         d = np.load(path, allow_pickle=False)
         return cls(labels=list(d["labels"]), sources=list(d["sources"]), matrix=d["matrix"])
+
+    @classmethod
+    def from_rows(cls, rows) -> "PrototypeSet":
+        """Build from (page_type, source, embedding) rows (embedding = sequence of float)."""
+        labels, sources, vecs = [], [], []
+        for page_type, source, embedding in rows:
+            labels.append(str(page_type)); sources.append(str(source))
+            vecs.append(np.asarray(embedding, dtype="float32"))
+        if not vecs:
+            raise ValueError("no page-type prototype rows")
+        return cls(labels=labels, sources=sources, matrix=_normalize(np.vstack(vecs)))
 
 
 def build_prototype_set(exemplar_parquet: str, embedder: Embedder, *,
@@ -295,3 +337,23 @@ def classify_pages(texts: list[str], ref: NaceReference, embedder: Embedder, *,
     P = embedder.embed(texts, instruction=instruction)
     return classify_matrix(P, ref, page_types=page_types,
                            page_type_threshold=page_type_threshold, margin_threshold=margin_threshold)
+
+
+# ---- ClickHouse loaders (production: load the reference matrices into RAM) ---
+def load_nace_reference(ch_client, *, database: str = NACE_DATABASE) -> NaceReference:
+    """Load the NACE reference matrix from ClickHouse. `ch_client` is anything with
+    `.execute(sql)` (e.g. a dagster_clickhouse connection)."""
+    rows = ch_client.execute(
+        f"SELECT code, label, division, embedding "
+        f"FROM {database}.{NACE_EMBEDDINGS_TABLE} FINAL ORDER BY code"
+    )
+    return NaceReference.from_rows(rows)
+
+
+def load_page_type_prototypes(ch_client, *, database: str = NACE_DATABASE) -> PrototypeSet:
+    """Load the page-type prototypes from ClickHouse."""
+    rows = ch_client.execute(
+        f"SELECT page_type, root_domain, embedding "
+        f"FROM {database}.{PAGE_TYPE_EXEMPLARS_TABLE} FINAL"
+    )
+    return PrototypeSet.from_rows(rows)

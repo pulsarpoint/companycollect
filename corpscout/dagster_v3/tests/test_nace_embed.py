@@ -193,3 +193,47 @@ def test_empty_prototype_set_best_is_zero():
 def test_build_prototype_set_empty_raises():
     with pytest.raises(ValueError, match="no page-type exemplars"):
         ne.build_prototype_set("unused.parquet", FakeEmbedder(), rows=[])
+
+
+# ---- ClickHouse loaders -----------------------------------------------------
+class FakeCHClient:
+    def __init__(self, rows):
+        self._rows = rows
+        self.queries: list[str] = []
+
+    def execute(self, sql):
+        self.queries.append(sql)
+        return self._rows
+
+
+def test_load_nace_reference_from_clickhouse():
+    rows = [("62.01", "Computer programming", "62", [1.0, 0.0, 0.0]),
+            ("47.11", "Retail sale", "47", [0.0, 2.0, 0.0])]  # unnormalized on purpose
+    client = FakeCHClient(rows)
+    ref = ne.load_nace_reference(client)
+    assert ref.codes == ["62.01", "47.11"] and ref.divisions == ["62", "47"]
+    assert np.allclose(np.linalg.norm(ref.matrix, axis=1), 1.0)  # normalized on load
+    assert ne.NACE_EMBEDDINGS_TABLE in client.queries[0]  # queried the right table
+
+
+def test_load_page_type_prototypes_from_clickhouse():
+    rows = [("parked", "x.com", [1.0, 0.0]), ("default_server", "y.com", [0.0, 1.0])]
+    ps = ne.load_page_type_prototypes(FakeCHClient(rows))
+    assert ps.labels == ["parked", "default_server"] and ps.sources == ["x.com", "y.com"]
+    assert ps.matrix.shape == (2, 2)
+
+
+def test_nace_reference_from_rows_empty_raises():
+    with pytest.raises(ValueError, match="no nace embedding rows"):
+        ne.NaceReference.from_rows([])
+
+
+def test_prototype_set_from_rows_empty_raises():
+    with pytest.raises(ValueError, match="no page-type prototype rows"):
+        ne.PrototypeSet.from_rows([])
+
+
+def test_embedding_client_from_env_requires_url(monkeypatch):
+    monkeypatch.delenv("COMMONCRAWL_EMBED_BASE_URL", raising=False)
+    with pytest.raises(RuntimeError, match="COMMONCRAWL_EMBED_BASE_URL"):
+        ne.EmbeddingClient.from_env()
