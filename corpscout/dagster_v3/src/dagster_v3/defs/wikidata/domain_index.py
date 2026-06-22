@@ -13,7 +13,6 @@ from dagster_v3.defs.wikidata.source import (
     DEFAULT_WIKIDATA_REQUEST_DELAY_SECONDS,
     DEFAULT_WIKIDATA_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_WIKIDATA_USER_AGENT,
-    binding_value,
     query_hash,
     response_bindings,
 )
@@ -62,39 +61,17 @@ class WikidataDomainIndexRawPullConfig(dg.Config):
 def build_wikidata_domain_index_query(
     *,
     limit: int,
-    last_entity_iri: str | None = None,
-    last_website_url: str | None = None,
+    offset: int,
 ) -> str:
-    cursor_clause = ""
-    if last_entity_iri and last_website_url:
-        escaped_entity = _sparql_string_literal(last_entity_iri)
-        escaped_website = _sparql_string_literal(last_website_url)
-        cursor_clause = f"""
-  FILTER (
-    STR(?entity) > "{escaped_entity}"
-    ||
-    (
-      STR(?entity) = "{escaped_entity}"
-      && STR(?website) > "{escaped_website}"
-    )
-  )
-"""
-
     return f"""
-SELECT DISTINCT
+SELECT
   ?entity
-  ?entityLabel
-  ?entityDescription
   ?website
 WHERE {{
   ?entity wdt:P856 ?website .
-{cursor_clause}
-  SERVICE wikibase:label {{
-    bd:serviceParam wikibase:language "en" .
-  }}
 }}
-ORDER BY ?entity ?website
 LIMIT {limit}
+OFFSET {offset}
 """.strip()
 
 
@@ -109,19 +86,18 @@ def pull_wikidata_domain_index_raw_objects(
 ) -> dg.MaterializeResult:
     object_store.ensure_bucket(WIKIDATA_DOMAIN_INDEX_RAW_BUCKET)
     retrieved_date = retrieved_at[:10]
-    first_query = build_wikidata_domain_index_query(limit=config.page_size)
+    first_query = build_wikidata_domain_index_query(limit=config.page_size, offset=0)
     current_query_hash = query_hash(first_query)
     page_count = 0
     row_count = 0
     object_keys: list[str] = []
-    last_entity_iri = ""
-    last_website_url = ""
+    last_offset = 0
 
     while config.max_pages is None or page_count < config.max_pages:
+        offset = page_count * config.page_size
         query = build_wikidata_domain_index_query(
             limit=config.page_size,
-            last_entity_iri=last_entity_iri or None,
-            last_website_url=last_website_url or None,
+            offset=offset,
         )
         payload = client.fetch(query, user_agent=config.user_agent)
         bindings = response_bindings(payload)
@@ -130,6 +106,7 @@ def pull_wikidata_domain_index_raw_objects(
 
         page_count += 1
         row_count += len(bindings)
+        last_offset = offset
         object_key = wikidata_domain_index_page_object_key(
             retrieved_date=retrieved_date,
             run_id=run_id,
@@ -141,7 +118,6 @@ def pull_wikidata_domain_index_raw_objects(
             bucket=WIKIDATA_DOMAIN_INDEX_RAW_BUCKET,
         )
         object_keys.append(object_key)
-        last_entity_iri, last_website_url = _cursor_from_last_binding(bindings[-1])
 
         if len(bindings) < config.page_size:
             break
@@ -161,8 +137,7 @@ def pull_wikidata_domain_index_raw_objects(
         "query_hash": current_query_hash,
         "row_count": row_count,
         "page_count": page_count,
-        "last_entity_iri": last_entity_iri,
-        "last_website_url": last_website_url,
+        "last_offset": last_offset,
         "started_at": retrieved_at,
         "completed_at": datetime.now(UTC).isoformat(),
         "objects": object_keys,
@@ -228,15 +203,3 @@ def delete_old_wikidata_domain_index_raw_objects(
         stale_keys,
         bucket=WIKIDATA_DOMAIN_INDEX_RAW_BUCKET,
     )
-
-
-def _cursor_from_last_binding(binding: dict[str, Any]) -> tuple[str, str]:
-    entity_iri = binding_value(binding, "entity")
-    website_url = binding_value(binding, "website")
-    if not entity_iri or not website_url:
-        raise ValueError("Wikidata domain-index binding is missing entity or website")
-    return entity_iri, website_url
-
-
-def _sparql_string_literal(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"')

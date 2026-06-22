@@ -575,30 +575,28 @@ def test_wikidata_raw_pull_discovers_active_exchanges_before_downloading_pages()
     assert client.company_offsets == {"QEX1": [0, 1], "QEX2": [0, 1]}
 
 
-def test_wikidata_domain_index_query_uses_stable_cursor_pagination() -> None:
+def test_wikidata_domain_index_query_uses_offset_pagination_without_labels_or_global_sort() -> None:
     from dagster_v3.defs.wikidata.domain_index import (
         build_wikidata_domain_index_query,
     )
 
-    first_page_query = build_wikidata_domain_index_query(limit=100)
-    cursor_query = build_wikidata_domain_index_query(
+    first_page_query = build_wikidata_domain_index_query(limit=100, offset=0)
+    second_page_query = build_wikidata_domain_index_query(
         limit=100,
-        last_entity_iri="http://www.wikidata.org/entity/Q123",
-        last_website_url="https://example.com",
+        offset=100,
     )
 
     assert "?entity wdt:P856 ?website" in first_page_query
-    assert "?entityDescription" in first_page_query
-    assert "ORDER BY ?entity ?website" in first_page_query
+    assert "?entityLabel" not in first_page_query
+    assert "?entityDescription" not in first_page_query
+    assert "SERVICE wikibase:label" not in first_page_query
+    assert "ORDER BY" not in first_page_query
     assert "LIMIT 100" in first_page_query
-    assert "OFFSET" not in first_page_query
+    assert "OFFSET 0" in first_page_query
     assert "FILTER (" not in first_page_query
 
-    assert 'STR(?entity) > "http://www.wikidata.org/entity/Q123"' in cursor_query
-    assert 'STR(?entity) = "http://www.wikidata.org/entity/Q123"' in cursor_query
-    assert 'STR(?website) > "https://example.com"' in cursor_query
-    assert cursor_query.index("FILTER (") < cursor_query.index("ORDER BY")
-    assert cursor_query.index("ORDER BY") < cursor_query.index("LIMIT 100")
+    assert "LIMIT 100" in second_page_query
+    assert "OFFSET 100" in second_page_query
 
 
 def test_wikidata_domain_index_raw_pull_writes_pages_and_manifest() -> None:
@@ -668,8 +666,7 @@ def test_wikidata_domain_index_raw_pull_writes_pages_and_manifest() -> None:
     assert manifest["row_count"] == 3
     assert manifest["page_count"] == 2
     assert manifest["objects"] == [page_one_key, page_two_key]
-    assert manifest["last_entity_iri"] == "http://www.wikidata.org/entity/Q3"
-    assert manifest["last_website_url"] == "https://gamma.example"
+    assert manifest["last_offset"] == 2
     assert len(manifest["query_hash"]) == 64
 
     assert result.metadata["bucket"] == WIKIDATA_DOMAIN_INDEX_RAW_BUCKET
@@ -678,8 +675,10 @@ def test_wikidata_domain_index_raw_pull_writes_pages_and_manifest() -> None:
     assert result.metadata["deleted_old_raw_object_count"] == 1
     assert len(client.queries) == 2
     assert "FILTER (" not in client.queries[0]
-    assert 'STR(?entity) > "http://www.wikidata.org/entity/Q2"' in client.queries[1]
-    assert 'STR(?website) > "https://beta.example"' in client.queries[1]
+    assert "ORDER BY" not in client.queries[0]
+    assert "SERVICE wikibase:label" not in client.queries[0]
+    assert "OFFSET 0" in client.queries[0]
+    assert "OFFSET 2" in client.queries[1]
 
 
 def test_wikidata_query_uses_stable_order_for_offset_pagination() -> None:
