@@ -46,3 +46,13 @@ def test_enrich_domains_full_flow():
     # b had no deterministic contact -> LLM recall added one tagged 'llm'
     b = results["b.sk"]
     assert any(e.email == "found@b.sk" and e.source_method == "llm" for e in b.emails)
+
+
+def test_enrich_domains_without_llm_runs_deterministic_only():
+    results = {e.target.root_domain: e for e in enrich.enrich_domains(
+        _targets(), resolve=_fake_resolve, fetch=_fake_fetch, llm=None,
+        crawl_id="CC-MAIN-2025-21", max_workers=2)}
+    a = results["a.sk"]
+    assert a.fetch_status == "ok" and a.ico == "31333532"  # deterministic still works
+    assert a.industry is None                              # no LLM -> no industry
+    assert results["b.sk"].emails == []                    # no LLM recall on the miss residual

@@ -1,4 +1,6 @@
+import json
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -59,18 +61,24 @@ def resolve_via_duckdb(domains: list[str], *, crawl_id: str, duckdb_con) -> dict
     return out
 
 
+# CDX is rate-limited, so keep concurrency low; resolve_via_cdx retries 429/503.
+DEFAULT_CDX_MAX_WORKERS = 4
+
+
 def resolve_via_cdx_batch(
     domains: list[str],
     *,
     crawl_id: str,
     session: requests.Session | None = None,
-    max_workers: int = 8,
+    max_workers: int = DEFAULT_CDX_MAX_WORKERS,
 ) -> dict[str, IndexRecord]:
     """Resolve homepage records for a batch of domains via the public CDX HTTP API (no AWS).
 
-    Threads `resolve_via_cdx` per domain and returns only the resolved ones.
-    This is the primary resolver path: the commoncrawl S3 bucket does not allow
-    anonymous access, so the credential-free CDX API is used instead of DuckDB/S3.
+    Threads `resolve_via_cdx` per domain (low concurrency — CDX rate-limits) and
+    returns only the resolved ones. This is the primary resolver path: the
+    commoncrawl S3 bucket does not allow anonymous access, so the credential-free
+    CDX API is used instead of DuckDB/S3. Pass a plain `requests.Session` (NOT an
+    auto-raising session) so the per-request retry logic can inspect 429/503.
     """
     http = session or requests.Session()
 
@@ -83,21 +91,45 @@ def resolve_via_cdx_batch(
     return {domain: rec for domain, rec in results if rec is not None}
 
 
-def resolve_via_cdx(domain: str, *, crawl_id: str, session: requests.Session | None = None) -> IndexRecord | None:
-    """Per-domain fallback using the public CDX API (no AWS)."""
+def resolve_via_cdx(
+    domain: str,
+    *,
+    crawl_id: str,
+    session: requests.Session | None = None,
+    max_attempts: int = 4,
+    backoff_seconds: float = 2.0,
+) -> IndexRecord | None:
+    """Resolve a domain's homepage record via the public CDX API (no AWS).
+
+    Retries 429/503 (CDX rate-limiting) and connection errors with linear backoff;
+    treats 404 (domain/URL not captured in this crawl) and empty results as a clean
+    miss. Use a plain `requests.Session` so non-2xx responses are inspected, not raised.
+    """
     http = session or requests.Session()
-    response = http.get(
-        CDX_URL.format(crawl=crawl_id),
-        params={"url": f"{domain}/", "output": "json", "filter": "status:200", "limit": 20},
-        headers={"User-Agent": USER_AGENT}, timeout=60,
-    )
-    if response.status_code != 200 or not response.text.strip():
-        return None
-    rows: list[IndexRow] = []
-    for line in response.text.splitlines():
-        import json
-        rec = json.loads(line)
-        host = (rec.get("url", "").split("/")[2] if "://" in rec.get("url", "") else domain).removeprefix("www.")
-        rows.append((host, "/", rec.get("status", ""), rec.get("mime", ""), rec.get("timestamp", ""),
-                     rec.get("filename", ""), rec.get("offset", 0), rec.get("length", 0), rec.get("url", "")))
-    return select_best_record(domain, rows, crawl_id=crawl_id)
+    url = CDX_URL.format(crawl=crawl_id)
+    params = {"url": f"{domain}/", "output": "json", "filter": "status:200", "limit": 20}
+    last_status: int | None = None
+    for attempt in range(max_attempts):
+        try:
+            response = http.get(url, params=params, headers={"User-Agent": USER_AGENT}, timeout=60)
+        except requests.RequestException as exc:
+            LOGGER.debug("CDX connection error for %s: %s", domain, exc)
+            time.sleep(backoff_seconds * (attempt + 1))
+            continue
+        last_status = response.status_code
+        if response.status_code in (429, 503):  # rate-limited -> back off and retry
+            time.sleep(backoff_seconds * (attempt + 1))
+            continue
+        if response.status_code == 404:  # not captured in this crawl
+            return None
+        if response.status_code != 200 or not response.text.strip():
+            return None
+        rows: list[IndexRow] = []
+        for line in response.text.splitlines():
+            rec = json.loads(line)
+            host = (rec.get("url", "").split("/")[2] if "://" in rec.get("url", "") else domain).removeprefix("www.")
+            rows.append((host, "/", rec.get("status", ""), rec.get("mime", ""), rec.get("timestamp", ""),
+                         rec.get("filename", ""), rec.get("offset", 0), rec.get("length", 0), rec.get("url", "")))
+        return select_best_record(domain, rows, crawl_id=crawl_id)
+    LOGGER.debug("CDX exhausted retries for %s (last status %s)", domain, last_status)
+    return None

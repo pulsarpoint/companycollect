@@ -13,7 +13,8 @@ ResolveFn = Callable[..., dict[str, IndexRecord]]
 FetchFn = Callable[..., FetchedPage | None]
 
 
-def _enrich_one(target: DomainTarget, record: IndexRecord | None, *, fetch: FetchFn, llm: LLMArm) -> DomainEnrichment:
+def _enrich_one(target: DomainTarget, record: IndexRecord | None, *, fetch: FetchFn,
+                llm: LLMArm | None) -> DomainEnrichment:
     if record is None:
         return DomainEnrichment(target=target, fetch_status="not_in_index")
 
@@ -33,20 +34,21 @@ def _enrich_one(target: DomainTarget, record: IndexRecord | None, *, fetch: Fetc
         technologies=tech.detect_technologies(page.html, page.headers),
         fetch_ms=fetch_ms,
     )
-    parsed_text = extract.parse_html(page.html).text
-    t1 = time.monotonic()
-    enr.industry = llm.classify_industry(parsed_text)
-    if not enr.emails and not enr.phones:  # contact-recall only on the deterministic-miss residual
-        extra_emails, extra_phones = llm.recover_contacts(parsed_text)
-        enr.emails.extend(extra_emails)
-        enr.phones.extend(extra_phones)
-    enr.llm_ms = (time.monotonic() - t1) * 1000.0
+    if llm is not None:  # LLM arm is optional (deterministic-only when no endpoint configured)
+        parsed_text = extract.parse_html(page.html).text
+        t1 = time.monotonic()
+        enr.industry = llm.classify_industry(parsed_text)
+        if not enr.emails and not enr.phones:  # contact-recall only on the deterministic-miss residual
+            extra_emails, extra_phones = llm.recover_contacts(parsed_text)
+            enr.emails.extend(extra_emails)
+            enr.phones.extend(extra_phones)
+        enr.llm_ms = (time.monotonic() - t1) * 1000.0
 
     return enr
 
 
 def enrich_domains(targets: list[DomainTarget], *, resolve: ResolveFn, fetch: FetchFn,
-                   llm: LLMArm, crawl_id: str, max_workers: int = 16) -> list[DomainEnrichment]:
+                   llm: LLMArm | None, crawl_id: str, max_workers: int = 16) -> list[DomainEnrichment]:
     records = resolve([t.root_domain for t in targets], crawl_id=crawl_id)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         return list(pool.map(

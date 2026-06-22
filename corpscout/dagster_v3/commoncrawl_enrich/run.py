@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import duckdb
+import requests
 from dlt.sources.helpers import requests as dlt_requests
 
 from commoncrawl_enrich import enrich, index_client, metrics, parquet_out, warc
@@ -57,22 +58,36 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     targets = load_targets(args.manifest, limit=args.limit)
-    # Use repo-standard dlt session (built-in 429/5xx retry/backoff).
-    session = dlt_requests.Session()
-    llm = from_openai(
-        base_url=os.environ["COMMONCRAWL_LLM_BASE_URL"],
-        model=os.environ["COMMONCRAWL_LLM_MODEL"],
-        api_key=os.environ.get("COMMONCRAWL_LLM_API_KEY", "not-needed"),
-        enable_thinking=True,
-    )
+    # CDX needs a PLAIN session so the retry logic can inspect 429/503; the WARC fetch
+    # uses the repo-standard dlt session (built-in retry/backoff) against data.commoncrawl.org.
+    cdx_session = requests.Session()
+    fetch_session = dlt_requests.Session()
+
+    # LLM arm is optional: with no endpoint configured we run deterministic-only.
+    llm_base = os.environ.get("COMMONCRAWL_LLM_BASE_URL")
+    if llm_base:
+        llm = from_openai(
+            base_url=llm_base,
+            model=os.environ["COMMONCRAWL_LLM_MODEL"],
+            api_key=os.environ.get("COMMONCRAWL_LLM_API_KEY", "not-needed"),
+            enable_thinking=True,
+        )
+    else:
+        llm = None
+        LOGGER.warning(
+            "COMMONCRAWL_LLM_BASE_URL not set — running deterministic-only "
+            "(no industry classification or LLM contact-recall)"
+        )
+
     report = run_pipeline(
         targets, out_dir=args.out,
-        # Resolve via credential-free CDX HTTP API (commoncrawl S3 bucket rejects anonymous
-        # unsigned requests; DuckDB httpfs cannot sign-as-anonymous against that bucket).
+        # Credential-free CDX HTTP API (commoncrawl S3 needs AWS auth — run the columnar
+        # resolver on AWS for full-scale; see README). CDX rate-limits, so concurrency is capped.
         resolve=lambda domains, *, crawl_id: index_client.resolve_via_cdx_batch(
-            domains, crawl_id=crawl_id, session=session, max_workers=args.max_workers,
+            domains, crawl_id=crawl_id, session=cdx_session,
+            max_workers=min(args.max_workers, index_client.DEFAULT_CDX_MAX_WORKERS),
         ),
-        fetch=lambda record: warc.fetch_page(record, session=session),
+        fetch=lambda record: warc.fetch_page(record, session=fetch_session),
         llm=llm, crawl_id=args.crawl_id, max_workers=args.max_workers,
     )
     LOGGER.info("Report: %s", json.dumps(report, indent=2))
