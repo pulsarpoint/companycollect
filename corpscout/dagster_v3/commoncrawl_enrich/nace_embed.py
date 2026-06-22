@@ -30,6 +30,8 @@ PAGE_INSTRUCTION = "Classify the business into its industry category"
 DEFAULT_MARGIN_THRESHOLD = 0.03  # spike: bare + margin>=0.03 -> 100% LLM agreement
 DEFAULT_PAGE_TYPE_THRESHOLD = 0.55  # validation: 0 real-business FP at >=0.55 (real max ~0.49)
 _EMBED_BATCH = 128
+_EMBED_MAX_CHARS = 6000  # keep input under the 8192-token model limit (worst-case ~1 token/char
+#                          for token-dense scripts; 8000 chars overflowed with the query prefix)
 
 
 def division(code: str) -> str:
@@ -71,6 +73,7 @@ class EmbeddingClient:
         return self._model
 
     def embed(self, texts: list[str], instruction: str | None = None) -> np.ndarray:
+        texts = [t[:_EMBED_MAX_CHARS] for t in texts]  # bound input under model token limit
         if instruction:
             texts = [f"Instruct: {instruction}\nQuery: {t}" for t in texts]
         out: list[list[float]] = []

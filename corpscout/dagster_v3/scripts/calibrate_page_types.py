@@ -66,17 +66,25 @@ def main() -> None:
     ap.add_argument("--scan", type=int, default=30000)
     ap.add_argument("--content-cap", type=int, default=300)
     ap.add_argument("--exemplars-out", default="data/commoncrawl/parked_exemplars.parquet")
+    ap.add_argument("--content-out", default="data/commoncrawl/page_type_content.parquet")
     ap.add_argument("--prototypes-out", default="data/commoncrawl/page_type_prototypes.npz")
     args = ap.parse_args()
 
-    exemplars, content = mine_segments(args.segments, args.scan, args.content_cap)
+    # reuse cached mine (exemplars + content) so iterating the embedding/threshold side
+    # doesn't re-download 5 WET files
+    if Path(args.exemplars_out).exists() and Path(args.content_out).exists():
+        exemplars = pq.read_table(args.exemplars_out).to_pylist()
+        content = pq.read_table(args.content_out).to_pylist()
+        print(f"using cached mine: {len(exemplars)} exemplars, {len(content)} content")
+    else:
+        exemplars, content = mine_segments(args.segments, args.scan, args.content_cap)
+        Path(args.exemplars_out).parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(pa.Table.from_pylist(exemplars), args.exemplars_out)
+        pq.write_table(pa.Table.from_pylist(content), args.content_out)
     if len(exemplars) < 10:
         print(f"too few exemplars ({len(exemplars)}) to calibrate"); return
     print(f"\nmined {len(exemplars)} exemplars  {dict(Counter(r['signal'] for r in exemplars))}")
     print(f"mined {len(content)} real-content negatives")
-
-    Path(args.exemplars_out).parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pa.Table.from_pylist(exemplars), args.exemplars_out)
 
     cl = ne.EmbeddingClient(base_url="http://100.77.62.33:8000/v1")
     train, test = split_train_test(exemplars)
