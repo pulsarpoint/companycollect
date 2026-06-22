@@ -1,10 +1,82 @@
 # CommonCrawl domain enrichment — design
 
-**Status:** design (execution gated on the `open_page_rank` dataset being loaded).
-**Author:** brainstormed 2026-06-21.
-**Scope of this doc:** Phase 0 — a domain-enrichment spike that validates feasibility
-(first run **~10k** for numbers **and speed**, then optionally ~100k), architected as the
-seed of a reusable enrichment layer over the top-10M domains.
+**Status:** Phase-0 spike package (`commoncrawl_enrich`) built + extraction validated on live
+CommonCrawl data. **Scale architecture revised 2026-06-22 → whole-segment WET-first (see §0),
+benchmark-backed.** Full run targets AWS (us-east-1). Sections §1–§9 describe the original
+index-driven spike (which validated the *extraction logic*); §0 supersedes its *resolver/scale*
+approach.
+**Author:** brainstormed 2026-06-21; revised 2026-06-22.
+
+---
+
+## 0. Revision 2026-06-22 — whole-segment WET-first architecture (benchmark-validated)
+
+The Phase-0 spike package validated the **extraction logic** end-to-end on live data. A series of
+experiments then pivoted the **scale architecture** from per-domain index lookup to **whole-segment
+WET processing**. Every decision below is backed by a measured benchmark (all on CC-MAIN-2025-21).
+
+### Experiments & results
+
+| experiment | result | implication |
+|---|---|---|
+| **CDX index lookup** (per-domain, `index.commoncrawl.org`) | rate-limited: 503s under light concurrency; ~7/30 resolved; **0.24 dom/s** | unusable at scale (~11,400 h for 10M) |
+| **CommonCrawl S3 columnar index** (`s3://commoncrawl/…`) | **403** — not anonymously readable (confirmed via DuckDB *and* boto3-unsigned) | fast batch path needs a real AWS account |
+| **WARC fetch + extract** (per page) | works; IČO/emails/socials/tech extracted correctly | extraction logic sound |
+| **LLM contacts, think-ON** | **23 s/page** | thinking ruinous for extraction |
+| **LLM contacts, think-OFF** (20 pages) | **1.9 s/page**; emails DET=6 vs LLM=4; phones/addresses LLM-only | regex beats LLM on emails; LLM wins phones/addresses |
+| **LLM industry, OFF vs ON** (real businesses) | think-off matched NACE on 3/4 exactly (47.61, 62.01, 29.10), right division on 4th; **1.3 s vs ~18 s** | **non-thinking is good enough for industry** |
+| **WET text pass** (parse + email regex, 5,000 recs) | **2,723 records/sec**; 26% have an email; ~153 MB/file (vs ~1 GB WARC) | bulk pass is cheap + fast |
+
+### Recomputed full-crawl cost (≈90k files/crawl)
+- **WET text + email extraction over the *entire* crawl: ~19 core-days, ~14 TB download** (vs ~90 TB WARC) — trivially parallel.
+- **Industry (per-domain homepage, think-off):** bounded by #domains, batchable — ~5 days for 10M domains with modest vLLM concurrency (single-stream 163 core-days ÷ batch).
+- Net: WET + per-domain/think-off discipline cut the earlier WARC+LLM-every-page estimate (~50,000+ core-days) by **~1000×**.
+
+### Validated architecture (supersedes §3/§6 for scale)
+
+**Format follows data need:**
+
+| extract | needs | source |
+|---|---|---|
+| industry, emails, phones, addresses | page text | **WET** (pre-extracted plaintext; no HTML parse; ~5× smaller) |
+| socials | `<a href>` | **WARC** (WET strips links) |
+| technologies (Wappalyzer) | HTML + headers | **WARC** |
+
+**Three tiers:**
+1. **WET bulk pass (whole crawl, credential-free over `https://data.commoncrawl.org`):** stream every
+   `*.warc.wet.gz`, **regex emails** (regex beats the LLM here and is free) + stage per-domain
+   homepage text. ~19 core-days, ~14 TB.
+2. **Industry tier (per *domain*, homepage only):** LLM **think-off** (verified equal to thinking on
+   industry), batched on the local vLLM or a **cheap commercial model** (DeepSeek-V3 / Gemini Flash —
+   *non-reasoning* suffices); **confidence-gated escalation** to thinking only when confidence is low /
+   the label is only division-level.
+3. **WARC selective (optional):** only to add tech + href-socials, and only for the
+   **homepage-per-domain** set — never the bulk.
+
+**Extraction discipline (validated):** **hybrid** — regex for emails (exhaustive + free), LLM
+(think-off) for phones/addresses/socials and industry. **Think-off everywhere.**
+
+**Access reality:** off-AWS, read all public data over **`https://data.commoncrawl.org`** (no
+rate-limit on the data CDN — only the CDX *index API* throttles). The fast S3 columnar index needs an
+**AWS account**; the clean scale plan is to **run whole-segment processing on AWS (us-east-1)** where
+S3/CDN reads are free + fast (per commoncrawl.org/get-started). "Our S3" (the `~/.aws` `minio`/`rustfs`
+profiles) is a self-hosted store with no CommonCrawl data.
+
+### Carry-over from the built `commoncrawl_enrich` package
+- **Reused as-is:** extractors (`extract.py` IČO/emails/phones/socials — now urlparse-hardened against
+  WARC garbage), `tech.py`, `models.py`, the provider-agnostic LLM client (`llm.py`, think toggle),
+  Parquet output, metrics.
+- **Changes for scale:** the index resolver (CDX/columnar) is replaced by **whole-segment WET/WARC
+  streaming**; add `tldextract` (host → registrable-domain + subdomain); add a WET reader (warcio
+  `conversion` records).
+
+### Open items
+- **Batched-concurrent industry throughput** on the vLLM (to firm up the ~5-day figure) — not yet measured.
+- **Commercial industry model** comparison (DeepSeek/Gemini) — needs an API key in `.env`.
+- **WET coverage caveat:** WET strips `mailto:`/href, so emails-only-in-links + socials + tech need the
+  selective-WARC tier; quantify the WET-vs-WARC email loss.
+- Align `run.py` to read `.env`'s `COMMONCRAWL_LLM_BASE_MODEL` (it reads `COMMONCRAWL_LLM_MODEL`);
+  note `.env`'s `qwen3:6b` aliases the served `RedHatAI/Qwen3.6-35B-A3B-NVFP4`.
 
 ---
 
