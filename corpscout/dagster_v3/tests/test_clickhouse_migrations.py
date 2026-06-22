@@ -56,6 +56,9 @@ EXPECTED_MIGRATIONS = (
     "000043_corpscout_sk_financial_metrics",
     "000044_corpscout_nace_category_embeddings",
     "000045_corpscout_page_type_exemplars",
+    "000046_corpscout_commoncrawl_domains",
+    "000047_corpscout_commoncrawl_technologies",
+    "000048_corpscout_commoncrawl_page_signals",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -712,6 +715,50 @@ def test_page_type_exemplars_migration_covers_prototypes() -> None:
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
     assert "ORDER BY (page_type, root_domain)" in sql
     assert "DROP TABLE IF EXISTS corpscout.page_type_exemplars" in down_sql
+
+
+def test_commoncrawl_domains_migration_covers_industry_and_top3_audit() -> None:
+    sql = _migration_sql("000046_corpscout_commoncrawl_domains.up.sql")
+    down_sql = _migration_sql("000046_corpscout_commoncrawl_domains.down.sql")
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domains" in sql
+    for column_name in (
+        "crawl_id", "url", "root_domain", "subdomain", "emails", "email_count",
+        "page_type", "page_type_score", "nace_code", "nace_label", "nace_division",
+        "nace_confident", "nace_margin", "nace_score", "nace_method",
+        "nace_top3_codes", "nace_top3_labels", "nace_top3_scores",
+        "source_url", "source_run_id", "resolved_at",
+    ):
+        assert f"    {column_name} " in sql
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert "ORDER BY (root_domain, url, crawl_id)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domains" in down_sql
+
+
+def test_commoncrawl_technologies_migration_is_normalized_per_page_tech() -> None:
+    sql = _migration_sql("000047_corpscout_commoncrawl_technologies.up.sql")
+    down_sql = _migration_sql("000047_corpscout_commoncrawl_technologies.down.sql")
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_technologies" in sql
+    for column_name in (
+        "crawl_id", "url", "root_domain", "subdomain", "technology", "category",
+        "version", "confidence", "source_url", "source_run_id", "resolved_at",
+    ):
+        assert f"    {column_name} " in sql
+    # one row per page x technology -> technology is part of the sort key
+    assert "ORDER BY (root_domain, url, technology, crawl_id)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_technologies" in down_sql
+
+
+def test_commoncrawl_page_signals_migration_covers_emails_and_socials() -> None:
+    sql = _migration_sql("000048_corpscout_commoncrawl_page_signals.up.sql")
+    down_sql = _migration_sql("000048_corpscout_commoncrawl_page_signals.down.sql")
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_page_signals" in sql
+    for column_name in (
+        "crawl_id", "url", "root_domain", "subdomain", "emails", "social_platforms",
+        "source_url", "source_run_id", "resolved_at",
+    ):
+        assert f"    {column_name} " in sql
+    assert "ORDER BY (root_domain, url, crawl_id)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_page_signals" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

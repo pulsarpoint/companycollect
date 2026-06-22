@@ -27,7 +27,9 @@ class IndustryResult:
     nace_confident: bool = False
     nace_margin: float = 0.0
     nace_score: float = 0.0
-    nace_top3: list[str] = field(default_factory=list)
+    nace_top3: list[str] = field(default_factory=list)         # audit log: top-3 codes
+    nace_top3_labels: list[str] = field(default_factory=list)  # audit log: top-3 labels
+    nace_top3_scores: list[float] = field(default_factory=list)  # audit log: top-3 scores
     method: str = ""             # keyword_page_type | embedding_page_type | embedding | llm
 
     @property
@@ -87,7 +89,8 @@ class PageClassifier:
                     results[i] = IndustryResult(
                         nace_code=c.code, nace_label=c.label, nace_division=c.division,
                         nace_confident=c.confident, nace_margin=c.margin, nace_score=c.score,
-                        nace_top3=list(c.top3_codes), page_type_score=c.page_type_score,
+                        nace_top3=list(c.top3_codes), nace_top3_labels=list(c.top3_labels),
+                        nace_top3_scores=list(c.top3_scores), page_type_score=c.page_type_score,
                         method="embedding",
                     )
 
@@ -101,7 +104,8 @@ class PageClassifier:
                             nace_code=guess.nace_hint, nace_label=guess.label,
                             nace_division=nace_embed.division(guess.nace_hint),
                             nace_confident=guess.confidence >= 60, nace_score=r.nace_score,
-                            nace_top3=r.nace_top3, method="llm",
+                            nace_top3=r.nace_top3, nace_top3_labels=r.nace_top3_labels,
+                            nace_top3_scores=r.nace_top3_scores, method="llm",
                         )
 
         return [r if r is not None else IndustryResult() for r in results]

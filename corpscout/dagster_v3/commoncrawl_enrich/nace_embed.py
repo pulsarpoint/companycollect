@@ -22,7 +22,7 @@ gating are unit-testable without a live endpoint.
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 import numpy as np
@@ -224,6 +224,7 @@ class NaceClassification:
     confident: bool      # gate decision (margin or consensus, AND not a structural page type)
     top3_codes: list[str]
     top3_scores: list[float]
+    top3_labels: list[str] = field(default_factory=list)  # audit log for manual verification
     page_type: str = ""    # structural page type if detected (parked/directory_listing/...),
     page_type_score: float = 0.0  # else "" -> page has business content, NACE applies
     method: str = "embedding"
@@ -309,16 +310,17 @@ def classify_matrix(P: np.ndarray, ref: NaceReference, *,
     for i in range(sims.shape[0]):
         idx = order[i]
         codes = [ref.codes[j] for j in idx]
+        labels = [ref.labels[j] for j in idx]
         scores = [float(sims[i, j]) for j in idx]
         divs = [ref.divisions[j] for j in idx]
         margin = scores[0] - scores[1] if len(scores) > 1 else scores[0]
         consensus = len(set(divs)) == 1
         is_page_type = float(pt_scores[i]) >= page_type_threshold
         results.append(NaceClassification(
-            code=codes[0], label=ref.labels[idx[0]], score=scores[0], margin=margin,
+            code=codes[0], label=labels[0], score=scores[0], margin=margin,
             division=divs[0], division_consensus=consensus,
             confident=((margin >= margin_threshold or consensus) and not is_page_type),
-            top3_codes=codes, top3_scores=scores,
+            top3_codes=codes, top3_scores=scores, top3_labels=labels,
             page_type=pt_labels[i] if is_page_type else "",
             page_type_score=float(pt_scores[i]),
         ))
