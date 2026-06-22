@@ -7,6 +7,7 @@ from warcio.warcwriter import WARCWriter
 
 from commoncrawl_enrich import ingest
 from commoncrawl_enrich.classifier import IndustryResult
+from commoncrawl_enrich.models import Technology
 
 RESOLVED = datetime(2026, 6, 23, tzinfo=timezone.utc)
 
@@ -25,6 +26,17 @@ class FakeCH:
         for sql, rows in self.inserts:
             if table in sql:
                 out.extend(rows or [])
+        return out
+
+
+class FakeWappalyzer:
+    """Returns WordPress for any page whose body contains 'wp-content'."""
+
+    def analyze_batch(self, items):
+        out = {}
+        for key, _headers, body in items:
+            out[key] = ([Technology(technology="WordPress", category="CMS", version="6.1",
+                                     confidence=100)] if "wp-content" in body else [])
         return out
 
 
@@ -91,7 +103,7 @@ def test_process_warc_to_clickhouse_writes_tech_and_signals(tmp_path):
     ])
     ch = FakeCH()
     stats = ingest.process_warc_to_clickhouse(
-        str(warc), ch_client=ch, crawl_id="CC-MAIN-2026-25",
+        str(warc), ch_client=ch, crawl_id="CC-MAIN-2026-25", wappalyzer=FakeWappalyzer(),
         source_url="http://data/x.warc.gz", source_run_id="run1", resolved_at=RESOLVED)
     tech_rows = ch.rows_for(ingest.TECHNOLOGIES_TABLE)
     signal_rows = ch.rows_for(ingest.PAGE_SIGNALS_TABLE)

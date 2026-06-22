@@ -26,7 +26,32 @@ _HEADER_FINGERPRINTS: list[tuple[str, str, str, str]] = [
 ]
 
 
+def _to_multidict(headers: dict[str, str] | None) -> dict[str, list[str]]:
+    return {k: [v] for k, v in (headers or {}).items()}
+
+
+_CLIENT: object = None  # lazy: WappalyzerClient | False (no service configured)
+
+
+def _wappalyzer_client():
+    global _CLIENT
+    if _CLIENT is None:
+        from commoncrawl_enrich.wappalyzer_client import WappalyzerClient
+        _CLIENT = WappalyzerClient.from_env() or False
+    return _CLIENT or None
+
+
 def detect_technologies(html: str, headers: dict[str, str]) -> list[Technology]:
+    """Detect technologies via the wappalyzer-service (wappalyzergo) when configured
+    (COMMONCRAWL_WAPPALYZER_URL); otherwise fall back to the built-in fingerprints.
+    For bulk WARC processing prefer WappalyzerClient.analyze_batch directly."""
+    client = _wappalyzer_client()
+    if client is not None:
+        return client.analyze(_to_multidict(headers), html or "")
+    return _builtin_detect(html, headers)
+
+
+def _builtin_detect(html: str, headers: dict[str, str]) -> list[Technology]:
     low_html = (html or "").lower()
     low_headers = {k.lower(): str(v).lower() for k, v in (headers or {}).items()}
     out: list[Technology] = []

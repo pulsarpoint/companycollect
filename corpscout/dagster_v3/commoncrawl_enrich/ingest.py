@@ -13,8 +13,9 @@ from datetime import datetime, timezone
 
 from warcio.archiveiterator import ArchiveIterator
 
-from commoncrawl_enrich import extract, segment, tech
+from commoncrawl_enrich import extract, segment
 from commoncrawl_enrich.classifier import PageClassifier
+from commoncrawl_enrich.wappalyzer_client import WappalyzerClient
 
 DOMAINS_TABLE = "corpscout.commoncrawl_domains"
 TECHNOLOGIES_TABLE = "corpscout.commoncrawl_technologies"
@@ -92,18 +93,33 @@ def process_wet_to_clickhouse(
     }
 
 
+def _headers_multidict(http) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for key, value in (http.headers if http else []):
+        out.setdefault(key, []).append(value)
+    return out
+
+
 def process_warc_to_clickhouse(
-    source: str, *, ch_client, crawl_id: str, source_url: str | None = None,
-    source_run_id: str = "", resolved_at: datetime | None = None, limit: int | None = None,
+    source: str, *, ch_client, crawl_id: str, wappalyzer: WappalyzerClient | None = None,
+    source_url: str | None = None, source_run_id: str = "",
+    resolved_at: datetime | None = None, limit: int | None = None,
     session=None, batch_size: int = 2000,
 ) -> dict:
-    """Process one WARC file -> append per-page technologies + page signals (emails/socials)."""
+    """Process one WARC file -> append per-page technologies + page signals (emails/socials).
+
+    Technologies come from the wappalyzer-service (wappalyzergo) in one batch call per
+    file; pass `wappalyzer` or set COMMONCRAWL_WAPPALYZER_URL. Without it, no technology
+    rows are produced (emails/socials still are).
+    """
     resolved_at = resolved_at or datetime.now(timezone.utc)
     source_url = source_url if source_url is not None else (
         source if str(source).startswith(("http://", "https://")) else "")
+    wappalyzer = wappalyzer or WappalyzerClient.from_env()
     stream = segment._open_stream(source, session)
     signal_rows: list[tuple] = []
-    tech_rows: list[tuple] = []
+    tech_items: list[tuple[str, dict, str]] = []  # (key, headers, body) for wappalyzer
+    page_host: dict[str, tuple[str, str]] = {}     # key -> (root, subdomain)
     pages = 0
     try:
         for record in ArchiveIterator(stream):
@@ -117,19 +133,26 @@ def process_warc_to_clickhouse(
             uri = record.rec_headers.get_header("WARC-Target-URI") or ""
             root, sub = segment._host(uri)
             parsed = extract.parse_html(html)
-            headers = {k: v for k, v in (http.headers if http else [])}
             emails = [e.email for e in extract.extract_emails(html)]
             socials = sorted({s.platform for s in extract.extract_socials(parsed.links)})
             signal_rows.append((crawl_id, uri, root, sub, emails, socials,
                                 source_url, source_run_id, resolved_at))
-            for t in tech.detect_technologies(html, headers):
-                tech_rows.append((crawl_id, uri, root, sub, t.technology, t.category,
-                                  t.version, int(t.confidence), source_url, source_run_id, resolved_at))
+            key = f"{pages}\t{uri}"  # unique per record (URLs can repeat within a WARC)
+            tech_items.append((key, _headers_multidict(http), html))
+            page_host[key] = (uri, root, sub)
             pages += 1
             if limit and pages >= limit:
                 break
     finally:
         stream.close()
+
+    tech_rows: list[tuple] = []
+    if wappalyzer is not None and tech_items:
+        for key, techs in wappalyzer.analyze_batch(tech_items).items():
+            uri, root, sub = page_host[key]
+            for t in techs:
+                tech_rows.append((crawl_id, uri, root, sub, t.technology, t.category,
+                                  t.version, int(t.confidence), source_url, source_run_id, resolved_at))
 
     _insert(ch_client, TECHNOLOGIES_TABLE, TECHNOLOGIES_COLUMNS, tech_rows, batch_size)
     _insert(ch_client, PAGE_SIGNALS_TABLE, PAGE_SIGNALS_COLUMNS, signal_rows, batch_size)
