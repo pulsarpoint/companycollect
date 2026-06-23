@@ -1,124 +1,149 @@
-# CommonCrawl WET → Industry Pipeline (+ one-file benchmark) — Design
+# CommonCrawl Processing — Worker Package + Control Plane — Design
 
-**Status:** design (plan-only). Scoped to the WET pipeline and a one-file benchmark.
-The WARC/technology pipeline, sharded runner, ledger-driven durable loop, and Dagster
-triggers are **separate follow-up specs** (this doc establishes the shape they plug into).
+**Status:** design (plan-only). Built in two phases:
+- **Phase 1 (buildable now):** a stateless, dockerized **WET worker** — WET S3 path in → one
+  Parquet out (local or S3) — plus a one-file benchmark. Independent of the control plane.
+- **Phase 2 (next spec):** the **control plane** — NATS JetStream work queue, an orchestrator,
+  and a SQLite ledger — that drives N workers in parallel.
+
+The WARC/technology worker reuses the same shape (separate spec; adds the wappalyzer sidecar
+and multi-host scale).
 
 ## Context
 
-CommonCrawl publishes one crawl per month, id `CC-MAIN-YYYY-WW` (year + ISO week of the
-crawl start; e.g. `CC-MAIN-2026-25` = June 2026). 125 crawls exist back to 2008. Each crawl
-is **100,000 WET + 100,000 WARC + 100,000 WAT** files (1:1). WET ≈ 150 MB/file (~15 TB/crawl,
-plaintext, no HTTP headers); WARC ≈ 1 GB/file (~100 TB/crawl, full HTTP response).
+One crawl per month, id `CC-MAIN-YYYY-WW` (year + ISO week; `CC-MAIN-2026-25` = June 2026),
+125 crawls back to 2008. Each crawl = **100,000 WET + 100,000 WARC + 100,000 WAT** files (1:1).
+WET ≈ 150 MB/file (~15 TB/crawl, plaintext, no HTTP headers). We process **one crawl per
+month**; historical backfill is optional later via the same machinery.
 
-We process **one crawl per month** — keeping up with new releases is enough; historical
-backfill is optional later (same machinery, enqueue an older crawl when idle).
+The classification stack is built and tested: `nace_embed` (NACE reference matrix +
+`classify_pages` + page-type prototypes), `page_types` (keyword `match_signal`),
+`classifier.PageClassifier` (keyword → embedding page-type/NACE → LLM tail), and `ingest`
+(`process_wet_to_clickhouse`, `DOMAINS_COLUMNS`). Reference data lives in ClickHouse
+(044/045) and as local `.npz`. Output tables exist (046 `commoncrawl_domains`,
+047 `commoncrawl_technologies`, 048 `commoncrawl_page_signals`). Industry classification calls
+the shared **DGX embedding endpoint** (Qwen3-Embedding-8B), which **degrades under
+concurrency** — this is the hard cap on parallelism (see Decisions).
 
-The classification stack already exists and is tested: `nace_embed` (NACE reference matrix +
-`classify_pages` with the margin/division-consensus gate + page-type prototypes),
-`page_types` (keyword `match_signal`), `classifier.PageClassifier` (keyword → embedding
-page-type/NACE → LLM tail), and `ingest.process_wet_to_clickhouse`. Reference data lives in
-ClickHouse (`nace_category_embeddings`, `page_type_exemplars`, migrations 044/045) and as
-local `.npz` snapshots. Output tables exist (migrations 046 `commoncrawl_domains`,
-047 `commoncrawl_technologies`, 048 `commoncrawl_page_signals`).
-
-## Goals
-
-1. **A full one-WET-file flow**: download a WET file → local S3 → process with the
-   `PageClassifier` → write **one Parquet per WET file** (column order = `commoncrawl_domains`)
-   → the Parquet is directly loadable into ClickHouse.
-2. **Benchmark it** to measure, on a real file: download time, process time, homepages/file,
-   Parquet size (bytes/row and bytes/file), and project to a full crawl (×100,000):
-   core-time, local Parquet storage, download volume. These numbers decide the worker pool
-   size and storage budget for the monthly run.
-
-Non-goals (separate specs): WARC pipeline, sharding/worker fleet, ledger, Temporal loop,
-Dagster trigger/sensor, AWS backfill.
-
-## Architecture (where this fits)
-
-Two **independent** monthly pipelines — different volume, speed, and cadence, so never
-coupled in one runner:
-
-- **WET → industry** (this spec): homepages only → `commoncrawl_domains`. Light (~15 TB,
-  homepage fraction). Classifier + embedder loaded once, reused across files.
-- **WARC → technology** (future): all pages → `commoncrawl_technologies` +
-  `commoncrawl_page_signals`. Heavy (~100 TB), sharded across workers, wappalyzer sidecar.
-
-Both will share a future **ledger** keyed `(crawl_id, kind, file_index)` and a durable loop;
-Dagster triggers + monitors. Not built in this spec.
-
-### Decision: one Parquet per WET file
-
-**Yes — 1:1 file→Parquet.** Rationale: a WET file is the atomic download+process unit, so
-1:1 makes processing **resumable** (Parquet exists ⇒ file done), **parallelizable** (workers
-never share a file), and maps 1:1 to the future ledger row. ClickHouse loads it with no custom
-code (`INSERT INTO corpscout.commoncrawl_domains SELECT * FROM s3('…/CC-MAIN-…-NNNNN.parquet')`,
-or glob a shard). The only risk is many small files (100k/crawl); the benchmark's bytes/file
-number tells us whether to later batch N files into one segment-Parquet. **Start 1:1; revisit
-only if files are wastefully small.**
-
-## Components
-
-1. **`ingest.build_wet_domain_rows(source, *, classifier, crawl_id, …) -> list[tuple]`**
-   — extract the existing row-building out of `process_wet_to_clickhouse` (stream homepages →
-   classify → build `commoncrawl_domains` tuples). `process_wet_to_clickhouse` becomes
-   `build_wet_domain_rows(...)` + `_insert(...)`. No behaviour change; just a shared seam so
-   the row-builder feeds both the ClickHouse sink and the Parquet sink.
-
-2. **`ingest.DOMAINS_PARQUET_SCHEMA` + `ingest.write_domain_rows_parquet(rows, out_path)`**
-   — pyarrow schema whose column order == `DOMAINS_COLUMNS` (so the Parquet is CH-loadable),
-   list/timestamp types matching the migration. Writes one Parquet.
-
-3. **`scripts/benchmark_wet.py`** — the one-file flow + measurement:
-   - load `NaceReference`/`PrototypeSet` from local `.npz`, `EmbeddingClient.from_env()`,
-     optional LLM (env); build `PageClassifier`.
-   - resolve latest crawl + first WET url (`segment.latest_crawl` / `first_wet_url`).
-   - download to a temp file; if S3 enabled (default), `put_object` then `download_file`
-     back (mirrors the real download→local-S3→process path); `--no-s3` skips the round-trip.
-   - `build_wet_domain_rows(...)` → `write_domain_rows_parquet(...)`.
-   - print per-phase timings, homepages, Parquet size (bytes/row, bytes/file), industry /
-     page-type / email counts, and the ×100,000 projection (core-days, storage, download TB).
-   - flags: `--segment-index`, `--limit`, `--no-s3`, `--no-llm-tail`.
-
-## Data flow
+## Architecture (full, both phases)
 
 ```
-latest_crawl() ─▶ first_wet_url(segment_index)
-       │
-       ▼  download (requests, streamed)
-   temp .warc.wet.gz ──(optional)──▶ local S3 put_object ──▶ download_file back
-       │
-       ▼  build_wet_domain_rows(classifier)   # homepages → keyword/embedding/LLM-tail
-   commoncrawl_domains rows
-       │
-       ▼  write_domain_rows_parquet
-   data/commoncrawl/benchmark/CC-MAIN-…-NNNNN.warc.wet.parquet   # 1 file, CH-loadable
-       │
-       ▼  (manual, to verify) INSERT INTO corpscout.commoncrawl_domains SELECT * FROM file(...)
+                 ┌──────────────┐   list crawl files, enqueue pending
+                 │ orchestrator │───────────────────────────────────┐
+                 │ (1 process)  │                                    ▼
+                 │  owns SQLite │                            ┌───────────────┐
+                 │   ledger     │◀── done/failed (NATS) ──────│ NATS JetStream│
+                 └──────────────┘                            │  work queue   │
+                        ▲                                    └───────┬───────┘
+                        │ updates ledger (sole writer)               │ pull task
+                        │                                    ┌───────┴────────┐
+                        └──────────────────── ack ───────────│  worker × N    │
+                                                             │ WET→Parquet    │──▶ Parquet (local/S3)
+                                                             │ (stateless)    │
+                                                             └────────────────┘
+                                                                  │ calls
+                                                                  ▼
+                                                        DGX embedding endpoint (shared, caps N)
+
+   (separate periodic step) INSERT INTO corpscout.commoncrawl_domains SELECT * FROM s3(glob)
 ```
 
-## Error handling
+- **Worker (Phase 1):** stateless. Input = one WET file (S3 path or CDN url) + config; output =
+  one Parquet (local or S3), named deterministically by `(crawl_id, file_index)`. Loads the
+  reference matrices **once** (baked into the image). Never touches the ledger or ClickHouse.
+- **NATS JetStream (Phase 2):** durable work-queue stream (orchestrator publishes file tasks) +
+  a completion subject (workers publish `done`/`failed`). Explicit ack, ack-wait redelivery on
+  crash, `max-deliver` + dead-letter so a permanently-bad file stops after K tries.
+- **Orchestrator (Phase 2):** single process; **sole writer** of the SQLite ledger. Monthly:
+  resolve latest crawl, list `wet.paths.gz`, enqueue files not `done`, consume completions,
+  update the ledger, signal "crawl complete" when `done == file_count`.
+- **SQLite ledger (Phase 2):** one file on the orchestrator host;
+  `commoncrawl_file_ledger(crawl_id, kind, file_index, status, attempts, error, finished_at)`.
+  Single-writer ⇒ no lock contention; workers stay multi-host via NATS. Plain SQL behind a
+  small interface ⇒ swap to Postgres later if the orchestrator ever needs HA.
+- **ClickHouse loading:** a **separate** periodic step globs the Parquet shard into
+  `commoncrawl_domains`. Not the worker's job (keeps the worker retry-safe and decoupled).
 
-- Streamed download with the existing `requests` retry session; a malformed record never
-  crashes the loop (decode with `errors="replace"`, already the case).
-- Empty file → zero rows → an empty Parquet with the correct schema (still CH-loadable).
-- Embedding endpoint required; LLM tail optional (`--no-llm-tail`, or absent
-  `COMMONCRAWL_LLM_BASE_URL` → embedding-only). Benchmark reports which path ran.
+## Phase 1 — the worker package (build now)
 
-## Testing
+### Components
+1. **`commoncrawl_enrich.ingest` refactor** — extract `build_wet_domain_rows(source, *,
+   classifier, crawl_id, …) -> list[tuple]` out of `process_wet_to_clickhouse` (stream
+   homepages → classify → `commoncrawl_domains` tuples). `process_wet_to_clickhouse` becomes
+   `build_wet_domain_rows(...) + _insert(...)` (behaviour-preserving). Add
+   `DOMAINS_PARQUET_SCHEMA` (column order == `DOMAINS_COLUMNS`, list/timestamp types matching
+   the migration) and `write_domain_rows_parquet(rows, out_path)`.
 
-- Unit (offline, existing fixtures): `build_wet_domain_rows` returns the same rows the
-  current `process_wet_to_clickhouse` builds (refactor is behaviour-preserving — assert via the
-  warcio WET fixture). `write_domain_rows_parquet` round-trips to a Parquet whose schema ==
-  `DOMAINS_PARQUET_SCHEMA` and whose columns match `DOMAINS_COLUMNS` (read back, check a row).
-- The benchmark script itself is run manually (live endpoints), not unit-tested.
+2. **`commoncrawl_enrich.worker`** — the worker core + CLI:
+   - `run_wet_task(task: WetTask, *, classifier, s3=None) -> dict` — download the WET (S3 path
+     via boto3, or `https://data.commoncrawl.org` url), `build_wet_domain_rows`,
+     `write_domain_rows_parquet` to a temp file, upload to the output dest (local path or S3),
+     return stats (rows, industries, page_types, with_email, parquet_bytes, timings).
+   - `WetTask` (from JSON): `crawl_id, file_index, wet_path` (s3:// or https url),
+     `output` ({`kind`: "local"|"s3", `path`/`bucket`+`prefix`}), optional `limit`.
+   - CLI **one-shot** mode: `python -m commoncrawl_enrich.worker --task task.json`
+     (or `--wet … --out …`) → run once, print stats, exit. (Phase 2 adds a `serve` subcommand
+     that consumes NATS and calls the same `run_wet_task`.)
+   - Reference: load `NaceReference`/`PrototypeSet` from `.npz` baked into the image (path via
+     env, default `/refs/*.npz`); `EmbeddingClient.from_env()`; LLM optional via env.
+
+3. **Docker image** (`corpscout/commoncrawl-worker/`): Python + `commoncrawl_enrich` + the
+   reference `.npz` baked in. Built in **GitHub CI** → registry (GHCR). Entry = the worker CLI.
+   Config via env (`COMMONCRAWL_EMBED_BASE_URL`, S3 creds/endpoint, `COMMONCRAWL_REFS_DIR`, …).
+
+4. **`run.sh`** — pull the image from the registry and run it with a task JSON
+   (`docker run … commoncrawl-worker --task /work/task.json`). Phase-1 convenience + the unit
+   the Phase-2 orchestrator/compose will invoke.
+
+5. **Benchmark** = run the one-shot worker on one real WET file; record download time, process
+   time, homepages/file, Parquet bytes/row & bytes/file, then project ×100,000 → core-days,
+   Parquet storage, download TB for one crawl. These size N and storage for Phase 2.
+
+### Data flow (Phase 1)
+```
+WetTask(wet_path, output) ─▶ download (boto3 s3 / requests cdn) ─▶ temp .warc.wet.gz
+   ─▶ build_wet_domain_rows(classifier)  # homepages → keyword/embedding/LLM-tail
+   ─▶ write_domain_rows_parquet ─▶ temp .parquet
+   ─▶ upload to output (local copy / s3 put)  # name: {crawl_id}/{file_index}.parquet
+   ─▶ stats
+```
+
+### Error handling
+- Streamed download via the existing `requests` retry session; malformed records never crash
+  the loop (`decode(errors="replace")`). Empty file → empty-but-typed Parquet (still loadable).
+- Embedding endpoint required; LLM tail optional. Worker reports which path ran.
+- Deterministic output name ⇒ a retry **overwrites**, never duplicates; ReplacingMergeTree
+  cleans any dup at the CH side.
+
+### Testing
+- Unit (offline, warcio fixtures): `build_wet_domain_rows` matches the rows
+  `process_wet_to_clickhouse` builds; `write_domain_rows_parquet` round-trips to a Parquet
+  whose schema == `DOMAINS_PARQUET_SCHEMA` / columns == `DOMAINS_COLUMNS`; `run_wet_task` with
+  a fake classifier + a local WET fixture + local output writes the expected Parquet and stats;
+  `WetTask` JSON parsing. The Docker image + the live benchmark are run manually.
+
+## Phase 2 — control plane (next spec, documented here for shape)
+NATS JetStream stream + consumer config (work-queue retention, ack-wait, max-deliver,
+dead-letter), the orchestrator (file listing, enqueue, completion consumer, ledger updates,
+crawl-complete signal), the SQLite ledger schema + interface, the worker `serve` subcommand,
+the compose file (`worker` scaled to N, NATS, orchestrator), and the separate CH-load step.
+Worker concurrency capped to the DGX embedding throughput (see Decisions).
+
+## Decisions
+- **1:1 file → Parquet**, deterministic name `{crawl_id}/{file_index}.parquet` (resumable,
+  parallelizable, CH-loadable, retry-overwrites). Revisit batching only if bytes/file is tiny.
+- **DGX embedding endpoint is the hard cap on N**, not CPU/bandwidth — it degrades under
+  concurrency. Phase 2 caps worker/embedding concurrency to its sustained batched throughput;
+  a central embedding-batching proxy is an optional later optimization.
+- **Reference `.npz` baked into the image** (small, changes rarely) — workers never query CH at
+  startup. Rebuild image to refresh.
+- **NATS JetStream** (durable, ack, redelivery, dead-letter) — not core NATS.
+- **SQLite ledger, orchestrator is sole writer**; workers report via NATS. Postgres is the
+  swap-in if the orchestrator ever needs HA. ClickHouse is wrong for the ledger (no cheap
+  single-row upsert; it's the OLAP *output* store, not operational state).
+- **ClickHouse loading is a separate step**, not the worker.
+- **WET worker is Python-only**; the WARC worker (separate spec) adds the wappalyzer sidecar.
 
 ## Open questions (resolved)
-
-- **Parquet granularity:** 1:1 file→Parquet (above).
-- **Benchmark classifier mode:** run embedding-only first (`--no-llm-tail`) for a clean core
-  throughput number, then optionally with the LLM tail to measure its added cost; the LLM
-  endpoint shares the GPU with embeddings, so it may be down when embeddings are up.
-- **Storage location of Parquet:** local dir for the benchmark; the production pipeline will
-  decide local-vs-S3 staging based on the measured bytes/file.
+- Parquet granularity → 1:1. Ledger store → SQLite (orchestrator-owned). Queue → NATS
+  JetStream. Benchmark classifier mode → embedding-only first, LLM tail optional.
