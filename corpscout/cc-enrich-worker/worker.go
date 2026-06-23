@@ -81,9 +81,11 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 			agg := &domainAgg{rootDomain: dom}
 			techSeen := map[string]bool{}
 			for _, it := range byDomain[dom] {
-				headers, body, err := FetchRecord(ctx, getter, ccBucket, it.WarcFilename, it.Offset, it.Length)
+				fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				headers, body, err := FetchRecord(fctx, getter, ccBucket, it.WarcFilename, it.Offset, it.Length)
+				cancel()
 				if err != nil {
-					continue // skip a bad page; the domain still emits if its primary survived
+					continue // skip a bad/slow page; the domain still emits if its primary survived
 				}
 				text, emails, _ := ParseHTML(string(body))
 				for _, t := range DetectTech(headers, body) {

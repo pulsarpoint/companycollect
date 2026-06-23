@@ -90,7 +90,8 @@ func main() {
 	crawlID := flag.String("crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 (required)")
 	concurrency := flag.Int("concurrency", 16, "fetch/parse/tech concurrency")
 	batch := flag.Int("embed-batch", embedBatch, "embed batch size")
-	embedConc := flag.Int("embed-concurrency", 64, "concurrent embed requests in flight (saturate the GPU)")
+	embedConc := flag.Int("embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
+	chunkSize := flag.Int("chunk", 1024, "domains per fetch+embed chunk (pipelines fetch/embed; lower = earlier GPU traffic)")
 	region := flag.String("region", envOr("AWS_REGION", "us-east-1"), "S3 region")
 	s3Bucket := flag.String("s3-bucket", "", "if set, upload outputs to this bucket")
 	s3Prefix := flag.String("s3-prefix", "", "key prefix for uploaded outputs")
@@ -141,9 +142,21 @@ func main() {
 		ResolvedAt: time.Now().UTC(), Concurrency: *concurrency,
 	}
 	start := time.Now()
-	domains, tech, err := ProcessShard(ctx, items, getter, emb, ref, protos, cfg)
-	if err != nil {
-		log.Fatalf("process shard: %v", err)
+	var domains []DomainRow
+	var tech []TechRow
+	for i := 0; i < len(items); i += *chunkSize {
+		end := i + *chunkSize
+		if end > len(items) {
+			end = len(items)
+		}
+		d, tk, err := ProcessShard(ctx, items[i:end], getter, emb, ref, protos, cfg)
+		if err != nil {
+			log.Fatalf("process chunk at %d: %v", i, err)
+		}
+		domains = append(domains, d...)
+		tech = append(tech, tk...)
+		el := time.Since(start).Seconds()
+		log.Printf("progress: %d/%d domains, %d tech (%.1f domains/s)", len(domains), len(items), len(tech), float64(len(domains))/el)
 	}
 
 	domPath, techPath := *out+"-domains.parquet", *out+"-tech.parquet"
