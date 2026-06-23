@@ -90,6 +90,7 @@ func main() {
 	crawlID := flag.String("crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 (required)")
 	concurrency := flag.Int("concurrency", 16, "fetch/parse/tech concurrency")
 	batch := flag.Int("embed-batch", embedBatch, "embed batch size")
+	embedConc := flag.Int("embed-concurrency", 64, "concurrent embed requests in flight (saturate the GPU)")
 	region := flag.String("region", envOr("AWS_REGION", "us-east-1"), "S3 region")
 	s3Bucket := flag.String("s3-bucket", "", "if set, upload outputs to this bucket")
 	s3Prefix := flag.String("s3-prefix", "", "key prefix for uploaded outputs")
@@ -122,7 +123,7 @@ func main() {
 		}
 	}
 	log.Printf("embed endpoint=%s model=%s", baseURL, model)
-	emb := NewEmbedClient(baseURL, model, *batch)
+	emb := NewEmbedClient(baseURL, model, *batch, *embedConc)
 
 	getter, err := NewS3Getter(ctx, *region)
 	if err != nil {
