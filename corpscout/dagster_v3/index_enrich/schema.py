@@ -27,8 +27,13 @@ TECHNOLOGIES_COLUMNS = (
 
 
 def write_domain_rows_parquet(rows: list, out_path) -> int:
+    from pathlib import Path
+
     import pyarrow.parquet as pq
 
+    parent = Path(out_path).parent
+    if str(parent):
+        parent.mkdir(parents=True, exist_ok=True)
     columns = list(zip(*rows)) if rows else [() for _ in DOMAINS_COLUMNS]
     arrays = [pa.array(list(col), type=DOMAINS_PARQUET_SCHEMA.field(i).type)
               for i, col in enumerate(columns)]
