@@ -1,10 +1,11 @@
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 
 import dagster as dg
 import duckdb
 from dagster import AssetKey
+from dlt.extract.exceptions import ResourceExtractionError
 import polars as pl
 import pytest
 from pydantic import ValidationError
@@ -137,6 +138,17 @@ def test_financial_reports_asset_is_monthly_partitioned():
     )
     assert node.partitions_def is not None
     assert type(node.partitions_def).__name__ == "MonthlyPartitionsDefinition"
+
+
+def test_financial_reports_partitions_start_at_prh_supported_registration_floor() -> None:
+    node = load_project_defs().get_repository_def().asset_graph.get(
+        AssetKey(["finland_xbrl_financial_reports_duckdb"])
+    )
+
+    assert node.partitions_def is not None
+    partition_keys = node.partitions_def.get_partition_keys(current_time=datetime(2026, 6, 22))
+
+    assert partition_keys[0] == "2023-07-01"
 
 
 def test_financial_reports_merge_accumulates_across_windows(tmp_path: Path) -> None:
@@ -296,6 +308,22 @@ def test_xbrl_dlt_source_pages_financial_report_listing() -> None:
     assert session.calls[0][1]["registeredDateStart"] == "2026-06-01"
     assert session.calls[0][1]["registeredDateEnd"] == "2026-06-30"
     assert sleeps == [0.5, 0.5]
+
+
+def test_xbrl_dlt_source_rejects_registration_start_before_prh_floor() -> None:
+    session = FakePagedFinancialReportsSession()
+    source = xbrl_assets.finland_xbrl_financial_reports_source(
+        registered_date_start="2014-01-01",
+        registered_date_end="2014-01-31",
+        request_delay_seconds=0,
+        run_id="test-run",
+        session=session,
+    )
+
+    with pytest.raises(ResourceExtractionError, match="2023-07-01"):
+        list(source.resources[xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE])
+
+    assert session.calls == []
 
 
 def test_xbrl_financial_reports_http_client_uses_dlt_retry_client() -> None:

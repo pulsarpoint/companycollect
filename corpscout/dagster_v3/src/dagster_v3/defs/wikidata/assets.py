@@ -19,10 +19,6 @@ from dagster_v3.defs.clickhouse.resolved import (
     replace_duckdb_tables_in_clickhouse,
 )
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.wikidata.domain_index import (
-    WikidataDomainIndexRawPullConfig,
-    pull_wikidata_domain_index_raw_objects,
-)
 from dagster_v3.defs.wikidata.source import (
     WIKIDATA_DUCKDB_DATASET_NAME,
     WIKIDATA_DUCKDB_PIPELINE_NAME,
@@ -155,30 +151,6 @@ def wikidata_company_seed_raw_objects(
 ) -> dg.MaterializeResult:
     client = WikidataSparqlClient(timeout_seconds=config.request_timeout_seconds)
     return pull_wikidata_company_seed_raw_objects(
-        client=client,
-        object_store=object_store,
-        config=config,
-        run_id=context.run_id,
-        retrieved_at=datetime.now(UTC).isoformat(),
-        sleep=time.sleep,
-    )
-
-
-@dg.asset(
-    group_name=GROUP_NAME,
-    kinds={"python", "wikidata", "s3"},
-    description=(
-        "Pulls raw Wikidata official-website SPARQL pages into object storage for "
-        "the domain index pipeline."
-    ),
-)
-def wikidata_domain_index_raw_objects(
-    context: dg.AssetExecutionContext,
-    config: WikidataDomainIndexRawPullConfig,
-    object_store: ObjectStoreResource,
-) -> dg.MaterializeResult:
-    client = WikidataSparqlClient(timeout_seconds=config.request_timeout_seconds)
-    return pull_wikidata_domain_index_raw_objects(
         client=client,
         object_store=object_store,
         config=config,
@@ -1194,11 +1166,6 @@ wikidata_company_seed_weekly_job = dg.define_asset_job(
     selection=wikidata_company_seed_selection,
 )
 
-wikidata_domain_index_raw_job = dg.define_asset_job(
-    "wikidata_domain_index_raw_job",
-    selection=dg.AssetSelection.assets("wikidata_domain_index_raw_objects"),
-)
-
 
 @dg.schedule(
     name="wikidata_company_seed_weekly_schedule",
@@ -1215,9 +1182,8 @@ defs = dg.Definitions(
         wikidata_listed_companies_duckdb_asset,
         wikidata_company_seed_duckdb_tables,
         wikidata_company_seed_raw_objects,
-        wikidata_domain_index_raw_objects,
         wikidata_company_seed_clickhouse,
     ],
-    jobs=[wikidata_company_seed_weekly_job, wikidata_domain_index_raw_job],
+    jobs=[wikidata_company_seed_weekly_job],
     schedules=[wikidata_company_seed_weekly_schedule],
 )

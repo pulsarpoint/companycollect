@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Uruguay DEI package metadata",
+    "slug": "miem_dei_package",
+    "type": "api_page",
+    "url": "https://catalogodatos.gub.uy/api/3/action/package_show?id=miem-dei",
+    "method": "GET",
+    "headers": {"Accept": "application/json"},
+    "max_pages": 1
+  },
+  {
+    "name": "Uruguay DEI CSV",
+    "slug": "miem_dei_csv",
+    "type": "bulk",
+    "url": "https://catalogodatos.gub.uy/dataset/575ccb87-ae74-4dcd-ba4b-cf050bd8e08a/resource/e56d1949-3e94-42a9-801f-c6d2523b185d/download/empresasdei_20230330.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]

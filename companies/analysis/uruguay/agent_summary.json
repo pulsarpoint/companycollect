@@ -1,0 +1,48 @@
+{
+  "country": "Uruguay",
+  "country_slug": "uruguay",
+  "summary_version": 1,
+  "answered_at": "2026-06-23",
+  "registered_company_list": {
+    "answer": "partial",
+    "downloadable_without_auth": true,
+    "coverage": "official_sector_directory_not_full_registry",
+    "details": "The verified entity-level source is the industrial company directory. A full national legal-entity/company registry was not confirmed."
+  },
+  "auth": {
+    "required": false,
+    "type": "none",
+    "cost": "free"
+  },
+  "financial_data": {
+    "answer": "no",
+    "details": "No company financial statement source was found in the verified DEI source."
+  },
+  "contact_info": {
+    "answer": "yes_for_verified_sector_source",
+    "fields": ["public_email", "website", "phone", "address", "coordinates"],
+    "owner_or_officer_data": "not_found",
+    "privacy_notes": "Contact fields are public business directory fields, but they should still be minimized if not needed."
+  },
+  "formats": ["csv", "xlsx", "xml", "json_metadata"],
+  "data_sources": [
+    {
+      "name": "Directorio de Empresas Industriales",
+      "role": "partial_sector_directory",
+      "status": "useful_secondary_source",
+      "official": true,
+      "url": "https://catalogodatos.gub.uy/dataset/miem-dei",
+      "api_base_url": "https://catalogodatos.gub.uy/api/3/action/package_show?id=miem-dei",
+      "access_method": "public_bulk_file",
+      "formats": ["csv", "xlsx", "xml", "json_metadata"],
+      "license": "Licencia de DAG de Uruguay"
+    }
+  ],
+  "recommended_ingestion": "Use only if sector-limited industrial coverage is acceptable; continue discovery for a full national registry before full-country ingestion.",
+  "local_artifacts": {
+    "analysis": "companycollect/companies/analysis/uruguay",
+    "data": "companycollect/companies/data/uruguay",
+    "source_inventory": "companycollect/companies/analysis/uruguay/source_inventory.json",
+    "sample": "companycollect/companies/data/uruguay/normalized/companies.sample.jsonl"
+  }
+}

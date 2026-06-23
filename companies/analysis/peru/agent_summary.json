@@ -1,0 +1,60 @@
+{
+  "country": "Peru",
+  "country_slug": "peru",
+  "summary_version": 1,
+  "answered_at": "2026-06-23",
+  "registered_company_list": {
+    "answer": "yes",
+    "downloadable_without_auth": true,
+    "coverage": "official_tax_register_spine",
+    "details": "SUNAT publishes the Padron Reducido RUC ZIP as a public bulk file. It is a tax-register spine rather than a commercial-register filing dataset."
+  },
+  "auth": {
+    "required": false,
+    "type": "none",
+    "cost": "free"
+  },
+  "financial_data": {
+    "answer": "no",
+    "details": "No company financial statement source was found in the SUNAT Padron Reducido source."
+  },
+  "contact_info": {
+    "answer": "partial",
+    "fields": ["fiscal_address", "taxpayer_status", "address_condition", "ubigeo"],
+    "owner_or_officer_data": "not_found",
+    "privacy_notes": "The RUC file may include natural-person taxpayers; filter or minimize if scope is companies only."
+  },
+  "formats": ["zip", "txt", "html_source_page"],
+  "data_sources": [
+    {
+      "name": "SUNAT Padron Reducido RUC",
+      "role": "primary_tax_register",
+      "status": "recommended",
+      "official": true,
+      "url": "https://www.sunat.gob.pe/descargaPRR/mrc137_padron_reducido.html",
+      "bulk_download_url": "http://www2.sunat.gob.pe/padron_reducido_ruc.zip",
+      "access_method": "public_bulk_zip",
+      "formats": ["zip", "txt"],
+      "license": "public SUNAT file; reuse terms need review",
+      "download_note": "Main ZIP was about 388 MB during discovery and was not downloaded as a sample."
+    },
+    {
+      "name": "SUNAT Padron Reducido Local Anexo",
+      "role": "location_enrichment",
+      "status": "recommended_enrichment",
+      "official": true,
+      "url": "https://www.sunat.gob.pe/descargaPRR/mrc137_padron_reducido.html",
+      "bulk_download_url": "https://www.sunat.gob.pe/descargaPRR/padron_reducido_local_anexo.zip",
+      "access_method": "public_bulk_zip",
+      "formats": ["zip", "txt"],
+      "license": "public SUNAT file; reuse terms need review"
+    }
+  ],
+  "recommended_ingestion": "Controlled bulk download, checksum, unzip, and profile before mapping exact fields.",
+  "local_artifacts": {
+    "analysis": "companycollect/companies/analysis/peru",
+    "data": "companycollect/companies/data/peru",
+    "source_inventory": "companycollect/companies/analysis/peru/source_inventory.json",
+    "sample": null
+  }
+}

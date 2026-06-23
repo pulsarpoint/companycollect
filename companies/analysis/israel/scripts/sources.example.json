@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Israel Companies Registrar datastore",
+    "slug": "ica_companies_datastore",
+    "type": "api_page",
+    "url": "https://data.gov.il/api/3/action/datastore_search?resource_id=f004176c-b85f-4542-8901-7b3176f9a054",
+    "method": "GET",
+    "headers": {"Accept": "application/json"},
+    "page_param": "offset",
+    "page_start": 0,
+    "limit_param": "limit",
+    "limit": 10000
+  }
+]

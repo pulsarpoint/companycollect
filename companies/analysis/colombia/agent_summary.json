@@ -1,0 +1,59 @@
+{
+  "country": "Colombia",
+  "country_slug": "colombia",
+  "summary_version": 1,
+  "answered_at": "2026-06-23",
+  "registered_company_list": {
+    "answer": "yes",
+    "downloadable_without_auth": true,
+    "coverage": "official_open_data_registry_extract",
+    "details": "datos.gov.co exposes a public Socrata API/CSV export for a RUES-style registry extract containing legal entities, non-profits, and natural-person merchants."
+  },
+  "auth": {
+    "required": false,
+    "type": "none",
+    "cost": "free"
+  },
+  "financial_data": {
+    "answer": "partial",
+    "details": "SuperSociedades publishes public financial statement datasets, but coverage is not all registered companies."
+  },
+  "contact_info": {
+    "answer": "partial",
+    "fields": ["legal_representative_name", "legal_representative_id", "chamber", "activity_codes"],
+    "owner_or_officer_data": "legal_representative_fields_present",
+    "privacy_notes": "The source contains personal data and natural-person merchants; use minimization and filtering."
+  },
+  "formats": ["json_api", "csv"],
+  "data_sources": [
+    {
+      "name": "Personas Naturales, Personas Juridicas y Entidades Sin Animo de Lucro",
+      "role": "primary_registry_extract",
+      "status": "recommended",
+      "official": true,
+      "url": "https://www.datos.gov.co/Comercio-Industria-y-Turismo/Personas-Naturales-Personas-Jur-dicas-y-Entidades-/c82u-588k",
+      "api_base_url": "https://www.datos.gov.co/resource/c82u-588k.json",
+      "bulk_download_url": "https://www.datos.gov.co/resource/c82u-588k.csv",
+      "access_method": "public_socrata_api_or_csv",
+      "formats": ["json", "csv"],
+      "license": "Creative Commons Attribution Share Alike 4.0 International"
+    },
+    {
+      "name": "SuperSociedades financial statement datasets",
+      "role": "financial_enrichment",
+      "status": "useful_secondary_source",
+      "official": true,
+      "url": "https://www.datos.gov.co/",
+      "access_method": "public_socrata_api_or_csv",
+      "formats": ["json", "csv"],
+      "license": "open-data license per dataset"
+    }
+  ],
+  "recommended_ingestion": "Socrata snapshot using API pagination or CSV export, with legal-entity filtering where required.",
+  "local_artifacts": {
+    "analysis": "companycollect/companies/analysis/colombia",
+    "data": "companycollect/companies/data/colombia",
+    "source_inventory": "companycollect/companies/analysis/colombia/source_inventory.json",
+    "sample": "companycollect/companies/data/colombia/normalized/companies.sample.jsonl"
+  }
+}

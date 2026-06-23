@@ -1,0 +1,20 @@
+[
+  {
+    "name": "SUNAT Padron Reducido RUC",
+    "slug": "sunat_padron_reducido_ruc",
+    "type": "bulk",
+    "url": "http://www2.sunat.gob.pe/padron_reducido_ruc.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  },
+  {
+    "name": "SUNAT Padron Reducido Local Anexo",
+    "slug": "sunat_padron_local_anexo",
+    "type": "bulk",
+    "url": "https://www.sunat.gob.pe/descargaPRR/padron_reducido_local_anexo.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]

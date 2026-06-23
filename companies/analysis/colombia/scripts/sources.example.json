@@ -1,0 +1,14 @@
+[
+  {
+    "name": "datos.gov.co RUES-style registry extract",
+    "slug": "datos_gov_co_c82u_588k",
+    "type": "api_page",
+    "url": "https://www.datos.gov.co/resource/c82u-588k.json",
+    "method": "GET",
+    "headers": {"Accept": "application/json"},
+    "page_param": "$offset",
+    "page_start": 0,
+    "limit_param": "$limit",
+    "limit": 50000
+  }
+]

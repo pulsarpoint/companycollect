@@ -1,0 +1,23 @@
+[
+  {
+    "country": "Israel",
+    "country_slug": "israel",
+    "source_name": "Companies Registrar company dataset",
+    "source_type": "official_registry",
+    "organization": "Ministry of Justice / Israeli Corporations Authority",
+    "url": "https://data.gov.il/dataset/ica_companies",
+    "bulk_download_url": "https://data.gov.il/dataset/246d949c-a253-4811-8a11-41a137d3d613/resource/f004176c-b85f-4542-8901-7b3176f9a054/download/f004176c-b85f-4542-8901-7b3176f9a054.csv",
+    "api_base_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=f004176c-b85f-4542-8901-7b3176f9a054",
+    "formats": ["json", "csv"],
+    "license": "other-open on data.gov.il; confirm exact terms",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": "CKAN datastore public API limits apply",
+    "fields_observed": ["מספר חברה", "שם חברה", "שם באנגלית", "סוג תאגיד", "סטטוס חברה", "תאריך התאגדות", "חברה ממשלתית", "מגבלות", "שנה אחרונה של דוח שנתי (שהוגש)", "שם עיר", "שם רחוב"],
+    "data_freshness": "portal-managed; sample retrieved 2026-06-23",
+    "downloaded_files": ["raw/api/data_gov_il_ica_companies_package.json", "raw/api/ica_companies_datastore_sample.json", "normalized/companies.sample.jsonl"],
+    "status": "recommended",
+    "notes": "Direct CSV download returned an anti-bot/challenge HTML in this environment; datastore API worked."
+  }
+]

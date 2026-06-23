@@ -1,0 +1,58 @@
+{
+  "country": "Argentina",
+  "country_slug": "argentina",
+  "summary_version": 1,
+  "answered_at": "2026-06-23",
+  "registered_company_list": {
+    "answer": "yes",
+    "downloadable_without_auth": true,
+    "coverage": "official_registry",
+    "details": "Registro Nacional de Sociedades publishes public CSV/ZIP resources through datos.gob.ar, including current 2026 resources."
+  },
+  "auth": {
+    "required": false,
+    "type": "none",
+    "cost": "free"
+  },
+  "financial_data": {
+    "answer": "partial",
+    "details": "The national registry is not a financial statement source. IGJ secondary datasets include balance-related files for IGJ entities, not full national financials."
+  },
+  "contact_info": {
+    "answer": "partial",
+    "fields": ["fiscal_address", "legal_address", "activity"],
+    "owner_or_officer_data": "available_in_secondary_igj_authorities_dataset",
+    "privacy_notes": "Review IGJ authorities/person fields before ingestion."
+  },
+  "formats": ["csv", "zip", "json_metadata"],
+  "data_sources": [
+    {
+      "name": "Registro Nacional de Sociedades",
+      "role": "primary_registry",
+      "status": "recommended",
+      "official": true,
+      "url": "https://datos.gob.ar/ar/dataset/justicia-registro-nacional-sociedades",
+      "api_base_url": "https://datos.gob.ar/api/3/action/package_show?id=justicia-registro-nacional-sociedades",
+      "access_method": "public_bulk_zip_and_csv",
+      "formats": ["csv", "zip", "json_metadata"],
+      "license": "Creative Commons Attribution 4.0"
+    },
+    {
+      "name": "IGJ entities",
+      "role": "secondary_registry_financial_authority_enrichment",
+      "status": "useful_secondary_source",
+      "official": true,
+      "url": "https://datos.gob.ar/",
+      "access_method": "public_bulk_zip_and_csv",
+      "formats": ["csv", "zip"],
+      "license": "Creative Commons Attribution 4.0"
+    }
+  ],
+  "recommended_ingestion": "Bulk snapshot: enumerate CKAN package resources, download current ZIP, profile contained CSV files, then backfill.",
+  "local_artifacts": {
+    "analysis": "companycollect/companies/analysis/argentina",
+    "data": "companycollect/companies/data/argentina",
+    "source_inventory": "companycollect/companies/analysis/argentina/source_inventory.json",
+    "sample": "companycollect/companies/data/argentina/normalized/companies.sample.jsonl"
+  }
+}

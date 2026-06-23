@@ -1,0 +1,23 @@
+[
+  {
+    "country": "Argentina",
+    "country_slug": "argentina",
+    "source_name": "Registro Nacional de Sociedades",
+    "source_type": "official_registry",
+    "organization": "Ministerio de Justicia",
+    "url": "https://datos.gob.ar/ar/dataset/justicia-registro-nacional-sociedades",
+    "bulk_download_url": "https://datos.jus.gob.ar/dataset/ee83de85-4305-4c53-9a9f-fd3d15e42c36/resource/13a1a66f-9f49-4d2d-9582-7b4540ef1b83/download/registro-nacional-sociedades-2026.zip",
+    "api_base_url": "https://datos.gob.ar/api/3/action/package_show?id=justicia-registro-nacional-sociedades",
+    "formats": ["csv", "zip", "json"],
+    "license": "Creative Commons Attribution 4.0",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": null,
+    "fields_observed": ["cuit", "razon_social", "fecha_hora_contrato_social", "tipo_societario", "fecha_hora_actualizacion", "numero_inscripcion", "dom_fiscal_provincia", "dom_legal_provincia", "actividad_codigo", "actividad_descripcion"],
+    "data_freshness": "2026 resources observed; 2026-06-18 last_modified for current resources",
+    "downloaded_files": ["raw/api/datos_gob_ar_registro_nacional_sociedades_package.json", "raw/samples/registro_nacional_sociedades_muestreo.sample.csv", "normalized/companies.sample.jsonl"],
+    "status": "recommended",
+    "notes": "Fresh official bulk source keyed on CUIT."
+  }
+]

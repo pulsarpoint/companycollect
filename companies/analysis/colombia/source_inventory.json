@@ -1,0 +1,23 @@
+[
+  {
+    "country": "Colombia",
+    "country_slug": "colombia",
+    "source_name": "Personas Naturales, Personas Juridicas y Entidades Sin Animo de Lucro",
+    "source_type": "official_open_data_registry_extract",
+    "organization": "datos.gov.co / Colombian chambers of commerce",
+    "url": "https://www.datos.gov.co/Comercio-Industria-y-Turismo/Personas-Naturales-Personas-Jur-dicas-y-Entidades-/c82u-588k",
+    "bulk_download_url": "https://www.datos.gov.co/resource/c82u-588k.csv",
+    "api_base_url": "https://www.datos.gov.co/resource/c82u-588k.json",
+    "formats": ["json", "csv"],
+    "license": "Creative Commons Attribution Share Alike 4.0 International",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": "Socrata public API limits apply",
+    "fields_observed": ["codigo_camara", "camara_comercio", "matricula", "razon_social", "nit", "digito_verificacion", "cod_ciiu_act_econ_pri", "fecha_matricula", "fecha_renovacion", "fecha_cancelacion", "organizacion_juridica", "estado_matricula", "representante_legal"],
+    "data_freshness": "metadata rowsUpdatedAt observed 2026-06-01",
+    "downloaded_files": ["raw/api/datos_gov_co_c82u_588k_metadata.json", "raw/api/rues_legal_entities_sample.json", "normalized/companies.sample.jsonl"],
+    "status": "recommended",
+    "notes": "Includes natural-person merchants and legal representative personal data; ingestion needs filtering/data minimization."
+  }
+]

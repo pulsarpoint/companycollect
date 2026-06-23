@@ -1,0 +1,23 @@
+[
+  {
+    "country": "Uruguay",
+    "country_slug": "uruguay",
+    "source_name": "Directorio de Empresas Industriales",
+    "source_type": "official_sector_directory",
+    "organization": "Ministerio de Industria, Energia y Mineria",
+    "url": "https://catalogodatos.gub.uy/dataset/miem-dei",
+    "bulk_download_url": "https://catalogodatos.gub.uy/dataset/575ccb87-ae74-4dcd-ba4b-cf050bd8e08a/resource/e56d1949-3e94-42a9-801f-c6d2523b185d/download/empresasdei_20230330.csv",
+    "api_base_url": "https://catalogodatos.gub.uy/api/3/action/package_show?id=miem-dei",
+    "formats": ["csv", "xlsx", "xml", "json"],
+    "license": "Licencia de DAG de Uruguay",
+    "access": "public",
+    "requires_authentication": false,
+    "requires_payment": false,
+    "rate_limits": null,
+    "fields_observed": ["Estado de la empresa", "RUT", "Denominacion Social", "Nombre comercial", "Tamano de la empresa", "Tipos de actividad de la empresa", "Codigo CIIU principal", "Descripcion Codigo CIIU principal", "Email publico", "Sitio web", "Numero de telefono", "Fecha de Registro", "Fecha de vencimiento"],
+    "data_freshness": "resource last_modified observed 2025-07-08; filename 20230330",
+    "downloaded_files": ["raw/api/catalogodatos_gub_uy_dei_package.json", "raw/samples/empresasdei_20230330.sample.csv", "normalized/companies.sample.jsonl"],
+    "status": "useful_secondary_source",
+    "notes": "Entity-level but sector-scoped industrial directory, not full national registry."
+  }
+]

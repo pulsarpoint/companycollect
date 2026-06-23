@@ -1,0 +1,59 @@
+{
+  "country": "Israel",
+  "country_slug": "israel",
+  "summary_version": 1,
+  "answered_at": "2026-06-23",
+  "registered_company_list": {
+    "answer": "yes",
+    "downloadable_without_auth": true,
+    "coverage": "official_registry",
+    "details": "The Companies Registrar dataset is available through data.gov.il. CKAN datastore API worked without auth; direct CSV URL was listed but returned a challenge page in this environment."
+  },
+  "auth": {
+    "required": false,
+    "type": "none_for_datastore_api",
+    "cost": "free",
+    "notes": "Direct CSV may require normal browser access or different runtime; do not bypass challenges."
+  },
+  "financial_data": {
+    "answer": "no",
+    "details": "Main dataset includes latest annual report year, but no financial statements or accounts."
+  },
+  "contact_info": {
+    "answer": "partial",
+    "fields": ["city", "street", "house_number", "postcode", "country"],
+    "owner_or_officer_data": "not_found_in_main_company_dataset",
+    "privacy_notes": "Review partnership/change datasets separately before ingesting people fields."
+  },
+  "formats": ["json_api", "csv_listed"],
+  "data_sources": [
+    {
+      "name": "Companies Registrar company dataset",
+      "role": "primary_registry",
+      "status": "recommended",
+      "official": true,
+      "url": "https://data.gov.il/dataset/ica_companies",
+      "api_base_url": "https://data.gov.il/api/3/action/datastore_search?resource_id=f004176c-b85f-4542-8901-7b3176f9a054",
+      "access_method": "public_ckan_datastore_api",
+      "formats": ["json", "csv"],
+      "license": "other-open on data.gov.il; confirm exact terms"
+    },
+    {
+      "name": "Companies Registrar partnerships and changes datasets",
+      "role": "secondary_registry_enrichment",
+      "status": "useful_secondary_source",
+      "official": true,
+      "url": "https://data.gov.il/",
+      "access_method": "public_ckan_datastore_or_csv",
+      "formats": ["json", "csv"],
+      "license": "other-open on data.gov.il; confirm exact terms"
+    }
+  ],
+  "recommended_ingestion": "Use CKAN datastore pagination first; treat direct CSV as optional if a normal browser/runtime can fetch it cleanly.",
+  "local_artifacts": {
+    "analysis": "companycollect/companies/analysis/israel",
+    "data": "companycollect/companies/data/israel",
+    "source_inventory": "companycollect/companies/analysis/israel/source_inventory.json",
+    "sample": "companycollect/companies/data/israel/normalized/companies.sample.jsonl"
+  }
+}

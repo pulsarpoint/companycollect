@@ -1,0 +1,57 @@
+{
+  "country": "Chile",
+  "country_slug": "chile",
+  "summary_version": 1,
+  "answered_at": "2026-06-23",
+  "registered_company_list": {
+    "answer": "yes",
+    "downloadable_without_auth": true,
+    "coverage": "official_registry_event_spine",
+    "details": "Registro de Empresas y Sociedades publishes yearly public CSV files for incorporations/events. SII provides additional public bulk tax/company lists."
+  },
+  "auth": {
+    "required": false,
+    "type": "none",
+    "cost": "free"
+  },
+  "financial_data": {
+    "answer": "partial_enrichment_only",
+    "details": "No full company financial statements found. SII has company-size, activity, address, and possible sales/worker-band style enrichment, not accounts."
+  },
+  "contact_info": {
+    "answer": "partial",
+    "fields": ["commune", "region", "tax/address enrichment from SII"],
+    "owner_or_officer_data": "possible_in_sii_composition_files",
+    "privacy_notes": "Review SII composition files before ingesting ownership/person fields."
+  },
+  "formats": ["csv", "zip", "txt", "json_metadata"],
+  "data_sources": [
+    {
+      "name": "Registro de Empresas y Sociedades",
+      "role": "primary_registry",
+      "status": "recommended",
+      "official": true,
+      "url": "https://datos.gob.cl/dataset/registro-de-empresas-y-sociedades",
+      "access_method": "public_bulk_csv",
+      "formats": ["csv", "json_metadata"],
+      "license": "open data portal terms; confirm per-resource reuse"
+    },
+    {
+      "name": "SII Personas Juridicas y Empresas",
+      "role": "tax_activity_address_enrichment",
+      "status": "recommended_enrichment",
+      "official": true,
+      "url": "https://www.sii.cl/sobre_el_sii/nominapersonasjuridicas.html",
+      "access_method": "public_bulk_zip",
+      "formats": ["zip", "txt"],
+      "license": "public SII files; reuse terms need review"
+    }
+  ],
+  "recommended_ingestion": "Bulk snapshot: RES yearly CSV first, then SII ZIP enrichment keyed by RUT.",
+  "local_artifacts": {
+    "analysis": "companycollect/companies/analysis/chile",
+    "data": "companycollect/companies/data/chile",
+    "source_inventory": "companycollect/companies/analysis/chile/source_inventory.json",
+    "sample": "companycollect/companies/data/chile/normalized/companies.sample.jsonl"
+  }
+}

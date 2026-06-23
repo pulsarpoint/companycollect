@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Jordan individual institutions 2",
+    "slug": "individual_institutions_2",
+    "type": "bulk",
+    "url": "https://opendata.gov.jo/dataset/MIGRATED-76-2017/resource/0807648b-e604-4022-91fe-abb532c4287c/download/-2csv.csv",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]

@@ -45,7 +45,8 @@ DEFAULT_XBRL_REQUEST_DELAY_SECONDS = 1.0
 DEFAULT_XBRL_REQUEST_MAX_ATTEMPTS = 5
 DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS = 10.0
 DEFAULT_XBRL_RETRY_MAX_DELAY_SECONDS = 120.0
-FI_XBRL_PARSE_PARTITION_START = "2014-01-01"  # earliest registration month in scope; widen if needed
+PRH_XBRL_REGISTRATION_SEARCH_START = "2023-07-01"
+FI_XBRL_PARSE_PARTITION_START = PRH_XBRL_REGISTRATION_SEARCH_START
 fi_xbrl_parse_partitions = dg.MonthlyPartitionsDefinition(start_date=FI_XBRL_PARSE_PARTITION_START)
 
 FINLAND_XBRL_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
@@ -219,6 +220,7 @@ def _financial_reports_resource(
     session: HttpSession | None,
     sleep: Callable[[float], None],
 ) -> Iterator[dict[str, Any]]:
+    _ensure_supported_registered_date_start(registered_date_start)
     page_number = 1
     source_record_number = 1
     http_client = session or _financial_reports_http_client(
@@ -864,6 +866,17 @@ def _download_financial_reports_page(
     response.raise_for_status()
     payload = response.json()
     return payload if isinstance(payload, dict) else {}
+
+
+def _ensure_supported_registered_date_start(registered_date_start: str) -> None:
+    if date.fromisoformat(registered_date_start) >= date.fromisoformat(
+        PRH_XBRL_REGISTRATION_SEARCH_START
+    ):
+        return
+    raise ValueError(
+        "PRH XBRL API only supports registration date searches starting on or after "
+        f"{PRH_XBRL_REGISTRATION_SEARCH_START}; got {registered_date_start}"
+    )
 
 
 def _financial_reports_http_client(

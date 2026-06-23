@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Registro Nacional de Sociedades package metadata",
+    "slug": "rns_package",
+    "type": "api_page",
+    "url": "https://datos.gob.ar/api/3/action/package_show?id=justicia-registro-nacional-sociedades",
+    "method": "GET",
+    "headers": {"Accept": "application/json"},
+    "max_pages": 1
+  },
+  {
+    "name": "Registro Nacional de Sociedades 2026",
+    "slug": "rns_2026",
+    "type": "bulk",
+    "url": "https://datos.jus.gob.ar/dataset/ee83de85-4305-4c53-9a9f-fd3d15e42c36/resource/13a1a66f-9f49-4d2d-9582-7b4540ef1b83/download/registro-nacional-sociedades-2026.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0
+  }
+]

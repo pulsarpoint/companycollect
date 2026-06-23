@@ -1,0 +1,57 @@
+{
+  "country": "Jordan",
+  "country_slug": "jordan",
+  "summary_version": 1,
+  "answered_at": "2026-06-23",
+  "registered_company_list": {
+    "answer": "partial",
+    "downloadable_without_auth": true,
+    "coverage": "individual_institutions_and_sector_lists_not_full_company_registry",
+    "details": "Open data has entity-level individual-institution data and listed-company/sector lists. The observed commercial registry dataset was aggregate year/count data, not a full company list."
+  },
+  "auth": {
+    "required": false,
+    "type": "none",
+    "cost": "free"
+  },
+  "financial_data": {
+    "answer": "no_for_broad_registry",
+    "details": "No broad private-company financial statements found. Some listed-company market datasets exist via Amman Stock Exchange open data."
+  },
+  "contact_info": {
+    "answer": "partial",
+    "fields": ["governorate", "area", "city", "street", "proprietor_or_institution_name"],
+    "owner_or_officer_data": "sole_proprietor_names_present",
+    "privacy_notes": "Individual-institution data contains natural-person names and national numbers; minimize by default."
+  },
+  "formats": ["csv", "xlsx", "json", "xml"],
+  "data_sources": [
+    {
+      "name": "Table of individual institutions 2",
+      "role": "partial_individual_institution_register",
+      "status": "useful_secondary_source",
+      "official": true,
+      "url": "https://opendata.gov.jo/dataset/table-of-individual-institutions-2-76-2017",
+      "access_method": "public_bulk_file",
+      "formats": ["csv", "xlsx", "json", "xml"],
+      "license": "Open Jordanian License"
+    },
+    {
+      "name": "Commercial registry",
+      "role": "aggregate_statistics",
+      "status": "not_company_data",
+      "official": true,
+      "url": "https://opendata.gov.jo/en/dataset/commercial-registry-654-2020",
+      "access_method": "public_bulk_file",
+      "formats": ["csv"],
+      "license": "Open Jordanian License"
+    }
+  ],
+  "recommended_ingestion": "Do not treat as full registry. Ingest only as a partial individual-institution source with personal-data controls.",
+  "local_artifacts": {
+    "analysis": "companycollect/companies/analysis/jordan",
+    "data": "companycollect/companies/data/jordan",
+    "source_inventory": "companycollect/companies/analysis/jordan/source_inventory.json",
+    "sample": "companycollect/companies/data/jordan/normalized/companies.sample.jsonl"
+  }
+}
