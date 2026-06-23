@@ -3,31 +3,53 @@ import argparse
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
+from commoncrawl_enrich import extract
 from index_enrich import classify, fetch, schema
 
 LOGGER = logging.getLogger(__name__)
 
 
+def _fetch_record(s3, item: dict) -> tuple:
+    """Byte-range fetch + parse one record -> (item, text, emails, subdomain). I/O-bound."""
+    html, _headers = fetch.fetch_warc_record(
+        s3, item["warc_filename"], int(item["warc_record_offset"]),
+        int(item["warc_record_length"]))
+    parsed = extract.parse_html(html)
+    emails = [e.email for e in extract.extract_emails(html)]
+    return item, (parsed.text or html), emails, classify._subdomain(item["url"])
+
+
 def run_shard(worklist: list[dict], *, s3, classifier, crawl_id: str, out_path,
-              wappalyzer=None, source_run_id: str = "", resolved_at: datetime | None = None) -> dict:
+              source_run_id: str = "", resolved_at: datetime | None = None,
+              fetch_workers: int = 32) -> dict:
+    """Fetch the whole shard in parallel (I/O), then classify ALL texts in one batched call so
+    the embedding GPU gets full batches instead of one text at a time."""
     resolved_at = resolved_at or datetime.now(timezone.utc)
-    domain_rows: list[tuple] = []
+
+    records: list[tuple] = []
     errors = 0
-    for item in worklist:
-        try:
-            html, headers = fetch.fetch_warc_record(
-                s3, item["warc_filename"], int(item["warc_record_offset"]),
-                int(item["warc_record_length"]))
-            row, _tech = classify.enrich_domain(
-                html, headers, root_domain=item["root_domain"], url=item["url"],
-                crawl_id=crawl_id, classifier=classifier, wappalyzer=wappalyzer,
-                source_run_id=source_run_id, resolved_at=resolved_at)
-            domain_rows.append(row)
-        except Exception as exc:  # noqa: BLE001 - skip a bad record, keep the shard going
-            errors += 1
-            LOGGER.warning("enrich failed for %s: %s", item.get("root_domain"), exc)
+    with ThreadPoolExecutor(max_workers=fetch_workers) as pool:
+        futures = [pool.submit(_fetch_record, s3, item) for item in worklist]
+        for fut in as_completed(futures):
+            try:
+                records.append(fut.result())
+            except Exception as exc:  # noqa: BLE001 - skip a bad record, keep the shard going
+                errors += 1
+                LOGGER.warning("fetch/parse failed: %s", exc)
+
+    results = classifier.classify([r[1] for r in records]) if records else []
+    domain_rows = [
+        (crawl_id, item["url"], item["root_domain"], sub, emails, len(emails),
+         res.page_type, float(res.page_type_score),
+         res.nace_code, res.nace_label, res.nace_division,
+         int(res.nace_confident), float(res.nace_margin), float(res.nace_score), res.method,
+         res.nace_top3, res.nace_top3_labels, [float(s) for s in res.nace_top3_scores],
+         item["url"], source_run_id, resolved_at)
+        for (item, _text, emails, sub), res in zip(records, results)
+    ]
     schema.write_domain_rows_parquet(domain_rows, out_path)
     return {"domains": len(domain_rows), "errors": errors, "out": str(out_path)}
 
