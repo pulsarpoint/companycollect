@@ -4,7 +4,6 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 from index_enrich import classify, fetch, schema
 
@@ -33,14 +32,25 @@ def run_shard(worklist: list[dict], *, s3, classifier, crawl_id: str, out_path,
     return {"domains": len(domain_rows), "errors": errors, "out": str(out_path)}
 
 
+def _make_ch_client():
+    """Native ClickHouse client from CLICKHOUSE_* env (reachable over Tailscale)."""
+    from clickhouse_driver import Client
+
+    secure = os.environ.get("CLICKHOUSE_SECURE", "").lower() in {"1", "true", "yes", "on"}
+    return Client(host=os.environ["CLICKHOUSE_HOST"],
+                  port=int(os.environ.get("CLICKHOUSE_NATIVE_PORT", "9002")),
+                  user=os.environ.get("CLICKHOUSE_USER", "default"),
+                  password=os.environ.get("CLICKHOUSE_PASSWORD", ""),
+                  database=os.environ.get("CLICKHOUSE_DATABASE", "corpscout"),
+                  secure=secure)
+
+
 def _load_classifier():
+    """Build the classifier with reference matrices loaded straight from ClickHouse (no npz)."""
     from commoncrawl_enrich import nace_embed
     from commoncrawl_enrich.classifier import PageClassifier
 
-    refs = Path(os.environ.get("COMMONCRAWL_REFS_DIR", "data"))
-    ref = nace_embed.NaceReference.load(str(refs / "nace_reference.npz"))
-    protos = nace_embed.PrototypeSet.load(str(refs / "page_type_prototypes.npz"))
-    return PageClassifier(ref, protos, nace_embed.EmbeddingClient.from_env())
+    return PageClassifier.from_clickhouse(_make_ch_client(), nace_embed.EmbeddingClient.from_env())
 
 
 def main(argv: list[str] | None = None) -> None:
