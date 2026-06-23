@@ -66,12 +66,16 @@ class EmbeddingClient:
     """
 
     def __init__(self, *, base_url: str, api_key: str = "x", model: str | None = None,
-                 batch: int = _EMBED_BATCH, timeout: int = 120):
+                 batch: int = _EMBED_BATCH, timeout: int = 120, max_chars: int | None = None):
         from openai import OpenAI
 
         self._client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         self._model = model or self._client.models.list().data[0].id
         self._batch = batch
+        # Shorter input = more texts per GPU batch + less compute. Industry signal is
+        # front-loaded, so this trades little quality for a lot of throughput.
+        self._max_chars = max_chars or int(
+            os.environ.get("COMMONCRAWL_EMBED_MAX_CHARS", _EMBED_MAX_CHARS))
 
     @classmethod
     def from_env(cls, *, batch: int = _EMBED_BATCH, timeout: int = 120) -> "EmbeddingClient":
@@ -91,7 +95,7 @@ class EmbeddingClient:
         return self._model
 
     def embed(self, texts: list[str], instruction: str | None = None) -> np.ndarray:
-        texts = [t[:_EMBED_MAX_CHARS] for t in texts]  # bound input under model token limit
+        texts = [t[:self._max_chars] for t in texts]  # bound input (token limit + throughput)
         if instruction:
             texts = [f"Instruct: {instruction}\nQuery: {t}" for t in texts]
         out: list[list[float]] = []
