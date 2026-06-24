@@ -1,0 +1,24 @@
+{
+  "country": "Iceland",
+  "country_slug": "iceland",
+  "source_slug": "arsreikningaskra",
+  "source_name": "Ársreikningaskrá — Annual Accounts Register (Skatturinn)",
+  "source_type": "financial_statements",
+  "organization": "Skatturinn (Iceland Revenue and Customs)",
+  "source_url": "https://www.skatturinn.is/fyrirtaekjaskra/arsreikningaskra/",
+  "license": "restricted",
+  "access": "paid",
+  "data_freshness": "annual filings",
+  "record_shape": "per_company_per_year_annual_account_document",
+  "primary_keys": ["kennitala", "fiscal_year"],
+  "join_keys": ["kennitala"],
+  "field_count": 6,
+  "fields": [
+    { "path": "account.kennitala", "source_field": "Kennitala", "english_name": "kennitala", "meaning": "10-digit id of the filing company.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: paid retrieval; cataloged from public docs.", "source_confidence": "low", "analysis_notes": "Join key to the register." },
+    { "path": "account.fiscal_year", "source_field": "Reikningsár", "english_name": "fiscal_year", "meaning": "Fiscal year of the statement.", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "account.revenue", "source_field": "Rekstrartekjur", "english_name": "revenue", "meaning": "Operating revenue (ISK).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Icelandic", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "account.profit", "source_field": "Hagnaður/tap", "english_name": "profit", "meaning": "Profit / loss for the year (ISK).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Icelandic", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "account.total_assets", "source_field": "Eignir samtals", "english_name": "total_assets", "meaning": "Total assets (ISK).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Icelandic", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null },
+    { "path": "account.equity", "source_field": "Eigið fé", "english_name": "equity", "meaning": "Equity (ISK).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Icelandic", "limitations": "PLANNING-ONLY (paid).", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

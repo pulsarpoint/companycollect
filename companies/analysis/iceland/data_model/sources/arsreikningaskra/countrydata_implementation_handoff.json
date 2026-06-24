@@ -1,0 +1,65 @@
+{
+  "country": "Iceland",
+  "country_slug": "iceland",
+  "source_slug": "arsreikningaskra",
+  "source_identity": "iceland_arsreikningaskra",
+  "source_package": "arsreikningaskra",
+  "env_prefix": "ARSREIKNINGASKRA",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Ársreikningaskrá — Annual Accounts Register (Skatturinn)",
+    "source_type": "financial_statements",
+    "organization": "Skatturinn (Iceland Revenue and Customs)",
+    "source_url": "https://www.skatturinn.is/fyrirtaekjaskra/arsreikningaskra/",
+    "license": "restricted",
+    "access": "paid",
+    "data_freshness": "annual filings",
+    "attribution": "Skatturinn (ársreikningaskrá)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": true,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.skatturinn.is/fyrirtaekjaskra/arsreikningaskra/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "paid per-document"
+  },
+  "snapshot": { "strategy": "not_applicable_paid", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "ArsreikningurRecord",
+    "date_formats": ["2006"],
+    "datetime_formats": [],
+    "number_formats": ["isk_integer"],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Filed annual accounts for public disclosure; retrieval paid per-document (no open bulk/XBRL). Keyed on kennitala + fiscal year. Currency ISK."
+  },
+  "keys": {
+    "primary_keys": ["kennitala", "fiscal_year"],
+    "join_keys": ["kennitala"],
+    "dedupe_keys": ["kennitala", "fiscal_year"]
+  },
+  "mapping_rules": {
+    "financials": "Map revenue/profit/total_assets/equity per fiscal_year into financial_statements[] (ISK).",
+    "join": "kennitala -> Fyrirtækjaskrá identity."
+  },
+  "fixture_requirements": ["documented-only: annual account summary (revenue/profit/assets/equity)"],
+  "live_test_plan": {
+    "smoke": "Not applicable — paid per-document.",
+    "full": "Not applicable without lawful paid access; do not bulk-fetch."
+  },
+  "blockers": [
+    "Paid per-document retrieval; no open bulk or XBRL.",
+    "Public disclosure exists but is not openly downloadable."
+  ]
+}

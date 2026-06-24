@@ -1,0 +1,18 @@
+{
+  "country": "Iceland",
+  "country_slug": "iceland",
+  "country_profile_version": "2026-06-24",
+  "_note": "registration/legal_identity/registered_location are REAL data from the free Fyrirtaekjaskra per-company overview (Skatturinn) for JBT Marel ehf., kennitala 6204830369. tax_identifiers.tax_id = kennitala; vat_id is a separate VSK registration (only status shown). officers (chair) is personal data (GDPR) and redacted/empty. financial_statements are PLANNING-ONLY (Arsreikningaskra, paid per-document) and empty.",
+  "registration": { "kennitala": "6204830369" },
+  "tax_identifiers": { "tax_id": "6204830369", "vat_id": null },
+  "legal_identity": { "legal_name": "JBT Marel ehf.", "legal_form": "E1 Einkahlutafélag (ehf)" },
+  "status": { "status": "registered" },
+  "activity": { "isat_code": null },
+  "registered_location": { "registered_address": "Austurhrauni 9, 210 Garðabær", "municipality": "1300 Garðabær" },
+  "officers": [],
+  "financial_statements": [],
+  "source_provenance": [
+    { "source_slug": "skatturinn_fyrirtaekjaskra", "section": "registration / tax_identifiers / legal_identity / status / registered_location / officers", "source_url": "https://www.skatturinn.is/fyrirtaekjaskra/leit/kennitala/6204830369", "access": "free per-company overview (paid bulk)", "license": "free_per_company_overview_paid_bulk", "retrieved_at": "2026-06-24T00:00:00Z" },
+    { "source_slug": "arsreikningaskra", "section": "financial_statements (planning-only; paid)", "source_url": "https://www.skatturinn.is/fyrirtaekjaskra/arsreikningaskra/", "access": "paid per-document", "license": "restricted", "retrieved_at": null }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "country": "Iceland",
+  "country_slug": "iceland",
+  "source_slug": "skatturinn_fyrirtaekjaskra",
+  "source_name": "Fyrirtækjaskrá — Iceland company register (Skatturinn)",
+  "source_type": "official_registry",
+  "organization": "Skatturinn (Iceland Revenue and Customs)",
+  "source_url": "https://www.skatturinn.is/fyrirtaekjaskra/leit/kennitala/{kennitala}",
+  "license": "free_per_company_overview_paid_bulk",
+  "access": "public_search",
+  "data_freshness": "live register",
+  "record_shape": "per_company_html_overview",
+  "primary_keys": ["kennitala"],
+  "join_keys": ["kennitala"],
+  "field_count": 8,
+  "fields": [
+    { "path": "nafn", "source_field": "Nafn", "english_name": "legal_name", "meaning": "Registered legal name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["JBT Marel ehf.", "Icelandair ehf."], "nullable": false, "repeatable": false, "code_list": null, "language": "Icelandic", "limitations": null, "source_confidence": "high", "analysis_notes": "Primary display name." },
+    { "path": "kennitala", "source_field": "Kennitala", "english_name": "kennitala", "meaning": "10-digit national identifier (= company id = tax id).", "data_type": "string", "semantic_type": "identifier", "example_values": ["6204830369", "4612023490"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Company kennitalas add 40 to the day field (first two digits 41-71). Keep as string.", "source_confidence": "high", "analysis_notes": "Universal join key across Skatturinn registers." },
+    { "path": "logheimili", "source_field": "Lögheimili", "english_name": "registered_address", "meaning": "Registered (legal) address.", "data_type": "string", "semantic_type": "address", "example_values": ["Austurhrauni 9 210 Garðabær", "Flugvöllum 1 221 Hafnarfjörður"], "nullable": true, "repeatable": false, "code_list": null, "language": "Icelandic", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "sveitarfelag", "source_field": "Sveitarfélag", "english_name": "municipality", "meaning": "Municipality (with code).", "data_type": "string", "semantic_type": "geography", "example_values": ["1300 Garðabær", "1400 Hafnarfjörður"], "nullable": true, "repeatable": false, "code_list": "Icelandic municipality codes", "language": "Icelandic", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "rekstrarform", "source_field": "Rekstrarform", "english_name": "legal_form", "meaning": "Legal / operating form (code + name).", "data_type": "string", "semantic_type": "legal_form", "example_values": ["E1 Einkahlutafélag (ehf)"], "nullable": false, "repeatable": false, "code_list": "Skatturinn rekstrarform (ehf / hf / sf / slf / svf / sjálfseignarstofnun / húsfélag / útibú ...)", "language": "Icelandic", "limitations": null, "source_confidence": "high", "analysis_notes": "E1 = Einkahlutafélag (private limited / ehf)." },
+    { "path": "isat_atvinnugrein", "source_field": "ÍSAT Atvinnugreinaflokkun", "english_name": "isat_activity", "meaning": "Economic-activity classification (NACE-based).", "data_type": "string", "semantic_type": "activity", "example_values": ["94.99.1 Starfsemi húsfélaga íbúðareigenda"], "nullable": true, "repeatable": false, "code_list": "ÍSAT (Icelandic NACE)", "language": "Icelandic", "limitations": null, "source_confidence": "high", "analysis_notes": "ÍSAT maps to EU NACE." },
+    { "path": "vsk_status", "source_field": "VSK-skrá", "english_name": "vat_status", "meaning": "VAT-register (VSK) status; the VSK number is a separate registration.", "data_type": "string", "semantic_type": "license_or_terms", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Icelandic", "limitations": "VSK number distinct from the kennitala.", "source_confidence": "medium", "analysis_notes": "Iceland has VAT (VSK)." },
+    { "path": "forradamadur", "source_field": "Forráðamaður", "english_name": "responsible_person", "meaning": "Responsible person / board chair (stjórnarformaður).", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Icelandic", "limitations": "PERSONAL DATA (GDPR) — redact. Full board only via paid certificate.", "source_confidence": "high", "analysis_notes": "Only the chair is shown in the free overview." }
+  ]
+}

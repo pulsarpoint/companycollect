@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Iceland Company Profile",
+  "description": "Country-specific company profile for Iceland. Keyed on the kennitala (10-digit national identifier), which is the company id AND the tax id. The Fyrirtækjaskrá (Skatturinn company register) gives a FREE per-company overview (name, registered address, municipality, legal form/rekstrarform, ÍSAT activity, VAT/VSK status, board chair), but there is NO open bulk (paid extracts/certificates) and no enumeration. Iceland has VAT (VSK); the VSK number is a separate registration from the kennitala. Financial statements (Ársreikningaskrá) are filed for public disclosure but paid per-document (planning-only). The board chair (forráðamaður) is personal data (GDPR).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Iceland" },
+    "country_slug": { "type": "string", "const": "iceland" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["kennitala"],
+      "properties": {
+        "kennitala": {
+          "type": "string",
+          "description": "10-digit national identifier. Company id + tax id + universal join key.",
+          "x-source": "skatturinn_fyrirtaekjaskra",
+          "x-source-path": "kennitala",
+          "x-join-key": true,
+          "x-freshness": "live"
+        }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= kennitala.", "x-source": "skatturinn_fyrirtaekjaskra", "x-source-path": "kennitala" },
+        "vat_id": { "type": ["string", "null"], "description": "VSK number — a separate registration from the kennitala (status shown in the register).", "x-source": "skatturinn_fyrirtaekjaskra", "x-source-path": "vsk_status", "x-access": "separate_registration" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "skatturinn_fyrirtaekjaskra", "x-source-path": "nafn" },
+        "legal_form": { "type": ["string", "null"], "description": "Rekstrarform (E1 Einkahlutafélag ehf / hf / sf / svf / ...).", "x-source": "skatturinn_fyrirtaekjaskra", "x-source-path": "rekstrarform" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status": { "type": ["string", "null"], "description": "registered (in register) / afskráð (deregistered).", "x-source": "skatturinn_fyrirtaekjaskra" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "isat_code": { "type": ["string", "null"], "description": "ÍSAT economic activity (NACE-based).", "x-source": "skatturinn_fyrirtaekjaskra", "x-source-path": "isat_atvinnugrein" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "skatturinn_fyrirtaekjaskra", "x-source-path": "logheimili" },
+        "municipality": { "type": ["string", "null"], "x-source": "skatturinn_fyrirtaekjaskra", "x-source-path": "sveitarfelag" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Board chair (forráðamaður) is in the free overview; the full board is on the paid certificate. PERSONAL DATA (GDPR) — redact.",
+      "x-source": "skatturinn_fyrirtaekjaskra",
+      "x-access": "free_chair_paid_full_board_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Ársreikningaskrá — filed for public disclosure but paid per-document. Currency ISK.",
+      "x-source": "arsreikningaskra",
+      "x-access": "paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": ["string", "null"] },
+          "revenue": { "type": ["number", "null"] },
+          "profit": { "type": ["number", "null"] },
+          "total_assets": { "type": ["number", "null"] },
+          "equity": { "type": ["number", "null"] },
+          "currency": { "type": "string", "const": "ISK" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

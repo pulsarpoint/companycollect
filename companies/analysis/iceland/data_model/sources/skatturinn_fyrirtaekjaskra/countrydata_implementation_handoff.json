@@ -1,0 +1,83 @@
+{
+  "country": "Iceland",
+  "country_slug": "iceland",
+  "source_slug": "skatturinn_fyrirtaekjaskra",
+  "source_identity": "iceland_skatturinn_fyrirtaekjaskra",
+  "source_package": "fyrirtaekjaskra",
+  "env_prefix": "FYRIRTAEKJASKRA",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Fyrirtækjaskrá — Iceland company register (Skatturinn)",
+    "source_type": "official_registry",
+    "organization": "Skatturinn (Iceland Revenue and Customs)",
+    "source_url": "https://www.skatturinn.is/fyrirtaekjaskra/leit/kennitala/{kennitala}",
+    "license": "free_per_company_overview_paid_bulk",
+    "access": "public_search",
+    "data_freshness": "live register",
+    "attribution": "Skatturinn (fyrirtækjaskrá)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://www.skatturinn.is/fyrirtaekjaskra/leit/kennitala/{kennitala}",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Accept: text/html"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "per_company_lookup", "page_param": "kennitala", "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "free per-company overview; pace requests (no bulk; do not scrape aggressively)"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "FyrirtaekjaskraRecord",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "HTML per-company overview. GET /fyrirtaekjaskra/leit/kennitala/{kennitala}; parse the result table for nafn, lögheimili, sveitarfélag, rekstrarform (legal form), ÍSAT activity, VSK status, forráðamaður (chair). Keep kennitala as a string. Redact forráðamaður (GDPR). No open bulk — there is no enumeration of all kennitalas; ingestion is per-known-kennitala (e.g. from a procurement/LEI/aggregator seed list). Bulk extracts and certified certificates are paid."
+  },
+  "keys": {
+    "primary_keys": ["kennitala"],
+    "join_keys": ["kennitala"],
+    "dedupe_keys": ["kennitala"]
+  },
+  "mapping_rules": {
+    "company_id": "kennitala (10-digit).",
+    "registration_number": "kennitala.",
+    "tax_id": "kennitala.",
+    "vat_id": "VSK number (separate registration; only status shown here).",
+    "legal_name": "nafn.",
+    "legal_form": "rekstrarform (E1 ehf / hf / sf / svf / ...).",
+    "registered_address": "lögheimili (+ sveitarfélag).",
+    "activity_code": "ÍSAT atvinnugrein (NACE-based).",
+    "officers": "forráðamaður (chair; PERSONAL DATA — redact)."
+  },
+  "fixture_requirements": [
+    "private limited company (E1 ehf)",
+    "public limited company (hf)",
+    "housing association / non-company entity (húsfélag)",
+    "entity with VSK status",
+    "record with forráðamaður (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "GET one kennitala overview; parse the fields.",
+    "full": "Look up identity per known kennitala (no open bulk enumeration); redact chair; pace requests; bulk/certificates are paid."
+  },
+  "blockers": [
+    "No open bulk / enumeration — per-company lookup only (seed kennitalas needed).",
+    "Bulk extracts and certified certificates are paid (gjaldskrá).",
+    "forráðamaður (chair) is personal data (GDPR) — redact."
+  ]
+}
