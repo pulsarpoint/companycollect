@@ -90,23 +90,24 @@ def build_br_cnae_to_nace_rows(
                     f"normalized as {nace_normalized_code} at line {line_number}"
                 )
 
+            output_row: dict[str, Any] = {
+                "cnae_version": row["cnae_version"],
+                "cnae_code": row["cnae_code"],
+                "cnae_normalized_code": cnae_normalized_code,
+                "cnae_description_pt": row["cnae_description_pt"],
+                "cnae_description_en": row["cnae_description_en"],
+                "nace_revision": row["nace_revision"],
+                "nace_code": row["nace_code"],
+                "nace_normalized_code": nace_normalized_code,
+                "nace_description_en": row["nace_description_en"],
+                "mapping_source": row["mapping_source"],
+                "source_url": row["source_url"],
+                "source_payload_hash": source_payload_hash,
+                "source_run_id": source_run_id,
+                "pulled_at": resolved_pulled_at,
+            }
             rows.append(
-                (
-                    row["cnae_version"],
-                    row["cnae_code"],
-                    cnae_normalized_code,
-                    row["cnae_description_pt"],
-                    row["cnae_description_en"],
-                    row["nace_revision"],
-                    row["nace_code"],
-                    nace_normalized_code,
-                    row["nace_description_en"],
-                    row["mapping_source"],
-                    row["source_url"],
-                    source_payload_hash,
-                    source_run_id,
-                    resolved_pulled_at,
-                )
+                tuple(output_row[column] for column in tables.BR_CNAE_TO_NACE_COLUMNS)
             )
 
     if not rows:
@@ -132,14 +133,19 @@ def _validate_fixture_header(fieldnames: Sequence[str] | None) -> None:
 
 
 def _normalized_fixture_row(
-    raw_row: dict[str, str | None],
+    raw_row: dict[str | None, str | list[str] | None],
     *,
     line_number: int,
 ) -> dict[str, str]:
+    if None in raw_row:
+        raise ValueError(
+            f"Unexpected extra fixture values at line {line_number}: {raw_row[None]}"
+        )
+
     row: dict[str, str] = {}
     for column in REQUIRED_FIXTURE_COLUMNS:
         value = raw_row.get(column)
-        if value is None or not value.strip():
+        if not isinstance(value, str) or not value.strip():
             raise ValueError(
                 f"Missing required fixture value: {column} at line {line_number}"
             )

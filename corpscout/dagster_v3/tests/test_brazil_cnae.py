@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -114,6 +115,7 @@ def test_build_rows_supports_many_to_many_edges(tmp_path: Path) -> None:
     assert rows[0][12] == "run-123"
     assert rows[0][13] == PULLED_AT
     assert {row[11] for row in rows} == {rows[0][11]}
+    assert rows[0][11] == hashlib.sha256(fixture_path.read_bytes()).hexdigest()
     assert len(rows[0][11]) == 64
     assert {row[2] for row in rows} == {"6201501", "6311900"}
     assert {row[7] for row in rows} == {"6201", "6202", "6311"}
@@ -127,8 +129,8 @@ def test_build_rows_rejects_duplicate_edges(tmp_path: Path) -> None:
             "Custom software development,NACE_REV_2,62.01,"
             "Computer programming activities,ibge_concla_isic_bridge,"
             "https://example.test/cnae",
-            "CNAE_2_0,6201-5/01,Desenvolvimento de programas sob encomenda,"
-            "Custom software development,NACE_REV_2,62.01,"
+            "CNAE_2_0,62.01-5/01,Desenvolvimento de programas sob encomenda,"
+            "Custom software development,NACE_REV_2,6201,"
             "Computer programming activities,ibge_concla_isic_bridge,"
             "https://example.test/cnae",
         ],
@@ -138,6 +140,26 @@ def test_build_rows_rejects_duplicate_edges(tmp_path: Path) -> None:
         ValueError,
         match="Duplicate Brazil CNAE to NACE mapping edge",
     ):
+        build_br_cnae_to_nace_rows(
+            fixture_path=fixture_path,
+            source_run_id="run-123",
+            valid_nace_targets={("NACE_REV_2", "6201")},
+            pulled_at=PULLED_AT,
+        )
+
+
+def test_build_rows_rejects_extra_fixture_values(tmp_path: Path) -> None:
+    fixture_path = _write_fixture(
+        tmp_path,
+        [
+            "CNAE_2_0,6201-5/01,Desenvolvimento de programas sob encomenda,"
+            "Custom software development,NACE_REV_2,62.01,"
+            "Computer programming activities,ibge_concla_isic_bridge,"
+            "https://example.test/cnae,unexpected",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="Unexpected extra fixture values"):
         build_br_cnae_to_nace_rows(
             fixture_path=fixture_path,
             source_run_id="run-123",
@@ -160,6 +182,46 @@ def test_build_rows_rejects_missing_required_values(tmp_path: Path) -> None:
     with pytest.raises(
         ValueError,
         match="Missing required fixture value: cnae_code",
+    ):
+        build_br_cnae_to_nace_rows(
+            fixture_path=fixture_path,
+            source_run_id="run-123",
+            valid_nace_targets={("NACE_REV_2", "6201")},
+            pulled_at=PULLED_AT,
+        )
+
+
+def test_build_rows_rejects_missing_required_header_columns(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "missing_header.csv"
+    fixture_path.write_text(
+        "\n".join(
+            [
+                "cnae_version,cnae_code,cnae_description_pt,cnae_description_en,"
+                "nace_revision,nace_description_en,mapping_source,source_url",
+                "CNAE_2_0,6201-5/01,Desenvolvimento de programas sob encomenda,"
+                "Custom software development,NACE_REV_2,"
+                "Computer programming activities,ibge_concla_isic_bridge,"
+                "https://example.test/cnae",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Missing required fixture columns: nace_code"):
+        build_br_cnae_to_nace_rows(
+            fixture_path=fixture_path,
+            source_run_id="run-123",
+            valid_nace_targets={("NACE_REV_2", "6201")},
+            pulled_at=PULLED_AT,
+        )
+
+
+def test_build_rows_rejects_empty_fixture(tmp_path: Path) -> None:
+    fixture_path = _write_fixture(tmp_path, [])
+
+    with pytest.raises(
+        ValueError,
+        match="Brazil CNAE to NACE fixture produced no rows",
     ):
         build_br_cnae_to_nace_rows(
             fixture_path=fixture_path,
