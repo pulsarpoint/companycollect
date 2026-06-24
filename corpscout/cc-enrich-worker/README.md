@@ -197,18 +197,52 @@ scan for comparison.
 
 ---
 
-## Output schema
+## ClickHouse storage
 
-Written to Parquet in the column order of the ClickHouse migrations, then loaded into:
+Everything lives in the **`corpscout`** ClickHouse database (on-prem, `companycollect:9002`).
 
-- **`corpscout.commoncrawl_domains`** (migration `000046`) — one row/domain: crawl_id, url,
-  root_domain, subdomain, emails[], email_count, page_type(+score), nace_code/label/division,
-  nace_confident/margin/score/method, nace_top3_*, source_url, source_run_id, resolved_at.
-- **`corpscout.commoncrawl_technologies`** (migration `000047`) — one row per (domain, technology):
-  crawl_id, url, root_domain, subdomain, technology, category, version, confidence, source_url,
-  source_run_id, resolved_at.
+### Where the schema is defined
+All table schemas are **golang-migrate** SQL migrations in
+[`corpscout/clickhouse/migrations/`](../clickhouse/migrations) (`.up.sql` + `.down.sql` per
+version). **The migration owns the schema — this worker never issues DDL.** It only reads the
+reference tables and writes Parquet whose column order is **pinned to the migration** (a contract
+test in `dagster_v3` greps the export column tuple against the migration file). New migrations are
+also registered in `EXPECTED_MIGRATIONS` in `dagster_v3/tests/test_clickhouse_migrations.py`.
 
-Both are `ReplacingMergeTree` — re-running a shard is safe and dedupes.
+Apply / roll back (from `corpscout/`, uses `CLICKHOUSE_MIGRATE_URL` → `…/database=corpscout`):
+```bash
+make clickhouse-migrate-up        # apply pending migrations (golang-migrate via docker)
+make clickhouse-migrate-down      # roll back one
+```
+
+### Tables this worker uses
+
+**Outputs** — written as Parquet by the passes, loaded into ClickHouse by `run_crawl.sh`:
+
+| table | migration | written by | grain | holds |
+|---|---|---|---|---|
+| `commoncrawl_domains` | `000046` | **industry** pass | one row per **domain** | **the industry classification** (`nace_code`, `nace_label`, `nace_division`, `nace_confident`, `nace_margin`, `nace_score`, `nace_method`, `nace_top3_codes/labels/scores`) + `page_type`(+score) + contacts (`emails[]`, `email_count`) + lineage (`crawl_id`, `url`, `root_domain`, `subdomain`, `source_url`, `source_run_id`, `resolved_at`) |
+| `commoncrawl_technologies` | `000047` | **tech** pass | one row per **(domain, technology)** | `technology`, `category`, `version`, `confidence` + the same lineage columns |
+
+> **Naming note:** there is no `commoncrawl_industries` table. The "industry" pass writes
+> `commoncrawl_domains` — the NACE industry fields are columns *on the per-domain row*, not a
+> separate table. `Go struct ↔ column` mappings are `DomainRow`/`TechRow` in `output.go`.
+
+**Reference** — read by the industry/both passes at startup (`reference.go`), **not** written by
+this worker (built by the `commoncrawl_classify` Dagster assets in `dagster_v3` and rebuilt with
+`dagster_v3/scripts/rebuild_reference_embeddings.py` whenever the served embedding model changes):
+
+| table | migration | read for |
+|---|---|---|
+| `nace_category_embeddings` | `000044` | the NACE matrix (`code`, `label`, `division`, `embedding Array(Float32)`, …) cosine-matched against the page vector |
+| `page_type_exemplars` | `000045` | page-type prototype vectors (`page_type`, `embedding`, …) |
+
+(`commoncrawl_page_signals`, migration `000048`, also exists in the `corpscout` schema but is not
+produced or read by this worker.)
+
+### Engine / dedup
+All output and reference tables are **`ReplacingMergeTree`** — re-running a shard, or re-loading
+its Parquet, is safe and dedupes on the sort key. This is what makes the driver restartable.
 
 ---
 
