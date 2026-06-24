@@ -62,6 +62,8 @@ EXPECTED_MIGRATIONS = (
     "000048_corpscout_commoncrawl_page_signals",
     "000049_corpscout_commoncrawl_domains_nace_confidence",
     "000050_corpscout_br_cnae_to_nace",
+    "000051_corpscout_commoncrawl_company_identifiers",
+    "000052_corpscout_lei_wikidata_companies_view",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -385,7 +387,11 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
 
         assert "CREATE DATABASE IF NOT EXISTS" in sql
         # Every migration creates tables, except pure ALTER (schema-change) migrations.
-        assert "CREATE TABLE IF NOT EXISTS" in sql or "ALTER TABLE" in sql
+        assert (
+            "CREATE TABLE IF NOT EXISTS" in sql
+            or "ALTER TABLE" in sql
+            or "CREATE VIEW IF NOT EXISTS" in sql
+        )
         assert "TRUNCATE" not in sql.upper()
 
 
@@ -393,7 +399,11 @@ def test_clickhouse_migrations_have_down_files() -> None:
     for migration_file in EXPECTED_MIGRATIONS:
         sql = _migration_sql(f"{migration_file}.down.sql")
 
-        assert "DROP TABLE IF EXISTS" in sql or "ALTER TABLE" in sql
+        assert (
+            "DROP TABLE IF EXISTS" in sql
+            or "ALTER TABLE" in sql
+            or "DROP VIEW IF EXISTS" in sql
+        )
 
 
 def test_finland_resolved_migrations_use_corpscout_database() -> None:
@@ -778,6 +788,35 @@ def test_brazil_cnae_mapping_migration_covers_exported_columns() -> None:
         in sql
     )
     assert "DROP TABLE IF EXISTS corpscout.br_cnae_to_nace" in down_sql
+
+
+def test_lei_wikidata_company_view_joins_gleif_and_wikidata_lei_identifiers() -> None:
+    sql = _migration_sql("000052_corpscout_lei_wikidata_companies_view.up.sql")
+    down_sql = _migration_sql("000052_corpscout_lei_wikidata_companies_view.down.sql")
+
+    assert "CREATE VIEW IF NOT EXISTS corpscout.lei_wikidata_companies" in sql
+    assert "FROM corpscout.gleif_lei_records AS lei" in sql
+    assert "INNER JOIN corpscout.wikidata_company_identifiers AS ids" in sql
+    assert "ids.identifier_type = 'lei'" in sql
+    assert "ids.wikidata_property_id = 'P1278'" in sql
+    assert "ids.identifier_value = lei.lei" in sql
+    assert "LEFT JOIN corpscout.wikidata_companies AS company" in sql
+    assert "company.wikidata_id = ids.wikidata_id" in sql
+    for column_alias in (
+        "gleif_legal_name",
+        "gleif_entity_status",
+        "gleif_primary_country_iso2",
+        "wikidata_id",
+        "wikidata_name",
+        "wikidata_official_name",
+        "wikidata_company_description",
+        "wikidata_legal_form_label",
+        "wikidata_industry_label",
+        "wikidata_has_current_listing",
+    ):
+        assert f" AS {column_alias}" in sql
+
+    assert "DROP VIEW IF EXISTS corpscout.lei_wikidata_companies" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

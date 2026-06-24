@@ -1,0 +1,66 @@
+CREATE DATABASE IF NOT EXISTS corpscout;
+
+CREATE VIEW IF NOT EXISTS corpscout.lei_wikidata_companies AS
+SELECT
+    lei.lei AS lei,
+    lei.legal_name AS gleif_legal_name,
+    lei.legal_name_language AS gleif_legal_name_language,
+    lei.entity_status AS gleif_entity_status,
+    lei.registration_status AS gleif_registration_status,
+    lei.jurisdiction AS gleif_jurisdiction,
+    lei.category AS gleif_category,
+    lei.subcategory AS gleif_subcategory,
+    lei.legal_form_id AS gleif_legal_form_id,
+    lei.legal_form_other AS gleif_legal_form_other,
+    lei.registered_at_id AS gleif_registered_at_id,
+    lei.registered_at_other AS gleif_registered_at_other,
+    lei.registered_as AS gleif_registered_as,
+    lei.initial_registration_date AS gleif_initial_registration_date,
+    lei.last_update_date AS gleif_last_update_date,
+    lei.next_renewal_date AS gleif_next_renewal_date,
+    lei.managing_lou AS gleif_managing_lou,
+    lei.corroboration_level AS gleif_corroboration_level,
+    lei.validated_at_id AS gleif_validated_at_id,
+    lei.validated_at_other AS gleif_validated_at_other,
+    lei.validated_as AS gleif_validated_as,
+    lei.conformity_flag AS gleif_conformity_flag,
+    lei.legal_address_country AS gleif_legal_address_country,
+    lei.headquarters_address_country AS gleif_headquarters_address_country,
+    lei.primary_country_iso2 AS gleif_primary_country_iso2,
+    lei.golden_copy_publish_date AS gleif_golden_copy_publish_date,
+    lei.resolved_at AS gleif_resolved_at,
+    ids.wikidata_id AS wikidata_id,
+    ids.identifier_scope AS wikidata_identifier_scope,
+    ids.is_primary AS wikidata_identifier_is_primary,
+    ids.resolved_at AS wikidata_identifier_resolved_at,
+    company.wikidata_url AS wikidata_url,
+    company.name AS wikidata_name,
+    company.name_normalized AS wikidata_name_normalized,
+    company.official_name AS wikidata_official_name,
+    company.company_description AS wikidata_company_description,
+    company.headquarters_wikidata_id AS wikidata_headquarters_wikidata_id,
+    company.headquarters_label AS wikidata_headquarters_label,
+    company.headquarters_country_wikidata_id AS wikidata_headquarters_country_wikidata_id,
+    company.headquarters_country_label AS wikidata_headquarters_country_label,
+    company.headquarters_country_iso2 AS wikidata_headquarters_country_iso2,
+    company.country_resolution_method AS wikidata_country_resolution_method,
+    company.country_resolution_confidence AS wikidata_country_resolution_confidence,
+    company.inception_date AS wikidata_inception_date,
+    company.legal_form_wikidata_id AS wikidata_legal_form_wikidata_id,
+    company.legal_form_label AS wikidata_legal_form_label,
+    company.employee_count AS wikidata_employee_count,
+    company.employee_count_point_in_time AS wikidata_employee_count_point_in_time,
+    company.logo_image AS wikidata_logo_image,
+    company.logo_image_url AS wikidata_logo_image_url,
+    company.industry_wikidata_id AS wikidata_industry_wikidata_id,
+    company.industry_label AS wikidata_industry_label,
+    company.has_current_listing AS wikidata_has_current_listing,
+    company.listing_count AS wikidata_listing_count,
+    company.resolved_at AS wikidata_company_resolved_at
+FROM corpscout.gleif_lei_records AS lei
+INNER JOIN corpscout.wikidata_company_identifiers AS ids
+    ON ids.identifier_type = 'lei'
+    AND ids.wikidata_property_id = 'P1278'
+    AND ids.identifier_value = lei.lei
+LEFT JOIN corpscout.wikidata_companies AS company
+    ON company.wikidata_id = ids.wikidata_id;
