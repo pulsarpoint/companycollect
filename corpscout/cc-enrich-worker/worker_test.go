@@ -96,7 +96,7 @@ func TestProcessShardAndParquet(t *testing.T) {
 	}
 }
 
-func TestProcessShardSkipTech(t *testing.T) {
+func TestProcessShardIndustryMode(t *testing.T) {
 	page1 := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n<html><body>Acme software company</body></html>")
 	getter := multiGetter{"f.warc.gz:0": page1}
 	items := []WorklistItem{
@@ -105,7 +105,7 @@ func TestProcessShardSkipTech(t *testing.T) {
 	ref := &Reference{Codes: []string{"62.01"}, Labels: []string{"Programming"}, Divisions: []string{"62"},
 		M: [][]float32{norm([]float32{1, 0, 0})}}
 	emb := fakeEmbedder{vec: norm([]float32{1, 0, 0})}
-	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, SkipTech: true}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "industry"}
 
 	domains, tech, err := ProcessShard(context.Background(), items, getter, emb, ref, &Prototypes{}, cfg)
 	if err != nil {
@@ -115,6 +115,32 @@ func TestProcessShardSkipTech(t *testing.T) {
 		t.Fatalf("industry classify wrong: %+v", domains)
 	}
 	if len(tech) != 0 {
-		t.Fatalf("skip-tech should emit no tech rows, got %d", len(tech))
+		t.Fatalf("industry mode should emit no tech rows, got %d", len(tech))
+	}
+}
+
+func TestProcessShardTechMode(t *testing.T) {
+	// mode=tech needs neither embedder nor reference: pass nil and assert no panic/calls.
+	page := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n<html><head>" +
+		"<meta name=\"generator\" content=\"WordPress 6.4\">" +
+		"<link href=\"/wp-content/themes/x/style.css\" rel=\"stylesheet\"></head><body>x</body></html>")
+	getter := multiGetter{"f.warc.gz:0": page}
+	items := []WorklistItem{
+		{RootDomain: "acme.com", URL: "https://acme.com/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
+	}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech"}
+
+	domains, tech, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(domains) != 0 {
+		t.Fatalf("tech mode should emit no domain rows, got %d", len(domains))
+	}
+	if !hasTechRow(tech, "Nginx") || !hasTechRow(tech, "WordPress") {
+		t.Fatalf("tech mode tech rows wrong: %+v", tech)
+	}
+	if tech[0].RootDomain != "acme.com" {
+		t.Fatalf("tech row not keyed to domain: %+v", tech[0])
 	}
 }

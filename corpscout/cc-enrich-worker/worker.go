@@ -27,8 +27,8 @@ type ShardConfig struct {
 	CrawlID, SourceRunID string
 	ResolvedAt           time.Time
 	Concurrency          int
-	TechMaxBytes         int  // body cap fed to Wappalyzer; 0 => techMaxBytes default
-	SkipTech             bool // skip Wappalyzer entirely (industry-only pass; run tech separately)
+	TechMaxBytes         int    // body cap fed to Wappalyzer; 0 => techMaxBytes default
+	Mode                 string // "industry" | "tech" | "both" (default "both")
 }
 
 type domainAgg struct {
@@ -54,11 +54,21 @@ func subdomainOf(rawURL, root string) string {
 	return ""
 }
 
-// ProcessShard fetches+parses+fingerprints every page (all K) across all cores, embeds
-// each domain's primary text in one batch, then classifies (keyword signal else cosine
-// gates) into one DomainResult per domain with the union of its pages' technologies.
+// ProcessShard processes one worklist shard. cfg.Mode selects the work:
+//   "industry": fetch each domain's primary page -> embed -> classify -> domain rows
+//               (needs the ClickHouse reference + embedder; no Wappalyzer)
+//   "tech":     fetch every page -> Wappalyzer -> per-domain unioned tech rows
+//               (no ClickHouse, no embedder)
+//   "both"  :   both in a single fetch pass (default)
 func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter, emb embedderIface,
 	ref *Reference, protos *Prototypes, cfg ShardConfig) ([]DomainRow, []TechRow, error) {
+
+	mode := cfg.Mode
+	if mode == "" {
+		mode = "both"
+	}
+	runEmbed := mode != "tech"
+	runTech := mode != "industry"
 
 	byDomain := map[string][]WorklistItem{}
 	var order []string
@@ -95,10 +105,11 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 				if err != nil {
 					continue // skip a bad/slow page; the domain still emits if its primary survived
 				}
-				t1 := time.Now()
-				text, emails, _ := ParseHTML(string(body))
-				atomic.AddInt64(&parseNs, time.Since(t1).Nanoseconds())
-				if !cfg.SkipTech {
+				if agg.primaryURL == "" { // first surviving page keys this domain's rows
+					agg.primaryURL = it.URL
+					agg.primarySub = subdomainOf(it.URL, dom)
+				}
+				if runTech {
 					t2 := time.Now()
 					techBody := body
 					if limit := cfg.TechMaxBytes; limit > 0 && len(techBody) > limit {
@@ -113,10 +124,11 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 						}
 					}
 				}
-				if it.Primary && !agg.hasPrimary {
+				if runEmbed && it.Primary && !agg.hasPrimary {
+					t1 := time.Now()
+					text, emails, _ := ParseHTML(string(body))
+					atomic.AddInt64(&parseNs, time.Since(t1).Nanoseconds())
 					agg.hasPrimary = true
-					agg.primaryURL = it.URL
-					agg.primarySub = subdomainOf(it.URL, dom)
 					agg.primaryText = text
 					agg.emails = emails
 				}
@@ -126,56 +138,66 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 	}
 	wg.Wait()
 	if n := atomic.LoadInt64(&pageCount); n > 0 {
-		log.Printf("  timing/page (avg latency): fetch=%.0fms parse=%.1fms tech=%.1fms  conc=%d n=%d",
+		log.Printf("  timing/page (avg latency): fetch=%.0fms parse=%.1fms tech=%.1fms  conc=%d n=%d mode=%s",
 			float64(fetchNs)/float64(n)/1e6, float64(parseNs)/float64(n)/1e6,
-			float64(techNs)/float64(n)/1e6, conc, n)
-	}
-
-	var idx []int
-	var texts []string
-	for i, a := range aggs {
-		if a != nil && a.hasPrimary {
-			idx = append(idx, i)
-			texts = append(texts, a.primaryText)
-		}
-	}
-	var vecs [][]float32
-	if len(texts) > 0 {
-		var err error
-		if vecs, err = emb.Embed(texts, classifyInstruction); err != nil {
-			return nil, nil, err
-		}
+			float64(techNs)/float64(n)/1e6, conc, n, mode)
 	}
 
 	var domains []DomainRow
 	var techRows []TechRow
-	for vi, i := range idx {
-		a := aggs[i]
-		var res DomainResult
-		if label := MatchSignal(a.primaryText); label != "" {
-			res = DomainResult{PageType: label, NaceMethod: "keyword"}
-		} else {
-			res = Classify(vecs[vi], ref, protos)
+
+	if runEmbed {
+		var idx []int
+		var texts []string
+		for i, a := range aggs {
+			if a != nil && a.hasPrimary {
+				idx = append(idx, i)
+				texts = append(texts, a.primaryText)
+			}
 		}
-		conf := uint8(0)
-		if res.NaceConfident {
-			conf = 1
+		var vecs [][]float32
+		if len(texts) > 0 {
+			var err error
+			if vecs, err = emb.Embed(texts, classifyInstruction); err != nil {
+				return nil, nil, err
+			}
 		}
-		domains = append(domains, DomainRow{
-			CrawlID: cfg.CrawlID, URL: a.primaryURL, RootDomain: a.rootDomain, Subdomain: a.primarySub,
-			Emails: a.emails, EmailCount: uint32(len(a.emails)),
-			PageType: res.PageType, PageTypeScore: res.PageTypeScore,
-			NaceCode: res.NaceCode, NaceLabel: res.NaceLabel, NaceDivision: res.NaceDivision,
-			NaceConfident: conf, NaceMargin: res.NaceMargin, NaceScore: res.NaceScore, NaceMethod: res.NaceMethod,
-			Top3Codes: res.Top3Codes, Top3Labels: res.Top3Labels, Top3Scores: res.Top3Scores,
-			SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
-		})
-		for _, t := range a.tech {
-			techRows = append(techRows, TechRow{
+		for vi, i := range idx {
+			a := aggs[i]
+			var res DomainResult
+			if label := MatchSignal(a.primaryText); label != "" {
+				res = DomainResult{PageType: label, NaceMethod: "keyword"}
+			} else {
+				res = Classify(vecs[vi], ref, protos)
+			}
+			conf := uint8(0)
+			if res.NaceConfident {
+				conf = 1
+			}
+			domains = append(domains, DomainRow{
 				CrawlID: cfg.CrawlID, URL: a.primaryURL, RootDomain: a.rootDomain, Subdomain: a.primarySub,
-				Technology: t.Name, Category: t.Category, Version: t.Version, Confidence: 100,
+				Emails: a.emails, EmailCount: uint32(len(a.emails)),
+				PageType: res.PageType, PageTypeScore: res.PageTypeScore,
+				NaceCode: res.NaceCode, NaceLabel: res.NaceLabel, NaceDivision: res.NaceDivision,
+				NaceConfident: conf, NaceMargin: res.NaceMargin, NaceScore: res.NaceScore, NaceMethod: res.NaceMethod,
+				Top3Codes: res.Top3Codes, Top3Labels: res.Top3Labels, Top3Scores: res.Top3Scores,
 				SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 			})
+		}
+	}
+
+	if runTech {
+		for _, a := range aggs {
+			if a == nil || a.primaryURL == "" {
+				continue
+			}
+			for _, t := range a.tech {
+				techRows = append(techRows, TechRow{
+					CrawlID: cfg.CrawlID, URL: a.primaryURL, RootDomain: a.rootDomain, Subdomain: a.primarySub,
+					Technology: t.Name, Category: t.Category, Version: t.Version, Confidence: 100,
+					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+				})
+			}
 		}
 	}
 	return domains, techRows, nil

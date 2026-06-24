@@ -90,7 +90,8 @@ func main() {
 	crawlID := flag.String("crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 (required)")
 	concurrency := flag.Int("concurrency", 32, "fetch/parse/tech concurrency")
 	techMax := flag.Int("tech-max-bytes", techMaxBytes, "cap body bytes fed to Wappalyzer (0=full body; full-body regex is ~1.2s/page)")
-	skipTech := flag.Bool("skip-tech", false, "skip Wappalyzer entirely (light industry-only pass; run tech separately)")
+	modeFlag := flag.String("mode", "both", "industry (domains, needs CH+embedder) | tech (tech only, no CH/embedder) | both")
+	skipTech := flag.Bool("skip-tech", false, "alias for --mode industry (skip Wappalyzer)")
 	anonymous := flag.Bool("s3-anonymous", false, "fetch from S3 with unsigned requests (off-AWS; CommonCrawl is open data)")
 	batch := flag.Int("embed-batch", embedBatch, "embed batch size")
 	embedConc := flag.Int("embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
@@ -105,29 +106,46 @@ func main() {
 	}
 	ctx := context.Background()
 
-	conn, err := chConnect(ctx)
-	if err != nil {
-		log.Fatalf("clickhouse connect: %v", err)
+	mode := *modeFlag
+	if *skipTech && mode == "both" {
+		mode = "industry"
 	}
-	ref, protos, err := LoadReference(ctx, conn)
-	conn.Close()
-	if err != nil {
-		log.Fatalf("load reference: %v", err)
+	if mode != "industry" && mode != "tech" && mode != "both" {
+		log.Fatalf("--mode must be industry|tech|both, got %q", mode)
 	}
-	if len(ref.M) == 0 {
-		log.Fatal("empty NACE reference — rebuild corpscout.nace_category_embeddings")
-	}
-	log.Printf("reference: nace=%d page_types=%d dim=%d", len(ref.M), len(protos.P), len(ref.M[0]))
 
-	baseURL := envOr("COMMONCRAWL_EMBED_BASE_URL", "http://localhost:8000/v1")
-	model := envOr("COMMONCRAWL_EMBED_MODEL", "")
-	if model == "" {
-		if model, err = detectModel(baseURL); err != nil {
-			log.Fatalf("detect embed model: %v", err)
+	// ClickHouse reference + embedder are only needed when we classify (industry/both).
+	var ref *Reference
+	var protos *Prototypes
+	var emb embedderIface
+	if mode != "tech" {
+		conn, err := chConnect(ctx)
+		if err != nil {
+			log.Fatalf("clickhouse connect: %v", err)
 		}
+		ref, protos, err = LoadReference(ctx, conn)
+		conn.Close()
+		if err != nil {
+			log.Fatalf("load reference: %v", err)
+		}
+		if len(ref.M) == 0 {
+			log.Fatal("empty NACE reference — rebuild corpscout.nace_category_embeddings")
+		}
+		log.Printf("reference: nace=%d page_types=%d dim=%d", len(ref.M), len(protos.P), len(ref.M[0]))
+
+		baseURL := envOr("COMMONCRAWL_EMBED_BASE_URL", "http://localhost:8000/v1")
+		model := envOr("COMMONCRAWL_EMBED_MODEL", "")
+		if model == "" {
+			var err error
+			if model, err = detectModel(baseURL); err != nil {
+				log.Fatalf("detect embed model: %v", err)
+			}
+		}
+		log.Printf("embed endpoint=%s model=%s", baseURL, model)
+		emb = NewEmbedClient(baseURL, model, *batch, *embedConc)
+	} else {
+		log.Printf("mode=tech: skipping ClickHouse reference + embedder")
 	}
-	log.Printf("embed endpoint=%s model=%s", baseURL, model)
-	emb := NewEmbedClient(baseURL, model, *batch, *embedConc)
 
 	getter, err := NewS3Getter(ctx, *region, *anonymous)
 	if err != nil {
@@ -143,7 +161,7 @@ func main() {
 	cfg := ShardConfig{
 		CrawlID: *crawlID, SourceRunID: fmt.Sprintf("go-%d", time.Now().Unix()),
 		ResolvedAt: time.Now().UTC(), Concurrency: *concurrency, TechMaxBytes: *techMax,
-		SkipTech: *skipTech,
+		Mode: mode,
 	}
 	start := time.Now()
 	var domains []DomainRow
@@ -164,11 +182,18 @@ func main() {
 	}
 
 	domPath, techPath := *out+"-domains.parquet", *out+"-tech.parquet"
-	if err := WriteDomains(domPath, domains); err != nil {
-		log.Fatalf("write domains: %v", err)
+	var written []string
+	if mode != "tech" {
+		if err := WriteDomains(domPath, domains); err != nil {
+			log.Fatalf("write domains: %v", err)
+		}
+		written = append(written, domPath)
 	}
-	if err := WriteTech(techPath, tech); err != nil {
-		log.Fatalf("write tech: %v", err)
+	if mode != "industry" {
+		if err := WriteTech(techPath, tech); err != nil {
+			log.Fatalf("write tech: %v", err)
+		}
+		written = append(written, techPath)
 	}
 	dur := time.Since(start).Seconds()
 	rate := 0.0
@@ -179,7 +204,7 @@ func main() {
 
 	if *s3Bucket != "" {
 		s3c := getter.client
-		for _, p := range []string{domPath, techPath} {
+		for _, p := range written {
 			key := *s3Prefix + p
 			if err := UploadToS3(ctx, s3c, *s3Bucket, key, p); err != nil {
 				log.Fatalf("upload %s: %v", p, err)
