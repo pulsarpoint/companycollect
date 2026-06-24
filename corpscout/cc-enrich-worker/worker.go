@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"log"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -70,6 +72,7 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 	if conc <= 0 {
 		conc = 8
 	}
+	var fetchNs, parseNs, techNs, pageCount int64 // per-stage timing (diagnostics)
 	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
 	for di, dom := range order {
@@ -81,14 +84,22 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 			agg := &domainAgg{rootDomain: dom}
 			techSeen := map[string]bool{}
 			for _, it := range byDomain[dom] {
+				t0 := time.Now()
 				fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 				headers, body, err := FetchRecord(fctx, getter, ccBucket, it.WarcFilename, it.Offset, it.Length)
 				cancel()
+				atomic.AddInt64(&fetchNs, time.Since(t0).Nanoseconds())
+				atomic.AddInt64(&pageCount, 1)
 				if err != nil {
 					continue // skip a bad/slow page; the domain still emits if its primary survived
 				}
+				t1 := time.Now()
 				text, emails, _ := ParseHTML(string(body))
-				for _, t := range DetectTech(headers, body) {
+				atomic.AddInt64(&parseNs, time.Since(t1).Nanoseconds())
+				t2 := time.Now()
+				detected := DetectTech(headers, body)
+				atomic.AddInt64(&techNs, time.Since(t2).Nanoseconds())
+				for _, t := range detected {
 					if !techSeen[t.Name] {
 						techSeen[t.Name] = true
 						agg.tech = append(agg.tech, t)
@@ -106,6 +117,11 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 		}(di, dom)
 	}
 	wg.Wait()
+	if n := atomic.LoadInt64(&pageCount); n > 0 {
+		log.Printf("  timing/page (avg latency): fetch=%.0fms parse=%.1fms tech=%.1fms  conc=%d n=%d",
+			float64(fetchNs)/float64(n)/1e6, float64(parseNs)/float64(n)/1e6,
+			float64(techNs)/float64(n)/1e6, conc, n)
+	}
 
 	var idx []int
 	var texts []string
