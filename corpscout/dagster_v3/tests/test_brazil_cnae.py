@@ -375,3 +375,29 @@ def test_replace_clickhouse_drops_stage_after_insert_failure(
     assert client.statements[-1][0] == (
         "DROP TABLE IF EXISTS `corpscout`.`_tmp_br_cnae_to_nace_failed`"
     )
+
+
+def test_seed_fixture_builds_non_empty_rows() -> None:
+    from dagster_v3.defs.brazil_cnae.assets import BR_CNAE_TO_NACE_FIXTURE
+
+    rows = build_br_cnae_to_nace_rows(
+        fixture_path=BR_CNAE_TO_NACE_FIXTURE,
+        source_run_id="seed-test",
+        pulled_at=PULLED_AT,
+        valid_nace_targets={
+            ("NACE_REV_2", "6201"),
+            ("NACE_REV_2", "6202"),
+            ("NACE_REV_2", "6311"),
+        },
+    )
+
+    assert len(rows) == 3
+
+
+def test_brazil_cnae_asset_is_registered() -> None:
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    keys = {key.to_user_string() for key in repo.asset_graph.get_all_asset_keys()}
+
+    assert "brazil_cnae_to_nace_clickhouse" in keys

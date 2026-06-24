@@ -1,0 +1,4 @@
+cnae_version,cnae_code,cnae_description_pt,cnae_description_en,nace_revision,nace_code,nace_description_en,mapping_source,source_url
+CNAE_2_0,6201-5/01,Desenvolvimento de programas de computador sob encomenda,Custom software development,NACE_REV_2,62.01,Computer programming activities,seed_fixture_isic_bridge,https://concla.ibge.gov.br/
+CNAE_2_0,6201-5/01,Desenvolvimento de programas de computador sob encomenda,Custom software development,NACE_REV_2,62.02,Computer consultancy activities,seed_fixture_isic_bridge,https://concla.ibge.gov.br/
+CNAE_2_0,6311-9/00,Tratamento de dados provedores de serviços de aplicação e serviços de hospedagem na internet,Data processing hosting and application service providers,NACE_REV_2,63.11,"Data processing, hosting and related activities",seed_fixture_isic_bridge,https://concla.ibge.gov.br/
