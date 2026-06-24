@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import re
+import uuid
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -114,6 +115,80 @@ def build_br_cnae_to_nace_rows(
         raise ValueError("Brazil CNAE to NACE fixture produced no rows")
 
     return rows
+
+
+def replace_br_cnae_to_nace_clickhouse(
+    *,
+    clickhouse_client: Any,
+    fixture_path: str | Path,
+    source_run_id: str,
+    pulled_at: datetime | None = None,
+) -> dict[str, int]:
+    valid_nace_targets = _load_valid_nace_targets(clickhouse_client)
+    rows = build_br_cnae_to_nace_rows(
+        fixture_path=fixture_path,
+        source_run_id=source_run_id,
+        valid_nace_targets=valid_nace_targets,
+        pulled_at=pulled_at,
+    )
+
+    stage_table = f"_tmp_{tables.BR_CNAE_TO_NACE_TABLE}_{uuid.uuid4().hex}"
+    qualified_stage_table = _qualified_clickhouse_table(stage_table)
+    qualified_target_table = _qualified_clickhouse_table(tables.BR_CNAE_TO_NACE_TABLE)
+    columns = ", ".join(tables.BR_CNAE_TO_NACE_COLUMNS)
+    primary_error: Exception | None = None
+
+    try:
+        clickhouse_client.execute(
+            f"CREATE TABLE {qualified_stage_table} AS {qualified_target_table}"
+        )
+        clickhouse_client.execute(
+            f"INSERT INTO {qualified_stage_table} ({columns}) VALUES",
+            rows,
+        )
+        clickhouse_client.execute(
+            f"EXCHANGE TABLES {qualified_stage_table} AND {qualified_target_table}"
+        )
+    except Exception as exc:
+        primary_error = exc
+        raise
+    finally:
+        try:
+            clickhouse_client.execute(f"DROP TABLE IF EXISTS {qualified_stage_table}")
+        except Exception:
+            if primary_error is None:
+                raise
+
+    return {
+        "rows": len(rows),
+        "cnae_codes": len({str(row[2]) for row in rows}),
+        "nace_targets": len({(str(row[5]), str(row[7])) for row in rows}),
+    }
+
+
+def _load_valid_nace_targets(clickhouse_client: Any) -> set[NormalizedNaceTarget]:
+    rows = clickhouse_client.execute(
+        "SELECT classification_version, normalized_code, description_en "
+        f"FROM {_qualified_clickhouse_table('nace_categories')}"
+    )
+    valid_nace_targets = {(str(row[0]), str(row[1])) for row in rows}
+    if not valid_nace_targets:
+        raise ValueError(
+            "No NACE categories available for Brazil CNAE mapping validation"
+        )
+    return valid_nace_targets
+
+
+def _qualified_clickhouse_table(table: str) -> str:
+    return (
+        f"{_quote_clickhouse_identifier(tables.BRAZIL_CNAE_DATABASE)}."
+        f"{_quote_clickhouse_identifier(table)}"
+    )
+
+
+def _quote_clickhouse_identifier(identifier: str) -> str:
+    escaped = identifier.replace("`", "``")
+    return f"`{escaped}`"
 
 
 def _validate_fixture_header(fieldnames: Sequence[str] | None) -> None:
