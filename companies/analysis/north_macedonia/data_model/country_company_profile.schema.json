@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "North Macedonia Company Profile",
+  "description": "Country-specific company profile for North Macedonia. The authoritative source is the Central Registry (Централен регистар на РСМ, CRM), which runs both the Trade Registry and the Registry of Annual Accounts. Keyed on the ЕМБС (7-digit unique entity registration number = company id); the ЕДБ (13-digit) is the tax number and the ДДВ број is the VAT registration (UJP). The CRM commercially distributes its data: only a free basic per-company search is open; bulk extracts, detailed data, and annual financial statements (Биланс на состојба / Биланс на успех, MKD) are PAID. There is no open bulk register and no open financials. The .mk government hosts were firewalled from the investigation environment (DNS resolves; TCP/HTTP blocked), so this model is documented from public sources with no captured values. Managers/founders are personal data — redact. Currency MKD; Cyrillic + Albanian.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "North Macedonia" },
+    "country_slug": { "type": "string", "const": "north_macedonia" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["embs"],
+      "properties": {
+        "embs": { "type": ["string", "null"], "description": "ЕМБС — 7-digit unique entity registration number = company id. Primary join key. (Held by CRM; free basic search, paid detail.)", "x-source": "crm_trade_registry", "x-source-path": "EMBS", "x-join-key": true, "x-freshness": "live", "x-access": "free_basic_search_paid_bulk" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "edb_tax_id": { "type": ["string", "null"], "description": "ЕДБ — 13-digit tax number.", "x-source": "crm_trade_registry", "x-source-path": "EDB" },
+        "vat_id": { "type": ["string", "null"], "description": "ДДВ број — VAT registration (UJP).", "x-source": "ujp_tax", "x-access": "public_search" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "business_name": { "type": ["string", "null"], "x-source": "crm_trade_registry", "x-source-path": "naziv" },
+        "legal_form": { "type": ["string", "null"], "description": "ДОО/ДООЕЛ/АД/ТП/ЈТД/КД.", "x-source": "crm_trade_registry", "x-source-path": "pravna_forma" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "активен / во ликвидација / во стечај / избришан.", "x-source": "crm_trade_registry", "x-source-path": "status" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "activity_code": { "type": ["string", "null"], "description": "НКД (~NACE).", "x-source": "crm_trade_registry", "x-source-path": "dejnost_NKD" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "crm_trade_registry", "x-source-path": "sediste_adresa" },
+        "municipality": { "type": ["string", "null"] }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "description": "Registered capital (MKD). Paid/detailed CRM field.",
+      "x-source": "crm_trade_registry",
+      "x-source-path": "osnovna_glavnina",
+      "x-access": "paid",
+      "properties": {
+        "registered_capital": { "type": ["number", "null"] },
+        "currency": { "type": "string", "const": "MKD" }
+      }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Managers/founders (Управители/Основачи). PERSONAL DATA when natural persons — REDACT. Paid/detailed CRM field.",
+      "x-source": "crm_trade_registry",
+      "x-source-path": "upraviteli_osnovaci",
+      "x-access": "paid",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Annual accounts from the CRM Registry of Annual Accounts (Биланс на состојба / Биланс на успех), MKD. PAID; no open bulk.",
+      "x-source": "crm_annual_accounts",
+      "x-access": "paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": ["string", "null"] },
+          "total_assets": { "type": ["number", "null"] },
+          "equity": { "type": ["number", "null"] },
+          "total_revenue": { "type": ["number", "null"] },
+          "net_result": { "type": ["number", "null"] },
+          "currency": { "type": "string", "const": "MKD" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

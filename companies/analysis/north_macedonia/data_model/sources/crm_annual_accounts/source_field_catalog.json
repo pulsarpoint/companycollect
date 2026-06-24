@@ -1,0 +1,25 @@
+{
+  "country": "North Macedonia",
+  "country_slug": "north_macedonia",
+  "source_slug": "crm_annual_accounts",
+  "source_name": "Central Registry — Registry of Annual Accounts (Регистар на годишни сметки)",
+  "source_type": "financial_statements",
+  "organization": "Централен регистар на Република Северна Македонија (CRM)",
+  "source_url": "https://www.crm.com.mk/",
+  "license": "commercial_distribution_by_registry",
+  "access": "paid",
+  "data_freshness": "annual",
+  "record_shape": "per_company_paid_annual_account_planning_only",
+  "primary_keys": ["EMBS"],
+  "join_keys": ["EMBS"],
+  "field_count": 7,
+  "fields": [
+    { "path": "embs", "source_field": "ЕМБС", "english_name": "entity_registration_number", "meaning": "Entity registration number (join key to the Trade Registry).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "mk", "limitations": "PLANNING-ONLY — paid; no values copied.", "source_confidence": "high", "analysis_notes": "Join key." },
+    { "path": "delovna_godina", "source_field": "Деловна година", "english_name": "fiscal_year", "meaning": "Reporting fiscal year.", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "mk", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "bilans_sostojba.aktiva", "source_field": "Биланс на состојба — Актива", "english_name": "total_assets", "meaning": "Balance sheet total assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "mk", "limitations": "PLANNING-ONLY. Currency MKD.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "bilans_sostojba.kapital", "source_field": "Биланс на состојба — Капитал и резерви", "english_name": "equity", "meaning": "Balance sheet equity and reserves.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "mk", "limitations": "PLANNING-ONLY. MKD.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "bilans_uspeh.vkupni_prihodi", "source_field": "Биланс на успех — Вкупни приходи", "english_name": "total_revenue", "meaning": "Income statement total revenue.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "mk", "limitations": "PLANNING-ONLY. MKD.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "bilans_uspeh.neto_dobivka", "source_field": "Биланс на успех — Нето добивка/загуба", "english_name": "net_result", "meaning": "Income statement net profit or loss.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "mk", "limitations": "PLANNING-ONLY. MKD.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "broj_vraboteni", "source_field": "Број на вработени", "english_name": "employees", "meaning": "Number of employees.", "data_type": "integer", "semantic_type": "employment", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "mk", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

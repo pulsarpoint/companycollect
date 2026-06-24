@@ -1,0 +1,27 @@
+{
+  "country": "North Macedonia",
+  "country_slug": "north_macedonia",
+  "source_slug": "crm_trade_registry",
+  "source_name": "Central Registry of North Macedonia — Trade Registry (Трговски регистар)",
+  "source_type": "official_registry",
+  "organization": "Централен регистар на Република Северна Македонија (CRM)",
+  "source_url": "https://www.crm.com.mk/",
+  "license": "commercial_distribution_by_registry",
+  "access": "free_basic_search_paid_bulk",
+  "data_freshness": "live",
+  "record_shape": "per_company_record_free_basic_search_paid_detail",
+  "primary_keys": ["EMBS"],
+  "join_keys": ["EMBS", "EDB"],
+  "field_count": 9,
+  "fields": [
+    { "path": "EMBS", "source_field": "ЕМБС", "english_name": "entity_registration_number", "meaning": "Единствен матичен број на субјектот — 7-digit unique entity registration number. Company id.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "mk", "limitations": "Documented from public docs; host unreachable from this environment, no live values.", "source_confidence": "high", "analysis_notes": "Primary join key." },
+    { "path": "EDB", "source_field": "ЕДБ", "english_name": "tax_number", "meaning": "Единствен даночен број — 13-digit tax number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "mk", "limitations": null, "source_confidence": "high", "analysis_notes": "Tax id; links to UJP." },
+    { "path": "naziv", "source_field": "Назив / Име", "english_name": "business_name", "meaning": "Registered business name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "mk (Cyrillic) / sq / Latin", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "pravna_forma", "source_field": "Правна форма", "english_name": "legal_form", "meaning": "Legal form (ДОО/ДООЕЛ/АД/ТП/ЈТД/КД).", "data_type": "string", "semantic_type": "legal_form", "example_values": ["ДОО", "ДООЕЛ", "АД"], "nullable": true, "repeatable": false, "code_list": "ДОО/ДООЕЛ/АД/ТП/ЈТД/КД/Подружница", "language": "mk", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Статус", "english_name": "status", "meaning": "Registration status (активен / во ликвидација / во стечај / избришан).", "data_type": "string", "semantic_type": "status", "example_values": ["активен"], "nullable": true, "repeatable": false, "code_list": "активен / во ликвидација / во стечај / избришан", "language": "mk", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "sediste_adresa", "source_field": "Седиште / Адреса", "english_name": "registered_seat", "meaning": "Registered seat / address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "mk", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "dejnost_NKD", "source_field": "Дејност (НКД)", "english_name": "activity_code", "meaning": "Primary activity code (NKD ~NACE).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "НКД (National Classification of Activities, ~NACE)", "language": "mk", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "upraviteli_osnovaci", "source_field": "Управители / Основачи", "english_name": "managers_founders", "meaning": "Managers / founders.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "mk", "limitations": "PERSONAL DATA when natural persons (NM Law on Personal Data Protection) — REDACT. Paid/detailed field.", "source_confidence": "high", "analysis_notes": "Redact natural persons." },
+    { "path": "osnovna_glavnina", "source_field": "Основна главнина", "english_name": "registered_capital", "meaning": "Registered capital.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency MKD; paid/detailed field.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

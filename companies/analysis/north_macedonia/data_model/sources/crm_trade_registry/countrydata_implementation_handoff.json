@@ -1,0 +1,85 @@
+{
+  "country": "North Macedonia",
+  "country_slug": "north_macedonia",
+  "source_slug": "crm_trade_registry",
+  "source_identity": "north_macedonia_crm_trade_registry",
+  "source_package": "crmtrade",
+  "env_prefix": "MK_CRM_TRADE",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Central Registry of North Macedonia — Trade Registry",
+    "source_type": "official_registry",
+    "organization": "Централен регистар на Република Северна Македонија (CRM)",
+    "source_url": "https://www.crm.com.mk/",
+    "license": "commercial_distribution_by_registry",
+    "access": "free_basic_search_paid_bulk",
+    "data_freshness": "live",
+    "attribution": "Central Registry of North Macedonia (CRM)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["MK_CRM_TRADE_USERNAME", "MK_CRM_TRADE_PASSWORD"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://e-submit.crm.com.mk/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "paid_distribution"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "free basic search per company; bulk/detailed via paid distribution; host firewalled from this environment"
+  },
+  "snapshot": {
+    "strategy": "none_paid",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "CrmSubjekt",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": ["1.234.567,89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "PAID. Official register (CRM). Free public search returns basic identity/status; bulk + detailed data (managers/founders, capital, history) are paid via the CRM distribution service. Confirm the live transport from an unblocked network and under a CRM distribution agreement before implementation. ЕМБС (7-digit) = company id; ЕДБ (13-digit) = tax id. Redact managers/founders (personal data). Currency MKD. Catalogued from public docs — host (crm.com.mk → 92.55.95.145) was TCP/HTTP firewalled from this environment."
+  },
+  "keys": {
+    "primary_keys": ["EMBS"],
+    "join_keys": ["EMBS", "EDB"],
+    "dedupe_keys": ["EMBS"]
+  },
+  "mapping_rules": {
+    "company_id": "ЕМБС (7-digit).",
+    "registration_number": "ЕМБС.",
+    "tax_id": "ЕДБ (13-digit).",
+    "vat_id": "ДДВ број (from UJP).",
+    "legal_name": "Назив / Име.",
+    "legal_form": "Правна форма (ДОО/ДООЕЛ/АД/ТП…).",
+    "status": "Статус (активен/ликвидација/стечај/избришан).",
+    "registered_address": "Седиште / Адреса.",
+    "activity_code": "Дејност (НКД).",
+    "capital": "Основна главнина (MKD).",
+    "owners": "Управители / Основачи (REDACT natural persons)."
+  },
+  "fixture_requirements": [
+    "active ДОО / ДООЕЛ",
+    "АД (joint-stock) company",
+    "company in liquidation/bankruptcy",
+    "record with managers/founders (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable here (host firewalled). From an unblocked network, confirm the free search response shape; assert basic identity.",
+    "full": "Blocked on payment — requires a CRM data-distribution agreement; redact personal data."
+  },
+  "blockers": [
+    "Bulk + detailed data are paid (CRM commercial distribution)",
+    "Transport/response shape unconfirmed",
+    "crm.com.mk firewalled (TCP/HTTP timeout) from this environment",
+    "Redistribution governed by CRM commercial terms"
+  ]
+}

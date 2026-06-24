@@ -1,0 +1,62 @@
+{
+  "country": "North Macedonia",
+  "country_slug": "north_macedonia",
+  "country_profile_version": "2026-06-24",
+  "_note": "Structural example. The legal name is public knowledge; CRM-held identifiers (ЕМБС, ЕДБ) and paid fields are null — the register commercially distributes data and its host was firewalled from this environment (no values captured, nothing fabricated).",
+  "registration": {
+    "embs": null
+  },
+  "tax_identifiers": {
+    "edb_tax_id": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "business_name": "Макпетрол АД Скопје",
+    "legal_form": "акционерско друштво (АД)"
+  },
+  "status": {
+    "status_text": "активен"
+  },
+  "activity": {
+    "activity_code": null
+  },
+  "registered_location": {
+    "registered_address": null,
+    "municipality": "Скопје"
+  },
+  "capital": {
+    "registered_capital": null,
+    "currency": "MKD"
+  },
+  "owners": [
+    { "name": "[REDACTED-PII]", "role": "управител" }
+  ],
+  "financial_statements": [
+    {
+      "fiscal_year": "2024",
+      "total_assets": null,
+      "equity": null,
+      "total_revenue": null,
+      "net_result": null,
+      "currency": "MKD"
+    }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "crm_trade_registry",
+      "section": "registration / tax_identifiers / legal_identity / status / activity / registered_location / capital / owners",
+      "source_url": "https://www.crm.com.mk/",
+      "access": "free_basic_search_paid_bulk",
+      "license": "commercial_distribution_by_registry",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "crm_annual_accounts",
+      "section": "financial_statements (paid, planning-only)",
+      "source_url": "https://www.crm.com.mk/",
+      "access": "paid",
+      "license": "commercial_distribution_by_registry",
+      "retrieved_at": null
+    }
+  ]
+}
