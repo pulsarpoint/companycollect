@@ -1,0 +1,32 @@
+[
+  {
+    "name": "DBD OpenAPI — juristic person (OPEN, no key)",
+    "slug": "dbd_openapi_juristic",
+    "type": "bulk",
+    "url": "https://openapi.dbd.go.th/api/v1/juristic_person/0107544000108",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0,
+    "note": "Open official company API. GET /api/v1/juristic_person/{13-digit-id} -> JSON (id, name TH/EN, type, register date, status, TSIC objective, register+paid-up capital THB, structured address). No token. Per-company by 13-digit juristic ID; iterate over an ID worklist. Verified: PTT 0107544000108, Bangkok Bank 0107536000374, CP All 0107542000011, INET 0107544000094."
+  },
+  {
+    "name": "DBD DataWarehouse — financial statements (login-gated)",
+    "slug": "dbd_datawarehouse",
+    "type": "bulk",
+    "url": "https://datawarehouse.dbd.go.th/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "PLANNING-ONLY. Full financial statements (balance sheet / income statement, THB) per juristic ID + year. Login/session-gated (302/403 for automation). Do not bypass login."
+  },
+  {
+    "name": "SET — listed-company financials",
+    "slug": "set_listed",
+    "type": "bulk",
+    "url": "https://www.set.or.th/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Stock Exchange of Thailand — listed-company financial statements + disclosures (public via browser). Listed only."
+  }
+]
