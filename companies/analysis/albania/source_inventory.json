@@ -1,0 +1,48 @@
+[
+  {
+    "country": "Albania", "country_slug": "albania", "source_slug": "open_data_albania_qkb",
+    "source_name": "Open Corporates Albania (QKB commercial register open data)",
+    "source_type": "official_registry",
+    "organization": "Open Data Albania / AIS (republishing QKB)",
+    "url": "https://opencorporates.al/",
+    "bulk_download_url": null, "api_base_url": "https://opencorporates.al/sq/company/",
+    "formats": ["html"], "license": "open_data_albania", "access": "public",
+    "requires_authentication": false, "requires_payment": false,
+    "rate_limits": "public company lists + per-company pages",
+    "fields_observed": ["nipt", "emri", "administrator", "ortake", "kapitali", "objekti", "statusi", "former_names"],
+    "data_freshness": "periodic (mirrors QKB)",
+    "downloaded_files": ["raw/pages/oca_company_list.html"],
+    "status": "recommended",
+    "notes": "QKB commercial register republished as open data by Open Data Albania (AIS). Company lists (by year) + per-company pages keyed on NIPT (letter+8digits+letter). Fields: name, NIPT, administrator (personal data), owners (ortakë), capital, activity (objekti), status, former names (ish). Verified: 4,459 NIPTs extracted from one list (NEXUS GROUP L67508702G, etc.)."
+  },
+  {
+    "country": "Albania", "country_slug": "albania", "source_slug": "qkb_registry",
+    "source_name": "QKB — National Business Center (commercial register extract)",
+    "source_type": "official_registry",
+    "organization": "Qendra Kombëtare e Biznesit (QKB)",
+    "url": "https://qkb.gov.al/",
+    "bulk_download_url": null, "api_base_url": null,
+    "formats": ["html", "pdf"], "license": "official_register", "access": "public_search",
+    "requires_authentication": false, "requires_payment": false,
+    "rate_limits": "free per-company extract (ekstrakt) search",
+    "fields_observed": ["nipt", "emri", "forma_ligjore", "data_regjistrimit", "administrator", "ortake", "kapitali", "objekti", "adresa", "statusi"],
+    "data_freshness": "live register",
+    "downloaded_files": [],
+    "status": "recommended",
+    "notes": "The official commercial register. Free per-company extract (ekstrakt) by NIPT/name. Authoritative identity: NIPT, name, legal form, registration date, administrator, owners, capital, activity, address, status. No open bulk (per-company); Open Data Albania mirrors it openly. Financial statements (bilanci) filed here. Directors/owners are personal data."
+  },
+  {
+    "country": "Albania", "country_slug": "albania", "source_slug": "opendata_gov_al",
+    "source_name": "opendata.gov.al (Albania national open data portal)",
+    "source_type": "open_data_portal",
+    "organization": "Government of Albania (AKSHI)",
+    "url": "https://opendata.gov.al/",
+    "bulk_download_url": null, "api_base_url": null,
+    "formats": ["csv", "html"], "license": "open", "access": "public",
+    "requires_authentication": false, "requires_payment": false, "rate_limits": null,
+    "fields_observed": [], "data_freshness": "varies",
+    "downloaded_files": ["raw/pages/opendata_home.html"],
+    "status": "useful_secondary_source",
+    "notes": "National open-data portal. May host QKB / business-register datasets; the CKAN-style API was not at the standard path. The practical open company source is opencorporates.al (Open Data Albania)."
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Open Data Albania company list",
+    "slug": "oca_company_list",
+    "type": "api_page",
+    "url": "https://opencorporates.al/sq/company/",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "QKB register open data (Open Data Albania). Company lists + per-company pages /sq/company/{NIPT}. Keyed on NIPT (letter+8digits+letter). Parse name, administrator (personal data, redact), owners, capital, activity, status, former names."
+  },
+  {
+    "name": "QKB official extract (per-company)",
+    "slug": "qkb_extract",
+    "type": "api_page",
+    "url": "https://qkb.gov.al/",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "PLANNING-ONLY. Official QKB per-company extract (ekstrakt) by NIPT/name. Authoritative identity + financial statements (bilanci, ALL). No open bulk. Redact administrator/owners (personal data)."
+  }
+]
