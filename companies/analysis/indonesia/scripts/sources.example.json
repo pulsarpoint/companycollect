@@ -1,0 +1,34 @@
+[
+  {
+    "name": "AHU legal-entity profile search (paid PNBP; geo-blocked here)",
+    "slug": "ahu_legal_entity",
+    "type": "bulk",
+    "url": "https://ahu.go.id/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Authoritative legal-entity registry (PT/CV/Yayasan), Ministry of Law. Free profile search; full profiles/documents PAID (PNBP). No open bulk/API. Host firewalled (DNS resolves, TCP timeout) from this environment. Redact pengurus/pemegang saham (personal data). Re-probe from an unblocked network."
+  },
+  {
+    "name": "OSS NIB search (per-company)",
+    "slug": "oss_nib",
+    "type": "bulk",
+    "url": "https://oss.go.id/id/pencarian",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "OSS (BKPM). Issues NIB (13-digit) + KBLI activities. Public per-company 'Cari NIB' search (JS SPA). No open bulk register."
+  },
+  {
+    "name": "IDX listed-company financials (Cloudflare-gated)",
+    "slug": "idx_listed_financials",
+    "type": "api_page",
+    "url": "https://www.idx.co.id/primary/ListedCompany/GetCompanyProfiles",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "start",
+    "page_start": 0,
+    "max_pages": 1,
+    "note": "Indonesia Stock Exchange — listed-company financial statements + annual reports (~900 companies). Public via browser but Cloudflare-gated (HTTP 403) for automation. Do NOT bypass Cloudflare. Listed only."
+  }
+]
