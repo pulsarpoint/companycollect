@@ -1,0 +1,26 @@
+{
+  "country": "Bosnia and Herzegovina",
+  "country_slug": "bosnia_and_herzegovina",
+  "source_slug": "apif_rfi_financials",
+  "source_name": "APIF — Registar finansijskih izvještaja (RFI) + Registar boniteta (RS); FIA equivalent (FBiH)",
+  "source_type": "financial_statements",
+  "organization": "APIF (Republika Srpska) / FIA (Federation of BiH)",
+  "source_url": "https://www.apif.net/index.php?option=com_content&view=article&id=12:registar-finansijskih-izvjestaja&catid=9:registri&lang=sr",
+  "license": "paid_per_company",
+  "access": "public_paid",
+  "data_freshness": "annual",
+  "record_shape": "per_company_paid_financial_report_planning_only",
+  "primary_keys": ["JIB"],
+  "join_keys": ["JIB"],
+  "field_count": 8,
+  "fields": [
+    { "path": "fiscal_year", "source_field": "Godina / Period", "english_name": "fiscal_year", "meaning": "Reporting fiscal year.", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "BHS", "limitations": "PLANNING-ONLY — paid per-company report; no raw values copied.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "bilans_stanja.aktiva", "source_field": "Bilans stanja — Aktiva (ukupna)", "english_name": "total_assets", "meaning": "Balance sheet total assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "BHS", "limitations": "PLANNING-ONLY. Currency BAM (KM).", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "bilans_stanja.kapital", "source_field": "Bilans stanja — Kapital", "english_name": "equity", "meaning": "Balance sheet equity.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "BHS", "limitations": "PLANNING-ONLY. BAM.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "bilans_stanja.obaveze", "source_field": "Bilans stanja — Obaveze", "english_name": "liabilities", "meaning": "Balance sheet liabilities.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "BHS", "limitations": "PLANNING-ONLY. BAM.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "bilans_uspjeha.poslovni_prihodi", "source_field": "Bilans uspjeha — Poslovni prihodi", "english_name": "operating_revenue", "meaning": "Income statement operating revenue.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "BHS", "limitations": "PLANNING-ONLY. BAM.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "bilans_uspjeha.neto_rezultat", "source_field": "Bilans uspjeha — Neto dobit/gubitak", "english_name": "net_result", "meaning": "Income statement net profit or loss.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "BHS", "limitations": "PLANNING-ONLY. BAM.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "broj_zaposlenih", "source_field": "Broj zaposlenih", "english_name": "employees", "meaning": "Number of employees (statistical annex).", "data_type": "integer", "semantic_type": "employment", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "BHS", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "bonitet", "source_field": "Bonitet / ocjena", "english_name": "creditworthiness", "meaning": "Creditworthiness rating (Registar boniteta).", "data_type": "string", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "BHS", "limitations": "PLANNING-ONLY — separate paid bonitet product.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

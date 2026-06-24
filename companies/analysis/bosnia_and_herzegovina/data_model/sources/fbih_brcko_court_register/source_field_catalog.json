@@ -1,0 +1,25 @@
+{
+  "country": "Bosnia and Herzegovina",
+  "country_slug": "bosnia_and_herzegovina",
+  "source_slug": "fbih_brcko_court_register",
+  "source_name": "Registar poslovnih subjekata — FBiH & Brčko (bizreg.pravosudje.ba)",
+  "source_type": "official_registry",
+  "organization": "High Judicial and Prosecutorial Council (VSTV/HJPC) — entity courts",
+  "source_url": "https://bizreg.pravosudje.ba/",
+  "license": "public_per_company_no_open_bulk",
+  "access": "public_search",
+  "data_freshness": "live",
+  "record_shape": "oracle_apex_html_per_company_search",
+  "primary_keys": ["JIB"],
+  "join_keys": ["JIB"],
+  "field_count": 7,
+  "fields": [
+    { "path": "naziv", "source_field": "Naziv / Firma", "english_name": "business_name", "meaning": "Registered business name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "BHS", "limitations": "Read from APEX search results (HTML); no JSON API observed.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "jib", "source_field": "JIB", "english_name": "unique_id", "meaning": "13-digit unique identification number (company id = tax id).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Join key; FBiH legal entities commonly start 42." },
+    { "path": "mbs", "source_field": "MBS / broj uloška", "english_name": "court_registration_number", "meaning": "Court registration number (registarski uložak).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "sjediste", "source_field": "Sjedište", "english_name": "registered_seat", "meaning": "Registered seat / address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "BHS", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "djelatnost", "source_field": "Djelatnost", "english_name": "activity", "meaning": "Registered activity (KD BiH ~NACE).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "Klasifikacija djelatnosti BiH", "language": "BHS", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Registration status (aktivan, u likvidaciji, u stečaju, brisan).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "BHS", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "sud", "source_field": "Nadležni sud", "english_name": "competent_court", "meaning": "Registration court (canton/Brčko) that maintains the entry.", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "BHS", "limitations": null, "source_confidence": "medium", "analysis_notes": "Indicates FBiH canton or Brčko District." }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "country": "Bosnia and Herzegovina",
+  "country_slug": "bosnia_and_herzegovina",
+  "source_slug": "rs_business_register",
+  "source_identity": "bosnia_and_herzegovina_rs_business_register",
+  "source_package": "rsbizreg",
+  "env_prefix": "BA_RS_BIZREG",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "RS Business Register — Jedinstveni informacioni sistem (bizreg.esrpska.com)",
+    "source_type": "official_registry",
+    "organization": "APIF / Republika Srpska courts",
+    "source_url": "http://bizreg.esrpska.com/Home/PretragaPoslovnogSubjekta",
+    "license": "public_per_company_no_open_bulk",
+    "access": "public",
+    "data_freshness": "live",
+    "attribution": "RS business register (APIF / RS courts)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "http://bizreg.esrpska.com/Home/SearchPoslovniSubjekt",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["X-Requested-With: XMLHttpRequest", "Content-Type: application/x-www-form-urlencoded; charset=UTF-8"],
+    "formats": ["json", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "Records",
+    "total_results_path": "TotalRecordCount",
+    "pagination": { "type": "jtable_index", "page_param": "jtStartIndex", "page_start": 0, "page_size": 10, "page_size_param": "jtPageSize", "next_page_path": null },
+    "rate_limit": "per-company search only; no bulk enumeration endpoint"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "RsPoslovniSubjekat",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "POST body: term=<Naziv|JIB|MBS>&opstinaId=&osnivac=&djelatnostId=&jtStartIndex=0&jtPageSize=10&jtSorting=PoslovnoIme ASC. Strip HTML from StatusPoslovniSubjekatOpis (trailing <br>). Split PreteznaDjelatnost into code + text. Per-company PDF extract at /Home/DetaljiPoslovnogSubjekta/{PrivrednoDrustvoId}. REDACT Osnivaci natural persons + OdgovornoLice + representative sub-lists (personal data). RS entities only — combine with fbih_brcko_court_register for full BiH coverage."
+  },
+  "keys": {
+    "primary_keys": ["JIB"],
+    "join_keys": ["JIB"],
+    "dedupe_keys": ["JIB"]
+  },
+  "mapping_rules": {
+    "company_id": "JIB (13-digit).",
+    "registration_number": "MBS (court) / MB (statistical).",
+    "tax_id": "JIB.",
+    "vat_id": "Not in this source — PDV broj from UINO (separate).",
+    "legal_name": "PoslovnoIme (SkracenoPoslovnoIme = short).",
+    "status": "StatusPoslovniSubjekatOpis (strip HTML).",
+    "activity_code": "PreteznaDjelatnost (split code + text).",
+    "registered_address": "Sjediste.",
+    "owners": "Osnivaci (REDACT natural persons).",
+    "officers": "OdgovornoLice + representative sub-lists (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "active company with legal-entity founder (assert kept)",
+    "company with natural-person founder (assert redaction)",
+    "record with status containing HTML <br>",
+    "record with null MBS/MB in envelope",
+    "PreteznaDjelatnost split into code + text"
+  ],
+  "live_test_plan": {
+    "smoke": "POST term=NOVA BANKA, parse the JSON envelope, assert JIB 4400374890002.",
+    "full": "Iterate a provided JIB/name list (no bulk endpoint exists); fetch per-company PDF extracts behind env gate; redact personal data."
+  },
+  "blockers": []
+}

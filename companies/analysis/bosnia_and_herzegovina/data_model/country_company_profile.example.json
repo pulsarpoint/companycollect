@@ -1,0 +1,67 @@
+{
+  "country": "Bosnia and Herzegovina",
+  "country_slug": "bosnia_and_herzegovina",
+  "country_profile_version": "2026-06-24",
+  "registration": {
+    "jib": "4400374890002",
+    "mbs": null,
+    "mb": null,
+    "entity": "Republika Srpska"
+  },
+  "tax_identifiers": {
+    "tax_id": "4400374890002",
+    "pdv_broj": null
+  },
+  "legal_identity": {
+    "business_name": "\"Nova banka\" akcionarsko društvo Banja Luka",
+    "short_name": "Nova banka a.d. Banja Luka",
+    "legal_form": "akcionarsko društvo (a.d.)"
+  },
+  "status": {
+    "status_text": "registrovan"
+  },
+  "activity": {
+    "activity_code": "64.19",
+    "activity_text": "Ostalo novčano poslovanje"
+  },
+  "registered_location": {
+    "registered_address": "Ulica kralja Alfonsa XIII broj 37 a, Banja Luka",
+    "municipality": "Banja Luka",
+    "branch_count": 68
+  },
+  "owners": [
+    { "name": "\"MG MIND\" d.o.o. Mrkonjić Grad", "kind": "legal_entity" },
+    { "name": "[REDACTED-PII]", "kind": "natural_person" }
+  ],
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "odgovorno lice / direktor" }
+  ],
+  "financial_statements": [
+    {
+      "fiscal_year": "2024",
+      "total_assets": null,
+      "equity": null,
+      "operating_revenue": null,
+      "net_result": null,
+      "currency": "BAM"
+    }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "rs_business_register",
+      "section": "registration / legal_identity / status / activity / registered_location / owners",
+      "source_url": "http://bizreg.esrpska.com/Home/SearchPoslovniSubjekt",
+      "access": "public_search",
+      "license": "public_per_company_no_open_bulk",
+      "retrieved_at": "2026-06-24T00:00:00Z"
+    },
+    {
+      "source_slug": "apif_rfi_financials",
+      "section": "financial_statements (planning-only)",
+      "source_url": "https://www.apif.net/",
+      "access": "public_paid",
+      "license": "paid_per_company",
+      "retrieved_at": null
+    }
+  ]
+}

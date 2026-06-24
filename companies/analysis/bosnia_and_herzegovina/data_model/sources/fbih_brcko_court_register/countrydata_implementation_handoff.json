@@ -1,0 +1,80 @@
+{
+  "country": "Bosnia and Herzegovina",
+  "country_slug": "bosnia_and_herzegovina",
+  "source_slug": "fbih_brcko_court_register",
+  "source_identity": "bosnia_and_herzegovina_fbih_brcko_court_register",
+  "source_package": "fbihbizreg",
+  "env_prefix": "BA_FBIH_BIZREG",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Registar poslovnih subjekata — FBiH & Brčko (bizreg.pravosudje.ba)",
+    "source_type": "official_registry",
+    "organization": "High Judicial and Prosecutorial Council (VSTV/HJPC) — entity courts",
+    "source_url": "https://bizreg.pravosudje.ba/",
+    "license": "public_per_company_no_open_bulk",
+    "access": "public",
+    "data_freshness": "live",
+    "attribution": "FBiH/Brčko court business register (VSTV/HJPC)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://bizreg.pravosudje.ba/pls/apex/f?p=183",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per-company APEX search; session-bound"
+  },
+  "snapshot": {
+    "strategy": "html_pages_per_company",
+    "file_extension": ".html",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "FbihCourtRecord",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Oracle APEX application (app 183). Per-company search by Naziv/JIB/MBS. Session-bound APEX URLs (p=183:PAGE:SESSION); no JSON API or bulk export confirmed. A real implementation must reverse the APEX page flow (instance id, page submit, result region) — confirm before building. Covers FBiH cantons + Brčko District. Redact officers/founders (personal data)."
+  },
+  "keys": {
+    "primary_keys": ["JIB"],
+    "join_keys": ["JIB"],
+    "dedupe_keys": ["JIB"]
+  },
+  "mapping_rules": {
+    "company_id": "JIB (13-digit).",
+    "registration_number": "MBS / broj uloška.",
+    "tax_id": "JIB.",
+    "legal_name": "Naziv / Firma.",
+    "status": "Status.",
+    "activity_code": "Djelatnost (KD BiH).",
+    "registered_address": "Sjedište.",
+    "competent_court": "Nadležni sud (FBiH canton / Brčko)."
+  },
+  "fixture_requirements": [
+    "FBiH (cantonal) company record",
+    "Brčko District company record",
+    "struck-off / liquidation record"
+  ],
+  "live_test_plan": {
+    "smoke": "Confirm the APEX search request/response shape for app 183 before any extraction.",
+    "full": "Blocked until the APEX transport is confirmed; no bulk endpoint."
+  },
+  "blockers": [
+    "Oracle APEX session-bound flow; no JSON API or bulk export confirmed",
+    "Exact request parameters and result-region parsing not reverse-engineered",
+    "Per-company only; needs an external JIB/name worklist"
+  ]
+}

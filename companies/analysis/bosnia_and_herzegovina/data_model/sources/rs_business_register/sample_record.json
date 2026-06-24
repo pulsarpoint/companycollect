@@ -1,0 +1,18 @@
+{
+  "_note": "Real record from bizreg.esrpska.com POST /Home/SearchPoslovniSubjekt (term=NOVA BANKA). Personal-data fields (Osnivaci individuals, OdgovornoLice) redacted; founder here is a legal entity and kept.",
+  "PrivrednoDrustvoId": 3021,
+  "JIB": "4400374890002",
+  "MBS": null,
+  "MB": null,
+  "PoslovnoIme": "\"Nova banka\" akcionarsko društvo Banja Luka",
+  "SkracenoPoslovnoIme": null,
+  "Sjediste": "Ulica kralja Alfonsa XIII broj 37 a, Banja Luka, Banja Luka",
+  "PreteznaDjelatnost": "64.19 Ostalo novčano poslovanje",
+  "StatusPoslovniSubjekatOpis": "registrovan",
+  "Osnivaci": "Trgovinsko društvo \"MG MIND\" d.o.o. Mrkonjić Grad (legal entity)",
+  "OdgovornoLice": "[REDACTED-PII]",
+  "Email": "[REDACTED-CONTACT]",
+  "Telefon": "[REDACTED-CONTACT]",
+  "PoslovneJedinice": 68,
+  "_detail_pdf": "http://bizreg.esrpska.com/Home/DetaljiPoslovnogSubjekta/3021"
+}
