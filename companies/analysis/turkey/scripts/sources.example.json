@@ -1,0 +1,26 @@
+[
+  {
+    "name": "KAP listed-companies page (BIST member list)",
+    "slug": "kap_bist_companies",
+    "type": "api_page",
+    "url": "https://www.kap.org.tr/tr/bist-sirketler",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Listed companies on Borsa Istanbul. Per-company pages at /tr/sirket-bilgileri/ozet/{kapId}-{slug} hold identity + financial statements (mali tablolar, TRY) + disclosures. Public; client-side data fetch. No private-company financials."
+  },
+  {
+    "name": "MERSIS per-company query (free; no open bulk)",
+    "slug": "mersis_lookup",
+    "type": "api_page",
+    "url": "https://mersis.ticaret.gov.tr/",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "PLANNING-ONLY. Central registry per-company query (MERSIS no / VKN / title) -> 16-digit MERSIS no, unvan, VKN (tax id), ticaret sicil no, NACE, address, type, status. JS form; no open bulk/API. Redact directors (KVKK)."
+  }
+]
