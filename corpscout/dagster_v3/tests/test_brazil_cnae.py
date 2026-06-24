@@ -51,7 +51,8 @@ def test_build_rows_supports_many_to_many_edges(tmp_path: Path) -> None:
             "https://example.test/cnae",
             "CNAE_2_0,6311-9/00,Tratamento de dados e hospedagem,"
             "Data processing and hosting,NACE_REV_2,63.11,"
-            "Data processing, hosting and related activities,ibge_concla_isic_bridge,"
+            '"Data processing, hosting and related activities",'
+            "ibge_concla_isic_bridge,"
             "https://example.test/cnae",
         ],
     )
@@ -69,23 +70,47 @@ def test_build_rows_supports_many_to_many_edges(tmp_path: Path) -> None:
 
     assert len(rows) == 3
     assert all(len(row) == len(tables.BR_CNAE_TO_NACE_COLUMNS) for row in rows)
-    assert rows[0][:11] == (
-        "CNAE_2_0",
-        "6201-5/01",
-        "6201501",
-        "Desenvolvimento de programas sob encomenda",
-        "Custom software development",
-        "NACE_REV_2",
-        "62.01",
-        "6201",
-        "Computer programming activities",
-        "ibge_concla_isic_bridge",
-        "https://example.test/cnae",
-    )
-    assert rows[1][2] == "6201501"
-    assert rows[1][7] == "6202"
-    assert rows[2][2] == "6311900"
-    assert rows[2][7] == "6311"
+    assert [row[:11] for row in rows] == [
+        (
+            "CNAE_2_0",
+            "6201-5/01",
+            "6201501",
+            "Desenvolvimento de programas sob encomenda",
+            "Custom software development",
+            "NACE_REV_2",
+            "62.01",
+            "6201",
+            "Computer programming activities",
+            "ibge_concla_isic_bridge",
+            "https://example.test/cnae",
+        ),
+        (
+            "CNAE_2_0",
+            "6201-5/01",
+            "6201501",
+            "Desenvolvimento de programas sob encomenda",
+            "Custom software development",
+            "NACE_REV_2",
+            "62.02",
+            "6202",
+            "Computer consultancy activities",
+            "ibge_concla_isic_bridge",
+            "https://example.test/cnae",
+        ),
+        (
+            "CNAE_2_0",
+            "6311-9/00",
+            "6311900",
+            "Tratamento de dados e hospedagem",
+            "Data processing and hosting",
+            "NACE_REV_2",
+            "63.11",
+            "6311",
+            "Data processing, hosting and related activities",
+            "ibge_concla_isic_bridge",
+            "https://example.test/cnae",
+        ),
+    ]
     assert rows[0][12] == "run-123"
     assert rows[0][13] == PULLED_AT
     assert {row[11] for row in rows} == {rows[0][11]}
