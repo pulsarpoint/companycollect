@@ -1,0 +1,36 @@
+[
+  {
+    "name": "ARBK business register search (GATED — Turnstile + bearer)",
+    "slug": "arbk_business_register",
+    "type": "api_page",
+    "url": "https://arbk.rks-gov.net/api/api/Services/KerkoBiznesin",
+    "method": "POST",
+    "headers": { "Content-Type": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "BLOCKED. Official Kosovo register. All Services/* return HTTP 401 without the SPA bearer token; search requires a Cloudflare Turnstile CAPTCHA token. No open bulk; EksportoBizneset also gated. Browser-only — do NOT bypass the CAPTCHA/auth. Placeholder for documentation."
+  },
+  {
+    "name": "ATK VatRegist / SearchTaxPayer (GATED — CAPTCHA)",
+    "slug": "atk_vatregist",
+    "type": "api_page",
+    "url": "https://apps.atk-ks.org/BizPasiveApp/VatRegist/SearchTaxPayer",
+    "method": "GET",
+    "headers": {},
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "BLOCKED. Per-company fiscal/VAT verification (term = Nr. Fiskal / NRB / Nr. TVSh / Emri). CAPTCHA-gated ('I'm not a robot'). Do NOT bypass. Output: FiscalNo, NrbID, TpStatus, TpName, Address, City, VatNo, VatTypeAl."
+  },
+  {
+    "name": "ATK Open Data — employees by sector/municipality (XLSX, aggregate)",
+    "slug": "atk_open_data",
+    "type": "bulk",
+    "url": "https://www.atk-ks.org/wp-content/uploads/2023/07/Nr_punto_ID-2023.xlsx",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Real open XLSX, but AGGREGATE only (TPER_YEAR, PERSHKRIMI_SEKTORIT, KOMUNA, TIPI_SUBJEKTIT, NR_PUNDHENSVE, NR_PUNTORVE). Not company-level. Use for sector/employment context."
+  }
+]
