@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Drive CommonCrawl enrichment over many index shards — resumable.
+#
+#   set -a; source ../dagster_v3/.env; set +a    # CLICKHOUSE_*, AWS_*, COMMONCRAWL_EMBED_BASE_URL
+#   ./run_crawl.sh tech     0-299                 # CPU-bound tech pass  (most cores)
+#   ./run_crawl.sh industry 0-299                 # GPU-bound industry pass (the 5090)
+#
+# Run the two modes as SEPARATE processes (e.g. two tmux panes) so tech pegs the cores
+# while industry feeds the 5090. Each is independent and restartable: a shard whose
+# <out>.loaded marker exists is skipped; ReplacingMergeTree dedupes any re-load.
+#
+# Tunables via env: CRAWL, WHERE (worklist SQL filter; empty = ALL domains), DATA,
+# DAGSTER_DIR, TECH_CONC, IND_CONC, EMBED_CONC.
+set -uo pipefail
+
+MODE="${1:?usage: run_crawl.sh <industry|tech> <lo-hi>}"
+RANGE="${2:?usage: run_crawl.sh <industry|tech> <lo-hi>}"
+CRAWL="${CRAWL:-CC-MAIN-2026-25}"
+WHERE="${WHERE:-}" # empty = all domains (global dataset); e.g. "content_languages like '%eng%'"
+DATA="${DATA:-data/crawl}"
+DAGSTER_DIR="${DAGSTER_DIR:-../dagster_v3}"
+WORKER="$PWD/cc-enrich-worker"
+
+case "$MODE" in
+industry) TABLE=commoncrawl_domains;      SUFFIX=domains
+          PASS_ARGS=(--mode industry --concurrency "${IND_CONC:-16}" --embed-concurrency "${EMBED_CONC:-128}") ;;
+tech)     TABLE=commoncrawl_technologies; SUFFIX=tech
+          PASS_ARGS=(--mode tech --tech-engine fast --concurrency "${TECH_CONC:-128}") ;;
+*) echo "MODE must be industry|tech"; exit 1 ;;
+esac
+
+lo="${RANGE%-*}"; hi="${RANGE#*-}"
+mkdir -p "$DATA"
+DATA_ABS="$(cd "$DATA" && pwd)"
+DAGSTER_ABS="$(cd "$DAGSTER_DIR" && pwd)"
+
+ch() {
+	clickhouse-client --host "${CLICKHOUSE_HOST:?set CLICKHOUSE_HOST}" \
+		--port "${CLICKHOUSE_NATIVE_PORT:-9002}" --user "${CLICKHOUSE_USER:-default}" \
+		--password "${CLICKHOUSE_PASSWORD:-}" --database "${CLICKHOUSE_DATABASE:-corpscout}" "$@"
+}
+
+for ((p = lo; p <= hi; p++)); do
+	shard="$DATA_ABS/shard_${p}.parquet"
+	out="$DATA/${MODE}_${p}"
+	parquet="${out}-${SUFFIX}.parquet"
+	marker="${out}.loaded"
+	[ -f "$marker" ] && { echo "[$MODE $p] already loaded — skip"; continue; }
+
+	# 1. worklist (atomic rename; safe if both modes race on the same shard)
+	if [ ! -f "$shard" ]; then
+		echo "[$MODE $p] generating worklist…"
+		tmp="${shard}.tmp.$$"
+		if (cd "$DAGSTER_ABS" && uv run python scripts/make_worklist.py \
+			--crawl "$CRAWL" --part "$p" --where "$WHERE" --out "$tmp"); then
+			mv -f "$tmp" "$shard"
+		else
+			echo "[$MODE $p] worklist FAILED — skip"; rm -f "$tmp"; continue
+		fi
+	fi
+
+	# 2. run the pass (skip if its parquet already exists from a prior run)
+	if [ ! -f "$parquet" ]; then
+		echo "[$MODE $p] $MODE pass…"
+		if ! "$WORKER" "${PASS_ARGS[@]}" --worklist "$shard" --crawl-id "$CRAWL" --out "$out"; then
+			echo "[$MODE $p] worker FAILED — skip"; continue
+		fi
+	fi
+
+	# 3. load into ClickHouse, then mark done
+	if [ -s "$parquet" ]; then
+		echo "[$MODE $p] loading $(basename "$parquet") → $TABLE"
+		if ch --query "INSERT INTO $TABLE FROM INFILE '$parquet' FORMAT Parquet"; then
+			touch "$marker"; echo "[$MODE $p] DONE"
+		else
+			echo "[$MODE $p] ClickHouse load FAILED — will retry next run"; continue
+		fi
+	else
+		echo "[$MODE $p] empty output — marking done"; touch "$marker"
+	fi
+done
+echo "[$MODE] range $RANGE complete"
