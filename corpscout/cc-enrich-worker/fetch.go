@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -55,13 +56,10 @@ func FetchRecord(ctx context.Context, g rangeGetter, bucket, key string, offset,
 // s3Getter is the production rangeGetter backed by aws-sdk-go-v2.
 type s3Getter struct{ client *s3.Client }
 
-func NewS3Getter(ctx context.Context, region string, anonymous bool) (s3Getter, error) {
-	opts := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(region)}
-	if anonymous {
-		// CommonCrawl is AWS Open Data — unsigned reads work from anywhere (no instance role).
-		opts = append(opts, awsconfig.WithCredentialsProvider(aws.AnonymousCredentials{}))
-	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+// NewS3Getter signs requests (in-AWS instance role / configured creds). CommonCrawl's
+// S3 API denies anonymous access — off-AWS use httpRangeGetter instead.
+func NewS3Getter(ctx context.Context, region string) (s3Getter, error) {
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 	if err != nil {
 		return s3Getter{}, err
 	}
@@ -79,4 +77,45 @@ func (s s3Getter) GetRange(ctx context.Context, bucket, key string, start, end i
 	}
 	defer out.Body.Close()
 	return io.ReadAll(out.Body)
+}
+
+// httpRangeGetter fetches byte ranges over CommonCrawl's anonymous HTTPS CDN
+// (data.commoncrawl.org), the only anonymous path — the S3 API denies unsigned reads.
+type httpRangeGetter struct {
+	base   string
+	client *http.Client
+}
+
+func NewHTTPGetter(base string, concurrency int) httpRangeGetter {
+	if base == "" {
+		base = "https://data.commoncrawl.org/"
+	}
+	if !strings.HasSuffix(base, "/") {
+		base += "/"
+	}
+	if concurrency <= 0 {
+		concurrency = 16
+	}
+	return httpRangeGetter{base: base, client: &http.Client{Transport: &http.Transport{
+		MaxIdleConns:        concurrency * 2,
+		MaxIdleConnsPerHost: concurrency * 2,
+		MaxConnsPerHost:     concurrency,
+	}}}
+}
+
+func (g httpRangeGetter) GetRange(ctx context.Context, bucket, key string, start, end int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.base+key, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return nil, fmt.Errorf("http %d fetching %s", resp.StatusCode, key)
+	}
+	return io.ReadAll(resp.Body)
 }

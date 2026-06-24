@@ -92,7 +92,7 @@ func main() {
 	techMax := flag.Int("tech-max-bytes", techMaxBytes, "cap body bytes fed to Wappalyzer (0=full body; full-body regex is ~1.2s/page)")
 	modeFlag := flag.String("mode", "both", "industry (domains, needs CH+embedder) | tech (tech only, no CH/embedder) | both")
 	skipTech := flag.Bool("skip-tech", false, "alias for --mode industry (skip Wappalyzer)")
-	anonymous := flag.Bool("s3-anonymous", false, "fetch from S3 with unsigned requests (off-AWS; CommonCrawl is open data)")
+	anonymous := flag.Bool("s3-anonymous", false, "fetch via the anonymous HTTPS CDN data.commoncrawl.org (off-AWS; S3 API denies anon)")
 	batch := flag.Int("embed-batch", embedBatch, "embed batch size")
 	embedConc := flag.Int("embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
 	chunkSize := flag.Int("chunk", 1024, "domains per fetch+embed chunk (pipelines fetch/embed; lower = earlier GPU traffic)")
@@ -147,9 +147,16 @@ func main() {
 		log.Printf("mode=tech: skipping ClickHouse reference + embedder")
 	}
 
-	getter, err := NewS3Getter(ctx, *region, *anonymous)
-	if err != nil {
-		log.Fatalf("s3 init: %v", err)
+	var getter rangeGetter
+	if *anonymous {
+		getter = NewHTTPGetter(envOr("CC_BASE_URL", ""), *concurrency)
+		log.Printf("fetch: anonymous HTTPS CDN (data.commoncrawl.org)")
+	} else {
+		g, err := NewS3Getter(ctx, *region)
+		if err != nil {
+			log.Fatalf("s3 init: %v", err)
+		}
+		getter = g
 	}
 
 	items, err := readWorklist(*worklist)
@@ -203,13 +210,17 @@ func main() {
 	log.Printf("done: %d domains, %d tech rows in %.1fs (%.1f domains/s)", len(domains), len(tech), dur, rate)
 
 	if *s3Bucket != "" {
-		s3c := getter.client
-		for _, p := range written {
-			key := *s3Prefix + p
-			if err := UploadToS3(ctx, s3c, *s3Bucket, key, p); err != nil {
-				log.Fatalf("upload %s: %v", p, err)
+		g, ok := getter.(s3Getter)
+		if !ok {
+			log.Printf("skip S3 upload: anonymous HTTP fetch mode has no S3 client")
+		} else {
+			for _, p := range written {
+				key := *s3Prefix + p
+				if err := UploadToS3(ctx, g.client, *s3Bucket, key, p); err != nil {
+					log.Fatalf("upload %s: %v", p, err)
+				}
+				log.Printf("uploaded s3://%s/%s", *s3Bucket, key)
 			}
-			log.Printf("uploaded s3://%s/%s", *s3Bucket, key)
 		}
 	}
 }
