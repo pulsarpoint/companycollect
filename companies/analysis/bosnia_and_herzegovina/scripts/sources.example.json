@@ -1,0 +1,37 @@
+[
+  {
+    "name": "RS Business Register — search (bizreg.esrpska.com)",
+    "slug": "rs_business_register_search",
+    "type": "api_page",
+    "url": "http://bizreg.esrpska.com/Home/SearchPoslovniSubjekt",
+    "method": "POST",
+    "headers": {
+      "X-Requested-With": "XMLHttpRequest",
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+    },
+    "page_param": "jtStartIndex",
+    "page_start": 0,
+    "max_pages": 1,
+    "note": "POST form: term=<Naziv|JIB|MBS>&opstinaId=&osnivac=&djelatnostId=&jtPageSize=10&jtSorting=PoslovnoIme ASC. Returns JSON {Result, Records[], TotalRecordCount}. Per-company PDF extract: /Home/DetaljiPoslovnogSubjekta/{PrivrednoDrustvoId}. No open bulk; per-company only."
+  },
+  {
+    "name": "FBiH & Brčko court register (bizreg.pravosudje.ba)",
+    "slug": "fbih_brcko_court_register",
+    "type": "bulk",
+    "url": "https://bizreg.pravosudje.ba/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Oracle APEX per-company search (Naziv/JIB/MBS) for the Federation of BiH and Brčko District. No open JSON/bulk export — placeholder; implement as per-company lookup."
+  },
+  {
+    "name": "APIF — Registar finansijskih izvještaja (RS, PAID)",
+    "slug": "apif_rfi_financials",
+    "type": "bulk",
+    "url": "https://www.apif.net/index.php?option=com_content&view=article&id=12:registar-finansijskih-izvjestaja&catid=9:registri&lang=sr",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "PLANNING-ONLY. RS annual financial statements (bilans stanja/uspjeha, BAM) — paid per company. No open bulk. Do not download reports without confirming terms/fees."
+  }
+]
