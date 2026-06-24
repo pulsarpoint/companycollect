@@ -4,9 +4,16 @@ import wappalyzer "github.com/projectdiscovery/wappalyzergo"
 
 var wapp, _ = wappalyzer.New()
 
+// fastTech, when set (via --tech-engine fast), replaces wappalyzergo's full scan with
+// the Aho-Corasick-gated matcher. nil => upstream wappalyzergo.
+var fastTech *FastMatcher
+
 // DetectTech fingerprints one page (HTTP headers + body) into a list of technologies.
 // wappalyzergo returns keys as "Name" or "Name:version"; categories come from AppInfo.
 func DetectTech(headers map[string][]string, body []byte) []Technology {
+	if fastTech != nil {
+		return fastTech.Detect(headers, body)
+	}
 	out := []Technology{}
 	if wapp == nil {
 		return out

@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.25
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.0
 	github.com/parquet-go/parquet-go v0.30.1
+	github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745
 	github.com/projectdiscovery/wappalyzergo v0.2.86
 	golang.org/x/net v0.56.0
 )

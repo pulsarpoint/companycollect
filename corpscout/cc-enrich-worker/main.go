@@ -90,6 +90,7 @@ func main() {
 	crawlID := flag.String("crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 (required)")
 	concurrency := flag.Int("concurrency", 32, "fetch/parse/tech concurrency")
 	techMax := flag.Int("tech-max-bytes", techMaxBytes, "cap body bytes fed to Wappalyzer (0=full body; full-body regex is ~1.2s/page)")
+	techEngine := flag.String("tech-engine", "fast", "tech matcher: fast (Aho-Corasick gated) | wappalyzer (upstream full scan)")
 	modeFlag := flag.String("mode", "both", "industry (domains, needs CH+embedder) | tech (tech only, no CH/embedder) | both")
 	skipTech := flag.Bool("skip-tech", false, "alias for --mode industry (skip Wappalyzer)")
 	anonymous := flag.Bool("s3-anonymous", false, "fetch via the anonymous HTTPS CDN data.commoncrawl.org (off-AWS; S3 API denies anon)")
@@ -112,6 +113,22 @@ func main() {
 	}
 	if mode != "industry" && mode != "tech" && mode != "both" {
 		log.Fatalf("--mode must be industry|tech|both, got %q", mode)
+	}
+
+	if mode != "industry" { // tech matcher only needed when we fingerprint
+		switch *techEngine {
+		case "fast":
+			fm, err := NewFastMatcher()
+			if err != nil {
+				log.Fatalf("build fast tech matcher: %v", err)
+			}
+			fastTech = fm
+			log.Printf("tech engine: fast (Aho-Corasick gated)")
+		case "wappalyzer":
+			log.Printf("tech engine: wappalyzer (upstream full scan)")
+		default:
+			log.Fatalf("--tech-engine must be fast|wappalyzer, got %q", *techEngine)
+		}
 	}
 
 	// ClickHouse reference + embedder are only needed when we classify (industry/both).
