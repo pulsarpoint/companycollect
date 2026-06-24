@@ -221,12 +221,21 @@ make clickhouse-migrate-down      # roll back one
 
 | table | migration | written by | grain | holds |
 |---|---|---|---|---|
-| `commoncrawl_domains` | `000046` | **industry** pass | one row per **domain** | **the industry classification** (`nace_code`, `nace_label`, `nace_division`, `nace_confident`, `nace_margin`, `nace_score`, `nace_method`, `nace_top3_codes/labels/scores`) + `page_type`(+score) + contacts (`emails[]`, `email_count`) + lineage (`crawl_id`, `url`, `root_domain`, `subdomain`, `source_url`, `source_run_id`, `resolved_at`) |
+| `commoncrawl_domains` | `000046` (+`000049` `nace_confidence`) | **industry** pass | one row per **domain** | **the industry classification** (`nace_code`, `nace_label`, `nace_division`, `nace_confident`, `nace_confidence`, `nace_margin`, `nace_score`, `nace_method`, `nace_top3_codes/labels/scores`) + `page_type`(+score) + contacts (`emails[]`, `email_count`) + lineage (`crawl_id`, `url`, `root_domain`, `subdomain`, `source_url`, `source_run_id`, `resolved_at`) |
 | `commoncrawl_technologies` | `000047` | **tech** pass | one row per **(domain, technology)** | `technology`, `category`, `version`, `confidence` + the same lineage columns |
 
 > **Naming note:** there is no `commoncrawl_industries` table. The "industry" pass writes
 > `commoncrawl_domains` — the NACE industry fields are columns *on the per-domain row*, not a
 > separate table. `Go struct ↔ column` mappings are `DomainRow`/`TechRow` in `output.go`.
+
+> **Confidence:** `nace_confident` (UInt8) is the cheap binary gate `(margin ≥ 0.03 OR top-3
+> share one division) AND not junk`. `nace_confidence` (Float32, 0–1) is the continuous score:
+> `softmax(top-10 standardized scores / T)[0]`, where scores are standardized by **median + MAD**
+> (robust to the top outliers, removes the per-page baseline) — so a domain whose top industry
+> stands clearly above the bulk scores high, a mushy/spread one scores low. `T` (`confTemp` in
+> `consts.go`) is a temperature to calibrate against a labeled sample. Use `nace_confidence` to
+> rank/threshold the LLM-escalation tail (`WHERE nace_confidence < :T AND page_type NOT IN (junk)`)
+> — the threshold lives in the query, decided after the scan, re-runnable without re-scanning.
 
 **Reference** — read by the industry/both passes at startup (`reference.go`), **not** written by
 this worker (built by the `commoncrawl_classify` Dagster assets in `dagster_v3` and rebuilt with

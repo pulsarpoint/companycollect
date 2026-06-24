@@ -22,9 +22,10 @@ type DomainRow struct {
 	PageTypeScore float32   `parquet:"page_type_score"`
 	NaceCode      string    `parquet:"nace_code"`
 	NaceLabel     string    `parquet:"nace_label"`
-	NaceDivision  string    `parquet:"nace_division"`
-	NaceConfident uint8     `parquet:"nace_confident"`
-	NaceMargin    float32   `parquet:"nace_margin"`
+	NaceDivision   string   `parquet:"nace_division"`
+	NaceConfident  uint8    `parquet:"nace_confident"`
+	NaceConfidence float32  `parquet:"nace_confidence"`
+	NaceMargin     float32  `parquet:"nace_margin"`
 	NaceScore     float32   `parquet:"nace_score"`
 	NaceMethod    string    `parquet:"nace_method"`
 	Top3Codes     []string  `parquet:"nace_top3_codes"`

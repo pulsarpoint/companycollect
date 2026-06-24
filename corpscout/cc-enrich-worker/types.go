@@ -31,6 +31,7 @@ type DomainResult struct {
 	PageTypeScore                       float32
 	NaceCode, NaceLabel, NaceDivision   string
 	NaceConfident                       bool
+	NaceConfidence                      float32 // softmax(top-K standardized scores) in [0,1]
 	NaceMargin, NaceScore               float32
 	NaceMethod                          string
 	Top3Codes, Top3Labels               []string

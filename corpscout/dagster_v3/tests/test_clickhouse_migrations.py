@@ -59,6 +59,7 @@ EXPECTED_MIGRATIONS = (
     "000046_corpscout_commoncrawl_domains",
     "000047_corpscout_commoncrawl_technologies",
     "000048_corpscout_commoncrawl_page_signals",
+    "000049_corpscout_commoncrawl_domains_nace_confidence",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
