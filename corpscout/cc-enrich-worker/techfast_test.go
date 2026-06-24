@@ -92,6 +92,11 @@ func TestFastMatcherParity(t *testing.T) {
 			map[string][]string{},
 			`<html><head><script src="https://www.googletagmanager.com/gtag/js?id=G-XXText"></script></head><body>x</body></html>`,
 		},
+		{
+			"transitive-implies", // Melis -> Laravel -> PHP/MySQL/Symfony/Zend
+			map[string][]string{},
+			`<html><body><!-- rendered with melis cms v2 --></body></html>`,
+		},
 	}
 	for _, s := range samples {
 		want := techNameSet(DetectTech(s.headers, []byte(s.body)))

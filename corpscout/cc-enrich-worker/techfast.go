@@ -39,7 +39,33 @@ type rawApp struct {
 	Meta      map[string][]string `json:"meta"`
 	Headers   map[string]string   `json:"headers"`
 	Cookies   map[string]string   `json:"cookies"`
-	Implies   []string            `json:"implies"`
+	Implies   json.RawMessage     `json:"implies"` // string OR []string in the JSON
+}
+
+// parseImplies handles both "implies": "PHP" and "implies": ["PHP","MySQL"], stripping
+// the wappalyzer "\;confidence:.." suffix so the implied name matches the Apps map.
+func parseImplies(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		var one string
+		if json.Unmarshal(raw, &one) != nil {
+			return nil
+		}
+		arr = []string{one}
+	}
+	out := make([]string, 0, len(arr))
+	for _, s := range arr {
+		if i := strings.Index(s, `\;`); i >= 0 {
+			s = s[:i]
+		}
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func mustParse(p string) *wappalyzer.ParsedPattern {
@@ -74,8 +100,8 @@ func NewFastMatcher() (*FastMatcher, error) {
 				m.appCats[app] = append(m.appCats[app], ci.Name)
 			}
 		}
-		if len(a.Implies) > 0 {
-			m.appImplies[app] = a.Implies
+		if imp := parseImplies(a.Implies); len(imp) > 0 {
+			m.appImplies[app] = imp
 		}
 		for _, p := range a.HTML {
 			pp := mustParse(p)
@@ -138,15 +164,14 @@ func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []Technol
 	bodyStr := string(normBody)
 	found := map[string]string{} // app -> version (first match wins, "" if none)
 
-	record := func(app, ver string) {
+	var record func(app, ver string)
+	record = func(app, ver string) {
 		if _, ok := found[app]; ok {
 			return
 		}
 		found[app] = ver
 		for _, imp := range m.appImplies[app] {
-			if _, ok := found[imp]; !ok {
-				found[imp] = ""
-			}
+			record(imp, "") // transitive; found map guards cycles
 		}
 	}
 	eval := func(fp fpat, target string) {
