@@ -77,11 +77,12 @@ Expected fixture properties:
 
 ## Function Boundary
 
-The mapping logic should be a plain function that can be tested without Dagster:
+The mapping publish should be a plain source-specific function. Dagster should
+only call it and report the returned counts:
 
 ```text
-build_br_cnae_to_nace(
-    duckdb_path,
+replace_br_cnae_to_nace_clickhouse(
+    clickhouse_client,
     fixture_path,
     source_run_id,
 ) -> dict[str, int]
@@ -89,12 +90,15 @@ build_br_cnae_to_nace(
 
 The function owns the actual work:
 
-- create or replace the DuckDB staging table;
 - load fixture rows;
 - normalize CNAE and NACE codes;
 - validate required fields and duplicate mapping edges;
 - validate target NACE codes against available `nace_categories` data when that
   dependency is supplied to the test or materialization context;
+- create a ClickHouse stage table from `corpscout.br_cnae_to_nace`;
+- insert the validated mapping rows into the stage table in one batch;
+- exchange the stage table with `corpscout.br_cnae_to_nace`;
+- drop the stage table on success or failure;
 - return row counts and validation counts for asset metadata.
 
 Keep this function source-specific and direct. Do not introduce a generic fixture
@@ -103,22 +107,21 @@ needs the same behavior later.
 
 ## Dagster Flow
 
-Use the normal `dagster_v3` reference-data flow:
+Use a direct static-reference flow:
 
 ```text
-fixture files -> brazil_cnae_source.duckdb -> corpscout.br_cnae_to_nace
+fixture files -> replace_br_cnae_to_nace_clickhouse(...) -> corpscout.br_cnae_to_nace
 ```
 
 The source should be small and direct:
 
 - one source module: `defs/brazil_cnae`;
-- one DuckDB file: `data/brazil_cnae_source.duckdb`;
-- one source-owned pool for writes to that DuckDB file;
-- the materialization function only calls `build_br_cnae_to_nace(...)`, logs the
-  returned counts, and returns them as metadata;
-- direct DuckDB load and validation inside the function, no row-by-row Python
-  transform;
-- migration-owned ClickHouse DDL and atomic replacement on export.
+- no DuckDB file or dlt pipeline for this source;
+- the materialization function only calls `replace_br_cnae_to_nace_clickhouse(...)`,
+  logs the returned counts, and returns them as metadata;
+- migration-owned ClickHouse DDL;
+- direct ClickHouse stage-table replacement: create stage, insert rows, `EXCHANGE
+  TABLES`, drop stage.
 
 ## Brazil Company Usage
 
