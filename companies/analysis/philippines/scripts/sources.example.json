@@ -1,0 +1,34 @@
+[
+  {
+    "name": "PSE EDGE — listed company directory (OPEN)",
+    "slug": "pse_edge",
+    "type": "api_page",
+    "url": "https://edge.pse.com.ph/companyDirectory/search.ax",
+    "method": "POST",
+    "headers": { "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/x-www-form-urlencoded" },
+    "page_param": "pageNo",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "OPEN. POST form: keyword=&sector=&subsector=&pageNo=&pageSize=50&cmpySortType=ASC&symbolSortType=ASC. Returns HTML rows: company name, stock symbol, sector, subsector, listing date. Verified: PLDT Inc. (TEL). Per-company disclosures + financial reports via cmpy_id. Listed only."
+  },
+  {
+    "name": "SEC Express — company documents (PAID)",
+    "slug": "sec_express",
+    "type": "bulk",
+    "url": "https://secexpress.ph/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "PAID. Order GIS (officers/stockholders/capital) / AFS (financials) / Articles / certificates per company (PHP). Companies file via eFAST (login). No open bulk/API; sec.gov.ph WAF-blocked. Redact GIS personal data (Data Privacy Act 2012). Do not bypass paywall."
+  },
+  {
+    "name": "DTI BNRS — sole-proprietor business name search (free)",
+    "slug": "dti_bnrs",
+    "type": "bulk",
+    "url": "https://bnrs.dti.gov.ph/search",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Free business-name search/verification for sole proprietorships (not corporations — those are SEC). Issues the DTI BN number. No open bulk."
+  }
+]
