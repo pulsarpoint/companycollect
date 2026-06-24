@@ -1,0 +1,34 @@
+[
+  {
+    "name": "NGX equities API — listed companies (OPEN)",
+    "slug": "ngx_equities",
+    "type": "api_page",
+    "url": "https://doclib.ngxgroup.com/REST/api/statistics/equities/",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "pageNo",
+    "page_start": 0,
+    "max_pages": 1,
+    "note": "OPEN. GET ?market=&sector=&orderby=&pageSize=500&pageNo=0 -> JSON array of listed equities: Symbol, Sector, Market (board), prices, Volume, Value, TradeDate. Verified live: 146 equities (DANGCEM, MTNN, GTCO, ZENITHBANK, SEPLAT...). Listed-company financial statements/disclosures also on ngxgroup.com."
+  },
+  {
+    "name": "CAC company search / documents (Cloudflare-gated + PAID)",
+    "slug": "cac_registry",
+    "type": "bulk",
+    "url": "https://search.cac.gov.ng/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Official registry (RC/BN/IT). Public search Cloudflare-gated ('Just a moment'); documents (status report/certified extract/annual returns/AFS) paid via the CAC portal. No open bulk/API. Do not bypass Cloudflare/paywall. Redact directors/shareholders (NDPA 2023)."
+  },
+  {
+    "name": "CAC Beneficial Ownership Register (PSC) — token-gated API",
+    "slug": "cac_bor_psc",
+    "type": "bulk",
+    "url": "https://bor.cac.gov.ng/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Public beneficial ownership register (Persons With Significant Control). API borapp.cac.gov.ng/api/bor-search/get_psc (POST) requires an access token. Do NOT bypass the token gate. Beneficial owners are personal data (NDPA 2023) — redact. NOTE: a token-less /auth/access-token endpoint leaked an individual's PII (misconfiguration) — do not use/store."
+  }
+]
