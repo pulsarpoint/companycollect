@@ -63,7 +63,7 @@ func TestProcessShardAndParquet(t *testing.T) {
 	cfg := ShardConfig{CrawlID: "CC-MAIN-2026-25", SourceRunID: "run1",
 		ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 2}
 
-	domains, tech, err := ProcessShard(context.Background(), items, getter, emb, ref, protos, cfg)
+	domains, tech, _, err := ProcessShard(context.Background(), items, getter, emb, ref, protos, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestProcessShardIndustryMode(t *testing.T) {
 	emb := fakeEmbedder{vec: norm([]float32{1, 0, 0})}
 	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "industry"}
 
-	domains, tech, err := ProcessShard(context.Background(), items, getter, emb, ref, &Prototypes{}, cfg)
+	domains, tech, _, err := ProcessShard(context.Background(), items, getter, emb, ref, &Prototypes{}, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,14 +123,15 @@ func TestProcessShardTechMode(t *testing.T) {
 	// mode=tech needs neither embedder nor reference: pass nil and assert no panic/calls.
 	page := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n<html><head>" +
 		"<meta name=\"generator\" content=\"WordPress 6.4\">" +
-		"<link href=\"/wp-content/themes/x/style.css\" rel=\"stylesheet\"></head><body>x</body></html>")
+		"<link href=\"/wp-content/themes/x/style.css\" rel=\"stylesheet\"></head>" +
+		"<body>x<footer>LEI: HWUPKR0MPOU8FGXBT394</footer></body></html>")
 	getter := multiGetter{"f.warc.gz:0": page}
 	items := []WorklistItem{
 		{RootDomain: "acme.com", URL: "https://acme.com/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
 	}
 	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech"}
 
-	domains, tech, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
+	domains, tech, ids, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,5 +143,9 @@ func TestProcessShardTechMode(t *testing.T) {
 	}
 	if tech[0].RootDomain != "acme.com" {
 		t.Fatalf("tech row not keyed to domain: %+v", tech[0])
+	}
+	if len(ids) != 1 || ids[0].IDType != "lei" || ids[0].IDValue != "HWUPKR0MPOU8FGXBT394" ||
+		ids[0].Valid != 1 || ids[0].RootDomain != "acme.com" {
+		t.Fatalf("identifier row wrong: %+v", ids)
 	}
 }

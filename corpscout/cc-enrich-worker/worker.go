@@ -35,6 +35,7 @@ type domainAgg struct {
 	rootDomain, primaryURL, primarySub, primaryText string
 	emails                                          []string
 	tech                                            []Technology
+	identifiers                                     []Identifier
 	hasPrimary                                      bool
 }
 
@@ -61,7 +62,7 @@ func subdomainOf(rawURL, root string) string {
 //               (no ClickHouse, no embedder)
 //   "both"  :   both in a single fetch pass (default)
 func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter, emb embedderIface,
-	ref *Reference, protos *Prototypes, cfg ShardConfig) ([]DomainRow, []TechRow, error) {
+	ref *Reference, protos *Prototypes, cfg ShardConfig) ([]DomainRow, []TechRow, []IdentifierRow, error) {
 
 	mode := cfg.Mode
 	if mode == "" {
@@ -97,6 +98,7 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 			defer func() { <-sem }()
 			agg := &domainAgg{rootDomain: dom}
 			techSeen := map[string]bool{}
+			idSeen := map[string]bool{}
 			for _, it := range byDomain[dom] {
 				t0 := time.Now()
 				fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -127,6 +129,12 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 							agg.tech = append(agg.tech, t)
 						}
 					}
+					for _, id := range ExtractLEIs(techBody) {
+						if !idSeen[id.Value] {
+							idSeen[id.Value] = true
+							agg.identifiers = append(agg.identifiers, id)
+						}
+					}
 				}
 				if runEmbed && it.Primary && !agg.hasPrimary {
 					t1 := time.Now()
@@ -153,6 +161,7 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 
 	var domains []DomainRow
 	var techRows []TechRow
+	var identRows []IdentifierRow
 
 	if runEmbed {
 		var idx []int
@@ -167,7 +176,7 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 		if len(texts) > 0 {
 			var err error
 			if vecs, err = emb.Embed(texts, classifyInstruction); err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 		}
 		for vi, i := range idx {
@@ -207,7 +216,18 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
 			}
+			for _, id := range a.identifiers {
+				valid := uint8(0)
+				if id.Valid {
+					valid = 1
+				}
+				identRows = append(identRows, IdentifierRow{
+					CrawlID: cfg.CrawlID, RootDomain: a.rootDomain, URL: a.primaryURL, Subdomain: a.primarySub,
+					IDType: id.Type, IDValue: id.Value, Valid: valid, Source: id.Source,
+					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+				})
+			}
 		}
 	}
-	return domains, techRows, nil
+	return domains, techRows, identRows, nil
 }

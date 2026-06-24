@@ -9,6 +9,9 @@ produces:
   cosine-match against a NACE reference matrix + page-type prototypes, apply confidence gates).
 - **Technologies** — the tech stack per page (a fast, Aho-Corasick-gated Wappalyzer).
 - **Contacts** — emails and social links scraped from the page.
+- **Company identifiers** — LEIs scraped from the page (checksum-validated; from JSON-LD
+  `leiCode` or text), the join key that links a domain to authoritative registry data
+  (LEI → GLEIF). Extensible to VAT / registration numbers.
 
 It is the production processor behind the index-driven enrichment design. It is **stateless** and
 **resumable**: it reads a worklist shard, writes result Parquet, and exits. The wrapper
@@ -223,6 +226,7 @@ make clickhouse-migrate-down      # roll back one
 |---|---|---|---|---|
 | `commoncrawl_domains` | `000046` (+`000049` `nace_confidence`) | **industry** pass | one row per **domain** | **the industry classification** (`nace_code`, `nace_label`, `nace_division`, `nace_confident`, `nace_confidence`, `nace_margin`, `nace_score`, `nace_method`, `nace_top3_codes/labels/scores`) + `page_type`(+score) + contacts (`emails[]`, `email_count`) + lineage (`crawl_id`, `url`, `root_domain`, `subdomain`, `source_url`, `source_run_id`, `resolved_at`) |
 | `commoncrawl_technologies` | `000047` | **tech** pass | one row per **(domain, technology)** | `technology`, `category`, `version`, `confidence` + the same lineage columns |
+| `commoncrawl_company_identifiers` | `000051` | **tech** pass | one row per **(domain, identifier)** | `id_type` (`'lei'`), `id_value`, `valid` (checksum), `source` (`'jsonld'`/`'text'`) + lineage. Join `WHERE id_type='lei'` to `gleif_reference_data` for the verified legal entity. |
 
 > **Naming note:** there is no `commoncrawl_industries` table. The "industry" pass writes
 > `commoncrawl_domains` — the NACE industry fields are columns *on the per-domain row*, not a
@@ -268,6 +272,7 @@ its Parquet, is safe and dedupes on the sort key. This is what makes the driver 
 | `parse.go` | HTML → visible text, emails, social links |
 | `tech.go` | Wappalyzer wrapper; dispatches to `fastTech` when `--tech-engine fast` |
 | `techfast.go` | the Aho-Corasick-gated matcher (`FastMatcher`) |
+| `lei.go` | LEI extraction (JSON-LD `leiCode` + text regex) with ISO 7064 checksum validation |
 | `literal.go` | required-literal extraction from a regex (`regexp/syntax` walk) |
 | `reference.go` | load NACE matrix + page-type prototypes from ClickHouse |
 | `output.go` | Parquet writers pinned to migrations 046/047 + S3 upload |

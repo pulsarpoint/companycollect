@@ -21,10 +21,11 @@ DATA="${DATA:-data/crawl}"
 DAGSTER_DIR="${DAGSTER_DIR:-../dagster_v3}"
 WORKER="$PWD/cc-enrich-worker"
 
+# OUTPUTS: the <table>:<parquet-suffix> pairs a mode produces (loaded in order).
 case "$MODE" in
-industry) TABLE=commoncrawl_domains;      SUFFIX=domains
+industry) OUTPUTS=("commoncrawl_domains:domains")
           PASS_ARGS=(--mode industry --concurrency "${IND_CONC:-16}" --embed-concurrency "${EMBED_CONC:-128}") ;;
-tech)     TABLE=commoncrawl_technologies; SUFFIX=tech
+tech)     OUTPUTS=("commoncrawl_technologies:tech" "commoncrawl_company_identifiers:identifiers")
           PASS_ARGS=(--mode tech --tech-engine fast --concurrency "${TECH_CONC:-128}") ;;
 *) echo "MODE must be industry|tech"; exit 1 ;;
 esac
@@ -43,7 +44,7 @@ ch() {
 for ((p = lo; p <= hi; p++)); do
 	shard="$DATA_ABS/shard_${p}.parquet"
 	out="$DATA/${MODE}_${p}"
-	parquet="${out}-${SUFFIX}.parquet"
+	primary="${out}-${OUTPUTS[0]##*:}.parquet" # produced whenever the pass runs
 	marker="${out}.loaded"
 	[ -f "$marker" ] && { echo "[$MODE $p] already loaded — skip"; continue; }
 
@@ -59,24 +60,26 @@ for ((p = lo; p <= hi; p++)); do
 		fi
 	fi
 
-	# 2. run the pass (skip if its parquet already exists from a prior run)
-	if [ ! -f "$parquet" ]; then
+	# 2. run the pass once (produces every output for the mode)
+	if [ ! -f "$primary" ]; then
 		echo "[$MODE $p] $MODE pass…"
 		if ! "$WORKER" "${PASS_ARGS[@]}" --worklist "$shard" --crawl-id "$CRAWL" --out "$out"; then
 			echo "[$MODE $p] worker FAILED — skip"; continue
 		fi
 	fi
 
-	# 3. load into ClickHouse, then mark done
-	if [ -s "$parquet" ]; then
-		echo "[$MODE $p] loading $(basename "$parquet") → $TABLE"
-		if ch --query "INSERT INTO $TABLE FROM INFILE '$parquet' FORMAT Parquet"; then
-			touch "$marker"; echo "[$MODE $p] DONE"
-		else
-			echo "[$MODE $p] ClickHouse load FAILED — will retry next run"; continue
-		fi
+	# 3. load every output into ClickHouse, then mark done (empty parquet = skip, normal)
+	ok=1
+	for pair in "${OUTPUTS[@]}"; do
+		tbl="${pair%%:*}"; pq="${out}-${pair##*:}.parquet"
+		[ -s "$pq" ] || { echo "[$MODE $p] $(basename "$pq") empty — skip"; continue; }
+		echo "[$MODE $p] loading $(basename "$pq") → $tbl"
+		ch --query "INSERT INTO $tbl FROM INFILE '$pq' FORMAT Parquet" || { ok=0; echo "[$MODE $p] load $tbl FAILED"; }
+	done
+	if [ "$ok" = 1 ]; then
+		touch "$marker"; echo "[$MODE $p] DONE"
 	else
-		echo "[$MODE $p] empty output — marking done"; touch "$marker"
+		echo "[$MODE $p] a load failed — will retry next run"
 	fi
 done
 echo "[$MODE] range $RANGE complete"

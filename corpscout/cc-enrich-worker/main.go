@@ -190,20 +190,22 @@ func main() {
 	start := time.Now()
 	var domains []DomainRow
 	var tech []TechRow
+	var idents []IdentifierRow
 	for i := 0; i < len(items); i += *chunkSize {
 		end := i + *chunkSize
 		if end > len(items) {
 			end = len(items)
 		}
-		d, tk, err := ProcessShard(ctx, items[i:end], getter, emb, ref, protos, cfg)
+		d, tk, ids, err := ProcessShard(ctx, items[i:end], getter, emb, ref, protos, cfg)
 		if err != nil {
 			log.Fatalf("process chunk at %d: %v", i, err)
 		}
 		domains = append(domains, d...)
 		tech = append(tech, tk...)
+		idents = append(idents, ids...)
 		el := time.Since(start).Seconds()
-		log.Printf("progress: %d/%d pages, %d domains, %d tech (%.1f pages/s)",
-			end, len(items), len(domains), len(tech), float64(end)/el)
+		log.Printf("progress: %d/%d pages, %d domains, %d tech, %d ids (%.1f pages/s)",
+			end, len(items), len(domains), len(tech), len(idents), float64(end)/el)
 	}
 
 	domPath, techPath := *out+"-domains.parquet", *out+"-tech.parquet"
@@ -219,6 +221,11 @@ func main() {
 			log.Fatalf("write tech: %v", err)
 		}
 		written = append(written, techPath)
+		identPath := *out + "-identifiers.parquet"
+		if err := WriteIdentifiers(identPath, idents); err != nil {
+			log.Fatalf("write identifiers: %v", err)
+		}
+		written = append(written, identPath)
 	}
 	dur := time.Since(start).Seconds()
 	rate := 0.0
