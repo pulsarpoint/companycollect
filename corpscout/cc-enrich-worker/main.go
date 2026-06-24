@@ -185,7 +185,8 @@ func main() {
 		domains = append(domains, d...)
 		tech = append(tech, tk...)
 		el := time.Since(start).Seconds()
-		log.Printf("progress: %d/%d domains, %d tech (%.1f domains/s)", len(domains), len(items), len(tech), float64(len(domains))/el)
+		log.Printf("progress: %d/%d pages, %d domains, %d tech (%.1f pages/s)",
+			end, len(items), len(domains), len(tech), float64(end)/el)
 	}
 
 	domPath, techPath := *out+"-domains.parquet", *out+"-tech.parquet"
