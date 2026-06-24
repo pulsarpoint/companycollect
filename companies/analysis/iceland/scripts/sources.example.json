@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Fyrirtaekjaskra per-company overview (free)",
+    "slug": "fyrirtaekjaskra_lookup",
+    "type": "api_page",
+    "url": "https://www.skatturinn.is/fyrirtaekjaskra/leit/kennitala/{kennitala}",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Free per-company HTML overview keyed on the 10-digit kennitala. Parse name, logheimili (address), sveitarfelag (municipality), rekstrarform (legal form), ISAT activity, VSK status. Redact forradamadur (chair, GDPR). No open bulk; bulk extracts and certified certificates are paid (gjaldskra)."
+  }
+]
