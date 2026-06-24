@@ -1,0 +1,65 @@
+{
+  "country": "Malaysia",
+  "country_slug": "malaysia",
+  "country_profile_version": "2026-06-24",
+  "_note": "Example anchored on a real public-knowledge listed company. SSM registration number, capital, directors/shareholders and financials are PAID (e-Info/MyData-SSM) — so those values are null; only the Bursa listing (public knowledge) is filled. Nothing fabricated.",
+  "registration": {
+    "registration_number_new": null,
+    "registration_number_old": null
+  },
+  "tax_identifiers": {
+    "tin": null,
+    "sst_number": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "Malayan Banking Berhad",
+    "company_type": "Berhad (Bhd. — public limited)"
+  },
+  "status": {
+    "status_text": "Existing",
+    "incorporation_date": null
+  },
+  "activity": {
+    "msic_code": null
+  },
+  "registered_location": {
+    "registered_address": null,
+    "state": "Kuala Lumpur"
+  },
+  "capital": {
+    "paid_up_capital": null,
+    "currency": "MYR"
+  },
+  "owners": [
+    { "name": "[REDACTED-PII]", "shares": null }
+  ],
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Director" }
+  ],
+  "listing": {
+    "stock_code": "1155",
+    "sector": "Financial Services"
+  },
+  "financial_statements": [
+    { "financial_year": "2024", "revenue": null, "net_profit": null, "currency": "MYR" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "ssm_einfo",
+      "section": "registration / legal_identity / status / activity / capital / owners / officers / financial_statements",
+      "source_url": "https://www.ssm-einfo.my/",
+      "access": "public_paid_login",
+      "license": "commercial_paid_products",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "bursa_listed",
+      "section": "listing",
+      "source_url": "https://www.bursamalaysia.com/",
+      "access": "public_waf_blocked_here",
+      "license": "public_disclosure",
+      "retrieved_at": null
+    }
+  ]
+}

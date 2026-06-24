@@ -1,0 +1,21 @@
+{
+  "country": "Malaysia",
+  "country_slug": "malaysia",
+  "source_slug": "mydata_ssm",
+  "source_name": "MyData-SSM — Buy SSM Report",
+  "source_type": "official_registry",
+  "organization": "Suruhanjaya Syarikat Malaysia (SSM)",
+  "source_url": "https://www.mydata-ssm.com.my/",
+  "license": "commercial_paid_products",
+  "access": "public_paid",
+  "data_freshness": "live",
+  "record_shape": "paid_company_profile_and_financial_report",
+  "primary_keys": ["registration_number_new"],
+  "join_keys": ["registration_number_new"],
+  "field_count": 3,
+  "fields": [
+    { "path": "company_profile", "source_field": "Company Profile", "english_name": "company_profile", "meaning": "SSM company profile (same underlying register as e-Info): identity, status, address, capital, directors, shareholders.", "data_type": "object", "semantic_type": "metadata", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en/ms", "limitations": "PAID — no values copied. Directors/shareholders = personal data (PDPA), redact.", "source_confidence": "high", "analysis_notes": "Same fields as ssm_einfo Company Profile." },
+    { "path": "company_financial_report", "source_field": "Company Financial Report", "english_name": "financial_report", "meaning": "Annual financial statement figures (revenue, profit, assets, equity), MYR.", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "PAID; currency MYR.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "registration_number_new", "source_field": "Registration No.", "english_name": "registration_number_new", "meaning": "12-digit company registration number (lookup key).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Join key to e-Info / SSM register." }
+  ]
+}

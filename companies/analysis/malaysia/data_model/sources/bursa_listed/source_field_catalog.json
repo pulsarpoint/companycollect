@@ -1,0 +1,23 @@
+{
+  "country": "Malaysia",
+  "country_slug": "malaysia",
+  "source_slug": "bursa_listed",
+  "source_name": "Bursa Malaysia — listed-company financials",
+  "source_type": "financial_disclosure",
+  "organization": "Bursa Malaysia Berhad",
+  "source_url": "https://www.bursamalaysia.com/",
+  "license": "public_disclosure",
+  "access": "public_waf_blocked_here",
+  "data_freshness": "quarterly",
+  "record_shape": "per_listed_company_profile_and_filings",
+  "primary_keys": ["stock_code"],
+  "join_keys": ["stock_code", "company_name", "registration_number_new"],
+  "field_count": 5,
+  "fields": [
+    { "path": "stock_code", "source_field": "Stock Code", "english_name": "stock_code", "meaning": "Bursa Malaysia stock code (e.g. 1155 MAYBANK).", "data_type": "string", "semantic_type": "identifier", "example_values": ["1155", "5347", "5183"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Listed companies only.", "source_confidence": "high", "analysis_notes": "Listed-entity key." },
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Listed company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Malayan Banking Berhad"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "sector", "source_field": "Sector", "english_name": "sector", "meaning": "Bursa sector/industry classification.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Bursa sectors", "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "financial_statements", "source_field": "Financial Statements", "english_name": "financial_statements", "meaning": "Quarterly/annual financial statements (MYR).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "Listed only; currency MYR.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "registration_number_new", "source_field": "Registration No.", "english_name": "registration_number_new", "meaning": "SSM 12-digit registration number (in announcements).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Join to SSM.", "source_confidence": "medium", "analysis_notes": "Join key to SSM." }
+  ]
+}

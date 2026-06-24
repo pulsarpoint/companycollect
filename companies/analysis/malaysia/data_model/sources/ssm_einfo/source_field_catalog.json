@@ -1,0 +1,31 @@
+{
+  "country": "Malaysia",
+  "country_slug": "malaysia",
+  "source_slug": "ssm_einfo",
+  "source_name": "SSM e-Info — Company Profile + Financial products",
+  "source_type": "official_registry",
+  "organization": "Suruhanjaya Syarikat Malaysia (SSM / Companies Commission of Malaysia)",
+  "source_url": "https://www.ssm-einfo.my/",
+  "license": "commercial_paid_products",
+  "access": "public_paid_login",
+  "data_freshness": "live",
+  "record_shape": "paid_pdf_company_profile_and_financial_reports",
+  "primary_keys": ["registration_number_new"],
+  "join_keys": ["registration_number_new", "registration_number_old", "tin"],
+  "field_count": 13,
+  "fields": [
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Registered company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en/ms", "limitations": "PAID — field model from published sample templates; no real values copied.", "source_confidence": "high", "analysis_notes": "Sdn. Bhd. / Bhd. / PLT." },
+    { "path": "registration_number_new", "source_field": "Registration No. (new)", "english_name": "registration_number_new", "meaning": "12-digit company registration number (since 2019).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Primary key." },
+    { "path": "registration_number_old", "source_field": "Registration No. (old)", "english_name": "registration_number_old", "meaning": "Legacy registration number (NNNNNNN-A).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Cross-reference key." },
+    { "path": "incorporation_date", "source_field": "Incorporation Date", "english_name": "incorporation_date", "meaning": "Date of incorporation.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "company_type", "source_field": "Company Type", "english_name": "company_type", "meaning": "Type (private/public limited; limited by shares/guarantee).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Sdn. Bhd. / Bhd. / PLT", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Company status (Existing / Dissolved / Wound up / Struck off).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Existing/Dissolved/Wound up/Struck off", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "registered_address", "source_field": "Registered Office Address", "english_name": "registered_address", "meaning": "Registered office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en/ms", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "business_address", "source_field": "Business Address", "english_name": "business_address", "meaning": "Principal place of business.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en/ms", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "nature_of_business", "source_field": "Nature of Business (MSIC)", "english_name": "activity_code", "meaning": "Business activity (MSIC code).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "MSIC (Malaysia Standard Industrial Classification)", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "paid_up_capital", "source_field": "Paid-up Capital", "english_name": "paid_up_capital", "meaning": "Issued/paid-up capital (MYR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency MYR.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "directors", "source_field": "Directors", "english_name": "directors", "meaning": "Company directors.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA (PDPA 2010) — REDACT. Includes NRIC.", "source_confidence": "high", "analysis_notes": "Redact." },
+    { "path": "shareholders", "source_field": "Shareholders", "english_name": "shareholders", "meaning": "Shareholders and holdings.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA when natural persons — REDACT.", "source_confidence": "high", "analysis_notes": "Redact natural persons." },
+    { "path": "financial_comparison", "source_field": "Financial Comparison / Historical", "english_name": "financial_statements", "meaning": "Annual financial figures (revenue, profit, assets, equity) over 2/3/5/10 years.", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "Separate paid product; currency MYR.", "source_confidence": "high", "analysis_notes": "Financial statements." }
+  ]
+}
