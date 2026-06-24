@@ -314,9 +314,10 @@ def test_replace_clickhouse_uses_stage_insert_exchange_and_drop(
         "`corpscout`.`br_cnae_to_nace`"
     )
     insert_sql, insert_params = client.statements[2]
-    assert insert_sql.startswith(
+    expected_columns = ", ".join(tables.BR_CNAE_TO_NACE_COLUMNS)
+    assert insert_sql == (
         "INSERT INTO `corpscout`.`_tmp_br_cnae_to_nace_abc123` "
-        "(cnae_version, cnae_code, cnae_normalized_code"
+        f"({expected_columns}) VALUES"
     )
     assert isinstance(insert_params, list)
     assert len(insert_params) == 2
