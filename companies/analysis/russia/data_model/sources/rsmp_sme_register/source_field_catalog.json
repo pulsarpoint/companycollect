@@ -1,0 +1,30 @@
+{
+  "country": "Russia",
+  "country_slug": "russia",
+  "source_slug": "rsmp_sme_register",
+  "source_name": "РСМП — Unified Register of SMEs (FNS open data)",
+  "source_type": "official_registry",
+  "organization": "Federal Tax Service of Russia (ФНС / FNS)",
+  "source_url": "https://file.nalog.ru/opendata/7707329152-rsmp/",
+  "license": "open_data_fns",
+  "access": "public",
+  "data_freshness": "monthly",
+  "record_shape": "xml_chunked_files_one_document_per_sme",
+  "primary_keys": ["ИННЮЛ", "ОГРН"],
+  "join_keys": ["ИННЮЛ", "ОГРН"],
+  "field_count": 12,
+  "fields": [
+    { "path": "Документ/ОргВклМСП/@ИННЮЛ", "source_field": "ИННЮЛ", "english_name": "inn_legal_entity", "meaning": "INN of the SME legal entity (10-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Per RSMP XSD (verified). For ИП it is ИННФЛ (12-digit, personal).", "source_confidence": "high", "analysis_notes": "Tax id + join key." },
+    { "path": "Документ/ОргВклМСП/@ОГРН", "source_field": "ОГРН", "english_name": "ogrn", "meaning": "Primary State Registration Number (13-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Company id." },
+    { "path": "Документ/ОргВклМСП/@НаимОрг", "source_field": "НаимОрг", "english_name": "full_name", "meaning": "Full legal name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Russian", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Документ/ОргВклМСП/@НаимОргСокр", "source_field": "НаимОргСокр", "english_name": "short_name", "meaning": "Short name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Russian", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Документ/ИПВклМСП", "source_field": "ИПВклМСП (ФИОИП, ИННФЛ, ОГРНИП)", "english_name": "sole_proprietor", "meaning": "Individual entrepreneur block (name + personal INN + OGRNIP).", "data_type": "object", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Russian", "limitations": "PERSONAL DATA (152-ФЗ) — redact ФИОИП/ИННФЛ.", "source_confidence": "high", "analysis_notes": "Present for ИП rows, not legal entities." },
+    { "path": "Документ/СведМН/@Регион", "source_field": "Регион / Район / Город / НаселПункт / КодРегион", "english_name": "location", "meaning": "Location (region, district, city, settlement, region code).", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Russian region codes", "language": "Russian", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Документ/СвОКВЭД/СвОКВЭДОсн/@КодОКВЭД", "source_field": "СвОКВЭДОсн/КодОКВЭД", "english_name": "okved_primary", "meaning": "Primary OKVED activity code.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "OKVED2", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Документ/СвОКВЭД/СвОКВЭДДоп", "source_field": "СвОКВЭДДоп", "english_name": "okved_additional", "meaning": "Additional OKVED activity codes.", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "OKVED2", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Документ/@ДатаВклМСП", "source_field": "ДатаВклМСП", "english_name": "date_included", "meaning": "Date included in the SME register.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Документ/@ВидСубМСП", "source_field": "ВидСубМСП", "english_name": "entity_kind", "meaning": "Entity kind: legal entity (1) or individual entrepreneur (2).", "data_type": "string", "semantic_type": "legal_form", "example_values": ["1", "2"], "nullable": false, "repeatable": false, "code_list": "1 ЮЛ / 2 ИП", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Документ/@КатСубМСП", "source_field": "КатСубМСП", "english_name": "sme_category", "meaning": "SME category: micro (1), small (2), medium (3).", "data_type": "string", "semantic_type": "metadata", "example_values": ["1", "2", "3"], "nullable": false, "repeatable": false, "code_list": "1 micro / 2 small / 3 medium", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Документ/ССЧР/@ВеличССЧР", "source_field": "ССЧР", "english_name": "average_headcount", "meaning": "Average headcount.", "data_type": "integer", "semantic_type": "employment", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": "Employment size signal." }
+  ]
+}

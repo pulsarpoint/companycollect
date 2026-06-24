@@ -1,0 +1,78 @@
+{
+  "country": "Russia",
+  "country_slug": "russia",
+  "source_slug": "rsmp_sme_register",
+  "source_identity": "russia_rsmp_sme_register",
+  "source_package": "rsmp",
+  "env_prefix": "RSMP",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "РСМП — Unified Register of SMEs (FNS open data)",
+    "source_type": "official_registry",
+    "organization": "Federal Tax Service of Russia (ФНС / FNS)",
+    "source_url": "https://file.nalog.ru/opendata/7707329152-rsmp/",
+    "license": "open_data_fns",
+    "access": "public",
+    "data_freshness": "monthly",
+    "attribution": "FNS (РСМП open data)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": "https://file.nalog.ru/opendata/7707329152-rsmp/",
+    "download_url": "https://file.nalog.ru/opendata/7707329152-rsmp/data-10062026-structure-12052026.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xml", "zip"],
+    "compression": "zip",
+    "encoding": "windows-1251",
+    "record_path": "Документ",
+    "total_results_path": null,
+    "pagination": { "type": "monthly_archive", "page_param": "date", "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "monthly archive ~2.25 GB; resolve the latest URL from the dataset passport"
+  },
+  "snapshot": {
+    "strategy": "preserve_zip_then_stream_xml_chunks",
+    "file_extension": ".zip",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "RsmpDocument",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "ZIP of chunked XML, one <Документ> per SME. Encoding Windows-1251 (convert to UTF-8). Legal entities under ОргВклМСП (ИННЮЛ/ОГРН/НаимОрг); individual entrepreneurs under ИПВклМСП (ФИОИП/ИННФЛ/ОГРНИП = PERSONAL DATA, redact). Resolve the latest archive URL from the dataset passport (the date changes monthly). Validate against the structure XSD. Large file — stream chunk by chunk."
+  },
+  "keys": {
+    "primary_keys": ["ИННЮЛ", "ОГРН"],
+    "join_keys": ["ИННЮЛ", "ОГРН"],
+    "dedupe_keys": ["ОГРН"]
+  },
+  "mapping_rules": {
+    "company_id": "ОГРН.",
+    "tax_id": "ИННЮЛ.",
+    "legal_name": "НаимОрг (+ НаимОргСокр).",
+    "activity_code": "СвОКВЭДОсн/КодОКВЭД (+ СвОКВЭДДоп).",
+    "registered_address": "СведМН (Регион/Район/Город).",
+    "sme_category": "КатСубМСП (1 micro / 2 small / 3 medium).",
+    "employees": "ССЧР.",
+    "owners": "ИПВклМСП (individual entrepreneur — PERSONAL DATA, redact)."
+  },
+  "fixture_requirements": [
+    "legal-entity SME (ОргВклМСП, micro)",
+    "small/medium legal-entity SME",
+    "individual entrepreneur (ИПВклМСП — assert redaction)",
+    "record with multiple OKVED codes",
+    "Windows-1251 encoded chunk"
+  ],
+  "live_test_plan": {
+    "smoke": "Download the dataset passport, resolve the latest ZIP URL, stream one XML chunk, parse a few <Документ>.",
+    "full": "Stream the whole monthly archive; keyed on ИННЮЛ/ОГРН; redact ИП personal data; gate behind env (large file)."
+  },
+  "blockers": []
+}

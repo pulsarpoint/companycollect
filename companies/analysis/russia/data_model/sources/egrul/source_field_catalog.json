@@ -1,0 +1,27 @@
+{
+  "country": "Russia",
+  "country_slug": "russia",
+  "source_slug": "egrul",
+  "source_name": "ЕГРЮЛ — EGRUL (Unified State Register of Legal Entities)",
+  "source_type": "official_registry",
+  "organization": "Federal Tax Service of Russia (ФНС / FNS)",
+  "source_url": "https://egrul.nalog.ru/",
+  "license": "free_per_company_paid_bulk",
+  "access": "public_search_paid_bulk",
+  "data_freshness": "live register",
+  "record_shape": "per_company_extract_vypiska",
+  "primary_keys": ["ogrn"],
+  "join_keys": ["ogrn", "inn"],
+  "field_count": 9,
+  "fields": [
+    { "path": "egrul.ogrn", "source_field": "ОГРН", "english_name": "ogrn", "meaning": "Primary State Registration Number (13-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: full bulk paid; free per-company extract.", "source_confidence": "low", "analysis_notes": "Authoritative company id." },
+    { "path": "egrul.inn", "source_field": "ИНН", "english_name": "inn", "meaning": "Taxpayer id (10-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "Tax id." },
+    { "path": "egrul.kpp", "source_field": "КПП", "english_name": "kpp", "meaning": "Tax-registration reason code (9-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "egrul.full_name", "source_field": "Полное наименование", "english_name": "full_name", "meaning": "Full legal name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Russian", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "egrul.legal_form", "source_field": "ОПФ / ОКОПФ", "english_name": "legal_form", "meaning": "Legal form.", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "OKOPF", "language": "Russian", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "egrul.status", "source_field": "Состояние", "english_name": "status", "meaning": "Status (active / in liquidation / liquidated / etc.).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Russian", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "egrul.registration_date", "source_field": "Дата регистрации", "english_name": "registration_date", "meaning": "Date of state registration.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "egrul.directors_founders", "source_field": "Руководитель / Учредители", "english_name": "directors_founders", "meaning": "Director and founders/participants (names + INN).", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Russian", "limitations": "PLANNING-ONLY. PERSONAL DATA (152-ФЗ) — redact.", "source_confidence": "low", "analysis_notes": "Only source of directors/founders." },
+    { "path": "egrul.capital", "source_field": "Уставный капитал", "english_name": "charter_capital", "meaning": "Charter capital (RUB).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

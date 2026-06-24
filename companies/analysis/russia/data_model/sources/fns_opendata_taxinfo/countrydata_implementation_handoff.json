@@ -1,0 +1,56 @@
+{
+  "country": "Russia",
+  "country_slug": "russia",
+  "source_slug": "fns_opendata_taxinfo",
+  "source_identity": "russia_fns_opendata_taxinfo",
+  "source_package": "fnsopendata",
+  "env_prefix": "FNS_OPENDATA",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "FNS open data — formerly tax-secret company information",
+    "source_type": "tax_registry",
+    "organization": "Federal Tax Service of Russia (ФНС / FNS)",
+    "source_url": "https://www.nalog.gov.ru/opendata/",
+    "license": "open_data_fns",
+    "access": "public",
+    "data_freshness": "annual",
+    "attribution": "FNS open data"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "zip_archive",
+    "base_url": "https://file.nalog.ru/opendata/",
+    "download_url": "https://file.nalog.ru/opendata/7707329152-{set}/data-{date}-structure-{date}.zip",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xml", "csv", "zip"],
+    "compression": "zip",
+    "encoding": "windows-1251",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "per_dataset_archive", "page_param": "set", "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "annual archives; resolve latest URL per dataset passport"
+  },
+  "snapshot": { "strategy": "preserve_zip_then_stream", "file_extension": ".zip", "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "FnsOpenDataRecord",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": ["rub_integer"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Per-INN open datasets (sshr headcount, revexp income/expense, paidtax taxes, taxregime, registerdisqualified). Bulk XML/CSV at file.nalog.ru; each has a passport with the latest archive URL + XSD. Encoding Windows-1251. Keyed on ИНН -> join to GIR BO/RSMP/EGRUL."
+  },
+  "keys": { "primary_keys": ["ИНН"], "join_keys": ["ИНН"], "dedupe_keys": ["ИНН"] },
+  "mapping_rules": {
+    "employees": "sshr average headcount.",
+    "financials": "revexp income/expense (RUB) as a supplement to GIR BO.",
+    "tax_regime": "special tax regimes.",
+    "join": "ИНН."
+  },
+  "fixture_requirements": ["sshr headcount record", "revexp income/expense record", "paidtax record"],
+  "live_test_plan": {
+    "smoke": "Resolve one dataset passport (e.g. sshr); download + parse a few INN records.",
+    "full": "Ingest the per-INN sets and join on ИНН; convert Windows-1251; gate behind env."
+  },
+  "blockers": []
+}

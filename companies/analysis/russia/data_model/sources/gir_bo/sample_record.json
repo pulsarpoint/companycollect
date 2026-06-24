@@ -1,0 +1,33 @@
+{
+  "_comment": "Real record from the open GIR BO search API (FNS, bo.nalog.gov.ru). Legal-entity corporate identity + list of filed annual financial statements. No personal data.",
+  "id": 6622458,
+  "inn": "7736050003",
+  "ogrn": "1027700070518",
+  "shortName": "ПАО \"ГАЗПРОМ\"",
+  "region": "САНКТ-ПЕТЕРБУРГ",
+  "okopf": 12247,
+  "okfs": null,
+  "okpo": null,
+  "statusCode": "ACTIVE",
+  "bfo_periods": [
+    "2026",
+    "2025",
+    "2024",
+    "2023",
+    "2021"
+  ],
+  "organizationInfo_2026": {
+    "fullName": "Публичное акционерное общество \"Газпром\"",
+    "inn": "7736050003",
+    "kpp": "997250001",
+    "okpo": "00040778",
+    "okopf": {
+      "id": 12247,
+      "name": "Публичные акционерные общества"
+    },
+    "okfs": {
+      "id": 41,
+      "name": "Смешанная российская собственность с долей федеральной собственности"
+    }
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Russia Company Profile",
+  "description": "Country-specific company profile for Russia. Keyed on the OGRN (13-digit Primary State Registration Number, company id) and the INN (10-digit taxpayer id). Russia has VAT (НДС) but NO separate VAT number — the INN is the tax id. Open identity + financial statements come from GIR BO (bo.nalog.gov.ru, FNS, free API); the open SME company list comes from the RSMP register (file.nalog.ru bulk XML). The full authoritative register (EGRUL — directors/founders/capital/history) is paid (per-company extract free, full bulk via paid FTP). The FNS publishes per-INN open enrichment (headcount, income/expense, paid taxes). Directors/founders and individual-entrepreneur data are personal data (152-ФЗ).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Russia" },
+    "country_slug": { "type": "string", "const": "russia" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["ogrn"],
+      "properties": {
+        "ogrn": { "type": "string", "description": "ОГРН — 13-digit Primary State Registration Number (company id).", "x-source": "gir_bo", "x-source-path": "content[].ogrn", "x-join-key": true, "x-freshness": "live" },
+        "inn": { "type": ["string", "null"], "description": "ИНН — 10-digit taxpayer id.", "x-source": "gir_bo", "x-source-path": "content[].inn", "x-join-key": true },
+        "kpp": { "type": ["string", "null"], "description": "КПП — 9-digit tax-registration reason code.", "x-source": "gir_bo", "x-source-path": "bfo[].organizationInfo.kpp" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= INN.", "x-source": "gir_bo", "x-source-path": "content[].inn" },
+        "vat_id": { "type": ["string", "null"], "description": "No separate VAT number — Russia uses the INN for VAT (НДС).", "x-access": "not_available" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "short_name": { "type": ["string", "null"], "x-source": "gir_bo", "x-source-path": "content[].shortName" },
+        "full_name": { "type": ["string", "null"], "x-source": "gir_bo", "x-source-path": "bfo[].organizationInfo.fullName" },
+        "okopf_legal_form": { "type": ["string", "null"], "description": "ОКОПФ legal form.", "x-source": "gir_bo", "x-source-path": "content[].okopf.name" },
+        "okfs_ownership": { "type": ["string", "null"], "description": "ОКФС ownership form.", "x-source": "gir_bo", "x-source-path": "content[].okfs.name" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_code": { "type": ["string", "null"], "x-source": "gir_bo", "x-source-path": "content[].statusCode" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "okved_code": { "type": ["string", "null"], "description": "ОКВЭД2 economic activity (~NACE).", "x-source": "gir_bo", "x-source-path": "content[].okved2" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "region": { "type": ["string", "null"], "x-source": "gir_bo", "x-source-path": "content[].region" },
+        "registered_address": { "type": ["string", "null"], "x-source": "gir_bo", "x-source-path": "content[].index+region+city+street+house" }
+      }
+    },
+    "sme": {
+      "type": "object",
+      "description": "From the RSMP SME register (open bulk).",
+      "x-source": "rsmp_sme_register",
+      "properties": {
+        "category": { "type": ["string", "null"], "description": "micro / small / medium (КатСубМСП).", "x-source-path": "@КатСубМСП" },
+        "date_included": { "type": ["string", "null"], "format": "date", "x-source-path": "@ДатаВклМСП" },
+        "average_headcount": { "type": ["integer", "null"], "x-source-path": "ССЧР" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Open annual accounting statements from GIR BO (balance sheet + income statement), RUB (thousands).",
+      "x-source": "gir_bo",
+      "x-access": "open",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": ["string", "null"] },
+          "total_assets": { "type": ["number", "null"], "description": "Balance sheet line 1600." },
+          "equity": { "type": ["number", "null"], "description": "Line 1300." },
+          "revenue": { "type": ["number", "null"], "description": "Income statement line 2110." },
+          "net_profit": { "type": ["number", "null"], "description": "Line 2400." },
+          "currency": { "type": "string", "const": "RUB" }
+        }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Director / founders only via EGRUL (per-company free / paid bulk). PERSONAL DATA (152-ФЗ) — redact.",
+      "x-source": "egrul",
+      "x-access": "free_per_company_paid_bulk_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] }, "inn": { "type": ["string", "null"], "x-personal-data": true } } }
+    },
+    "tax_enrichment": {
+      "type": "object",
+      "description": "FNS open per-INN datasets (headcount, income/expense, paid taxes, tax regime).",
+      "x-source": "fns_opendata_taxinfo",
+      "properties": {
+        "average_headcount": { "type": ["integer", "null"] },
+        "tax_regime": { "type": ["string", "null"] }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

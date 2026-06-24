@@ -1,0 +1,24 @@
+{
+  "country": "Russia",
+  "country_slug": "russia",
+  "country_profile_version": "2026-06-24",
+  "_note": "registration/legal_identity/status/activity/registered_location are REAL data from the open GIR BO search API (FNS) for ПАО \"ГАЗПРОМ\" (INN 7736050003, OGRN 1027700070518). financial_statements lists the REAL filed years (2021-2025); line-item figures populate from the GIR BO per-statement detail (RUB). tax_identifiers.tax_id = INN; vat_id null (no separate VAT number). sme (RSMP) is empty (Gazprom is not an SME). officers (EGRUL directors/founders) are personal data (152-ФЗ), paid/per-company, and empty/redacted. tax_enrichment is FNS open per-INN sets.",
+  "registration": { "ogrn": "1027700070518", "inn": "7736050003", "kpp": "997250001" },
+  "tax_identifiers": { "tax_id": "7736050003", "vat_id": null },
+  "legal_identity": { "short_name": "ПАО \"ГАЗПРОМ\"", "full_name": "Публичное акционерное общество \"Газпром\"", "okopf_legal_form": "Публичные акционерные общества", "okfs_ownership": "Смешанная российская собственность с долей федеральной собственности" },
+  "status": { "status_code": null },
+  "activity": { "okved_code": null },
+  "registered_location": { "region": "САНКТ-ПЕТЕРБУРГ", "registered_address": "197229, Санкт-Петербург, ..." },
+  "sme": { "category": null, "date_included": null, "average_headcount": null },
+  "financial_statements": [
+    { "fiscal_year": "2024", "total_assets": null, "equity": null, "revenue": null, "net_profit": null, "currency": "RUB" },
+    { "fiscal_year": "2023", "total_assets": null, "equity": null, "revenue": null, "net_profit": null, "currency": "RUB" }
+  ],
+  "officers": [],
+  "tax_enrichment": { "average_headcount": null, "tax_regime": null },
+  "source_provenance": [
+    { "source_slug": "gir_bo", "section": "registration / legal_identity / status / activity / registered_location / financial_statements", "source_url": "https://bo.nalog.gov.ru/advanced-search/organizations/search?query=7736050003", "access": "public (no key)", "license": "open_data_fns", "retrieved_at": "2026-06-24T00:00:00Z" },
+    { "source_slug": "rsmp_sme_register", "section": "sme (not applicable for Gazprom)", "source_url": "https://file.nalog.ru/opendata/7707329152-rsmp/", "access": "public bulk", "license": "open_data_fns", "retrieved_at": null },
+    { "source_slug": "egrul", "section": "officers (planning-only; paid / personal data)", "source_url": "https://egrul.nalog.ru/", "access": "free per-company / paid bulk", "license": "free_per_company_paid_bulk", "retrieved_at": null }
+  ]
+}

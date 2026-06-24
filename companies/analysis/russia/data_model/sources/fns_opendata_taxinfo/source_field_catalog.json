@@ -1,0 +1,23 @@
+{
+  "country": "Russia",
+  "country_slug": "russia",
+  "source_slug": "fns_opendata_taxinfo",
+  "source_name": "FNS open data — formerly tax-secret company information",
+  "source_type": "tax_registry",
+  "organization": "Federal Tax Service of Russia (ФНС / FNS)",
+  "source_url": "https://www.nalog.gov.ru/opendata/",
+  "license": "open_data_fns",
+  "access": "public",
+  "data_freshness": "annual",
+  "record_shape": "bulk_xml_csv_per_dataset_keyed_by_inn",
+  "primary_keys": ["ИНН"],
+  "join_keys": ["ИНН"],
+  "field_count": 5,
+  "fields": [
+    { "path": "set.ИНН", "source_field": "ИНН", "english_name": "inn", "meaning": "Taxpayer id (join key).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Open data; per-INN.", "source_confidence": "high", "analysis_notes": "Join key across the FNS sets." },
+    { "path": "sshr.average_headcount", "source_field": "Среднесписочная численность", "english_name": "average_headcount", "meaning": "Average headcount (sshr set).", "data_type": "integer", "semantic_type": "employment", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Russian", "limitations": "Open.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "revexp.income_expense", "source_field": "Доходы/расходы", "english_name": "income_expense", "meaning": "Income and expense from accounting statements (revexp set).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Russian", "limitations": "Open; RUB.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "paidtax.paid_taxes", "source_field": "Уплаченные налоги", "english_name": "paid_taxes", "meaning": "Paid taxes / fees by type (paidtax set).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Russian", "limitations": "Open; RUB.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "taxregime.special_regime", "source_field": "Спецрежимы", "english_name": "tax_regime", "meaning": "Special tax regimes applied (USN/ESHN/etc.).", "data_type": "string", "semantic_type": "license_or_terms", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Russian", "limitations": "Open.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

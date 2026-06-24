@@ -1,0 +1,79 @@
+{
+  "country": "Russia",
+  "country_slug": "russia",
+  "source_slug": "gir_bo",
+  "source_identity": "russia_gir_bo",
+  "source_package": "girbo",
+  "env_prefix": "GIR_BO",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "ГИР БО — GIR BO (State Information Resource for Accounting Statements)",
+    "source_type": "financial_statements",
+    "organization": "Federal Tax Service of Russia (ФНС / FNS)",
+    "source_url": "https://bo.nalog.gov.ru/",
+    "license": "open_data_fns",
+    "access": "public",
+    "data_freshness": "annual filings (continuously updated)",
+    "attribution": "FNS / ГИР БО"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://bo.nalog.gov.ru/advanced-search/organizations/search",
+    "download_url": "https://bo.nalog.gov.ru/nbo/organizations/{id}/bfo/",
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json", "zip", "xml"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "content",
+    "total_results_path": "totalElements",
+    "pagination": { "type": "page_number", "page_param": "page", "page_start": 0, "page_size": 20, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "no key; pace requests"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_org_per_line_plus_bfo",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "GirBoOrganization",
+    "date_formats": ["02.01.2006", "2006"],
+    "datetime_formats": [],
+    "number_formats": ["rub_thousands"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Two-step: GET /advanced-search/organizations/search?query={INN|OGRN|name}&page=0 -> content[] org (inn/ogrn/okopf/okfs/okpo/okved2/region/status + bfo[] years). Strip <strong> from inn. Then GET /nbo/organizations/{id}/bfo/ for the statement list; per-statement detail holds line items (RAS codes: 1600 assets, 1300 equity, 2110 revenue, 2400 net profit), RUB (thousands). Banks excluded. Annual bulk datasets also at /nbo/opendata."
+  },
+  "keys": {
+    "primary_keys": ["id"],
+    "join_keys": ["inn", "ogrn"],
+    "dedupe_keys": ["ogrn"]
+  },
+  "mapping_rules": {
+    "company_id": "ogrn (13-digit).",
+    "tax_id": "inn (10-digit).",
+    "vat_id": "null (VAT/НДС uses the INN).",
+    "kpp": "organizationInfo.kpp.",
+    "legal_name": "shortName / fullName.",
+    "legal_form": "okopf (id+name).",
+    "activity_code": "okved2.",
+    "registered_address": "region/city/street/house.",
+    "financials": "bfo[] per period -> balance sheet (1600/1300/1500) + income statement (2110/2400), RUB."
+  },
+  "fixture_requirements": [
+    "large PAO with multi-year statements (e.g. okopf public JSC)",
+    "small OOO (LLC)",
+    "org with okopf/okfs/okpo populated",
+    "org with inn wrapped in <strong> (assert stripping)",
+    "bfo statement with balance + income line items"
+  ],
+  "live_test_plan": {
+    "smoke": "Search one INN; read identity + bfo years; fetch /bfo/ list.",
+    "full": "Iterate INNs/OGRNs (from RSMP or a seed list) -> identity + financials; or ingest the annual bulk datasets. No key; pace requests."
+  },
+  "blockers": []
+}
