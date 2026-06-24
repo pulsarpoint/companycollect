@@ -277,6 +277,7 @@ its Parquet, is safe and dedupes on the sort key. This is what makes the driver 
 | `tech.go` | Wappalyzer wrapper; dispatches to `fastTech` when `--tech-engine fast` |
 | `techfast.go` | the Aho-Corasick-gated matcher (`FastMatcher`) |
 | `lei.go` | LEI extraction (JSON-LD `leiCode` + text regex) with ISO 7064 checksum validation |
+| `vat.go` | EU VAT id extraction + per-country format validation (+ DE/IT checksums) |
 | `profile.go` | schema.org `Organization`/`LocalBusiness` JSON-LD → firmographics + structured identifiers |
 | `literal.go` | required-literal extraction from a regex (`regexp/syntax` walk) |
 | `reference.go` | load NACE matrix + page-type prototypes from ClickHouse |

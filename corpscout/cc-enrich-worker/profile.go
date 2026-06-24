@@ -92,10 +92,13 @@ func ExtractProfile(body []byte) (CompanyProfile, []Identifier) {
 }
 
 func identValid(typ, val string) bool {
-	if typ == "lei" {
+	switch typ {
+	case "lei":
 		return validLEI(val)
+	case "vat":
+		return validVAT(val)
 	}
-	return false // no format validation yet for vat/tax/duns/naics
+	return false // no validation yet for tax/duns/naics
 }
 
 // walkLD visits every JSON object in a parsed JSON-LD value (handles @graph, arrays, nesting).

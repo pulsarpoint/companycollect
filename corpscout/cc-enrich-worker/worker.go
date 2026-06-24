@@ -153,6 +153,12 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 							agg.identifiers = append(agg.identifiers, id)
 						}
 					}
+					for _, id := range ExtractVATs(techBody) { // EU VAT ids (format + checksum)
+						if !idSeen[id.Value] {
+							idSeen[id.Value] = true
+							agg.identifiers = append(agg.identifiers, id)
+						}
+					}
 					if agg.profile.Empty() && !prof.Empty() {
 						agg.profile = prof
 					}
