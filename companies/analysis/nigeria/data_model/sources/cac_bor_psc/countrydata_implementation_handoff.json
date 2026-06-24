@@ -1,0 +1,74 @@
+{
+  "country": "Nigeria",
+  "country_slug": "nigeria",
+  "source_slug": "cac_bor_psc",
+  "source_identity": "nigeria_cac_bor_psc",
+  "source_package": "cacbor",
+  "env_prefix": "NG_CAC_BOR",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "CAC Beneficial Ownership Register (Persons With Significant Control)",
+    "source_type": "beneficial_ownership",
+    "organization": "Corporate Affairs Commission (CAC)",
+    "source_url": "https://borapp.cac.gov.ng/api/bor-search/get_psc",
+    "license": "public_register_token_gated",
+    "access": "public_browser_token_gated_api",
+    "data_freshness": "live",
+    "attribution": "CAC Beneficial Ownership Register"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["NG_CAC_BOR_TOKEN"]
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://borapp.cac.gov.ng/api/bor-search/get_psc",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Authorization: Bearer <access token>", "Content-Type: application/json"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "data",
+    "total_results_path": null,
+    "pagination": { "type": "page_number", "page_param": "pageNo", "page_start": 0, "page_size": 10, "page_size_param": "pageSize", "next_page_path": null },
+    "rate_limit": "401 without a token; public via browser"
+  },
+  "snapshot": {
+    "strategy": "none_blocked",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "CacPsc",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "BLOCKED (token). CAC Beneficial Ownership Register (PSC). API borapp.cac.gov.ng/api/bor-search/get_psc (POST) returns 401 without an access token. Do NOT bypass the token gate. SECURITY NOTE: a token-less /auth/access-token endpoint returned an individual's PII (broken access control) — do NOT call it, use it, or store its output. PSC names/nationality are personal data (NDPA 2023) — redact. Join on RC number / company name to the CAC register."
+  },
+  "keys": {
+    "primary_keys": ["rc_number"],
+    "join_keys": ["rc_number", "company_name"],
+    "dedupe_keys": ["rc_number", "psc_name"]
+  },
+  "mapping_rules": {
+    "owners": "pscName + shareholdingPercent + natureOfControl (REDACT pscName/nationality — personal data).",
+    "company_id": "rcNumber (join to CAC register)."
+  },
+  "fixture_requirements": [
+    "company with a single PSC",
+    "company with multiple PSCs",
+    "PSC redaction assertion (no name/nationality persisted)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable — token required. Do not bypass; do not call /auth/access-token.",
+    "full": "Blocked on authentication — requires a proper CAC BOR token arrangement; redact PSC personal data."
+  },
+  "blockers": [
+    "API token-gated (401 without an access token)",
+    "Broken-access-control endpoint observed leaking PII — must not be used",
+    "PSC data is personal data (NDPA 2023) — redact"
+  ]
+}

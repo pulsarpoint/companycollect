@@ -1,0 +1,24 @@
+{
+  "country": "Nigeria",
+  "country_slug": "nigeria",
+  "source_slug": "cac_bor_psc",
+  "source_name": "CAC Beneficial Ownership Register (Persons With Significant Control)",
+  "source_type": "beneficial_ownership",
+  "organization": "Corporate Affairs Commission (CAC)",
+  "source_url": "https://borapp.cac.gov.ng/api/bor-search/get_psc",
+  "license": "public_register_token_gated",
+  "access": "public_browser_token_gated_api",
+  "data_freshness": "live",
+  "record_shape": "json_psc_search_results_token_gated",
+  "primary_keys": ["rc_number"],
+  "join_keys": ["rc_number", "company_name"],
+  "field_count": 6,
+  "fields": [
+    { "path": "company_name", "source_field": "companyName", "english_name": "company_name", "meaning": "Company whose persons with significant control are listed.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Token-gated API; documented from the SPA model, no live values.", "source_confidence": "medium", "analysis_notes": "Join to CAC by RC number." },
+    { "path": "rc_number", "source_field": "rcNumber", "english_name": "rc_number", "meaning": "Company RC number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": "Join key." },
+    { "path": "psc_name", "source_field": "pscName", "english_name": "psc_name", "meaning": "Person with significant control (beneficial owner) name.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "PERSONAL DATA (NDPA 2023) — REDACT.", "source_confidence": "medium", "analysis_notes": "Redact." },
+    { "path": "nature_of_control", "source_field": "natureOfControl", "english_name": "nature_of_control", "meaning": "Nature of significant control (shareholding / voting rights / influence).", "data_type": "string", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "shareholding_percent", "source_field": "shareholdingPercent", "english_name": "shareholding_percent", "meaning": "Percentage of shares / control held.", "data_type": "decimal", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "nationality", "source_field": "nationality", "english_name": "nationality", "meaning": "PSC nationality.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "PERSONAL DATA — handle with care.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

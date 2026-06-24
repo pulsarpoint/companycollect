@@ -1,0 +1,73 @@
+{
+  "country": "Nigeria",
+  "country_slug": "nigeria",
+  "source_slug": "ngx_equities",
+  "source_identity": "nigeria_ngx_equities",
+  "source_package": "ngxequities",
+  "env_prefix": "NG_NGX",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "NGX — Nigerian Exchange (listed equities + financials)",
+    "source_type": "financial_disclosure",
+    "organization": "Nigerian Exchange Group (NGX)",
+    "source_url": "https://doclib.ngxgroup.com/REST/api/statistics/equities/",
+    "license": "public_disclosure",
+    "access": "public_open",
+    "data_freshness": "daily",
+    "attribution": "NGX / issuer"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://doclib.ngxgroup.com/REST/api/statistics/equities/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "$ (root array)",
+    "total_results_path": null,
+    "pagination": { "type": "page_number", "page_param": "pageNo", "page_start": 0, "page_size": 500, "page_size_param": "pageSize", "next_page_path": null },
+    "rate_limit": "public; be polite (the full listed set is ~150 equities in one page)"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "NgxEquity",
+    "date_formats": ["2006-01-02T15:04:05"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "GET ?market=&sector=&orderby=&pageSize=500&pageNo=0 -> JSON array. Each object: Symbol, Sector, Market (board), OpeningPrice/ClosePrice/HighPrice/LowPrice, Change/PercChange, Trades/Volume/Value, TradeDate (and Company2, which may echo the symbol). Resolve full legal names + full financial statements from the NGX issuer-disclosure pages. Listed companies only (~150). Join to CAC by company name."
+  },
+  "keys": {
+    "primary_keys": ["Symbol"],
+    "join_keys": ["Symbol", "company_name"],
+    "dedupe_keys": ["Symbol"]
+  },
+  "mapping_rules": {
+    "company_id": "Symbol (listed entity).",
+    "legal_name": "company name (from issuer disclosure; Company2 may echo symbol).",
+    "activity_code": "Sector (NGX classification).",
+    "financials": "ClosePrice/Volume/Value (market) + issuer financial statements (NGN)."
+  },
+  "fixture_requirements": [
+    "Premium Board issuer (e.g. DANGCEM)",
+    "Main Board issuer (e.g. GTCO)",
+    "issuer with null volume/value",
+    "issuer with [MRF]/suffix in name"
+  ],
+  "live_test_plan": {
+    "smoke": "GET pageSize=500; assert >100 rows and that DANGCEM/MTNN/GTCO are present.",
+    "full": "Persist the full equities array; fetch issuer financial statements per symbol; politely rate-limit."
+  },
+  "blockers": []
+}

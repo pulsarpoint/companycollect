@@ -1,0 +1,88 @@
+{
+  "country": "Nigeria",
+  "country_slug": "nigeria",
+  "source_slug": "cac_registry",
+  "source_identity": "nigeria_cac_registry",
+  "source_package": "cac",
+  "env_prefix": "NG_CAC",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "CAC — Corporate Affairs Commission (company register + documents)",
+    "source_type": "official_registry",
+    "organization": "Corporate Affairs Commission (CAC)",
+    "source_url": "https://search.cac.gov.ng/",
+    "license": "restricted_paid_documents",
+    "access": "cloudflare_gated_search_paid_documents",
+    "data_freshness": "live",
+    "attribution": "CAC (Corporate Affairs Commission)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["NG_CAC_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://search.cac.gov.ng/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Cloudflare clearance (browser)"],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public search Cloudflare-gated; documents paid via CAC portal; no open bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_gated_paid",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "CacCompany",
+    "date_formats": ["02/01/2006", "02-Jan-2006"],
+    "datetime_formats": [],
+    "number_formats": ["1,234,567.89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Cloudflare-gated + paid. CAC is the official registrar (RC/BN/IT). Public search (search.cac.gov.ng) is Cloudflare-gated ('Just a moment'); documents (status report, certified extract, annual returns, AFS) paid via the CAC portal. No open bulk/API. Do NOT bypass Cloudflare/paywall. Field model from public knowledge; no values copied. RC number = company id; TIN join to tax. Redact directors/shareholders (NDPA 2023)."
+  },
+  "keys": {
+    "primary_keys": ["rc_number"],
+    "join_keys": ["rc_number", "tin", "company_name"],
+    "dedupe_keys": ["rc_number"]
+  },
+  "mapping_rules": {
+    "company_id": "RC Number (companies) / BN / IT.",
+    "registration_number": "RC / BN / IT number.",
+    "tax_id": "TIN (FIRS).",
+    "vat_id": "VAT registration (FIRS).",
+    "legal_name": "Company Name.",
+    "company_type": "Company Type (Plc/Ltd/Ltd-Gte/BN/IT).",
+    "status": "Status (Active/Inactive/Dissolved/Delisted).",
+    "incorporation_date": "Registration Date.",
+    "registered_address": "Registered Address.",
+    "activity_code": "Nature of Business.",
+    "capital": "Share Capital (NGN).",
+    "financials": "Annual Returns / AFS (NGN).",
+    "owners": "Shareholders (REDACT natural persons).",
+    "officers": "Directors (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "active private limited (Ltd)",
+    "public limited (Plc)",
+    "business name (BN)",
+    "incorporated trustees (IT)",
+    "record with directors/shareholders (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (Cloudflare). From a browser context, verify a company by RC/name.",
+    "full": "Blocked on payment + Cloudflare — buy documents per company via a CAC account; redact personal data."
+  },
+  "blockers": [
+    "Public search is Cloudflare-gated ('Just a moment')",
+    "Company documents (status report/annual returns/AFS) are paid per document",
+    "No open bulk/API; transport unconfirmed"
+  ]
+}

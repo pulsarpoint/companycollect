@@ -1,0 +1,27 @@
+{
+  "country": "Nigeria",
+  "country_slug": "nigeria",
+  "source_slug": "ngx_equities",
+  "source_name": "NGX — Nigerian Exchange (listed equities + financials)",
+  "source_type": "financial_disclosure",
+  "organization": "Nigerian Exchange Group (NGX)",
+  "source_url": "https://doclib.ngxgroup.com/REST/api/statistics/equities/",
+  "license": "public_disclosure",
+  "access": "public_open",
+  "data_freshness": "daily",
+  "record_shape": "json_array_one_object_per_listed_equity",
+  "primary_keys": ["Symbol"],
+  "join_keys": ["Symbol", "company_name"],
+  "field_count": 9,
+  "fields": [
+    { "path": "[].Symbol", "source_field": "Symbol", "english_name": "ticker", "meaning": "NGX ticker symbol.", "data_type": "string", "semantic_type": "identifier", "example_values": ["DANGCEM", "MTNN", "GTCO", "ZENITHBANK", "SEPLAT"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Listed companies only (~150 equities).", "source_confidence": "high", "analysis_notes": "Listed-entity key." },
+    { "path": "[].Sector", "source_field": "Sector", "english_name": "sector", "meaning": "NGX sector classification.", "data_type": "string", "semantic_type": "activity", "example_values": ["FINANCIAL SERVICES", "ICT", "INDUSTRIAL GOODS", "CONSUMER GOODS", "OIL AND GAS"], "nullable": true, "repeatable": false, "code_list": "NGX sectors", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "[].Market", "source_field": "Market", "english_name": "market_board", "meaning": "Listing board.", "data_type": "string", "semantic_type": "metadata", "example_values": ["Premium Board", "Main Board", "Growth Board"], "nullable": true, "repeatable": false, "code_list": "Premium/Main/Growth", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "[].ClosePrice", "source_field": "ClosePrice", "english_name": "close_price", "meaning": "Latest closing price (NGN).", "data_type": "decimal", "semantic_type": "financial", "example_values": ["963.0", "830.0", "129.8"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency NGN.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "[].OpeningPrice", "source_field": "OpeningPrice / HighPrice / LowPrice", "english_name": "daily_prices", "meaning": "Open / high / low prices (NGN).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency NGN.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "[].Change", "source_field": "Change / PercChange", "english_name": "daily_change", "meaning": "Day change (absolute and percent).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "[].Trades", "source_field": "Trades / Volume / Value", "english_name": "trading_activity", "meaning": "Number of trades, volume, and value (NGN).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Value in NGN.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "[].TradeDate", "source_field": "TradeDate", "english_name": "trade_date", "meaning": "Trade date of the quote.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "financial_statements", "source_field": "Financial Statements (ngxgroup.com)", "english_name": "financial_statements", "meaning": "Per-listed-company financial statements / disclosures (NGN).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "Separate NGX disclosure pages; listed only.", "source_confidence": "medium", "analysis_notes": "Full statements via the issuer disclosure section." }
+  ]
+}

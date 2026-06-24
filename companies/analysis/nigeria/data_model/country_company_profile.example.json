@@ -1,0 +1,64 @@
+{
+  "country": "Nigeria",
+  "country_slug": "nigeria",
+  "country_profile_version": "2026-06-25",
+  "_note": "Identity/listing from the open NGX equities API (verified live: DANGCEM). RC number, TIN, share capital, directors/shareholders and AFS are CAC documents (Cloudflare-gated / paid) — so those values are null. Nothing fabricated; no PII.",
+  "registration": {
+    "rc_number": null
+  },
+  "tax_identifiers": {
+    "tin": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "Dangote Cement Plc",
+    "company_type": "Public limited company (Plc)"
+  },
+  "status": {
+    "status_text": "Active",
+    "registration_date": null
+  },
+  "activity": {
+    "nature_of_business": null,
+    "ngx_sector": "INDUSTRIAL GOODS"
+  },
+  "registered_location": {
+    "registered_address": null
+  },
+  "capital": {
+    "share_capital": null,
+    "currency": "NGN"
+  },
+  "owners": [
+    { "name": "[REDACTED-PII]", "shareholding_percent": null, "nature_of_control": null }
+  ],
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Director" }
+  ],
+  "listing": {
+    "ngx_symbol": "DANGCEM",
+    "market_board": "Premium Board",
+    "close_price": 963.0
+  },
+  "financial_statements": [
+    { "fiscal_year": "2024", "revenue": null, "profit": null, "currency": "NGN" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "ngx_equities",
+      "section": "legal_identity / status / activity.ngx_sector / listing",
+      "source_url": "https://doclib.ngxgroup.com/REST/api/statistics/equities/",
+      "access": "public_open",
+      "license": "public_disclosure",
+      "retrieved_at": "2026-06-25T00:00:00Z"
+    },
+    {
+      "source_slug": "cac_registry",
+      "section": "registration / tax_identifiers / capital / owners / officers / financial_statements",
+      "source_url": "https://search.cac.gov.ng/",
+      "access": "cloudflare_gated_search_paid_documents",
+      "license": "restricted_paid_documents",
+      "retrieved_at": null
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "country": "Nigeria",
+  "country_slug": "nigeria",
+  "source_slug": "cac_registry",
+  "source_name": "CAC — Corporate Affairs Commission (company register + documents)",
+  "source_type": "official_registry",
+  "organization": "Corporate Affairs Commission (CAC)",
+  "source_url": "https://search.cac.gov.ng/",
+  "license": "restricted_paid_documents",
+  "access": "cloudflare_gated_search_paid_documents",
+  "data_freshness": "live",
+  "record_shape": "per_company_search_cloudflare_gated_paid_documents",
+  "primary_keys": ["rc_number"],
+  "join_keys": ["rc_number", "tin", "company_name"],
+  "field_count": 11,
+  "fields": [
+    { "path": "rc_number", "source_field": "RC Number", "english_name": "rc_number", "meaning": "Registration of Company number (limited companies). BN/IT numbers for business names / incorporated trustees.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented from public knowledge; CAC search Cloudflare-gated, no live values.", "source_confidence": "high", "analysis_notes": "Primary key (companies)." },
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Registered name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "company_type", "source_field": "Company Type", "english_name": "company_type", "meaning": "Private/Public Ltd, Ltd by guarantee, business name, incorporated trustees.", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Plc/Ltd/Ltd-Gte/Business Name/Incorporated Trustees", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Registration status (Active / Inactive / Dissolved / Delisted).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Active/Inactive/Dissolved/Delisted", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "registration_date", "source_field": "Registration Date", "english_name": "registration_date", "meaning": "Date of registration/incorporation.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "registered_address", "source_field": "Registered Address", "english_name": "registered_address", "meaning": "Registered office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "nature_of_business", "source_field": "Nature of Business", "english_name": "nature_of_business", "meaning": "Business activity / objects.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "share_capital", "source_field": "Share Capital", "english_name": "share_capital", "meaning": "Issued / authorised share capital (NGN).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency NGN; from paid documents.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "directors", "source_field": "Directors", "english_name": "directors", "meaning": "Company directors.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA (NDPA 2023) — REDACT.", "source_confidence": "high", "analysis_notes": "Redact." },
+    { "path": "shareholders", "source_field": "Shareholders", "english_name": "shareholders", "meaning": "Shareholders and holdings.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA when natural persons — REDACT.", "source_confidence": "high", "analysis_notes": "Redact natural persons." },
+    { "path": "annual_returns_afs", "source_field": "Annual Returns / AFS", "english_name": "financial_statements", "meaning": "Annual returns and audited financial statements (NGN).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "Paid document; currency NGN.", "source_confidence": "medium", "analysis_notes": "Financial statements." }
+  ]
+}

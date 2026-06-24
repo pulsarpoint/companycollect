@@ -1,0 +1,13 @@
+{
+  "_note": "Real record from the open NGX equities API (GET doclib.ngxgroup.com/REST/api/statistics/equities/). Listed company; no personal data. Trimmed to key fields.",
+  "Symbol": "DANGCEM",
+  "Sector": "INDUSTRIAL GOODS",
+  "Market": "Premium Board",
+  "OpeningPrice": 963.0,
+  "ClosePrice": 963.0,
+  "Change": 0.0,
+  "PercChange": 0.0,
+  "Volume": null,
+  "Value": null,
+  "TradeDate": "(per response)"
+}

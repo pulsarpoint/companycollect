@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nigeria Company Profile",
+  "description": "Country-specific company profile for Nigeria. The official register is the CAC (Corporate Affairs Commission), keyed on the RC number (companies; BN for business names, IT for incorporated trustees), but the public search is Cloudflare-gated and company documents (status report, annual returns, AFS) are paid. The TIN (FIRS) is the tax id; VAT is a separate FIRS registration. The CAC Beneficial Ownership Register (PSC) is public via browser but token-gated for automation (and exposed a misconfigured PII-leaking endpoint, which was NOT used). The one open source is the NGX (Nigerian Exchange) equities API for listed companies (symbol/sector/market/prices) plus listed financial statements. Currency NGN; English. Directors/shareholders/beneficial owners are personal data (NDPA 2023) — redact. No CAC per-company values were captured; listed data is from NGX.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Nigeria" },
+    "country_slug": { "type": "string", "const": "nigeria" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["rc_number"],
+      "properties": {
+        "rc_number": { "type": ["string", "null"], "description": "RC number (companies). BN (business names) / IT (incorporated trustees) for other entity types. Primary id. Paid/gated via CAC.", "x-source": "cac_registry", "x-source-path": "rc_number", "x-join-key": true, "x-freshness": "live", "x-access": "cloudflare_gated_paid" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tin": { "type": ["string", "null"], "description": "Tax Identification Number (FIRS).", "x-source": "firs", "x-access": "per_company" },
+        "vat_id": { "type": ["string", "null"], "description": "VAT registration (FIRS).", "x-source": "firs" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "cac_registry", "x-source-path": "company_name", "x-source-alt": "ngx_equities.company_name" },
+        "company_type": { "type": ["string", "null"], "description": "Plc / Ltd / Ltd-Gte / Business Name / Incorporated Trustees.", "x-source": "cac_registry", "x-source-path": "company_type" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "Active / Inactive / Dissolved / Delisted.", "x-source": "cac_registry", "x-source-path": "status" },
+        "registration_date": { "type": ["string", "null"], "format": "date", "x-source": "cac_registry", "x-source-path": "registration_date" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "nature_of_business": { "type": ["string", "null"], "x-source": "cac_registry", "x-source-path": "nature_of_business" },
+        "ngx_sector": { "type": ["string", "null"], "description": "NGX sector (listed).", "x-source": "ngx_equities", "x-source-path": "[].Sector" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "cac_registry", "x-source-path": "registered_address" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "description": "Share capital (NGN), from paid CAC documents.",
+      "x-source": "cac_registry",
+      "x-access": "paid",
+      "properties": {
+        "share_capital": { "type": ["number", "null"], "x-source-path": "share_capital" },
+        "currency": { "type": "string", "const": "NGN" }
+      }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Shareholders (paid CAC) / beneficial owners (PSC, token-gated). PERSONAL DATA when natural persons (NDPA 2023) — REDACT.",
+      "x-source": "cac_registry",
+      "x-source-path": "shareholders",
+      "x-access": "paid_or_token_gated",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "shareholding_percent": { "type": ["number", "null"] }, "nature_of_control": { "type": ["string", "null"] } } }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Directors from paid CAC documents. PERSONAL DATA — REDACT.",
+      "x-source": "cac_registry",
+      "x-source-path": "directors",
+      "x-access": "paid",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for NGX-listed companies (open).",
+      "x-source": "ngx_equities",
+      "properties": {
+        "ngx_symbol": { "type": ["string", "null"], "x-source-path": "[].Symbol" },
+        "market_board": { "type": ["string", "null"], "x-source-path": "[].Market" },
+        "close_price": { "type": ["number", "null"], "x-source-path": "[].ClosePrice" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "AFS / annual returns (NGN). PAID via CAC for all companies; OPEN via NGX for listed companies.",
+      "x-source": "ngx_equities",
+      "x-access": "open_for_listed_paid_otherwise",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": ["string", "null"] },
+          "revenue": { "type": ["number", "null"] },
+          "profit": { "type": ["number", "null"] },
+          "currency": { "type": "string", "const": "NGN" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}
