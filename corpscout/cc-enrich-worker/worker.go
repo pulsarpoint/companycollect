@@ -27,7 +27,8 @@ type ShardConfig struct {
 	CrawlID, SourceRunID string
 	ResolvedAt           time.Time
 	Concurrency          int
-	TechMaxBytes         int // body cap fed to Wappalyzer; 0 => techMaxBytes default
+	TechMaxBytes         int  // body cap fed to Wappalyzer; 0 => techMaxBytes default
+	SkipTech             bool // skip Wappalyzer entirely (industry-only pass; run tech separately)
 }
 
 type domainAgg struct {
@@ -97,17 +98,19 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 				t1 := time.Now()
 				text, emails, _ := ParseHTML(string(body))
 				atomic.AddInt64(&parseNs, time.Since(t1).Nanoseconds())
-				t2 := time.Now()
-				techBody := body
-				if limit := cfg.TechMaxBytes; limit > 0 && len(techBody) > limit {
-					techBody = techBody[:limit] // cap regex input; tech signals live in headers + early body
-				}
-				detected := DetectTech(headers, techBody)
-				atomic.AddInt64(&techNs, time.Since(t2).Nanoseconds())
-				for _, t := range detected {
-					if !techSeen[t.Name] {
-						techSeen[t.Name] = true
-						agg.tech = append(agg.tech, t)
+				if !cfg.SkipTech {
+					t2 := time.Now()
+					techBody := body
+					if limit := cfg.TechMaxBytes; limit > 0 && len(techBody) > limit {
+						techBody = techBody[:limit] // cap regex input; tech signals live in headers + early body
+					}
+					detected := DetectTech(headers, techBody)
+					atomic.AddInt64(&techNs, time.Since(t2).Nanoseconds())
+					for _, t := range detected {
+						if !techSeen[t.Name] {
+							techSeen[t.Name] = true
+							agg.tech = append(agg.tech, t)
+						}
 					}
 				}
 				if it.Primary && !agg.hasPrimary {

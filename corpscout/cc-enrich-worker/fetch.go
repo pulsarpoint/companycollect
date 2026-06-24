@@ -55,8 +55,13 @@ func FetchRecord(ctx context.Context, g rangeGetter, bucket, key string, offset,
 // s3Getter is the production rangeGetter backed by aws-sdk-go-v2.
 type s3Getter struct{ client *s3.Client }
 
-func NewS3Getter(ctx context.Context, region string) (s3Getter, error) {
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+func NewS3Getter(ctx context.Context, region string, anonymous bool) (s3Getter, error) {
+	opts := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(region)}
+	if anonymous {
+		// CommonCrawl is AWS Open Data — unsigned reads work from anywhere (no instance role).
+		opts = append(opts, awsconfig.WithCredentialsProvider(aws.AnonymousCredentials{}))
+	}
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return s3Getter{}, err
 	}

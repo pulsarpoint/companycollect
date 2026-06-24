@@ -90,6 +90,8 @@ func main() {
 	crawlID := flag.String("crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 (required)")
 	concurrency := flag.Int("concurrency", 32, "fetch/parse/tech concurrency")
 	techMax := flag.Int("tech-max-bytes", techMaxBytes, "cap body bytes fed to Wappalyzer (0=full body; full-body regex is ~1.2s/page)")
+	skipTech := flag.Bool("skip-tech", false, "skip Wappalyzer entirely (light industry-only pass; run tech separately)")
+	anonymous := flag.Bool("s3-anonymous", false, "fetch from S3 with unsigned requests (off-AWS; CommonCrawl is open data)")
 	batch := flag.Int("embed-batch", embedBatch, "embed batch size")
 	embedConc := flag.Int("embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
 	chunkSize := flag.Int("chunk", 1024, "domains per fetch+embed chunk (pipelines fetch/embed; lower = earlier GPU traffic)")
@@ -127,7 +129,7 @@ func main() {
 	log.Printf("embed endpoint=%s model=%s", baseURL, model)
 	emb := NewEmbedClient(baseURL, model, *batch, *embedConc)
 
-	getter, err := NewS3Getter(ctx, *region)
+	getter, err := NewS3Getter(ctx, *region, *anonymous)
 	if err != nil {
 		log.Fatalf("s3 init: %v", err)
 	}
@@ -141,6 +143,7 @@ func main() {
 	cfg := ShardConfig{
 		CrawlID: *crawlID, SourceRunID: fmt.Sprintf("go-%d", time.Now().Unix()),
 		ResolvedAt: time.Now().UTC(), Concurrency: *concurrency, TechMaxBytes: *techMax,
+		SkipTech: *skipTech,
 	}
 	start := time.Now()
 	var domains []DomainRow

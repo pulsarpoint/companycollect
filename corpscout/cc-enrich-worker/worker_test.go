@@ -95,3 +95,26 @@ func TestProcessShardAndParquet(t *testing.T) {
 		t.Fatalf("round-trip mismatch: %+v", back)
 	}
 }
+
+func TestProcessShardSkipTech(t *testing.T) {
+	page1 := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n<html><body>Acme software company</body></html>")
+	getter := multiGetter{"f.warc.gz:0": page1}
+	items := []WorklistItem{
+		{RootDomain: "acme.com", URL: "https://acme.com/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page1)), Primary: true},
+	}
+	ref := &Reference{Codes: []string{"62.01"}, Labels: []string{"Programming"}, Divisions: []string{"62"},
+		M: [][]float32{norm([]float32{1, 0, 0})}}
+	emb := fakeEmbedder{vec: norm([]float32{1, 0, 0})}
+	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, SkipTech: true}
+
+	domains, tech, err := ProcessShard(context.Background(), items, getter, emb, ref, &Prototypes{}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(domains) != 1 || domains[0].NaceCode != "62.01" {
+		t.Fatalf("industry classify wrong: %+v", domains)
+	}
+	if len(tech) != 0 {
+		t.Fatalf("skip-tech should emit no tech rows, got %d", len(tech))
+	}
+}
