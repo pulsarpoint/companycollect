@@ -1,0 +1,34 @@
+[
+  {
+    "name": "SSM e-Info — company / financial products (PAID)",
+    "slug": "ssm_einfo",
+    "type": "bulk",
+    "url": "https://www.ssm-einfo.my/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "PAID. Official SSM commercial portal (SAML login via idpro.ssm.com.my). Company/Business/LLP Profile, Financial Comparison 2/3/5/10Y, Financial Historical — paid per document (MYR). Free e-Search for basic existence only. No open bulk/API. Do not bypass paywall/login. Redact directors/shareholders (PDPA)."
+  },
+  {
+    "name": "MyData-SSM — Buy SSM Report (PAID)",
+    "slug": "mydata_ssm",
+    "type": "bulk",
+    "url": "https://www.mydata-ssm.com.my/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "PAID. SSM channel: Company Profile + Company Financial Report, paid per report. No open bulk/API."
+  },
+  {
+    "name": "data.gov.my (OpenDOSM) catalogue API",
+    "slug": "datagovmy_portal",
+    "type": "api_page",
+    "url": "https://api.data.gov.my/data-catalogue/",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Working JSON catalogue API (?id=...). NO company register — DOSM statistics only. Use for sector/economic statistics."
+  }
+]
