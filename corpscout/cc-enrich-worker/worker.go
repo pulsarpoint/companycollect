@@ -84,7 +84,9 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 	if conc <= 0 {
 		conc = 8
 	}
-	var fetchNs, parseNs, techNs, pageCount int64 // per-stage timing (diagnostics)
+	var fetchNs, parseNs, techNs, pageCount, errCount int64 // per-stage timing (diagnostics)
+	var errSample string
+	var errOnce sync.Once
 	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
 	for di, dom := range order {
@@ -103,6 +105,8 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 				atomic.AddInt64(&fetchNs, time.Since(t0).Nanoseconds())
 				atomic.AddInt64(&pageCount, 1)
 				if err != nil {
+					atomic.AddInt64(&errCount, 1)
+					errOnce.Do(func() { errSample = err.Error() })
 					continue // skip a bad/slow page; the domain still emits if its primary survived
 				}
 				if agg.primaryURL == "" { // first surviving page keys this domain's rows
@@ -138,9 +142,13 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 	}
 	wg.Wait()
 	if n := atomic.LoadInt64(&pageCount); n > 0 {
-		log.Printf("  timing/page (avg latency): fetch=%.0fms parse=%.1fms tech=%.1fms  conc=%d n=%d mode=%s",
+		errs := atomic.LoadInt64(&errCount)
+		log.Printf("  timing/page (avg latency): fetch=%.0fms parse=%.1fms tech=%.1fms  errs=%d/%d  conc=%d mode=%s",
 			float64(fetchNs)/float64(n)/1e6, float64(parseNs)/float64(n)/1e6,
-			float64(techNs)/float64(n)/1e6, conc, n, mode)
+			float64(techNs)/float64(n)/1e6, errs, n, conc, mode)
+		if errs > 0 {
+			log.Printf("  first fetch error: %s", errSample)
+		}
 	}
 
 	var domains []DomainRow

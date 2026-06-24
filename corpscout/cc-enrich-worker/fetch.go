@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -104,18 +105,37 @@ func NewHTTPGetter(base string, concurrency int) httpRangeGetter {
 }
 
 func (g httpRangeGetter) GetRange(ctx context.Context, bucket, key string, start, end int64) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.base+key, nil)
-	if err != nil {
-		return nil, err
+	rng := fmt.Sprintf("bytes=%d-%d", start, end)
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 { // exponential backoff for transient throttling (429/5xx)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt*attempt) * 250 * time.Millisecond):
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.base+key, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Range", rng)
+		resp, err := g.client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent {
+			b, rerr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return b, rerr
+		}
+		status := resp.StatusCode
+		resp.Body.Close()
+		lastErr = fmt.Errorf("http %d fetching %s", status, key)
+		if status != http.StatusTooManyRequests && status < 500 {
+			return nil, lastErr // 403/404 etc. are permanent — don't retry
+		}
 	}
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
-	resp, err := g.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		return nil, fmt.Errorf("http %d fetching %s", resp.StatusCode, key)
-	}
-	return io.ReadAll(resp.Body)
+	return nil, lastErr
 }
