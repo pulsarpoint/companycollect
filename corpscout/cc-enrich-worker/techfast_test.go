@@ -10,7 +10,8 @@ import (
 var benchBody = []byte(strings.Repeat(`<div class="row"><p>lorem ipsum dolor sit amet consectetur</p></div>`, 1100) +
 	`<meta name="generator" content="WordPress 6.4.2">` +
 	`<link rel="stylesheet" href="/wp-content/themes/x/style.css">` +
-	`<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>`)
+	`<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>` +
+	strings.Repeat(`<script src="https://cdn.example.com/lib-`+`x.js"></script>`, 25))
 var benchHeaders = map[string][]string{"Server": {"nginx"}}
 
 func BenchmarkWappalyzer(b *testing.B) {

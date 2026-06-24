@@ -22,10 +22,14 @@ type fpat struct {
 // and category mapping, so non-HTML parts are identical to upstream.
 type FastMatcher struct {
 	ac         ahocorasick.AhoCorasick
-	litToPats  [][]fpat            // index-aligned with the AC dictionary
-	alwaysHTML []fpat              // HTML patterns with no extractable required literal
-	scriptSrc  []fpat              // matched against each <script src>
-	metaPats   map[string][]fpat   // meta name (lower) -> patterns
+	litToPats  [][]fpat // index-aligned with the AC dictionary (HTML body)
+	alwaysHTML []fpat   // HTML patterns with no extractable required literal
+
+	acScript        ahocorasick.AhoCorasick // gate for <script src> patterns
+	litToScriptPats [][]fpat
+	alwaysScript    []fpat
+
+	metaPats   map[string][]fpat // meta name (lower) -> patterns
 	headerPats map[string][]fpat   // header name (lower) -> patterns
 	cookiePats map[string][]fpat   // cookie name (lower) -> patterns
 	appCats    map[string][]string // app -> category names
@@ -92,7 +96,8 @@ func NewFastMatcher() (*FastMatcher, error) {
 		appCats:    map[string][]string{},
 		appImplies: map[string][]string{},
 	}
-	litMap := map[string][]fpat{} // required literal -> html patterns
+	litMap := map[string][]fpat{}       // required literal -> html patterns
+	scriptLitMap := map[string][]fpat{} // required literal -> scriptSrc patterns
 
 	for app, a := range raw.Apps {
 		for _, c := range a.Cats {
@@ -116,8 +121,15 @@ func NewFastMatcher() (*FastMatcher, error) {
 			}
 		}
 		for _, p := range a.ScriptSrc {
-			if pp := mustParse(p); pp != nil {
-				m.scriptSrc = append(m.scriptSrc, fpat{app, pp})
+			pp := mustParse(p)
+			if pp == nil {
+				continue
+			}
+			fp := fpat{app, pp}
+			if lit := longestRequiredLiteral(p); len([]rune(lit)) >= 4 {
+				scriptLitMap[lit] = append(scriptLitMap[lit], fp)
+			} else {
+				m.alwaysScript = append(m.alwaysScript, fp)
 			}
 		}
 		for name, pats := range a.Meta {
@@ -142,6 +154,11 @@ func NewFastMatcher() (*FastMatcher, error) {
 		}
 	}
 
+	opts := ahocorasick.Opts{
+		MatchKind: ahocorasick.StandardMatch, // report every occurrence (overlapping iter)
+		DFA:       true,
+	}
+
 	dict := make([]string, 0, len(litMap))
 	for lit := range litMap {
 		dict = append(dict, lit)
@@ -150,11 +167,19 @@ func NewFastMatcher() (*FastMatcher, error) {
 	for i, lit := range dict {
 		m.litToPats[i] = litMap[lit]
 	}
-	builder := ahocorasick.NewAhoCorasickBuilder(ahocorasick.Opts{
-		MatchKind: ahocorasick.StandardMatch, // report every occurrence (overlapping iter)
-		DFA:       true,
-	})
-	m.ac = builder.Build(dict)
+	htmlBuilder := ahocorasick.NewAhoCorasickBuilder(opts)
+	m.ac = htmlBuilder.Build(dict)
+
+	sdict := make([]string, 0, len(scriptLitMap))
+	for lit := range scriptLitMap {
+		sdict = append(sdict, lit)
+	}
+	m.litToScriptPats = make([][]fpat, len(sdict))
+	for i, lit := range sdict {
+		m.litToScriptPats[i] = scriptLitMap[lit]
+	}
+	scriptBuilder := ahocorasick.NewAhoCorasickBuilder(opts)
+	m.acScript = scriptBuilder.Build(sdict)
 	return m, nil
 }
 
@@ -230,10 +255,24 @@ func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []Technol
 		switch t.Data {
 		case "script":
 			for _, a := range t.Attr {
-				if a.Key == "src" {
-					for _, fp := range m.scriptSrc {
-						eval(fp, a.Val)
+				if a.Key != "src" {
+					continue
+				}
+				src := a.Val // already lowercased (body was lowercased)
+				sseen := make(map[int]bool)
+				si := m.acScript.IterOverlapping(src)
+				for match := si.Next(); match != nil; match = si.Next() {
+					idx := match.Pattern()
+					if sseen[idx] {
+						continue
 					}
+					sseen[idx] = true
+					for _, fp := range m.litToScriptPats[idx] {
+						eval(fp, src)
+					}
+				}
+				for _, fp := range m.alwaysScript {
+					eval(fp, src)
 				}
 			}
 		case "meta":
