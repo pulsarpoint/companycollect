@@ -75,6 +75,32 @@ Expected fixture properties:
 - NACE English description copied from or validated against `nace_categories`;
 - source URL and payload hash for provenance.
 
+## Function Boundary
+
+The mapping logic should be a plain function that can be tested without Dagster:
+
+```text
+build_br_cnae_to_nace(
+    duckdb_path,
+    fixture_path,
+    source_run_id,
+) -> dict[str, int]
+```
+
+The function owns the actual work:
+
+- create or replace the DuckDB staging table;
+- load fixture rows;
+- normalize CNAE and NACE codes;
+- validate required fields and duplicate mapping edges;
+- validate target NACE codes against available `nace_categories` data when that
+  dependency is supplied to the test or materialization context;
+- return row counts and validation counts for asset metadata.
+
+Keep this function source-specific and direct. Do not introduce a generic fixture
+loader, mapping service, interface, or config object unless another real source
+needs the same behavior later.
+
 ## Dagster Flow
 
 Use the normal `dagster_v3` reference-data flow:
@@ -88,7 +114,10 @@ The source should be small and direct:
 - one source module: `defs/brazil_cnae`;
 - one DuckDB file: `data/brazil_cnae_source.duckdb`;
 - one source-owned pool for writes to that DuckDB file;
-- direct DuckDB load and validation, no row-by-row Python transform;
+- the materialization function only calls `build_br_cnae_to_nace(...)`, logs the
+  returned counts, and returns them as metadata;
+- direct DuckDB load and validation inside the function, no row-by-row Python
+  transform;
 - migration-owned ClickHouse DDL and atomic replacement on export.
 
 ## Brazil Company Usage
