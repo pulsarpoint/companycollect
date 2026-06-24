@@ -1,0 +1,25 @@
+{
+  "country": "Indonesia",
+  "country_slug": "indonesia",
+  "source_slug": "idx_listed_financials",
+  "source_name": "IDX — Bursa Efek Indonesia (listed-company financials)",
+  "source_type": "financial_disclosure",
+  "organization": "PT Bursa Efek Indonesia (Indonesia Stock Exchange)",
+  "source_url": "https://www.idx.co.id/",
+  "license": "public_disclosure",
+  "access": "public_browser_cloudflare_gated",
+  "data_freshness": "quarterly",
+  "record_shape": "json_listed_company_profiles_and_financials_cloudflare_gated",
+  "primary_keys": ["ticker"],
+  "join_keys": ["ticker", "company_name"],
+  "field_count": 7,
+  "fields": [
+    { "path": "KodeEmiten", "source_field": "ticker (Kode Emiten)", "english_name": "ticker", "meaning": "Stock ticker / issuer code (e.g. BBCA, TLKM, ASII).", "data_type": "string", "semantic_type": "identifier", "example_values": ["BBCA", "TLKM", "ASII"], "nullable": false, "repeatable": false, "code_list": null, "language": "en/id", "limitations": "Listed companies only (~900). Cloudflare-gated; values here are public-knowledge tickers.", "source_confidence": "high", "analysis_notes": "Listed-company key." },
+    { "path": "NamaEmiten", "source_field": "company_name (Nama Emiten)", "english_name": "company_name", "meaning": "Listed company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["PT Bank Central Asia Tbk"], "nullable": false, "repeatable": false, "code_list": null, "language": "id", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "TanggalPencatatan", "source_field": "listing_date", "english_name": "listing_date", "meaning": "Date listed on IDX.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "sector", "source_field": "sector / sub-sector (IDX-IC)", "english_name": "sector", "meaning": "IDX industry classification.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "IDX-IC", "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "financial_statements", "source_field": "Laporan Keuangan", "english_name": "financial_statements", "meaning": "Quarterly/annual financial statements (balance sheet + income statement).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "id/en", "limitations": "Listed only; currency IDR. Cloudflare-gated for automation.", "source_confidence": "high", "analysis_notes": "PDF + XBRL filings." },
+    { "path": "annual_report", "source_field": "Laporan Tahunan", "english_name": "annual_report", "meaning": "Annual report (PDF).", "data_type": "document", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "id/en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "npwp", "source_field": "NPWP (in filings)", "english_name": "tax_id", "meaning": "Tax id, present in filings — join to AHU/OSS.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "id", "limitations": "Appears in filings, not the profile list.", "source_confidence": "low", "analysis_notes": "Join key to AHU/OSS where present." }
+  ]
+}

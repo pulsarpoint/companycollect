@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Indonesia Company Profile",
+  "description": "Country-specific company profile for Indonesia. Company identity is split across two official systems: AHU Online (Ditjen AHU, Ministry of Law) — the legal-entity registry (PT/CV/Yayasan), keyed on the Nomor SK AHU, holding NPWP, capital, directors and shareholders (paid PNBP; host geo-blocked from the investigation environment) — and OSS (BKPM), which issues the NIB (13-digit business id) with KBLI activity codes (public per-company search). The NIB is the modern primary company id; NPWP is the tax id (15→16-digit); Indonesia has VAT (PPN) with no separate VAT number (PKP status via NPWP). Listed-company financial statements come from IDX (open via browser but Cloudflare-gated for automation); private-company financials are not open. Currency IDR. Directors/shareholders are personal data (UU 27/2022 PDP) — redact. No per-company values were captured (controls/blocks not bypassed).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Indonesia" },
+    "country_slug": { "type": "string", "const": "indonesia" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["nib"],
+      "properties": {
+        "nib": { "type": ["string", "null"], "description": "Nomor Induk Berusaha — 13-digit business id (OSS). Modern primary company id / join key.", "x-source": "oss_nib", "x-source-path": "nib", "x-join-key": true, "x-freshness": "live" },
+        "nomor_sk_ahu": { "type": ["string", "null"], "description": "Legal-entity decree number (AHU).", "x-source": "ahu_legal_entity", "x-source-path": "nomor_sk_ahu", "x-access": "paid" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "npwp": { "type": ["string", "null"], "description": "Nomor Pokok Wajib Pajak — tax id (15→16-digit).", "x-source": "ahu_legal_entity", "x-source-path": "npwp" },
+        "vat_id": { "type": ["string", "null"], "description": "No separate VAT number — Indonesia uses NPWP; VAT collectors have PKP status.", "x-access": "not_available" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "ahu_legal_entity", "x-source-path": "nama_pt", "x-source-alt": "oss_nib.nama_pelaku_usaha" },
+        "legal_form": { "type": ["string", "null"], "description": "PT/PT Tbk/Persero/CV/Firma/Yayasan/Koperasi/Perkumpulan.", "x-source": "ahu_legal_entity", "x-source-path": "jenis_badan_hukum" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "aktif / dibubarkan (AHU) or NIB status (aktif/dicabut).", "x-source": "oss_nib", "x-source-path": "status_nib" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "kbli_codes": { "type": "array", "items": { "type": "string" }, "description": "KBLI 2020 activity codes (OSS).", "x-source": "oss_nib", "x-source-path": "kbli" },
+        "business_scale": { "type": ["string", "null"], "description": "UMK / Non-UMK.", "x-source": "oss_nib", "x-source-path": "skala_usaha" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "ahu_legal_entity", "x-source-path": "alamat", "x-source-alt": "oss_nib.alamat" },
+        "city": { "type": ["string", "null"] }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "description": "Registered capital (IDR), from AHU (paid).",
+      "x-source": "ahu_legal_entity",
+      "x-access": "paid",
+      "properties": {
+        "authorized_capital": { "type": ["number", "null"], "x-source-path": "modal_dasar" },
+        "paid_up_capital": { "type": ["number", "null"], "x-source-path": "modal_disetor" },
+        "currency": { "type": "string", "const": "IDR" }
+      }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Shareholders (Pemegang saham) from AHU (paid). PERSONAL DATA when natural persons (UU 27/2022 PDP) — REDACT.",
+      "x-source": "ahu_legal_entity",
+      "x-source-path": "pemegang_saham",
+      "x-access": "paid",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "share_pct": { "type": ["number", "null"] } } }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Directors / commissioners (Pengurus) from AHU (paid). PERSONAL DATA — REDACT.",
+      "x-source": "ahu_legal_entity",
+      "x-source-path": "pengurus",
+      "x-access": "paid",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for IDX-listed companies (open via browser; Cloudflare-gated).",
+      "x-source": "idx_listed_financials",
+      "properties": {
+        "idx_ticker": { "type": ["string", "null"], "x-source-path": "KodeEmiten" },
+        "listing_date": { "type": ["string", "null"], "format": "date", "x-source-path": "TanggalPencatatan" },
+        "sector": { "type": ["string", "null"], "x-source-path": "sector" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Listed-company financials from IDX (laporan keuangan, IDR). Cloudflare-gated for automation; private financials not open.",
+      "x-source": "idx_listed_financials",
+      "x-access": "public_browser_cloudflare_gated",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": ["string", "null"] },
+          "period": { "type": ["string", "null"] },
+          "currency": { "type": "string", "const": "IDR" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

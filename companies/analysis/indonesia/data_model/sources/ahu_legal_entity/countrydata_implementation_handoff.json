@@ -1,0 +1,82 @@
+{
+  "country": "Indonesia",
+  "country_slug": "indonesia",
+  "source_slug": "ahu_legal_entity",
+  "source_identity": "indonesia_ahu_legal_entity",
+  "source_package": "ahu",
+  "env_prefix": "ID_AHU",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "AHU Online — Legal Entity Registry",
+    "source_type": "official_registry",
+    "organization": "Direktorat Jenderal AHU, Ministry of Law (Kemenkumham)",
+    "source_url": "https://ahu.go.id/",
+    "license": "paid_per_company_pnbp",
+    "access": "public_search_paid_documents",
+    "data_freshness": "live",
+    "attribution": "Ditjen AHU (Kemenkumham)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["ID_AHU_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://ahu.go.id/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "free profile search; full profiles paid (PNBP); host firewalled from this environment"
+  },
+  "snapshot": {
+    "strategy": "none_paid",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "AhuBadanHukum",
+    "date_formats": ["02-01-2006"],
+    "datetime_formats": [],
+    "number_formats": ["1.234.567"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "PAID + geo-blocked. Authoritative legal-entity registry (PT/CV/Yayasan), Ministry of Law. Free 'Pencarian Profil' search; full profiles/documents paid (PNBP). No open bulk/API. ahu.go.id resolved via DNS (103.200.129.129) but TCP/HTTP timed out from this environment — confirm transport from an unblocked network. Nomor SK AHU = legal-entity key; NPWP join key. Redact pengurus/pemegang saham (personal data, UU 27/2022). Currency IDR."
+  },
+  "keys": {
+    "primary_keys": ["nomor_sk_ahu"],
+    "join_keys": ["npwp", "nama_pt"],
+    "dedupe_keys": ["nomor_sk_ahu"]
+  },
+  "mapping_rules": {
+    "company_id": "Nomor SK AHU (legal entity) or NIB (from OSS).",
+    "registration_number": "Nomor SK AHU.",
+    "tax_id": "NPWP.",
+    "legal_name": "Nama PT.",
+    "legal_form": "Jenis badan hukum (PT/PT Tbk/CV/Yayasan).",
+    "registered_address": "Alamat.",
+    "capital": "Modal dasar / modal disetor (IDR).",
+    "owners": "Pemegang saham (REDACT natural persons).",
+    "officers": "Pengurus (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "active PT with shareholders",
+    "Yayasan (foundation)",
+    "PT Persero (state-owned)",
+    "record with directors/shareholders (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable here (host firewalled). From an unblocked network, run the free profile search; assert name + Nomor SK.",
+    "full": "Blocked on payment — full profiles require PNBP; redact personal data."
+  },
+  "blockers": [
+    "Full profiles/documents are paid (PNBP)",
+    "ahu.go.id firewalled (TCP/HTTP timeout) from this environment",
+    "No open bulk/API; transport shape unconfirmed"
+  ]
+}

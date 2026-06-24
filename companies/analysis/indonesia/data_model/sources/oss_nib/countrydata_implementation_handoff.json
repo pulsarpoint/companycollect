@@ -1,0 +1,79 @@
+{
+  "country": "Indonesia",
+  "country_slug": "indonesia",
+  "source_slug": "oss_nib",
+  "source_identity": "indonesia_oss_nib",
+  "source_package": "ossnib",
+  "env_prefix": "ID_OSS",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "OSS — Online Single Submission (NIB)",
+    "source_type": "business_licensing",
+    "organization": "Kementerian Investasi / BKPM",
+    "source_url": "https://oss.go.id/",
+    "license": "not_stated_verification_only",
+    "access": "public_search",
+    "data_freshness": "live",
+    "attribution": "OSS / BKPM"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://oss.go.id/id/pencarian",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per-company NIB search; JS SPA; no open bulk"
+  },
+  "snapshot": {
+    "strategy": "html_pages_per_company",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "OssNib",
+    "date_formats": ["02-01-2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "OSS (BKPM) issues the NIB (13-digit) + KBLI activities. Public per-company 'Cari NIB' search is a Next.js SPA; the backing XHR endpoint must be reverse-engineered (direct GETs to guessed paths 404). No open bulk register. Join on NIB / NPWP. Confirm the SPA's search API before implementation."
+  },
+  "keys": {
+    "primary_keys": ["nib"],
+    "join_keys": ["nib", "npwp"],
+    "dedupe_keys": ["nib"]
+  },
+  "mapping_rules": {
+    "company_id": "NIB (13-digit).",
+    "tax_id": "NPWP.",
+    "legal_name": "Nama Pelaku Usaha.",
+    "activity_code": "KBLI.",
+    "status": "Status NIB (aktif/dicabut).",
+    "registered_address": "Alamat."
+  },
+  "fixture_requirements": [
+    "UMK (micro/small) business actor",
+    "Non-UMK (medium/large) business actor",
+    "record with multiple KBLI codes",
+    "revoked NIB"
+  ],
+  "live_test_plan": {
+    "smoke": "Reverse the OSS search XHR; query a known business; assert NIB + KBLI.",
+    "full": "Per-company lookups over a provided NIB/name list (no bulk endpoint)."
+  },
+  "blockers": [
+    "Public search is a JS SPA; backing search API not reverse-engineered",
+    "Per-company only; no open bulk register",
+    "Reuse terms not stated"
+  ]
+}

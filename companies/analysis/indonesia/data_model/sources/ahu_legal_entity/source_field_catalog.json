@@ -1,0 +1,27 @@
+{
+  "country": "Indonesia",
+  "country_slug": "indonesia",
+  "source_slug": "ahu_legal_entity",
+  "source_name": "AHU Online — Legal Entity Registry (Ditjen AHU)",
+  "source_type": "official_registry",
+  "organization": "Direktorat Jenderal Administrasi Hukum Umum, Ministry of Law (Kemenkumham)",
+  "source_url": "https://ahu.go.id/",
+  "license": "paid_per_company_pnbp",
+  "access": "public_search_paid_documents",
+  "data_freshness": "live",
+  "record_shape": "per_company_legal_entity_profile_paid",
+  "primary_keys": ["nomor_sk_ahu"],
+  "join_keys": ["npwp", "nama_pt"],
+  "field_count": 9,
+  "fields": [
+    { "path": "nama_pt", "source_field": "Nama PT", "english_name": "company_name", "meaning": "Registered legal-entity name (PT/CV/Yayasan/etc.).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "id", "limitations": "Documented from public docs; host geo-blocked, no live values.", "source_confidence": "high", "analysis_notes": "Primary display name." },
+    { "path": "nomor_sk_ahu", "source_field": "Nomor SK AHU", "english_name": "legal_entity_decree_number", "meaning": "Legal-entity decree number (SK pengesahan badan hukum) issued by the Ministry of Law.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "id", "limitations": null, "source_confidence": "high", "analysis_notes": "Legal-entity primary key." },
+    { "path": "npwp", "source_field": "NPWP", "english_name": "tax_id", "meaning": "Nomor Pokok Wajib Pajak — tax id (15→16-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "id", "limitations": null, "source_confidence": "high", "analysis_notes": "Join key to tax/OSS." },
+    { "path": "jenis_badan_hukum", "source_field": "Jenis badan hukum", "english_name": "legal_form", "meaning": "Legal form (PT/PT Tbk/Persero/CV/Firma/Yayasan/Perkumpulan).", "data_type": "string", "semantic_type": "legal_form", "example_values": ["PT", "Yayasan"], "nullable": true, "repeatable": false, "code_list": "PT/PT Tbk/Persero/CV/Firma/Yayasan/Koperasi/Perkumpulan", "language": "id", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "modal_dasar", "source_field": "Modal dasar", "english_name": "authorized_capital", "meaning": "Authorized capital (IDR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency IDR; paid field.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "modal_disetor", "source_field": "Modal disetor", "english_name": "paid_up_capital", "meaning": "Paid-up capital (IDR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency IDR; paid field.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "pengurus", "source_field": "Pengurus", "english_name": "directors_commissioners", "meaning": "Directors and commissioners (direksi/komisaris).", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "id", "limitations": "PERSONAL DATA (UU 27/2022 PDP) — REDACT. Paid field.", "source_confidence": "high", "analysis_notes": "Redact." },
+    { "path": "pemegang_saham", "source_field": "Pemegang saham", "english_name": "shareholders", "meaning": "Shareholders and their holdings.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "id", "limitations": "PERSONAL DATA when natural persons — REDACT. Paid field.", "source_confidence": "high", "analysis_notes": "Redact natural persons." },
+    { "path": "alamat", "source_field": "Alamat", "english_name": "address", "meaning": "Registered address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "id", "limitations": null, "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

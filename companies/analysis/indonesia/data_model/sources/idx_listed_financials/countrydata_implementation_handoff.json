@@ -1,0 +1,77 @@
+{
+  "country": "Indonesia",
+  "country_slug": "indonesia",
+  "source_slug": "idx_listed_financials",
+  "source_identity": "indonesia_idx_listed_financials",
+  "source_package": "idx",
+  "env_prefix": "ID_IDX",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "IDX — Bursa Efek Indonesia (listed-company financials)",
+    "source_type": "financial_disclosure",
+    "organization": "PT Bursa Efek Indonesia (Indonesia Stock Exchange)",
+    "source_url": "https://www.idx.co.id/",
+    "license": "public_disclosure",
+    "access": "public_browser_cloudflare_gated",
+    "data_freshness": "quarterly",
+    "attribution": "IDX / issuer"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://www.idx.co.id/primary/ListedCompany/GetCompanyProfiles",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Cloudflare clearance (browser)"],
+    "formats": ["json", "pdf", "xbrl"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "data",
+    "total_results_path": "recordsTotal",
+    "pagination": { "type": "offset", "page_param": "start", "page_start": 0, "page_size": 10, "page_size_param": "length", "next_page_path": null },
+    "rate_limit": "Cloudflare challenge (HTTP 403) on automated requests"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "IdxListedCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Listed-company profiles + financial filings (laporan keuangan, IDR; PDF+XBRL). The /primary/ListedCompany/GetCompanyProfiles endpoint exists (start/length pagination) but is Cloudflare-gated (403) for automation — do NOT bypass Cloudflare. Implement behind a browser/clearance context or an official feed. Listed only (~900). Join filings to AHU/OSS via NPWP."
+  },
+  "keys": {
+    "primary_keys": ["ticker"],
+    "join_keys": ["ticker", "company_name", "npwp"],
+    "dedupe_keys": ["ticker"]
+  },
+  "mapping_rules": {
+    "company_id": "ticker (Kode Emiten) for the listed entity.",
+    "legal_name": "NamaEmiten.",
+    "financials": "Laporan Keuangan (balance sheet + income statement, IDR).",
+    "documents": "Laporan Tahunan (annual report).",
+    "tax_id": "NPWP where present in filings (join to AHU/OSS)."
+  },
+  "fixture_requirements": [
+    "bank issuer (e.g. BBCA)",
+    "state-owned issuer (e.g. TLKM)",
+    "conglomerate issuer (e.g. ASII)",
+    "quarterly vs annual statement"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (Cloudflare 403). From a browser/clearance context, fetch GetCompanyProfiles; assert ticker list.",
+    "full": "Blocked on Cloudflare for automation — use a browser-clearance context or an official IDX data feed."
+  },
+  "blockers": [
+    "Cloudflare challenge (HTTP 403) on automated requests",
+    "Listed companies only; private financials not public"
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "country": "Indonesia",
+  "country_slug": "indonesia",
+  "country_profile_version": "2026-06-24",
+  "_note": "Example anchored on a real public-knowledge listed company. NIB/Nomor SK AHU/NPWP are held by OSS/AHU (per-company, paid/geo-blocked) and IDX is Cloudflare-gated — so identifier and financial values are null; only the IDX ticker (public knowledge) is filled. Nothing fabricated.",
+  "registration": {
+    "nib": null,
+    "nomor_sk_ahu": null
+  },
+  "tax_identifiers": {
+    "npwp": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "PT Bank Central Asia Tbk",
+    "legal_form": "Perseroan Terbatas Terbuka (PT Tbk)"
+  },
+  "status": {
+    "status_text": "aktif"
+  },
+  "activity": {
+    "kbli_codes": [],
+    "business_scale": "Non-UMK"
+  },
+  "registered_location": {
+    "registered_address": null,
+    "city": "Jakarta"
+  },
+  "capital": {
+    "authorized_capital": null,
+    "paid_up_capital": null,
+    "currency": "IDR"
+  },
+  "owners": [
+    { "name": "[REDACTED-PII]", "share_pct": null }
+  ],
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Direksi / Komisaris" }
+  ],
+  "listing": {
+    "idx_ticker": "BBCA",
+    "listing_date": null,
+    "sector": "Financials"
+  },
+  "financial_statements": [
+    { "fiscal_year": "2024", "period": "FY", "currency": "IDR" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "ahu_legal_entity",
+      "section": "registration / tax_identifiers / legal_identity / capital / owners / officers",
+      "source_url": "https://ahu.go.id/",
+      "access": "public_search_paid_documents",
+      "license": "paid_per_company_pnbp",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "oss_nib",
+      "section": "registration.nib / activity / status",
+      "source_url": "https://oss.go.id/",
+      "access": "public_search",
+      "license": "not_stated_verification_only",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "idx_listed_financials",
+      "section": "listing / financial_statements",
+      "source_url": "https://www.idx.co.id/",
+      "access": "public_browser_cloudflare_gated",
+      "license": "public_disclosure",
+      "retrieved_at": null
+    }
+  ]
+}

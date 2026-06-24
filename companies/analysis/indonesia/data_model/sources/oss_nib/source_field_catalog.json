@@ -1,0 +1,24 @@
+{
+  "country": "Indonesia",
+  "country_slug": "indonesia",
+  "source_slug": "oss_nib",
+  "source_name": "OSS — Online Single Submission (NIB)",
+  "source_type": "business_licensing",
+  "organization": "Kementerian Investasi / BKPM",
+  "source_url": "https://oss.go.id/",
+  "license": "not_stated_verification_only",
+  "access": "public_search",
+  "data_freshness": "live",
+  "record_shape": "per_company_nib_search_js_spa",
+  "primary_keys": ["nib"],
+  "join_keys": ["nib", "npwp"],
+  "field_count": 6,
+  "fields": [
+    { "path": "nib", "source_field": "NIB", "english_name": "business_id", "meaning": "Nomor Induk Berusaha — 13-digit business identification number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "id", "limitations": "Documented from the OSS public search model; per-company JS search, no live values captured.", "source_confidence": "high", "analysis_notes": "Modern primary company id / join key." },
+    { "path": "nama_pelaku_usaha", "source_field": "Nama Pelaku Usaha", "english_name": "business_name", "meaning": "Business actor name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "id", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "kbli", "source_field": "KBLI", "english_name": "activity_code", "meaning": "Klasifikasi Baku Lapangan Usaha Indonesia — business activity code(s).", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "KBLI 2020 (~ISIC)", "language": "id", "limitations": null, "source_confidence": "high", "analysis_notes": "Activity classification." },
+    { "path": "skala_usaha", "source_field": "Skala Usaha", "english_name": "business_scale", "meaning": "Business scale (UMK / Non-UMK — micro/small vs medium/large).", "data_type": "string", "semantic_type": "metadata", "example_values": ["UMK", "Non-UMK"], "nullable": true, "repeatable": false, "code_list": "UMK / Non-UMK", "language": "id", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "status_nib", "source_field": "Status NIB", "english_name": "nib_status", "meaning": "NIB status (aktif / dicabut).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "id", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "alamat", "source_field": "Alamat", "english_name": "address", "meaning": "Business address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "id", "limitations": null, "source_confidence": "medium", "analysis_notes": null }
+  ]
+}
