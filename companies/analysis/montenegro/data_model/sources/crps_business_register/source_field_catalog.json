@@ -1,0 +1,29 @@
+{
+  "country": "Montenegro",
+  "country_slug": "montenegro",
+  "source_slug": "crps_business_register",
+  "source_name": "CRPS — Centralni registar privrednih subjekata (Central Registry of Business Entities)",
+  "source_type": "official_registry",
+  "organization": "Uprava prihoda i carina (Revenue and Customs Administration), tax.gov.me",
+  "source_url": "https://eprijava.tax.gov.me/TaxisPortal",
+  "license": "not_stated",
+  "access": "unavailable_portal_down",
+  "data_freshness": "live_when_available",
+  "record_shape": "per_company_lookup_portal_currently_503",
+  "primary_keys": ["PIB"],
+  "join_keys": ["PIB", "registarski_broj"],
+  "field_count": 11,
+  "fields": [
+    { "path": "PIB", "source_field": "PIB", "english_name": "tax_id", "meaning": "Poreski identifikacioni broj — tax id (8-digit). Company id = tax id.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "me", "limitations": "Documented from public knowledge of CRPS; portal was down (503), no live values.", "source_confidence": "high", "analysis_notes": "Primary join key." },
+    { "path": "registarski_broj", "source_field": "Registarski / Matični broj", "english_name": "registration_number", "meaning": "CRPS registration number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "me", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "PDV_broj", "source_field": "PDV broj", "english_name": "vat_number", "meaning": "VAT number — separate, only for VAT-registered entities.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "me", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "naziv", "source_field": "Naziv", "english_name": "business_name", "meaning": "Registered business name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "me", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "oblik_organizovanja", "source_field": "Oblik organizovanja", "english_name": "legal_form", "meaning": "Legal form (DOO/AD/OD/KD/preduzetnik).", "data_type": "string", "semantic_type": "legal_form", "example_values": ["DOO", "AD"], "nullable": true, "repeatable": false, "code_list": "DOO/AD/OD/KD/preduzetnik", "language": "me", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Registration status (aktivno / u likvidaciji / u stečaju / brisano).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "aktivno / u likvidaciji / u stečaju / brisano", "language": "me", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "datum_registracije", "source_field": "Datum registracije", "english_name": "registration_date", "meaning": "Registration date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "dd.mm.yyyy.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "sjediste", "source_field": "Sjedište", "english_name": "registered_seat", "meaning": "Registered seat / address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "me", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "sifra_djelatnosti", "source_field": "Šifra djelatnosti", "english_name": "activity_code", "meaning": "Activity code (KD ~NACE).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "KD (Montenegro activity classification, ~NACE)", "language": "me", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "osnivaci", "source_field": "Osnivači", "english_name": "founders", "meaning": "Founders / owners.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "me", "limitations": "PERSONAL DATA when natural persons (Zakon o zaštiti podataka o ličnosti) — REDACT.", "source_confidence": "high", "analysis_notes": "Redact natural persons." },
+    { "path": "finansijski_izvjestaji", "source_field": "Finansijski izvještaji", "english_name": "financial_statements", "meaning": "Annual financial statements filed with CRPS.", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "me", "limitations": "Filed at CRPS but NOT published as open data; currency EUR.", "source_confidence": "medium", "analysis_notes": "Planning-only; not open." }
+  ]
+}

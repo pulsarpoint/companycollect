@@ -1,0 +1,25 @@
+{
+  "country": "Montenegro",
+  "country_slug": "montenegro",
+  "source_slug": "datagovme_javna_preduzeca",
+  "source_name": "data.gov.me — Javna preduzeća (public enterprises)",
+  "source_type": "company_list",
+  "organization": "Ministarstvo javne uprave (Ministry of Public Administration) via data.gov.me",
+  "source_url": "https://data.gov.me/dataset/13740b69-cddf-4f35-966d-52df7a9661ce",
+  "license": "open_data_published",
+  "access": "public",
+  "data_freshness": "periodic",
+  "record_shape": "xlsx_one_row_per_public_enterprise",
+  "primary_keys": ["naziv"],
+  "join_keys": ["naziv"],
+  "field_count": 7,
+  "fields": [
+    { "path": "Naziv", "source_field": "Naziv", "english_name": "name", "meaning": "Public-enterprise name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Investiciono razvojni fond", "Crnogorski elektroprenosni sistem AD", "Luka Bar AD"], "nullable": false, "repeatable": false, "code_list": null, "language": "me", "limitations": "Display name; not the exact CRPS legal name. Public enterprises only.", "source_confidence": "high", "analysis_notes": "Real, openly-licensed values." },
+    { "path": "Status", "source_field": "Status", "english_name": "status", "meaning": "Operating status (e.g. Aktivna).", "data_type": "string", "semantic_type": "status", "example_values": ["Aktivna"], "nullable": true, "repeatable": false, "code_list": null, "language": "me", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Tip", "source_field": "Tip", "english_name": "type", "meaning": "Entity type (Javno preduzeće / Državni fond - privredno društvo, etc.).", "data_type": "string", "semantic_type": "legal_form", "example_values": ["Javno preduzeće", "Državni fond - privredno društvo"], "nullable": true, "repeatable": false, "code_list": null, "language": "me", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Osnivac", "source_field": "Osnivač", "english_name": "founder", "meaning": "Founder (typically the state — Vlada CG).", "data_type": "string", "semantic_type": "ownership", "example_values": ["Vlada CG", "Vlada"], "nullable": true, "repeatable": false, "code_list": null, "language": "me", "limitations": "Public enterprises — founder is the state (legal entity), not personal data.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Adresa", "source_field": "Adresa", "english_name": "address", "meaning": "Address / contact.", "data_type": "string", "semantic_type": "address", "example_values": ["Bulevar sv. Petra Cetinjskog 126/I Podgorica"], "nullable": true, "repeatable": false, "code_list": null, "language": "me", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Website", "source_field": "Website", "english_name": "website", "meaning": "Official website.", "data_type": "string", "semantic_type": "raw_extension", "example_values": ["https://www.irfcg.me/me/"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "PravniOsnov", "source_field": "Pravni osnov", "english_name": "legal_basis", "meaning": "Legal basis (founding law / statute).", "data_type": "string", "semantic_type": "document", "example_values": ["Zakon o Investiciono-razvojnom fondu Crne Gore A.D."], "nullable": true, "repeatable": false, "code_list": null, "language": "me", "limitations": null, "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

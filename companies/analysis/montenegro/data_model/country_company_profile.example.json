@@ -1,0 +1,59 @@
+{
+  "country": "Montenegro",
+  "country_slug": "montenegro",
+  "country_profile_version": "2026-06-24",
+  "_note": "Example anchored on a real public enterprise from data.gov.me. CRPS-held identifiers (PIB, registration number) are null because the CRPS portal was down (503) and the legacy domain is parked — no register values captured.",
+  "registration": {
+    "pib": null,
+    "registration_number": null
+  },
+  "tax_identifiers": {
+    "tax_id": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "business_name": "Investiciono-razvojni fond Crne Gore A.D.",
+    "legal_form": "akcionarsko društvo (A.D.)"
+  },
+  "status": {
+    "status_text": "Aktivna",
+    "registration_date": null
+  },
+  "activity": {
+    "activity_code": null
+  },
+  "registered_location": {
+    "registered_address": "Bulevar sv. Petra Cetinjskog 126/I, Podgorica",
+    "municipality": "Podgorica"
+  },
+  "public_enterprise": {
+    "type": "Državni fond - privredno društvo",
+    "founder": "Vlada Crne Gore (state)",
+    "website": "https://www.irfcg.me/me/",
+    "legal_basis": "Zakon o Investiciono-razvojnom fondu Crne Gore A.D."
+  },
+  "owners": [
+    { "name": "Vlada Crne Gore", "kind": "state" }
+  ],
+  "financial_statements": [
+    { "fiscal_year": "2024", "currency": "EUR" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "datagovme_javna_preduzeca",
+      "section": "legal_identity / status / registered_location / public_enterprise / owners",
+      "source_url": "https://data.gov.me/dataset/13740b69-cddf-4f35-966d-52df7a9661ce",
+      "access": "public",
+      "license": "open_data_published",
+      "retrieved_at": "2026-06-24T00:00:00Z"
+    },
+    {
+      "source_slug": "crps_business_register",
+      "section": "registration / tax_identifiers / financial_statements (unavailable — portal 503)",
+      "source_url": "https://eprijava.tax.gov.me/TaxisPortal",
+      "access": "unavailable_portal_down",
+      "license": "not_stated",
+      "retrieved_at": null
+    }
+  ]
+}

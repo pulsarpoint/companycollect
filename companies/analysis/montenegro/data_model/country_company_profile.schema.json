@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Montenegro Company Profile",
+  "description": "Country-specific company profile for Montenegro. The authoritative source is CRPS (Centralni registar privrednih subjekata), run by the Revenue and Customs Administration (tax.gov.me), keyed on the PIB (8-digit tax id = company id) and the CRPS registration number; the PDV broj (VAT) is separate. At investigation time CRPS had NO working open access (legacy crps.me parked; eprijava.tax.gov.me/TaxisPortal returned HTTP 503) and there is no open bulk/API — so the CRPS section is documented from public knowledge with no captured values. The only working open dataset is data.gov.me 'Javna preduzeća' (public/state enterprises — name/status/type/founder/address/website, no PIB). Financial statements are filed at CRPS but NOT published openly. Currency EUR. Founders/owners are personal data (Zakon o zaštiti podataka o ličnosti) — redact.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Montenegro" },
+    "country_slug": { "type": "string", "const": "montenegro" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["pib"],
+      "properties": {
+        "pib": { "type": ["string", "null"], "description": "Poreski identifikacioni broj — 8-digit tax id = company id. Primary join key. (Held by CRPS; portal currently down.)", "x-source": "crps_business_register", "x-source-path": "PIB", "x-join-key": true, "x-freshness": "live_when_available", "x-access": "unavailable_portal_down" },
+        "registration_number": { "type": ["string", "null"], "description": "CRPS registration number (Registarski/Matični broj).", "x-source": "crps_business_register", "x-source-path": "registarski_broj" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= PIB.", "x-source": "crps_business_register", "x-source-path": "PIB" },
+        "vat_id": { "type": ["string", "null"], "description": "PDV broj — VAT number, separate.", "x-source": "crps_business_register", "x-source-path": "PDV_broj" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "business_name": { "type": ["string", "null"], "x-source": "crps_business_register", "x-source-path": "naziv", "x-source-alt": "datagovme_javna_preduzeca.Naziv" },
+        "legal_form": { "type": ["string", "null"], "description": "DOO/AD/OD/KD/preduzetnik.", "x-source": "crps_business_register", "x-source-path": "oblik_organizovanja" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "aktivno / u likvidaciji / u stečaju / brisano.", "x-source": "crps_business_register", "x-source-path": "status" },
+        "registration_date": { "type": ["string", "null"], "format": "date", "x-source": "crps_business_register", "x-source-path": "datum_registracije" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "activity_code": { "type": ["string", "null"], "description": "KD (~NACE).", "x-source": "crps_business_register", "x-source-path": "sifra_djelatnosti" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "crps_business_register", "x-source-path": "sjediste", "x-source-alt": "datagovme_javna_preduzeca.Adresa" },
+        "municipality": { "type": ["string", "null"] }
+      }
+    },
+    "public_enterprise": {
+      "type": "object",
+      "description": "Present only for public/state enterprises, from the open data.gov.me dataset.",
+      "x-source": "datagovme_javna_preduzeca",
+      "properties": {
+        "type": { "type": ["string", "null"], "x-source-path": "Tip" },
+        "founder": { "type": ["string", "null"], "x-source-path": "Osnivac" },
+        "website": { "type": ["string", "null"], "x-source-path": "Website" },
+        "legal_basis": { "type": ["string", "null"], "x-source-path": "PravniOsnov" }
+      }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Founders/owners (Osnivači) from CRPS. PERSONAL DATA when natural persons — REDACT.",
+      "x-source": "crps_business_register",
+      "x-source-path": "osnivaci",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "kind": { "type": ["string", "null"], "enum": ["legal_entity", "natural_person", "state", null] } } }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PLANNING-ONLY. Annual statements filed with CRPS, currency EUR — NOT published as open data.",
+      "x-source": "crps_business_register",
+      "x-access": "not_open",
+      "items": { "type": "object", "properties": { "fiscal_year": { "type": ["string", "null"] }, "currency": { "type": "string", "const": "EUR" } } }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

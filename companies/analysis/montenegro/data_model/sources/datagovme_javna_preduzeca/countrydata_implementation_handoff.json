@@ -1,0 +1,75 @@
+{
+  "country": "Montenegro",
+  "country_slug": "montenegro",
+  "source_slug": "datagovme_javna_preduzeca",
+  "source_identity": "montenegro_datagovme_javna_preduzeca",
+  "source_package": "javnapreduzeca",
+  "env_prefix": "ME_DATAGOVME_JP",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "data.gov.me — Javna preduzeća (public enterprises)",
+    "source_type": "company_list",
+    "organization": "Ministarstvo javne uprave via data.gov.me",
+    "source_url": "https://data.gov.me/dataset/13740b69-cddf-4f35-966d-52df7a9661ce",
+    "license": "open_data_published",
+    "access": "public",
+    "data_freshness": "periodic",
+    "attribution": "data.gov.me / Ministarstvo javne uprave"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://data.gov.me/dataset/13740b69-cddf-4f35-966d-52df7a9661ce/resource/25812bd4-a14a-429e-9e9f-507333aff02e/download/javna_preduzeca.xlsx",
+    "download_url": "https://data.gov.me/dataset/13740b69-cddf-4f35-966d-52df7a9661ce/resource/25812bd4-a14a-429e-9e9f-507333aff02e/download/javna_preduzeca.xlsx",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xlsx"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "static CKAN file; resolve latest resource via CKAN package_show"
+  },
+  "snapshot": {
+    "strategy": "preserve_xlsx_then_parse_rows",
+    "file_extension": ".xlsx",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "JavnoPreduzece",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "XLSX (OOXML zip). One row per public enterprise. Columns: Naziv, Status, Tip, Osnivač, Adresa, Website, Pravni osnov (and others). Resolve the current resource URL via CKAN package_show (resource id may rotate). PUBLIC ENTERPRISES ONLY — no PIB/registration number; join to CRPS by name once CRPS is available. Founder is the state (legal entity), not personal data."
+  },
+  "keys": {
+    "primary_keys": ["Naziv"],
+    "join_keys": ["Naziv"],
+    "dedupe_keys": ["Naziv"]
+  },
+  "mapping_rules": {
+    "legal_name": "Naziv.",
+    "status": "Status (Aktivna).",
+    "legal_form": "Tip (Javno preduzeće / Državni fond / AD).",
+    "owners": "Osnivač (the state — legal entity).",
+    "registered_address": "Adresa.",
+    "website": "Website."
+  },
+  "fixture_requirements": [
+    "joint-stock public enterprise (AD)",
+    "state fund / privredno društvo",
+    "row with website + legal basis",
+    "row with missing optional fields"
+  ],
+  "live_test_plan": {
+    "smoke": "Download the XLSX, parse the first rows, assert a known entity (Luka Bar AD).",
+    "full": "Parse the full sheet; map to public-enterprise records; join to CRPS by name when available."
+  },
+  "blockers": []
+}

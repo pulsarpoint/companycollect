@@ -1,0 +1,85 @@
+{
+  "country": "Montenegro",
+  "country_slug": "montenegro",
+  "source_slug": "crps_business_register",
+  "source_identity": "montenegro_crps_business_register",
+  "source_package": "crps",
+  "env_prefix": "ME_CRPS",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "CRPS — Centralni registar privrednih subjekata",
+    "source_type": "official_registry",
+    "organization": "Uprava prihoda i carina (Revenue and Customs Administration)",
+    "source_url": "https://eprijava.tax.gov.me/TaxisPortal",
+    "license": "not_stated",
+    "access": "unavailable_portal_down",
+    "data_freshness": "live_when_available",
+    "attribution": "CRPS / Uprava prihoda i carina"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://eprijava.tax.gov.me/TaxisPortal",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "portal returned HTTP 503 (down); legacy crps.me parked; no open bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_unavailable",
+    "file_extension": ".html",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "CrpsSubjekat",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "UNAVAILABLE at investigation time. Official Montenegro register (CRPS, Uprava prihoda i carina). Legacy crps.me is parked; current eprijava.tax.gov.me/TaxisPortal returns HTTP 503. No open bulk/API. Confirm the live portal transport (search by PIB/name/registration number) once it is back online before implementation. Redact founders/representatives (personal data). Financials filed at CRPS are NOT open."
+  },
+  "keys": {
+    "primary_keys": ["PIB"],
+    "join_keys": ["PIB", "registarski_broj"],
+    "dedupe_keys": ["PIB"]
+  },
+  "mapping_rules": {
+    "company_id": "PIB (8-digit) or registarski broj.",
+    "registration_number": "Registarski / Matični broj.",
+    "tax_id": "PIB.",
+    "vat_id": "PDV broj (separate).",
+    "legal_name": "Naziv.",
+    "legal_form": "Oblik organizovanja (DOO/AD/OD/KD).",
+    "status": "Status (aktivno/likvidacija/stečaj/brisano).",
+    "incorporation_date": "Datum registracije.",
+    "registered_address": "Sjedište.",
+    "activity_code": "Šifra djelatnosti.",
+    "owners": "Osnivači (REDACT natural persons)."
+  },
+  "fixture_requirements": [
+    "active DOO with single founder",
+    "AD (joint-stock) company",
+    "company in liquidation/bankruptcy",
+    "VAT-registered company (PDV broj present)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable — TaxisPortal returns 503. Re-probe the portal; confirm the per-company search transport when it is online.",
+    "full": "Blocked until the CRPS portal is available; no open bulk."
+  },
+  "blockers": [
+    "Current portal eprijava.tax.gov.me/TaxisPortal returns HTTP 503 (down)",
+    "Legacy crps.me domain is parked",
+    "No open bulk/API; transport shape unconfirmed",
+    "Financial statements not published as open data"
+  ]
+}
