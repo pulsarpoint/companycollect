@@ -23,6 +23,15 @@ type embedderIface interface {
 	Embed(texts []string, instruction string) ([][]float32, error)
 }
 
+// ShardResult bundles the per-pass outputs (domains from industry; tech/identifiers/
+// profiles from tech). Each maps to its own ClickHouse table.
+type ShardResult struct {
+	Domains     []DomainRow
+	Tech        []TechRow
+	Identifiers []IdentifierRow
+	Profiles    []ProfileRow
+}
+
 type ShardConfig struct {
 	CrawlID, SourceRunID string
 	ResolvedAt           time.Time
@@ -36,6 +45,7 @@ type domainAgg struct {
 	emails                                          []string
 	tech                                            []Technology
 	identifiers                                     []Identifier
+	profile                                         CompanyProfile
 	hasPrimary                                      bool
 }
 
@@ -56,13 +66,14 @@ func subdomainOf(rawURL, root string) string {
 }
 
 // ProcessShard processes one worklist shard. cfg.Mode selects the work:
-//   "industry": fetch each domain's primary page -> embed -> classify -> domain rows
-//               (needs the ClickHouse reference + embedder; no Wappalyzer)
-//   "tech":     fetch every page -> Wappalyzer -> per-domain unioned tech rows
-//               (no ClickHouse, no embedder)
-//   "both"  :   both in a single fetch pass (default)
+//
+//	"industry": fetch each domain's primary page -> embed -> classify -> domain rows
+//	            (needs the ClickHouse reference + embedder; no Wappalyzer)
+//	"tech":     fetch every page -> Wappalyzer -> per-domain unioned tech rows
+//	            (no ClickHouse, no embedder)
+//	"both"  :   both in a single fetch pass (default)
 func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter, emb embedderIface,
-	ref *Reference, protos *Prototypes, cfg ShardConfig) ([]DomainRow, []TechRow, []IdentifierRow, error) {
+	ref *Reference, protos *Prototypes, cfg ShardConfig) (ShardResult, error) {
 
 	mode := cfg.Mode
 	if mode == "" {
@@ -129,11 +140,21 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 							agg.tech = append(agg.tech, t)
 						}
 					}
-					for _, id := range ExtractLEIs(techBody) {
+					prof, structIDs := ExtractProfile(techBody) // schema.org Organization JSON-LD
+					for _, id := range structIDs {
 						if !idSeen[id.Value] {
 							idSeen[id.Value] = true
 							agg.identifiers = append(agg.identifiers, id)
 						}
+					}
+					for _, id := range ExtractLEIs(techBody) { // jsonld-regex + text LEIs
+						if !idSeen[id.Value] {
+							idSeen[id.Value] = true
+							agg.identifiers = append(agg.identifiers, id)
+						}
+					}
+					if agg.profile.Empty() && !prof.Empty() {
+						agg.profile = prof
 					}
 				}
 				if runEmbed && it.Primary && !agg.hasPrimary {
@@ -162,6 +183,7 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 	var domains []DomainRow
 	var techRows []TechRow
 	var identRows []IdentifierRow
+	var profileRows []ProfileRow
 
 	if runEmbed {
 		var idx []int
@@ -176,7 +198,7 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 		if len(texts) > 0 {
 			var err error
 			if vecs, err = emb.Embed(texts, classifyInstruction); err != nil {
-				return nil, nil, nil, err
+				return ShardResult{}, err
 			}
 		}
 		for vi, i := range idx {
@@ -227,7 +249,16 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
 			}
+			if p := a.profile; !p.Empty() {
+				profileRows = append(profileRows, ProfileRow{
+					CrawlID: cfg.CrawlID, RootDomain: a.rootDomain, URL: a.primaryURL, Subdomain: a.primarySub,
+					Name: p.Name, Description: p.Description, Logo: p.Logo, Country: p.Country,
+					Email: p.Email, Phone: p.Phone, FoundingYear: p.FoundingYear, EmployeeCount: p.EmployeeCount,
+					SameAs: p.SameAs, Source: "jsonld",
+					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+				})
+			}
 		}
 	}
-	return domains, techRows, identRows, nil
+	return ShardResult{Domains: domains, Tech: techRows, Identifiers: identRows, Profiles: profileRows}, nil
 }

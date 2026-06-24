@@ -25,7 +25,7 @@ WORKER="$PWD/cc-enrich-worker"
 case "$MODE" in
 industry) OUTPUTS=("commoncrawl_domains:domains")
           PASS_ARGS=(--mode industry --concurrency "${IND_CONC:-16}" --embed-concurrency "${EMBED_CONC:-128}") ;;
-tech)     OUTPUTS=("commoncrawl_technologies:tech" "commoncrawl_company_identifiers:identifiers")
+tech)     OUTPUTS=("commoncrawl_technologies:tech" "commoncrawl_company_identifiers:identifiers" "commoncrawl_company_profile:profiles")
           PASS_ARGS=(--mode tech --tech-engine fast --concurrency "${TECH_CONC:-128}") ;;
 *) echo "MODE must be industry|tech"; exit 1 ;;
 esac

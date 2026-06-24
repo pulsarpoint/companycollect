@@ -63,28 +63,28 @@ func TestProcessShardAndParquet(t *testing.T) {
 	cfg := ShardConfig{CrawlID: "CC-MAIN-2026-25", SourceRunID: "run1",
 		ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 2}
 
-	domains, tech, _, err := ProcessShard(context.Background(), items, getter, emb, ref, protos, cfg)
+	res, err := ProcessShard(context.Background(), items, getter, emb, ref, protos, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(domains) != 1 {
-		t.Fatalf("want 1 domain, got %d", len(domains))
+	if len(res.Domains) != 1 {
+		t.Fatalf("want 1 domain, got %d", len(res.Domains))
 	}
-	d := domains[0]
+	d := res.Domains[0]
 	if d.NaceCode != "62.01" || d.NaceConfident != 1 {
 		t.Fatalf("classify wrong: %+v", d)
 	}
-	if !hasTechRow(tech, "Nginx") || !hasTechRow(tech, "WordPress") {
-		t.Fatalf("tech union wrong: %+v", tech)
+	if !hasTechRow(res.Tech, "Nginx") || !hasTechRow(res.Tech, "WordPress") {
+		t.Fatalf("tech union wrong: %+v", res.Tech)
 	}
 
 	// Parquet round-trip with the migration column order.
 	dir := t.TempDir()
 	dp, tp := filepath.Join(dir, "domains.parquet"), filepath.Join(dir, "tech.parquet")
-	if err := WriteDomains(dp, domains); err != nil {
+	if err := WriteDomains(dp, res.Domains); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteTech(tp, tech); err != nil {
+	if err := WriteTech(tp, res.Tech); err != nil {
 		t.Fatal(err)
 	}
 	back, err := parquet.ReadFile[DomainRow](dp)
@@ -107,20 +107,20 @@ func TestProcessShardIndustryMode(t *testing.T) {
 	emb := fakeEmbedder{vec: norm([]float32{1, 0, 0})}
 	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "industry"}
 
-	domains, tech, _, err := ProcessShard(context.Background(), items, getter, emb, ref, &Prototypes{}, cfg)
+	res, err := ProcessShard(context.Background(), items, getter, emb, ref, &Prototypes{}, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(domains) != 1 || domains[0].NaceCode != "62.01" {
-		t.Fatalf("industry classify wrong: %+v", domains)
+	if len(res.Domains) != 1 || res.Domains[0].NaceCode != "62.01" {
+		t.Fatalf("industry classify wrong: %+v", res.Domains)
 	}
-	if len(tech) != 0 {
-		t.Fatalf("industry mode should emit no tech rows, got %d", len(tech))
+	if len(res.Tech) != 0 {
+		t.Fatalf("industry mode should emit no tech rows, got %d", len(res.Tech))
 	}
 }
 
 func TestProcessShardTechMode(t *testing.T) {
-	// mode=tech needs neither embedder nor reference: pass nil and assert no panic/calls.
+	// mode=res.Tech needs neither embedder nor reference: pass nil and assert no panic/calls.
 	page := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n<html><head>" +
 		"<meta name=\"generator\" content=\"WordPress 6.4\">" +
 		"<link href=\"/wp-content/themes/x/style.css\" rel=\"stylesheet\"></head>" +
@@ -131,21 +131,21 @@ func TestProcessShardTechMode(t *testing.T) {
 	}
 	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech"}
 
-	domains, tech, ids, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
+	res, err := ProcessShard(context.Background(), items, getter, nil, nil, nil, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(domains) != 0 {
-		t.Fatalf("tech mode should emit no domain rows, got %d", len(domains))
+	if len(res.Domains) != 0 {
+		t.Fatalf("tech mode should emit no domain rows, got %d", len(res.Domains))
 	}
-	if !hasTechRow(tech, "Nginx") || !hasTechRow(tech, "WordPress") {
-		t.Fatalf("tech mode tech rows wrong: %+v", tech)
+	if !hasTechRow(res.Tech, "Nginx") || !hasTechRow(res.Tech, "WordPress") {
+		t.Fatalf("tech mode tech rows wrong: %+v", res.Tech)
 	}
-	if tech[0].RootDomain != "acme.com" {
-		t.Fatalf("tech row not keyed to domain: %+v", tech[0])
+	if res.Tech[0].RootDomain != "acme.com" {
+		t.Fatalf("tech row not keyed to domain: %+v", res.Tech[0])
 	}
-	if len(ids) != 1 || ids[0].IDType != "lei" || ids[0].IDValue != "HWUPKR0MPOU8FGXBT394" ||
-		ids[0].Valid != 1 || ids[0].RootDomain != "acme.com" {
-		t.Fatalf("identifier row wrong: %+v", ids)
+	if len(res.Identifiers) != 1 || res.Identifiers[0].IDType != "lei" || res.Identifiers[0].IDValue != "HWUPKR0MPOU8FGXBT394" ||
+		res.Identifiers[0].Valid != 1 || res.Identifiers[0].RootDomain != "acme.com" {
+		t.Fatalf("identifier row wrong: %+v", res.Identifiers)
 	}
 }

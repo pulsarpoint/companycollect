@@ -67,9 +67,32 @@ type IdentifierRow struct {
 	ResolvedAt  time.Time `parquet:"resolved_at,timestamp"`
 }
 
+// ProfileRow mirrors corpscout.commoncrawl_company_profile (migration 000053): one row
+// per domain, the firmographics distilled from schema.org Organization JSON-LD.
+type ProfileRow struct {
+	CrawlID       string    `parquet:"crawl_id"`
+	RootDomain    string    `parquet:"root_domain"`
+	URL           string    `parquet:"url"`
+	Subdomain     string    `parquet:"subdomain"`
+	Name          string    `parquet:"name"`
+	Description   string    `parquet:"description"`
+	Logo          string    `parquet:"logo"`
+	Country       string    `parquet:"country"`
+	Email         string    `parquet:"email"`
+	Phone         string    `parquet:"phone"`
+	FoundingYear  uint16    `parquet:"founding_year"`
+	EmployeeCount uint32    `parquet:"employee_count"`
+	SameAs        []string  `parquet:"same_as"`
+	Source        string    `parquet:"source"`
+	SourceURL     string    `parquet:"source_url"`
+	SourceRunID   string    `parquet:"source_run_id"`
+	ResolvedAt    time.Time `parquet:"resolved_at,timestamp"`
+}
+
 func WriteDomains(path string, rows []DomainRow) error         { return parquet.WriteFile(path, rows) }
 func WriteTech(path string, rows []TechRow) error              { return parquet.WriteFile(path, rows) }
 func WriteIdentifiers(path string, rows []IdentifierRow) error { return parquet.WriteFile(path, rows) }
+func WriteProfiles(path string, rows []ProfileRow) error       { return parquet.WriteFile(path, rows) }
 
 // UploadToS3 puts a local file at the given bucket/key.
 func UploadToS3(ctx context.Context, client *s3.Client, bucket, key, path string) error {
