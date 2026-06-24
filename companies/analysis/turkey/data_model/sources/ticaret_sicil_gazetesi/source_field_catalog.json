@@ -1,0 +1,24 @@
+{
+  "country": "Turkey",
+  "country_slug": "turkey",
+  "source_slug": "ticaret_sicil_gazetesi",
+  "source_name": "Türkiye Ticaret Sicili Gazetesi — Trade Registry Gazette",
+  "source_type": "official_gazette",
+  "organization": "TOBB (Union of Chambers and Commodity Exchanges)",
+  "source_url": "https://www.ticaretsicil.gov.tr/",
+  "license": "public_gazette",
+  "access": "public_search",
+  "data_freshness": "continuous (publication-driven)",
+  "record_shape": "per_company_gazette_announcements",
+  "primary_keys": ["ticaret_sicil_no"],
+  "join_keys": ["ticaret_sicil_no", "mersis_no"],
+  "field_count": 6,
+  "fields": [
+    { "path": "gazette.ticaret_sicil_no", "source_field": "Ticaret Sicil No", "english_name": "trade_registry_no", "meaning": "Trade-registry number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: per-company search.", "source_confidence": "low", "analysis_notes": "Join to MERSIS." },
+    { "path": "gazette.unvan", "source_field": "Unvan", "english_name": "legal_name", "meaning": "Company title.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Turkish", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "gazette.ilan_turu", "source_field": "İlan Türü", "english_name": "announcement_type", "meaning": "Announcement type (incorporation/amendment/dissolution).", "data_type": "string", "semantic_type": "metadata", "example_values": ["Kuruluş", "Değişiklik", "Tasfiye"], "nullable": false, "repeatable": true, "code_list": null, "language": "Turkish", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "gazette.ilan_tarihi", "source_field": "İlan Tarihi", "english_name": "announcement_date", "meaning": "Publication date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "gazette.sicil_mudurlugu", "source_field": "Sicil Müdürlüğü", "english_name": "registry_office", "meaning": "Trade-registry office.", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Turkish", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "gazette.ilan_metni", "source_field": "İlan Metni", "english_name": "announcement_text", "meaning": "Announcement text (may name directors/shareholders).", "data_type": "string", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Turkish", "limitations": "PLANNING-ONLY. May contain PERSONAL DATA (KVKK) — redact.", "source_confidence": "low", "analysis_notes": "Source of officer info." }
+  ]
+}

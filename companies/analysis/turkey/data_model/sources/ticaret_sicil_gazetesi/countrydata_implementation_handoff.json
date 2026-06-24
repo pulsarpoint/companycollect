@@ -1,0 +1,58 @@
+{
+  "country": "Turkey",
+  "country_slug": "turkey",
+  "source_slug": "ticaret_sicil_gazetesi",
+  "source_identity": "turkey_ticaret_sicil_gazetesi",
+  "source_package": "ticaretsicilgazetesi",
+  "env_prefix": "TICARET_SICIL_GAZETESI",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Türkiye Ticaret Sicili Gazetesi — Trade Registry Gazette",
+    "source_type": "official_gazette",
+    "organization": "TOBB",
+    "source_url": "https://www.ticaretsicil.gov.tr/",
+    "license": "public_gazette",
+    "access": "public_search",
+    "data_freshness": "continuous",
+    "attribution": "TOBB / Ticaret Sicili Gazetesi"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.ticaretsicil.gov.tr/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "per_company_search", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per-company / per-issue search; no open bulk"
+  },
+  "snapshot": { "strategy": "not_applicable_search_only", "file_extension": null, "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "GazetteAnnouncement",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "not_applicable",
+    "notes": "Planning-only. Per-company gazette announcement search (trade-registry no / title). Source of company events + directors/shareholders (personal data, KVKK — redact). No open bulk. Join to MERSIS by ticaret_sicil_no / name."
+  },
+  "keys": { "primary_keys": ["ticaret_sicil_no"], "join_keys": ["ticaret_sicil_no", "mersis_no"], "dedupe_keys": ["ticaret_sicil_no"] },
+  "mapping_rules": {
+    "documents": "gazette announcements (kuruluş/değişiklik/tasfiye).",
+    "officers": "ilan_metni director/shareholder mentions (PERSONAL DATA — redact).",
+    "join": "ticaret_sicil_no / name -> MERSIS."
+  },
+  "fixture_requirements": ["documented-only: incorporation announcement", "documented-only: amendment with directors (assert redaction)"],
+  "live_test_plan": {
+    "smoke": "Not run — per-company search; resolve announcements for a seed company.",
+    "full": "Out of scope for open bulk; per-company event lookups."
+  },
+  "blockers": [
+    "Per-company search only; no open bulk.",
+    "Announcement text may contain personal data (KVKK) — redact."
+  ]
+}

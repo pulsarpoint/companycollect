@@ -1,0 +1,26 @@
+{
+  "country": "Turkey",
+  "country_slug": "turkey",
+  "source_slug": "mersis_registry",
+  "source_name": "MERSIS — Central Registry System (Ministry of Trade)",
+  "source_type": "official_registry",
+  "organization": "Ministry of Trade (Ticaret Bakanlığı)",
+  "source_url": "https://mersis.ticaret.gov.tr/",
+  "license": "free_per_company_no_open_bulk",
+  "access": "public_search",
+  "data_freshness": "live register",
+  "record_shape": "per_company_query_result",
+  "primary_keys": ["mersis_no"],
+  "join_keys": ["mersis_no", "vkn"],
+  "field_count": 8,
+  "fields": [
+    { "path": "mersis.mersis_no", "source_field": "MERSIS No", "english_name": "mersis_no", "meaning": "Central Registry System number (16-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: per-company query; no open bulk.", "source_confidence": "medium", "analysis_notes": "Company id + universal join key." },
+    { "path": "mersis.unvan", "source_field": "Unvan", "english_name": "legal_name", "meaning": "Registered company title.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Turkish", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "mersis.vkn", "source_field": "VKN (Vergi Kimlik No)", "english_name": "vkn", "meaning": "Tax id (10-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": "Tax id; no separate VAT number." },
+    { "path": "mersis.ticaret_sicil_no", "source_field": "Ticaret Sicil No", "english_name": "trade_registry_no", "meaning": "Trade-registry number (per registry office).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY; needs the office to be unique.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "mersis.nace", "source_field": "NACE / Faaliyet", "english_name": "nace_activity", "meaning": "Economic-activity code (NACE).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "NACE Rev.2", "language": "Turkish", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "mersis.adres", "source_field": "Adres", "english_name": "address", "meaning": "Registered address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Turkish", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "mersis.sirket_turu", "source_field": "Şirket Türü", "english_name": "company_type", "meaning": "Company type / legal form.", "data_type": "string", "semantic_type": "legal_form", "example_values": ["Anonim Şirket (A.Ş.)", "Limited Şirket (Ltd. Şti.)"], "nullable": true, "repeatable": false, "code_list": "Turkish company types", "language": "Turkish", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "mersis.durum", "source_field": "Durum", "english_name": "status", "meaning": "Registration status (active / dissolved / liquidation).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Turkish", "limitations": "PLANNING-ONLY.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

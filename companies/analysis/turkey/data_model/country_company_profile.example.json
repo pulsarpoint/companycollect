@@ -1,0 +1,21 @@
+{
+  "country": "Turkey",
+  "country_slug": "turkey",
+  "country_profile_version": "2026-06-24",
+  "_note": "registration.kap_id + legal_identity.legal_name are REAL data from the public KAP BIST member list (ADEL KALEMCILIK, KAP id 832). mersis_no / trade_registry_no / VKN (MERSIS, free per-company query) and financial_statements (KAP per-company, TRY) are null/empty placeholders here. tax_identifiers.tax_id = VKN; vat_id null (no separate VAT number). officers (gazette directors) are personal data (KVKK) and empty/redacted.",
+  "registration": { "mersis_no": null, "trade_registry_no": null, "kap_id": "832" },
+  "tax_identifiers": { "tax_id": null, "vat_id": null },
+  "legal_identity": { "legal_name": "ADEL KALEMCILIK TICARET VE SANAYI A.Ş.", "company_type": "Anonim Şirket (A.Ş.)" },
+  "status": { "status": "bist_listed" },
+  "activity": { "nace_code": null },
+  "registered_location": { "registered_address": null },
+  "documents": [],
+  "officers": [],
+  "financial_statements": [
+    { "period": "2024", "revenue": null, "net_profit": null, "total_assets": null, "currency": "TRY" }
+  ],
+  "source_provenance": [
+    { "source_slug": "kap_disclosure", "section": "registration.kap_id / legal_identity / financial_statements", "source_url": "https://www.kap.org.tr/tr/sirket-bilgileri/ozet/832", "access": "public", "license": "public_disclosure", "retrieved_at": "2026-06-24T00:00:00Z" },
+    { "source_slug": "mersis_registry", "section": "registration.mersis_no / tax_identifiers / status / activity / address (per-company query)", "source_url": "https://mersis.ticaret.gov.tr/", "access": "free per-company query (no open bulk)", "license": "free_per_company_no_open_bulk", "retrieved_at": null }
+  ]
+}

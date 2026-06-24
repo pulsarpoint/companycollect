@@ -1,0 +1,59 @@
+{
+  "country": "Turkey",
+  "country_slug": "turkey",
+  "source_slug": "kap_disclosure",
+  "source_identity": "turkey_kap_disclosure",
+  "source_package": "kap",
+  "env_prefix": "KAP",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "KAP — Kamuyu Aydınlatma Platformu (Public Disclosure Platform)",
+    "source_type": "financial_disclosure",
+    "organization": "MKK / Borsa İstanbul",
+    "source_url": "https://www.kap.org.tr/tr/bist-sirketler",
+    "license": "public_disclosure",
+    "access": "public",
+    "data_freshness": "event-driven / quarterly",
+    "attribution": "KAP / Borsa İstanbul"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://www.kap.org.tr/tr/",
+    "download_url": "https://www.kap.org.tr/tr/sirket-bilgileri/ozet/{kapId}-{slug}",
+    "http_method": "GET",
+    "headers_required": ["Accept: text/html"],
+    "formats": ["html", "pdf", "xbrl"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "company_list_page", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public; client-side data fetch (Next.js); pace requests"
+  },
+  "snapshot": { "strategy": "preserve_company_pages_and_statements", "file_extension": null, "preserve_raw_download": true },
+  "parsing": {
+    "record_type_hint": "KapListedCompany",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": ["try_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Enumerate listed companies from /tr/bist-sirketler (links /tr/sirket-bilgileri/ozet/{kapId}-{slug}). Per-company page holds identity + financial statements (Bilanço/Gelir Tablosu, TFRS, TRY) + disclosures. JSON API endpoints have moved; use the site pages / current API. Verify KAP/Borsa terms before redistribution. Listed only."
+  },
+  "keys": { "primary_keys": ["kap_id"], "join_keys": ["kap_id", "vkn", "company_name"], "dedupe_keys": ["kap_id"] },
+  "mapping_rules": {
+    "legal_name": "company.name (unvan).",
+    "financials": "financials.balance_income per period (TRY): revenue/net profit/total assets.",
+    "join": "kap_id / company name / VKN -> MERSIS identity."
+  },
+  "fixture_requirements": ["listed company with annual financial statements", "company with quarterly statements", "company with material-event disclosures"],
+  "live_test_plan": {
+    "smoke": "GET /tr/bist-sirketler; extract kapId+name; fetch one company page.",
+    "full": "Iterate the ~800 listed companies; pull financial statements (TRY); join to MERSIS. Pace requests; respect terms."
+  },
+  "blockers": [
+    "Listed companies only (~800); private-company financials not public.",
+    "KAP JSON API endpoints have moved; use the site pages / current API.",
+    "Reuse governed by KAP/Borsa İstanbul terms."
+  ]
+}

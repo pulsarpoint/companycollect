@@ -1,0 +1,22 @@
+{
+  "country": "Turkey",
+  "country_slug": "turkey",
+  "source_slug": "gib_vkn",
+  "source_name": "GİB — VKN / tax-number lookup (Revenue Administration)",
+  "source_type": "tax_registry",
+  "organization": "Gelir İdaresi Başkanlığı (GİB)",
+  "source_url": "https://www.gib.gov.tr/",
+  "license": "free_per_company",
+  "access": "public_search",
+  "data_freshness": "live",
+  "record_shape": "per_company_vkn_lookup",
+  "primary_keys": ["vkn"],
+  "join_keys": ["vkn"],
+  "field_count": 4,
+  "fields": [
+    { "path": "gib.vkn", "source_field": "VKN", "english_name": "vkn", "meaning": "Tax id (10-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY: per-company lookup.", "source_confidence": "low", "analysis_notes": "Tax id; join key." },
+    { "path": "gib.unvan", "source_field": "Unvan", "english_name": "legal_name", "meaning": "Taxpayer title.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Turkish", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "gib.vergi_dairesi", "source_field": "Vergi Dairesi", "english_name": "tax_office", "meaning": "Tax office.", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Turkish", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "gib.kdv_mukellef", "source_field": "KDV Mükellefiyeti", "english_name": "vat_taxpayer", "meaning": "VAT (KDV) taxpayer status.", "data_type": "string", "semantic_type": "license_or_terms", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Turkish", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": "VKN serves as the VAT id; no separate VAT number." }
+  ]
+}

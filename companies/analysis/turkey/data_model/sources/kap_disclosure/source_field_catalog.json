@@ -1,0 +1,26 @@
+{
+  "country": "Turkey",
+  "country_slug": "turkey",
+  "source_slug": "kap_disclosure",
+  "source_name": "KAP — Kamuyu Aydınlatma Platformu (Public Disclosure Platform)",
+  "source_type": "financial_disclosure",
+  "organization": "MKK / Borsa İstanbul (Public Disclosure Platform)",
+  "source_url": "https://www.kap.org.tr/tr/bist-sirketler",
+  "license": "public_disclosure",
+  "access": "public",
+  "data_freshness": "event-driven / quarterly",
+  "record_shape": "listed_company_page_plus_financial_statements",
+  "primary_keys": ["kap_id"],
+  "join_keys": ["kap_id", "vkn", "company_name"],
+  "field_count": 8,
+  "fields": [
+    { "path": "company.kap_id", "source_field": "KAP id", "english_name": "kap_id", "meaning": "KAP internal company id.", "data_type": "string", "semantic_type": "identifier", "example_values": ["832", "2429", "1626"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Listed companies only.", "source_confidence": "high", "analysis_notes": "From /tr/sirket-bilgileri/ozet/{kapId}-{slug}." },
+    { "path": "company.name", "source_field": "Unvan / Company name", "english_name": "company_name", "meaning": "Listed company title.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["ADEL KALEMCILIK TICARET VE SANAYI A.Ş.", "YAPI VE KREDI BANKASI A.Ş."], "nullable": false, "repeatable": false, "code_list": null, "language": "Turkish", "limitations": null, "source_confidence": "high", "analysis_notes": "Real values from the BIST member list." },
+    { "path": "company.ticker", "source_field": "BIST kodu", "english_name": "ticker", "meaning": "Borsa İstanbul ticker / stock code.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Per-company page.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "company.city", "source_field": "Şehir", "english_name": "city", "meaning": "City.", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Turkish", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "company.sector", "source_field": "Sektör", "english_name": "sector", "meaning": "Sector / industry.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Turkish", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "financials.period", "source_field": "Dönem", "english_name": "period", "meaning": "Reporting period (quarter/year).", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": true, "code_list": null, "language": "n/a", "limitations": "Per-company financial statements.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "financials.balance_income", "source_field": "Bilanço / Gelir Tablosu", "english_name": "balance_income", "meaning": "Balance sheet + income statement line items (TRY).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": "TFRS/TMS (Turkish IFRS) taxonomy", "language": "Turkish", "limitations": "Per-company; XBRL/PDF.", "source_confidence": "medium", "analysis_notes": "Revenue (Hasılat), net profit (Net Dönem Karı), total assets (Toplam Varlıklar)." },
+    { "path": "disclosures.ozel_durum", "source_field": "Özel Durum Açıklamaları", "english_name": "disclosures", "meaning": "Material-event disclosures.", "data_type": "array", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Turkish", "limitations": null, "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

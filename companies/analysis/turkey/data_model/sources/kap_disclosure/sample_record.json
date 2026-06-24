@@ -1,0 +1,30 @@
+{
+  "_comment": "Real listed companies extracted from the public KAP BIST member list (kap.org.tr). KAP id + name; per-company pages hold financial statements (TRY). Listed companies only.",
+  "companies": [
+    {
+      "kap_id": "1626",
+      "name": "ACISELSAN ACIPAYAM SELULOZ SANAYI VE TICARET A.Ş.",
+      "url": "https://www.kap.org.tr/tr/sirket-bilgileri/ozet/1626"
+    },
+    {
+      "kap_id": "92",
+      "name": "PWC BAGIMSIZ DENETIM VE SERBEST MUHASEBECI MALI MUSAVIRLIK A.Ş.",
+      "url": "https://www.kap.org.tr/tr/sirket-bilgileri/ozet/92"
+    },
+    {
+      "kap_id": "832",
+      "name": "ADEL KALEMCILIK TICARET VE SANAYI A.Ş.",
+      "url": "https://www.kap.org.tr/tr/sirket-bilgileri/ozet/832"
+    },
+    {
+      "kap_id": "1560",
+      "name": "ADESE GAYRIMENKUL YATIRIM A.Ş.",
+      "url": "https://www.kap.org.tr/tr/sirket-bilgileri/ozet/1560"
+    },
+    {
+      "kap_id": "5310",
+      "name": "TTK BAGIMSIZ DENETIM VE YEMINLI MALI MUSAVIRLIK A.Ş.",
+      "url": "https://www.kap.org.tr/tr/sirket-bilgileri/ozet/5310"
+    }
+  ]
+}
