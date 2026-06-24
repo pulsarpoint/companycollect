@@ -1,0 +1,34 @@
+[
+  {
+    "name": "CRPS business register (CURRENTLY DOWN — 503)",
+    "slug": "crps_business_register",
+    "type": "bulk",
+    "url": "https://eprijava.tax.gov.me/TaxisPortal",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "UNAVAILABLE. Official Montenegro company register (CRPS, Uprava prihoda i carina). Current portal returns HTTP 503; legacy crps.me is parked. No open bulk/API. Per-company lookup only when the portal is back (PIB / name / registration number). Placeholder for documentation."
+  },
+  {
+    "name": "data.gov.me — Javna preduzeća (public enterprises, XLSX)",
+    "slug": "datagovme_javna_preduzeca",
+    "type": "bulk",
+    "url": "https://data.gov.me/dataset/13740b69-cddf-4f35-966d-52df7a9661ce/resource/25812bd4-a14a-429e-9e9f-507333aff02e/download/javna_preduzeca.xlsx",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Real open XLSX of public/state enterprises (name, status, type, founder, address, website). NOT the full register; no PIB/registration number."
+  },
+  {
+    "name": "data.gov.me CKAN package_search",
+    "slug": "datagovme_ckan",
+    "type": "api_page",
+    "url": "https://data.gov.me/api/3/action/package_search",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "start",
+    "page_start": 0,
+    "max_pages": 1,
+    "note": "Working CKAN API. No company register present — statistics + niche registers + public-enterprises list only."
+  }
+]
