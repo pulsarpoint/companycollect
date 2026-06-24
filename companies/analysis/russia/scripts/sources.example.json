@@ -1,0 +1,36 @@
+[
+  {
+    "name": "GIR BO organization search (identity + financials list)",
+    "slug": "girbo_search",
+    "type": "api_page",
+    "url": "https://bo.nalog.gov.ru/advanced-search/organizations/search?query={INN_or_OGRN_or_name}",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 0,
+    "max_pages": 1,
+    "note": "No key. Returns content[] with identity (inn, ogrn, kpp, okopf, okfs, okpo, okved2, region, address, statusCode) + bfo[] (financial-statement years). Then GET /nbo/organizations/{id}/bfo/ for the statement list; line items (balance sheet form1 / income statement form2) per period, RUB. Banks excluded."
+  },
+  {
+    "name": "RSMP — Unified SME Register (open bulk XML)",
+    "slug": "rsmp_bulk",
+    "type": "bulk",
+    "url": "https://file.nalog.ru/opendata/7707329152-rsmp/data-10062026-structure-12052026.zip",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Monthly bulk ZIP (~2.25 GB) of chunked XML; XSD at structure-12052026.xsd. Per entity: ИННЮЛ (INN), ОГРН, НаимОрг, Регион, СвОКВЭД (OKVED), КатСубМСП (micro/small/medium), ССЧР (headcount), ДатаВклМСП. Large file — gate behind explicit env. May be Windows-1251."
+  },
+  {
+    "name": "FNS open data — per-INN tax info (example: SME register passport listing)",
+    "slug": "fns_opendata",
+    "type": "api_page",
+    "url": "https://www.nalog.gov.ru/opendata/",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Lists open datasets (each a passport with a file.nalog.ru bulk URL): rsmp (SMEs), revexp (income/expense), paidtax (paid taxes), sshr (headcount), registerdisqualified. Keyed on INN."
+  }
+]
