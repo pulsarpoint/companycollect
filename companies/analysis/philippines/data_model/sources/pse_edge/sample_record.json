@@ -1,0 +1,8 @@
+{
+  "_note": "Real record extracted from PSE EDGE company directory (POST /companyDirectory/search.ax, keyword=PLDT). Listed company; no personal data.",
+  "company_name": "PLDT Inc.",
+  "stock_symbol": "TEL",
+  "sector": "Services",
+  "subsector": "Telecommunications",
+  "listing_date": "Sep 17, 1953"
+}

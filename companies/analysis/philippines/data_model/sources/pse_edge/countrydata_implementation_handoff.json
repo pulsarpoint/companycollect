@@ -1,0 +1,75 @@
+{
+  "country": "Philippines",
+  "country_slug": "philippines",
+  "source_slug": "pse_edge",
+  "source_identity": "philippines_pse_edge",
+  "source_package": "pseedge",
+  "env_prefix": "PH_PSE_EDGE",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "PSE EDGE — listed-company directory + disclosures",
+    "source_type": "financial_disclosure",
+    "organization": "Philippine Stock Exchange (PSE)",
+    "source_url": "https://edge.pse.com.ph/companyDirectory/search.ax",
+    "license": "public_disclosure",
+    "access": "public",
+    "data_freshness": "event_driven_quarterly",
+    "attribution": "PSE EDGE / issuer"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://edge.pse.com.ph/companyDirectory/search.ax",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["X-Requested-With: XMLHttpRequest", "Content-Type: application/x-www-form-urlencoded"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "table rows (HTML)",
+    "total_results_path": null,
+    "pagination": { "type": "page_number", "page_param": "pageNo", "page_start": 1, "page_size": 50, "page_size_param": "pageSize", "next_page_path": null },
+    "rate_limit": "public POST search; be polite (the full directory is ~280 listed companies)"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "PseListedCompany",
+    "date_formats": ["Jan 02, 2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "POST form: keyword=&sector=&subsector=&pageNo=N&pageSize=50&cmpySortType=ASC&symbolSortType=ASC. Response is an HTML fragment — parse table rows for company name, stock symbol, sector, subsector, listing date (and the cmpy_id in the row link). Use cmpy_id to fetch per-company disclosures + financial reports (PHP). Listed companies only. Join to SEC by name (SEC reg/TIN not on PSE)."
+  },
+  "keys": {
+    "primary_keys": ["stock_symbol"],
+    "join_keys": ["stock_symbol", "company_name", "cmpy_id"],
+    "dedupe_keys": ["stock_symbol"]
+  },
+  "mapping_rules": {
+    "company_id": "stock_symbol (listed entity).",
+    "legal_name": "Company Name.",
+    "activity_code": "sector / subsector (PSE classification).",
+    "listing_date": "Listing Date.",
+    "financials": "per-company disclosures / financial reports (PHP) via cmpy_id."
+  },
+  "fixture_requirements": [
+    "telco issuer (e.g. TEL)",
+    "bank issuer",
+    "holding firm (e.g. AC)",
+    "food issuer (e.g. JFC)",
+    "page boundary (pagination)"
+  ],
+  "live_test_plan": {
+    "smoke": "POST keyword=PLDT; assert PLDT Inc. / TEL / Services / Telecommunications.",
+    "full": "Page through the full directory (~280); fetch disclosures per cmpy_id; politely rate-limit."
+  },
+  "blockers": []
+}

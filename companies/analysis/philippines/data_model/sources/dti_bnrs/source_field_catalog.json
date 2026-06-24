@@ -1,0 +1,23 @@
+{
+  "country": "Philippines",
+  "country_slug": "philippines",
+  "source_slug": "dti_bnrs",
+  "source_name": "DTI BNRS — Business Name Registration (sole proprietors)",
+  "source_type": "official_registry",
+  "organization": "Department of Trade and Industry (DTI)",
+  "source_url": "https://bnrs.dti.gov.ph/search",
+  "license": "not_stated_verification_only",
+  "access": "public_search",
+  "data_freshness": "live",
+  "record_shape": "per_business_name_search_result",
+  "primary_keys": ["bn_number"],
+  "join_keys": ["bn_number", "business_name"],
+  "field_count": 5,
+  "fields": [
+    { "path": "business_name", "source_field": "Business Name", "english_name": "business_name", "meaning": "Registered business/trade name (sole proprietorship).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Sole proprietors only (corporations are SEC).", "source_confidence": "high", "analysis_notes": null },
+    { "path": "bn_number", "source_field": "BN Number", "english_name": "bn_number", "meaning": "DTI business name registration number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Sole-prop id." },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Registration status (Active / Expired / Cancelled).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "scope", "source_field": "Scope / Territorial Coverage", "english_name": "scope", "meaning": "Coverage (Barangay / City-Municipality / Regional / National).", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Barangay/City/Regional/National", "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "region", "source_field": "Region", "english_name": "region", "meaning": "Registered region/location.", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

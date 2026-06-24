@@ -1,0 +1,76 @@
+{
+  "country": "Philippines",
+  "country_slug": "philippines",
+  "source_slug": "dti_bnrs",
+  "source_identity": "philippines_dti_bnrs",
+  "source_package": "dtibnrs",
+  "env_prefix": "PH_DTI_BNRS",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "DTI BNRS — Business Name Registration (sole proprietors)",
+    "source_type": "official_registry",
+    "organization": "Department of Trade and Industry (DTI)",
+    "source_url": "https://bnrs.dti.gov.ph/search",
+    "license": "not_stated_verification_only",
+    "access": "public_search",
+    "data_freshness": "live",
+    "attribution": "DTI BNRS"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://bnrs.dti.gov.ph/search",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "free per-name search; backing API not reverse-engineered"
+  },
+  "snapshot": {
+    "strategy": "html_pages_per_name",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "DtiBusinessName",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "DTI Business Name Registration System for sole proprietorships. Free per-name search/verification (business_name, BN number, status, scope, region). Backing search API not reverse-engineered (the /search page is a SPA). Sole proprietors only — NOT corporations (those are SEC). The owner's name is personal data (Data Privacy Act 2012) — handle with care."
+  },
+  "keys": {
+    "primary_keys": ["bn_number"],
+    "join_keys": ["bn_number", "business_name"],
+    "dedupe_keys": ["bn_number"]
+  },
+  "mapping_rules": {
+    "company_id": "BN Number (sole proprietorship).",
+    "registration_number": "BN Number.",
+    "legal_name": "Business Name.",
+    "status": "Status.",
+    "registered_address": "Region / scope."
+  },
+  "fixture_requirements": [
+    "active national-scope business name",
+    "city/municipality-scope business name",
+    "expired/cancelled registration"
+  ],
+  "live_test_plan": {
+    "smoke": "Reverse the BNRS search request; query a known business name; assert BN number + status.",
+    "full": "Per-name lookups (no open bulk). Sole proprietors only."
+  },
+  "blockers": [
+    "Backing search API not reverse-engineered (SPA)",
+    "Sole proprietors only; no corporate data; no open bulk"
+  ]
+}

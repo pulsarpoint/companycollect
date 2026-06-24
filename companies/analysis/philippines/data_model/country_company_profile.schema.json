@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Philippines Company Profile",
+  "description": "Country-specific company profile for the Philippines. The official corporate register is the SEC, keyed on the SEC Registration Number, but its documents are PAID: the General Information Sheet (GIS — directors/officers/stockholders/capital) and Audited Financial Statements (AFS) are filed via eFAST (login) and obtained via the SEC Express System (paid per document). The TIN (BIR) is the tax id; VAT-registered businesses use the TIN (no separate VAT number). Listed-company data + financials are OPEN via PSE EDGE (keyed on stock symbol). Sole proprietorships are registered separately with DTI (BN number). Currency PHP; English. GIS directors/officers/stockholders are personal data (Data Privacy Act 2012) — redact. No SEC per-company values were captured (paywall not bypassed); listed data is from PSE EDGE.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Philippines" },
+    "country_slug": { "type": "string", "const": "philippines" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["sec_registration_number"],
+      "properties": {
+        "sec_registration_number": { "type": ["string", "null"], "description": "SEC corporate registration number. Primary id (corporations/partnerships). Paid via SEC Express.", "x-source": "sec_express", "x-source-path": "sec_registration_number", "x-join-key": true, "x-freshness": "live", "x-access": "paid" },
+        "dti_bn_number": { "type": ["string", "null"], "description": "DTI business name number (sole proprietorships only).", "x-source": "dti_bnrs", "x-source-path": "bn_number" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tin": { "type": ["string", "null"], "description": "BIR Tax Identification Number.", "x-source": "sec_express", "x-source-path": "tin" },
+        "vat_id": { "type": ["string", "null"], "description": "Not applicable — VAT-registered businesses use the TIN (no separate VAT number).", "x-access": "not_available" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "sec_express", "x-source-path": "company_name", "x-source-alt": "pse_edge.company_name" },
+        "company_type": { "type": ["string", "null"], "description": "Stock / Non-stock / OPC / Partnership / Branch.", "x-source": "sec_express", "x-source-path": "company_type" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "Active / Revoked / Suspended / Dissolved.", "x-source": "sec_express", "x-source-path": "status" },
+        "incorporation_date": { "type": ["string", "null"], "format": "date", "x-source": "sec_express", "x-source-path": "incorporation_date" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "primary_purpose": { "type": ["string", "null"], "description": "Primary purpose / line of business (PSIC where coded).", "x-source": "sec_express", "x-source-path": "primary_purpose" },
+        "pse_sector": { "type": ["string", "null"], "description": "PSE sector/subsector (listed).", "x-source": "pse_edge", "x-source-path": "sector" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "sec_express", "x-source-path": "registered_address" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "description": "Capital structure (PHP), from the paid SEC GIS.",
+      "x-source": "sec_express",
+      "x-access": "paid",
+      "properties": {
+        "authorized_capital": { "type": ["number", "null"], "x-source-path": "authorized_capital" },
+        "paid_up_capital": { "type": ["number", "null"], "x-source-path": "paid_up_capital" },
+        "currency": { "type": "string", "const": "PHP" }
+      }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Stockholders from the paid SEC GIS. PERSONAL DATA when natural persons (Data Privacy Act 2012) — REDACT.",
+      "x-source": "sec_express",
+      "x-source-path": "stockholders",
+      "x-access": "paid",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "shares": { "type": ["number", "null"] } } }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Directors / officers from the paid SEC GIS. PERSONAL DATA — REDACT.",
+      "x-source": "sec_express",
+      "x-source-path": "directors",
+      "x-access": "paid",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for PSE-listed companies (open via PSE EDGE).",
+      "x-source": "pse_edge",
+      "properties": {
+        "pse_symbol": { "type": ["string", "null"], "x-source-path": "stock_symbol" },
+        "sector": { "type": ["string", "null"], "x-source-path": "sector" },
+        "listing_date": { "type": ["string", "null"], "x-source-path": "listing_date" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "AFS (PHP). PAID via SEC Express (eFAST) for all corporations; OPEN via PSE EDGE for listed companies.",
+      "x-source": "sec_express",
+      "x-access": "paid",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": ["string", "null"] },
+          "total_assets": { "type": ["number", "null"] },
+          "net_income": { "type": ["number", "null"] },
+          "currency": { "type": "string", "const": "PHP" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

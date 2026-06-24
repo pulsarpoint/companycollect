@@ -1,0 +1,66 @@
+{
+  "country": "Philippines",
+  "country_slug": "philippines",
+  "country_profile_version": "2026-06-25",
+  "_note": "Identity/listing from PSE EDGE (verified live: PLDT Inc. / TEL). SEC Registration Number, TIN, capital, directors/officers/stockholders and AFS are paid (SEC Express) — so those values are null. Nothing fabricated.",
+  "registration": {
+    "sec_registration_number": null,
+    "dti_bn_number": null
+  },
+  "tax_identifiers": {
+    "tin": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "PLDT Inc.",
+    "company_type": "Stock corporation (Inc.)"
+  },
+  "status": {
+    "status_text": "Active",
+    "incorporation_date": null
+  },
+  "activity": {
+    "primary_purpose": null,
+    "pse_sector": "Services"
+  },
+  "registered_location": {
+    "registered_address": null
+  },
+  "capital": {
+    "authorized_capital": null,
+    "paid_up_capital": null,
+    "currency": "PHP"
+  },
+  "owners": [
+    { "name": "[REDACTED-PII]", "shares": null }
+  ],
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Director" }
+  ],
+  "listing": {
+    "pse_symbol": "TEL",
+    "sector": "Services",
+    "listing_date": "Sep 17, 1953"
+  },
+  "financial_statements": [
+    { "fiscal_year": "2024", "total_assets": null, "net_income": null, "currency": "PHP" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "pse_edge",
+      "section": "legal_identity / status / activity.pse_sector / listing",
+      "source_url": "https://edge.pse.com.ph/companyDirectory/form.do",
+      "access": "public",
+      "license": "public_disclosure",
+      "retrieved_at": "2026-06-25T00:00:00Z"
+    },
+    {
+      "source_slug": "sec_express",
+      "section": "registration / tax_identifiers / capital / owners / officers / financial_statements",
+      "source_url": "https://secexpress.ph/",
+      "access": "public_paid",
+      "license": "paid_per_document",
+      "retrieved_at": null
+    }
+  ]
+}

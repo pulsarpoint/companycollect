@@ -1,0 +1,25 @@
+{
+  "country": "Philippines",
+  "country_slug": "philippines",
+  "source_slug": "pse_edge",
+  "source_name": "PSE EDGE — listed-company directory + disclosures",
+  "source_type": "financial_disclosure",
+  "organization": "Philippine Stock Exchange (PSE)",
+  "source_url": "https://edge.pse.com.ph/companyDirectory/search.ax",
+  "license": "public_disclosure",
+  "access": "public",
+  "data_freshness": "event_driven_quarterly",
+  "record_shape": "html_table_rows_one_per_listed_company",
+  "primary_keys": ["stock_symbol"],
+  "join_keys": ["stock_symbol", "company_name", "cmpy_id"],
+  "field_count": 7,
+  "fields": [
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Listed company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["PLDT Inc.", "Jollibee Foods Corporation"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Listed companies only (~280).", "source_confidence": "high", "analysis_notes": "Display name." },
+    { "path": "stock_symbol", "source_field": "Stock Symbol", "english_name": "stock_symbol", "meaning": "PSE ticker symbol.", "data_type": "string", "semantic_type": "identifier", "example_values": ["TEL", "JFC", "AC"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": "Listed-entity key." },
+    { "path": "cmpy_id", "source_field": "cmpy_id", "english_name": "pse_company_id", "meaning": "Internal PSE company id (links to disclosures/financials).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PSE-internal id, used in disclosure URLs.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "sector", "source_field": "Sector", "english_name": "sector", "meaning": "PSE sector classification.", "data_type": "string", "semantic_type": "activity", "example_values": ["Services", "Industrial", "Financials", "Holding Firms", "Property"], "nullable": true, "repeatable": false, "code_list": "PSE sectors", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "subsector", "source_field": "Subsector", "english_name": "subsector", "meaning": "PSE subsector.", "data_type": "string", "semantic_type": "activity", "example_values": ["Telecommunications", "Food, Beverage & Tobacco", "Banks"], "nullable": true, "repeatable": false, "code_list": "PSE subsectors", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "listing_date", "source_field": "Listing Date", "english_name": "listing_date", "meaning": "Date the company listed on the PSE.", "data_type": "date", "semantic_type": "date", "example_values": ["Sep 17, 1953", "Jul 14, 1993"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Format 'Mon dd, yyyy'.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "financial_reports", "source_field": "Disclosures / Financial Reports", "english_name": "financial_reports", "meaning": "Per-company disclosures and financial statements (PHP).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "Listed only; currency PHP. Accessed via cmpy_id disclosure pages.", "source_confidence": "high", "analysis_notes": null }
+  ]
+}

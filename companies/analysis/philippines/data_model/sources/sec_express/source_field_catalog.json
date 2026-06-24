@@ -1,0 +1,31 @@
+{
+  "country": "Philippines",
+  "country_slug": "philippines",
+  "source_slug": "sec_express",
+  "source_name": "SEC Express System — company documents (GIS / AFS / Articles)",
+  "source_type": "official_registry",
+  "organization": "Securities and Exchange Commission (SEC)",
+  "source_url": "https://secexpress.ph/",
+  "license": "paid_per_document",
+  "access": "public_paid",
+  "data_freshness": "live",
+  "record_shape": "paid_pdf_documents_gis_afs_articles",
+  "primary_keys": ["sec_registration_number"],
+  "join_keys": ["sec_registration_number", "tin", "company_name"],
+  "field_count": 13,
+  "fields": [
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Registered corporate/partnership name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "PAID — field model from public product descriptions; no real values copied.", "source_confidence": "high", "analysis_notes": "Inc./Corp./OPC/Partnership." },
+    { "path": "sec_registration_number", "source_field": "SEC Registration Number", "english_name": "sec_registration_number", "meaning": "SEC corporate registration number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Formats e.g. CSNNNNNNNN / older ANNNNNNNN.", "source_confidence": "high", "analysis_notes": "Primary key." },
+    { "path": "tin", "source_field": "TIN", "english_name": "tax_id", "meaning": "BIR Tax Identification Number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "9-digit + branch code.", "source_confidence": "medium", "analysis_notes": "Tax join key." },
+    { "path": "company_type", "source_field": "Company Type", "english_name": "company_type", "meaning": "Stock / Non-stock / OPC / Partnership / Branch of foreign corp.", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Stock/Non-stock/OPC/Partnership/Branch", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Corporate status (Active / Revoked / Suspended / Dissolved).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Active/Revoked/Suspended/Dissolved", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "incorporation_date", "source_field": "Date of Incorporation", "english_name": "incorporation_date", "meaning": "Date of incorporation/registration.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "registered_address", "source_field": "Principal Office Address", "english_name": "registered_address", "meaning": "Registered principal office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "primary_purpose", "source_field": "Primary Purpose", "english_name": "primary_purpose", "meaning": "Primary purpose / line of business.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "PSIC where coded", "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "authorized_capital", "source_field": "Authorized Capital Stock", "english_name": "authorized_capital", "meaning": "Authorised capital stock (PHP).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency PHP; from GIS.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "paid_up_capital", "source_field": "Paid-up Capital", "english_name": "paid_up_capital", "meaning": "Paid-up capital (PHP).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency PHP; from GIS.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "directors", "source_field": "Directors / Trustees", "english_name": "directors", "meaning": "Directors or trustees (from GIS).", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA (Data Privacy Act 2012) — REDACT.", "source_confidence": "high", "analysis_notes": "Redact." },
+    { "path": "officers", "source_field": "Officers", "english_name": "officers", "meaning": "Corporate officers (from GIS).", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA — REDACT.", "source_confidence": "high", "analysis_notes": "Redact." },
+    { "path": "stockholders", "source_field": "Stockholders", "english_name": "stockholders", "meaning": "Stockholders and their shareholdings (from GIS).", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA when natural persons — REDACT.", "source_confidence": "high", "analysis_notes": "Redact natural persons." }
+  ]
+}
