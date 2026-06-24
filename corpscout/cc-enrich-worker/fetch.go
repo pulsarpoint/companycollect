@@ -64,6 +64,14 @@ func NewS3Getter(ctx context.Context, region string) (s3Getter, error) {
 	if err != nil {
 		return s3Getter{}, err
 	}
+	// Validate creds upfront so we fail fast with a clear message off-AWS instead of
+	// hanging on the 169.254 IMDS lookup for every fetch.
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if _, err := cfg.Credentials.Retrieve(cctx); err != nil {
+		return s3Getter{}, fmt.Errorf("no usable AWS credentials — export AWS_ACCESS_KEY_ID + "+
+			"AWS_SECRET_ACCESS_KEY (or run with --s3-anonymous): %w", err)
+	}
 	return s3Getter{client: s3.NewFromConfig(cfg)}, nil
 }
 
