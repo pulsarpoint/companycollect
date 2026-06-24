@@ -1,0 +1,75 @@
+{
+  "country": "Thailand",
+  "country_slug": "thailand",
+  "source_slug": "set_listed",
+  "source_identity": "thailand_set_listed",
+  "source_package": "setlisted",
+  "env_prefix": "TH_SET",
+  "implementation_status": "sample_only",
+  "source": {
+    "source_name": "SET — Stock Exchange of Thailand (listed financials)",
+    "source_type": "financial_disclosure",
+    "organization": "The Stock Exchange of Thailand (SET)",
+    "source_url": "https://www.set.or.th/",
+    "license": "public_disclosure",
+    "access": "public",
+    "data_freshness": "quarterly",
+    "attribution": "SET / issuer"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.set.or.th/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public site; confirm the listed-company/financial JSON endpoints"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "SetListedCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Listed-company profiles + financial statements (THB). Public via browser; confirm the SET data endpoints before implementation. Listed only (~800). Join filings to the DBD OpenAPI via the 13-digit juristic ID."
+  },
+  "keys": {
+    "primary_keys": ["symbol"],
+    "join_keys": ["symbol", "juristic_id"],
+    "dedupe_keys": ["symbol"]
+  },
+  "mapping_rules": {
+    "company_id": "symbol for the listed entity (juristic_id for the legal entity).",
+    "legal_name": "company_name.",
+    "financials": "financial statements (THB).",
+    "tax_id": "juristic_id where present in filings (join to DBD)."
+  },
+  "fixture_requirements": [
+    "large-cap issuer (e.g. PTT)",
+    "bank issuer (e.g. BBL)",
+    "retail issuer (e.g. CPALL)"
+  ],
+  "live_test_plan": {
+    "smoke": "Confirm the SET listed-company list endpoint; assert symbols PTT/BBL/CPALL.",
+    "full": "Fetch listed financials; join to DBD by juristic ID. Listed subset only."
+  },
+  "blockers": [
+    "SET data endpoints not reverse-engineered in this investigation",
+    "Listed companies only"
+  ]
+}

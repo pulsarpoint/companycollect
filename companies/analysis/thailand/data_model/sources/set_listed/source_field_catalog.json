@@ -1,0 +1,23 @@
+{
+  "country": "Thailand",
+  "country_slug": "thailand",
+  "source_slug": "set_listed",
+  "source_name": "SET — Stock Exchange of Thailand (listed financials)",
+  "source_type": "financial_disclosure",
+  "organization": "The Stock Exchange of Thailand (SET)",
+  "source_url": "https://www.set.or.th/",
+  "license": "public_disclosure",
+  "access": "public",
+  "data_freshness": "quarterly",
+  "record_shape": "per_listed_company_profile_and_filings",
+  "primary_keys": ["symbol"],
+  "join_keys": ["symbol", "company_name", "juristic_id"],
+  "field_count": 5,
+  "fields": [
+    { "path": "symbol", "source_field": "symbol", "english_name": "ticker", "meaning": "SET stock symbol (e.g. PTT, BBL, CPALL).", "data_type": "string", "semantic_type": "identifier", "example_values": ["PTT", "BBL", "CPALL"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Listed companies only.", "source_confidence": "high", "analysis_notes": "Listed-entity key." },
+    { "path": "company_name", "source_field": "company_name", "english_name": "company_name", "meaning": "Listed company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["PTT PUBLIC COMPANY LIMITED"], "nullable": false, "repeatable": false, "code_list": null, "language": "en/th", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "sector", "source_field": "sector / industry", "english_name": "sector", "meaning": "SET industry/sector classification.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "SET industry groups", "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "financial_statements", "source_field": "financial statements", "english_name": "financial_statements", "meaning": "Quarterly/annual financial statements (THB).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en/th", "limitations": "Listed only; currency THB.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "juristic_id", "source_field": "juristic id (in filings)", "english_name": "juristic_id", "meaning": "13-digit juristic id — join key to DBD.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Present in filings/profile; join to DBD OpenAPI.", "source_confidence": "medium", "analysis_notes": "Join key to DBD." }
+  ]
+}

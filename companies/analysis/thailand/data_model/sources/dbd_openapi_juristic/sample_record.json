@@ -1,0 +1,36 @@
+{
+  "_note": "Real record from the open DBD OpenAPI (GET /api/v1/juristic_person/0107544000094). Public company; no personal data. Address shortened for review.",
+  "status": { "code": "1000", "description": "Success" },
+  "data": [
+    {
+      "cd:OrganizationJuristicPerson": {
+        "cd:OrganizationJuristicID": "0107544000094",
+        "cd:OrganizationJuristicNameTH": "บริษัท อินเทอร์เน็ตประเทศไทย จำกัด (มหาชน)",
+        "cd:OrganizationJuristicNameEN": "INTERNET THAILAND PUBLIC COMPANY LIMITED",
+        "cd:OrganizationJuristicType": "บริษัทมหาชนจำกัด",
+        "cd:OrganizationJuristicRegisterDate": "20010914",
+        "cd:OrganizationJuristicStatus": "ยังดำเนินกิจการอยู่",
+        "cd:OrganizationJuristicObjective": {
+          "td:JuristicObjective": {
+            "td:JuristicObjectiveCode": "61101",
+            "td:JuristicObjectiveTextTH": "การบริการอินเทอร์เน็ตแบบใช้สายและไร้สาย",
+            "td:JuristicObjectiveTextEN": "Internet access activities over wired networks"
+          }
+        },
+        "cd:OrganizationJuristicRegisterCapital": "596740267.0",
+        "cd:OrganizationJuristicPaidUpCapital": "596740267.00",
+        "cd:OrganizationJuristicBranchName": "สำนักงานใหญ่",
+        "cd:OrganizationJuristicAddress": {
+          "cr:AddressType": {
+            "cd:AddressNo": "1768",
+            "cd:Building": "ไทยซัมมิท ทาวเวอร์ ชั้นที่ 10-12 และชั้นไอที",
+            "cd:Road": "เพชรบุรีตัดใหม่",
+            "cd:CitySubDivision": { "cr:CitySubDivisionCode": "10170200", "cr:CitySubDivisionTextTH": "บางกะปิ" },
+            "cd:City": { "cr:CityCode": "1017", "cr:CityTextTH": "เขตห้วยขวาง" },
+            "cd:CountrySubDivision": { "cr:CountrySubDivisionCode": "TH-10", "cr:CountrySubDivisionTextTH": "กรุงเทพมหานคร" }
+          }
+        }
+      }
+    }
+  ]
+}

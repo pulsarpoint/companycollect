@@ -1,0 +1,26 @@
+{
+  "country": "Thailand",
+  "country_slug": "thailand",
+  "source_slug": "dbd_datawarehouse",
+  "source_name": "DBD DataWarehouse — company profiles + financial statements",
+  "source_type": "financial_statements",
+  "organization": "Department of Business Development (DBD)",
+  "source_url": "https://datawarehouse.dbd.go.th/",
+  "license": "not_stated_login_required",
+  "access": "login_session_gated",
+  "data_freshness": "annual",
+  "record_shape": "per_company_per_year_financial_statement_login_gated",
+  "primary_keys": ["juristic_id", "financial_year"],
+  "join_keys": ["juristic_id"],
+  "field_count": 8,
+  "fields": [
+    { "path": "juristic_id", "source_field": "เลขทะเบียนนิติบุคคล", "english_name": "juristic_id", "meaning": "13-digit juristic id (join key to the DBD OpenAPI).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY — login-gated; no values copied.", "source_confidence": "high", "analysis_notes": "Join key." },
+    { "path": "financial_year", "source_field": "ปีงบการเงิน", "english_name": "financial_year", "meaning": "Financial statement year.", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "PLANNING-ONLY.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "total_assets", "source_field": "สินทรัพย์รวม", "english_name": "total_assets", "meaning": "Balance sheet total assets.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Thai", "limitations": "PLANNING-ONLY. Currency THB.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "total_liabilities", "source_field": "หนี้สินรวม", "english_name": "total_liabilities", "meaning": "Balance sheet total liabilities.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Thai", "limitations": "PLANNING-ONLY. THB.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "shareholder_equity", "source_field": "ส่วนของผู้ถือหุ้น", "english_name": "shareholder_equity", "meaning": "Shareholders' equity.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Thai", "limitations": "PLANNING-ONLY. THB.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "total_revenue", "source_field": "รายได้รวม", "english_name": "total_revenue", "meaning": "Income statement total revenue.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Thai", "limitations": "PLANNING-ONLY. THB.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "net_profit", "source_field": "กำไร(ขาดทุน)สุทธิ", "english_name": "net_profit", "meaning": "Net profit (loss).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Thai", "limitations": "PLANNING-ONLY. THB.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "financial_ratios", "source_field": "อัตราส่วนทางการเงิน", "english_name": "financial_ratios", "meaning": "Financial ratios (e.g. ROA, ROE, current ratio, D/E).", "data_type": "object", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Thai", "limitations": "PLANNING-ONLY.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

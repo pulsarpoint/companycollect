@@ -1,0 +1,68 @@
+{
+  "country": "Thailand",
+  "country_slug": "thailand",
+  "country_profile_version": "2026-06-24",
+  "_note": "Real identity/capital from the open DBD OpenAPI (PTT PCL). Listing from SET (public knowledge). Full financial statements are DataWarehouse/SET-gated, so financial_statements carries only year + currency placeholders.",
+  "registration": {
+    "juristic_id": "0107544000108"
+  },
+  "tax_identifiers": {
+    "tax_id": "0107544000108",
+    "vat_id": "0107544000108"
+  },
+  "legal_identity": {
+    "name_en": "PTT PUBLIC COMPANY LIMITED",
+    "name_th": "บริษัท ปตท. จำกัด (มหาชน)",
+    "legal_form": "บริษัทมหาชนจำกัด"
+  },
+  "status": {
+    "status_text": "ยังดำเนินกิจการอยู่",
+    "register_date": "20011001"
+  },
+  "activity": {
+    "tsic_code": "71209",
+    "tsic_text_en": null
+  },
+  "registered_location": {
+    "registered_address": null,
+    "province": "กรุงเทพมหานคร"
+  },
+  "capital": {
+    "registered_capital": 28562996250.0,
+    "paid_up_capital": 28562996250.0,
+    "currency": "THB"
+  },
+  "listing": {
+    "set_symbol": "PTT",
+    "sector": "Resources / Energy & Utilities"
+  },
+  "financial_statements": [
+    { "financial_year": "2024", "total_assets": null, "total_revenue": null, "net_profit": null, "currency": "THB" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "dbd_openapi_juristic",
+      "section": "registration / tax_identifiers / legal_identity / status / activity / registered_location / capital",
+      "source_url": "https://openapi.dbd.go.th/api/v1/juristic_person/0107544000108",
+      "access": "public_open_no_key",
+      "license": "official_open_api",
+      "retrieved_at": "2026-06-24T00:00:00Z"
+    },
+    {
+      "source_slug": "set_listed",
+      "section": "listing",
+      "source_url": "https://www.set.or.th/",
+      "access": "public",
+      "license": "public_disclosure",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "dbd_datawarehouse",
+      "section": "financial_statements (login-gated)",
+      "source_url": "https://datawarehouse.dbd.go.th/",
+      "access": "login_session_gated",
+      "license": "not_stated_login_required",
+      "retrieved_at": null
+    }
+  ]
+}

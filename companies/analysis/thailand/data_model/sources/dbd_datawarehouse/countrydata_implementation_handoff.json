@@ -1,0 +1,78 @@
+{
+  "country": "Thailand",
+  "country_slug": "thailand",
+  "source_slug": "dbd_datawarehouse",
+  "source_identity": "thailand_dbd_datawarehouse",
+  "source_package": "dbddw",
+  "env_prefix": "TH_DBD_DW",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "DBD DataWarehouse — financial statements",
+    "source_type": "financial_statements",
+    "organization": "Department of Business Development (DBD)",
+    "source_url": "https://datawarehouse.dbd.go.th/",
+    "license": "not_stated_login_required",
+    "access": "login_session_gated",
+    "data_freshness": "annual",
+    "attribution": "DBD DataWarehouse"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["TH_DBD_DW_USERNAME", "TH_DBD_DW_PASSWORD"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://datawarehouse.dbd.go.th/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["session cookie (login)"],
+    "formats": ["html", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "login/session required; returned 302/403 for automation"
+  },
+  "snapshot": {
+    "strategy": "none_login_gated",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "DbdFinancialStatement",
+    "date_formats": ["2006"],
+    "datetime_formats": [],
+    "number_formats": ["1,234,567.89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "PLANNING-ONLY. Annual financial statements (balance sheet + income statement, THB) + ratios per juristic ID per year. Login/session-gated (302/403 for automation). Confirm the authenticated request/response shape before implementation. Join on the 13-digit juristic ID to the DBD OpenAPI identity."
+  },
+  "keys": {
+    "primary_keys": ["juristic_id", "financial_year"],
+    "join_keys": ["juristic_id"],
+    "dedupe_keys": ["juristic_id", "financial_year"]
+  },
+  "mapping_rules": {
+    "financials.total_assets": "สินทรัพย์รวม (THB).",
+    "financials.total_liabilities": "หนี้สินรวม (THB).",
+    "financials.equity": "ส่วนของผู้ถือหุ้น (THB).",
+    "financials.total_revenue": "รายได้รวม (THB).",
+    "financials.net_profit": "กำไร(ขาดทุน)สุทธิ (THB).",
+    "financials.currency": "Always THB."
+  },
+  "fixture_requirements": [
+    "profitable company year",
+    "loss-making year (negative net profit)",
+    "multiple consecutive years"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (login). Confirm the authenticated financial-statement endpoint.",
+    "full": "Blocked on authentication — requires a DBD DataWarehouse login arrangement."
+  },
+  "blockers": [
+    "Login/session required (302/403 for automation)",
+    "Transport/response shape not confirmed",
+    "Reuse terms not stated"
+  ]
+}
