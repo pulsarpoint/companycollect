@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from dagster_v3.defs.brazil_cnae import tables as brazil_cnae_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.finland_resolved import tables as finland_resolved_tables
@@ -60,6 +61,7 @@ EXPECTED_MIGRATIONS = (
     "000047_corpscout_commoncrawl_technologies",
     "000048_corpscout_commoncrawl_page_signals",
     "000049_corpscout_commoncrawl_domains_nace_confidence",
+    "000050_corpscout_br_cnae_to_nace",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -760,6 +762,22 @@ def test_commoncrawl_page_signals_migration_covers_emails_and_socials() -> None:
         assert f"    {column_name} " in sql
     assert "ORDER BY (root_domain, url, crawl_id)" in sql
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_page_signals" in down_sql
+
+
+def test_brazil_cnae_mapping_migration_covers_exported_columns() -> None:
+    sql = _migration_sql("000050_corpscout_br_cnae_to_nace.up.sql")
+    down_sql = _migration_sql("000050_corpscout_br_cnae_to_nace.down.sql")
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.br_cnae_to_nace" in sql
+    for column_name in brazil_cnae_tables.BR_CNAE_TO_NACE_COLUMNS:
+        assert f"    {column_name} " in sql
+
+    assert "ENGINE = ReplacingMergeTree(pulled_at)" in sql
+    assert (
+        "ORDER BY (cnae_version, cnae_normalized_code, nace_revision, nace_normalized_code)"
+        in sql
+    )
+    assert "DROP TABLE IF EXISTS corpscout.br_cnae_to_nace" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:
