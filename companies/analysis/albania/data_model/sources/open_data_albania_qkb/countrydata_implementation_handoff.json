@@ -1,0 +1,38 @@
+{
+  "country": "Albania", "country_slug": "albania", "source_slug": "open_data_albania_qkb",
+  "source_identity": "albania_open_data_albania_qkb", "source_package": "opendataalbania", "env_prefix": "OPEN_DATA_ALBANIA",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Open Corporates Albania (QKB commercial register open data)",
+    "source_type": "official_registry", "organization": "Open Data Albania / AIS (republishing QKB)",
+    "source_url": "https://opencorporates.al/sq/company/", "license": "open_data_albania",
+    "access": "public", "data_freshness": "periodic (mirrors QKB)", "attribution": "Open Data Albania / QKB"
+  },
+  "access": { "requires_authentication": false, "requires_payment": false, "credential_env_vars": [] },
+  "transport": {
+    "access_mode": "single_json_api", "base_url": "https://opencorporates.al/sq/company/",
+    "download_url": "https://opencorporates.al/sq/company/{NIPT}", "http_method": "GET",
+    "headers_required": ["Accept: text/html"], "formats": ["html"], "compression": null, "encoding": "utf-8",
+    "record_path": null, "total_results_path": null,
+    "pagination": { "type": "company_list_pages", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public; pace requests (do not scrape aggressively)"
+  },
+  "snapshot": { "strategy": "ndjson_one_company_per_line", "file_extension": ".ndjson", "preserve_raw_download": false },
+  "parsing": {
+    "record_type_hint": "AlbaniaCompany", "date_formats": ["02.01.2006"], "datetime_formats": [], "number_formats": ["all_decimal"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Company lists + per-company pages /sq/company/{NIPT}. Keyed on NIPT (letter+8digits+letter). Parse emri (name), forma ligjore, administrator (personal data, redact), ortakë (owners), kapitali (ALL), objekti (activity), statusi, former names (ish). UTF-8 (ç ë). NIPT = company id = tax id = VAT id."
+  },
+  "keys": { "primary_keys": ["nipt"], "join_keys": ["nipt"], "dedupe_keys": ["nipt"] },
+  "mapping_rules": {
+    "company_id": "nipt.", "registration_number": "nipt.", "tax_id": "nipt.", "vat_id": "nipt (NIPT serves as VAT id).",
+    "legal_name": "emri.", "legal_form": "forma_ligjore.", "status": "statusi (Aktiv->active).",
+    "activity": "objekti.", "officers": "administrator (PERSONAL DATA — redact).", "owners": "ortakë (PERSONAL DATA — redact)."
+  },
+  "fixture_requirements": ["Sh.p.k. (Ltd) company", "Sh.a. (JSC) company", "Person Fizik (sole trader)", "company with former names (ish)", "record with administrator (assert redaction)"],
+  "live_test_plan": {
+    "smoke": "GET a company list; extract NIPTs; fetch one /sq/company/{NIPT}; parse fields.",
+    "full": "Iterate the lists + per-company pages keyed on NIPT; redact personal data; pace requests."
+  },
+  "blockers": []
+}

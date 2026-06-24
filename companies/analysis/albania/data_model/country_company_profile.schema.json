@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Albania Company Profile",
+  "description": "Country-specific company profile for Albania. Keyed on the NIPT/NUIS (letter+8digits+letter), which is the company id, the tax id, AND the VAT id (Albania has VAT; the NIPT serves as the VAT number). The QKB commercial register is open via Open Data Albania (opencorporates.al) — name, legal form, administrator, owners, capital, activity, status, former names; QKB provides the official per-company extract + financial statements (bilanci, ALL). Administrator/owners are personal data (Law 9887 / GDPR-aligned).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Albania" },
+    "country_slug": { "type": "string", "const": "albania" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object", "required": ["nipt"],
+      "properties": { "nipt": { "type": "string", "description": "NIPT/NUIS (letter+8digits+letter). Company id + tax id + VAT id.", "x-source": "open_data_albania_qkb", "x-source-path": "company.nipt", "x-join-key": true } }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "= NIPT.", "x-source": "open_data_albania_qkb", "x-source-path": "company.nipt" },
+        "vat_id": { "type": ["string", "null"], "description": "= NIPT (NIPT serves as the VAT id).", "x-source": "open_data_albania_qkb", "x-source-path": "company.nipt" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "open_data_albania_qkb", "x-source-path": "company.emri" },
+        "legal_form": { "type": ["string", "null"], "description": "Sh.p.k. / Sh.a. / Person Fizik / Degë.", "x-source": "open_data_albania_qkb", "x-source-path": "company.forma_ligjore" },
+        "former_names": { "type": "array", "items": { "type": "string" }, "x-source": "open_data_albania_qkb", "x-source-path": "company.former_names" }
+      }
+    },
+    "status": { "type": "object", "properties": { "status": { "type": ["string", "null"], "description": "Aktiv/Pasiv/Çregjistruar.", "x-source": "open_data_albania_qkb", "x-source-path": "company.statusi" } } },
+    "incorporation": { "type": "object", "properties": { "registration_date": { "type": ["string", "null"], "format": "date", "x-source": "qkb_registry", "x-source-path": "ekstrakt.data_regjistrimit" } } },
+    "activity": { "type": "object", "properties": { "activity_text": { "type": ["string", "null"], "description": "Objekti i veprimtarisë (free text).", "x-source": "open_data_albania_qkb", "x-source-path": "company.objekti" } } },
+    "capital": { "type": "object", "properties": { "registered_capital_all": { "type": ["number", "null"], "x-source": "open_data_albania_qkb", "x-source-path": "company.kapitali" } } },
+    "officers": {
+      "type": "array",
+      "description": "Administrator + owners (ortakë). PERSONAL DATA (Law 9887 / GDPR) — redact.",
+      "x-source": "open_data_albania_qkb", "x-access": "open_but_personal_data",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Annual financial statements (bilanci) filed with QKB, ALL. Not in clean open bulk.",
+      "x-source": "qkb_registry", "x-access": "qkb_per_company",
+      "items": { "type": "object", "properties": { "fiscal_year": { "type": ["string", "null"] }, "currency": { "type": "string", "const": "ALL" } } }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": { "type": "object", "required": ["source_slug", "section"], "properties": { "source_slug": { "type": "string" }, "section": { "type": "string" }, "source_url": { "type": "string" }, "access": { "type": "string" }, "license": { "type": "string" }, "retrieved_at": { "type": ["string", "null"] } } }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "country": "Albania", "country_slug": "albania", "source_slug": "open_data_albania_qkb",
+  "source_name": "Open Corporates Albania (QKB commercial register open data)",
+  "source_type": "official_registry",
+  "organization": "Open Data Albania / AIS (republishing QKB)",
+  "source_url": "https://opencorporates.al/sq/company/",
+  "license": "open_data_albania", "access": "public",
+  "data_freshness": "periodic (mirrors QKB)",
+  "record_shape": "company_list_and_per_company_pages_keyed_by_nipt",
+  "primary_keys": ["nipt"], "join_keys": ["nipt"],
+  "field_count": 9,
+  "fields": [
+    { "path": "company.nipt", "source_field": "NIPT/NUIS", "english_name": "nipt", "meaning": "Unique business id (letter+8digits+letter). Company id, tax id, VAT id.", "data_type": "string", "semantic_type": "identifier", "example_values": ["L67508702G", "L61307015S", "L61306025U"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Universal join key; = tax id = VAT id." },
+    { "path": "company.emri", "source_field": "Emri", "english_name": "legal_name", "meaning": "Company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["NEXUS GROUP", "MALESIA TRAVEL", "MEDIAL"], "nullable": false, "repeatable": false, "code_list": null, "language": "Albanian", "limitations": "May embed former names (ish ...).", "source_confidence": "high", "analysis_notes": "Real values verified." },
+    { "path": "company.forma_ligjore", "source_field": "Forma ligjore", "english_name": "legal_form", "meaning": "Legal form.", "data_type": "string", "semantic_type": "legal_form", "example_values": ["Sh.p.k.", "Sh.a.", "Person Fizik"], "nullable": true, "repeatable": false, "code_list": "Albanian legal forms", "language": "Albanian", "limitations": null, "source_confidence": "high", "analysis_notes": "Sh.p.k.=Ltd, Sh.a.=JSC, Person Fizik=sole trader, Degë=branch." },
+    { "path": "company.administrator", "source_field": "Administrator", "english_name": "administrator", "meaning": "Administrator (director).", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Albanian", "limitations": "PERSONAL DATA — redact.", "source_confidence": "high", "analysis_notes": "Present per company; personal data." },
+    { "path": "company.ortake", "source_field": "Ortakë / Aksionarë", "english_name": "owners", "meaning": "Owners / shareholders.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Albanian", "limitations": "PERSONAL DATA where individuals — redact.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "company.kapitali", "source_field": "Kapitali", "english_name": "capital", "meaning": "Registered capital (ALL).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "company.objekti", "source_field": "Objekti i veprimtarisë", "english_name": "activity", "meaning": "Activity / business purpose (free text).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "Albanian", "limitations": "Free text; NACE-aligned.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "company.statusi", "source_field": "Statusi", "english_name": "status", "meaning": "Status.", "data_type": "string", "semantic_type": "status", "example_values": ["Aktiv", "Pasiv", "Çregjistruar"], "nullable": true, "repeatable": false, "code_list": "Aktiv/Pasiv/Çregjistruar", "language": "Albanian", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "company.former_names", "source_field": "Emra të mëparshëm (ish)", "english_name": "former_names", "meaning": "Former names.", "data_type": "array", "semantic_type": "legal_name", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Albanian", "limitations": null, "source_confidence": "high", "analysis_notes": "Marked 'ish' in the name." }
+  ]
+}

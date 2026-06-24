@@ -1,0 +1,19 @@
+{
+  "country": "Albania",
+  "country_slug": "albania",
+  "country_profile_version": "2026-06-24",
+  "_note": "registration/tax_identifiers/legal_identity are REAL data from Open Data Albania (opencorporates.al, QKB open data) — NEXUS GROUP, NIPT L67508702G. NIPT = company id = tax id = VAT id. officers (administrator/owners) are personal data (Law 9887/GDPR) and redacted/empty. incorporation/financial_statements come from the QKB official extract (per-company).",
+  "registration": { "nipt": "L67508702G" },
+  "tax_identifiers": { "tax_id": "L67508702G", "vat_id": "L67508702G" },
+  "legal_identity": { "legal_name": "NEXUS GROUP", "legal_form": null, "former_names": [] },
+  "status": { "status": "Aktiv" },
+  "incorporation": { "registration_date": null },
+  "activity": { "activity_text": null },
+  "capital": { "registered_capital_all": null },
+  "officers": [],
+  "financial_statements": [],
+  "source_provenance": [
+    { "source_slug": "open_data_albania_qkb", "section": "registration / tax_identifiers / legal_identity / status / activity / capital / officers", "source_url": "https://opencorporates.al/sq/company/L67508702G", "access": "public (no key)", "license": "open_data_albania", "retrieved_at": "2026-06-24T00:00:00Z" },
+    { "source_slug": "qkb_registry", "section": "incorporation / financial_statements (per-company extract)", "source_url": "https://qkb.gov.al/", "access": "free per-company extract", "license": "official_register", "retrieved_at": null }
+  ]
+}

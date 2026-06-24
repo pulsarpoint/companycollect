@@ -1,0 +1,41 @@
+{
+  "_comment": "Real records from Open Data Albania (opencorporates.al), QKB commercial register open data. NIPT = company id = tax id = VAT id. Administrator/owners are personal data and redacted.",
+  "companies": [
+    {
+      "nipt": "L61306065C",
+      "emri": "ASTREA'' (",
+      "administrator": "[REDACTED-PII]",
+      "url": "https://opencorporates.al/sq/company/L61306065C"
+    },
+    {
+      "nipt": "L61306025U",
+      "emri": "MEDIAL (",
+      "administrator": "[REDACTED-PII]",
+      "url": "https://opencorporates.al/sq/company/L61306025U"
+    },
+    {
+      "nipt": "L61306009P",
+      "emri": "ONE EXPLORER (",
+      "administrator": "[REDACTED-PII]",
+      "url": "https://opencorporates.al/sq/company/L61306009P"
+    },
+    {
+      "nipt": "L61307015S",
+      "emri": "MALESIA TRAVEL",
+      "administrator": "[REDACTED-PII]",
+      "url": "https://opencorporates.al/sq/company/L61307015S"
+    },
+    {
+      "nipt": "L67508702G",
+      "emri": "NEXUS GROUP",
+      "administrator": "[REDACTED-PII]",
+      "url": "https://opencorporates.al/sq/company/L67508702G"
+    },
+    {
+      "nipt": "L61308059O",
+      "emri": "SAFETY ALBANIA (I",
+      "administrator": "[REDACTED-PII]",
+      "url": "https://opencorporates.al/sq/company/L61308059O"
+    }
+  ]
+}

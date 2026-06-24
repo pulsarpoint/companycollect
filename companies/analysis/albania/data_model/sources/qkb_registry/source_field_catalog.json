@@ -1,0 +1,16 @@
+{
+  "country": "Albania", "country_slug": "albania", "source_slug": "qkb_registry",
+  "source_name": "QKB — National Business Center (commercial register extract)",
+  "source_type": "official_registry", "organization": "Qendra Kombëtare e Biznesit (QKB)",
+  "source_url": "https://qkb.gov.al/", "license": "official_register", "access": "public_search",
+  "data_freshness": "live register", "record_shape": "per_company_extract_ekstrakt",
+  "primary_keys": ["nipt"], "join_keys": ["nipt"], "field_count": 6,
+  "fields": [
+    { "path": "ekstrakt.nipt", "source_field": "NIPT/NUIS", "english_name": "nipt", "meaning": "Unique business id.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Authoritative; free per-company extract.", "source_confidence": "high", "analysis_notes": "= tax id = VAT id." },
+    { "path": "ekstrakt.emri", "source_field": "Emri", "english_name": "legal_name", "meaning": "Company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "Albanian", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "ekstrakt.forma_ligjore", "source_field": "Forma ligjore", "english_name": "legal_form", "meaning": "Legal form.", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Albanian legal forms", "language": "Albanian", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "ekstrakt.data_regjistrimit", "source_field": "Data e regjistrimit", "english_name": "registration_date", "meaning": "Registration date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "ekstrakt.administrator_ortake", "source_field": "Administrator / Ortakë", "english_name": "officers_owners", "meaning": "Administrator + owners/shareholders.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Albanian", "limitations": "PERSONAL DATA — redact.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "ekstrakt.bilanci", "source_field": "Pasqyrat financiare / Bilanci", "english_name": "financial_statements", "meaning": "Annual financial statements (ALL).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "Albanian", "limitations": "Filed with QKB; not clean open bulk.", "source_confidence": "medium", "analysis_notes": "Currency ALL (Lek)." }
+  ]
+}
