@@ -1,0 +1,86 @@
+{
+  "country": "Kosovo",
+  "country_slug": "kosovo",
+  "source_slug": "arbk_business_register",
+  "source_identity": "kosovo_arbk_business_register",
+  "source_package": "arbk",
+  "env_prefix": "KS_ARBK",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "ARBK — Kosovo Business Registration Agency",
+    "source_type": "official_registry",
+    "organization": "ARBK / Ministry of Industry, Entrepreneurship and Trade (MINT)",
+    "source_url": "https://arbk.rks-gov.net/",
+    "license": "not_stated_verification_only",
+    "access": "public_browser_only_captcha_and_bearer_gated",
+    "data_freshness": "live",
+    "attribution": "ARBK (Agjencia për Regjistrimin e Bizneseve të Kosovës)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://arbk.rks-gov.net/api/api/Services/",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["Authorization: Bearer <SPA token>", "Cloudflare Turnstile token in body"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "all Services/* return 401 without bearer; search requires Turnstile CAPTCHA; export gated"
+  },
+  "snapshot": {
+    "strategy": "none_blocked",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "ArbkBiznes",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "BLOCKED. Official Kosovo register. Endpoints: Services/KerkoBiznesin (search, Turnstile token), Services/TeDhenatBiznesit (details), Services/EksportoBizneset (export). All require the SPA bearer (401 otherwise) and the search a Cloudflare Turnstile CAPTCHA token. Do NOT bypass. Field model documented from the SPA JS. NUI = Numri Fiskal (9-digit) = primary id; Numri TVSH = VAT (separate). Redact owners (Pronarët). Only open financial-ish field is registered Kapitali (EUR)."
+  },
+  "keys": {
+    "primary_keys": ["NumriUnikIdentifikues"],
+    "join_keys": ["NumriUnikIdentifikues", "NumriFiskal"],
+    "dedupe_keys": ["NumriUnikIdentifikues"]
+  },
+  "mapping_rules": {
+    "company_id": "NumriUnikIdentifikues (NUI = Numri Fiskal).",
+    "registration_number": "NumriBiznesit (NRB).",
+    "tax_id": "NumriFiskal (= NUI).",
+    "vat_id": "NumriTVSH (separate).",
+    "legal_name": "Emri.",
+    "status": "StatusiBiznesit (Aktiv/Pasiv/Shuar).",
+    "legal_form": "LlojiBiznesit.",
+    "incorporation_date": "DataRegjistrimit.",
+    "registered_address": "Adresa + Komuna.",
+    "activity_code": "AktivitetiKryesor.",
+    "capital": "Kapitali (EUR).",
+    "owners": "Pronarët (REDACT natural persons)."
+  },
+  "fixture_requirements": [
+    "active Sh.P.K. with single owner",
+    "business with foreign ownership %",
+    "dissolved (Shuar) business",
+    "VAT-registered business (Numri TVSH present)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless — bearer + Turnstile CAPTCHA required. Confirm access path with ARBK before any implementation.",
+    "full": "Blocked on authentication/CAPTCHA. Requires an official data-sharing agreement or API credentials from ARBK/MINT."
+  },
+  "blockers": [
+    "All Services/* endpoints return HTTP 401 without the SPA bearer token",
+    "Search (KerkoBiznesin) requires a Cloudflare Turnstile CAPTCHA token",
+    "Export (EksportoBizneset) is auth-gated; no open bulk",
+    "No published open API key or data-sharing endpoint"
+  ]
+}

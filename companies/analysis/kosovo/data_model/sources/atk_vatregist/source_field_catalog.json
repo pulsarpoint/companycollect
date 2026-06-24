@@ -1,0 +1,28 @@
+{
+  "country": "Kosovo",
+  "country_slug": "kosovo",
+  "source_slug": "atk_vatregist",
+  "source_name": "ATK — VatRegist / SearchTaxPayer",
+  "source_type": "tax_registry",
+  "organization": "Administrata Tatimore e Kosovës (ATK / Tax Administration of Kosovo)",
+  "source_url": "https://apps.atk-ks.org/BizPasiveApp/VatRegist/SearchTaxPayer",
+  "license": "not_stated_verification_only",
+  "access": "public_search_captcha_gated",
+  "data_freshness": "live",
+  "record_shape": "json_taxpayer_detail_behind_captcha",
+  "primary_keys": ["FiscalNo"],
+  "join_keys": ["FiscalNo", "NrbID"],
+  "field_count": 10,
+  "fields": [
+    { "path": "tpResult.FiscalNo", "source_field": "FiscalNo", "english_name": "fiscal_number", "meaning": "Fiscal/tax number (= NUI for businesses).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "CAPTCHA-gated; documented from the form output fields, no live values.", "source_confidence": "high", "analysis_notes": "Join key to ARBK NUI." },
+    { "path": "tpResult.NrbID", "source_field": "NrbID", "english_name": "business_number", "meaning": "Business registration number (NRB).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "tpResult.VatNo", "source_field": "VatNo", "english_name": "vat_number", "meaning": "VAT number (if VAT-registered).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "tpResult.VatTypeAl", "source_field": "VatTypeAl", "english_name": "vat_type", "meaning": "VAT type / registration category (Albanian).", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "sq", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "tpResult.TpName", "source_field": "TpName", "english_name": "taxpayer_name", "meaning": "Taxpayer / business name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "sq/sr/en", "limitations": "PERSONAL DATA if sole trader — handle with care.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "tpResult.TpStatus", "source_field": "TpStatus", "english_name": "taxpayer_status", "meaning": "Taxpayer status (active / deregistered).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "sq", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "tpResult.Address", "source_field": "Address", "english_name": "address", "meaning": "Registered address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "sq/sr", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "tpResult.CityName", "source_field": "CityName", "english_name": "city", "meaning": "City.", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "sq/sr", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "tpResult.ParishName", "source_field": "ParishName", "english_name": "parish_settlement", "meaning": "Parish / settlement.", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "sq/sr", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "tpResult.TaxCentreName", "source_field": "TaxCentreName", "english_name": "tax_centre", "meaning": "Responsible ATK tax centre/office.", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "sq", "limitations": null, "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

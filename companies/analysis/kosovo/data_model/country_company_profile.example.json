@@ -1,0 +1,66 @@
+{
+  "country": "Kosovo",
+  "country_slug": "kosovo",
+  "country_profile_version": "2026-06-24",
+  "_note": "Structural example only. ARBK and ATK per-company lookups are CAPTCHA/bearer gated; no real per-company values were extracted (controls not bypassed). Identifier/value fields are placeholders.",
+  "registration": {
+    "nui": "[CAPTCHA-GATED-NOT-EXTRACTED]",
+    "business_number_nrb": "[CAPTCHA-GATED]"
+  },
+  "tax_identifiers": {
+    "fiscal_number": "[CAPTCHA-GATED]",
+    "tax_id": "[CAPTCHA-GATED]",
+    "vat_id": null
+  },
+  "legal_identity": {
+    "business_name": "[CAPTCHA-GATED]",
+    "legal_form": "Sh.P.K. (Shoqëri me Përgjegjësi të Kufizuar / LLC)"
+  },
+  "status": {
+    "status_text": "Aktiv",
+    "registration_date": null
+  },
+  "activity": {
+    "primary_activity": "[Aktiviteti Kryesor]",
+    "other_activities": [],
+    "sector": null
+  },
+  "registered_location": {
+    "registered_address": "[Adresa]",
+    "municipality": "[Komuna]"
+  },
+  "capital": {
+    "registered_capital": null,
+    "currency": "EUR",
+    "foreign_ownership_pct": null
+  },
+  "owners": [
+    { "name": "[REDACTED-PII]", "ownership_pct": null }
+  ],
+  "employment": {
+    "employees": null
+  },
+  "tax_status": {
+    "taxpayer_status": "[ATK TpStatus — CAPTCHA-gated]",
+    "vat_type": null,
+    "tax_centre": null
+  },
+  "source_provenance": [
+    {
+      "source_slug": "arbk_business_register",
+      "section": "registration / tax_identifiers / legal_identity / status / activity / registered_location / capital / owners / employment",
+      "source_url": "https://arbk.rks-gov.net/",
+      "access": "public_browser_only_captcha_and_bearer_gated",
+      "license": "not_stated_verification_only",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "atk_vatregist",
+      "section": "tax_status / tax_identifiers cross-check",
+      "source_url": "https://apps.atk-ks.org/BizPasiveApp/VatRegist/Index",
+      "access": "public_search_captcha_gated",
+      "license": "not_stated_verification_only",
+      "retrieved_at": null
+    }
+  ]
+}

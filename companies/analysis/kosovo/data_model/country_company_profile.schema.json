@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Kosovo Company Profile",
+  "description": "Country-specific company profile for Kosovo. Identity comes from ARBK (Kosovo Business Registration Agency) keyed on the NUI (Numri Unik Identifikues = Numri Fiskal, 9-digit company id = tax id); the VAT number (Numri i TVSH) is separate. Both the ARBK API and the ATK VatRegist tax lookup are GATED (ARBK: bearer 401 + Cloudflare Turnstile CAPTCHA; ATK: CAPTCHA) — there is no open bulk/API and no per-company values were extracted (controls not bypassed). The only open financial datapoint is ARBK registered capital (EUR); there is no public financial-statements register. Owners (Pronarët) are personal data (Law 06/L-082) — redact. Tri-lingual (sq/sr/en); currency EUR.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Kosovo" },
+    "country_slug": { "type": "string", "const": "kosovo" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["nui"],
+      "properties": {
+        "nui": { "type": "string", "description": "Numri Unik Identifikues — unique id (= Numri Fiskal, 9-digit). Company id = tax id; primary join key.", "x-source": "arbk_business_register", "x-source-path": "NumriUnikIdentifikues", "x-join-key": true, "x-freshness": "live", "x-access": "captcha_bearer_gated" },
+        "business_number_nrb": { "type": ["string", "null"], "description": "Numri i Biznesit (NRB) — business registration number.", "x-source": "arbk_business_register", "x-source-path": "NumriBiznesit" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "fiscal_number": { "type": ["string", "null"], "description": "Numri Fiskal (= NUI).", "x-source": "arbk_business_register", "x-source-path": "NumriFiskal" },
+        "tax_id": { "type": ["string", "null"], "description": "= NUI / fiscal number.", "x-source": "atk_vatregist", "x-source-path": "tpResult.FiscalNo" },
+        "vat_id": { "type": ["string", "null"], "description": "Numri i TVSH-së — VAT number, separate (only if VAT-registered).", "x-source": "arbk_business_register", "x-source-path": "NumriTVSH" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "business_name": { "type": ["string", "null"], "x-source": "arbk_business_register", "x-source-path": "Emri" },
+        "legal_form": { "type": ["string", "null"], "description": "B.I./O.P./Sh.P.K./Sh.A./Degë.", "x-source": "arbk_business_register", "x-source-path": "LlojiBiznesit" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "Aktiv / Pasiv / Shuar.", "x-source": "arbk_business_register", "x-source-path": "StatusiBiznesit" },
+        "registration_date": { "type": ["string", "null"], "format": "date", "x-source": "arbk_business_register", "x-source-path": "DataRegjistrimit" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "primary_activity": { "type": ["string", "null"], "x-source": "arbk_business_register", "x-source-path": "AktivitetiKryesor" },
+        "other_activities": { "type": "array", "items": { "type": "string" }, "x-source": "arbk_business_register", "x-source-path": "Aktivitetet" },
+        "sector": { "type": ["string", "null"], "x-source": "arbk_business_register", "x-source-path": "Sektori" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "arbk_business_register", "x-source-path": "Adresa" },
+        "municipality": { "type": ["string", "null"], "x-source": "arbk_business_register", "x-source-path": "Komuna" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "description": "Registered capital (EUR). The only openly-modelled financial datapoint; no financial statements are published.",
+      "x-source": "arbk_business_register",
+      "x-source-path": "Kapitali",
+      "properties": {
+        "registered_capital": { "type": ["number", "null"] },
+        "currency": { "type": "string", "const": "EUR" },
+        "foreign_ownership_pct": { "type": ["number", "null"], "x-source-path": "PronariHuaj" }
+      }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Owners (Pronarët) with ownership %. PERSONAL DATA when natural persons (Law 06/L-082) — REDACT.",
+      "x-source": "arbk_business_register",
+      "x-source-path": "Pronaret",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "ownership_pct": { "type": ["number", "null"] } } }
+    },
+    "employment": {
+      "type": "object",
+      "properties": {
+        "employees": { "type": ["integer", "null"], "x-source": "arbk_business_register", "x-source-path": "NumriPunetoreve" }
+      }
+    },
+    "tax_status": {
+      "type": "object",
+      "description": "Tax-side cross-check from ATK VatRegist (CAPTCHA-gated).",
+      "x-source": "atk_vatregist",
+      "x-access": "captcha_gated",
+      "properties": {
+        "taxpayer_status": { "type": ["string", "null"], "x-source-path": "tpResult.TpStatus" },
+        "vat_type": { "type": ["string", "null"], "x-source-path": "tpResult.VatTypeAl" },
+        "tax_centre": { "type": ["string", "null"], "x-source-path": "tpResult.TaxCentreName" }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

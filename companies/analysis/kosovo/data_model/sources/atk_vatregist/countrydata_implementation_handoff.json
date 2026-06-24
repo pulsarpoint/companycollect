@@ -1,0 +1,78 @@
+{
+  "country": "Kosovo",
+  "country_slug": "kosovo",
+  "source_slug": "atk_vatregist",
+  "source_identity": "kosovo_atk_vatregist",
+  "source_package": "atkvatregist",
+  "env_prefix": "KS_ATK_VAT",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "ATK — VatRegist / SearchTaxPayer",
+    "source_type": "tax_registry",
+    "organization": "Administrata Tatimore e Kosovës (ATK)",
+    "source_url": "https://apps.atk-ks.org/BizPasiveApp/VatRegist/Index",
+    "license": "not_stated_verification_only",
+    "access": "public_search_captcha_gated",
+    "data_freshness": "live",
+    "attribution": "ATK (Tax Administration of Kosovo)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://apps.atk-ks.org/BizPasiveApp/VatRegist/SearchTaxPayer",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["CAPTCHA token (Google/Cloudflare)"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "tpResult",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per-company; CAPTCHA required ('I'm not a robot')"
+  },
+  "snapshot": {
+    "strategy": "none_blocked",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "AtkTaxpayer",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "BLOCKED. Per-company VAT/fiscal verification. term = Nr. Fiskal / NRB / Nr. TVSh / Emri. CAPTCHA-gated — response carries captchaData until solved. Do NOT bypass. Output fields (FiscalNo, NrbID, VatNo, VatTypeAl, TpName, TpStatus, Address, CityName, ParishName, TaxCentreName) documented from the public form. Joins to ARBK on FiscalNo (= NUI). TpName is PII for sole traders — redact."
+  },
+  "keys": {
+    "primary_keys": ["FiscalNo"],
+    "join_keys": ["FiscalNo", "NrbID"],
+    "dedupe_keys": ["FiscalNo"]
+  },
+  "mapping_rules": {
+    "tax_id": "FiscalNo (= ARBK NUI).",
+    "registration_number": "NrbID.",
+    "vat_id": "VatNo.",
+    "legal_name": "TpName (redact if sole trader).",
+    "status": "TpStatus.",
+    "registered_address": "Address + CityName + ParishName."
+  },
+  "fixture_requirements": [
+    "VAT-registered taxpayer (VatNo present)",
+    "non-VAT taxpayer (VatNo null)",
+    "deregistered taxpayer"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless — CAPTCHA required. Confirm access with ATK.",
+    "full": "Blocked on CAPTCHA. Requires an official ATK arrangement."
+  },
+  "blockers": [
+    "CAPTCHA-gated ('I'm not a robot'); response returns captchaData until solved",
+    "Per-company only; no bulk",
+    "No published open API / data-sharing endpoint"
+  ]
+}
