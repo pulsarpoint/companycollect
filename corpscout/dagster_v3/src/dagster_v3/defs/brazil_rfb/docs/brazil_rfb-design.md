@@ -32,9 +32,11 @@ statement grain.
   | Simples | same monthly CNPJ snapshot | ZIP CSV | large | monthly | no |
   | Reference tables (`Cnaes`, `Naturezas`, `Municipios`, `Paises`, `Qualificacoes`, `Motivos`) | same monthly CNPJ snapshot | ZIP CSV | small | monthly | no |
 
-- **Out of scope for this phase**: `Socios` because it carries partner names and
-  masked CPF personal data under LGPD. Do not commit samples from this file. A
-  later restricted enrichment design can decide whether and how to ingest it.
+- **Deferred from this phase**: `Socios` because it mixes corporate partners with
+  natural-person partner names and masked CPF personal data under LGPD. Do not
+  commit samples from this file. A later restricted partner-enrichment design
+  should decide how to ingest it, separating corporate partners from natural
+  persons and defining access, minimization, retention, and redaction rules.
 - **Entity key**: `cnpj_basico` is the legal entity key. Full CNPJ
   (`cnpj_basico` + `cnpj_ordem` + `cnpj_dv`) identifies an establishment.
 - **Expected volume**: tens of millions of legal entities and 50M+ establishment
@@ -154,7 +156,9 @@ statement grain.
     to one company row would lose branch status, contact, and activity data.
   - Share capital has no effective date in RFB CNPJ. USD conversion uses the
     snapshot publish/retrieval date as `fx_rate_date`; document this in metadata.
-  - `Socios` is not exported in this phase due LGPD personal-data risk.
+  - `Socios` is deferred to a separate restricted partner-enrichment design
+    because phase 1 does not define the privacy controls needed for
+    natural-person partner data.
 - **Export subset**: `*_EXPORT_COLUMNS` drops `raw_*` and `source_payload_hash`.
 
 ## 6. Translation
@@ -235,7 +239,10 @@ statement grain.
 - **Brazilian decimal text**: normalize `capital_social` carefully before casting.
 - **Secondary CNAE list**: split the source list set-based in DuckDB and handle
   empty values.
-- **LGPD**: avoid `Socios` in this phase and never commit partner-name samples.
+- **LGPD**: defer `Socios` from this phase and never commit partner-name samples.
+  A future partner design should treat corporate partners differently from
+  natural-person partners and should document purpose, access, minimization,
+  retention, and redaction rules before ingestion.
 - **Mapping coverage**: the current CNAE-to-NACE fixture is only a seed. The full
   registry run must report unmapped CNAE coverage and should not silently drop
   unmapped companies.
