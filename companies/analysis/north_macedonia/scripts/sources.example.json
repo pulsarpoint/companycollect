@@ -1,0 +1,34 @@
+[
+  {
+    "name": "CRM Trade Registry — public search (free basic) / paid distribution",
+    "slug": "crm_trade_registry",
+    "type": "bulk",
+    "url": "https://www.crm.com.mk/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Official register (Central Registry). Free public search returns basic identity/status; bulk + detailed data are PAID via the CRM data-distribution service. Identifiers: ЕМБС/ЕДБ/ДДВ. Hosts were firewalled from this environment (DNS resolves, TCP/HTTP timeout) — re-probe from an unblocked network. Do not bypass paid access."
+  },
+  {
+    "name": "CRM Registry of Annual Accounts (financials, PAID)",
+    "slug": "crm_annual_accounts",
+    "type": "bulk",
+    "url": "https://www.crm.com.mk/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "PLANNING-ONLY. Annual financial statements (Биланс на состојба / Биланс на успех, MKD). Paid via CRM distribution; no open bulk."
+  },
+  {
+    "name": "data.gov.mk CKAN package_search",
+    "slug": "datagovmk_ckan",
+    "type": "api_page",
+    "url": "https://data.gov.mk/api/3/action/package_search",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "start",
+    "page_start": 0,
+    "max_pages": 1,
+    "note": "National CKAN portal. Generally no full register. Unreachable (HTTP 000) from this environment at investigation time."
+  }
+]
