@@ -88,7 +88,8 @@ func main() {
 	worklist := flag.String("worklist", "", "worklist parquet shard (required)")
 	out := flag.String("out", "out", "output prefix: writes <out>-domains.parquet, <out>-tech.parquet")
 	crawlID := flag.String("crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 (required)")
-	concurrency := flag.Int("concurrency", 16, "fetch/parse/tech concurrency")
+	concurrency := flag.Int("concurrency", 32, "fetch/parse/tech concurrency")
+	techMax := flag.Int("tech-max-bytes", techMaxBytes, "cap body bytes fed to Wappalyzer (0=full body; full-body regex is ~1.2s/page)")
 	batch := flag.Int("embed-batch", embedBatch, "embed batch size")
 	embedConc := flag.Int("embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
 	chunkSize := flag.Int("chunk", 1024, "domains per fetch+embed chunk (pipelines fetch/embed; lower = earlier GPU traffic)")
@@ -139,7 +140,7 @@ func main() {
 
 	cfg := ShardConfig{
 		CrawlID: *crawlID, SourceRunID: fmt.Sprintf("go-%d", time.Now().Unix()),
-		ResolvedAt: time.Now().UTC(), Concurrency: *concurrency,
+		ResolvedAt: time.Now().UTC(), Concurrency: *concurrency, TechMaxBytes: *techMax,
 	}
 	start := time.Now()
 	var domains []DomainRow
