@@ -14,6 +14,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/parquet-go/parquet-go"
 
+	"cc-enrich-worker/internal/classify"
 	"cc-enrich-worker/internal/embed"
 	"cc-enrich-worker/internal/fetch"
 	mdl "cc-enrich-worker/internal/model"
@@ -146,12 +147,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("clickhouse connect: %v", err)
 		}
-		ref, protos, err = LoadReference(ctx, conn)
+		ref, protos, err = classify.LoadReference(ctx, conn)
 		if err != nil {
 			conn.Close()
 			log.Fatalf("load reference: %v", err)
 		}
-		meta, metaErr := LoadReferenceMeta(ctx, conn)
+		meta, metaErr := classify.LoadReferenceMeta(ctx, conn)
 		conn.Close()
 		if metaErr != nil {
 			log.Fatalf("load reference meta: %v", metaErr)
@@ -173,7 +174,7 @@ func main() {
 
 		// Fail fast unless the reference covers every NACE category and was built with the same
 		// model + dim this worker will embed pages with (the matching-vector-space invariant).
-		if err := VerifyReference(meta, model, emb); err != nil {
+		if err := classify.VerifyReference(meta, model, emb); err != nil {
 			log.Fatalf("reference check failed: %v", err)
 		}
 		log.Printf("reference check OK: %d/%d categories, model=%s dim=%d", meta.Count, meta.Expected, meta.Model, meta.Dim)

@@ -1,6 +1,16 @@
-package main
+package classify
 
 import "testing"
+
+type fakeEmbedder struct{ vec []float32 }
+
+func (f fakeEmbedder) Embed(texts []string, instr string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i := range texts {
+		out[i] = f.vec
+	}
+	return out, nil
+}
 
 func TestVerifyReference(t *testing.T) {
 	emb8 := fakeEmbedder{vec: make([]float32, 8)} // endpoint produces dim-8 vectors

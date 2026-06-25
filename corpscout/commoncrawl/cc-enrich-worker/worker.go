@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"cc-enrich-worker/internal/classify"
 	"cc-enrich-worker/internal/extract"
 	"cc-enrich-worker/internal/fetch"
 	"cc-enrich-worker/internal/model"
@@ -19,9 +20,7 @@ import (
 
 const classifyInstruction = "Classify the business into its industry category"
 
-type embedderIface interface {
-	Embed(texts []string, instruction string) ([][]float32, error)
-}
+type embedderIface = classify.Embedder
 
 // ShardResult bundles the per-pass outputs (domains from industry; tech/identifiers/
 // profiles from tech). Each maps to its own ClickHouse table.
@@ -210,10 +209,10 @@ func ProcessShard(ctx context.Context, items []model.WorklistItem, getter fetch.
 		for vi, i := range idx {
 			a := aggs[i]
 			var res model.DomainResult
-			if label := MatchSignal(a.primaryText); label != "" {
+			if label := classify.MatchSignal(a.primaryText); label != "" {
 				res = model.DomainResult{PageType: label, NaceMethod: "keyword"}
 			} else {
-				res = Classify(vecs[vi], ref, protos)
+				res = classify.Classify(vecs[vi], ref, protos)
 			}
 			conf := uint8(0)
 			if res.NaceConfident {

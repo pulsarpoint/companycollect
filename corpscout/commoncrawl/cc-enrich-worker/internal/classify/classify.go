@@ -1,4 +1,4 @@
-package main
+package classify
 
 import (
 	"math"
@@ -7,6 +7,13 @@ import (
 
 	"cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/vec"
+)
+
+const (
+	marginThreshold   = 0.03 // confident if top1-top2 >= this
+	pageTypeThreshold = 0.55 // page-type detected if max prototype sim >= this
+	confTopK          = 10   // nace_confidence = softmax over the top-K standardized scores
+	confTemp          = 1.0  // softmax temperature over median/MAD-standardized z-scores (tune on labels)
 )
 
 // division: 2-digit NACE division from a possibly-messy code.

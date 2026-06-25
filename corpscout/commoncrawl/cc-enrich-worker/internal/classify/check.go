@@ -1,4 +1,4 @@
-package main
+package classify
 
 import (
 	"context"
@@ -6,6 +6,11 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
+
+// Embedder is the interface required by VerifyReference to probe the live embedding endpoint.
+type Embedder interface {
+	Embed(texts []string, instruction string) ([][]float32, error)
+}
 
 // ReferenceMeta is the model/dim/coverage of the NACE reference table — used to fail fast at
 // startup if the reference was built with a different model than this worker will embed with
@@ -56,14 +61,14 @@ func LoadReferenceMeta(ctx context.Context, conn driver.Conn) (ReferenceMeta, er
 // VerifyReference fails fast unless the reference table (a) has an embedding for every NACE
 // category, and (b) was built with the same model + dimensionality this worker is about to embed
 // pages with. It probes the live endpoint for the real dimension.
-func VerifyReference(meta ReferenceMeta, model string, emb embedderIface) error {
+func VerifyReference(meta ReferenceMeta, modelName string, emb Embedder) error {
 	if meta.Count != meta.Expected {
 		return fmt.Errorf("reference has embeddings for %d/%d NACE categories — rebuild corpscout.nace_category_embeddings",
 			meta.Count, meta.Expected)
 	}
-	if model != "" && meta.Model != model {
+	if modelName != "" && meta.Model != modelName {
 		return fmt.Errorf("reference built with model=%q but worker is configured for model=%q — rebuild the reference with this model",
-			meta.Model, model)
+			meta.Model, modelName)
 	}
 	probe, err := emb.Embed([]string{"industry classification reference check"}, "")
 	if err != nil {
