@@ -141,25 +141,36 @@ func main() {
 			log.Fatalf("clickhouse connect: %v", err)
 		}
 		ref, protos, err = LoadReference(ctx, conn)
-		conn.Close()
 		if err != nil {
+			conn.Close()
 			log.Fatalf("load reference: %v", err)
+		}
+		meta, metaErr := LoadReferenceMeta(ctx, conn)
+		conn.Close()
+		if metaErr != nil {
+			log.Fatalf("load reference meta: %v", metaErr)
 		}
 		if len(ref.M) == 0 {
 			log.Fatal("empty NACE reference — rebuild corpscout.nace_category_embeddings")
 		}
-		log.Printf("reference: nace=%d page_types=%d dim=%d", len(ref.M), len(protos.P), len(ref.M[0]))
+		log.Printf("reference: nace=%d page_types=%d dim=%d model=%s", len(ref.M), len(protos.P), len(ref.M[0]), meta.Model)
 
 		baseURL := envOr("COMMONCRAWL_EMBED_BASE_URL", "http://localhost:8000/v1")
 		model := envOr("COMMONCRAWL_EMBED_MODEL", "")
 		if model == "" {
-			var err error
 			if model, err = detectModel(baseURL); err != nil {
 				log.Fatalf("detect embed model: %v", err)
 			}
 		}
 		log.Printf("embed endpoint=%s model=%s", baseURL, model)
 		emb = NewEmbedClient(baseURL, model, *batch, *embedConc)
+
+		// Fail fast unless the reference covers every NACE category and was built with the same
+		// model + dim this worker will embed pages with (the matching-vector-space invariant).
+		if err := VerifyReference(meta, model, emb); err != nil {
+			log.Fatalf("reference check failed: %v", err)
+		}
+		log.Printf("reference check OK: %d/%d categories, model=%s dim=%d", meta.Count, meta.Expected, meta.Model, meta.Dim)
 	} else {
 		log.Printf("mode=tech: skipping ClickHouse reference + embedder")
 	}

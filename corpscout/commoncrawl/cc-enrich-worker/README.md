@@ -67,7 +67,10 @@ CPU pegs on tech while the GPU stays fed by industry.
 | **ClickHouse** (`corpscout` db) | industry / both read; driver writes | native protocol | Industry/both **read** the reference tables (`nace_category_embeddings`, `page_type_exemplars`) at startup. The worker does **not** write to ClickHouse — `run_crawl.sh` loads the output Parquet via `clickhouse-client`. |
 
 The reference tables must be built/refreshed with the **same model** the endpoint serves (page
-vectors and reference vectors must match) — see `dagster_v3/scripts/rebuild_reference_embeddings.py`.
+vectors and reference vectors must match) — see `../reference-builder`. **The industry pass
+enforces this at startup** (`check.go`): before processing it verifies the reference covers every
+NACE category and that its `embedding_model`/`embedding_dim` match the configured model and the
+dimension the endpoint actually produces — otherwise it **stops** (`reference check failed: …`).
 
 ---
 
