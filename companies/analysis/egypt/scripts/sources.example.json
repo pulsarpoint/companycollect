@@ -1,0 +1,32 @@
+[
+  {
+    "name": "EGX listed companies + financials (browser; WAF-gated)",
+    "slug": "egx_listed",
+    "type": "bulk",
+    "url": "https://www.egx.com.eg/en/ListedStocks.aspx",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Listed-company profiles, disclosures, financial statements (EGP). ListedStocks.aspx + companiesprofilesearch.aspx load in a browser; data endpoints (getinformation.aspx) are WAF-gated ('Request Rejected') for automation. Do NOT bypass the WAF. Listed only. EGX symbol/ISIN (EG...)."
+  },
+  {
+    "name": "GAFI company establishment / eServices (login-gated)",
+    "slug": "gafi_registry",
+    "type": "bulk",
+    "url": "https://www.gafi.gov.eg/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "GAFI establishes companies + runs login-gated investor eServices. No public company search/register, no open API. Do not bypass login. Redact directors/shareholders (PDP Law 151/2020)."
+  },
+  {
+    "name": "Commercial Registry (السجل التجاري) — not openly searchable",
+    "slug": "commercial_registry",
+    "type": "bulk",
+    "url": "https://www.gov.eg/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Commercial registration number held by GOEIC / Ministry of Supply. Not openly searchable online; no open bulk/API. Placeholder for documentation."
+  }
+]
