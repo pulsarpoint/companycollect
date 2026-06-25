@@ -1,0 +1,78 @@
+{
+  "country": "Georgia",
+  "country_slug": "georgia",
+  "source_slug": "reportal_saras",
+  "source_identity": "georgia_reportal_saras",
+  "source_package": "reportal",
+  "env_prefix": "GE_REPORTAL",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "SARAS Reporting Portal (reportal.ge) — public financial statements",
+    "source_type": "financial_disclosure",
+    "organization": "Service for Accounting, Reporting and Auditing Supervision (SARAS), Ministry of Finance of Georgia",
+    "source_url": "https://reportal.ge/en/Reports",
+    "license": "public_disclosure_unconfirmed",
+    "access": "public_browser_token_gated",
+    "data_freshness": "annual",
+    "attribution": "SARAS Reporting Portal (reportal.ge)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://reportal.ge/en/Reports",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["__RequestVerificationToken (anti-forgery) for POST search"],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public via browser; search requires anti-forgery token"
+  },
+  "snapshot": {
+    "strategy": "preserve_report_pdfs",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "GeReportalCompany",
+    "date_formats": ["2006"],
+    "datetime_formats": [],
+    "number_formats": ["1,234.56"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Official SARAS public financial-statements portal. Browser-public search by identification code / name, but automation is gated: the simple search POST (/en/Base/Search) needs an __RequestVerificationToken; the detailed search GET (/en/Reports/List with orgName, year, legalFormId, naceCodes) returned 404 for guessed URLs. An API host rms.reportal.ge exists but guessed endpoints 404'd. Discover the real search/data endpoint and handle the anti-forgery token/session; do NOT bypass controls. Financials are inside filed PDFs (GEL). Join to NAPR on the 9-digit identification code."
+  },
+  "keys": {
+    "primary_keys": ["identification_code"],
+    "join_keys": ["identification_code", "company_name"],
+    "dedupe_keys": ["identification_code"]
+  },
+  "mapping_rules": {
+    "company_id": "identification_code (9-digit).",
+    "legal_name": "orgName.",
+    "legal_form": "legalFormId.",
+    "activity_code": "naceCodes (NACE Rev.2).",
+    "financials": "Filed financial statements PDF (GEL)."
+  },
+  "fixture_requirements": [
+    "public-interest entity with multiple reporting years",
+    "LLC (შპს) filing",
+    "company with NACE codes populated",
+    "report with both financial statements and management report PDFs"
+  ],
+  "live_test_plan": {
+    "smoke": "Load /en/Reports, obtain the __RequestVerificationToken, and POST a name search; or identify the detailed-search GET endpoint.",
+    "full": "Blocked on transport discovery — resolve the search/data endpoint + token handling; download report PDFs and parse financials (GEL)."
+  },
+  "blockers": [
+    "Search POST requires an anti-forgery token; detailed-search GET endpoint not resolved (404 for guessed URLs)",
+    "Financials are in PDFs (not structured fields)",
+    "License/reuse terms unconfirmed"
+  ]
+}

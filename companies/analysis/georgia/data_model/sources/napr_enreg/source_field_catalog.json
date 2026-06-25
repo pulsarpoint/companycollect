@@ -1,0 +1,26 @@
+{
+  "country": "Georgia",
+  "country_slug": "georgia",
+  "source_slug": "napr_enreg",
+  "source_name": "NAPR — National Agency of Public Registry (e-registry / enreg)",
+  "source_type": "official_registry",
+  "organization": "National Agency of Public Registry (NAPR), Ministry of Justice of Georgia",
+  "source_url": "https://enreg.reestri.gov.ge/main.php",
+  "license": "restricted",
+  "access": "public_search_captcha_gated",
+  "data_freshness": "live",
+  "record_shape": "per_company_extract_captcha_gated_planning_only",
+  "primary_keys": ["identification_code"],
+  "join_keys": ["identification_code", "legal_name"],
+  "field_count": 8,
+  "fields": [
+    { "path": "identification_code", "source_field": "საიდენტიფიკაციო კოდი (Identification Code)", "english_name": "identification_code", "meaning": "9-digit national identification code — the company registration number and tax id.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; search CAPTCHA-gated. Same code used by the Revenue Service as the tax id.", "source_confidence": "high", "analysis_notes": "Universal key for Georgian companies." },
+    { "path": "legal_name", "source_field": "დასახელება (Name)", "english_name": "legal_name", "meaning": "Registered company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "ka", "limitations": "Planning-only; Georgian script (some English).", "source_confidence": "high", "analysis_notes": null },
+    { "path": "legal_form", "source_field": "სამართლებრივი ფორმა (Legal Form)", "english_name": "legal_form", "meaning": "Legal form (e.g. შპს = LLC, სს = JSC, ი.მ = individual entrepreneur).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Georgian legal forms", "language": "ka", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "სტატუსი (Status)", "english_name": "status", "meaning": "Registration status (active / registered / liquidated / suspended).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ka", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "registration_date", "source_field": "რეგისტრაციის თარიღი (Registration Date)", "english_name": "registration_date", "meaning": "Date of registration / incorporation.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; Gregorian.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "registered_address", "source_field": "მისამართი (Address)", "english_name": "registered_address", "meaning": "Registered (legal) address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ka", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "director", "source_field": "დირექტორი (Director)", "english_name": "director", "meaning": "Director / governing person.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ka", "limitations": "PERSONAL DATA — redact (Law on Personal Data Protection). Planning-only.", "source_confidence": "high", "analysis_notes": "Do not store cleartext." },
+    { "path": "partners", "source_field": "პარტნიორები (Partners / Shareholders)", "english_name": "partners", "meaning": "Partners / shareholders.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "ka", "limitations": "PERSONAL DATA when natural persons — redact. Planning-only. Available in the extract (amonaweri) PDF.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

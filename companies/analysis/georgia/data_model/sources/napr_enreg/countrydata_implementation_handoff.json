@@ -1,0 +1,84 @@
+{
+  "country": "Georgia",
+  "country_slug": "georgia",
+  "source_slug": "napr_enreg",
+  "source_identity": "georgia_napr_enreg",
+  "source_package": "naprenreg",
+  "env_prefix": "GE_NAPR",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "NAPR — National Agency of Public Registry (e-registry / enreg)",
+    "source_type": "official_registry",
+    "organization": "National Agency of Public Registry (NAPR), Ministry of Justice of Georgia",
+    "source_url": "https://enreg.reestri.gov.ge/main.php",
+    "license": "restricted",
+    "access": "public_search_captcha_gated",
+    "data_freshness": "live",
+    "attribution": "National Agency of Public Registry (Georgia)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://enreg.reestri.gov.ge/main.php",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["CAPTCHA solution (captcha_validator_field)"],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public search CAPTCHA-gated; api.napr.gov.ge Access Denied; no open bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_captcha_gated",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "GeNaprCompany",
+    "date_formats": ["2006-01-02", "02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Authoritative Georgian company registry via enreg.reestri.gov.ge. The public search/extract is CAPTCHA-gated (captcha_validator_field) and api.napr.gov.ge returns 'Access Denied'. Do NOT bypass the CAPTCHA. No open bulk or free API. Key = 9-digit identification code (registration number + tax id). Georgian (Mkhedruli) script. Redact director/partners (personal data). Field model from public knowledge; no values captured. Confirm whether NAPR offers an official data-sharing/API arrangement."
+  },
+  "keys": {
+    "primary_keys": ["identification_code"],
+    "join_keys": ["identification_code", "legal_name"],
+    "dedupe_keys": ["identification_code"]
+  },
+  "mapping_rules": {
+    "company_id": "identification_code (9-digit).",
+    "registration_number": "identification_code.",
+    "tax_id": "identification_code (same code is the tax id).",
+    "legal_name": "Name (დასახელება).",
+    "legal_form": "Legal Form (შპს/სს/ი.მ).",
+    "status": "Status.",
+    "incorporation_date": "Registration Date.",
+    "registered_address": "Address.",
+    "officers": "Director (REDACT — personal data).",
+    "owners": "Partners/Shareholders (REDACT natural persons)."
+  },
+  "fixture_requirements": [
+    "active LLC (შპს)",
+    "JSC (სს)",
+    "individual entrepreneur (ი.მ)",
+    "liquidated company",
+    "record with director/partners (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (CAPTCHA). Confirm the e-registry access / data-sharing path.",
+    "full": "Blocked on CAPTCHA — requires manual/authorized access or an official NAPR arrangement; redact personal data."
+  },
+  "blockers": [
+    "Public search and extract are CAPTCHA-gated",
+    "api.napr.gov.ge returns 'Access Denied'",
+    "No open bulk file or free API"
+  ]
+}

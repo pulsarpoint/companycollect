@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Georgia Company Profile",
+  "description": "Country-specific company profile for Georgia. The universal key is the 9-digit identification code (საიდენტიფიკაციო კოდი), which is both the company registration number and the tax id (shared by NAPR and the Revenue Service). The authoritative register is the NAPR e-registry (enreg.reestri.gov.ge) — but its public search/extract is CAPTCHA-gated and api.napr.gov.ge returns Access Denied (planning-only). Public financial statements come from the SARAS Reporting Portal (reportal.ge), browser-public but anti-forgery-token-gated for automation. Listed securities come from the Georgian Stock Exchange (GSE) by ISIN. data.gov.ge was firewalled from the investigation environment. Currency GEL; language Georgian (Mkhedruli) + English. Director/partners are personal data (Law on Personal Data Protection) — redact. No registry per-company values were captured.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Georgia" },
+    "country_slug": { "type": "string", "const": "georgia" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["identification_code"],
+      "properties": {
+        "identification_code": { "type": "string", "description": "9-digit national identification code — registration number and tax id. Universal key.", "x-source": "napr_enreg", "x-source-path": "identification_code", "x-join-key": true, "x-freshness": "live", "x-access": "captcha_gated", "x-source-alt": "reportal_saras.identification_code" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "napr_enreg", "x-source-path": "legal_name", "x-source-alt": "reportal_saras.company_name", "x-access": "captcha_gated" },
+        "legal_form": { "type": ["string", "null"], "description": "შპს (LLC) / სს (JSC) / ი.მ (individual entrepreneur).", "x-source": "napr_enreg", "x-source-path": "legal_form", "x-source-alt": "reportal_saras.legal_form" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "NAPR status (active/registered/liquidated).", "x-source": "napr_enreg", "x-source-path": "status", "x-access": "captcha_gated" },
+        "registration_date": { "type": ["string", "null"], "x-source": "napr_enreg", "x-source-path": "registration_date" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "nace_codes": { "type": "array", "items": { "type": "string" }, "description": "NACE Rev.2 codes (from reportal).", "x-source": "reportal_saras", "x-source-path": "nace_codes" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "napr_enreg", "x-source-path": "registered_address", "x-access": "captcha_gated" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Director (NAPR). PERSONAL DATA (Law on Personal Data Protection) — REDACT.",
+      "x-source": "napr_enreg",
+      "x-source-path": "director",
+      "x-access": "captcha_gated_redact",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Partners / shareholders (NAPR extract). PERSONAL DATA when natural persons — REDACT.",
+      "x-source": "napr_enreg",
+      "x-source-path": "partners",
+      "x-access": "captcha_gated_redact",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "share": { "type": ["string", "null"] } } }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Annual financial statements filed at reportal.ge (PDF; GEL). Browser-public; token-gated for automation.",
+      "x-source": "reportal_saras",
+      "x-access": "public_browser_token_gated",
+      "items": {
+        "type": "object",
+        "properties": {
+          "reporting_year": { "type": ["integer", "null"], "x-source-path": "reporting_year" },
+          "financial_statements_pdf": { "type": ["string", "null"], "x-source-path": "financial_statements_pdf" },
+          "currency": { "type": "string", "const": "GEL" }
+        }
+      }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for GSE-listed companies.",
+      "x-source": "gse_listed",
+      "properties": {
+        "isin": { "type": ["string", "null"], "x-source-path": "isin" },
+        "security_name": { "type": ["string", "null"], "x-source-path": "security_name" }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "country": "Georgia",
+  "country_slug": "georgia",
+  "source_slug": "gse_listed",
+  "source_name": "Georgian Stock Exchange (GSE) — listed securities",
+  "source_type": "financial_disclosure",
+  "organization": "Georgian Stock Exchange (GSE / JSC Georgian Stock Exchange)",
+  "source_url": "https://gse.ge/en/securities",
+  "license": "public_disclosure",
+  "access": "public_browser",
+  "data_freshness": "event_driven",
+  "record_shape": "listed_securities_html_page",
+  "primary_keys": ["isin"],
+  "join_keys": ["isin", "security_name"],
+  "field_count": 3,
+  "fields": [
+    { "path": "isin", "source_field": "ISIN", "english_name": "isin", "meaning": "International Securities Identification Number (Georgian).", "data_type": "string", "semantic_type": "identifier", "example_values": ["GE1100000029", "GE2700604186"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Georgian ISINs begin GE. 32 distinct ISINs observed on the securities page.", "source_confidence": "high", "analysis_notes": "Listed-security key." },
+    { "path": "security_name", "source_field": "Security / Issuer Name", "english_name": "security_name", "meaning": "Listed security / issuer name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "ka/en", "limitations": "Listed only; HTML page (names not individually parsed).", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "issuer", "source_field": "Issuer", "english_name": "issuer", "meaning": "Issuing company.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ka/en", "limitations": "No identification code published on the page; join to NAPR by name.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

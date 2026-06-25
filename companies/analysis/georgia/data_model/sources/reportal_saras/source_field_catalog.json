@@ -1,0 +1,25 @@
+{
+  "country": "Georgia",
+  "country_slug": "georgia",
+  "source_slug": "reportal_saras",
+  "source_name": "SARAS Reporting Portal (reportal.ge) — public financial statements",
+  "source_type": "financial_disclosure",
+  "organization": "Service for Accounting, Reporting and Auditing Supervision (SARAS), Ministry of Finance of Georgia",
+  "source_url": "https://reportal.ge/en/Reports",
+  "license": "public_disclosure_unconfirmed",
+  "access": "public_browser_token_gated",
+  "data_freshness": "annual",
+  "record_shape": "company_with_filed_reports_browser_public",
+  "primary_keys": ["identification_code"],
+  "join_keys": ["identification_code", "company_name"],
+  "field_count": 7,
+  "fields": [
+    { "path": "identification_code", "source_field": "Identification (საიდენტიფიკაციო კოდი)", "english_name": "identification_code", "meaning": "9-digit national identification code of the reporting entity.", "data_type": "string", "semantic_type": "identifier", "example_values": ["110782780"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Join key to NAPR; example observed on the Reports page.", "source_confidence": "high", "analysis_notes": "Universal key." },
+    { "path": "company_name", "source_field": "orgName (Company Name)", "english_name": "company_name", "meaning": "Reporting entity name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "ka/en", "limitations": "Detailed-search param orgName; not captured (token-gated).", "source_confidence": "high", "analysis_notes": null },
+    { "path": "legal_form", "source_field": "legalFormId (Legal Form)", "english_name": "legal_form", "meaning": "Legal form of the entity.", "data_type": "string", "semantic_type": "legal_form", "example_values": ["შპს (LLC)"], "nullable": true, "repeatable": false, "code_list": "reportal legal forms (legalFormId)", "language": "ka", "limitations": null, "source_confidence": "high", "analysis_notes": "Search filter legalFormId." },
+    { "path": "nace_codes", "source_field": "naceCodes", "english_name": "nace_codes", "meaning": "NACE economic-activity code(s).", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "NACE Rev.2", "language": "n/a", "limitations": "Search filter naceCodes.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "reporting_year", "source_field": "year", "english_name": "reporting_year", "meaning": "Financial reporting year.", "data_type": "integer", "semantic_type": "date", "example_values": ["2023"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Search filter year.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "financial_statements_pdf", "source_field": "Financial Statements (report)", "english_name": "financial_statements_pdf", "meaning": "Filed annual financial statements (PDF).", "data_type": "string", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "ka/en", "limitations": "PDF document; currency GEL. Accessed via /Reports/Report.", "source_confidence": "high", "analysis_notes": "Financials are in the filed PDF, not structured fields." },
+    { "path": "management_report_pdf", "source_field": "Management Report", "english_name": "management_report_pdf", "meaning": "Filed management report (PDF).", "data_type": "string", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "ka/en", "limitations": "PDF document.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

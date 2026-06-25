@@ -1,0 +1,53 @@
+{
+  "country": "Georgia",
+  "country_slug": "georgia",
+  "country_profile_version": "2026-06-25",
+  "registration": {
+    "identification_code": "110782780"
+  },
+  "legal_identity": {
+    "legal_name": null,
+    "legal_form": "შპს (LLC)"
+  },
+  "status": {
+    "status_text": null,
+    "registration_date": null
+  },
+  "activity": {
+    "nace_codes": []
+  },
+  "registered_location": {
+    "registered_address": null
+  },
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Director (NAPR; CAPTCHA-gated; redacted per data-protection law)" }
+  ],
+  "owners": [
+    { "name": "[REDACTED-PII]", "share": null }
+  ],
+  "financial_statements": [
+    { "reporting_year": null, "financial_statements_pdf": null, "currency": "GEL" }
+  ],
+  "listing": {
+    "isin": null,
+    "security_name": null
+  },
+  "source_provenance": [
+    {
+      "source_slug": "reportal_saras",
+      "section": "registration.identification_code / legal_identity.legal_form / activity.nace_codes / financial_statements",
+      "source_url": "https://reportal.ge/en/Reports",
+      "access": "public_browser_token_gated",
+      "license": "public_disclosure_unconfirmed",
+      "retrieved_at": "2026-06-25T00:00:00Z"
+    },
+    {
+      "source_slug": "napr_enreg",
+      "section": "registration / legal_identity / status / registered_location / officers / owners (planning-only, CAPTCHA-gated)",
+      "source_url": "https://enreg.reestri.gov.ge/main.php",
+      "access": "public_search_captcha_gated",
+      "license": "restricted",
+      "retrieved_at": null
+    }
+  ]
+}
