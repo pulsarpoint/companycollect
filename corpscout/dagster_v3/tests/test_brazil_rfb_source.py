@@ -83,6 +83,25 @@ def test_discover_snapshot_zip_urls_from_directory_html() -> None:
     ]
 
 
+def test_snapshot_year_month_builds_month_directory_url() -> None:
+    assert source.build_year_month_base_url(
+        snapshot_year_month="2026-05",
+        base_url="https://example.test/dados_abertos_cnpj/",
+    ) == "https://example.test/dados_abertos_cnpj/2026-05/"
+
+
+def test_snapshot_year_month_rejects_invalid_format() -> None:
+    try:
+        source.build_year_month_base_url(
+            snapshot_year_month="202605",
+            base_url="https://example.test/dados_abertos_cnpj/",
+        )
+    except ValueError as exc:
+        assert "snapshot_year_month must use YYYY-MM format" in str(exc)
+    else:
+        raise AssertionError("expected invalid snapshot_year_month to fail")
+
+
 def test_download_extract_and_build_manifest_rows(tmp_path: Path) -> None:
     archive_url = "https://example.test/K3241.K03200Y0.D30612.EMPRECSV.zip"
     session = FakeSession(

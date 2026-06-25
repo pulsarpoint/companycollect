@@ -1,4 +1,5 @@
 import dagster as dg
+from pydantic import ValidationError
 
 
 def test_brazil_rfb_raw_assets_are_registered_with_single_writer_pool() -> None:
@@ -45,6 +46,44 @@ def test_brazil_rfb_raw_assets_are_registered_with_single_writer_pool() -> None:
     assert clickhouse_establishments_asset.op.pool == "brazil_rfb_duckdb"
     assert clickhouse_contact_info_asset.op.pool == "brazil_rfb_duckdb"
     assert clickhouse_websites_asset.op.pool == "brazil_rfb_duckdb"
+
+
+def test_brazil_rfb_snapshot_config_documents_year_month_examples() -> None:
+    from dagster_v3.defs.brazil_rfb.assets import BrazilRfbConfig
+
+    fields = BrazilRfbConfig.model_fields
+
+    assert "snapshot_year_month" in fields
+    assert "snapshot_month" not in fields
+    snapshot_field = fields["snapshot_year_month"]
+    assert snapshot_field.description is not None
+    assert "YYYY-MM" in snapshot_field.description
+    assert "2026-05" in snapshot_field.description
+    assert snapshot_field.examples == ["2026-05", "2026-06"]
+    assert fields["snapshot_base_url"].description is not None
+    assert "dados_abertos_cnpj" in fields["snapshot_base_url"].description
+
+
+def test_brazil_rfb_snapshot_config_rejects_old_or_invalid_period_key() -> None:
+    from dagster_v3.defs.brazil_rfb.assets import BrazilRfbConfig
+
+    valid = BrazilRfbConfig(snapshot_year_month="2026-05")
+
+    assert valid.snapshot_year_month == "2026-05"
+
+    try:
+        BrazilRfbConfig(snapshot_year_month="202605")
+    except ValidationError as exc:
+        assert "snapshot_year_month must use YYYY-MM format" in str(exc)
+    else:
+        raise AssertionError("expected invalid snapshot_year_month to fail")
+
+    try:
+        BrazilRfbConfig(snapshot_month="2026-05")
+    except ValidationError as exc:
+        assert "snapshot_year_month" in str(exc)
+    else:
+        raise AssertionError("expected old snapshot_month key to fail")
 
 
 def test_brazil_rfb_raw_asset_depends_on_snapshot_manifest() -> None:

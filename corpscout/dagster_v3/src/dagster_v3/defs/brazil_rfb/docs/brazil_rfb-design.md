@@ -18,8 +18,8 @@ statement grain.
 - **ClickHouse tables planned**:
   - `corpscout.br_companies`: one row per legal entity (`cnpj_basico`).
   - `corpscout.br_establishments`: one row per full 14-digit establishment CNPJ.
-  - `corpscout.br_company_contacts`: one row per establishment contact.
-  - `corpscout.br_company_domains`: deduped company-domain feeder for the common
+  - `corpscout.br_company_contact_info`: one row per establishment contact.
+  - `corpscout.br_websites`: deduped company-domain feeder for the common
     domain graph.
   - `corpscout.br_industries`: one row per deduped legal-entity CNAE activity,
     mapped to one or more NACE categories through `br_cnae_to_nace`.
@@ -63,7 +63,27 @@ statement grain.
 
 - **Download boundary**: a dlt-bounded bulk download asset resolves the monthly
   snapshot file list and downloads ZIP files with retry/backoff. It records the
-  snapshot month, source URLs, file hashes, byte sizes, and retrieved timestamp.
+  `snapshot_year_month`, source URLs, file hashes, byte sizes, and retrieved timestamp.
+- **Launch config**: `snapshot_year_month` is required and must use `YYYY-MM`.
+  Valid examples are `2026-05` and `2026-06`. Invalid examples are `202605`,
+  `2026/05`, and `05-2026`.
+
+  ```yaml
+  ops:
+    brazil_rfb_snapshot_files_duckdb:
+      config:
+        snapshot_year_month: "2026-05"
+  ```
+
+  Override the base URL only for mirrors or tests:
+
+  ```yaml
+  ops:
+    brazil_rfb_snapshot_files_duckdb:
+      config:
+        snapshot_year_month: "2026-05"
+        snapshot_base_url: "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/"
+  ```
 - **DuckDB reader**: use DuckDB `read_csv` over unzipped files with explicit
   column lists, `all_varchar=true`, `header=false`, `delim=';'`, and Latin-1
   decoding. Do not parse rows in Python.

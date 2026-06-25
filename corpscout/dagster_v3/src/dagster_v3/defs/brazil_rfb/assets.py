@@ -6,6 +6,7 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
+from pydantic import Field, field_validator
 
 from dagster_v3.defs.brazil_rfb import contacts, source, staging, tables, transforms
 from dagster_v3.defs.brazil_rfb.clickhouse import (
@@ -31,8 +32,28 @@ CLICKHOUSE_WEBSITES_ASSET_KEY = "brazil_rfb_clickhouse_websites"
 
 
 class BrazilRfbConfig(dg.Config):
-    snapshot_month: str
-    snapshot_base_url: str = source.DEFAULT_BASE_URL
+    snapshot_year_month: str = Field(
+        description=(
+            "Brazil RFB CNPJ snapshot directory in YYYY-MM format. Examples: "
+            "2026-05 or 2026-06. Dagster launch config example: "
+            "ops.brazil_rfb_snapshot_files_duckdb.config.snapshot_year_month: "
+            "'2026-05'."
+        ),
+        examples=["2026-05", "2026-06"],
+    )
+    snapshot_base_url: str = Field(
+        default=source.DEFAULT_BASE_URL,
+        description=(
+            "Base URL for Receita Federal CNPJ open-data snapshots. The asset appends "
+            "the snapshot_year_month value to this URL, for example "
+            "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/2026-05/."
+        ),
+    )
+
+    @field_validator("snapshot_year_month")
+    @classmethod
+    def validate_snapshot_year_month(cls, value: str) -> str:
+        return source.validate_snapshot_year_month(value)
 
 
 class BrazilRfbDltTranslator(DagsterDltTranslator):
@@ -69,9 +90,9 @@ def brazil_rfb_snapshot_files_duckdb(
         context=context,
         dlt_source=source.brazil_rfb_source(
             source_run_id=context.run_id,
-            snapshot_month=config.snapshot_month,
+            snapshot_year_month=config.snapshot_year_month,
             snapshot_base_url=config.snapshot_base_url,
-            download_dir=BRAZIL_RFB_DOWNLOAD_DIR / config.snapshot_month,
+            download_dir=BRAZIL_RFB_DOWNLOAD_DIR / config.snapshot_year_month,
         ),
         dlt_pipeline=source.brazil_rfb_pipeline(BRAZIL_RFB_DUCKDB_PATH),
     )

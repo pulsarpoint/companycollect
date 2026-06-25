@@ -23,6 +23,7 @@ DEFAULT_BASE_URL = "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_aber
 DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_FAMILIES = tuple(tables.RAW_TABLE_BY_FAMILY)
 DOWNLOAD_CHUNK_BYTES = 1 << 20
+SNAPSHOT_YEAR_MONTH_RE = re.compile(r"\d{4}-\d{2}")
 
 
 class HttpSession(Protocol):
@@ -95,22 +96,34 @@ def discover_snapshot_zip_urls(
     return sorted(files, key=lambda item: (item.family, item.archive_name))
 
 
-def build_month_base_url(*, snapshot_month: str, base_url: str = DEFAULT_BASE_URL) -> str:
-    clean_month = snapshot_month.strip()
-    if not re.fullmatch(r"\d{4}-\d{2}", clean_month):
-        raise ValueError("snapshot_month must use YYYY-MM format")
-    return urljoin(base_url.rstrip("/") + "/", clean_month + "/")
+def validate_snapshot_year_month(value: str) -> str:
+    clean_value = value.strip()
+    if not SNAPSHOT_YEAR_MONTH_RE.fullmatch(clean_value):
+        raise ValueError("snapshot_year_month must use YYYY-MM format")
+    return clean_value
+
+
+def build_year_month_base_url(
+    *,
+    snapshot_year_month: str,
+    base_url: str = DEFAULT_BASE_URL,
+) -> str:
+    clean_year_month = validate_snapshot_year_month(snapshot_year_month)
+    return urljoin(base_url.rstrip("/") + "/", clean_year_month + "/")
 
 
 def fetch_snapshot_remote_files(
     *,
-    snapshot_month: str,
+    snapshot_year_month: str,
     base_url: str = DEFAULT_BASE_URL,
     families: Sequence[str] = DEFAULT_FAMILIES,
     session: HttpSession | None = None,
     timeout_seconds: int = 60,
 ) -> list[BrazilRfbRemoteFile]:
-    month_url = build_month_base_url(snapshot_month=snapshot_month, base_url=base_url)
+    month_url = build_year_month_base_url(
+        snapshot_year_month=snapshot_year_month,
+        base_url=base_url,
+    )
     http_session = session or dlt_requests.Session()
     response = http_session.get(month_url, timeout=timeout_seconds)
     response.raise_for_status()
@@ -228,7 +241,7 @@ def brazil_rfb_source(
     *,
     source_run_id: str,
     manifest_rows: Sequence[dict[str, object]] | None = None,
-    snapshot_month: str | None = None,
+    snapshot_year_month: str | None = None,
     snapshot_base_url: str = DEFAULT_BASE_URL,
     download_dir: str | Path | None = None,
     families: Sequence[str] = DEFAULT_FAMILIES,
@@ -236,13 +249,13 @@ def brazil_rfb_source(
 ) -> DltResource:
     if manifest_rows is not None:
         return snapshot_files_resource(manifest_rows)
-    if snapshot_month is None:
-        raise ValueError("snapshot_month is required when manifest_rows is not provided")
+    if snapshot_year_month is None:
+        raise ValueError("snapshot_year_month is required when manifest_rows is not provided")
     resolved_download_dir = (
         Path(download_dir) if download_dir is not None else Path(tempfile.gettempdir()) / "brazil_rfb"
     )
     remote_files = fetch_snapshot_remote_files(
-        snapshot_month=snapshot_month,
+        snapshot_year_month=snapshot_year_month,
         base_url=snapshot_base_url,
         families=families,
         session=session,
