@@ -1,0 +1,62 @@
+{
+  "country": "Saudi Arabia",
+  "country_slug": "saudi_arabia",
+  "country_profile_version": "2026-06-13",
+  "registration": {
+    "cr_number": null,
+    "unified_number_700": null
+  },
+  "tax_identifiers": {
+    "vat_number": null,
+    "tax_id": null
+  },
+  "legal_identity": {
+    "legal_name": "Saudi Arabian Oil Company (Saudi Aramco)",
+    "company_type": "JSC"
+  },
+  "status": {
+    "status_text": null,
+    "issue_date": null,
+    "expiry_date": null
+  },
+  "activity": {
+    "activities": [],
+    "tadawul_sector": "Energy"
+  },
+  "registered_location": {
+    "head_office": null
+  },
+  "capital": {
+    "capital_amount": null,
+    "currency": "SAR"
+  },
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Manager (gated; redacted per PDPL)" }
+  ],
+  "listing": {
+    "symbol": "2222",
+    "isin": "SA...",
+    "sector": "Energy"
+  },
+  "financial_statements": [
+    { "fiscal_year": null, "currency": "SAR" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "moc_commercial_register",
+      "section": "registration / tax_identifiers / legal_identity / status / capital / officers",
+      "source_url": "https://mc.gov.sa/en/eservices/Pages/Commercial-data.aspx",
+      "access": "nafath_login_gated",
+      "license": "restricted_login",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "tadawul_listed",
+      "section": "listing / financial_statements / activity.tadawul_sector / legal_identity.legal_name",
+      "source_url": "https://www.saudiexchange.sa/",
+      "access": "public_browser_waf_gated",
+      "license": "public_disclosure",
+      "retrieved_at": null
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "country": "Saudi Arabia",
+  "country_slug": "saudi_arabia",
+  "source_slug": "tadawul_listed",
+  "source_name": "Saudi Exchange (Tadawul) — listed-company financials",
+  "source_type": "financial_disclosure",
+  "organization": "Saudi Exchange (Tadawul)",
+  "source_url": "https://www.saudiexchange.sa/",
+  "license": "public_disclosure",
+  "access": "public_browser_waf_gated",
+  "data_freshness": "event_driven_quarterly",
+  "record_shape": "listed_company_profile_browser_public_waf_gated",
+  "primary_keys": ["symbol"],
+  "join_keys": ["symbol", "isin", "company_name"],
+  "field_count": 6,
+  "fields": [
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Listed company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Saudi Arabian Oil Company (Saudi Aramco)", "Al Rajhi Bank", "Saudi Basic Industries Corporation (SABIC)"], "nullable": false, "repeatable": false, "code_list": null, "language": "en/ar", "limitations": "Listed companies only; documented from the issuer directory / public knowledge (WAF-gated).", "source_confidence": "medium", "analysis_notes": "Display name." },
+    { "path": "symbol", "source_field": "Symbol", "english_name": "symbol", "meaning": "Tadawul ticker symbol (4-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": ["2222", "1120", "2010", "7010"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Listed-entity key." },
+    { "path": "isin", "source_field": "ISIN", "english_name": "isin", "meaning": "International Securities Identification Number.", "data_type": "string", "semantic_type": "identifier", "example_values": ["SA..."], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Saudi ISINs start SA.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "sector", "source_field": "Sector", "english_name": "sector", "meaning": "TASI / Tadawul sector classification.", "data_type": "string", "semantic_type": "activity", "example_values": ["Energy", "Banking", "Materials"], "nullable": true, "repeatable": false, "code_list": "Tadawul sectors", "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "financial_statements", "source_field": "Financial Statements", "english_name": "financial_statements", "meaning": "Listed-company financial statements (SAR).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en/ar", "limitations": "Listed only; currency SAR; WAF-gated.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "disclosures", "source_field": "Disclosures", "english_name": "disclosures", "meaning": "Issuer disclosures / announcements.", "data_type": "array", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en/ar", "limitations": "WAF-gated for automation.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

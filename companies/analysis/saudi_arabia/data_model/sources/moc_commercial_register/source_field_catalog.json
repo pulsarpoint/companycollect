@@ -1,0 +1,30 @@
+{
+  "country": "Saudi Arabia",
+  "country_slug": "saudi_arabia",
+  "source_slug": "moc_commercial_register",
+  "source_name": "Ministry of Commerce — Commercial Register (السجل التجاري)",
+  "source_type": "official_registry",
+  "organization": "Ministry of Commerce (MoC) / Saudi Business Center",
+  "source_url": "https://mc.gov.sa/en/eservices/Pages/Commercial-data.aspx",
+  "license": "restricted_login",
+  "access": "nafath_login_gated",
+  "data_freshness": "live",
+  "record_shape": "per_company_cr_record_nafath_login_gated",
+  "primary_keys": ["cr_number"],
+  "join_keys": ["cr_number", "unified_number_700", "vat_number", "company_name"],
+  "field_count": 12,
+  "fields": [
+    { "path": "cr_number", "source_field": "Commercial Registration Number (رقم السجل التجاري)", "english_name": "cr_number", "meaning": "10-digit Commercial Registration number with a region prefix.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": "region prefixes (1010 Riyadh, 2050 Eastern, 4030 Jeddah, ...)", "language": "n/a", "limitations": "Documented from public knowledge; Nafath login-gated, no live values.", "source_confidence": "high", "analysis_notes": "Primary key." },
+    { "path": "unified_number_700", "source_field": "Unified National Number (الرقم الموحد / 700)", "english_name": "unified_number_700", "meaning": "700... unified company id linking the CR with government agencies.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Cross-agency join key." },
+    { "path": "vat_number", "source_field": "VAT Number", "english_name": "vat_number", "meaning": "15-digit ZATCA VAT number (starts/ends with 3).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "From ZATCA, not the CR directly.", "source_confidence": "medium", "analysis_notes": "Tax key." },
+    { "path": "company_name", "source_field": "Company Name (AR/EN)", "english_name": "company_name", "meaning": "Registered company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "ar/en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "company_type", "source_field": "Entity Type", "english_name": "company_type", "meaning": "JSC / LLC / SJSC / Sole Proprietorship / Branch.", "data_type": "string", "semantic_type": "legal_form", "example_values": ["JSC", "LLC"], "nullable": true, "repeatable": false, "code_list": "JSC/LLC/SJSC/Sole Proprietorship/Branch", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Active / Expired / Cancelled / Suspended.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Active/Expired/Cancelled/Suspended", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "issue_date", "source_field": "Issue Date", "english_name": "issue_date", "meaning": "CR issue date (Hijri/Gregorian).", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Hijri calendar primary.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "expiry_date", "source_field": "Expiry Date", "english_name": "expiry_date", "meaning": "CR expiry date (CRs are renewed).", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "capital", "source_field": "Capital", "english_name": "capital", "meaning": "Company capital (SAR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency SAR.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "activities", "source_field": "Activities", "english_name": "activities", "meaning": "Licensed economic activities (ISIC-based).", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "ISIC", "language": "ar/en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "head_office", "source_field": "Head Office / Address", "english_name": "head_office", "meaning": "Head-office address (city / region).", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ar/en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "managers", "source_field": "Managers / Owners / Partners", "english_name": "managers", "meaning": "Managers, owners, and partners.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "ar/en", "limitations": "PERSONAL DATA (PDPL) — REDACT.", "source_confidence": "medium", "analysis_notes": "Redact natural persons." }
+  ]
+}

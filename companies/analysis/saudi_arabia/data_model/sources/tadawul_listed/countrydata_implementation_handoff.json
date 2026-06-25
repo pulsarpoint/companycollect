@@ -1,0 +1,75 @@
+{
+  "country": "Saudi Arabia",
+  "country_slug": "saudi_arabia",
+  "source_slug": "tadawul_listed",
+  "source_identity": "saudi_arabia_tadawul_listed",
+  "source_package": "tadawul",
+  "env_prefix": "SA_TADAWUL",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Saudi Exchange (Tadawul) — listed-company financials",
+    "source_type": "financial_disclosure",
+    "organization": "Saudi Exchange (Tadawul)",
+    "source_url": "https://www.saudiexchange.sa/",
+    "license": "public_disclosure",
+    "access": "public_browser_waf_gated",
+    "data_freshness": "event_driven_quarterly",
+    "attribution": "Saudi Exchange (Tadawul) / issuer"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.saudiexchange.sa/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["WAF clearance (browser)"],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public via browser; HTTP 403 'Access Denied' (WAF) for automation"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "TadawulListedCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["1,234,567.89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Listed-company profiles + financial statements (SAR). The Saudi Exchange (Tadawul) issuer directory is public via the browser but returned 403 'Access Denied' (WAF) for automation — do NOT bypass the WAF. Implement behind a browser/clearance context or an official Tadawul feed. Listed only. 4-digit symbol / ISIN (SA...). Join to the MoC Commercial Register by company name / Unified Number."
+  },
+  "keys": {
+    "primary_keys": ["symbol"],
+    "join_keys": ["symbol", "isin", "company_name"],
+    "dedupe_keys": ["symbol"]
+  },
+  "mapping_rules": {
+    "company_id": "symbol (listed entity).",
+    "legal_name": "Company Name.",
+    "activity_code": "Sector (TASI).",
+    "financials": "Financial statements (SAR)."
+  },
+  "fixture_requirements": [
+    "energy issuer (e.g. 2222 Saudi Aramco)",
+    "bank issuer (e.g. 1120 Al Rajhi)",
+    "materials issuer (e.g. 2010 SABIC)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (WAF 403). From a browser context, load the Tadawul issuer directory.",
+    "full": "Blocked on WAF for automation — use a browser/clearance context or an official exchange feed; listed subset only."
+  },
+  "blockers": [
+    "WAF 'Access Denied' (403) on automated requests",
+    "Listed companies only; private financials not public"
+  ]
+}

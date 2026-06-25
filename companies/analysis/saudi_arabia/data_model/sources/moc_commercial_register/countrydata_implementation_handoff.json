@@ -1,0 +1,87 @@
+{
+  "country": "Saudi Arabia",
+  "country_slug": "saudi_arabia",
+  "source_slug": "moc_commercial_register",
+  "source_identity": "saudi_arabia_moc_commercial_register",
+  "source_package": "moccr",
+  "env_prefix": "SA_MOC",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Ministry of Commerce — Commercial Register (السجل التجاري)",
+    "source_type": "official_registry",
+    "organization": "Ministry of Commerce (MoC) / Saudi Business Center",
+    "source_url": "https://mc.gov.sa/en/eservices/Pages/Commercial-data.aspx",
+    "license": "restricted_login",
+    "access": "nafath_login_gated",
+    "data_freshness": "live",
+    "attribution": "Ministry of Commerce (Saudi Arabia)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["SA_MOC_NAFATH_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://mc.gov.sa/en/eservices/Pages/Commercial-data.aspx",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Nafath session (login)"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "CR inquiry requires Nafath login; inquiry sub-hosts NXDOMAIN/firewalled; no open bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_login_gated",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "SaCommercialRegister",
+    "date_formats": ["1446-01-02", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["1,234,567.89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Nafath login-gated. MoC Commercial Register (السجل التجاري). The CR inquiry/verification e-service requires Nafath login; inquiry sub-hosts (eservices.mc.gov.sa, businesscenter.gov.sa, qaweem) NXDOMAIN/firewalled. No open bulk/API. Do NOT bypass login. Dates primarily Hijri (convert). CR number (10-digit, region prefix) = company id; Unified Number (700...) = cross-agency key; VAT (15-digit) from ZATCA. Field model from public knowledge; no values copied. Redact managers/owners (PDPL). Confirm whether an official data-sharing channel exists."
+  },
+  "keys": {
+    "primary_keys": ["cr_number"],
+    "join_keys": ["cr_number", "unified_number_700", "vat_number", "company_name"],
+    "dedupe_keys": ["cr_number"]
+  },
+  "mapping_rules": {
+    "company_id": "CR number (10-digit) or Unified National Number (700).",
+    "registration_number": "CR number.",
+    "tax_id": "VAT number (ZATCA) / Unified Number for tax.",
+    "vat_id": "VAT number (15-digit, ZATCA).",
+    "legal_name": "Company Name.",
+    "company_type": "Entity Type (JSC/LLC/SJSC/Sole Proprietorship/Branch).",
+    "status": "Status (Active/Expired/Cancelled/Suspended).",
+    "incorporation_date": "Issue Date (Hijri->Gregorian).",
+    "registered_address": "Head Office.",
+    "activity_code": "Activities (ISIC).",
+    "capital": "Capital (SAR).",
+    "owners": "Owners / Partners (REDACT natural persons).",
+    "officers": "Managers (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "active JSC",
+    "LLC",
+    "sole proprietorship",
+    "expired/cancelled CR",
+    "record with managers/owners (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (Nafath login). Confirm the CR inquiry access path / data-sharing channel.",
+    "full": "Blocked on authentication — requires a Nafath-authenticated session or an official MoC arrangement; redact personal data."
+  },
+  "blockers": [
+    "CR inquiry requires Nafath login (national digital identity)",
+    "Inquiry sub-hosts (eservices.mc.gov.sa, businesscenter.gov.sa, qaweem) NXDOMAIN/firewalled",
+    "No open bulk/API; transport unconfirmed; dates Hijri"
+  ]
+}

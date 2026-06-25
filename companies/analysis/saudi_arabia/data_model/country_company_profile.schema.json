@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Saudi Arabia Company Profile",
+  "description": "Country-specific company profile for Saudi Arabia. The official register is the Ministry of Commerce Commercial Register (السجل التجاري), keyed on the CR number (10-digit, region-prefixed) with the Unified National Number (700...) as the cross-agency id and the VAT number (15-digit, ZATCA) as the tax/VAT key. The CR inquiry is Nafath login-gated and its inquiry hosts were firewalled from the investigation environment. Listed-company financials come from the Saudi Exchange (Tadawul), keyed on the 4-digit symbol — public via the browser but WAF-gated for automation. open.data.gov.sa was firewalled. Currency SAR; dates Hijri (and Gregorian); Arabic + English. Managers/owners/partners are personal data (PDPL, Royal Decree M/19 of 1443H) — redact. No registry per-company values were captured; listed identity is from Tadawul.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Saudi Arabia" },
+    "country_slug": { "type": "string", "const": "saudi_arabia" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["cr_number"],
+      "properties": {
+        "cr_number": { "type": ["string", "null"], "description": "Commercial Registration number (10-digit, region prefix). Primary id. Nafath login-gated.", "x-source": "moc_commercial_register", "x-source-path": "cr_number", "x-join-key": true, "x-freshness": "live", "x-access": "nafath_login_gated" },
+        "unified_number_700": { "type": ["string", "null"], "description": "Unified National Number (700...), cross-agency company id.", "x-source": "moc_commercial_register", "x-source-path": "unified_number_700" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "vat_number": { "type": ["string", "null"], "description": "VAT number (15-digit, ZATCA; starts/ends with 3).", "x-source": "moc_commercial_register", "x-source-path": "vat_number" },
+        "tax_id": { "type": ["string", "null"], "description": "= VAT number / Unified Number for tax (ZATCA).", "x-source": "moc_commercial_register", "x-source-path": "vat_number" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "moc_commercial_register", "x-source-path": "company_name", "x-source-alt": "tadawul_listed.company_name" },
+        "company_type": { "type": ["string", "null"], "description": "JSC / LLC / SJSC / Sole Proprietorship / Branch.", "x-source": "moc_commercial_register", "x-source-path": "company_type" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "Active / Expired / Cancelled / Suspended.", "x-source": "moc_commercial_register", "x-source-path": "status" },
+        "issue_date": { "type": ["string", "null"], "description": "CR issue date (Hijri/Gregorian).", "x-source": "moc_commercial_register", "x-source-path": "issue_date" },
+        "expiry_date": { "type": ["string", "null"], "x-source": "moc_commercial_register", "x-source-path": "expiry_date" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "activities": { "type": "array", "items": { "type": "string" }, "description": "Licensed activities (ISIC).", "x-source": "moc_commercial_register", "x-source-path": "activities" },
+        "tadawul_sector": { "type": ["string", "null"], "description": "Tadawul sector (listed).", "x-source": "tadawul_listed", "x-source-path": "sector" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "head_office": { "type": ["string", "null"], "x-source": "moc_commercial_register", "x-source-path": "head_office" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "description": "Company capital (SAR), from the Nafath-gated CR.",
+      "x-source": "moc_commercial_register",
+      "x-access": "login_gated",
+      "properties": {
+        "capital_amount": { "type": ["number", "null"], "x-source-path": "capital" },
+        "currency": { "type": "string", "const": "SAR" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Managers / owners / partners from the Nafath-gated CR. PERSONAL DATA (PDPL) — REDACT.",
+      "x-source": "moc_commercial_register",
+      "x-source-path": "managers",
+      "x-access": "login_gated",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for Tadawul-listed companies (public via browser; WAF-gated).",
+      "x-source": "tadawul_listed",
+      "properties": {
+        "symbol": { "type": ["string", "null"], "x-source-path": "symbol" },
+        "isin": { "type": ["string", "null"], "x-source-path": "isin" },
+        "sector": { "type": ["string", "null"], "x-source-path": "sector" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Financial statements (SAR). OPEN via Tadawul for listed companies (WAF-gated for automation); private financials not open.",
+      "x-source": "tadawul_listed",
+      "x-access": "public_browser_waf_gated",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": ["string", "null"] },
+          "currency": { "type": "string", "const": "SAR" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}
