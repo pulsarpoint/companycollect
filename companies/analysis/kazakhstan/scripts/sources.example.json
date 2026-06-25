@@ -1,0 +1,38 @@
+[
+  {
+    "name": "data.egov.kz gbd_ul (State Database of Legal Entities)",
+    "slug": "egov_gbd_ul",
+    "type": "api_page",
+    "url": "https://data.egov.kz/api/v4/gbd_ul/v21?apiKey=YOUR_FREE_API_KEY&size=100",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Open legal-entities register. REQUIRES a FREE API key (register on data.egov.kz). Verified: 403 'API key is required' without a key. Fields: BIN, name, registration date, legal address, OKED activity, director name. Key = BIN (12-digit). Confirm the current version string; redact director name (personal data)."
+  },
+  {
+    "name": "KGD taxpayer search (by BIN)",
+    "slug": "kgd_taxpayer",
+    "type": "api_page",
+    "url": "https://kgd.gov.kz/ru",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "State Revenue Committee taxpayer search + published lists (VAT payers, inactive/pseudo taxpayers). Browser-public; per-BIN/IIN search and downloadable XLSX lists. Adds tax/VAT status."
+  },
+  {
+    "name": "Kazakhstan Stock Exchange — listed (SPA)",
+    "slug": "kase_listed",
+    "type": "api_page",
+    "url": "https://kase.kz/en/shares",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Listed companies/securities. Browser-public; listing pages 301-redirect (SPA). ISIN KZxxxxxxxxxx. Listed only."
+  }
+]
