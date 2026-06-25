@@ -243,6 +243,12 @@ make clickhouse-migrate-down      # roll back one
 > `commoncrawl_domains` — the NACE industry fields are columns *on the per-domain row*, not a
 > separate table. `Go struct ↔ column` mappings are `DomainRow`/`TechRow` in `output.go`.
 
+> **Multi-page tech, single source_url:** the tech pass unions technologies/identifiers/profiles
+> across *all* of a domain's pages (the `tech` worklist gives many pages/domain — see
+> `../index-builder`). The rows' `url`/`source_url` is the domain's first fetched page (homepage),
+> **not** the exact page a given LEI/VAT was found on — the `root_domain` join key is unaffected,
+> but per-page provenance is a future change.
+
 > **Confidence:** `nace_confident` (UInt8) is the cheap binary gate `(margin ≥ 0.03 OR top-3
 > share one division) AND not junk`. `nace_confidence` (Float32, 0–1) is the continuous score:
 > `softmax(top-10 standardized scores / T)[0]`, where scores are standardized by **median + MAD**
