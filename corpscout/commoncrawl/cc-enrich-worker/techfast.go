@@ -8,6 +8,8 @@ import (
 	ahocorasick "github.com/petar-dambovaliev/aho-corasick"
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
 	"golang.org/x/net/html"
+
+	"cc-enrich-worker/internal/model"
 )
 
 type fpat struct {
@@ -184,7 +186,7 @@ func NewFastMatcher() (*FastMatcher, error) {
 }
 
 // Detect mirrors wappalyzer.Fingerprint: lowercase, then headers + cookies + body.
-func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []Technology {
+func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []model.Technology {
 	normBody := bytes.ToLower(body)
 	bodyStr := string(normBody)
 	found := map[string]string{} // app -> version (first match wins, "" if none)
@@ -291,13 +293,13 @@ func (m *FastMatcher) Detect(headers map[string][]string, body []byte) []Technol
 		}
 	}
 
-	out := make([]Technology, 0, len(found))
+	out := make([]model.Technology, 0, len(found))
 	for app, ver := range found {
 		cat := ""
 		if cs := m.appCats[app]; len(cs) > 0 {
 			cat = cs[0]
 		}
-		out = append(out, Technology{Name: app, Category: cat, Version: ver})
+		out = append(out, model.Technology{Name: app, Category: cat, Version: ver})
 	}
 	return out
 }

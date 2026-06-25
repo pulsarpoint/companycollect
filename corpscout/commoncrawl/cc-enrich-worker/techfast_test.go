@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"cc-enrich-worker/internal/model"
 )
 
 // benchBody is a ~70KB realistic page: lots of filler + a few real tech signals.
@@ -31,7 +33,7 @@ func BenchmarkFast(b *testing.B) {
 	}
 }
 
-func techNameSet(techs []Technology) []string {
+func techNameSet(techs []model.Technology) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, t := range techs {

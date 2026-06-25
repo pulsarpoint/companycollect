@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/vec"
 )
 
@@ -22,7 +23,7 @@ func division(code string) string {
 }
 
 // Classify a normalized page vector against the NACE matrix + page-type prototypes.
-func Classify(page []float32, ref *Reference, protos *Prototypes) DomainResult {
+func Classify(page []float32, ref *model.Reference, protos *model.Prototypes) model.DomainResult {
 	type sc struct {
 		i int
 		s float32
@@ -68,7 +69,7 @@ func Classify(page []float32, ref *Reference, protos *Prototypes) DomainResult {
 	}
 	isPageType := ptScore >= pageTypeThreshold
 
-	r := DomainResult{
+	r := model.DomainResult{
 		PageTypeScore: ptScore,
 		NaceCode:      codes[0], NaceLabel: labels[0], NaceDivision: ref.Divisions[sims[0].i],
 		NaceMargin: margin, NaceScore: scores[0],

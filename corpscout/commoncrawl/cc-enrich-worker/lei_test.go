@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"cc-enrich-worker/internal/model"
+)
 
 func TestValidLEI(t *testing.T) {
 	valid := []string{
@@ -30,7 +34,7 @@ func TestExtractLEIs(t *testing.T) {
 		<script type="application/ld+json">{"@type":"Organization","name":"Apple","leiCode":"HWUPKR0MPOU8FGXBT394"}</script>
 		</head><body><footer>Deutsche Bank AG · LEI 7LTWFZYICNSX8D621K86 · some hash ABCD1234ABCD1234ABCD</footer></body></html>`)
 	ids := ExtractLEIs(body)
-	got := map[string]Identifier{}
+	got := map[string]model.Identifier{}
 	for _, id := range ids {
 		got[id.Value] = id
 	}

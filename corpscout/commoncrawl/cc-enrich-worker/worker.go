@@ -10,18 +10,12 @@ import (
 	"time"
 
 	"cc-enrich-worker/internal/fetch"
+	"cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/parse"
 )
 
 const classifyInstruction = "Classify the business into its industry category"
-
-// WorklistItem is one row of the index-driven worklist (top-K pages per domain).
-type WorklistItem struct {
-	RootDomain, URL, WarcFilename string
-	Offset, Length                int64
-	Primary                       bool // rn == 1 (the shallowest page; gets embedded)
-}
 
 type embedderIface interface {
 	Embed(texts []string, instruction string) ([][]float32, error)
@@ -47,9 +41,9 @@ type ShardConfig struct {
 type domainAgg struct {
 	rootDomain, primaryURL, primarySub, primaryText string
 	emails                                          []string
-	tech                                            []Technology
-	identifiers                                     []Identifier
-	profile                                         CompanyProfile
+	tech                                            []model.Technology
+	identifiers                                     []model.Identifier
+	profile                                         model.CompanyProfile
 	hasPrimary                                      bool
 }
 
@@ -76,8 +70,8 @@ func subdomainOf(rawURL, root string) string {
 //	"tech":     fetch every page -> Wappalyzer -> per-domain unioned tech rows
 //	            (no ClickHouse, no embedder)
 //	"both"  :   both in a single fetch pass (default)
-func ProcessShard(ctx context.Context, items []WorklistItem, getter fetch.RangeGetter, emb embedderIface,
-	ref *Reference, protos *Prototypes, cfg ShardConfig) (ShardResult, error) {
+func ProcessShard(ctx context.Context, items []model.WorklistItem, getter fetch.RangeGetter, emb embedderIface,
+	ref *model.Reference, protos *model.Prototypes, cfg ShardConfig) (ShardResult, error) {
 
 	mode := cfg.Mode
 	if mode == "" {
@@ -86,7 +80,7 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter fetch.RangeG
 	runEmbed := mode != "tech"
 	runTech := mode != "industry"
 
-	byDomain := map[string][]WorklistItem{}
+	byDomain := map[string][]model.WorklistItem{}
 	var order []string
 	for _, it := range items {
 		if _, ok := byDomain[it.RootDomain]; !ok {
@@ -213,9 +207,9 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter fetch.RangeG
 		}
 		for vi, i := range idx {
 			a := aggs[i]
-			var res DomainResult
+			var res model.DomainResult
 			if label := MatchSignal(a.primaryText); label != "" {
-				res = DomainResult{PageType: label, NaceMethod: "keyword"}
+				res = model.DomainResult{PageType: label, NaceMethod: "keyword"}
 			} else {
 				res = Classify(vecs[vi], ref, protos)
 			}

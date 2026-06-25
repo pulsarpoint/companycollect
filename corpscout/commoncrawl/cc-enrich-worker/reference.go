@@ -5,6 +5,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
+	"cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/vec"
 )
 
@@ -19,8 +20,8 @@ type protoRow struct {
 }
 
 // BuildReference normalizes each embedding into the co-ordered NACE matrix.
-func BuildReference(rows []refRow) *Reference {
-	ref := &Reference{}
+func BuildReference(rows []refRow) *model.Reference {
+	ref := &model.Reference{}
 	for _, r := range rows {
 		ref.Codes = append(ref.Codes, r.Code)
 		ref.Labels = append(ref.Labels, r.Label)
@@ -31,8 +32,8 @@ func BuildReference(rows []refRow) *Reference {
 }
 
 // BuildPrototypes normalizes each page-type exemplar embedding.
-func BuildPrototypes(rows []protoRow) *Prototypes {
-	p := &Prototypes{}
+func BuildPrototypes(rows []protoRow) *model.Prototypes {
+	p := &model.Prototypes{}
 	for _, r := range rows {
 		p.Labels = append(p.Labels, r.PageType)
 		p.P = append(p.P, vec.Norm(r.Embedding))
@@ -42,7 +43,7 @@ func BuildPrototypes(rows []protoRow) *Prototypes {
 
 // LoadReference reads the NACE matrix and page-type prototypes from ClickHouse.
 // Schema is owned by migrations 000044/000045; embeddings are Array(Float32).
-func LoadReference(ctx context.Context, conn driver.Conn) (*Reference, *Prototypes, error) {
+func LoadReference(ctx context.Context, conn driver.Conn) (*model.Reference, *model.Prototypes, error) {
 	var refRows []refRow
 	rows, err := conn.Query(ctx,
 		"SELECT code,label,division,embedding FROM corpscout.nace_category_embeddings FINAL ORDER BY code")

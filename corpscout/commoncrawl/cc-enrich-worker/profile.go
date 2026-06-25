@@ -5,26 +5,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"cc-enrich-worker/internal/model"
 )
-
-// CompanyProfile is the firmographic record distilled from a page's schema.org
-// Organization / LocalBusiness JSON-LD (clean structured data, when present).
-type CompanyProfile struct {
-	Name          string
-	Description   string
-	Logo          string
-	Country       string // ISO alpha-2 when given as a code, else the raw value
-	Email         string
-	Phone         string
-	FoundingYear  uint16
-	EmployeeCount uint32
-	SameAs        []string // linkedin / wikidata / crunchbase / socials
-}
-
-func (p CompanyProfile) Empty() bool {
-	return p.Name == "" && p.Description == "" && p.Logo == "" && p.Country == "" &&
-		p.Email == "" && p.Phone == "" && p.FoundingYear == 0 && p.EmployeeCount == 0 && len(p.SameAs) == 0
-}
 
 var ldBlockRe = regexp.MustCompile(`(?is)<script[^>]+type\s*=\s*["']application/ld\+json["'][^>]*>(.*?)</script>`)
 var orgTypeRe = regexp.MustCompile(`(?i)organization|localbusiness|corporation|\bngo\b|store|restaurant|\bcompany\b`)
@@ -33,9 +16,9 @@ var yearRe = regexp.MustCompile(`(?:18|19|20)\d{2}`)
 // ExtractProfile parses schema.org Organization/LocalBusiness JSON-LD into a company
 // profile plus any structured identifiers (lei/vat/tax/duns/naics). First non-empty
 // org object wins for each field; identifiers are unioned.
-func ExtractProfile(body []byte) (CompanyProfile, []Identifier) {
-	var prof CompanyProfile
-	var ids []Identifier
+func ExtractProfile(body []byte) (model.CompanyProfile, []model.Identifier) {
+	var prof model.CompanyProfile
+	var ids []model.Identifier
 	seen := map[string]bool{}
 
 	for _, m := range ldBlockRe.FindAllSubmatch(body, -1) {
@@ -55,7 +38,7 @@ func ExtractProfile(body []byte) (CompanyProfile, []Identifier) {
 					continue
 				}
 				seen[pair.typ+":"+val] = true
-				ids = append(ids, Identifier{Type: pair.typ, Value: val, Valid: identValid(pair.typ, val), Source: "jsonld"})
+				ids = append(ids, model.Identifier{Type: pair.typ, Value: val, Valid: identValid(pair.typ, val), Source: "jsonld"})
 			}
 			if prof.Name == "" {
 				if prof.Name = ldString(obj["name"]); prof.Name == "" {

@@ -3,16 +3,9 @@ package main
 import (
 	"regexp"
 	"strings"
-)
 
-// Identifier is a company identifier scraped from a page that links the domain to an
-// authoritative registry (e.g. an LEI → GLEIF). Extensible to VAT / registration numbers.
-type Identifier struct {
-	Type   string // "lei"
-	Value  string
-	Valid  bool   // checksum/format validated
-	Source string // "jsonld" | "text"
-}
+	"cc-enrich-worker/internal/model"
+)
 
 // A 20-char LEI: 18 alphanumeric + 2 check digits (ISO 17442).
 var leiTokenRe = regexp.MustCompile(`[A-Z0-9]{18}[0-9]{2}`)
@@ -44,13 +37,13 @@ func validLEI(s string) bool {
 // ExtractLEIs finds LEIs on a page. JSON-LD leiCode values are kept even if the checksum
 // fails (an explicitly-claimed LEI — flagged invalid); bare text tokens are kept only when
 // the checksum validates (no label, so the checksum is what makes us confident it's an LEI).
-func ExtractLEIs(body []byte) []Identifier {
-	found := map[string]Identifier{}
+func ExtractLEIs(body []byte) []model.Identifier {
+	found := map[string]model.Identifier{}
 
 	for _, m := range leiCodeRe.FindAllSubmatch(body, -1) {
 		v := strings.ToUpper(string(m[1]))
 		if _, ok := found[v]; !ok {
-			found[v] = Identifier{Type: "lei", Value: v, Valid: validLEI(v), Source: "jsonld"}
+			found[v] = model.Identifier{Type: "lei", Value: v, Valid: validLEI(v), Source: "jsonld"}
 		}
 	}
 	for _, m := range leiTokenRe.FindAll(body, -1) {
@@ -59,11 +52,11 @@ func ExtractLEIs(body []byte) []Identifier {
 			continue
 		}
 		if _, ok := found[v]; !ok {
-			found[v] = Identifier{Type: "lei", Value: v, Valid: true, Source: "text"}
+			found[v] = model.Identifier{Type: "lei", Value: v, Valid: true, Source: "text"}
 		}
 	}
 
-	out := make([]Identifier, 0, len(found))
+	out := make([]model.Identifier, 0, len(found))
 	for _, id := range found {
 		out = append(out, id)
 	}

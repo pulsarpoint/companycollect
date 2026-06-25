@@ -11,6 +11,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
+	"cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/vec"
 )
@@ -55,13 +56,13 @@ func TestProcessShardAndParquet(t *testing.T) {
 	page2 := gzWarc("HTTP/1.1 200 OK\r\n\r\n<html><head><meta name=\"generator\" content=\"WordPress 6.4\">" +
 		"<link href=\"/wp-content/themes/x/style.css\" rel=\"stylesheet\"></head><body>about us</body></html>")
 	getter := multiGetter{"f.warc.gz:0": page1, "f.warc.gz:1000": page2}
-	items := []WorklistItem{
+	items := []model.WorklistItem{
 		{RootDomain: "acme.com", URL: "https://acme.com/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page1)), Primary: true},
 		{RootDomain: "acme.com", URL: "https://acme.com/about", WarcFilename: "f.warc.gz", Offset: 1000, Length: int64(len(page2)), Primary: false},
 	}
-	ref := &Reference{Codes: []string{"62.01"}, Labels: []string{"Programming"}, Divisions: []string{"62"},
+	ref := &model.Reference{Codes: []string{"62.01"}, Labels: []string{"Programming"}, Divisions: []string{"62"},
 		M: [][]float32{vec.Norm([]float32{1, 0, 0})}}
-	protos := &Prototypes{}
+	protos := &model.Prototypes{}
 	emb := fakeEmbedder{vec: vec.Norm([]float32{1, 0, 0})}
 	cfg := ShardConfig{CrawlID: "CC-MAIN-2026-25", SourceRunID: "run1",
 		ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 2}
@@ -102,15 +103,15 @@ func TestProcessShardAndParquet(t *testing.T) {
 func TestProcessShardIndustryMode(t *testing.T) {
 	page1 := gzWarc("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n<html><body>Acme software company</body></html>")
 	getter := multiGetter{"f.warc.gz:0": page1}
-	items := []WorklistItem{
+	items := []model.WorklistItem{
 		{RootDomain: "acme.com", URL: "https://acme.com/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page1)), Primary: true},
 	}
-	ref := &Reference{Codes: []string{"62.01"}, Labels: []string{"Programming"}, Divisions: []string{"62"},
+	ref := &model.Reference{Codes: []string{"62.01"}, Labels: []string{"Programming"}, Divisions: []string{"62"},
 		M: [][]float32{vec.Norm([]float32{1, 0, 0})}}
 	emb := fakeEmbedder{vec: vec.Norm([]float32{1, 0, 0})}
 	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "industry"}
 
-	res, err := ProcessShard(context.Background(), items, getter, emb, ref, &Prototypes{}, cfg)
+	res, err := ProcessShard(context.Background(), items, getter, emb, ref, &model.Prototypes{}, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +130,7 @@ func TestProcessShardTechMode(t *testing.T) {
 		"<link href=\"/wp-content/themes/x/style.css\" rel=\"stylesheet\"></head>" +
 		"<body>x<footer>LEI: HWUPKR0MPOU8FGXBT394</footer></body></html>")
 	getter := multiGetter{"f.warc.gz:0": page}
-	items := []WorklistItem{
+	items := []model.WorklistItem{
 		{RootDomain: "acme.com", URL: "https://acme.com/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page)), Primary: true},
 	}
 	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "tech"}

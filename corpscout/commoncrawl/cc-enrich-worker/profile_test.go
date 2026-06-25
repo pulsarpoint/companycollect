@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"cc-enrich-worker/internal/model"
+)
 
 func TestExtractProfile(t *testing.T) {
 	body := []byte(`<html><head>
@@ -38,7 +42,7 @@ func TestExtractProfile(t *testing.T) {
 		t.Fatalf("sameAs wrong: %+v", p.SameAs)
 	}
 
-	byType := map[string]Identifier{}
+	byType := map[string]model.Identifier{}
 	for _, id := range ids {
 		byType[id.Type] = id
 	}

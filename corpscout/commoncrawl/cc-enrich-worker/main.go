@@ -16,6 +16,7 @@ import (
 
 	"cc-enrich-worker/internal/embed"
 	"cc-enrich-worker/internal/fetch"
+	mdl "cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
 )
 
@@ -70,17 +71,17 @@ func detectModel(baseURL string) (string, error) {
 
 // readWorklist loads the shard and marks the first row per domain as the primary
 // page (the worklist is ordered shallowest-first, so rn=1 leads each domain group).
-func readWorklist(path string) ([]WorklistItem, error) {
+func readWorklist(path string) ([]mdl.WorklistItem, error) {
 	rows, err := parquet.ReadFile[WorklistRow](path)
 	if err != nil {
 		return nil, err
 	}
 	seen := map[string]bool{}
-	items := make([]WorklistItem, 0, len(rows))
+	items := make([]mdl.WorklistItem, 0, len(rows))
 	for _, r := range rows {
 		primary := !seen[r.RootDomain]
 		seen[r.RootDomain] = true
-		items = append(items, WorklistItem{
+		items = append(items, mdl.WorklistItem{
 			RootDomain: r.RootDomain, URL: r.URL, WarcFilename: r.WarcFilename,
 			Offset: r.Offset, Length: r.Length, Primary: primary,
 		})
@@ -136,8 +137,8 @@ func main() {
 	}
 
 	// ClickHouse reference + embedder are only needed when we classify (industry/both).
-	var ref *Reference
-	var protos *Prototypes
+	var ref *mdl.Reference
+	var protos *mdl.Prototypes
 	var emb embedderIface
 	if mode != "tech" {
 		conn, err := chConnect(ctx)

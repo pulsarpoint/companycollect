@@ -3,6 +3,8 @@ package main
 import (
 	"regexp"
 	"strings"
+
+	"cc-enrich-worker/internal/model"
 )
 
 // vatFormats: the VIES format of the VAT number *after* the 2-letter country code.
@@ -108,16 +110,16 @@ func luhn(num string) bool {
 }
 
 // ExtractVATs finds checksum/format-valid EU VAT ids in page text.
-func ExtractVATs(body []byte) []Identifier {
+func ExtractVATs(body []byte) []model.Identifier {
 	seen := map[string]bool{}
-	var out []Identifier
+	var out []model.Identifier
 	for _, m := range vatCandidateRe.FindAllSubmatch(body, -1) {
 		full := string(m[1]) + string(m[2])
 		if seen[full] || !validVAT(full) {
 			continue
 		}
 		seen[full] = true
-		out = append(out, Identifier{Type: "vat", Value: full, Valid: true, Source: "text"})
+		out = append(out, model.Identifier{Type: "vat", Value: full, Valid: true, Source: "text"})
 	}
 	return out
 }
