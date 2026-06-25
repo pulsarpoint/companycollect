@@ -1,0 +1,75 @@
+{
+  "country": "Armenia",
+  "country_slug": "armenia",
+  "source_slug": "amx_listed",
+  "source_identity": "armenia_amx_listed",
+  "source_package": "amx",
+  "env_prefix": "AM_AMX",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Armenia Securities Exchange (AMX) — listed securities",
+    "source_type": "financial_disclosure",
+    "organization": "Armenia Securities Exchange (AMX)",
+    "source_url": "https://amx.am/en",
+    "license": "public_disclosure",
+    "access": "public_browser_spa",
+    "data_freshness": "event_driven",
+    "attribution": "Armenia Securities Exchange (AMX)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://amx.am/en",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public via browser; JS SPA"
+  },
+  "snapshot": {
+    "strategy": "preserve_json_if_endpoint_found",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "AmxListedSecurity",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "AMX listed-securities site is a JavaScript SPA; static fetches return an empty shell and no clean public JSON API was found (guessed api.amx.am / amx.am/api/instruments returned 404 or the shell). Discover the SPA's backend data endpoint (via the browser network tab) before implementing; do NOT bypass site controls. Listed securities only; ISIN AMxxxxxxxxxx. No TIN published — join to the State Register by name."
+  },
+  "keys": {
+    "primary_keys": ["isin"],
+    "join_keys": ["isin", "issuer_name"],
+    "dedupe_keys": ["isin"]
+  },
+  "mapping_rules": {
+    "company_id": "ISIN (listed security).",
+    "legal_name": "Issuer / Instrument name.",
+    "listing": "ISIN."
+  },
+  "fixture_requirements": [
+    "equity listing with an AM ISIN",
+    "bond listing",
+    "record asserting join-by-name to the State Register"
+  ],
+  "live_test_plan": {
+    "smoke": "Load amx.am/en/issuers in a browser; capture the XHR/data endpoint feeding the listings.",
+    "full": "Blocked on transport discovery — identify the SPA data endpoint; listed subset only."
+  },
+  "blockers": [
+    "JS SPA; static fetch returns an empty shell; no public JSON API found",
+    "No TIN published (join by name)",
+    "Listed securities only; small market"
+  ]
+}

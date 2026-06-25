@@ -1,0 +1,84 @@
+{
+  "country": "Armenia",
+  "country_slug": "armenia",
+  "source_slug": "state_register_eregister",
+  "source_identity": "armenia_state_register_eregister",
+  "source_package": "eregister",
+  "env_prefix": "AM_EREGISTER",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "State Register of Legal Entities (e-register.am)",
+    "source_type": "official_registry",
+    "organization": "State Register of Legal Entities, Ministry of Justice of the Republic of Armenia",
+    "source_url": "https://www.e-register.am/",
+    "license": "restricted",
+    "access": "public_search_bot_protected",
+    "data_freshness": "live",
+    "attribution": "State Register of Legal Entities (Armenia)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.e-register.am/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Radware Bot Manager clearance (browser)"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public search Radware bot-protected (perfdrive validation); no open bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_bot_protected",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "AmStateRegisterEntity",
+    "date_formats": ["02.01.2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Authoritative Armenian company register via e-register.am. The public search is protected by Radware Bot Manager (e-register.am/en and /companies redirect to validate.perfdrive.com). Do NOT bypass the bot manager. No open bulk or free API. Key = state registration number; TIN (ՀՎՀՀ/HVHH, 8-digit) is the cross-source join key. Armenian (Armenian script). Redact director/founders (personal data). Field model from public knowledge; no values captured. Confirm whether the State Register offers an official data-sharing/API or open dataset."
+  },
+  "keys": {
+    "primary_keys": ["state_registration_number"],
+    "join_keys": ["state_registration_number", "tin_hvhh", "legal_name"],
+    "dedupe_keys": ["state_registration_number"]
+  },
+  "mapping_rules": {
+    "company_id": "state registration number / TIN (ՀՎՀՀ).",
+    "registration_number": "state registration number.",
+    "tax_id": "TIN (ՀՎՀՀ).",
+    "legal_name": "Name (Անվանում).",
+    "legal_form": "Legal Form (ՍՊԸ/ԲԲԸ/ՓԲԸ).",
+    "status": "Status.",
+    "incorporation_date": "Registration Date.",
+    "registered_address": "Address.",
+    "officers": "Director (REDACT — personal data).",
+    "owners": "Founders/Participants (REDACT natural persons)."
+  },
+  "fixture_requirements": [
+    "active LLC (ՍՊԸ)",
+    "joint-stock company (ԲԲԸ/ՓԲԸ)",
+    "individual entrepreneur",
+    "liquidated entity",
+    "record with director/founders (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (Radware bot manager). Confirm the register access / data-sharing path.",
+    "full": "Blocked on bot protection — requires browser/clearance or an official State Register arrangement; redact personal data."
+  },
+  "blockers": [
+    "Public search protected by Radware Bot Manager (perfdrive validation)",
+    "No open bulk file or free API",
+    "Director/founders are personal data"
+  ]
+}

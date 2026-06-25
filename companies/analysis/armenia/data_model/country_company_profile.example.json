@@ -1,0 +1,50 @@
+{
+  "country": "Armenia",
+  "country_slug": "armenia",
+  "country_profile_version": "2026-06-25",
+  "registration": {
+    "tin_hvhh": null,
+    "state_registration_number": null
+  },
+  "legal_identity": {
+    "legal_name": null,
+    "legal_form": null
+  },
+  "status": {
+    "registration_status": null,
+    "taxpayer_status": null,
+    "vat_status": null,
+    "registration_date": null
+  },
+  "registered_location": {
+    "registered_address": null
+  },
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Director (State Register; bot-protected; redacted per personal-data law)" }
+  ],
+  "owners": [
+    { "name": "[REDACTED-PII]", "share": null }
+  ],
+  "listing": {
+    "isin": null,
+    "instrument_name": null
+  },
+  "source_provenance": [
+    {
+      "source_slug": "src_taxpayer_search",
+      "section": "registration.tin_hvhh / legal_identity.legal_name / status.taxpayer_status / status.vat_status",
+      "source_url": "https://www.src.am/en/search",
+      "access": "public_browser_search",
+      "license": "restricted",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "state_register_eregister",
+      "section": "registration.state_registration_number / legal_identity.legal_form / status.registration_status / registered_location / officers / owners (planning-only, bot-protected)",
+      "source_url": "https://www.e-register.am/",
+      "access": "public_search_bot_protected",
+      "license": "restricted",
+      "retrieved_at": null
+    }
+  ]
+}

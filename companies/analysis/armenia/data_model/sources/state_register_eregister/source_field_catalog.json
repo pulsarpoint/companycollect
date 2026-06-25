@@ -1,0 +1,26 @@
+{
+  "country": "Armenia",
+  "country_slug": "armenia",
+  "source_slug": "state_register_eregister",
+  "source_name": "State Register of Legal Entities (e-register.am)",
+  "source_type": "official_registry",
+  "organization": "State Register of Legal Entities, Ministry of Justice of the Republic of Armenia",
+  "source_url": "https://www.e-register.am/",
+  "license": "restricted",
+  "access": "public_search_bot_protected",
+  "data_freshness": "live",
+  "record_shape": "per_company_search_bot_protected_planning_only",
+  "primary_keys": ["state_registration_number"],
+  "join_keys": ["state_registration_number", "tin_hvhh", "legal_name"],
+  "field_count": 8,
+  "fields": [
+    { "path": "state_registration_number", "source_field": "State Registration Number", "english_name": "state_registration_number", "meaning": "State Register identifier for the legal entity.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; search Radware bot-protected.", "source_confidence": "high", "analysis_notes": "Registry key." },
+    { "path": "tin_hvhh", "source_field": "ՀՎՀՀ (TIN / HVHH)", "english_name": "tin_hvhh", "meaning": "Taxpayer identification number (8-digit) — shared with the SRC; the universal company key.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": "Join key to SRC." },
+    { "path": "legal_name", "source_field": "Անվանում (Name)", "english_name": "legal_name", "meaning": "Registered legal-entity name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "hy", "limitations": "Planning-only; Armenian script (some English).", "source_confidence": "high", "analysis_notes": null },
+    { "path": "legal_form", "source_field": "Կազմակերպական-իրավական ձև (Legal Form)", "english_name": "legal_form", "meaning": "Legal form (e.g. ՍՊԸ = LLC, ԲԲԸ = OJSC, ՓԲԸ = CJSC, individual entrepreneur).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Armenian legal forms", "language": "hy", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Կարգավիճակ (Status)", "english_name": "status", "meaning": "Registration status (active / liquidated / in process).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "hy", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "registration_date", "source_field": "Գրանցման ամսաթիվ (Registration Date)", "english_name": "registration_date", "meaning": "Date of state registration.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; Gregorian.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "registered_address", "source_field": "Հասցե (Address)", "english_name": "registered_address", "meaning": "Registered (legal) address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "hy", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "director_and_founders", "source_field": "Տնօրեն / Հիմնադիրներ (Director / Founders)", "english_name": "director_and_founders", "meaning": "Executive director and founders/participants.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "hy", "limitations": "PERSONAL DATA — redact natural persons (Law on the Protection of Personal Data). Planning-only.", "source_confidence": "medium", "analysis_notes": "Do not store cleartext; director is a person, founders may be persons or entities." }
+  ]
+}

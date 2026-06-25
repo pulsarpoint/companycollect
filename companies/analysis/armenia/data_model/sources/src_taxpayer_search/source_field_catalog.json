@@ -1,0 +1,22 @@
+{
+  "country": "Armenia",
+  "country_slug": "armenia",
+  "source_slug": "src_taxpayer_search",
+  "source_name": "State Revenue Committee (SRC) — taxpayer search",
+  "source_type": "tax_register",
+  "organization": "State Revenue Committee of the Republic of Armenia (SRC)",
+  "source_url": "https://www.src.am/en/search",
+  "license": "restricted",
+  "access": "public_browser_search",
+  "data_freshness": "live",
+  "record_shape": "per_tin_search_browser_public",
+  "primary_keys": ["tin_hvhh"],
+  "join_keys": ["tin_hvhh", "taxpayer_name"],
+  "field_count": 4,
+  "fields": [
+    { "path": "tin_hvhh", "source_field": "ՀՎՀՀ (TIN / HVHH)", "english_name": "tin_hvhh", "meaning": "Taxpayer identification number (8-digit) — the SRC key and the universal company key.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Browser-public per-TIN search; no bulk/API.", "source_confidence": "high", "analysis_notes": "Join key to the State Register." },
+    { "path": "taxpayer_name", "source_field": "Հարկ վճարողի անվանում (Taxpayer Name)", "english_name": "taxpayer_name", "meaning": "Registered taxpayer name (company or individual).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "hy", "limitations": "Individuals are personal data — redact individuals. Per-TIN.", "source_confidence": "high", "analysis_notes": "Companies and individuals both appear." },
+    { "path": "taxpayer_status", "source_field": "Կարգավիճակ (Status)", "english_name": "taxpayer_status", "meaning": "Taxpayer status (active / inactive).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "hy", "limitations": "Tax status, not company registration status.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "vat_status", "source_field": "ԱԱՀ կարգավիճակ (VAT Status)", "english_name": "vat_status", "meaning": "VAT registration status of the taxpayer.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "hy", "limitations": "VAT registration indicator.", "source_confidence": "low", "analysis_notes": "ԱԱՀ = VAT in Armenian." }
+  ]
+}

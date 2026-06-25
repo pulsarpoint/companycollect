@@ -1,0 +1,76 @@
+{
+  "country": "Armenia",
+  "country_slug": "armenia",
+  "source_slug": "src_taxpayer_search",
+  "source_identity": "armenia_src_taxpayer_search",
+  "source_package": "srctax",
+  "env_prefix": "AM_SRC",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "State Revenue Committee (SRC) — taxpayer search",
+    "source_type": "tax_register",
+    "organization": "State Revenue Committee of the Republic of Armenia (SRC)",
+    "source_url": "https://www.src.am/en/search",
+    "license": "restricted",
+    "access": "public_browser_search",
+    "data_freshness": "live",
+    "attribution": "State Revenue Committee (Armenia)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.src.am/en/search",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["AJAX/session for /searchTaxpayerData"],
+    "formats": ["html", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "browser-public per-TIN search; no bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_per_tin_search",
+    "file_extension": ".json",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "AmSrcTaxpayer",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "SRC public taxpayer search. Browser-public lookup by TIN (ՀՎՀՀ) / name via /searchTaxpayerData (AJAX) returning name + status (and VAT status). No bulk file or documented open API. Discover the exact request shape (likely POST + session/token) before implementing; do NOT scrape aggressively. Key = TIN (HVHH); join to the State Register on TIN. Covers companies AND individuals — REDACT individuals (personal data). taxpayer_status is tax status, not registration status."
+  },
+  "keys": {
+    "primary_keys": ["tin_hvhh"],
+    "join_keys": ["tin_hvhh", "taxpayer_name"],
+    "dedupe_keys": ["tin_hvhh"]
+  },
+  "mapping_rules": {
+    "tax_id": "TIN (ՀՎՀՀ).",
+    "legal_name": "Taxpayer Name (companies only; redact individuals).",
+    "status": "Taxpayer Status (TAX status, not registration status).",
+    "vat_id": "VAT status indicator (registered/not)."
+  },
+  "fixture_requirements": [
+    "company taxpayer (active)",
+    "individual taxpayer (assert redaction)",
+    "VAT-registered vs not"
+  ],
+  "live_test_plan": {
+    "smoke": "Load /en/search, submit a known TIN; confirm name/status returned.",
+    "full": "Blocked on transport discovery — resolve the /searchTaxpayerData request shape; per-TIN only (no bulk); redact individuals."
+  },
+  "blockers": [
+    "Per-TIN browser search; no bulk file or documented open API",
+    "Exact request shape (POST/session/token) not resolved",
+    "Mixes companies and individuals (individuals are personal data)"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "country": "Armenia",
+  "country_slug": "armenia",
+  "source_slug": "amx_listed",
+  "source_name": "Armenia Securities Exchange (AMX) — listed securities",
+  "source_type": "financial_disclosure",
+  "organization": "Armenia Securities Exchange (AMX)",
+  "source_url": "https://amx.am/en",
+  "license": "public_disclosure",
+  "access": "public_browser_spa",
+  "data_freshness": "event_driven",
+  "record_shape": "listed_securities_js_spa",
+  "primary_keys": ["isin"],
+  "join_keys": ["isin", "issuer_name"],
+  "field_count": 3,
+  "fields": [
+    { "path": "isin", "source_field": "ISIN", "english_name": "isin", "meaning": "International Securities Identification Number (Armenian).", "data_type": "string", "semantic_type": "identifier", "example_values": ["AM..."], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Armenian ISINs begin AM. Loaded via the SPA; not captured statically.", "source_confidence": "medium", "analysis_notes": "Listed-security key." },
+    { "path": "instrument_name", "source_field": "Instrument / Security Name", "english_name": "instrument_name", "meaning": "Listed instrument / security name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "hy/en", "limitations": "Listed only; SPA (no static capture).", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "issuer_name", "source_field": "Issuer", "english_name": "issuer_name", "meaning": "Issuing company.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "hy/en", "limitations": "Join to the register by name / TIN (TIN not published on the page).", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Armenia Company Profile",
+  "description": "Country-specific company profile for Armenia. The universal key is the 8-digit TIN (ՀՎՀՀ / HVHH), shared by the State Register and the State Revenue Committee (SRC); the State Register also issues a state registration number. The authoritative State Register of Legal Entities (e-register.am, Ministry of Justice) is protected by Radware Bot Manager (planning-only — no open bulk/API). The SRC taxpayer search (src.am) is browser-public per-TIN, returning taxpayer name and status (and VAT status). Listed securities come from the Armenia Securities Exchange (AMX) by ISIN (AM...), a JS SPA with no clean public API. The national open-data portal (data.gov.am) did not resolve, and the civic Open Data Armenia (CKAN) carries no company register. Language Armenian (+ English); currency AMD. Director/founders (register) and individual taxpayers (SRC) are personal data — redact. No registry per-company values were captured.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Armenia" },
+    "country_slug": { "type": "string", "const": "armenia" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["tin_hvhh"],
+      "properties": {
+        "tin_hvhh": { "type": "string", "description": "8-digit TIN (ՀՎՀՀ/HVHH) — tax id and universal join key (register + SRC).", "x-source": "src_taxpayer_search", "x-source-path": "tin_hvhh", "x-join-key": true, "x-access": "browser_public", "x-source-alt": "state_register_eregister.tin_hvhh" },
+        "state_registration_number": { "type": ["string", "null"], "description": "State Register identifier (bot-protected; planning-only).", "x-source": "state_register_eregister", "x-source-path": "state_registration_number", "x-join-key": true, "x-access": "bot_protected" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "description": "Company name. SRC taxpayer name (browser) / State Register name (authoritative).", "x-source": "src_taxpayer_search", "x-source-path": "taxpayer_name", "x-source-alt": "state_register_eregister.legal_name" },
+        "legal_form": { "type": ["string", "null"], "description": "State Register legal form (planning-only): ՍՊԸ (LLC), ԲԲԸ/ՓԲԸ (OJSC/CJSC).", "x-source": "state_register_eregister", "x-source-path": "legal_form", "x-access": "bot_protected" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "registration_status": { "type": ["string", "null"], "description": "State Register status (active/liquidated). Planning-only.", "x-source": "state_register_eregister", "x-source-path": "status", "x-access": "bot_protected" },
+        "taxpayer_status": { "type": ["string", "null"], "description": "SRC taxpayer status (active/inactive) — TAX status, not registration status.", "x-source": "src_taxpayer_search", "x-source-path": "taxpayer_status", "x-access": "browser_public" },
+        "vat_status": { "type": ["string", "null"], "description": "SRC VAT registration status.", "x-source": "src_taxpayer_search", "x-source-path": "vat_status" },
+        "registration_date": { "type": ["string", "null"], "x-source": "state_register_eregister", "x-source-path": "registration_date", "x-access": "bot_protected" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "description": "Registered address — State Register only (bot-protected; planning-only).",
+      "x-source": "state_register_eregister",
+      "x-access": "bot_protected",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source-path": "registered_address" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Director (State Register). PERSONAL DATA (personal-data law) — REDACT. Planning-only (bot-protected).",
+      "x-source": "state_register_eregister",
+      "x-source-path": "director_and_founders",
+      "x-access": "bot_protected_redact",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Founders / participants (State Register). PERSONAL DATA when natural persons — REDACT. Planning-only.",
+      "x-source": "state_register_eregister",
+      "x-source-path": "director_and_founders",
+      "x-access": "bot_protected_redact",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "share": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for AMX-listed companies (browser-public SPA).",
+      "x-source": "amx_listed",
+      "properties": {
+        "isin": { "type": ["string", "null"], "x-source-path": "isin" },
+        "instrument_name": { "type": ["string", "null"], "x-source-path": "instrument_name" }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}
