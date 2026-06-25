@@ -1,0 +1,38 @@
+[
+  {
+    "name": "NAPR e-registry company search (CAPTCHA-gated)",
+    "slug": "napr_enreg",
+    "type": "api_page",
+    "url": "https://enreg.reestri.gov.ge/main.php?c=app&m=show_app",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Authoritative registry. Public search is CAPTCHA-gated (captcha_validator_field); free extracts (amonaweri) only after solving the CAPTCHA. api.napr.gov.ge is 'Access Denied'. Do NOT bypass the CAPTCHA. Key = 9-digit identification code."
+  },
+  {
+    "name": "SARAS Reporting Portal — detailed search",
+    "slug": "reportal_saras",
+    "type": "api_page",
+    "url": "https://reportal.ge/en/Reports",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Browser-public financial statements (by identification code / name). Simple search POST /en/Base/Search needs __RequestVerificationToken; detailed search GET /en/Reports/List (orgName, year, legalFormId, naceCodes). Implement with token/session handling. PDF reports per company."
+  },
+  {
+    "name": "Georgian Stock Exchange — securities",
+    "slug": "gse_listed",
+    "type": "api_page",
+    "url": "https://gse.ge/en/securities",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Browser-public securities list (Georgian ISINs GExxxxxxxxxx). Listed companies only; HTML page (no clean JSON API found)."
+  }
+]
