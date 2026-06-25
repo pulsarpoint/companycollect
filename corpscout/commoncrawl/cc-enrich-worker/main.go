@@ -20,6 +20,7 @@ import (
 	mdl "cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/tech"
+	"cc-enrich-worker/internal/worker"
 )
 
 // WorklistRow is one row of the materialized worklist parquet (index_enrich/worklist.py
@@ -96,7 +97,7 @@ func main() {
 	out := flag.String("out", "out", "output prefix: writes <out>-domains.parquet, <out>-tech.parquet")
 	crawlID := flag.String("crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 (required)")
 	concurrency := flag.Int("concurrency", 32, "fetch/parse/tech concurrency")
-	techMax := flag.Int("tech-max-bytes", techMaxBytes, "cap body bytes fed to Wappalyzer (0=full body; full-body regex is ~1.2s/page)")
+	techMax := flag.Int("tech-max-bytes", 131072, "cap body bytes fed to Wappalyzer (0=full body; full-body regex is ~1.2s/page)")
 	techEngine := flag.String("tech-engine", "fast", "tech matcher: fast (Aho-Corasick gated) | wappalyzer (upstream full scan)")
 	modeFlag := flag.String("mode", "both", "industry (domains, needs CH+embedder) | tech (tech only, no CH/embedder) | both")
 	skipTech := flag.Bool("skip-tech", false, "alias for --mode industry (skip Wappalyzer)")
@@ -141,7 +142,7 @@ func main() {
 	// ClickHouse reference + embedder are only needed when we classify (industry/both).
 	var ref *mdl.Reference
 	var protos *mdl.Prototypes
-	var emb embedderIface
+	var emb classify.Embedder
 	if mode != "tech" {
 		conn, err := chConnect(ctx)
 		if err != nil {
@@ -200,14 +201,14 @@ func main() {
 	}
 	log.Printf("worklist: %d pages", len(items))
 
-	cfg := ShardConfig{
+	cfg := worker.ShardConfig{
 		CrawlID: *crawlID, SourceRunID: fmt.Sprintf("go-%d", time.Now().Unix()),
 		ResolvedAt: time.Now().UTC(), Concurrency: *concurrency, TechMaxBytes: *techMax,
 		Mode: mode,
 	}
 	start := time.Now()
 	var domains []output.DomainRow
-	var tech []output.TechRow
+	var techRows []output.TechRow
 	var idents []output.IdentifierRow
 	var profiles []output.ProfileRow
 	for i := 0; i < len(items); i += *chunkSize {
@@ -215,17 +216,17 @@ func main() {
 		if end > len(items) {
 			end = len(items)
 		}
-		res, err := ProcessShard(ctx, items[i:end], getter, emb, ref, protos, cfg)
+		res, err := worker.ProcessShard(ctx, items[i:end], getter, emb, ref, protos, cfg)
 		if err != nil {
 			log.Fatalf("process chunk at %d: %v", i, err)
 		}
 		domains = append(domains, res.Domains...)
-		tech = append(tech, res.Tech...)
+		techRows = append(techRows, res.Tech...)
 		idents = append(idents, res.Identifiers...)
 		profiles = append(profiles, res.Profiles...)
 		el := time.Since(start).Seconds()
 		log.Printf("progress: %d/%d pages, %d domains, %d tech, %d ids, %d profiles (%.1f pages/s)",
-			end, len(items), len(domains), len(tech), len(idents), len(profiles), float64(end)/el)
+			end, len(items), len(domains), len(techRows), len(idents), len(profiles), float64(end)/el)
 	}
 
 	domPath, techPath := *out+"-domains.parquet", *out+"-tech.parquet"
@@ -237,7 +238,7 @@ func main() {
 		written = append(written, domPath)
 	}
 	if mode != "industry" {
-		if err := output.WriteTech(techPath, tech); err != nil {
+		if err := output.WriteTech(techPath, techRows); err != nil {
 			log.Fatalf("write tech: %v", err)
 		}
 		written = append(written, techPath)
@@ -257,7 +258,7 @@ func main() {
 	if dur > 0 {
 		rate = float64(len(domains)) / dur
 	}
-	log.Printf("done: %d domains, %d tech rows in %.1fs (%.1f domains/s)", len(domains), len(tech), dur, rate)
+	log.Printf("done: %d domains, %d tech rows in %.1fs (%.1f domains/s)", len(domains), len(techRows), dur, rate)
 
 	if *s3Bucket != "" {
 		g, ok := getter.(*fetch.S3Getter)

@@ -1,4 +1,4 @@
-package main
+package worker
 
 import (
 	"context"
@@ -16,6 +16,11 @@ import (
 	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/parse"
 	"cc-enrich-worker/internal/tech"
+)
+
+const (
+	ccBucket     = "commoncrawl"
+	techMaxBytes = 131072 // cap body fed to Wappalyzer; full-body regex over MB pages ~= 1.2s/page
 )
 
 const classifyInstruction = "Classify the business into its industry category"
