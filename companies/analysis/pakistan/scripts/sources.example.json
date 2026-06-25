@@ -1,0 +1,36 @@
+[
+  {
+    "name": "PSX Data Portal — all listed symbols (JSON)",
+    "slug": "psx_symbols",
+    "type": "bulk",
+    "url": "https://dps.psx.com.pk/symbols",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0,
+    "note": "Open JSON array of all listed symbols (~1,068; 744 equities). Fields: symbol, name, sectorName, isETF, isDebt. Filter isDebt=false & isETF=false for equities. Listed companies only."
+  },
+  {
+    "name": "PSX Data Portal — company page",
+    "slug": "psx_company",
+    "type": "api_page",
+    "url": "https://dps.psx.com.pk/company/OGDC",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Per-company HTML page (sector, registered address, free float, shares). Substitute {symbol} from /symbols. Parse HTML."
+  },
+  {
+    "name": "SECP eServices (firewalled here)",
+    "slug": "secp_eservices",
+    "type": "api_page",
+    "url": "https://eservices.secp.gov.pk/eServices/",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Authoritative registrar (CUIN). WAF-blocked (403) / timed out from this environment; filings require login. Run from an unblocked network; do NOT bypass the WAF."
+  }
+]
