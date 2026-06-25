@@ -1,4 +1,4 @@
-package main
+package embed
 
 import (
 	"encoding/json"
@@ -8,6 +8,11 @@ import (
 	"sync/atomic"
 	"testing"
 )
+
+// dot is a helper for tests; use Dot for public API.
+func dot(a, b []float32) float32 {
+	return Dot(a, b)
+}
 
 func TestEmbedBatchesAndNormalizes(t *testing.T) {
 	var reqCount int64

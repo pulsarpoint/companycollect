@@ -1,6 +1,10 @@
 package main
 
-import "regexp"
+import (
+	"regexp"
+
+	"cc-enrich-worker/internal/embed"
+)
 
 type sig struct {
 	label string
@@ -9,7 +13,7 @@ type sig struct {
 
 // signals: high-precision page-type keyword patterns, ported from
 // commoncrawl_enrich/page_types.py PAGE_TYPE_SIGNALS. Case-insensitive + DOTALL,
-// scanned over only the first embedMaxChars chars.
+// scanned over only the first embed.MaxChars chars.
 var signals = func() []sig {
 	pats := []struct{ label, p string }{
 		{"for_sale", `(?is)\bbuy this domain\b`},
@@ -50,11 +54,11 @@ var signals = func() []sig {
 }()
 
 // MatchSignal returns the page-type label for the first matching high-precision
-// pattern, or "" if none fire. Only the first embedMaxChars are scanned.
+// pattern, or "" if none fire. Only the first embed.MaxChars are scanned.
 func MatchSignal(text string) string {
 	head := text
-	if len(head) > embedMaxChars {
-		head = head[:embedMaxChars]
+	if len(head) > embed.MaxChars {
+		head = head[:embed.MaxChars]
 	}
 	for _, s := range signals {
 		if s.re.MatchString(head) {

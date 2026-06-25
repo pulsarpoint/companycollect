@@ -1,11 +1,19 @@
-package main
+package embed
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"sync"
+)
+
+const (
+	embedMaxChars  = 2000 // COMMONCRAWL_EMBED_MAX_CHARS default
+	MaxChars       = 2000 // exported max chars for text truncation (COMMONCRAWL_EMBED_MAX_CHARS)
+	embedBatch     = 16   // texts/request; small so requests co-batch under the engine token budget
+	DefaultBatch   = 16   // default batch size for embeddings
 )
 
 type EmbedClient struct {
@@ -120,4 +128,25 @@ func (c *EmbedClient) embedOne(chunk []string) ([][]float32, error) {
 		out[i] = norm(d.Embedding)
 	}
 	return out, nil
+}
+
+func sqrt32(x float32) float32 { return float32(math.Sqrt(float64(x))) }
+
+// Dot returns the dot product of vectors a and b.
+func Dot(a, b []float32) float32 {
+	var s float32
+	for i := range a {
+		s += a[i] * b[i]
+	}
+	return s
+}
+
+// Norm L2-normalizes a vector.
+func norm(v []float32) []float32 {
+	s := float32(1.0) / (sqrt32(Dot(v, v)) + 1e-9)
+	out := make([]float32, len(v))
+	for i, x := range v {
+		out[i] = x * s
+	}
+	return out
 }

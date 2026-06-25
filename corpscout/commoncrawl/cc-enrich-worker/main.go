@@ -14,6 +14,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/parquet-go/parquet-go"
 
+	"cc-enrich-worker/internal/embed"
 	"cc-enrich-worker/internal/fetch"
 )
 
@@ -96,7 +97,7 @@ func main() {
 	modeFlag := flag.String("mode", "both", "industry (domains, needs CH+embedder) | tech (tech only, no CH/embedder) | both")
 	skipTech := flag.Bool("skip-tech", false, "alias for --mode industry (skip Wappalyzer)")
 	anonymous := flag.Bool("s3-anonymous", false, "fetch via the anonymous HTTPS CDN data.commoncrawl.org (off-AWS; S3 API denies anon)")
-	batch := flag.Int("embed-batch", embedBatch, "embed batch size")
+	batch := flag.Int("embed-batch", embed.DefaultBatch, "embed batch size")
 	embedConc := flag.Int("embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
 	chunkSize := flag.Int("chunk", 1024, "domains per fetch+embed chunk (pipelines fetch/embed; lower = earlier GPU traffic)")
 	region := flag.String("region", envOr("AWS_REGION", "us-east-1"), "S3 region")
@@ -165,7 +166,7 @@ func main() {
 			}
 		}
 		log.Printf("embed endpoint=%s model=%s", baseURL, model)
-		emb = NewEmbedClient(baseURL, model, *batch, *embedConc)
+		emb = embed.NewEmbedClient(baseURL, model, *batch, *embedConc)
 
 		// Fail fast unless the reference covers every NACE category and was built with the same
 		// model + dim this worker will embed pages with (the matching-vector-space invariant).
