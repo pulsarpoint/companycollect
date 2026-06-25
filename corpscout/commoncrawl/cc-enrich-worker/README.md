@@ -136,14 +136,16 @@ Or the distroless image: `docker build -t cc-enrich-worker .` (see `Dockerfile`)
 ### 1. Generate a worklist shard
 Worklists are produced off-AWS by the standalone **`../index-builder`** package (duckdb + pyarrow,
 no dagster), which resolves exact index-part URLs from CommonCrawl's HTTPS manifest (anonymous S3
-LIST is denied, so no globs). One index part → one shard (~30k domains); the warc subset has ~300
-parts/crawl. Picks each domain's main-site homepage (apex/www, shallowest path).
+LIST is denied, so no globs). The warc subset has ~300 parts/crawl. **The two passes use different
+worklists**: `industry` = 1 homepage/domain; `tech` = many pages/domain (so Wappalyzer + the
+LEI/VAT/profile extractors see the legal/contact pages where that data lives).
 ```bash
 cd ../index-builder
-uv run python -m index_builder --crawl CC-MAIN-2026-25 --list          # how many parts exist
-uv run python -m index_builder --crawl CC-MAIN-2026-25 --part 0 \
-    --out ../cc-enrich-worker/data/commoncrawl/shard0.parquet          # default --where = all domains
+uv run python -m index_builder --crawl CC-MAIN-2026-25 --list                      # how many parts
+uv run python -m index_builder --crawl CC-MAIN-2026-25 --part 0 --out i0.parquet   # industry (1/domain)
+uv run python -m index_builder --crawl CC-MAIN-2026-25 --mode tech --part 0 --out t0.parquet  # tech (≤25/domain)
 ```
+`run_crawl.sh` does this automatically per mode (caching `shard_<mode>_<part>.parquet`).
 Worklist columns: `root_domain, url, warc_filename, warc_record_offset, warc_record_length, content_languages`.
 
 ### 2. Run a pass

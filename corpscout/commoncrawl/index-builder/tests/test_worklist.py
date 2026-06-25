@@ -51,6 +51,47 @@ def test_worklist_prefers_main_site_over_functional_subdomain(tmp_path):
     assert rows[0][1] == "http://ex.com/" and rows[0][2] == "apex.gz"
 
 
+def test_tech_mode_multi_page_homepage_and_legal_first_then_caps(tmp_path):
+    idx = tmp_path / "idx.parquet"
+    _write_index(idx, [
+        ("ex.com", "ex.com", "http://ex.com/a/b/c", "/a/b/c", 200, "text/html", "w", 4, 5),  # deep -> dropped at cap 3
+        ("ex.com", "ex.com", "http://ex.com/blog", "/blog", 200, "text/html", "w", 3, 5),
+        ("ex.com", "ex.com", "http://ex.com/imprint", "/imprint", 200, "text/html", "w", 2, 5),  # legal -> kept
+        ("ex.com", "ex.com", "http://ex.com/", "/", 200, "text/html", "w", 0, 5),                # homepage -> first
+        ("shop.ex.com.dom", "shop.ex.com.dom", "http://x/", "/", 404, "text/html", "w", 9, 5),   # not 200 -> dropped
+    ])
+    con = duckdb.connect()
+    rows = worklist.run_worklist(con, f"read_parquet('{idx}')", mode="tech", max_pages=3).fetchall()
+    urls = [r[1] for r in rows]
+    assert len(urls) == 3                          # capped to 3 pages for the one domain
+    assert urls[0] == "http://ex.com/"             # homepage ranked first
+    assert "http://ex.com/imprint" in urls         # legal page kept within the cap (identifiers live here)
+    assert "http://ex.com/a/b/c" not in urls       # deepest page dropped by the cap
+
+
+def test_tech_mode_uncapped_returns_all_html_pages(tmp_path):
+    idx = tmp_path / "idx.parquet"
+    _write_index(idx, [
+        ("ex.com", "ex.com", "http://ex.com/", "/", 200, "text/html", "w", 0, 5),
+        ("ex.com", "ex.com", "http://ex.com/a", "/a", 200, "text/html", "w", 1, 5),
+        ("ex.com", "ex.com", "http://ex.com/b", "/b", 200, "text/html", "w", 2, 5),
+    ])
+    con = duckdb.connect()
+    rows = worklist.run_worklist(con, f"read_parquet('{idx}')", mode="tech", max_pages=0).fetchall()
+    assert len(rows) == 3                          # every 200/HTML page
+
+
+def test_industry_mode_still_one_page_per_domain(tmp_path):
+    idx = tmp_path / "idx.parquet"
+    _write_index(idx, [
+        ("ex.com", "ex.com", "http://ex.com/", "/", 200, "text/html", "w", 0, 5),
+        ("ex.com", "ex.com", "http://ex.com/about", "/about", 200, "text/html", "w", 1, 5),
+    ])
+    con = duckdb.connect()
+    rows = worklist.run_worklist(con, f"read_parquet('{idx}')").fetchall()  # default mode=industry
+    assert len(rows) == 1 and rows[0][1] == "http://ex.com/"
+
+
 def test_build_worklist_writes_parquet_and_where_filter(tmp_path):
     idx = tmp_path / "idx.parquet"
     _write_index(idx, [

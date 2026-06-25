@@ -10,7 +10,11 @@
 # <out>.loaded marker exists is skipped; ReplacingMergeTree dedupes any re-load.
 #
 # Tunables via env: CRAWL, WHERE (worklist SQL filter; empty = ALL domains), DATA,
-# BUILDER_DIR, TECH_CONC, IND_CONC, EMBED_CONC.
+# BUILDER_DIR, MAX_PAGES (tech pages/domain, default 25; 0=all), TECH_CONC, IND_CONC, EMBED_CONC.
+#
+# industry and tech build SEPARATE worklists: industry = 1 representative page/domain (homepage),
+# tech = up to MAX_PAGES/domain (homepage + legal/contact pages + shallow) so Wappalyzer + the
+# LEI/VAT/profile extractors see the pages that actually carry that data.
 set -uo pipefail
 
 # Load the shared config (COMMONCRAWL_EMBED_*, CLICKHOUSE_*, AWS_*) — the single source of truth
@@ -46,7 +50,7 @@ ch() {
 }
 
 for ((p = lo; p <= hi; p++)); do
-	shard="$DATA_ABS/shard_${p}.parquet"
+	shard="$DATA_ABS/shard_${MODE}_${p}.parquet" # per-mode: industry=1 page/domain, tech=many
 	out="$DATA/${MODE}_${p}"
 	primary="${out}-${OUTPUTS[0]##*:}.parquet" # produced whenever the pass runs
 	marker="${out}.loaded"
@@ -56,8 +60,8 @@ for ((p = lo; p <= hi; p++)); do
 	if [ ! -f "$shard" ]; then
 		echo "[$MODE $p] generating worklist…"
 		tmp="${shard}.tmp.$$"
-		if (cd "$BUILDER_ABS" && uv run python -m index_builder \
-			--crawl "$CRAWL" --part "$p" --where "$WHERE" --out "$tmp"); then
+		if (cd "$BUILDER_ABS" && uv run python -m index_builder --mode "$MODE" \
+			--max-pages "${MAX_PAGES:-25}" --crawl "$CRAWL" --part "$p" --where "$WHERE" --out "$tmp"); then
 			mv -f "$tmp" "$shard"
 		else
 			echo "[$MODE $p] worklist FAILED — skip"; rm -f "$tmp"; continue
