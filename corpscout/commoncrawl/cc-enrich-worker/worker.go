@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cc-enrich-worker/internal/fetch"
+	"cc-enrich-worker/internal/parse"
 )
 
 const classifyInstruction = "Classify the business into its industry category"
@@ -167,7 +168,7 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter fetch.RangeG
 				}
 				if runEmbed && it.Primary && !agg.hasPrimary {
 					t1 := time.Now()
-					text, emails, _ := ParseHTML(string(body))
+					text, emails, _ := parse.ParseHTML(string(body))
 					atomic.AddInt64(&parseNs, time.Since(t1).Nanoseconds())
 					agg.hasPrimary = true
 					agg.primaryText = text
