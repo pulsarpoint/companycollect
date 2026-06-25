@@ -53,7 +53,7 @@ surfaced through a join view, so they survive Dagster's wipe-and-replace and nev
 | 3 | Scope | Generic config-driven engine, **Norway-only config** initially |
 | 4 | Trigger | **Dagster triggers** the workflow after its ClickHouse export, **by workflow name** (thin op; no heavy import) |
 | 5 | Wait semantics | **Fire-and-forget** — Dagster does not gate on completion |
-| 6 | Write-back model | **Separate `company_translations` table + join view**; survives Dagster's wipe-and-replace |
+| 6 | Write-back model | **Separate `text_translations` table + join view**; survives Dagster's wipe-and-replace |
 | 7 | Dedup granularity | **Term-level** — translate each distinct string once (existing `item_id = hash(text+lang)`) |
 | 8 | Service name | `corpscout/translator` (Python package + worker entrypoint) |
 | 9 | `_en` exposure | **New join-view**; drop `_en` columns from the base companies table |
@@ -80,14 +80,14 @@ fire Temporal StartWorkflow ─────────────────�
 asset completes immediately                          1. scan: distinct untranslated terms FROM ClickHouse
                                                      2. seed DuckDB queue (term-level, deduped)  [existing]
                                                      3. loop: claim batch → LLM translate → save  [existing]
-                                                     4. flush results → corpscout.company_translations  [NEW]
+                                                     4. flush results → corpscout.text_translations  [NEW]
                                                             │
 queries read view  ◄──────────────────────────────────────┘
 corpscout.norway_companies_translated
-   = companies LEFT JOIN company_translations (ClickHouse computes hash on both sides)
+   = companies LEFT JOIN text_translations (ClickHouse computes hash on both sides)
 ```
 
-Next refresh re-exports `companies` (wiping it) but **not** `company_translations`; the scan then finds only
+Next refresh re-exports `companies` (wiping it) but **not** `text_translations`; the scan then finds only
 new/changed terms → minimal re-translation.
 
 ---
@@ -105,13 +105,13 @@ new/changed terms → minimal re-translation.
 **Build (the genuinely new parts):**
 1. **ClickHouse scan** — replace the current "seed from source DuckDB" with "seed from ClickHouse": for each
    registered field, `SELECT DISTINCT <original_col>` where the original is non-empty **and** not already in
-   `company_translations` (LEFT JOIN). Returns distinct terms.
-2. **ClickHouse flush** — a new final workflow step that writes completed results to `company_translations`
+   `text_translations` (LEFT JOIN). Returns distinct terms.
+2. **ClickHouse flush** — a new final workflow step that writes completed results to `text_translations`
    (replaces the current DuckDB apply-back + re-export).
 3. **Generic registry** — per `source_slug`: `{source_lang, ch_table, [(original_col, field)]}`. Norway-only
    initially.
 4. **Dagster trigger op** — a thin fire-and-forget `StartWorkflow` call (by name) after the companies export.
-5. **ClickHouse migrations** — `company_translations` table + the join view; drop `_en` from `companies`.
+5. **ClickHouse migrations** — `text_translations` table + the join view; drop `_en` from `companies`.
 
 **Simplification:** the existing `translation_locations` table tracks `source_table/source_pk/source_field`
 for *patching source rows*. The new model writes **term-level** results keyed by hash, so per-row locations are
@@ -128,8 +128,8 @@ corpscout/translator/
 ├── translator/
 │   ├── worker.py              # entrypoint — runs the Temporal worker (reuses queue_cli.worker_main)
 │   ├── registry.py            # per source_slug → {source_lang, ch_table, [(original_col, field)]}
-│   ├── scan.py                # ClickHouse: distinct untranslated terms (LEFT JOIN company_translations)
-│   ├── flush.py               # ClickHouse: insert completed results into company_translations
+│   ├── scan.py                # ClickHouse: distinct untranslated terms (LEFT JOIN text_translations)
+│   ├── flush.py               # ClickHouse: insert completed results into text_translations
 │   ├── workflow.py            # workflow wiring scan → seed (existing queue) → translate loop → flush
 │   ├── queue.py               # MOVED from translations/queue.py (DuckDB queue)
 │   └── provider.py            # MOVED OpenAI-compatible translation provider
@@ -143,12 +143,12 @@ Dagster trigger agree without new config.
 
 ## Data Model
 
-### `corpscout.company_translations` (new ClickHouse table)
+### `corpscout.text_translations` (new ClickHouse table)
 
 Term-level, hash-keyed. Identical source strings across many companies are translated once.
 
 ```sql
-CREATE TABLE IF NOT EXISTS corpscout.company_translations
+CREATE TABLE IF NOT EXISTS corpscout.text_translations
 (
     source_slug       LowCardinality(String),   -- 'norway_brreg'
     field             LowCardinality(String),   -- 'company_description'
@@ -171,7 +171,7 @@ We avoid it: the Python worker **never computes `cityHash64`**. The flush step i
 carrying the raw `source_text` + `translated_text`, then:
 
 ```sql
-INSERT INTO corpscout.company_translations
+INSERT INTO corpscout.text_translations
 SELECT 'norway_brreg', field, cityHash64(<normalize>(source_text)), 'no', 'en',
        translated_text, provider, model, <version>
 FROM <staging>;
@@ -183,7 +183,7 @@ ClickHouse on both write and read — there is exactly **one** definition of the
 
 ### View: `corpscout.norway_companies_translated`
 
-Exposes `_en` by joining the base table to `company_translations` per field. The base `companies` table
+Exposes `_en` by joining the base table to `text_translations` per field. The base `companies` table
 **no longer carries `_en` columns** (Decision 9); consumers point at the view.
 
 ```sql
@@ -197,7 +197,7 @@ SELECT
 FROM corpscout.companies AS c
 LEFT JOIN (
     SELECT source_text_hash, argMax(translated_text, version) AS translated_text
-    FROM corpscout.company_translations
+    FROM corpscout.text_translations
     WHERE source_slug='norway_brreg' AND field='company_description'
     GROUP BY source_text_hash
 ) AS t_desc ON t_desc.source_text_hash = cityHash64(<normalize>(c.company_description_original))
@@ -215,9 +215,9 @@ LEFT JOIN (
 2. Dagster's final step fires `StartWorkflow` by name with `id="translate-norway_brreg"` and
    `WorkflowIDConflictPolicy.USE_EXISTING`, then the asset completes (fire-and-forget).
 3. The `translator` worker runs: scan ClickHouse → seed the DuckDB queue → claim/translate/save loop → flush
-   results to `company_translations`.
+   results to `text_translations`.
 4. Queries read `corpscout.norway_companies_translated`; `_en` is filled for translated terms, empty otherwise.
-5. On the next refresh, `companies` is wiped and re-exported; `company_translations` persists, so the scan only
+5. On the next refresh, `companies` is wiped and re-exported; `text_translations` persists, so the scan only
    enqueues genuinely new/changed terms.
 
 ---
@@ -263,7 +263,7 @@ LEFT JOIN (
 
 ## ClickHouse Migrations (`corpscout/clickhouse/migrations`)
 
-- New forward migration creating `company_translations` (ReplacingMergeTree) + a `*_staging` insert path.
+- New forward migration creating `text_translations` (ReplacingMergeTree) + a `*_staging` insert path.
 - New migration creating `norway_companies_translated` view and dropping `_en` columns from `companies`
   (forward-only; the ledger is shared/forward-only).
 - Add both migration names to `EXPECTED_MIGRATIONS` in the migrations contract test.
@@ -274,14 +274,14 @@ LEFT JOIN (
 
 **`corpscout/translator` (Python):**
 - `registry`: table-driven test of the Norway config (fields, language).
-- `scan`: against a local ClickHouse with seeded `companies` + partial `company_translations`, returns only
+- `scan`: against a local ClickHouse with seeded `companies` + partial `text_translations`, returns only
   the missing distinct terms.
 - `queue`: existing DuckDB queue tests carried over (build/claim/save/retry, term-level dedup).
 - `provider`: against a mock OpenAI-compatible server; JSON parse + error paths (existing smoke test adapted).
 - `workflow`: under the Temporal test environment — happy path drains the queue; a failing batch leaves items
   retryable and the workflow still completes; empty scan no-ops.
-- `flush`: insert via staging → `company_translations` dedup by key/version; only non-empty translations land.
-- **Hash/view test:** seed `company_translations` via the staging insert, then assert the view's
+- `flush`: insert via staging → `text_translations` dedup by key/version; only non-empty translations land.
+- **Hash/view test:** seed `text_translations` via the staging insert, then assert the view's
   `cityHash64(<normalize>(...))` join surfaces the right `_en` (proves the single SQL hash definition works on
   both sides).
 
