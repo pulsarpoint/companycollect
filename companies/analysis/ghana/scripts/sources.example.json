@@ -1,0 +1,32 @@
+[
+  {
+    "name": "GSE listed companies + financials (OPEN)",
+    "slug": "gse_listed",
+    "type": "bulk",
+    "url": "https://gse.com.gh/listed-companies/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "OPEN. Listed-company directory (name, sector) + /profile-of-listed-companies/ + /financial-statements/ (listed financials, GHS). Verified live: Ecobank Ghana PLC, GCB/Ghana Commercial Bank, AngloGold Ashanti Plc, CalBank PLC, Standard Chartered Bank Ghana PLC, Guinness Ghana, Fan Milk, Enterprise Group. Listed only (~35)."
+  },
+  {
+    "name": "ORC / RGD eServices — company search + documents (PAID; firewalled here)",
+    "slug": "orc_eservices",
+    "type": "bulk",
+    "url": "https://eservices.rgd.gov.gh/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "PAID. Official registrar (ORC, ex-RGD). Search + documents (incorporation/status/annual returns) via eServices, paid per transaction. orc.gov.gh/rgd.gov.gh resolved via DNS but firewalled (TCP timeout) from this environment. No open bulk/API. Redact directors/shareholders (Act 843)."
+  },
+  {
+    "name": "data.gov.gh (firewalled here)",
+    "slug": "datagovgh_portal",
+    "type": "bulk",
+    "url": "https://data.gov.gh/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "National open-data portal. Firewalled (TCP/HTTP timeout) from this environment; no company-register dataset confirmed."
+  }
+]
