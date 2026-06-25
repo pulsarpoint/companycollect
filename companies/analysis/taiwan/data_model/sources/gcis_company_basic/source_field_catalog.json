@@ -1,0 +1,30 @@
+{
+  "country": "Taiwan",
+  "country_slug": "taiwan",
+  "source_slug": "gcis_company_basic",
+  "source_name": "MOEA GCIS — Company Registration Basic Data (OpenData API)",
+  "source_type": "official_registry",
+  "organization": "Ministry of Economic Affairs, Department of Commerce (GCIS / 商工登記公示資料)",
+  "source_url": "https://data.gcis.nat.gov.tw/od/data/api/5F64D864-61CB-4D0D-8AD9-492047CC1EA6",
+  "license": "open_government_data_license_tw",
+  "access": "public",
+  "data_freshness": "monthly",
+  "record_shape": "json_array_of_company_objects",
+  "primary_keys": ["Business_Accounting_NO"],
+  "join_keys": ["Business_Accounting_NO"],
+  "field_count": 12,
+  "fields": [
+    { "path": "Business_Accounting_NO", "source_field": "Business_Accounting_NO", "english_name": "unified_business_number", "meaning": "8-digit 統一編號 (Unified Business Number) — the national company/tax identifier and primary key.", "data_type": "string", "semantic_type": "identifier", "example_values": ["22099131"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Universal join key to TWSE/TPEx." },
+    { "path": "Company_Name", "source_field": "Company_Name", "english_name": "company_name", "meaning": "Registered company name (Chinese).", "data_type": "string", "semantic_type": "legal_name", "example_values": ["台灣積體電路製造股份有限公司"], "nullable": false, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": null, "source_confidence": "high", "analysis_notes": "Primary display name." },
+    { "path": "Company_Status_Desc", "source_field": "Company_Status_Desc", "english_name": "company_status_desc", "meaning": "Registration status description.", "data_type": "string", "semantic_type": "status", "example_values": ["核准設立"], "nullable": false, "repeatable": false, "code_list": "GCIS status descriptions", "language": "zh-Hant", "limitations": "核准設立 = approved/established.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Capital_Stock_Amount", "source_field": "Capital_Stock_Amount", "english_name": "capital_stock_amount", "meaning": "Authorized capital (TWD).", "data_type": "integer", "semantic_type": "financial", "example_values": ["280500000000"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency TWD.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Paid_In_Capital_Amount", "source_field": "Paid_In_Capital_Amount", "english_name": "paid_in_capital_amount", "meaning": "Paid-in capital (TWD).", "data_type": "integer", "semantic_type": "financial", "example_values": ["259323700670"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency TWD.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Responsible_Name", "source_field": "Responsible_Name", "english_name": "responsible_name", "meaning": "Legal representative / responsible person.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": "PERSONAL DATA — redact (PDPA). Value intentionally omitted.", "source_confidence": "high", "analysis_notes": "Do not store cleartext." },
+    { "path": "Company_Location", "source_field": "Company_Location", "english_name": "company_location", "meaning": "Registered address.", "data_type": "string", "semantic_type": "address", "example_values": ["新竹科學園區新竹市力行六路8號"], "nullable": true, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Register_Organization_Desc", "source_field": "Register_Organization_Desc", "english_name": "register_organization_desc", "meaning": "Registering authority.", "data_type": "string", "semantic_type": "metadata", "example_values": ["國家科學及技術委員會新竹科學園區管理局"], "nullable": true, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": null, "source_confidence": "high", "analysis_notes": "Identifies which authority registered the company (科學園區 vs MOEA vs city)." },
+    { "path": "Company_Setup_Date", "source_field": "Company_Setup_Date", "english_name": "company_setup_date", "meaning": "Establishment date.", "data_type": "string", "semantic_type": "date", "example_values": ["0760221"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "ROC/Minguo date YYYMMDD (076 → 1987-02-21). Convert to Gregorian.", "source_confidence": "high", "analysis_notes": "year = ROC + 1911." },
+    { "path": "Change_Of_Approval_Data", "source_field": "Change_Of_Approval_Data", "english_name": "change_of_approval_date", "meaning": "Date of last approval change.", "data_type": "string", "semantic_type": "date", "example_values": ["1150618"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "ROC/Minguo date (115 → 2026-06-18).", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Revoke_App_Date", "source_field": "Revoke_App_Date", "english_name": "revoke_app_date", "meaning": "Revocation date (empty if not revoked).", "data_type": "string", "semantic_type": "date", "example_values": [""], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "ROC date when present.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "Sus_App_Date", "source_field": "Sus_App_Date / Sus_Beg_Date / Sus_End_Date", "english_name": "suspension_dates", "meaning": "Suspension application / begin / end dates.", "data_type": "string", "semantic_type": "date", "example_values": [""], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "ROC dates when present; group of suspension fields.", "source_confidence": "medium", "analysis_notes": "Plus Case_Status / Case_Status_Desc for pending cases." }
+  ]
+}

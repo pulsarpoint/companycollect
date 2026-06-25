@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Taiwan Company Profile",
+  "description": "Country-specific company profile for Taiwan. The authoritative open register is the MOEA GCIS Company Registration Basic Data API, keyed on the 8-digit 統一編號 (Unified Business Number) — which is also the national tax id. Listed companies are enriched from the Taiwan Stock Exchange (TWSE) and Taipei Exchange (TPEx) OpenAPIs, which carry the same 統一編號 as a join key plus a 4-digit securities code. All three are fully open JSON APIs (Open Government Data License, Taiwan). GCIS dates are ROC/Minguo (YYYMMDD, year = AD-1911); TWSE/TPEx incorporation/listing dates are Gregorian. Currency TWD; language Traditional Chinese (TWSE adds English). Responsible person, chairman, GM, spokesperson, and auditor names are personal data (PDPA) — redact.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Taiwan" },
+    "country_slug": { "type": "string", "const": "taiwan" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["unified_business_number"],
+      "properties": {
+        "unified_business_number": { "type": "string", "description": "8-digit 統一編號 — primary key and tax id.", "x-source": "gcis_company_basic", "x-source-path": "Business_Accounting_NO", "x-join-key": true, "x-freshness": "monthly", "x-access": "public" },
+        "securities_code": { "type": ["string", "null"], "description": "4-digit listed securities code (listed companies only).", "x-source": "twse_listed", "x-source-path": "公司代號", "x-source-alt": "tpex_listed.SecuritiesCompanyCode" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "gcis_company_basic", "x-source-path": "Company_Name", "x-source-alt": "twse_listed.公司名稱" },
+        "legal_name_en": { "type": ["string", "null"], "description": "English short name (listed).", "x-source": "twse_listed", "x-source-path": "英文簡稱" },
+        "short_name": { "type": ["string", "null"], "x-source": "twse_listed", "x-source-path": "公司簡稱" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "GCIS registration status (e.g. 核准設立).", "x-source": "gcis_company_basic", "x-source-path": "Company_Status_Desc" },
+        "incorporation_date": { "type": ["string", "null"], "description": "Establishment date (ISO 8601 after ROC->Gregorian conversion).", "x-source": "gcis_company_basic", "x-source-path": "Company_Setup_Date", "x-source-alt": "twse_listed.成立日期" },
+        "last_change_date": { "type": ["string", "null"], "description": "GCIS last approval-change date (ROC->Gregorian).", "x-source": "gcis_company_basic", "x-source-path": "Change_Of_Approval_Data" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "industry_code": { "type": ["string", "null"], "description": "TWSE/TPEx industry classification (listed).", "x-source": "twse_listed", "x-source-path": "產業別", "x-source-alt": "tpex_listed.SecuritiesIndustryCode" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "address": { "type": ["string", "null"], "x-source": "gcis_company_basic", "x-source-path": "Company_Location", "x-source-alt": "twse_listed.住址" },
+        "address_en": { "type": ["string", "null"], "x-source": "twse_listed", "x-source-path": "英文通訊地址" },
+        "register_organization": { "type": ["string", "null"], "description": "Registering authority.", "x-source": "gcis_company_basic", "x-source-path": "Register_Organization_Desc" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "description": "Capital amounts in TWD (GCIS authoritative).",
+      "x-source": "gcis_company_basic",
+      "properties": {
+        "capital_stock_amount": { "type": ["integer", "null"], "x-source-path": "Capital_Stock_Amount" },
+        "paid_in_capital_amount": { "type": ["integer", "null"], "x-source-path": "Paid_In_Capital_Amount" },
+        "currency": { "type": "string", "const": "TWD" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Responsible person (GCIS) / chairman, GM, spokesperson, auditor (TWSE/TPEx). PERSONAL DATA (PDPA) — REDACT.",
+      "x-source": "gcis_company_basic",
+      "x-source-path": "Responsible_Name",
+      "x-access": "personal_data_redact",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for TWSE/TPEx-listed companies.",
+      "properties": {
+        "market": { "type": ["string", "null"], "description": "TWSE (main board) or TPEx (OTC)." },
+        "securities_code": { "type": ["string", "null"], "x-source": "twse_listed", "x-source-path": "公司代號", "x-source-alt": "tpex_listed.SecuritiesCompanyCode" },
+        "listing_date": { "type": ["string", "null"], "description": "Date listed (Gregorian).", "x-source": "twse_listed", "x-source-path": "上市日期" },
+        "website": { "type": ["string", "null"], "x-source": "twse_listed", "x-source-path": "網址" }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

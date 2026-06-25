@@ -1,0 +1,85 @@
+{
+  "country": "Taiwan",
+  "country_slug": "taiwan",
+  "source_slug": "gcis_company_basic",
+  "source_identity": "taiwan_gcis_company_basic",
+  "source_package": "gcis",
+  "env_prefix": "TW_GCIS",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "MOEA GCIS — Company Registration Basic Data (OpenData API)",
+    "source_type": "official_registry",
+    "organization": "Ministry of Economic Affairs, Department of Commerce (GCIS / 商工登記公示資料)",
+    "source_url": "https://data.gcis.nat.gov.tw/od/data/api/5F64D864-61CB-4D0D-8AD9-492047CC1EA6",
+    "license": "open_government_data_license_tw",
+    "access": "public",
+    "data_freshness": "monthly",
+    "attribution": "MOEA GCIS 商工登記公示資料"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://data.gcis.nat.gov.tw/od/data/api/5F64D864-61CB-4D0D-8AD9-492047CC1EA6",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json", "xml", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "$",
+    "total_results_path": null,
+    "pagination": {
+      "type": "odata_skip_top",
+      "page_param": "$skip",
+      "page_start": 0,
+      "page_size": 100,
+      "page_size_param": "$top",
+      "next_page_path": null
+    },
+    "rate_limit": "unspecified"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "GcisCompanyBasic",
+    "date_formats": ["roc_minguo_YYYMMDD"],
+    "datetime_formats": [],
+    "number_formats": ["plain_integer"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Open JSON REST API returning an array of company objects. Query by $filter=Business_Accounting_NO eq <8-digit 統一編號> (URL-encode spaces with %20). The Company_Name `like` filter is unreliable (empty body observed) — for bulk-by-name use GCIS downloadable dataset files instead. Dates are ROC/Minguo YYYMMDD (calendar year = ROC year + 1911) — convert. Currency TWD. Redact Responsible_Name (personal data, PDPA)."
+  },
+  "keys": {
+    "primary_keys": ["Business_Accounting_NO"],
+    "join_keys": ["Business_Accounting_NO"],
+    "dedupe_keys": ["Business_Accounting_NO"]
+  },
+  "mapping_rules": {
+    "company_id": "Business_Accounting_NO (統一編號).",
+    "registration_number": "Business_Accounting_NO.",
+    "tax_id": "Business_Accounting_NO (the unified business number is the tax id).",
+    "legal_name": "Company_Name.",
+    "status": "Company_Status_Desc.",
+    "incorporation_date": "Company_Setup_Date (ROC -> Gregorian).",
+    "registered_address": "Company_Location.",
+    "capital": "Paid_In_Capital_Amount / Capital_Stock_Amount (TWD).",
+    "officers": "Responsible_Name (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "active company (核准設立)",
+    "company with suspension/revocation dates populated",
+    "company with large paid-in capital",
+    "record asserting Responsible_Name redaction"
+  ],
+  "live_test_plan": {
+    "smoke": "GET the API with $filter=Business_Accounting_NO eq 22099131 & $top=1; expect one TSMC record.",
+    "full": "Iterate known 統一編號 lists (or ingest GCIS bulk dataset files) behind env gates; convert ROC dates."
+  },
+  "blockers": []
+}

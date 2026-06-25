@@ -1,0 +1,59 @@
+{
+  "country": "Taiwan",
+  "country_slug": "taiwan",
+  "country_profile_version": "2026-06-25",
+  "registration": {
+    "unified_business_number": "22099131",
+    "securities_code": "2330"
+  },
+  "legal_identity": {
+    "legal_name": "台灣積體電路製造股份有限公司",
+    "legal_name_en": "TSMC",
+    "short_name": "台積電"
+  },
+  "status": {
+    "status_text": "核准設立",
+    "incorporation_date": "1987-02-21",
+    "last_change_date": "2026-06-18"
+  },
+  "activity": {
+    "industry_code": "24"
+  },
+  "registered_location": {
+    "address": "新竹科學園區新竹市力行六路8號",
+    "address_en": "No. 8, Li-Hsin Rd. 6, Hsinchu Science Park, Hsin-Chu 300096, Taiwan, R.O.C.",
+    "register_organization": "國家科學及技術委員會新竹科學園區管理局"
+  },
+  "capital": {
+    "capital_stock_amount": 280500000000,
+    "paid_in_capital_amount": 259323700670,
+    "currency": "TWD"
+  },
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Responsible person / Chairman (redacted per PDPA)" }
+  ],
+  "listing": {
+    "market": "TWSE",
+    "securities_code": "2330",
+    "listing_date": "1994-09-05",
+    "website": "https://www.tsmc.com"
+  },
+  "source_provenance": [
+    {
+      "source_slug": "gcis_company_basic",
+      "section": "registration.unified_business_number / legal_identity.legal_name / status / capital / registered_location / officers",
+      "source_url": "https://data.gcis.nat.gov.tw/od/data/api/5F64D864-61CB-4D0D-8AD9-492047CC1EA6",
+      "access": "public",
+      "license": "open_government_data_license_tw",
+      "retrieved_at": "2026-06-25T00:00:00Z"
+    },
+    {
+      "source_slug": "twse_listed",
+      "section": "registration.securities_code / legal_identity.legal_name_en / activity.industry_code / listing / registered_location.address_en",
+      "source_url": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+      "access": "public",
+      "license": "open_government_data_license_tw",
+      "retrieved_at": "2026-06-25T00:00:00Z"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "country": "Taiwan",
+  "country_slug": "taiwan",
+  "source_slug": "tpex_listed",
+  "source_name": "Taipei Exchange (TPEx) — OTC Listed Company Basic Info OpenAPI",
+  "source_type": "financial_disclosure",
+  "organization": "Taipei Exchange (TPEx / 證券櫃檯買賣中心)",
+  "source_url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+  "license": "open_government_data_license_tw",
+  "access": "public",
+  "data_freshness": "daily",
+  "record_shape": "json_array_of_otc_company_objects",
+  "primary_keys": ["SecuritiesCompanyCode"],
+  "join_keys": ["UnifiedBusinessNo.", "SecuritiesCompanyCode"],
+  "field_count": 9,
+  "fields": [
+    { "path": "SecuritiesCompanyCode", "source_field": "SecuritiesCompanyCode", "english_name": "company_code", "meaning": "TPEx securities/company code.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "OTC market.", "source_confidence": "high", "analysis_notes": "Listed-entity primary key (OTC)." },
+    { "path": "UnifiedBusinessNo.", "source_field": "UnifiedBusinessNo.", "english_name": "unified_business_number", "meaning": "8-digit 統一編號 — JOIN KEY to GCIS.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Equals GCIS Business_Accounting_NO." },
+    { "path": "CompanyName", "source_field": "CompanyName", "english_name": "company_name", "meaning": "Company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "CompanyAbbreviation", "source_field": "CompanyAbbreviation", "english_name": "company_abbreviation", "meaning": "Short company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Registration", "source_field": "Registration", "english_name": "foreign_registration_country", "meaning": "Foreign registration country (for F-shares).", "data_type": "string", "semantic_type": "geography", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "mixed", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "SecuritiesIndustryCode", "source_field": "SecuritiesIndustryCode", "english_name": "industry_code", "meaning": "TPEx industry classification code.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "TPEx industry codes", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Address", "source_field": "Address", "english_name": "address", "meaning": "Registered address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Chairman", "source_field": "Chairman", "english_name": "chairman", "meaning": "Chairman of the board.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": "PERSONAL DATA — redact (PDPA).", "source_confidence": "high", "analysis_notes": null },
+    { "path": "GeneralManager", "source_field": "GeneralManager", "english_name": "general_manager", "meaning": "General manager / president.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": "PERSONAL DATA — redact.", "source_confidence": "high", "analysis_notes": null }
+  ]
+}

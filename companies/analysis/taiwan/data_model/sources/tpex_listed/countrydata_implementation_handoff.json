@@ -1,0 +1,73 @@
+{
+  "country": "Taiwan",
+  "country_slug": "taiwan",
+  "source_slug": "tpex_listed",
+  "source_identity": "taiwan_tpex_listed",
+  "source_package": "tpex",
+  "env_prefix": "TW_TPEX",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Taipei Exchange (TPEx) — OTC Listed Company Basic Info OpenAPI",
+    "source_type": "financial_disclosure",
+    "organization": "Taipei Exchange (TPEx / 證券櫃檯買賣中心)",
+    "source_url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+    "license": "open_government_data_license_tw",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Taipei Exchange OpenAPI"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+    "download_url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "$",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unspecified; single full-array response (~890 records)"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "TpexOtcCompany",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Open JSON array of all OTC (櫃買) listed companies, English field names. No pagination — one GET returns all. Join key UnifiedBusinessNo. == GCIS Business_Accounting_NO. Currency TWD. Redact Chairman/GeneralManager (personal data, PDPA)."
+  },
+  "keys": {
+    "primary_keys": ["SecuritiesCompanyCode"],
+    "join_keys": ["UnifiedBusinessNo.", "SecuritiesCompanyCode"],
+    "dedupe_keys": ["SecuritiesCompanyCode"]
+  },
+  "mapping_rules": {
+    "company_id": "SecuritiesCompanyCode (OTC) — link to UnifiedBusinessNo. for the universal id.",
+    "legal_name": "CompanyName.",
+    "activity_code": "SecuritiesIndustryCode.",
+    "registered_address": "Address.",
+    "officers": "Chairman / GeneralManager (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "OTC issuer",
+    "foreign-registered (Registration populated) issuer",
+    "record asserting chairman/GM redaction"
+  ],
+  "live_test_plan": {
+    "smoke": "GET mopsfin_t187ap03_O; expect a JSON array of OTC companies with UnifiedBusinessNo.",
+    "full": "Ingest the full array daily; join to GCIS on 統一編號."
+  },
+  "blockers": []
+}

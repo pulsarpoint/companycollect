@@ -1,0 +1,32 @@
+{
+  "country": "Taiwan",
+  "country_slug": "taiwan",
+  "source_slug": "twse_listed",
+  "source_name": "Taiwan Stock Exchange (TWSE) — Listed Company Basic Info OpenAPI",
+  "source_type": "financial_disclosure",
+  "organization": "Taiwan Stock Exchange (TWSE / 臺灣證券交易所)",
+  "source_url": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+  "license": "open_government_data_license_tw",
+  "access": "public",
+  "data_freshness": "daily",
+  "record_shape": "json_array_of_listed_company_objects",
+  "primary_keys": ["公司代號"],
+  "join_keys": ["營利事業統一編號", "公司代號"],
+  "field_count": 14,
+  "fields": [
+    { "path": "公司代號", "source_field": "公司代號", "english_name": "company_code", "meaning": "TWSE securities/company code (4-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": ["2330", "1101"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Listed-entity primary key." },
+    { "path": "營利事業統一編號", "source_field": "營利事業統一編號", "english_name": "unified_business_number", "meaning": "8-digit 統一編號 — JOIN KEY to GCIS.", "data_type": "string", "semantic_type": "identifier", "example_values": ["22099131"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Equals GCIS Business_Accounting_NO." },
+    { "path": "公司名稱", "source_field": "公司名稱", "english_name": "company_name", "meaning": "Full company name (Chinese).", "data_type": "string", "semantic_type": "legal_name", "example_values": ["台灣積體電路製造股份有限公司"], "nullable": false, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "公司簡稱", "source_field": "公司簡稱", "english_name": "company_abbreviation", "meaning": "Short company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["台積電"], "nullable": true, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "英文簡稱", "source_field": "英文簡稱", "english_name": "english_abbreviation", "meaning": "English short name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["TSMC"], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "產業別", "source_field": "產業別", "english_name": "industry_code", "meaning": "TWSE industry classification code.", "data_type": "string", "semantic_type": "activity", "example_values": ["24", "01"], "nullable": true, "repeatable": false, "code_list": "TWSE industry codes", "language": "n/a", "limitations": "24 = semiconductors; 01 = cement.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "住址", "source_field": "住址", "english_name": "address", "meaning": "Registered address (Chinese).", "data_type": "string", "semantic_type": "address", "example_values": ["新竹科學園區力行六路8號"], "nullable": true, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "英文通訊地址", "source_field": "英文通訊地址", "english_name": "english_address", "meaning": "English mailing address.", "data_type": "string", "semantic_type": "address", "example_values": ["No. 8, Li-Hsin Rd. 6, Hsinchu Science Park, …"], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "董事長", "source_field": "董事長", "english_name": "chairman", "meaning": "Chairman of the board.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": "PERSONAL DATA — redact (PDPA).", "source_confidence": "high", "analysis_notes": "Do not store cleartext." },
+    { "path": "總經理", "source_field": "總經理", "english_name": "general_manager", "meaning": "General manager / president.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": "PERSONAL DATA — redact.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "成立日期", "source_field": "成立日期", "english_name": "incorporation_date", "meaning": "Company establishment date.", "data_type": "string", "semantic_type": "date", "example_values": ["19870221"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Gregorian YYYYMMDD (note: 出表日期 report date is ROC).", "source_confidence": "high", "analysis_notes": null },
+    { "path": "上市日期", "source_field": "上市日期", "english_name": "listing_date", "meaning": "Date listed on TWSE.", "data_type": "string", "semantic_type": "date", "example_values": ["19940905"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Gregorian YYYYMMDD.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "實收資本額", "source_field": "實收資本額", "english_name": "paid_in_capital", "meaning": "Paid-in capital (TWD).", "data_type": "string", "semantic_type": "financial", "example_values": ["259323700670"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency TWD.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "網址", "source_field": "網址 / 電子郵件信箱 / 簽證會計師事務所", "english_name": "contact_and_auditor", "meaning": "Website, investor email, and signing auditor firm (+簽證會計師1/2 names).", "data_type": "string", "semantic_type": "metadata", "example_values": ["https://www.tsmc.com"], "nullable": true, "repeatable": false, "code_list": null, "language": "mixed", "limitations": "Auditor names (簽證會計師1/2) are personal data — redact.", "source_confidence": "high", "analysis_notes": "Group of contact/governance fields; also 發言人/代理發言人 spokespersons (redact)." }
+  ]
+}

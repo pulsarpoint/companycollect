@@ -1,0 +1,75 @@
+{
+  "country": "Taiwan",
+  "country_slug": "taiwan",
+  "source_slug": "twse_listed",
+  "source_identity": "taiwan_twse_listed",
+  "source_package": "twse",
+  "env_prefix": "TW_TWSE",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Taiwan Stock Exchange (TWSE) — Listed Company Basic Info OpenAPI",
+    "source_type": "financial_disclosure",
+    "organization": "Taiwan Stock Exchange (TWSE / 臺灣證券交易所)",
+    "source_url": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+    "license": "open_government_data_license_tw",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Taiwan Stock Exchange OpenAPI"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+    "download_url": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "$",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unspecified; single full-array response (~1,089 records)"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "TwseListedCompany",
+    "date_formats": ["20060102", "roc_minguo_YYYMMDD"],
+    "datetime_formats": [],
+    "number_formats": ["plain_integer_string"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Open JSON array of all main-board listed companies. No pagination — one GET returns all. Join key 營利事業統一編號 == GCIS Business_Accounting_NO. 成立日期/上市日期 are Gregorian YYYYMMDD; 出表日期 (report date) is ROC. Currency TWD. Redact 董事長/總經理/發言人/代理發言人/簽證會計師1/2 (personal data, PDPA)."
+  },
+  "keys": {
+    "primary_keys": ["公司代號"],
+    "join_keys": ["營利事業統一編號", "公司代號"],
+    "dedupe_keys": ["公司代號"]
+  },
+  "mapping_rules": {
+    "company_id": "公司代號 (listed) — link to 統一編號 for the universal id.",
+    "legal_name": "公司名稱; legal_name_en = 英文簡稱.",
+    "activity_code": "產業別 (TWSE industry code).",
+    "incorporation_date": "成立日期 (Gregorian).",
+    "listing_date": "上市日期 (Gregorian).",
+    "capital": "實收資本額 (TWD).",
+    "officers": "董事長 / 總經理 (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "large-cap issuer (e.g. 2330 TSMC)",
+    "foreign-registered issuer (外國企業註冊地國 populated)",
+    "record asserting chairman/GM redaction"
+  ],
+  "live_test_plan": {
+    "smoke": "GET t187ap03_L; expect a JSON array; find 公司代號 2330 with 營利事業統一編號 22099131.",
+    "full": "Ingest the full array daily; join to GCIS on 統一編號; convert dates."
+  },
+  "blockers": []
+}
