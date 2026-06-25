@@ -84,6 +84,8 @@ statement grain.
         snapshot_year_month: "2026-05"
         snapshot_base_url: "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/"
   ```
+  `brazil_rfb_resolve_job` carries this launch config by default; update the
+  year-month when running a newer monthly snapshot.
 - **DuckDB reader**: use DuckDB `read_csv` over unzipped files with explicit
   column lists, `all_varchar=true`, `header=false`, `delim=';'`, and Latin-1
   decoding. Do not parse rows in Python.

@@ -154,13 +154,25 @@ def test_brazil_rfb_resolve_job_covers_brazil_outputs_and_domain_graph() -> None
     repo = load_defs().get_repository_def()
 
     assert "brazil_rfb_resolve_job" in set(repo.job_names)
+    resolve_job = repo.get_job("brazil_rfb_resolve_job")
     resolve_keys = {
         key.path[-1]
-        for key in repo.get_job(
-            "brazil_rfb_resolve_job"
-        ).asset_layer.executable_asset_keys
+        for key in resolve_job.asset_layer.executable_asset_keys
     }
 
+    assert resolve_job.run_config == {
+        "ops": {
+            "brazil_rfb_snapshot_files_duckdb": {
+                "config": {
+                    "snapshot_year_month": "2026-05",
+                    "snapshot_base_url": (
+                        "https://arquivos.receitafederal.gov.br/dados/cnpj/"
+                        "dados_abertos_cnpj/"
+                    ),
+                }
+            }
+        }
+    }
     assert {
         "brazil_rfb_snapshot_files_duckdb",
         "brazil_rfb_raw_files_duckdb",

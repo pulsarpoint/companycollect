@@ -29,6 +29,17 @@ CLICKHOUSE_COMPANIES_ASSET_KEY = "brazil_rfb_clickhouse_companies"
 CLICKHOUSE_ESTABLISHMENTS_ASSET_KEY = "brazil_rfb_clickhouse_establishments"
 CLICKHOUSE_CONTACT_INFO_ASSET_KEY = "brazil_rfb_clickhouse_contact_info"
 CLICKHOUSE_WEBSITES_ASSET_KEY = "brazil_rfb_clickhouse_websites"
+BRAZIL_RFB_DEFAULT_SNAPSHOT_YEAR_MONTH = "2026-05"
+BRAZIL_RFB_DEFAULT_RUN_CONFIG = {
+    "ops": {
+        SNAPSHOT_FILES_ASSET_KEY: {
+            "config": {
+                "snapshot_year_month": BRAZIL_RFB_DEFAULT_SNAPSHOT_YEAR_MONTH,
+                "snapshot_base_url": source.DEFAULT_BASE_URL,
+            }
+        }
+    }
+}
 
 
 class BrazilRfbConfig(dg.Config):
@@ -280,6 +291,7 @@ brazil_rfb_resolve_job = dg.define_asset_job(
     "brazil_rfb_resolve_job",
     selection=dg.AssetSelection.groups(GROUP_NAME)
     | dg.AssetSelection.assets("domains_clickhouse"),
+    config=BRAZIL_RFB_DEFAULT_RUN_CONFIG,
 )
 
 
