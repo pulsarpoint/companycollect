@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from dagster_v3.defs.brazil_cnae import tables as brazil_cnae_tables
+from dagster_v3.defs.brazil_rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
 from dagster_v3.defs.domains import tables as domain_tables
 from dagster_v3.defs.finland_resolved import tables as finland_resolved_tables
@@ -64,6 +65,8 @@ EXPECTED_MIGRATIONS = (
     "000050_corpscout_br_cnae_to_nace",
     "000051_corpscout_commoncrawl_company_identifiers",
     "000052_corpscout_lei_wikidata_companies_view",
+    "000053_corpscout_commoncrawl_company_profile",
+    "000054_corpscout_br_rfb_registry",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -817,6 +820,27 @@ def test_lei_wikidata_company_view_joins_gleif_and_wikidata_lei_identifiers() ->
         assert f" AS {column_alias}" in sql
 
     assert "DROP VIEW IF EXISTS corpscout.lei_wikidata_companies" in down_sql
+
+
+def test_brazil_rfb_registry_migration_covers_exported_columns() -> None:
+    sql = _migration_sql("000054_corpscout_br_rfb_registry.up.sql")
+    down_sql = _migration_sql("000054_corpscout_br_rfb_registry.down.sql")
+
+    assert f"CREATE TABLE IF NOT EXISTS {brazil_rfb_tables.QUALIFIED_BR_COMPANIES_TABLE}" in sql
+    assert (
+        f"CREATE TABLE IF NOT EXISTS {brazil_rfb_tables.QUALIFIED_BR_ESTABLISHMENTS_TABLE}"
+        in sql
+    )
+    for column_name in brazil_rfb_tables.BR_COMPANIES_EXPORT_COLUMNS:
+        assert f"    {column_name} " in sql, f"missing {column_name} in br_companies"
+    for column_name in brazil_rfb_tables.BR_ESTABLISHMENTS_EXPORT_COLUMNS:
+        assert f"    {column_name} " in sql, f"missing {column_name} in br_establishments"
+
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert "ORDER BY (cnpj_basico)" in sql
+    assert "ORDER BY (cnpj_basico, cnpj)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.br_establishments" in down_sql
+    assert "DROP TABLE IF EXISTS corpscout.br_companies" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

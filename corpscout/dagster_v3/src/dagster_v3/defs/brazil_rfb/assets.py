@@ -1,0 +1,165 @@
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import dagster as dg
+from dagster_clickhouse import ClickhouseResource
+from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
+from dagster_dlt.translator import DltResourceTranslatorData
+
+from dagster_v3.defs.brazil_rfb import source, staging, tables, transforms
+from dagster_v3.defs.brazil_rfb.clickhouse import (
+    export_brazil_rfb_clickhouse_companies,
+    export_brazil_rfb_clickhouse_establishments,
+)
+
+GROUP_NAME = "brazil_rfb"
+BRAZIL_RFB_DUCKDB_POOL = "brazil_rfb_duckdb"
+BRAZIL_RFB_DUCKDB_PATH = Path("data/brazil_rfb_source.duckdb")
+BRAZIL_RFB_DOWNLOAD_DIR = Path("data/brazil_rfb_downloads")
+SNAPSHOT_FILES_ASSET_KEY = "brazil_rfb_snapshot_files_duckdb"
+RAW_FILES_ASSET_KEY = "brazil_rfb_raw_files_duckdb"
+COMPANIES_ASSET_KEY = "brazil_rfb_companies_duckdb"
+CLICKHOUSE_COMPANIES_ASSET_KEY = "brazil_rfb_clickhouse_companies"
+CLICKHOUSE_ESTABLISHMENTS_ASSET_KEY = "brazil_rfb_clickhouse_establishments"
+
+
+class BrazilRfbConfig(dg.Config):
+    snapshot_month: str
+    snapshot_base_url: str = source.DEFAULT_BASE_URL
+
+
+class BrazilRfbDltTranslator(DagsterDltTranslator):
+    def get_asset_spec(self, data: DltResourceTranslatorData) -> dg.AssetSpec:
+        spec = super().get_asset_spec(data)
+        return spec.replace_attributes(
+            key=dg.AssetKey(SNAPSHOT_FILES_ASSET_KEY),
+            deps=[],
+            group_name=GROUP_NAME,
+            description=(
+                "Brazil RFB CNPJ monthly snapshot ZIP files downloaded, extracted, "
+                "and recorded as a dlt manifest table in DuckDB."
+            ),
+            kinds={"python", "dlt", "duckdb"},
+        )
+
+
+@dlt_assets(
+    dlt_source=source.brazil_rfb_source(
+        source_run_id="definition",
+        manifest_rows=[],
+    ),
+    dlt_pipeline=source.brazil_rfb_pipeline(BRAZIL_RFB_DUCKDB_PATH),
+    name=SNAPSHOT_FILES_ASSET_KEY,
+    dagster_dlt_translator=BrazilRfbDltTranslator(),
+    pool=BRAZIL_RFB_DUCKDB_POOL,
+)
+def brazil_rfb_snapshot_files_duckdb(
+    context: dg.AssetExecutionContext,
+    config: BrazilRfbConfig,
+    dlt: DagsterDltResource,
+) -> Iterator[Any]:
+    yield from dlt.run(
+        context=context,
+        dlt_source=source.brazil_rfb_source(
+            source_run_id=context.run_id,
+            snapshot_month=config.snapshot_month,
+            snapshot_base_url=config.snapshot_base_url,
+            download_dir=BRAZIL_RFB_DOWNLOAD_DIR / config.snapshot_month,
+        ),
+        dlt_pipeline=source.brazil_rfb_pipeline(BRAZIL_RFB_DUCKDB_PATH),
+    )
+
+
+@dg.asset(
+    name=RAW_FILES_ASSET_KEY,
+    deps=[dg.AssetKey(SNAPSHOT_FILES_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb"},
+    pool=BRAZIL_RFB_DUCKDB_POOL,
+    description="Brazil RFB CNPJ raw CSV file families loaded into DuckDB with read_csv.",
+)
+def brazil_rfb_raw_files_duckdb(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
+    counts = staging.load_all_raw_families_from_manifest(
+        database_path=BRAZIL_RFB_DUCKDB_PATH,
+        source_run_id=context.run_id,
+    )
+    context.log.info("Loaded Brazil RFB raw CSV families: counts=%s", counts)
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    name=COMPANIES_ASSET_KEY,
+    deps=[dg.AssetKey(RAW_FILES_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "sql"},
+    pool=BRAZIL_RFB_DUCKDB_POOL,
+    description="Brazil RFB legal entities and establishments normalized in DuckDB.",
+)
+def brazil_rfb_companies_duckdb(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
+    counts = transforms.build_brazil_rfb_companies_and_establishments(
+        database_path=BRAZIL_RFB_DUCKDB_PATH,
+        source_run_id=context.run_id,
+    )
+    context.log.info("Normalized Brazil RFB companies and establishments: counts=%s", counts)
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    name=CLICKHOUSE_COMPANIES_ASSET_KEY,
+    deps=[dg.AssetKey(COMPANIES_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=BRAZIL_RFB_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_BR_COMPANIES_TABLE},
+    description="Brazil RFB legal entities exported to ClickHouse corpscout.br_companies.",
+)
+def brazil_rfb_clickhouse_companies(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    rows = export_brazil_rfb_clickhouse_companies(
+        database_path=BRAZIL_RFB_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={"rows": rows, "table": tables.QUALIFIED_BR_COMPANIES_TABLE},
+    )
+
+
+@dg.asset(
+    name=CLICKHOUSE_ESTABLISHMENTS_ASSET_KEY,
+    deps=[dg.AssetKey(COMPANIES_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=BRAZIL_RFB_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_BR_ESTABLISHMENTS_TABLE},
+    description=(
+        "Brazil RFB establishments exported to ClickHouse "
+        "corpscout.br_establishments."
+    ),
+)
+def brazil_rfb_clickhouse_establishments(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    rows = export_brazil_rfb_clickhouse_establishments(
+        database_path=BRAZIL_RFB_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={"rows": rows, "table": tables.QUALIFIED_BR_ESTABLISHMENTS_TABLE},
+    )
+
+
+defs = dg.Definitions(
+    assets=[
+        brazil_rfb_snapshot_files_duckdb,
+        brazil_rfb_raw_files_duckdb,
+        brazil_rfb_companies_duckdb,
+        brazil_rfb_clickhouse_companies,
+        brazil_rfb_clickhouse_establishments,
+    ],
+)

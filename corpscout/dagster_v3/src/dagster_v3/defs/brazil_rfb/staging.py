@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import duckdb
+
+from dagster_v3.defs.brazil_rfb import tables
+
+
+def _sql_literal(value: object) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _list_literal(values: tuple[str, ...]) -> str:
+    return "[" + ", ".join(_sql_literal(value) for value in values) + "]"
+
+
+def load_raw_family_from_manifest(
+    *,
+    database_path: str | Path,
+    family: str,
+    source_run_id: str,
+) -> int:
+    if family not in tables.RAW_TABLE_BY_FAMILY:
+        raise ValueError(f"unknown Brazil RFB file family: {family}")
+
+    table_name = tables.RAW_TABLE_BY_FAMILY[family]
+    column_names = tables.RAW_COLUMNS_BY_FAMILY[family]
+    dataset = tables.DLT_DATASET_NAME
+    manifest = f"{dataset}.{tables.SNAPSHOT_FILES_TABLE}"
+    qualified = f"{dataset}.{table_name}"
+
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(f"create schema if not exists {dataset}")
+        manifest_rows = connection.execute(
+            f"""
+            select csv_path, archive_url, csv_member_name
+            from {manifest}
+            where family = ? and source_run_id = ?
+            order by archive_name, csv_member_name
+            """,
+            [family, source_run_id],
+        ).fetchall()
+        if not manifest_rows:
+            raise ValueError(f"No Brazil RFB manifest rows found for family {family}")
+
+        csv_paths = tuple(str(row[0]) for row in manifest_rows)
+        if all(Path(csv_path).stat().st_size == 0 for csv_path in csv_paths):
+            raise ValueError(f"Brazil RFB family {family} produced no rows")
+
+        read_csv_paths = _list_literal(csv_paths)
+        read_csv_columns = _list_literal(column_names)
+        manifest_values = ", ".join(
+            "("
+            + ", ".join(
+                (
+                    _sql_literal(str(row[0])),
+                    _sql_literal(family),
+                    _sql_literal(str(row[1])),
+                    _sql_literal(str(row[2])),
+                )
+            )
+            + ")"
+            for row in manifest_rows
+        )
+        connection.execute(
+            f"""
+            create or replace table {qualified} as
+            with file_manifest(csv_path, source_file_family, source_archive_url, source_csv_member) as (
+                values {manifest_values}
+            ),
+            loaded as (
+                select *
+                from read_csv(
+                    {read_csv_paths},
+                    names = {read_csv_columns},
+                    header = false,
+                    all_varchar = true,
+                    delim = ';',
+                    quote = '"',
+                    escape = '"',
+                    encoding = 'latin-1',
+                    filename = true
+                )
+            )
+            select
+                {", ".join(column_names)},
+                fm.source_file_family,
+                fm.source_archive_url,
+                fm.source_csv_member,
+                {_sql_literal(source_run_id)} as source_run_id,
+                now() as loaded_at
+            from loaded
+            join file_manifest fm on loaded.filename = fm.csv_path
+            """
+        )
+        count = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
+
+    if count == 0:
+        raise ValueError(f"Brazil RFB family {family} produced no rows")
+    return count
+
+
+def load_all_raw_families_from_manifest(
+    *,
+    database_path: str | Path,
+    source_run_id: str,
+) -> dict[str, int]:
+    return {
+        family: load_raw_family_from_manifest(
+            database_path=database_path,
+            family=family,
+            source_run_id=source_run_id,
+        )
+        for family in tables.RAW_TABLE_BY_FAMILY
+    }
