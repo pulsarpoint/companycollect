@@ -1,0 +1,32 @@
+[
+  {
+    "name": "NSE listed-company directory (OPEN)",
+    "slug": "nse_listed",
+    "type": "bulk",
+    "url": "https://www.nse.co.ke/listed-companies/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "OPEN. Listed-company directory (name, sector/segment). Verified live: Absa Bank Kenya PLC, Stanbic Holdings Plc, Standard Chartered Bank, Diamond Trust Bank, Sasini Ltd, Williamson Tea, Car & General. Listed announcements + financial results also public; /wp-json/ reachable. Listed only (~60). Real-time market data is a paid product."
+  },
+  {
+    "name": "BRS company search + documents via eCitizen (PAID)",
+    "slug": "brs_ecitizen",
+    "type": "bulk",
+    "url": "https://brs.ecitizen.go.ke/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "PAID. Official registrar. Search + documents (CR12 directors/shareholders, status report, certified extract, annual returns) via eCitizen (login + paid per transaction). Returned 403 to automation. No open bulk/API. Do not bypass login/paywall. Redact CR12 directors/shareholders (Data Protection Act 2019)."
+  },
+  {
+    "name": "Kenya Open Data (KODI)",
+    "slug": "opendata_kodi",
+    "type": "bulk",
+    "url": "https://www.opendata.go.ke/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "National open-data portal. Reachable but no accessible company-register dataset (CKAN/DKAN/Socrata APIs 404). Statistics only."
+  }
+]
