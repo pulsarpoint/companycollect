@@ -1,0 +1,34 @@
+[
+  {
+    "name": "MoC Commercial Register inquiry (Nafath login-gated)",
+    "slug": "moc_commercial_register",
+    "type": "bulk",
+    "url": "https://mc.gov.sa/en/eservices/Pages/Commercial-data.aspx",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Official Commercial Register (Ministry of Commerce). CR inquiry/verification requires Nafath login; inquiry sub-hosts (eservices.mc.gov.sa, businesscenter.gov.sa, qaweem) NXDOMAIN/firewalled. No open bulk/API. Do not bypass login. Identifiers: CR number (10-digit), Unified Number (700...). Redact managers/owners (PDPL)."
+  },
+  {
+    "name": "Saudi Exchange (Tadawul) — listed financials (browser; WAF-gated)",
+    "slug": "tadawul_listed",
+    "type": "bulk",
+    "url": "https://www.saudiexchange.sa/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Listed-company profiles + financial statements (SAR). Public via browser; WAF 'Access Denied' (403) for automation. Listed only (Saudi Aramco 2222, Al Rajhi 1120, SABIC 2010, STC 7010). Do not bypass WAF."
+  },
+  {
+    "name": "open.data.gov.sa (firewalled here)",
+    "slug": "open_data_gov_sa",
+    "type": "api_page",
+    "url": "https://open.data.gov.sa/data/api/3/action/package_search",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "start",
+    "page_start": 0,
+    "max_pages": 1,
+    "note": "National open-data portal (SDAIA, CKAN). Resolves (78.93.109.61) but HTTP timed out (firewalled) from this environment. Re-probe from an unblocked network."
+  }
+]
