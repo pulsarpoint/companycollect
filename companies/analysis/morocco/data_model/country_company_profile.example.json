@@ -1,0 +1,61 @@
+{
+  "country": "Morocco",
+  "country_slug": "morocco",
+  "country_profile_version": "2026-06-25",
+  "_note": "Identity/listing from the Casablanca Stock Exchange issuer listing (verified live: AFMA SA). ICE, RC number, IF tax id, capital, managers and Bilans are OMPIC/directinfo (free search reCAPTCHA-gated; detail + API paid) — so those values are null. Nothing fabricated.",
+  "registration": {
+    "ice": null,
+    "rc_number": null
+  },
+  "tax_identifiers": {
+    "if_tax_id": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "AFMA SA",
+    "legal_form": "Société Anonyme (SA)"
+  },
+  "status": {
+    "status_text": "en activité"
+  },
+  "activity": {
+    "activity_object": null,
+    "bourse_sector": "Assurances / Courtage"
+  },
+  "registered_location": {
+    "registered_address": null
+  },
+  "capital": {
+    "capital_social": null,
+    "currency": "MAD"
+  },
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Dirigeant" }
+  ],
+  "listing": {
+    "ticker": "AFMA",
+    "isin": null,
+    "sector": "Assurances / Courtage"
+  },
+  "financial_statements": [
+    { "fiscal_year": "2024", "currency": "MAD" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "casablanca_bourse",
+      "section": "legal_identity / status / activity.bourse_sector / listing / financial_statements",
+      "source_url": "https://www.casablanca-bourse.com/fr/listing-des-emetteurs",
+      "access": "public_open",
+      "license": "public_disclosure",
+      "retrieved_at": "2026-06-25T00:00:00Z"
+    },
+    {
+      "source_slug": "ompic_directinfo",
+      "section": "registration / tax_identifiers / capital / officers (gated)",
+      "source_url": "https://www.directinfo.ma/",
+      "access": "recaptcha_search_paid_detail_api",
+      "license": "free_search_recaptcha_paid_detail",
+      "retrieved_at": null
+    }
+  ]
+}

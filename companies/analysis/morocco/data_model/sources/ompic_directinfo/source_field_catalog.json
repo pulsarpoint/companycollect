@@ -1,0 +1,29 @@
+{
+  "country": "Morocco",
+  "country_slug": "morocco",
+  "source_slug": "ompic_directinfo",
+  "source_name": "OMPIC — Registre Central du Commerce (directinfo.ma)",
+  "source_type": "official_registry",
+  "organization": "Office Marocain de la Propriété Industrielle et Commerciale (OMPIC)",
+  "source_url": "https://www.directinfo.ma/",
+  "license": "free_search_recaptcha_paid_detail",
+  "access": "recaptcha_search_paid_detail_api",
+  "data_freshness": "live",
+  "record_shape": "per_company_record_recaptcha_search_paid_detail",
+  "primary_keys": ["ice"],
+  "join_keys": ["ice", "rc_number", "if_tax_id", "raison_sociale"],
+  "field_count": 11,
+  "fields": [
+    { "path": "ice", "source_field": "ICE", "english_name": "ice", "meaning": "Identifiant Commun de l'Entreprise — 15-digit unified company id (registry + tax + social security).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented from public knowledge; search reCAPTCHA-gated, detail paid, no live values.", "source_confidence": "high", "analysis_notes": "Primary join key (unified)." },
+    { "path": "rc_number", "source_field": "Numéro RC", "english_name": "rc_number", "meaning": "Registre du Commerce number (per court/tribunal).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Per-court; pair with the court name.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "if_tax_id", "source_field": "Identifiant Fiscal (IF)", "english_name": "tax_id", "meaning": "Tax identifier (DGI).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Tax key." },
+    { "path": "raison_sociale", "source_field": "Raison sociale", "english_name": "legal_name", "meaning": "Company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "fr/ar", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "forme_juridique", "source_field": "Forme juridique", "english_name": "legal_form", "meaning": "Legal form (SA/SARL/SARL-AU/SNC/SCS/succursale).", "data_type": "string", "semantic_type": "legal_form", "example_values": ["SA", "SARL", "SARL-AU"], "nullable": true, "repeatable": false, "code_list": "SA/SARL/SARL-AU/SNC/SCS/succursale", "language": "fr", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "statut", "source_field": "Statut", "english_name": "status", "meaning": "Status (en activité / en liquidation / radiée).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "en activité / en liquidation / radiée", "language": "fr", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "capital_social", "source_field": "Capital social", "english_name": "capital", "meaning": "Share capital (MAD).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency MAD.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "activite", "source_field": "Activité", "english_name": "activity", "meaning": "Business activity / object.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "NMA nomenclature", "language": "fr/ar", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "adresse", "source_field": "Adresse / Siège social", "english_name": "registered_address", "meaning": "Registered/head office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "fr/ar", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "dirigeants", "source_field": "Dirigeants", "english_name": "managers", "meaning": "Managers / directors.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "fr/ar", "limitations": "PERSONAL DATA (Law 09-08) — REDACT. Paid detail.", "source_confidence": "medium", "analysis_notes": "Redact." },
+    { "path": "bilans", "source_field": "Bilans", "english_name": "financial_statements", "meaning": "Annual financial statements (MAD).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "fr", "limitations": "Paid product; currency MAD.", "source_confidence": "medium", "analysis_notes": "Financial statements." }
+  ]
+}

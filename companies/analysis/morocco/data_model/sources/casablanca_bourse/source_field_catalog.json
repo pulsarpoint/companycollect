@@ -1,0 +1,23 @@
+{
+  "country": "Morocco",
+  "country_slug": "morocco",
+  "source_slug": "casablanca_bourse",
+  "source_name": "Casablanca Stock Exchange (listed companies + financials)",
+  "source_type": "financial_disclosure",
+  "organization": "Bourse de Casablanca",
+  "source_url": "https://www.casablanca-bourse.com/fr/listing-des-emetteurs",
+  "license": "public_disclosure",
+  "access": "public_open",
+  "data_freshness": "event_driven_quarterly",
+  "record_shape": "html_issuer_directory_one_row_per_listed_company",
+  "primary_keys": ["ticker"],
+  "join_keys": ["ticker", "isin", "company_name"],
+  "field_count": 5,
+  "fields": [
+    { "path": "company_name", "source_field": "Émetteur / Raison sociale", "english_name": "company_name", "meaning": "Listed company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["AFMA SA", "Alliances Développement Immobilier SA", "Atlanta Sanad"], "nullable": false, "repeatable": false, "code_list": null, "language": "fr", "limitations": "Listed companies only (~75). Verified on the issuer-listing page.", "source_confidence": "high", "analysis_notes": "Display name." },
+    { "path": "ticker", "source_field": "Ticker / Code valeur", "english_name": "ticker", "meaning": "Casablanca ticker symbol.", "data_type": "string", "semantic_type": "identifier", "example_values": ["AFMA", "ADI", "ATL"], "nullable": true, "repeatable": false, "code_list": null, "language": "fr", "limitations": "Some tickers from public knowledge; verify on the page.", "source_confidence": "medium", "analysis_notes": "Listed-entity key." },
+    { "path": "sector", "source_field": "Secteur", "english_name": "sector", "meaning": "Bourse sector.", "data_type": "string", "semantic_type": "activity", "example_values": ["Assurances", "Immobilier", "Banques"], "nullable": true, "repeatable": false, "code_list": "Casablanca Bourse sectors", "language": "fr", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "isin", "source_field": "ISIN", "english_name": "isin", "meaning": "International Securities Identification Number.", "data_type": "string", "semantic_type": "identifier", "example_values": ["MA..."], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Moroccan ISINs start MA.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "financial_publications", "source_field": "Publications des émetteurs", "english_name": "financial_publications", "meaning": "Issuer financial publications / results (MAD).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "fr", "limitations": "Listed only; currency MAD. Via /fr/publications-des-emetteurs.", "source_confidence": "high", "analysis_notes": null }
+  ]
+}

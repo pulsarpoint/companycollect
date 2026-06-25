@@ -1,0 +1,85 @@
+{
+  "country": "Morocco",
+  "country_slug": "morocco",
+  "source_slug": "ompic_directinfo",
+  "source_identity": "morocco_ompic_directinfo",
+  "source_package": "ompic",
+  "env_prefix": "MA_OMPIC",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "OMPIC — Registre Central du Commerce (directinfo.ma)",
+    "source_type": "official_registry",
+    "organization": "Office Marocain de la Propriété Industrielle et Commerciale (OMPIC)",
+    "source_url": "https://www.directinfo.ma/",
+    "license": "free_search_recaptcha_paid_detail",
+    "access": "recaptcha_search_paid_detail_api",
+    "data_freshness": "live",
+    "attribution": "OMPIC"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["MA_OMPIC_API_KEY"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.directinfo.ma/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["OMPIC API subscription (CAPI)"],
+    "formats": ["html", "json", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "free basic search reCAPTCHA-gated; detailed data + Bilans + API paid/subscription"
+  },
+  "snapshot": {
+    "strategy": "none_gated_paid",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "OmpicCompany",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": ["1 234 567,89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "reCAPTCHA + paid. Official Registre Central du Commerce (OMPIC). directinfo.ma free basic search is Google reCAPTCHA-gated; detailed company data, Bilans (financial statements), statistics, and the OMPIC API (CAPI) are paid/subscription. No open bulk. Do NOT bypass reCAPTCHA/paywall. Prefer the official subscription API once licensed. Field model from public knowledge; no values copied. ICE (15-digit) = unified company id; RC (per court) + IF (tax). Redact dirigeants/associés (Law 09-08)."
+  },
+  "keys": {
+    "primary_keys": ["ice"],
+    "join_keys": ["ice", "rc_number", "if_tax_id", "raison_sociale"],
+    "dedupe_keys": ["ice"]
+  },
+  "mapping_rules": {
+    "company_id": "ICE (15-digit unified id) or RC number.",
+    "registration_number": "Numéro RC (per court).",
+    "tax_id": "Identifiant Fiscal (IF).",
+    "vat_id": "none separate (TVA tied to the IF).",
+    "legal_name": "Raison sociale.",
+    "company_type": "Forme juridique (SA/SARL/SARL-AU/...).",
+    "status": "Statut (en activité/liquidation/radiée).",
+    "registered_address": "Adresse / Siège social.",
+    "activity_code": "Activité (NMA).",
+    "capital": "Capital social (MAD).",
+    "financials": "Bilans (MAD).",
+    "officers": "Dirigeants (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "active SA",
+    "SARL / SARL-AU",
+    "branch (succursale)",
+    "record with dirigeants/associés (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (reCAPTCHA/paid). Review the OMPIC API doc (CAPI) before any implementation.",
+    "full": "Blocked on payment — use the OMPIC subscription API under licence; redact personal data."
+  },
+  "blockers": [
+    "Free basic search is Google reCAPTCHA-gated",
+    "Detailed data + Bilans + API are paid/subscription",
+    "No open bulk; www.ompic.ma timed out"
+  ]
+}
