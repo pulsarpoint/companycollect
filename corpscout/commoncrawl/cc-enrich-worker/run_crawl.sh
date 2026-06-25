@@ -10,7 +10,7 @@
 # <out>.loaded marker exists is skipped; ReplacingMergeTree dedupes any re-load.
 #
 # Tunables via env: CRAWL, WHERE (worklist SQL filter; empty = ALL domains), DATA,
-# DAGSTER_DIR, TECH_CONC, IND_CONC, EMBED_CONC.
+# BUILDER_DIR, TECH_CONC, IND_CONC, EMBED_CONC.
 set -uo pipefail
 
 MODE="${1:?usage: run_crawl.sh <industry|tech> <lo-hi>}"
@@ -18,7 +18,7 @@ RANGE="${2:?usage: run_crawl.sh <industry|tech> <lo-hi>}"
 CRAWL="${CRAWL:-CC-MAIN-2026-25}"
 WHERE="${WHERE:-}" # empty = all domains (global dataset); e.g. "content_languages like '%eng%'"
 DATA="${DATA:-data/crawl}"
-DAGSTER_DIR="${DAGSTER_DIR:-../dagster_v3}"
+BUILDER_DIR="${BUILDER_DIR:-../index-builder}" # standalone Python worklist builder
 WORKER="$PWD/cc-enrich-worker"
 
 # OUTPUTS: the <table>:<parquet-suffix> pairs a mode produces (loaded in order).
@@ -33,7 +33,7 @@ esac
 lo="${RANGE%-*}"; hi="${RANGE#*-}"
 mkdir -p "$DATA"
 DATA_ABS="$(cd "$DATA" && pwd)"
-DAGSTER_ABS="$(cd "$DAGSTER_DIR" && pwd)"
+BUILDER_ABS="$(cd "$BUILDER_DIR" && pwd)"
 
 ch() {
 	clickhouse-client --host "${CLICKHOUSE_HOST:?set CLICKHOUSE_HOST}" \
@@ -52,7 +52,7 @@ for ((p = lo; p <= hi; p++)); do
 	if [ ! -f "$shard" ]; then
 		echo "[$MODE $p] generating worklist…"
 		tmp="${shard}.tmp.$$"
-		if (cd "$DAGSTER_ABS" && uv run python scripts/make_worklist.py \
+		if (cd "$BUILDER_ABS" && uv run python -m index_builder \
 			--crawl "$CRAWL" --part "$p" --where "$WHERE" --out "$tmp"); then
 			mv -f "$tmp" "$shard"
 		else

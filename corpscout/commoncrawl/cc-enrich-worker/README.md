@@ -131,13 +131,15 @@ Or the distroless image: `docker build -t cc-enrich-worker .` (see `Dockerfile`)
 ## Usage
 
 ### 1. Generate a worklist shard
-Worklists are produced off-AWS by `dagster_v3/scripts/make_worklist.py`, which resolves exact
-index-part URLs from CommonCrawl's HTTPS manifest (anonymous S3 LIST is denied, so no globs).
-One index part → one shard (~30k domains); the warc subset has ~300 parts/crawl.
+Worklists are produced off-AWS by the standalone **`../index-builder`** package (duckdb + pyarrow,
+no dagster), which resolves exact index-part URLs from CommonCrawl's HTTPS manifest (anonymous S3
+LIST is denied, so no globs). One index part → one shard (~30k domains); the warc subset has ~300
+parts/crawl. Picks each domain's main-site homepage (apex/www, shallowest path).
 ```bash
-cd ../dagster_v3
-uv run python scripts/make_worklist.py --crawl CC-MAIN-2026-25 --part 0 \
-    --where "" --out data/commoncrawl/shard0.parquet      # --where "" = all domains
+cd ../index-builder
+uv run python -m index_builder --crawl CC-MAIN-2026-25 --list          # how many parts exist
+uv run python -m index_builder --crawl CC-MAIN-2026-25 --part 0 \
+    --out ../cc-enrich-worker/data/commoncrawl/shard0.parquet          # default --where = all domains
 ```
 Worklist columns: `root_domain, url, warc_filename, warc_record_offset, warc_record_length, content_languages`.
 

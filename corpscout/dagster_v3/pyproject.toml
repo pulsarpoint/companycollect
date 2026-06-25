@@ -38,7 +38,13 @@ dev = [
     "dagster-dg-cli",
     "dagster-webserver",
     "pytest>=9.1.0",
+    "cc-index-builder",
 ]
+
+[tool.uv.sources]
+# the standalone CommonCrawl worklist builder (commoncrawl/index-builder); the dagster-side
+# throughput dev script (scripts/index_enrich_validate.py) reuses its worklist query.
+cc-index-builder = { path = "../commoncrawl/index-builder", editable = true }
 
 [build-system]
 requires = ["hatchling"]

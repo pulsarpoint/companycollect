@@ -5,28 +5,25 @@
 - off-AWS full: read_parquet(['https://data.commoncrawl.org/<part>', ...], hive_partitioning=true)
 - on-AWS: read_parquet('s3://commoncrawl/cc-index/table/cc-main/warc/crawl=.../subset=warc/*.parquet')
 
-One row per domain: the shallowest fetch_status=200 HTML page + its WARC location.
-"""
-
-ATHENA_SQL = """
--- AWS path: run against the `ccindex` Athena table, UNLOAD result to your S3 bucket.
-SELECT root_domain, url, warc_filename, warc_record_offset, warc_record_length, content_languages
-FROM (
-  SELECT url_host_registered_domain AS root_domain, url, warc_filename,
-         warc_record_offset, warc_record_length, content_languages,
-         ROW_NUMBER() OVER (
-           PARTITION BY url_host_registered_domain
-           ORDER BY length(url_path) - length(replace(url_path,'/','')) ASC,
-                    length(url_path) ASC
-         ) rn
-  FROM ccindex
-  WHERE crawl = ? AND subset = 'warc'
-    AND fetch_status = 200
-    AND content_mime_detected IN ('text/html','application/xhtml+xml')
-) WHERE rn = 1
+One row per domain: the most *representative* fetch_status=200 HTML page — preferring the
+apex host, then www, then any other subdomain, and within that the shallowest URL path.
 """
 
 _HTML_MIME = ("text/html", "application/xhtml+xml")
+
+# Pick the registered domain's main-site homepage, not a functional subdomain (shop./blog./
+# api.…). Rank apex and www as the "main site" (0) above any other subdomain (1); within that,
+# the shallowest/shortest path wins (the homepage over a deep page); ties break apex over www.
+_ORDER_BY = """
+    CASE
+        WHEN url_host_name = url_host_registered_domain THEN 0
+        WHEN url_host_name = 'www.' || url_host_registered_domain THEN 0
+        ELSE 1
+    END ASC,
+    length(url_path) - length(replace(url_path, '/', '')) ASC,
+    length(url_path) ASC,
+    CASE WHEN url_host_name = url_host_registered_domain THEN 0 ELSE 1 END ASC
+"""
 
 
 def worklist_query(source: str, *, where: str = "") -> str:
@@ -39,8 +36,7 @@ def worklist_query(source: str, *, where: str = "") -> str:
                  warc_record_offset, warc_record_length, content_languages,
                  row_number() OVER (
                    PARTITION BY url_host_registered_domain
-                   ORDER BY length(url_path) - length(replace(url_path,'/','')) ASC,
-                            length(url_path) ASC
+                   ORDER BY {_ORDER_BY}
                  ) AS rn
           FROM {source}
           WHERE fetch_status = 200

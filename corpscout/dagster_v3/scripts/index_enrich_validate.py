@@ -18,7 +18,8 @@ import time
 import boto3
 import duckdb
 
-from index_enrich import worker, worklist
+from index_builder import worklist
+from index_enrich import worker
 
 
 def main() -> None:

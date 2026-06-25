@@ -177,6 +177,23 @@ wheels = [
 ]
 
 [[package]]
+name = "cc-index-builder"
+version = "0.1.0"
+source = { editable = "../commoncrawl/index-builder" }
+dependencies = [
+    { name = "duckdb" },
+    { name = "pyarrow" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "duckdb", specifier = ">=1.0" },
+    { name = "pyarrow", specifier = ">=14" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "certifi"
 version = "2026.5.20"
 source = { registry = "https://pypi.org/simple" }
@@ -893,6 +910,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "cc-index-builder" },
     { name = "dagster-dg-cli" },
     { name = "dagster-webserver" },
     { name = "pytest" },
@@ -925,6 +943,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "cc-index-builder", editable = "../commoncrawl/index-builder" },
     { name = "dagster-dg-cli" },
     { name = "dagster-webserver" },
     { name = "pytest", specifier = ">=9.1.0" },
