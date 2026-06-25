@@ -1,0 +1,26 @@
+{
+  "country": "Hong Kong",
+  "country_slug": "hong_kong",
+  "source_slug": "cr_open_data_newly_registered",
+  "source_name": "Companies Registry — List of Newly Incorporated / Registered / Re-domiciled Companies (Open Data)",
+  "source_type": "official_registry",
+  "organization": "Companies Registry (CR), HKSAR Government",
+  "source_url": "https://data.gov.hk/en-data/dataset/hk-cr-crdata-list-newly-registered-companies-2526",
+  "license": "data_gov_hk_terms_unconfirmed",
+  "access": "public",
+  "data_freshness": "weekly",
+  "record_shape": "weekly_csv_two_streams_local_RNC063L_and_nonhk_RNC063F",
+  "primary_keys": ["BR Number"],
+  "join_keys": ["BR Number"],
+  "field_count": 8,
+  "fields": [
+    { "path": "Seq", "source_field": "Seq", "english_name": "sequence", "meaning": "Row sequence number within the weekly file.", "data_type": "integer", "semantic_type": "metadata", "example_values": ["1", "7"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Per-file ordinal only; not a stable id.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Current Company Name in English", "source_field": "Current Company Name in English", "english_name": "company_name_en", "meaning": "Current registered English company name (RNC063L, local).", "data_type": "string", "semantic_type": "legal_name", "example_values": ["197 VENTURES HK LIMITED", "1984 MEDIA LIMITED"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": "Primary display name." },
+    { "path": "Current Company Name in Chinese", "source_field": "Current Company Name in Chinese", "english_name": "company_name_zh", "meaning": "Current registered Chinese company name (may be empty).", "data_type": "string", "semantic_type": "legal_name", "example_values": ["眾加國際有限公司"], "nullable": true, "repeatable": false, "code_list": null, "language": "zh-Hant", "limitations": "Often empty for companies without a Chinese name.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "BR Number", "source_field": "BR Number", "english_name": "br_number", "meaning": "Business Registration number (Inland Revenue Department), 8-digit. Primary key in this feed.", "data_type": "string", "semantic_type": "identifier", "example_values": ["77541433", "77534292", "77525211"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "This is the BR Number (IRD), NOT the CR Company Number (ICRIS).", "source_confidence": "high", "analysis_notes": "De-facto business/tax id; join key for the open feed." },
+    { "path": "Date of Incorporation", "source_field": "Date of Incorporation", "english_name": "incorporation_date", "meaning": "Incorporation date of a local company (RNC063L).", "data_type": "date", "semantic_type": "date", "example_values": ["02-01-2025", "31-12-2024"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Format DD-MM-YYYY; empty when the row is a name-change record.", "source_confidence": "high", "analysis_notes": "Convert to ISO 8601." },
+    { "path": "Date of Registration", "source_field": "Date of Registration", "english_name": "registration_date", "meaning": "HK registration date of a non-HK company (RNC063F).", "data_type": "date", "semantic_type": "date", "example_values": ["02-01-2025"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "RNC063F stream only; DD-MM-YYYY.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Date of Change of name", "source_field": "Date of Change of name", "english_name": "name_change_date", "meaning": "Date of a name change (when the row represents a name change).", "data_type": "date", "semantic_type": "date", "example_values": ["03-01-2025"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "DD-MM-YYYY; present instead of incorporation date for name-change rows.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "Current Approved Name for Carrying on Business in H.K.", "source_field": "Current Approved Name for Carrying on Business in H.K.", "english_name": "approved_hk_business_name", "meaning": "Approved name under which a non-HK company carries on business in HK (RNC063F).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en/zh-Hant", "limitations": "RNC063F stream only; often empty.", "source_confidence": "high", "analysis_notes": "Non-HK companies may carry on business under an approved HK name." }
+  ]
+}

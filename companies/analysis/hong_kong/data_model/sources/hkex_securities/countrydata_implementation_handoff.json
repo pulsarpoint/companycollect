@@ -1,0 +1,73 @@
+{
+  "country": "Hong Kong",
+  "country_slug": "hong_kong",
+  "source_slug": "hkex_securities",
+  "source_identity": "hong_kong_hkex_securities",
+  "source_package": "hkex",
+  "env_prefix": "HK_HKEX",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "HKEX — List of Securities",
+    "source_type": "financial_disclosure",
+    "organization": "Hong Kong Exchanges and Clearing (HKEX)",
+    "source_url": "https://www.hkex.com.hk/eng/services/trading/securities/securitieslists/ListOfSecurities.xlsx",
+    "license": "hkex_terms",
+    "access": "public_browser",
+    "data_freshness": "daily",
+    "attribution": "Hong Kong Exchanges and Clearing (HKEX)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "xlsx_file",
+    "base_url": "https://www.hkex.com.hk/eng/services/trading/securities/securitieslists/ListOfSecurities.xlsx",
+    "download_url": "https://www.hkex.com.hk/eng/services/trading/securities/securitieslists/ListOfSecurities.xlsx",
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["xlsx"],
+    "compression": null,
+    "encoding": "binary",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public via browser; static URL returns a template skeleton"
+  },
+  "snapshot": {
+    "strategy": "preserve_xlsx",
+    "file_extension": ".xlsx",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "HkexListedSecurity",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "HKEX daily List of Securities (listed stocks). The static .xlsx URL returned a TEMPLATE skeleton (placeholders <<TableContent>>/<<nextTradeDate>>, dimension A1:R8) — the populated list is generated server-side. Discover the populated data path (the HKEX site/securities-list page) before implementing; do NOT bypass site controls. Listed companies only; no CR Company Number / BR Number published — join to the register by name."
+  },
+  "keys": {
+    "primary_keys": ["stock_code"],
+    "join_keys": ["stock_code", "isin", "name_of_securities"],
+    "dedupe_keys": ["stock_code"]
+  },
+  "mapping_rules": {
+    "company_id": "Stock Code (listed).",
+    "legal_name": "Name of Securities.",
+    "listing": "Stock Code + ISIN."
+  },
+  "fixture_requirements": [
+    "equity listing",
+    "record asserting join-by-name to the register"
+  ],
+  "live_test_plan": {
+    "smoke": "GET the static xlsx — currently a template; identify the populated securities-list endpoint from the HKEX site.",
+    "full": "Blocked on transport discovery — locate the populated List of Securities path; listed subset only."
+  },
+  "blockers": [
+    "Static xlsx returns a template skeleton; populated list generated server-side",
+    "Listed companies only; no CR/BR identifier published (join by name)"
+  ]
+}

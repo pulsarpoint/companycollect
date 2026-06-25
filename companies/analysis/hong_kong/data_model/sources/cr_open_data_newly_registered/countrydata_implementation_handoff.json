@@ -1,0 +1,83 @@
+{
+  "country": "Hong Kong",
+  "country_slug": "hong_kong",
+  "source_slug": "cr_open_data_newly_registered",
+  "source_identity": "hong_kong_cr_open_data_newly_registered",
+  "source_package": "cropendata",
+  "env_prefix": "HK_CR_OPENDATA",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Companies Registry — List of Newly Incorporated / Registered / Re-domiciled Companies (Open Data)",
+    "source_type": "official_registry",
+    "organization": "Companies Registry (CR), HKSAR Government",
+    "source_url": "https://data.gov.hk/en-data/dataset/hk-cr-crdata-list-newly-registered-companies-2526",
+    "license": "data_gov_hk_terms_unconfirmed",
+    "access": "public",
+    "data_freshness": "weekly",
+    "attribution": "Companies Registry, HKSAR / data.gov.hk"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://www.cr.gov.hk/docs/wrpt/RNC063/",
+    "download_url": "https://www.cr.gov.hk/docs/wrpt/RNC063/RNC063L_20241230.csv",
+    "http_method": "GET",
+    "headers_required": ["Accept: text/csv"],
+    "formats": ["csv", "xls"],
+    "compression": null,
+    "encoding": "utf-8-bom",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": {
+      "type": "weekly_dated_files",
+      "page_param": null,
+      "page_start": null,
+      "page_size": null,
+      "page_size_param": null,
+      "next_page_path": "data.gov.hk CKAN package_search enumerates weekly RNC063L_<YYYYMMDD>.csv and RNC063F_<YYYYMMDD>.csv URLs"
+    },
+    "rate_limit": "unspecified"
+  },
+  "snapshot": {
+    "strategy": "preserve_weekly_csv_files",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "HkCrNewlyRegistered",
+    "date_formats": ["02-01-2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Two weekly CSV streams: RNC063L (newly incorporated LOCAL companies) and RNC063F (newly registered NON-HK companies); both include name-change rows. CSV is UTF-8 with BOM; quote all fields. Dates DD-MM-YYYY. Identifier is the BR Number (IRD), NOT the CR Company Number. No personal data. Incremental feed — accumulate weekly files. Enumerate weekly file dates via the data.gov.hk CKAN API (package_search id hk-cr-crdata-list-newly-registered-companies-2526)."
+  },
+  "keys": {
+    "primary_keys": ["BR Number"],
+    "join_keys": ["BR Number"],
+    "dedupe_keys": ["BR Number"]
+  },
+  "mapping_rules": {
+    "company_id": "BR Number (IRD).",
+    "tax_id": "BR Number (HK has no VAT; BR Number is the business id).",
+    "legal_name": "Current Company Name in English (RNC063L) / Current Corporate Name (RNC063F).",
+    "legal_name_zh": "Current Company Name in Chinese.",
+    "incorporation_date": "Date of Incorporation (RNC063L) / Date of Registration (RNC063F), DD-MM-YYYY -> ISO.",
+    "status": "Derive 'newly_incorporated' / 'newly_registered' / 'name_change' from the stream and populated dates."
+  },
+  "fixture_requirements": [
+    "RNC063L local incorporation row",
+    "RNC063F non-HK registration row",
+    "name-change row (Date of Change of name populated, no incorporation date)",
+    "row with empty Chinese name",
+    "malformed/short CSV line"
+  ],
+  "live_test_plan": {
+    "smoke": "Download RNC063L_20241230.csv; expect ~3,286 rows with header Seq,Current Company Name in English,Current Company Name in Chinese,BR Number,Date of Incorporation,Date of Change of name.",
+    "full": "Enumerate weekly RNC063L/RNC063F files via CKAN; ingest and accumulate keyed on BR Number."
+  },
+  "blockers": []
+}

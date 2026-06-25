@@ -1,0 +1,81 @@
+{
+  "country": "Hong Kong",
+  "country_slug": "hong_kong",
+  "source_slug": "icris_esearch",
+  "source_identity": "hong_kong_icris_esearch",
+  "source_package": "icris",
+  "env_prefix": "HK_ICRIS",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "Companies Registry — ICRIS e-Search (full register)",
+    "source_type": "official_registry",
+    "organization": "Companies Registry (CR), HKSAR Government",
+    "source_url": "https://www.e-services.cr.gov.hk/ICRIS3EP/",
+    "license": "restricted",
+    "access": "interactive_pay_per_use",
+    "data_freshness": "live",
+    "attribution": "Companies Registry, HKSAR"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["HK_ICRIS_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.e-services.cr.gov.hk/ICRIS3EP/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["ICRIS session"],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "interactive; document/particulars search pay-per-use; no open bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_pay_per_use",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "HkIcrisCompany",
+    "date_formats": ["02-01-2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Authoritative full register via ICRIS e-Search (ICRIS3EP). Interactive portal; document and full-particulars search are pay-per-use. No open bulk or free API. Do NOT scrape or bypass payment. CR Company Number is the registry key (distinct from the BR Number in the open feed). Directors/secretary are personal data (PDPO) — redact. Field model from public documentation only; no values captured. Confirm whether an official data-sharing arrangement exists."
+  },
+  "keys": {
+    "primary_keys": ["cr_company_number"],
+    "join_keys": ["cr_company_number", "br_number", "company_name"],
+    "dedupe_keys": ["cr_company_number"]
+  },
+  "mapping_rules": {
+    "company_id": "CR Company Number.",
+    "registration_number": "CR Company Number.",
+    "legal_name": "Company Name (English/Chinese).",
+    "legal_form": "Company Type.",
+    "status": "Company Status.",
+    "incorporation_date": "Date of Incorporation / Registration.",
+    "registered_address": "Registered Office Address.",
+    "officers": "Directors / Company Secretary (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "live private company limited by shares",
+    "dissolved / struck-off company",
+    "non-HK registered company",
+    "record with directors (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable openly (pay-per-use). Confirm the e-Search access/data-sharing path.",
+    "full": "Blocked on payment — requires an ICRIS paid/interactive path or an official CR data arrangement; redact personal data."
+  },
+  "blockers": [
+    "Document and full-particulars search are pay-per-use",
+    "Interactive portal; no open bulk file or free API",
+    "Directors/secretary personal data (PDPO)"
+  ]
+}

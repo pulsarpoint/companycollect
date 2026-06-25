@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hong Kong Company Profile",
+  "description": "Country-specific company profile for Hong Kong. Hong Kong has TWO company identifiers: the CR Company Number (issued by the Companies Registry, the registry key in ICRIS) and the BR Number (Business Registration number issued by the Inland Revenue Department). The genuinely OPEN source is the Companies Registry open data on data.gov.hk (RNC063 weekly CSVs) — an INCREMENTAL feed of newly incorporated local companies and newly registered non-HK companies, keyed on the BR Number, with English/Chinese names and dates, and NO personal data. The authoritative FULL register (CR Company Number, type, status, registered office, directors, charges) is ICRIS e-Search, which is interactive and pay-per-use (planning-only). HKEX List of Securities covers listed stocks (browser-public; static xlsx is a template). Currency HKD; bilingual English/Traditional Chinese; dates DD-MM-YYYY (open feed). Directors/secretary are personal data (PDPO) — redact.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Hong Kong" },
+    "country_slug": { "type": "string", "const": "hong_kong" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "description": "At least one HK identifier. The open feed provides the BR Number; the CR Company Number comes from ICRIS (paid).",
+      "properties": {
+        "br_number": { "type": ["string", "null"], "description": "Business Registration number (IRD), 8-digit. Open-feed key.", "x-source": "cr_open_data_newly_registered", "x-source-path": "BR Number", "x-join-key": true, "x-freshness": "weekly", "x-access": "public" },
+        "cr_company_number": { "type": ["string", "null"], "description": "Companies Registry company number. Registry key (ICRIS, pay-per-use).", "x-source": "icris_esearch", "x-source-path": "cr_company_number", "x-join-key": true, "x-access": "pay_per_use" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name_en": { "type": ["string", "null"], "x-source": "cr_open_data_newly_registered", "x-source-path": "Current Company Name in English", "x-source-alt": "icris_esearch.company_name" },
+        "legal_name_zh": { "type": ["string", "null"], "x-source": "cr_open_data_newly_registered", "x-source-path": "Current Company Name in Chinese" },
+        "company_type": { "type": ["string", "null"], "description": "ICRIS only (planning): private ltd by shares, public, guarantee, non-HK.", "x-source": "icris_esearch", "x-source-path": "company_type", "x-access": "pay_per_use" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "Open-feed event (newly_incorporated/newly_registered/name_change) or ICRIS Company Status (Live/Dissolved).", "x-source": "cr_open_data_newly_registered", "x-source-alt": "icris_esearch.company_status" },
+        "incorporation_date": { "type": ["string", "null"], "description": "ISO 8601 (from DD-MM-YYYY).", "x-source": "cr_open_data_newly_registered", "x-source-path": "Date of Incorporation", "x-source-alt": "cr_open_data_newly_registered.Date of Registration" },
+        "name_change_date": { "type": ["string", "null"], "x-source": "cr_open_data_newly_registered", "x-source-path": "Date of Change of name" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "description": "Registered office — ICRIS only (planning-only; not in the open feed).",
+      "x-source": "icris_esearch",
+      "x-access": "pay_per_use",
+      "properties": {
+        "registered_office_address": { "type": ["string", "null"], "x-source-path": "registered_office_address" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Directors / company secretary — ICRIS only (planning-only, pay-per-use). PERSONAL DATA (PDPO) — REDACT.",
+      "x-source": "icris_esearch",
+      "x-source-path": "directors",
+      "x-access": "pay_per_use_redact",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for HKEX-listed companies (browser-public; static xlsx is a template).",
+      "x-source": "hkex_securities",
+      "properties": {
+        "stock_code": { "type": ["string", "null"], "x-source-path": "stock_code" },
+        "isin": { "type": ["string", "null"], "x-source-path": "isin" },
+        "name_of_securities": { "type": ["string", "null"], "x-source-path": "name_of_securities" }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

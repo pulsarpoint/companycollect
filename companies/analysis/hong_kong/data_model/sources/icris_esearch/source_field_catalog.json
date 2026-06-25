@@ -1,0 +1,27 @@
+{
+  "country": "Hong Kong",
+  "country_slug": "hong_kong",
+  "source_slug": "icris_esearch",
+  "source_name": "Companies Registry — ICRIS e-Search (full register)",
+  "source_type": "official_registry",
+  "organization": "Companies Registry (CR), HKSAR Government",
+  "source_url": "https://www.e-services.cr.gov.hk/ICRIS3EP/",
+  "license": "restricted",
+  "access": "interactive_pay_per_use",
+  "data_freshness": "live",
+  "record_shape": "per_company_lookup_planning_only",
+  "primary_keys": ["cr_company_number"],
+  "join_keys": ["cr_company_number", "br_number", "company_name"],
+  "field_count": 9,
+  "fields": [
+    { "path": "cr_company_number", "source_field": "Company Number (CR No.)", "english_name": "cr_company_number", "meaning": "Companies Registry company number — the registry primary key.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; ICRIS pay-per-use. Distinct from the BR Number.", "source_confidence": "high", "analysis_notes": "Registry key for the full register." },
+    { "path": "company_name", "source_field": "Company Name (English / Chinese)", "english_name": "company_name", "meaning": "Registered company name(s).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en/zh-Hant", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "company_type", "source_field": "Company Type", "english_name": "company_type", "meaning": "Type (e.g. private company limited by shares, public company, company limited by guarantee, non-HK company).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "CR company types", "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "company_status", "source_field": "Company Status", "english_name": "company_status", "meaning": "Status (e.g. Live, Dissolved, Struck off, In liquidation).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "CR statuses", "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "date_of_incorporation", "source_field": "Date of Incorporation / Registration", "english_name": "date_of_incorporation", "meaning": "Incorporation (local) or HK registration (non-HK) date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "registered_office_address", "source_field": "Registered Office Address", "english_name": "registered_office_address", "meaning": "Registered office address in Hong Kong.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en/zh-Hant", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "directors", "source_field": "Directors", "english_name": "directors", "meaning": "Company directors (natural persons / bodies corporate).", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en/zh-Hant", "limitations": "PERSONAL DATA — redact (PDPO). Planning-only; pay-per-use.", "source_confidence": "high", "analysis_notes": "Do not store cleartext personal data." },
+    { "path": "company_secretary", "source_field": "Company Secretary", "english_name": "company_secretary", "meaning": "Company secretary.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en/zh-Hant", "limitations": "PERSONAL DATA — redact. Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "charges", "source_field": "Charges / Documents", "english_name": "charges_and_documents", "meaning": "Registered charges and filed documents (images).", "data_type": "array", "semantic_type": "document", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "Planning-only; document images are pay-per-use.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

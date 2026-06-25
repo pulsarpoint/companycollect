@@ -1,0 +1,46 @@
+{
+  "country": "Hong Kong",
+  "country_slug": "hong_kong",
+  "country_profile_version": "2026-06-25",
+  "registration": {
+    "br_number": "77552157",
+    "cr_company_number": null
+  },
+  "legal_identity": {
+    "legal_name_en": "3PLUS SOLUTIONS GLOBAL LIMITED",
+    "legal_name_zh": "眾加國際有限公司",
+    "company_type": null
+  },
+  "status": {
+    "status_text": "newly_incorporated",
+    "incorporation_date": "2025-01-03",
+    "name_change_date": null
+  },
+  "registered_location": {
+    "registered_office_address": null
+  },
+  "officers": [],
+  "listing": {
+    "stock_code": null,
+    "isin": null,
+    "name_of_securities": null
+  },
+  "source_provenance": [
+    {
+      "source_slug": "cr_open_data_newly_registered",
+      "section": "registration.br_number / legal_identity.legal_name_en / legal_identity.legal_name_zh / status",
+      "source_url": "https://www.cr.gov.hk/docs/wrpt/RNC063/RNC063L_20241230.csv",
+      "access": "public",
+      "license": "data_gov_hk_terms_unconfirmed",
+      "retrieved_at": "2026-06-25T00:00:00Z"
+    },
+    {
+      "source_slug": "icris_esearch",
+      "section": "registration.cr_company_number / legal_identity.company_type / registered_location / officers (planning-only, pay-per-use)",
+      "source_url": "https://www.e-services.cr.gov.hk/ICRIS3EP/",
+      "access": "interactive_pay_per_use",
+      "license": "restricted",
+      "retrieved_at": null
+    }
+  ]
+}

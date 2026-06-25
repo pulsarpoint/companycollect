@@ -1,0 +1,24 @@
+{
+  "country": "Hong Kong",
+  "country_slug": "hong_kong",
+  "source_slug": "hkex_securities",
+  "source_name": "HKEX — List of Securities",
+  "source_type": "financial_disclosure",
+  "organization": "Hong Kong Exchanges and Clearing (HKEX)",
+  "source_url": "https://www.hkex.com.hk/eng/services/trading/securities/securitieslists/ListOfSecurities.xlsx",
+  "license": "hkex_terms",
+  "access": "public_browser",
+  "data_freshness": "daily",
+  "record_shape": "xlsx_template_populated_server_side",
+  "primary_keys": ["stock_code"],
+  "join_keys": ["stock_code", "isin", "name_of_securities"],
+  "field_count": 6,
+  "fields": [
+    { "path": "stock_code", "source_field": "Stock Code", "english_name": "stock_code", "meaning": "HKEX listed-security/stock code.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Listed-only; static xlsx returned a template (populated server-side).", "source_confidence": "medium", "analysis_notes": "Listed-entity key." },
+    { "path": "name_of_securities", "source_field": "Name of Securities", "english_name": "name_of_securities", "meaning": "Listed security / company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Documented from the HKEX list structure (template not populated via static URL).", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "category", "source_field": "Category", "english_name": "category", "meaning": "Security category (e.g. Equity).", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": "HKEX categories", "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "sub_category", "source_field": "Sub-Category", "english_name": "sub_category", "meaning": "Security sub-category.", "data_type": "string", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "low", "analysis_notes": null },
+    { "path": "board_lot", "source_field": "Board Lot", "english_name": "board_lot", "meaning": "Trading board lot size.", "data_type": "integer", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "low", "analysis_notes": null },
+    { "path": "isin", "source_field": "ISIN", "english_name": "isin", "meaning": "International Securities Identification Number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Listed-only.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}
