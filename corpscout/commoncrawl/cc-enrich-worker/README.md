@@ -278,24 +278,19 @@ its Parquet, is safe and dedupes on the sort key. This is what makes the driver 
 
 ## Source layout
 
-| file | responsibility |
+| package | responsibility |
 |---|---|
-| `main.go` | flags/env, mode dispatch, reference + embedder setup, chunked run loop, ClickHouse-free output |
-| `worker.go` | the goroutine pipeline (`ProcessShard`): group by domain, fetch+parse+tech across cores, batch-embed, classify |
-| `fetch.go` | S3 byte-range getter (signed) + HTTPS-CDN getter (`--s3-anonymous`) → gunzip WARC record → `(headers, body)` |
-| `embed.go` | batched, concurrent `/v1/embeddings` client (L2-normalized, ordered) |
-| `classify.go` | cosine top-3 vs NACE matrix + margin/division-consensus/page-type gates |
-| `signals.go` | keyword page-type signals (parked/for-sale/default-server/…) |
-| `parse.go` | HTML → visible text, emails, social links |
-| `tech.go` | Wappalyzer wrapper; dispatches to `fastTech` when `--tech-engine fast` |
-| `techfast.go` | the Aho-Corasick-gated matcher (`FastMatcher`) |
-| `lei.go` | LEI extraction (JSON-LD `leiCode` + text regex) with ISO 7064 checksum validation |
-| `vat.go` | EU VAT id extraction + per-country format validation (+ DE/IT checksums) |
-| `profile.go` | schema.org `Organization`/`LocalBusiness` JSON-LD → firmographics + structured identifiers |
-| `literal.go` | required-literal extraction from a regex (`regexp/syntax` walk) |
-| `reference.go` | load NACE matrix + page-type prototypes from ClickHouse |
-| `output.go` | Parquet writers pinned to migrations 046/047 + S3 upload |
-| `types.go` / `consts.go` | shared types + thresholds |
+| `main.go` | entry point — flags, env, ClickHouse conn, `readWorklist`, orchestration |
+| `internal/model/` | shared data structs (Technology, Reference, Identifier, CompanyProfile, …) |
+| `internal/fetch/` | byte-range WARC fetch (S3 / HTTP CDN) |
+| `internal/embed/` | OpenAI-compatible embedding client |
+| `internal/vec/` | vector math (Dot/Norm/Sqrt32) shared by embed + classify |
+| `internal/parse/` | HTML → text / emails / socials |
+| `internal/tech/` | Wappalyzer + the Aho-Corasick fast matcher |
+| `internal/extract/` | LEI / VAT / schema.org-profile extraction |
+| `internal/classify/` | NACE reference, classify + confidence, page-type signals, startup check |
+| `internal/output/` | Parquet row structs + writers, S3 upload |
+| `internal/worker/` | `ProcessShard` orchestration |
 | `run_crawl.sh` | resumable full-crawl driver (worklist → pass → ClickHouse load) |
 
 ---
