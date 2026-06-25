@@ -1,0 +1,36 @@
+[
+  {
+    "name": "data.govmu.org — List of ICT Companies (CSV)",
+    "slug": "datagovmu_ict_companies",
+    "type": "bulk",
+    "url": "https://data.govmu.org/dataset/f65a8b55-500e-4f79-9999-fed2118cc4e4/resource/25c81775-74c1-46df-b2cc-81395aa5128b/download/ict_companies.csv",
+    "method": "GET",
+    "headers": { "Accept": "text/csv" },
+    "max_pages": 0,
+    "note": "Open CSV, CC-BY-SA-4.0 (1,060 rows). Columns: Title, Address, District, Sectors, Other Related Sectors. Encoding Windows-1252 (cp1252). Sectoral (ICT) directory; no BRN/identifiers/status. No personal data."
+  },
+  {
+    "name": "data.govmu.org CKAN — company dataset search",
+    "slug": "data_govmu_portal",
+    "type": "api_page",
+    "url": "https://data.govmu.org/api/3/action/package_search?q=company",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "start",
+    "page_start": 0,
+    "max_pages": 1,
+    "note": "CKAN catalog. Use to discover any future company-register dataset (currently only ICT-company directories are company data)."
+  },
+  {
+    "name": "CBRD CBRIS Online Search (Turnstile-gated)",
+    "slug": "cbrd_cbris_search",
+    "type": "api_page",
+    "url": "https://onlinesearch.mns.global/",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Authoritative register (BRN). Angular SPA gated by Cloudflare Turnstile; document purchase paid. Do NOT bypass Turnstile. No open bulk/API."
+  }
+]
