@@ -1,4 +1,4 @@
-package main
+package fetch
 
 import (
 	"bufio"
@@ -16,15 +16,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// rangeGetter fetches a byte range of an object. S3 in prod, a fake in tests.
-type rangeGetter interface {
+// RangeGetter fetches a byte range of an object. S3 in prod, a fake in tests.
+type RangeGetter interface {
 	GetRange(ctx context.Context, bucket, key string, start, end int64) ([]byte, error)
 }
 
 // FetchRecord fetches one WARC record (a single gzip member) by byte range and
 // parses the embedded HTTP response into (headers, body). The record layout is:
 // WARC headers \r\n\r\n  HTTP status+headers \r\n\r\n  HTTP body.
-func FetchRecord(ctx context.Context, g rangeGetter, bucket, key string, offset, length int64) (http.Header, []byte, error) {
+func FetchRecord(ctx context.Context, g RangeGetter, bucket, key string, offset, length int64) (http.Header, []byte, error) {
 	raw, err := g.GetRange(ctx, bucket, key, offset, offset+length-1)
 	if err != nil {
 		return nil, nil, err
@@ -54,29 +54,29 @@ func FetchRecord(ctx context.Context, g rangeGetter, bucket, key string, offset,
 	return resp.Header, body, nil
 }
 
-// s3Getter is the production rangeGetter backed by aws-sdk-go-v2.
-type s3Getter struct{ client *s3.Client }
+// S3Getter is the production RangeGetter backed by aws-sdk-go-v2.
+type S3Getter struct{ Client *s3.Client }
 
 // NewS3Getter signs requests (in-AWS instance role / configured creds). CommonCrawl's
 // S3 API denies anonymous access — off-AWS use httpRangeGetter instead.
-func NewS3Getter(ctx context.Context, region string) (s3Getter, error) {
+func NewS3Getter(ctx context.Context, region string) (RangeGetter, error) {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 	if err != nil {
-		return s3Getter{}, err
+		return &S3Getter{}, err
 	}
 	// Validate creds upfront so we fail fast with a clear message off-AWS instead of
 	// hanging on the 169.254 IMDS lookup for every fetch.
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if _, err := cfg.Credentials.Retrieve(cctx); err != nil {
-		return s3Getter{}, fmt.Errorf("no usable AWS credentials — export AWS_ACCESS_KEY_ID + "+
+		return &S3Getter{}, fmt.Errorf("no usable AWS credentials — export AWS_ACCESS_KEY_ID + "+
 			"AWS_SECRET_ACCESS_KEY (or run with --s3-anonymous): %w", err)
 	}
-	return s3Getter{client: s3.NewFromConfig(cfg)}, nil
+	return &S3Getter{Client: s3.NewFromConfig(cfg)}, nil
 }
 
-func (s s3Getter) GetRange(ctx context.Context, bucket, key string, start, end int64) ([]byte, error) {
-	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+func (s *S3Getter) GetRange(ctx context.Context, bucket, key string, start, end int64) ([]byte, error) {
+	out, err := s.Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", start, end)),
@@ -95,7 +95,7 @@ type httpRangeGetter struct {
 	client *http.Client
 }
 
-func NewHTTPGetter(base string, concurrency int) httpRangeGetter {
+func NewHTTPGetter(base string, concurrency int) RangeGetter {
 	if base == "" {
 		base = "https://data.commoncrawl.org/"
 	}

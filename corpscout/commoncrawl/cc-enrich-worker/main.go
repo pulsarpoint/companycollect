@@ -13,6 +13,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/parquet-go/parquet-go"
+
+	"cc-enrich-worker/internal/fetch"
 )
 
 // WorklistRow is one row of the materialized worklist parquet (index_enrich/worklist.py
@@ -175,12 +177,12 @@ func main() {
 		log.Printf("mode=tech: skipping ClickHouse reference + embedder")
 	}
 
-	var getter rangeGetter
+	var getter fetch.RangeGetter
 	if *anonymous {
-		getter = NewHTTPGetter(envOr("CC_BASE_URL", ""), *concurrency)
+		getter = fetch.NewHTTPGetter(envOr("CC_BASE_URL", ""), *concurrency)
 		log.Printf("fetch: anonymous HTTPS CDN (data.commoncrawl.org)")
 	} else {
-		g, err := NewS3Getter(ctx, *region)
+		g, err := fetch.NewS3Getter(ctx, *region)
 		if err != nil {
 			log.Fatalf("s3 init: %v", err)
 		}
@@ -253,13 +255,13 @@ func main() {
 	log.Printf("done: %d domains, %d tech rows in %.1fs (%.1f domains/s)", len(domains), len(tech), dur, rate)
 
 	if *s3Bucket != "" {
-		g, ok := getter.(s3Getter)
+		g, ok := getter.(*fetch.S3Getter)
 		if !ok {
 			log.Printf("skip S3 upload: anonymous HTTP fetch mode has no S3 client")
 		} else {
 			for _, p := range written {
 				key := *s3Prefix + p
-				if err := UploadToS3(ctx, g.client, *s3Bucket, key, p); err != nil {
+				if err := UploadToS3(ctx, g.Client, *s3Bucket, key, p); err != nil {
 					log.Fatalf("upload %s: %v", p, err)
 				}
 				log.Printf("uploaded s3://%s/%s", *s3Bucket, key)

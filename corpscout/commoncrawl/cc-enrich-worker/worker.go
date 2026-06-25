@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"cc-enrich-worker/internal/fetch"
 )
 
 const classifyInstruction = "Classify the business into its industry category"
@@ -72,7 +74,7 @@ func subdomainOf(rawURL, root string) string {
 //	"tech":     fetch every page -> Wappalyzer -> per-domain unioned tech rows
 //	            (no ClickHouse, no embedder)
 //	"both"  :   both in a single fetch pass (default)
-func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter, emb embedderIface,
+func ProcessShard(ctx context.Context, items []WorklistItem, getter fetch.RangeGetter, emb embedderIface,
 	ref *Reference, protos *Prototypes, cfg ShardConfig) (ShardResult, error) {
 
 	mode := cfg.Mode
@@ -113,7 +115,7 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter rangeGetter,
 			for _, it := range byDomain[dom] {
 				t0 := time.Now()
 				fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				headers, body, err := FetchRecord(fctx, getter, ccBucket, it.WarcFilename, it.Offset, it.Length)
+				headers, body, err := fetch.FetchRecord(fctx, getter, ccBucket, it.WarcFilename, it.Offset, it.Length)
 				cancel()
 				atomic.AddInt64(&fetchNs, time.Since(t0).Nanoseconds())
 				atomic.AddInt64(&pageCount, 1)
