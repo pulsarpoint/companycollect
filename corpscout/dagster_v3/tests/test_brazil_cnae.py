@@ -1,8 +1,11 @@
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
+import dagster as dg
 import pytest
+from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.brazil_cnae import tables
 from dagster_v3.defs.brazil_cnae.mapping import (
@@ -401,3 +404,75 @@ def test_brazil_cnae_asset_is_registered() -> None:
     keys = {key.to_user_string() for key in repo.asset_graph.get_all_asset_keys()}
 
     assert "brazil_cnae_to_nace_clickhouse" in keys
+
+
+def test_brazil_cnae_asset_asserts_clickhouse_target_table_before_publish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dagster_v3.defs.brazil_cnae import assets
+
+    calls: dict[str, object] = {}
+    events: list[str] = []
+    client = object()
+
+    class FakeConnection:
+        def __enter__(self) -> object:
+            events.append("connection")
+            calls["connection_opened"] = True
+            return client
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    def fake_assert_clickhouse_tables_exist(
+        clickhouse: ClickhouseResource,
+        *,
+        database: str,
+        tables: tuple[str, ...],
+    ) -> None:
+        events.append("assert")
+        calls["assert"] = {
+            "clickhouse": clickhouse,
+            "database": database,
+            "tables": tables,
+        }
+
+    def fake_replace_br_cnae_to_nace_clickhouse(**kwargs: Any) -> dict[str, int]:
+        events.append("replace")
+        calls["replace"] = kwargs
+        return {"rows": 3, "cnae_codes": 2, "nace_targets": 3}
+
+    monkeypatch.setattr(
+        assets,
+        "assert_clickhouse_tables_exist",
+        fake_assert_clickhouse_tables_exist,
+    )
+    monkeypatch.setattr(
+        assets,
+        "replace_br_cnae_to_nace_clickhouse",
+        fake_replace_br_cnae_to_nace_clickhouse,
+    )
+
+    clickhouse = ClickhouseResource(host="localhost")
+    monkeypatch.setattr(
+        ClickhouseResource,
+        "get_connection",
+        lambda self: FakeConnection(),
+    )
+
+    result = dg.materialize(
+        [assets.brazil_cnae_to_nace_clickhouse],
+        resources={"clickhouse": clickhouse},
+    )
+
+    assert result.success
+    assert events == ["assert", "connection", "replace"]
+    assert calls["assert"] == {
+        "clickhouse": clickhouse,
+        "database": tables.BRAZIL_CNAE_DATABASE,
+        "tables": (tables.BR_CNAE_TO_NACE_TABLE,),
+    }
+    assert calls["replace"]["clickhouse_client"] is client
+    assert calls["replace"]["fixture_path"] == assets.BR_CNAE_TO_NACE_FIXTURE
+    assert isinstance(calls["replace"]["source_run_id"], str)
+    assert calls["replace"]["source_run_id"]
