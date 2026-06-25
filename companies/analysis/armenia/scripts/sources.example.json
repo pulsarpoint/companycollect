@@ -1,0 +1,38 @@
+[
+  {
+    "name": "State Register company search (Radware bot-protected)",
+    "slug": "state_register_eregister",
+    "type": "api_page",
+    "url": "https://www.e-register.am/en/companies",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Authoritative register. Free public search but protected by Radware Bot Manager (redirects to validate.perfdrive.com). No open bulk/API. Do NOT bypass the bot manager. Key = state registration number + TIN (ՀՎՀՀ)."
+  },
+  {
+    "name": "SRC taxpayer search (by TIN)",
+    "slug": "src_taxpayer_search",
+    "type": "api_page",
+    "url": "https://www.src.am/en/search",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Browser-public taxpayer search by TIN (ՀՎՀՀ) / name returning taxpayer name + status (and VAT status). Internal endpoint /searchTaxpayerData. Per-TIN AJAX; no bulk/API."
+  },
+  {
+    "name": "Armenia Securities Exchange — listed (SPA)",
+    "slug": "amx_listed",
+    "type": "api_page",
+    "url": "https://amx.am/en/issuers",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Listed securities. JS SPA — static fetch returns an empty shell; no clean public JSON API found. Listed only; ISIN AMxxxxxxxxxx."
+  }
+]
