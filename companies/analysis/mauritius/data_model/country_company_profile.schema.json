@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mauritius Company Profile",
+  "description": "Country-specific company profile for Mauritius. The authoritative identifier is the BRN (Business Registration Number) from the CBRD/CBRIS register — but the CBRIS online search is Cloudflare Turnstile-gated and full documents are paid (planning-only). The one genuinely OPEN company dataset is a sectoral directory: data.govmu.org's 'List of ICT Companies in Mauritius' (CSV, CC-BY-SA-4.0) — name + address + district + sectors, with NO identifier (join by name). Listed companies come from the Stock Exchange of Mauritius (SEM; Official Market + DEM). Language English; currency MUR. Directors/shareholders (CBRD) are personal data (Data Protection Act 2017) — redact. The open directory carries no identifiers, status, or dates; those require the gated CBRD register.",
+  "type": "object",
+  "required": ["country", "country_slug", "legal_identity", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Mauritius" },
+    "country_slug": { "type": "string", "const": "mauritius" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "description": "BRN from the CBRD/CBRIS register (Turnstile-gated, planning-only). Absent for open-directory-only companies.",
+      "properties": {
+        "brn": { "type": ["string", "null"], "description": "Business Registration Number (CBRD). Registry key + MRA tax basis.", "x-source": "cbrd_cbris_search", "x-source-path": "brn", "x-join-key": true, "x-access": "turnstile_gated" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["legal_name"],
+      "properties": {
+        "legal_name": { "type": "string", "description": "Company name. Open from the ICT directory (Title); authoritative from CBRD.", "x-source": "datagovmu_ict_companies", "x-source-path": "Title", "x-source-alt": "cbrd_cbris_search.company_name", "x-join-key": true },
+        "company_type": { "type": ["string", "null"], "description": "CBRD entity type (planning-only).", "x-source": "cbrd_cbris_search", "x-source-path": "company_type", "x-access": "turnstile_gated" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "description": "CBRD only (Turnstile-gated, planning-only); not in the open directory.",
+      "x-source": "cbrd_cbris_search",
+      "x-access": "turnstile_gated",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "x-source-path": "company_status" },
+        "incorporation_date": { "type": ["string", "null"], "x-source-path": "incorporation_date" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "sectors": { "type": "array", "items": { "type": "string" }, "description": "ICT sector(s) from the open directory (free-text, newline-split).", "x-source": "datagovmu_ict_companies", "x-source-path": "Sectors" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "address": { "type": ["string", "null"], "description": "Address from the open ICT directory; or CBRD registered office.", "x-source": "datagovmu_ict_companies", "x-source-path": "Address", "x-source-alt": "cbrd_cbris_search.registered_office_address" },
+        "district": { "type": ["string", "null"], "x-source": "datagovmu_ict_companies", "x-source-path": "District" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Directors (CBRD). PERSONAL DATA (Data Protection Act 2017) — REDACT. Planning-only (Turnstile-gated / paid).",
+      "x-source": "cbrd_cbris_search",
+      "x-source-path": "directors",
+      "x-access": "turnstile_gated_redact",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Shareholders (CBRD). PERSONAL DATA when natural persons — REDACT. Planning-only (paid documents).",
+      "x-source": "cbrd_cbris_search",
+      "x-source-path": "shareholders",
+      "x-access": "paid_redact",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "share": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for SEM-listed companies (browser-public).",
+      "x-source": "sem_listed",
+      "properties": {
+        "market_segment": { "type": ["string", "null"], "description": "Official Market or DEM.", "x-source-path": "market_segment" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "SEM published accounts (PDF; MUR) for listed companies.",
+      "x-source": "sem_listed",
+      "x-access": "public_browser",
+      "items": {
+        "type": "object",
+        "properties": {
+          "published_accounts_pdf": { "type": ["string", "null"], "x-source-path": "published_accounts" },
+          "currency": { "type": "string", "const": "MUR" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

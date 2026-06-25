@@ -1,0 +1,51 @@
+{
+  "country": "Mauritius",
+  "country_slug": "mauritius",
+  "country_profile_version": "2026-06-25",
+  "registration": {
+    "brn": null
+  },
+  "legal_identity": {
+    "legal_name": "A CHAMROO LTD",
+    "company_type": null
+  },
+  "status": {
+    "status_text": null,
+    "incorporation_date": null
+  },
+  "activity": {
+    "sectors": ["Software Development", "Web Design Development"]
+  },
+  "registered_location": {
+    "address": "Best House Glaieul Av Quatre Bornes",
+    "district": "Plaine Wilhems"
+  },
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Director (CBRD; Turnstile-gated/paid; redacted per Data Protection Act 2017)" }
+  ],
+  "owners": [
+    { "name": "[REDACTED-PII]", "share": null }
+  ],
+  "listing": {
+    "market_segment": null
+  },
+  "financial_statements": [],
+  "source_provenance": [
+    {
+      "source_slug": "datagovmu_ict_companies",
+      "section": "legal_identity.legal_name / activity.sectors / registered_location",
+      "source_url": "https://data.govmu.org/dataset/list-ict-companies-mauritius",
+      "access": "public",
+      "license": "CC-BY-SA-4.0",
+      "retrieved_at": "2026-06-25T00:00:00Z"
+    },
+    {
+      "source_slug": "cbrd_cbris_search",
+      "section": "registration.brn / legal_identity.company_type / status / officers / owners (planning-only, Turnstile-gated/paid)",
+      "source_url": "https://onlinesearch.mns.global/",
+      "access": "public_search_turnstile_gated",
+      "license": "restricted",
+      "retrieved_at": null
+    }
+  ]
+}

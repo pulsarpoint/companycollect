@@ -1,0 +1,22 @@
+{
+  "country": "Mauritius",
+  "country_slug": "mauritius",
+  "source_slug": "sem_listed",
+  "source_name": "Stock Exchange of Mauritius (SEM) — listed companies",
+  "source_type": "financial_disclosure",
+  "organization": "Stock Exchange of Mauritius Ltd (SEM)",
+  "source_url": "https://www.stockexchangeofmauritius.com/",
+  "license": "public_disclosure",
+  "access": "public_browser",
+  "data_freshness": "event_driven",
+  "record_shape": "listed_issuer_pages_html",
+  "primary_keys": ["issuer_name"],
+  "join_keys": ["issuer_name"],
+  "field_count": 4,
+  "fields": [
+    { "path": "issuer_name", "source_field": "Issuer / Company Name", "english_name": "issuer_name", "meaning": "Listed company / issuer name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Listed only; navigable HTML, names not individually parsed.", "source_confidence": "medium", "analysis_notes": "Join to CBRD by name (no BRN published)." },
+    { "path": "market_segment", "source_field": "Market Segment", "english_name": "market_segment", "meaning": "SEM market segment (Official Market or DEM = Development & Enterprise Market).", "data_type": "string", "semantic_type": "metadata", "example_values": ["Official Market", "DEM"], "nullable": true, "repeatable": false, "code_list": "SEM segments", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "published_accounts", "source_field": "Published Accounts", "english_name": "published_accounts", "meaning": "Issuer published accounts (financial statements, PDF).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PDF; currency MUR. Per-issuer pages.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "announcements", "source_field": "Company Announcements", "english_name": "announcements", "meaning": "Issuer corporate announcements / disclosures.", "data_type": "array", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "Per-issuer; Official Market + DEM.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

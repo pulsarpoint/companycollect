@@ -1,0 +1,72 @@
+{
+  "country": "Mauritius",
+  "country_slug": "mauritius",
+  "source_slug": "datagovmu_ict_companies",
+  "source_identity": "mauritius_datagovmu_ict_companies",
+  "source_package": "ictdirectory",
+  "env_prefix": "MU_DATAGOVMU_ICT",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "data.govmu.org — List of ICT Companies in Mauritius (Open Data)",
+    "source_type": "company_directory",
+    "organization": "Mauritius (publisher MDPA), via the national open-data portal (CKAN)",
+    "source_url": "https://data.govmu.org/dataset/list-ict-companies-mauritius",
+    "license": "CC-BY-SA-4.0",
+    "access": "public",
+    "data_freshness": "static",
+    "attribution": "Publisher (MDPA) / data.govmu.org"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "csv_file",
+    "base_url": "https://data.govmu.org/dataset/f65a8b55-500e-4f79-9999-fed2118cc4e4/resource/25c81775-74c1-46df-b2cc-81395aa5128b/download/ict_companies.csv",
+    "download_url": "https://data.govmu.org/dataset/f65a8b55-500e-4f79-9999-fed2118cc4e4/resource/25c81775-74c1-46df-b2cc-81395aa5128b/download/ict_companies.csv",
+    "http_method": "GET",
+    "headers_required": ["Accept: text/csv"],
+    "formats": ["csv"],
+    "compression": null,
+    "encoding": "windows-1252",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unspecified"
+  },
+  "snapshot": {
+    "strategy": "preserve_csv",
+    "file_extension": ".csv",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "MuIctCompany",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Single open CSV (CC-BY-SA-4.0, ~1,060 rows). Encoding is Windows-1252 (cp1252) — NOT UTF-8; decode accordingly. Columns: Title, Address, District, Sectors, Other Related Sectors. Sectors is newline-separated free-text within the cell. No identifier (no BRN), no status, no dates. Sectoral (ICT) coverage only. Discover the latest resource URL via the data.govmu.org CKAN package_search if the file id changes. Join to CBRD by name."
+  },
+  "keys": {
+    "primary_keys": ["Title"],
+    "join_keys": ["Title"],
+    "dedupe_keys": ["Title", "Address"]
+  },
+  "mapping_rules": {
+    "legal_name": "Title.",
+    "registered_address": "Address + District.",
+    "activity_code": "Sectors (split on newline) + Other Related Sectors (free-text, no code list)."
+  },
+  "fixture_requirements": [
+    "row with multi-line Sectors",
+    "row with Address 'Not Available'",
+    "row with concatenated two-entity Title",
+    "cp1252-encoded special character row"
+  ],
+  "live_test_plan": {
+    "smoke": "Download ict_companies.csv (cp1252) and parse the 5 columns; expect ~1,060 rows.",
+    "full": "Ingest the full CSV; split Sectors on newline; join to CBRD by name for identifiers."
+  },
+  "blockers": []
+}

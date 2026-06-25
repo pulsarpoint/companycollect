@@ -1,0 +1,75 @@
+{
+  "country": "Mauritius",
+  "country_slug": "mauritius",
+  "source_slug": "sem_listed",
+  "source_identity": "mauritius_sem_listed",
+  "source_package": "sem",
+  "env_prefix": "MU_SEM",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Stock Exchange of Mauritius (SEM) — listed companies",
+    "source_type": "financial_disclosure",
+    "organization": "Stock Exchange of Mauritius Ltd (SEM)",
+    "source_url": "https://www.stockexchangeofmauritius.com/",
+    "license": "public_disclosure",
+    "access": "public_browser",
+    "data_freshness": "event_driven",
+    "attribution": "Stock Exchange of Mauritius"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.stockexchangeofmauritius.com/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public via browser"
+  },
+  "snapshot": {
+    "strategy": "preserve_html_pdf",
+    "file_extension": ".html",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "SemListedIssuer",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "SEM listed-issuer content is browser-public across /listing-issuer-services/ for the Official Market and DEM segments (published accounts + announcements). No clean single listed-companies list or JSON API was found — navigate/parse the HTML per issuer/segment. Listed companies only; no BRN published (join to CBRD by name). Currency MUR."
+  },
+  "keys": {
+    "primary_keys": ["issuer_name"],
+    "join_keys": ["issuer_name"],
+    "dedupe_keys": ["issuer_name"]
+  },
+  "mapping_rules": {
+    "legal_name": "Issuer / Company Name.",
+    "financials": "Published Accounts (PDF; MUR).",
+    "listing": "Market Segment (Official Market / DEM)."
+  },
+  "fixture_requirements": [
+    "Official Market issuer with published accounts",
+    "DEM issuer",
+    "issuer with announcements"
+  ],
+  "live_test_plan": {
+    "smoke": "Load the SEM listing/issuer-services pages; enumerate issuers per segment.",
+    "full": "Blocked on transport discovery — locate a consolidated issuer list; parse per-issuer pages; listed subset only."
+  },
+  "blockers": [
+    "No clean single listed-companies list or JSON API (navigable HTML only)",
+    "No BRN published (join by name)",
+    "Listed companies only"
+  ]
+}

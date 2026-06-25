@@ -1,0 +1,23 @@
+{
+  "country": "Mauritius",
+  "country_slug": "mauritius",
+  "source_slug": "datagovmu_ict_companies",
+  "source_name": "data.govmu.org — List of ICT Companies in Mauritius (Open Data)",
+  "source_type": "company_directory",
+  "organization": "Mauritius (publisher: MDPA), via the national open-data portal (CKAN)",
+  "source_url": "https://data.govmu.org/dataset/list-ict-companies-mauritius",
+  "license": "CC-BY-SA-4.0",
+  "access": "public",
+  "data_freshness": "static",
+  "record_shape": "csv_one_row_per_ict_company",
+  "primary_keys": ["Title"],
+  "join_keys": ["Title"],
+  "field_count": 5,
+  "fields": [
+    { "path": "Title", "source_field": "Title", "english_name": "company_name", "meaning": "Company name (display).", "data_type": "string", "semantic_type": "legal_name", "example_values": ["A CHAMROO LTD", "AFM COMPUTER LTD"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "No identifier accompanies the name; some rows concatenate two related entity names.", "source_confidence": "high", "analysis_notes": "Only available company key in this open dataset (name string)." },
+    { "path": "Address", "source_field": "Address", "english_name": "address", "meaning": "Street address of the company.", "data_type": "string", "semantic_type": "address", "example_values": ["Best House Glaieul Av Quatre Bornes"], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "May be 'Not Available' / blank; free-text.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "District", "source_field": "District", "english_name": "district", "meaning": "Administrative district / region.", "data_type": "string", "semantic_type": "geography", "example_values": ["Plaine Wilhems", "Port Louis"], "nullable": true, "repeatable": false, "code_list": "Mauritius districts", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "Sectors", "source_field": "Sectors", "english_name": "sectors", "meaning": "ICT sector(s) the company operates in.", "data_type": "string", "semantic_type": "activity", "example_values": ["Software Development", "Web Design Development", "BPO General"], "nullable": true, "repeatable": true, "code_list": "ICT sector free-text", "language": "en", "limitations": "Newline-separated within the cell; free-text, not a code list.", "source_confidence": "high", "analysis_notes": "Split on newline to get multiple sectors." },
+    { "path": "Other Related Sectors", "source_field": "Other Related Sectors", "english_name": "other_related_sectors", "meaning": "Additional / related sectors or free-text description.", "data_type": "string", "semantic_type": "activity", "example_values": ["Distributor of IBM Service Agreement", "Not Available"], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "Often 'Not Available'; free-text.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

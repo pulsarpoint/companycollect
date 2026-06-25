@@ -1,0 +1,26 @@
+{
+  "country": "Mauritius",
+  "country_slug": "mauritius",
+  "source_slug": "cbrd_cbris_search",
+  "source_name": "CBRD — CBRIS Online Company Search",
+  "source_type": "official_registry",
+  "organization": "Corporate and Business Registration Department (CBRD); operated via Mauritius Network Services (MNS)",
+  "source_url": "https://onlinesearch.mns.global/",
+  "license": "restricted",
+  "access": "public_search_turnstile_gated",
+  "data_freshness": "live",
+  "record_shape": "per_company_search_turnstile_gated_planning_only",
+  "primary_keys": ["brn"],
+  "join_keys": ["brn", "company_name"],
+  "field_count": 8,
+  "fields": [
+    { "path": "brn", "source_field": "Business Registration Number (BRN)", "english_name": "brn", "meaning": "Business Registration Number — the CBRD company/business identifier.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; search Turnstile-gated. Basis of the MRA tax identity.", "source_confidence": "high", "analysis_notes": "Registry primary key." },
+    { "path": "company_name", "source_field": "Company / Business Name", "english_name": "company_name", "meaning": "Registered company or business name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "company_type", "source_field": "Type", "english_name": "company_type", "meaning": "Entity type (e.g. private company limited by shares, sole trader, société, foundation).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "CBRD entity types", "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "company_status", "source_field": "Status", "english_name": "company_status", "meaning": "Status (e.g. live / removed / defunct / wound up).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "CBRD statuses", "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "incorporation_date", "source_field": "Date of Incorporation / Registration", "english_name": "incorporation_date", "meaning": "Date the entity was incorporated/registered.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "registered_office_address", "source_field": "Registered Office Address", "english_name": "registered_office_address", "meaning": "Registered office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "directors", "source_field": "Directors", "english_name": "directors", "meaning": "Company directors.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA — redact (Data Protection Act 2017). Planning-only; document purchase paid.", "source_confidence": "medium", "analysis_notes": "Do not store cleartext." },
+    { "path": "shareholders", "source_field": "Shareholders", "english_name": "shareholders", "meaning": "Shareholders.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA when natural persons — redact. Planning-only; in paid documents.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}
