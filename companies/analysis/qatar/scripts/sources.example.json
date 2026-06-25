@@ -1,0 +1,26 @@
+[
+  {
+    "name": "QFC Public Register (firms)",
+    "slug": "qfc_public_register",
+    "type": "api_page",
+    "url": "https://eservices.qfc.qa/qfcpublicregister/publicregister.aspx",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Browser-public ASP.NET register; result grid is populated via search POSTBACK (__VIEWSTATE), NOT a plain GET. Implement behind a browser context; do not bypass the postback. QFC-licensed firms only."
+  },
+  {
+    "name": "Qatar Stock Exchange listed securities",
+    "slug": "qse_listed",
+    "type": "api_page",
+    "url": "https://www.qe.com.qa/listed-securities",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Browser-public Liferay portal; listed-company data loaded via portlet AJAX. No clean open JSON API. Listed companies only."
+  }
+]
