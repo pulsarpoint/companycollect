@@ -1,0 +1,74 @@
+{
+  "country": "Pakistan",
+  "country_slug": "pakistan",
+  "source_slug": "psx_dataportal",
+  "source_identity": "pakistan_psx_dataportal",
+  "source_package": "psx",
+  "env_prefix": "PK_PSX",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Pakistan Stock Exchange — Data Portal (symbols + company pages)",
+    "source_type": "financial_disclosure",
+    "organization": "Pakistan Stock Exchange Limited (PSX)",
+    "source_url": "https://dps.psx.com.pk/symbols",
+    "license": "psx_terms_unconfirmed",
+    "access": "public",
+    "data_freshness": "daily",
+    "attribution": "Pakistan Stock Exchange (PSX)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "single_json_api",
+    "base_url": "https://dps.psx.com.pk/symbols",
+    "download_url": "https://dps.psx.com.pk/symbols",
+    "http_method": "GET",
+    "headers_required": ["Accept: application/json"],
+    "formats": ["json", "html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "$",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "unspecified; single full-array response (~1,068 symbols)"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "PsxListedSymbol",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Open JSON array of all listed symbols. No pagination — one GET returns all (~1,068; 744 equities). Filter isDebt=false & isETF=false for company equities. For registered address / free float / shares, fetch the per-company HTML page at dps.psx.com.pk/company/{symbol} and parse. Listed companies only. No CUIN/NTN published — join to SECP/FBR by name. Currency PKR. Confirm PSX reuse terms before bulk redistribution."
+  },
+  "keys": {
+    "primary_keys": ["symbol"],
+    "join_keys": ["symbol", "name"],
+    "dedupe_keys": ["symbol"]
+  },
+  "mapping_rules": {
+    "company_id": "symbol (listed).",
+    "legal_name": "name.",
+    "activity_code": "sectorName.",
+    "registered_address": "company page Registered Address (HTML).",
+    "financials": "company page free float / shares (PKR)."
+  },
+  "fixture_requirements": [
+    "equity (isDebt=false, isETF=false)",
+    "debt instrument (isDebt=true) to assert it is filtered/flagged",
+    "ETF (isETF=true)",
+    "company page parse for registered address"
+  ],
+  "live_test_plan": {
+    "smoke": "GET /symbols; expect a JSON array; find symbol OGDC/HBL with sectorName.",
+    "full": "Ingest /symbols; for each equity, fetch /company/{symbol} and parse address/free float."
+  },
+  "blockers": []
+}

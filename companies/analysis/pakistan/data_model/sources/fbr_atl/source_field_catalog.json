@@ -1,0 +1,23 @@
+{
+  "country": "Pakistan",
+  "country_slug": "pakistan",
+  "source_slug": "fbr_atl",
+  "source_name": "FBR — Active Taxpayers List (ATL) / NTN verification",
+  "source_type": "tax_register",
+  "organization": "Federal Board of Revenue (FBR)",
+  "source_url": "https://www.fbr.gov.pk/active-taxpayer-list-income-tax/51147/131210",
+  "license": "restricted",
+  "access": "online_verification_per_ntn",
+  "data_freshness": "weekly",
+  "record_shape": "per_ntn_verification_planning_only",
+  "primary_keys": ["ntn"],
+  "join_keys": ["ntn", "registration_no", "name"],
+  "field_count": 5,
+  "fields": [
+    { "path": "ntn", "source_field": "NTN (National Tax Number)", "english_name": "ntn", "meaning": "National Tax Number — the FBR tax identifier.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; per-NTN online verification (no open bulk located).", "source_confidence": "high", "analysis_notes": "Tax key; also used for companies." },
+    { "path": "registration_no", "source_field": "Registration No.", "english_name": "registration_no", "meaning": "Incorporation/registration number (for companies, aligns with SECP).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only.", "source_confidence": "medium", "analysis_notes": "Potential bridge to the SECP CUIN/registration number." },
+    { "path": "name", "source_field": "Name", "english_name": "name", "meaning": "Taxpayer name (company or individual).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "PERSONAL DATA when an individual — redact individuals. Planning-only.", "source_confidence": "high", "analysis_notes": "Companies and individuals both appear in the ATL." },
+    { "path": "atl_status", "source_field": "ATL Status", "english_name": "atl_status", "meaning": "Active Taxpayers List status (active / inactive filer).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "ATL statuses", "language": "en", "limitations": "Planning-only; tax-filing status, not company registration status.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "category", "source_field": "Category", "english_name": "category", "meaning": "Taxpayer category (e.g. company, AOP, individual).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "Planning-only.", "source_confidence": "medium", "analysis_notes": "Use to separate companies from individuals." }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pakistan Company Profile",
+  "description": "Country-specific company profile for Pakistan. Three identifiers: the CUIN (Company Universal Identification Number) from the SECP registrar, the NTN (National Tax Number) from the FBR, and the PSX symbol for listed companies. The genuinely OPEN source is the Pakistan Stock Exchange data portal (dps.psx.com.pk/symbols, JSON) — listed companies with symbol/name/sector plus per-company HTML (registered address, free float). The authoritative full registrar SECP eServices (keyed on CUIN) was WAF-blocked/firewalled from the investigation environment (planning-only). FBR ATL (keyed on NTN) is per-NTN online verification covering companies and individuals (no open bulk located). Language English; currency PKR. SECP directors and FBR individual taxpayers are personal data — redact. PSX publishes no CUIN/NTN, so listed companies join to the register by name.",
+  "type": "object",
+  "required": ["country", "country_slug", "legal_identity", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Pakistan" },
+    "country_slug": { "type": "string", "const": "pakistan" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "description": "Registry/tax identifiers. CUIN (SECP) and NTN (FBR) are both gated/firewalled here (planning-only); PSX symbol is open for listed companies.",
+      "properties": {
+        "cuin": { "type": ["string", "null"], "description": "SECP Company Universal Identification Number. Registrar key.", "x-source": "secp_eservices", "x-source-path": "cuin", "x-join-key": true, "x-access": "firewalled" },
+        "ntn": { "type": ["string", "null"], "description": "FBR National Tax Number.", "x-source": "fbr_atl", "x-source-path": "ntn", "x-join-key": true, "x-access": "per_ntn_verification" },
+        "psx_symbol": { "type": ["string", "null"], "description": "PSX ticker (listed companies only).", "x-source": "psx_dataportal", "x-source-path": "symbol", "x-join-key": true, "x-access": "public" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["legal_name"],
+      "properties": {
+        "legal_name": { "type": "string", "description": "Company name. Open from PSX (listed); authoritative from SECP.", "x-source": "psx_dataportal", "x-source-path": "name", "x-source-alt": "secp_eservices.company_name", "x-join-key": true },
+        "company_kind": { "type": ["string", "null"], "description": "SECP entity kind (planning-only): private/public limited, SMC, LLP.", "x-source": "secp_eservices", "x-source-path": "company_kind", "x-access": "firewalled" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "registration_status": { "type": ["string", "null"], "description": "SECP company status (active/dormant/dissolved). Planning-only.", "x-source": "secp_eservices", "x-source-path": "status", "x-access": "firewalled" },
+        "atl_status": { "type": ["string", "null"], "description": "FBR ATL filer status (active/inactive) — TAX status, not registration status.", "x-source": "fbr_atl", "x-source-path": "atl_status", "x-access": "per_ntn_verification" },
+        "incorporation_date": { "type": ["string", "null"], "x-source": "secp_eservices", "x-source-path": "incorporation_date", "x-access": "firewalled" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "sector": { "type": ["string", "null"], "description": "PSX sector (listed).", "x-source": "psx_dataportal", "x-source-path": "sectorName" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "description": "PSX company-page address (listed) or SECP registered office.", "x-source": "psx_dataportal", "x-source-path": "company_page.registered_address", "x-source-alt": "secp_eservices.registered_address" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Directors / officers (SECP). PERSONAL DATA — REDACT. Planning-only (firewalled / login).",
+      "x-source": "secp_eservices",
+      "x-source-path": "directors",
+      "x-access": "firewalled_redact",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for PSX-listed companies (open).",
+      "x-source": "psx_dataportal",
+      "properties": {
+        "psx_symbol": { "type": ["string", "null"], "x-source-path": "symbol" },
+        "sector": { "type": ["string", "null"], "x-source-path": "sectorName" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "PSX company-page free float / shares (PKR) for listed companies.",
+      "x-source": "psx_dataportal",
+      "x-access": "public",
+      "items": {
+        "type": "object",
+        "properties": {
+          "free_float_and_shares": { "type": ["string", "null"], "x-source-path": "company_page.free_float" },
+          "currency": { "type": "string", "const": "PKR" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

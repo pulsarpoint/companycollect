@@ -1,0 +1,76 @@
+{
+  "country": "Pakistan",
+  "country_slug": "pakistan",
+  "source_slug": "fbr_atl",
+  "source_identity": "pakistan_fbr_atl",
+  "source_package": "fbratl",
+  "env_prefix": "PK_FBR_ATL",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "FBR — Active Taxpayers List (ATL) / NTN verification",
+    "source_type": "tax_register",
+    "organization": "Federal Board of Revenue (FBR)",
+    "source_url": "https://www.fbr.gov.pk/active-taxpayer-list-income-tax/51147/131210",
+    "license": "restricted",
+    "access": "online_verification_per_ntn",
+    "data_freshness": "weekly",
+    "attribution": "Federal Board of Revenue (Pakistan)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.fbr.gov.pk/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per-NTN online verification; no open bulk file located"
+  },
+  "snapshot": {
+    "strategy": "none_verification_only",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "PkFbrAtlEntry",
+    "date_formats": ["02-Jan-2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "FBR Active Taxpayers List. Access is per-NTN online verification (plus Tax Asaan app / SMS); a clean open bulk ATL download was NOT located here (category pages informational). Discover whether an official bulk ATL file exists before implementing. Key = NTN (National Tax Number); Registration No. can bridge to SECP. ATL covers companies AND individuals — separate via category and REDACT individuals (personal data). atl_status is tax-filing status, not registration status."
+  },
+  "keys": {
+    "primary_keys": ["ntn"],
+    "join_keys": ["ntn", "registration_no", "name"],
+    "dedupe_keys": ["ntn"]
+  },
+  "mapping_rules": {
+    "tax_id": "NTN.",
+    "registration_number": "Registration No. (companies; bridge to SECP).",
+    "legal_name": "Name (companies only; redact individuals).",
+    "status": "ATL Status (TAX-FILING status, not registration status)."
+  },
+  "fixture_requirements": [
+    "company ATL entry (category = company)",
+    "individual ATL entry (assert redaction)",
+    "active vs inactive filer status"
+  ],
+  "live_test_plan": {
+    "smoke": "Verify a known NTN online; confirm fields returned.",
+    "full": "Blocked on transport discovery — confirm/obtain an official bulk ATL file; otherwise per-NTN verification only; redact individuals."
+  },
+  "blockers": [
+    "Per-NTN online verification; no open bulk ATL file located",
+    "Mixes companies and individuals (individuals are personal data)",
+    "atl_status is tax-filing status, not registration status"
+  ]
+}

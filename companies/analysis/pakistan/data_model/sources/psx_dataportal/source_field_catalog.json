@@ -1,0 +1,25 @@
+{
+  "country": "Pakistan",
+  "country_slug": "pakistan",
+  "source_slug": "psx_dataportal",
+  "source_name": "Pakistan Stock Exchange — Data Portal (symbols + company pages)",
+  "source_type": "financial_disclosure",
+  "organization": "Pakistan Stock Exchange Limited (PSX)",
+  "source_url": "https://dps.psx.com.pk/symbols",
+  "license": "psx_terms_unconfirmed",
+  "access": "public",
+  "data_freshness": "daily",
+  "record_shape": "json_array_of_symbol_objects_plus_per_company_html",
+  "primary_keys": ["symbol"],
+  "join_keys": ["symbol", "name"],
+  "field_count": 7,
+  "fields": [
+    { "path": "symbol", "source_field": "symbol", "english_name": "psx_symbol", "meaning": "PSX ticker symbol for the listed security.", "data_type": "string", "semantic_type": "identifier", "example_values": ["OGDC", "HBL", "LUCK", "ENGRO"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Listed securities only; debt/ETF rows share this field.", "source_confidence": "high", "analysis_notes": "Listed-entity primary key." },
+    { "path": "name", "source_field": "name", "english_name": "name", "meaning": "Listed company / security name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Oil and Gas Development Company Limited", "Habib Bank Limited", "Lucky Cement Limited"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Display name; debt rows append instrument suffix (e.g. TFC6).", "source_confidence": "high", "analysis_notes": null },
+    { "path": "sectorName", "source_field": "sectorName", "english_name": "sector", "meaning": "PSX sector classification.", "data_type": "string", "semantic_type": "activity", "example_values": ["COMMERCIAL BANKS", "CEMENT", "FERTILIZER", "OIL & GAS EXPLORATION COMPANIES"], "nullable": true, "repeatable": false, "code_list": "PSX sectors", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "isETF", "source_field": "isETF", "english_name": "is_etf", "meaning": "Whether the symbol is an ETF.", "data_type": "boolean", "semantic_type": "metadata", "example_values": ["false", "true"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Filter out for company equities.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "isDebt", "source_field": "isDebt", "english_name": "is_debt", "meaning": "Whether the symbol is a debt instrument (TFC/bond/sukuk).", "data_type": "boolean", "semantic_type": "metadata", "example_values": ["false", "true"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Filter out for company equities.", "source_confidence": "high", "analysis_notes": "744 of 1,068 symbols are non-debt/non-ETF equities." },
+    { "path": "company_page.registered_address", "source_field": "Registered Address (company page)", "english_name": "registered_address", "meaning": "Registered office address (from dps.psx.com.pk/company/{symbol}).", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "Per-company HTML page; parse required.", "source_confidence": "medium", "analysis_notes": "Available on the per-company page, not the /symbols array." },
+    { "path": "company_page.free_float", "source_field": "Free Float / Shares (company page)", "english_name": "free_float_and_shares", "meaning": "Free float and shares outstanding.", "data_type": "string", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Per-company HTML page; PKR context.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

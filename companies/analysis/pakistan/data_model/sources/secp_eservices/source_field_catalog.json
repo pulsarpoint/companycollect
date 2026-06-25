@@ -1,0 +1,25 @@
+{
+  "country": "Pakistan",
+  "country_slug": "pakistan",
+  "source_slug": "secp_eservices",
+  "source_name": "SECP eServices — Company / LLP Registry",
+  "source_type": "official_registry",
+  "organization": "Securities and Exchange Commission of Pakistan (SECP)",
+  "source_url": "https://eservices.secp.gov.pk/eServices/",
+  "license": "restricted",
+  "access": "firewalled_from_environment",
+  "data_freshness": "live",
+  "record_shape": "per_company_lookup_planning_only",
+  "primary_keys": ["cuin"],
+  "join_keys": ["cuin", "company_name"],
+  "field_count": 7,
+  "fields": [
+    { "path": "cuin", "source_field": "CUIN (Company Universal Identification Number)", "english_name": "cuin", "meaning": "SECP company identifier — the registrar primary key (also the registration number).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; SECP firewalled/WAF-blocked from this environment.", "source_confidence": "high", "analysis_notes": "Registry key." },
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Registered company / LLP name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "company_kind", "source_field": "Company Kind", "english_name": "company_kind", "meaning": "Entity kind (e.g. private limited, public limited, single-member company SMC, LLP).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "SECP company kinds", "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Company status (active / dormant / dissolved / struck off).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "SECP statuses", "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "incorporation_date", "source_field": "Date of Incorporation", "english_name": "incorporation_date", "meaning": "Date of incorporation/registration.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "registered_address", "source_field": "Registered Office Address", "english_name": "registered_address", "meaning": "Registered office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "directors", "source_field": "Directors / Officers", "english_name": "directors", "meaning": "Company directors / officers.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA — redact. Planning-only; full filings require login.", "source_confidence": "medium", "analysis_notes": "Do not store cleartext personal data." }
+  ]
+}

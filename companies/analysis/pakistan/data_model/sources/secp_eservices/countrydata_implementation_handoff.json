@@ -1,0 +1,82 @@
+{
+  "country": "Pakistan",
+  "country_slug": "pakistan",
+  "source_slug": "secp_eservices",
+  "source_identity": "pakistan_secp_eservices",
+  "source_package": "secp",
+  "env_prefix": "PK_SECP",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "SECP eServices — Company / LLP Registry",
+    "source_type": "official_registry",
+    "organization": "Securities and Exchange Commission of Pakistan (SECP)",
+    "source_url": "https://eservices.secp.gov.pk/eServices/",
+    "license": "restricted",
+    "access": "firewalled_from_environment",
+    "data_freshness": "live",
+    "attribution": "Securities and Exchange Commission of Pakistan"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["PK_SECP_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://eservices.secp.gov.pk/eServices/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["unblocked network (WAF); login for filings"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "SECP website 403 (WAF); eServices timed out; no open bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_firewalled",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "PkSecpCompany",
+    "date_formats": ["02-Jan-2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Authoritative Pakistani company/LLP registrar (SECP eServices). The SECP website returned HTTP 403 (WAF) and eservices.secp.gov.pk timed out — firewalled from this environment. Company name search + filings (filings require login). Do NOT bypass the WAF. Key = CUIN (Company Universal Identification Number). Directors are personal data — redact. Field model from public knowledge; no values captured. Run from an unblocked network; confirm whether SECP offers an official data-sharing/API arrangement."
+  },
+  "keys": {
+    "primary_keys": ["cuin"],
+    "join_keys": ["cuin", "company_name"],
+    "dedupe_keys": ["cuin"]
+  },
+  "mapping_rules": {
+    "company_id": "CUIN.",
+    "registration_number": "CUIN.",
+    "legal_name": "Company Name.",
+    "legal_form": "Company Kind.",
+    "status": "Status.",
+    "incorporation_date": "Date of Incorporation.",
+    "registered_address": "Registered Office Address.",
+    "officers": "Directors / Officers (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "active private limited company",
+    "single-member company (SMC)",
+    "LLP",
+    "dissolved / struck-off company",
+    "record with directors (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable from this environment (WAF/timeout). From an unblocked network, run an SECP company name search.",
+    "full": "Blocked on WAF/firewall + login — requires an unblocked network and authorized access or an official SECP arrangement; redact personal data."
+  },
+  "blockers": [
+    "SECP website returns HTTP 403 (WAF); eServices times out (firewalled from this environment)",
+    "Filings require login; no open bulk file or free API",
+    "Directors are personal data"
+  ]
+}

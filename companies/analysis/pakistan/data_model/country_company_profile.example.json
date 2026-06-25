@@ -1,0 +1,61 @@
+{
+  "country": "Pakistan",
+  "country_slug": "pakistan",
+  "country_profile_version": "2026-06-25",
+  "registration": {
+    "cuin": null,
+    "ntn": null,
+    "psx_symbol": "HBL"
+  },
+  "legal_identity": {
+    "legal_name": "Habib Bank Limited",
+    "company_kind": null
+  },
+  "status": {
+    "registration_status": null,
+    "atl_status": null,
+    "incorporation_date": null
+  },
+  "activity": {
+    "sector": "COMMERCIAL BANKS"
+  },
+  "registered_location": {
+    "registered_address": null
+  },
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Director (SECP; firewalled/login; redacted as personal data)" }
+  ],
+  "listing": {
+    "psx_symbol": "HBL",
+    "sector": "COMMERCIAL BANKS"
+  },
+  "financial_statements": [
+    { "free_float_and_shares": null, "currency": "PKR" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "psx_dataportal",
+      "section": "registration.psx_symbol / legal_identity.legal_name / activity.sector / listing",
+      "source_url": "https://dps.psx.com.pk/symbols",
+      "access": "public",
+      "license": "psx_terms_unconfirmed",
+      "retrieved_at": "2026-06-25T00:00:00Z"
+    },
+    {
+      "source_slug": "secp_eservices",
+      "section": "registration.cuin / legal_identity.company_kind / status.registration_status / officers (planning-only, firewalled)",
+      "source_url": "https://eservices.secp.gov.pk/eServices/",
+      "access": "firewalled_from_environment",
+      "license": "restricted",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "fbr_atl",
+      "section": "registration.ntn / status.atl_status (planning-only, per-NTN verification)",
+      "source_url": "https://www.fbr.gov.pk/active-taxpayer-list-income-tax/51147/131210",
+      "access": "online_verification_per_ntn",
+      "license": "restricted",
+      "retrieved_at": null
+    }
+  ]
+}
