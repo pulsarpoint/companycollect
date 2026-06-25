@@ -1,0 +1,24 @@
+{
+  "country": "Qatar",
+  "country_slug": "qatar",
+  "source_slug": "qse_listed",
+  "source_name": "Qatar Stock Exchange (QSE) — listed securities",
+  "source_type": "financial_disclosure",
+  "organization": "Qatar Stock Exchange (QSE / Bourse de Doha)",
+  "source_url": "https://www.qe.com.qa/listed-securities",
+  "license": "public_disclosure",
+  "access": "public_browser",
+  "data_freshness": "event_driven_quarterly",
+  "record_shape": "listed_company_profile_browser_public_ajax",
+  "primary_keys": ["symbol"],
+  "join_keys": ["symbol", "isin", "company_name"],
+  "field_count": 6,
+  "fields": [
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Listed company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Qatar National Bank (Q.P.S.C.)", "Industries Qatar (Q.P.S.C.)", "Qatar Islamic Bank (Q.P.S.C.)"], "nullable": false, "repeatable": false, "code_list": null, "language": "en/ar", "limitations": "Listed companies only; public-knowledge names (portal loads via AJAX).", "source_confidence": "medium", "analysis_notes": "Display name." },
+    { "path": "symbol", "source_field": "Symbol", "english_name": "symbol", "meaning": "QSE ticker symbol.", "data_type": "string", "semantic_type": "identifier", "example_values": ["QNBK", "IQCD", "QIBK", "ORDS"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Listed-entity key." },
+    { "path": "isin", "source_field": "ISIN", "english_name": "isin", "meaning": "International Securities Identification Number.", "data_type": "string", "semantic_type": "identifier", "example_values": ["QA0006929238", "QA0007227496", "QA0006929697"], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Qatari ISINs start QA.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "sector", "source_field": "Sector", "english_name": "sector", "meaning": "QSE sector classification.", "data_type": "string", "semantic_type": "activity", "example_values": ["Banks & Financial Services", "Industrials", "Telecoms"], "nullable": true, "repeatable": false, "code_list": "QSE sectors", "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "financial_statements", "source_field": "Financial Statements", "english_name": "financial_statements", "meaning": "Listed-company financial statements (QAR).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en/ar", "limitations": "Listed only; currency QAR; AJAX-loaded.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "disclosures", "source_field": "Disclosures", "english_name": "disclosures", "meaning": "Issuer disclosures / announcements.", "data_type": "array", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en/ar", "limitations": "AJAX-loaded; no clean open JSON API.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

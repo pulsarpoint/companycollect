@@ -1,0 +1,77 @@
+{
+  "country": "Qatar",
+  "country_slug": "qatar",
+  "source_slug": "qfc_public_register",
+  "source_identity": "qatar_qfc_public_register",
+  "source_package": "qfcregister",
+  "env_prefix": "QA_QFC",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "QFC Public Register",
+    "source_type": "official_registry",
+    "organization": "Qatar Financial Centre Authority (QFCA)",
+    "source_url": "https://eservices.qfc.qa/qfcpublicregister/publicregister.aspx",
+    "license": "unknown_public_register",
+    "access": "public_browser_postback",
+    "data_freshness": "live",
+    "attribution": "Qatar Financial Centre Authority"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://eservices.qfc.qa/qfcpublicregister/publicregister.aspx",
+    "download_url": null,
+    "http_method": "POST",
+    "headers_required": ["ASP.NET __VIEWSTATE / __EVENTVALIDATION (browser postback)"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public via browser; result grid populated only via search postback"
+  },
+  "snapshot": {
+    "strategy": "none_postback_gated",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "QfcFirm",
+    "date_formats": ["2006-01-02", "02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Browser-public ASP.NET register (publicregister.aspx). The result GridView is empty on a plain GET and populated only via a search POSTBACK carrying __VIEWSTATE. Do NOT bypass the postback. Implement behind a browser/clearance context. QFC-licensed firms only (financial centre) — distinct from the onshore MoCI CR registry. Redact approved-individual names/addresses (personal data, Law No. 13 of 2016). License is an unknown public register; confirm reuse terms."
+  },
+  "keys": {
+    "primary_keys": ["qfc_number"],
+    "join_keys": ["qfc_number", "firm_name"],
+    "dedupe_keys": ["qfc_number"]
+  },
+  "mapping_rules": {
+    "company_id": "QFC Number.",
+    "legal_name": "Firm Name.",
+    "status": "QFCA Licensed.",
+    "incorporation_date": "Date Of Registration.",
+    "officers": "Approved individuals / senior executive functions (REDACT personal data)."
+  },
+  "fixture_requirements": [
+    "QFC-licensed firm",
+    "firm with approved individuals (assert redaction)",
+    "registered insolvency practitioner / official liquidator row"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable as a plain GET (postback). From a browser context, run a register search.",
+    "full": "Blocked for automation by the search postback — use a browser/clearance context or an official QFC data channel; financial-centre firms only."
+  },
+  "blockers": [
+    "Result grid only via ASP.NET search postback (__VIEWSTATE); no clean GET/bulk/API",
+    "Scope limited to QFC-licensed firms (financial centre), not onshore companies",
+    "License is an unknown public register; reuse terms unconfirmed"
+  ]
+}

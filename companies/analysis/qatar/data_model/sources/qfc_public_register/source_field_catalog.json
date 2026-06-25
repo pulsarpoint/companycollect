@@ -1,0 +1,25 @@
+{
+  "country": "Qatar",
+  "country_slug": "qatar",
+  "source_slug": "qfc_public_register",
+  "source_name": "QFC Public Register",
+  "source_type": "official_registry",
+  "organization": "Qatar Financial Centre Authority (QFCA)",
+  "source_url": "https://eservices.qfc.qa/qfcpublicregister/publicregister.aspx",
+  "license": "unknown_public_register",
+  "access": "public_browser_postback",
+  "data_freshness": "live",
+  "record_shape": "aspnet_gridview_search_postback",
+  "primary_keys": ["qfc_number"],
+  "join_keys": ["qfc_number", "firm_name"],
+  "field_count": 7,
+  "fields": [
+    { "path": "firm_name", "source_field": "Firm Name", "english_name": "firm_name", "meaning": "Registered name of the QFC-licensed firm.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en/ar", "limitations": "Documented from the register page table headers; grid empty on plain GET (postback). QFC-licensed firms only.", "source_confidence": "high", "analysis_notes": "Display name for QFC firms." },
+    { "path": "qfc_number", "source_field": "QFC Number", "english_name": "qfc_number", "meaning": "QFC firm registration number (financial centre identifier).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Distinct from the onshore MoCI CR number.", "source_confidence": "high", "analysis_notes": "Primary key for QFC firms." },
+    { "path": "senior_executive_function", "source_field": "Senior Executive Function", "english_name": "senior_executive_function", "meaning": "Approved senior executive function held within a firm.", "data_type": "string", "semantic_type": "relationship", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "Links an approved individual to a firm role.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "approved_individual_full_name", "source_field": "Full Name", "english_name": "approved_individual_full_name", "meaning": "Full name of an approved individual.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en/ar", "limitations": "PERSONAL DATA — redact (Law No. 13 of 2016).", "source_confidence": "high", "analysis_notes": "Do not store cleartext." },
+    { "path": "address", "source_field": "Address", "english_name": "address", "meaning": "Registered address of the firm / approved person.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en/ar", "limitations": "For individuals this is personal data — redact.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "date_of_registration", "source_field": "Date Of Registration", "english_name": "date_of_registration", "meaning": "Date the firm/person was registered with the QFC.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Gregorian.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "qfca_licensed", "source_field": "QFCA Licensed", "english_name": "qfca_licensed", "meaning": "Whether the firm is QFCA-licensed / its licensing status.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": "Status indicator for QFC firms." }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "country": "Qatar",
+  "country_slug": "qatar",
+  "source_slug": "moci_commercial_registration",
+  "source_identity": "qatar_moci_commercial_registration",
+  "source_package": "mocicr",
+  "env_prefix": "QA_MOCI",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Ministry of Commerce and Industry — Commercial Registration",
+    "source_type": "official_registry",
+    "organization": "Ministry of Commerce and Industry (MoCI)",
+    "source_url": "https://www.moci.gov.qa/en/",
+    "license": "restricted",
+    "access": "lookup_only_auth_gated",
+    "data_freshness": "live",
+    "attribution": "Ministry of Commerce and Industry (Qatar)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["QA_MOCI_PORTAL_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.moci.gov.qa/en/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["national portal session (likely)"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per-CR lookup; e-service paths 404; Single Window host unresolved; no open bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_auth_gated",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "QaCommercialRegistration",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["1,234,567.89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Onshore Qatari companies registry keyed on the CR number. MoCI main site reachable but e-service paths return 404 (portal restructured) and the Single Window hosts (businessinqatar.gov.qa, business.gov.qa) did not resolve. Verification is a per-CR lookup, often Arabic, commonly behind the national portal/authentication. No open bulk/API found. Do NOT bypass authentication. Field model is planning-only from public knowledge; no per-company values captured. Arabic primary; QAR; redact owners/partners/manager (Law No. 13 of 2016). Confirm whether MoCI offers an official data-sharing channel."
+  },
+  "keys": {
+    "primary_keys": ["cr_number"],
+    "join_keys": ["cr_number", "establishment_name"],
+    "dedupe_keys": ["cr_number"]
+  },
+  "mapping_rules": {
+    "company_id": "CR number.",
+    "registration_number": "CR number.",
+    "legal_name": "Trade / Establishment Name.",
+    "legal_form": "Legal Form.",
+    "status": "Status.",
+    "activity_code": "Activities (ISIC-based).",
+    "capital": "Capital (QAR).",
+    "owners": "Owners / Partners (REDACT natural persons).",
+    "officers": "Manager (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "active onshore CR (W.L.L./LLC)",
+    "Q.P.S.C. (public shareholding)",
+    "sole proprietorship",
+    "expired/cancelled CR",
+    "record with owners/manager (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (auth-gated, no open endpoint). Confirm the CR-lookup access path / data-sharing channel.",
+    "full": "Blocked on authentication — requires an official MoCI arrangement or authenticated session; redact personal data."
+  },
+  "blockers": [
+    "No open bulk file or API; per-CR lookup only",
+    "MoCI e-service paths 404; Single Window host unresolved",
+    "Verification commonly auth-gated (national portal), often Arabic"
+  ]
+}

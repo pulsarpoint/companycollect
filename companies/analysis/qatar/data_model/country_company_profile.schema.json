@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Qatar Company Profile",
+  "description": "Country-specific company profile for Qatar. Qatar has a dual-registry structure: the onshore Ministry of Commerce and Industry (MoCI) Commercial Register keyed on the CR number (the authoritative onshore identifier; lookup-only, auth-gated, no open bulk/API), and the Qatar Financial Centre (QFC) Public Register keyed on the QFC Number (financial-centre firms; browser-public but ASP.NET postback-driven). Listed-company financials come from the Qatar Stock Exchange (QSE), keyed on the ticker symbol / ISIN (QA...) — browser-public but loaded via portlet AJAX with no clean open API. The national open-data portal (data.gov.qa) carries statistics, not a company register. Currency QAR; languages Arabic + English; dates Gregorian. Owners/partners/managers and approved individuals are personal data (Law No. 13 of 2016) — redact. No registry per-company values were captured; listed identity uses public-knowledge QSE symbols.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Qatar" },
+    "country_slug": { "type": "string", "const": "qatar" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "description": "At least one registry identifier. Onshore companies use the MoCI CR number; financial-centre firms use the QFC Number.",
+      "properties": {
+        "cr_number": { "type": ["string", "null"], "description": "Onshore Commercial Registration number (MoCI). Primary onshore id. Lookup-only / auth-gated.", "x-source": "moci_commercial_registration", "x-source-path": "cr_number", "x-join-key": true, "x-freshness": "live", "x-access": "lookup_only_auth_gated" },
+        "qfc_number": { "type": ["string", "null"], "description": "QFC firm registration number (financial centre). Browser-public, postback-gated.", "x-source": "qfc_public_register", "x-source-path": "qfc_number", "x-join-key": true, "x-access": "public_browser_postback" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "moci_commercial_registration", "x-source-path": "establishment_name", "x-source-alt": "qfc_public_register.firm_name / qse_listed.company_name" },
+        "legal_form": { "type": ["string", "null"], "description": "W.L.L./LLC, Q.P.S.C., sole proprietorship, branch.", "x-source": "moci_commercial_registration", "x-source-path": "legal_form" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "MoCI CR status (active/expired/cancelled) or QFCA licensing status.", "x-source": "moci_commercial_registration", "x-source-path": "status", "x-source-alt": "qfc_public_register.qfca_licensed" },
+        "date_of_registration": { "type": ["string", "null"], "description": "QFC date of registration / MoCI CR issue date (Gregorian).", "x-source": "qfc_public_register", "x-source-path": "date_of_registration" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "activities": { "type": "array", "items": { "type": "string" }, "description": "Licensed activities (ISIC-based).", "x-source": "moci_commercial_registration", "x-source-path": "activities" },
+        "qse_sector": { "type": ["string", "null"], "description": "QSE sector (listed).", "x-source": "qse_listed", "x-source-path": "sector" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "address": { "type": ["string", "null"], "description": "Registered address (firm-level). Personal for individuals — redact those.", "x-source": "qfc_public_register", "x-source-path": "address" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "description": "Registered capital (QAR), from the auth-gated MoCI CR.",
+      "x-source": "moci_commercial_registration",
+      "x-access": "lookup_only_auth_gated",
+      "properties": {
+        "capital_amount": { "type": ["number", "null"], "x-source-path": "capital" },
+        "currency": { "type": "string", "const": "QAR" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Approved individuals (QFC) / owners-partners-manager (MoCI). PERSONAL DATA (Law No. 13 of 2016) — REDACT.",
+      "x-source": "qfc_public_register",
+      "x-source-path": "approved_individual_full_name",
+      "x-access": "personal_data_redact",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for QSE-listed companies (browser-public; AJAX).",
+      "x-source": "qse_listed",
+      "properties": {
+        "symbol": { "type": ["string", "null"], "x-source-path": "symbol" },
+        "isin": { "type": ["string", "null"], "x-source-path": "isin" },
+        "sector": { "type": ["string", "null"], "x-source-path": "sector" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Financial statements (QAR). Public via QSE for listed companies (AJAX-loaded); private financials not open.",
+      "x-source": "qse_listed",
+      "x-access": "public_browser",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": ["string", "null"] },
+          "currency": { "type": "string", "const": "QAR" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "country": "Qatar",
+  "country_slug": "qatar",
+  "source_slug": "moci_commercial_registration",
+  "source_name": "Ministry of Commerce and Industry — Commercial Registration",
+  "source_type": "official_registry",
+  "organization": "Ministry of Commerce and Industry (MoCI)",
+  "source_url": "https://www.moci.gov.qa/en/",
+  "license": "restricted",
+  "access": "lookup_only_auth_gated",
+  "data_freshness": "live",
+  "record_shape": "per_cr_lookup_planning_only",
+  "primary_keys": ["cr_number"],
+  "join_keys": ["cr_number", "establishment_name"],
+  "field_count": 8,
+  "fields": [
+    { "path": "cr_number", "source_field": "Commercial Registration No.", "english_name": "cr_number", "meaning": "Onshore Commercial Registration number — the primary Qatari company identifier.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; documented from public knowledge. No open bulk/API; per-CR lookup, often Arabic, commonly auth-gated.", "source_confidence": "high", "analysis_notes": "Primary onshore key." },
+    { "path": "establishment_name", "source_field": "Trade / Establishment Name", "english_name": "establishment_name", "meaning": "Registered trade/establishment name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "ar/en", "limitations": "Planning-only; not captured.", "source_confidence": "medium", "analysis_notes": "Arabic primary, English secondary." },
+    { "path": "legal_form", "source_field": "Legal Form", "english_name": "legal_form", "meaning": "Legal form (e.g. W.L.L./LLC, Q.P.S.C., sole proprietorship, branch).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "MoCI legal forms", "language": "ar/en", "limitations": "Planning-only.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "activities", "source_field": "Activities", "english_name": "activities", "meaning": "Licensed commercial activities.", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "ISIC-based", "language": "ar/en", "limitations": "Planning-only.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "CR status (active / expired / cancelled).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ar/en", "limitations": "Planning-only.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "capital", "source_field": "Capital", "english_name": "capital", "meaning": "Registered capital (QAR).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; currency QAR.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "owners", "source_field": "Owners / Partners", "english_name": "owners", "meaning": "Owners / partners of the establishment.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "ar/en", "limitations": "PERSONAL DATA — redact natural persons (Law No. 13 of 2016). Planning-only.", "source_confidence": "low", "analysis_notes": "Do not store cleartext personal data." },
+    { "path": "manager", "source_field": "Manager", "english_name": "manager", "meaning": "Authorized manager of the establishment.", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ar/en", "limitations": "PERSONAL DATA — redact. Planning-only.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

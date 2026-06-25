@@ -1,0 +1,75 @@
+{
+  "country": "Qatar",
+  "country_slug": "qatar",
+  "source_slug": "qse_listed",
+  "source_identity": "qatar_qse_listed",
+  "source_package": "qse",
+  "env_prefix": "QA_QSE",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Qatar Stock Exchange (QSE) — listed securities",
+    "source_type": "financial_disclosure",
+    "organization": "Qatar Stock Exchange (QSE / Bourse de Doha)",
+    "source_url": "https://www.qe.com.qa/listed-securities",
+    "license": "public_disclosure",
+    "access": "public_browser",
+    "data_freshness": "event_driven_quarterly",
+    "attribution": "Qatar Stock Exchange / issuer"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.qe.com.qa/listed-securities",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public via browser; data loaded via portlet AJAX"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "QseListedCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": ["1,234,567.89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Listed-company profiles + financial statements (QAR). Browser-public Liferay portal; the listed-securities data is loaded via portlet AJAX and guessed JSON endpoints (/api/markets/*) returned 404 — the concrete data endpoint was not identified. Implement behind a browser context or discover the real AJAX/data endpoint. Listed only. Symbol / ISIN (QA...). Join to the MoCI onshore registry by company name."
+  },
+  "keys": {
+    "primary_keys": ["symbol"],
+    "join_keys": ["symbol", "isin", "company_name"],
+    "dedupe_keys": ["symbol"]
+  },
+  "mapping_rules": {
+    "company_id": "symbol (listed entity).",
+    "legal_name": "Company Name.",
+    "activity_code": "Sector.",
+    "financials": "Financial statements (QAR)."
+  },
+  "fixture_requirements": [
+    "bank issuer (e.g. QNBK)",
+    "industrials issuer (e.g. IQCD)",
+    "telecoms issuer (e.g. ORDS)"
+  ],
+  "live_test_plan": {
+    "smoke": "From a browser context, load the listed-securities directory and capture the AJAX data endpoint.",
+    "full": "Blocked on transport discovery — the portlet AJAX/data endpoint must be identified; listed subset only."
+  },
+  "blockers": [
+    "Listed-securities data loaded via portlet AJAX; concrete data endpoint not identified (guessed /api/markets/* returned 404)",
+    "Listed companies only; private financials not public"
+  ]
+}

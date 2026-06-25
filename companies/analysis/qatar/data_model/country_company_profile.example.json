@@ -1,0 +1,65 @@
+{
+  "country": "Qatar",
+  "country_slug": "qatar",
+  "country_profile_version": "2026-06-25",
+  "registration": {
+    "cr_number": null,
+    "qfc_number": null
+  },
+  "legal_identity": {
+    "legal_name": "Qatar National Bank (Q.P.S.C.)",
+    "legal_form": "Q.P.S.C."
+  },
+  "status": {
+    "status_text": null,
+    "date_of_registration": null
+  },
+  "activity": {
+    "activities": [],
+    "qse_sector": "Banks & Financial Services"
+  },
+  "registered_location": {
+    "address": null
+  },
+  "capital": {
+    "capital_amount": null,
+    "currency": "QAR"
+  },
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Approved individual / manager (gated; redacted per Law No. 13 of 2016)" }
+  ],
+  "listing": {
+    "symbol": "QNBK",
+    "isin": "QA0006929238",
+    "sector": "Banks & Financial Services"
+  },
+  "financial_statements": [
+    { "fiscal_year": null, "currency": "QAR" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "moci_commercial_registration",
+      "section": "registration.cr_number / legal_identity / status / activity.activities / capital / officers",
+      "source_url": "https://www.moci.gov.qa/en/",
+      "access": "lookup_only_auth_gated",
+      "license": "restricted",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "qfc_public_register",
+      "section": "registration.qfc_number / status.date_of_registration / registered_location.address / officers",
+      "source_url": "https://eservices.qfc.qa/qfcpublicregister/publicregister.aspx",
+      "access": "public_browser_postback",
+      "license": "unknown_public_register",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "qse_listed",
+      "section": "listing / financial_statements / activity.qse_sector / legal_identity.legal_name",
+      "source_url": "https://www.qe.com.qa/listed-securities",
+      "access": "public_browser",
+      "license": "public_disclosure",
+      "retrieved_at": null
+    }
+  ]
+}
