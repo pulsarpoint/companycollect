@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Drive CommonCrawl enrichment over many index shards — resumable.
 #
-#   set -a; source ../dagster_v3/.env; set +a    # CLICKHOUSE_*, AWS_*, COMMONCRAWL_EMBED_BASE_URL
-#   ./run_crawl.sh tech     0-299                 # CPU-bound tech pass  (most cores)
-#   ./run_crawl.sh industry 0-299                 # GPU-bound industry pass (the 5090)
+#   cp ../.env.example ../.env && edit it          # shared config (auto-loaded below)
+#   ./run_crawl.sh tech     0-299                  # CPU-bound tech pass  (most cores)
+#   ./run_crawl.sh industry 0-299                  # GPU-bound industry pass (the 5090)
 #
 # Run the two modes as SEPARATE processes (e.g. two tmux panes) so tech pegs the cores
 # while industry feeds the 5090. Each is independent and restartable: a shard whose
@@ -12,6 +12,10 @@
 # Tunables via env: CRAWL, WHERE (worklist SQL filter; empty = ALL domains), DATA,
 # BUILDER_DIR, TECH_CONC, IND_CONC, EMBED_CONC.
 set -uo pipefail
+
+# Load the shared config (COMMONCRAWL_EMBED_*, CLICKHOUSE_*, AWS_*) — the single source of truth
+# the dagster reference-build also reads, so worker and reference embeddings use the same model.
+[ -f ../.env ] && { set -a; . ../.env; set +a; }
 
 MODE="${1:?usage: run_crawl.sh <industry|tech> <lo-hi>}"
 RANGE="${2:?usage: run_crawl.sh <industry|tech> <lo-hi>}"

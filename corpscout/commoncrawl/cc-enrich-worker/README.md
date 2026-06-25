@@ -145,7 +145,7 @@ Worklist columns: `root_domain, url, warc_filename, warc_record_offset, warc_rec
 
 ### 2. Run a pass
 ```bash
-set -a; source ../dagster_v3/.env; set +a
+set -a; source ../.env; set +a   # shared config — see ../.env.example
 
 # Tech (CPU-bound) — no embedder/ClickHouse needed
 ./cc-enrich-worker --mode tech --worklist ../dagster_v3/data/commoncrawl/shard0.parquet \
@@ -174,7 +174,7 @@ demand, running the pass, loading the result into ClickHouse, and dropping a `.l
 **Resumable**: done shards are skipped; ClickHouse `ReplacingMergeTree` dedupes re-loads.
 
 ```bash
-set -a; source ../dagster_v3/.env; set +a
+set -a; source ../.env; set +a   # shared config — see ../.env.example
 
 ./run_crawl.sh tech 0-2            # smoke test on 3 shards first
 
