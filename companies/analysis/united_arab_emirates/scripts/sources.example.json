@@ -1,0 +1,32 @@
+[
+  {
+    "name": "National Economic Register (NER) — login-gated",
+    "slug": "national_economic_register",
+    "type": "bulk",
+    "url": "https://economy.gov.ae/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Federal unified company search (Ministry of Economy), across emirates + free zones. Login-gated; ner.economy.gov.ae NXDOMAIN. No open bulk/API. Do not bypass login."
+  },
+  {
+    "name": "Free-zone public registers — DIFC & ADGM (WAF/rate-limited)",
+    "slug": "freezone_public_registers",
+    "type": "bulk",
+    "url": "https://www.adgm.com/public-registers",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "DIFC + ADGM public registers of free-zone entities. Public via browser but WAF/rate-limited (DIFC 429; registration.adgm.com 403). No open download. Do not bypass WAF."
+  },
+  {
+    "name": "DFM & ADX — listed-company financials (browser; WAF/auth-gated)",
+    "slug": "dfm_adx_listed",
+    "type": "bulk",
+    "url": "https://www.dfm.ae/",
+    "method": "GET",
+    "headers": {},
+    "max_pages": 0,
+    "note": "Listed-company profiles + financial statements (AED). Public via browser; DFM data feeds auth-gated (connexions.dfm.ae); ADX 403 (WAF). Listed only (Emaar Properties PJSC, Emirates NBD PJSC, First Abu Dhabi Bank PJSC). Do not bypass WAF/auth."
+  }
+]
