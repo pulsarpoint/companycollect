@@ -16,14 +16,6 @@ type Prototypes struct {
 	P      [][]float32
 }
 
-type PageFetch struct {
-	URL, RootDomain, Subdomain string
-	Primary                    bool
-	Text                       string
-	Emails, Socials            []string
-	Tech                       []Technology
-}
-
 type DomainResult struct {
 	CrawlID, RootDomain, URL, Subdomain string
 	Emails                              []string

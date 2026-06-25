@@ -19,8 +19,7 @@ import (
 )
 
 const (
-	ccBucket     = "commoncrawl"
-	techMaxBytes = 131072 // cap body fed to Wappalyzer; full-body regex over MB pages ~= 1.2s/page
+	ccBucket = "commoncrawl"
 )
 
 const classifyInstruction = "Classify the business into its industry category"
@@ -40,7 +39,7 @@ type ShardConfig struct {
 	CrawlID, SourceRunID string
 	ResolvedAt           time.Time
 	Concurrency          int
-	TechMaxBytes         int    // body cap fed to Wappalyzer; 0 => techMaxBytes default
+	TechMaxBytes         int    // body cap fed to Wappalyzer; 0 => no cap (full body)
 	Mode                 string // "industry" | "tech" | "both" (default "both")
 }
 
