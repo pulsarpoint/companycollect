@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"cc-enrich-worker/internal/fetch"
+	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/parse"
 )
 
@@ -29,10 +30,10 @@ type embedderIface interface {
 // ShardResult bundles the per-pass outputs (domains from industry; tech/identifiers/
 // profiles from tech). Each maps to its own ClickHouse table.
 type ShardResult struct {
-	Domains     []DomainRow
-	Tech        []TechRow
-	Identifiers []IdentifierRow
-	Profiles    []ProfileRow
+	Domains     []output.DomainRow
+	Tech        []output.TechRow
+	Identifiers []output.IdentifierRow
+	Profiles    []output.ProfileRow
 }
 
 type ShardConfig struct {
@@ -189,10 +190,10 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter fetch.RangeG
 		}
 	}
 
-	var domains []DomainRow
-	var techRows []TechRow
-	var identRows []IdentifierRow
-	var profileRows []ProfileRow
+	var domains []output.DomainRow
+	var techRows []output.TechRow
+	var identRows []output.IdentifierRow
+	var profileRows []output.ProfileRow
 
 	if runEmbed {
 		var idx []int
@@ -222,7 +223,7 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter fetch.RangeG
 			if res.NaceConfident {
 				conf = 1
 			}
-			domains = append(domains, DomainRow{
+			domains = append(domains, output.DomainRow{
 				CrawlID: cfg.CrawlID, URL: a.primaryURL, RootDomain: a.rootDomain, Subdomain: a.primarySub,
 				Emails: a.emails, EmailCount: uint32(len(a.emails)),
 				PageType: res.PageType, PageTypeScore: res.PageTypeScore,
@@ -241,7 +242,7 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter fetch.RangeG
 				continue
 			}
 			for _, t := range a.tech {
-				techRows = append(techRows, TechRow{
+				techRows = append(techRows, output.TechRow{
 					CrawlID: cfg.CrawlID, URL: a.primaryURL, RootDomain: a.rootDomain, Subdomain: a.primarySub,
 					Technology: t.Name, Category: t.Category, Version: t.Version, Confidence: 100,
 					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
@@ -252,14 +253,14 @@ func ProcessShard(ctx context.Context, items []WorklistItem, getter fetch.RangeG
 				if id.Valid {
 					valid = 1
 				}
-				identRows = append(identRows, IdentifierRow{
+				identRows = append(identRows, output.IdentifierRow{
 					CrawlID: cfg.CrawlID, RootDomain: a.rootDomain, URL: a.primaryURL, Subdomain: a.primarySub,
 					IDType: id.Type, IDValue: id.Value, Valid: valid, Source: id.Source,
 					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
 			}
 			if p := a.profile; !p.Empty() {
-				profileRows = append(profileRows, ProfileRow{
+				profileRows = append(profileRows, output.ProfileRow{
 					CrawlID: cfg.CrawlID, RootDomain: a.rootDomain, URL: a.primaryURL, Subdomain: a.primarySub,
 					Name: p.Name, Description: p.Description, Logo: p.Logo, Country: p.Country,
 					Email: p.Email, Phone: p.Phone, FoundingYear: p.FoundingYear, EmployeeCount: p.EmployeeCount,

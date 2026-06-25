@@ -16,6 +16,7 @@ import (
 
 	"cc-enrich-worker/internal/embed"
 	"cc-enrich-worker/internal/fetch"
+	"cc-enrich-worker/internal/output"
 )
 
 // WorklistRow is one row of the materialized worklist parquet (index_enrich/worklist.py
@@ -202,10 +203,10 @@ func main() {
 		Mode: mode,
 	}
 	start := time.Now()
-	var domains []DomainRow
-	var tech []TechRow
-	var idents []IdentifierRow
-	var profiles []ProfileRow
+	var domains []output.DomainRow
+	var tech []output.TechRow
+	var idents []output.IdentifierRow
+	var profiles []output.ProfileRow
 	for i := 0; i < len(items); i += *chunkSize {
 		end := i + *chunkSize
 		if end > len(items) {
@@ -227,23 +228,23 @@ func main() {
 	domPath, techPath := *out+"-domains.parquet", *out+"-tech.parquet"
 	var written []string
 	if mode != "tech" {
-		if err := WriteDomains(domPath, domains); err != nil {
+		if err := output.WriteDomains(domPath, domains); err != nil {
 			log.Fatalf("write domains: %v", err)
 		}
 		written = append(written, domPath)
 	}
 	if mode != "industry" {
-		if err := WriteTech(techPath, tech); err != nil {
+		if err := output.WriteTech(techPath, tech); err != nil {
 			log.Fatalf("write tech: %v", err)
 		}
 		written = append(written, techPath)
 		identPath := *out + "-identifiers.parquet"
-		if err := WriteIdentifiers(identPath, idents); err != nil {
+		if err := output.WriteIdentifiers(identPath, idents); err != nil {
 			log.Fatalf("write identifiers: %v", err)
 		}
 		written = append(written, identPath)
 		profilePath := *out + "-profiles.parquet"
-		if err := WriteProfiles(profilePath, profiles); err != nil {
+		if err := output.WriteProfiles(profilePath, profiles); err != nil {
 			log.Fatalf("write profiles: %v", err)
 		}
 		written = append(written, profilePath)
@@ -262,7 +263,7 @@ func main() {
 		} else {
 			for _, p := range written {
 				key := *s3Prefix + p
-				if err := UploadToS3(ctx, g.Client, *s3Bucket, key, p); err != nil {
+				if err := output.UploadToS3(ctx, g.Client, *s3Bucket, key, p); err != nil {
 					log.Fatalf("upload %s: %v", p, err)
 				}
 				log.Printf("uploaded s3://%s/%s", *s3Bucket, key)

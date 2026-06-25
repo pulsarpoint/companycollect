@@ -11,6 +11,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
+	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/vec"
 )
 
@@ -40,7 +41,7 @@ func gzWarc(httpResp string) []byte {
 	return buf.Bytes()
 }
 
-func hasTechRow(rows []TechRow, name string) bool {
+func hasTechRow(rows []output.TechRow, name string) bool {
 	for _, r := range rows {
 		if r.Technology == name {
 			return true
@@ -83,13 +84,13 @@ func TestProcessShardAndParquet(t *testing.T) {
 	// Parquet round-trip with the migration column order.
 	dir := t.TempDir()
 	dp, tp := filepath.Join(dir, "domains.parquet"), filepath.Join(dir, "tech.parquet")
-	if err := WriteDomains(dp, res.Domains); err != nil {
+	if err := output.WriteDomains(dp, res.Domains); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteTech(tp, res.Tech); err != nil {
+	if err := output.WriteTech(tp, res.Tech); err != nil {
 		t.Fatal(err)
 	}
-	back, err := parquet.ReadFile[DomainRow](dp)
+	back, err := parquet.ReadFile[output.DomainRow](dp)
 	if err != nil {
 		t.Fatal(err)
 	}
