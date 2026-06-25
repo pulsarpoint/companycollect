@@ -21,7 +21,9 @@ Two worklist shapes, because the two worker passes want different inputs (`--mod
 - **`tech`** — MANY pages per domain (`--max-pages`, default 25; `0` = every HTML page). Wappalyzer
   + the contact/LEI/VAT/JSON-LD-profile extractors improve with coverage, and **LEI/VAT live on
   `/imprint`, `/legal`, `/contact` — never the homepage**. Ranked homepage-first, then legal/contact/
-  about pages, then shallowest, so a per-domain cap keeps the identifier-bearing pages.
+  about pages (**multilingual** — `impressum`, `mentions-legales`, `quienes-somos`, `chi-siamo`,
+  `uber-uns`, … — so non-English sites aren't missed), then shallowest, so a per-domain cap keeps
+  the identifier-bearing pages.
 
 Off-AWS it resolves exact part URLs from the published `cc-index-table.paths.gz` manifest
 (anonymous S3 LIST is denied; anonymous GET is fine).

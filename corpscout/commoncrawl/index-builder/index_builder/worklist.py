@@ -17,8 +17,23 @@ Two shapes, because the two passes want different inputs:
 
 _HTML_MIME = ("text/html", "application/xhtml+xml")
 
-# Pages that carry the company identifiers (LEI/VAT) + the schema.org Organization JSON-LD.
-_LEGAL_PATH = "imprint|impressum|legal|contact|kontakt|about|privacy|terms|mentions|legales|aviso|datenschutz"
+# Legal/imprint, about/company, and contact pages — where the company identifiers (LEI/VAT; the
+# imprint is legally mandatory in DE/AT/CH) and the schema.org Organization JSON-LD live. Kept
+# multilingual on purpose: a fixed English list misses most non-English sites, and the i18n page
+# names are exactly where the value is (matched as substrings of the lower-cased url_path).
+_LEGAL_PATH = "|".join((
+    # imprint / legal notice
+    "imprint", "impressum", "legal", "mentions", "aviso-legal", "note-legali", "datenschutz", "colofon",
+    # about / company
+    "about", "uber-uns", "ueber-uns", "a-propos", "apropos", "quienes-somos", "sobre-nos",
+    "sobre-nosotros", "acerca", "chi-siamo", "over-ons", "o-nas", "om-oss", "om-os", "hakkimizda",
+    "company", "unternehmen", "entreprise", "empresa", "azienda",
+    # contact
+    "contact", "kontakt", "contatti", "contato", "iletisim",
+    # privacy / terms
+    "privacy", "privacidad", "confidentialite", "terms", "termini", "termos", "terminos",
+    "agb", "cgv", "cgu", "voorwaarden",
+))
 
 # apex and www are the "main site" (0), any other host a functional subdomain (1).
 _MAIN_SITE = """

@@ -69,6 +69,27 @@ def test_tech_mode_multi_page_homepage_and_legal_first_then_caps(tmp_path):
     assert "http://ex.com/a/b/c" not in urls       # deepest page dropped by the cap
 
 
+def test_tech_mode_promotes_multilingual_legal_pages(tmp_path):
+    # non-English legal/about pages must be kept within the cap (a fixed English regex would miss them)
+    idx = tmp_path / "idx.parquet"
+    _write_index(idx, [
+        ("de.com", "de.com", "http://de.com/", "/", 200, "text/html", "w", 0, 5),
+        ("de.com", "de.com", "http://de.com/produkte/x/y", "/produkte/x/y", 200, "text/html", "w", 1, 5),
+        ("de.com", "de.com", "http://de.com/impressum", "/impressum", 200, "text/html", "w", 2, 5),  # DE imprint
+        ("es.com", "es.com", "http://es.com/", "/", 200, "text/html", "w", 3, 5),
+        ("es.com", "es.com", "http://es.com/tienda/p/1", "/tienda/p/1", 200, "text/html", "w", 4, 5),
+        ("es.com", "es.com", "http://es.com/quienes-somos", "/quienes-somos", 200, "text/html", "w", 5, 5),  # ES about
+    ])
+    con = duckdb.connect()
+    rows = worklist.run_worklist(con, f"read_parquet('{idx}')", mode="tech", max_pages=2).fetchall()
+    by_dom = {}
+    for r in rows:
+        by_dom.setdefault(r[0], []).append(r[1])
+    assert set(by_dom["de.com"]) == {"http://de.com/", "http://de.com/impressum"}        # imprint kept
+    assert "http://de.com/produkte/x/y" not in by_dom["de.com"]                          # deep page dropped
+    assert set(by_dom["es.com"]) == {"http://es.com/", "http://es.com/quienes-somos"}    # about kept
+
+
 def test_tech_mode_uncapped_returns_all_html_pages(tmp_path):
     idx = tmp_path / "idx.parquet"
     _write_index(idx, [
