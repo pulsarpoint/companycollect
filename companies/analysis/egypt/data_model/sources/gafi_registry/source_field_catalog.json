@@ -1,0 +1,28 @@
+{
+  "country": "Egypt",
+  "country_slug": "egypt",
+  "source_slug": "gafi_registry",
+  "source_name": "GAFI — General Authority for Investment (company establishment / eServices)",
+  "source_type": "official_registry",
+  "organization": "General Authority for Investment and Free Zones (GAFI)",
+  "source_url": "https://www.gafi.gov.eg/",
+  "license": "restricted_login",
+  "access": "login_gated_eservices",
+  "data_freshness": "live",
+  "record_shape": "per_company_record_login_gated",
+  "primary_keys": ["commercial_registry_number"],
+  "join_keys": ["commercial_registry_number", "tax_id", "company_name"],
+  "field_count": 10,
+  "fields": [
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Registered company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "ar/en", "limitations": "Login-gated; documented from public knowledge, no live values.", "source_confidence": "high", "analysis_notes": "S.A.E. / LLC / branch." },
+    { "path": "commercial_registry_number", "source_field": "Commercial Registry Number (رقم السجل التجاري)", "english_name": "commercial_registry_number", "meaning": "Commercial registration number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Primary key." },
+    { "path": "tax_id", "source_field": "Tax ID (الرقم الضريبي)", "english_name": "tax_id", "meaning": "Egyptian Tax Authority tax number (9-digit).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Tax join key." },
+    { "path": "company_type", "source_field": "Company Type", "english_name": "company_type", "meaning": "Joint-stock (S.A.E.) / LLC / one-person company / branch.", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "S.A.E./LLC/one-person/branch", "language": "ar/en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Active / under liquidation / struck off.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Active/Under liquidation/Struck off", "language": "ar/en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "capital", "source_field": "Authorised / Paid-up Capital", "english_name": "capital", "meaning": "Authorised / paid-up capital (EGP).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency EGP.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "activity", "source_field": "Activity / Purpose", "english_name": "activity", "meaning": "Business activity / company purpose.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ar/en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "registered_address", "source_field": "Registered Address", "english_name": "registered_address", "meaning": "Registered/head office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ar/en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "directors", "source_field": "Board / Managers", "english_name": "directors", "meaning": "Board members / managers.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "ar/en", "limitations": "PERSONAL DATA (PDP Law 151/2020) — REDACT.", "source_confidence": "medium", "analysis_notes": "Redact." },
+    { "path": "shareholders", "source_field": "Shareholders / Partners", "english_name": "shareholders", "meaning": "Shareholders / partners.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "ar/en", "limitations": "PERSONAL DATA when natural persons — REDACT.", "source_confidence": "medium", "analysis_notes": "Redact natural persons." }
+  ]
+}

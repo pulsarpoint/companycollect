@@ -1,0 +1,24 @@
+{
+  "country": "Egypt",
+  "country_slug": "egypt",
+  "source_slug": "commercial_registry",
+  "source_name": "Commercial Registry (السجل التجاري) — GOEIC / Ministry of Supply",
+  "source_type": "official_registry",
+  "organization": "General Organization for Export and Import Control (GOEIC) / Ministry of Supply",
+  "source_url": "https://www.gov.eg/",
+  "license": "restricted",
+  "access": "not_openly_searchable",
+  "data_freshness": "live",
+  "record_shape": "per_company_commercial_registration_not_openly_searchable",
+  "primary_keys": ["commercial_registry_number"],
+  "join_keys": ["commercial_registry_number", "tax_id"],
+  "field_count": 6,
+  "fields": [
+    { "path": "commercial_registry_number", "source_field": "رقم السجل التجاري", "english_name": "commercial_registry_number", "meaning": "Commercial registration number (companies and traders).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Not openly searchable; documented from public knowledge.", "source_confidence": "high", "analysis_notes": "Same key as GAFI." },
+    { "path": "company_name", "source_field": "الاسم التجاري", "english_name": "trade_name", "meaning": "Registered trade name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "ar/en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "activity", "source_field": "النشاط", "english_name": "activity", "meaning": "Registered commercial activity.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ar", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "address", "source_field": "العنوان", "english_name": "address", "meaning": "Registered place of business.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ar", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "capital", "source_field": "رأس المال", "english_name": "capital", "meaning": "Registered capital (EGP).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency EGP.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "owner", "source_field": "صاحب المنشأة", "english_name": "owner", "meaning": "Establishment owner (for traders / sole proprietors).", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ar", "limitations": "PERSONAL DATA (PDP Law 151/2020) — REDACT.", "source_confidence": "medium", "analysis_notes": "Redact." }
+  ]
+}

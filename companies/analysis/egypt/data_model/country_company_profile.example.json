@@ -1,0 +1,63 @@
+{
+  "country": "Egypt",
+  "country_slug": "egypt",
+  "country_profile_version": "2026-06-25",
+  "_note": "Identity/listing anchored on a public-knowledge EGX-listed company (Commercial International Bank / COMI). Commercial Registry number, Tax ID, capital, board/shareholders and registry financials are gated (GAFI login / Commercial Registry not openly searchable; EGX WAF-gated) — so those values are null. Nothing fabricated.",
+  "registration": {
+    "commercial_registry_number": null
+  },
+  "tax_identifiers": {
+    "tax_id": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "Commercial International Bank (Egypt) S.A.E.",
+    "company_type": "Joint Stock Company (S.A.E.)"
+  },
+  "status": {
+    "status_text": "Active"
+  },
+  "activity": {
+    "activity_purpose": null,
+    "egx_sector": "Banks"
+  },
+  "registered_location": {
+    "registered_address": null
+  },
+  "capital": {
+    "capital_amount": null,
+    "currency": "EGP"
+  },
+  "owners": [
+    { "name": "[REDACTED-PII]", "share_pct": null }
+  ],
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Board member" }
+  ],
+  "listing": {
+    "egx_symbol": "COMI",
+    "isin": null,
+    "sector": "Banks"
+  },
+  "financial_statements": [
+    { "fiscal_year": "2024", "currency": "EGP" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "egx_listed",
+      "section": "legal_identity / status / activity.egx_sector / listing / financial_statements",
+      "source_url": "https://www.egx.com.eg/en/ListedStocks.aspx",
+      "access": "public_browser_waf_gated",
+      "license": "public_disclosure",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "gafi_registry",
+      "section": "registration / tax_identifiers / capital / owners / officers",
+      "source_url": "https://www.gafi.gov.eg/",
+      "access": "login_gated_eservices",
+      "license": "restricted_login",
+      "retrieved_at": null
+    }
+  ]
+}

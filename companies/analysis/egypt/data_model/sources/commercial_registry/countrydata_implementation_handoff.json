@@ -1,0 +1,77 @@
+{
+  "country": "Egypt",
+  "country_slug": "egypt",
+  "source_slug": "commercial_registry",
+  "source_identity": "egypt_commercial_registry",
+  "source_package": "commreg",
+  "env_prefix": "EG_COMMREG",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Commercial Registry (السجل التجاري) — GOEIC / Ministry of Supply",
+    "source_type": "official_registry",
+    "organization": "GOEIC / Ministry of Supply",
+    "source_url": "https://www.gov.eg/",
+    "license": "restricted",
+    "access": "not_openly_searchable",
+    "data_freshness": "live",
+    "attribution": "Commercial Registry (GOEIC / Ministry of Supply)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.gov.eg/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "not openly searchable online; no open bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_restricted",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "EgyptCommercialRegistration",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Not openly searchable. The Commercial Registry holds the commercial registration number (رقم السجل التجاري) for companies and traders (GOEIC / Ministry of Supply). No open bulk/API; in-person / restricted portal. Field model from public knowledge; no values copied. Same key as GAFI (commercial registry number). Redact owner/personal data (PDP Law 151/2020)."
+  },
+  "keys": {
+    "primary_keys": ["commercial_registry_number"],
+    "join_keys": ["commercial_registry_number", "tax_id"],
+    "dedupe_keys": ["commercial_registry_number"]
+  },
+  "mapping_rules": {
+    "company_id": "Commercial Registry number.",
+    "registration_number": "Commercial Registry number.",
+    "legal_name": "Trade name.",
+    "activity_code": "Activity.",
+    "registered_address": "Address.",
+    "capital": "Registered capital (EGP)."
+  },
+  "fixture_requirements": [
+    "company commercial registration",
+    "trader / sole proprietor registration"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable — not openly searchable. Confirm access path with GOEIC.",
+    "full": "Blocked — not openly searchable; requires an official arrangement."
+  },
+  "blockers": [
+    "Not openly searchable online (in-person / restricted portal)",
+    "No open bulk/API",
+    "Surfaced through GAFI for live registrations — prefer gafi_registry"
+  ]
+}

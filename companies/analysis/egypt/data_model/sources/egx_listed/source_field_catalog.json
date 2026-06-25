@@ -1,0 +1,24 @@
+{
+  "country": "Egypt",
+  "country_slug": "egypt",
+  "source_slug": "egx_listed",
+  "source_name": "EGX — Egyptian Exchange (listed companies + financials)",
+  "source_type": "financial_disclosure",
+  "organization": "The Egyptian Exchange (EGX)",
+  "source_url": "https://www.egx.com.eg/en/ListedStocks.aspx",
+  "license": "public_disclosure",
+  "access": "public_browser_waf_gated",
+  "data_freshness": "event_driven_quarterly",
+  "record_shape": "listed_company_profile_browser_public_waf_gated_api",
+  "primary_keys": ["egx_symbol"],
+  "join_keys": ["egx_symbol", "isin", "company_name"],
+  "field_count": 6,
+  "fields": [
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Listed company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Commercial International Bank (Egypt) S.A.E."], "nullable": false, "repeatable": false, "code_list": null, "language": "en/ar", "limitations": "Listed companies only; documented from public knowledge (data endpoints WAF-gated).", "source_confidence": "medium", "analysis_notes": "Display name." },
+    { "path": "egx_symbol", "source_field": "Symbol", "english_name": "egx_symbol", "meaning": "EGX stock symbol.", "data_type": "string", "semantic_type": "identifier", "example_values": ["COMI", "TMGH", "SWDY"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": "Listed-entity key." },
+    { "path": "isin", "source_field": "ISIN", "english_name": "isin", "meaning": "International Securities Identification Number.", "data_type": "string", "semantic_type": "identifier", "example_values": ["EG..."], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Egyptian ISINs start EG.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "sector", "source_field": "Sector / Industry", "english_name": "sector", "meaning": "EGX sector classification.", "data_type": "string", "semantic_type": "activity", "example_values": ["Banks", "Real Estate", "Industrial"], "nullable": true, "repeatable": false, "code_list": "EGX sectors", "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "disclosures", "source_field": "Disclosures", "english_name": "disclosures", "meaning": "Listed-company disclosures (board reports, material events).", "data_type": "array", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en/ar", "limitations": "WAF-gated for automation.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "financial_statements", "source_field": "Financial Statements", "english_name": "financial_statements", "meaning": "Listed-company financial statements (EGP).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en/ar", "limitations": "Listed only; currency EGP; WAF-gated.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

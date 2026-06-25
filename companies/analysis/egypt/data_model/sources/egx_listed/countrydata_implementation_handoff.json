@@ -1,0 +1,75 @@
+{
+  "country": "Egypt",
+  "country_slug": "egypt",
+  "source_slug": "egx_listed",
+  "source_identity": "egypt_egx_listed",
+  "source_package": "egxlisted",
+  "env_prefix": "EG_EGX",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "EGX — Egyptian Exchange (listed companies + financials)",
+    "source_type": "financial_disclosure",
+    "organization": "The Egyptian Exchange (EGX)",
+    "source_url": "https://www.egx.com.eg/en/ListedStocks.aspx",
+    "license": "public_disclosure",
+    "access": "public_browser_waf_gated",
+    "data_freshness": "event_driven_quarterly",
+    "attribution": "EGX / issuer"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.egx.com.eg/getinformation.aspx",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["WAF clearance (browser)"],
+    "formats": ["html", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "data endpoints WAF-gated ('Request Rejected') for automation"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "EgxListedCompany",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": ["1,234,567.89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Listed-company profiles + financial statements (EGP). ListedStocks.aspx + companiesprofilesearch.aspx load in a browser; the getinformation.aspx data endpoints returned 'Request Rejected' (WAF) for automation — do NOT bypass the WAF. Implement behind a browser/clearance context. Listed only. EGX symbol/ISIN (EG...). Join to GAFI/Commercial Registry by company name."
+  },
+  "keys": {
+    "primary_keys": ["egx_symbol"],
+    "join_keys": ["egx_symbol", "isin", "company_name"],
+    "dedupe_keys": ["egx_symbol"]
+  },
+  "mapping_rules": {
+    "company_id": "egx_symbol (listed entity).",
+    "legal_name": "Company Name.",
+    "activity_code": "Sector / Industry (EGX).",
+    "financials": "Financial statements (EGP)."
+  },
+  "fixture_requirements": [
+    "bank issuer (e.g. COMI)",
+    "real-estate issuer (e.g. TMGH)",
+    "industrial issuer (e.g. SWDY)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (WAF). From a browser context, load ListedStocks; assert known symbols.",
+    "full": "Blocked on WAF for automation — use a browser/clearance context; listed subset only."
+  },
+  "blockers": [
+    "Data endpoints WAF-gated ('Request Rejected') for automated requests",
+    "Listed companies only"
+  ]
+}

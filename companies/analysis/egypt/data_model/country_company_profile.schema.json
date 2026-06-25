@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Egypt Company Profile",
+  "description": "Country-specific company profile for Egypt. The official register is keyed on the Commercial Registry number (رقم السجل التجاري), with the Tax ID (الرقم الضريبي, 9-digit) as the tax key. Both registry sources are gated: GAFI runs login-gated investor eServices (company establishment) and the Commercial Registry (GOEIC / Ministry of Supply) is not openly searchable online. VAT is registered under the Tax ID (no separate VAT number). Listed-company data + financials come from EGX (Egyptian Exchange), keyed on the EGX symbol / ISIN — public via the browser but WAF-gated for automation. Currency EGP; Arabic + English. Board members/shareholders are personal data (PDP Law 151/2020) — redact. No registry per-company values were captured (gates not bypassed); listed identity is from EGX.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Egypt" },
+    "country_slug": { "type": "string", "const": "egypt" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["commercial_registry_number"],
+      "properties": {
+        "commercial_registry_number": { "type": ["string", "null"], "description": "Commercial Registry number (رقم السجل التجاري). Primary id. Gated (GAFI login / Commercial Registry not openly searchable).", "x-source": "gafi_registry", "x-source-path": "commercial_registry_number", "x-join-key": true, "x-freshness": "live", "x-access": "gated" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "tax_id": { "type": ["string", "null"], "description": "Egyptian Tax Authority tax number (الرقم الضريبي, 9-digit).", "x-source": "gafi_registry", "x-source-path": "tax_id" },
+        "vat_id": { "type": ["string", "null"], "description": "Not separate — VAT is registered under the Tax ID.", "x-access": "not_available" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "gafi_registry", "x-source-path": "company_name", "x-source-alt": "egx_listed.company_name" },
+        "company_type": { "type": ["string", "null"], "description": "S.A.E. (joint-stock) / LLC / one-person company / branch.", "x-source": "gafi_registry", "x-source-path": "company_type" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "Active / Under liquidation / Struck off.", "x-source": "gafi_registry", "x-source-path": "status" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "activity_purpose": { "type": ["string", "null"], "x-source": "gafi_registry", "x-source-path": "activity" },
+        "egx_sector": { "type": ["string", "null"], "description": "EGX sector (listed).", "x-source": "egx_listed", "x-source-path": "sector" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "gafi_registry", "x-source-path": "registered_address" }
+      }
+    },
+    "capital": {
+      "type": "object",
+      "description": "Authorised / paid-up capital (EGP), from gated registry sources.",
+      "x-source": "gafi_registry",
+      "x-access": "gated",
+      "properties": {
+        "capital_amount": { "type": ["number", "null"], "x-source-path": "capital" },
+        "currency": { "type": "string", "const": "EGP" }
+      }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Shareholders / partners from gated registry sources. PERSONAL DATA when natural persons (PDP Law 151/2020) — REDACT.",
+      "x-source": "gafi_registry",
+      "x-source-path": "shareholders",
+      "x-access": "gated",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "share_pct": { "type": ["number", "null"] } } }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Board members / managers from gated registry sources. PERSONAL DATA — REDACT.",
+      "x-source": "gafi_registry",
+      "x-source-path": "directors",
+      "x-access": "gated",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for EGX-listed companies (public via browser; WAF-gated).",
+      "x-source": "egx_listed",
+      "properties": {
+        "egx_symbol": { "type": ["string", "null"], "x-source-path": "egx_symbol" },
+        "isin": { "type": ["string", "null"], "x-source-path": "isin" },
+        "sector": { "type": ["string", "null"], "x-source-path": "sector" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Financial statements (EGP). OPEN via EGX for listed companies (browser; WAF-gated); not open for private companies.",
+      "x-source": "egx_listed",
+      "x-access": "public_browser_waf_gated",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": ["string", "null"] },
+          "currency": { "type": "string", "const": "EGP" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}
