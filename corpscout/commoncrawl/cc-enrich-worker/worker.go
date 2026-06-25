@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"cc-enrich-worker/internal/extract"
 	"cc-enrich-worker/internal/fetch"
 	"cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
@@ -139,20 +140,20 @@ func ProcessShard(ctx context.Context, items []model.WorklistItem, getter fetch.
 							agg.tech = append(agg.tech, t)
 						}
 					}
-					prof, structIDs := ExtractProfile(techBody) // schema.org Organization JSON-LD
+					prof, structIDs := extract.ExtractProfile(techBody) // schema.org Organization JSON-LD
 					for _, id := range structIDs {
 						if !idSeen[id.Value] {
 							idSeen[id.Value] = true
 							agg.identifiers = append(agg.identifiers, id)
 						}
 					}
-					for _, id := range ExtractLEIs(techBody) { // jsonld-regex + text LEIs
+					for _, id := range extract.ExtractLEIs(techBody) { // jsonld-regex + text LEIs
 						if !idSeen[id.Value] {
 							idSeen[id.Value] = true
 							agg.identifiers = append(agg.identifiers, id)
 						}
 					}
-					for _, id := range ExtractVATs(techBody) { // EU VAT ids (format + checksum)
+					for _, id := range extract.ExtractVATs(techBody) { // EU VAT ids (format + checksum)
 						if !idSeen[id.Value] {
 							idSeen[id.Value] = true
 							agg.identifiers = append(agg.identifiers, id)
