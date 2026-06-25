@@ -1,0 +1,87 @@
+{
+  "country": "Ghana",
+  "country_slug": "ghana",
+  "source_slug": "orc_eservices",
+  "source_identity": "ghana_orc_eservices",
+  "source_package": "orc",
+  "env_prefix": "GH_ORC",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "ORC / RGD — Office of the Registrar of Companies (company search + documents via eServices)",
+    "source_type": "official_registry",
+    "organization": "Office of the Registrar of Companies (formerly Registrar General's Department)",
+    "source_url": "https://eservices.rgd.gov.gh/",
+    "license": "paid_per_transaction",
+    "access": "eservices_paid_firewalled_here",
+    "data_freshness": "live",
+    "attribution": "ORC (Office of the Registrar of Companies)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["GH_ORC_ESERVICES_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://eservices.rgd.gov.gh/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["eServices session (login)"],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per-transaction search + document fee (GHS); eServices login; hosts firewalled from this environment"
+  },
+  "snapshot": {
+    "strategy": "none_gated_paid",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "OrcCompany",
+    "date_formats": ["02/01/2006", "02-Jan-2006"],
+    "datetime_formats": [],
+    "number_formats": ["1,234,567.89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "eServices login + paid. ORC (ex-RGD) is the official registrar (companies, business names, partnerships). Search + documents (incorporation, status report, annual returns) via eServices (eservices.rgd.gov.gh) — paid per transaction (GHS). orc.gov.gh/rgd.gov.gh resolved via DNS (197.253.x.x) but timed out from this environment. No open bulk/API. Do NOT bypass login/paywall. Field model from public knowledge; no values copied. Registration number = company id; TIN join to tax. Redact directors/shareholders (Act 843; may include Ghana Card PIN)."
+  },
+  "keys": {
+    "primary_keys": ["registration_number"],
+    "join_keys": ["registration_number", "tin", "company_name"],
+    "dedupe_keys": ["registration_number"]
+  },
+  "mapping_rules": {
+    "company_id": "Registration Number (ORC).",
+    "registration_number": "Registration Number / business registration.",
+    "tax_id": "TIN (GRA).",
+    "vat_id": "none separate (VAT registration tied to the TIN).",
+    "legal_name": "Company Name.",
+    "company_type": "Company Type (Ltd by shares/by guarantee/unlimited/external).",
+    "status": "Status (Active/Dissolved/Struck off/In receivership).",
+    "incorporation_date": "Date of Incorporation.",
+    "registered_address": "Registered Office Address.",
+    "activity_code": "Nature of Business.",
+    "capital": "Stated Capital (GHS).",
+    "owners": "Shareholders / Subscribers (REDACT natural persons).",
+    "officers": "Directors (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "active company limited by shares (Ltd)",
+    "public limited company (PLC)",
+    "company limited by guarantee",
+    "external (foreign) company",
+    "record with directors/shareholders (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (firewalled + login). From an unblocked, logged-in session, verify a company by registration number/name.",
+    "full": "Blocked on payment — buy search/status/annual returns per company via an eServices account; redact personal data."
+  },
+  "blockers": [
+    "Search + documents are paid per transaction (GHS) via eServices",
+    "orc.gov.gh/rgd.gov.gh firewalled (TCP/HTTP timeout) from this environment",
+    "No open bulk/API; transport unconfirmed"
+  ]
+}

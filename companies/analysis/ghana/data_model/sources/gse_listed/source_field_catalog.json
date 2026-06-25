@@ -1,0 +1,23 @@
+{
+  "country": "Ghana",
+  "country_slug": "ghana",
+  "source_slug": "gse_listed",
+  "source_name": "GSE — Ghana Stock Exchange (listed companies + financials)",
+  "source_type": "financial_disclosure",
+  "organization": "Ghana Stock Exchange (GSE)",
+  "source_url": "https://gse.com.gh/listed-companies/",
+  "license": "public_disclosure",
+  "access": "public_open",
+  "data_freshness": "event_driven_quarterly",
+  "record_shape": "html_directory_one_row_per_listed_company",
+  "primary_keys": ["ticker"],
+  "join_keys": ["ticker", "company_name"],
+  "field_count": 5,
+  "fields": [
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Listed company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Ecobank Ghana PLC", "GCB Bank PLC", "AngloGold Ashanti Plc"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Listed companies only (~35). Verified on the listed-companies page.", "source_confidence": "high", "analysis_notes": "Display name." },
+    { "path": "ticker", "source_field": "Ticker / Symbol", "english_name": "ticker", "meaning": "GSE ticker symbol.", "data_type": "string", "semantic_type": "identifier", "example_values": ["EGH", "GCB", "AGA"], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "Some tickers from public knowledge; verify on the page.", "source_confidence": "medium", "analysis_notes": "Listed-entity key." },
+    { "path": "sector", "source_field": "Sector / Industry", "english_name": "sector", "meaning": "GSE sector.", "data_type": "string", "semantic_type": "activity", "example_values": ["Banking", "Mining", "Manufacturing", "Agriculture"], "nullable": true, "repeatable": false, "code_list": "GSE sectors", "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "profile", "source_field": "Company Profile", "english_name": "profile", "meaning": "Listed-company profile.", "data_type": "object", "semantic_type": "metadata", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "Via /profile-of-listed-companies/.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "financial_statements", "source_field": "Financial Statements", "english_name": "financial_statements", "meaning": "Listed-company financial statements (GHS).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "Listed only; currency GHS. Via /financial-statements/.", "source_confidence": "high", "analysis_notes": null }
+  ]
+}

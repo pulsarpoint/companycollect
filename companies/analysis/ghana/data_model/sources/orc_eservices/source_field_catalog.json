@@ -1,0 +1,29 @@
+{
+  "country": "Ghana",
+  "country_slug": "ghana",
+  "source_slug": "orc_eservices",
+  "source_name": "ORC / RGD — Office of the Registrar of Companies (company search + documents via eServices)",
+  "source_type": "official_registry",
+  "organization": "Office of the Registrar of Companies (formerly Registrar General's Department)",
+  "source_url": "https://eservices.rgd.gov.gh/",
+  "license": "paid_per_transaction",
+  "access": "eservices_paid_firewalled_here",
+  "data_freshness": "live",
+  "record_shape": "per_company_search_and_documents_eservices_paid",
+  "primary_keys": ["registration_number"],
+  "join_keys": ["registration_number", "tin", "company_name"],
+  "field_count": 11,
+  "fields": [
+    { "path": "registration_number", "source_field": "Registration Number", "english_name": "registration_number", "meaning": "ORC company registration number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented from public knowledge; eServices paid + firewalled, no live values.", "source_confidence": "high", "analysis_notes": "Primary key." },
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Registered name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "company_type", "source_field": "Company Type", "english_name": "company_type", "meaning": "Company limited by shares / by guarantee / unlimited / external (foreign) / business name.", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Ltd by shares/by guarantee/unlimited/external/business name", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Active / In good standing / Dissolved / Struck off / In receivership.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Active/Dissolved/Struck off/In receivership", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "incorporation_date", "source_field": "Date of Incorporation", "english_name": "incorporation_date", "meaning": "Date of incorporation/registration.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "registered_address", "source_field": "Registered Office Address", "english_name": "registered_address", "meaning": "Registered office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "nature_of_business", "source_field": "Nature of Business", "english_name": "nature_of_business", "meaning": "Business activity / objects.", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "stated_capital", "source_field": "Stated Capital", "english_name": "stated_capital", "meaning": "Stated capital (GHS).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency GHS; from paid documents.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "tin", "source_field": "TIN", "english_name": "tax_id", "meaning": "Tax Identification Number (GRA).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": "Tax join key." },
+    { "path": "directors", "source_field": "Directors", "english_name": "directors", "meaning": "Company directors.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA (Act 843) — REDACT. May include Ghana Card PIN.", "source_confidence": "high", "analysis_notes": "Redact." },
+    { "path": "shareholders", "source_field": "Shareholders / Subscribers", "english_name": "shareholders", "meaning": "Shareholders / subscribers and holdings.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA when natural persons — REDACT.", "source_confidence": "high", "analysis_notes": "Redact natural persons." }
+  ]
+}

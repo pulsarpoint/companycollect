@@ -1,0 +1,63 @@
+{
+  "country": "Ghana",
+  "country_slug": "ghana",
+  "country_profile_version": "2026-06-25",
+  "_note": "Identity/listing from the GSE listed-companies directory (verified live: Ecobank Ghana PLC). Registration number, TIN, stated capital, directors/shareholders and annual returns are ORC documents via eServices (paid; hosts firewalled here) — so those values are null. Nothing fabricated.",
+  "registration": {
+    "registration_number": null
+  },
+  "tax_identifiers": {
+    "tin": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "Ecobank Ghana PLC",
+    "company_type": "Public limited company (PLC)"
+  },
+  "status": {
+    "status_text": "Active",
+    "incorporation_date": null
+  },
+  "activity": {
+    "nature_of_business": null,
+    "gse_sector": "Banking"
+  },
+  "registered_location": {
+    "registered_address": null
+  },
+  "capital": {
+    "stated_capital": null,
+    "currency": "GHS"
+  },
+  "owners": [
+    { "name": "[REDACTED-PII]", "shares": null }
+  ],
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Director" }
+  ],
+  "listing": {
+    "gse_ticker": "EGH",
+    "sector": "Banking"
+  },
+  "financial_statements": [
+    { "fiscal_year": "2024", "currency": "GHS" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "gse_listed",
+      "section": "legal_identity / status / activity.gse_sector / listing / financial_statements",
+      "source_url": "https://gse.com.gh/listed-companies/",
+      "access": "public_open",
+      "license": "public_disclosure",
+      "retrieved_at": "2026-06-25T00:00:00Z"
+    },
+    {
+      "source_slug": "orc_eservices",
+      "section": "registration / tax_identifiers / capital / owners / officers",
+      "source_url": "https://eservices.rgd.gov.gh/",
+      "access": "eservices_paid_firewalled_here",
+      "license": "paid_per_transaction",
+      "retrieved_at": null
+    }
+  ]
+}
