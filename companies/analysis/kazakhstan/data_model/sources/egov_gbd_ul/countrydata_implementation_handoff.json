@@ -1,0 +1,88 @@
+{
+  "country": "Kazakhstan",
+  "country_slug": "kazakhstan",
+  "source_slug": "egov_gbd_ul",
+  "source_identity": "kazakhstan_egov_gbd_ul",
+  "source_package": "gbdul",
+  "env_prefix": "KZ_EGOV_GBDUL",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "data.egov.kz — State Database of Legal Entities (ГБД ЮЛ / gbd_ul)",
+    "source_type": "official_registry",
+    "organization": "Open Data Portal of the Republic of Kazakhstan (data.egov.kz), Ministry of Digital Development",
+    "source_url": "https://data.egov.kz/datasets/view?index=gbd_ul",
+    "license": "open_data_egov_kz",
+    "access": "public_api_key_required",
+    "data_freshness": "periodic",
+    "attribution": "data.egov.kz / data owner"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["KZ_EGOV_API_KEY"]
+  },
+  "transport": {
+    "access_mode": "paginated_json_api",
+    "base_url": "https://data.egov.kz/api/v4/gbd_ul",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["json", "xml", "csv"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": "totalCount",
+    "pagination": {
+      "type": "page_or_from_size",
+      "page_param": "page",
+      "page_start": 1,
+      "page_size": 100,
+      "page_size_param": "size",
+      "next_page_path": null
+    },
+    "rate_limit": "free API key required (registration); 403 'API key is required' without a key"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "KzGbdUlLegalEntity",
+    "date_formats": ["2006-01-02", "02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Authoritative open legal-entities register on data.egov.kz. Access via /api/v4/gbd_ul/<version>?apiKey=<key>&size=<n> — REQUIRES a FREE API key (registration on data.egov.kz); verified 403 {'error':'API key is required'} without a key. Confirm the current <version> string from the dataset page. Fields: BIN, name (RU/KZ), registration date, legal address, OKED activity, director full name. Key = BIN (12-digit). Redact director_full_name (personal data, Law on Personal Data). Russian primary; OKED activity classifier."
+  },
+  "keys": {
+    "primary_keys": ["bin"],
+    "join_keys": ["bin"],
+    "dedupe_keys": ["bin"]
+  },
+  "mapping_rules": {
+    "company_id": "bin (БИН).",
+    "registration_number": "bin.",
+    "tax_id": "bin (the BIN serves as the tax id).",
+    "legal_name": "name (Наименование).",
+    "incorporation_date": "registration_date (Дата регистрации).",
+    "registered_address": "legal_address (Юридический адрес).",
+    "activity_code": "oked_activity (ОКЭД).",
+    "officers": "director_full_name (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "active legal entity (LLP / ТОО)",
+    "branch (филиал) or representative office",
+    "record with OKED populated",
+    "record with director name (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "With a free API key, GET /api/v4/gbd_ul/<version>?apiKey=...&size=3; expect legal-entity records with BIN.",
+    "full": "Page through gbd_ul with the API key; redact director names; join to KGD on BIN."
+  },
+  "blockers": [
+    "data.egov.kz API requires a FREE API key (registration) — verified 403 without a key",
+    "No key-less bulk mirror found",
+    "Director full name is personal data"
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "country": "Kazakhstan",
+  "country_slug": "kazakhstan",
+  "country_profile_version": "2026-06-26",
+  "registration": {
+    "bin": null
+  },
+  "legal_identity": {
+    "legal_name": null
+  },
+  "status": {
+    "registration_date": null,
+    "taxpayer_status": null,
+    "vat_registration": null
+  },
+  "activity": {
+    "oked_activity": null
+  },
+  "registered_location": {
+    "legal_address": null
+  },
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Director (gbd_ul; API-key-gated; redacted per Law on Personal Data)" }
+  ],
+  "listing": {
+    "ticker": null,
+    "isin": null
+  },
+  "source_provenance": [
+    {
+      "source_slug": "egov_gbd_ul",
+      "section": "registration.bin / legal_identity.legal_name / status.registration_date / activity.oked_activity / registered_location / officers (API-key-gated)",
+      "source_url": "https://data.egov.kz/datasets/view?index=gbd_ul",
+      "access": "public_api_key_required",
+      "license": "open_data_egov_kz",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "kgd_taxpayer",
+      "section": "status.taxpayer_status / status.vat_registration (browser-public, per-BIN)",
+      "source_url": "https://kgd.gov.kz/ru",
+      "access": "public_browser_search_and_lists",
+      "license": "restricted",
+      "retrieved_at": null
+    }
+  ]
+}

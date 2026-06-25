@@ -1,0 +1,24 @@
+{
+  "country": "Kazakhstan",
+  "country_slug": "kazakhstan",
+  "source_slug": "egov_gbd_ul",
+  "source_name": "data.egov.kz — State Database of Legal Entities (ГБД ЮЛ / gbd_ul)",
+  "source_type": "official_registry",
+  "organization": "Open Data Portal of the Republic of Kazakhstan (data.egov.kz), Ministry of Digital Development",
+  "source_url": "https://data.egov.kz/datasets/view?index=gbd_ul",
+  "license": "open_data_egov_kz",
+  "access": "public_api_key_required",
+  "data_freshness": "periodic",
+  "record_shape": "json_array_of_legal_entity_objects_api_key_gated",
+  "primary_keys": ["bin"],
+  "join_keys": ["bin"],
+  "field_count": 6,
+  "fields": [
+    { "path": "bin", "source_field": "БИН (BIN)", "english_name": "bin", "meaning": "12-digit Business Identification Number — the legal-entity identifier.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented from the dataset description; values are API-key-gated (not captured).", "source_confidence": "high", "analysis_notes": "Primary key + universal join key (KGD)." },
+    { "path": "name", "source_field": "Наименование (Name)", "english_name": "name", "meaning": "Registered legal-entity name (Russian; Kazakh variant where present).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "ru/kk", "limitations": "API-key-gated.", "source_confidence": "high", "analysis_notes": "Covers legal entities, branches (филиалы), representative offices." },
+    { "path": "registration_date", "source_field": "Дата регистрации (Registration Date)", "english_name": "registration_date", "meaning": "Date of state registration.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "API-key-gated; Gregorian.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "legal_address", "source_field": "Юридический адрес (Legal Address)", "english_name": "legal_address", "meaning": "Registered (legal) address — place of location at registration.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ru/kk", "limitations": "API-key-gated.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "oked_activity", "source_field": "Вид деятельности / ОКЭД (Activity / OKED)", "english_name": "oked_activity", "meaning": "Economic activity (OKED — Kazakhstan economic-activity classifier).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "OKED (ОКЭД)", "language": "ru", "limitations": "API-key-gated.", "source_confidence": "high", "analysis_notes": "OKED is the KZ analogue of NACE/ISIC." },
+    { "path": "director_full_name", "source_field": "ФИО руководителя (Director Full Name)", "english_name": "director_full_name", "meaning": "Full name of the director/head (where present).", "data_type": "string", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ru/kk", "limitations": "PERSONAL DATA — redact (Law on Personal Data and its Protection). API-key-gated; not captured.", "source_confidence": "high", "analysis_notes": "Do not store cleartext." }
+  ]
+}

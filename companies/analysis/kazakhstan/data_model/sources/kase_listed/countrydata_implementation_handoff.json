@@ -1,0 +1,75 @@
+{
+  "country": "Kazakhstan",
+  "country_slug": "kazakhstan",
+  "source_slug": "kase_listed",
+  "source_identity": "kazakhstan_kase_listed",
+  "source_package": "kase",
+  "env_prefix": "KZ_KASE",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Kazakhstan Stock Exchange (KASE) — listed companies",
+    "source_type": "financial_disclosure",
+    "organization": "Kazakhstan Stock Exchange (KASE)",
+    "source_url": "https://kase.kz/en/",
+    "license": "public_disclosure",
+    "access": "public_browser",
+    "data_freshness": "event_driven",
+    "attribution": "Kazakhstan Stock Exchange (KASE)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://kase.kz/en/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public via browser"
+  },
+  "snapshot": {
+    "strategy": "preserve_html",
+    "file_extension": ".html",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "KaseListedIssuer",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "KASE listed-companies pages are browser-public but 301-redirect (SPA / trailing-variant); no clean open JSON API was confirmed from static fetches. Discover the SPA/data endpoint (browser network tab) before implementing; do NOT bypass site controls. Listed companies only; ISIN KZxxxxxxxxxx. No BIN published — join to gbd_ul by name. Currency KZT."
+  },
+  "keys": {
+    "primary_keys": ["isin"],
+    "join_keys": ["isin", "issuer_name"],
+    "dedupe_keys": ["isin"]
+  },
+  "mapping_rules": {
+    "company_id": "ISIN (listed security).",
+    "legal_name": "Issuer Name.",
+    "listing": "Ticker + ISIN."
+  },
+  "fixture_requirements": [
+    "equity listing with a KZ ISIN",
+    "bond listing",
+    "record asserting join-by-name to gbd_ul"
+  ],
+  "live_test_plan": {
+    "smoke": "Load the KASE shares/issuers listing in a browser; capture the data endpoint feeding the list.",
+    "full": "Blocked on transport discovery — identify the SPA data endpoint; listed subset only."
+  },
+  "blockers": [
+    "Listing pages 301-redirect (SPA); no clean static list/API confirmed",
+    "No BIN published (join by name)",
+    "Listed companies only"
+  ]
+}

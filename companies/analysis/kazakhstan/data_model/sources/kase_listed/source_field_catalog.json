@@ -1,0 +1,21 @@
+{
+  "country": "Kazakhstan",
+  "country_slug": "kazakhstan",
+  "source_slug": "kase_listed",
+  "source_name": "Kazakhstan Stock Exchange (KASE) — listed companies",
+  "source_type": "financial_disclosure",
+  "organization": "Kazakhstan Stock Exchange (KASE)",
+  "source_url": "https://kase.kz/en/",
+  "license": "public_disclosure",
+  "access": "public_browser",
+  "data_freshness": "event_driven",
+  "record_shape": "listed_issuers_html_spa",
+  "primary_keys": ["isin"],
+  "join_keys": ["isin", "issuer_name"],
+  "field_count": 3,
+  "fields": [
+    { "path": "issuer_name", "source_field": "Issuer Name", "english_name": "issuer_name", "meaning": "Listed company / issuer name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en/ru", "limitations": "Listed only; pages redirect/SPA (not statically captured).", "source_confidence": "medium", "analysis_notes": "Join to gbd_ul by name (no BIN published on the page)." },
+    { "path": "ticker", "source_field": "Ticker", "english_name": "ticker", "meaning": "KASE ticker symbol.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Listed only.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "isin", "source_field": "ISIN", "english_name": "isin", "meaning": "International Securities Identification Number (Kazakhstani).", "data_type": "string", "semantic_type": "identifier", "example_values": ["KZ..."], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Kazakhstani ISINs begin KZ.", "source_confidence": "medium", "analysis_notes": "Listed-security key." }
+  ]
+}

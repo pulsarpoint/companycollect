@@ -1,0 +1,22 @@
+{
+  "country": "Kazakhstan",
+  "country_slug": "kazakhstan",
+  "source_slug": "kgd_taxpayer",
+  "source_name": "State Revenue Committee (KGD) — taxpayer search / published lists",
+  "source_type": "tax_register",
+  "organization": "State Revenue Committee, Ministry of Finance (kgd.gov.kz)",
+  "source_url": "https://kgd.gov.kz/ru",
+  "license": "restricted",
+  "access": "public_browser_search_and_lists",
+  "data_freshness": "periodic",
+  "record_shape": "per_bin_search_and_published_lists",
+  "primary_keys": ["bin_iin"],
+  "join_keys": ["bin_iin", "taxpayer_name"],
+  "field_count": 4,
+  "fields": [
+    { "path": "bin_iin", "source_field": "БИН/ИИН (BIN/IIN)", "english_name": "bin_iin", "meaning": "Business Identification Number (legal entities) or Individual Identification Number (individuals).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "12-digit. Browser-public search; join key (BIN) to gbd_ul.", "source_confidence": "high", "analysis_notes": "BIN for legal entities; IIN for individuals." },
+    { "path": "taxpayer_name", "source_field": "Наименование налогоплательщика (Taxpayer Name)", "english_name": "taxpayer_name", "meaning": "Registered taxpayer name (company or individual).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "ru/kk", "limitations": "Individuals are personal data — redact individuals.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "vat_registration", "source_field": "Регистрация по НДС (VAT Registration)", "english_name": "vat_registration", "meaning": "VAT (НДС) registration status of the taxpayer.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "ru", "limitations": "VAT registration indicator.", "source_confidence": "medium", "analysis_notes": "НДС = VAT in Russian." },
+    { "path": "taxpayer_status", "source_field": "Статус налогоплательщика (Taxpayer Status)", "english_name": "taxpayer_status", "meaning": "Taxpayer status (active / inactive / pseudo-enterprise / debtor — per the relevant published list).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "KGD taxpayer-list categories", "language": "ru", "limitations": "Status comes from specific KGD lists; tax status, not registration status.", "source_confidence": "medium", "analysis_notes": "KGD publishes lists: inactive, pseudo-enterprise, tax-debtors, deregistered, VAT payers." }
+  ]
+}

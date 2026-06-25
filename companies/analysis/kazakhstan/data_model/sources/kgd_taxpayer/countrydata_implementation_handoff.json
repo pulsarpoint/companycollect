@@ -1,0 +1,76 @@
+{
+  "country": "Kazakhstan",
+  "country_slug": "kazakhstan",
+  "source_slug": "kgd_taxpayer",
+  "source_identity": "kazakhstan_kgd_taxpayer",
+  "source_package": "kgd",
+  "env_prefix": "KZ_KGD",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "State Revenue Committee (KGD) — taxpayer search / published lists",
+    "source_type": "tax_register",
+    "organization": "State Revenue Committee, Ministry of Finance (kgd.gov.kz)",
+    "source_url": "https://kgd.gov.kz/ru",
+    "license": "restricted",
+    "access": "public_browser_search_and_lists",
+    "data_freshness": "periodic",
+    "attribution": "State Revenue Committee (Kazakhstan)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://kgd.gov.kz/ru",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "xlsx"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "browser-public search / published lists"
+  },
+  "snapshot": {
+    "strategy": "preserve_lists",
+    "file_extension": ".xlsx",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "KzKgdTaxpayer",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "State Revenue Committee taxpayer search + published lists (VAT payers, inactive, pseudo-enterprise, debtors). Browser-public; per-BIN/IIN search and downloadable XLSX lists. Discover the exact list URLs / search request shape before implementing; do NOT scrape aggressively. Key = BIN (legal entities; join to gbd_ul) / IIN (individuals). taxpayer_status is tax status, not registration status. Redact individuals (personal data)."
+  },
+  "keys": {
+    "primary_keys": ["bin_iin"],
+    "join_keys": ["bin_iin", "taxpayer_name"],
+    "dedupe_keys": ["bin_iin"]
+  },
+  "mapping_rules": {
+    "tax_id": "BIN/IIN.",
+    "legal_name": "Taxpayer Name (companies only; redact individuals).",
+    "vat_id": "VAT (НДС) registration status.",
+    "status": "Taxpayer Status (TAX status, from KGD lists; not registration status)."
+  },
+  "fixture_requirements": [
+    "VAT-registered legal entity",
+    "inactive / pseudo-enterprise taxpayer",
+    "individual taxpayer (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Open a KGD published list (e.g. VAT payers) or run a per-BIN taxpayer search; confirm name/status.",
+    "full": "Blocked on transport discovery — resolve list URLs / search request shape; join to gbd_ul on BIN; redact individuals."
+  },
+  "blockers": [
+    "No single clean open API; per-BIN search / per-list XLSX",
+    "Exact list URLs / search request shape not resolved",
+    "Lists include individuals (personal data)"
+  ]
+}

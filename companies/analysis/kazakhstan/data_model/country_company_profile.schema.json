@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Kazakhstan Company Profile",
+  "description": "Country-specific company profile for Kazakhstan. The universal key is the 12-digit BIN (Business Identification Number). The authoritative OPEN register is the data.egov.kz dataset gbd_ul (State Database of Legal Entities) — BIN, name (RU/KZ), registration date, legal address, OKED activity, director name — served via the data.egov.kz API but gated by a FREE API key (registration; verified 403 without a key). The State Revenue Committee (KGD) adds tax/VAT status by BIN/IIN (browser-public search + published lists). Listed companies come from the Kazakhstan Stock Exchange (KASE) by ISIN (KZ...). Language Russian (+ Kazakh); currency KZT; activity classified by OKED. The director name (gbd_ul) and individual taxpayers (KGD) are personal data — redact. No registry per-company values were captured (API key not obtained).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Kazakhstan" },
+    "country_slug": { "type": "string", "const": "kazakhstan" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["bin"],
+      "properties": {
+        "bin": { "type": "string", "description": "12-digit Business Identification Number — registration number, tax id, and universal join key.", "x-source": "egov_gbd_ul", "x-source-path": "bin", "x-join-key": true, "x-freshness": "periodic", "x-access": "api_key_required", "x-source-alt": "kgd_taxpayer.bin_iin" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "description": "Legal-entity name (RU/KZ). gbd_ul authoritative; KGD taxpayer_name as alt.", "x-source": "egov_gbd_ul", "x-source-path": "name", "x-source-alt": "kgd_taxpayer.taxpayer_name", "x-access": "api_key_required" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "registration_date": { "type": ["string", "null"], "description": "Date of state registration (gbd_ul).", "x-source": "egov_gbd_ul", "x-source-path": "registration_date", "x-access": "api_key_required" },
+        "taxpayer_status": { "type": ["string", "null"], "description": "KGD taxpayer status (active/inactive/pseudo-enterprise/debtor) — TAX status, not registration status.", "x-source": "kgd_taxpayer", "x-source-path": "taxpayer_status", "x-access": "browser_public" },
+        "vat_registration": { "type": ["string", "null"], "description": "KGD VAT (НДС) registration status.", "x-source": "kgd_taxpayer", "x-source-path": "vat_registration" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "oked_activity": { "type": ["string", "null"], "description": "Economic activity (OKED).", "x-source": "egov_gbd_ul", "x-source-path": "oked_activity", "x-access": "api_key_required" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "legal_address": { "type": ["string", "null"], "x-source": "egov_gbd_ul", "x-source-path": "legal_address", "x-access": "api_key_required" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Director (gbd_ul). PERSONAL DATA (Law on Personal Data) — REDACT. API-key-gated.",
+      "x-source": "egov_gbd_ul",
+      "x-source-path": "director_full_name",
+      "x-access": "api_key_required_redact",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for KASE-listed companies (browser-public SPA).",
+      "x-source": "kase_listed",
+      "properties": {
+        "ticker": { "type": ["string", "null"], "x-source-path": "ticker" },
+        "isin": { "type": ["string", "null"], "x-source-path": "isin" }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}
