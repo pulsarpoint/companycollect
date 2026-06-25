@@ -3,13 +3,6 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-# Shared CommonCrawl config (single source of truth for COMMONCRAWL_EMBED_* + CLICKHOUSE_*, also
-# read by commoncrawl/cc-enrich-worker) — so the reference-embedding assets and the Go worker
-# always hit the same served model. Keep these vars in commoncrawl/.env, not dagster_v3/.env.
-if [[ -f "../commoncrawl/.env" ]]; then
-  set -a; source "../commoncrawl/.env"; set +a
-fi
-
 if [[ -z "${DAGSTER_PG_URL:-}" && -f ".env" ]]; then
   DAGSTER_PG_URL="$(grep -m 1 '^DAGSTER_PG_URL=' .env | cut -d '=' -f 2- || true)"
   export DAGSTER_PG_URL
