@@ -1,4 +1,4 @@
-package main
+package tech
 
 import (
 	"regexp/syntax"

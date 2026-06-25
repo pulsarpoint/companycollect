@@ -1,4 +1,4 @@
-package main
+package tech
 
 import (
 	"cc-enrich-worker/internal/model"
@@ -11,6 +11,10 @@ var wapp, _ = wappalyzer.New()
 // fastTech, when set (via --tech-engine fast), replaces wappalyzergo's full scan with
 // the Aho-Corasick-gated matcher. nil => upstream wappalyzergo.
 var fastTech *FastMatcher
+
+// SetFastMatcher wires in the optional Aho-Corasick-gated matcher. Call from main
+// when --tech-engine=fast; nil resets to upstream wappalyzergo.
+func SetFastMatcher(fm *FastMatcher) { fastTech = fm }
 
 // DetectTech fingerprints one page (HTTP headers + body) into a list of technologies.
 // wappalyzergo returns keys as "Name" or "Name:version"; categories come from AppInfo.

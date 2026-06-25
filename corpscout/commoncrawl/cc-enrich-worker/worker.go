@@ -13,6 +13,7 @@ import (
 	"cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/parse"
+	"cc-enrich-worker/internal/tech"
 )
 
 const classifyInstruction = "Classify the business into its industry category"
@@ -130,7 +131,7 @@ func ProcessShard(ctx context.Context, items []model.WorklistItem, getter fetch.
 					if limit := cfg.TechMaxBytes; limit > 0 && len(techBody) > limit {
 						techBody = techBody[:limit] // cap regex input; tech signals live in headers + early body
 					}
-					detected := DetectTech(headers, techBody)
+					detected := tech.DetectTech(headers, techBody)
 					atomic.AddInt64(&techNs, time.Since(t2).Nanoseconds())
 					for _, t := range detected {
 						if !techSeen[t.Name] {

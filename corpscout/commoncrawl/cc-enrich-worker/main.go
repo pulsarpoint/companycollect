@@ -18,6 +18,7 @@ import (
 	"cc-enrich-worker/internal/fetch"
 	mdl "cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
+	"cc-enrich-worker/internal/tech"
 )
 
 // WorklistRow is one row of the materialized worklist parquet (index_enrich/worklist.py
@@ -123,11 +124,11 @@ func main() {
 	if mode != "industry" { // tech matcher only needed when we fingerprint
 		switch *techEngine {
 		case "fast":
-			fm, err := NewFastMatcher()
+			fm, err := tech.NewFastMatcher()
 			if err != nil {
 				log.Fatalf("build fast tech matcher: %v", err)
 			}
-			fastTech = fm
+			tech.SetFastMatcher(fm)
 			log.Printf("tech engine: fast (Aho-Corasick gated)")
 		case "wappalyzer":
 			log.Printf("tech engine: wappalyzer (upstream full scan)")
