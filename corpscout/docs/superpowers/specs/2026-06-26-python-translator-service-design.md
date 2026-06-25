@@ -58,6 +58,13 @@ surfaced through a join view, so they survive Dagster's wipe-and-replace and nev
 | 8 | Service name | `corpscout/translator` (Python package + worker entrypoint) |
 | 9 | `_en` exposure | **New join-view**; drop `_en` columns from the base companies table |
 | 10 | Hash join contract | **ClickHouse computes the join hash on both write and read** — no cross-language hash contract |
+| 11 | Registry form | **Static, in-code Python** (typed dataclass in `registry.py`) — the source of truth for *which* columns are translatable, now that `_en` is dropped from the base table. Adding a source = a code change + test |
+
+> **Why a registry is required once `_en` is dropped:** the base-table `_en` columns previously did double duty —
+> they named *which* columns to translate (the destination existed) **and** signaled *which rows* were still
+> untranslated (`_en` empty). Dropping them splits those two jobs to where they belong: the **registry** declares
+> *which columns* (a design-time decision, never truly inferable from schema — the old code already hardcoded
+> `*_original → *_en` pairs), and the **`text_translations` LEFT JOIN** answers *which rows* are still missing.
 
 ---
 
