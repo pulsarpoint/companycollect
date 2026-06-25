@@ -1,0 +1,60 @@
+{
+  "country": "United Arab Emirates",
+  "country_slug": "united_arab_emirates",
+  "country_profile_version": "2026-06-25",
+  "_note": "Identity/listing anchored on a public-knowledge DFM-listed company (Emaar Properties PJSC / EMAAR). Trade license number, economic register number, TRN, owners, registered address and registry financials are gated (NER login; emirate DEDs WAF; DIFC/ADGM WAF; DFM/ADX WAF/auth) — so those values are null. Nothing fabricated.",
+  "registration": {
+    "trade_license_number": null,
+    "economic_register_number": null,
+    "license_authority": "Dubai DET"
+  },
+  "tax_identifiers": {
+    "trn": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "Emaar Properties PJSC",
+    "company_type": "Public Joint Stock Company (PJSC)"
+  },
+  "status": {
+    "status_text": "Active",
+    "license_expiry_date": null
+  },
+  "activity": {
+    "activities": [],
+    "exchange_sector": "Real Estate"
+  },
+  "registered_location": {
+    "emirate": "Dubai",
+    "registered_address": null
+  },
+  "owners": [
+    { "name": "[REDACTED-PII]", "share_pct": null }
+  ],
+  "listing": {
+    "symbol": "EMAAR",
+    "exchange": "DFM",
+    "isin": null
+  },
+  "financial_statements": [
+    { "fiscal_year": "2024", "currency": "AED" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "dfm_adx_listed",
+      "section": "legal_identity / status / activity.exchange_sector / listing / financial_statements",
+      "source_url": "https://www.dfm.ae/",
+      "access": "public_browser_waf_auth_gated",
+      "license": "public_disclosure",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "national_economic_register",
+      "section": "registration / tax_identifiers / registered_location (gated)",
+      "source_url": "https://economy.gov.ae/",
+      "access": "login_gated",
+      "license": "restricted_login",
+      "retrieved_at": null
+    }
+  ]
+}

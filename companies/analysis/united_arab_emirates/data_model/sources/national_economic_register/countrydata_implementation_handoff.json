@@ -1,0 +1,82 @@
+{
+  "country": "United Arab Emirates",
+  "country_slug": "united_arab_emirates",
+  "source_slug": "national_economic_register",
+  "source_identity": "united_arab_emirates_national_economic_register",
+  "source_package": "ner",
+  "env_prefix": "AE_NER",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "National Economic Register (NER) — Ministry of Economy",
+    "source_type": "official_registry",
+    "organization": "Ministry of Economy (UAE)",
+    "source_url": "https://economy.gov.ae/",
+    "license": "restricted_login",
+    "access": "login_gated",
+    "data_freshness": "live",
+    "attribution": "Ministry of Economy (UAE) — National Economic Register"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": false,
+    "credential_env_vars": ["AE_NER_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://economy.gov.ae/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["NER session (login)"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "login-gated unified company search; no open bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_login_gated",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "NerCompany",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Login-gated. Federal unified company search (Ministry of Economy) across emirates + free zones. ner.economy.gov.ae NXDOMAIN; service under economy.gov.ae. No open bulk/API. Field model from public knowledge; no values copied. Economic register number = unified company id; trade license number routes to the issuing authority; TRN = tax. Confirm whether an official data-sharing channel exists before implementation. Redact owners/managers (PDPL)."
+  },
+  "keys": {
+    "primary_keys": ["economic_register_number"],
+    "join_keys": ["economic_register_number", "trade_license_number", "trn", "legal_name"],
+    "dedupe_keys": ["economic_register_number"]
+  },
+  "mapping_rules": {
+    "company_id": "Economic Register Number (or trade license number).",
+    "registration_number": "Trade license number / economic register number.",
+    "tax_id": "TRN (15-digit, FTA).",
+    "vat_id": "TRN (same number).",
+    "legal_name": "Legal Name (AR/EN).",
+    "company_type": "Legal Form.",
+    "status": "Status.",
+    "activity_code": "Economic Activities (DED/ISIC).",
+    "registered_location": "Emirate + licensing authority."
+  },
+  "fixture_requirements": [
+    "Dubai DET-licensed LLC",
+    "Abu Dhabi ADDED-licensed company",
+    "free-zone entity (DIFC/ADGM/DMCC)",
+    "expired/cancelled license"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (login). Confirm the NER access path / data-sharing channel.",
+    "full": "Blocked on authentication — requires an official Ministry of Economy arrangement."
+  },
+  "blockers": [
+    "NER unified search is login-gated",
+    "ner.economy.gov.ae does not resolve (NXDOMAIN); service under economy.gov.ae",
+    "No open bulk/API; transport unconfirmed"
+  ]
+}

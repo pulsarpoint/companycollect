@@ -1,0 +1,82 @@
+{
+  "country": "United Arab Emirates",
+  "country_slug": "united_arab_emirates",
+  "source_slug": "emirate_deds",
+  "source_identity": "united_arab_emirates_emirate_deds",
+  "source_package": "emiratededs",
+  "env_prefix": "AE_DED",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Emirate DEDs — trade-license registries (Dubai DET, Abu Dhabi ADDED, etc.)",
+    "source_type": "official_registry",
+    "organization": "Emirate Departments of Economic Development",
+    "source_url": "https://invest.dubai.ae/",
+    "license": "restricted",
+    "access": "per_emirate_login_waf",
+    "data_freshness": "live",
+    "attribution": "Emirate DEDs (Dubai DET / Abu Dhabi ADDED / Sharjah SEDD / ...)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["AE_DED_DUBAI_ACCOUNT", "AE_DED_ABUDHABI_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://invest.dubai.ae/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["WAF clearance / login per emirate"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per-emirate WAF/login (invest.dubai.ae 403); no open bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_gated",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "EmirateTradeLicense",
+    "date_formats": ["02/01/2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Per-emirate, WAF/login-gated. Mainland companies are licensed by the emirate DEDs (Dubai DET/Invest in Dubai, Abu Dhabi ADDED/TAMM, Sharjah SEDD, etc.) — each a separate sub-source with its own license-number format and verification tool. invest.dubai.ae returned 403 (WAF). No open bulk/API. Trade license number = company id within the emirate; TRN (FTA) is the cross-emirate tax key; no single national number here (use the NER to unify). Trade licenses renew annually. Redact owners/partners (PDPL)."
+  },
+  "keys": {
+    "primary_keys": ["trade_license_number"],
+    "join_keys": ["trade_license_number", "trn", "trade_name"],
+    "dedupe_keys": ["trade_license_number"]
+  },
+  "mapping_rules": {
+    "company_id": "Trade License Number (per emirate).",
+    "registration_number": "Trade License Number.",
+    "tax_id": "TRN (FTA).",
+    "legal_name": "Trade Name.",
+    "company_type": "Legal Form (LLC/Sole Establishment/Civil/Branch).",
+    "status": "Status (Active/Expired/Cancelled).",
+    "incorporation_date": "Issue Date.",
+    "activity_code": "Activities (DED codes).",
+    "owners": "Owners / Partners (REDACT natural persons)."
+  },
+  "fixture_requirements": [
+    "Dubai DET commercial LLC",
+    "Abu Dhabi ADDED company",
+    "professional / sole establishment",
+    "expired license"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (WAF/login). Confirm each emirate's verification request shape.",
+    "full": "Blocked on authentication — separate arrangement per emirate DED."
+  },
+  "blockers": [
+    "Per-emirate WAF/login (invest.dubai.ae 403)",
+    "No open bulk/API; per-emirate license-number formats differ",
+    "No single national number at this layer (NER unifies)"
+  ]
+}

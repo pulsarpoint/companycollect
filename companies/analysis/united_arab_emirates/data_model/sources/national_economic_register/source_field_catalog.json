@@ -1,0 +1,27 @@
+{
+  "country": "United Arab Emirates",
+  "country_slug": "united_arab_emirates",
+  "source_slug": "national_economic_register",
+  "source_name": "National Economic Register (NER) — Ministry of Economy",
+  "source_type": "official_registry",
+  "organization": "Ministry of Economy (UAE)",
+  "source_url": "https://economy.gov.ae/",
+  "license": "restricted_login",
+  "access": "login_gated",
+  "data_freshness": "live",
+  "record_shape": "per_company_unified_record_login_gated",
+  "primary_keys": ["economic_register_number"],
+  "join_keys": ["economic_register_number", "trade_license_number", "trn", "legal_name"],
+  "field_count": 9,
+  "fields": [
+    { "path": "economic_register_number", "source_field": "Economic Register Number", "english_name": "economic_register_number", "meaning": "National unified company number (across emirates + free zones).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented from public knowledge; login-gated, no live values.", "source_confidence": "high", "analysis_notes": "Unified primary join key." },
+    { "path": "trade_license_number", "source_field": "License Number", "english_name": "trade_license_number", "meaning": "Trade/commercial license number from the issuing authority.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Per emirate/free zone.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "trn", "source_field": "TRN", "english_name": "trn", "meaning": "Tax Registration Number (15-digit, FTA).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": "Tax key." },
+    { "path": "legal_name", "source_field": "Legal Name (AR/EN)", "english_name": "legal_name", "meaning": "Legal / trade name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "ar/en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "license_authority", "source_field": "Licensing Authority", "english_name": "license_authority", "meaning": "Issuing authority (emirate DED / free zone).", "data_type": "string", "semantic_type": "metadata", "example_values": ["Dubai DET", "ADDED", "DIFC", "ADGM", "DMCC"], "nullable": true, "repeatable": false, "code_list": "emirate DEDs / free zones", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "company_type", "source_field": "Legal Form", "english_name": "company_type", "meaning": "Legal form (LLC/PJSC/PrJSC/Sole Establishment/Branch/free-zone company).", "data_type": "string", "semantic_type": "legal_form", "example_values": ["LLC", "PJSC", "FZE"], "nullable": true, "repeatable": false, "code_list": "LLC/PJSC/PrJSC/Sole Establishment/Branch/FZE", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Active / Expired / Cancelled.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Active/Expired/Cancelled", "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "activity", "source_field": "Economic Activities", "english_name": "activity", "meaning": "Licensed economic activities (ISIC-based).", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "DED / ISIC activities", "language": "ar/en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "emirate", "source_field": "Emirate", "english_name": "emirate", "meaning": "Emirate of registration.", "data_type": "string", "semantic_type": "geography", "example_values": ["Dubai", "Abu Dhabi", "Sharjah"], "nullable": true, "repeatable": false, "code_list": "7 emirates", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null }
+  ]
+}

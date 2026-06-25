@@ -1,0 +1,25 @@
+{
+  "country": "United Arab Emirates",
+  "country_slug": "united_arab_emirates",
+  "source_slug": "freezone_public_registers",
+  "source_name": "Free-zone public registers — DIFC & ADGM",
+  "source_type": "official_registry",
+  "organization": "DIFC Registrar of Companies / ADGM Registration Authority",
+  "source_url": "https://www.adgm.com/public-registers",
+  "license": "public_register_waf_gated",
+  "access": "public_browser_waf_gated",
+  "data_freshness": "live",
+  "record_shape": "per_entity_freezone_register_record_waf_gated",
+  "primary_keys": ["registration_number"],
+  "join_keys": ["registration_number", "entity_name"],
+  "field_count": 7,
+  "fields": [
+    { "path": "entity_name", "source_field": "Entity Name", "english_name": "entity_name", "meaning": "Registered entity name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "WAF/rate-limited; documented from public knowledge.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "registration_number", "source_field": "Registration Number", "english_name": "registration_number", "meaning": "DIFC / ADGM registration number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Primary key (per free zone)." },
+    { "path": "legal_form", "source_field": "Legal Form / Type", "english_name": "legal_form", "meaning": "Private/Public company, branch, SPV, fund, partnership, foundation.", "data_type": "string", "semantic_type": "legal_form", "example_values": ["Private Company Limited by Shares", "Branch", "SPV", "Foundation"], "nullable": true, "repeatable": false, "code_list": "DIFC/ADGM entity types", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Active / Dissolved / Struck off.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Active/Dissolved/Struck off", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "registered_address", "source_field": "Registered Address", "english_name": "registered_address", "meaning": "Registered address within the free zone.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "incorporation_date", "source_field": "Incorporation Date", "english_name": "incorporation_date", "meaning": "Date of incorporation/registration.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "free_zone", "source_field": "Free Zone", "english_name": "free_zone", "meaning": "Which free zone (DIFC / ADGM / DMCC / JAFZA).", "data_type": "string", "semantic_type": "metadata", "example_values": ["DIFC", "ADGM"], "nullable": false, "repeatable": false, "code_list": "DIFC/ADGM/DMCC/JAFZA/...", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": "Routes to the specific registrar." }
+  ]
+}

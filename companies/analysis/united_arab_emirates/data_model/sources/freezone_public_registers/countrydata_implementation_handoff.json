@@ -1,0 +1,80 @@
+{
+  "country": "United Arab Emirates",
+  "country_slug": "united_arab_emirates",
+  "source_slug": "freezone_public_registers",
+  "source_identity": "united_arab_emirates_freezone_public_registers",
+  "source_package": "freezoneregisters",
+  "env_prefix": "AE_FREEZONE",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "Free-zone public registers — DIFC & ADGM",
+    "source_type": "official_registry",
+    "organization": "DIFC Registrar of Companies / ADGM Registration Authority",
+    "source_url": "https://www.adgm.com/public-registers",
+    "license": "public_register_waf_gated",
+    "access": "public_browser_waf_gated",
+    "data_freshness": "live",
+    "attribution": "DIFC / ADGM registrars"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://registration.adgm.com/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["WAF clearance (browser)"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public registers but WAF/rate-limited (DIFC 429; registration.adgm.com 403)"
+  },
+  "snapshot": {
+    "strategy": "html_pages_per_entity",
+    "file_extension": ".html",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "FreezoneEntity",
+    "date_formats": ["02 January 2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Public registers (DIFC + ADGM), WAF/rate-limited for automation. The ADGM public-registers page loads but the search app (registration.adgm.com) returned 403; DIFC's public register returned 429. Public via browser; do NOT bypass the WAF/rate limit — use a browser/clearance context. Registration number is per free zone; the free_zone field routes to the registrar. Other free zones (DMCC/JAFZA/...) are separate. Redact personal data (DIFC DP Law 2020; ADGM DP Regs 2021)."
+  },
+  "keys": {
+    "primary_keys": ["registration_number"],
+    "join_keys": ["registration_number", "entity_name"],
+    "dedupe_keys": ["registration_number"]
+  },
+  "mapping_rules": {
+    "company_id": "Registration Number (per free zone).",
+    "registration_number": "Registration Number.",
+    "legal_name": "Entity Name.",
+    "company_type": "Legal Form / Type.",
+    "status": "Status (Active/Dissolved/Struck off).",
+    "incorporation_date": "Incorporation Date.",
+    "registered_address": "Registered Address (within the free zone)."
+  },
+  "fixture_requirements": [
+    "DIFC private company limited by shares",
+    "ADGM SPV / foundation",
+    "free-zone branch of a foreign company",
+    "dissolved / struck-off entity"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (WAF/429). From a browser context, search the DIFC/ADGM public register.",
+    "full": "Blocked on WAF/rate limit — use a browser/clearance context; DIFC and ADGM are separate registrars."
+  },
+  "blockers": [
+    "DIFC public register 429; ADGM search app (registration.adgm.com) 403",
+    "No downloadable register file; per-free-zone registers are separate",
+    "WAF/rate-limited for automation"
+  ]
+}

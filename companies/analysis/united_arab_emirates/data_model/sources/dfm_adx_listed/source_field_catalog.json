@@ -1,0 +1,24 @@
+{
+  "country": "United Arab Emirates",
+  "country_slug": "united_arab_emirates",
+  "source_slug": "dfm_adx_listed",
+  "source_name": "DFM & ADX — listed-company financials",
+  "source_type": "financial_disclosure",
+  "organization": "Dubai Financial Market (DFM) / Abu Dhabi Securities Exchange (ADX)",
+  "source_url": "https://www.dfm.ae/",
+  "license": "public_disclosure",
+  "access": "public_browser_waf_auth_gated",
+  "data_freshness": "event_driven_quarterly",
+  "record_shape": "listed_company_profile_browser_public_waf_auth_gated",
+  "primary_keys": ["symbol"],
+  "join_keys": ["symbol", "isin", "company_name"],
+  "field_count": 6,
+  "fields": [
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Listed company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Emaar Properties PJSC", "Emirates NBD Bank PJSC", "First Abu Dhabi Bank PJSC"], "nullable": false, "repeatable": false, "code_list": null, "language": "en/ar", "limitations": "Listed companies only; documented from the page model / public knowledge (feeds auth-gated).", "source_confidence": "medium", "analysis_notes": "Display name." },
+    { "path": "symbol", "source_field": "Symbol", "english_name": "symbol", "meaning": "DFM / ADX ticker symbol.", "data_type": "string", "semantic_type": "identifier", "example_values": ["EMAAR", "ENBD", "FAB"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": "Listed-entity key." },
+    { "path": "exchange", "source_field": "Exchange", "english_name": "exchange", "meaning": "DFM or ADX (also Nasdaq Dubai).", "data_type": "string", "semantic_type": "metadata", "example_values": ["DFM", "ADX", "Nasdaq Dubai"], "nullable": false, "repeatable": false, "code_list": "DFM/ADX/Nasdaq Dubai", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "isin", "source_field": "ISIN", "english_name": "isin", "meaning": "International Securities Identification Number.", "data_type": "string", "semantic_type": "identifier", "example_values": ["AE..."], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "UAE ISINs start AE.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "sector", "source_field": "Sector", "english_name": "sector", "meaning": "Exchange sector.", "data_type": "string", "semantic_type": "activity", "example_values": ["Real Estate", "Banking"], "nullable": true, "repeatable": false, "code_list": "DFM/ADX sectors", "language": "en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "financial_statements", "source_field": "Financial Statements / Disclosures", "english_name": "financial_statements", "meaning": "Listed-company financial statements + disclosures (AED).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en/ar", "limitations": "Listed only; currency AED; feeds WAF/auth-gated.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

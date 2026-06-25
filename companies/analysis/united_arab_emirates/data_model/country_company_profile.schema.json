@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "United Arab Emirates Company Profile",
+  "description": "Country-specific company profile for the UAE. There is no single national company register: registration is split across emirate-level DEDs (trade-license registries), free-zone registrars (DIFC/ADGM and others), and the federal National Economic Register (NER) unified search. Identity is keyed on the trade/commercial license number (per emirate) or the free-zone registration number, with the NER economic register number as the unified id and the TRN (Tax Registration Number, 15-digit FTA, also the VAT id) as the tax key. All registry layers are login/WAF/rate-limited; the open-data portals were unreachable. Listed-company financials come from DFM/ADX (public via the browser but WAF/auth-gated). Currency AED; Arabic + English. Owners/managers/directors are personal data (PDPL Federal Decree-Law 45/2021; DIFC DP Law 2020; ADGM DP Regs 2021) — redact. No registry per-company values were captured; listed identity is from DFM/ADX.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "United Arab Emirates" },
+    "country_slug": { "type": "string", "const": "united_arab_emirates" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["trade_license_number"],
+      "properties": {
+        "trade_license_number": { "type": ["string", "null"], "description": "Trade/commercial license number (emirate DED) OR free-zone registration number. Per-authority company id. Gated.", "x-source": "emirate_deds", "x-source-path": "trade_license_number", "x-join-key": true, "x-freshness": "live", "x-access": "gated" },
+        "economic_register_number": { "type": ["string", "null"], "description": "NER national unified number.", "x-source": "national_economic_register", "x-source-path": "economic_register_number", "x-access": "login_gated" },
+        "license_authority": { "type": ["string", "null"], "description": "Issuing authority (emirate DED / free zone).", "x-source": "national_economic_register", "x-source-path": "license_authority" }
+      }
+    },
+    "tax_identifiers": {
+      "type": "object",
+      "properties": {
+        "trn": { "type": ["string", "null"], "description": "Tax Registration Number (15-digit, FTA). Used for VAT + corporate tax.", "x-source": "national_economic_register", "x-source-path": "trn" },
+        "vat_id": { "type": ["string", "null"], "description": "= TRN (no separate VAT number).", "x-source": "national_economic_register", "x-source-path": "trn" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "x-source": "emirate_deds", "x-source-path": "trade_name", "x-source-alt": "dfm_adx_listed.company_name" },
+        "company_type": { "type": ["string", "null"], "description": "LLC / PJSC / PrJSC / Sole Establishment / Branch / free-zone company (FZE/SPV/foundation).", "x-source": "national_economic_register", "x-source-path": "company_type" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "status_text": { "type": ["string", "null"], "description": "Active / Expired / Cancelled / Dissolved.", "x-source": "emirate_deds", "x-source-path": "status" },
+        "license_expiry_date": { "type": ["string", "null"], "format": "date", "description": "Trade-license expiry (annual renewal).", "x-source": "emirate_deds", "x-source-path": "expiry_date" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "activities": { "type": "array", "items": { "type": "string" }, "description": "Licensed activities (DED/ISIC).", "x-source": "emirate_deds", "x-source-path": "activities" },
+        "exchange_sector": { "type": ["string", "null"], "description": "DFM/ADX sector (listed).", "x-source": "dfm_adx_listed", "x-source-path": "sector" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "emirate": { "type": ["string", "null"], "x-source": "national_economic_register", "x-source-path": "emirate" },
+        "registered_address": { "type": ["string", "null"], "x-source": "freezone_public_registers", "x-source-path": "registered_address" }
+      }
+    },
+    "owners": {
+      "type": "array",
+      "description": "Owners / partners (emirate DED). PERSONAL DATA when natural persons (PDPL) — REDACT.",
+      "x-source": "emirate_deds",
+      "x-source-path": "owners",
+      "x-access": "gated",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "share_pct": { "type": ["number", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for DFM/ADX/Nasdaq-Dubai-listed companies (public via browser; WAF-gated).",
+      "x-source": "dfm_adx_listed",
+      "properties": {
+        "symbol": { "type": ["string", "null"], "x-source-path": "symbol" },
+        "exchange": { "type": ["string", "null"], "x-source-path": "exchange" },
+        "isin": { "type": ["string", "null"], "x-source-path": "isin" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Financial statements (AED). OPEN via DFM/ADX for listed companies (WAF-gated for automation); private financials not open.",
+      "x-source": "dfm_adx_listed",
+      "x-access": "public_browser_waf_auth_gated",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fiscal_year": { "type": ["string", "null"] },
+          "currency": { "type": "string", "const": "AED" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

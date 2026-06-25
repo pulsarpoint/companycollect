@@ -1,0 +1,27 @@
+{
+  "country": "United Arab Emirates",
+  "country_slug": "united_arab_emirates",
+  "source_slug": "emirate_deds",
+  "source_name": "Emirate DEDs — trade-license registries (Dubai DET, Abu Dhabi ADDED, etc.)",
+  "source_type": "official_registry",
+  "organization": "Emirate Departments of Economic Development",
+  "source_url": "https://invest.dubai.ae/",
+  "license": "restricted",
+  "access": "per_emirate_login_waf",
+  "data_freshness": "live",
+  "record_shape": "per_company_trade_license_record_per_emirate_gated",
+  "primary_keys": ["trade_license_number"],
+  "join_keys": ["trade_license_number", "trn", "trade_name"],
+  "field_count": 9,
+  "fields": [
+    { "path": "trade_name", "source_field": "Trade Name", "english_name": "trade_name", "meaning": "Registered trade/company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "ar/en", "limitations": "Login/WAF-gated; documented from public knowledge.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "trade_license_number", "source_field": "Trade License Number", "english_name": "trade_license_number", "meaning": "Trade/commercial license number (per emirate).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Primary key (per emirate)." },
+    { "path": "license_type", "source_field": "License Type", "english_name": "license_type", "meaning": "License type (Commercial / Professional / Industrial / Tourism).", "data_type": "string", "semantic_type": "metadata", "example_values": ["Commercial", "Professional", "Industrial"], "nullable": true, "repeatable": false, "code_list": "Commercial/Professional/Industrial/Tourism", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "legal_form", "source_field": "Legal Form", "english_name": "legal_form", "meaning": "Legal form (LLC / Sole Establishment / Civil Company / Branch).", "data_type": "string", "semantic_type": "legal_form", "example_values": ["LLC", "Sole Establishment"], "nullable": true, "repeatable": false, "code_list": "LLC/Sole Establishment/Civil/Branch", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Active / Expired / Cancelled.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Active/Expired/Cancelled", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "activities", "source_field": "Activities", "english_name": "activities", "meaning": "Licensed business activities (DED codes).", "data_type": "array", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": true, "code_list": "DED activity codes", "language": "ar/en", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "issue_date", "source_field": "Issue Date", "english_name": "issue_date", "meaning": "License issue date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": null },
+    { "path": "expiry_date", "source_field": "Expiry Date", "english_name": "expiry_date", "meaning": "License expiry date.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": "Trade licenses are renewed annually." },
+    { "path": "owners", "source_field": "Owners / Partners", "english_name": "owners", "meaning": "Owners / partners and shares.", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "ar/en", "limitations": "PERSONAL DATA (PDPL) — REDACT.", "source_confidence": "medium", "analysis_notes": "Redact natural persons." }
+  ]
+}

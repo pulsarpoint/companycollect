@@ -1,0 +1,75 @@
+{
+  "country": "United Arab Emirates",
+  "country_slug": "united_arab_emirates",
+  "source_slug": "dfm_adx_listed",
+  "source_identity": "united_arab_emirates_dfm_adx_listed",
+  "source_package": "dfmadx",
+  "env_prefix": "AE_DFM_ADX",
+  "implementation_status": "blocked_authentication",
+  "source": {
+    "source_name": "DFM & ADX — listed-company financials",
+    "source_type": "financial_disclosure",
+    "organization": "Dubai Financial Market (DFM) / Abu Dhabi Securities Exchange (ADX)",
+    "source_url": "https://www.dfm.ae/",
+    "license": "public_disclosure",
+    "access": "public_browser_waf_auth_gated",
+    "data_freshness": "event_driven_quarterly",
+    "attribution": "DFM / ADX / issuer"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://connexions.dfm.ae/ext/p/arena/api/v2",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["WAF clearance / feed auth (browser)"],
+    "formats": ["html", "json", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "DFM SPA + auth-gated feeds; ADX 403 (WAF)"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "UaeListedCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Listed-company profiles + financial statements (AED). DFM is a SPA with auth-gated market-data feeds (connexions.dfm.ae/feeds.dfm.ae); ADX returned 403 (WAF). Public via browser only — do NOT bypass the WAF/auth. Implement behind a browser/clearance context or official feed. Listed only (DFM/ADX/Nasdaq Dubai). Join to the registry by company name."
+  },
+  "keys": {
+    "primary_keys": ["symbol"],
+    "join_keys": ["symbol", "isin", "company_name"],
+    "dedupe_keys": ["symbol"]
+  },
+  "mapping_rules": {
+    "company_id": "symbol (listed entity).",
+    "legal_name": "Company Name.",
+    "activity_code": "Sector (exchange).",
+    "financials": "Financial statements (AED)."
+  },
+  "fixture_requirements": [
+    "DFM real-estate issuer (e.g. EMAAR)",
+    "DFM bank issuer (e.g. ENBD)",
+    "ADX bank issuer (e.g. FAB)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (WAF/auth). From a browser context, load a DFM/ADX issuer page.",
+    "full": "Blocked on WAF/auth for automation — use a browser/clearance context or an official exchange feed; listed subset only."
+  },
+  "blockers": [
+    "DFM data feeds auth-gated (connexions.dfm.ae); ADX 403 (WAF)",
+    "Listed companies only; private financials not public"
+  ]
+}
