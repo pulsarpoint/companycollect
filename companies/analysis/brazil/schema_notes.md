@@ -17,7 +17,12 @@
 - **No single VAT** — federal taxes use the CNPJ; **ICMS** (state VAT-like) uses a
   separate **Inscrição Estadual** (not in the federal open data).
 
-## RFB CNPJ bulk CSVs (Latin-1, `;`-delimited, NO header)
+## RFB CNPJ bulk CSVs (Latin-1-compatible, `;`-delimited, NO header)
+
+The Dagster pipeline preserves the raw ZIP members and writes UTF-8 normalized
+CSV artifacts before DuckDB ingestion. This avoids DuckDB failures on dirty
+control bytes present in some RFB snapshot rows while keeping CSV parsing
+set-based.
 
 ### Empresas (`*.EMPRECSV`)
 `cnpj_basico` (8-digit root), `razao_social`, `natureza_juridica` (→ Naturezas
@@ -69,7 +74,9 @@ PENÚLTIMO = prior), `DT_FIM_EXERC`, `CD_CONTA` (account code, e.g. `1` Ativo To
 
 - Dates: `YYYY-MM-DD` (CVM); `YYYYMMDD` (RFB CNPJ).
 - Money: **BRL**; CVM scale typically **MIL** (thousands) — multiply by 1000.
-- Encoding: **Latin-1 (ISO-8859-1)** for both RFB and CVM CSVs; `;`-delimited.
+- Encoding: **Latin-1-compatible source CSVs** for RFB, normalized to UTF-8 in
+  Dagster before DuckDB ingestion; **Latin-1 (ISO-8859-1)** for CVM CSVs.
+  Both are `;`-delimited.
 
 ## Internal model mapping
 

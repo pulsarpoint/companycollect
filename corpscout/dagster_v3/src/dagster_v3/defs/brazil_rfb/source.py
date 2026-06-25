@@ -24,8 +24,17 @@ DEFAULT_BASE_URL = "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/"
 DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_FAMILIES = tuple(tables.RAW_TABLE_BY_FAMILY)
 DOWNLOAD_CHUNK_BYTES = 1 << 20
+TEXT_NORMALIZATION_CHUNK_BYTES = 1 << 20
+NORMALIZED_CSV_SUFFIX = ".utf8.csv"
+# RFB publishes Latin-1-ish CSVs, but live snapshots can contain dirty C1 bytes.
+# CP1252 preserves Portuguese text and replaces undefined bytes before DuckDB reads UTF-8.
+RFB_CSV_SOURCE_ENCODING = "cp1252"
 SNAPSHOT_YEAR_MONTH_RE = re.compile(r"\d{4}-\d{2}")
 SNAPSHOT_DATED_DIRECTORY_RE = re.compile(r"\d{4}-\d{2}-\d{2}/?$")
+UNSUPPORTED_CONTROL_TRANSLATION = {
+    codepoint: "\ufffd"
+    for codepoint in (*range(0, 9), *range(11, 13), *range(14, 32), 127)
+}
 
 
 class HttpSession(Protocol):
@@ -238,6 +247,39 @@ def _download(
     return sha.digest()
 
 
+def _normalized_csv_is_current(source_path: Path, normalized_path: Path) -> bool:
+    if not normalized_path.exists():
+        return False
+    source_stat = source_path.stat()
+    normalized_stat = normalized_path.stat()
+    if source_stat.st_size > 0 and normalized_stat.st_size == 0:
+        return False
+    return normalized_stat.st_mtime_ns >= source_stat.st_mtime_ns
+
+
+def normalize_csv_for_duckdb(csv_path: str | Path) -> Path:
+    source_path = Path(csv_path)
+    if source_path.name.endswith(NORMALIZED_CSV_SUFFIX):
+        return source_path
+
+    normalized_path = source_path.with_name(source_path.name + NORMALIZED_CSV_SUFFIX)
+    if _normalized_csv_is_current(source_path, normalized_path):
+        return normalized_path
+
+    temp_path = normalized_path.with_name(normalized_path.name + ".tmp")
+    with source_path.open("rb") as source_file, temp_path.open(
+        "w",
+        encoding="utf-8",
+        newline="",
+    ) as normalized_file:
+        while chunk := source_file.read(TEXT_NORMALIZATION_CHUNK_BYTES):
+            text = chunk.decode(RFB_CSV_SOURCE_ENCODING, errors="replace")
+            normalized_file.write(text.translate(UNSUPPORTED_CONTROL_TRANSLATION))
+
+    temp_path.replace(normalized_path)
+    return normalized_path
+
+
 def _extract_single_csv(zip_path: Path, dest_dir: Path) -> tuple[str, Path]:
     with zipfile.ZipFile(zip_path) as archive:
         members = [name for name in archive.namelist() if not name.endswith("/")]
@@ -245,7 +287,8 @@ def _extract_single_csv(zip_path: Path, dest_dir: Path) -> tuple[str, Path]:
             raise ValueError(f"expected exactly one CSV member in {zip_path}, found {members}")
         member = members[0]
         archive.extract(member, dest_dir)
-        return member, dest_dir / member
+        csv_path = dest_dir / member
+        return member, normalize_csv_for_duckdb(csv_path)
 
 
 def download_extract_snapshot_files(

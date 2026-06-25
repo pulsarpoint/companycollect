@@ -267,6 +267,40 @@ def test_download_extract_and_build_manifest_rows(tmp_path: Path) -> None:
     assert session.calls == [(archive_url, True)]
 
 
+def test_download_extract_normalizes_dirty_latin1_csv_for_duckdb(tmp_path: Path) -> None:
+    archive_url = "https://example.test/K3241.K03200Y0.D30612.EMPRECSV.zip"
+    session = FakeSession(
+        {
+            archive_url: FakeResponse(
+                _zip_bytes(
+                    "K3241.K03200Y0.D30612.EMPRECSV",
+                    b"12345678;CAF\xc9 \x8f LTDA;2062;49;1000,00;01;\n",
+                )
+            )
+        }
+    )
+
+    rows = source.download_extract_snapshot_files(
+        remote_files=[
+            source.BrazilRfbRemoteFile(
+                family="empresas",
+                url=archive_url,
+                archive_name="K3241.K03200Y0.D30612.EMPRECSV.zip",
+            )
+        ],
+        download_dir=tmp_path,
+        source_run_id="run-1",
+        session=session,
+    )
+
+    csv_path = Path(rows[0]["csv_path"])
+
+    assert csv_path.name.endswith(".utf8.csv")
+    assert csv_path.read_text(encoding="utf-8") == (
+        "12345678;CAFÉ � LTDA;2062;49;1000,00;01;\n"
+    )
+
+
 def test_snapshot_files_resource_declares_explicit_schema(tmp_path: Path) -> None:
     row = source.build_snapshot_file_row(
         family="empresas",

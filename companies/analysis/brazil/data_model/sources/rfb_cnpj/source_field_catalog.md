@@ -55,8 +55,10 @@
   via the Motivos table for the reason.
 - **Code lists**: resolve `natureza_juridica`, `cnae_fiscal`, `municipio`,
   `qualificacao_socio` against the bundled reference tables.
-- **Encoding Latin-1**, `;`-delimited, **no header row** (map by position per the
-  RFB layout).
+- **Source encoding Latin-1-compatible**, `;`-delimited, **no header row** (map
+  by position per the RFB layout). The Dagster pipeline preserves raw ZIP members
+  and writes UTF-8 normalized CSV artifacts for DuckDB because some snapshots
+  contain dirty control bytes.
 - **Personal data**: the **Sócios** file (names, masked CPF) and establishment
   contact fields are **personal data (LGPD)** — redact in committed output.
 - **CVM financials join here by CNPJ** (CVM `CNPJ_CIA` = this 14-digit CNPJ).

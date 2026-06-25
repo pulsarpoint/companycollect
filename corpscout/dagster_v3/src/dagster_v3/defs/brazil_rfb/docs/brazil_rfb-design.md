@@ -56,9 +56,12 @@ statement grain.
   The mirror publishes dated directories such as `2026-05-10/`; the Dagster
   partition key remains the month (`2026-05`) and resolves to the latest dated
   directory for that month.
-- **Format**: ZIP files containing Latin-1, semicolon-delimited CSV with no header.
-  RFB uses fixed published column order per file family. Dates are `YYYYMMDD`.
-  Monetary values such as `capital_social` use Brazilian decimal formatting.
+- **Format**: ZIP files containing Latin-1-compatible, semicolon-delimited CSV
+  with no header. Extraction preserves the raw member and writes a UTF-8
+  normalized `.utf8.csv` artifact for DuckDB, replacing dirty control bytes that
+  appear in some registry rows. RFB uses fixed published column order per file
+  family. Dates are `YYYYMMDD`. Monetary values such as `capital_social` use
+  Brazilian decimal formatting.
 - **Partitioning**: every `brazil_rfb` asset uses the same monthly partition
   definition. The partition key is the RFB snapshot directory name, for example
   partition `2026-05` resolves the latest matching dated directory such as
@@ -95,9 +98,11 @@ statement grain.
       config:
         snapshot_base_url: "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/"
   ```
-- **DuckDB reader**: use DuckDB `read_csv` over unzipped files with explicit
-  column lists, `all_varchar=true`, `header=false`, `delim=';'`, and Latin-1
-  decoding. Do not parse rows in Python.
+- **DuckDB reader**: use DuckDB `read_csv` over UTF-8 normalized extracted files
+  with explicit column lists, `all_varchar=true`, `header=false`, and
+  `delim=';'`. Do not parse rows in Python; Python only performs streaming byte
+  normalization because DuckDB rejects some dirty Latin-1 control bytes before
+  row parsing.
 - **File-family checkpoints**:
   - `brazil_rfb_empresas_duckdb`
   - `brazil_rfb_estabelecimentos_duckdb`
@@ -271,8 +276,9 @@ statement grain.
   directories (`YYYY-MM/`) for future host changes.
 - **Large split files**: `Estabelecimentos` is the heavy part. Load by file family
   and checkpoint before transformations.
-- **Latin-1 and no headers**: use explicit schemas and encoding. Never infer
-  columns from the first row.
+- **Latin-1-compatible source and no headers**: normalize extracted source CSVs
+  to UTF-8 before DuckDB ingestion, use explicit schemas, and never infer columns
+  from the first row.
 - **Brazilian decimal text**: normalize `capital_social` carefully before casting.
 - **Secondary CNAE list**: split the source list set-based in DuckDB and handle
   empty values.

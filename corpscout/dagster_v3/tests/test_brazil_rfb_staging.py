@@ -141,6 +141,34 @@ def test_load_raw_family_uses_latin1_no_header_csv(tmp_path: Path) -> None:
     )
 
 
+def test_load_raw_family_normalizes_dirty_latin1_manifest_path(tmp_path: Path) -> None:
+    csv_path = tmp_path / "empresas.csv"
+    csv_path.write_bytes(
+        "12345678;CAF\xc9 \x8f LTDA;2062;49;1000,00;01;\n".encode("latin-1")
+    )
+    database_path = tmp_path / "br.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        _write_manifest(connection, csv_path)
+
+    count = staging.load_raw_family_from_manifest(
+        database_path=database_path,
+        family="empresas",
+        source_run_id="run-1",
+    )
+
+    assert count == 1
+    assert (tmp_path / "empresas.csv.utf8.csv").exists()
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        row = connection.execute(
+            f"""
+            select razao_social
+            from {tables.DLT_DATASET_NAME}.{tables.RAW_TABLE_BY_FAMILY["empresas"]}
+            """
+        ).fetchone()
+
+    assert row == ("CAFÉ � LTDA",)
+
+
 def test_load_raw_family_refuses_empty_csv(tmp_path: Path) -> None:
     csv_path = tmp_path / "empty_empresas.csv"
     csv_path.write_text("")

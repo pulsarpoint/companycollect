@@ -29,7 +29,7 @@
     "headers_required": [],
     "formats": ["csv", "zip"],
     "compression": "zip",
-    "encoding": "latin-1",
+    "encoding": "latin-1-compatible source; normalize extracted CSV to utf-8 for DuckDB",
     "record_path": null,
     "total_results_path": null,
     "pagination": { "type": "split_files", "page_param": "file_index", "page_start": 0, "page_size": null, "page_size_param": null, "next_page_path": null },
@@ -46,7 +46,7 @@
     "datetime_formats": [],
     "number_formats": ["brl_comma_decimal"],
     "malformed_record_policy": "log_warn_and_continue",
-    "notes": "Latin-1, ;-delimited, NO header — map columns by position per the RFB layout. Files: Empresas0..9, Estabelecimentos0..9, Socios0..9, Simples, + reference tables (Cnaes/Naturezas/Municipios/Paises/Qualificacoes/Motivos). Join on cnpj_basico. Full CNPJ = cnpj_basico+cnpj_ordem+cnpj_dv. situacao_cadastral 02=ativa/08=baixada. Resolve code lists. Redact Socios (names, masked CPF) + contact fields (LGPD). The historical Receita arquivos host returned 404/timeout headlessly; use the Casa dos Dados mirror as the fetch transport while attributing data to Receita Federal."
+    "notes": "Latin-1-compatible source, ;-delimited, NO header — map columns by position per the RFB layout. Preserve raw ZIP members and normalize extracted CSV artifacts to UTF-8 before DuckDB ingestion because some snapshots contain dirty control bytes. Files: Empresas0..9, Estabelecimentos0..9, Socios0..9, Simples, + reference tables (Cnaes/Naturezas/Municipios/Paises/Qualificacoes/Motivos). Join on cnpj_basico. Full CNPJ = cnpj_basico+cnpj_ordem+cnpj_dv. situacao_cadastral 02=ativa/08=baixada. Resolve code lists. Redact Socios (names, masked CPF) + contact fields (LGPD). The historical Receita arquivos host returned 404/timeout headlessly; use the Casa dos Dados mirror as the fetch transport while attributing data to Receita Federal."
   },
   "keys": {
     "primary_keys": ["cnpj_basico"],

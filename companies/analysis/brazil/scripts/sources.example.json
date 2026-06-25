@@ -7,7 +7,7 @@
     "method": "GET",
     "headers": {},
     "max_pages": 0,
-    "note": "Empresas split Empresas0..9.zip; also Estabelecimentos0..9, Socios0..9, Simples, and reference tables (Cnaes/Naturezas/Municipios/Paises/Qualificacoes/Motivos). Latin-1, ;-delimited, NO header. Replace {YYYY-MM-DD} with the latest dated snapshot folder for the desired month, e.g. 2026-05-10. The mirror is headlessly fetchable; Receita Federal remains the authoritative source owner."
+    "note": "Empresas split Empresas0..9.zip; also Estabelecimentos0..9, Socios0..9, Simples, and reference tables (Cnaes/Naturezas/Municipios/Paises/Qualificacoes/Motivos). Latin-1-compatible source, ;-delimited, NO header; Dagster normalizes extracted RFB CSVs to UTF-8 for DuckDB. Replace {YYYY-MM-DD} with the latest dated snapshot folder for the desired month, e.g. 2026-05-10. The mirror is headlessly fetchable; Receita Federal remains the authoritative source owner."
   },
   {
     "name": "CVM DFP — listed-company annual financial statements (per year)",

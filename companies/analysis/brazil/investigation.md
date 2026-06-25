@@ -62,7 +62,9 @@ Brazil is a **top-tier open-data country**: the **complete company registry** an
   `data_entrada_sociedade`, `representante_legal` — **personal data (LGPD)**.
 - **Simples** (`*.SIMPLES.CSV`): `cnpj_basico`, `opcao_simples`, `opcao_mei`, dates.
 - **Reference**: Cnaes, Naturezas, Municípios, Países, Qualificações, Motivos
-  (code → description). Encoding **Latin-1**, `;`-delimited, no header row.
+  (code → description). Source encoding is **Latin-1-compatible**,
+  `;`-delimited, no header row; Dagster normalizes extracted RFB CSVs to UTF-8
+  for DuckDB because some snapshots contain dirty control bytes.
 
 ## CVM DFP/ITR layout (verified)
 

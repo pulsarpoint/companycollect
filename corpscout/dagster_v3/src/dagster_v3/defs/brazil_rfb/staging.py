@@ -4,7 +4,7 @@ from pathlib import Path
 
 import duckdb
 
-from dagster_v3.defs.brazil_rfb import tables
+from dagster_v3.defs.brazil_rfb import source, tables
 
 
 def _sql_literal(value: object) -> str:
@@ -44,24 +44,28 @@ def load_raw_family_from_manifest(
         if not manifest_rows:
             raise ValueError(f"No Brazil RFB manifest rows found for family {family}")
 
-        csv_paths = tuple(str(row[0]) for row in manifest_rows)
-        if all(Path(csv_path).stat().st_size == 0 for csv_path in csv_paths):
+        raw_csv_paths = tuple(Path(str(row[0])) for row in manifest_rows)
+        if all(csv_path.stat().st_size == 0 for csv_path in raw_csv_paths):
             raise ValueError(f"Brazil RFB family {family} produced no rows")
 
+        csv_paths = tuple(
+            str(source.normalize_csv_for_duckdb(csv_path))
+            for csv_path in raw_csv_paths
+        )
         read_csv_paths = _list_literal(csv_paths)
         read_csv_columns = _list_literal(column_names)
         manifest_values = ", ".join(
             "("
             + ", ".join(
                 (
-                    _sql_literal(str(row[0])),
+                    _sql_literal(csv_path),
                     _sql_literal(family),
                     _sql_literal(str(row[1])),
                     _sql_literal(str(row[2])),
                 )
             )
             + ")"
-            for row in manifest_rows
+            for row, csv_path in zip(manifest_rows, csv_paths, strict=True)
         )
         connection.execute(
             f"""
@@ -79,7 +83,7 @@ def load_raw_family_from_manifest(
                     delim = ';',
                     quote = '"',
                     escape = '"',
-                    encoding = 'latin-1',
+                    encoding = 'utf-8',
                     filename = true
                 )
             )
