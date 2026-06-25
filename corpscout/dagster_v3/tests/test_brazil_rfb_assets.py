@@ -107,3 +107,32 @@ def test_brazil_rfb_contact_domain_assets_have_ordered_dependencies() -> None:
             for parent in repo.asset_graph.get(dg.AssetKey(asset_name)).parent_keys
         }
         assert parents == expected
+
+
+def test_brazil_rfb_resolve_job_covers_brazil_outputs_and_domain_graph() -> None:
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+
+    assert "brazil_rfb_resolve_job" in set(repo.job_names)
+    resolve_keys = {
+        key.path[-1]
+        for key in repo.get_job(
+            "brazil_rfb_resolve_job"
+        ).asset_layer.executable_asset_keys
+    }
+
+    assert {
+        "brazil_rfb_snapshot_files_duckdb",
+        "brazil_rfb_raw_files_duckdb",
+        "brazil_rfb_companies_duckdb",
+        "brazil_rfb_contact_info_duckdb",
+        "brazil_rfb_websites_duckdb",
+        "brazil_rfb_clickhouse_companies",
+        "brazil_rfb_clickhouse_establishments",
+        "brazil_rfb_clickhouse_contact_info",
+        "brazil_rfb_clickhouse_websites",
+        "domains_clickhouse",
+    }.issubset(resolve_keys)
+    assert "estonia_ar_general_data_duckdb" not in resolve_keys
+    assert "norway_resolved_clickhouse" not in resolve_keys

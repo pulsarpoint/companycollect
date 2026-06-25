@@ -219,11 +219,11 @@ statement grain.
 
 ## 8. Scheduling
 
-- **`brazil_rfb_register_job`**: monthly full-refresh after the RFB monthly
-  snapshot is expected to publish. Default STOPPED until the source resolver and
-  first full materialization are validated.
-- **`brazil_rfb_domains_job`**: included in the same monthly chain because contacts
-  come from `Estabelecimentos`; no separate source cadence.
+- **`brazil_rfb_resolve_job`**: manual full-refresh job for all `brazil_rfb`
+  assets plus `domains_clickhouse`, so `br_websites` is pushed through
+  `company_website_domains` and the shared `domains` aggregate in the same run.
+  Keep it unscheduled until the source resolver and first full materialization
+  are validated.
 - **Manual full refresh**: group-level job for all `brazil_rfb` assets plus
   upstream `brazil_cnae_to_nace_clickhouse` and `nace_categories_clickhouse`.
 - **Cron staggering**: choose a different hour/day from Estonia/France/UK monthly

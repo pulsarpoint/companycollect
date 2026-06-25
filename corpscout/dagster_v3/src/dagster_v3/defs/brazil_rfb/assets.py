@@ -255,6 +255,13 @@ def brazil_rfb_clickhouse_websites(
     )
 
 
+brazil_rfb_resolve_job = dg.define_asset_job(
+    "brazil_rfb_resolve_job",
+    selection=dg.AssetSelection.groups(GROUP_NAME)
+    | dg.AssetSelection.assets("domains_clickhouse"),
+)
+
+
 defs = dg.Definitions(
     assets=[
         brazil_rfb_snapshot_files_duckdb,
@@ -267,4 +274,5 @@ defs = dg.Definitions(
         brazil_rfb_clickhouse_contact_info,
         brazil_rfb_clickhouse_websites,
     ],
+    jobs=[brazil_rfb_resolve_job],
 )
