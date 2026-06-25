@@ -1,19 +1,19 @@
 # Receita Federal — Dados Públicos CNPJ Field Catalog
 
 > **Schema DOCUMENTED from the authoritative RFB published layout.** The data is
-> fully open (no auth/payment), but the bulk ZIPs are now served via Receita's
-> **SERPRO+ portal** (a JS app), so they were not fetchable headlessly in this run.
-> No raw record is included for this source; the example record uses CVM data
-> (which carries the CNPJ).
+> fully open (no auth/payment). The historical Receita file host returned
+> 404/timeout headlessly, but the Casa dos Dados mirror exposes the same open ZIPs
+> under dated folders such as `2026-05-10/`. No raw record is included for this
+> source; the example record uses CVM data (which carries the CNPJ).
 
 ## Source Summary
 
 - Country: Brazil
 - Source type: official_registry
 - Organization: Receita Federal do Brasil (RFB) / SERPRO
-- URL: https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/{YYYY-MM}/
+- URL: https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/{YYYY-MM-DD}/
 - License: open (Lei de Acesso à Informação / CC-BY style)
-- Access: public, no key (bulk ZIPs via the SERPRO+ portal)
+- Access: public, no key (bulk ZIPs via headless mirror; Receita Federal is the authoritative source owner)
 - Freshness: monthly
 - Record shape: multiple CSVs joined on `cnpj_basico` (Empresas / Estabelecimentos / Socios / Simples + reference tables)
 - Primary keys: `cnpj_basico` (8-digit root)

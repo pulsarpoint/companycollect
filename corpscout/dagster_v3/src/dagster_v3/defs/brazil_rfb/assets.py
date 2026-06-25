@@ -51,9 +51,9 @@ class BrazilRfbConfig(dg.Config):
         default=source.DEFAULT_BASE_URL,
         description=(
             "Base URL for Receita Federal CNPJ open-data snapshots. Partition key "
-            "controls the YYYY-MM snapshot, and the asset appends that value to this "
-            "URL. Example for partition 2026-05: "
-            "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/2026-05/."
+            "controls the YYYY-MM snapshot, and the resolver selects a direct "
+            "YYYY-MM directory or the latest matching YYYY-MM-DD directory. Default "
+            "mirror base: https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/."
         ),
     )
 

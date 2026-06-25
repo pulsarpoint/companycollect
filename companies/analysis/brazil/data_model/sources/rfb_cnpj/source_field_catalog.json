@@ -5,7 +5,7 @@
   "source_name": "Receita Federal — Dados Públicos CNPJ",
   "source_type": "official_registry",
   "organization": "Receita Federal do Brasil (RFB) / SERPRO",
-  "source_url": "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/",
+  "source_url": "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/",
   "license": "open_lai_cc_by",
   "access": "public",
   "data_freshness": "monthly",
@@ -14,7 +14,7 @@
   "join_keys": ["cnpj_basico", "cnpj (14-digit)"],
   "field_count": 20,
   "fields": [
-    { "path": "Empresas.cnpj_basico", "source_field": "cnpj_basico", "english_name": "cnpj_root", "meaning": "8-digit CNPJ root — the legal entity.", "data_type": "string", "semantic_type": "identifier", "example_values": ["00000000"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "DOCUMENTED from RFB layout (files now via SERPRO+ portal).", "source_confidence": "high", "analysis_notes": "Entity-level join key across all CNPJ files." },
+    { "path": "Empresas.cnpj_basico", "source_field": "cnpj_basico", "english_name": "cnpj_root", "meaning": "8-digit CNPJ root — the legal entity.", "data_type": "string", "semantic_type": "identifier", "example_values": ["00000000"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "DOCUMENTED from RFB layout; current headless transport uses Casa dos Dados mirror.", "source_confidence": "high", "analysis_notes": "Entity-level join key across all CNPJ files." },
     { "path": "Empresas.razao_social", "source_field": "razao_social", "english_name": "legal_name", "meaning": "Legal name (razão social).", "data_type": "string", "semantic_type": "legal_name", "example_values": ["BANCO DO BRASIL SA"], "nullable": false, "repeatable": false, "code_list": null, "language": "Portuguese", "limitations": "DOCUMENTED.", "source_confidence": "high", "analysis_notes": "Primary legal name." },
     { "path": "Empresas.natureza_juridica", "source_field": "natureza_juridica", "english_name": "legal_nature_code", "meaning": "Legal-nature code.", "data_type": "string", "semantic_type": "legal_form", "example_values": ["2038", "2062"], "nullable": true, "repeatable": false, "code_list": "Naturezas reference table", "language": "n/a", "limitations": "DOCUMENTED.", "source_confidence": "high", "analysis_notes": "Resolve via Naturezas." },
     { "path": "Empresas.capital_social", "source_field": "capital_social", "english_name": "share_capital", "meaning": "Share capital (BRL).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "DOCUMENTED; decimal comma.", "source_confidence": "high", "analysis_notes": null },

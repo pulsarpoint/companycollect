@@ -2,6 +2,8 @@ import io
 import zipfile
 from pathlib import Path
 
+from requests import HTTPError
+
 from dagster_v3.defs.brazil_rfb import source
 
 
@@ -13,12 +15,21 @@ def _zip_bytes(member_name: str, body: bytes) -> bytes:
 
 
 class FakeResponse:
-    def __init__(self, body: bytes, *, json_payload: dict | None = None) -> None:
+    def __init__(
+        self,
+        body: bytes,
+        *,
+        json_payload: dict | None = None,
+        status_code: int = 200,
+    ) -> None:
         self.content = body
         self.headers = {"Content-Length": str(len(body))}
         self._json_payload = json_payload
+        self.status_code = status_code
 
     def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise HTTPError(f"{self.status_code} error")
         return None
 
     def iter_content(self, chunk_size: int = 0):
@@ -42,17 +53,26 @@ class FakeSession:
 
 def test_family_from_archive_name_matches_rfb_patterns() -> None:
     assert source.family_from_archive_name("K3241.K03200Y0.D30612.EMPRECSV.zip") == "empresas"
+    assert source.family_from_archive_name("Empresas0.zip") == "empresas"
     assert (
         source.family_from_archive_name("K3241.K03200Y0.D30612.ESTABELE.zip")
         == "estabelecimentos"
     )
+    assert source.family_from_archive_name("Estabelecimentos9.zip") == "estabelecimentos"
     assert source.family_from_archive_name("K3241.K03200Y0.D30612.SIMPLES.CSV.zip") == "simples"
+    assert source.family_from_archive_name("Simples.zip") == "simples"
     assert source.family_from_archive_name("F.K03200$Z.D30612.CNAECSV.zip") == "cnaes"
+    assert source.family_from_archive_name("Cnaes.zip") == "cnaes"
     assert source.family_from_archive_name("F.K03200$Z.D30612.NATJUCSV.zip") == "naturezas"
+    assert source.family_from_archive_name("Naturezas.zip") == "naturezas"
     assert source.family_from_archive_name("F.K03200$Z.D30612.MUNICCSV.zip") == "municipios"
+    assert source.family_from_archive_name("Municipios.zip") == "municipios"
     assert source.family_from_archive_name("F.K03200$Z.D30612.PAISCSV.zip") == "paises"
+    assert source.family_from_archive_name("Paises.zip") == "paises"
     assert source.family_from_archive_name("F.K03200$Z.D30612.QUALSCSV.zip") == "qualificacoes"
+    assert source.family_from_archive_name("Qualificacoes.zip") == "qualificacoes"
     assert source.family_from_archive_name("F.K03200$Z.D30612.MOTICSV.zip") == "motivos"
+    assert source.family_from_archive_name("Motivos.zip") == "motivos"
     assert source.family_from_archive_name("SOCIOCSV.zip") == ""
 
 
@@ -83,11 +103,120 @@ def test_discover_snapshot_zip_urls_from_directory_html() -> None:
     ]
 
 
+def test_discover_current_snapshot_zip_urls_from_mirror_html() -> None:
+    html = """
+    <html><body>
+      <a href="Empresas0.zip">empresas 0</a>
+      <a href="Empresas1.zip">empresas 1</a>
+      <a href="Estabelecimentos0.zip">estab 0</a>
+      <a href="Simples.zip">simples</a>
+      <a href="Cnaes.zip">cnaes</a>
+      <a href="Naturezas.zip">naturezas</a>
+      <a href="Municipios.zip">municipios</a>
+      <a href="Paises.zip">paises</a>
+      <a href="Qualificacoes.zip">qualificacoes</a>
+      <a href="Motivos.zip">motivos</a>
+      <a href="Socios0.zip">ignored socios</a>
+    </body></html>
+    """
+
+    files = source.discover_snapshot_zip_urls(
+        html,
+        base_url="https://example.test/arquivos/2026-05-10/",
+        families=source.DEFAULT_FAMILIES,
+    )
+
+    assert len(files) == 10
+    assert source.BrazilRfbRemoteFile(
+        family="empresas",
+        url="https://example.test/arquivos/2026-05-10/Empresas0.zip",
+        archive_name="Empresas0.zip",
+    ) in files
+    assert source.BrazilRfbRemoteFile(
+        family="estabelecimentos",
+        url="https://example.test/arquivos/2026-05-10/Estabelecimentos0.zip",
+        archive_name="Estabelecimentos0.zip",
+    ) in files
+
+
 def test_snapshot_year_month_builds_month_directory_url() -> None:
     assert source.build_year_month_base_url(
         snapshot_year_month="2026-05",
         base_url="https://example.test/dados_abertos_cnpj/",
     ) == "https://example.test/dados_abertos_cnpj/2026-05/"
+
+
+def test_default_base_url_points_to_fetchable_cnpj_mirror() -> None:
+    assert source.DEFAULT_BASE_URL == (
+        "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/"
+    )
+
+
+def test_dated_snapshot_directory_resolves_latest_day_for_month() -> None:
+    html = """
+    <html><body>
+      <a href="2026-04-12/">2026-04-12</a>
+      <a href="2026-05-01/">2026-05-01</a>
+      <a href="2026-05-10/">2026-05-10</a>
+      <a href="2026-06-13/">2026-06-13</a>
+    </body></html>
+    """
+
+    assert source.resolve_dated_snapshot_directory_url(
+        html,
+        base_url="https://example.test/arquivos/",
+        snapshot_year_month="2026-05",
+    ) == "https://example.test/arquivos/2026-05-10/"
+
+
+def test_fetch_snapshot_remote_files_falls_back_to_dated_month_directory() -> None:
+    base_url = "https://example.test/arquivos/"
+    direct_month_url = "https://example.test/arquivos/2026-05/"
+    dated_month_url = "https://example.test/arquivos/2026-05-10/"
+    root_html = """
+    <html><body>
+      <a href="2026-05-01/">2026-05-01</a>
+      <a href="2026-05-10/">2026-05-10</a>
+    </body></html>
+    """
+    dated_html = """
+    <html><body>
+      <a href="Empresas0.zip">empresas</a>
+      <a href="Cnaes.zip">cnaes</a>
+    </body></html>
+    """
+    session = FakeSession(
+        {
+            direct_month_url: FakeResponse(b"not found", status_code=404),
+            base_url: FakeResponse(root_html.encode("utf-8")),
+            dated_month_url: FakeResponse(dated_html.encode("utf-8")),
+        }
+    )
+
+    files = source.fetch_snapshot_remote_files(
+        snapshot_year_month="2026-05",
+        base_url=base_url,
+        families=("empresas", "cnaes"),
+        session=session,
+    )
+
+    assert files == [
+        source.BrazilRfbRemoteFile(
+            family="cnaes",
+            url="https://example.test/arquivos/2026-05-10/Cnaes.zip",
+            archive_name="Cnaes.zip",
+        ),
+        source.BrazilRfbRemoteFile(
+            family="empresas",
+            url="https://example.test/arquivos/2026-05-10/Empresas0.zip",
+            archive_name="Empresas0.zip",
+        ),
+    ]
+    assert session.calls == [
+        (direct_month_url, False),
+        (base_url, False),
+        (dated_month_url, False),
+    ]
 
 
 def test_snapshot_year_month_rejects_invalid_format() -> None:

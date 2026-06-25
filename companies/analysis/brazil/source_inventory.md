@@ -2,7 +2,7 @@
 
 | Source | Org | Type | Access | Formats | License | Status |
 |---|---|---|---|---|---|---|
-| RFB Dados Públicos CNPJ | Receita Federal / SERPRO | official registry | public (bulk; via SERPRO+ portal) | CSV, ZIP | open (LAI/CC-BY) | **recommended** |
+| RFB Dados Públicos CNPJ | Receita Federal / SERPRO | official registry | public bulk ZIPs; headless mirror via Casa dos Dados | CSV, ZIP | open (LAI/CC-BY) | **recommended** |
 | CVM DFP/ITR | CVM | financial statements | public, no key | CSV, ZIP | open (CC-BY) | **recommended** |
 | Juntas Comerciais (NIRE) | Juntas estaduais / DREI | official registry | per-document (paid) | HTML, PDF | varies | blocked_by_payment |
 | dados.gov.br | Governo Federal | open data portal | public (API token) | CSV, JSON | open | useful_secondary_source |
@@ -11,8 +11,9 @@
 
 - **rfb_cnpj** — the authoritative open **company registry** keyed on the 14-digit
   CNPJ: Empresas (entity), Estabelecimentos (establishments), Sócios (owners),
-  Simples, + reference tables. ~50M+ entities. (Files now via the SERPRO+ portal;
-  layout cataloged from the published RFB spec.)
+  Simples, + reference tables. ~50M+ entities. The historical Receita file host
+  returned 404/timeout headlessly; the Casa dos Dados mirror exposes the open ZIPs
+  under dated directories such as `2026-05-10/`.
 - **cvm_dfp_itr** — open **financial statements** for listed companies (BPA/BPP/
   DRE/DFC/DMPL/DRA/DVA), keyed on CNPJ_CIA + CD_CVM, BRL. Verified live; joins to
   the CNPJ registry by CNPJ.

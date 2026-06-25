@@ -89,7 +89,10 @@ def test_brazil_rfb_snapshot_config_documents_partition_key_source() -> None:
         fields["snapshot_year_month"].description or ""
     )
     assert fields["snapshot_base_url"].description is not None
-    assert "dados_abertos_cnpj" in fields["snapshot_base_url"].description
+    assert "dados-abertos-rf-cnpj.casadosdados.com.br" in (
+        fields["snapshot_base_url"].description or ""
+    )
+    assert "YYYY-MM-DD" in (fields["snapshot_base_url"].description or "")
     assert "Partition key controls the YYYY-MM snapshot" in (
         fields["snapshot_base_url"].description or ""
     )

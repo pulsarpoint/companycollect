@@ -49,3 +49,18 @@
 - Why: The legal incorporation registries (NIRE).
 - Result: per-state portals; acts/extracts fee-based; no single open bulk (RFB CNPJ already covers core registry fields openly).
 - Decision: blocked_by_payment (per-document enrichment).
+
+## Attempt 6
+
+- Date/time: 2026-06-25
+- Source: Casa dos Dados mirror of RFB CNPJ open-data ZIPs
+- URL: https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/
+- Language: Portuguese
+- Why: The historical Receita `arquivos.receitafederal.gov.br/dados/cnpj/...`
+  path returned 404 for month directories, so we needed a headless bulk path for
+  the same open RFB CNPJ files.
+- Result: reachable directory index with dated snapshot folders such as
+  `2026-05-10/`; ZIPs such as `Cnaes.zip`, `Empresas0.zip`, and
+  `Estabelecimentos0.zip` are directly fetchable.
+- Decision: Use this mirror as the current headless bulk-download base URL while
+  keeping Receita Federal as the authoritative data owner.

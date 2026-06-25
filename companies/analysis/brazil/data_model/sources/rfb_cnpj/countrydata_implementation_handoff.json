@@ -10,7 +10,7 @@
     "source_name": "Receita Federal — Dados Públicos CNPJ",
     "source_type": "official_registry",
     "organization": "Receita Federal do Brasil (RFB) / SERPRO",
-    "source_url": "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/",
+    "source_url": "https://www.gov.br/receitafederal/pt-br/assuntos/orientacao-tributaria/cadastros/consultas/dados-publicos-cnpj",
     "license": "open_lai_cc_by",
     "access": "public",
     "data_freshness": "monthly",
@@ -23,8 +23,8 @@
   },
   "transport": {
     "access_mode": "zip_archive",
-    "base_url": "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/{YYYY-MM}/",
-    "download_url": "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/{YYYY-MM}/Empresas0.zip",
+    "base_url": "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/{YYYY-MM-DD}/",
+    "download_url": "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/{YYYY-MM-DD}/Empresas0.zip",
     "http_method": "GET",
     "headers_required": [],
     "formats": ["csv", "zip"],
@@ -33,7 +33,7 @@
     "record_path": null,
     "total_results_path": null,
     "pagination": { "type": "split_files", "page_param": "file_index", "page_start": 0, "page_size": null, "page_size_param": null, "next_page_path": null },
-    "rate_limit": "monthly bulk; files now served via SERPRO+ JS portal (may need a browser-capable fetch). Data is open (no auth/payment)."
+    "rate_limit": "monthly bulk; resolve the requested YYYY-MM partition to the latest dated mirror folder such as 2026-05-10. Data is open (no auth/payment)."
   },
   "snapshot": {
     "strategy": "preserve_zip_then_extract_csv",
@@ -46,7 +46,7 @@
     "datetime_formats": [],
     "number_formats": ["brl_comma_decimal"],
     "malformed_record_policy": "log_warn_and_continue",
-    "notes": "Latin-1, ;-delimited, NO header — map columns by position per the RFB layout. Files: Empresas0..9, Estabelecimentos0..9, Socios0..9, Simples, + reference tables (Cnaes/Naturezas/Municipios/Paises/Qualificacoes/Motivos). Join on cnpj_basico. Full CNPJ = cnpj_basico+cnpj_ordem+cnpj_dv. situacao_cadastral 02=ativa/08=baixada. Resolve code lists. Redact Socios (names, masked CPF) + contact fields (LGPD). NOTE: bulk host is now a SERPRO+ JS app; a browser-capable retrieval step may be required."
+    "notes": "Latin-1, ;-delimited, NO header — map columns by position per the RFB layout. Files: Empresas0..9, Estabelecimentos0..9, Socios0..9, Simples, + reference tables (Cnaes/Naturezas/Municipios/Paises/Qualificacoes/Motivos). Join on cnpj_basico. Full CNPJ = cnpj_basico+cnpj_ordem+cnpj_dv. situacao_cadastral 02=ativa/08=baixada. Resolve code lists. Redact Socios (names, masked CPF) + contact fields (LGPD). The historical Receita arquivos host returned 404/timeout headlessly; use the Casa dos Dados mirror as the fetch transport while attributing data to Receita Federal."
   },
   "keys": {
     "primary_keys": ["cnpj_basico"],
@@ -76,9 +76,7 @@
   ],
   "live_test_plan": {
     "smoke": "Fetch one reference table (e.g. Cnaes.zip) + Empresas0.zip; parse by position; resolve a few codes.",
-    "full": "Download Empresas0..9 + Estabelecimentos0..9 + Socios0..9 + Simples + reference tables; join on cnpj_basico; redact Socios; gate behind env. Browser-capable fetch may be needed for the SERPRO+ portal."
+    "full": "Download Empresas0..9 + Estabelecimentos0..9 + Socios0..9 + Simples + reference tables from the dated mirror folder; join on cnpj_basico; redact Socios; gate behind env."
   },
-  "blockers": [
-    "Bulk ZIPs now served via Receita's SERPRO+ JS portal — a browser-capable retrieval step may be required (data itself is open, no auth/payment)."
-  ]
+  "blockers": []
 }

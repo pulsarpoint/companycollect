@@ -7,19 +7,19 @@
     "source_type": "official_registry",
     "organization": "Receita Federal do Brasil (RFB) / SERPRO",
     "url": "https://www.gov.br/receitafederal/pt-br/assuntos/orientacao-tributaria/cadastros/consultas/dados-publicos-cnpj",
-    "bulk_download_url": "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/{YYYY-MM}/",
+    "bulk_download_url": "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/{YYYY-MM-DD}/",
     "api_base_url": null,
     "formats": ["csv", "zip"],
     "license": "open_lai_cc_by",
     "access": "public",
     "requires_authentication": false,
     "requires_payment": false,
-    "rate_limits": "monthly bulk ZIPs; files now served via the SERPRO+ JS portal (not directly fetchable headlessly in this run)",
+    "rate_limits": "monthly bulk ZIPs; partition month resolves to latest dated mirror directory such as 2026-05-10",
     "fields_observed": ["cnpj_basico", "razao_social", "natureza_juridica", "capital_social", "porte", "cnpj_ordem", "cnpj_dv", "nome_fantasia", "situacao_cadastral", "cnae_fiscal", "logradouro", "municipio", "uf", "data_inicio_atividade", "socio_nome", "qualificacao_socio"],
     "data_freshness": "monthly",
     "downloaded_files": ["raw/pages/dadosgov_cnpj.html", "raw/pages/rfb_landing.html"],
     "status": "recommended",
-    "notes": "The complete national company registry keyed on the 14-digit CNPJ (8-digit root = legal entity). Bulk ZIP CSVs: Empresas, Estabelecimentos, Socios, Simples + reference tables (Cnaes, Naturezas, Municipios, Paises, Qualificacoes, Motivos). ~50M+ entities, fully open. NOTE: files moved behind Receita's SERPRO+ portal (JS app); could not fetch the ZIPs headlessly here. Layout cataloged from the authoritative RFB published spec; dataset listed on dados.gov.br."
+    "notes": "The complete national company registry keyed on the 14-digit CNPJ (8-digit root = legal entity). Bulk ZIP CSVs: Empresas, Estabelecimentos, Socios, Simples + reference tables (Cnaes, Naturezas, Municipios, Paises, Qualificacoes, Motivos). ~50M+ entities, fully open. The historical Receita arquivos host returned 404/timeout headlessly; the Casa dos Dados mirror exposes the same open ZIPs through dated directories such as 2026-05-10 with files like Empresas0.zip, Estabelecimentos0.zip, and Cnaes.zip. Receita Federal remains the authoritative source owner."
   },
   {
     "country": "Brazil",

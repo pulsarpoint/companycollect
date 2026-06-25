@@ -16,14 +16,16 @@ import dlt
 from dlt.extract.resource import DltResource
 from dlt.pipeline.pipeline import Pipeline
 from dlt.sources.helpers import requests as dlt_requests
+from requests import HTTPError
 
 from dagster_v3.defs.brazil_rfb import tables
 
-DEFAULT_BASE_URL = "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/"
+DEFAULT_BASE_URL = "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/"
 DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_FAMILIES = tuple(tables.RAW_TABLE_BY_FAMILY)
 DOWNLOAD_CHUNK_BYTES = 1 << 20
 SNAPSHOT_YEAR_MONTH_RE = re.compile(r"\d{4}-\d{2}")
+SNAPSHOT_DATED_DIRECTORY_RE = re.compile(r"\d{4}-\d{2}-\d{2}/?$")
 
 
 class HttpSession(Protocol):
@@ -51,15 +53,18 @@ class _HrefParser(HTMLParser):
 
 
 _FAMILY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("empresas", re.compile(r"EMPRECSV\.zip$", re.IGNORECASE)),
-    ("estabelecimentos", re.compile(r"ESTABELE\.zip$", re.IGNORECASE)),
-    ("simples", re.compile(r"SIMPLES\.CSV\.zip$", re.IGNORECASE)),
-    ("cnaes", re.compile(r"CNAECSV\.zip$", re.IGNORECASE)),
-    ("naturezas", re.compile(r"NATJUCSV\.zip$", re.IGNORECASE)),
-    ("municipios", re.compile(r"MUNICCSV\.zip$", re.IGNORECASE)),
-    ("paises", re.compile(r"PAISCSV\.zip$", re.IGNORECASE)),
-    ("qualificacoes", re.compile(r"QUALSCSV\.zip$", re.IGNORECASE)),
-    ("motivos", re.compile(r"MOTICSV\.zip$", re.IGNORECASE)),
+    ("empresas", re.compile(r"(EMPRECSV|Empresas\d*)\.zip$", re.IGNORECASE)),
+    (
+        "estabelecimentos",
+        re.compile(r"(ESTABELE|Estabelecimentos\d*)\.zip$", re.IGNORECASE),
+    ),
+    ("simples", re.compile(r"(SIMPLES\.CSV|Simples)\.zip$", re.IGNORECASE)),
+    ("cnaes", re.compile(r"(CNAECSV|Cnaes)\.zip$", re.IGNORECASE)),
+    ("naturezas", re.compile(r"(NATJUCSV|Naturezas)\.zip$", re.IGNORECASE)),
+    ("municipios", re.compile(r"(MUNICCSV|Municipios)\.zip$", re.IGNORECASE)),
+    ("paises", re.compile(r"(PAISCSV|Paises)\.zip$", re.IGNORECASE)),
+    ("qualificacoes", re.compile(r"(QUALSCSV|Qualificacoes)\.zip$", re.IGNORECASE)),
+    ("motivos", re.compile(r"(MOTICSV|Motivos)\.zip$", re.IGNORECASE)),
 )
 
 
@@ -112,6 +117,59 @@ def build_year_month_base_url(
     return urljoin(base_url.rstrip("/") + "/", clean_year_month + "/")
 
 
+def resolve_dated_snapshot_directory_url(
+    html: str,
+    *,
+    base_url: str,
+    snapshot_year_month: str,
+) -> str:
+    clean_year_month = validate_snapshot_year_month(snapshot_year_month)
+    parser = _HrefParser()
+    parser.feed(html)
+    candidates = []
+    for href in parser.hrefs:
+        directory_name = href.rstrip("/").split("/")[-1]
+        if not directory_name.startswith(clean_year_month + "-"):
+            continue
+        if not SNAPSHOT_DATED_DIRECTORY_RE.fullmatch(directory_name + "/"):
+            continue
+        candidates.append(href)
+    if not candidates:
+        raise LookupError(
+            f"missing Brazil RFB dated snapshot directory for {clean_year_month}"
+        )
+    return urljoin(base_url.rstrip("/") + "/", sorted(candidates)[-1].rstrip("/") + "/")
+
+
+def _fetch_snapshot_directory_html(
+    *,
+    snapshot_year_month: str,
+    base_url: str,
+    session: HttpSession,
+    timeout_seconds: int,
+) -> tuple[str, str]:
+    month_url = build_year_month_base_url(
+        snapshot_year_month=snapshot_year_month,
+        base_url=base_url,
+    )
+    try:
+        response = session.get(month_url, timeout=timeout_seconds)
+        response.raise_for_status()
+        return month_url, response.content.decode("utf-8", errors="replace")
+    except HTTPError:
+        root_url = base_url.rstrip("/") + "/"
+        index_response = session.get(root_url, timeout=timeout_seconds)
+        index_response.raise_for_status()
+        dated_month_url = resolve_dated_snapshot_directory_url(
+            index_response.content.decode("utf-8", errors="replace"),
+            base_url=root_url,
+            snapshot_year_month=snapshot_year_month,
+        )
+        dated_response = session.get(dated_month_url, timeout=timeout_seconds)
+        dated_response.raise_for_status()
+        return dated_month_url, dated_response.content.decode("utf-8", errors="replace")
+
+
 def fetch_snapshot_remote_files(
     *,
     snapshot_year_month: str,
@@ -120,15 +178,14 @@ def fetch_snapshot_remote_files(
     session: HttpSession | None = None,
     timeout_seconds: int = 60,
 ) -> list[BrazilRfbRemoteFile]:
-    month_url = build_year_month_base_url(
+    month_url, html = _fetch_snapshot_directory_html(
         snapshot_year_month=snapshot_year_month,
         base_url=base_url,
+        session=session or dlt_requests.Session(),
+        timeout_seconds=timeout_seconds,
     )
-    http_session = session or dlt_requests.Session()
-    response = http_session.get(month_url, timeout=timeout_seconds)
-    response.raise_for_status()
     files = discover_snapshot_zip_urls(
-        response.content.decode("utf-8", errors="replace"),
+        html,
         base_url=month_url,
         families=families,
     )

@@ -3,11 +3,11 @@
     "name": "RFB CNPJ — Empresas (legal entities) bulk ZIP",
     "slug": "rfb_cnpj_empresas",
     "type": "bulk",
-    "url": "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/{YYYY-MM}/Empresas0.zip",
+    "url": "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/{YYYY-MM-DD}/Empresas0.zip",
     "method": "GET",
     "headers": {},
     "max_pages": 0,
-    "note": "Empresas split Empresas0..9.zip; also Estabelecimentos0..9, Socios0..9, Simples, and reference tables (Cnaes/Naturezas/Municipios/Paises/Qualificacoes/Motivos). Latin-1, ;-delimited, NO header. Replace {YYYY-MM} with the latest month. NOTE: now served via Receita's SERPRO+ portal (JS app) — may need browser-based retrieval; the data is open (no auth/payment)."
+    "note": "Empresas split Empresas0..9.zip; also Estabelecimentos0..9, Socios0..9, Simples, and reference tables (Cnaes/Naturezas/Municipios/Paises/Qualificacoes/Motivos). Latin-1, ;-delimited, NO header. Replace {YYYY-MM-DD} with the latest dated snapshot folder for the desired month, e.g. 2026-05-10. The mirror is headlessly fetchable; Receita Federal remains the authoritative source owner."
   },
   {
     "name": "CVM DFP — listed-company annual financial statements (per year)",

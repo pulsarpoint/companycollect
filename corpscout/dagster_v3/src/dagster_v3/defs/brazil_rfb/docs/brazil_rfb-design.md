@@ -27,7 +27,7 @@ statement grain.
 
   | dataset | URL | format | size | cadence | auth? |
   |---|---|---|---|---|---|
-  | Empresas | `https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/{YYYY-MM}/` or SERPRO+ equivalent | ZIP CSV, split files | large | monthly | no |
+  | Empresas | `https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/{YYYY-MM-DD}/` mirror of RFB CNPJ ZIPs | ZIP CSV, split files | large | monthly | no |
   | Estabelecimentos | same monthly CNPJ snapshot | ZIP CSV, split files | very large | monthly | no |
   | Simples | same monthly CNPJ snapshot | ZIP CSV | large | monthly | no |
   | Reference tables (`Cnaes`, `Naturezas`, `Municipios`, `Paises`, `Qualificacoes`, `Motivos`) | same monthly CNPJ snapshot | ZIP CSV | small | monthly | no |
@@ -48,19 +48,21 @@ statement grain.
   keys use `YYYY-MM` and start at `2024-01`.
 - **Why**: the official source publishes full ZIP CSV snapshots. A paginated API is
   not needed and would be slower, less reproducible, and harder to backfill.
-- **Access caveat**: the historical RFB directory URL is cataloged, but the files
-  are now also served through a SERPRO+ JavaScript portal. The implementation
-  should have a resolver that can use the normal monthly directory when available
-  and a configured snapshot manifest/base URL when the JS portal blocks headless
-  discovery. This is a source-access issue, not a reason to switch to per-record
-  API ingestion.
+- **Access caveat**: the historical
+  `arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/` path returns
+  404 from this environment. The default fetch path uses the Casa dos Dados
+  open mirror (`https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/`),
+  which exposes the same RFB CNPJ ZIP layout through simple directory listings.
+  The mirror publishes dated directories such as `2026-05-10/`; the Dagster
+  partition key remains the month (`2026-05`) and resolves to the latest dated
+  directory for that month.
 - **Format**: ZIP files containing Latin-1, semicolon-delimited CSV with no header.
   RFB uses fixed published column order per file family. Dates are `YYYYMMDD`.
   Monetary values such as `capital_social` use Brazilian decimal formatting.
 - **Partitioning**: every `brazil_rfb` asset uses the same monthly partition
   definition. The partition key is the RFB snapshot directory name, for example
-  partition `2026-05` resolves
-  `.../dados_abertos_cnpj/2026-05/`. Current DuckDB and ClickHouse tables hold the
+  partition `2026-05` resolves the latest matching dated directory such as
+  `.../arquivos/2026-05-10/`. Current DuckDB and ClickHouse tables hold the
   selected snapshot's full-refresh state; historical partition materializations
   are tracked by Dagster, not retained as separate monthly rows in the final
   tables.
@@ -84,13 +86,14 @@ statement grain.
   `snapshot_year_month`. The asset accepts that deprecated field only when it
   matches the selected partition; otherwise the run fails before download.
 
-  Override the base URL only for mirrors or tests:
+  Override the base URL only for tests or if the official RFB host becomes
+  directly browsable again:
 
   ```yaml
   ops:
     brazil_rfb_snapshot_files_duckdb:
       config:
-        snapshot_base_url: "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/"
+        snapshot_base_url: "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/"
   ```
 - **DuckDB reader**: use DuckDB `read_csv` over unzipped files with explicit
   column lists, `all_varchar=true`, `header=false`, `delim=';'`, and Latin-1
@@ -262,9 +265,10 @@ statement grain.
 
 ## 9. Issues expected during processing
 
-- **SERPRO+ portal discovery**: the open data may not expose a simple browsable
-  directory to headless clients. Build the resolver with a configured snapshot URL
-  override instead of blocking the transform design on the portal UI.
+- **RFB host discovery**: the historical RFB host can return 404/timeout to
+  headless clients. The resolver therefore defaults to the Casa dos Dados mirror
+  and supports dated monthly directories (`YYYY-MM-DD/`) plus direct month
+  directories (`YYYY-MM/`) for future host changes.
 - **Large split files**: `Estabelecimentos` is the heavy part. Load by file family
   and checkpoint before transformations.
 - **Latin-1 and no headers**: use explicit schemas and encoding. Never infer

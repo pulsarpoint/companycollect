@@ -14,7 +14,7 @@ uses real CVM data; financials were verified live.
 
 | Source slug | Source name | Status | Access | License | Role |
 |---|---|---|---|---|---|
-| rfb_cnpj | Receita Federal — Dados Públicos CNPJ | recommended | public (bulk via SERPRO+ portal) | open (LAI/CC-BY) | Authoritative open registry (all entities) |
+| rfb_cnpj | Receita Federal — Dados Públicos CNPJ | recommended | public bulk; headless mirror available | open (LAI/CC-BY) | Authoritative open registry (all entities) |
 | cvm_dfp_itr | CVM Dados Abertos — DFP/ITR | recommended | public, no key | open (CC-BY) | Open financials (listed companies) |
 | junta_comercial_nire | Juntas Comerciais (NIRE) | blocked_payment | per-document (paid) | varies | Incorporation acts / officers (enrichment) |
 
@@ -24,8 +24,9 @@ uses real CVM data; financials were verified live.
   Empresas (razão social, legal nature, capital, size), Estabelecimentos (trade
   name, status, CNAE, address, dates), Sócios (partners — personal data), Simples
   (tax regime), and reference code lists. Schema documented from the published RFB
-  layout (bulk ZIPs now served via Receita's SERPRO+ JS portal — open, but not
-  fetchable headlessly in this run).
+  layout. The historical Receita file path returned 404/timeout headlessly; the
+  Casa dos Dados mirror exposes the open ZIPs under dated monthly folders such as
+  `2026-05-10/`.
 - **cvm_dfp_itr** — open standardized financial statements (BPA/BPP balance sheet,
   DRE income, DFC cash flow, DMPL equity, DRA/DVA) for listed companies, keyed on
   CNPJ_CIA + CD_CVM, in BRL. **Verified live** (dfp_cia_aberta_2025.zip; real data

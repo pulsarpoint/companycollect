@@ -23,10 +23,12 @@ registry**. Every legal entity has a **CNPJ (Cadastro Nacional da Pessoa Jurídi
 - Reference tables — **Cnaes**, **Naturezas** (legal natures), **Municipios**,
   **Paises**, **Qualificações**, **Motivos** (status reasons).
 
-This covers **~50M+ entities** and is fully open. (Access note: the files are now
-served through Receita's SERPRO+ portal — a JS app — so the bulk ZIPs could not be
-fetched headlessly in this run; the layout below is the authoritative published
-spec, and the dataset is listed on dados.gov.br.)
+This covers **~50M+ entities** and is fully open. (Access note: the historical
+Receita `arquivos.receitafederal.gov.br/dados/cnpj/...` path returned
+404/timeout headlessly, but the Casa dos Dados mirror is reachable at
+`https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/`. It exposes dated
+monthly folders such as `2026-05-10/` and direct ZIPs such as `Cnaes.zip`,
+`Empresas0.zip`, and `Estabelecimentos0.zip`.)
 
 ## Financial data — verified open
 

@@ -25,10 +25,13 @@ Brazil is a **top-tier open-data country**: the **complete company registry** an
 - **CVM directory** lists `dfp_cia_aberta_{YYYY}.zip` (2022–2026) — reachable and
   downloadable, no key.
 - **RFB CNPJ**: the dados-públicos-CNPJ landing page (gov.br) is live, and the
-  dataset is on dados.gov.br, but the bulk ZIPs are now served via Receita's
-  **SERPRO+ portal (a JS app)** — the directory and direct file URLs returned
-  404/timeout headlessly. The CNPJ layout below is the **authoritative published
-  RFB spec**; the data itself is open (no auth/payment).
+  dataset is on dados.gov.br. The historical
+  `arquivos.receitafederal.gov.br/dados/cnpj/...` path returned 404/timeout
+  headlessly, but the Casa dos Dados mirror is reachable and exposes dated
+  snapshot folders such as `2026-05-10/` with direct ZIPs including
+  `Cnaes.zip`, `Empresas0.zip`, and `Estabelecimentos0.zip`. The CNPJ layout
+  below is the **authoritative published RFB spec**; the data itself is open
+  (no auth/payment).
 - **dados.gov.br** CKAN API now needs a **free token** (401 without it).
 
 ## Identifiers
