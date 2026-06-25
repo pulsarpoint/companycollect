@@ -56,7 +56,20 @@ surfaced through a join view, so they survive Dagster's wipe-and-replace and nev
 | 6 | Write-back model | **Separate `text_translations` table + join view**; survives Dagster's wipe-and-replace |
 | 7 | Dedup granularity | **Term-level** — translate each distinct string once (existing `item_id = hash(text+lang)`) |
 | 8 | Service name | `corpscout/translator` (Python package + worker entrypoint) |
-| 9 | `_en` exposure | **New join-view**; drop `_en` columns from the base companies table |
+| 9 | `_en` exposure | **New join-view**; drop the **free-text** `_en` columns from the base companies table (see scoping note) |
+
+> **Scoping — which `_en` columns this service owns:** `corpscout.companies` has 7 `_en` columns, but only the
+> **3 free-text** ones are translated by this service: `articles_purpose_en`, `activity_text_en`,
+> `company_description_en`. The other 4 — `legal_form_description_en`, `nace1_description_en`,
+> `nace2_description_en`, `nace3_description_en` — are **reference-data** translations (legal-form + NACE
+> lookups, translated once in their reference tables, not per company). They are **out of scope**: the
+> translator never touches them, the view passes them through from the base table unchanged, and only the 3
+> free-text columns are dropped from the base table and re-supplied via `text_translations`.
+
+> **`<normalize>` in v1 = identity (raw text):** to keep the scan / flush / view hashes provably consistent and
+> match the existing queue's exact-text dedup (`sha256(source_text)`, no normalization), v1 hashes the **raw**
+> original text: `cityHash64(<original_col>)`. A normalization expression can be introduced later as a single
+> shared SQL function, but is deliberately deferred to avoid a three-way drift bug in the first cut.
 | 10 | Hash join contract | **ClickHouse computes the join hash on both write and read** — no cross-language hash contract |
 | 11 | Registry form | **Static, in-code Python** (typed dataclass in `registry.py`) — the source of truth for *which* columns are translatable, now that `_en` is dropped from the base table. Adding a source = a code change + test |
 
