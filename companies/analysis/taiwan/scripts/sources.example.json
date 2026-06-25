@@ -1,0 +1,34 @@
+[
+  {
+    "name": "MOEA GCIS Company Basic Data (by 統一編號)",
+    "slug": "gcis_company_basic",
+    "type": "api_page",
+    "url": "https://data.gcis.nat.gov.tw/od/data/api/5F64D864-61CB-4D0D-8AD9-492047CC1EA6?$format=json&$filter=Business_Accounting_NO%20eq%2022099131&$top=1",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "$skip",
+    "page_start": 0,
+    "max_pages": 1,
+    "note": "Open JSON REST API. Reliable access path is $filter=Business_Accounting_NO eq <8-digit 統一編號>. Encode spaces (%20). The Company_Name `like` filter is finicky. Dates are ROC/Minguo (YYYMMDD). Responsible_Name is personal data — redact."
+  },
+  {
+    "name": "TWSE Listed Company Basic Info",
+    "slug": "twse_listed",
+    "type": "bulk",
+    "url": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0,
+    "note": "Open JSON array of all listed (main board) companies (~1,089). Join to GCIS on 營利事業統一編號. Setup/listing dates Gregorian. Chairman/GM/spokesperson are personal data — redact."
+  },
+  {
+    "name": "TPEx OTC Company Basic Info",
+    "slug": "tpex_listed",
+    "type": "bulk",
+    "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "max_pages": 0,
+    "note": "Open JSON array of all OTC (櫃買) companies (~890). Join to GCIS on UnifiedBusinessNo. Chairman/GeneralManager are personal data — redact."
+  }
+]
