@@ -1,0 +1,23 @@
+{
+  "country": "Kenya",
+  "country_slug": "kenya",
+  "source_slug": "nse_listed",
+  "source_name": "NSE — Nairobi Securities Exchange (listed companies + financials)",
+  "source_type": "financial_disclosure",
+  "organization": "Nairobi Securities Exchange PLC (NSE)",
+  "source_url": "https://www.nse.co.ke/listed-companies/",
+  "license": "public_disclosure",
+  "access": "public_open",
+  "data_freshness": "event_driven_quarterly",
+  "record_shape": "html_directory_one_row_per_listed_company",
+  "primary_keys": ["ticker"],
+  "join_keys": ["ticker", "company_name"],
+  "field_count": 5,
+  "fields": [
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Listed company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["Absa Bank Kenya PLC", "Stanbic Holdings Plc", "Sasini Ltd"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Listed companies only (~60).", "source_confidence": "high", "analysis_notes": "Display name; verified on the listed-companies page." },
+    { "path": "ticker", "source_field": "Ticker / Symbol", "english_name": "ticker", "meaning": "NSE ticker symbol.", "data_type": "string", "semantic_type": "identifier", "example_values": ["ABSA", "SBIC", "SASN"], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "Some tickers from public knowledge; verify on the page.", "source_confidence": "medium", "analysis_notes": "Listed-entity key." },
+    { "path": "sector_segment", "source_field": "Sector / Market Segment", "english_name": "sector_segment", "meaning": "NSE sector / market segment.", "data_type": "string", "semantic_type": "activity", "example_values": ["Banking", "Agricultural", "Commercial & Services", "Manufacturing & Allied", "Investment"], "nullable": true, "repeatable": false, "code_list": "NSE sectors", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "announcements", "source_field": "Listed Company Announcements", "english_name": "announcements", "meaning": "Company announcements (financial results, notices).", "data_type": "array", "semantic_type": "filing", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "Via nse.co.ke/listed-company-announcements.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "financial_results", "source_field": "Financial Results", "english_name": "financial_results", "meaning": "Listed-company financial statements (KES).", "data_type": "array", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "Listed only; currency KES.", "source_confidence": "medium", "analysis_notes": "Full statements via announcements / issuer pages." }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "country": "Kenya",
+  "country_slug": "kenya",
+  "source_slug": "brs_ecitizen",
+  "source_identity": "kenya_brs_ecitizen",
+  "source_package": "brs",
+  "env_prefix": "KE_BRS",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "BRS — Business Registration Service (company search + documents via eCitizen)",
+    "source_type": "official_registry",
+    "organization": "Business Registration Service (Office of the Registrar of Companies)",
+    "source_url": "https://brs.ecitizen.go.ke/",
+    "license": "paid_per_transaction",
+    "access": "ecitizen_login_paid",
+    "data_freshness": "live",
+    "attribution": "BRS (Business Registration Service)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["KE_ECITIZEN_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://brs.ecitizen.go.ke/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["eCitizen session (login)"],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per-transaction search + document fee (KES); eCitizen login; 403 to automation"
+  },
+  "snapshot": {
+    "strategy": "none_gated_paid",
+    "file_extension": ".pdf",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "BrsCompany",
+    "date_formats": ["02/01/2006", "02-Jan-2006"],
+    "datetime_formats": [],
+    "number_formats": ["1,234,567.89"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "eCitizen login + paid. BRS is the official registrar (companies, business names, LLPs). Search + documents (CR12 directors/shareholders, status report, certified extract, annual returns) via eCitizen — paid per transaction (KES). brs.ecitizen.go.ke returned 403 to automation. No open bulk/API. Do NOT bypass the login/paywall. Field model from public knowledge; no values copied. Registration number = company id (old C./CPR, new PVT-XXXXXXX); KRA PIN join to tax. Redact directors/shareholders (Data Protection Act 2019)."
+  },
+  "keys": {
+    "primary_keys": ["registration_number"],
+    "join_keys": ["registration_number", "kra_pin", "company_name"],
+    "dedupe_keys": ["registration_number"]
+  },
+  "mapping_rules": {
+    "company_id": "Registration Number (BRS).",
+    "registration_number": "Registration Number / BN.",
+    "tax_id": "KRA PIN.",
+    "vat_id": "none separate (VAT under the KRA PIN).",
+    "legal_name": "Company Name.",
+    "company_type": "Company Type (Private/Public Ltd, CLG, Business Name, LLP).",
+    "status": "Status (Active/Dormant/Dissolved/Struck off).",
+    "incorporation_date": "Registration Date.",
+    "registered_address": "Registered Office Address.",
+    "capital": "Nominal / Issued Capital (KES).",
+    "financials": "Annual returns / accounts (KES).",
+    "owners": "Shareholders (CR12) (REDACT natural persons).",
+    "officers": "Directors (CR12) (REDACT — personal data)."
+  },
+  "fixture_requirements": [
+    "active private limited (Ltd)",
+    "public limited (PLC)",
+    "business name (BN)",
+    "company limited by guarantee (CLG)",
+    "CR12 with directors/shareholders (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable headless (eCitizen login/403). From a logged-in session, verify a company by registration number/name.",
+    "full": "Blocked on payment — buy search/CR12/status report per company via an eCitizen account; redact personal data."
+  },
+  "blockers": [
+    "Search + documents (CR12/status report/annual returns) are paid per transaction (KES)",
+    "eCitizen login required; brs.ecitizen.go.ke returned 403 to automation",
+    "No open bulk/API; transport unconfirmed"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "country": "Kenya",
+  "country_slug": "kenya",
+  "source_slug": "brs_ecitizen",
+  "source_name": "BRS — Business Registration Service (company search + documents via eCitizen)",
+  "source_type": "official_registry",
+  "organization": "Business Registration Service (Office of the Registrar of Companies)",
+  "source_url": "https://brs.ecitizen.go.ke/",
+  "license": "paid_per_transaction",
+  "access": "ecitizen_login_paid",
+  "data_freshness": "live",
+  "record_shape": "per_company_search_and_documents_ecitizen_login_paid",
+  "primary_keys": ["registration_number"],
+  "join_keys": ["registration_number", "kra_pin", "company_name"],
+  "field_count": 10,
+  "fields": [
+    { "path": "registration_number", "source_field": "Registration Number", "english_name": "registration_number", "meaning": "BRS company registration number (old C./CPR; new PVT-XXXXXXX). BN for business names.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Documented from public knowledge; eCitizen login-gated, no live values.", "source_confidence": "high", "analysis_notes": "Primary key." },
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Registered name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "company_type", "source_field": "Company Type", "english_name": "company_type", "meaning": "Private/Public Ltd, company limited by guarantee, business name, LLP.", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Private Ltd/Public Ltd/CLG/Business Name/LLP", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Registration status (Active / Dormant / Dissolved / Struck off).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Active/Dormant/Dissolved/Struck off", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "registration_date", "source_field": "Registration Date", "english_name": "registration_date", "meaning": "Date of registration/incorporation.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "registered_address", "source_field": "Registered Office Address", "english_name": "registered_address", "meaning": "Registered office address (postal / physical).", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "nominal_capital", "source_field": "Nominal / Issued Capital", "english_name": "nominal_capital", "meaning": "Nominal / issued share capital (KES).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Currency KES; from paid documents.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "kra_pin", "source_field": "KRA PIN", "english_name": "tax_id", "meaning": "Kenya Revenue Authority tax id.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "medium", "analysis_notes": "Tax join key." },
+    { "path": "directors", "source_field": "Directors (CR12)", "english_name": "directors", "meaning": "Company directors (from the CR12 document).", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA (Data Protection Act 2019) — REDACT.", "source_confidence": "high", "analysis_notes": "Redact." },
+    { "path": "shareholders", "source_field": "Shareholders (CR12)", "english_name": "shareholders", "meaning": "Shareholders and shareholdings (from the CR12 document).", "data_type": "array", "semantic_type": "ownership", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA when natural persons — REDACT.", "source_confidence": "high", "analysis_notes": "Redact natural persons." }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "country": "Kenya",
+  "country_slug": "kenya",
+  "country_profile_version": "2026-06-25",
+  "_note": "Identity/listing from the NSE listed-companies directory (verified live: Absa Bank Kenya PLC). Registration number, KRA PIN, capital, directors/shareholders (CR12) and annual returns are BRS documents via eCitizen (login + paid) — so those values are null. Nothing fabricated.",
+  "registration": {
+    "registration_number": null
+  },
+  "tax_identifiers": {
+    "kra_pin": null,
+    "vat_id": null
+  },
+  "legal_identity": {
+    "legal_name": "Absa Bank Kenya PLC",
+    "company_type": "Public limited company (PLC)"
+  },
+  "status": {
+    "status_text": "Active",
+    "registration_date": null
+  },
+  "activity": {
+    "nse_sector": "Banking"
+  },
+  "registered_location": {
+    "registered_address": null
+  },
+  "capital": {
+    "nominal_capital": null,
+    "currency": "KES"
+  },
+  "owners": [
+    { "name": "[REDACTED-PII]", "shares": null }
+  ],
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Director" }
+  ],
+  "listing": {
+    "nse_ticker": "ABSA",
+    "sector_segment": "Banking"
+  },
+  "financial_statements": [
+    { "fiscal_year": "2024", "revenue": null, "profit": null, "currency": "KES" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "nse_listed",
+      "section": "legal_identity / status / activity.nse_sector / listing",
+      "source_url": "https://www.nse.co.ke/listed-companies/",
+      "access": "public_open",
+      "license": "public_disclosure",
+      "retrieved_at": "2026-06-25T00:00:00Z"
+    },
+    {
+      "source_slug": "brs_ecitizen",
+      "section": "registration / tax_identifiers / capital / owners / officers / financial_statements",
+      "source_url": "https://brs.ecitizen.go.ke/",
+      "access": "ecitizen_login_paid",
+      "license": "paid_per_transaction",
+      "retrieved_at": null
+    }
+  ]
+}

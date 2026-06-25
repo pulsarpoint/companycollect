@@ -1,0 +1,73 @@
+{
+  "country": "Kenya",
+  "country_slug": "kenya",
+  "source_slug": "nse_listed",
+  "source_identity": "kenya_nse_listed",
+  "source_package": "nselisted",
+  "env_prefix": "KE_NSE",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "NSE — Nairobi Securities Exchange (listed companies + financials)",
+    "source_type": "financial_disclosure",
+    "organization": "Nairobi Securities Exchange PLC (NSE)",
+    "source_url": "https://www.nse.co.ke/listed-companies/",
+    "license": "public_disclosure",
+    "access": "public_open",
+    "data_freshness": "event_driven_quarterly",
+    "attribution": "NSE / issuer"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "bulk_file",
+    "base_url": "https://www.nse.co.ke/listed-companies/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": "listed-companies directory table",
+    "total_results_path": null,
+    "pagination": { "type": "none", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public; be polite (single directory page ~60 companies)"
+  },
+  "snapshot": {
+    "strategy": "ndjson_one_record_per_line",
+    "file_extension": ".ndjson",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "NseListedCompany",
+    "date_formats": ["2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Parse the listed-companies HTML directory: company name, ticker, sector/segment. Listed announcements + financial results via /listed-company-announcements/. /wp-json/ is reachable for structured content. Listed companies only (~60). Join to BRS by company name. Do NOT use the paid real-time market-data feed without a licence."
+  },
+  "keys": {
+    "primary_keys": ["ticker"],
+    "join_keys": ["ticker", "company_name"],
+    "dedupe_keys": ["ticker"]
+  },
+  "mapping_rules": {
+    "company_id": "ticker (listed entity).",
+    "legal_name": "Company Name.",
+    "activity_code": "Sector / Market Segment (NSE).",
+    "financials": "Financial results / announcements (KES)."
+  },
+  "fixture_requirements": [
+    "bank issuer (e.g. ABSA)",
+    "agricultural issuer (e.g. SASN)",
+    "holding company (e.g. SBIC)",
+    "company with missing ticker"
+  ],
+  "live_test_plan": {
+    "smoke": "GET /listed-companies/; assert Absa Bank Kenya PLC and Stanbic Holdings Plc are present.",
+    "full": "Parse the full directory; fetch announcements/financial results per company; politely rate-limit."
+  },
+  "blockers": []
+}
