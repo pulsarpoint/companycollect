@@ -1,0 +1,34 @@
+[
+  {
+    "name": "CR Newly Incorporated Local Companies (weekly CSV)",
+    "slug": "cr_rnc063l",
+    "type": "bulk",
+    "url": "https://www.cr.gov.hk/docs/wrpt/RNC063/RNC063L_20241230.csv",
+    "method": "GET",
+    "headers": { "Accept": "text/csv" },
+    "max_pages": 0,
+    "note": "Open CR weekly CSV: newly incorporated LOCAL companies + name changes. Fields: Seq, English name, Chinese name, BR Number, Date of Incorporation, Date of Change of name. Date DD-MM-YYYY. No personal data. Enumerate weekly file dates via the data.gov.hk CKAN API."
+  },
+  {
+    "name": "CR Newly Registered Non-HK Companies (weekly CSV)",
+    "slug": "cr_rnc063f",
+    "type": "bulk",
+    "url": "https://www.cr.gov.hk/docs/wrpt/RNC063/RNC063F_20241230.csv",
+    "method": "GET",
+    "headers": { "Accept": "text/csv" },
+    "max_pages": 0,
+    "note": "Open CR weekly CSV: newly registered NON-HONG-KONG companies + name changes. Fields: Seq, Corporate Name, Approved HK Name, BR Number, Date of Registration, Date of Change of name."
+  },
+  {
+    "name": "data.gov.hk CKAN — CR newly-registered dataset",
+    "slug": "datagovhk_cr_dataset",
+    "type": "api_page",
+    "url": "https://data.gov.hk/en-data/api/3/action/package_search?q=company",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "start",
+    "page_start": 0,
+    "max_pages": 1,
+    "note": "CKAN catalog. Use to enumerate the weekly RNC063L/RNC063F resource URLs (one per week) for the CR open dataset."
+  }
+]
