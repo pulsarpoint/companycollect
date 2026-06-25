@@ -4,27 +4,9 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"cc-enrich-worker/internal/vec"
 )
-
-func sqrt32(x float32) float32 { return float32(math.Sqrt(float64(x))) }
-
-func dot(a, b []float32) float32 {
-	var s float32
-	for i := range a {
-		s += a[i] * b[i]
-	}
-	return s
-}
-
-// norm L2-normalizes a vector (used here and by the embed client).
-func norm(v []float32) []float32 {
-	s := float32(1.0) / (sqrt32(dot(v, v)) + 1e-9)
-	out := make([]float32, len(v))
-	for i, x := range v {
-		out[i] = x * s
-	}
-	return out
-}
 
 // division: 2-digit NACE division from a possibly-messy code.
 func division(code string) string {
@@ -47,7 +29,7 @@ func Classify(page []float32, ref *Reference, protos *Prototypes) DomainResult {
 	}
 	sims := make([]sc, len(ref.M))
 	for i, row := range ref.M {
-		sims[i] = sc{i, dot(page, row)}
+		sims[i] = sc{i, vec.Dot(page, row)}
 	}
 	sort.Slice(sims, func(a, b int) bool { return sims[a].s > sims[b].s })
 
@@ -80,7 +62,7 @@ func Classify(page []float32, ref *Reference, protos *Prototypes) DomainResult {
 	var ptScore float32
 	ptLabel := ""
 	for i, row := range protos.P {
-		if s := dot(page, row); s > ptScore {
+		if s := vec.Dot(page, row); s > ptScore {
 			ptScore, ptLabel = s, protos.Labels[i]
 		}
 	}

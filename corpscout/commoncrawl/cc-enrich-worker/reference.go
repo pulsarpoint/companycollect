@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
+	"cc-enrich-worker/internal/vec"
 )
 
 type refRow struct {
@@ -23,7 +25,7 @@ func BuildReference(rows []refRow) *Reference {
 		ref.Codes = append(ref.Codes, r.Code)
 		ref.Labels = append(ref.Labels, r.Label)
 		ref.Divisions = append(ref.Divisions, r.Division)
-		ref.M = append(ref.M, norm(r.Embedding))
+		ref.M = append(ref.M, vec.Norm(r.Embedding))
 	}
 	return ref
 }
@@ -33,7 +35,7 @@ func BuildPrototypes(rows []protoRow) *Prototypes {
 	p := &Prototypes{}
 	for _, r := range rows {
 		p.Labels = append(p.Labels, r.PageType)
-		p.P = append(p.P, norm(r.Embedding))
+		p.P = append(p.P, vec.Norm(r.Embedding))
 	}
 	return p
 }

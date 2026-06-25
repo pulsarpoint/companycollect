@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"cc-enrich-worker/internal/vec"
+)
 
 func TestBuildReferenceNormalizesAndOrders(t *testing.T) {
 	ref := BuildReference([]refRow{
@@ -10,7 +14,7 @@ func TestBuildReferenceNormalizesAndOrders(t *testing.T) {
 	if len(ref.M) != 2 || ref.Codes[0] != "62.01" || ref.Divisions[1] != "47" {
 		t.Fatalf("co-ordering wrong: %+v", ref)
 	}
-	if d := dot(ref.M[0], ref.M[0]); d < 0.99 || d > 1.01 {
+	if d := vec.Dot(ref.M[0], ref.M[0]); d < 0.99 || d > 1.01 {
 		t.Fatalf("row 0 not normalized: %v", d)
 	}
 }
@@ -20,7 +24,7 @@ func TestBuildPrototypesNormalizes(t *testing.T) {
 	if len(p.P) != 1 || p.Labels[0] != "parked" {
 		t.Fatalf("labels wrong: %+v", p)
 	}
-	if d := dot(p.P[0], p.P[0]); d < 0.99 || d > 1.01 {
+	if d := vec.Dot(p.P[0], p.P[0]); d < 0.99 || d > 1.01 {
 		t.Fatalf("not normalized: %v", d)
 	}
 }

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/parquet-go/parquet-go"
+
+	"cc-enrich-worker/internal/vec"
 )
 
 type multiGetter map[string][]byte
@@ -57,9 +59,9 @@ func TestProcessShardAndParquet(t *testing.T) {
 		{RootDomain: "acme.com", URL: "https://acme.com/about", WarcFilename: "f.warc.gz", Offset: 1000, Length: int64(len(page2)), Primary: false},
 	}
 	ref := &Reference{Codes: []string{"62.01"}, Labels: []string{"Programming"}, Divisions: []string{"62"},
-		M: [][]float32{norm([]float32{1, 0, 0})}}
+		M: [][]float32{vec.Norm([]float32{1, 0, 0})}}
 	protos := &Prototypes{}
-	emb := fakeEmbedder{vec: norm([]float32{1, 0, 0})}
+	emb := fakeEmbedder{vec: vec.Norm([]float32{1, 0, 0})}
 	cfg := ShardConfig{CrawlID: "CC-MAIN-2026-25", SourceRunID: "run1",
 		ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 2}
 
@@ -103,8 +105,8 @@ func TestProcessShardIndustryMode(t *testing.T) {
 		{RootDomain: "acme.com", URL: "https://acme.com/", WarcFilename: "f.warc.gz", Offset: 0, Length: int64(len(page1)), Primary: true},
 	}
 	ref := &Reference{Codes: []string{"62.01"}, Labels: []string{"Programming"}, Divisions: []string{"62"},
-		M: [][]float32{norm([]float32{1, 0, 0})}}
-	emb := fakeEmbedder{vec: norm([]float32{1, 0, 0})}
+		M: [][]float32{vec.Norm([]float32{1, 0, 0})}}
+	emb := fakeEmbedder{vec: vec.Norm([]float32{1, 0, 0})}
 	cfg := ShardConfig{CrawlID: "C", ResolvedAt: time.Unix(1700000000, 0).UTC(), Concurrency: 1, Mode: "industry"}
 
 	res, err := ProcessShard(context.Background(), items, getter, emb, ref, &Prototypes{}, cfg)

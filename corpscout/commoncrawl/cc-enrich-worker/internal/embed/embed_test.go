@@ -7,12 +7,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-)
 
-// dot is a helper for tests; use Dot for public API.
-func dot(a, b []float32) float32 {
-	return Dot(a, b)
-}
+	"cc-enrich-worker/internal/vec"
+)
 
 func TestEmbedBatchesAndNormalizes(t *testing.T) {
 	var reqCount int64
@@ -55,7 +52,7 @@ func TestEmbedBatchesAndNormalizes(t *testing.T) {
 	if !sawPrefix.Load() {
 		t.Fatal("query instruction prefix not applied")
 	}
-	if d := dot(vecs[0], vecs[0]); d < 0.99 || d > 1.01 {
+	if d := vec.Dot(vecs[0], vecs[0]); d < 0.99 || d > 1.01 {
 		t.Fatalf("not normalized: %v", d)
 	}
 }

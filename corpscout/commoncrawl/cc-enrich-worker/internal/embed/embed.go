@@ -4,16 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"sync"
+
+	"cc-enrich-worker/internal/vec"
 )
 
 const (
-	embedMaxChars  = 2000 // COMMONCRAWL_EMBED_MAX_CHARS default
-	MaxChars       = 2000 // exported max chars for text truncation (COMMONCRAWL_EMBED_MAX_CHARS)
-	embedBatch     = 16   // texts/request; small so requests co-batch under the engine token budget
-	DefaultBatch   = 16   // default batch size for embeddings
+	MaxChars     = 2000 // max chars for text truncation (COMMONCRAWL_EMBED_MAX_CHARS)
+	DefaultBatch = 16   // texts/request; small so requests co-batch under the engine token budget
 )
 
 type EmbedClient struct {
@@ -29,7 +28,7 @@ type EmbedClient struct {
 // leaves it idle). concurrency<=1 is sequential.
 func NewEmbedClient(baseURL, model string, batch, concurrency int) *EmbedClient {
 	if batch <= 0 {
-		batch = embedBatch
+		batch = DefaultBatch
 	}
 	if concurrency <= 0 {
 		concurrency = 1
@@ -63,8 +62,8 @@ func (c *EmbedClient) Embed(texts []string, instruction string) ([][]float32, er
 		}
 		ct := make([]string, 0, end-i)
 		for _, t := range texts[i:end] {
-			if len(t) > embedMaxChars {
-				t = t[:embedMaxChars]
+			if len(t) > MaxChars {
+				t = t[:MaxChars]
 			}
 			if instruction != "" {
 				t = "Instruct: " + instruction + "\nQuery: " + t
@@ -125,28 +124,7 @@ func (c *EmbedClient) embedOne(chunk []string) ([][]float32, error) {
 	}
 	out := make([][]float32, len(parsed.Data))
 	for i, d := range parsed.Data {
-		out[i] = norm(d.Embedding)
+		out[i] = vec.Norm(d.Embedding)
 	}
 	return out, nil
-}
-
-func sqrt32(x float32) float32 { return float32(math.Sqrt(float64(x))) }
-
-// Dot returns the dot product of vectors a and b.
-func Dot(a, b []float32) float32 {
-	var s float32
-	for i := range a {
-		s += a[i] * b[i]
-	}
-	return s
-}
-
-// Norm L2-normalizes a vector.
-func norm(v []float32) []float32 {
-	s := float32(1.0) / (sqrt32(Dot(v, v)) + 1e-9)
-	out := make([]float32, len(v))
-	for i, x := range v {
-		out[i] = x * s
-	}
-	return out
 }
