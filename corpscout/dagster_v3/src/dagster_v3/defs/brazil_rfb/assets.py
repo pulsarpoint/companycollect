@@ -6,7 +6,7 @@ import dagster as dg
 from dagster_clickhouse import ClickhouseResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from dagster_v3.defs.brazil_rfb import contacts, source, staging, tables, transforms
 from dagster_v3.defs.brazil_rfb.clickhouse import (
@@ -38,6 +38,15 @@ BRAZIL_RFB_BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=
 
 
 class BrazilRfbConfig(dg.Config):
+    snapshot_year_month: str | None = Field(
+        default=None,
+        description=(
+            "Deprecated compatibility field for saved launch config. Select the "
+            "monthly Dagster partition instead. If provided, this value must match "
+            "the selected Dagster partition key."
+        ),
+        examples=["2026-05"],
+    )
     snapshot_base_url: str = Field(
         default=source.DEFAULT_BASE_URL,
         description=(
@@ -47,6 +56,13 @@ class BrazilRfbConfig(dg.Config):
             "https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/2026-05/."
         ),
     )
+
+    @field_validator("snapshot_year_month")
+    @classmethod
+    def validate_snapshot_year_month(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return source.validate_snapshot_year_month(value)
 
 
 class BrazilRfbDltTranslator(DagsterDltTranslator):
@@ -82,6 +98,22 @@ def brazil_rfb_snapshot_files_duckdb(
     dlt: DagsterDltResource,
 ) -> Iterator[Any]:
     snapshot_year_month = source.validate_snapshot_year_month(context.partition_key)
+    if (
+        config.snapshot_year_month is not None
+        and config.snapshot_year_month != snapshot_year_month
+    ):
+        raise dg.Failure(
+            description=(
+                "Deprecated snapshot_year_month config "
+                f"{config.snapshot_year_month!r} does not match selected partition "
+                f"{snapshot_year_month!r}. Remove snapshot_year_month from run config "
+                "or select the matching partition."
+            ),
+            metadata={
+                "configured_snapshot_year_month": config.snapshot_year_month,
+                "partition_key": snapshot_year_month,
+            },
+        )
     yield from dlt.run(
         context=context,
         dlt_source=source.brazil_rfb_source(

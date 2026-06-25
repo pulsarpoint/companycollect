@@ -80,6 +80,10 @@ statement grain.
   partition: "2026-05"
   ```
 
+  Saved launch configs from before partitioning may still contain
+  `snapshot_year_month`. The asset accepts that deprecated field only when it
+  matches the selected partition; otherwise the run fails before download.
+
   Override the base URL only for mirrors or tests:
 
   ```yaml

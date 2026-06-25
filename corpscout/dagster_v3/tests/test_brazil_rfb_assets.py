@@ -1,6 +1,7 @@
 from datetime import datetime
 
 import dagster as dg
+import pytest
 
 
 def test_brazil_rfb_raw_assets_are_registered_with_single_writer_pool() -> None:
@@ -75,13 +76,18 @@ def test_brazil_rfb_assets_are_monthly_partitioned_from_2024() -> None:
         assert partition_keys == ["2024-01", "2024-02"]
 
 
-def test_brazil_rfb_snapshot_config_documents_base_url_override_only() -> None:
+def test_brazil_rfb_snapshot_config_documents_partition_key_source() -> None:
     from dagster_v3.defs.brazil_rfb.assets import BrazilRfbConfig
 
     fields = BrazilRfbConfig.model_fields
 
-    assert "snapshot_year_month" not in fields
+    assert "snapshot_year_month" in fields
     assert "snapshot_month" not in fields
+    assert fields["snapshot_year_month"].description is not None
+    assert "Deprecated" in (fields["snapshot_year_month"].description or "")
+    assert "must match the selected Dagster partition key" in (
+        fields["snapshot_year_month"].description or ""
+    )
     assert fields["snapshot_base_url"].description is not None
     assert "dados_abertos_cnpj" in fields["snapshot_base_url"].description
     assert "Partition key controls the YYYY-MM snapshot" in (
@@ -129,6 +135,57 @@ def test_brazil_rfb_snapshot_asset_uses_partition_key_for_snapshot(monkeypatch) 
     assert calls["source"]["download_dir"] == assets.BRAZIL_RFB_DOWNLOAD_DIR / "2024-02"
     assert calls["run"]["dlt_source"] == "dlt-source"
     assert calls["run"]["dlt_pipeline"] == "dlt-pipeline"
+
+
+def test_brazil_rfb_snapshot_asset_accepts_matching_legacy_snapshot_config(
+    monkeypatch,
+) -> None:
+    from dagster_v3.defs.brazil_rfb import assets
+
+    calls = {}
+
+    class FakeContext:
+        run_id = "run-1"
+        partition_key = "2024-02"
+
+    class FakeDlt:
+        def run(self, **kwargs):
+            calls["source"] = kwargs["dlt_source"]
+            yield "materialization"
+
+    def fake_source(**kwargs):
+        return kwargs
+
+    monkeypatch.setattr(assets.source, "brazil_rfb_source", fake_source)
+    monkeypatch.setattr(assets.source, "brazil_rfb_pipeline", lambda database_path: None)
+
+    result = list(
+        assets.brazil_rfb_snapshot_files_duckdb.node_def.compute_fn.decorated_fn(
+            FakeContext(),
+            assets.BrazilRfbConfig(snapshot_year_month="2024-02"),
+            FakeDlt(),
+        )
+    )
+
+    assert result == ["materialization"]
+    assert calls["source"]["snapshot_year_month"] == "2024-02"
+
+
+def test_brazil_rfb_snapshot_asset_rejects_mismatched_legacy_snapshot_config() -> None:
+    from dagster_v3.defs.brazil_rfb import assets
+
+    class FakeContext:
+        run_id = "run-1"
+        partition_key = "2024-02"
+
+    with pytest.raises(dg.Failure, match="does not match selected partition"):
+        list(
+            assets.brazil_rfb_snapshot_files_duckdb.node_def.compute_fn.decorated_fn(
+                FakeContext(),
+                assets.BrazilRfbConfig(snapshot_year_month="2024-03"),
+                object(),
+            )
+        )
 
 
 def test_brazil_rfb_raw_asset_depends_on_snapshot_manifest() -> None:
