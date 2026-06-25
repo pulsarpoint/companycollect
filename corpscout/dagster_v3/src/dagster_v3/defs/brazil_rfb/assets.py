@@ -7,10 +7,12 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
-from dagster_v3.defs.brazil_rfb import source, staging, tables, transforms
+from dagster_v3.defs.brazil_rfb import contacts, source, staging, tables, transforms
 from dagster_v3.defs.brazil_rfb.clickhouse import (
+    export_brazil_rfb_clickhouse_contact_info,
     export_brazil_rfb_clickhouse_companies,
     export_brazil_rfb_clickhouse_establishments,
+    export_brazil_rfb_clickhouse_websites,
 )
 
 GROUP_NAME = "brazil_rfb"
@@ -20,8 +22,12 @@ BRAZIL_RFB_DOWNLOAD_DIR = Path("data/brazil_rfb_downloads")
 SNAPSHOT_FILES_ASSET_KEY = "brazil_rfb_snapshot_files_duckdb"
 RAW_FILES_ASSET_KEY = "brazil_rfb_raw_files_duckdb"
 COMPANIES_ASSET_KEY = "brazil_rfb_companies_duckdb"
+CONTACT_INFO_ASSET_KEY = "brazil_rfb_contact_info_duckdb"
+WEBSITES_ASSET_KEY = "brazil_rfb_websites_duckdb"
 CLICKHOUSE_COMPANIES_ASSET_KEY = "brazil_rfb_clickhouse_companies"
 CLICKHOUSE_ESTABLISHMENTS_ASSET_KEY = "brazil_rfb_clickhouse_establishments"
+CLICKHOUSE_CONTACT_INFO_ASSET_KEY = "brazil_rfb_clickhouse_contact_info"
+CLICKHOUSE_WEBSITES_ASSET_KEY = "brazil_rfb_clickhouse_websites"
 
 
 class BrazilRfbConfig(dg.Config):
@@ -106,6 +112,49 @@ def brazil_rfb_companies_duckdb(context: dg.AssetExecutionContext) -> dg.Materia
 
 
 @dg.asset(
+    name=CONTACT_INFO_ASSET_KEY,
+    deps=[dg.AssetKey(COMPANIES_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "sql"},
+    pool=BRAZIL_RFB_DUCKDB_POOL,
+    description=(
+        "Brazil RFB establishment contact info normalized in DuckDB "
+        "with accepted unique email domains."
+    ),
+)
+def brazil_rfb_contact_info_duckdb(
+    context: dg.AssetExecutionContext,
+) -> dg.MaterializeResult:
+    counts = contacts.build_brazil_rfb_contact_info(
+        database_path=BRAZIL_RFB_DUCKDB_PATH,
+        source_run_id=context.run_id,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
+    name=WEBSITES_ASSET_KEY,
+    deps=[dg.AssetKey(CONTACT_INFO_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "sql"},
+    pool=BRAZIL_RFB_DUCKDB_POOL,
+    description=(
+        "Brazil RFB email-derived br_websites feeder table for the "
+        "cross-source domain graph."
+    ),
+)
+def brazil_rfb_websites_duckdb(
+    context: dg.AssetExecutionContext,
+) -> dg.MaterializeResult:
+    counts = contacts.build_brazil_rfb_websites(
+        database_path=BRAZIL_RFB_DUCKDB_PATH,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(metadata=counts)
+
+
+@dg.asset(
     name=CLICKHOUSE_COMPANIES_ASSET_KEY,
     deps=[dg.AssetKey(COMPANIES_ASSET_KEY)],
     group_name=GROUP_NAME,
@@ -154,12 +203,68 @@ def brazil_rfb_clickhouse_establishments(
     )
 
 
+@dg.asset(
+    name=CLICKHOUSE_CONTACT_INFO_ASSET_KEY,
+    deps=[dg.AssetKey(CONTACT_INFO_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=BRAZIL_RFB_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_BR_COMPANY_CONTACT_INFO_TABLE},
+    description=(
+        "Brazil RFB company contact info exported to ClickHouse "
+        "corpscout.br_company_contact_info."
+    ),
+)
+def brazil_rfb_clickhouse_contact_info(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    rows = export_brazil_rfb_clickhouse_contact_info(
+        database_path=BRAZIL_RFB_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={"rows": rows, "table": tables.QUALIFIED_BR_COMPANY_CONTACT_INFO_TABLE},
+    )
+
+
+@dg.asset(
+    name=CLICKHOUSE_WEBSITES_ASSET_KEY,
+    deps=[dg.AssetKey(WEBSITES_ASSET_KEY)],
+    group_name=GROUP_NAME,
+    kinds={"python", "duckdb", "clickhouse"},
+    pool=BRAZIL_RFB_DUCKDB_POOL,
+    metadata={"table": tables.QUALIFIED_BR_WEBSITES_TABLE},
+    description=(
+        "Brazil RFB email-derived websites exported to ClickHouse "
+        "corpscout.br_websites for the domain graph."
+    ),
+)
+def brazil_rfb_clickhouse_websites(
+    context: dg.AssetExecutionContext,
+    clickhouse: ClickhouseResource,
+) -> dg.MaterializeResult:
+    rows = export_brazil_rfb_clickhouse_websites(
+        database_path=BRAZIL_RFB_DUCKDB_PATH,
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={"rows": rows, "table": tables.QUALIFIED_BR_WEBSITES_TABLE},
+    )
+
+
 defs = dg.Definitions(
     assets=[
         brazil_rfb_snapshot_files_duckdb,
         brazil_rfb_raw_files_duckdb,
         brazil_rfb_companies_duckdb,
+        brazil_rfb_contact_info_duckdb,
+        brazil_rfb_websites_duckdb,
         brazil_rfb_clickhouse_companies,
         brazil_rfb_clickhouse_establishments,
+        brazil_rfb_clickhouse_contact_info,
+        brazil_rfb_clickhouse_websites,
     ],
 )

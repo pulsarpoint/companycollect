@@ -129,18 +129,20 @@ statement grain.
     `activity_start_date`, address columns, `primary_cnae_code`,
     `secondary_cnae_codes`, source columns.
   - `ORDER BY (cnpj_basico, cnpj)`.
-- **`br_company_contacts`**: one row per normalized contact.
+- **`br_company_contact_info`**: one row per normalized contact.
   - Core columns: `cnpj_basico`, `cnpj`, `contact_type`, `contact_type_en`,
-    `contact_value`, `domain`, `domain_source`, `is_current`, source columns.
+    `contact_value`, `root_domain`, `domain_source`, `is_current`, source columns.
   - `domain_source` is `email` when a unique company email domain is accepted,
     otherwise empty. There is no website field in RFB CNPJ.
   - `ORDER BY (cnpj_basico, contact_type, contact_value, cnpj)`.
-- **`br_company_domains`**: one row per `(cnpj_basico, domain)` for the shared
-  domain graph.
+- **`br_websites`**: one row per `(cnpj_basico, root_domain)` for the shared
+  `company_website_domains` graph.
   - Email-derived domains are accepted only when the suffix belongs to one
     distinct `cnpj_basico`, with the same `EMAIL_DOMAIN_MAX_COMPANIES=1` rule used
     by Estonia. A small provider denylist remains a backstop.
-  - `ORDER BY (cnpj_basico, domain)`.
+  - RFB does not publish official website URLs, so first-version rows use
+    `domain_source='email'` and leave website URL/host fields empty.
+  - `ORDER BY (cnpj_basico, root_domain)`.
 - **`br_industries`**: one row per company CNAE to NACE edge.
   - Core columns: `cnpj_basico`, `source_industry_code`,
     `source_industry_code_set='CNAE_2_0'`, `description_original`,

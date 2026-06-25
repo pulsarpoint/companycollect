@@ -1,5 +1,7 @@
 import importlib.util
 
+from dagster import AssetKey
+
 from dagster_v3.defs.domains import tables
 
 
@@ -63,7 +65,10 @@ def test_replace_domain_clickhouse_tables_uses_stage_exchange(
         and "`corpscout`.`wikidata_company_websites`" in statement
         and "`corpscout`.`wikidata_companies`" in statement
         and "`corpscout`.`ee_company_domains`" in statement
+        and "`corpscout`.`br_websites`" in statement
         and "companies.headquarters_country_iso2" in statement
+        and "'brazil_rfb' AS source_slug" in statement
+        and "'cnpj_basico' AS company_id_type" in statement
         and "source_website_table" in statement
         and "source_website_id" in statement
         and "domain_source" in statement
@@ -87,3 +92,15 @@ def test_replace_domain_clickhouse_tables_uses_stage_exchange(
         "DROP TABLE IF EXISTS `corpscout`.`_tmp_company_website_domains_links`",
         "DROP TABLE IF EXISTS `corpscout`.`_tmp_domains_domain_dim`",
     ]
+
+
+def test_domains_clickhouse_depends_on_brazil_websites() -> None:
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    parents = {
+        parent.path[-1]
+        for parent in repo.asset_graph.get(AssetKey("domains_clickhouse")).parent_keys
+    }
+
+    assert "brazil_rfb_clickhouse_websites" in parents

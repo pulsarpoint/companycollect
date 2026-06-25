@@ -95,11 +95,19 @@ SNAPSHOT_FILE_COLUMNS = {
 
 COMPANIES_TABLE = "companies"
 ESTABLISHMENTS_TABLE = "establishments"
+COMPANY_CONTACT_INFO_TABLE = "company_contact_info"
+WEBSITES_TABLE = "websites"
 
 BR_COMPANIES_TABLE_CH = "br_companies"
 BR_ESTABLISHMENTS_TABLE_CH = "br_establishments"
+BR_COMPANY_CONTACT_INFO_TABLE_CH = "br_company_contact_info"
+BR_WEBSITES_TABLE_CH = "br_websites"
 QUALIFIED_BR_COMPANIES_TABLE = f"{BRAZIL_RFB_DATABASE}.{BR_COMPANIES_TABLE_CH}"
 QUALIFIED_BR_ESTABLISHMENTS_TABLE = f"{BRAZIL_RFB_DATABASE}.{BR_ESTABLISHMENTS_TABLE_CH}"
+QUALIFIED_BR_COMPANY_CONTACT_INFO_TABLE = (
+    f"{BRAZIL_RFB_DATABASE}.{BR_COMPANY_CONTACT_INFO_TABLE_CH}"
+)
+QUALIFIED_BR_WEBSITES_TABLE = f"{BRAZIL_RFB_DATABASE}.{BR_WEBSITES_TABLE_CH}"
 
 BR_COMPANIES_COLUMNS = (
     "country_iso2",
@@ -174,3 +182,38 @@ BR_ESTABLISHMENTS_COLUMNS = (
     "resolved_at",
 )
 BR_ESTABLISHMENTS_EXPORT_COLUMNS = BR_ESTABLISHMENTS_COLUMNS
+
+BR_COMPANY_CONTACT_INFO_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "cnpj",
+    "cnpj_basico",
+    "contact_type",
+    "contact_type_en",
+    "contact_area_code",
+    "contact_value",
+    "is_current",
+    "root_domain",
+    "domain_source",
+    "resolved_at",
+)
+BR_COMPANY_CONTACT_INFO_EXPORT_COLUMNS = BR_COMPANY_CONTACT_INFO_COLUMNS
+
+BR_WEBSITES_COLUMNS = (
+    "country_iso2",
+    "source_slug",
+    "source_run_id",
+    "source_record_id",
+    "cnpj_basico",
+    "root_domain",
+    "domain_source",
+    "website_url",
+    "website_normalized_url",
+    "website_host",
+    "is_current",
+    "is_primary",
+    "resolved_at",
+)
+BR_WEBSITES_EXPORT_COLUMNS = BR_WEBSITES_COLUMNS

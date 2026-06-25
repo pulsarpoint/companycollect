@@ -78,3 +78,71 @@ def export_brazil_rfb_clickhouse_establishments(
     if log is not None:
         log("Finished Brazil RFB establishments ClickHouse export: rows=%s", rows)
     return rows
+
+
+def export_brazil_rfb_clickhouse_contact_info(
+    *,
+    database_path: str | Path,
+    clickhouse: ClickhouseResource,
+    log: Callable[..., object] | None = None,
+) -> int:
+    """Replace corpscout.br_company_contact_info with the DuckDB contact table."""
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.BRAZIL_RFB_DATABASE,
+        tables=(tables.BR_COMPANY_CONTACT_INFO_TABLE_CH,),
+    )
+    if log is not None:
+        log(
+            "Exporting Brazil RFB contact info to ClickHouse: duckdb_path=%s, table=%s",
+            database_path,
+            tables.QUALIFIED_BR_COMPANY_CONTACT_INFO_TABLE,
+        )
+    with clickhouse.get_connection() as client:
+        rows = export_duckdb_table_to_clickhouse(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema=DLT_DATASET_NAME,
+            duckdb_table=tables.COMPANY_CONTACT_INFO_TABLE,
+            clickhouse_database=tables.BRAZIL_RFB_DATABASE,
+            clickhouse_table=tables.BR_COMPANY_CONTACT_INFO_TABLE_CH,
+            columns=tables.BR_COMPANY_CONTACT_INFO_EXPORT_COLUMNS,
+            truncate=True,
+        )
+    if log is not None:
+        log("Finished Brazil RFB contact info ClickHouse export: rows=%s", rows)
+    return rows
+
+
+def export_brazil_rfb_clickhouse_websites(
+    *,
+    database_path: str | Path,
+    clickhouse: ClickhouseResource,
+    log: Callable[..., object] | None = None,
+) -> int:
+    """Replace corpscout.br_websites with the DuckDB domain feeder table."""
+    assert_clickhouse_tables_exist(
+        clickhouse,
+        database=tables.BRAZIL_RFB_DATABASE,
+        tables=(tables.BR_WEBSITES_TABLE_CH,),
+    )
+    if log is not None:
+        log(
+            "Exporting Brazil RFB websites to ClickHouse: duckdb_path=%s, table=%s",
+            database_path,
+            tables.QUALIFIED_BR_WEBSITES_TABLE,
+        )
+    with clickhouse.get_connection() as client:
+        rows = export_duckdb_table_to_clickhouse(
+            duckdb_path=database_path,
+            clickhouse_client=client,
+            duckdb_schema=DLT_DATASET_NAME,
+            duckdb_table=tables.WEBSITES_TABLE,
+            clickhouse_database=tables.BRAZIL_RFB_DATABASE,
+            clickhouse_table=tables.BR_WEBSITES_TABLE_CH,
+            columns=tables.BR_WEBSITES_EXPORT_COLUMNS,
+            truncate=True,
+        )
+    if log is not None:
+        log("Finished Brazil RFB websites ClickHouse export: rows=%s", rows)
+    return rows

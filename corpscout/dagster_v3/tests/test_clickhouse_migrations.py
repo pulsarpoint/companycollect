@@ -67,6 +67,7 @@ EXPECTED_MIGRATIONS = (
     "000052_corpscout_lei_wikidata_companies_view",
     "000053_corpscout_commoncrawl_company_profile",
     "000054_corpscout_br_rfb_registry",
+    "000055_corpscout_br_rfb_contact_domains",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -841,6 +842,32 @@ def test_brazil_rfb_registry_migration_covers_exported_columns() -> None:
     assert "ORDER BY (cnpj_basico, cnpj)" in sql
     assert "DROP TABLE IF EXISTS corpscout.br_establishments" in down_sql
     assert "DROP TABLE IF EXISTS corpscout.br_companies" in down_sql
+
+
+def test_brazil_rfb_contact_domains_migration_covers_exported_columns() -> None:
+    sql = _migration_sql("000055_corpscout_br_rfb_contact_domains.up.sql")
+    down_sql = _migration_sql("000055_corpscout_br_rfb_contact_domains.down.sql")
+
+    assert (
+        f"CREATE TABLE IF NOT EXISTS "
+        f"{brazil_rfb_tables.QUALIFIED_BR_COMPANY_CONTACT_INFO_TABLE}"
+    ) in sql
+    assert (
+        f"CREATE TABLE IF NOT EXISTS {brazil_rfb_tables.QUALIFIED_BR_WEBSITES_TABLE}"
+        in sql
+    )
+    for column_name in brazil_rfb_tables.BR_COMPANY_CONTACT_INFO_EXPORT_COLUMNS:
+        assert (
+            f"    {column_name} " in sql
+        ), f"missing {column_name} in br_company_contact_info"
+    for column_name in brazil_rfb_tables.BR_WEBSITES_EXPORT_COLUMNS:
+        assert f"    {column_name} " in sql, f"missing {column_name} in br_websites"
+
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert "ORDER BY (cnpj_basico, cnpj, contact_type, contact_value)" in sql
+    assert "ORDER BY (cnpj_basico, root_domain)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.br_websites" in down_sql
+    assert "DROP TABLE IF EXISTS corpscout.br_company_contact_info" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

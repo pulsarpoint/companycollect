@@ -2,7 +2,7 @@ from pathlib import Path
 
 import duckdb
 
-from dagster_v3.defs.brazil_rfb import tables, transforms
+from dagster_v3.defs.brazil_rfb import contacts, tables, transforms
 
 
 def _create_raw_tables(database_path: Path) -> None:
@@ -184,3 +184,135 @@ def test_normalized_tables_match_clickhouse_export_contract(tmp_path: Path) -> N
     assert tables.BR_COMPANIES_EXPORT_COLUMNS == tables.BR_COMPANIES_COLUMNS
     assert tables.BR_ESTABLISHMENTS_EXPORT_COLUMNS == tables.BR_ESTABLISHMENTS_COLUMNS
     assert source_identity == ("BR", "brazil_rfb", "12345678")
+
+
+def _insert_contact_filter_rows(database_path: Path) -> None:
+    dataset = tables.DLT_DATASET_NAME
+    column_list = ", ".join(tables.BR_ESTABLISHMENTS_COLUMNS)
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(
+            f"""
+            insert into {dataset}.{tables.ESTABLISHMENTS_TABLE} ({column_list})
+            select * from (values
+                ('BR', 'brazil_rfb', 'run-1', '22222222000100', '22222222000100',
+                 '22222222', '0001', '00', 1, 'SHARED A', '02', 'Active',
+                 date '2020-01-01', '', date '2020-01-01', '6201501', '',
+                 '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
+                 'finance@contador.com.br', '', '', now()),
+                ('BR', 'brazil_rfb', 'run-1', '33333333000100', '33333333000100',
+                 '33333333', '0001', '00', 1, 'SHARED B', '02', 'Active',
+                 date '2020-01-01', '', date '2020-01-01', '6201501', '',
+                 '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
+                 'owner@contador.com.br', '', '', now()),
+                ('BR', 'brazil_rfb', 'run-1', '44444444000100', '44444444000100',
+                 '44444444', '0001', '00', 1, 'PUBLIC MAIL', '02', 'Active',
+                 date '2020-01-01', '', date '2020-01-01', '6201501', '',
+                 '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
+                 'owner@gmail.com', '', '', now()),
+                ('BR', 'brazil_rfb', 'run-1', '55555555000100', '55555555000100',
+                 '55555555', '0001', '00', 1, 'FAX ONLY', '02', 'Active',
+                 date '2020-01-01', '', date '2020-01-01', '6201501', '',
+                 '', '', '', '', '', '', '', '', '', '', '', '', '', '31',
+                 '33333333', '', '', '', now())
+            ) as t({column_list})
+            """
+        )
+
+
+def test_build_contact_info_and_websites_extracts_unique_email_domains(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "br.duckdb"
+    _create_raw_tables(database_path)
+    transforms.build_brazil_rfb_companies_and_establishments(
+        database_path=database_path,
+        source_run_id="run-1",
+    )
+    _insert_contact_filter_rows(database_path)
+
+    counts = contacts.build_brazil_rfb_contact_info_and_websites(
+        database_path=database_path,
+        source_run_id="run-contacts",
+    )
+
+    assert counts == {
+        "contacts": 6,
+        "websites": 1,
+        "email_domains": 1,
+        "companies_with_contacts": 5,
+    }
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        contact_rows = connection.execute(
+            f"""
+            select cnpj_basico, contact_type, contact_area_code, contact_value,
+                   root_domain, domain_source
+            from {tables.DLT_DATASET_NAME}.{tables.COMPANY_CONTACT_INFO_TABLE}
+            order by cnpj_basico, contact_type, contact_value
+            """
+        ).fetchall()
+        website_rows = connection.execute(
+            f"""
+            select cnpj_basico, root_domain, domain_source, website_url,
+                   website_normalized_url, website_host, is_primary
+            from {tables.DLT_DATASET_NAME}.{tables.WEBSITES_TABLE}
+            order by cnpj_basico, root_domain
+            """
+        ).fetchall()
+
+    assert (
+        "12345678",
+        "email",
+        "",
+        "info@acme.com.br",
+        "acme.com.br",
+        "email",
+    ) in contact_rows
+    assert ("12345678", "phone", "11", "11111111", "", "") in contact_rows
+    assert ("55555555", "fax", "31", "33333333", "", "") in contact_rows
+    assert (
+        "22222222",
+        "email",
+        "",
+        "finance@contador.com.br",
+        "",
+        "",
+    ) in contact_rows
+    assert ("44444444", "email", "", "owner@gmail.com", "", "") in contact_rows
+    assert website_rows == [
+        ("12345678", "acme.com.br", "email", "", "", "", 1),
+    ]
+
+
+def test_contact_domain_tables_match_clickhouse_export_contract(tmp_path: Path) -> None:
+    database_path = tmp_path / "br.duckdb"
+    _create_raw_tables(database_path)
+    transforms.build_brazil_rfb_companies_and_establishments(
+        database_path=database_path,
+        source_run_id="run-1",
+    )
+
+    contacts.build_brazil_rfb_contact_info_and_websites(
+        database_path=database_path,
+        source_run_id="run-contacts",
+    )
+
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        contact_columns = [
+            row[0]
+            for row in connection.execute(
+                f"describe {tables.DLT_DATASET_NAME}.{tables.COMPANY_CONTACT_INFO_TABLE}"
+            ).fetchall()
+        ]
+        website_columns = [
+            row[0]
+            for row in connection.execute(
+                f"describe {tables.DLT_DATASET_NAME}.{tables.WEBSITES_TABLE}"
+            ).fetchall()
+        ]
+
+    assert contact_columns == list(tables.BR_COMPANY_CONTACT_INFO_COLUMNS)
+    assert website_columns == list(tables.BR_WEBSITES_COLUMNS)
+    assert tables.BR_COMPANY_CONTACT_INFO_EXPORT_COLUMNS == (
+        tables.BR_COMPANY_CONTACT_INFO_COLUMNS
+    )
+    assert tables.BR_WEBSITES_EXPORT_COLUMNS == tables.BR_WEBSITES_COLUMNS
