@@ -1,0 +1,38 @@
+[
+  {
+    "name": "EGRPO register via data.egov.uz (firewalled here)",
+    "slug": "egrpo_register",
+    "type": "api_page",
+    "url": "https://data.egov.uz/",
+    "method": "GET",
+    "headers": { "Accept": "application/json" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Authoritative EGRPO register (Unified State Register of Enterprises and Organizations). data.egov.uz / data.gov.uz are FIREWALLED from this environment (timeout/refused). Run from an unblocked network; locate the EGRPO dataset/API. Key = STIR/INN (9-digit) + EGRPO code; activity = OKED. Redact director (personal data)."
+  },
+  {
+    "name": "State Tax Committee taxpayer search (firewalled here)",
+    "slug": "soliq_taxpayer",
+    "type": "api_page",
+    "url": "https://soliq.uz/",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Taxpayer search by STIR/INN + VAT-payers registry. soliq.uz TIMED OUT (firewalled) here. Run from an unblocked network. Adds tax/VAT status."
+  },
+  {
+    "name": "UZSE listed issuers (SPA)",
+    "slug": "uzse_listed",
+    "type": "api_page",
+    "url": "https://uzse.uz/issuers",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Republican Stock Exchange 'Toshkent'. Browser-public JS SPA; issuers list is client-side and the REST API route was not located (uzse.uz/api/... returns JSON 404 for guessed paths). Listed only; ISIN."
+  }
+]
