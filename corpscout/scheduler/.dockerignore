@@ -1,5 +1,0 @@
-bin/
-worker
-*.test
-coverage.out
-.DS_Store

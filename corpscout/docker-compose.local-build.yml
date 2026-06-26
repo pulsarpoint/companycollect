@@ -1,5 +1,0 @@
-services:
-  scheduler:
-    build:
-      context: ./scheduler
-      dockerfile: Dockerfile.local
