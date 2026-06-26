@@ -161,9 +161,12 @@ across pages, and — crucially — **LEI/VAT and the Organization JSON-LD live 
 (`impressum`, `mentions-legales`, `quienes-somos`, `chi-siamo`, `uber-uns`, …) so non-English sites
 aren't missed. `MAX_PAGES=0` = every HTML page (the whole crawl, ~3B pages — expensive).
 
-The tech matcher is a fast path (`--tech-engine fast`, default): a pure-Go Aho-Corasick pre-filter
-runs only the Wappalyzer regexes whose literal appears in the page (~4.6× faster, a strict superset
-of upstream). `--tech-engine wappalyzer` runs the upstream full scan.
+Both tech engines detect the **same** technologies — the difference is *how* they evaluate the
+fingerprints, not *how many*. `--tech-engine fast` (default) is a pure-Go Aho-Corasick pre-filter
+that runs only the Wappalyzer regexes whose required literal actually appears in the page (a strict
+**superset** of the library's output — nothing dropped — ~4.6× faster). `--tech-engine wappalyzer`
+runs the unmodified `wappalyzergo` library, which evaluates every fingerprint unconditionally —
+identical results, just slower; it exists only as the parity/reference baseline, not for bulk runs.
 
 ### B2. Run it
 ```bash
@@ -219,7 +222,8 @@ one fetch pass (discouraged — co-locating throttles the GPU; prefer two proces
 **`industry` (and `both`):** `--embed-concurrency` (96; in-flight embed requests), `--embed-batch`
 (16; texts/request — keep small, big batches overflow the engine's token budget).
 
-**`tech` (and `both`):** `--tech-engine` (`fast`|`wappalyzer`), `--tech-max-bytes` (131072; cap body
+**`tech` (and `both`):** `--tech-engine` (`fast` = Aho-Corasick-gated, ~4.6×, default | `wappalyzer` =
+unmodified library, every fingerprint, slower reference — both detect the same techs), `--tech-max-bytes` (131072; cap body
 fed to Wappalyzer, 0 = full body).
 
 **Fetch path:** **signed S3** (AWS creds) is the only reliable bulk source — the anonymous S3 API is
