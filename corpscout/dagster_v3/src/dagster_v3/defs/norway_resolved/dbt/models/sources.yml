@@ -7,7 +7,7 @@ sources:
       - name: entities
         meta:
           dagster:
-            asset_key: ["norway_brreg_translations_applied"]
+            asset_key: ["norway_brreg_entities_duckdb"]
       - name: financial_statements
         meta:
           dagster:
