@@ -22,7 +22,6 @@ from dagster_v3.defs.clickhouse.resolved import (
 )
 from dagster_v3.defs.common.duckdb_resources import duckdb_database_path, duckdb_resource
 from dagster_v3.defs.finland_resolved import tables
-from dagster_v3.defs.finland_ytj import assets as finland_ytj_assets
 
 GROUP_NAME = "finland_resolved"
 RESOLVED_DUCKDB_SCHEMA = "finland_resolved"
@@ -131,7 +130,7 @@ def defs() -> dg.Definitions:
         jobs=[finland_ytj_resolved_job],
         schedules=[finland_ytj_resolved_schedule],
         resources={
-            "ytj_duckdb": finland_ytj_assets.defs.resources["ytj_duckdb"],
+            "ytj_duckdb": duckdb_resource(_DEFAULT_DUCKDB_PATH),
             "finland_resolved_dbt": DbtCliResource(
                 project_dir=finland_resolved_dbt_project,
                 profiles_dir=FINLAND_RESOLVED_DBT_PROJECT_DIR,
