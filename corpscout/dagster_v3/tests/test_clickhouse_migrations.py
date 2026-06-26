@@ -68,6 +68,7 @@ EXPECTED_MIGRATIONS = (
     "000053_corpscout_commoncrawl_company_profile",
     "000054_corpscout_br_rfb_registry",
     "000055_corpscout_br_rfb_contact_domains",
+    "000056_corpscout_text_translations",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
