@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -65,6 +66,7 @@ AWS_* (region defaults to us-east-1 — the CommonCrawl bucket), CC_BASE_URL.
 // for the relevant command.
 type opts struct {
 	worklist, crawlID, out string
+	load                   bool
 	concurrency, chunk     int
 	anonymous              bool
 	s3Bucket, s3Prefix     string
@@ -80,7 +82,8 @@ func parse(mode string, args []string) opts {
 	// common to every command
 	fs.StringVar(&o.worklist, "worklist", "", "worklist parquet shard (required)")
 	fs.StringVar(&o.crawlID, "crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 — stamped on every row (required)")
-	fs.StringVar(&o.out, "out", "../data/crawl/out", "output prefix → <out>-domains.parquet, <out>-tech.parquet, … (default under the gitignored data/ dir; the parent is created)")
+	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default ../data/crawl/<worklist-name>/, unique per shard; an explicit dir must be empty)")
+	fs.BoolVar(&o.load, "load", false, "after writing Parquet, INSERT it into ClickHouse over the native driver (no clickhouse-client needed)")
 	fs.IntVar(&o.concurrency, "concurrency", 32, "fetch/parse concurrency (push to ~128 to hide off-AWS fetch RTT)")
 	fs.IntVar(&o.chunk, "chunk", 1024, "domains per fetch+process chunk")
 	fs.BoolVar(&o.anonymous, "s3-anonymous", false, "fetch via the HTTPS CDN data.commoncrawl.org (off-AWS; rate-limited — signed S3 preferred)")
@@ -122,34 +125,19 @@ func main() {
 	}
 }
 
-// runLoad implements the `load` command: push an already-produced Parquet output into ClickHouse
-// over the native driver (no clickhouse-client needed). Either one --file, or an --out prefix
-// whose <prefix>-{domains,tech,identifiers,profiles}.parquet files (whichever exist) are loaded.
+// runLoad implements the `load` command: push already-produced Parquet output into ClickHouse over
+// the native driver (no clickhouse-client needed). `--dir` loads every output file in a folder (a
+// shard's output dir); `--file` loads one. The kind→table mapping comes from the FIXED filenames.
 func runLoad(args []string) {
 	fs := flag.NewFlagSet("cc-enrich-worker load", flag.ExitOnError)
-	file := fs.String("file", "", "a single <prefix>-<kind>.parquet output file to load")
-	out := fs.String("out", "", "an output prefix; loads <prefix>-{domains,tech,identifiers,profiles}.parquet (whichever exist)")
+	dir := fs.String("dir", "", "a shard output directory; loads every {domains,tech,identifiers,profiles}.parquet in it")
+	file := fs.String("file", "", "a single Parquet output file to load")
 	kind := fs.String("kind", "", "override the kind for --file: domains|tech|identifiers|profiles")
 	_ = fs.Parse(args)
-	if (*file == "") == (*out == "") {
-		fmt.Fprintln(os.Stderr, "error: pass exactly one of --file or --out")
+	if (*dir == "") == (*file == "") {
+		fmt.Fprintln(os.Stderr, "error: pass exactly one of --dir or --file")
 		fs.Usage()
 		os.Exit(2)
-	}
-
-	var files []string
-	if *file != "" {
-		files = []string{*file}
-	} else {
-		for _, k := range load.Kinds {
-			p := *out + "-" + k + ".parquet"
-			if _, err := os.Stat(p); err == nil {
-				files = append(files, p)
-			}
-		}
-		if len(files) == 0 {
-			log.Fatalf("no <prefix>-{domains,tech,identifiers,profiles}.parquet files for --out %q", *out)
-		}
 	}
 
 	ctx := context.Background()
@@ -158,13 +146,22 @@ func runLoad(args []string) {
 		log.Fatalf("clickhouse connect: %v", err)
 	}
 	defer conn.Close()
-	for _, p := range files {
-		table, n, err := load.FromFile(ctx, conn, p, *kind)
+
+	if *dir != "" {
+		results, err := load.FromDir(ctx, conn, *dir)
 		if err != nil {
-			log.Fatalf("load %s: %v", p, err)
+			log.Fatalf("load %s: %v", *dir, err)
 		}
-		log.Printf("loaded %d rows: %s -> %s", n, p, table)
+		for _, r := range results {
+			log.Printf("loaded %d rows: %s -> %s", r.Rows, r.Path, r.Table)
+		}
+		return
 	}
+	table, n, err := load.FromFile(ctx, conn, *file, *kind)
+	if err != nil {
+		log.Fatalf("load %s: %v", *file, err)
+	}
+	log.Printf("loaded %d rows: %s -> %s", n, *file, table)
 }
 
 func chConnect(ctx context.Context) (driver.Conn, error) {
@@ -221,6 +218,21 @@ func readWorklist(path string) ([]mdl.WorklistItem, error) {
 
 func run(mode string, o opts) {
 	ctx := context.Background()
+
+	// Resolve the output DIRECTORY up front (fail fast, before any fetch). FIXED filenames inside so
+	// `load --dir` knows which file → which table. The default is unique per shard
+	// (../data/crawl/<worklist-stem>/) so parallel shard runs never collide; an explicit --out must
+	// be empty so a manual run can't clobber another's output.
+	outDir := o.out
+	if outDir == "" {
+		stem := strings.TrimSuffix(filepath.Base(o.worklist), filepath.Ext(o.worklist))
+		outDir = filepath.Join("../data/crawl", stem)
+	} else if entries, _ := os.ReadDir(outDir); len(entries) > 0 {
+		log.Fatalf("output dir %s is not empty — point --out at a fresh/empty directory", outDir)
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		log.Fatalf("create output dir %s: %v", outDir, err)
+	}
 
 	if mode != "industry" { // tech matcher only needed when we fingerprint
 		switch o.techEngine {
@@ -326,41 +338,51 @@ func run(mode string, o opts) {
 			end, len(items), len(domains), len(techRows), len(idents), len(profiles), float64(end)/el)
 	}
 
-	if dir := filepath.Dir(o.out); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			log.Fatalf("create output dir %s: %v", dir, err)
-		}
-	}
-	domPath, techPath := o.out+"-domains.parquet", o.out+"-tech.parquet"
 	var written []string
-	if mode != "tech" {
-		if err := output.WriteDomains(domPath, domains); err != nil {
-			log.Fatalf("write domains: %v", err)
+	write := func(name string, fn func(string) error) {
+		p := filepath.Join(outDir, name)
+		if err := fn(p); err != nil {
+			log.Fatalf("write %s: %v", name, err)
 		}
-		written = append(written, domPath)
+		written = append(written, p)
+	}
+	if mode != "tech" {
+		write("domains.parquet", func(p string) error { return output.WriteDomains(p, domains) })
 	}
 	if mode != "industry" {
-		if err := output.WriteTech(techPath, techRows); err != nil {
-			log.Fatalf("write tech: %v", err)
-		}
-		written = append(written, techPath)
-		identPath := o.out + "-identifiers.parquet"
-		if err := output.WriteIdentifiers(identPath, idents); err != nil {
-			log.Fatalf("write identifiers: %v", err)
-		}
-		written = append(written, identPath)
-		profilePath := o.out + "-profiles.parquet"
-		if err := output.WriteProfiles(profilePath, profiles); err != nil {
-			log.Fatalf("write profiles: %v", err)
-		}
-		written = append(written, profilePath)
+		write("tech.parquet", func(p string) error { return output.WriteTech(p, techRows) })
+		write("identifiers.parquet", func(p string) error { return output.WriteIdentifiers(p, idents) })
+		write("profiles.parquet", func(p string) error { return output.WriteProfiles(p, profiles) })
 	}
 	dur := time.Since(start).Seconds()
 	rate := 0.0
 	if dur > 0 {
 		rate = float64(len(domains)) / dur
 	}
-	log.Printf("done: %d domains, %d tech rows in %.1fs (%.1f domains/s)", len(domains), len(techRows), dur, rate)
+	log.Printf("done: %d domains, %d tech rows in %.1fs (%.1f domains/s) -> %s", len(domains), len(techRows), dur, rate, outDir)
+
+	if o.load {
+		conn, err := chConnect(ctx)
+		if err != nil {
+			log.Fatalf("clickhouse connect (load): %v", err)
+		}
+		defer conn.Close()
+		loadInto := func(kind string, do func() (int, error)) {
+			n, err := do()
+			if err != nil {
+				log.Fatalf("load %s: %v", kind, err)
+			}
+			log.Printf("loaded %d rows -> %s", n, load.Tables[kind])
+		}
+		if mode != "tech" {
+			loadInto("domains", func() (int, error) { return load.Insert(ctx, conn, load.Tables["domains"], domains) })
+		}
+		if mode != "industry" {
+			loadInto("tech", func() (int, error) { return load.Insert(ctx, conn, load.Tables["tech"], techRows) })
+			loadInto("identifiers", func() (int, error) { return load.Insert(ctx, conn, load.Tables["identifiers"], idents) })
+			loadInto("profiles", func() (int, error) { return load.Insert(ctx, conn, load.Tables["profiles"], profiles) })
+		}
+	}
 
 	if o.s3Bucket != "" {
 		g, ok := getter.(*fetch.S3Getter)

@@ -5,6 +5,7 @@ package load
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -14,6 +15,24 @@ import (
 
 	"cc-enrich-worker/internal/output"
 )
+
+// Each output kind has ONE fixed filename "<kind>.parquet" and one table. The worker writes these
+// exact names; the loader reads them. No filename parsing.
+var Tables = map[string]string{
+	"domains":     "commoncrawl_domains",
+	"tech":        "commoncrawl_technologies",
+	"identifiers": "commoncrawl_company_identifiers",
+	"profiles":    "commoncrawl_company_profile",
+}
+
+// Kinds is the load order (domains for industry; the three tech outputs).
+var Kinds = []string{"domains", "tech", "identifiers", "profiles"}
+
+// Result is one loaded file.
+type Result struct {
+	Path, Table string
+	Rows        int
+}
 
 // chColumns returns the `ch` tag of each field of T, in declaration order — the explicit column
 // list for the INSERT, so a table with extra (defaulted) columns the struct doesn't carry is fine.
@@ -26,28 +45,6 @@ func chColumns[T any]() []string {
 		}
 	}
 	return cols
-}
-
-// Tables maps each output kind to its ClickHouse table.
-var Tables = map[string]string{
-	"domains":     "commoncrawl_domains",
-	"tech":        "commoncrawl_technologies",
-	"identifiers": "commoncrawl_company_identifiers",
-	"profiles":    "commoncrawl_company_profile",
-}
-
-// Kinds is the load order (domains for industry; the three tech outputs).
-var Kinds = []string{"domains", "tech", "identifiers", "profiles"}
-
-// KindForFile infers the output kind from a "<prefix>-<kind>.parquet" filename.
-func KindForFile(path string) (string, bool) {
-	base := strings.TrimSuffix(filepath.Base(path), ".parquet")
-	for _, k := range Kinds {
-		if strings.HasSuffix(base, "-"+k) {
-			return k, true
-		}
-	}
-	return "", false
 }
 
 // Insert batch-inserts rows into table over the native protocol (AppendStruct uses the `ch` tags).
@@ -72,19 +69,15 @@ func Insert[T any](ctx context.Context, conn driver.Conn, table string, rows []T
 	return len(rows), nil
 }
 
-// FromFile reads a Parquet output file and inserts it into its ClickHouse table. Pass kind="" to
-// infer it from the filename. Returns (table, rows inserted).
+// FromFile reads one output Parquet and inserts it. kind="" infers it from the basename, which must
+// be exactly "<kind>.parquet" (domains|tech|identifiers|profiles).
 func FromFile(ctx context.Context, conn driver.Conn, path, kind string) (string, int, error) {
 	if kind == "" {
-		k, ok := KindForFile(path)
-		if !ok {
-			return "", 0, fmt.Errorf("cannot infer kind from %q (expected …-{domains,tech,identifiers,profiles}.parquet); pass --kind", path)
-		}
-		kind = k
+		kind = strings.TrimSuffix(filepath.Base(path), ".parquet")
 	}
 	table, ok := Tables[kind]
 	if !ok {
-		return "", 0, fmt.Errorf("unknown kind %q (want one of %v)", kind, Kinds)
+		return "", 0, fmt.Errorf("%q is not an output file (want <%s>.parquet, or pass --kind)", path, strings.Join(Kinds, "|"))
 	}
 	switch kind {
 	case "domains":
@@ -117,4 +110,24 @@ func FromFile(ctx context.Context, conn driver.Conn, path, kind string) (string,
 		return table, n, err
 	}
 	return table, 0, fmt.Errorf("unhandled kind %q", kind)
+}
+
+// FromDir inserts every <kind>.parquet present in dir (whichever the run produced).
+func FromDir(ctx context.Context, conn driver.Conn, dir string) ([]Result, error) {
+	var out []Result
+	for _, k := range Kinds {
+		p := filepath.Join(dir, k+".parquet")
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		table, n, err := FromFile(ctx, conn, p, k)
+		if err != nil {
+			return out, fmt.Errorf("%s: %w", p, err)
+		}
+		out = append(out, Result{Path: p, Table: table, Rows: n})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no %s.parquet in %s", "{"+strings.Join(Kinds, ",")+"}", dir)
+	}
+	return out, nil
 }

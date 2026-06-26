@@ -29,12 +29,9 @@ DATA="${DATA:-../data/crawl}" # commoncrawl/data/crawl (gitignored); never write
 BUILDER_DIR="${BUILDER_DIR:-../index-builder}" # standalone Python worklist builder
 WORKER="$PWD/bin/cc-enrich-worker" # built by `make build`
 
-# PRIMARY: the output suffix the pass always produces (its presence => the pass already ran).
 case "$MODE" in
-industry) PRIMARY=domains
-          PASS_ARGS=(--concurrency "${IND_CONC:-16}" --embed-concurrency "${EMBED_CONC:-128}") ;;
-tech)     PRIMARY=tech
-          PASS_ARGS=(--tech-engine fast --concurrency "${TECH_CONC:-128}") ;;
+industry) PASS_ARGS=(--concurrency "${IND_CONC:-16}" --embed-concurrency "${EMBED_CONC:-128}") ;;
+tech)     PASS_ARGS=(--tech-engine fast --concurrency "${TECH_CONC:-128}") ;;
 *) echo "MODE must be industry|tech"; exit 1 ;;
 esac
 
@@ -45,8 +42,7 @@ BUILDER_ABS="$(cd "$BUILDER_DIR" && pwd)"
 
 for ((p = lo; p <= hi; p++)); do
 	shard="$DATA_ABS/shard_${MODE}_${p}.parquet" # per-mode: industry=1 page/domain, tech=many
-	out="$DATA/${MODE}_${p}"
-	primary="${out}-${PRIMARY}.parquet" # produced whenever the pass runs
+	out="$DATA_ABS/out_${MODE}_${p}"             # per-shard output DIR (fixed filenames inside)
 	marker="${out}.loaded"
 	[ -f "$marker" ] && { echo "[$MODE $p] already loaded — skip"; continue; }
 
@@ -62,20 +58,14 @@ for ((p = lo; p <= hi; p++)); do
 		fi
 	fi
 
-	# 2. run the pass once (produces every output for the mode)
-	if [ ! -f "$primary" ]; then
-		echo "[$MODE $p] $MODE pass…"
-		if ! "$WORKER" "$MODE" "${PASS_ARGS[@]}" --worklist "$shard" --crawl-id "$CRAWL" --out "$out"; then
-			echo "[$MODE $p] worker FAILED — skip"; continue
-		fi
-	fi
-
-	# 3. load all outputs into ClickHouse via the worker's own driver (no clickhouse-client needed)
-	echo "[$MODE $p] loading → ClickHouse"
-	if "$WORKER" load --out "$out"; then
+	# 2. run the pass AND load it into ClickHouse in one step (--load; no clickhouse-client).
+	#    Fresh output dir each attempt (an explicit --out must be empty); the marker gates redo.
+	rm -rf "$out"
+	echo "[$MODE $p] $MODE pass + load…"
+	if "$WORKER" "$MODE" "${PASS_ARGS[@]}" --worklist "$shard" --crawl-id "$CRAWL" --out "$out" --load; then
 		touch "$marker"; echo "[$MODE $p] DONE"
 	else
-		echo "[$MODE $p] load failed — will retry next run"
+		echo "[$MODE $p] FAILED — will retry next run"
 	fi
 done
 echo "[$MODE] range $RANGE complete"

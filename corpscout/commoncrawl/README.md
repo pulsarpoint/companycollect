@@ -195,18 +195,20 @@ set -a; source ../.env; set +a
 ./run_crawl.sh industry 0-299      # workflow A over shards 0..299 (GPU pass)
 ```
 For each shard it: generates the **per-mode** worklist on demand (`shard_<mode>_<part>.parquet`,
-cached/skipped if present), runs the worker pass, loads each output into ClickHouse via the worker's
-own `load` command (native driver — no `clickhouse-client`), and touches a `.loaded` marker.
-Re-running **skips completed shards**
+cached/skipped if present), runs the worker pass **with `--load`** (writes the per-shard output dir
+and INSERTs it into ClickHouse over the native driver — no `clickhouse-client`), and touches a
+`.loaded` marker. Re-running **skips completed shards**
 (idempotent; ReplacingMergeTree dedupes). Run the two workflows as **separate processes** so tech
 pegs the cores while industry feeds the GPU. Env tunables: `CRAWL`, `WHERE` (worklist SQL filter),
 `MAX_PAGES`, `TECH_CONC`, `IND_CONC`, `EMBED_CONC`.
 
 ### Running the worker yourself (without `run_crawl.sh`)
 
-The run commands **only write Parquet**; the separate **`load` command** pushes that Parquet into
-ClickHouse over the worker's own native driver — so **`clickhouse-client` is not needed on the box**.
-`run_crawl.sh` bundles all three; by hand it's run → load:
+Each run writes Parquet into an **output directory** with **fixed filenames** (`domains.parquet`,
+`tech.parquet`, `identifiers.parquet`, `profiles.parquet`). The dir is **unique per shard** so
+parallel runs never collide. Load into ClickHouse either inline with **`--load`**, or afterwards by
+pointing **`load --dir`** at the folder — both use the worker's own native driver, so
+**`clickhouse-client` is not needed on the box**.
 
 ```bash
 cd commoncrawl/cc-enrich-worker
@@ -217,16 +219,17 @@ set -a; source ../.env; set +a
 ( cd ../index-builder && uv run python -m index_builder --mode tech --part 0 )
 SHARD=../data/index/CC-MAIN-2026-25/shard_tech_0.parquet
 
-# 2. run the pass — writes Parquet under ../data/crawl/ (the default --out; the dir is created)
-./bin/cc-enrich-worker tech --worklist "$SHARD" --crawl-id CC-MAIN-2026-25 --out ../data/crawl/run0
-# -> ../data/crawl/run0-tech.parquet, run0-identifiers.parquet, run0-profiles.parquet
+# 2a. run + load in one step (--load):
+./bin/cc-enrich-worker tech --worklist "$SHARD" --crawl-id CC-MAIN-2026-25 --load
+#    default --out = ../data/crawl/shard_tech_0/ (the worklist name); files: tech/identifiers/profiles.parquet
 
-# 3. load it into ClickHouse — the worker reads each file and INSERTs over the native protocol
-./bin/cc-enrich-worker load --out ../data/crawl/run0     # loads all run0-*.parquet that exist
-# or one file: ./bin/cc-enrich-worker load --file ../data/crawl/run0-tech.parquet
+# 2b. …or run now, load later: write to a dir (must be empty), then load every file in it
+./bin/cc-enrich-worker tech --worklist "$SHARD" --crawl-id CC-MAIN-2026-25 --out ../data/crawl/run0
+./bin/cc-enrich-worker load --dir ../data/crawl/run0
+# or one file: ./bin/cc-enrich-worker load --file ../data/crawl/run0/tech.parquet
 ```
-`load` maps the kind from the filename suffix (`-tech` → `commoncrawl_technologies`, etc.; an
-`industry` run's `run0-domains.parquet` → `commoncrawl_domains`). Tables must exist
+`load --dir` loads whichever of the four fixed files are present (an `industry` run produces just
+`domains.parquet` → `commoncrawl_domains`). Tables must exist
 (`make clickhouse-migrate-up`); ReplacingMergeTree dedupes, so re-loading a file is safe.
 
 ---
@@ -242,7 +245,8 @@ one fetch pass (discouraged — co-locating throttles the GPU; prefer two proces
 |---|---|---|
 | `--worklist` | *(required)* | worklist Parquet shard (§2d) |
 | `--crawl-id` | *(required)* | e.g. `CC-MAIN-2026-25`; stamped on every row |
-| `--out` | `out` | output prefix → `<out>-domains.parquet`, `<out>-tech.parquet`, … |
+| `--out` | `../data/crawl/<worklist-name>/` | output **directory** (fixed names `domains/tech/identifiers/profiles.parquet`); default unique per shard; an explicit dir must be empty |
+| `--load` | `false` | after writing, INSERT into ClickHouse via the native driver (no `clickhouse-client`) |
 | `--concurrency` | `32` | fetch/parse goroutines (push to ~128 to hide off-AWS fetch RTT) |
 | `--chunk` | `1024` | domains per fetch+process chunk (lower = earlier GPU traffic) |
 | `--s3-anonymous` | `false` | fetch via the HTTPS CDN instead of signed S3 — **rate-limits**, avoid for bulk |
@@ -258,13 +262,13 @@ fed to Wappalyzer, 0 = full body).
 **Fetch path:** **signed S3** (AWS creds) is the only reliable bulk source — the anonymous S3 API is
 denied, and the `data.commoncrawl.org` HTTPS CDN (`--s3-anonymous`) works but is latency-bound and
 rate-limits. Reads are free (Open Data). The worker streams each page through memory and discards it
-(no on-disk page cache). The run commands write Parquet only; the **`load` command** then INSERTs
-it into ClickHouse over the native driver (so no `clickhouse-client` on the box).
+(no on-disk page cache). A run writes Parquet and, with `--load`, also INSERTs it; the **`load`
+command** does the same for already-written output — both over the native driver (no `clickhouse-client`).
 
-**`load`** — `cc-enrich-worker load --out <prefix>` loads every `<prefix>-{domains,tech,identifiers,
-profiles}.parquet` that exists; `--file <path>` loads one (kind inferred from the `-<kind>.parquet`
-suffix, or `--kind`). Reads via the env-driven ClickHouse connection (`CLICKHOUSE_*`); tables must
-exist (`make clickhouse-migrate-up`).
+**`load`** — `cc-enrich-worker load --dir <shard-dir>` loads every `{domains,tech,identifiers,
+profiles}.parquet` present in the directory (the fixed name maps to the table); `--file <path>` loads
+one (kind from its filename, or `--kind`). Reads via the env-driven ClickHouse connection
+(`CLICKHOUSE_*`); tables must exist (`make clickhouse-migrate-up`).
 
 ---
 
