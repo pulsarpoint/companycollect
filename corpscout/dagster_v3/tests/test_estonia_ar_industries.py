@@ -44,9 +44,10 @@ def test_industries_build(tmp_path):
     json_path = tmp_path / "yldandmed.json"
     _write_sample(json_path)
     db = tmp_path / "ee.duckdb"
-    counts = industries._build_industries_from_json(
-        database_path=db, json_path=json_path, source_run_id="run-1"
-    )
+    with duckdb.connect(str(db)) as conn:
+        counts = industries._build_industries_from_json(
+            duckdb_connection=conn, json_path=json_path, source_run_id="run-1"
+        )
     assert counts == {"industries": 3, "nace_mapped": 2, "companies": 2}
 
     with duckdb.connect(str(db), read_only=True) as con:

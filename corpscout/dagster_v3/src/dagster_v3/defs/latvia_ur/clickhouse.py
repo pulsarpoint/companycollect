@@ -1,11 +1,11 @@
 from collections.abc import Callable
-from pathlib import Path
+from typing import Any
 
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
-    export_duckdb_table_to_clickhouse,
+    export_duckdb_connection_table_to_clickhouse,
 )
 from dagster_v3.defs.latvia_ur import tables
 
@@ -15,7 +15,7 @@ ENTITIES_TABLE = tables.ENTITIES_TABLE
 
 def export_latvia_ur_clickhouse_companies(
     *,
-    database_path: str | Path,
+    duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> int:
@@ -31,13 +31,12 @@ def export_latvia_ur_clickhouse_companies(
     )
     if log is not None:
         log(
-            "Exporting Latvia UR companies to ClickHouse: duckdb_path=%s, table=%s",
-            database_path,
+            "Exporting Latvia UR companies to ClickHouse: table=%s",
             tables.QUALIFIED_LV_COMPANIES_TABLE,
         )
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_table_to_clickhouse(
-            duckdb_path=database_path,
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=ENTITIES_TABLE,
@@ -53,7 +52,7 @@ def export_latvia_ur_clickhouse_companies(
 
 def export_latvia_ur_clickhouse_financial_statements(
     *,
-    database_path: str | Path,
+    duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> int:
@@ -65,13 +64,12 @@ def export_latvia_ur_clickhouse_financial_statements(
     )
     if log is not None:
         log(
-            "Exporting Latvia UR financial statements to ClickHouse: duckdb_path=%s, table=%s",
-            database_path,
+            "Exporting Latvia UR financial statements to ClickHouse: table=%s",
             tables.QUALIFIED_LV_FINANCIAL_STATEMENTS_TABLE,
         )
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_table_to_clickhouse(
-            duckdb_path=database_path,
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.FINANCIAL_STATEMENTS_WIDE_TABLE,
@@ -87,7 +85,7 @@ def export_latvia_ur_clickhouse_financial_statements(
 
 def export_latvia_ur_clickhouse_financial_metrics(
     *,
-    database_path: str | Path,
+    duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> int:
@@ -99,13 +97,12 @@ def export_latvia_ur_clickhouse_financial_metrics(
     )
     if log is not None:
         log(
-            "Exporting Latvia UR financial metrics to ClickHouse: duckdb_path=%s, table=%s",
-            database_path,
+            "Exporting Latvia UR financial metrics to ClickHouse: table=%s",
             tables.QUALIFIED_LV_FINANCIAL_METRICS_TABLE,
         )
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_table_to_clickhouse(
-            duckdb_path=database_path,
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.FINANCIAL_METRICS_WIDE_TABLE,

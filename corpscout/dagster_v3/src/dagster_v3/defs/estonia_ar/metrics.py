@@ -1,8 +1,7 @@
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, Protocol
 
-import duckdb
+from duckdb import DuckDBPyConnection
 
 from dagster_v3.defs.estonia_ar import tables
 
@@ -25,7 +24,7 @@ def _request(currency: str, rate_date: str) -> Any:
 
 def build_estonia_ar_financial_metrics(
     *,
-    database_path: str | Path,
+    duckdb_connection: DuckDBPyConnection,
     source_run_id: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
@@ -65,11 +64,10 @@ def build_estonia_ar_financial_metrics(
             cast(now() as timestamp) as resolved_at
         from {DLT_DATASET_NAME}.{WIDE_STATEMENTS}
     """
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(build_sql, [source_run_id])
-        metrics = int(
-            connection.execute(f"select count(*) from {qualified}").fetchone()[0]
-        )
+    duckdb_connection.execute(build_sql, [source_run_id])
+    metrics = int(
+        duckdb_connection.execute(f"select count(*) from {qualified}").fetchone()[0]
+    )
     if log is not None:
         log("Built Estonia AR financial metrics (native EUR): metrics=%s", metrics)
     return {"metrics": metrics}
@@ -99,7 +97,7 @@ def _load_rates(
 
 def apply_estonia_ar_usd_conversion(
     *,
-    database_path: str | Path,
+    duckdb_connection: DuckDBPyConnection,
     exchange_rates: ExchangeRates,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
@@ -110,15 +108,14 @@ def apply_estonia_ar_usd_conversion(
     period_end_date) -> rate table and UPDATE-join. No-op-safe when rates absent.
     """
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        pairs = connection.execute(
-            f"""
-            select distinct upper(currency) as currency,
-                            cast(period_end_date as varchar) as period_end
-            from {qualified}
-            where coalesce(currency, '') <> '' and period_end_date is not null
-            """
-        ).fetchall()
+    pairs = duckdb_connection.execute(
+        f"""
+        select distinct upper(currency) as currency,
+                        cast(period_end_date as varchar) as period_end
+        from {qualified}
+        where coalesce(currency, '') <> '' and period_end_date is not null
+        """
+    ).fetchall()
 
     requests = [_request(currency, end) for currency, end in pairs]
     rates = _load_rates(exchange_rates, requests)
@@ -135,39 +132,38 @@ def apply_estonia_ar_usd_conversion(
         f"{metric}_amount_usd = cast({metric}_amount_original * fx.fx_rate as decimal(38, 2))"
         for metric in tables.FINANCIAL_METRIC_NAMES
     )
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(
-            "create or replace temp table _ee_fx ("
-            "currency varchar, period_end date, fx_rate decimal(38, 12), "
-            "fx_rate_date date, fx_source varchar)"
+    duckdb_connection.execute(
+        "create or replace temp table _ee_fx ("
+        "currency varchar, period_end date, fx_rate decimal(38, 12), "
+        "fx_rate_date date, fx_source varchar)"
+    )
+    if fx_rows:
+        duckdb_connection.executemany(
+            "insert into _ee_fx values "
+            "(?, cast(? as date), cast(? as decimal(38, 12)), cast(? as date), ?)",
+            fx_rows,
         )
-        if fx_rows:
-            connection.executemany(
-                "insert into _ee_fx values "
-                "(?, cast(? as date), cast(? as decimal(38, 12)), cast(? as date), ?)",
-                fx_rows,
-            )
-        connection.execute(
-            f"update {qualified} set fx_rate_to_usd = NULL, fx_rate_date = NULL, "
-            f"fx_source = '', {reset_usd}"
-        )
-        connection.execute(
-            f"""
-            update {qualified} as mt
-            set fx_rate_to_usd = fx.fx_rate,
-                fx_rate_date = fx.fx_rate_date,
-                fx_source = fx.fx_source,
-                {set_usd}
-            from _ee_fx as fx
-            where upper(mt.currency) = fx.currency
-              and mt.period_end_date = fx.period_end
-            """
-        )
-        converted = int(
-            connection.execute(
-                f"select count(*) from {qualified} where fx_rate_to_usd is not null"
-            ).fetchone()[0]
-        )
+    duckdb_connection.execute(
+        f"update {qualified} set fx_rate_to_usd = NULL, fx_rate_date = NULL, "
+        f"fx_source = '', {reset_usd}"
+    )
+    duckdb_connection.execute(
+        f"""
+        update {qualified} as mt
+        set fx_rate_to_usd = fx.fx_rate,
+            fx_rate_date = fx.fx_rate_date,
+            fx_source = fx.fx_source,
+            {set_usd}
+        from _ee_fx as fx
+        where upper(mt.currency) = fx.currency
+          and mt.period_end_date = fx.period_end
+        """
+    )
+    converted = int(
+        duckdb_connection.execute(
+            f"select count(*) from {qualified} where fx_rate_to_usd is not null"
+        ).fetchone()[0]
+    )
 
     counts = {
         "rate_pairs": len(pairs),

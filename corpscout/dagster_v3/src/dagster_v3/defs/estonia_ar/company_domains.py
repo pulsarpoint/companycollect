@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 
-import duckdb
+from duckdb import DuckDBPyConnection
 
 from dagster_v3.defs.estonia_ar import tables
 from dagster_v3.defs.estonia_ar.contacts import register_domain_udfs
@@ -20,7 +19,7 @@ def _sql_literal(value: str) -> str:
 
 def build_estonia_ar_company_domains(
     *,
-    database_path: str | Path,
+    duckdb_connection: DuckDBPyConnection,
     source_run_id: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
@@ -83,25 +82,24 @@ def build_estonia_ar_company_domains(
             now() as resolved_at
         from primaried
     """
-    with duckdb.connect(str(database_path)) as connection:
-        register_domain_udfs(connection)
-        connection.execute(sql)
-        rows = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
-        websites = int(
-            connection.execute(
-                f"select count(*) from {qualified} where domain_source = 'website'"
-            ).fetchone()[0]
-        )
-        emails = int(
-            connection.execute(
-                f"select count(*) from {qualified} where domain_source = 'email'"
-            ).fetchone()[0]
-        )
-        companies = int(
-            connection.execute(
-                f"select count(distinct reg_code) from {qualified}"
-            ).fetchone()[0]
-        )
+    register_domain_udfs(duckdb_connection)
+    duckdb_connection.execute(sql)
+    rows = int(duckdb_connection.execute(f"select count(*) from {qualified}").fetchone()[0])
+    websites = int(
+        duckdb_connection.execute(
+            f"select count(*) from {qualified} where domain_source = 'website'"
+        ).fetchone()[0]
+    )
+    emails = int(
+        duckdb_connection.execute(
+            f"select count(*) from {qualified} where domain_source = 'email'"
+        ).fetchone()[0]
+    )
+    companies = int(
+        duckdb_connection.execute(
+            f"select count(distinct reg_code) from {qualified}"
+        ).fetchone()[0]
+    )
     if rows == 0:
         raise ValueError(
             "Estonia AR contacts produced no company domains; refusing to replace the table"

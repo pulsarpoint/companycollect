@@ -53,9 +53,10 @@ def _build(tmp_path) -> Path:
     json_path = tmp_path / "yldandmed.json"
     _write_sample(json_path)
     db = tmp_path / "ee.duckdb"
-    contacts._build_contacts_from_json(
-        database_path=db, json_path=json_path, source_run_id="run-1"
-    )
+    with duckdb.connect(str(db)) as conn:
+        contacts._build_contacts_from_json(
+            duckdb_connection=conn, json_path=json_path, source_run_id="run-1"
+        )
     return db
 
 
@@ -63,9 +64,10 @@ def test_contacts_domain_derivation(tmp_path):
     json_path = tmp_path / "yldandmed.json"
     _write_sample(json_path)
     db = tmp_path / "ee.duckdb"
-    counts = contacts._build_contacts_from_json(
-        database_path=db, json_path=json_path, source_run_id="run-1"
-    )
+    with duckdb.connect(str(db)) as conn:
+        counts = contacts._build_contacts_from_json(
+            duckdb_connection=conn, json_path=json_path, source_run_id="run-1"
+        )
     # 1 website domain (acme.ee), 2 email domains (acme.ee, uniquefirm.ee).
     assert counts["websites"] == 1
     assert counts["email_domains"] == 2
@@ -95,9 +97,10 @@ def test_contacts_domain_derivation(tmp_path):
 
 def test_company_domains_feeder(tmp_path):
     db = _build(tmp_path)
-    counts = company_domains.build_estonia_ar_company_domains(
-        database_path=db, source_run_id="run-1"
-    )
+    with duckdb.connect(str(db)) as conn:
+        counts = company_domains.build_estonia_ar_company_domains(
+            duckdb_connection=conn, source_run_id="run-1"
+        )
     # company 16752073 (acme.ee, deduped website+email) + company 300 (uniquefirm.ee).
     assert counts == {"domains": 2, "website_domains": 1, "email_domains": 1, "companies": 2}
 

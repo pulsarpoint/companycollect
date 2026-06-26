@@ -57,9 +57,10 @@ def test_one_download_builds_contacts_and_industries(tmp_path):
     db = tmp_path / "estonia_ar_source.duckdb"
     session = _FakeSession(_zip_bytes(SAMPLE_RECORDS))
 
-    counts = general_data.build_estonia_ar_general_data(
-        database_path=db, source_run_id="run-1", session=session
-    )
+    with duckdb.connect(str(db)) as conn:
+        counts = general_data.build_estonia_ar_general_data(
+            duckdb_connection=conn, source_run_id="run-1", session=session
+        )
 
     # ONE download fed both tables.
     assert session.calls == 1

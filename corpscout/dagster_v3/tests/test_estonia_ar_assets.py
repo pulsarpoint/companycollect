@@ -155,10 +155,11 @@ def test_export_companies_replaces_clickhouse_table(tmp_path: Path, monkeypatch)
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    rows = ee_clickhouse.export_estonia_ar_clickhouse_companies(
-        database_path=db_path,
-        clickhouse=ClickhouseResource(host="localhost"),
-    )
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        rows = ee_clickhouse.export_estonia_ar_clickhouse_companies(
+            duckdb_connection=conn,
+            clickhouse=ClickhouseResource(host="localhost"),
+        )
 
     assert rows == 2
     assert any("EXCHANGE TABLES" in stmt for stmt in fake.statements)

@@ -42,10 +42,13 @@ class _FakeClickHouse:
 
 def _build_native(db_path: Path) -> None:
     _seed_raw(db_path)
-    financials.build_estonia_ar_financial_statements(
-        database_path=db_path, source_run_id="run-1"
-    )
-    metrics.build_estonia_ar_financial_metrics(database_path=db_path, source_run_id="run-1")
+    with duckdb.connect(str(db_path)) as conn:
+        financials.build_estonia_ar_financial_statements(
+            duckdb_connection=conn, source_run_id="run-1"
+        )
+        metrics.build_estonia_ar_financial_metrics(
+            duckdb_connection=conn, source_run_id="run-1"
+        )
 
 
 def test_build_native_metrics_eur_no_usd(tmp_path: Path):
@@ -70,9 +73,10 @@ def test_build_native_metrics_eur_no_usd(tmp_path: Path):
 def test_usd_conversion_fills_usd(tmp_path: Path):
     db_path = tmp_path / "estonia_ar_source.duckdb"
     _build_native(db_path)
-    counts = metrics.apply_estonia_ar_usd_conversion(
-        database_path=db_path, exchange_rates=_StubExchangeRates()
-    )
+    with duckdb.connect(str(db_path)) as conn:
+        counts = metrics.apply_estonia_ar_usd_conversion(
+            duckdb_connection=conn, exchange_rates=_StubExchangeRates()
+        )
     assert counts["rate_pairs"] == 1  # EUR / 2019-12-31
     assert counts["rows_converted"] == 1
     wide = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_METRICS_WIDE_TABLE}"
@@ -111,9 +115,10 @@ def test_load_rates_batches_requests():
 def test_export_metrics_replaces_clickhouse_table(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "estonia_ar_source.duckdb"
     _build_native(db_path)
-    metrics.apply_estonia_ar_usd_conversion(
-        database_path=db_path, exchange_rates=_StubExchangeRates()
-    )
+    with duckdb.connect(str(db_path)) as conn:
+        metrics.apply_estonia_ar_usd_conversion(
+            duckdb_connection=conn, exchange_rates=_StubExchangeRates()
+        )
 
     fake = _FakeClickHouse()
 
@@ -123,10 +128,11 @@ def test_export_metrics_replaces_clickhouse_table(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    rows = ee_clickhouse.export_estonia_ar_clickhouse_financial_metrics(
-        database_path=db_path,
-        clickhouse=ClickhouseResource(host="localhost"),
-    )
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        rows = ee_clickhouse.export_estonia_ar_clickhouse_financial_metrics(
+            duckdb_connection=conn,
+            clickhouse=ClickhouseResource(host="localhost"),
+        )
     assert rows == 1
     assert any("EXCHANGE TABLES" in stmt for stmt in fake.statements)
     _, inserted_rows = fake.inserts[0]

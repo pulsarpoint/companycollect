@@ -6,8 +6,8 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-import duckdb
 from dlt.sources.helpers import requests as dlt_requests
+from duckdb import DuckDBPyConnection
 
 from dagster_v3.defs.estonia_ar import resources, tables
 
@@ -97,7 +97,7 @@ def _sql_literal(value: str) -> str:
 
 def load_estonia_ar_financial_csv(
     *,
-    database_path: str | Path,
+    duckdb_connection: DuckDBPyConnection,
     download_url: str,
     raw_table: str,
     session: resources.HttpSession | None = None,
@@ -118,23 +118,22 @@ def load_estonia_ar_financial_csv(
             session=session,
         )
         csv_path = resources._extract_single_csv(zip_path, tmp)
-        with duckdb.connect(str(database_path)) as connection:
-            connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
-            connection.execute(
-                f"create or replace table {DLT_DATASET_NAME}.{raw_table} as "
-                "select * from read_csv(?, delim=';', header=true, all_varchar=true, "
-                "quote='\"', escape='\"')",
-                [str(csv_path)],
-            )
-            rows = connection.execute(
-                f"select count(*) from {DLT_DATASET_NAME}.{raw_table}"
-            ).fetchone()[0]
+        duckdb_connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+        duckdb_connection.execute(
+            f"create or replace table {DLT_DATASET_NAME}.{raw_table} as "
+            "select * from read_csv(?, delim=';', header=true, all_varchar=true, "
+            "quote='\"', escape='\"')",
+            [str(csv_path)],
+        )
+        rows = duckdb_connection.execute(
+            f"select count(*) from {DLT_DATASET_NAME}.{raw_table}"
+        ).fetchone()[0]
     return int(rows)
 
 
 def build_estonia_ar_financial_statements(
     *,
-    database_path: str | Path,
+    duckdb_connection: DuckDBPyConnection,
     source_run_id: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
@@ -221,29 +220,28 @@ def build_estonia_ar_financial_statements(
         left join pivoted on pivoted.report_id = spine.report_id
     """
 
-    with duckdb.connect(str(database_path)) as connection:
-        spine_count = int(
-            connection.execute(
-                f"select count(*) from {DLT_DATASET_NAME}.{REPORT_GENERAL_RAW_TABLE}"
-            ).fetchone()[0]
+    spine_count = int(
+        duckdb_connection.execute(
+            f"select count(*) from {DLT_DATASET_NAME}.{REPORT_GENERAL_RAW_TABLE}"
+        ).fetchone()[0]
+    )
+    if spine_count == 0:
+        raise ValueError(
+            "Estonia AR report_general_raw produced no rows; refusing to replace "
+            "the wide financial_statements table"
         )
-        if spine_count == 0:
-            raise ValueError(
-                "Estonia AR report_general_raw produced no rows; refusing to replace "
-                "the wide financial_statements table"
-            )
-        connection.execute(sql)
-        statements = int(
-            connection.execute(
-                f"select count(*) from {DLT_DATASET_NAME}.{WIDE_TABLE}"
-            ).fetchone()[0]
-        )
-        with_metrics = int(
-            connection.execute(
-                f"select count(*) from {DLT_DATASET_NAME}.{WIDE_TABLE} "
-                "where net_result is not null or total_assets is not null"
-            ).fetchone()[0]
-        )
+    duckdb_connection.execute(sql)
+    statements = int(
+        duckdb_connection.execute(
+            f"select count(*) from {DLT_DATASET_NAME}.{WIDE_TABLE}"
+        ).fetchone()[0]
+    )
+    with_metrics = int(
+        duckdb_connection.execute(
+            f"select count(*) from {DLT_DATASET_NAME}.{WIDE_TABLE} "
+            "where net_result is not null or total_assets is not null"
+        ).fetchone()[0]
+    )
 
     counts = {"financial_statements": statements, "with_metrics": with_metrics}
     if log is not None:

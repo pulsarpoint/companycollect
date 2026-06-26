@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import duckdb
+from pathlib import Path
+from duckdb import DuckDBPyConnection
 
 from dagster_v3.defs.estonia_ar import tables
 from dagster_v3.defs.estonia_ar.contacts import _sql_literal
@@ -19,7 +20,7 @@ _READ_JSON_COLUMNS = (
 
 
 def _build_industries_from_json(
-    *, database_path: str | Path, json_path: Path, source_run_id: str
+    *, duckdb_connection: DuckDBPyConnection, json_path: Path, source_run_id: str
 ) -> dict[str, int]:
     qualified = f"{DLT_DATASET_NAME}.{INDUSTRIES_TABLE}"
     sql = f"""
@@ -67,18 +68,17 @@ def _build_industries_from_json(
             now() as resolved_at
         from current_activities
     """
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
-        connection.execute(sql)
-        rows = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
-        mapped = int(
-            connection.execute(
-                f"select count(*) from {qualified} where nace_mapping_status = 'mapped'"
-            ).fetchone()[0]
-        )
-        companies = int(
-            connection.execute(
-                f"select count(distinct reg_code) from {qualified}"
-            ).fetchone()[0]
-        )
+    duckdb_connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+    duckdb_connection.execute(sql)
+    rows = int(duckdb_connection.execute(f"select count(*) from {qualified}").fetchone()[0])
+    mapped = int(
+        duckdb_connection.execute(
+            f"select count(*) from {qualified} where nace_mapping_status = 'mapped'"
+        ).fetchone()[0]
+    )
+    companies = int(
+        duckdb_connection.execute(
+            f"select count(distinct reg_code) from {qualified}"
+        ).fetchone()[0]
+    )
     return {"industries": rows, "nace_mapped": mapped, "companies": companies}

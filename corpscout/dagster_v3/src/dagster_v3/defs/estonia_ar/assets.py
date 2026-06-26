@@ -4,12 +4,16 @@ from typing import Any
 
 import dagster as dg
 import dlt
-import duckdb
 from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
+from dagster_duckdb import DuckDBResource
 
+from dagster_v3.defs.common.duckdb_resources import (
+    duckdb_resource,
+    read_only_duckdb_connection,
+)
 from dagster_v3.defs.estonia_ar import resources, tables
 from dagster_v3.defs.estonia_ar.clickhouse import (
     export_estonia_ar_clickhouse_companies,
@@ -94,6 +98,7 @@ def run_estonia_ar_dlt_pipeline(
 def estonia_ar_entities_duckdb_asset(
     context: AssetExecutionContext,
     dlt: DagsterDltResource,
+    estonia_ar_duckdb: DuckDBResource,
 ) -> Iterator[Any]:
     """Load Estonia AR register entity bulk data to local DuckDB with dlt."""
     ESTONIA_AR_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -106,10 +111,11 @@ def estonia_ar_entities_duckdb_asset(
         ENTITIES_TABLE,
     )
     yield from dlt.run(context=context)
-    row_count = _duckdb_table_count(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        table_name=f"{DLT_DATASET_NAME}.{ENTITIES_TABLE}",
-    )
+    with read_only_duckdb_connection(estonia_ar_duckdb) as connection:
+        row_count = _duckdb_table_count(
+            duckdb_connection=connection,
+            table_name=f"{DLT_DATASET_NAME}.{ENTITIES_TABLE}",
+        )
     context.log.info(
         "Completed Estonia AR register dlt load: duckdb_path=%s, dataset=%s, table=%s, rows=%s",
         ESTONIA_AR_DUCKDB_PATH,
@@ -130,17 +136,19 @@ def estonia_ar_entities_duckdb_asset(
 def estonia_ar_clickhouse_companies(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
+    estonia_ar_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     context.log.info(
         "Starting Estonia AR companies ClickHouse export: duckdb_path=%s, table=%s",
         ESTONIA_AR_DUCKDB_PATH,
         tables.QUALIFIED_EE_COMPANIES_TABLE,
     )
-    rows = export_estonia_ar_clickhouse_companies(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with read_only_duckdb_connection(estonia_ar_duckdb) as connection:
+        rows = export_estonia_ar_clickhouse_companies(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     context.log.info("Completed Estonia AR companies ClickHouse export: rows=%s", rows)
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_EE_COMPANIES_TABLE},
@@ -150,6 +158,7 @@ def estonia_ar_clickhouse_companies(
 def _load_financial_raw(
     context: AssetExecutionContext,
     *,
+    estonia_ar_duckdb: DuckDBResource,
     raw_table: str,
 ) -> dg.MaterializeResult:
     # Resolve the current (datestamp-rotated) snapshot URL from the dataset index.
@@ -161,11 +170,13 @@ def _load_financial_raw(
         DLT_DATASET_NAME,
         raw_table,
     )
-    rows = load_estonia_ar_financial_csv(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        download_url=download_url,
-        raw_table=raw_table,
-    )
+    ESTONIA_AR_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with estonia_ar_duckdb.get_connection() as connection:
+        rows = load_estonia_ar_financial_csv(
+            duckdb_connection=connection,
+            download_url=download_url,
+            raw_table=raw_table,
+        )
     context.log.info(
         "Loaded Estonia AR financial CSV: table=%s.%s, rows=%s",
         DLT_DATASET_NAME,
@@ -185,8 +196,15 @@ def _raw_financial_asset(*, asset_key: str, raw_table: str, description: str):
         pool=ESTONIA_AR_DUCKDB_POOL,
         description=description,
     )
-    def _asset(context: AssetExecutionContext) -> dg.MaterializeResult:
-        return _load_financial_raw(context, raw_table=raw_table)
+    def _asset(
+        context: AssetExecutionContext,
+        estonia_ar_duckdb: DuckDBResource,
+    ) -> dg.MaterializeResult:
+        return _load_financial_raw(
+            context,
+            estonia_ar_duckdb=estonia_ar_duckdb,
+            raw_table=raw_table,
+        )
 
     return _asset
 
@@ -221,6 +239,7 @@ for _year in tables.EE_FINANCIAL_YEARS:
 )
 def estonia_ar_financial_statements_duckdb(
     context: AssetExecutionContext,
+    estonia_ar_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     context.log.info(
         "Building Estonia AR wide financial statements: duckdb_path=%s, table=%s.%s",
@@ -228,11 +247,13 @@ def estonia_ar_financial_statements_duckdb(
         DLT_DATASET_NAME,
         tables.FINANCIAL_STATEMENTS_WIDE_TABLE,
     )
-    counts = build_estonia_ar_financial_statements(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        log=context.log.info,
-    )
+    ESTONIA_AR_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with estonia_ar_duckdb.get_connection() as connection:
+        counts = build_estonia_ar_financial_statements(
+            duckdb_connection=connection,
+            source_run_id=context.run_id,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -250,17 +271,19 @@ def estonia_ar_financial_statements_duckdb(
 def estonia_ar_clickhouse_financial_statements(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
+    estonia_ar_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     context.log.info(
         "Starting Estonia AR financial statements ClickHouse export: duckdb_path=%s, table=%s",
         ESTONIA_AR_DUCKDB_PATH,
         tables.QUALIFIED_EE_FINANCIAL_STATEMENTS_TABLE,
     )
-    rows = export_estonia_ar_clickhouse_financial_statements(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with read_only_duckdb_connection(estonia_ar_duckdb) as connection:
+        rows = export_estonia_ar_clickhouse_financial_statements(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     context.log.info(
         "Completed Estonia AR financial statements ClickHouse export: rows=%s", rows
     )
@@ -279,6 +302,7 @@ def estonia_ar_clickhouse_financial_statements(
 )
 def estonia_ar_financial_metrics_duckdb(
     context: AssetExecutionContext,
+    estonia_ar_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     context.log.info(
         "Building Estonia AR native financial metrics: duckdb_path=%s, table=%s.%s",
@@ -286,11 +310,13 @@ def estonia_ar_financial_metrics_duckdb(
         DLT_DATASET_NAME,
         tables.FINANCIAL_METRICS_WIDE_TABLE,
     )
-    counts = build_estonia_ar_financial_metrics(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        log=context.log.info,
-    )
+    ESTONIA_AR_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with estonia_ar_duckdb.get_connection() as connection:
+        counts = build_estonia_ar_financial_metrics(
+            duckdb_connection=connection,
+            source_run_id=context.run_id,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -307,6 +333,7 @@ def estonia_ar_financial_metrics_duckdb(
 )
 def estonia_ar_financial_metrics_usd_duckdb(
     context: AssetExecutionContext,
+    estonia_ar_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     from exchange_rates import ExchangeRateClient
 
@@ -316,11 +343,13 @@ def estonia_ar_financial_metrics_usd_duckdb(
         DLT_DATASET_NAME,
         tables.FINANCIAL_METRICS_WIDE_TABLE,
     )
-    counts = apply_estonia_ar_usd_conversion(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        exchange_rates=ExchangeRateClient.from_env(),
-        log=context.log.info,
-    )
+    ESTONIA_AR_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with estonia_ar_duckdb.get_connection() as connection:
+        counts = apply_estonia_ar_usd_conversion(
+            duckdb_connection=connection,
+            exchange_rates=ExchangeRateClient.from_env(),
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -337,17 +366,19 @@ def estonia_ar_financial_metrics_usd_duckdb(
 def estonia_ar_clickhouse_financial_metrics(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
+    estonia_ar_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     context.log.info(
         "Starting Estonia AR financial metrics ClickHouse export: duckdb_path=%s, table=%s",
         ESTONIA_AR_DUCKDB_PATH,
         tables.QUALIFIED_EE_FINANCIAL_METRICS_TABLE,
     )
-    rows = export_estonia_ar_clickhouse_financial_metrics(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with read_only_duckdb_connection(estonia_ar_duckdb) as connection:
+        rows = export_estonia_ar_clickhouse_financial_metrics(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     context.log.info("Completed Estonia AR financial metrics ClickHouse export: rows=%s", rows)
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_EE_FINANCIAL_METRICS_TABLE},
@@ -370,17 +401,20 @@ def estonia_ar_clickhouse_financial_metrics(
 )
 def estonia_ar_general_data_duckdb(
     context: AssetExecutionContext,
+    estonia_ar_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     context.log.info(
         "Building Estonia AR general data (contacts + industries): duckdb_path=%s, dataset=%s",
         ESTONIA_AR_DUCKDB_PATH,
         DLT_DATASET_NAME,
     )
-    counts = build_estonia_ar_general_data(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        log=context.log.info,
-    )
+    ESTONIA_AR_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with estonia_ar_duckdb.get_connection() as connection:
+        counts = build_estonia_ar_general_data(
+            duckdb_connection=connection,
+            source_run_id=context.run_id,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -397,17 +431,19 @@ def estonia_ar_general_data_duckdb(
 def estonia_ar_clickhouse_company_contacts(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
+    estonia_ar_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     context.log.info(
         "Starting Estonia AR company contacts ClickHouse export: duckdb_path=%s, table=%s",
         ESTONIA_AR_DUCKDB_PATH,
         tables.QUALIFIED_EE_COMPANY_CONTACTS_TABLE,
     )
-    rows = export_estonia_ar_clickhouse_company_contacts(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with read_only_duckdb_connection(estonia_ar_duckdb) as connection:
+        rows = export_estonia_ar_clickhouse_company_contacts(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     context.log.info("Completed Estonia AR company contacts ClickHouse export: rows=%s", rows)
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_EE_COMPANY_CONTACTS_TABLE},
@@ -427,6 +463,7 @@ def estonia_ar_clickhouse_company_contacts(
 )
 def estonia_ar_company_domains_duckdb(
     context: AssetExecutionContext,
+    estonia_ar_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     context.log.info(
         "Building Estonia AR company domains: duckdb_path=%s, table=%s.%s",
@@ -434,11 +471,13 @@ def estonia_ar_company_domains_duckdb(
         DLT_DATASET_NAME,
         tables.COMPANY_DOMAINS_TABLE,
     )
-    counts = build_estonia_ar_company_domains(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        log=context.log.info,
-    )
+    ESTONIA_AR_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with estonia_ar_duckdb.get_connection() as connection:
+        counts = build_estonia_ar_company_domains(
+            duckdb_connection=connection,
+            source_run_id=context.run_id,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -456,17 +495,19 @@ def estonia_ar_company_domains_duckdb(
 def estonia_ar_clickhouse_company_domains(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
+    estonia_ar_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     context.log.info(
         "Starting Estonia AR company domains ClickHouse export: duckdb_path=%s, table=%s",
         ESTONIA_AR_DUCKDB_PATH,
         tables.QUALIFIED_EE_COMPANY_DOMAINS_TABLE,
     )
-    rows = export_estonia_ar_clickhouse_company_domains(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with read_only_duckdb_connection(estonia_ar_duckdb) as connection:
+        rows = export_estonia_ar_clickhouse_company_domains(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     context.log.info("Completed Estonia AR company domains ClickHouse export: rows=%s", rows)
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_EE_COMPANY_DOMAINS_TABLE},
@@ -490,26 +531,27 @@ def estonia_ar_clickhouse_company_domains(
 def estonia_ar_clickhouse_industries(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
+    estonia_ar_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     context.log.info(
         "Starting Estonia AR industries ClickHouse export: duckdb_path=%s, table=%s",
         ESTONIA_AR_DUCKDB_PATH,
         tables.QUALIFIED_EE_INDUSTRIES_TABLE,
     )
-    rows = export_estonia_ar_clickhouse_industries(
-        database_path=ESTONIA_AR_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with read_only_duckdb_connection(estonia_ar_duckdb) as connection:
+        rows = export_estonia_ar_clickhouse_industries(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     context.log.info("Completed Estonia AR industries ClickHouse export: rows=%s", rows)
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_EE_INDUSTRIES_TABLE},
     )
 
 
-def _duckdb_table_count(*, database_path: str | Path, table_name: str) -> int:
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        value = connection.execute(f"select count(*) from {table_name}").fetchone()[0]
+def _duckdb_table_count(*, duckdb_connection: Any, table_name: str) -> int:
+    value = duckdb_connection.execute(f"select count(*) from {table_name}").fetchone()[0]
     return int(value)
 
 
@@ -571,4 +613,37 @@ estonia_ar_general_data_schedule = dg.ScheduleDefinition(
 estonia_ar_full_refresh_job = dg.define_asset_job(
     "estonia_ar_full_refresh_job",
     selection=dg.AssetSelection.groups(GROUP_NAME),
+)
+
+
+defs = dg.Definitions(
+    assets=[
+        estonia_ar_entities_duckdb_asset,
+        *(globals()[key] for key in RAW_FINANCIAL_ASSET_KEYS),
+        estonia_ar_financial_statements_duckdb,
+        estonia_ar_clickhouse_financial_statements,
+        estonia_ar_financial_metrics_duckdb,
+        estonia_ar_financial_metrics_usd_duckdb,
+        estonia_ar_clickhouse_financial_metrics,
+        estonia_ar_clickhouse_companies,
+        estonia_ar_general_data_duckdb,
+        estonia_ar_clickhouse_company_contacts,
+        estonia_ar_company_domains_duckdb,
+        estonia_ar_clickhouse_company_domains,
+        estonia_ar_clickhouse_industries,
+    ],
+    jobs=[
+        estonia_ar_register_job,
+        estonia_ar_financials_job,
+        estonia_ar_general_data_job,
+        estonia_ar_full_refresh_job,
+    ],
+    schedules=[
+        estonia_ar_register_schedule,
+        estonia_ar_financials_schedule,
+        estonia_ar_general_data_schedule,
+    ],
+    resources={
+        "estonia_ar_duckdb": duckdb_resource(ESTONIA_AR_DUCKDB_PATH),
+    },
 )

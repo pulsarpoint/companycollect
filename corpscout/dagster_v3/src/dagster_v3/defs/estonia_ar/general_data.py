@@ -4,6 +4,8 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+from duckdb import DuckDBPyConnection
+
 from dagster_v3.defs.estonia_ar import resources, tables
 from dagster_v3.defs.estonia_ar.contacts import (
     _build_contacts_from_json,
@@ -16,7 +18,7 @@ DEFAULT_TIMEOUT_SECONDS = resources.DEFAULT_TIMEOUT_SECONDS
 
 def build_estonia_ar_general_data(
     *,
-    database_path: str | Path,
+    duckdb_connection: DuckDBPyConnection,
     source_run_id: str,
     download_url: str = tables.GENERAL_DATA_URL,
     session: resources.HttpSession | None = None,
@@ -42,10 +44,14 @@ def build_estonia_ar_general_data(
         )
         json_path = _extract_single_json(zip_path, tmp)
         contacts_counts = _build_contacts_from_json(
-            database_path=database_path, json_path=json_path, source_run_id=source_run_id
+            duckdb_connection=duckdb_connection,
+            json_path=json_path,
+            source_run_id=source_run_id,
         )
         industries_counts = _build_industries_from_json(
-            database_path=database_path, json_path=json_path, source_run_id=source_run_id
+            duckdb_connection=duckdb_connection,
+            json_path=json_path,
+            source_run_id=source_run_id,
         )
     if contacts_counts["contacts"] == 0:
         raise ValueError(

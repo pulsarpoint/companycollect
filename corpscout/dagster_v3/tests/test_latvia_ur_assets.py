@@ -118,7 +118,8 @@ def test_duckdb_table_count_helper(tmp_path: Path):
         pipelines_dir=tmp_path / "dlt",
     )
     qualified = f"{resources.DLT_DATASET_NAME}.{resources.ENTITIES_TABLE}"
-    assert assets._duckdb_table_count(database_path=db_path, table_name=qualified) == 2
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        assert assets._duckdb_table_count(duckdb_connection=conn, table_name=qualified) == 2
 
 
 def test_lv_companies_columns_match_entities_schema_and_migration():
@@ -153,10 +154,11 @@ def test_export_companies_replaces_clickhouse_table(tmp_path: Path, monkeypatch)
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    rows = latvia_ur_clickhouse.export_latvia_ur_clickhouse_companies(
-        database_path=db_path,
-        clickhouse=ClickhouseResource(host="localhost"),
-    )
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        rows = latvia_ur_clickhouse.export_latvia_ur_clickhouse_companies(
+            duckdb_connection=conn,
+            clickhouse=ClickhouseResource(host="localhost"),
+        )
 
     assert rows == 2
     # the staged table is created and atomically exchanged into corpscout.lv_companies

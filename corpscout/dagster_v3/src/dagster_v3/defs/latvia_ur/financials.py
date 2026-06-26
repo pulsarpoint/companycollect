@@ -3,6 +3,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import duckdb
+from duckdb import DuckDBPyConnection
 
 from dagster_v3.defs.latvia_ur import tables
 from dagster_v3.defs.latvia_ur.resources import (
@@ -36,7 +37,7 @@ _FS_RAW_COLUMNS = (
 
 def load_latvia_ur_financial_csv(
     *,
-    database_path: str | Path,
+    duckdb_connection: DuckDBPyConnection,
     download_url: str,
     raw_table: str,
     session: HttpSession | None = None,
@@ -49,7 +50,6 @@ def load_latvia_ur_financial_csv(
     losslessly; the pivot step casts numerics. Each raw table is an independent
     checkpoint, so a failure in one file never re-downloads the others.
     """
-    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="latvia_ur_fin_") as tmpdir:
         csv_path = Path(tmpdir) / f"{raw_table}.csv"
         _download_to_path(
@@ -59,17 +59,16 @@ def load_latvia_ur_financial_csv(
             user_agent=user_agent,
             session=session,
         )
-        with duckdb.connect(str(database_path)) as connection:
-            connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
-            connection.execute(
-                f"create or replace table {DLT_DATASET_NAME}.{raw_table} as "
-                "select * from read_csv(?, delim=';', header=true, all_varchar=true, "
-                "quote='\"', escape='\"')",
-                [str(csv_path)],
-            )
-            count = connection.execute(
-                f"select count(*) from {DLT_DATASET_NAME}.{raw_table}"
-            ).fetchone()[0]
+        duckdb_connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+        duckdb_connection.execute(
+            f"create or replace table {DLT_DATASET_NAME}.{raw_table} as "
+            "select * from read_csv(?, delim=';', header=true, all_varchar=true, "
+            "quote='\"', escape='\"')",
+            [str(csv_path)],
+        )
+        count = duckdb_connection.execute(
+            f"select count(*) from {DLT_DATASET_NAME}.{raw_table}"
+        ).fetchone()[0]
     return int(count)
 
 
@@ -95,7 +94,7 @@ def _orphan_count(connection: duckdb.DuckDBPyConnection, raw_table: str) -> int:
 
 def build_latvia_ur_financial_statements(
     *,
-    database_path: str | Path,
+    duckdb_connection: DuckDBPyConnection,
     source_run_id: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
@@ -152,21 +151,20 @@ def build_latvia_ur_financial_statements(
         on cf.statement_id = spine.id
     """
 
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(sql, [source_run_id, FINANCIALS_SOURCE_URL])
-        statements = int(
-            connection.execute(
-                f"select count(*) from {DLT_DATASET_NAME}.{WIDE_TABLE}"
-            ).fetchone()[0]
-        )
-        counts = {
-            "financial_statements": statements,
-            "balance_orphans": _orphan_count(connection, tables.BALANCE_SHEETS_RAW_TABLE),
-            "income_orphans": _orphan_count(connection, tables.INCOME_STATEMENTS_RAW_TABLE),
-            "cash_flow_orphans": _orphan_count(
-                connection, tables.CASH_FLOW_STATEMENTS_RAW_TABLE
-            ),
-        }
+    duckdb_connection.execute(sql, [source_run_id, FINANCIALS_SOURCE_URL])
+    statements = int(
+        duckdb_connection.execute(
+            f"select count(*) from {DLT_DATASET_NAME}.{WIDE_TABLE}"
+        ).fetchone()[0]
+    )
+    counts = {
+        "financial_statements": statements,
+        "balance_orphans": _orphan_count(duckdb_connection, tables.BALANCE_SHEETS_RAW_TABLE),
+        "income_orphans": _orphan_count(duckdb_connection, tables.INCOME_STATEMENTS_RAW_TABLE),
+        "cash_flow_orphans": _orphan_count(
+            duckdb_connection, tables.CASH_FLOW_STATEMENTS_RAW_TABLE
+        ),
+    }
     if log is not None:
         log(
             "Built Latvia UR wide financial statements: statements=%s, "

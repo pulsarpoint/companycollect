@@ -55,12 +55,13 @@ BALANCE_CSV = (
 
 def test_load_financial_csv_into_duckdb(tmp_path: Path):
     db_path = tmp_path / "latvia_ur_source.duckdb"
-    rows = financials.load_latvia_ur_financial_csv(
-        database_path=db_path,
-        download_url="https://data.gov.lv/example/balance_sheets.csv",
-        raw_table=tables.BALANCE_SHEETS_RAW_TABLE,
-        session=_FakeSession(BALANCE_CSV.encode("utf-8")),
-    )
+    with duckdb.connect(str(db_path)) as conn:
+        rows = financials.load_latvia_ur_financial_csv(
+            duckdb_connection=conn,
+            download_url="https://data.gov.lv/example/balance_sheets.csv",
+            raw_table=tables.BALANCE_SHEETS_RAW_TABLE,
+            session=_FakeSession(BALANCE_CSV.encode("utf-8")),
+        )
     assert rows == 2
     qualified = f"{tables.DLT_DATASET_NAME}.{tables.BALANCE_SHEETS_RAW_TABLE}"
     with duckdb.connect(str(db_path), read_only=True) as conn:
@@ -78,13 +79,14 @@ def test_load_financial_csv_into_duckdb(tmp_path: Path):
 
 def test_load_is_idempotent_replace(tmp_path: Path):
     db_path = tmp_path / "latvia_ur_source.duckdb"
-    for _ in range(2):
-        rows = financials.load_latvia_ur_financial_csv(
-            database_path=db_path,
-            download_url="https://data.gov.lv/example/balance_sheets.csv",
-            raw_table=tables.BALANCE_SHEETS_RAW_TABLE,
-            session=_FakeSession(BALANCE_CSV.encode("utf-8")),
-        )
+    with duckdb.connect(str(db_path)) as conn:
+        for _ in range(2):
+            rows = financials.load_latvia_ur_financial_csv(
+                duckdb_connection=conn,
+                download_url="https://data.gov.lv/example/balance_sheets.csv",
+                raw_table=tables.BALANCE_SHEETS_RAW_TABLE,
+                session=_FakeSession(BALANCE_CSV.encode("utf-8")),
+            )
     assert rows == 2
     qualified = f"{tables.DLT_DATASET_NAME}.{tables.BALANCE_SHEETS_RAW_TABLE}"
     with duckdb.connect(str(db_path), read_only=True) as conn:
@@ -140,28 +142,30 @@ CASHFLOW_CSV = (
 
 
 def _seed_raw(db_path: Path) -> None:
-    for raw_table, csv in (
-        (tables.FINANCIAL_STATEMENTS_RAW_TABLE, FS_CSV),
-        (tables.BALANCE_SHEETS_RAW_TABLE, BALANCE_CSV),
-        (tables.INCOME_STATEMENTS_RAW_TABLE, INCOME_CSV),
-        (tables.CASH_FLOW_STATEMENTS_RAW_TABLE, CASHFLOW_CSV),
-    ):
-        financials.load_latvia_ur_financial_csv(
-            database_path=db_path,
-            download_url="https://data.gov.lv/example.csv",
-            raw_table=raw_table,
-            session=_FakeSession(csv.encode("utf-8")),
-        )
+    with duckdb.connect(str(db_path)) as conn:
+        for raw_table, csv in (
+            (tables.FINANCIAL_STATEMENTS_RAW_TABLE, FS_CSV),
+            (tables.BALANCE_SHEETS_RAW_TABLE, BALANCE_CSV),
+            (tables.INCOME_STATEMENTS_RAW_TABLE, INCOME_CSV),
+            (tables.CASH_FLOW_STATEMENTS_RAW_TABLE, CASHFLOW_CSV),
+        ):
+            financials.load_latvia_ur_financial_csv(
+                duckdb_connection=conn,
+                download_url="https://data.gov.lv/example.csv",
+                raw_table=raw_table,
+                session=_FakeSession(csv.encode("utf-8")),
+            )
 
 
 def test_pivot_builds_wide_table_and_counts_orphans(tmp_path: Path):
     db_path = tmp_path / "latvia_ur_source.duckdb"
     _seed_raw(db_path)
 
-    counts = financials.build_latvia_ur_financial_statements(
-        database_path=db_path,
-        source_run_id="run-1",
-    )
+    with duckdb.connect(str(db_path)) as conn:
+        counts = financials.build_latvia_ur_financial_statements(
+            duckdb_connection=conn,
+            source_run_id="run-1",
+        )
 
     assert counts["financial_statements"] == 2
     assert counts["cash_flow_orphans"] == 1  # statement 999 has no spine row
@@ -195,9 +199,10 @@ def test_wide_build_coalesces_null_source_type(tmp_path: Path):
     raw = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_STATEMENTS_RAW_TABLE}"
     with duckdb.connect(str(db_path)) as conn:
         conn.execute(f"update {raw} set source_type = NULL")
-    financials.build_latvia_ur_financial_statements(
-        database_path=db_path, source_run_id="run-1"
-    )
+    with duckdb.connect(str(db_path)) as conn:
+        financials.build_latvia_ur_financial_statements(
+            duckdb_connection=conn, source_run_id="run-1"
+        )
     wide = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_STATEMENTS_WIDE_TABLE}"
     with duckdb.connect(str(db_path), read_only=True) as conn:
         nulls = conn.execute(
@@ -213,9 +218,10 @@ def test_wide_build_coalesces_null_source_type(tmp_path: Path):
 def test_export_financial_statements_replaces_clickhouse_table(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "latvia_ur_source.duckdb"
     _seed_raw(db_path)
-    financials.build_latvia_ur_financial_statements(
-        database_path=db_path, source_run_id="run-1"
-    )
+    with duckdb.connect(str(db_path)) as conn:
+        financials.build_latvia_ur_financial_statements(
+            duckdb_connection=conn, source_run_id="run-1"
+        )
 
     fake = _FakeClickHouse()
 
@@ -225,10 +231,11 @@ def test_export_financial_statements_replaces_clickhouse_table(tmp_path: Path, m
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    rows = latvia_ur_clickhouse.export_latvia_ur_clickhouse_financial_statements(
-        database_path=db_path,
-        clickhouse=ClickhouseResource(host="localhost"),
-    )
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        rows = latvia_ur_clickhouse.export_latvia_ur_clickhouse_financial_statements(
+            duckdb_connection=conn,
+            clickhouse=ClickhouseResource(host="localhost"),
+        )
 
     assert rows == 2
     assert any("EXCHANGE TABLES" in stmt for stmt in fake.statements)

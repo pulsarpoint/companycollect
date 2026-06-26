@@ -64,29 +64,31 @@ KI_2019_CSV = "\n".join(
 
 
 def _seed_raw(db_path: Path, *, report_general: str = RG_CSV) -> None:
-    financials.load_estonia_ar_financial_csv(
-        database_path=db_path,
-        download_url="https://example/report_general.zip",
-        raw_table=tables.REPORT_GENERAL_RAW_TABLE,
-        session=_zip_session(report_general),
-    )
-    for year in tables.EE_FINANCIAL_YEARS:
-        csv_text = KI_2019_CSV if year == 2019 else KI_HEADER
+    with duckdb.connect(str(db_path)) as conn:
         financials.load_estonia_ar_financial_csv(
-            database_path=db_path,
-            download_url=f"https://example/{year}.zip",
-            raw_table=tables.key_indicators_raw_table(year),
-            session=_zip_session(csv_text),
+            duckdb_connection=conn,
+            download_url="https://example/report_general.zip",
+            raw_table=tables.REPORT_GENERAL_RAW_TABLE,
+            session=_zip_session(report_general),
         )
+        for year in tables.EE_FINANCIAL_YEARS:
+            csv_text = KI_2019_CSV if year == 2019 else KI_HEADER
+            financials.load_estonia_ar_financial_csv(
+                duckdb_connection=conn,
+                download_url=f"https://example/{year}.zip",
+                raw_table=tables.key_indicators_raw_table(year),
+                session=_zip_session(csv_text),
+            )
 
 
 def test_pivot_builds_wide_statement_with_english_and_metrics(tmp_path: Path):
     db_path = tmp_path / "estonia_ar_source.duckdb"
     _seed_raw(db_path)
 
-    counts = financials.build_estonia_ar_financial_statements(
-        database_path=db_path, source_run_id="run-1"
-    )
+    with duckdb.connect(str(db_path)) as conn:
+        counts = financials.build_estonia_ar_financial_statements(
+            duckdb_connection=conn, source_run_id="run-1"
+        )
     assert counts["financial_statements"] == 1
     assert counts["with_metrics"] == 1
 
@@ -125,9 +127,10 @@ def test_pivot_builds_wide_statement_with_english_and_metrics(tmp_path: Path):
 def test_wide_columns_match_schema(tmp_path: Path):
     db_path = tmp_path / "estonia_ar_source.duckdb"
     _seed_raw(db_path)
-    financials.build_estonia_ar_financial_statements(
-        database_path=db_path, source_run_id="run-1"
-    )
+    with duckdb.connect(str(db_path)) as conn:
+        financials.build_estonia_ar_financial_statements(
+            duckdb_connection=conn, source_run_id="run-1"
+        )
     wide = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_STATEMENTS_WIDE_TABLE}"
     with duckdb.connect(str(db_path), read_only=True) as conn:
         cols = [r[0] for r in conn.execute(f"describe {wide}").fetchall()]
@@ -194,6 +197,7 @@ def test_build_refuses_empty_report_general(tmp_path: Path):
     db_path = tmp_path / "estonia_ar_source.duckdb"
     _seed_raw(db_path, report_general=RG_HEADER)  # header only -> 0 spine rows
     with pytest.raises(ValueError, match="refusing to replace"):
-        financials.build_estonia_ar_financial_statements(
-            database_path=db_path, source_run_id="run-1"
-        )
+        with duckdb.connect(str(db_path)) as conn:
+            financials.build_estonia_ar_financial_statements(
+                duckdb_connection=conn, source_run_id="run-1"
+            )

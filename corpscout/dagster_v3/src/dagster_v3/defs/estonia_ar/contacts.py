@@ -4,6 +4,7 @@ import zipfile
 from pathlib import Path
 
 import duckdb
+from duckdb import DuckDBPyConnection
 
 from dagster_v3.defs.estonia_ar import resources, tables
 from dagster_v3.domains import normalized_url, root_domain, website_host
@@ -63,7 +64,7 @@ def _extract_single_json(zip_path: Path, dest_dir: Path) -> Path:
 
 
 def _build_contacts_from_json(
-    *, database_path: str | Path, json_path: Path, source_run_id: str
+    *, duckdb_connection: DuckDBPyConnection, json_path: Path, source_run_id: str
 ) -> dict[str, int]:
     contact_type_en = "\n            ".join(
         f"when '{code}' then '{en}'"
@@ -144,20 +145,19 @@ def _build_contacts_from_json(
         from enriched2 e
         left join email_counts ec on e.email_domain = ec.email_domain
     """
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
-        register_domain_udfs(connection)
-        connection.execute(sql)
-        qualified = f"{DLT_DATASET_NAME}.{CONTACTS_TABLE}"
-        contacts = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
-        websites = int(
-            connection.execute(
-                f"select count(*) from {qualified} where domain_source = 'website'"
-            ).fetchone()[0]
-        )
-        email_domains = int(
-            connection.execute(
-                f"select count(*) from {qualified} where domain_source = 'email'"
-            ).fetchone()[0]
-        )
+    duckdb_connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+    register_domain_udfs(duckdb_connection)
+    duckdb_connection.execute(sql)
+    qualified = f"{DLT_DATASET_NAME}.{CONTACTS_TABLE}"
+    contacts = int(duckdb_connection.execute(f"select count(*) from {qualified}").fetchone()[0])
+    websites = int(
+        duckdb_connection.execute(
+            f"select count(*) from {qualified} where domain_source = 'website'"
+        ).fetchone()[0]
+    )
+    email_domains = int(
+        duckdb_connection.execute(
+            f"select count(*) from {qualified} where domain_source = 'email'"
+        ).fetchone()[0]
+    )
     return {"contacts": contacts, "websites": websites, "email_domains": email_domains}
