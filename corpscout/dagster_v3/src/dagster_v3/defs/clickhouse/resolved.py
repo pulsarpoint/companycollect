@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
 
-import duckdb
 from dagster_clickhouse import ClickhouseResource
 
 RESOLVED_DATABASE = "corpscout"
@@ -46,32 +44,6 @@ def assert_clickhouse_tables_exist(
     missing = [table for table in requested_tables if table not in existing]
     if missing:
         raise ValueError(f"Missing ClickHouse tables in {database}: {', '.join(missing)}")
-
-
-def export_duckdb_table_to_clickhouse(
-    *,
-    duckdb_path: str | Path,
-    clickhouse_client: Any,
-    duckdb_schema: str,
-    duckdb_table: str,
-    clickhouse_database: str,
-    clickhouse_table: str,
-    columns: Sequence[str],
-    truncate: bool,
-    batch_size: int = DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
-) -> int:
-    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
-        return export_duckdb_connection_table_to_clickhouse(
-            duckdb_connection=connection,
-            clickhouse_client=clickhouse_client,
-            duckdb_schema=duckdb_schema,
-            duckdb_table=duckdb_table,
-            clickhouse_database=clickhouse_database,
-            clickhouse_table=clickhouse_table,
-            columns=columns,
-            truncate=truncate,
-            batch_size=batch_size,
-        )
 
 
 def export_duckdb_connection_table_to_clickhouse(
@@ -138,26 +110,6 @@ def export_duckdb_connection_table_to_clickhouse(
             suppress_errors=primary_error is not None,
         )
     return row_count
-
-
-def replace_duckdb_tables_in_clickhouse(
-    *,
-    duckdb_path: str | Path,
-    clickhouse_client: Any,
-    duckdb_schema: str,
-    clickhouse_database: str,
-    tables: Sequence[tuple[str, Sequence[str]]],
-    batch_size: int = DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
-) -> dict[str, int]:
-    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
-        return replace_duckdb_connection_tables_in_clickhouse(
-            duckdb_connection=connection,
-            clickhouse_client=clickhouse_client,
-            duckdb_schema=duckdb_schema,
-            clickhouse_database=clickhouse_database,
-            tables=tables,
-            batch_size=batch_size,
-        )
 
 
 def replace_duckdb_connection_tables_in_clickhouse(

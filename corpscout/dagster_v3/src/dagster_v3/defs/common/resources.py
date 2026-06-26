@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
 import boto3
 import dagster as dg
-import duckdb
 from botocore.config import Config
 from pydantic import PrivateAttr
 
@@ -124,23 +122,6 @@ class ObjectStoreResource(dg.ConfigurableResource):
             )
             deleted_count += len(key_batch)
         return deleted_count
-
-
-class LocalDuckDBResource(dg.ConfigurableResource):
-    database_path: str = "data/finland_ytj.duckdb"
-
-    def path(self) -> Path:
-        return Path(self.database_path)
-
-    @contextmanager
-    def connect(self, *, read_only: bool = False) -> Iterator[Any]:
-        path = self.path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        connection = duckdb.connect(str(path), read_only=read_only)
-        try:
-            yield connection
-        finally:
-            connection.close()
 
 
 def _error_code(exc: Exception) -> str:

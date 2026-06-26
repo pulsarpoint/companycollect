@@ -165,7 +165,7 @@ Purpose:
 
 Recommended publish behavior:
 
-- Because NACE is a small reference table, use full-table replacement through `replace_duckdb_tables_in_clickhouse(...)`.
+- Because NACE is a small reference table, use full-table replacement through `replace_duckdb_connection_tables_in_clickhouse(...)`.
 - That helper creates a temporary stage table from the migrated final table, inserts DuckDB rows, and swaps tables.
 - This avoids `TRUNCATE TABLE` and reduces the chance of leaving the reference table empty after a failed run.
 

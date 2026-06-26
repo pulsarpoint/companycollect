@@ -9,10 +9,24 @@ from dagster_v3.defs.clickhouse.resolved import (
     REQUIRED_FINLAND_RESOLVED_TABLES,
     assert_clickhouse_tables_exist,
     export_duckdb_connection_table_to_clickhouse,
-    export_duckdb_table_to_clickhouse,
     replace_duckdb_connection_tables_in_clickhouse,
-    replace_duckdb_tables_in_clickhouse,
 )
+
+
+def _export_table(*, duckdb_path, **kwargs):
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        return export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=connection,
+            **kwargs,
+        )
+
+
+def _replace_tables(*, duckdb_path, **kwargs):
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        return replace_duckdb_connection_tables_in_clickhouse(
+            duckdb_connection=connection,
+            **kwargs,
+        )
 
 
 class FakeClickHouseClient:
@@ -89,7 +103,7 @@ def test_assert_clickhouse_tables_exist_reports_missing_tables(monkeypatch) -> N
         raise AssertionError("expected missing table error")
 
 
-def test_export_duckdb_table_to_clickhouse_inserts_rows_in_column_order(tmp_path) -> None:
+def test__export_table_inserts_rows_in_column_order(tmp_path) -> None:
     database_path = tmp_path / "source.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         connection.execute("create schema finland_resolved")
@@ -108,7 +122,7 @@ def test_export_duckdb_table_to_clickhouse_inserts_rows_in_column_order(tmp_path
 
     client = FakeInsertClickHouseClient()
 
-    row_count = export_duckdb_table_to_clickhouse(
+    row_count = _export_table(
         duckdb_path=database_path,
         clickhouse_client=client,
         duckdb_schema="finland_resolved",
@@ -178,7 +192,7 @@ def test_export_duckdb_connection_table_to_clickhouse_inserts_rows_in_batches(
     ]
 
 
-def test_export_duckdb_table_to_clickhouse_inserts_rows_in_batches(tmp_path) -> None:
+def test__export_table_inserts_rows_in_batches(tmp_path) -> None:
     database_path = tmp_path / "source.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         connection.execute("create schema finland_resolved")
@@ -200,7 +214,7 @@ def test_export_duckdb_table_to_clickhouse_inserts_rows_in_batches(tmp_path) -> 
 
     client = FakeInsertClickHouseClient()
 
-    row_count = export_duckdb_table_to_clickhouse(
+    row_count = _export_table(
         duckdb_path=database_path,
         clickhouse_client=client,
         duckdb_schema="finland_resolved",
@@ -225,7 +239,7 @@ def test_export_duckdb_table_to_clickhouse_inserts_rows_in_batches(tmp_path) -> 
     ]
 
 
-def test_export_duckdb_table_to_clickhouse_uses_stage_then_exchange_for_truncate(
+def test__export_table_uses_stage_then_exchange_for_truncate(
     tmp_path, monkeypatch
 ) -> None:
     database_path = tmp_path / "source.duckdb"
@@ -250,7 +264,7 @@ def test_export_duckdb_table_to_clickhouse_uses_stage_then_exchange_for_truncate
     )
     client = FakeInsertClickHouseClient()
 
-    row_count = export_duckdb_table_to_clickhouse(
+    row_count = _export_table(
         duckdb_path=database_path,
         clickhouse_client=client,
         duckdb_schema="finland_resolved",
@@ -275,7 +289,7 @@ def test_export_duckdb_table_to_clickhouse_uses_stage_then_exchange_for_truncate
     ]
 
 
-def test_export_duckdb_table_to_clickhouse_returns_zero_for_empty_table(
+def test__export_table_returns_zero_for_empty_table(
     tmp_path, monkeypatch
 ) -> None:
     database_path = tmp_path / "source.duckdb"
@@ -297,7 +311,7 @@ def test_export_duckdb_table_to_clickhouse_returns_zero_for_empty_table(
     )
     client = FakeInsertClickHouseClient()
 
-    row_count = export_duckdb_table_to_clickhouse(
+    row_count = _export_table(
         duckdb_path=database_path,
         clickhouse_client=client,
         duckdb_schema="finland_resolved",
@@ -317,7 +331,7 @@ def test_export_duckdb_table_to_clickhouse_returns_zero_for_empty_table(
     assert client.insert_calls == []
 
 
-def test_export_duckdb_table_to_clickhouse_escapes_identifiers(tmp_path) -> None:
+def test__export_table_escapes_identifiers(tmp_path) -> None:
     database_path = tmp_path / "source.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         connection.execute('create schema "schema""name"')
@@ -336,7 +350,7 @@ def test_export_duckdb_table_to_clickhouse_escapes_identifiers(tmp_path) -> None
 
     client = FakeInsertClickHouseClient()
 
-    row_count = export_duckdb_table_to_clickhouse(
+    row_count = _export_table(
         duckdb_path=database_path,
         clickhouse_client=client,
         duckdb_schema='schema"name',
@@ -356,7 +370,7 @@ def test_export_duckdb_table_to_clickhouse_escapes_identifiers(tmp_path) -> None
     ]
 
 
-def test_export_duckdb_table_to_clickhouse_supports_dotted_schema_qualifier(
+def test__export_table_supports_dotted_schema_qualifier(
     tmp_path,
 ) -> None:
     database_path = tmp_path / "wikidata.duckdb"
@@ -373,7 +387,7 @@ def test_export_duckdb_table_to_clickhouse_supports_dotted_schema_qualifier(
 
     client = FakeInsertClickHouseClient()
 
-    row_count = export_duckdb_table_to_clickhouse(
+    row_count = _export_table(
         duckdb_path=database_path,
         clickhouse_client=client,
         duckdb_schema="wikidata.wikidata",
@@ -393,7 +407,7 @@ def test_export_duckdb_table_to_clickhouse_supports_dotted_schema_qualifier(
     ]
 
 
-def test_export_duckdb_table_to_clickhouse_cleanup_attempts_drop_on_insert_failure(
+def test__export_table_cleanup_attempts_drop_on_insert_failure(
     tmp_path, monkeypatch
 ) -> None:
     database_path = tmp_path / "source.duckdb"
@@ -416,7 +430,7 @@ def test_export_duckdb_table_to_clickhouse_cleanup_attempts_drop_on_insert_failu
     client = FailingInsertClickHouseClient()
 
     try:
-        export_duckdb_table_to_clickhouse(
+        _export_table(
             duckdb_path=database_path,
             clickhouse_client=client,
             duckdb_schema="finland_resolved",
@@ -443,7 +457,7 @@ def test_export_duckdb_table_to_clickhouse_cleanup_attempts_drop_on_insert_failu
     ]
 
 
-def test_export_duckdb_table_to_clickhouse_raises_cleanup_error_after_successful_exchange(
+def test__export_table_raises_cleanup_error_after_successful_exchange(
     tmp_path, monkeypatch
 ) -> None:
     database_path = tmp_path / "source.duckdb"
@@ -470,7 +484,7 @@ def test_export_duckdb_table_to_clickhouse_raises_cleanup_error_after_successful
     )
 
     try:
-        export_duckdb_table_to_clickhouse(
+        _export_table(
             duckdb_path=database_path,
             clickhouse_client=client,
             duckdb_schema="finland_resolved",
@@ -500,7 +514,7 @@ def test_export_duckdb_table_to_clickhouse_raises_cleanup_error_after_successful
     ]
 
 
-def test_replace_duckdb_tables_in_clickhouse_rolls_back_on_exchange_failure(
+def test__replace_tables_rolls_back_on_exchange_failure(
     tmp_path, monkeypatch
 ) -> None:
     database_path = tmp_path / "source.duckdb"
@@ -532,7 +546,7 @@ def test_replace_duckdb_tables_in_clickhouse_rolls_back_on_exchange_failure(
     client = FailingSecondExchangeClickHouseClient()
 
     try:
-        replace_duckdb_tables_in_clickhouse(
+        _replace_tables(
             duckdb_path=database_path,
             clickhouse_client=client,
             duckdb_schema="finland_resolved",
@@ -568,7 +582,7 @@ def test_replace_duckdb_tables_in_clickhouse_rolls_back_on_exchange_failure(
     ]
 
 
-def test_replace_duckdb_tables_in_clickhouse_loads_stages_in_batches(
+def test__replace_tables_loads_stages_in_batches(
     tmp_path, monkeypatch
 ) -> None:
     database_path = tmp_path / "source.duckdb"
@@ -612,7 +626,7 @@ def test_replace_duckdb_tables_in_clickhouse_loads_stages_in_batches(
     )
     client = FakeInsertClickHouseClient()
 
-    row_counts = replace_duckdb_tables_in_clickhouse(
+    row_counts = _replace_tables(
         duckdb_path=database_path,
         clickhouse_client=client,
         duckdb_schema="finland_resolved",
@@ -736,7 +750,7 @@ def test_replace_duckdb_connection_tables_in_clickhouse_loads_stages_in_batches(
     ]
 
 
-def test_replace_duckdb_tables_in_clickhouse_surfaces_rollback_exchange_failures(
+def test__replace_tables_surfaces_rollback_exchange_failures(
     tmp_path, monkeypatch
 ) -> None:
     database_path = tmp_path / "source.duckdb"
@@ -768,7 +782,7 @@ def test_replace_duckdb_tables_in_clickhouse_surfaces_rollback_exchange_failures
     client = FailingSecondExchangeAndRollbackClickHouseClient()
 
     try:
-        replace_duckdb_tables_in_clickhouse(
+        _replace_tables(
             duckdb_path=database_path,
             clickhouse_client=client,
             duckdb_schema="finland_resolved",
@@ -812,7 +826,7 @@ def test_replace_duckdb_tables_in_clickhouse_surfaces_rollback_exchange_failures
     ]
 
 
-def test_replace_duckdb_tables_in_clickhouse_raises_cleanup_error_after_successful_exchange(
+def test__replace_tables_raises_cleanup_error_after_successful_exchange(
     tmp_path, monkeypatch
 ) -> None:
     database_path = tmp_path / "source.duckdb"
@@ -849,7 +863,7 @@ def test_replace_duckdb_tables_in_clickhouse_raises_cleanup_error_after_successf
     )
 
     try:
-        replace_duckdb_tables_in_clickhouse(
+        _replace_tables(
             duckdb_path=database_path,
             clickhouse_client=client,
             duckdb_schema="finland_resolved",
