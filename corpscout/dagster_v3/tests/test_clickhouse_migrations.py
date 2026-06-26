@@ -73,6 +73,7 @@ EXPECTED_MIGRATIONS = (
     "000058_corpscout_companies_drop_free_text_en",
     "000059_corpscout_no_companies_free_text_columns",
     "000060_corpscout_no_companies_translated_view",
+    "000061_corpscout_drop_raw_norway_exports",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -395,12 +396,15 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
         sql = _migration_sql(f"{migration_file}.up.sql")
 
         assert "CREATE DATABASE IF NOT EXISTS" in sql
-        # Every migration creates tables, except pure ALTER (schema-change) migrations.
+        # Every migration creates, alters, or drops objects — never a no-op.
+        # DROP-only up migrations (e.g. removing orphaned tables) are allowed.
         assert (
             "CREATE TABLE IF NOT EXISTS" in sql
             or "ALTER TABLE" in sql
             or "CREATE VIEW IF NOT EXISTS" in sql
             or "CREATE OR REPLACE VIEW" in sql
+            or "DROP TABLE IF EXISTS" in sql
+            or "DROP VIEW IF EXISTS" in sql
         )
         assert "TRUNCATE" not in sql.upper()
 
@@ -409,10 +413,13 @@ def test_clickhouse_migrations_have_down_files() -> None:
     for migration_file in EXPECTED_MIGRATIONS:
         sql = _migration_sql(f"{migration_file}.down.sql")
 
+        # Down migrations undo the up migration: DROP-up → CREATE-down and vice versa.
         assert (
             "DROP TABLE IF EXISTS" in sql
             or "ALTER TABLE" in sql
             or "DROP VIEW IF EXISTS" in sql
+            or "CREATE TABLE IF NOT EXISTS" in sql
+            or "CREATE OR REPLACE VIEW" in sql
         )
 
 
@@ -890,6 +897,19 @@ def test_brazil_rfb_contact_domains_migration_covers_exported_columns() -> None:
     assert "ORDER BY (cnpj_basico, root_domain)" in sql
     assert "DROP TABLE IF EXISTS corpscout.br_websites" in down_sql
     assert "DROP TABLE IF EXISTS corpscout.br_company_contact_info" in down_sql
+
+
+def test_drop_raw_norway_exports_migration_removes_orphaned_tables() -> None:
+    sql = _migration_sql("000061_corpscout_drop_raw_norway_exports.up.sql")
+    down_sql = _migration_sql("000061_corpscout_drop_raw_norway_exports.down.sql")
+
+    assert "DROP VIEW IF EXISTS corpscout.norway_companies_translated" in sql
+    assert "DROP TABLE IF EXISTS corpscout.companies" in sql
+    assert "DROP TABLE IF EXISTS corpscout.financial_statements" in sql
+
+    assert "CREATE TABLE IF NOT EXISTS corpscout.companies" in down_sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.financial_statements" in down_sql
+    assert "CREATE OR REPLACE VIEW corpscout.norway_companies_translated" in down_sql
 
 
 def _migration_sql(file_name: str) -> str:

@@ -3,8 +3,6 @@ import dagster as dg
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.norway_brreg.assets import (
     NORWAY_BRREG_DUCKDB_PATH,
-    norway_brreg_clickhouse_companies,
-    norway_brreg_clickhouse_financial_statements,
     norway_brreg_entities_duckdb_asset,
     norway_brreg_financial_fetches_duckdb_asset,
     norway_brreg_financial_statements_duckdb_asset,
@@ -19,8 +17,6 @@ defs = dg.Definitions(
         norway_brreg_entities_duckdb_asset,
         norway_brreg_financial_fetches_duckdb_asset,
         norway_brreg_financial_statements_duckdb_asset,
-        norway_brreg_clickhouse_companies,
-        norway_brreg_clickhouse_financial_statements,
         norway_brreg_translation_trigger,
     ],
     jobs=[norway_brreg_refresh_job],

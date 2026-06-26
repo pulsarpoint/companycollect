@@ -6,7 +6,7 @@ from translator.registry import FieldConfig, get_source_config
 def test_norway_brreg_config_has_three_free_text_fields():
     config = get_source_config("norway_brreg")
     assert config.source_lang == "no"
-    assert config.ch_table == "corpscout.companies"
+    assert config.ch_table == "corpscout.no_companies"
     assert config.fields == (
         FieldConfig(field="articles_purpose", original_col="articles_purpose_original"),
         FieldConfig(field="activity_text", original_col="activity_text_original"),

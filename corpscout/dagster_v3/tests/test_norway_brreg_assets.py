@@ -8,15 +8,11 @@ from pathlib import Path
 from typing import Any
 from typing import get_type_hints
 
-import dagster as dg
 import dlt
 import duckdb
-import pyarrow as pa
-import pytest
 from dagster_clickhouse import ClickhouseResource
 
 import dagster_v3.defs.norway_brreg.assets as brreg_assets
-from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.norway_brreg import resources as brreg_resources
 from dagster_v3.defs.norway_brreg import tables as brreg_tables
 from dagster_v3.defs.norway_brreg.financial_fetches import (
@@ -728,169 +724,6 @@ def test_prepare_norway_brreg_clickhouse_financials_uses_official_resource_conne
         "CREATE DATABASE IF NOT EXISTS corpscout",
         brreg_tables.FINANCIAL_STATEMENTS_DDL.strip(),
     ]
-
-
-def test_export_norway_brreg_clickhouse_tables_reads_duckdb_and_inserts(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    database_path = tmp_path / "norway.duckdb"
-    _run_entities_dlt_pipeline_for_test(
-        database_path=database_path,
-        session=FakeHttpSession(_gzip_json_array([_entity_record()])),
-    )
-    _run_financial_fetches_for_test(
-        database_path=database_path,
-        client=FakeHttpSession(
-            json_by_url={
-                "https://data.brreg.no/regnskapsregisteret/regnskap/923609016": [
-                    _financial_record()
-                ]
-            }
-        ),
-    )
-    _normalize_financial_statements_for_test(
-        database_path=database_path,
-        exchange_rates=FakeExchangeRates(),
-    )
-    resource = ClickhouseResource(host="localhost")
-    client = FakeClickHouseClient()
-    log_messages: list[str] = []
-
-    def capture_log(message: str, *args: Any) -> None:
-        log_messages.append(message % args if args else message)
-
-    @contextmanager
-    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
-        yield client
-
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
-
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        result = brreg_assets.export_norway_brreg_clickhouse_tables(
-            duckdb_connection=connection,
-            clickhouse=resource,
-            log=capture_log,
-        )
-
-    assert result == {"companies": 1, "financial_statements": 1}
-    assert [insert[0].split(" (", 1)[0] for insert in client.insert_calls] == [
-        "INSERT INTO `corpscout`.`companies`",
-        "INSERT INTO `corpscout`.`financial_statements`",
-    ]
-
-    company_row = dict(zip(brreg_tables.COMPANIES_EXPORT_COLUMNS, client.insert_calls[0][1][0]))
-    financial_row = dict(
-        zip(brreg_tables.FINANCIAL_STATEMENTS_EXPORT_COLUMNS, client.insert_calls[1][1][0])
-    )
-    assert company_row["org_number"] == "923609016"
-    assert company_row["legal_name"] == "EQUINOR ASA"
-    assert financial_row["org_number"] == "923609016"
-    assert financial_row["period_end_date"] == date(2024, 12, 31)
-    assert financial_row["operating_revenue_amount_original"] == Decimal("72543000000.000")
-    assert financial_row["operating_revenue_amount_usd"] == Decimal("7254300000.000")
-    assert (
-        (
-            "Preparing Norway Brreg companies ClickHouse table: database=corpscout, "
-            "table=corpscout.companies"
-        )
-        in log_messages
-    )
-    assert (
-        (
-            "Preparing Norway Brreg financial statements ClickHouse table: "
-            "database=corpscout, table=corpscout.financial_statements"
-        )
-        in log_messages
-    )
-
-
-def test_export_norway_brreg_clickhouse_companies_touches_only_company_table(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    database_path = tmp_path / "norway.duckdb"
-    _run_entities_dlt_pipeline_for_test(
-        database_path=database_path,
-        session=FakeHttpSession(_gzip_json_array([_entity_record()])),
-    )
-    resource = ClickhouseResource(host="localhost")
-    client = FakeClickHouseClient()
-
-    @contextmanager
-    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
-        yield client
-
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
-
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        rows = brreg_assets.export_norway_brreg_clickhouse_companies(
-            duckdb_connection=connection,
-            clickhouse=resource,
-        )
-
-    assert rows == 1
-    assert client.statements == [
-        "CREATE DATABASE IF NOT EXISTS corpscout",
-        brreg_tables.COMPANIES_DDL.strip(),
-    ]
-    assert [insert[0].split(" (", 1)[0] for insert in client.insert_calls] == [
-        "INSERT INTO `corpscout`.`companies`"
-    ]
-    company_row = dict(zip(brreg_tables.COMPANIES_EXPORT_COLUMNS, client.insert_calls[0][1][0]))
-    assert company_row["org_number"] == "923609016"
-
-
-def test_export_norway_brreg_clickhouse_financials_touches_only_financial_table(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    database_path = tmp_path / "norway.duckdb"
-    _run_entities_dlt_pipeline_for_test(
-        database_path=database_path,
-        session=FakeHttpSession(_gzip_json_array([_entity_record()])),
-    )
-    _run_financial_fetches_for_test(
-        database_path=database_path,
-        client=FakeHttpSession(
-            json_by_url={
-                "https://data.brreg.no/regnskapsregisteret/regnskap/923609016": [
-                    _financial_record()
-                ]
-            }
-        ),
-    )
-    _normalize_financial_statements_for_test(
-        database_path=database_path,
-        exchange_rates=FakeExchangeRates(),
-    )
-    resource = ClickhouseResource(host="localhost")
-    client = FakeClickHouseClient()
-
-    @contextmanager
-    def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
-        yield client
-
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
-
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        rows = brreg_assets.export_norway_brreg_clickhouse_financial_statements(
-            duckdb_connection=connection,
-            clickhouse=resource,
-        )
-
-    assert rows == 1
-    assert client.statements == [
-        "CREATE DATABASE IF NOT EXISTS corpscout",
-        brreg_tables.FINANCIAL_STATEMENTS_DDL.strip(),
-    ]
-    assert [insert[0].split(" (", 1)[0] for insert in client.insert_calls] == [
-        "INSERT INTO `corpscout`.`financial_statements`"
-    ]
-    financial_row = dict(
-        zip(brreg_tables.FINANCIAL_STATEMENTS_EXPORT_COLUMNS, client.insert_calls[0][1][0])
-    )
-    assert financial_row["org_number"] == "923609016"
 
 
 def test_entity_status_derivation_handles_liquidation_and_bankruptcy() -> None:
