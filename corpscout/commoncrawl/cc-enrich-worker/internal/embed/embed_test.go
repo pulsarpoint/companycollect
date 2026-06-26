@@ -38,7 +38,7 @@ func TestEmbedBatchesAndNormalizes(t *testing.T) {
 		json.NewEncoder(w).Encode(out)
 	}))
 	defer srv.Close()
-	c := NewEmbedClient(srv.URL, "m", 2, 1) // batch 2, sequential
+	c := NewEmbedClient(srv.URL, "m", 2, 1, 0) // batch 2, sequential
 	vecs, err := c.Embed([]string{"a", "b", "c"}, "Classify")
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestEmbedConcurrentPreservesOrder(t *testing.T) {
 		json.NewEncoder(w).Encode(out)
 	}))
 	defer srv.Close()
-	c := NewEmbedClient(srv.URL, "m", 1, 4) // batch 1, 4 in flight
+	c := NewEmbedClient(srv.URL, "m", 1, 4, 0) // batch 1, 4 in flight
 	vecs, err := c.Embed([]string{"q0", "q1", "q2", "q3"}, "")
 	if err != nil {
 		t.Fatal(err)

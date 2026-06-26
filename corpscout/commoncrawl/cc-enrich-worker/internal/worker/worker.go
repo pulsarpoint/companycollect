@@ -362,14 +362,17 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 	go func() {
 		t := time.NewTicker(10 * time.Second)
 		defer t.Stop()
+		last, lastT := int64(0), start
 		for {
 			select {
 			case <-stop:
 				return
-			case <-t.C:
+			case now := <-t.C:
 				n := atomic.LoadInt64(&done)
-				log.Printf("  industry stream: %d/%d domains (%.1f domains/s, conc=%d embed=%d)",
-					n, len(order), float64(n)/time.Since(start).Seconds(), conc, embConc)
+				inst := float64(n-last) / now.Sub(lastT).Seconds() // rate over the last tick (not cold-start avg)
+				log.Printf("  industry stream: %d/%d domains (%.0f/s now, %.0f/s avg, conc=%d embed=%d)",
+					n, len(order), inst, float64(n)/time.Since(start).Seconds(), conc, embConc)
+				last, lastT = n, now
 			}
 		}
 	}()

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +40,15 @@ type WorklistRow struct {
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }
@@ -282,7 +292,7 @@ func run(mode string, o opts) {
 			}
 		}
 		log.Printf("embed endpoint=%s model=%s", baseURL, model)
-		emb = embed.NewEmbedClient(baseURL, model, o.batch, o.embedConc)
+		emb = embed.NewEmbedClient(baseURL, model, o.batch, o.embedConc, envInt("COMMONCRAWL_EMBED_MAX_CHARS", 0))
 
 		// Fail fast unless the reference covers every NACE category and was built with the same
 		// model + dim this worker will embed pages with (the matching-vector-space invariant).
