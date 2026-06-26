@@ -1632,6 +1632,7 @@ def test_norway_translations_applied_skips_when_workflow_is_running(monkeypatch)
     result = brreg_assets.norway_brreg_translations_applied(
         dg.build_asset_context(),
         DuckDBResource(database=":memory:"),
+        DuckDBResource(database=":memory:"),
     )
 
     assert result.metadata["applied"] is False
@@ -1660,6 +1661,7 @@ def test_norway_translations_applied_reports_unavailable_workflow(monkeypatch) -
     result = brreg_assets.norway_brreg_translations_applied(
         dg.build_asset_context(),
         DuckDBResource(database=":memory:"),
+        DuckDBResource(database=":memory:"),
     )
 
     assert result.metadata["applied"] is False
@@ -1667,7 +1669,9 @@ def test_norway_translations_applied_reports_unavailable_workflow(monkeypatch) -
     assert result.metadata["workflow_error"] == "workflow not found"
 
 
-def test_norway_translations_applied_applies_when_workflow_is_completed(monkeypatch) -> None:
+def test_norway_translations_applied_applies_when_workflow_is_completed(
+    monkeypatch, tmp_path
+) -> None:
     applied_calls: list[dict[str, Any]] = []
 
     def apply_results(**kwargs: Any) -> dict[str, int]:
@@ -1697,12 +1701,16 @@ def test_norway_translations_applied_applies_when_workflow_is_completed(monkeypa
         apply_results,
     )
 
+    queue_path = tmp_path / "translation_queue.duckdb"
+
     result = brreg_assets.norway_brreg_translations_applied(
         dg.build_asset_context(),
         DuckDBResource(database=":memory:"),
+        DuckDBResource(database=str(queue_path)),
     )
 
     assert len(applied_calls) == 1
+    assert applied_calls[0]["queue_duckdb_path"] == queue_path
     assert result.metadata["applied"] is True
     assert result.metadata["workflow_status"] == "COMPLETED"
     assert result.metadata["fields_updated"] == 3

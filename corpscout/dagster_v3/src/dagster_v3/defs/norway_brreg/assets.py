@@ -478,6 +478,7 @@ def norway_brreg_translation_workflow_status(
 def norway_brreg_translations_applied(
     context: AssetExecutionContext,
     norway_brreg_duckdb: DuckDBResource,
+    norway_brreg_translation_queue_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     try:
         workflow = describe_norway_brreg_translation_workflow()
@@ -504,7 +505,9 @@ def norway_brreg_translations_applied(
     with norway_brreg_duckdb.get_connection() as connection:
         counts = apply_norway_brreg_translation_queue_results(
             source_duckdb_connection=connection,
-            queue_duckdb_path=NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
+            queue_duckdb_path=duckdb_database_path(
+                norway_brreg_translation_queue_duckdb
+            ),
         )
     metadata = {
         **counts,
