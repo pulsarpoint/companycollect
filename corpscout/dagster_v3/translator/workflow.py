@@ -165,7 +165,7 @@ class TranslateSourceWorkflow:
                 break
             if result.status != "success":
                 failure_count += 1
-                if params.max_batch_failures > 0 and failure_count > params.max_batch_failures:
+                if failure_count > params.max_batch_failures:
                     break
 
         version = int(workflow.now().timestamp())

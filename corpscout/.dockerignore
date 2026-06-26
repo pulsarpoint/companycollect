@@ -8,3 +8,5 @@ scheduler/worker
 scheduler/*.test
 scheduler/coverage.out
 **/.DS_Store
+dagster_v3/storage/
+dagster_v3/data/

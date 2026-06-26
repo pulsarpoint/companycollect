@@ -68,3 +68,44 @@ def test_translate_source_workflow_scans_translates_flushes(tmp_path, monkeypatc
     assert result.completed_items == 2
     assert result.flushed_rows == 2
     assert sorted(r.translated_text for r in flushed["rows"]) == ["BYGG", "HOLDINGSELSKAP"]
+
+
+def test_translate_source_workflow_terminates_on_persistent_failure(tmp_path, monkeypatch):
+    """Workflow must break out of the batch loop after max_batch_failures failures."""
+    monkeypatch.setattr(wf, "clickhouse_client_from_env", lambda: object())
+    monkeypatch.setattr(
+        wf,
+        "scan_untranslated_terms",
+        lambda client, cfg: [("company_description", "Holdingselskap"), ("activity_text", "Bygg")],
+    )
+    monkeypatch.setattr(wf, "flush_translations", lambda client, cfg, rows, **kw: len(list(rows)))
+
+    def always_fail(params, *, provider=None):
+        return acts.ProcessTranslationBatchResult(status="failed", item_count=1, duration_seconds=0.0)
+
+    monkeypatch.setattr(acts, "process_translation_batch_once", always_fail)
+
+    params = wf.TranslateSourceWorkflowInput(
+        source_slug="norway_brreg", queue_dir=str(tmp_path), batch_size=10, timeout_seconds=5,
+        max_batch_failures=2, worker_id="test-worker", max_tokens=64, extra_body_json="",
+        initialize_timeout_seconds=10, batch_timeout_buffer_seconds=5, summarize_timeout_seconds=10,
+        activity_maximum_attempts=1, lease_timeout_seconds=60, scan_timeout_seconds=10, flush_timeout_seconds=10,
+    )
+
+    async def _run():
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client, task_queue="test-translator",
+                workflows=[wf.TranslateSourceWorkflow],
+                activities=[wf.scan_and_seed_activity, wf.flush_activity,
+                            acts.process_translation_batch, acts.summarize_translation_queue],
+            ):
+                return await env.client.execute_workflow(
+                    wf.TranslateSourceWorkflow.run, params,
+                    id=f"test-{uuid.uuid4()}", task_queue="test-translator",
+                )
+
+    result = asyncio.run(_run())
+
+    assert isinstance(result, wf.TranslateSourceWorkflowOutput)
+    assert result.flushed_rows == 0

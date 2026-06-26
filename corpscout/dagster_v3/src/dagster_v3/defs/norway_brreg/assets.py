@@ -283,7 +283,7 @@ def build_norway_brreg_translate_input() -> TranslateSourceWorkflowInput:
         queue_dir="data/translator",
         batch_size=50,
         timeout_seconds=120,
-        max_batch_failures=0,
+        max_batch_failures=20,
         worker_id="translation-temporal-worker",
         max_tokens=2048,
         extra_body_json='{"chat_template_kwargs": {"enable_thinking": false}}',

@@ -12,5 +12,5 @@ def test_build_translate_input_targets_norway_brreg():
     params = build_norway_brreg_translate_input()
     assert params.source_slug == "norway_brreg"
     assert params.batch_size == 50
-    assert params.max_batch_failures == 0
+    assert params.max_batch_failures == 20
     assert params.queue_dir == "data/translator"
