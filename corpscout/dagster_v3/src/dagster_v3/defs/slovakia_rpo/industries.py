@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from pathlib import Path
 
 import duckdb
 
@@ -17,7 +16,7 @@ def _sql_literal(value: str) -> str:
 
 def build_slovakia_rpo_industries(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     source_run_id: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
@@ -81,14 +80,13 @@ def build_slovakia_rpo_industries(
             now() as resolved_at
         from leveled
     """
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(sql)
-        rows = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
-        mapped = int(
-            connection.execute(
-                f"select count(*) from {qualified} where nace_mapping_status = 'mapped'"
-            ).fetchone()[0]
-        )
+    connection.execute(sql)
+    rows = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
+    mapped = int(
+        connection.execute(
+            f"select count(*) from {qualified} where nace_mapping_status = 'mapped'"
+        ).fetchone()[0]
+    )
     if rows == 0:
         raise ValueError("Slovak RPO produced no industries; refusing to replace the table")
     if log is not None:

@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 import duckdb
 
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.uk_companies_house import resources, tables
 from dagster_v3.defs.xbrl_common.parser import parse_ixbrl
 
@@ -69,7 +70,7 @@ def _extract_metrics(content: bytes) -> tuple[str, Any, dict[str, Any]] | None:
 
 def build_uk_financials_from_archive(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     archive_path: str | Path,
     source_run_id: str,
     source_url: str,
@@ -78,7 +79,7 @@ def build_uk_financials_from_archive(
     """Parse every iXBRL filing in an accounts archive into native-GBP metrics."""
     rows, parsed = parse_archive_rows(archive_path)
     counts = write_metrics_table(
-        database_path=database_path,
+        connection=connection,
         rows=rows,
         source_run_id=source_run_id,
         source_slug=FINANCIALS_SOURCE_SLUG,
@@ -125,13 +126,28 @@ def metrics_row(company_number: str, period_end: Any, metrics: dict[str, Any]) -
 
 def write_metrics_table(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection | None = None,
+    database_path: str | Path | None = None,
     rows: list[tuple[Any, ...]],
     source_run_id: str,
     source_slug: str,
     allow_empty: bool = False,
 ) -> dict[str, int]:
     """Write staging metric rows into the DuckDB metrics table (latest period/company)."""
+    if connection is None:
+        if database_path is None:
+            raise ValueError("write_metrics_table requires connection or database_path")
+        database_file = Path(database_path)
+        database_file.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb_resource(database_file).get_connection() as managed_connection:
+            return write_metrics_table(
+                connection=managed_connection,
+                rows=rows,
+                source_run_id=source_run_id,
+                source_slug=source_slug,
+                allow_empty=allow_empty,
+            )
+
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
     amount_cols = ", ".join(f"{m}_amount_original decimal(38, 2)" for m in METRIC_NAMES)
     placeholders = ", ".join(["?"] * (4 + len(METRIC_NAMES)))
@@ -139,51 +155,50 @@ def write_metrics_table(
         f"{m}_amount_original, cast(null as decimal(38, 2)) as {m}_amount_usd"
         for m in METRIC_NAMES
     )
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+    connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+    connection.execute(
+        f"create or replace temp table _gb_stage ("
+        f"company_number varchar, period_end date, fiscal_year integer, "
+        f"currency varchar, {amount_cols})"
+    )
+    if rows:
+        connection.executemany(
+            f"insert into _gb_stage values ({placeholders})", rows
+        )
+    connection.execute(
+        f"""
+        create or replace table {qualified} as
+        with ranked as (
+            select *, row_number() over (
+                partition by company_number order by period_end desc
+            ) as rn
+            from _gb_stage
+        )
+        select
+            'GB' as country_iso2,
+            {resources._sql_literal(source_slug)} as source_slug,
+            {resources._sql_literal(source_run_id)} as source_run_id,
+            company_number as source_record_id,
+            company_number,
+            period_end as period_end_date,
+            fiscal_year,
+            currency,
+            {metric_cols_select},
+            cast(null as decimal(38, 12)) as fx_rate_to_usd,
+            cast(null as date) as fx_rate_date,
+            '' as fx_source,
+            now() as resolved_at
+        from ranked where rn = 1
+        """
+    )
+    company_rows = int(
+        connection.execute(f"select count(*) from {qualified}").fetchone()[0]
+    )
+    with_revenue = int(
         connection.execute(
-            f"create or replace temp table _gb_stage ("
-            f"company_number varchar, period_end date, fiscal_year integer, "
-            f"currency varchar, {amount_cols})"
-        )
-        if rows:
-            connection.executemany(
-                f"insert into _gb_stage values ({placeholders})", rows
-            )
-        connection.execute(
-            f"""
-            create or replace table {qualified} as
-            with ranked as (
-                select *, row_number() over (
-                    partition by company_number order by period_end desc
-                ) as rn
-                from _gb_stage
-            )
-            select
-                'GB' as country_iso2,
-                {resources._sql_literal(source_slug)} as source_slug,
-                {resources._sql_literal(source_run_id)} as source_run_id,
-                company_number as source_record_id,
-                company_number,
-                period_end as period_end_date,
-                fiscal_year,
-                currency,
-                {metric_cols_select},
-                cast(null as decimal(38, 12)) as fx_rate_to_usd,
-                cast(null as date) as fx_rate_date,
-                '' as fx_source,
-                now() as resolved_at
-            from ranked where rn = 1
-            """
-        )
-        company_rows = int(
-            connection.execute(f"select count(*) from {qualified}").fetchone()[0]
-        )
-        with_revenue = int(
-            connection.execute(
-                f"select count(*) from {qualified} where revenue_amount_original is not null"
-            ).fetchone()[0]
-        )
+            f"select count(*) from {qualified} where revenue_amount_original is not null"
+        ).fetchone()[0]
+    )
     if company_rows == 0 and not allow_empty:
         raise ValueError(
             "UK Companies House accounts produced no metrics; refusing to replace the table"
@@ -193,7 +208,7 @@ def write_metrics_table(
 
 def build_uk_companies_house_financials(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     source_run_id: str,
     download_url: str | None = None,
     session: resources.HttpSession | None = None,
@@ -212,7 +227,7 @@ def build_uk_companies_house_financials(
             log=log if callable(log) else None,
         )
         return build_uk_financials_from_archive(
-            database_path=database_path,
+            connection=connection,
             archive_path=archive_path,
             source_run_id=source_run_id,
             source_url=url,
@@ -239,21 +254,20 @@ def _load_rates(
 
 def apply_uk_usd_conversion(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     exchange_rates: ExchangeRates,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     """Fill *_usd + fx_* columns by GBP→USD at each filing's period_end_date."""
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        pairs = connection.execute(
-            f"""
-            select distinct upper(currency) as currency,
-                            cast(period_end_date as varchar) as period_end
-            from {qualified}
-            where coalesce(currency, '') <> '' and period_end_date is not null
-            """
-        ).fetchall()
+    pairs = connection.execute(
+        f"""
+        select distinct upper(currency) as currency,
+                        cast(period_end_date as varchar) as period_end
+        from {qualified}
+        where coalesce(currency, '') <> '' and period_end_date is not null
+        """
+    ).fetchall()
 
     requests = [_request(currency, end) for currency, end in pairs]
     rates = _load_rates(exchange_rates, requests)
@@ -268,39 +282,38 @@ def apply_uk_usd_conversion(
         f"{m}_amount_usd = cast({m}_amount_original * fx.fx_rate as decimal(38, 2))"
         for m in METRIC_NAMES
     )
-    with duckdb.connect(str(database_path)) as connection:
+    connection.execute(
+        "create or replace temp table _gb_fx ("
+        "currency varchar, period_end date, fx_rate decimal(38, 12), "
+        "fx_rate_date date, fx_source varchar)"
+    )
+    if fx_rows:
+        connection.executemany(
+            "insert into _gb_fx values "
+            "(?, cast(? as date), cast(? as decimal(38, 12)), cast(? as date), ?)",
+            fx_rows,
+        )
+    connection.execute(
+        f"update {qualified} set fx_rate_to_usd = NULL, fx_rate_date = NULL, "
+        f"fx_source = '', {reset_usd}"
+    )
+    connection.execute(
+        f"""
+        update {qualified} as mt
+        set fx_rate_to_usd = fx.fx_rate,
+            fx_rate_date = fx.fx_rate_date,
+            fx_source = fx.fx_source,
+            {set_usd}
+        from _gb_fx as fx
+        where upper(mt.currency) = fx.currency
+          and mt.period_end_date = fx.period_end
+        """
+    )
+    converted = int(
         connection.execute(
-            "create or replace temp table _gb_fx ("
-            "currency varchar, period_end date, fx_rate decimal(38, 12), "
-            "fx_rate_date date, fx_source varchar)"
-        )
-        if fx_rows:
-            connection.executemany(
-                "insert into _gb_fx values "
-                "(?, cast(? as date), cast(? as decimal(38, 12)), cast(? as date), ?)",
-                fx_rows,
-            )
-        connection.execute(
-            f"update {qualified} set fx_rate_to_usd = NULL, fx_rate_date = NULL, "
-            f"fx_source = '', {reset_usd}"
-        )
-        connection.execute(
-            f"""
-            update {qualified} as mt
-            set fx_rate_to_usd = fx.fx_rate,
-                fx_rate_date = fx.fx_rate_date,
-                fx_source = fx.fx_source,
-                {set_usd}
-            from _gb_fx as fx
-            where upper(mt.currency) = fx.currency
-              and mt.period_end_date = fx.period_end
-            """
-        )
-        converted = int(
-            connection.execute(
-                f"select count(*) from {qualified} where fx_rate_to_usd is not null"
-            ).fetchone()[0]
-        )
+            f"select count(*) from {qualified} where fx_rate_to_usd is not null"
+        ).fetchone()[0]
+    )
     counts = {"rate_pairs": len(pairs), "rates_found": len(fx_rows), "rows_converted": converted}
     if log is not None:
         log(

@@ -259,7 +259,7 @@ def load_records_into_duckdb(
 
 def load_slovakia_rpo_dump(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     download_url: str = tables.RPO_DUMP_URL,
     session: HttpSession | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
@@ -267,20 +267,18 @@ def load_slovakia_rpo_dump(
     log: Callable[..., object] | None = None,
 ) -> int:
     """Download rpo2.sql.gz, parse the organizations dump, load into DuckDB raw."""
-    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="slovakia_rpo_") as tmpdir:
         gz_path = Path(tmpdir) / "rpo2.sql.gz"
         _download_to_path(
             url=download_url, dest=gz_path, timeout_seconds=timeout_seconds,
             session=session, log=log if callable(log) else None,
         )
-        with duckdb.connect(str(database_path)) as connection:
-            with gzip.open(gz_path, "rt", encoding="utf-8", errors="replace") as handle:
-                count = load_records_into_duckdb(
-                    connection=connection,
-                    records=iter_dump_records(handle),
-                    batch_rows=batch_rows,
-                )
+        with gzip.open(gz_path, "rt", encoding="utf-8", errors="replace") as handle:
+            count = load_records_into_duckdb(
+                connection=connection,
+                records=iter_dump_records(handle),
+                batch_rows=batch_rows,
+            )
     if count == 0:
         raise ValueError("Slovak RPO dump produced no rows; refusing to replace the table")
     if log is not None:
@@ -294,7 +292,7 @@ def _sql_literal(value: str) -> str:
 
 def build_slovakia_rpo_companies(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     source_run_id: str,
     source_url: str = tables.RPO_DUMP_URL,
     log: Callable[..., object] | None = None,
@@ -338,12 +336,11 @@ def build_slovakia_rpo_companies(
         from {raw}
         where ico is not null and trim(ico) <> ''
     """
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(sql)
-        rows = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
-        active = int(
-            connection.execute(f"select count(*) from {qualified} where is_active").fetchone()[0]
-        )
+    connection.execute(sql)
+    rows = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
+    active = int(
+        connection.execute(f"select count(*) from {qualified} where is_active").fetchone()[0]
+    )
     if rows == 0:
         raise ValueError("Slovak RPO produced no companies; refusing to replace the table")
     if log is not None:

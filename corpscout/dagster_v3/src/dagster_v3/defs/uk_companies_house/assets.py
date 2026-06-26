@@ -3,7 +3,9 @@ from pathlib import Path
 import dagster as dg
 from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
+from dagster_duckdb import DuckDBResource
 
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.uk_companies_house import resources, tables
 from dagster_v3.defs.uk_companies_house.clickhouse import (
     export_uk_companies_house_clickhouse_companies,
@@ -47,6 +49,7 @@ RAW_ASSET_KEY = "uk_companies_house_raw_duckdb"
 )
 def uk_companies_house_raw_duckdb(
     context: AssetExecutionContext,
+    uk_companies_house_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     download_url = resources.resolve_basic_company_data_url()
     context.log.info(
@@ -56,11 +59,13 @@ def uk_companies_house_raw_duckdb(
         DLT_DATASET_NAME,
         tables.COMPANIES_RAW_TABLE,
     )
-    rows = resources.load_uk_companies_house_raw(
-        database_path=UK_DUCKDB_PATH,
-        download_url=download_url,
-        log=context.log.info,
-    )
+    UK_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with uk_companies_house_duckdb.get_connection() as connection:
+        rows = resources.load_uk_companies_house_raw(
+            connection=connection,
+            download_url=download_url,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata={"rows": rows, "source_url": download_url})
 
 
@@ -74,14 +79,16 @@ def uk_companies_house_raw_duckdb(
 )
 def uk_companies_house_companies_duckdb(
     context: AssetExecutionContext,
+    uk_companies_house_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     source_url = resources.resolve_basic_company_data_url()
-    counts = resources.build_uk_companies_house_companies(
-        database_path=UK_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        source_url=source_url,
-        log=context.log.info,
-    )
+    with uk_companies_house_duckdb.get_connection() as connection:
+        counts = resources.build_uk_companies_house_companies(
+            connection=connection,
+            source_run_id=context.run_id,
+            source_url=source_url,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -120,12 +127,14 @@ def uk_companies_house_clickhouse_companies(
 )
 def uk_companies_house_industries_duckdb(
     context: AssetExecutionContext,
+    uk_companies_house_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    counts = build_uk_companies_house_industries(
-        database_path=UK_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        log=context.log.info,
-    )
+    with uk_companies_house_duckdb.get_connection() as connection:
+        counts = build_uk_companies_house_industries(
+            connection=connection,
+            source_run_id=context.run_id,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -170,12 +179,15 @@ def uk_companies_house_clickhouse_industries(
 )
 def uk_companies_house_financial_metrics_duckdb(
     context: AssetExecutionContext,
+    uk_companies_house_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    counts = build_uk_companies_house_financials(
-        database_path=UK_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        log=context.log.info,
-    )
+    UK_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with uk_companies_house_duckdb.get_connection() as connection:
+        counts = build_uk_companies_house_financials(
+            connection=connection,
+            source_run_id=context.run_id,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -189,14 +201,16 @@ def uk_companies_house_financial_metrics_duckdb(
 )
 def uk_companies_house_financial_metrics_usd_duckdb(
     context: AssetExecutionContext,
+    uk_companies_house_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     from exchange_rates import ExchangeRateClient
 
-    counts = apply_uk_usd_conversion(
-        database_path=UK_DUCKDB_PATH,
-        exchange_rates=ExchangeRateClient.from_env(),
-        log=context.log.info,
-    )
+    with uk_companies_house_duckdb.get_connection() as connection:
+        counts = apply_uk_usd_conversion(
+            connection=connection,
+            exchange_rates=ExchangeRateClient.from_env(),
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -247,6 +261,7 @@ class CompaniesHousePdfConfig(dg.Config):
 def uk_companies_house_pdf_financial_metrics(
     context: AssetExecutionContext,
     config: CompaniesHousePdfConfig,
+    uk_companies_house_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     import datetime as dt
@@ -287,16 +302,18 @@ def uk_companies_house_pdf_financial_metrics(
         fetched += 1
         context.log.info("PDF financials for %s: confidence=%s", cn, result.get("confidence"))
 
-    counts = write_metrics_table(
-        database_path=UK_DUCKDB_PATH, rows=rows, source_run_id=context.run_id,
-        source_slug="uk_companies_house_accounts_pdf", allow_empty=True,
-    )
-    if rows:
-        apply_uk_usd_conversion(
-            database_path=UK_DUCKDB_PATH,
-            exchange_rates=ExchangeRateClient.from_env(),
-            log=context.log.info,
+    with uk_companies_house_duckdb.get_connection() as connection:
+        counts = write_metrics_table(
+            connection=connection, rows=rows, source_run_id=context.run_id,
+            source_slug="uk_companies_house_accounts_pdf", allow_empty=True,
         )
+        if rows:
+            apply_uk_usd_conversion(
+                connection=connection,
+                exchange_rates=ExchangeRateClient.from_env(),
+                log=context.log.info,
+            )
+    if rows:
         export_uk_companies_house_clickhouse_financial_metrics(
             database_path=UK_DUCKDB_PATH, clickhouse=clickhouse, truncate=False,
             log=context.log.info,
@@ -325,27 +342,31 @@ class CompaniesHouseIncrementalConfig(dg.Config):
 def uk_companies_house_accounts_incremental(
     context: AssetExecutionContext,
     config: CompaniesHouseIncrementalConfig,
+    uk_companies_house_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     from exchange_rates import ExchangeRateClient
 
-    counts = build_incremental_metrics(
-        database_path=UK_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        max_archives=config.max_archives,
-        log=context.log.info,
-    )
+    UK_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with uk_companies_house_duckdb.get_connection() as connection:
+        counts = build_incremental_metrics(
+            connection=connection,
+            source_run_id=context.run_id,
+            max_archives=config.max_archives,
+            log=context.log.info,
+        )
+        if counts["processed_archives"]:
+            apply_uk_usd_conversion(
+                connection=connection,
+                exchange_rates=ExchangeRateClient.from_env(),
+                log=context.log.info,
+            )
     if not counts["processed_archives"]:
         context.log.info(
             "No new UK accounts archives since cursor=%s", counts["cursor_before"]
         )
         return dg.MaterializeResult(metadata=counts)
 
-    apply_uk_usd_conversion(
-        database_path=UK_DUCKDB_PATH,
-        exchange_rates=ExchangeRateClient.from_env(),
-        log=context.log.info,
-    )
     rows = export_uk_companies_house_clickhouse_financial_metrics(
         database_path=UK_DUCKDB_PATH,
         clickhouse=clickhouse,
@@ -353,7 +374,8 @@ def uk_companies_house_accounts_incremental(
         log=context.log.info,
     )
     # Advance the cursor only after a successful append.
-    write_cursor(UK_DUCKDB_PATH, max(counts["processed_archives"]))
+    with uk_companies_house_duckdb.get_connection() as connection:
+        write_cursor(connection, max(counts["processed_archives"]))
     context.log.info("Appended UK incremental metrics: rows=%s", rows)
     return dg.MaterializeResult(metadata={**counts, "exported_rows": rows})
 
@@ -379,6 +401,7 @@ class CompaniesHouseApiConfig(dg.Config):
 def uk_companies_house_api_financial_metrics(
     context: AssetExecutionContext,
     config: CompaniesHouseApiConfig,
+    uk_companies_house_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     from exchange_rates import ExchangeRateClient
@@ -391,11 +414,12 @@ def uk_companies_house_api_financial_metrics(
         client=client,
         log=context.log.info,
     )
-    apply_uk_usd_conversion(
-        database_path=UK_DUCKDB_PATH,
-        exchange_rates=ExchangeRateClient.from_env(),
-        log=context.log.info,
-    )
+    with uk_companies_house_duckdb.get_connection() as connection:
+        apply_uk_usd_conversion(
+            connection=connection,
+            exchange_rates=ExchangeRateClient.from_env(),
+            log=context.log.info,
+        )
     rows = export_uk_companies_house_clickhouse_financial_metrics(
         database_path=UK_DUCKDB_PATH,
         clickhouse=clickhouse,
@@ -463,4 +487,37 @@ uk_companies_house_accounts_incremental_schedule = dg.ScheduleDefinition(
 uk_companies_house_full_refresh_job = dg.define_asset_job(
     "uk_companies_house_full_refresh_job",
     selection=dg.AssetSelection.groups(GROUP_NAME),
+)
+
+
+defs = dg.Definitions(
+    assets=[
+        uk_companies_house_raw_duckdb,
+        uk_companies_house_companies_duckdb,
+        uk_companies_house_clickhouse_companies,
+        uk_companies_house_industries_duckdb,
+        uk_companies_house_clickhouse_industries,
+        uk_companies_house_financial_metrics_duckdb,
+        uk_companies_house_financial_metrics_usd_duckdb,
+        uk_companies_house_clickhouse_financial_metrics,
+        uk_companies_house_pdf_financial_metrics,
+        uk_companies_house_accounts_incremental,
+        uk_companies_house_api_financial_metrics,
+    ],
+    jobs=[
+        uk_companies_house_register_job,
+        uk_companies_house_financials_job,
+        uk_companies_house_api_financials_job,
+        uk_companies_house_pdf_financials_job,
+        uk_companies_house_accounts_incremental_job,
+        uk_companies_house_full_refresh_job,
+    ],
+    schedules=[
+        uk_companies_house_register_schedule,
+        uk_companies_house_financials_schedule,
+        uk_companies_house_accounts_incremental_schedule,
+    ],
+    resources={
+        "uk_companies_house_duckdb": duckdb_resource(UK_DUCKDB_PATH),
+    },
 )

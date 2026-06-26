@@ -139,33 +139,31 @@ def _download_to_path(
 
 def load_czech_ares_res(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     download_url: str = tables.RES_DATA_URL,
     session: HttpSession | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     log: Callable[..., object] | None = None,
 ) -> int:
     """Download res_data.csv and load it into a DuckDB raw table (multithreaded read_csv)."""
-    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="czech_ares_") as tmpdir:
         csv_path = Path(tmpdir) / "res_data.csv"
         _download_to_path(
             url=download_url, dest=csv_path, timeout_seconds=timeout_seconds,
             session=session, log=log if callable(log) else None,
         )
-        with duckdb.connect(str(database_path)) as connection:
-            connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+        connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+        connection.execute(
+            f"create or replace table {DLT_DATASET_NAME}.{RES_RAW_TABLE} as "
+            "select * from read_csv(?, header=true, all_varchar=true, "
+            "quote='\"', escape='\"')",
+            [str(csv_path)],
+        )
+        count = int(
             connection.execute(
-                f"create or replace table {DLT_DATASET_NAME}.{RES_RAW_TABLE} as "
-                "select * from read_csv(?, header=true, all_varchar=true, "
-                "quote='\"', escape='\"')",
-                [str(csv_path)],
-            )
-            count = int(
-                connection.execute(
-                    f"select count(*) from {DLT_DATASET_NAME}.{RES_RAW_TABLE}"
-                ).fetchone()[0]
-            )
+                f"select count(*) from {DLT_DATASET_NAME}.{RES_RAW_TABLE}"
+            ).fetchone()[0]
+        )
     if count == 0:
         raise ValueError("Czech RES produced no rows; refusing to replace the table")
     if log is not None:
@@ -179,7 +177,7 @@ def _sql_literal(value: str) -> str:
 
 def build_czech_ares_companies(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     source_run_id: str,
     source_url: str = tables.RES_DATA_URL,
     log: Callable[..., object] | None = None,
@@ -221,12 +219,11 @@ def build_czech_ares_companies(
         from {raw}
         where ICO is not null and trim(ICO) <> ''
     """
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(sql)
-        rows = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
-        active = int(
-            connection.execute(f"select count(*) from {qualified} where is_active").fetchone()[0]
-        )
+    connection.execute(sql)
+    rows = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
+    active = int(
+        connection.execute(f"select count(*) from {qualified} where is_active").fetchone()[0]
+    )
     if rows == 0:
         raise ValueError("Czech RES produced no companies; refusing to replace the table")
     if log is not None:

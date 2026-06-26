@@ -1,10 +1,12 @@
 from pathlib import Path
+from typing import Any
 
 import dagster as dg
-import duckdb
 from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
+from dagster_duckdb import DuckDBResource
 
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.france_sirene import resources, tables
 from dagster_v3.defs.france_sirene.clickhouse import (
     export_france_sirene_clickhouse_companies,
@@ -33,6 +35,7 @@ RAW_ASSET_KEY = "france_sirene_unite_legale_raw_duckdb"
 )
 def france_sirene_unite_legale_raw_duckdb(
     context: AssetExecutionContext,
+    france_sirene_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     download_url = resources.resolve_unite_legale_url()
     context.log.info(
@@ -42,11 +45,13 @@ def france_sirene_unite_legale_raw_duckdb(
         DLT_DATASET_NAME,
         tables.UNITE_LEGALE_RAW_TABLE,
     )
-    rows = resources.load_france_sirene_unite_legale(
-        database_path=FRANCE_SIRENE_DUCKDB_PATH,
-        download_url=download_url,
-        log=context.log.info,
-    )
+    FRANCE_SIRENE_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with france_sirene_duckdb.get_connection() as connection:
+        rows = resources.load_france_sirene_unite_legale(
+            connection=connection,
+            download_url=download_url,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(
         metadata={"rows": rows, "source_url": download_url},
     )
@@ -67,6 +72,7 @@ SIEGE_ASSET_KEY = "france_sirene_etablissement_siege_raw_duckdb"
 )
 def france_sirene_etablissement_siege_raw_duckdb(
     context: AssetExecutionContext,
+    france_sirene_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     download_url = resources.resolve_etablissement_url()
     context.log.info(
@@ -76,11 +82,13 @@ def france_sirene_etablissement_siege_raw_duckdb(
         DLT_DATASET_NAME,
         tables.ETABLISSEMENT_SIEGE_TABLE,
     )
-    rows = resources.load_france_sirene_etablissement_siege(
-        database_path=FRANCE_SIRENE_DUCKDB_PATH,
-        download_url=download_url,
-        log=context.log.info,
-    )
+    FRANCE_SIRENE_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with france_sirene_duckdb.get_connection() as connection:
+        rows = resources.load_france_sirene_etablissement_siege(
+            connection=connection,
+            download_url=download_url,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata={"rows": rows, "source_url": download_url})
 
 
@@ -94,14 +102,16 @@ def france_sirene_etablissement_siege_raw_duckdb(
 )
 def france_sirene_companies_duckdb(
     context: AssetExecutionContext,
+    france_sirene_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     source_url = resources.resolve_unite_legale_url()
-    counts = resources.build_france_sirene_companies(
-        database_path=FRANCE_SIRENE_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        source_url=source_url,
-        log=context.log.info,
-    )
+    with france_sirene_duckdb.get_connection() as connection:
+        counts = resources.build_france_sirene_companies(
+            connection=connection,
+            source_run_id=context.run_id,
+            source_url=source_url,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -140,12 +150,14 @@ def france_sirene_clickhouse_companies(
 )
 def france_sirene_industries_duckdb(
     context: AssetExecutionContext,
+    france_sirene_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    counts = build_france_sirene_industries(
-        database_path=FRANCE_SIRENE_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        log=context.log.info,
-    )
+    with france_sirene_duckdb.get_connection() as connection:
+        counts = build_france_sirene_industries(
+            connection=connection,
+            source_run_id=context.run_id,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -174,9 +186,10 @@ def france_sirene_clickhouse_industries(
     )
 
 
-def _duckdb_table_count(*, database_path, table_name: str) -> int:
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        return int(connection.execute(f"select count(*) from {table_name}").fetchone()[0])
+def _duckdb_table_count(
+    *, connection: Any, table_name: str
+) -> int:
+    return int(connection.execute(f"select count(*) from {table_name}").fetchone()[0])
 
 
 # --- Jobs & schedules --------------------------------------------------------
@@ -200,4 +213,24 @@ france_sirene_register_schedule = dg.ScheduleDefinition(
 france_sirene_full_refresh_job = dg.define_asset_job(
     "france_sirene_full_refresh_job",
     selection=dg.AssetSelection.groups(GROUP_NAME),
+)
+
+
+defs = dg.Definitions(
+    assets=[
+        france_sirene_unite_legale_raw_duckdb,
+        france_sirene_etablissement_siege_raw_duckdb,
+        france_sirene_companies_duckdb,
+        france_sirene_clickhouse_companies,
+        france_sirene_industries_duckdb,
+        france_sirene_clickhouse_industries,
+    ],
+    jobs=[
+        france_sirene_register_job,
+        france_sirene_full_refresh_job,
+    ],
+    schedules=[france_sirene_register_schedule],
+    resources={
+        "france_sirene_duckdb": duckdb_resource(FRANCE_SIRENE_DUCKDB_PATH),
+    },
 )

@@ -54,24 +54,23 @@ def _ensure_cursor_table(connection: duckdb.DuckDBPyConnection) -> None:
     )
 
 
-def read_cursor(database_path: str | Path) -> str | None:
-    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
-    with duckdb.connect(str(database_path)) as connection:
-        _ensure_cursor_table(connection)
-        row = connection.execute(
-            f"select last_archive_date from {CURSOR_TABLE} where name = ?", [CURSOR_NAME]
-        ).fetchone()
+def read_cursor(connection: duckdb.DuckDBPyConnection) -> str | None:
+    _ensure_cursor_table(connection)
+    row = connection.execute(
+        f"select last_archive_date from {CURSOR_TABLE} where name = ?", [CURSOR_NAME]
+    ).fetchone()
     return row[0] if row else None
 
 
-def write_cursor(database_path: str | Path, last_archive_date: str) -> None:
-    with duckdb.connect(str(database_path)) as connection:
-        _ensure_cursor_table(connection)
-        connection.execute(
-            f"insert into {CURSOR_TABLE} values (?, ?) "
-            "on conflict (name) do update set last_archive_date = excluded.last_archive_date",
-            [CURSOR_NAME, last_archive_date],
-        )
+def write_cursor(
+    connection: duckdb.DuckDBPyConnection, last_archive_date: str
+) -> None:
+    _ensure_cursor_table(connection)
+    connection.execute(
+        f"insert into {CURSOR_TABLE} values (?, ?) "
+        "on conflict (name) do update set last_archive_date = excluded.last_archive_date",
+        [CURSOR_NAME, last_archive_date],
+    )
 
 
 def select_new_archives(
@@ -89,7 +88,7 @@ def select_new_archives(
 
 def build_incremental_metrics(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     source_run_id: str,
     session: resources.HttpSession | None = None,
     max_archives: int = 10,
@@ -102,7 +101,7 @@ def build_incremental_metrics(
     ClickHouse append, so a failure re-processes the same archives next run.
     """
     archives = list_accounts_archives(session=session)
-    cursor = read_cursor(database_path)
+    cursor = read_cursor(connection)
     selected = select_new_archives(archives, cursor, max_archives)
 
     rows: list[tuple[Any, ...]] = []
@@ -124,7 +123,7 @@ def build_incremental_metrics(
             log("Parsed UK accounts archive %s: filings=%s", archive_date, archive_parsed)
 
     counts = financials.write_metrics_table(
-        database_path=database_path,
+        connection=connection,
         rows=rows,
         source_run_id=source_run_id,
         source_slug=ARCHIVE_SOURCE_SLUG,

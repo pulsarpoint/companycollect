@@ -217,7 +217,7 @@ def _extract_single_csv(zip_path: Path, dest_dir: Path) -> Path:
 
 def load_france_sirene_unite_legale(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     download_url: str,
     session: HttpSession | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
@@ -228,7 +228,6 @@ def load_france_sirene_unite_legale(
     Uses DuckDB's multithreaded read_csv (all_varchar) — never row-by-row Python —
     for the ~4M-row file. Downstream SQL does the relational casts.
     """
-    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="france_sirene_") as tmpdir:
         tmp = Path(tmpdir)
         zip_path = tmp / "stock_unite_legale.zip"
@@ -240,19 +239,18 @@ def load_france_sirene_unite_legale(
             log=log if callable(log) else None,
         )
         csv_path = _extract_single_csv(zip_path, tmp)
-        with duckdb.connect(str(database_path)) as connection:
-            connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+        connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+        connection.execute(
+            f"create or replace table {DLT_DATASET_NAME}.{UNITE_LEGALE_RAW_TABLE} as "
+            "select * from read_csv(?, header=true, all_varchar=true, "
+            "quote='\"', escape='\"')",
+            [str(csv_path)],
+        )
+        count = int(
             connection.execute(
-                f"create or replace table {DLT_DATASET_NAME}.{UNITE_LEGALE_RAW_TABLE} as "
-                "select * from read_csv(?, header=true, all_varchar=true, "
-                "quote='\"', escape='\"')",
-                [str(csv_path)],
-            )
-            count = int(
-                connection.execute(
-                    f"select count(*) from {DLT_DATASET_NAME}.{UNITE_LEGALE_RAW_TABLE}"
-                ).fetchone()[0]
-            )
+                f"select count(*) from {DLT_DATASET_NAME}.{UNITE_LEGALE_RAW_TABLE}"
+            ).fetchone()[0]
+        )
     if count == 0:
         raise ValueError(
             "France SIRENE StockUniteLegale produced no rows; refusing to replace the table"
@@ -263,41 +261,40 @@ def load_france_sirene_unite_legale(
 
 
 def build_etablissement_siege_from_csv(
-    *, database_path: str | Path, csv_path: str | Path
+    *, connection: duckdb.DuckDBPyConnection, csv_path: str | Path
 ) -> int:
     """Load one siège address per legal unit from a StockEtablissement CSV."""
     qualified = f"{DLT_DATASET_NAME}.{tables.ETABLISSEMENT_SIEGE_TABLE}"
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
-        connection.execute(
-            f"""
-            create or replace table {qualified} as
-            select
-                siren,
-                coalesce(nullif(trim(concat_ws(' ',
-                    nullif(trim(numeroVoieEtablissement), ''),
-                    nullif(trim(typeVoieEtablissement), ''),
-                    nullif(trim(libelleVoieEtablissement), ''))), ''), '') as address,
-                coalesce(trim(complementAdresseEtablissement), '') as address_supplement,
-                coalesce(
-                    nullif(trim(codePostalEtablissement), ''),
-                    nullif(trim(codeCedexEtablissement), ''), '') as postal_code,
-                coalesce(
-                    nullif(trim(libelleCommuneEtablissement), ''),
-                    nullif(trim(libelleCommuneEtrangerEtablissement), ''), '') as city,
-                coalesce(trim(codeCommuneEtablissement), '') as city_code,
-                coalesce(trim(libellePaysEtrangerEtablissement), '') as country_label
-            from read_csv(?, header=true, all_varchar=true, quote='"', escape='"')
-            where etablissementSiege = 'true' and siren is not null and trim(siren) <> ''
-            """,
-            [str(csv_path)],
-        )
-        return int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
+    connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+    connection.execute(
+        f"""
+        create or replace table {qualified} as
+        select
+            siren,
+            coalesce(nullif(trim(concat_ws(' ',
+                nullif(trim(numeroVoieEtablissement), ''),
+                nullif(trim(typeVoieEtablissement), ''),
+                nullif(trim(libelleVoieEtablissement), ''))), ''), '') as address,
+            coalesce(trim(complementAdresseEtablissement), '') as address_supplement,
+            coalesce(
+                nullif(trim(codePostalEtablissement), ''),
+                nullif(trim(codeCedexEtablissement), ''), '') as postal_code,
+            coalesce(
+                nullif(trim(libelleCommuneEtablissement), ''),
+                nullif(trim(libelleCommuneEtrangerEtablissement), ''), '') as city,
+            coalesce(trim(codeCommuneEtablissement), '') as city_code,
+            coalesce(trim(libellePaysEtrangerEtablissement), '') as country_label
+        from read_csv(?, header=true, all_varchar=true, quote='"', escape='"')
+        where etablissementSiege = 'true' and siren is not null and trim(siren) <> ''
+        """,
+        [str(csv_path)],
+    )
+    return int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
 
 
 def load_france_sirene_etablissement_siege(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     download_url: str,
     session: HttpSession | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
@@ -309,7 +306,6 @@ def load_france_sirene_etablissement_siege(
     (`etablissementSiege='true'`) and projects only the address fields, so one row
     per siren lands. Foreign-address fields fall back when the French ones are empty.
     """
-    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
     qualified = f"{DLT_DATASET_NAME}.{tables.ETABLISSEMENT_SIEGE_TABLE}"
     with tempfile.TemporaryDirectory(prefix="france_sirene_etab_") as tmpdir:
         tmp = Path(tmpdir)
@@ -323,7 +319,7 @@ def load_france_sirene_etablissement_siege(
         )
         csv_path = _extract_single_csv(zip_path, tmp)
         count = build_etablissement_siege_from_csv(
-            database_path=database_path, csv_path=csv_path
+            connection=connection, csv_path=csv_path
         )
     if count == 0:
         raise ValueError(
@@ -348,7 +344,7 @@ def _case_map(column: str, mapping: dict[str, str]) -> str:
 
 def build_france_sirene_companies(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     source_run_id: str,
     source_url: str,
     log: Callable[..., object] | None = None,
@@ -403,14 +399,13 @@ def build_france_sirene_companies(
         left join {siege} es on es.siren = ul.siren
         where ul.siren is not null and trim(ul.siren) <> ''
     """
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(sql)
-        rows = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
-        active = int(
-            connection.execute(
-                f"select count(*) from {qualified} where is_active"
-            ).fetchone()[0]
-        )
+    connection.execute(sql)
+    rows = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
+    active = int(
+        connection.execute(
+            f"select count(*) from {qualified} where is_active"
+        ).fetchone()[0]
+    )
     if rows == 0:
         raise ValueError(
             "France SIRENE produced no companies; refusing to replace the table"

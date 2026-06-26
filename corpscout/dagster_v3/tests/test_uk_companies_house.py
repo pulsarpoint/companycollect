@@ -45,9 +45,10 @@ def _load_raw(tmp_path) -> Path:
 
 def test_companies_build(tmp_path):
     db = _load_raw(tmp_path)
-    counts = resources.build_uk_companies_house_companies(
-        database_path=db, source_run_id="r1", source_url="http://x.zip"
-    )
+    with duckdb.connect(str(db)) as con:
+        counts = resources.build_uk_companies_house_companies(
+            connection=con, source_run_id="r1", source_url="http://x.zip"
+        )
     assert counts == {"companies": 3, "active": 2}
     with duckdb.connect(str(db), read_only=True) as con:
         cols = [r[0] for r in con.execute(
@@ -71,7 +72,10 @@ def test_companies_build(tmp_path):
 
 def test_industries_build_sic_to_nace(tmp_path):
     db = _load_raw(tmp_path)
-    counts = industries.build_uk_companies_house_industries(database_path=db, source_run_id="r1")
+    with duckdb.connect(str(db)) as con:
+        counts = industries.build_uk_companies_house_industries(
+            connection=con, source_run_id="r1"
+        )
     # ACME has 2 SIC, DORMANT 1 (unmapped), OLD 1 -> 4 rows, 3 mapped.
     assert counts == {"industries": 4, "nace_mapped": 3}
     with duckdb.connect(str(db), read_only=True) as con:
@@ -141,9 +145,10 @@ def test_financials_build_from_archive(tmp_path):
         zf.writestr("Prod_synth_01234567.html", SAMPLE)
         zf.writestr("ignore.pdf", b"%PDF-1.4 not xbrl")
     db = tmp_path / "fin.duckdb"
-    counts = financials.build_uk_financials_from_archive(
-        database_path=db, archive_path=archive, source_run_id="r1", source_url="http://x.zip"
-    )
+    with duckdb.connect(str(db)) as con:
+        counts = financials.build_uk_financials_from_archive(
+            connection=con, archive_path=archive, source_run_id="r1", source_url="http://x.zip"
+        )
     assert counts["companies"] == 1 and counts["with_revenue"] == 1
     with duckdb.connect(str(db), read_only=True) as con:
         cols = [r[0] for r in con.execute(
@@ -271,11 +276,12 @@ def test_incremental_cursor_and_selection(tmp_path):
     assert incremental.select_new_archives(archives, "2026-06-03", 10) == []
 
     db = tmp_path / "uk.duckdb"
-    assert incremental.read_cursor(db) is None
-    incremental.write_cursor(db, "2026-06-02")
-    assert incremental.read_cursor(db) == "2026-06-02"
-    incremental.write_cursor(db, "2026-06-03")  # upsert
-    assert incremental.read_cursor(db) == "2026-06-03"
+    with duckdb.connect(str(db)) as con:
+        assert incremental.read_cursor(con) is None
+        incremental.write_cursor(con, "2026-06-02")
+        assert incremental.read_cursor(con) == "2026-06-02"
+        incremental.write_cursor(con, "2026-06-03")  # upsert
+        assert incremental.read_cursor(con) == "2026-06-03"
 
 
 def test_incremental_schedule_registered():

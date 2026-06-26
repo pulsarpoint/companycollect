@@ -131,7 +131,7 @@ def _extract_single_csv(zip_path: Path, dest_dir: Path) -> Path:
 
 def load_uk_companies_house_raw(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     download_url: str,
     session: HttpSession | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
@@ -142,7 +142,6 @@ def load_uk_companies_house_raw(
     normalize_names=true tidies the leading-space/dotted headers
     (` CompanyNumber`, `RegAddress.PostTown`, `SICCode.SicText_1`).
     """
-    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="uk_companies_house_") as tmpdir:
         tmp = Path(tmpdir)
         zip_path = tmp / "basic_company_data.zip"
@@ -154,19 +153,18 @@ def load_uk_companies_house_raw(
             log=log if callable(log) else None,
         )
         csv_path = _extract_single_csv(zip_path, tmp)
-        with duckdb.connect(str(database_path)) as connection:
-            connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+        connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+        connection.execute(
+            f"create or replace table {DLT_DATASET_NAME}.{COMPANIES_RAW_TABLE} as "
+            "select * from read_csv(?, header=true, all_varchar=true, "
+            "normalize_names=true, quote='\"', escape='\"')",
+            [str(csv_path)],
+        )
+        count = int(
             connection.execute(
-                f"create or replace table {DLT_DATASET_NAME}.{COMPANIES_RAW_TABLE} as "
-                "select * from read_csv(?, header=true, all_varchar=true, "
-                "normalize_names=true, quote='\"', escape='\"')",
-                [str(csv_path)],
-            )
-            count = int(
-                connection.execute(
-                    f"select count(*) from {DLT_DATASET_NAME}.{COMPANIES_RAW_TABLE}"
-                ).fetchone()[0]
-            )
+                f"select count(*) from {DLT_DATASET_NAME}.{COMPANIES_RAW_TABLE}"
+            ).fetchone()[0]
+        )
     if count == 0:
         raise ValueError(
             "UK Companies House basic data produced no rows; refusing to replace the table"
@@ -182,7 +180,7 @@ def _sql_literal(value: str) -> str:
 
 def build_uk_companies_house_companies(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     source_run_id: str,
     source_url: str,
     log: Callable[..., object] | None = None,
@@ -217,14 +215,13 @@ def build_uk_companies_house_companies(
         from {raw}
         where companynumber is not null and trim(companynumber) <> ''
     """
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(sql)
-        rows = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
-        active = int(
-            connection.execute(
-                f"select count(*) from {qualified} where is_active"
-            ).fetchone()[0]
-        )
+    connection.execute(sql)
+    rows = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
+    active = int(
+        connection.execute(
+            f"select count(*) from {qualified} where is_active"
+        ).fetchone()[0]
+    )
     if rows == 0:
         raise ValueError(
             "UK Companies House produced no companies; refusing to replace the table"

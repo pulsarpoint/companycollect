@@ -130,7 +130,8 @@ def test_iter_dump_records_stops_at_organizations_block():
 
 def test_companies_build(tmp_path):
     db = _load_raw(tmp_path, [R1, R2, R3])
-    counts = resources.build_slovakia_rpo_companies(database_path=db, source_run_id="r1")
+    with duckdb.connect(str(db)) as con:
+        counts = resources.build_slovakia_rpo_companies(connection=con, source_run_id="r1")
     assert counts == {"companies": 3, "active": 2}
     with duckdb.connect(str(db), read_only=True) as con:
         cols = [r[0] for r in con.execute(
@@ -153,7 +154,8 @@ def test_companies_build(tmp_path):
 
 def test_industries_build_sknace_to_nace(tmp_path):
     db = _load_raw(tmp_path, [R1, R2, R3])
-    counts = industries.build_slovakia_rpo_industries(database_path=db, source_run_id="r1")
+    with duckdb.connect(str(db)) as con:
+        counts = industries.build_slovakia_rpo_industries(connection=con, source_run_id="r1")
     # R3 has no main activity -> dropped; R1 + R2 mapped.
     assert counts == {"industries": 2, "nace_mapped": 2}
     with duckdb.connect(str(db), read_only=True) as con:

@@ -61,11 +61,11 @@ def _load_raw(tmp_path, *, with_siege: bool = True) -> Path:
         f"create table {tables.DLT_DATASET_NAME}.{tables.UNITE_LEGALE_RAW_TABLE} as "
         f"select * from read_csv('{csv}', header=true, all_varchar=true)"
     )
-    con.close()
     if with_siege:
         etab = tmp_path / "etab.csv"
         etab.write_text("\n".join([ETAB_HEADER, *ETAB_ROWS]) + "\n")
-        resources.build_etablissement_siege_from_csv(database_path=db, csv_path=etab)
+        resources.build_etablissement_siege_from_csv(connection=con, csv_path=etab)
+    con.close()
     return db
 
 
@@ -84,9 +84,10 @@ def test_siege_filter_and_address(tmp_path):
 
 def test_companies_build(tmp_path):
     db = _load_raw(tmp_path)
-    counts = resources.build_france_sirene_companies(
-        database_path=db, source_run_id="r1", source_url="http://x/stock.zip"
-    )
+    with duckdb.connect(str(db)) as con:
+        counts = resources.build_france_sirene_companies(
+            connection=con, source_run_id="r1", source_url="http://x/stock.zip"
+        )
     assert counts == {"companies": 4, "active": 2}
     with duckdb.connect(str(db), read_only=True) as con:
         cols = [r[0] for r in con.execute(
@@ -115,7 +116,10 @@ def test_companies_build(tmp_path):
 
 def test_industries_build_naf_to_nace(tmp_path):
     db = _load_raw(tmp_path)
-    counts = industries.build_france_sirene_industries(database_path=db, source_run_id="r1")
+    with duckdb.connect(str(db)) as con:
+        counts = industries.build_france_sirene_industries(
+            connection=con, source_run_id="r1"
+        )
     assert counts == {"industries": 4, "nace_mapped": 3}
     with duckdb.connect(str(db), read_only=True) as con:
         cols = [r[0] for r in con.execute(

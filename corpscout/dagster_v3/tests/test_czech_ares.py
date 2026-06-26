@@ -37,7 +37,8 @@ def test_companies_build(tmp_path):
     import datetime as dt
 
     db = _load_raw(tmp_path)
-    counts = resources.build_czech_ares_companies(database_path=db, source_run_id="r1")
+    with duckdb.connect(str(db)) as con:
+        counts = resources.build_czech_ares_companies(connection=con, source_run_id="r1")
     assert counts == {"companies": 3, "active": 2}
     with duckdb.connect(str(db), read_only=True) as con:
         cols = [r[0] for r in con.execute(
@@ -60,7 +61,8 @@ def test_companies_build(tmp_path):
 
 def test_industries_build_cznace_to_nace(tmp_path):
     db = _load_raw(tmp_path)
-    counts = industries.build_czech_ares_industries(database_path=db, source_run_id="r1")
+    with duckdb.connect(str(db)) as con:
+        counts = industries.build_czech_ares_industries(connection=con, source_run_id="r1")
     assert counts == {"industries": 3, "nace_mapped": 3}
     with duckdb.connect(str(db), read_only=True) as con:
         cols = [r[0] for r in con.execute(
