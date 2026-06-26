@@ -26,7 +26,7 @@ def test_duckdb_resource_factory_uses_generic_runtime_env(
     assert isinstance(resource, DuckDBResource)
     assert helpers.duckdb_database_path(resource) == tmp_path / "source.duckdb"
     assert resource.connection_config["memory_limit"] == "8GiB"
-    assert resource.connection_config["threads"] == "2"
+    assert resource.connection_config["threads"] == 2
     assert resource.connection_config["max_temp_directory_size"] == "150GiB"
     assert resource.connection_config["temp_directory"] == str(tmp_path / "duckdb-temp")
     assert resource.connection_config["preserve_insertion_order"] is False
@@ -44,6 +44,17 @@ def test_duckdb_resource_reuses_same_object_for_same_normalized_database(
 
     assert relative is absolute
     assert helpers.duckdb_database_path(relative) == tmp_path / "data" / "source.duckdb"
+
+
+def test_duckdb_resource_rejects_invalid_threads_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    helpers = importlib.import_module("dagster_v3.defs.common.duckdb_resources")
+    monkeypatch.setenv("DUCKDB_THREADS", "4y")
+
+    with pytest.raises(ValueError, match="DUCKDB_THREADS must be a positive integer"):
+        helpers.duckdb_resource(tmp_path / "source.duckdb")
 
 
 def test_read_only_duckdb_connection_rejects_writes(tmp_path: Path) -> None:

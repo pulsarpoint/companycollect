@@ -29,6 +29,7 @@ dependencies = [
 
 [project.scripts]
 translator-worker = "translator.worker:worker_main"
+translator-import-legacy-queue = "translator.import_legacy:main"
 
 [dependency-groups]
 dev = [

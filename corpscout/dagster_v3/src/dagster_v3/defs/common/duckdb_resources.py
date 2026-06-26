@@ -8,7 +8,7 @@ from typing import Any
 
 from dagster_duckdb import DuckDBResource
 
-DEFAULT_DUCKDB_THREADS = "4"
+DEFAULT_DUCKDB_THREADS = 4
 DEFAULT_DUCKDB_MAX_TEMP_DIRECTORY_SIZE = "100GiB"
 DEFAULT_DUCKDB_TEMP_DIRECTORY = Path("data/duckdb_tmp")
 _RESOURCE_CACHE: dict[tuple[str, tuple[tuple[str, Any], ...]], DuckDBResource] = {}
@@ -73,7 +73,7 @@ def duckdb_connection_config(
             _env_value("DUCKDB_MAX_TEMP_DIRECTORY_SIZE")
             or DEFAULT_DUCKDB_MAX_TEMP_DIRECTORY_SIZE
         ),
-        "threads": _env_value("DUCKDB_THREADS") or DEFAULT_DUCKDB_THREADS,
+        "threads": _env_positive_int("DUCKDB_THREADS", default=DEFAULT_DUCKDB_THREADS),
         "preserve_insertion_order": _env_bool(
             "DUCKDB_PRESERVE_INSERTION_ORDER",
             default=False,
@@ -91,6 +91,19 @@ def _env_value(name: str) -> str | None:
         return None
     clean_value = value.strip()
     return clean_value if clean_value else None
+
+
+def _env_positive_int(name: str, *, default: int) -> int:
+    value = _env_value(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}") from exc
+    if parsed <= 0:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return parsed
 
 
 def _env_bool(name: str, *, default: bool) -> bool:

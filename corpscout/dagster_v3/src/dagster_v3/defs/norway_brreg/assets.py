@@ -9,22 +9,16 @@ import dagster as dg
 import dlt
 import duckdb
 from dagster import AssetExecutionContext
-from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
-from dagster_v3.defs.clickhouse.resolved import export_duckdb_connection_table_to_clickhouse
 from dagster_v3.defs.common.duckdb_resources import (
     duckdb_database_path,
     read_only_duckdb_connection,
 )
 from dagster_v3.defs.norway_brreg import resources
 from dagster_v3.defs.norway_brreg import tables
-from dagster_v3.defs.norway_brreg.clickhouse import (
-    prepare_norway_brreg_clickhouse_companies_table,
-    prepare_norway_brreg_clickhouse_financial_statements_table,
-)
 from dagster_v3.defs.norway_brreg.financial_fetches import (
     BRREG_FINANCIAL_FETCHES_COLUMNS,
     FINANCIAL_FETCHES_TABLE,
@@ -199,81 +193,6 @@ def norway_brreg_financial_statements_duckdb_asset(
     return dg.MaterializeResult(metadata=counts)
 
 
-@dg.asset(
-    deps=[dg.AssetKey("norway_brreg_entities_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"duckdb", "clickhouse"},
-    description="Norway Brreg final companies table exported to ClickHouse.",
-    metadata={"table": tables.QUALIFIED_COMPANIES_TABLE},
-    pool=NORWAY_BRREG_DUCKDB_POOL,
-)
-def norway_brreg_clickhouse_companies(
-    context: AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-    norway_brreg_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    duckdb_path = duckdb_database_path(norway_brreg_duckdb)
-    context.log.info(
-        "Starting Norway Brreg companies ClickHouse export: duckdb_path=%s, table=%s",
-        duckdb_path,
-        tables.QUALIFIED_COMPANIES_TABLE,
-    )
-    with read_only_duckdb_connection(norway_brreg_duckdb) as connection:
-        rows = export_norway_brreg_clickhouse_companies(
-            duckdb_connection=connection,
-            clickhouse=clickhouse,
-            log=context.log.info,
-        )
-    context.log.info(
-        "Completed Norway Brreg companies ClickHouse export: rows=%s",
-        rows,
-    )
-    return dg.MaterializeResult(
-        metadata={
-            "rows": rows,
-            "table": tables.QUALIFIED_COMPANIES_TABLE,
-        },
-    )
-
-
-@dg.asset(
-    deps=[dg.AssetKey("norway_brreg_financial_statements_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"duckdb", "clickhouse"},
-    description="Norway Brreg final financial statements table exported to ClickHouse.",
-    metadata={"table": tables.QUALIFIED_FINANCIAL_STATEMENTS_TABLE},
-    pool=NORWAY_BRREG_DUCKDB_POOL,
-)
-def norway_brreg_clickhouse_financial_statements(
-    context: AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-    norway_brreg_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    duckdb_path = duckdb_database_path(norway_brreg_duckdb)
-    context.log.info(
-        "Starting Norway Brreg financial statements ClickHouse export: duckdb_path=%s, "
-        "table=%s",
-        duckdb_path,
-        tables.QUALIFIED_FINANCIAL_STATEMENTS_TABLE,
-    )
-    with read_only_duckdb_connection(norway_brreg_duckdb) as connection:
-        rows = export_norway_brreg_clickhouse_financial_statements(
-            duckdb_connection=connection,
-            clickhouse=clickhouse,
-            log=context.log.info,
-        )
-    context.log.info(
-        "Completed Norway Brreg financial statements ClickHouse export: rows=%s",
-        rows,
-    )
-    return dg.MaterializeResult(
-        metadata={
-            "rows": rows,
-            "table": tables.QUALIFIED_FINANCIAL_STATEMENTS_TABLE,
-        },
-    )
-
-
 NORWAY_BRREG_TRANSLATE_WORKFLOW_ID = "translate-norway_brreg"
 
 
@@ -285,7 +204,7 @@ def build_norway_brreg_translate_input() -> TranslateSourceWorkflowInput:
         timeout_seconds=120,
         max_batch_failures=20,
         worker_id="translation-temporal-worker",
-        max_tokens=2048,
+        max_tokens=8192,
         extra_body_json='{"chat_template_kwargs": {"enable_thinking": false}}',
         initialize_timeout_seconds=60,
         batch_timeout_buffer_seconds=30,
@@ -310,12 +229,13 @@ async def _start_norway_brreg_translation(temporal_address: str) -> str:
 
 
 @dg.asset(
-    deps=[dg.AssetKey("norway_brreg_clickhouse_companies")],
+    deps=[dg.AssetKey("norway_resolved_clickhouse")],
     group_name=GROUP_NAME,
     kinds={"python", "temporal"},
     description=(
         "Fire-and-forget: start (or reuse) the standalone translator Temporal "
-        "workflow after companies land in ClickHouse. Does not wait for completion."
+        "workflow after no_companies lands in ClickHouse via the resolved export. "
+        "Does not wait for completion."
     ),
 )
 def norway_brreg_translation_trigger(context: AssetExecutionContext) -> dg.MaterializeResult:
@@ -339,15 +259,12 @@ def norway_brreg_translation_trigger(context: AssetExecutionContext) -> dg.Mater
 
 
 # Monthly coordinated refresh (see dagster_v3/CLAUDE.md "Scheduling"). Loads
-# entities once, runs the financials chain, exports companies to ClickHouse, then
-# fires the standalone translator Temporal workflow (returns immediately; the
-# workflow runs async).
+# entities once, runs the resolved chain (dbt -> norway_resolved_clickhouse, which
+# lands corpscout.no_companies), then fires the standalone translator Temporal
+# workflow (returns immediately; the workflow runs async).
 norway_brreg_refresh_job = dg.define_asset_job(
     "norway_brreg_refresh_job",
-    selection=dg.AssetSelection.assets(
-        "norway_brreg_clickhouse_financial_statements",
-        "norway_brreg_translation_trigger",
-    ).upstream(),
+    selection=dg.AssetSelection.assets("norway_brreg_translation_trigger").upstream(),
 )
 norway_brreg_refresh_schedule = dg.ScheduleDefinition(
     name="norway_brreg_refresh_schedule",
@@ -414,90 +331,6 @@ def normalize_norway_brreg_financial_statements_duckdb(
         counts["failed_fetches"],
     )
     return counts
-
-
-def export_norway_brreg_clickhouse_tables(
-    *,
-    duckdb_connection: duckdb.DuckDBPyConnection,
-    clickhouse: ClickhouseResource,
-    log: Callable[..., None] | None = None,
-) -> dict[str, int]:
-    companies = export_norway_brreg_clickhouse_companies(
-        duckdb_connection=duckdb_connection,
-        clickhouse=clickhouse,
-        log=log,
-    )
-    financial_statements = export_norway_brreg_clickhouse_financial_statements(
-        duckdb_connection=duckdb_connection,
-        clickhouse=clickhouse,
-        log=log,
-    )
-    return {
-        "companies": companies,
-        "financial_statements": financial_statements,
-    }
-
-
-def export_norway_brreg_clickhouse_companies(
-    *,
-    duckdb_connection: duckdb.DuckDBPyConnection,
-    clickhouse: ClickhouseResource,
-    log: Callable[..., None] | None = None,
-) -> int:
-    _log(
-        log,
-        "Preparing Norway Brreg companies ClickHouse table: database=%s, table=%s",
-        tables.NORWAY_BRREG_DATABASE,
-        tables.QUALIFIED_COMPANIES_TABLE,
-    )
-    prepare_norway_brreg_clickhouse_companies_table(clickhouse)
-    with clickhouse.get_connection() as client:
-        rows = export_duckdb_connection_table_to_clickhouse(
-            duckdb_connection=duckdb_connection,
-            clickhouse_client=client,
-            duckdb_schema=DLT_DATASET_NAME,
-            duckdb_table=ENTITIES_TABLE,
-            clickhouse_database=tables.NORWAY_BRREG_DATABASE,
-            clickhouse_table=tables.COMPANIES_TABLE,
-            columns=tables.COMPANIES_EXPORT_COLUMNS,
-            truncate=False,
-        )
-
-    _log(log, "Finished Norway Brreg companies ClickHouse export: rows=%s", rows)
-    return rows
-
-
-def export_norway_brreg_clickhouse_financial_statements(
-    *,
-    duckdb_connection: duckdb.DuckDBPyConnection,
-    clickhouse: ClickhouseResource,
-    log: Callable[..., None] | None = None,
-) -> int:
-    _log(
-        log,
-        "Preparing Norway Brreg financial statements ClickHouse table: database=%s, table=%s",
-        tables.NORWAY_BRREG_DATABASE,
-        tables.QUALIFIED_FINANCIAL_STATEMENTS_TABLE,
-    )
-    prepare_norway_brreg_clickhouse_financial_statements_table(clickhouse)
-    with clickhouse.get_connection() as client:
-        rows = export_duckdb_connection_table_to_clickhouse(
-            duckdb_connection=duckdb_connection,
-            clickhouse_client=client,
-            duckdb_schema=DLT_DATASET_NAME,
-            duckdb_table=FINANCIAL_STATEMENTS_TABLE,
-            clickhouse_database=tables.NORWAY_BRREG_DATABASE,
-            clickhouse_table=tables.FINANCIAL_STATEMENTS_TABLE,
-            columns=tables.FINANCIAL_STATEMENTS_EXPORT_COLUMNS,
-            truncate=False,
-        )
-
-    _log(
-        log,
-        "Finished Norway Brreg financial statements ClickHouse export: rows=%s",
-        rows,
-    )
-    return rows
 
 
 def _log(log: Callable[..., None] | None, message: str, *args: Any) -> None:

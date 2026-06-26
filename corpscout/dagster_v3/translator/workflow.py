@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -56,19 +57,68 @@ class ScanAndSeedInput:
 
 
 @dataclass(frozen=True)
+class ScanAndSeedResult:
+    """Result returned by the scan-and-seed activity.
+
+    ``dynamic_enqueued`` is the count of free-text terms placed on the DuckDB
+    queue for LLM translation.  ``static_flushed`` is the count of static-map
+    terms flushed directly to ``text_translations`` (bypassing the LLM queue).
+    """
+
+    dynamic_enqueued: int
+    static_flushed: int
+
+
+@dataclass(frozen=True)
 class FlushInput:
     source_slug: str
     queue_duckdb_path: str
     version: int
 
 
-def scan_and_seed_once(params: ScanAndSeedInput) -> int:
-    from translator.queue import TranslationQueue, TranslationQueueItem
+def scan_and_seed_once(params: ScanAndSeedInput) -> ScanAndSeedResult:
+    from translator.queue import FlushTranslationRow, TranslationQueue, TranslationQueueItem
 
     source_config = get_source_config(params.source_slug)
+    field_by_name = {f.field: f for f in source_config.fields}
+
     client = clickhouse_client_from_env()
+    static_flushed = 0
     try:
         terms = scan_untranslated_terms(client, source_config)
+
+        static_terms = []
+        dynamic_terms = []
+        for term in terms:
+            fc = field_by_name.get(term.field)
+            if fc is not None and fc.static_map is not None:
+                static_terms.append(term)
+            else:
+                dynamic_terms.append(term)
+
+        if static_terms:
+            static_rows: list[FlushTranslationRow] = []
+            for term in static_terms:
+                fc = field_by_name[term.field]
+                translation = (fc.static_map_dict() or {}).get(term.static_key or "", "")
+                if translation:
+                    static_rows.append(
+                        FlushTranslationRow(
+                            field=term.field,
+                            source_text=term.source_text,
+                            translated_text=translation,
+                        )
+                    )
+            if static_rows:
+                static_flushed = flush_translations(
+                    client,
+                    source_config,
+                    static_rows,
+                    provider="static",
+                    model="static",
+                    version=int(time.time()),
+                    run_id=params.queue_duckdb_path,
+                )
     finally:
         close = getattr(client, "close", None)
         if callable(close):
@@ -81,13 +131,14 @@ def scan_and_seed_once(params: ScanAndSeedInput) -> int:
             source_duckdb_path="clickhouse",
             source_table=source_config.ch_table,
             source_pk="",
-            source_field=field,
-            source_text=source_text,
+            source_field=term.field,
+            source_text=term.source_text,
             target_language="en",
         )
-        for field, source_text in terms
+        for term in dynamic_terms
     ]
-    return queue.enqueue_items(items)
+    dynamic_enqueued = queue.enqueue_items(items)
+    return ScanAndSeedResult(dynamic_enqueued=dynamic_enqueued, static_flushed=static_flushed)
 
 
 def flush_once(params: FlushInput) -> int:
@@ -117,7 +168,7 @@ def flush_once(params: FlushInput) -> int:
 
 
 @activity.defn
-async def scan_and_seed_activity(params: ScanAndSeedInput) -> int:
+async def scan_and_seed_activity(params: ScanAndSeedInput) -> ScanAndSeedResult:
     return await asyncio.to_thread(scan_and_seed_once, params)
 
 
@@ -136,7 +187,7 @@ class TranslateSourceWorkflow:
     async def run(self, params: TranslateSourceWorkflowInput) -> TranslateSourceWorkflowOutput:
         queue_path = _queue_path(params.queue_dir, params.source_slug)
 
-        enqueued = await workflow.execute_activity(
+        scan_result: ScanAndSeedResult = await workflow.execute_activity(
             scan_and_seed_activity,
             ScanAndSeedInput(source_slug=params.source_slug, queue_duckdb_path=queue_path),
             start_to_close_timeout=timedelta(seconds=params.scan_timeout_seconds),
@@ -169,7 +220,7 @@ class TranslateSourceWorkflow:
                     break
 
         version = int(workflow.now().timestamp())
-        flushed = await workflow.execute_activity(
+        dynamic_flushed = await workflow.execute_activity(
             flush_activity,
             FlushInput(source_slug=params.source_slug, queue_duckdb_path=queue_path, version=version),
             start_to_close_timeout=timedelta(seconds=params.flush_timeout_seconds),
@@ -183,8 +234,8 @@ class TranslateSourceWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=params.activity_maximum_attempts),
         )
         return TranslateSourceWorkflowOutput(
-            enqueued_items=enqueued,
+            enqueued_items=scan_result.dynamic_enqueued,
             completed_items=summary["completed_items"],
             failed_retryable_items=summary["failed_retryable_items"],
-            flushed_rows=flushed,
+            flushed_rows=dynamic_flushed + scan_result.static_flushed,
         )

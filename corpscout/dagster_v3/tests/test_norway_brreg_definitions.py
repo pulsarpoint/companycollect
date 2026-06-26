@@ -1,10 +1,11 @@
-"""Graph-contract tests for the Norway Brreg definitions after in-graph translation removal.
+"""Graph-contract tests for the Norway Brreg definitions after retargeting the translation trigger.
 
-Restores coverage deleted in commit d9d17e3 (Plan 03 Task 4):
+Coverage:
 1. All surviving assets are registered, including norway_brreg_translation_trigger.
 2. Dependency edges: entities→fetches, fetches→statements, entities→clickhouse_companies,
-   statements→clickhouse_financial, clickhouse_companies→translation_trigger.
-3. norway_brreg_refresh_job expanded membership after AssetSelection rewrite.
+   statements→clickhouse_financial, norway_resolved_clickhouse→translation_trigger.
+3. norway_brreg_refresh_job expanded membership now includes the resolved dbt models and
+   resolved ClickHouse export via upstream() resolution across modules.
 4. resources["norway_brreg_duckdb"] is wired as DuckDBResource.
 """
 
@@ -23,10 +24,12 @@ def test_norway_brreg_all_assets_registered() -> None:
     assert "norway_brreg_entities_duckdb" in asset_names
     assert "norway_brreg_financial_fetches_duckdb" in asset_names
     assert "norway_brreg_financial_statements_duckdb" in asset_names
-    assert "norway_brreg_clickhouse_companies" in asset_names
-    assert "norway_brreg_clickhouse_financial_statements" in asset_names
     assert "norway_brreg_translation_trigger" in asset_names
 
+    # Raw ClickHouse export assets dropped in Task 4 (raw tables orphaned; replaced by
+    # norway_resolved → no_companies / no_financial_statements pipeline).
+    assert "norway_brreg_clickhouse_companies" not in asset_names
+    assert "norway_brreg_clickhouse_financial_statements" not in asset_names
     # In-graph translation assets removed in d9d17e3 must be absent.
     # Note: norway_brreg_translations_applied still appears as an *external source* in
     # norway_resolved/dbt/models/sources.yml, so we only assert the pure Dagster assets are gone.
@@ -35,16 +38,12 @@ def test_norway_brreg_all_assets_registered() -> None:
 
 
 def test_norway_brreg_asset_dependency_edges() -> None:
-    """All five dep-edges in the new graph are wired correctly."""
+    """Dep-edges in the graph after raw ClickHouse export assets were removed (Task 4)."""
     asset_graph = load_project_defs().get_repository_def().asset_graph
 
     fetches_node = asset_graph.get(brreg_assets.norway_brreg_financial_fetches_duckdb_asset.key)
     statements_node = asset_graph.get(
         brreg_assets.norway_brreg_financial_statements_duckdb_asset.key
-    )
-    clickhouse_companies_node = asset_graph.get(dg.AssetKey("norway_brreg_clickhouse_companies"))
-    clickhouse_financial_node = asset_graph.get(
-        dg.AssetKey("norway_brreg_clickhouse_financial_statements")
     )
     trigger_node = asset_graph.get(dg.AssetKey("norway_brreg_translation_trigger"))
 
@@ -54,17 +53,9 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     assert {k.path[-1] for k in statements_node.parent_keys} == {
         "norway_brreg_financial_fetches_duckdb"
     }
-    # entities → clickhouse_companies
-    assert {k.path[-1] for k in clickhouse_companies_node.parent_keys} == {
-        "norway_brreg_entities_duckdb"
-    }
-    # statements → clickhouse_financial
-    assert {k.path[-1] for k in clickhouse_financial_node.parent_keys} == {
-        "norway_brreg_financial_statements_duckdb"
-    }
-    # clickhouse_companies → translation_trigger  (new fire-and-forget edge)
+    # norway_resolved_clickhouse → translation_trigger  (fires after no_companies lands)
     assert {k.path[-1] for k in trigger_node.parent_keys} == {
-        "norway_brreg_clickhouse_companies"
+        "norway_resolved_clickhouse"
     }
 
 
@@ -78,14 +69,24 @@ def test_norway_brreg_refresh_job_membership() -> None:
         k.path[-1]
         for k in repo.get_job("norway_brreg_refresh_job").asset_layer.executable_asset_keys
     }
+    # Trigger fires after the resolved export; the full chain runs through it.
     assert refresh == {
+        # brreg raw chain
         "norway_brreg_entities_duckdb",
         "norway_brreg_financial_fetches_duckdb",
         "norway_brreg_financial_statements_duckdb",
-        "norway_brreg_clickhouse_financial_statements",
-        "norway_brreg_clickhouse_companies",
+        # resolved dbt models
+        "norway_resolved_no_companies",
+        "norway_resolved_no_websites",
+        "norway_resolved_no_industries",
+        "norway_resolved_no_financial_statements",
+        # resolved ClickHouse export + trigger
+        "norway_resolved_clickhouse",
         "norway_brreg_translation_trigger",
     }
+    # Raw brreg ClickHouse exports are no longer in the job chain
+    assert "norway_brreg_clickhouse_companies" not in refresh
+    assert "norway_brreg_clickhouse_financial_statements" not in refresh
     # Old translation-in-graph assets must be absent from the job
     assert "norway_brreg_translation_queue" not in refresh
     assert "norway_brreg_translations_applied" not in refresh
@@ -101,7 +102,7 @@ def test_norway_brreg_duckdb_resource_is_wired() -> None:
 
 
 def test_norway_brreg_duckdb_pool_on_writing_assets() -> None:
-    """Every DuckDB-writing asset declares the norway_brreg_duckdb pool."""
+    """Every surviving DuckDB-writing asset declares the norway_brreg_duckdb pool."""
     assert brreg_assets.norway_brreg_entities_duckdb_asset.op.pool == "norway_brreg_duckdb"
     assert (
         brreg_assets.norway_brreg_financial_fetches_duckdb_asset.op.pool
@@ -109,11 +110,6 @@ def test_norway_brreg_duckdb_pool_on_writing_assets() -> None:
     )
     assert (
         brreg_assets.norway_brreg_financial_statements_duckdb_asset.op.pool
-        == "norway_brreg_duckdb"
-    )
-    assert brreg_assets.norway_brreg_clickhouse_companies.op.pool == "norway_brreg_duckdb"
-    assert (
-        brreg_assets.norway_brreg_clickhouse_financial_statements.op.pool
         == "norway_brreg_duckdb"
     )
 
