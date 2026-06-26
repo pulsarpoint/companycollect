@@ -35,7 +35,7 @@ BUILDER_DIR="${BUILDER_DIR:-$HERE/index-builder}" # standalone Python worklist b
 WORKER="${WORKER:-$HERE/cc-enrich-worker/bin/cc-enrich-worker}" # built by `make -C cc-enrich-worker build`
 
 case "$MODE" in
-industry) PASS_ARGS=(--concurrency "${IND_CONC:-16}" --embed-concurrency "${EMBED_CONC:-128}") ;;
+industry) PASS_ARGS=(--concurrency "${IND_CONC:-64}" --embed-concurrency "${EMBED_CONC:-128}") ;;
 tech)     PASS_ARGS=(--tech-engine fast --concurrency "${TECH_CONC:-128}") ;;
 *) echo "MODE must be industry|tech"; exit 1 ;;
 esac

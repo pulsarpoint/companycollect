@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -203,6 +204,7 @@ func ProcessShard(ctx context.Context, items []model.WorklistItem, getter fetch.
 				texts = append(texts, a.primaryText)
 			}
 		}
+		tEmbed := time.Now()
 		var vecs [][]float32
 		if len(texts) > 0 {
 			var err error
@@ -210,28 +212,50 @@ func ProcessShard(ctx context.Context, items []model.WorklistItem, getter fetch.
 				return ShardResult{}, err
 			}
 		}
-		for vi, i := range idx {
-			a := aggs[i]
-			var res model.DomainResult
-			if label := classify.MatchSignal(a.primaryText); label != "" {
-				res = model.DomainResult{PageType: label, NaceMethod: "keyword"}
-			} else {
-				res = classify.Classify(vecs[vi], ref, protos)
-			}
-			conf := uint8(0)
-			if res.NaceConfident {
-				conf = 1
-			}
-			domains = append(domains, output.DomainRow{
-				CrawlID: cfg.CrawlID, URL: a.primaryURL, RootDomain: a.rootDomain, Subdomain: a.primarySub,
-				Emails: a.emails, EmailCount: uint32(len(a.emails)),
-				PageType: res.PageType, PageTypeScore: res.PageTypeScore,
-				NaceCode: res.NaceCode, NaceLabel: res.NaceLabel, NaceDivision: res.NaceDivision,
-				NaceConfident: conf, NaceConfidence: res.NaceConfidence,
-				NaceMargin: res.NaceMargin, NaceScore: res.NaceScore, NaceMethod: res.NaceMethod,
-				Top3Codes: res.Top3Codes, Top3Labels: res.Top3Labels, Top3Scores: res.Top3Scores,
-				SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
-			})
+		embedDur := time.Since(tEmbed)
+
+		// Classify is a per-domain cosine over the whole NACE matrix (1k×4k) — fan it across all
+		// cores instead of one. Each worker writes its own non-overlapping range of domains.
+		tClass := time.Now()
+		domains = make([]output.DomainRow, len(idx))
+		cw := runtime.NumCPU()
+		if cw > len(idx) {
+			cw = len(idx)
+		}
+		var cwg sync.WaitGroup
+		for w := 0; w < cw; w++ {
+			cwg.Add(1)
+			go func(w int) {
+				defer cwg.Done()
+				for vi := w; vi < len(idx); vi += cw { // stride partition -> balanced, no shared write
+					a := aggs[idx[vi]]
+					var res model.DomainResult
+					if label := classify.MatchSignal(a.primaryText); label != "" {
+						res = model.DomainResult{PageType: label, NaceMethod: "keyword"}
+					} else {
+						res = classify.Classify(vecs[vi], ref, protos)
+					}
+					conf := uint8(0)
+					if res.NaceConfident {
+						conf = 1
+					}
+					domains[vi] = output.DomainRow{
+						CrawlID: cfg.CrawlID, URL: a.primaryURL, RootDomain: a.rootDomain, Subdomain: a.primarySub,
+						Emails: a.emails, EmailCount: uint32(len(a.emails)),
+						PageType: res.PageType, PageTypeScore: res.PageTypeScore,
+						NaceCode: res.NaceCode, NaceLabel: res.NaceLabel, NaceDivision: res.NaceDivision,
+						NaceConfident: conf, NaceConfidence: res.NaceConfidence,
+						NaceMargin: res.NaceMargin, NaceScore: res.NaceScore, NaceMethod: res.NaceMethod,
+						Top3Codes: res.Top3Codes, Top3Labels: res.Top3Labels, Top3Scores: res.Top3Scores,
+						SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+					}
+				}
+			}(w)
+		}
+		cwg.Wait()
+		if len(idx) > 0 {
+			log.Printf("  embed=%.1fs classify=%.1fs for %d domains (%d classify workers)",
+				embedDur.Seconds(), time.Since(tClass).Seconds(), len(idx), cw)
 		}
 	}
 
