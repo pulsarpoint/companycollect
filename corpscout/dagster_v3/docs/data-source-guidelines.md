@@ -113,7 +113,8 @@ decouple the stages.
 - **Mapping**: `concept_qname → canonical metric` as a **per-taxonomy lookup table (data, not code)**,
   applied in SQL/dbt (see `finland_xbrl`'s `xbrl_metric_map`). **A new XBRL country is mostly a new
   mapping table** — national GAAP / IFRS / ESEF taxonomies all flow through the same shape.
-- **Normalize / USD / translate**: downstream SQL/dbt per the standard (§5–§8).
+- **Normalize / USD**: downstream SQL/dbt per the standard (§5–§7). **Translation** is a separate
+  out-of-graph step (§8) — not dbt/SQL.
 
 **Make XBRL extraction a shared component**, not per-country code: a reusable `xbrl_common` Arelle
 wrapper (→ flat fact table) parameterized by `(taxonomy entrypoint, concept→metric map)`. A new XBRL
@@ -150,16 +151,30 @@ country then = configure it + supply a mapping table, rather than re-implementin
   legacy LVL) keep native-only (`_usd` NULL) — document it. Mirror `latvia_ur`/`estonia_ar` metrics.
 
 ## 8. Cross-cutting standard B — translation (always, for non-English free text)
-Every non-English text/enum field gets an `_en` companion column. Pick the mechanism by field kind:
-- **Finite enumeration** (legal form, status, statement/size category) → **static lookup map** in
-  Python, applied at row-build (`EE_LEGAL_FORM_EN_BY_NAME.get(x,'')`). Deterministic, no LLM, no
-  Temporal. DDL: `<field>_original` + `<field>_en`. *Default — prefer this.*
-- **Free text** (company description, activity text) → **LLM translation-service** (Temporal queue,
-  start-or-reuse workflow, sensor-driven completion). DDL adds `<field>_en` +
-  `<field>_translated_at` + `<field>_translation_provider` + `<field>_translation_model`. Mirror
-  `norway_brreg`. Schedule it monthly (translation is slow/expensive); never re-trigger daily.
-- **Proper nouns** (company name, address) → **not translated**.
-- The design doc lists every translated field and its mechanism.
+Non-English text/enum fields are translated to English by the **standalone translator service**
+(`translator/` — a Temporal worker decoupled from the Dagster graph; full detail in
+`dagster_v3/README.md` "# Translation"). Translation is **not** done in dbt/SQL and is **not** an asset
+in the graph.
+
+The base ClickHouse table carries only `<field>_original` — **do not add `<field>_en` (or
+`_translated_at`/`_provider`/`_model`) columns to it.** English values live in the shared
+`corpscout.text_translations` cache (term-level, hash-keyed by `cityHash64(<original>)`) and are exposed
+by a per-source `<source>_translated` join view. The cache survives the wipe-and-replace export, so a
+refresh only translates genuinely new/changed text.
+
+To make a source's fields translatable:
+1. **Register** the columns in `translator/registry.py` — one `FieldConfig(field, original_col)` per
+   field on the `SourceConfig`. Pick the mechanism by field kind:
+   - **Free text** (company description, activity text) → LLM (leave `static_map` unset).
+   - **Finite enumeration** (legal form, status, size category) → set `static_map` (an authoritative
+     code/value→EN dict in `translator/static_maps.py`) + `static_key_col`. Resolved from the dict, no
+     LLM — deterministic and free. *Prefer this for closed sets.*
+   - **Proper nouns** (company name, address) → not translated.
+2. **View**: add a `<source>_translated` join view (mirror `corpscout.no_companies_translated`).
+3. **Trigger**: add a fire-and-forget Dagster asset downstream of the source's ClickHouse export (mirror
+   `norway_brreg_translation_trigger`) — it starts the Temporal workflow and returns immediately. No
+   completion sensor, no gating; a translation failure can never block ingestion.
+- The design doc lists every translated field and its mechanism (LLM vs static dict).
 
 ## 8b. Cross-cutting standard C — contact information (ALWAYS pull it)
 **Connecting a company to its internet/contact presence is core to corpscout — capturing *any*
@@ -218,8 +233,9 @@ the general-data/financials datasets before concluding it's unavailable.
 - Select job assets with **`AssetSelection.assets(...).upstream()`** (full transitive chain — the
   `dg launch +leaf` CLI only resolves one hop). **Stagger** cron minutes across sources; leave
   schedules **default-STOPPED** until validated.
-- Translation-gated sources (Norway) get a **coordinated** refresh (load once → kick off async
-  translation + financials; companies land via the completion sensor), not the naive template.
+- Translation is **out of the asset graph**: the refresh job lands the source's tables in ClickHouse,
+  then a **fire-and-forget trigger asset** starts the standalone translator workflow and returns
+  immediately (no completion sensor, no gating). Mirror `norway_brreg_translation_trigger`.
 
 ## 10. Required: a per-source design doc
 **Every source must ship `defs/<source>/docs/<source>-design.md`** using

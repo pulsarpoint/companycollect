@@ -37,12 +37,15 @@
   DD.MM.YYYY; element X has no native field → column stays NULL; …>
 - Export subset: `<TABLE>_EXPORT_COLUMNS` drops `raw_*`/`source_payload_hash`.
 
-## 6. Translation (§8)
-| field | original | mechanism | notes |
+## 6. Translation (§8) — registered in `translator/registry.py`
+| field | original col | mechanism | static_map / notes |
 |---|---|---|---|
-| legal form | `legal_form_original` | static map | `EE_LEGAL_FORM_EN_BY_NAME` |
-| status | … | static map | |
-| description (if any) | … | LLM service | adds `_translated_at/_provider/_model` |
+| legal form | `legal_form_original` | static dict | `<CC>_LEGAL_FORM_EN_BY_CODE`, `static_key_col=legal_form_code` |
+| status | `status_original` | static dict | |
+| description (if any) | `<field>_original` | LLM | free text |
+- `_en` is served by the `<source>_translated` join view from the `text_translations` cache — **not**
+  base-table columns (the base table carries only `<field>_original`).
+- A fire-and-forget trigger asset starts the standalone translator after the ClickHouse export (no sensor).
 - Fields deliberately **not** translated (proper nouns): <name, address>.
 
 ## 6b. Contacts (§8b) — MANDATORY to assess
@@ -57,7 +60,7 @@
 
 ## 8. Scheduling (§9)
 - Jobs + cadence: <register daily HH:MM; financials monthly Nth>; cron stagger vs other sources: <…>
-- Special orchestration: <translation-gated coordinated refresh, sensor, etc.>
+- Special orchestration: <fire-and-forget translation trigger downstream of the ClickHouse export>
 
 ## 9. Issues found during processing
 > The most valuable section — what bit us, the symptom, and the fix, so the next source avoids it.
