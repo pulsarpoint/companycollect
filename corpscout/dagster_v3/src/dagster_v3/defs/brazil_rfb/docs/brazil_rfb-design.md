@@ -116,6 +116,14 @@ statement grain.
   table on zero rows.
 - **Single writer**: every asset that writes `brazil_rfb_source.duckdb` uses
   `pool="brazil_rfb_duckdb"`.
+- **DuckDB spill settings**: the company/establishment transform applies
+  `preserve_insertion_order=false`, `threads`, `temp_directory`, and
+  `max_temp_directory_size` before running the large window/join SQL. Defaults
+  are `BRAZIL_RFB_DUCKDB_THREADS=4`,
+  `BRAZIL_RFB_DUCKDB_MAX_TEMP_DIRECTORY_SIZE=100GiB`, and
+  `BRAZIL_RFB_DUCKDB_TEMP_DIRECTORY=data/brazil_rfb_duckdb_tmp`. Set
+  `BRAZIL_RFB_DUCKDB_MEMORY_LIMIT` only when the worker needs an explicit memory
+  cap.
 
 ## 4. Transform
 

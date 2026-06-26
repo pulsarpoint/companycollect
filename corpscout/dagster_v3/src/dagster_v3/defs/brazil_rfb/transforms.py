@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import duckdb
@@ -19,6 +20,9 @@ COMPANY_SIZE_EN_BY_CODE = {
     "03": "Small",
     "05": "Other",
 }
+DEFAULT_DUCKDB_THREADS = "4"
+DEFAULT_DUCKDB_MAX_TEMP_DIRECTORY_SIZE = "100GiB"
+DEFAULT_DUCKDB_TEMP_DIRECTORY = Path("data/brazil_rfb_duckdb_tmp")
 
 
 def _sql_literal(value: object) -> str:
@@ -33,6 +37,39 @@ def _case_map(column: str, mapping: dict[str, str]) -> str:
     return f"case {column} {cases} else '' end"
 
 
+def _env_value(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    clean_value = value.strip()
+    return clean_value if clean_value else None
+
+
+def apply_brazil_rfb_duckdb_runtime_settings(
+    connection: duckdb.DuckDBPyConnection,
+) -> None:
+    memory_limit = _env_value("BRAZIL_RFB_DUCKDB_MEMORY_LIMIT")
+    temp_directory = Path(
+        _env_value("BRAZIL_RFB_DUCKDB_TEMP_DIRECTORY")
+        or DEFAULT_DUCKDB_TEMP_DIRECTORY
+    )
+    max_temp_directory_size = (
+        _env_value("BRAZIL_RFB_DUCKDB_MAX_TEMP_DIRECTORY_SIZE")
+        or DEFAULT_DUCKDB_MAX_TEMP_DIRECTORY_SIZE
+    )
+    threads = _env_value("BRAZIL_RFB_DUCKDB_THREADS") or DEFAULT_DUCKDB_THREADS
+
+    temp_directory.mkdir(parents=True, exist_ok=True)
+    connection.execute("set preserve_insertion_order = false")
+    connection.execute(f"set temp_directory = {_sql_literal(temp_directory)}")
+    connection.execute(
+        f"set max_temp_directory_size = {_sql_literal(max_temp_directory_size)}"
+    )
+    connection.execute(f"set threads = {int(threads)}")
+    if memory_limit is not None:
+        connection.execute(f"set memory_limit = {_sql_literal(memory_limit)}")
+
+
 def build_brazil_rfb_companies_and_establishments(
     *,
     database_path: str | Path,
@@ -43,6 +80,7 @@ def build_brazil_rfb_companies_and_establishments(
     size_en = _case_map("emp.porte", COMPANY_SIZE_EN_BY_CODE)
 
     with duckdb.connect(str(database_path)) as connection:
+        apply_brazil_rfb_duckdb_runtime_settings(connection)
         connection.execute(f"create schema if not exists {dataset}")
         connection.execute(
             f"""

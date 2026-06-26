@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import duckdb
+import pytest
 
 from dagster_v3.defs.brazil_rfb import contacts, tables, transforms
 
@@ -126,6 +127,43 @@ def test_build_companies_selects_hq_then_fallback_establishment(tmp_path: Path) 
         ("12345678000190", "12345678", 1, "6201501"),
         ("99999999000291", "99999999", 0, "6311900"),
     ]
+
+
+def test_duckdb_runtime_settings_are_applied_before_heavy_transforms(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("BRAZIL_RFB_DUCKDB_MEMORY_LIMIT", "8GiB")
+    monkeypatch.setenv("BRAZIL_RFB_DUCKDB_THREADS", "2")
+    monkeypatch.setenv("BRAZIL_RFB_DUCKDB_MAX_TEMP_DIRECTORY_SIZE", "100GiB")
+    monkeypatch.setenv(
+        "BRAZIL_RFB_DUCKDB_TEMP_DIRECTORY",
+        str(tmp_path / "duckdb-temp"),
+    )
+    connection = duckdb.connect(":memory:")
+
+    transforms.apply_brazil_rfb_duckdb_runtime_settings(connection)
+
+    settings = dict(
+        connection.execute(
+            """
+            select name, value
+            from duckdb_settings()
+            where name in (
+                'memory_limit',
+                'threads',
+                'max_temp_directory_size',
+                'temp_directory',
+                'preserve_insertion_order'
+            )
+            """
+        ).fetchall()
+    )
+    assert settings["memory_limit"] == "8.0 GiB"
+    assert settings["threads"] == "2"
+    assert settings["max_temp_directory_size"] == "100.0 GiB"
+    assert settings["temp_directory"] == str(tmp_path / "duckdb-temp")
+    assert settings["preserve_insertion_order"] == "false"
 
 
 def test_establishments_keep_contact_columns_for_contact_unpivot(tmp_path: Path) -> None:
