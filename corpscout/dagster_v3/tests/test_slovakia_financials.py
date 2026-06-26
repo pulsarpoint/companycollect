@@ -104,10 +104,15 @@ def test_process_statement_resolves_entity_and_metrics():
 
 def test_build_writes_metrics_table(tmp_path):
     db = tmp_path / "skfin.duckdb"
-    counts = metrics.build_slovakia_financials(
-        database_path=db, source_run_id="r1", after_id=5000, max_statements=10,
-        client=FakeRuzClient(), request_delay_seconds=0,
-    )
+    with duckdb.connect(str(db)) as con:
+        counts = metrics.build_slovakia_financials(
+            connection=con,
+            source_run_id="r1",
+            after_id=5000,
+            max_statements=10,
+            client=FakeRuzClient(),
+            request_delay_seconds=0,
+        )
     assert counts["statements"] == 1 and counts["mapped_statements"] == 1
     assert counts["skipped"] == 1 and counts["last_id"] == 5002
     with duckdb.connect(str(db), read_only=True) as con:
@@ -128,11 +133,18 @@ def test_build_writes_metrics_table(tmp_path):
 
 def test_usd_conversion_fills_amounts(tmp_path):
     db = tmp_path / "skfin.duckdb"
-    metrics.build_slovakia_financials(
-        database_path=db, source_run_id="r1", after_id=5000, max_statements=10,
-        client=FakeRuzClient(), request_delay_seconds=0,
-    )
-    counts = metrics.apply_slovakia_usd_conversion(database_path=db, exchange_rates=FakeRates())
+    with duckdb.connect(str(db)) as con:
+        metrics.build_slovakia_financials(
+            connection=con,
+            source_run_id="r1",
+            after_id=5000,
+            max_statements=10,
+            client=FakeRuzClient(),
+            request_delay_seconds=0,
+        )
+        counts = metrics.apply_slovakia_usd_conversion(
+            connection=con, exchange_rates=FakeRates()
+        )
     assert counts["rows_converted"] == 1
     with duckdb.connect(str(db), read_only=True) as con:
         usd, fx = con.execute(
@@ -144,11 +156,12 @@ def test_usd_conversion_fills_amounts(tmp_path):
 
 def test_cursor_roundtrip(tmp_path):
     db = tmp_path / "skfin.duckdb"
-    assert incremental.read_cursor(db) == 0
-    incremental.write_cursor(db, 12345)
-    assert incremental.read_cursor(db) == 12345
-    incremental.write_cursor(db, 99999)
-    assert incremental.read_cursor(db) == 99999
+    with duckdb.connect(str(db)) as con:
+        assert incremental.read_cursor(con) == 0
+        incremental.write_cursor(con, 12345)
+        assert incremental.read_cursor(con) == 12345
+        incremental.write_cursor(con, 99999)
+        assert incremental.read_cursor(con) == 99999
 
 
 def test_metrics_export_columns_match_migration():

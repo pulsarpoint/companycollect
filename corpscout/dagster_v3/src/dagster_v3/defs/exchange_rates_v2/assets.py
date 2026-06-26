@@ -19,8 +19,10 @@ from dagster_dbt import (
 )
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
+from dagster_duckdb import DuckDBResource
 
-from dagster_v3.defs.clickhouse.resolved import export_duckdb_table_to_clickhouse
+from dagster_v3.defs.clickhouse.resolved import export_duckdb_connection_table_to_clickhouse
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.duckdb.schema_contract import validate_duckdb_table_contract
 from dagster_v3.defs.exchange_rates_v2 import tables
 from dagster_v3.defs.exchange_rates_v2.source import (
@@ -172,45 +174,46 @@ def exchange_rates_v2_dbt_assets(
 def exchange_rates_v2_clickhouse(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
+    exchange_rates_v2_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     start_date, end_date = _full_range()
-    counts = export_exchange_rates_v2_clickhouse(
-        duckdb_path=EXCHANGE_RATES_V2_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        start_date=start_date,
-        end_date=end_date,
-    )
+    with exchange_rates_v2_duckdb.get_connection() as connection:
+        counts = export_exchange_rates_v2_clickhouse(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            start_date=start_date,
+            end_date=end_date,
+        )
     context.log.info("Exported exchange-rate v2 rows to ClickHouse", extra=counts)
     return dg.MaterializeResult(metadata=counts)
 
 
 def export_exchange_rates_v2_clickhouse(
     *,
-    duckdb_path: str | Path,
+    duckdb_connection: duckdb.DuckDBPyConnection,
     clickhouse: ClickhouseResource,
     start_date: str,
     end_date: str,
 ) -> dict[str, int | str]:
-    with duckdb.connect(str(duckdb_path)) as connection:
-        _validate_exchange_rates_v2_duckdb_table(connection, "ecb_rates")
-        _validate_exchange_rates_v2_duckdb_table(connection, "identity_rates")
-        connection.execute(
-            f"""
-            create or replace table {EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME}.{CLICKHOUSE_EXPORT_TABLE}
-            as
-            select {", ".join(tables.EXCHANGE_RATES_V2_COLUMNS)}
-            from {EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME}.ecb_rates
-            where rate_date >= '{_sql_escape(start_date)}' and rate_date <= '{_sql_escape(end_date)}'
-            union all
-            select {", ".join(tables.EXCHANGE_RATES_V2_COLUMNS)}
-            from {EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME}.identity_rates
-            where rate_date >= '{_sql_escape(start_date)}' and rate_date <= '{_sql_escape(end_date)}'
-            """
-        )
+    _validate_exchange_rates_v2_duckdb_table(duckdb_connection, "ecb_rates")
+    _validate_exchange_rates_v2_duckdb_table(duckdb_connection, "identity_rates")
+    duckdb_connection.execute(
+        f"""
+        create or replace table {EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME}.{CLICKHOUSE_EXPORT_TABLE}
+        as
+        select {", ".join(tables.EXCHANGE_RATES_V2_COLUMNS)}
+        from {EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME}.ecb_rates
+        where rate_date >= '{_sql_escape(start_date)}' and rate_date <= '{_sql_escape(end_date)}'
+        union all
+        select {", ".join(tables.EXCHANGE_RATES_V2_COLUMNS)}
+        from {EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME}.identity_rates
+        where rate_date >= '{_sql_escape(start_date)}' and rate_date <= '{_sql_escape(end_date)}'
+        """
+    )
     with clickhouse.get_connection() as client:
         delete_exchange_rates_v2_window(client, start_date=start_date, end_date=end_date)
-        row_count = export_duckdb_table_to_clickhouse(
-            duckdb_path=duckdb_path,
+        row_count = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=EXCHANGE_RATES_V2_DUCKDB_DATASET_NAME,
             duckdb_table=CLICKHOUSE_EXPORT_TABLE,
@@ -295,6 +298,7 @@ defs = dg.Definitions(
         "dbt": DbtCliResource(
             project_dir=exchange_rates_v2_dbt_project,
             profiles_dir=EXCHANGE_RATES_V2_DBT_PROJECT_DIR,
-        )
+        ),
+        "exchange_rates_v2_duckdb": duckdb_resource(EXCHANGE_RATES_V2_DUCKDB_PATH),
     },
 )

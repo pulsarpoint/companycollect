@@ -4,7 +4,9 @@ from pathlib import Path
 import dagster as dg
 from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
+from dagster_duckdb import DuckDBResource
 
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.finland_financials import incremental, metrics, tables
 from dagster_v3.defs.finland_financials.clickhouse import (
     export_finland_financials_clickhouse_metrics,
@@ -24,34 +26,36 @@ MONTHLY_PARTITIONS = dg.MonthlyPartitionsDefinition(
 def _ingest_window(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
+    finland_financials_duckdb: DuckDBResource,
     *,
     start: str,
     end: str,
     max_reports: int,
 ) -> dict:
     """Discover+parse the registration-date window, EUR→USD, append to ClickHouse."""
-    counts = metrics.build_finland_financials(
-        database_path=FINLAND_FINANCIALS_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        registered_date_start=start,
-        registered_date_end=end,
-        max_reports=max_reports,
-        log=context.log.info,
-    )
-    if counts.get("statements", 0) > 0:
-        from exchange_rates import ExchangeRateClient
+    with finland_financials_duckdb.get_connection() as connection:
+        counts = metrics.build_finland_financials(
+            connection=connection,
+            source_run_id=context.run_id,
+            registered_date_start=start,
+            registered_date_end=end,
+            max_reports=max_reports,
+            log=context.log.info,
+        )
+        if counts.get("statements", 0) > 0:
+            from exchange_rates import ExchangeRateClient
 
-        metrics.apply_finland_usd_conversion(
-            database_path=FINLAND_FINANCIALS_DUCKDB_PATH,
-            exchange_rates=ExchangeRateClient.from_env(),
-            log=context.log.info,
-        )
-        counts["exported_rows"] = export_finland_financials_clickhouse_metrics(
-            database_path=FINLAND_FINANCIALS_DUCKDB_PATH,
-            clickhouse=clickhouse,
-            truncate=False,
-            log=context.log.info,
-        )
+            metrics.apply_finland_usd_conversion(
+                connection=connection,
+                exchange_rates=ExchangeRateClient.from_env(),
+                log=context.log.info,
+            )
+            counts["exported_rows"] = export_finland_financials_clickhouse_metrics(
+                duckdb_connection=connection,
+                clickhouse=clickhouse,
+                truncate=False,
+                log=context.log.info,
+            )
     return counts
 
 
@@ -75,14 +79,27 @@ def finland_financials_incremental(
     context: AssetExecutionContext,
     config: FinlandIncrementalConfig,
     clickhouse: ClickhouseResource,
+    finland_financials_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    cursor = incremental.read_cursor(FINLAND_FINANCIALS_DUCKDB_PATH)
+    with finland_financials_duckdb.get_connection() as connection:
+        cursor = incremental.read_cursor(connection)
     start, end = incremental.incremental_window(cursor, dt.date.today())
     context.log.info(
-        "Finland incremental registration window: %s -> %s (cursor=%s)", start, end, cursor
+        "Finland incremental registration window: %s -> %s (cursor=%s)",
+        start,
+        end,
+        cursor,
     )
-    counts = _ingest_window(context, clickhouse, start=start, end=end, max_reports=config.max_reports)
-    incremental.write_cursor(FINLAND_FINANCIALS_DUCKDB_PATH, end)
+    counts = _ingest_window(
+        context,
+        clickhouse,
+        finland_financials_duckdb,
+        start=start,
+        end=end,
+        max_reports=config.max_reports,
+    )
+    with finland_financials_duckdb.get_connection() as connection:
+        incremental.write_cursor(connection, end)
     return dg.MaterializeResult(metadata={**counts, "window_start": start, "window_end": end})
 
 
@@ -103,11 +120,17 @@ def finland_financials_incremental(
 def finland_financials_backfill(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
+    finland_financials_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     start, end = incremental.month_window(context.partition_key)
     context.log.info("Finland backfill registration month: %s..%s", start, end)
     counts = _ingest_window(
-        context, clickhouse, start=start, end=end, max_reports=BACKFILL_MAX_REPORTS
+        context,
+        clickhouse,
+        finland_financials_duckdb,
+        start=start,
+        end=end,
+        max_reports=BACKFILL_MAX_REPORTS,
     )
     return dg.MaterializeResult(metadata={**counts, "partition": context.partition_key})
 
@@ -128,4 +151,13 @@ finland_financials_backfill_job = dg.define_asset_job(
     "finland_financials_backfill_job",
     selection=dg.AssetSelection.assets("finland_financials_backfill"),
     partitions_def=MONTHLY_PARTITIONS,
+)
+
+defs = dg.Definitions(
+    assets=[finland_financials_incremental, finland_financials_backfill],
+    jobs=[finland_financials_incremental_job, finland_financials_backfill_job],
+    schedules=[finland_financials_incremental_schedule],
+    resources={
+        "finland_financials_duckdb": duckdb_resource(FINLAND_FINANCIALS_DUCKDB_PATH),
+    },
 )

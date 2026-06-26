@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import duckdb
+
 from dagster_v3.defs.finland_financials import metrics, tables
 
 MIGRATION = (
@@ -76,11 +78,12 @@ def test_incremental_window_and_cursor(tmp_path):
     assert incremental.month_window("2025-02-01") == ("2025-02-01", "2025-02-28")
 
     db = tmp_path / "fi.duckdb"
-    assert incremental.read_cursor(db) is None
-    incremental.write_cursor(db, "2026-06-20")
-    assert incremental.read_cursor(db) == "2026-06-20"
-    incremental.write_cursor(db, "2026-06-21")  # upsert
-    assert incremental.read_cursor(db) == "2026-06-21"
+    with duckdb.connect(str(db)) as connection:
+        assert incremental.read_cursor(connection) is None
+        incremental.write_cursor(connection, "2026-06-20")
+        assert incremental.read_cursor(connection) == "2026-06-20"
+        incremental.write_cursor(connection, "2026-06-21")  # upsert
+        assert incremental.read_cursor(connection) == "2026-06-21"
 
 
 def test_jobs_and_schedule_registered():

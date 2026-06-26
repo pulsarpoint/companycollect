@@ -1,6 +1,5 @@
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, Protocol
 
 import duckdb
@@ -198,7 +197,7 @@ def process_statement(
 
 def build_slovakia_financials(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     source_run_id: str,
     after_id: int,
     max_statements: int,
@@ -236,7 +235,7 @@ def build_slovakia_financials(
             continue
         rows.append(row)
 
-    counts = _write_metrics_table(database_path, rows, source_run_id, log=log)
+    counts = _write_metrics_table(connection, rows, source_run_id, log=log)
     counts.update(
         {
             "fetched_ids": len(statement_ids),
@@ -292,7 +291,7 @@ def _stage_row(row: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def _write_metrics_table(
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     rows: list[dict[str, Any]],
     source_run_id: str,
     *,
@@ -305,58 +304,57 @@ def _write_metrics_table(
         f"{m}_amount_original, cast(null as decimal(38, 2)) as {m}_amount_usd"
         for m in METRIC_NAMES
     )
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+    connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+    connection.execute(
+        f"create or replace temp table _sk_stage ("
+        f"statement_id varchar, ruz_entity_id varchar, ico varchar, "
+        f"template_name varchar, statement_type varchar, fiscal_year integer, "
+        f"period_start date, period_end date, filed_date date, approved_date date, "
+        f"currency_original varchar, {amount_cols}, "
+        f"mapped_metric_count integer, template_mapped integer)"
+    )
+    if rows:
+        connection.executemany(
+            f"insert into _sk_stage values ({placeholders})",
+            [_stage_row(row) for row in rows],
+        )
+    connection.execute(
+        f"""
+        create or replace table {qualified} as
+        select
+            'SK' as country_iso2,
+            '{tables.SOURCE_SLUG}' as source_slug,
+            '{source_run_id}' as source_run_id,
+            statement_id as source_record_id,
+            ico,
+            ruz_entity_id,
+            statement_id,
+            template_name,
+            statement_type,
+            fiscal_year,
+            period_start as period_start_date,
+            period_end as period_end_date,
+            filed_date,
+            approved_date,
+            currency_original,
+            {metric_cols_select},
+            mapped_metric_count,
+            template_mapped,
+            '{tables.MAPPING_VERSION}' as mapping_version,
+            cast(null as decimal(38, 12)) as fx_rate_to_usd,
+            cast(null as date) as fx_rate_date,
+            cast(null as timestamp) as fx_converted_at,
+            '{tables.RUZ_BASE_URL}' as source_url,
+            now() as resolved_at
+        from _sk_stage
+        """
+    )
+    statements = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
+    mapped = int(
         connection.execute(
-            f"create or replace temp table _sk_stage ("
-            f"statement_id varchar, ruz_entity_id varchar, ico varchar, "
-            f"template_name varchar, statement_type varchar, fiscal_year integer, "
-            f"period_start date, period_end date, filed_date date, approved_date date, "
-            f"currency_original varchar, {amount_cols}, "
-            f"mapped_metric_count integer, template_mapped integer)"
-        )
-        if rows:
-            connection.executemany(
-                f"insert into _sk_stage values ({placeholders})",
-                [_stage_row(row) for row in rows],
-            )
-        connection.execute(
-            f"""
-            create or replace table {qualified} as
-            select
-                'SK' as country_iso2,
-                '{tables.SOURCE_SLUG}' as source_slug,
-                '{source_run_id}' as source_run_id,
-                statement_id as source_record_id,
-                ico,
-                ruz_entity_id,
-                statement_id,
-                template_name,
-                statement_type,
-                fiscal_year,
-                period_start as period_start_date,
-                period_end as period_end_date,
-                filed_date,
-                approved_date,
-                currency_original,
-                {metric_cols_select},
-                mapped_metric_count,
-                template_mapped,
-                '{tables.MAPPING_VERSION}' as mapping_version,
-                cast(null as decimal(38, 12)) as fx_rate_to_usd,
-                cast(null as date) as fx_rate_date,
-                cast(null as timestamp) as fx_converted_at,
-                '{tables.RUZ_BASE_URL}' as source_url,
-                now() as resolved_at
-            from _sk_stage
-            """
-        )
-        statements = int(connection.execute(f"select count(*) from {qualified}").fetchone()[0])
-        mapped = int(
-            connection.execute(
-                f"select count(*) from {qualified} where template_mapped = 1"
-            ).fetchone()[0]
-        )
+            f"select count(*) from {qualified} where template_mapped = 1"
+        ).fetchone()[0]
+    )
     return {"statements": statements, "mapped_statements": mapped}
 
 
@@ -377,21 +375,20 @@ def _load_rates(exchange_rates: ExchangeRates, requests: list[Any]) -> dict[tupl
 
 def apply_slovakia_usd_conversion(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     exchange_rates: ExchangeRates,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     """Fill *_usd + fx_* columns by EUR→USD at each statement's period_end."""
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        pairs = connection.execute(
-            f"""
-            select distinct upper(currency_original) as currency,
-                            cast(period_end_date as varchar) as period_end
-            from {qualified}
-            where coalesce(currency_original, '') <> '' and period_end_date is not null
-            """
-        ).fetchall()
+    pairs = connection.execute(
+        f"""
+        select distinct upper(currency_original) as currency,
+                        cast(period_end_date as varchar) as period_end
+        from {qualified}
+        where coalesce(currency_original, '') <> '' and period_end_date is not null
+        """
+    ).fetchall()
     requests = [_request(currency, end) for currency, end in pairs]
     rates = _load_rates(exchange_rates, requests)
     fx_rows = [
@@ -404,38 +401,37 @@ def apply_slovakia_usd_conversion(
         f"{m}_amount_usd = cast({m}_amount_original * fx.fx_rate as decimal(38, 2))"
         for m in METRIC_NAMES
     )
-    with duckdb.connect(str(database_path)) as connection:
+    connection.execute(
+        "create or replace temp table _sk_fx ("
+        "currency varchar, period_end date, fx_rate decimal(38, 12), fx_rate_date date)"
+    )
+    if fx_rows:
+        connection.executemany(
+            "insert into _sk_fx values "
+            "(?, cast(? as date), cast(? as decimal(38, 12)), cast(? as date))",
+            fx_rows,
+        )
+    connection.execute(
+        f"update {qualified} set fx_rate_to_usd = NULL, fx_rate_date = NULL, "
+        f"fx_converted_at = NULL, {reset_usd}"
+    )
+    connection.execute(
+        f"""
+        update {qualified} as mt
+        set fx_rate_to_usd = fx.fx_rate,
+            fx_rate_date = fx.fx_rate_date,
+            fx_converted_at = now(),
+            {set_usd}
+        from _sk_fx as fx
+        where upper(mt.currency_original) = fx.currency
+          and mt.period_end_date = fx.period_end
+        """
+    )
+    converted = int(
         connection.execute(
-            "create or replace temp table _sk_fx ("
-            "currency varchar, period_end date, fx_rate decimal(38, 12), fx_rate_date date)"
-        )
-        if fx_rows:
-            connection.executemany(
-                "insert into _sk_fx values "
-                "(?, cast(? as date), cast(? as decimal(38, 12)), cast(? as date))",
-                fx_rows,
-            )
-        connection.execute(
-            f"update {qualified} set fx_rate_to_usd = NULL, fx_rate_date = NULL, "
-            f"fx_converted_at = NULL, {reset_usd}"
-        )
-        connection.execute(
-            f"""
-            update {qualified} as mt
-            set fx_rate_to_usd = fx.fx_rate,
-                fx_rate_date = fx.fx_rate_date,
-                fx_converted_at = now(),
-                {set_usd}
-            from _sk_fx as fx
-            where upper(mt.currency_original) = fx.currency
-              and mt.period_end_date = fx.period_end
-            """
-        )
-        converted = int(
-            connection.execute(
-                f"select count(*) from {qualified} where fx_rate_to_usd is not null"
-            ).fetchone()[0]
-        )
+            f"select count(*) from {qualified} where fx_rate_to_usd is not null"
+        ).fetchone()[0]
+    )
     counts = {"rate_pairs": len(pairs), "rates_found": len(fx_rows), "rows_converted": converted}
     if log is not None:
         log(

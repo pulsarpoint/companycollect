@@ -296,7 +296,8 @@ def test_normalize_nace_categories_duckdb_reads_raw_payloads(tmp_path) -> None:
                 ],
             )
 
-    counts = nace_assets.normalize_nace_categories_duckdb(duckdb_path=duckdb_path)
+    with duckdb.connect(str(duckdb_path)) as connection:
+        counts = nace_assets.normalize_nace_categories_duckdb(connection=connection)
 
     assert counts == {"raw_payloads": 2, "rows": 4}
     with duckdb.connect(str(duckdb_path), read_only=True) as connection:
@@ -357,10 +358,11 @@ def test_export_nace_categories_clickhouse_replaces_from_duckdb(tmp_path, monkey
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    counts = nace_assets.export_nace_categories_clickhouse(
-        duckdb_path=duckdb_path,
-        clickhouse=resource,
-    )
+    with duckdb.connect(str(duckdb_path)) as connection:
+        counts = nace_assets.export_nace_categories_clickhouse(
+            duckdb_connection=connection,
+            clickhouse=resource,
+        )
 
     assert counts == {"rows": 1, "table": "corpscout.nace_categories"}
     assert client.statements[0].startswith("CREATE TABLE `corpscout`.`_tmp_nace_categories_")

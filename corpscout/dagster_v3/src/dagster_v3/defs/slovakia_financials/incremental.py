@@ -5,8 +5,6 @@ so a single id cursor walks ALL history in bounded chunks and then naturally
 picks up new filings (which get higher ids). No partitions needed.
 """
 
-from pathlib import Path
-
 import duckdb
 
 from dagster_v3.defs.slovakia_financials import tables
@@ -23,21 +21,18 @@ def _ensure_cursor_table(connection: duckdb.DuckDBPyConnection) -> None:
     )
 
 
-def read_cursor(database_path: str | Path) -> int:
-    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
-    with duckdb.connect(str(database_path)) as connection:
-        _ensure_cursor_table(connection)
-        row = connection.execute(
-            f"select last_id from {CURSOR_TABLE} where name = ?", [CURSOR_NAME]
-        ).fetchone()
+def read_cursor(connection: duckdb.DuckDBPyConnection) -> int:
+    _ensure_cursor_table(connection)
+    row = connection.execute(
+        f"select last_id from {CURSOR_TABLE} where name = ?", [CURSOR_NAME]
+    ).fetchone()
     return int(row[0]) if row and row[0] is not None else 0
 
 
-def write_cursor(database_path: str | Path, last_id: int) -> None:
-    with duckdb.connect(str(database_path)) as connection:
-        _ensure_cursor_table(connection)
-        connection.execute(
-            f"insert into {CURSOR_TABLE} values (?, ?) "
-            "on conflict (name) do update set last_id = excluded.last_id",
-            [CURSOR_NAME, int(last_id)],
-        )
+def write_cursor(connection: duckdb.DuckDBPyConnection, last_id: int) -> None:
+    _ensure_cursor_table(connection)
+    connection.execute(
+        f"insert into {CURSOR_TABLE} values (?, ?) "
+        "on conflict (name) do update set last_id = excluded.last_id",
+        [CURSOR_NAME, int(last_id)],
+    )

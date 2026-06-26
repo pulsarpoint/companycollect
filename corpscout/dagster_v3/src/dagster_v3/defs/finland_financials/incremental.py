@@ -7,7 +7,6 @@ backfill asset processes one registration-month per partition.
 
 import calendar
 import datetime as dt
-from pathlib import Path
 
 import duckdb
 
@@ -26,26 +25,25 @@ def _ensure_cursor_table(connection: duckdb.DuckDBPyConnection) -> None:
     )
 
 
-def read_cursor(database_path: str | Path) -> str | None:
-    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
-    with duckdb.connect(str(database_path)) as connection:
-        _ensure_cursor_table(connection)
-        row = connection.execute(
-            f"select last_registration_date from {CURSOR_TABLE} where name = ?",
-            [CURSOR_NAME],
-        ).fetchone()
+def read_cursor(connection: duckdb.DuckDBPyConnection) -> str | None:
+    _ensure_cursor_table(connection)
+    row = connection.execute(
+        f"select last_registration_date from {CURSOR_TABLE} where name = ?",
+        [CURSOR_NAME],
+    ).fetchone()
     return row[0] if row else None
 
 
-def write_cursor(database_path: str | Path, last_registration_date: str) -> None:
-    with duckdb.connect(str(database_path)) as connection:
-        _ensure_cursor_table(connection)
-        connection.execute(
-            f"insert into {CURSOR_TABLE} values (?, ?) "
-            "on conflict (name) do update set "
-            "last_registration_date = excluded.last_registration_date",
-            [CURSOR_NAME, last_registration_date],
-        )
+def write_cursor(
+    connection: duckdb.DuckDBPyConnection, last_registration_date: str
+) -> None:
+    _ensure_cursor_table(connection)
+    connection.execute(
+        f"insert into {CURSOR_TABLE} values (?, ?) "
+        "on conflict (name) do update set "
+        "last_registration_date = excluded.last_registration_date",
+        [CURSOR_NAME, last_registration_date],
+    )
 
 
 def incremental_window(

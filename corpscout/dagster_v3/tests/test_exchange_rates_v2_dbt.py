@@ -215,12 +215,13 @@ def test_exchange_rates_v2_clickhouse_export_reads_dbt_tables(tmp_path: Path) ->
     _run_dbt_build(duckdb_path)
     client = FakeClickHouseClient()
 
-    counts = fx_v2_assets.export_exchange_rates_v2_clickhouse(
-        duckdb_path=duckdb_path,
-        clickhouse=FakeClickHouseResource(client),
-        start_date="2024-12-30",
-        end_date="2024-12-31",
-    )
+    with duckdb.connect(str(duckdb_path)) as connection:
+        counts = fx_v2_assets.export_exchange_rates_v2_clickhouse(
+            duckdb_connection=connection,
+            clickhouse=FakeClickHouseResource(client),
+            start_date="2024-12-30",
+            end_date="2024-12-31",
+        )
 
     assert counts["rows"] == 6
     assert client.statements == [
