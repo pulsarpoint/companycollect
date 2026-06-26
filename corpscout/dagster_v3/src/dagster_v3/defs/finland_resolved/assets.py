@@ -13,24 +13,26 @@ from dagster_dbt import (
     dbt_assets,
     get_asset_key_for_model,
 )
+from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
     assert_clickhouse_tables_exist,
     replace_duckdb_tables_in_clickhouse,
 )
-from dagster_v3.defs.common.resources import LocalDuckDBResource
+from dagster_v3.defs.common.duckdb_resources import duckdb_database_path, duckdb_resource
 from dagster_v3.defs.finland_resolved import tables
+from dagster_v3.defs.finland_ytj import assets as finland_ytj_assets
 
 GROUP_NAME = "finland_resolved"
 RESOLVED_DUCKDB_SCHEMA = "finland_resolved"
 FINLAND_RESOLVED_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
 
-_DEFAULT_DUCKDB_PATH = Path(LocalDuckDBResource().database_path).expanduser()
+_DEFAULT_DUCKDB_PATH = Path("data/finland_ytj.duckdb").expanduser()
 if not _DEFAULT_DUCKDB_PATH.is_absolute():
     _DEFAULT_DUCKDB_PATH = _DEFAULT_DUCKDB_PATH.resolve()
 # dbt reads FINLAND_YTJ_DUCKDB_PATH (profiles.yml) while finland_ytj_resolved_clickhouse
-# reads ytj_duckdb.path(). Set it unconditionally from the resource default so the two
+# reads ytj_duckdb.database. Set it unconditionally from the resource default so the two
 # never disagree (a stale env var must not silently point dbt at a different file).
 os.environ["FINLAND_YTJ_DUCKDB_PATH"] = str(_DEFAULT_DUCKDB_PATH)
 
@@ -78,7 +80,7 @@ def finland_resolved_dbt_assets(
 )
 def finland_ytj_resolved_clickhouse(
     clickhouse: ClickhouseResource,
-    ytj_duckdb: LocalDuckDBResource,
+    ytj_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse,
@@ -87,7 +89,7 @@ def finland_ytj_resolved_clickhouse(
     )
     with clickhouse.get_connection() as client:
         row_counts = replace_duckdb_tables_in_clickhouse(
-            duckdb_path=ytj_duckdb.path(),
+            duckdb_path=duckdb_database_path(ytj_duckdb),
             clickhouse_client=client,
             duckdb_schema=RESOLVED_DUCKDB_SCHEMA,
             clickhouse_database=RESOLVED_DATABASE,
@@ -129,6 +131,7 @@ def defs() -> dg.Definitions:
         jobs=[finland_ytj_resolved_job],
         schedules=[finland_ytj_resolved_schedule],
         resources={
+            "ytj_duckdb": finland_ytj_assets.defs.resources["ytj_duckdb"],
             "finland_resolved_dbt": DbtCliResource(
                 project_dir=finland_resolved_dbt_project,
                 profiles_dir=FINLAND_RESOLVED_DBT_PROJECT_DIR,

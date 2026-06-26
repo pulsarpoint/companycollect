@@ -27,7 +27,8 @@ from dagster_v3.defs.finland_xbrl.tables import (
     TABLE_COLUMNS,
     XML_DOCUMENTS_TABLE,
 )
-from dagster_v3.defs.common.resources import LocalDuckDBResource, ObjectStoreResource
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
+from dagster_v3.defs.common.resources import ObjectStoreResource
 
 
 class FakeResponse:
@@ -582,7 +583,7 @@ def test_load_eligible_financial_report_rows_filters_by_financial_date_and_limit
         )
 
     rows = xbrl_assets.load_eligible_financial_report_rows(
-        LocalDuckDBResource(database_path=str(database_path)),
+        duckdb_resource(database_path),
         financial_start_date="2024-06-15",
         max_reports=1,
     )

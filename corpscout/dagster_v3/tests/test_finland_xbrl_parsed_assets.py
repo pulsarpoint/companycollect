@@ -20,7 +20,8 @@ from dagster_v3.defs.finland_xbrl.assets import (
     run_finland_xbrl_arelle_dlt_pipeline,
 )
 from dagster_v3.defs.finland_xbrl.tables import FACTS_TABLE, STATEMENT_DOCUMENTS_TABLE
-from dagster_v3.defs.common.resources import LocalDuckDBResource, ObjectStoreResource
+from dagster_v3.defs.common.duckdb_resources import duckdb_database_path, duckdb_resource
+from dagster_v3.defs.common.resources import ObjectStoreResource
 
 
 SAMPLE_XML = b"""<xbrl xmlns="http://www.xbrl.org/2003/instance"
@@ -206,7 +207,7 @@ def test_parsed_xbrl_observability_metadata_summarizes_quality_without_extra_tab
 
     metadata = parsed_duckdb_observability_metadata(
         object_store=object_store,
-        source_duckdb=LocalDuckDBResource(database_path=str(database_path)),
+        source_duckdb=duckdb_resource(database_path),
         documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY,
     )
 
@@ -609,7 +610,7 @@ def test_unparsed_documents_skips_by_object_key():
 
 
 def _xbrl_resource(tmp_path):
-    return LocalDuckDBResource(database_path=str(tmp_path / "finland_ytj.duckdb"))
+    return duckdb_resource(tmp_path / "finland_ytj.duckdb")
 
 
 def test_load_parsed_object_keys_empty_when_no_table(tmp_path):
@@ -628,7 +629,7 @@ def test_parsed_duckdb_row_counts_zero_on_missing_db(tmp_path):
 
 def test_load_parsed_object_keys_returns_distinct_keys(tmp_path):
     res = _xbrl_resource(tmp_path)
-    with res.connect() as conn:
+    with res.get_connection() as conn:
         conn.execute(f"create schema if not exists {xbrl.XBRL_DLT_DATASET_NAME}")
         conn.execute(
             f"create table {xbrl.XBRL_DLT_DATASET_NAME}.{xbrl.tables.STATEMENT_DOCUMENTS_TABLE} "
@@ -679,7 +680,7 @@ def _run_partition(res, object_store, window_start, window_end):
     )
     if to_parse:
         xbrl.run_finland_xbrl_arelle_dlt_pipeline(
-            database_path=res.path(),
+            database_path=duckdb_database_path(res),
             object_store=object_store,
             documents=to_parse,
             run_id="t",
@@ -689,7 +690,7 @@ def _run_partition(res, object_store, window_start, window_end):
 
 
 def _statement_count(res):
-    with duckdb.connect(str(res.path()), read_only=True) as conn:
+    with duckdb.connect(str(duckdb_database_path(res)), read_only=True) as conn:
         return conn.execute(
             f"select count(*) from {XBRL_DLT_DATASET_NAME}.{STATEMENT_DOCUMENTS_TABLE}"
         ).fetchone()[0]
@@ -730,7 +731,7 @@ def test_parse_metadata_reports_failed_and_parsed_counts(tmp_path):
     assert len(to_parse) == 2  # both attempted
 
     result = xbrl.run_finland_xbrl_arelle_dlt_pipeline(
-        database_path=res.path(),
+        database_path=duckdb_database_path(res),
         object_store=object_store,
         documents=to_parse,
         run_id="t",

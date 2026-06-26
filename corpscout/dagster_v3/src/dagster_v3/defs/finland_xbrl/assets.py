@@ -21,17 +21,23 @@ from dagster_dbt import (
 )
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
+from dagster_duckdb import DuckDBResource
 from dlt.extract.resource import DltResource
 from dlt.pipeline.pipeline import Pipeline
 from dlt.sources.helpers.requests import Client as DltRequestsClient
 
+from dagster_v3.defs.common.duckdb_resources import (
+    duckdb_database_path,
+    duckdb_resource,
+    read_only_duckdb_connection,
+)
+from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.finland_xbrl import tables
 from dagster_v3.defs.finland_xbrl.arelle_parser import (
     ArelleStatementParser,
     parse_statement_xml_with_arelle,
 )
 from dagster_v3.defs.finland_xbrl.resources import HttpSession, XbrlApiResource
-from dagster_v3.defs.common.resources import LocalDuckDBResource, ObjectStoreResource
 from pydantic import ConfigDict, field_validator
 
 XBRL_BUCKET = "source-finland-prh-xbrl"
@@ -50,7 +56,7 @@ FI_XBRL_PARSE_PARTITION_START = PRH_XBRL_REGISTRATION_SEARCH_START
 fi_xbrl_parse_partitions = dg.MonthlyPartitionsDefinition(start_date=FI_XBRL_PARSE_PARTITION_START)
 
 FINLAND_XBRL_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
-_XBRL_DUCKDB_PATH = Path(LocalDuckDBResource().database_path).expanduser()
+_XBRL_DUCKDB_PATH = Path("data/finland_ytj.duckdb").expanduser()
 if not _XBRL_DUCKDB_PATH.is_absolute():
     _XBRL_DUCKDB_PATH = _XBRL_DUCKDB_PATH.resolve()
 os.environ["FINLAND_XBRL_DUCKDB_PATH"] = str(_XBRL_DUCKDB_PATH)
@@ -301,7 +307,7 @@ def finland_xbrl_financial_reports_pipeline(database_path: str | Path) -> Pipeli
         registered_date_start="2023-07-01",
         registered_date_end="2023-07-01",
     ),
-    dlt_pipeline=finland_xbrl_financial_reports_pipeline(LocalDuckDBResource().path()),
+    dlt_pipeline=finland_xbrl_financial_reports_pipeline(_XBRL_DUCKDB_PATH),
     name="finland_xbrl_financial_reports_duckdb",
     dagster_dlt_translator=FinlandXbrlDltTranslator(),
     partitions_def=fi_xbrl_parse_partitions,
@@ -311,7 +317,7 @@ def finland_xbrl_financial_reports_duckdb_asset(
     context: dg.AssetExecutionContext,
     config: XbrlFinancialReportsConfig,
     dlt: DagsterDltResource,
-    source_duckdb: LocalDuckDBResource,
+    source_duckdb: DuckDBResource,
 ) -> Iterator[Any]:
     """Load PRH XBRL financial report listings to a local DuckDB database with dlt."""
     window = context.partition_time_window
@@ -333,7 +339,9 @@ def finland_xbrl_financial_reports_duckdb_asset(
             retry_max_delay_seconds=config.retry_max_delay_seconds,
             run_id=context.run_id,
         ),
-        dlt_pipeline=finland_xbrl_financial_reports_pipeline(source_duckdb.path()),
+        dlt_pipeline=finland_xbrl_financial_reports_pipeline(
+            duckdb_database_path(source_duckdb)
+        ),
     )
 
 
@@ -485,7 +493,8 @@ def run_finland_xbrl_arelle_dlt_pipeline(
             fact_rows=fact_rows,
         )
     )
-    _ensure_parsed_duckdb_tables(database_file)
+    with duckdb_resource(database_file).get_connection() as connection:
+        _ensure_parsed_duckdb_tables(connection)
     if log_info is not None:
         log_info("dlt loaded parsed XBRL tables into DuckDB")
     return XbrlParseRunResult(
@@ -687,7 +696,7 @@ def finland_xbrl_raw_xml_documents(
     config: XbrlRawConfig,
     xbrl_api: XbrlApiResource,
     object_store: ObjectStoreResource,
-    source_duckdb: LocalDuckDBResource,
+    source_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     """Download PRH XBRL XML statements for eligible DuckDB financial report rows."""
     run_date = datetime.now(UTC).date()
@@ -745,7 +754,7 @@ def finland_xbrl_parsed_tables(
     context: dg.AssetExecutionContext,
     config: XbrlParsedConfig,
     object_store: ObjectStoreResource,
-    source_duckdb: LocalDuckDBResource,
+    source_duckdb: DuckDBResource,
 ) -> Iterator[dg.MaterializeResult]:
     documents_key = resolve_xbrl_documents_key(config=config)
     window = context.partition_time_window
@@ -779,12 +788,14 @@ def finland_xbrl_parsed_tables(
     failed_this_run = 0
     if to_parse:
         result = run_finland_xbrl_arelle_dlt_pipeline(
-            database_path=source_duckdb.path(),
+            database_path=duckdb_database_path(source_duckdb),
             object_store=object_store,
             documents=to_parse,
             run_id=context.run_id,
             log_info=context.log.info,
         )
+        with source_duckdb.get_connection() as connection:
+            _ensure_parsed_duckdb_tables(connection)
         parsed_this_run = result.parsed
         failed_this_run = result.failed
         if failed_this_run:
@@ -825,7 +836,7 @@ defs = dg.Definitions(
     resources={
         "xbrl_api": XbrlApiResource(),
         "object_store": ObjectStoreResource(),
-        "source_duckdb": LocalDuckDBResource(),
+        "source_duckdb": duckdb_resource(_XBRL_DUCKDB_PATH),
         "finland_xbrl_dbt": DbtCliResource(
             project_dir=finland_xbrl_dbt_project,
             profiles_dir=FINLAND_XBRL_DBT_PROJECT_DIR,
@@ -936,13 +947,13 @@ def _source_payload_hash(payload: dict[str, Any]) -> str:
 
 
 def load_eligible_financial_report_rows(
-    source_duckdb: LocalDuckDBResource,
+    source_duckdb: DuckDBResource,
     *,
     financial_start_date: str,
     max_reports: int | None,
 ) -> list[dict[str, Any]]:
     limit_clause = "" if max_reports is None else f"limit {max_reports}"
-    with source_duckdb.connect(read_only=True) as connection:
+    with read_only_duckdb_connection(source_duckdb) as connection:
         rows = connection.execute(
             f"""
             select
@@ -1024,10 +1035,10 @@ def load_xml_document_catalog_frame(
     )
 
 
-def load_parsed_table_frame(source_duckdb: LocalDuckDBResource, *, table: str) -> pl.DataFrame:
+def load_parsed_table_frame(source_duckdb: DuckDBResource, *, table: str) -> pl.DataFrame:
     if table not in {tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE}:
         raise ValueError(f"Unsupported parsed XBRL DuckDB table {table!r}")
-    with source_duckdb.connect(read_only=True) as connection:
+    with read_only_duckdb_connection(source_duckdb) as connection:
         if not _duckdb_table_exists(connection, table=table):
             raise ValueError(
                 f"XBRL parsed DuckDB table {XBRL_DLT_DATASET_NAME}.{table} does not exist. "
@@ -1040,11 +1051,11 @@ def load_parsed_table_frame(source_duckdb: LocalDuckDBResource, *, table: str) -
     return pl.from_arrow(arrow_table)
 
 
-def parsed_duckdb_row_counts(source_duckdb: LocalDuckDBResource) -> dict[str, int]:
+def parsed_duckdb_row_counts(source_duckdb: DuckDBResource) -> dict[str, int]:
     parsed_tables = (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE)
-    if not source_duckdb.path().exists():
+    if not duckdb_database_path(source_duckdb).exists():
         return {table: 0 for table in parsed_tables}
-    with source_duckdb.connect(read_only=True) as connection:
+    with read_only_duckdb_connection(source_duckdb) as connection:
         return {
             table: (
                 int(
@@ -1059,11 +1070,11 @@ def parsed_duckdb_row_counts(source_duckdb: LocalDuckDBResource) -> dict[str, in
         }
 
 
-def load_parsed_object_keys(source_duckdb: LocalDuckDBResource) -> set[str]:
+def load_parsed_object_keys(source_duckdb: DuckDBResource) -> set[str]:
     """Set of xml_object_keys already present in the parsed statement table."""
-    if not source_duckdb.path().exists():
+    if not duckdb_database_path(source_duckdb).exists():
         return set()
-    with source_duckdb.connect(read_only=True) as connection:
+    with read_only_duckdb_connection(source_duckdb) as connection:
         if not _duckdb_table_exists(connection, table=tables.STATEMENT_DOCUMENTS_TABLE):
             return set()
         rows = connection.execute(
@@ -1076,7 +1087,7 @@ def load_parsed_object_keys(source_duckdb: LocalDuckDBResource) -> set[str]:
 def parsed_duckdb_observability_metadata(
     *,
     object_store: ObjectStoreResource,
-    source_duckdb: LocalDuckDBResource,
+    source_duckdb: DuckDBResource,
     documents_key: str,
 ) -> dict[str, Any]:
     xml_documents_frame = load_xml_document_catalog_frame(
@@ -1121,17 +1132,15 @@ def parsed_duckdb_observability_metadata(
     }
 
 
-def _ensure_parsed_duckdb_tables(database_path: Path) -> None:
-    with LocalDuckDBResource(database_path=str(database_path)).connect() as connection:
-        connection.execute(f"create schema if not exists {XBRL_DLT_DATASET_NAME}")
-        for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE):
-            column_definitions = ", ".join(
-                f"{column} {_duckdb_column_type(column)}"
-                for column in tables.TABLE_COLUMNS[table]
-            )
-            connection.execute(
-                f"create table if not exists {XBRL_DLT_DATASET_NAME}.{table} ({column_definitions})"
-            )
+def _ensure_parsed_duckdb_tables(connection: Any) -> None:
+    connection.execute(f"create schema if not exists {XBRL_DLT_DATASET_NAME}")
+    for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE):
+        column_definitions = ", ".join(
+            f"{column} {_duckdb_column_type(column)}" for column in tables.TABLE_COLUMNS[table]
+        )
+        connection.execute(
+            f"create table if not exists {XBRL_DLT_DATASET_NAME}.{table} ({column_definitions})"
+        )
 
 
 def _duckdb_table_exists(connection: Any, *, table: str) -> bool:
