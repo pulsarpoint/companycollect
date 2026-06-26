@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import duckdb
-import pytest
 
 from dagster_v3.defs.brazil_rfb import contacts, tables, transforms
 
@@ -77,10 +76,11 @@ def test_build_companies_selects_hq_then_fallback_establishment(tmp_path: Path) 
     database_path = tmp_path / "br.duckdb"
     _create_raw_tables(database_path)
 
-    counts = transforms.build_brazil_rfb_companies_and_establishments(
-        database_path=database_path,
-        source_run_id="run-1",
-    )
+    with duckdb.connect(str(database_path)) as connection:
+        counts = transforms.build_brazil_rfb_companies_and_establishments(
+            connection=connection,
+            source_run_id="run-1",
+        )
 
     assert counts == {"companies": 2, "establishments": 2, "active_companies": 2}
     with duckdb.connect(str(database_path), read_only=True) as connection:
@@ -129,51 +129,15 @@ def test_build_companies_selects_hq_then_fallback_establishment(tmp_path: Path) 
     ]
 
 
-def test_duckdb_runtime_settings_are_applied_before_heavy_transforms(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setenv("DUCKDB_MEMORY_LIMIT", "8GiB")
-    monkeypatch.setenv("DUCKDB_THREADS", "2")
-    monkeypatch.setenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE", "100GiB")
-    monkeypatch.setenv(
-        "DUCKDB_TEMP_DIRECTORY",
-        str(tmp_path / "duckdb-temp"),
-    )
-    connection = duckdb.connect(":memory:")
-
-    transforms.apply_brazil_rfb_duckdb_runtime_settings(connection)
-
-    settings = dict(
-        connection.execute(
-            """
-            select name, value
-            from duckdb_settings()
-            where name in (
-                'memory_limit',
-                'threads',
-                'max_temp_directory_size',
-                'temp_directory',
-                'preserve_insertion_order'
-            )
-            """
-        ).fetchall()
-    )
-    assert settings["memory_limit"] == "8.0 GiB"
-    assert settings["threads"] == "2"
-    assert settings["max_temp_directory_size"] == "100.0 GiB"
-    assert settings["temp_directory"] == str(tmp_path / "duckdb-temp")
-    assert settings["preserve_insertion_order"] == "false"
-
-
 def test_establishments_keep_contact_columns_for_contact_unpivot(tmp_path: Path) -> None:
     database_path = tmp_path / "br.duckdb"
     _create_raw_tables(database_path)
 
-    transforms.build_brazil_rfb_companies_and_establishments(
-        database_path=database_path,
-        source_run_id="run-1",
-    )
+    with duckdb.connect(str(database_path)) as connection:
+        transforms.build_brazil_rfb_companies_and_establishments(
+            connection=connection,
+            source_run_id="run-1",
+        )
 
     with duckdb.connect(str(database_path), read_only=True) as connection:
         row = connection.execute(
@@ -191,10 +155,11 @@ def test_normalized_tables_match_clickhouse_export_contract(tmp_path: Path) -> N
     database_path = tmp_path / "br.duckdb"
     _create_raw_tables(database_path)
 
-    transforms.build_brazil_rfb_companies_and_establishments(
-        database_path=database_path,
-        source_run_id="run-1",
-    )
+    with duckdb.connect(str(database_path)) as connection:
+        transforms.build_brazil_rfb_companies_and_establishments(
+            connection=connection,
+            source_run_id="run-1",
+        )
 
     with duckdb.connect(str(database_path), read_only=True) as connection:
         company_columns = [
@@ -262,16 +227,18 @@ def test_build_contact_info_and_websites_extracts_unique_email_domains(
 ) -> None:
     database_path = tmp_path / "br.duckdb"
     _create_raw_tables(database_path)
-    transforms.build_brazil_rfb_companies_and_establishments(
-        database_path=database_path,
-        source_run_id="run-1",
-    )
+    with duckdb.connect(str(database_path)) as connection:
+        transforms.build_brazil_rfb_companies_and_establishments(
+            connection=connection,
+            source_run_id="run-1",
+        )
     _insert_contact_filter_rows(database_path)
 
-    counts = contacts.build_brazil_rfb_contact_info_and_websites(
-        database_path=database_path,
-        source_run_id="run-contacts",
-    )
+    with duckdb.connect(str(database_path)) as connection:
+        counts = contacts.build_brazil_rfb_contact_info_and_websites(
+            connection=connection,
+            source_run_id="run-contacts",
+        )
 
     assert counts == {
         "contacts": 6,
@@ -324,15 +291,17 @@ def test_build_contact_info_and_websites_extracts_unique_email_domains(
 def test_contact_domain_tables_match_clickhouse_export_contract(tmp_path: Path) -> None:
     database_path = tmp_path / "br.duckdb"
     _create_raw_tables(database_path)
-    transforms.build_brazil_rfb_companies_and_establishments(
-        database_path=database_path,
-        source_run_id="run-1",
-    )
+    with duckdb.connect(str(database_path)) as connection:
+        transforms.build_brazil_rfb_companies_and_establishments(
+            connection=connection,
+            source_run_id="run-1",
+        )
 
-    contacts.build_brazil_rfb_contact_info_and_websites(
-        database_path=database_path,
-        source_run_id="run-contacts",
-    )
+    with duckdb.connect(str(database_path)) as connection:
+        contacts.build_brazil_rfb_contact_info_and_websites(
+            connection=connection,
+            source_run_id="run-contacts",
+        )
 
     with duckdb.connect(str(database_path), read_only=True) as connection:
         contact_columns = [

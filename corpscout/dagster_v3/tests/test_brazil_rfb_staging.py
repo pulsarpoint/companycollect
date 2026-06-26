@@ -114,12 +114,11 @@ def test_load_raw_family_uses_latin1_no_header_csv(tmp_path: Path) -> None:
     database_path = tmp_path / "br.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         _write_manifest(connection, csv_path)
-
-    count = staging.load_raw_family_from_manifest(
-        database_path=database_path,
-        family="empresas",
-        source_run_id="run-1",
-    )
+        count = staging.load_raw_family_from_manifest(
+            connection=connection,
+            family="empresas",
+            source_run_id="run-1",
+        )
 
     assert count == 1
     with duckdb.connect(str(database_path), read_only=True) as connection:
@@ -149,12 +148,11 @@ def test_load_raw_family_normalizes_dirty_latin1_manifest_path(tmp_path: Path) -
     database_path = tmp_path / "br.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         _write_manifest(connection, csv_path)
-
-    count = staging.load_raw_family_from_manifest(
-        database_path=database_path,
-        family="empresas",
-        source_run_id="run-1",
-    )
+        count = staging.load_raw_family_from_manifest(
+            connection=connection,
+            family="empresas",
+            source_run_id="run-1",
+        )
 
     assert count == 1
     assert (tmp_path / "empresas.csv.utf8.csv").exists()
@@ -176,9 +174,10 @@ def test_load_raw_family_refuses_empty_csv(tmp_path: Path) -> None:
     with duckdb.connect(str(database_path)) as connection:
         _write_manifest(connection, csv_path)
 
-    with pytest.raises(ValueError, match="produced no rows"):
-        staging.load_raw_family_from_manifest(
-            database_path=database_path,
-            family="empresas",
-            source_run_id="run-1",
-        )
+    with duckdb.connect(str(database_path)) as connection:
+        with pytest.raises(ValueError, match="produced no rows"):
+            staging.load_raw_family_from_manifest(
+                connection=connection,
+                family="empresas",
+                source_run_id="run-1",
+            )

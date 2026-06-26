@@ -4,6 +4,7 @@ from typing import Any
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
+from dagster_duckdb import DuckDBResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 from pydantic import Field, field_validator
@@ -15,6 +16,7 @@ from dagster_v3.defs.brazil_rfb.clickhouse import (
     export_brazil_rfb_clickhouse_establishments,
     export_brazil_rfb_clickhouse_websites,
 )
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 
 GROUP_NAME = "brazil_rfb"
 BRAZIL_RFB_DUCKDB_POOL = "brazil_rfb_duckdb"
@@ -136,11 +138,15 @@ def brazil_rfb_snapshot_files_duckdb(
     pool=BRAZIL_RFB_DUCKDB_POOL,
     description="Brazil RFB CNPJ raw CSV file families loaded into DuckDB with read_csv.",
 )
-def brazil_rfb_raw_files_duckdb(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
-    counts = staging.load_all_raw_families_from_manifest(
-        database_path=BRAZIL_RFB_DUCKDB_PATH,
-        source_run_id=context.run_id,
-    )
+def brazil_rfb_raw_files_duckdb(
+    context: dg.AssetExecutionContext,
+    brazil_rfb_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    with brazil_rfb_duckdb.get_connection() as connection:
+        counts = staging.load_all_raw_families_from_manifest(
+            connection=connection,
+            source_run_id=context.run_id,
+        )
     context.log.info("Loaded Brazil RFB raw CSV families: counts=%s", counts)
     return dg.MaterializeResult(metadata=counts)
 
@@ -155,11 +161,15 @@ def brazil_rfb_raw_files_duckdb(context: dg.AssetExecutionContext) -> dg.Materia
     pool=BRAZIL_RFB_DUCKDB_POOL,
     description="Brazil RFB legal entities and establishments normalized in DuckDB.",
 )
-def brazil_rfb_companies_duckdb(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
-    counts = transforms.build_brazil_rfb_companies_and_establishments(
-        database_path=BRAZIL_RFB_DUCKDB_PATH,
-        source_run_id=context.run_id,
-    )
+def brazil_rfb_companies_duckdb(
+    context: dg.AssetExecutionContext,
+    brazil_rfb_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    with brazil_rfb_duckdb.get_connection() as connection:
+        counts = transforms.build_brazil_rfb_companies_and_establishments(
+            connection=connection,
+            source_run_id=context.run_id,
+        )
     context.log.info("Normalized Brazil RFB companies and establishments: counts=%s", counts)
     return dg.MaterializeResult(metadata=counts)
 
@@ -179,12 +189,14 @@ def brazil_rfb_companies_duckdb(context: dg.AssetExecutionContext) -> dg.Materia
 )
 def brazil_rfb_contact_info_duckdb(
     context: dg.AssetExecutionContext,
+    brazil_rfb_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    counts = contacts.build_brazil_rfb_contact_info(
-        database_path=BRAZIL_RFB_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        log=context.log.info,
-    )
+    with brazil_rfb_duckdb.get_connection() as connection:
+        counts = contacts.build_brazil_rfb_contact_info(
+            connection=connection,
+            source_run_id=context.run_id,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -203,11 +215,13 @@ def brazil_rfb_contact_info_duckdb(
 )
 def brazil_rfb_websites_duckdb(
     context: dg.AssetExecutionContext,
+    brazil_rfb_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    counts = contacts.build_brazil_rfb_websites(
-        database_path=BRAZIL_RFB_DUCKDB_PATH,
-        log=context.log.info,
-    )
+    with brazil_rfb_duckdb.get_connection() as connection:
+        counts = contacts.build_brazil_rfb_websites(
+            connection=connection,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -340,4 +354,7 @@ defs = dg.Definitions(
         brazil_rfb_clickhouse_websites,
     ],
     jobs=[brazil_rfb_resolve_job],
+    resources={
+        "brazil_rfb_duckdb": duckdb_resource(BRAZIL_RFB_DUCKDB_PATH),
+    },
 )
