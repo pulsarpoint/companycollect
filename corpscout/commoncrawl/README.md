@@ -1,13 +1,20 @@
 # commoncrawl
 
-Global domain enrichment from [CommonCrawl](https://commoncrawl.org): every domain in a crawl →
-**NACE industry** (+ confidence), **technology stack**, **contacts**, **company identifiers**
-(LEI / VAT → registry join keys), and a **company profile** (firmographics from schema.org
-JSON-LD). Self-contained: pure Go + Python, **no dagster**. The only upstream dependency is one
-ClickHouse table (`corpscout.nace_categories`) that dagster populates.
+Global domain enrichment from [CommonCrawl](https://commoncrawl.org). For every domain in a crawl
+it produces **two independent things**:
 
-> If you only read one thing: **build the reference embeddings before you run the worker**
-> (§3 step 4). The industry pass refuses to start otherwise.
+- **An industry category** — a NACE code per domain (+ confidence), by embedding the page and
+  matching it against the NACE taxonomy. → `commoncrawl_domains`
+- **Technologies & company info** — the tech stack (Wappalyzer), company identifiers (LEI / VAT →
+  registry join keys), and a firmographic profile (schema.org JSON-LD). → `commoncrawl_technologies`,
+  `commoncrawl_company_identifiers`, `commoncrawl_company_profile`
+
+These are **two separate workflows** (this README is organised around that split — §3 and §4). They
+share the fetch infrastructure but otherwise have nothing in common: industry is GPU/embedding-bound
+and needs a prebuilt reference; tech is CPU-bound and needs only S3. Run them as separate processes.
+
+Self-contained: pure Go + Python, **no dagster**. The only upstream dependency is one ClickHouse
+table (`corpscout.nace_categories`) that dagster populates; the industry workflow reads it.
 
 ---
 
@@ -15,168 +22,200 @@ ClickHouse table (`corpscout.nace_categories`) that dagster populates.
 
 | Dir | Lang | Role |
 |---|---|---|
-| [`index-builder/`](index-builder/README.md) | Python (duckdb, pyarrow) | Build **worklists** from the CommonCrawl URL index — the "what to fetch" list (WARC file + byte offset per page). Two shapes: `industry` (1 page/domain) and `tech` (many). |
-| [`reference-builder/`](reference-builder/README.md) | Python (numpy, openai, clickhouse) | Build the **reference embeddings** — embed NACE categories + the page-type seed → `corpscout.nace_category_embeddings` / `page_type_exemplars`. The thing the worker matches pages against. |
-| [`cc-enrich-worker/`](cc-enrich-worker/README.md) | Go | The **processor**: byte-range-fetch WARC pages → classify (industry) / Wappalyzer + identifiers + profiles (tech) → Parquet → ClickHouse. |
-| `.env` | — | Shared config: the embedding endpoint (`COMMONCRAWL_EMBED_*`), ClickHouse, AWS. Read by the worker **and** the reference-builder so both use the **same model**. Copy `.env.example`. |
+| [`index-builder/`](index-builder/README.md) | Python (duckdb, pyarrow) | Build **worklists** from the CommonCrawl URL index — the "what to fetch" list (WARC file + byte offset per page). Two shapes: `industry` (1 page/domain) and `tech` (many pages/domain). |
+| [`reference-builder/`](reference-builder/README.md) | Python (numpy, openai, clickhouse) | Build the **reference embeddings** (industry workflow only) — embed NACE categories + the page-type seed → `nace_category_embeddings` / `page_type_exemplars`. What the worker matches pages against. |
+| [`cc-enrich-worker/`](cc-enrich-worker/README.md) | Go | The **processor**. Subcommand CLI: `cc-enrich-worker <industry\|tech\|both>`. Byte-range-fetches WARC pages and runs the chosen workflow → Parquet → ClickHouse. |
+| `.env` | — | Shared config: embedding endpoint (`COMMONCRAWL_EMBED_*`), ClickHouse, AWS. Read by the worker **and** reference-builder so both use the **same model**. Copy `.env.example`. |
 
 The ClickHouse **schema** lives in `../clickhouse/migrations/` (golang-migrate), not in any of these
 packages — code reads/writes tables whose DDL the migrations own.
 
 ---
 
-## 2. How it fits together
-
-```
- dagster_v3 ──(populates)──► corpscout.nace_categories         [the only upstream dependency]
-                                      │
-        reference-builder ───────────┘   embed NACE + page-type seed (COMMONCRAWL_EMBED_*)
-              │
-              ▼
-   corpscout.nace_category_embeddings (044)   corpscout.page_type_exemplars (045)
-              │                                        │
-              └──────────────► loaded at startup ◄─────┘
-                                      │
- CommonCrawl URL index ──► index-builder ──► worklist shards ──► cc-enrich-worker ──► ClickHouse
-   (cc-index parquet)        (industry|tech)   (WARC locators)     (fetch + enrich)     (results)
-```
-
-- **dagster's only role**: produce `corpscout.nace_categories`. The reference-builder reads it
-  *from ClickHouse* — one-way, decoupled.
-- The reference embeddings and the page embeddings **must come from the same model** (matching
-  vector space). The shared `.env` + the worker's startup check enforce this.
-
----
-
-## 3. Run order (first run on a fresh box)
+## 2. Setup (shared, do once)
 
 Everything below is from `corpscout/` unless noted.
 
-**1. Apply the ClickHouse schema**
+**a. Apply the ClickHouse schema**
 ```bash
-make clickhouse-migrate-up          # creates 044/045 reference tables + 046–053 result tables
+make clickhouse-migrate-up     # 044/045 reference tables + 046–053 result tables
 ```
 
-**2. Fill in the shared config**
+**b. Fill in the shared config**
 ```bash
 cp commoncrawl/.env.example commoncrawl/.env
-$EDITOR commoncrawl/.env            # COMMONCRAWL_EMBED_BASE_URL + _MODEL, CLICKHOUSE_*, AWS_*
+$EDITOR commoncrawl/.env        # COMMONCRAWL_EMBED_*, CLICKHOUSE_*, AWS_*
 ```
 
-**3. Bring up the embedding endpoint** (OpenAI-compatible, e.g. vLLM serving Qwen3-Embedding)
-and make sure `COMMONCRAWL_EMBED_BASE_URL` points at it.
+**c. Build the worker**
+```bash
+cd commoncrawl/cc-enrich-worker && CGO_ENABLED=0 go build -o cc-enrich-worker .
+```
 
-**4. Build the reference embeddings** — REQUIRED before the industry pass
+`cc-enrich-worker` is subcommand-based — the command **is** the workflow:
+```
+cc-enrich-worker industry [flags]    # workflow A (§3)
+cc-enrich-worker tech     [flags]    # workflow B (§4)
+cc-enrich-worker both     [flags]    # both in one fetch pass (discouraged — throttles the GPU)
+```
+Mode-specific flags appear only under their command (`cc-enrich-worker tech -h`).
+
+> In practice you don't call the binary directly — **`run_crawl.sh` (§5)** generates the worklist,
+> runs the pass, and loads ClickHouse, per shard. The two workflows below explain what each pass does.
+
+---
+
+## 3. Workflow A — categorize domains by industry  (`industry`)
+
+**Goal:** assign each domain a NACE industry code. **Needs:** the reference embeddings + the
+embedding endpoint + ClickHouse. **Bottleneck:** the GPU. **Output:** `commoncrawl_domains`.
+
+```
+nace_categories (dagster) ─► reference-builder ─► nace_category_embeddings + page_type_exemplars
+                                                            │  loaded + model-checked at startup
+index-builder --mode industry (1 page/domain) ─► worker industry ─► embed page ─► cosine-match NACE
+                                                                                   ─► commoncrawl_domains
+```
+
+### A1. Build the reference embeddings — REQUIRED first
+The worker matches each page against a fixed NACE matrix; build it (and refresh it whenever you
+change the served model — page and reference vectors **must** come from the same model):
 ```bash
 cd commoncrawl/reference-builder
 set -a; . ../.env; set +a
-uv run python -m reference_builder         # nace_category_embeddings + page_type_exemplars
+uv run python -m reference_builder      # writes nace_category_embeddings + page_type_exemplars
 ```
 
-**5. Verify the reference** (§4).
-
-**6. Build the worker + run the passes** (resumable driver, from `cc-enrich-worker/`)
-```bash
-cd ../cc-enrich-worker
-CGO_ENABLED=0 go build -o cc-enrich-worker .
-./run_crawl.sh tech     0-0        # CPU-bound: Wappalyzer + identifiers + profiles (many pages/domain)
-./run_crawl.sh industry 0-0        # GPU-bound: embed homepage → NACE classify (1 page/domain)
-```
-`run_crawl.sh` generates the per-mode worklist on demand, runs the pass, loads the output Parquet
-into ClickHouse, and marks the shard done. Re-running skips completed shards (idempotent;
-ReplacingMergeTree dedupes). Run the two modes as **separate processes** (tech pegs the cores,
-industry feeds the GPU).
-
----
-
-## 4. Verifying the NACE reference embeddings
-
-The worker checks this **automatically at industry startup** (`cc-enrich-worker/check.go`) and
-**refuses to run** on a mismatch — coverage, a single `(embedding_model, embedding_dim)`, that the
-model equals `COMMONCRAWL_EMBED_MODEL`, and that the dim equals what the endpoint produces. Look for:
+### A2. Verify the reference
+The industry pass **checks this at startup** (`cc-enrich-worker/check.go`) and **refuses to run** on
+a mismatch — full category coverage, a single `(embedding_model, embedding_dim)`, that the model
+equals `COMMONCRAWL_EMBED_MODEL`, and that the dim equals what the endpoint produces. Success logs:
 ```
 reference check OK: 1024/1024 categories, model=Qwen/Qwen3-Embedding-8B dim=4096
 ```
-or it aborts with `reference check failed: …`.
-
 To check by hand (`clickhouse-client --database corpscout`):
 ```sql
--- one model + dim, and how many categories are embedded
 SELECT embedding_model, embedding_dim, uniqExact(code) AS embedded
-FROM nace_category_embeddings FINAL GROUP BY 1, 2;
+FROM nace_category_embeddings FINAL GROUP BY 1, 2;            -- expect exactly ONE row
 
--- coverage: embedded vs the categories that SHOULD be embedded (must be equal)
-SELECT
-  (SELECT uniqExact(code) FROM nace_category_embeddings)                         AS embedded,
-  (SELECT uniqExact(code) FROM nace_categories
-     WHERE is_current = 1 AND level != 'section' AND description_en != '')       AS expected;
-
--- page-type prototypes present?
-SELECT count() FROM page_type_exemplars FINAL;
+SELECT (SELECT uniqExact(code) FROM nace_category_embeddings) AS embedded,
+       (SELECT uniqExact(code) FROM nace_categories
+          WHERE is_current = 1 AND level != 'section' AND description_en != '') AS expected;  -- must be equal
 ```
-If `embedded < expected`, or the model/dim differ from your `.env`, **re-run the reference-builder**
-(step 4). Always rebuild it after changing the served model — page vectors and reference vectors
-must match.
+If `embedded < expected` or the model/dim differ from your `.env`, **re-run A1**.
+
+### A3. Run it
+```bash
+./run_crawl.sh industry 0-0      # or a range, e.g. 0-299
+```
+Per domain it fetches the **one** representative page (the main-site homepage, from the `industry`
+worklist), embeds it, cosine-matches the NACE reference + page-type prototypes, and applies the
+confidence gate (`nace_confident` binary + `nace_confidence` 0–1). Junk/parked pages are tagged via
+`page_type` and skip NACE.
+
+### A4. What lands in `commoncrawl_domains`
+One row per domain: `nace_code/label/division`, `nace_confident`, `nace_confidence`, `nace_margin`,
+`nace_top3_*`, `page_type`(+score), and contacts (`emails[]`).
 
 ---
 
-## 5. The two passes
+## 4. Workflow B — resolve technologies & company info  (`tech`)
 
-| Pass | Worklist (`index-builder --mode`) | Reads | Produces (ClickHouse) |
+**Goal:** from a domain's pages, resolve its tech stack + company identifiers + firmographic
+profile. **Needs:** S3 only (no GPU, no reference, no embedding endpoint). **Bottleneck:** the CPU.
+**Output:** `commoncrawl_technologies`, `commoncrawl_company_identifiers`, `commoncrawl_company_profile`.
+
+```
+index-builder --mode tech (MANY pages/domain, multilingual legal-page ranking) ─► worker tech ─►
+   Aho-Corasick-gated Wappalyzer    ─► commoncrawl_technologies
+   LEI / VAT (checksum-validated)   ─► commoncrawl_company_identifiers   (→ GLEIF / country registries)
+   schema.org Organization JSON-LD  ─► commoncrawl_company_profile
+```
+
+### B1. Why a different worklist than industry
+Industry needs *one* representative page; tech wants **coverage**. Wappalyzer sees more of the stack
+across pages, and — crucially — **LEI/VAT and the Organization JSON-LD live on `/imprint`, `/legal`,
+`/contact`, `/about`, never the homepage**. So the `tech` worklist returns up to `MAX_PAGES`
+(default 25) pages/domain, ranked **homepage → legal/contact/about → shallowest**, multilingually
+(`impressum`, `mentions-legales`, `quienes-somos`, `chi-siamo`, `uber-uns`, …) so non-English sites
+aren't missed. `MAX_PAGES=0` = every HTML page (the whole crawl, ~3B pages — expensive).
+
+### B2. Run it
+```bash
+./run_crawl.sh tech 0-0          # or a range; MAX_PAGES=25 by default
+```
+The worker fetches each domain's pages and, per page, runs the fast tech matcher + the LEI/VAT
+extractors + the JSON-LD profile parser, **unioning results per domain**.
+
+### B3. What lands in ClickHouse
+- `commoncrawl_technologies` — one row / (domain, technology): `technology`, `category`, `version`.
+- `commoncrawl_company_identifiers` — one row / (domain, identifier): `id_type` (`lei`/`vat`/`tax`/
+  `duns`/`naics`), `id_value`, `valid` (checksum), `source` (`jsonld`/`text`). Join `WHERE
+  id_type='lei'` to `gleif_reference_data`; `vat` → the country company tables.
+- `commoncrawl_company_profile` — one row / domain: `name`, `country`, `founding_year`,
+  `employee_count`, `email`, `phone`, `same_as[]` (LinkedIn/Wikidata/…).
+
+---
+
+## 5. The driver (`run_crawl.sh`) — runs either workflow, resumable
+
+```bash
+cd commoncrawl/cc-enrich-worker
+set -a; source ../.env; set +a
+./run_crawl.sh tech     0-299      # workflow B over shards 0..299 (CPU pass)
+./run_crawl.sh industry 0-299      # workflow A over shards 0..299 (GPU pass)
+```
+For each shard it: generates the **per-mode** worklist on demand (`shard_<mode>_<part>.parquet`,
+cached/skipped if present), runs the worker pass, loads each output Parquet into ClickHouse, and
+touches a `.loaded` marker. Re-running **skips completed shards** (idempotent; ReplacingMergeTree
+dedupes). Run the two workflows as **separate processes** so tech pegs the cores while industry
+feeds the GPU. Tunables via env: `CRAWL`, `WHERE`, `MAX_PAGES`, `TECH_CONC`, `IND_CONC`, `EMBED_CONC`.
+
+---
+
+## 6. Output tables & coverage queries
+
+Schema in `../clickhouse/migrations/` (the migrations own the DDL; the worker never issues DDL):
+
+| Table | Migration | Workflow | Grain |
 |---|---|---|---|
-| **industry** | `industry` — 1 homepage/domain | reference tables + embed endpoint + S3 | `commoncrawl_domains` (NACE code/label/division, `nace_confident`, `nace_confidence`, page_type, emails) |
-| **tech** | `tech` — many pages/domain (≤`MAX_PAGES`, default 25) | S3 only | `commoncrawl_technologies`, `commoncrawl_company_identifiers` (LEI/VAT/…), `commoncrawl_company_profile` |
+| `commoncrawl_domains` | 046 (+049) | A | one row / domain — industry + contacts |
+| `commoncrawl_technologies` | 047 | B | one row / (domain, technology) |
+| `commoncrawl_company_identifiers` | 051 | B | one row / (domain, identifier) |
+| `commoncrawl_company_profile` | 053 | B | one row / domain |
+| `nace_category_embeddings` / `page_type_exemplars` | 044 / 045 | A (reference) | written by reference-builder, read by the worker |
 
-Why two worklists: industry embeds **one** representative page (the homepage); tech wants
-**coverage** — Wappalyzer sees more stacks, and **LEI/VAT + JSON-LD profiles live on `/imprint`,
-`/legal`, `/contact`, `/about` — never the homepage**. The tech worklist ranks homepage → legal/
-contact pages → shallowest, so the per-domain cap keeps the pages that carry identifiers.
-`MAX_PAGES=0` = every HTML page (the whole crawl, ~3B pages — expensive; the default 25 captures
-~all tech + the legal pages).
-
----
-
-## 6. Output tables (schema in `../clickhouse/migrations/`)
-
-| Table | Migration | Grain |
-|---|---|---|
-| `commoncrawl_domains` | 046 (+049 `nace_confidence`) | one row / domain — industry + contacts |
-| `commoncrawl_technologies` | 047 | one row / (domain, technology) |
-| `commoncrawl_company_identifiers` | 051 | one row / (domain, identifier) — `id_type` lei/vat/… → join `gleif_reference_data` / country registries |
-| `commoncrawl_company_profile` | 053 | one row / domain — name, country, founding, employees, sameAs |
-| `nace_category_embeddings` / `page_type_exemplars` | 044 / 045 | the reference (written by reference-builder, read by the worker) |
-
-### Coverage queries (after a run — these decide what to build next)
+After a run, these numbers decide what to build next:
 ```sql
+-- B: identifier hit-rate (worth adding more id_types? VAT vs LEI coverage?)
 SELECT id_type, count() rows, uniqExact(root_domain) domains, sum(valid) valid
-FROM commoncrawl_company_identifiers GROUP BY id_type;            -- LEI/VAT hit rate
+FROM commoncrawl_company_identifiers GROUP BY id_type;
 
-SELECT count() FROM commoncrawl_company_profile WHERE name != ''; -- JSON-LD profile coverage
+-- B: JSON-LD profile coverage
+SELECT count() FROM commoncrawl_company_profile WHERE name != '';
 
+-- A: confidence distribution → how big is the low-confidence LLM-escalation tail?
 SELECT round(nace_confidence, 1) conf, count()
-FROM commoncrawl_domains GROUP BY conf ORDER BY conf;             -- confidence distribution → LLM-tail size
+FROM commoncrawl_domains GROUP BY conf ORDER BY conf;
 ```
 
 ---
 
 ## 7. Operational notes
 
-- **Model-match invariant** — the reference and the worker must use the same
-  `COMMONCRAWL_EMBED_MODEL`/`BASE_URL`. Both read `commoncrawl/.env`; the startup check enforces it.
-  Swap the model → rebuild the reference (§3.4) **and** re-run the worker.
-- **Resumable** — `run_crawl.sh` skips shards whose `.loaded` marker exists; a partial shard
-  re-runs cleanly (ReplacingMergeTree dedupes). Refuses to replace a table on empty input.
-- **Identifier/profile provenance** — rows currently carry `source_url =` the domain's first
-  fetched page (homepage), not the exact page the LEI/VAT was found on. The `root_domain` join key
-  is unaffected; per-page provenance is a future worker change.
-- **No DDL in code** — migrations own the schema; the worker asserts tables exist and loads
-  Parquet via `clickhouse-client`.
+- **Model-match invariant (workflow A)** — the reference and the worker must use the same
+  `COMMONCRAWL_EMBED_MODEL`/`BASE_URL` (both read `commoncrawl/.env`; the startup check enforces it).
+  Swap the model → rebuild the reference (A1) **and** re-run the industry pass.
+- **Resumable** — `run_crawl.sh` skips shards with a `.loaded` marker; a partial shard re-runs
+  cleanly. The worker refuses to replace a table on empty input.
+- **Identifier/profile provenance (workflow B)** — rows carry `source_url =` the domain's first
+  fetched page, not the exact page a given LEI/VAT was found on. The `root_domain` join key is
+  unaffected; per-page provenance is a future change.
+- **No DDL in code** — migrations own the schema; the worker loads Parquet via `clickhouse-client`.
 
 ## 8. Build & test
 ```bash
-# Go worker
-cd cc-enrich-worker && go test ./... && CGO_ENABLED=0 go build -o cc-enrich-worker .
-# Python packages (offline tests, fakes — no endpoint/CH needed)
-cd ../index-builder    && uv run --with pytest --with duckdb --with pyarrow pytest tests/
+cd cc-enrich-worker     && go test ./... && CGO_ENABLED=0 go build -o cc-enrich-worker .
+cd ../index-builder     && uv run --with pytest --with duckdb --with pyarrow pytest tests/
 cd ../reference-builder && uv run --with pytest --with numpy pytest tests/
 ```
