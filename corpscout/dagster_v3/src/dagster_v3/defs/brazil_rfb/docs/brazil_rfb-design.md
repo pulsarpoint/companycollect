@@ -10,8 +10,8 @@ statement grain.
 
 - **Country / registry**: Brazil - Receita Federal Dados Publicos CNPJ, published
   by Receita Federal do Brasil / SERPRO.
-- **Module**: `defs/brazil_rfb/` - DuckDB `data/brazil_rfb_source.duckdb` - pool
-  `brazil_rfb_duckdb`.
+- **Module**: `defs/brazil_rfb/` - stage-specific DuckDB files under `data/`
+  with one writer pool per stage.
 - **Related reference module**: `defs/brazil_cnae/`, which publishes
   `corpscout.br_cnae_to_nace` from curated fixture data. The registry industry
   build depends on `brazil_cnae_to_nace_clickhouse`.
@@ -105,28 +105,45 @@ statement grain.
   - `brazil_rfb_estabelecimentos_duckdb`
   - `brazil_rfb_simples_duckdb`
   - `brazil_rfb_reference_duckdb`
+- **DuckDB stage artifacts**:
+  - `data/brazil_rfb_manifest.duckdb`: dlt snapshot manifest only.
+  - `data/brazil_rfb_empresas.duckdb`: `empresas_raw`.
+  - `data/brazil_rfb_estabelecimentos.duckdb`: `estabelecimentos_raw`.
+  - `data/brazil_rfb_simples.duckdb`: `simples_raw`.
+  - `data/brazil_rfb_reference.duckdb`: code-list raw tables.
+  - `data/brazil_rfb_companies.duckdb`: normalized `companies` and
+    `establishments`.
+  - `data/brazil_rfb_contacts.duckdb`: normalized `company_contact_info` and
+    `websites`.
 - **Staging tables**: `empresas_raw`, `estabelecimentos_raw`, `simples_raw`,
   `cnaes_raw`, `naturezas_raw`, `municipios_raw`, `paises_raw`,
   `qualificacoes_raw`, `motivos_raw`. Raw provenance and `source_payload_hash`
   stay in DuckDB only.
 - **Empty input rule**: every file-family asset refuses to replace its staging
   table on zero rows.
-- **Single writer**: every asset that writes `brazil_rfb_source.duckdb` uses
-  `pool="brazil_rfb_duckdb"`.
+- **Concurrency model**: each writable DuckDB stage has its own pool. Raw family
+  loads read the manifest database through a read-only `ATTACH`, then write only
+  their own stage database. Downstream transforms attach completed upstream
+  databases read-only and write to their own output database. ClickHouse exports
+  read completed stage databases and do not use a DuckDB writer pool.
 - **DuckDB spill settings**: the company/establishment transform applies
   `preserve_insertion_order=false`, `threads`, `temp_directory`, and
   `max_temp_directory_size` before running the large window/join SQL. Defaults
   are `DUCKDB_THREADS=4`, `DUCKDB_MAX_TEMP_DIRECTORY_SIZE=100GiB`, and a
   project-local temp directory beside the DuckDB database
-  (`data/duckdb_tmp` for `data/brazil_rfb_source.duckdb`) when
-  `DUCKDB_TEMP_DIRECTORY` is not set. Set `DUCKDB_MEMORY_LIMIT` only when the
-  worker needs an explicit memory cap. These `DUCKDB_*` environment variables
-  are shared knobs intended for any large DuckDB-based country source.
+  (`data/duckdb_tmp`) when `DUCKDB_TEMP_DIRECTORY` is not set. Set
+  `DUCKDB_MEMORY_LIMIT` only when the worker needs an explicit memory cap. These
+  `DUCKDB_*` environment variables are shared knobs intended for any large
+  DuckDB-based country source.
 
 ## 4. Transform
 
 - **Mechanism**: set-based DuckDB SQL. No dbt in this phase; the transforms are
   joins, casts, code-list resolution, contact unpivoting, and CNAE unnesting.
+- **Stage boundaries**: company/establishment SQL writes to
+  `brazil_rfb_companies.duckdb` after attaching raw-family databases read-only.
+  Contact/domain SQL writes to `brazil_rfb_contacts.duckdb` after attaching
+  `brazil_rfb_companies.duckdb` read-only.
 - **Company grain**: `br_companies` is one row per `cnpj_basico` legal entity.
   It joins `Empresas` to the headquarters establishment (`cnpj_ordem='0001'`) for
   company-facing status, address, trade name, and primary CNAE. If a headquarters

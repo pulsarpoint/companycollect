@@ -5,10 +5,14 @@ from pathlib import Path
 import duckdb
 
 from dagster_v3.defs.brazil_rfb import source, tables
+from dagster_v3.defs.brazil_rfb.duckdb_attach import (
+    attached_read_only_database,
+    sql_literal,
+)
 
 
 def _sql_literal(value: object) -> str:
-    return "'" + str(value).replace("'", "''") + "'"
+    return sql_literal(value)
 
 
 def _list_literal(values: tuple[str, ...]) -> str:
@@ -18,6 +22,7 @@ def _list_literal(values: tuple[str, ...]) -> str:
 def load_raw_family_from_manifest(
     *,
     connection: duckdb.DuckDBPyConnection,
+    manifest_database_path: str | Path,
     family: str,
     source_run_id: str,
 ) -> int:
@@ -27,19 +32,24 @@ def load_raw_family_from_manifest(
     table_name = tables.RAW_TABLE_BY_FAMILY[family]
     column_names = tables.RAW_COLUMNS_BY_FAMILY[family]
     dataset = tables.DLT_DATASET_NAME
-    manifest = f"{dataset}.{tables.SNAPSHOT_FILES_TABLE}"
     qualified = f"{dataset}.{table_name}"
 
     connection.execute(f"create schema if not exists {dataset}")
-    manifest_rows = connection.execute(
-        f"""
-        select csv_path, archive_url, csv_member_name
-        from {manifest}
-        where family = ? and source_run_id = ?
-        order by archive_name, csv_member_name
-        """,
-        [family, source_run_id],
-    ).fetchall()
+    with attached_read_only_database(
+        connection,
+        database_path=manifest_database_path,
+        alias="manifest_db",
+    ) as manifest_alias:
+        manifest = f"{manifest_alias}.{dataset}.{tables.SNAPSHOT_FILES_TABLE}"
+        manifest_rows = connection.execute(
+            f"""
+            select csv_path, archive_url, csv_member_name
+            from {manifest}
+            where family = ? and source_run_id = ?
+            order by archive_name, csv_member_name
+            """,
+            [family, source_run_id],
+        ).fetchall()
     if not manifest_rows:
         raise ValueError(f"No Brazil RFB manifest rows found for family {family}")
 
@@ -107,13 +117,33 @@ def load_raw_family_from_manifest(
 def load_all_raw_families_from_manifest(
     *,
     connection: duckdb.DuckDBPyConnection,
+    manifest_database_path: str | Path,
     source_run_id: str,
 ) -> dict[str, int]:
     return {
         family: load_raw_family_from_manifest(
             connection=connection,
+            manifest_database_path=manifest_database_path,
             family=family,
             source_run_id=source_run_id,
         )
         for family in tables.RAW_TABLE_BY_FAMILY
+    }
+
+
+def load_raw_families_from_manifest(
+    *,
+    connection: duckdb.DuckDBPyConnection,
+    manifest_database_path: str | Path,
+    families: tuple[str, ...],
+    source_run_id: str,
+) -> dict[str, int]:
+    return {
+        family: load_raw_family_from_manifest(
+            connection=connection,
+            manifest_database_path=manifest_database_path,
+            family=family,
+            source_run_id=source_run_id,
+        )
+        for family in families
     }

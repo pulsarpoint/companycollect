@@ -21,9 +21,15 @@ def test_register_domain_udfs_can_reuse_connection() -> None:
     assert reused_root == "example.com"
 
 
-def _create_raw_tables(database_path: Path) -> None:
+def _create_split_raw_tables(tmp_path: Path) -> dict[str, Path]:
     dataset = tables.DLT_DATASET_NAME
-    with duckdb.connect(str(database_path)) as connection:
+    paths = {
+        "empresas": tmp_path / "br_empresas.duckdb",
+        "estabelecimentos": tmp_path / "br_estabelecimentos.duckdb",
+        "simples": tmp_path / "br_simples.duckdb",
+        "reference": tmp_path / "br_reference.duckdb",
+    }
+    with duckdb.connect(str(paths["empresas"])) as connection:
         connection.execute(f"create schema {dataset}")
         connection.execute(
             f"""
@@ -35,6 +41,8 @@ def _create_raw_tables(database_path: Path) -> None:
                    capital_social, porte, ente_federativo_responsavel)
             """
         )
+    with duckdb.connect(str(paths["estabelecimentos"])) as connection:
+        connection.execute(f"create schema {dataset}")
         connection.execute(
             f"""
             create table {dataset}.estabelecimentos_raw as
@@ -55,6 +63,8 @@ def _create_raw_tables(database_path: Path) -> None:
             )
             """
         )
+    with duckdb.connect(str(paths["reference"])) as connection:
+        connection.execute(f"create schema {dataset}")
         connection.execute(
             f"""
             create table {dataset}.naturezas_raw as
@@ -78,6 +88,8 @@ def _create_raw_tables(database_path: Path) -> None:
             as t(code, description_pt)
             """
         )
+    with duckdb.connect(str(paths["simples"])) as connection:
+        connection.execute(f"create schema {dataset}")
         connection.execute(
             f"""
             create table {dataset}.simples_raw as
@@ -86,20 +98,40 @@ def _create_raw_tables(database_path: Path) -> None:
                  opcao_mei, data_opcao_mei, data_exclusao_mei)
             """
         )
+    return paths
+
+
+def _build_company_stage(tmp_path: Path) -> Path:
+    raw_paths = _create_split_raw_tables(tmp_path)
+    companies_path = tmp_path / "br_companies.duckdb"
+    with duckdb.connect(str(companies_path)) as connection:
+        transforms.build_brazil_rfb_companies_and_establishments(
+            connection=connection,
+            source_run_id="run-1",
+            empresas_database_path=raw_paths["empresas"],
+            estabelecimentos_database_path=raw_paths["estabelecimentos"],
+            simples_database_path=raw_paths["simples"],
+            reference_database_path=raw_paths["reference"],
+        )
+    return companies_path
 
 
 def test_build_companies_selects_hq_then_fallback_establishment(tmp_path: Path) -> None:
-    database_path = tmp_path / "br.duckdb"
-    _create_raw_tables(database_path)
+    raw_paths = _create_split_raw_tables(tmp_path)
+    companies_path = tmp_path / "br_companies.duckdb"
 
-    with duckdb.connect(str(database_path)) as connection:
+    with duckdb.connect(str(companies_path)) as connection:
         counts = transforms.build_brazil_rfb_companies_and_establishments(
             connection=connection,
             source_run_id="run-1",
+            empresas_database_path=raw_paths["empresas"],
+            estabelecimentos_database_path=raw_paths["estabelecimentos"],
+            simples_database_path=raw_paths["simples"],
+            reference_database_path=raw_paths["reference"],
         )
 
     assert counts == {"companies": 2, "establishments": 2, "active_companies": 2}
-    with duckdb.connect(str(database_path), read_only=True) as connection:
+    with duckdb.connect(str(companies_path), read_only=True) as connection:
         companies = connection.execute(
             f"""
             select cnpj_basico, headquarters_cnpj, legal_name, trade_name,
@@ -146,16 +178,9 @@ def test_build_companies_selects_hq_then_fallback_establishment(tmp_path: Path) 
 
 
 def test_establishments_keep_contact_columns_for_contact_unpivot(tmp_path: Path) -> None:
-    database_path = tmp_path / "br.duckdb"
-    _create_raw_tables(database_path)
+    companies_path = _build_company_stage(tmp_path)
 
-    with duckdb.connect(str(database_path)) as connection:
-        transforms.build_brazil_rfb_companies_and_establishments(
-            connection=connection,
-            source_run_id="run-1",
-        )
-
-    with duckdb.connect(str(database_path), read_only=True) as connection:
+    with duckdb.connect(str(companies_path), read_only=True) as connection:
         row = connection.execute(
             f"""
             select ddd_1, telefone_1, ddd_2, telefone_2, ddd_fax, fax, correio_eletronico
@@ -168,16 +193,9 @@ def test_establishments_keep_contact_columns_for_contact_unpivot(tmp_path: Path)
 
 
 def test_normalized_tables_match_clickhouse_export_contract(tmp_path: Path) -> None:
-    database_path = tmp_path / "br.duckdb"
-    _create_raw_tables(database_path)
+    companies_path = _build_company_stage(tmp_path)
 
-    with duckdb.connect(str(database_path)) as connection:
-        transforms.build_brazil_rfb_companies_and_establishments(
-            connection=connection,
-            source_run_id="run-1",
-        )
-
-    with duckdb.connect(str(database_path), read_only=True) as connection:
+    with duckdb.connect(str(companies_path), read_only=True) as connection:
         company_columns = [
             row[0]
             for row in connection.execute(
@@ -241,18 +259,14 @@ def _insert_contact_filter_rows(database_path: Path) -> None:
 def test_build_contact_info_and_websites_extracts_unique_email_domains(
     tmp_path: Path,
 ) -> None:
-    database_path = tmp_path / "br.duckdb"
-    _create_raw_tables(database_path)
-    with duckdb.connect(str(database_path)) as connection:
-        transforms.build_brazil_rfb_companies_and_establishments(
-            connection=connection,
-            source_run_id="run-1",
-        )
-    _insert_contact_filter_rows(database_path)
+    companies_path = _build_company_stage(tmp_path)
+    contacts_path = tmp_path / "br_contacts.duckdb"
+    _insert_contact_filter_rows(companies_path)
 
-    with duckdb.connect(str(database_path)) as connection:
+    with duckdb.connect(str(contacts_path)) as connection:
         counts = contacts.build_brazil_rfb_contact_info_and_websites(
             connection=connection,
+            companies_database_path=companies_path,
             source_run_id="run-contacts",
         )
 
@@ -262,7 +276,7 @@ def test_build_contact_info_and_websites_extracts_unique_email_domains(
         "email_domains": 1,
         "companies_with_contacts": 5,
     }
-    with duckdb.connect(str(database_path), read_only=True) as connection:
+    with duckdb.connect(str(contacts_path), read_only=True) as connection:
         contact_rows = connection.execute(
             f"""
             select cnpj_basico, contact_type, contact_area_code, contact_value,
@@ -305,21 +319,17 @@ def test_build_contact_info_and_websites_extracts_unique_email_domains(
 
 
 def test_contact_domain_tables_match_clickhouse_export_contract(tmp_path: Path) -> None:
-    database_path = tmp_path / "br.duckdb"
-    _create_raw_tables(database_path)
-    with duckdb.connect(str(database_path)) as connection:
-        transforms.build_brazil_rfb_companies_and_establishments(
-            connection=connection,
-            source_run_id="run-1",
-        )
+    companies_path = _build_company_stage(tmp_path)
+    contacts_path = tmp_path / "br_contacts.duckdb"
 
-    with duckdb.connect(str(database_path)) as connection:
+    with duckdb.connect(str(contacts_path)) as connection:
         contacts.build_brazil_rfb_contact_info_and_websites(
             connection=connection,
+            companies_database_path=companies_path,
             source_run_id="run-contacts",
         )
 
-    with duckdb.connect(str(database_path), read_only=True) as connection:
+    with duckdb.connect(str(contacts_path), read_only=True) as connection:
         contact_columns = [
             row[0]
             for row in connection.execute(

@@ -3,8 +3,8 @@ from pathlib import Path
 
 import duckdb
 
-from dagster_v3.defs.brazil_rfb import clickhouse, contacts, tables, transforms
-from tests.test_brazil_rfb_transforms import _create_raw_tables
+from dagster_v3.defs.brazil_rfb import clickhouse, contacts, tables
+from tests.test_brazil_rfb_transforms import _build_company_stage
 
 
 class FakeClickHouseClient:
@@ -37,16 +37,11 @@ class FakeClickHouseResource:
 
 
 def test_clickhouse_exports_replace_companies_and_establishments(tmp_path: Path) -> None:
-    database_path = tmp_path / "br.duckdb"
-    _create_raw_tables(database_path)
+    companies_path = _build_company_stage(tmp_path)
     fake_client = FakeClickHouseClient()
     fake_resource = FakeClickHouseResource(fake_client)
 
-    with duckdb.connect(str(database_path)) as connection:
-        transforms.build_brazil_rfb_companies_and_establishments(
-            connection=connection,
-            source_run_id="run-1",
-        )
+    with duckdb.connect(str(companies_path)) as connection:
         company_rows = clickhouse.export_brazil_rfb_clickhouse_companies(
             duckdb_connection=connection,
             clickhouse=fake_resource,
@@ -72,18 +67,15 @@ def test_clickhouse_exports_replace_companies_and_establishments(tmp_path: Path)
 
 
 def test_clickhouse_exports_replace_contact_info_and_websites(tmp_path: Path) -> None:
-    database_path = tmp_path / "br.duckdb"
-    _create_raw_tables(database_path)
+    companies_path = _build_company_stage(tmp_path)
+    contacts_path = tmp_path / "br_contacts.duckdb"
     fake_client = FakeClickHouseClient()
     fake_resource = FakeClickHouseResource(fake_client)
 
-    with duckdb.connect(str(database_path)) as connection:
-        transforms.build_brazil_rfb_companies_and_establishments(
-            connection=connection,
-            source_run_id="run-1",
-        )
+    with duckdb.connect(str(contacts_path)) as connection:
         contacts.build_brazil_rfb_contact_info_and_websites(
             connection=connection,
+            companies_database_path=companies_path,
             source_run_id="run-contacts",
         )
         contact_rows = clickhouse.export_brazil_rfb_clickhouse_contact_info(

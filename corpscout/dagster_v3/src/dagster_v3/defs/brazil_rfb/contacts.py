@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 import duckdb
 
 from dagster_v3.defs.brazil_rfb import tables
+from dagster_v3.defs.brazil_rfb.duckdb_attach import attached_read_only_database
 from dagster_v3.domains import root_domain
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
@@ -72,11 +74,11 @@ def register_domain_udfs(connection: duckdb.DuckDBPyConnection) -> None:
 def build_brazil_rfb_contact_info(
     *,
     connection: duckdb.DuckDBPyConnection,
+    companies_database_path: str | Path,
     source_run_id: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     contacts_table = f"{DLT_DATASET_NAME}.{tables.COMPANY_CONTACT_INFO_TABLE}"
-    establishments_table = f"{DLT_DATASET_NAME}.{tables.ESTABLISHMENTS_TABLE}"
     keep_email = (
         "email_root_domain <> '' "
         f"and email_company_count <= {EMAIL_DOMAIN_MAX_COMPANIES} "
@@ -85,117 +87,125 @@ def build_brazil_rfb_contact_info(
 
     register_domain_udfs(connection)
     connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
-    connection.execute(
-        f"""
-        create or replace table {contacts_table} as
-        with base as (
-            select
-                country_iso2,
-                source_slug,
-                source_run_id as establishment_source_run_id,
-                cnpj,
-                cnpj_basico,
-                'email' as contact_type,
-                'Email' as contact_type_en,
-                '' as contact_area_code,
-                lower(trim(correio_eletronico)) as contact_value,
-                case when status_code = '02' then 1 else 0 end as is_current
-            from {establishments_table}
-            where nullif(trim(correio_eletronico), '') is not null
-
-            union all
-
-            select
-                country_iso2,
-                source_slug,
-                source_run_id as establishment_source_run_id,
-                cnpj,
-                cnpj_basico,
-                'phone' as contact_type,
-                'Phone' as contact_type_en,
-                trim(ddd_1) as contact_area_code,
-                trim(telefone_1) as contact_value,
-                case when status_code = '02' then 1 else 0 end as is_current
-            from {establishments_table}
-            where nullif(trim(telefone_1), '') is not null
-
-            union all
-
-            select
-                country_iso2,
-                source_slug,
-                source_run_id as establishment_source_run_id,
-                cnpj,
-                cnpj_basico,
-                'phone' as contact_type,
-                'Phone' as contact_type_en,
-                trim(ddd_2) as contact_area_code,
-                trim(telefone_2) as contact_value,
-                case when status_code = '02' then 1 else 0 end as is_current
-            from {establishments_table}
-            where nullif(trim(telefone_2), '') is not null
-
-            union all
-
-            select
-                country_iso2,
-                source_slug,
-                source_run_id as establishment_source_run_id,
-                cnpj,
-                cnpj_basico,
-                'fax' as contact_type,
-                'Fax' as contact_type_en,
-                trim(ddd_fax) as contact_area_code,
-                trim(fax) as contact_value,
-                case when status_code = '02' then 1 else 0 end as is_current
-            from {establishments_table}
-            where nullif(trim(fax), '') is not null
-        ),
-        enriched as (
-            select
-                *,
-                case
-                    when contact_type = 'email' and contains(contact_value, '@')
-                    then coalesce(
-                        root_domain(
-                            concat(
-                                'https://',
-                                lower(trim(regexp_extract(contact_value, '[^@]+$')))
-                            )
-                        ),
-                        ''
-                    )
-                    else ''
-                end as email_root_domain
-            from base
-        ),
-        email_counts as (
-            select
-                email_root_domain,
-                count(distinct cnpj_basico) as email_company_count
-            from enriched
-            where email_root_domain <> ''
-            group by email_root_domain
+    with attached_read_only_database(
+        connection,
+        database_path=companies_database_path,
+        alias="companies_db",
+    ) as companies_alias:
+        establishments_table = (
+            f"{companies_alias}.{DLT_DATASET_NAME}.{tables.ESTABLISHMENTS_TABLE}"
         )
-        select
-            country_iso2,
-            source_slug,
-            {_sql_literal(source_run_id)} as source_run_id,
-            concat(cnpj, ':', contact_type, ':', contact_value) as source_record_id,
-            cnpj,
-            cnpj_basico,
-            contact_type,
-            contact_type_en,
-            contact_area_code,
-            contact_value,
-            is_current,
-            case when {keep_email} then email_root_domain else '' end as root_domain,
-            case when {keep_email} then 'email' else '' end as domain_source,
-            now() as resolved_at
-        from enriched
-        left join email_counts using (email_root_domain)
-        """
-    )
+        connection.execute(
+            f"""
+            create or replace table {contacts_table} as
+            with base as (
+                select
+                    country_iso2,
+                    source_slug,
+                    source_run_id as establishment_source_run_id,
+                    cnpj,
+                    cnpj_basico,
+                    'email' as contact_type,
+                    'Email' as contact_type_en,
+                    '' as contact_area_code,
+                    lower(trim(correio_eletronico)) as contact_value,
+                    case when status_code = '02' then 1 else 0 end as is_current
+                from {establishments_table}
+                where nullif(trim(correio_eletronico), '') is not null
+
+                union all
+
+                select
+                    country_iso2,
+                    source_slug,
+                    source_run_id as establishment_source_run_id,
+                    cnpj,
+                    cnpj_basico,
+                    'phone' as contact_type,
+                    'Phone' as contact_type_en,
+                    trim(ddd_1) as contact_area_code,
+                    trim(telefone_1) as contact_value,
+                    case when status_code = '02' then 1 else 0 end as is_current
+                from {establishments_table}
+                where nullif(trim(telefone_1), '') is not null
+
+                union all
+
+                select
+                    country_iso2,
+                    source_slug,
+                    source_run_id as establishment_source_run_id,
+                    cnpj,
+                    cnpj_basico,
+                    'phone' as contact_type,
+                    'Phone' as contact_type_en,
+                    trim(ddd_2) as contact_area_code,
+                    trim(telefone_2) as contact_value,
+                    case when status_code = '02' then 1 else 0 end as is_current
+                from {establishments_table}
+                where nullif(trim(telefone_2), '') is not null
+
+                union all
+
+                select
+                    country_iso2,
+                    source_slug,
+                    source_run_id as establishment_source_run_id,
+                    cnpj,
+                    cnpj_basico,
+                    'fax' as contact_type,
+                    'Fax' as contact_type_en,
+                    trim(ddd_fax) as contact_area_code,
+                    trim(fax) as contact_value,
+                    case when status_code = '02' then 1 else 0 end as is_current
+                from {establishments_table}
+                where nullif(trim(fax), '') is not null
+            ),
+            enriched as (
+                select
+                    *,
+                    case
+                        when contact_type = 'email' and contains(contact_value, '@')
+                        then coalesce(
+                            root_domain(
+                                concat(
+                                    'https://',
+                                    lower(trim(regexp_extract(contact_value, '[^@]+$')))
+                                )
+                            ),
+                            ''
+                        )
+                        else ''
+                    end as email_root_domain
+                from base
+            ),
+            email_counts as (
+                select
+                    email_root_domain,
+                    count(distinct cnpj_basico) as email_company_count
+                from enriched
+                where email_root_domain <> ''
+                group by email_root_domain
+            )
+            select
+                country_iso2,
+                source_slug,
+                {_sql_literal(source_run_id)} as source_run_id,
+                concat(cnpj, ':', contact_type, ':', contact_value) as source_record_id,
+                cnpj,
+                cnpj_basico,
+                contact_type,
+                contact_type_en,
+                contact_area_code,
+                contact_value,
+                is_current,
+                case when {keep_email} then email_root_domain else '' end as root_domain,
+                case when {keep_email} then 'email' else '' end as domain_source,
+                now() as resolved_at
+            from enriched
+            left join email_counts using (email_root_domain)
+            """
+        )
     contacts = int(
         connection.execute(f"select count(*) from {contacts_table}").fetchone()[0]
     )
@@ -313,11 +323,13 @@ def build_brazil_rfb_websites(
 def build_brazil_rfb_contact_info_and_websites(
     *,
     connection: duckdb.DuckDBPyConnection,
+    companies_database_path: str | Path,
     source_run_id: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     contact_counts = build_brazil_rfb_contact_info(
         connection=connection,
+        companies_database_path=companies_database_path,
         source_run_id=source_run_id,
         log=log,
     )
