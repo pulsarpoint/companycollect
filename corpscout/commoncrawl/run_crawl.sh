@@ -1,33 +1,38 @@
 #!/usr/bin/env bash
-# Drive CommonCrawl enrichment over many index shards — resumable.
+# Drive CommonCrawl enrichment over many index shards — resumable. Lives in commoncrawl/ because it
+# orchestrates all three packages (index-builder worklists + cc-enrich-worker + ClickHouse load).
 #
-#   cp ../.env.example ../.env && edit it          # shared config (auto-loaded below)
+#   cp .env.example .env && edit it                # shared config (auto-loaded below)
+#   make -C cc-enrich-worker build                 # build the worker binary once
 #   ./run_crawl.sh tech     0-299                  # CPU-bound tech pass  (most cores)
 #   ./run_crawl.sh industry 0-299                  # GPU-bound industry pass (the 5090)
 #
 # Run the two modes as SEPARATE processes (e.g. two tmux panes) so tech pegs the cores
 # while industry feeds the 5090. Each is independent and restartable: a shard whose
 # <out>.loaded marker exists is skipped; ReplacingMergeTree dedupes any re-load.
+# Paths are anchored to this script's directory, so it works from any working directory.
 #
-# Tunables via env: CRAWL, WHERE (worklist SQL filter; empty = ALL domains), DATA,
-# BUILDER_DIR, MAX_PAGES (tech pages/domain, default 25; 0=all), TECH_CONC, IND_CONC, EMBED_CONC.
+# Tunables via env: CRAWL, WHERE (worklist SQL filter; empty = ALL domains), DATA, BUILDER_DIR,
+# WORKER, MAX_PAGES (tech pages/domain, default 25; 0=all), TECH_CONC, IND_CONC, EMBED_CONC.
 #
 # industry and tech build SEPARATE worklists: industry = 1 representative page/domain (homepage),
 # tech = up to MAX_PAGES/domain (homepage + legal/contact pages + shallow) so Wappalyzer + the
 # LEI/VAT/profile extractors see the pages that actually carry that data.
 set -uo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # commoncrawl/
+
 # Load the shared config (COMMONCRAWL_EMBED_*, CLICKHOUSE_*, AWS_*) — the single source of truth
 # the dagster reference-build also reads, so worker and reference embeddings use the same model.
-[ -f ../.env ] && { set -a; . ../.env; set +a; }
+[ -f "$HERE/.env" ] && { set -a; . "$HERE/.env"; set +a; }
 
 MODE="${1:?usage: run_crawl.sh <industry|tech> <lo-hi>}"
 RANGE="${2:?usage: run_crawl.sh <industry|tech> <lo-hi>}"
 CRAWL="${CRAWL:-CC-MAIN-2026-25}"
 WHERE="${WHERE:-}" # empty = all domains (global dataset); e.g. "content_languages like '%eng%'"
-DATA="${DATA:-../data/crawl}" # commoncrawl/data/crawl (gitignored); never write data inside the code dir
-BUILDER_DIR="${BUILDER_DIR:-../index-builder}" # standalone Python worklist builder
-WORKER="$PWD/bin/cc-enrich-worker" # built by `make build`
+DATA="${DATA:-$HERE/data/crawl}" # commoncrawl/data/crawl (gitignored); never write data inside a code dir
+BUILDER_DIR="${BUILDER_DIR:-$HERE/index-builder}" # standalone Python worklist builder
+WORKER="${WORKER:-$HERE/cc-enrich-worker/bin/cc-enrich-worker}" # built by `make -C cc-enrich-worker build`
 
 case "$MODE" in
 industry) PASS_ARGS=(--concurrency "${IND_CONC:-16}" --embed-concurrency "${EMBED_CONC:-128}") ;;

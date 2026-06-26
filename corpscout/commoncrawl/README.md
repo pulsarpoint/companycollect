@@ -188,9 +188,12 @@ the JSON-LD profile parser, **unioning results per domain**.
 
 ## 5. The driver (`run_crawl.sh`) — runs either workflow, resumable
 
+Top-level in `commoncrawl/` (it drives all three packages). Paths are anchored to the script, so it
+runs from anywhere; it auto-loads `commoncrawl/.env`.
+
 ```bash
-cd commoncrawl/cc-enrich-worker
-set -a; source ../.env; set +a
+cd commoncrawl
+make -C cc-enrich-worker build     # build the worker once
 ./run_crawl.sh tech     0-299      # workflow B over shards 0..299 (CPU pass)
 ./run_crawl.sh industry 0-299      # workflow A over shards 0..299 (GPU pass)
 ```
