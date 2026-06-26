@@ -473,7 +473,10 @@ const (
 
 - [ ] **Step 2: Rename the package + fix the two gotchas**
 
-First line of all moved files → `package classify`. In `check.go`:
+First line of all moved files → `package classify`. **Note:** `classify.go` and `reference.go` already
+import `cc-enrich-worker/internal/vec` and call `vec.Dot`/`vec.Norm`/`vec.Sqrt32` (those helpers were
+extracted into the new `internal/vec` package during Task 2's fix). Keep that import — there are no local
+`dot`/`norm`/`sqrt32` definitions left to move. In `check.go`:
 - Define the consumer interface in this package:
   ```go
   type Embedder interface {
