@@ -46,6 +46,10 @@ from dagster_v3.defs.translations.assets import (
 from exchange_rates import ExchangeRateClient, ExchangeRateRequest
 from temporal.translations.queue import TranslationQueueWorkflowInput
 from temporalio.client import Client
+from temporalio.common import WorkflowIDConflictPolicy
+
+from translator.activities import LOCAL_LLM_TRANSLATION_TASK_QUEUE
+from translator.workflow import TranslateSourceWorkflow, TranslateSourceWorkflowInput
 from translations.queue import (
     TranslationQueue,
     TranslationQueueItem,
@@ -518,6 +522,70 @@ def norway_brreg_translations_applied(
     }
     context.log.info("Applied Norway Brreg translation queue results", extra=metadata)
     return dg.MaterializeResult(metadata=metadata)
+
+
+NORWAY_BRREG_TRANSLATE_WORKFLOW_ID = "translate-norway_brreg"
+
+
+def build_norway_brreg_translate_input() -> TranslateSourceWorkflowInput:
+    return TranslateSourceWorkflowInput(
+        source_slug="norway_brreg",
+        queue_dir="data/translator",
+        batch_size=50,
+        timeout_seconds=120,
+        max_batch_failures=0,
+        worker_id="translation-temporal-worker",
+        max_tokens=2048,
+        extra_body_json='{"chat_template_kwargs": {"enable_thinking": false}}',
+        initialize_timeout_seconds=60,
+        batch_timeout_buffer_seconds=30,
+        summarize_timeout_seconds=60,
+        activity_maximum_attempts=3,
+        lease_timeout_seconds=600,
+        scan_timeout_seconds=300,
+        flush_timeout_seconds=300,
+    )
+
+
+async def _start_norway_brreg_translation(temporal_address: str) -> str:
+    client = await Client.connect(temporal_address)
+    handle = await client.start_workflow(
+        TranslateSourceWorkflow.run,
+        build_norway_brreg_translate_input(),
+        id=NORWAY_BRREG_TRANSLATE_WORKFLOW_ID,
+        task_queue=LOCAL_LLM_TRANSLATION_TASK_QUEUE,
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+    return handle.result_run_id
+
+
+@dg.asset(
+    deps=[dg.AssetKey("norway_brreg_clickhouse_companies")],
+    group_name=GROUP_NAME,
+    kinds={"python", "temporal"},
+    description=(
+        "Fire-and-forget: start (or reuse) the standalone translator Temporal "
+        "workflow after companies land in ClickHouse. Does not wait for completion."
+    ),
+)
+def norway_brreg_translation_trigger(context: AssetExecutionContext) -> dg.MaterializeResult:
+    import asyncio as _asyncio
+    import os
+
+    address = os.environ.get("TEMPORAL_ADDRESS", "companycollect:7233")
+    run_id = _asyncio.run(_start_norway_brreg_translation(address))
+    context.log.info(
+        "Started Norway Brreg translation workflow: workflow_id=%s run_id=%s",
+        NORWAY_BRREG_TRANSLATE_WORKFLOW_ID,
+        run_id,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "workflow_id": NORWAY_BRREG_TRANSLATE_WORKFLOW_ID,
+            "workflow_run_id": run_id,
+            "task_queue": LOCAL_LLM_TRANSLATION_TASK_QUEUE,
+        }
+    )
 
 
 norway_brreg_translation_completion_job = dg.define_asset_job(
