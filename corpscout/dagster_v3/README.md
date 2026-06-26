@@ -44,14 +44,18 @@ The worker is a long-running process registered on the Temporal task queue `tran
 uv run translator-worker
 ```
 
-It connects to Temporal at `$TEMPORAL_ADDRESS` (default `companycollect:7233`), registers
-`TranslateSourceWorkflow` plus its activities, and waits for work. Stop it with Ctrl-C.
+It **auto-loads a `.env` file** from the current directory (so plain `uv run translator-worker`
+from `corpscout/dagster_v3/` just works), then connects to Temporal at `$TEMPORAL_ADDRESS`
+(default `companycollect:7233`), registers `TranslateSourceWorkflow` plus its activities, and
+waits for work. Stop it with Ctrl-C.
 
-In Docker it runs as its own service (`corpscout/docker-compose.yml`, service `translator`):
+- `--env-file PATH` points at a different env file.
+- Real environment variables always take precedence over the `.env` file (so `docker -e` / shell
+  exports win).
 
-```bash
-docker compose -f corpscout/docker-compose.yml up -d translator
-```
+In a container, provide the env the same way — mount/copy a `.env` next to the worker (it is
+auto-loaded), or pass `--env-file` / `-e` to `docker run`. The worker is self-contained; it does
+not depend on any external orchestrator to inject its environment.
 
 ### Required environment
 
