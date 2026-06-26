@@ -4,7 +4,7 @@ import hashlib
 import re
 import tempfile
 import zipfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from html.parser import HTMLParser
@@ -24,6 +24,7 @@ DEFAULT_BASE_URL = "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/"
 DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_FAMILIES = tuple(tables.RAW_TABLE_BY_FAMILY)
 DOWNLOAD_CHUNK_BYTES = 1 << 20
+DOWNLOAD_PROGRESS_LOG_BYTES = 256 << 20
 TEXT_NORMALIZATION_CHUNK_BYTES = 1 << 20
 NORMALIZED_CSV_SUFFIX = ".utf8.csv"
 # RFB publishes Latin-1-ish CSVs, but live snapshots can contain dirty C1 bytes.
@@ -46,6 +47,9 @@ class BrazilRfbRemoteFile:
     family: str
     url: str
     archive_name: str
+
+
+LogFn = Callable[..., object]
 
 
 class _HrefParser(HTMLParser):
@@ -233,17 +237,47 @@ def _download(
     dest: Path,
     session: HttpSession | None,
     timeout_seconds: int,
+    log: LogFn | None = None,
+    progress_label: str = "Brazil RFB archive",
 ) -> bytes:
     http_session = session or dlt_requests.Session()
     response = http_session.get(url, timeout=timeout_seconds, stream=True)
     response.raise_for_status()
+    expected_bytes = _response_content_length(response)
+    _log_progress(
+        log,
+        "Downloading %s: url=%s dest=%s expected_mb=%s",
+        progress_label,
+        url,
+        dest,
+        _format_mb(expected_bytes) if expected_bytes is not None else "unknown",
+    )
     sha = hashlib.sha256()
+    downloaded_bytes = 0
+    next_progress_bytes = DOWNLOAD_PROGRESS_LOG_BYTES
     with dest.open("wb") as output:
         for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_BYTES):
             if not chunk:
                 continue
             output.write(chunk)
             sha.update(chunk)
+            downloaded_bytes += len(chunk)
+            if downloaded_bytes >= next_progress_bytes:
+                _log_progress(
+                    log,
+                    "Downloading %s: downloaded_mb=%s expected_mb=%s",
+                    progress_label,
+                    _format_mb(downloaded_bytes),
+                    _format_mb(expected_bytes) if expected_bytes is not None else "unknown",
+                )
+                next_progress_bytes += DOWNLOAD_PROGRESS_LOG_BYTES
+    _log_progress(
+        log,
+        "Downloaded %s: path=%s size_mb=%s",
+        progress_label,
+        dest,
+        _format_mb(downloaded_bytes),
+    )
     return sha.digest()
 
 
@@ -280,7 +314,14 @@ def normalize_csv_for_duckdb(csv_path: str | Path) -> Path:
     return normalized_path
 
 
-def _extract_single_csv(zip_path: Path, dest_dir: Path) -> tuple[str, Path]:
+def _extract_single_csv(
+    zip_path: Path,
+    dest_dir: Path,
+    *,
+    log: LogFn | None = None,
+    progress_label: str = "Brazil RFB archive",
+) -> tuple[str, Path]:
+    _log_progress(log, "Extracting %s: archive=%s", progress_label, zip_path)
     with zipfile.ZipFile(zip_path) as archive:
         members = [name for name in archive.namelist() if not name.endswith("/")]
         if len(members) != 1:
@@ -288,7 +329,23 @@ def _extract_single_csv(zip_path: Path, dest_dir: Path) -> tuple[str, Path]:
         member = members[0]
         archive.extract(member, dest_dir)
         csv_path = dest_dir / member
-        return member, normalize_csv_for_duckdb(csv_path)
+        _log_progress(
+            log,
+            "Extracted %s: member=%s csv_path=%s size_mb=%s",
+            progress_label,
+            member,
+            csv_path,
+            _format_mb(csv_path.stat().st_size),
+        )
+        normalized_path = normalize_csv_for_duckdb(csv_path)
+        _log_progress(
+            log,
+            "Prepared %s for DuckDB: normalized_csv_path=%s size_mb=%s",
+            progress_label,
+            normalized_path,
+            _format_mb(normalized_path.stat().st_size),
+        )
+        return member, normalized_path
 
 
 def download_extract_snapshot_files(
@@ -298,21 +355,40 @@ def download_extract_snapshot_files(
     source_run_id: str,
     session: HttpSession | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    log: LogFn | None = None,
 ) -> list[dict[str, object]]:
     root = Path(download_dir)
     root.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, object]] = []
-    for remote_file in remote_files:
+    total_files = len(remote_files)
+    _log_progress(
+        log,
+        "Preparing Brazil RFB snapshot files: file_count=%s download_dir=%s",
+        total_files,
+        root,
+    )
+    for index, remote_file in enumerate(remote_files, start=1):
         family_dir = root / remote_file.family
         family_dir.mkdir(parents=True, exist_ok=True)
         archive_path = family_dir / remote_file.archive_name
+        progress_label = (
+            f"{remote_file.family} archive {index}/{total_files} "
+            f"({remote_file.archive_name})"
+        )
         digest = _download(
             remote_file.url,
             dest=archive_path,
             session=session,
             timeout_seconds=timeout_seconds,
+            log=log,
+            progress_label=progress_label,
         ).hex()
-        csv_member_name, csv_path = _extract_single_csv(archive_path, family_dir)
+        csv_member_name, csv_path = _extract_single_csv(
+            archive_path,
+            family_dir,
+            log=log,
+            progress_label=progress_label,
+        )
         rows.append(
             build_snapshot_file_row(
                 family=remote_file.family,
@@ -323,6 +399,15 @@ def download_extract_snapshot_files(
                 csv_path=csv_path,
                 source_run_id=source_run_id,
             )
+        )
+        _log_progress(
+            log,
+            "Recorded Brazil RFB snapshot manifest row: family=%s archive=%s csv_path=%s row=%s/%s",
+            remote_file.family,
+            remote_file.archive_name,
+            csv_path,
+            index,
+            total_files,
         )
     return rows
 
@@ -346,6 +431,7 @@ def brazil_rfb_source(
     download_dir: str | Path | None = None,
     families: Sequence[str] = DEFAULT_FAMILIES,
     session: HttpSession | None = None,
+    log: LogFn | None = None,
 ) -> DltResource:
     if manifest_rows is not None:
         return snapshot_files_resource(manifest_rows)
@@ -354,19 +440,62 @@ def brazil_rfb_source(
     resolved_download_dir = (
         Path(download_dir) if download_dir is not None else Path(tempfile.gettempdir()) / "brazil_rfb"
     )
+    _log_progress(
+        log,
+        "Resolving Brazil RFB snapshot files: snapshot_year_month=%s base_url=%s download_dir=%s families=%s",
+        snapshot_year_month,
+        snapshot_base_url,
+        resolved_download_dir,
+        ",".join(families),
+    )
     remote_files = fetch_snapshot_remote_files(
         snapshot_year_month=snapshot_year_month,
         base_url=snapshot_base_url,
         families=families,
         session=session,
     )
+    _log_progress(
+        log,
+        "Resolved Brazil RFB snapshot files: snapshot_year_month=%s file_count=%s archives=%s",
+        snapshot_year_month,
+        len(remote_files),
+        ",".join(item.archive_name for item in remote_files),
+    )
     rows = download_extract_snapshot_files(
         remote_files=remote_files,
         download_dir=resolved_download_dir,
         source_run_id=source_run_id,
         session=session,
+        log=log,
+    )
+    _log_progress(
+        log,
+        "Completed Brazil RFB snapshot preparation: manifest_rows=%s",
+        len(rows),
     )
     return snapshot_files_resource(rows)
+
+
+def _response_content_length(response: Any) -> int | None:
+    headers = getattr(response, "headers", {}) or {}
+    value = headers.get("Content-Length") or headers.get("content-length")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_mb(byte_count: int | None) -> str:
+    if byte_count is None:
+        return "unknown"
+    return f"{byte_count / (1024 * 1024):.1f}"
+
+
+def _log_progress(log: LogFn | None, message: str, *args: object) -> None:
+    if log is not None:
+        log(message, *args)
 
 
 def brazil_rfb_pipeline(

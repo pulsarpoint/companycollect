@@ -116,6 +116,14 @@ def brazil_rfb_snapshot_files_duckdb(
                 "partition_key": snapshot_year_month,
             },
         )
+    log_info = getattr(getattr(context, "log", None), "info", None)
+    if log_info is not None:
+        log_info(
+            "Starting Brazil RFB snapshot preparation: partition=%s base_url=%s download_dir=%s",
+            snapshot_year_month,
+            config.snapshot_base_url,
+            BRAZIL_RFB_DOWNLOAD_DIR / snapshot_year_month,
+        )
     yield from dlt.run(
         context=context,
         dlt_source=source.brazil_rfb_source(
@@ -123,6 +131,7 @@ def brazil_rfb_snapshot_files_duckdb(
             snapshot_year_month=snapshot_year_month,
             snapshot_base_url=config.snapshot_base_url,
             download_dir=BRAZIL_RFB_DOWNLOAD_DIR / snapshot_year_month,
+            log=log_info,
         ),
         dlt_pipeline=source.brazil_rfb_pipeline(BRAZIL_RFB_DUCKDB_PATH),
     )

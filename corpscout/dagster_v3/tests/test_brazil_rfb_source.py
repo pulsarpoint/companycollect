@@ -267,6 +267,47 @@ def test_download_extract_and_build_manifest_rows(tmp_path: Path) -> None:
     assert session.calls == [(archive_url, True)]
 
 
+def test_download_extract_logs_file_progress(tmp_path: Path) -> None:
+    archive_url = "https://example.test/K3241.K03200Y0.D30612.EMPRECSV.zip"
+    session = FakeSession(
+        {
+            archive_url: FakeResponse(
+                _zip_bytes(
+                    "K3241.K03200Y0.D30612.EMPRECSV",
+                    b"12345678;ACME LTDA;2062;49;1000,00;01;\n",
+                )
+            )
+        }
+    )
+    messages: list[str] = []
+
+    def log(message: str, *args: object) -> None:
+        messages.append(message % args)
+
+    rows = source.download_extract_snapshot_files(
+        remote_files=[
+            source.BrazilRfbRemoteFile(
+                family="empresas",
+                url=archive_url,
+                archive_name="K3241.K03200Y0.D30612.EMPRECSV.zip",
+            )
+        ],
+        download_dir=tmp_path,
+        source_run_id="run-1",
+        session=session,
+        log=log,
+    )
+
+    assert len(rows) == 1
+    assert any(message.startswith("Downloading empresas archive 1/1") for message in messages)
+    assert any(message.startswith("Downloaded empresas archive 1/1") for message in messages)
+    assert any(message.startswith("Extracted empresas archive 1/1") for message in messages)
+    assert any(
+        message.startswith("Recorded Brazil RFB snapshot manifest row")
+        for message in messages
+    )
+
+
 def test_download_extract_normalizes_dirty_latin1_csv_for_duckdb(tmp_path: Path) -> None:
     archive_url = "https://example.test/K3241.K03200Y0.D30612.EMPRECSV.zip"
     session = FakeSession(
