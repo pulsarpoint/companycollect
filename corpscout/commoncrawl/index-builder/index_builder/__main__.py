@@ -25,7 +25,9 @@ import duckdb
 from .worklist import build_worklist
 
 BASE = "https://data.commoncrawl.org/"
-DEFAULT_INDEX_DIR = Path("data/commoncrawl/index")
+# Worklist shards live under the gitignored commoncrawl/data/ — NEVER inside the code package.
+# Anchored to this file's location so the default is the same regardless of the working directory.
+DEFAULT_INDEX_DIR = Path(__file__).resolve().parents[2] / "data" / "index"
 
 
 def warc_part_urls(crawl: str) -> list[str]:

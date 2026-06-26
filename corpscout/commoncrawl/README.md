@@ -78,10 +78,11 @@ automatically per shard**, so you usually don't touch this. To build one by hand
 ```bash
 cd commoncrawl/index-builder
 uv run python -m index_builder --crawl CC-MAIN-2026-25 --list                                     # how many parts
-uv run python -m index_builder --crawl CC-MAIN-2026-25 --mode industry --part 0 --out i0.parquet  # 1 page/domain
-uv run python -m index_builder --crawl CC-MAIN-2026-25 --mode tech     --part 0 --out t0.parquet  # many pages/domain
+uv run python -m index_builder --crawl CC-MAIN-2026-25 --mode industry --part 0   # -> ../data/index/<crawl>/shard_industry_0.parquet
+uv run python -m index_builder --crawl CC-MAIN-2026-25 --mode tech     --part 0   # -> ../data/index/<crawl>/shard_tech_0.parquet
 ```
-Then e.g. `cc-enrich-worker industry --worklist i0.parquet --crawl-id CC-MAIN-2026-25`. Full
+Shards land under **`commoncrawl/data/`** (gitignored — *never* in the code folders). Then e.g.
+`cc-enrich-worker industry --worklist ../data/index/CC-MAIN-2026-25/shard_industry_0.parquet --crawl-id CC-MAIN-2026-25`. Full
 index-builder flags in §7.
 
 ---
@@ -232,7 +233,7 @@ rate-limits. Reads are free (Open Data). The worker streams each page through me
 
 Pure duckdb + pyarrow (no dagster). Resolves exact index-part URLs from CommonCrawl's HTTPS manifest
 (anonymous S3 LIST is denied, so no globs). One part → one shard, cached at
-`data/commoncrawl/index/<crawl>/shard_<mode>_<part>.parquet`, skipped if present.
+the gitignored `commoncrawl/data/index/<crawl>/shard_<mode>_<part>.parquet`, skipped if present.
 
 ```bash
 python -m index_builder --crawl CC-MAIN-2026-25 --list                       # how many parts (~300)
@@ -240,7 +241,7 @@ python -m index_builder --crawl CC-MAIN-2026-25 --part 0                      # 
 python -m index_builder --crawl CC-MAIN-2026-25 --mode tech --part 0          # tech (≤25 pages/domain)
 python -m index_builder --crawl CC-MAIN-2026-25 --mode tech --max-pages 0 --part 0   # every HTML page
 python -m index_builder --crawl CC-MAIN-2026-25 --parts 0-9                   # a range, skip cached
-python -m index_builder --crawl CC-MAIN-2026-25 --part 0 --out shard0.parquet # explicit path (bypass cache)
+python -m index_builder --crawl CC-MAIN-2026-25 --part 0 --out ../data/index/my-shard.parquet  # explicit path (must be under data/)
 python -m index_builder --crawl CC-MAIN-2026-25 --part 0 --where "content_languages like '%eng%'"
 ```
 | flag | default | meaning |

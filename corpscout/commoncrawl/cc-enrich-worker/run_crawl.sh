@@ -25,7 +25,7 @@ MODE="${1:?usage: run_crawl.sh <industry|tech> <lo-hi>}"
 RANGE="${2:?usage: run_crawl.sh <industry|tech> <lo-hi>}"
 CRAWL="${CRAWL:-CC-MAIN-2026-25}"
 WHERE="${WHERE:-}" # empty = all domains (global dataset); e.g. "content_languages like '%eng%'"
-DATA="${DATA:-data/crawl}"
+DATA="${DATA:-../data/crawl}" # commoncrawl/data/crawl (gitignored); never write data inside the code dir
 BUILDER_DIR="${BUILDER_DIR:-../index-builder}" # standalone Python worklist builder
 WORKER="$PWD/cc-enrich-worker"
 
