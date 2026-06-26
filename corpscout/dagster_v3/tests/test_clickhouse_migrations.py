@@ -71,6 +71,7 @@ EXPECTED_MIGRATIONS = (
     "000056_corpscout_text_translations",
     "000057_corpscout_norway_companies_translated_view",
     "000058_corpscout_companies_drop_free_text_en",
+    "000059_corpscout_no_companies_free_text_columns",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -542,13 +543,29 @@ def test_finland_xbrl_raw_first_migration_covers_reprocessible_statement_data() 
             assert f"    {column_name} " in sql
 
 
+NO_COMPANIES_ALTER_COLUMNS = frozenset({
+    # Added later via ALTER migration 000059
+    "company_description_original",
+    "articles_purpose_original",
+    "activity_text_original",
+})
+
+
 def test_norway_resolved_migration_covers_exported_columns() -> None:
     sql = _migration_sql("000012_corpscout_norway_resolved_and_domains.up.sql")
 
     for table_name in norway_resolved_tables.NORWAY_RESOLVED_TABLES:
         assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in sql
         for column_name in norway_resolved_tables.RESOLVED_TABLE_COLUMNS[table_name]:
+            if column_name in NO_COMPANIES_ALTER_COLUMNS:
+                # Added by a later ALTER migration; not in the base DDL.
+                continue
             assert f"    {column_name} " in sql
+
+    # The 3 free-text columns are added by the ALTER migration 000059.
+    alter_sql = _migration_sql("000059_corpscout_no_companies_free_text_columns.up.sql")
+    for column_name in NO_COMPANIES_ALTER_COLUMNS:
+        assert f"ADD COLUMN IF NOT EXISTS {column_name} " in alter_sql
 
 
 def test_norway_financial_statements_sort_key_avoids_nullable_fiscal_year() -> None:

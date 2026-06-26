@@ -25,7 +25,8 @@ def _seed_norway_brreg_source(db_path: Path) -> None:
                 '62.010', 'Programmeringstjenester', 'Computer programming activities',
                 '70.100', 'Hovedkontortjenester', 'Activities of head offices',
                 '', '', '',
-                'active', true
+                'active', true,
+                'A software company.', 'To develop software.', 'Technology services.'
               ),
               (
                 'NO', 'norway_brreg', 'run-1', '2000', 'hash2',
@@ -34,7 +35,8 @@ def _seed_norway_brreg_source(db_path: Path) -> None:
                 '', '', '',
                 '', '', '',
                 '', '', '',
-                'inactive', false
+                'inactive', false,
+                '', '', ''
               )
             ) as t(
               country_iso2, source_slug, source_run_id, source_record_id, source_payload_hash,
@@ -44,7 +46,8 @@ def _seed_norway_brreg_source(db_path: Path) -> None:
               nace1_code, nace1_description_original, nace1_description_en,
               nace2_code, nace2_description_original, nace2_description_en,
               nace3_code, nace3_description_original, nace3_description_en,
-              status, is_active
+              status, is_active,
+              company_description_original, articles_purpose_original, activity_text_original
             )
             """
         )
@@ -156,6 +159,26 @@ def test_no_companies_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert rows == [
         ("1000", "Active One AS", "active one as", True, "www.activeone.no"),
         ("2000", "Inactive Two AS", "inactive two as", False, None),
+    ]
+
+
+def test_no_companies_model_carries_free_text_originals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "source.duckdb"
+    _seed_norway_brreg_source(db)
+    _dbt_build(db, monkeypatch)
+
+    with duckdb.connect(str(db), read_only=True) as conn:
+        rows = conn.execute(
+            "select org_number, company_description_original, "
+            "articles_purpose_original, activity_text_original "
+            "from norway_resolved.no_companies order by org_number"
+        ).fetchall()
+
+    assert rows == [
+        ("1000", "A software company.", "To develop software.", "Technology services."),
+        ("2000", None, None, None),
     ]
 
 

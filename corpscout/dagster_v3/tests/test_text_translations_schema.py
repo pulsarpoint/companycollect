@@ -101,3 +101,31 @@ def test_drop_free_text_en_down_readds_columns():
     sql = DROP_EN_DOWN.read_text(encoding="utf-8")
     for col in ("articles_purpose_en", "activity_text_en", "company_description_en"):
         assert f"ADD COLUMN IF NOT EXISTS {col} String" in sql
+
+
+NO_COMPANIES_FREE_TEXT_UP = (
+    MIGRATIONS_DIR / "000059_corpscout_no_companies_free_text_columns.up.sql"
+)
+NO_COMPANIES_FREE_TEXT_DOWN = (
+    MIGRATIONS_DIR / "000059_corpscout_no_companies_free_text_columns.down.sql"
+)
+
+FREE_TEXT_ORIGINAL_COLUMNS = (
+    "company_description_original",
+    "articles_purpose_original",
+    "activity_text_original",
+)
+
+
+def test_no_companies_free_text_up_adds_three_nullable_columns():
+    sql = NO_COMPANIES_FREE_TEXT_UP.read_text(encoding="utf-8")
+    assert "ALTER TABLE corpscout.no_companies" in sql
+    for col in FREE_TEXT_ORIGINAL_COLUMNS:
+        assert f"ADD COLUMN IF NOT EXISTS {col} Nullable(String)" in sql
+
+
+def test_no_companies_free_text_down_drops_three_columns():
+    sql = NO_COMPANIES_FREE_TEXT_DOWN.read_text(encoding="utf-8")
+    assert "ALTER TABLE corpscout.no_companies" in sql
+    for col in FREE_TEXT_ORIGINAL_COLUMNS:
+        assert f"DROP COLUMN IF EXISTS {col}" in sql
