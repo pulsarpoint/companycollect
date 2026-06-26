@@ -795,6 +795,19 @@ wheels = [
 ]
 
 [[package]]
+name = "dagster-duckdb"
+version = "0.29.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dagster" },
+    { name = "duckdb" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/be/96/b2a98012335ee5a66d6331db1e7e5a11e103ae418fffac009d89b8ab150e/dagster_duckdb-0.29.9.tar.gz", hash = "sha256:b47da445f6cad6412ef98fd2dfda8ce878aebc0e9d01dee4e679942cab2ed63e", size = 142296, upload-time = "2026-06-11T18:37:46.443Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/e1/f1c7155304d3d8ab9f19df1dd30249817771a6f0d270722d900f5c29e5c8/dagster_duckdb-0.29.9-py3-none-any.whl", hash = "sha256:c7c7bf939d0ddbc6f24d942d9eb105c1548dc238d202f0349ec0610e77a80e9d", size = 10183, upload-time = "2026-06-11T18:37:45.301Z" },
+]
+
+[[package]]
 name = "dagster-graphql"
 version = "1.13.9"
 source = { registry = "https://pypi.org/simple" }
@@ -875,6 +888,7 @@ dependencies = [
     { name = "dagster-clickhouse" },
     { name = "dagster-dbt" },
     { name = "dagster-dlt" },
+    { name = "dagster-duckdb" },
     { name = "dagster-postgres" },
     { name = "dbt-duckdb" },
     { name = "dlt", extra = ["duckdb"] },
@@ -907,6 +921,7 @@ requires-dist = [
     { name = "dagster-clickhouse", specifier = ">=0.29.9" },
     { name = "dagster-dbt", specifier = ">=0.29.9" },
     { name = "dagster-dlt", specifier = ">=0.29.9" },
+    { name = "dagster-duckdb", specifier = ">=0.29.9" },
     { name = "dagster-postgres", specifier = ">=0.29.9" },
     { name = "dbt-duckdb", specifier = ">=1.8,<1.9" },
     { name = "dlt", extras = ["duckdb"], specifier = ">=1.27.2" },
