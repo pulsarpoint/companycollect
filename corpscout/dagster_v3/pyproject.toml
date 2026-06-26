@@ -33,6 +33,7 @@ translation-queue-smoke = "translations.queue_smoke:main"
 translation-temporal-worker = "temporal.translations.queue_cli:worker_main"
 translation-temporal-start = "temporal.translations.queue_cli:start_main"
 translation-temporal-status = "temporal.translations.queue_cli:status_main"
+translator-worker = "translator.worker:worker_main"
 
 [dependency-groups]
 dev = [
