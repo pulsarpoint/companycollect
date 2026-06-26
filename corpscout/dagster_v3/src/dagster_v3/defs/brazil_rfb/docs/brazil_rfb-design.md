@@ -42,52 +42,48 @@ statement grain.
 - **Expected volume**: tens of millions of legal entities and 50M+ establishment
   records in the national registry.
 
-## 2. Ingest mode - monthly partitioned bulk full-refresh
+## 2. Ingest mode - current-state bulk full-refresh
 
-- **Chosen**: monthly Dagster partitions over bulk full-refresh snapshots. Partition
-  keys use `YYYY-MM` and start at `2024-01`.
+- **Chosen**: non-partitioned Dagster full refresh over one selected monthly RFB
+  full snapshot. The selected snapshot is passed as `snapshot_year_month` in
+  `YYYY-MM` format.
 - **Why**: the official source publishes full ZIP CSV snapshots. A paginated API is
-  not needed and would be slower, less reproducible, and harder to backfill.
+  not needed and would be slower and less reproducible. A monthly Dagster
+  partition would be misleading because each month is a complete registry
+  snapshot, while the current DuckDB and ClickHouse tables keep only current-state
+  rows.
 - **Access caveat**: the historical
   `arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/` path returns
   404 from this environment. The default fetch path uses the Casa dos Dados
   open mirror (`https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/`),
   which exposes the same RFB CNPJ ZIP layout through simple directory listings.
-  The mirror publishes dated directories such as `2026-05-10/`; the Dagster
-  partition key remains the month (`2026-05`) and resolves to the latest dated
-  directory for that month.
+  The mirror publishes dated directories such as `2026-05-10/`; the configured
+  `snapshot_year_month` remains the month (`2026-05`) and resolves to the latest
+  dated directory for that month.
 - **Format**: ZIP files containing Latin-1-compatible, semicolon-delimited CSV
   with no header. Extraction preserves the raw member and writes a UTF-8
   normalized `.utf8.csv` artifact for DuckDB, replacing dirty control bytes that
   appear in some registry rows. RFB uses fixed published column order per file
   family. Dates are `YYYYMMDD`. Monetary values such as `capital_social` use
   Brazilian decimal formatting.
-- **Partitioning**: every `brazil_rfb` asset uses the same monthly partition
-  definition. The partition key is the RFB snapshot directory name, for example
-  partition `2026-05` resolves the latest matching dated directory such as
-  `.../arquivos/2026-05-10/`. Current DuckDB and ClickHouse tables hold the
-  selected snapshot's full-refresh state; historical partition materializations
-  are tracked by Dagster, not retained as separate monthly rows in the final
-  tables.
+- **No Dagster partitioning**: every `brazil_rfb` asset is non-partitioned. The
+  configured snapshot month is the RFB snapshot directory selector; for example
+  `snapshot_year_month: "2026-05"` resolves the latest matching dated directory
+  such as `.../arquivos/2026-05-10/`. Current DuckDB and ClickHouse tables hold
+  the selected snapshot's full-refresh state. Historical month-over-month
+  analysis requires separate snapshot/history tables and is out of scope for this
+  phase.
 
 ## 3. Loading
 
 - **Download boundary**: a dlt-bounded bulk download asset resolves the monthly
-  snapshot file list from `context.partition_key` and downloads ZIP files with
+  snapshot file list from `snapshot_year_month` and downloads ZIP files with
   retry/backoff. It records the source URLs, file hashes, byte sizes, and retrieved
   timestamp.
-- **Launch partition**: launch `brazil_rfb_resolve_job` with a monthly partition
-  key. `snapshot_year_month` is not launch config; it is the Dagster partition
-  key. Valid examples are `2024-01`, `2026-05`, and `2026-06`. Invalid examples
-  are `202605`, `2026/05`, and `05-2026`.
-
-  ```yaml
-  partition: "2026-05"
-  ```
-
-  Saved launch configs from before partitioning may still contain
-  `snapshot_year_month`. The asset accepts that deprecated field only when it
-  matches the selected partition; otherwise the run fails before download.
+- **Launch config**: launch `brazil_rfb_resolve_job` without a partition and pass
+  `snapshot_year_month` to the snapshot asset. Valid examples are `2024-01`,
+  `2026-05`, and `2026-06`. Invalid examples are `202605`, `2026/05`, and
+  `05-2026`.
 
   Override the base URL only for tests or if the official RFB host becomes
   directly browsable again:
@@ -96,6 +92,7 @@ statement grain.
   ops:
     brazil_rfb_snapshot_files_duckdb:
       config:
+        snapshot_year_month: "2026-05"
         snapshot_base_url: "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/"
   ```
 - **DuckDB reader**: use DuckDB `read_csv` over UTF-8 normalized extracted files
@@ -120,7 +117,8 @@ statement grain.
   `preserve_insertion_order=false`, `threads`, `temp_directory`, and
   `max_temp_directory_size` before running the large window/join SQL. Defaults
   are `DUCKDB_THREADS=4`, `DUCKDB_MAX_TEMP_DIRECTORY_SIZE=100GiB`, and a
-  Brazil-specific fallback temp directory of `data/brazil_rfb_duckdb_tmp` when
+  project-local temp directory beside the DuckDB database
+  (`data/duckdb_tmp` for `data/brazil_rfb_source.duckdb`) when
   `DUCKDB_TEMP_DIRECTORY` is not set. Set `DUCKDB_MEMORY_LIMIT` only when the
   worker needs an explicit memory cap. These `DUCKDB_*` environment variables
   are shared knobs intended for any large DuckDB-based country source.
@@ -263,14 +261,15 @@ statement grain.
 
 ## 8. Scheduling
 
-- **`brazil_rfb_resolve_job`**: manual monthly-partitioned full-refresh job for
-  all `brazil_rfb` assets plus `domains_clickhouse`, so `br_websites` is pushed
+- **`brazil_rfb_resolve_job`**: manual non-partitioned full-refresh job for all
+  `brazil_rfb` assets plus `domains_clickhouse`, so `br_websites` is pushed
   through `company_website_domains` and the shared `domains` aggregate in the
   same run. Keep it unscheduled until the source resolver and first full
   materialization are validated.
-- **Backfills**: run one partition per run. The pipeline writes one DuckDB
-  database and replaces current ClickHouse outputs for the selected snapshot, so
-  multi-month backfills should execute sequentially.
+- **Backfills**: do not backfill old RFB months into the current-state tables.
+  Each month is a full registry snapshot, and this phase replaces current DuckDB
+  and ClickHouse outputs for the selected snapshot. Add separate history tables
+  before doing month-over-month backfills.
 - **Manual full refresh**: group-level job for all `brazil_rfb` assets plus
   upstream `brazil_cnae_to_nace_clickhouse` and `nace_categories_clickhouse`.
 - **Cron staggering**: choose a different hour/day from Estonia/France/UK monthly

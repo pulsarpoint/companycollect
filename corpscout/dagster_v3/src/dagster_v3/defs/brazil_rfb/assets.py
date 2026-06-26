@@ -31,39 +31,30 @@ CLICKHOUSE_COMPANIES_ASSET_KEY = "brazil_rfb_clickhouse_companies"
 CLICKHOUSE_ESTABLISHMENTS_ASSET_KEY = "brazil_rfb_clickhouse_establishments"
 CLICKHOUSE_CONTACT_INFO_ASSET_KEY = "brazil_rfb_clickhouse_contact_info"
 CLICKHOUSE_WEBSITES_ASSET_KEY = "brazil_rfb_clickhouse_websites"
-BRAZIL_RFB_PARTITION_START_YEAR_MONTH = "2024-01"
-BRAZIL_RFB_MONTHLY_PARTITIONS = dg.MonthlyPartitionsDefinition(
-    start_date=BRAZIL_RFB_PARTITION_START_YEAR_MONTH,
-    fmt="%Y-%m",
-)
-BRAZIL_RFB_BACKFILL_POLICY = dg.BackfillPolicy.multi_run(max_partitions_per_run=1)
 
 
 class BrazilRfbConfig(dg.Config):
-    snapshot_year_month: str | None = Field(
-        default=None,
+    snapshot_year_month: str = Field(
         description=(
-            "Deprecated compatibility field for saved launch config. Select the "
-            "monthly Dagster partition instead. If provided, this value must match "
-            "the selected Dagster partition key."
+            "Receita Federal full CNPJ registry snapshot to load, in YYYY-MM "
+            "format. Example: 2026-05."
         ),
         examples=["2026-05"],
     )
     snapshot_base_url: str = Field(
         default=source.DEFAULT_BASE_URL,
         description=(
-            "Base URL for Receita Federal CNPJ open-data snapshots. Partition key "
-            "controls the YYYY-MM snapshot, and the resolver selects a direct "
-            "YYYY-MM directory or the latest matching YYYY-MM-DD directory. Default "
-            "mirror base: https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/."
+            "Base URL for Receita Federal CNPJ open-data snapshots. "
+            "snapshot_year_month controls the YYYY-MM snapshot, and the resolver "
+            "selects a direct YYYY-MM directory or the latest matching YYYY-MM-DD "
+            "directory. Default mirror base: "
+            "https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/."
         ),
     )
 
     @field_validator("snapshot_year_month")
     @classmethod
-    def validate_snapshot_year_month(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
+    def validate_snapshot_year_month(cls, value: str) -> str:
         return source.validate_snapshot_year_month(value)
 
 
@@ -90,8 +81,6 @@ class BrazilRfbDltTranslator(DagsterDltTranslator):
     dlt_pipeline=source.brazil_rfb_pipeline(BRAZIL_RFB_DUCKDB_PATH),
     name=SNAPSHOT_FILES_ASSET_KEY,
     dagster_dlt_translator=BrazilRfbDltTranslator(),
-    partitions_def=BRAZIL_RFB_MONTHLY_PARTITIONS,
-    backfill_policy=BRAZIL_RFB_BACKFILL_POLICY,
     pool=BRAZIL_RFB_DUCKDB_POOL,
 )
 def brazil_rfb_snapshot_files_duckdb(
@@ -99,27 +88,11 @@ def brazil_rfb_snapshot_files_duckdb(
     config: BrazilRfbConfig,
     dlt: DagsterDltResource,
 ) -> Iterator[Any]:
-    snapshot_year_month = source.validate_snapshot_year_month(context.partition_key)
-    if (
-        config.snapshot_year_month is not None
-        and config.snapshot_year_month != snapshot_year_month
-    ):
-        raise dg.Failure(
-            description=(
-                "Deprecated snapshot_year_month config "
-                f"{config.snapshot_year_month!r} does not match selected partition "
-                f"{snapshot_year_month!r}. Remove snapshot_year_month from run config "
-                "or select the matching partition."
-            ),
-            metadata={
-                "configured_snapshot_year_month": config.snapshot_year_month,
-                "partition_key": snapshot_year_month,
-            },
-        )
+    snapshot_year_month = config.snapshot_year_month
     log_info = getattr(getattr(context, "log", None), "info", None)
     if log_info is not None:
         log_info(
-            "Starting Brazil RFB snapshot preparation: partition=%s base_url=%s download_dir=%s",
+            "Starting Brazil RFB snapshot preparation: snapshot_year_month=%s base_url=%s download_dir=%s",
             snapshot_year_month,
             config.snapshot_base_url,
             BRAZIL_RFB_DOWNLOAD_DIR / snapshot_year_month,
@@ -140,8 +113,6 @@ def brazil_rfb_snapshot_files_duckdb(
 @dg.asset(
     name=RAW_FILES_ASSET_KEY,
     deps=[dg.AssetKey(SNAPSHOT_FILES_ASSET_KEY)],
-    partitions_def=BRAZIL_RFB_MONTHLY_PARTITIONS,
-    backfill_policy=BRAZIL_RFB_BACKFILL_POLICY,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb"},
     pool=BRAZIL_RFB_DUCKDB_POOL,
@@ -163,8 +134,6 @@ def brazil_rfb_raw_files_duckdb(
 @dg.asset(
     name=COMPANIES_ASSET_KEY,
     deps=[dg.AssetKey(RAW_FILES_ASSET_KEY)],
-    partitions_def=BRAZIL_RFB_MONTHLY_PARTITIONS,
-    backfill_policy=BRAZIL_RFB_BACKFILL_POLICY,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "sql"},
     pool=BRAZIL_RFB_DUCKDB_POOL,
@@ -186,8 +155,6 @@ def brazil_rfb_companies_duckdb(
 @dg.asset(
     name=CONTACT_INFO_ASSET_KEY,
     deps=[dg.AssetKey(COMPANIES_ASSET_KEY)],
-    partitions_def=BRAZIL_RFB_MONTHLY_PARTITIONS,
-    backfill_policy=BRAZIL_RFB_BACKFILL_POLICY,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "sql"},
     pool=BRAZIL_RFB_DUCKDB_POOL,
@@ -212,8 +179,6 @@ def brazil_rfb_contact_info_duckdb(
 @dg.asset(
     name=WEBSITES_ASSET_KEY,
     deps=[dg.AssetKey(CONTACT_INFO_ASSET_KEY)],
-    partitions_def=BRAZIL_RFB_MONTHLY_PARTITIONS,
-    backfill_policy=BRAZIL_RFB_BACKFILL_POLICY,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "sql"},
     pool=BRAZIL_RFB_DUCKDB_POOL,
@@ -237,8 +202,6 @@ def brazil_rfb_websites_duckdb(
 @dg.asset(
     name=CLICKHOUSE_COMPANIES_ASSET_KEY,
     deps=[dg.AssetKey(COMPANIES_ASSET_KEY)],
-    partitions_def=BRAZIL_RFB_MONTHLY_PARTITIONS,
-    backfill_policy=BRAZIL_RFB_BACKFILL_POLICY,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     pool=BRAZIL_RFB_DUCKDB_POOL,
@@ -264,8 +227,6 @@ def brazil_rfb_clickhouse_companies(
 @dg.asset(
     name=CLICKHOUSE_ESTABLISHMENTS_ASSET_KEY,
     deps=[dg.AssetKey(COMPANIES_ASSET_KEY)],
-    partitions_def=BRAZIL_RFB_MONTHLY_PARTITIONS,
-    backfill_policy=BRAZIL_RFB_BACKFILL_POLICY,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     pool=BRAZIL_RFB_DUCKDB_POOL,
@@ -294,8 +255,6 @@ def brazil_rfb_clickhouse_establishments(
 @dg.asset(
     name=CLICKHOUSE_CONTACT_INFO_ASSET_KEY,
     deps=[dg.AssetKey(CONTACT_INFO_ASSET_KEY)],
-    partitions_def=BRAZIL_RFB_MONTHLY_PARTITIONS,
-    backfill_policy=BRAZIL_RFB_BACKFILL_POLICY,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     pool=BRAZIL_RFB_DUCKDB_POOL,
@@ -324,8 +283,6 @@ def brazil_rfb_clickhouse_contact_info(
 @dg.asset(
     name=CLICKHOUSE_WEBSITES_ASSET_KEY,
     deps=[dg.AssetKey(WEBSITES_ASSET_KEY)],
-    partitions_def=BRAZIL_RFB_MONTHLY_PARTITIONS,
-    backfill_policy=BRAZIL_RFB_BACKFILL_POLICY,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     pool=BRAZIL_RFB_DUCKDB_POOL,

@@ -1,7 +1,4 @@
-from datetime import datetime
-
 import dagster as dg
-import pytest
 
 
 def test_brazil_rfb_raw_assets_are_registered_with_single_writer_pool() -> None:
@@ -50,11 +47,11 @@ def test_brazil_rfb_raw_assets_are_registered_with_single_writer_pool() -> None:
     assert clickhouse_websites_asset.op.pool == "brazil_rfb_duckdb"
 
 
-def test_brazil_rfb_assets_are_monthly_partitioned_from_2024() -> None:
+def test_brazil_rfb_assets_are_not_partitioned() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
-    expected_partitioned_assets = (
+    expected_current_state_assets = (
         "brazil_rfb_snapshot_files_duckdb",
         "brazil_rfb_raw_files_duckdb",
         "brazil_rfb_companies_duckdb",
@@ -66,26 +63,22 @@ def test_brazil_rfb_assets_are_monthly_partitioned_from_2024() -> None:
         "brazil_rfb_clickhouse_websites",
     )
 
-    for asset_name in expected_partitioned_assets:
+    for asset_name in expected_current_state_assets:
         node = repo.asset_graph.get(dg.AssetKey(asset_name))
-        assert node.partitions_def is not None
-        assert type(node.partitions_def).__name__ == "MonthlyPartitionsDefinition"
-        partition_keys = node.partitions_def.get_partition_keys(
-            current_time=datetime(2024, 3, 15)
-        )
-        assert partition_keys == ["2024-01", "2024-02"]
+        assert node.partitions_def is None
 
 
-def test_brazil_rfb_snapshot_config_documents_partition_key_source() -> None:
+def test_brazil_rfb_snapshot_config_requires_explicit_snapshot_year_month() -> None:
     from dagster_v3.defs.brazil_rfb.assets import BrazilRfbConfig
 
     fields = BrazilRfbConfig.model_fields
 
     assert "snapshot_year_month" in fields
     assert "snapshot_month" not in fields
+    assert fields["snapshot_year_month"].is_required()
     assert fields["snapshot_year_month"].description is not None
-    assert "Deprecated" in (fields["snapshot_year_month"].description or "")
-    assert "must match the selected Dagster partition key" in (
+    assert "YYYY-MM" in (fields["snapshot_year_month"].description or "")
+    assert "full CNPJ registry snapshot" in (
         fields["snapshot_year_month"].description or ""
     )
     assert fields["snapshot_base_url"].description is not None
@@ -93,19 +86,18 @@ def test_brazil_rfb_snapshot_config_documents_partition_key_source() -> None:
         fields["snapshot_base_url"].description or ""
     )
     assert "YYYY-MM-DD" in (fields["snapshot_base_url"].description or "")
-    assert "Partition key controls the YYYY-MM snapshot" in (
+    assert "snapshot_year_month controls the YYYY-MM snapshot" in (
         fields["snapshot_base_url"].description or ""
     )
 
 
-def test_brazil_rfb_snapshot_asset_uses_partition_key_for_snapshot(monkeypatch) -> None:
+def test_brazil_rfb_snapshot_asset_uses_configured_snapshot_year_month(monkeypatch) -> None:
     from dagster_v3.defs.brazil_rfb import assets
 
     calls = {}
 
     class FakeContext:
         run_id = "run-1"
-        partition_key = "2024-02"
 
     class FakeDlt:
         def run(self, **kwargs):
@@ -126,7 +118,10 @@ def test_brazil_rfb_snapshot_asset_uses_partition_key_for_snapshot(monkeypatch) 
     result = list(
         assets.brazil_rfb_snapshot_files_duckdb.node_def.compute_fn.decorated_fn(
             FakeContext(),
-            assets.BrazilRfbConfig(snapshot_base_url="https://mirror.test/cnpj/"),
+            assets.BrazilRfbConfig(
+                snapshot_year_month="2024-02",
+                snapshot_base_url="https://mirror.test/cnpj/",
+            ),
             FakeDlt(),
         )
     )
@@ -138,57 +133,6 @@ def test_brazil_rfb_snapshot_asset_uses_partition_key_for_snapshot(monkeypatch) 
     assert calls["source"]["download_dir"] == assets.BRAZIL_RFB_DOWNLOAD_DIR / "2024-02"
     assert calls["run"]["dlt_source"] == "dlt-source"
     assert calls["run"]["dlt_pipeline"] == "dlt-pipeline"
-
-
-def test_brazil_rfb_snapshot_asset_accepts_matching_legacy_snapshot_config(
-    monkeypatch,
-) -> None:
-    from dagster_v3.defs.brazil_rfb import assets
-
-    calls = {}
-
-    class FakeContext:
-        run_id = "run-1"
-        partition_key = "2024-02"
-
-    class FakeDlt:
-        def run(self, **kwargs):
-            calls["source"] = kwargs["dlt_source"]
-            yield "materialization"
-
-    def fake_source(**kwargs):
-        return kwargs
-
-    monkeypatch.setattr(assets.source, "brazil_rfb_source", fake_source)
-    monkeypatch.setattr(assets.source, "brazil_rfb_pipeline", lambda database_path: None)
-
-    result = list(
-        assets.brazil_rfb_snapshot_files_duckdb.node_def.compute_fn.decorated_fn(
-            FakeContext(),
-            assets.BrazilRfbConfig(snapshot_year_month="2024-02"),
-            FakeDlt(),
-        )
-    )
-
-    assert result == ["materialization"]
-    assert calls["source"]["snapshot_year_month"] == "2024-02"
-
-
-def test_brazil_rfb_snapshot_asset_rejects_mismatched_legacy_snapshot_config() -> None:
-    from dagster_v3.defs.brazil_rfb import assets
-
-    class FakeContext:
-        run_id = "run-1"
-        partition_key = "2024-02"
-
-    with pytest.raises(dg.Failure, match="does not match selected partition"):
-        list(
-            assets.brazil_rfb_snapshot_files_duckdb.node_def.compute_fn.decorated_fn(
-                FakeContext(),
-                assets.BrazilRfbConfig(snapshot_year_month="2024-03"),
-                object(),
-            )
-        )
 
 
 def test_brazil_rfb_raw_asset_depends_on_snapshot_manifest() -> None:
@@ -265,13 +209,7 @@ def test_brazil_rfb_resolve_job_covers_brazil_outputs_and_domain_graph() -> None
         for key in resolve_job.asset_layer.executable_asset_keys
     }
 
-    assert type(resolve_job.partitions_def).__name__ == "MonthlyPartitionsDefinition"
-    assert resolve_job.partitions_def is not None
-    partition_keys = resolve_job.partitions_def.get_partition_keys(
-        current_time=datetime(2026, 6, 25)
-    )
-    assert partition_keys[0] == "2024-01"
-    assert partition_keys[-1] == "2026-05"
+    assert resolve_job.partitions_def is None
     assert resolve_job.run_config is None
     assert {
         "brazil_rfb_snapshot_files_duckdb",
