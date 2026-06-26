@@ -26,6 +26,7 @@ REGISTRY: dict[str, SourceConfig] = {
             FieldConfig(field="articles_purpose", original_col="articles_purpose_original"),
             FieldConfig(field="activity_text", original_col="activity_text_original"),
             FieldConfig(field="company_description", original_col="company_description_original"),
+            FieldConfig(field="legal_form_description", original_col="legal_form_description_original"),
         ),
     ),
 }

@@ -20,3 +20,13 @@ def test_build_scan_sql_per_field_uses_its_original_column():
     sql = build_scan_sql(config, config.fields[0])  # articles_purpose
     assert "c.articles_purpose_original" in sql
     assert "company_description_original" not in sql
+
+
+def test_build_scan_sql_for_legal_form_description():
+    config = get_source_config("norway_brreg")
+    sql = build_scan_sql(config, config.fields[3])  # legal_form_description
+    assert "SELECT DISTINCT c.legal_form_description_original AS source_text" in sql
+    assert "FROM corpscout.no_companies AS c" in sql
+    assert "cityHash64(c.legal_form_description_original)" in sql
+    assert "c.legal_form_description_original <> ''" in sql
+    assert "company_description_original" not in sql

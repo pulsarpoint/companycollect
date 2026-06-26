@@ -162,6 +162,34 @@ def test_no_companies_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     ]
 
 
+def test_no_companies_model_drops_legacy_legal_form_translation_columns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "source.duckdb"
+    _seed_norway_brreg_source(db)
+    _dbt_build(db, monkeypatch)
+
+    with duckdb.connect(str(db), read_only=True) as conn:
+        columns = {
+            row[0]
+            for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'norway_resolved' AND table_name = 'no_companies'"
+            ).fetchall()
+        }
+
+    for col in (
+        "legal_form_description_language",
+        "legal_form_description_en",
+        "legal_form_description_translated_at",
+        "legal_form_description_translation_provider",
+        "legal_form_description_translation_model",
+    ):
+        assert col not in columns, f"legacy column {col!r} should have been removed from no_companies"
+
+    assert "legal_form_description_original" in columns
+
+
 def test_no_companies_model_carries_free_text_originals(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

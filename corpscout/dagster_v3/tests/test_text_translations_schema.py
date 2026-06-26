@@ -168,3 +168,80 @@ def test_no_companies_free_text_down_drops_three_columns():
     assert "ALTER TABLE corpscout.no_companies" in sql
     for col in FREE_TEXT_ORIGINAL_COLUMNS:
         assert f"DROP COLUMN IF EXISTS {col}" in sql
+
+
+LEGAL_FORM_VIA_CACHE_UP = (
+    MIGRATIONS_DIR / "000062_corpscout_no_companies_legal_form_via_cache.up.sql"
+)
+LEGAL_FORM_VIA_CACHE_DOWN = (
+    MIGRATIONS_DIR / "000062_corpscout_no_companies_legal_form_via_cache.down.sql"
+)
+
+DEAD_LEGAL_FORM_COLUMNS = (
+    "legal_form_description_language",
+    "legal_form_description_en",
+    "legal_form_description_translated_at",
+    "legal_form_description_translation_provider",
+    "legal_form_description_translation_model",
+)
+
+NO_COMPANIES_FOUR_FIELD_FIELDS = NO_COMPANIES_FREE_TEXT_FIELDS + (
+    ("legal_form_description", "legal_form_description_original", "legal_form_description_en"),
+)
+
+
+def test_legal_form_via_cache_up_drops_five_columns_first():
+    sql = LEGAL_FORM_VIA_CACHE_UP.read_text(encoding="utf-8")
+    for col in DEAD_LEGAL_FORM_COLUMNS:
+        assert f"DROP COLUMN IF EXISTS {col}" in sql
+
+
+def test_legal_form_via_cache_up_rebuilds_view_with_four_joins():
+    sql = LEGAL_FORM_VIA_CACHE_UP.read_text(encoding="utf-8")
+    assert "CREATE OR REPLACE VIEW corpscout.no_companies_translated" in sql
+    assert "FROM corpscout.no_companies AS c" in sql
+    assert "corpscout.text_translations" in sql
+    # No EXCEPT clause — no_companies never had base _en columns.
+    assert "EXCEPT (" not in sql
+    # All 4 fields are referenced.
+    for field, original, en_col in NO_COMPANIES_FOUR_FIELD_FIELDS:
+        assert f"field = '{field}'" in sql, f"view must filter field {field!r}"
+        assert f"cityHash64(c.{original})" in sql, f"view must join on cityHash64(c.{original})"
+        assert en_col in sql, f"view must produce {en_col}"
+    assert "argMax(translated_text, version)" in sql
+    # Drop happens before view creation — check ordering.
+    drop_pos = sql.index("DROP COLUMN IF EXISTS legal_form_description_en")
+    view_pos = sql.index("CREATE OR REPLACE VIEW")
+    assert drop_pos < view_pos, "columns must be dropped before the view is recreated"
+
+
+def test_legal_form_via_cache_down_readds_five_columns():
+    sql = LEGAL_FORM_VIA_CACHE_DOWN.read_text(encoding="utf-8")
+    assert "ADD COLUMN IF NOT EXISTS legal_form_description_language Nullable(String)" in sql
+    assert "ADD COLUMN IF NOT EXISTS legal_form_description_en Nullable(String)" in sql
+    assert (
+        "ADD COLUMN IF NOT EXISTS legal_form_description_translated_at Nullable(DateTime64(3, 'UTC'))"
+        in sql
+    )
+    assert (
+        "ADD COLUMN IF NOT EXISTS legal_form_description_translation_provider Nullable(String)"
+        in sql
+    )
+    assert (
+        "ADD COLUMN IF NOT EXISTS legal_form_description_translation_model Nullable(String)"
+        in sql
+    )
+
+
+def test_legal_form_via_cache_down_restores_three_field_view():
+    sql = LEGAL_FORM_VIA_CACHE_DOWN.read_text(encoding="utf-8")
+    assert "CREATE OR REPLACE VIEW corpscout.no_companies_translated" in sql
+    # Down view has exactly the original 3 free-text fields, not 4.
+    for field, original, en_col in NO_COMPANIES_FREE_TEXT_FIELDS:
+        assert f"field = '{field}'" in sql
+        assert en_col in sql
+    # The 4th field (legal_form_description) must NOT appear as a view join.
+    assert "field = 'legal_form_description'" not in sql
+    # legal_form_description_en is re-added as a base column (ADD COLUMN) but
+    # must not appear as a view-level alias produced by a cache JOIN.
+    assert "AS legal_form_description_en" not in sql
