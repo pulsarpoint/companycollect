@@ -126,7 +126,7 @@ the day-to-day gotcha list that backs that standard.
 
 ## Connections & scaling (target: 100+ sources)
 - The Dagster Postgres (`companycollect`) is **shared with Temporal** — connection pressure is the main scaling
-  bottleneck. The durable fix is **PgBouncer**: see `docs/superpowers/plans/2026-06-20-dagster-connection-scaling-pgbouncer.md`.
+  bottleneck. The durable fix is **PgBouncer**.
   Connect Dagster as the **least-privilege `dagster` user**, never the superuser.
 - Dev pool overflow is set in `scripts/dagster-dev.sh` (`DAGSTER_DB_POOL_MAX_OVERFLOW`). Too low starves the
   daemon's own pool (`QueuePool limit reached`); too high on a small server cap starves the shared DB.
