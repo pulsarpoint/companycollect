@@ -1228,7 +1228,6 @@ def test_export_norway_brreg_clickhouse_tables_reads_duckdb_and_inserts(
     )
     assert company_row["org_number"] == "923609016"
     assert company_row["legal_name"] == "EQUINOR ASA"
-    assert company_row["company_description_en"] == ""
     assert financial_row["org_number"] == "923609016"
     assert financial_row["period_end_date"] == date(2024, 12, 31)
     assert financial_row["operating_revenue_amount_original"] == Decimal("72543000000.000")
@@ -1501,7 +1500,7 @@ def test_norway_entity_asset_is_registered() -> None:
         == "norway_brreg_duckdb"
     )
     assert {key.path[-1] for key in clickhouse_companies_node.parent_keys} == {
-        "norway_brreg_translations_applied",
+        "norway_brreg_entities_duckdb",
     }
     assert {key.path[-1] for key in clickhouse_financial_node.parent_keys} == {
         "norway_brreg_financial_statements_duckdb",

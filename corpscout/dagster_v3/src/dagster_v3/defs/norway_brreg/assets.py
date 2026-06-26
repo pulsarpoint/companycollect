@@ -238,7 +238,7 @@ def norway_brreg_financial_statements_duckdb_asset(
 
 
 @dg.asset(
-    deps=[dg.AssetKey("norway_brreg_translations_applied")],
+    deps=[dg.AssetKey("norway_brreg_entities_duckdb")],
     group_name=GROUP_NAME,
     kinds={"duckdb", "clickhouse"},
     description="Norway Brreg final companies table exported to ClickHouse.",
