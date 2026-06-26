@@ -81,3 +81,23 @@ def test_view_up_passes_through_reference_en_columns():
 def test_view_down_drops_view():
     sql = VIEW_DOWN.read_text(encoding="utf-8")
     assert "DROP VIEW IF EXISTS corpscout.norway_companies_translated" in sql
+
+
+DROP_EN_UP = MIGRATIONS_DIR / "000058_corpscout_companies_drop_free_text_en.up.sql"
+DROP_EN_DOWN = MIGRATIONS_DIR / "000058_corpscout_companies_drop_free_text_en.down.sql"
+
+
+def test_drop_free_text_en_up_drops_three_columns_and_rebuilds_view():
+    sql = DROP_EN_UP.read_text(encoding="utf-8")
+    for col in ("articles_purpose_en", "activity_text_en", "company_description_en"):
+        assert f"DROP COLUMN IF EXISTS {col}" in sql
+    # View is recreated WITHOUT the EXCEPT clause (base no longer has those columns).
+    assert "CREATE OR REPLACE VIEW corpscout.norway_companies_translated" in sql
+    assert "EXCEPT (" not in sql
+    assert "cityHash64(c.company_description_original)" in sql
+
+
+def test_drop_free_text_en_down_readds_columns():
+    sql = DROP_EN_DOWN.read_text(encoding="utf-8")
+    for col in ("articles_purpose_en", "activity_text_en", "company_description_en"):
+        assert f"ADD COLUMN IF NOT EXISTS {col} String" in sql
