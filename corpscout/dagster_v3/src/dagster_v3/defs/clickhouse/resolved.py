@@ -60,6 +60,32 @@ def export_duckdb_table_to_clickhouse(
     truncate: bool,
     batch_size: int = DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
 ) -> int:
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        return export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=connection,
+            clickhouse_client=clickhouse_client,
+            duckdb_schema=duckdb_schema,
+            duckdb_table=duckdb_table,
+            clickhouse_database=clickhouse_database,
+            clickhouse_table=clickhouse_table,
+            columns=columns,
+            truncate=truncate,
+            batch_size=batch_size,
+        )
+
+
+def export_duckdb_connection_table_to_clickhouse(
+    *,
+    duckdb_connection: Any,
+    clickhouse_client: Any,
+    duckdb_schema: str,
+    duckdb_table: str,
+    clickhouse_database: str,
+    clickhouse_table: str,
+    columns: Sequence[str],
+    truncate: bool,
+    batch_size: int = DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
+) -> int:
     _validate_batch_size(batch_size)
     clickhouse_columns = ", ".join(_quote_clickhouse_identifier(column) for column in columns)
     clickhouse_qualified_table = (
@@ -67,17 +93,16 @@ def export_duckdb_table_to_clickhouse(
         f"{_quote_clickhouse_identifier(clickhouse_table)}"
     )
     if not truncate:
-        with duckdb.connect(str(duckdb_path), read_only=True) as connection:
-            return _insert_duckdb_rows_in_batches(
-                duckdb_connection=connection,
-                clickhouse_client=clickhouse_client,
-                duckdb_schema=duckdb_schema,
-                duckdb_table=duckdb_table,
-                clickhouse_qualified_table=clickhouse_qualified_table,
-                clickhouse_columns=clickhouse_columns,
-                columns=columns,
-                batch_size=batch_size,
-            )
+        return _insert_duckdb_rows_in_batches(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=clickhouse_client,
+            duckdb_schema=duckdb_schema,
+            duckdb_table=duckdb_table,
+            clickhouse_qualified_table=clickhouse_qualified_table,
+            clickhouse_columns=clickhouse_columns,
+            columns=columns,
+            batch_size=batch_size,
+        )
 
     clickhouse_stage_table = _clickhouse_stage_table_name(clickhouse_table)
     clickhouse_qualified_stage_table = _quote_clickhouse_qualified_table(
@@ -90,17 +115,16 @@ def export_duckdb_table_to_clickhouse(
     primary_error: Exception | None = None
     row_count = 0
     try:
-        with duckdb.connect(str(duckdb_path), read_only=True) as connection:
-            row_count = _insert_duckdb_rows_in_batches(
-                duckdb_connection=connection,
-                clickhouse_client=clickhouse_client,
-                duckdb_schema=duckdb_schema,
-                duckdb_table=duckdb_table,
-                clickhouse_qualified_table=clickhouse_qualified_stage_table,
-                clickhouse_columns=clickhouse_columns,
-                columns=columns,
-                batch_size=batch_size,
-            )
+        row_count = _insert_duckdb_rows_in_batches(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=clickhouse_client,
+            duckdb_schema=duckdb_schema,
+            duckdb_table=duckdb_table,
+            clickhouse_qualified_table=clickhouse_qualified_stage_table,
+            clickhouse_columns=clickhouse_columns,
+            columns=columns,
+            batch_size=batch_size,
+        )
         clickhouse_client.execute(
             f"EXCHANGE TABLES {clickhouse_qualified_stage_table} AND {clickhouse_qualified_table}"
         )
@@ -125,8 +149,27 @@ def replace_duckdb_tables_in_clickhouse(
     tables: Sequence[tuple[str, Sequence[str]]],
     batch_size: int = DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
 ) -> dict[str, int]:
+    with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+        return replace_duckdb_connection_tables_in_clickhouse(
+            duckdb_connection=connection,
+            clickhouse_client=clickhouse_client,
+            duckdb_schema=duckdb_schema,
+            clickhouse_database=clickhouse_database,
+            tables=tables,
+            batch_size=batch_size,
+        )
+
+
+def replace_duckdb_connection_tables_in_clickhouse(
+    *,
+    duckdb_connection: Any,
+    clickhouse_client: Any,
+    duckdb_schema: str,
+    clickhouse_database: str,
+    tables: Sequence[tuple[str, Sequence[str]]],
+    batch_size: int = DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
+) -> dict[str, int]:
     _validate_batch_size(batch_size)
-    duckdb_path = Path(duckdb_path)
     requested_tables = tuple(
         (clickhouse_table, tuple(columns)) for clickhouse_table, columns in tables
     )
@@ -159,20 +202,19 @@ def replace_duckdb_tables_in_clickhouse(
                 f"{clickhouse_qualified_tables[clickhouse_table]}"
             )
 
-        with duckdb.connect(str(duckdb_path), read_only=True) as connection:
-            for clickhouse_table, columns in requested_tables:
-                row_counts[clickhouse_table] = _insert_duckdb_rows_in_batches(
-                    duckdb_connection=connection,
-                    clickhouse_client=clickhouse_client,
-                    duckdb_schema=duckdb_schema,
-                    duckdb_table=clickhouse_table,
-                    clickhouse_qualified_table=clickhouse_qualified_stage_tables[
-                        clickhouse_table
-                    ],
-                    clickhouse_columns=clickhouse_columns_by_table[clickhouse_table],
-                    columns=columns,
-                    batch_size=batch_size,
-                )
+        for clickhouse_table, columns in requested_tables:
+            row_counts[clickhouse_table] = _insert_duckdb_rows_in_batches(
+                duckdb_connection=duckdb_connection,
+                clickhouse_client=clickhouse_client,
+                duckdb_schema=duckdb_schema,
+                duckdb_table=clickhouse_table,
+                clickhouse_qualified_table=clickhouse_qualified_stage_tables[
+                    clickhouse_table
+                ],
+                clickhouse_columns=clickhouse_columns_by_table[clickhouse_table],
+                columns=columns,
+                batch_size=batch_size,
+            )
 
         for clickhouse_table, _ in requested_tables:
             clickhouse_client.execute(

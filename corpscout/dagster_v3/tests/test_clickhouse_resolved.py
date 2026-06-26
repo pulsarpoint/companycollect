@@ -8,7 +8,9 @@ from dagster_v3.defs.clickhouse import resolved as clickhouse_resolved
 from dagster_v3.defs.clickhouse.resolved import (
     REQUIRED_FINLAND_RESOLVED_TABLES,
     assert_clickhouse_tables_exist,
+    export_duckdb_connection_table_to_clickhouse,
     export_duckdb_table_to_clickhouse,
+    replace_duckdb_connection_tables_in_clickhouse,
     replace_duckdb_tables_in_clickhouse,
 )
 
@@ -124,6 +126,55 @@ def test_export_duckdb_table_to_clickhouse_inserts_rows_in_column_order(tmp_path
             "INSERT INTO `corpscout`.`fi_companies` (`business_id`, `country_iso2`, `source_system`) VALUES",
             [("1234567-8", "FI", "finland_prhytj")],
         )
+    ]
+
+
+def test_export_duckdb_connection_table_to_clickhouse_inserts_rows_in_batches(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into finland_resolved.fi_companies values
+              ('1000001-1'),
+              ('1000002-2'),
+              ('1000003-3')
+            """
+        )
+
+        client = FakeInsertClickHouseClient()
+
+        row_count = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=connection,
+            clickhouse_client=client,
+            duckdb_schema="finland_resolved",
+            duckdb_table="fi_companies",
+            clickhouse_database="corpscout",
+            clickhouse_table="fi_companies",
+            columns=("business_id",),
+            truncate=False,
+            batch_size=2,
+        )
+
+    assert row_count == 3
+    assert client.insert_calls == [
+        (
+            "INSERT INTO `corpscout`.`fi_companies` (`business_id`) VALUES",
+            [("1000001-1",), ("1000002-2",)],
+        ),
+        (
+            "INSERT INTO `corpscout`.`fi_companies` (`business_id`) VALUES",
+            [("1000003-3",)],
+        ),
     ]
 
 
@@ -572,6 +623,90 @@ def test_replace_duckdb_tables_in_clickhouse_loads_stages_in_batches(
         ),
         batch_size=2,
     )
+
+    assert row_counts == {
+        "fi_companies": 3,
+        "fi_websites": 2,
+    }
+    assert client.statements == [
+        "CREATE TABLE `corpscout`.`_tmp_fi_companies_first` AS `corpscout`.`fi_companies`",
+        "CREATE TABLE `corpscout`.`_tmp_fi_websites_second` AS `corpscout`.`fi_websites`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_companies_first` AND `corpscout`.`fi_companies`",
+        "EXCHANGE TABLES `corpscout`.`_tmp_fi_websites_second` AND `corpscout`.`fi_websites`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_websites_second`",
+        "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_companies_first`",
+    ]
+    assert client.insert_calls == [
+        (
+            "INSERT INTO `corpscout`.`_tmp_fi_companies_first` (`business_id`) VALUES",
+            [("1000001-1",), ("1000002-2",)],
+        ),
+        (
+            "INSERT INTO `corpscout`.`_tmp_fi_companies_first` (`business_id`) VALUES",
+            [("1000003-3",)],
+        ),
+        (
+            "INSERT INTO `corpscout`.`_tmp_fi_websites_second` (`business_id`) VALUES",
+            [("2000001-1",), ("2000002-2",)],
+        ),
+    ]
+
+
+def test_replace_duckdb_connection_tables_in_clickhouse_loads_stages_in_batches(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table finland_resolved.fi_websites (
+                business_id varchar
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into finland_resolved.fi_companies values
+              ('1000001-1'),
+              ('1000002-2'),
+              ('1000003-3')
+            """
+        )
+        connection.execute(
+            """
+            insert into finland_resolved.fi_websites values
+              ('2000001-1'),
+              ('2000002-2')
+            """
+        )
+
+        stage_names = iter(["first", "second"])
+        monkeypatch.setattr(
+            clickhouse_resolved.uuid,
+            "uuid4",
+            lambda: type("U", (), {"hex": next(stage_names)})(),
+        )
+        client = FakeInsertClickHouseClient()
+
+        row_counts = replace_duckdb_connection_tables_in_clickhouse(
+            duckdb_connection=connection,
+            clickhouse_client=client,
+            duckdb_schema="finland_resolved",
+            clickhouse_database="corpscout",
+            tables=(
+                ("fi_companies", ("business_id",)),
+                ("fi_websites", ("business_id",)),
+            ),
+            batch_size=2,
+        )
 
     assert row_counts == {
         "fi_companies": 3,

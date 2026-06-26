@@ -39,21 +39,25 @@ class FakeClickHouseResource:
 def test_clickhouse_exports_replace_companies_and_establishments(tmp_path: Path) -> None:
     database_path = tmp_path / "br.duckdb"
     _create_raw_tables(database_path)
-    transforms.build_brazil_rfb_companies_and_establishments(
-        database_path=database_path,
-        source_run_id="run-1",
-    )
     fake_client = FakeClickHouseClient()
     fake_resource = FakeClickHouseResource(fake_client)
 
-    company_rows = clickhouse.export_brazil_rfb_clickhouse_companies(
-        database_path=database_path,
-        clickhouse=fake_resource,
-    )
-    establishment_rows = clickhouse.export_brazil_rfb_clickhouse_establishments(
-        database_path=database_path,
-        clickhouse=fake_resource,
-    )
+    with duckdb.connect(str(database_path)) as connection:
+        transforms.build_brazil_rfb_companies_and_establishments(
+            connection=connection,
+            source_run_id="run-1",
+        )
+        company_rows = clickhouse.export_brazil_rfb_clickhouse_companies(
+            duckdb_connection=connection,
+            clickhouse=fake_resource,
+        )
+        establishment_rows = clickhouse.export_brazil_rfb_clickhouse_establishments(
+            duckdb_connection=connection,
+            clickhouse=fake_resource,
+        )
+        assert connection.execute(
+            f"select count(*) from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}"
+        ).fetchone()[0] == company_rows
 
     assert company_rows == 2
     assert establishment_rows == 2
@@ -66,34 +70,30 @@ def test_clickhouse_exports_replace_companies_and_establishments(tmp_path: Path)
     assert len(company_insert_rows[0]) == len(tables.BR_COMPANIES_EXPORT_COLUMNS)
     assert len(establishment_insert_rows[0]) == len(tables.BR_ESTABLISHMENTS_EXPORT_COLUMNS)
 
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        assert connection.execute(
-            f"select count(*) from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}"
-        ).fetchone()[0] == company_rows
-
 
 def test_clickhouse_exports_replace_contact_info_and_websites(tmp_path: Path) -> None:
     database_path = tmp_path / "br.duckdb"
     _create_raw_tables(database_path)
-    transforms.build_brazil_rfb_companies_and_establishments(
-        database_path=database_path,
-        source_run_id="run-1",
-    )
-    contacts.build_brazil_rfb_contact_info_and_websites(
-        database_path=database_path,
-        source_run_id="run-contacts",
-    )
     fake_client = FakeClickHouseClient()
     fake_resource = FakeClickHouseResource(fake_client)
 
-    contact_rows = clickhouse.export_brazil_rfb_clickhouse_contact_info(
-        database_path=database_path,
-        clickhouse=fake_resource,
-    )
-    website_rows = clickhouse.export_brazil_rfb_clickhouse_websites(
-        database_path=database_path,
-        clickhouse=fake_resource,
-    )
+    with duckdb.connect(str(database_path)) as connection:
+        transforms.build_brazil_rfb_companies_and_establishments(
+            connection=connection,
+            source_run_id="run-1",
+        )
+        contacts.build_brazil_rfb_contact_info_and_websites(
+            connection=connection,
+            source_run_id="run-contacts",
+        )
+        contact_rows = clickhouse.export_brazil_rfb_clickhouse_contact_info(
+            duckdb_connection=connection,
+            clickhouse=fake_resource,
+        )
+        website_rows = clickhouse.export_brazil_rfb_clickhouse_websites(
+            duckdb_connection=connection,
+            clickhouse=fake_resource,
+        )
 
     assert contact_rows == 2
     assert website_rows == 1

@@ -18,9 +18,9 @@ from dagster_duckdb import DuckDBResource
 from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
     assert_clickhouse_tables_exist,
-    replace_duckdb_tables_in_clickhouse,
+    replace_duckdb_connection_tables_in_clickhouse,
 )
-from dagster_v3.defs.common.duckdb_resources import duckdb_database_path, duckdb_resource
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.finland_resolved import tables
 
 GROUP_NAME = "finland_resolved"
@@ -86,17 +86,18 @@ def finland_ytj_resolved_clickhouse(
         database=RESOLVED_DATABASE,
         tables=tables.FINLAND_YTJ_RESOLVED_TABLES,
     )
-    with clickhouse.get_connection() as client:
-        row_counts = replace_duckdb_tables_in_clickhouse(
-            duckdb_path=duckdb_database_path(ytj_duckdb),
-            clickhouse_client=client,
-            duckdb_schema=RESOLVED_DUCKDB_SCHEMA,
-            clickhouse_database=RESOLVED_DATABASE,
-            tables=tuple(
-                (table, tables.RESOLVED_EXPORT_COLUMNS[table])
-                for table in tables.FINLAND_YTJ_RESOLVED_TABLES
-            ),
-        )
+    with ytj_duckdb.get_connection() as connection:
+        with clickhouse.get_connection() as client:
+            row_counts = replace_duckdb_connection_tables_in_clickhouse(
+                duckdb_connection=connection,
+                clickhouse_client=client,
+                duckdb_schema=RESOLVED_DUCKDB_SCHEMA,
+                clickhouse_database=RESOLVED_DATABASE,
+                tables=tuple(
+                    (table, tables.RESOLVED_EXPORT_COLUMNS[table])
+                    for table in tables.FINLAND_YTJ_RESOLVED_TABLES
+                ),
+            )
     return dg.MaterializeResult(
         metadata={f"{table}_row_count": count for table, count in row_counts.items()}
     )

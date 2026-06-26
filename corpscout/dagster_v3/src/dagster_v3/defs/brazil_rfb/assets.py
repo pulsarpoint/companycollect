@@ -238,13 +238,15 @@ def brazil_rfb_websites_duckdb(
 )
 def brazil_rfb_clickhouse_companies(
     context: dg.AssetExecutionContext,
+    brazil_rfb_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    rows = export_brazil_rfb_clickhouse_companies(
-        database_path=BRAZIL_RFB_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with brazil_rfb_duckdb.get_connection() as connection:
+        rows = export_brazil_rfb_clickhouse_companies(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_BR_COMPANIES_TABLE},
     )
@@ -266,13 +268,15 @@ def brazil_rfb_clickhouse_companies(
 )
 def brazil_rfb_clickhouse_establishments(
     context: dg.AssetExecutionContext,
+    brazil_rfb_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    rows = export_brazil_rfb_clickhouse_establishments(
-        database_path=BRAZIL_RFB_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with brazil_rfb_duckdb.get_connection() as connection:
+        rows = export_brazil_rfb_clickhouse_establishments(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_BR_ESTABLISHMENTS_TABLE},
     )
@@ -294,13 +298,15 @@ def brazil_rfb_clickhouse_establishments(
 )
 def brazil_rfb_clickhouse_contact_info(
     context: dg.AssetExecutionContext,
+    brazil_rfb_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    rows = export_brazil_rfb_clickhouse_contact_info(
-        database_path=BRAZIL_RFB_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with brazil_rfb_duckdb.get_connection() as connection:
+        rows = export_brazil_rfb_clickhouse_contact_info(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_BR_COMPANY_CONTACT_INFO_TABLE},
     )
@@ -322,13 +328,15 @@ def brazil_rfb_clickhouse_contact_info(
 )
 def brazil_rfb_clickhouse_websites(
     context: dg.AssetExecutionContext,
+    brazil_rfb_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    rows = export_brazil_rfb_clickhouse_websites(
-        database_path=BRAZIL_RFB_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with brazil_rfb_duckdb.get_connection() as connection:
+        rows = export_brazil_rfb_clickhouse_websites(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_BR_WEBSITES_TABLE},
     )

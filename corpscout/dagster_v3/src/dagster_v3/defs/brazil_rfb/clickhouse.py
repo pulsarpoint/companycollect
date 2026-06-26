@@ -1,12 +1,12 @@
 from collections.abc import Callable
-from pathlib import Path
+from typing import Any
 
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.brazil_rfb import tables
 from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
-    export_duckdb_table_to_clickhouse,
+    export_duckdb_connection_table_to_clickhouse,
 )
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
@@ -14,7 +14,7 @@ DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 
 def export_brazil_rfb_clickhouse_companies(
     *,
-    database_path: str | Path,
+    duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> int:
@@ -26,13 +26,12 @@ def export_brazil_rfb_clickhouse_companies(
     )
     if log is not None:
         log(
-            "Exporting Brazil RFB companies to ClickHouse: duckdb_path=%s, table=%s",
-            database_path,
+            "Exporting Brazil RFB companies to ClickHouse: table=%s",
             tables.QUALIFIED_BR_COMPANIES_TABLE,
         )
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_table_to_clickhouse(
-            duckdb_path=database_path,
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.COMPANIES_TABLE,
@@ -48,7 +47,7 @@ def export_brazil_rfb_clickhouse_companies(
 
 def export_brazil_rfb_clickhouse_establishments(
     *,
-    database_path: str | Path,
+    duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> int:
@@ -60,13 +59,12 @@ def export_brazil_rfb_clickhouse_establishments(
     )
     if log is not None:
         log(
-            "Exporting Brazil RFB establishments to ClickHouse: duckdb_path=%s, table=%s",
-            database_path,
+            "Exporting Brazil RFB establishments to ClickHouse: table=%s",
             tables.QUALIFIED_BR_ESTABLISHMENTS_TABLE,
         )
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_table_to_clickhouse(
-            duckdb_path=database_path,
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.ESTABLISHMENTS_TABLE,
@@ -82,7 +80,7 @@ def export_brazil_rfb_clickhouse_establishments(
 
 def export_brazil_rfb_clickhouse_contact_info(
     *,
-    database_path: str | Path,
+    duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> int:
@@ -94,13 +92,12 @@ def export_brazil_rfb_clickhouse_contact_info(
     )
     if log is not None:
         log(
-            "Exporting Brazil RFB contact info to ClickHouse: duckdb_path=%s, table=%s",
-            database_path,
+            "Exporting Brazil RFB contact info to ClickHouse: table=%s",
             tables.QUALIFIED_BR_COMPANY_CONTACT_INFO_TABLE,
         )
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_table_to_clickhouse(
-            duckdb_path=database_path,
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.COMPANY_CONTACT_INFO_TABLE,
@@ -116,7 +113,7 @@ def export_brazil_rfb_clickhouse_contact_info(
 
 def export_brazil_rfb_clickhouse_websites(
     *,
-    database_path: str | Path,
+    duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> int:
@@ -128,13 +125,12 @@ def export_brazil_rfb_clickhouse_websites(
     )
     if log is not None:
         log(
-            "Exporting Brazil RFB websites to ClickHouse: duckdb_path=%s, table=%s",
-            database_path,
+            "Exporting Brazil RFB websites to ClickHouse: table=%s",
             tables.QUALIFIED_BR_WEBSITES_TABLE,
         )
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_table_to_clickhouse(
-            duckdb_path=database_path,
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.WEBSITES_TABLE,
