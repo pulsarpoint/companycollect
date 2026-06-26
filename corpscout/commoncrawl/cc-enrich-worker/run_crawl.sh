@@ -29,11 +29,11 @@ DATA="${DATA:-../data/crawl}" # commoncrawl/data/crawl (gitignored); never write
 BUILDER_DIR="${BUILDER_DIR:-../index-builder}" # standalone Python worklist builder
 WORKER="$PWD/bin/cc-enrich-worker" # built by `make build`
 
-# OUTPUTS: the <table>:<parquet-suffix> pairs a mode produces (loaded in order).
+# PRIMARY: the output suffix the pass always produces (its presence => the pass already ran).
 case "$MODE" in
-industry) OUTPUTS=("commoncrawl_domains:domains")
+industry) PRIMARY=domains
           PASS_ARGS=(--concurrency "${IND_CONC:-16}" --embed-concurrency "${EMBED_CONC:-128}") ;;
-tech)     OUTPUTS=("commoncrawl_technologies:tech" "commoncrawl_company_identifiers:identifiers" "commoncrawl_company_profile:profiles")
+tech)     PRIMARY=tech
           PASS_ARGS=(--tech-engine fast --concurrency "${TECH_CONC:-128}") ;;
 *) echo "MODE must be industry|tech"; exit 1 ;;
 esac
@@ -43,16 +43,10 @@ mkdir -p "$DATA"
 DATA_ABS="$(cd "$DATA" && pwd)"
 BUILDER_ABS="$(cd "$BUILDER_DIR" && pwd)"
 
-ch() {
-	clickhouse-client --host "${CLICKHOUSE_HOST:?set CLICKHOUSE_HOST}" \
-		--port "${CLICKHOUSE_NATIVE_PORT:-9002}" --user "${CLICKHOUSE_USER:-default}" \
-		--password "${CLICKHOUSE_PASSWORD:-}" --database "${CLICKHOUSE_DATABASE:-corpscout}" "$@"
-}
-
 for ((p = lo; p <= hi; p++)); do
 	shard="$DATA_ABS/shard_${MODE}_${p}.parquet" # per-mode: industry=1 page/domain, tech=many
 	out="$DATA/${MODE}_${p}"
-	primary="${out}-${OUTPUTS[0]##*:}.parquet" # produced whenever the pass runs
+	primary="${out}-${PRIMARY}.parquet" # produced whenever the pass runs
 	marker="${out}.loaded"
 	[ -f "$marker" ] && { echo "[$MODE $p] already loaded — skip"; continue; }
 
@@ -76,18 +70,12 @@ for ((p = lo; p <= hi; p++)); do
 		fi
 	fi
 
-	# 3. load every output into ClickHouse, then mark done (empty parquet = skip, normal)
-	ok=1
-	for pair in "${OUTPUTS[@]}"; do
-		tbl="${pair%%:*}"; pq="${out}-${pair##*:}.parquet"
-		[ -s "$pq" ] || { echo "[$MODE $p] $(basename "$pq") empty — skip"; continue; }
-		echo "[$MODE $p] loading $(basename "$pq") → $tbl"
-		ch --query "INSERT INTO $tbl FROM INFILE '$pq' FORMAT Parquet" || { ok=0; echo "[$MODE $p] load $tbl FAILED"; }
-	done
-	if [ "$ok" = 1 ]; then
+	# 3. load all outputs into ClickHouse via the worker's own driver (no clickhouse-client needed)
+	echo "[$MODE $p] loading → ClickHouse"
+	if "$WORKER" load --out "$out"; then
 		touch "$marker"; echo "[$MODE $p] DONE"
 	else
-		echo "[$MODE $p] a load failed — will retry next run"
+		echo "[$MODE $p] load failed — will retry next run"
 	fi
 done
 echo "[$MODE] range $RANGE complete"

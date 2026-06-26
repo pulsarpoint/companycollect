@@ -195,16 +195,18 @@ set -a; source ../.env; set +a
 ./run_crawl.sh industry 0-299      # workflow A over shards 0..299 (GPU pass)
 ```
 For each shard it: generates the **per-mode** worklist on demand (`shard_<mode>_<part>.parquet`,
-cached/skipped if present), runs the worker pass, loads each output Parquet into ClickHouse via
-`clickhouse-client`, and touches a `.loaded` marker. Re-running **skips completed shards**
+cached/skipped if present), runs the worker pass, loads each output into ClickHouse via the worker's
+own `load` command (native driver — no `clickhouse-client`), and touches a `.loaded` marker.
+Re-running **skips completed shards**
 (idempotent; ReplacingMergeTree dedupes). Run the two workflows as **separate processes** so tech
 pegs the cores while industry feeds the GPU. Env tunables: `CRAWL`, `WHERE` (worklist SQL filter),
 `MAX_PAGES`, `TECH_CONC`, `IND_CONC`, `EMBED_CONC`.
 
 ### Running the worker yourself (without `run_crawl.sh`)
 
-The worker is stateless: it **only writes Parquet** — it never touches ClickHouse. `run_crawl.sh`
-bundles worklist + run + load; if you run the binary directly you do those three steps yourself.
+The run commands **only write Parquet**; the separate **`load` command** pushes that Parquet into
+ClickHouse over the worker's own native driver — so **`clickhouse-client` is not needed on the box**.
+`run_crawl.sh` bundles all three; by hand it's run → load:
 
 ```bash
 cd commoncrawl/cc-enrich-worker
@@ -216,20 +218,16 @@ set -a; source ../.env; set +a
 SHARD=../data/index/CC-MAIN-2026-25/shard_tech_0.parquet
 
 # 2. run the pass — writes Parquet under ../data/crawl/ (the default --out; the dir is created)
-./bin/cc-enrich-worker tech --worklist "$SHARD" --crawl-id CC-MAIN-2026-25 \
-    --out ../data/crawl/run0 --concurrency 128
+./bin/cc-enrich-worker tech --worklist "$SHARD" --crawl-id CC-MAIN-2026-25 --out ../data/crawl/run0
 # -> ../data/crawl/run0-tech.parquet, run0-identifiers.parquet, run0-profiles.parquet
 
-# 3. load each Parquet into ClickHouse (tech writes 3 tables; industry writes 1: commoncrawl_domains)
-ch() { clickhouse-client --host "$CLICKHOUSE_HOST" --port "${CLICKHOUSE_NATIVE_PORT:-9002}" \
-         -u "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" -d corpscout "$@"; }
-ch --query "INSERT INTO commoncrawl_technologies        FROM INFILE '../data/crawl/run0-tech.parquet'        FORMAT Parquet"
-ch --query "INSERT INTO commoncrawl_company_identifiers FROM INFILE '../data/crawl/run0-identifiers.parquet' FORMAT Parquet"
-ch --query "INSERT INTO commoncrawl_company_profile     FROM INFILE '../data/crawl/run0-profiles.parquet'    FORMAT Parquet"
+# 3. load it into ClickHouse — the worker reads each file and INSERTs over the native protocol
+./bin/cc-enrich-worker load --out ../data/crawl/run0     # loads all run0-*.parquet that exist
+# or one file: ./bin/cc-enrich-worker load --file ../data/crawl/run0-tech.parquet
 ```
-`FROM INFILE` matches columns by name, so the Parquet loads straight in (tables must exist —
-`make clickhouse-migrate-up`). For an `industry` run, the one file is `run0-domains.parquet` →
-`INSERT INTO commoncrawl_domains`. ReplacingMergeTree dedupes, so re-loading a file is safe.
+`load` maps the kind from the filename suffix (`-tech` → `commoncrawl_technologies`, etc.; an
+`industry` run's `run0-domains.parquet` → `commoncrawl_domains`). Tables must exist
+(`make clickhouse-migrate-up`); ReplacingMergeTree dedupes, so re-loading a file is safe.
 
 ---
 
@@ -260,7 +258,13 @@ fed to Wappalyzer, 0 = full body).
 **Fetch path:** **signed S3** (AWS creds) is the only reliable bulk source — the anonymous S3 API is
 denied, and the `data.commoncrawl.org` HTTPS CDN (`--s3-anonymous`) works but is latency-bound and
 rate-limits. Reads are free (Open Data). The worker streams each page through memory and discards it
-(no on-disk page cache); it does **not** write to ClickHouse — the driver loads the Parquet.
+(no on-disk page cache). The run commands write Parquet only; the **`load` command** then INSERTs
+it into ClickHouse over the native driver (so no `clickhouse-client` on the box).
+
+**`load`** — `cc-enrich-worker load --out <prefix>` loads every `<prefix>-{domains,tech,identifiers,
+profiles}.parquet` that exists; `--file <path>` loads one (kind inferred from the `-<kind>.parquet`
+suffix, or `--kind`). Reads via the env-driven ClickHouse connection (`CLICKHOUSE_*`); tables must
+exist (`make clickhouse-migrate-up`).
 
 ---
 
@@ -343,7 +347,8 @@ FROM commoncrawl_domains GROUP BY conf ORDER BY conf;
 - **Identifier/profile provenance (workflow B)** — rows carry `source_url =` the domain's first
   fetched page, not the exact page a given LEI/VAT was found on. `root_domain` (the join key) is
   unaffected; per-page provenance is a future change.
-- **No DDL in code** — migrations own the schema; the worker loads Parquet via `clickhouse-client`.
+- **No DDL in code** — migrations own the schema; the worker's `load` command INSERTs rows over the
+  native driver (it asserts nothing about DDL; tables must already exist).
 
 ---
 
@@ -359,5 +364,6 @@ The Go worker is `cmd/cc-enrich-worker/main.go` (entry point: flags, env, ClickH
 wiring, the chunked process loop) + `internal/` packages: `model` (shared structs), `vec` (math),
 `fetch` (WARC fetch), `embed` (embedding client), `parse` (HTML→text), `tech` (Wappalyzer +
 Aho-Corasick), `extract` (LEI/VAT/profile), `classify` (NACE reference + classify + confidence +
-startup check), `output` (Parquet + S3), `worker` (`ProcessShard` orchestration). `Makefile` builds
+startup check), `output` (Parquet rows + S3), `load` (native-driver INSERT for the `load` command),
+`worker` (`ProcessShard` orchestration). `Makefile` builds
 into `bin/`; binaries and `data/` are gitignored — code dirs never hold binary output.

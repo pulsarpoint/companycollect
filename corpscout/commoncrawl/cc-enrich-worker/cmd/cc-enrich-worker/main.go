@@ -18,6 +18,7 @@ import (
 	"cc-enrich-worker/internal/classify"
 	"cc-enrich-worker/internal/embed"
 	"cc-enrich-worker/internal/fetch"
+	"cc-enrich-worker/internal/load"
 	mdl "cc-enrich-worker/internal/model"
 	"cc-enrich-worker/internal/output"
 	"cc-enrich-worker/internal/tech"
@@ -51,6 +52,7 @@ Commands:
   industry   embed each domain's page + classify NACE industry  (GPU-bound; needs ClickHouse + embed endpoint)
   tech       fingerprint technologies + extract identifiers/profiles  (CPU-bound; S3 only)
   both       run both in one fetch pass  (discouraged — co-locating throttles the GPU; prefer two processes)
+  load       load an already-produced Parquet output into ClickHouse (native driver — no clickhouse-client needed)
 
 Run "cc-enrich-worker <command> -h" to see that command's flags.
 
@@ -109,12 +111,59 @@ func main() {
 	switch cmd := os.Args[1]; cmd {
 	case "industry", "tech", "both":
 		run(cmd, parse(cmd, os.Args[2:]))
+	case "load":
+		runLoad(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 		usage()
 		os.Exit(2)
+	}
+}
+
+// runLoad implements the `load` command: push an already-produced Parquet output into ClickHouse
+// over the native driver (no clickhouse-client needed). Either one --file, or an --out prefix
+// whose <prefix>-{domains,tech,identifiers,profiles}.parquet files (whichever exist) are loaded.
+func runLoad(args []string) {
+	fs := flag.NewFlagSet("cc-enrich-worker load", flag.ExitOnError)
+	file := fs.String("file", "", "a single <prefix>-<kind>.parquet output file to load")
+	out := fs.String("out", "", "an output prefix; loads <prefix>-{domains,tech,identifiers,profiles}.parquet (whichever exist)")
+	kind := fs.String("kind", "", "override the kind for --file: domains|tech|identifiers|profiles")
+	_ = fs.Parse(args)
+	if (*file == "") == (*out == "") {
+		fmt.Fprintln(os.Stderr, "error: pass exactly one of --file or --out")
+		fs.Usage()
+		os.Exit(2)
+	}
+
+	var files []string
+	if *file != "" {
+		files = []string{*file}
+	} else {
+		for _, k := range load.Kinds {
+			p := *out + "-" + k + ".parquet"
+			if _, err := os.Stat(p); err == nil {
+				files = append(files, p)
+			}
+		}
+		if len(files) == 0 {
+			log.Fatalf("no <prefix>-{domains,tech,identifiers,profiles}.parquet files for --out %q", *out)
+		}
+	}
+
+	ctx := context.Background()
+	conn, err := chConnect(ctx)
+	if err != nil {
+		log.Fatalf("clickhouse connect: %v", err)
+	}
+	defer conn.Close()
+	for _, p := range files {
+		table, n, err := load.FromFile(ctx, conn, p, *kind)
+		if err != nil {
+			log.Fatalf("load %s: %v", p, err)
+		}
+		log.Printf("loaded %d rows: %s -> %s", n, p, table)
 	}
 }
 
