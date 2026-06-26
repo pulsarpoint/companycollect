@@ -5,6 +5,22 @@ import duckdb
 from dagster_v3.defs.brazil_rfb import contacts, tables, transforms
 
 
+def test_register_domain_udfs_can_reuse_connection() -> None:
+    with duckdb.connect(":memory:") as connection:
+        contacts.register_domain_udfs(connection)
+        root = connection.execute(
+            "select root_domain('https://www.example.com/path')"
+        ).fetchone()[0]
+
+        contacts.register_domain_udfs(connection)
+        reused_root = connection.execute(
+            "select root_domain('https://www.example.com/path')"
+        ).fetchone()[0]
+
+    assert root == "example.com"
+    assert reused_root == "example.com"
+
+
 def _create_raw_tables(database_path: Path) -> None:
     dataset = tables.DLT_DATASET_NAME
     with duckdb.connect(str(database_path)) as connection:

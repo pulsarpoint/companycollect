@@ -56,13 +56,17 @@ def register_domain_udfs(connection: duckdb.DuckDBPyConnection) -> None:
         connection.remove_function("root_domain")
     except (duckdb.InvalidInputException, duckdb.CatalogException):
         pass
-    connection.create_function(
-        "root_domain",
-        root_domain,
-        ["VARCHAR"],
-        "VARCHAR",
-        null_handling="special",
-    )
+    try:
+        connection.create_function(
+            "root_domain",
+            root_domain,
+            ["VARCHAR"],
+            "VARCHAR",
+            null_handling="special",
+        )
+    except duckdb.CatalogException as exc:
+        if 'Scalar Function with name "root_domain" already exists' not in str(exc):
+            raise
 
 
 def build_brazil_rfb_contact_info(
