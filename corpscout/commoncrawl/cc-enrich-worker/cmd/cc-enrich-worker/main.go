@@ -320,12 +320,28 @@ func run(mode string, o opts) {
 	var techRows []output.TechRow
 	var idents []output.IdentifierRow
 	var profiles []output.ProfileRow
-	for i := 0; i < len(items); i += o.chunk {
-		end := i + o.chunk
-		if end > len(items) {
-			end = len(items)
+	// Pipeline fetch and finalize: while chunk N embeds on the GPU (Finalize), chunk N+1 downloads
+	// on the network (FetchChunk) — so the GPU isn't idle during the fetch phase.
+	chunkEnd := func(i int) int {
+		if e := i + o.chunk; e < len(items) {
+			return e
 		}
-		res, err := worker.ProcessShard(ctx, items[i:end], getter, emb, ref, protos, cfg)
+		return len(items)
+	}
+	var fetched worker.FetchedChunk
+	if len(items) > 0 {
+		fetched = worker.FetchChunk(ctx, items[0:chunkEnd(0)], getter, cfg)
+	}
+	for i := 0; i < len(items); i += o.chunk {
+		end := chunkEnd(i)
+		cur := fetched
+		var nextCh chan worker.FetchedChunk
+		if end < len(items) { // prefetch the next chunk while this one finalizes
+			nextCh = make(chan worker.FetchedChunk, 1)
+			nlo, nhi := end, chunkEnd(end)
+			go func() { nextCh <- worker.FetchChunk(ctx, items[nlo:nhi], getter, cfg) }()
+		}
+		res, err := worker.Finalize(ctx, cur, emb, ref, protos, cfg)
 		if err != nil {
 			log.Fatalf("process chunk at %d: %v", i, err)
 		}
@@ -336,6 +352,9 @@ func run(mode string, o opts) {
 		el := time.Since(start).Seconds()
 		log.Printf("progress: %d/%d pages, %d domains, %d tech, %d ids, %d profiles (%.1f pages/s)",
 			end, len(items), len(domains), len(techRows), len(idents), len(profiles), float64(end)/el)
+		if nextCh != nil {
+			fetched = <-nextCh
+		}
 	}
 
 	var written []string

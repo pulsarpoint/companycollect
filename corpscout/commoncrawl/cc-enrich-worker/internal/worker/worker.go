@@ -53,6 +53,10 @@ type domainAgg struct {
 	hasPrimary                                      bool
 }
 
+// FetchedChunk holds the per-domain aggregates produced by FetchChunk, ready for Finalize.
+// (domainAgg is unexported, so callers pass this opaque value between the two phases.)
+type FetchedChunk struct{ aggs []*domainAgg }
+
 // subdomainOf returns the label(s) before the registered root, or "" for apex/www.
 func subdomainOf(rawURL, root string) string {
 	u, err := url.Parse(rawURL)
@@ -69,22 +73,20 @@ func subdomainOf(rawURL, root string) string {
 	return ""
 }
 
-// ProcessShard processes one worklist shard. cfg.Mode selects the work:
-//
-//	"industry": fetch each domain's primary page -> embed -> classify -> domain rows
-//	            (needs the ClickHouse reference + embedder; no Wappalyzer)
-//	"tech":     fetch every page -> Wappalyzer -> per-domain unioned tech rows
-//	            (no ClickHouse, no embedder)
-//	"both"  :   both in a single fetch pass (default)
-func ProcessShard(ctx context.Context, items []model.WorklistItem, getter fetch.RangeGetter, emb embedderIface,
-	ref *model.Reference, protos *model.Prototypes, cfg ShardConfig) (ShardResult, error) {
-
-	mode := cfg.Mode
+func modeFlags(cfg ShardConfig) (mode string, runEmbed, runTech bool) {
+	mode = cfg.Mode
 	if mode == "" {
 		mode = "both"
 	}
-	runEmbed := mode != "tech"
-	runTech := mode != "industry"
+	return mode, mode != "tech", mode != "industry"
+}
+
+// FetchChunk downloads + parses every page of the chunk into per-domain aggregates; tech detection
+// and identifier/profile extraction run inline here. It does NOT embed/classify — call Finalize for
+// that. Splitting the two phases lets the driver overlap one chunk's embed (GPU) with the next
+// chunk's fetch (network), so the GPU isn't idle while pages download.
+func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.RangeGetter, cfg ShardConfig) FetchedChunk {
+	_, runEmbed, runTech := modeFlags(cfg)
 
 	byDomain := map[string][]model.WorklistItem{}
 	var order []string
@@ -182,6 +184,7 @@ func ProcessShard(ctx context.Context, items []model.WorklistItem, getter fetch.
 	wg.Wait()
 	if n := atomic.LoadInt64(&pageCount); n > 0 {
 		errs := atomic.LoadInt64(&errCount)
+		mode, _, _ := modeFlags(cfg)
 		log.Printf("  timing/page (avg latency): fetch=%.0fms parse=%.1fms tech=%.1fms  errs=%d/%d  conc=%d mode=%s",
 			float64(fetchNs)/float64(n)/1e6, float64(parseNs)/float64(n)/1e6,
 			float64(techNs)/float64(n)/1e6, errs, n, conc, mode)
@@ -189,6 +192,14 @@ func ProcessShard(ctx context.Context, items []model.WorklistItem, getter fetch.
 			log.Printf("  first fetch error: %s", errSample)
 		}
 	}
+	return FetchedChunk{aggs: aggs}
+}
+
+// Finalize embeds + classifies (industry) and builds the output rows from a fetched chunk. For the
+// industry path this is the GPU-bound phase the driver overlaps with the next chunk's FetchChunk.
+func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *model.Reference, protos *model.Prototypes, cfg ShardConfig) (ShardResult, error) {
+	_, runEmbed, runTech := modeFlags(cfg)
+	aggs := fc.aggs
 
 	var domains []output.DomainRow
 	var techRows []output.TechRow
@@ -294,4 +305,15 @@ func ProcessShard(ctx context.Context, items []model.WorklistItem, getter fetch.
 		}
 	}
 	return ShardResult{Domains: domains, Tech: techRows, Identifiers: identRows, Profiles: profileRows}, nil
+}
+
+// ProcessShard processes one worklist chunk end-to-end (fetch then finalize). Use FetchChunk +
+// Finalize directly to pipeline fetch and embed across chunks.
+//
+//	"industry": fetch each domain's primary page -> embed -> classify -> domain rows
+//	"tech":     fetch every page -> Wappalyzer + identifiers/profile -> per-domain rows
+//	"both"  :   both in a single fetch pass (default)
+func ProcessShard(ctx context.Context, items []model.WorklistItem, getter fetch.RangeGetter, emb embedderIface,
+	ref *model.Reference, protos *model.Prototypes, cfg ShardConfig) (ShardResult, error) {
+	return Finalize(ctx, FetchChunk(ctx, items, getter, cfg), emb, ref, protos, cfg)
 }
