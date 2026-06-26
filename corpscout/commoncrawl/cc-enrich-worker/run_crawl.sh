@@ -27,7 +27,7 @@ CRAWL="${CRAWL:-CC-MAIN-2026-25}"
 WHERE="${WHERE:-}" # empty = all domains (global dataset); e.g. "content_languages like '%eng%'"
 DATA="${DATA:-../data/crawl}" # commoncrawl/data/crawl (gitignored); never write data inside the code dir
 BUILDER_DIR="${BUILDER_DIR:-../index-builder}" # standalone Python worklist builder
-WORKER="$PWD/cc-enrich-worker"
+WORKER="$PWD/bin/cc-enrich-worker" # built by `make build`
 
 # OUTPUTS: the <table>:<parquet-suffix> pairs a mode produces (loaded in order).
 case "$MODE" in

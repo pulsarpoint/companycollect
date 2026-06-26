@@ -63,11 +63,12 @@ Load with `set -a; source ../.env; set +a` (exports every var; `env | grep` to v
 shows set-but-unexported vars and lies). `AWS_REGION` is the only place the S3 region is set (the
 CommonCrawl bucket is permanently `us-east-1`); there is no region flag.
 
-**c. Build the worker**
+**c. Build the worker** (`cmd/cc-enrich-worker` → `bin/cc-enrich-worker`, gitignored)
 ```bash
-cd commoncrawl/cc-enrich-worker && CGO_ENABLED=0 go build -o cc-enrich-worker .   # pure static binary
-# ARM (Graviton): GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o cc-enrich-worker .
-# or: docker build -t cc-enrich-worker .   (distroless image, see Dockerfile)
+cd commoncrawl/cc-enrich-worker && make build     # static binary at bin/cc-enrich-worker
+# make arm    # cross-compile linux/arm64 (Graviton)
+# make test   # go test ./...
+# or: docker build -t cc-enrich-worker .          (distroless image, see Dockerfile)
 ```
 
 **d. Worklists — the worker's input (`--worklist`).** Every pass consumes a *worklist shard*: a
@@ -82,7 +83,7 @@ uv run python -m index_builder --crawl CC-MAIN-2026-25 --mode industry --part 0 
 uv run python -m index_builder --crawl CC-MAIN-2026-25 --mode tech     --part 0   # -> ../data/index/<crawl>/shard_tech_0.parquet
 ```
 Shards land under **`commoncrawl/data/`** (gitignored — *never* in the code folders). Then e.g.
-`cc-enrich-worker industry --worklist ../data/index/CC-MAIN-2026-25/shard_industry_0.parquet --crawl-id CC-MAIN-2026-25`. Full
+`./bin/cc-enrich-worker industry --worklist ../data/index/CC-MAIN-2026-25/shard_industry_0.parquet --crawl-id CC-MAIN-2026-25` (§5). Full
 index-builder flags in §7.
 
 ---
@@ -199,6 +200,36 @@ cached/skipped if present), runs the worker pass, loads each output Parquet into
 (idempotent; ReplacingMergeTree dedupes). Run the two workflows as **separate processes** so tech
 pegs the cores while industry feeds the GPU. Env tunables: `CRAWL`, `WHERE` (worklist SQL filter),
 `MAX_PAGES`, `TECH_CONC`, `IND_CONC`, `EMBED_CONC`.
+
+### Running the worker yourself (without `run_crawl.sh`)
+
+The worker is stateless: it **only writes Parquet** — it never touches ClickHouse. `run_crawl.sh`
+bundles worklist + run + load; if you run the binary directly you do those three steps yourself.
+
+```bash
+cd commoncrawl/cc-enrich-worker
+make build                                 # -> bin/cc-enrich-worker
+set -a; source ../.env; set +a
+
+# 1. build a worklist (or reuse one under ../data/index/) — §2d
+( cd ../index-builder && uv run python -m index_builder --mode tech --part 0 )
+SHARD=../data/index/CC-MAIN-2026-25/shard_tech_0.parquet
+
+# 2. run the pass — writes Parquet under ../data/crawl/ (the default --out; the dir is created)
+./bin/cc-enrich-worker tech --worklist "$SHARD" --crawl-id CC-MAIN-2026-25 \
+    --out ../data/crawl/run0 --concurrency 128
+# -> ../data/crawl/run0-tech.parquet, run0-identifiers.parquet, run0-profiles.parquet
+
+# 3. load each Parquet into ClickHouse (tech writes 3 tables; industry writes 1: commoncrawl_domains)
+ch() { clickhouse-client --host "$CLICKHOUSE_HOST" --port "${CLICKHOUSE_NATIVE_PORT:-9002}" \
+         -u "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" -d corpscout "$@"; }
+ch --query "INSERT INTO commoncrawl_technologies        FROM INFILE '../data/crawl/run0-tech.parquet'        FORMAT Parquet"
+ch --query "INSERT INTO commoncrawl_company_identifiers FROM INFILE '../data/crawl/run0-identifiers.parquet' FORMAT Parquet"
+ch --query "INSERT INTO commoncrawl_company_profile     FROM INFILE '../data/crawl/run0-profiles.parquet'    FORMAT Parquet"
+```
+`FROM INFILE` matches columns by name, so the Parquet loads straight in (tables must exist —
+`make clickhouse-migrate-up`). For an `industry` run, the one file is `run0-domains.parquet` →
+`INSERT INTO commoncrawl_domains`. ReplacingMergeTree dedupes, so re-loading a file is safe.
 
 ---
 
@@ -319,13 +350,14 @@ FROM commoncrawl_domains GROUP BY conf ORDER BY conf;
 ## 11. Build, test & code layout
 
 ```bash
-cd cc-enrich-worker     && go test ./... && CGO_ENABLED=0 go build -o cc-enrich-worker .
+cd cc-enrich-worker     && make test && make build      # binary -> bin/ (gitignored)
 cd ../index-builder     && uv run --with pytest --with duckdb --with pyarrow pytest tests/
 cd ../reference-builder && uv run --with pytest --with numpy pytest tests/
 ```
 
-The Go worker is `main.go` (entry point: flags, env, ClickHouse/embedder/getter wiring, the chunked
-process loop) + `internal/` packages: `model` (shared structs), `vec` (math), `fetch` (WARC fetch),
-`embed` (embedding client), `parse` (HTML→text), `tech` (Wappalyzer + Aho-Corasick), `extract`
-(LEI/VAT/profile), `classify` (NACE reference + classify + confidence + startup check), `output`
-(Parquet + S3), `worker` (`ProcessShard` orchestration).
+The Go worker is `cmd/cc-enrich-worker/main.go` (entry point: flags, env, ClickHouse/embedder/getter
+wiring, the chunked process loop) + `internal/` packages: `model` (shared structs), `vec` (math),
+`fetch` (WARC fetch), `embed` (embedding client), `parse` (HTML→text), `tech` (Wappalyzer +
+Aho-Corasick), `extract` (LEI/VAT/profile), `classify` (NACE reference + classify + confidence +
+startup check), `output` (Parquet + S3), `worker` (`ProcessShard` orchestration). `Makefile` builds
+into `bin/`; binaries and `data/` are gitignored — code dirs never hold binary output.

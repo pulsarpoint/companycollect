@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -77,7 +78,7 @@ func parse(mode string, args []string) opts {
 	// common to every command
 	fs.StringVar(&o.worklist, "worklist", "", "worklist parquet shard (required)")
 	fs.StringVar(&o.crawlID, "crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 — stamped on every row (required)")
-	fs.StringVar(&o.out, "out", "out", "output prefix, e.g. <out>-domains.parquet / <out>-tech.parquet")
+	fs.StringVar(&o.out, "out", "../data/crawl/out", "output prefix → <out>-domains.parquet, <out>-tech.parquet, … (default under the gitignored data/ dir; the parent is created)")
 	fs.IntVar(&o.concurrency, "concurrency", 32, "fetch/parse concurrency (push to ~128 to hide off-AWS fetch RTT)")
 	fs.IntVar(&o.chunk, "chunk", 1024, "domains per fetch+process chunk")
 	fs.BoolVar(&o.anonymous, "s3-anonymous", false, "fetch via the HTTPS CDN data.commoncrawl.org (off-AWS; rate-limited — signed S3 preferred)")
@@ -276,6 +277,11 @@ func run(mode string, o opts) {
 			end, len(items), len(domains), len(techRows), len(idents), len(profiles), float64(end)/el)
 	}
 
+	if dir := filepath.Dir(o.out); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			log.Fatalf("create output dir %s: %v", dir, err)
+		}
+	}
 	domPath, techPath := o.out+"-domains.parquet", o.out+"-tech.parquet"
 	var written []string
 	if mode != "tech" {
