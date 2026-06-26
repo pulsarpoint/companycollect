@@ -60,8 +60,23 @@ cc-enrich-worker both     [flags]    # both in one fetch pass (discouraged — t
 ```
 Mode-specific flags appear only under their command (`cc-enrich-worker tech -h`).
 
-> In practice you don't call the binary directly — **`run_crawl.sh` (§5)** generates the worklist,
-> runs the pass, and loads ClickHouse, per shard. The two workflows below explain what each pass does.
+**d. Worklists — the worker's input (`--worklist`).** Every pass consumes a *worklist shard*: a
+Parquet file with one row per page to fetch (`root_domain, url, warc_filename, warc_record_offset,
+warc_record_length, content_languages`), built by [`index-builder`](index-builder/README.md) from
+the CommonCrawl URL index. The crawl's index is ~300 parts; one part → one shard. **`run_crawl.sh`
+builds them automatically per shard**, so you usually don't touch this. To build one by hand:
+```bash
+cd commoncrawl/index-builder
+uv run python -m index_builder --crawl CC-MAIN-2026-25 --list                                 # how many parts
+uv run python -m index_builder --crawl CC-MAIN-2026-25 --mode industry --part 0 --out i0.parquet   # 1 page/domain
+uv run python -m index_builder --crawl CC-MAIN-2026-25 --mode tech     --part 0 --out t0.parquet   # many pages/domain
+```
+Then run e.g. `cc-enrich-worker industry --worklist i0.parquet --crawl-id CC-MAIN-2026-25`. The two
+modes return different page sets (§3 vs §4); full flags in
+[index-builder/README](index-builder/README.md).
+
+> In practice you don't call the binary directly — **`run_crawl.sh` (§5)** does steps (d)+run+load
+> per shard. The two workflows below explain what each pass does.
 
 ---
 
