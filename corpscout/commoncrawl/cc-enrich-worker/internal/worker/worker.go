@@ -40,6 +40,8 @@ type ShardConfig struct {
 	CrawlID, SourceRunID string
 	ResolvedAt           time.Time
 	Concurrency          int
+	EmbedConcurrency     int    // industry stream: embed requests kept continuously in flight
+	EmbedBatch           int    // industry stream: texts per embed request
 	TechMaxBytes         int    // body cap fed to Wappalyzer; 0 => no cap (full body)
 	Mode                 string // "industry" | "tech" | "both" (default "both")
 }
@@ -305,6 +307,198 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 		}
 	}
 	return ShardResult{Domains: domains, Tech: techRows, Identifiers: identRows, Profiles: profileRows}, nil
+}
+
+// streamItem is one fetched primary page handed from the fetch stage to an embed worker.
+type streamItem struct {
+	di        int
+	root, url string
+	sub       string
+	text      string
+	emails    []string
+}
+
+// ProcessIndustryStream runs the WHOLE industry shard as a continuous fetch→embed pipeline: fetch
+// goroutines stream each domain's primary page to a pool of embed workers that keep
+// cfg.EmbedConcurrency requests in flight at all times. Unlike the chunked path it never does
+// "embed all, then wait" — so the GPU is fed continuously and doesn't drain between bursts.
+func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, getter fetch.RangeGetter,
+	emb embedderIface, ref *model.Reference, protos *model.Prototypes, cfg ShardConfig) (ShardResult, error) {
+
+	byDomain := map[string][]model.WorklistItem{}
+	var order []string
+	for _, it := range items {
+		if _, ok := byDomain[it.RootDomain]; !ok {
+			order = append(order, it.RootDomain)
+		}
+		byDomain[it.RootDomain] = append(byDomain[it.RootDomain], it)
+	}
+	domains := make([]output.DomainRow, len(order)) // written by di; empty rows filtered at end
+
+	conc := cfg.Concurrency
+	if conc <= 0 {
+		conc = 8
+	}
+	embConc := cfg.EmbedConcurrency
+	if embConc <= 0 {
+		embConc = 32
+	}
+	embBatch := cfg.EmbedBatch
+	if embBatch <= 0 {
+		embBatch = 16
+	}
+
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ch := make(chan streamItem, embConc*embBatch)
+	var fetchNs, parseNs, pageCount, errCount, embedNs, embedReqs, done int64
+	var errSample string
+	var errOnce, embedErrOnce sync.Once
+	var embedErr error
+
+	// progress ticker
+	stop := make(chan struct{})
+	start := time.Now()
+	go func() {
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				n := atomic.LoadInt64(&done)
+				log.Printf("  industry stream: %d/%d domains (%.1f domains/s, conc=%d embed=%d)",
+					n, len(order), float64(n)/time.Since(start).Seconds(), conc, embConc)
+			}
+		}
+	}()
+
+	// embed workers: each keeps one request in flight; embConc of them => embConc concurrent.
+	var ewg sync.WaitGroup
+	for w := 0; w < embConc; w++ {
+		ewg.Add(1)
+		go func() {
+			defer ewg.Done()
+			var batch []streamItem
+			texts := make([]string, 0, embBatch)
+			flush := func() {
+				if len(batch) == 0 {
+					return
+				}
+				texts = texts[:0]
+				for k := range batch {
+					texts = append(texts, batch[k].text)
+				}
+				t0 := time.Now()
+				vecs, err := emb.Embed(texts, classifyInstruction)
+				atomic.AddInt64(&embedNs, time.Since(t0).Nanoseconds())
+				atomic.AddInt64(&embedReqs, 1)
+				if err != nil {
+					embedErrOnce.Do(func() { embedErr = err })
+					cancel()
+					batch = batch[:0]
+					return
+				}
+				for k := range batch {
+					b := batch[k]
+					var res model.DomainResult
+					if label := classify.MatchSignal(b.text); label != "" {
+						res = model.DomainResult{PageType: label, NaceMethod: "keyword"}
+					} else {
+						res = classify.Classify(vecs[k], ref, protos)
+					}
+					conf := uint8(0)
+					if res.NaceConfident {
+						conf = 1
+					}
+					domains[b.di] = output.DomainRow{
+						CrawlID: cfg.CrawlID, URL: b.url, RootDomain: b.root, Subdomain: b.sub,
+						Emails: b.emails, EmailCount: uint32(len(b.emails)),
+						PageType: res.PageType, PageTypeScore: res.PageTypeScore,
+						NaceCode: res.NaceCode, NaceLabel: res.NaceLabel, NaceDivision: res.NaceDivision,
+						NaceConfident: conf, NaceConfidence: res.NaceConfidence,
+						NaceMargin: res.NaceMargin, NaceScore: res.NaceScore, NaceMethod: res.NaceMethod,
+						Top3Codes: res.Top3Codes, Top3Labels: res.Top3Labels, Top3Scores: res.Top3Scores,
+						SourceURL: b.url, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+					}
+				}
+				atomic.AddInt64(&done, int64(len(batch)))
+				batch = batch[:0]
+			}
+			for it := range ch {
+				batch = append(batch, it)
+				if len(batch) >= embBatch {
+					flush()
+				}
+			}
+			flush()
+		}()
+	}
+
+	// fetch workers: one primary page per domain -> stream to the embed workers.
+	sem := make(chan struct{}, conc)
+	var fwg sync.WaitGroup
+	for di, dom := range order {
+		fwg.Add(1)
+		go func(di int, dom string) {
+			defer fwg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			for _, wit := range byDomain[dom] {
+				if !wit.Primary {
+					continue
+				}
+				t0 := time.Now()
+				fctx, fcancel := context.WithTimeout(cctx, 30*time.Second)
+				_, body, err := fetch.FetchRecord(fctx, getter, ccBucket, wit.WarcFilename, wit.Offset, wit.Length)
+				fcancel()
+				atomic.AddInt64(&fetchNs, time.Since(t0).Nanoseconds())
+				atomic.AddInt64(&pageCount, 1)
+				if err != nil {
+					atomic.AddInt64(&errCount, 1)
+					errOnce.Do(func() { errSample = err.Error() })
+					return
+				}
+				t1 := time.Now()
+				text, emails, _ := parse.ParseHTML(string(body))
+				atomic.AddInt64(&parseNs, time.Since(t1).Nanoseconds())
+				select {
+				case ch <- streamItem{di: di, root: dom, url: wit.URL, sub: subdomainOf(wit.URL, dom), text: text, emails: emails}:
+				case <-cctx.Done():
+				}
+				return
+			}
+		}(di, dom)
+	}
+	fwg.Wait()
+	close(ch)
+	ewg.Wait()
+	close(stop)
+	if embedErr != nil {
+		return ShardResult{}, embedErr
+	}
+
+	if n := atomic.LoadInt64(&pageCount); n > 0 {
+		reqs := atomic.LoadInt64(&embedReqs)
+		avgEmbed := 0.0
+		if reqs > 0 {
+			avgEmbed = float64(embedNs) / float64(reqs) / 1e6
+		}
+		log.Printf("  industry: fetch=%.0fms parse=%.1fms/page, embed=%.0fms/req over %d reqs, errs=%d/%d conc=%d embed=%d",
+			float64(fetchNs)/float64(n)/1e6, float64(parseNs)/float64(n)/1e6, avgEmbed, reqs,
+			atomic.LoadInt64(&errCount), n, conc, embConc)
+		if errCount > 0 {
+			log.Printf("  first fetch error: %s", errSample)
+		}
+	}
+	out := domains[:0]
+	for _, d := range domains {
+		if d.RootDomain != "" {
+			out = append(out, d)
+		}
+	}
+	return ShardResult{Domains: out}, nil
 }
 
 // ProcessShard processes one worklist chunk end-to-end (fetch then finalize). Use FetchChunk +

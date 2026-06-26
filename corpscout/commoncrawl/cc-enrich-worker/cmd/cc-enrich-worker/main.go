@@ -313,47 +313,60 @@ func run(mode string, o opts) {
 	cfg := worker.ShardConfig{
 		CrawlID: o.crawlID, SourceRunID: fmt.Sprintf("go-%d", time.Now().Unix()),
 		ResolvedAt: time.Now().UTC(), Concurrency: o.concurrency, TechMaxBytes: o.techMax,
-		Mode: mode,
+		EmbedConcurrency: o.embedConc, EmbedBatch: o.batch, Mode: mode,
 	}
 	start := time.Now()
 	var domains []output.DomainRow
 	var techRows []output.TechRow
 	var idents []output.IdentifierRow
 	var profiles []output.ProfileRow
-	// Pipeline fetch and finalize: while chunk N embeds on the GPU (Finalize), chunk N+1 downloads
-	// on the network (FetchChunk) — so the GPU isn't idle during the fetch phase.
-	chunkEnd := func(i int) int {
-		if e := i + o.chunk; e < len(items) {
-			return e
-		}
-		return len(items)
-	}
-	var fetched worker.FetchedChunk
-	if len(items) > 0 {
-		fetched = worker.FetchChunk(ctx, items[0:chunkEnd(0)], getter, cfg)
-	}
-	for i := 0; i < len(items); i += o.chunk {
-		end := chunkEnd(i)
-		cur := fetched
-		var nextCh chan worker.FetchedChunk
-		if end < len(items) { // prefetch the next chunk while this one finalizes
-			nextCh = make(chan worker.FetchedChunk, 1)
-			nlo, nhi := end, chunkEnd(end)
-			go func() { nextCh <- worker.FetchChunk(ctx, items[nlo:nhi], getter, cfg) }()
-		}
-		res, err := worker.Finalize(ctx, cur, emb, ref, protos, cfg)
+
+	// Industry: one continuous fetch→embed stream over the whole shard, so the GPU is fed
+	// non-stop (no per-chunk "embed all then wait" barrier). tech/both keep the chunk pipeline.
+	if mode == "industry" {
+		res, err := worker.ProcessIndustryStream(ctx, items, getter, emb, ref, protos, cfg)
 		if err != nil {
-			log.Fatalf("process chunk at %d: %v", i, err)
+			log.Fatalf("industry stream: %v", err)
 		}
-		domains = append(domains, res.Domains...)
-		techRows = append(techRows, res.Tech...)
-		idents = append(idents, res.Identifiers...)
-		profiles = append(profiles, res.Profiles...)
-		el := time.Since(start).Seconds()
-		log.Printf("progress: %d/%d pages, %d domains, %d tech, %d ids, %d profiles (%.1f pages/s)",
-			end, len(items), len(domains), len(techRows), len(idents), len(profiles), float64(end)/el)
-		if nextCh != nil {
-			fetched = <-nextCh
+		domains = res.Domains
+		log.Printf("progress: %d/%d pages, %d domains (%.1f pages/s)",
+			len(items), len(items), len(domains), float64(len(items))/time.Since(start).Seconds())
+	} else {
+		// Pipeline fetch and finalize: while chunk N embeds on the GPU (Finalize), chunk N+1 downloads
+		// on the network (FetchChunk) — so the GPU isn't idle during the fetch phase.
+		chunkEnd := func(i int) int {
+			if e := i + o.chunk; e < len(items) {
+				return e
+			}
+			return len(items)
+		}
+		var fetched worker.FetchedChunk
+		if len(items) > 0 {
+			fetched = worker.FetchChunk(ctx, items[0:chunkEnd(0)], getter, cfg)
+		}
+		for i := 0; i < len(items); i += o.chunk {
+			end := chunkEnd(i)
+			cur := fetched
+			var nextCh chan worker.FetchedChunk
+			if end < len(items) { // prefetch the next chunk while this one finalizes
+				nextCh = make(chan worker.FetchedChunk, 1)
+				nlo, nhi := end, chunkEnd(end)
+				go func() { nextCh <- worker.FetchChunk(ctx, items[nlo:nhi], getter, cfg) }()
+			}
+			res, err := worker.Finalize(ctx, cur, emb, ref, protos, cfg)
+			if err != nil {
+				log.Fatalf("process chunk at %d: %v", i, err)
+			}
+			domains = append(domains, res.Domains...)
+			techRows = append(techRows, res.Tech...)
+			idents = append(idents, res.Identifiers...)
+			profiles = append(profiles, res.Profiles...)
+			el := time.Since(start).Seconds()
+			log.Printf("progress: %d/%d pages, %d domains, %d tech, %d ids, %d profiles (%.1f pages/s)",
+				end, len(items), len(domains), len(techRows), len(idents), len(profiles), float64(end)/el)
+			if nextCh != nil {
+				fetched = <-nextCh
+			}
 		}
 	}
 
