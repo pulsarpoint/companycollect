@@ -13,11 +13,15 @@ import dlt
 import ijson
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
+from dagster_duckdb import DuckDBResource
 from dlt.extract.resource import DltResource
 from dlt.pipeline.pipeline import Pipeline
 from dlt.sources.helpers import requests as dlt_requests
 
-from dagster_v3.defs.common.resources import LocalDuckDBResource
+from dagster_v3.defs.common.duckdb_resources import (
+    duckdb_database_path,
+    duckdb_resource,
+)
 
 COUNTRY = "FI"
 SOURCE = "finland_prhytj"
@@ -151,20 +155,20 @@ def finland_ytj_pipeline(
 def finland_ytj_all_companies_duckdb_asset(
     context: dg.AssetExecutionContext,
     dlt: DagsterDltResource,
-    ytj_duckdb: LocalDuckDBResource,
+    ytj_duckdb: DuckDBResource,
 ) -> Iterator[Any]:
     """Load Finland PRH YTJ all-companies data to a local DuckDB database with dlt."""
     context.log.info("Materializing Finland YTJ dlt DuckDB table")
     yield from dlt.run(
         context=context,
         dlt_source=finland_ytj_source(run_id=context.run_id),
-        dlt_pipeline=finland_ytj_pipeline(ytj_duckdb.path()),
+        dlt_pipeline=finland_ytj_pipeline(duckdb_database_path(ytj_duckdb)),
     )
 
 
 @dg.asset_check(asset="finland_ytj_all_companies_duckdb", name="all_companies_non_empty")
-def all_companies_non_empty(ytj_duckdb: LocalDuckDBResource) -> dg.AssetCheckResult:
-    with ytj_duckdb.connect(read_only=True) as connection:
+def all_companies_non_empty(ytj_duckdb: DuckDBResource) -> dg.AssetCheckResult:
+    with ytj_duckdb.get_connection() as connection:
         row_count = connection.execute(
             f"select count(*) from {DLT_DATASET_NAME}.{DLT_COMPANIES_TABLE}"
         ).fetchone()[0]
@@ -180,7 +184,7 @@ defs = dg.Definitions(
     ],
     asset_checks=[all_companies_non_empty],
     resources={
-        "ytj_duckdb": LocalDuckDBResource(),
+        "ytj_duckdb": duckdb_resource(DEFAULT_DUCKDB_PATH),
     },
 )
 

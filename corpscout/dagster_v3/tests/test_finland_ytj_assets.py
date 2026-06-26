@@ -6,6 +6,7 @@ from zipfile import ZipFile
 import duckdb
 import pytest
 
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 import dagster_v3.defs.finland_ytj.assets as ytj_assets
 from dagster_v3.definitions import defs as load_project_defs
 
@@ -218,7 +219,7 @@ def test_non_empty_check_reports_count(tmp_path: Path) -> None:
         run_id="run-1",
         session=_session({"companies": [{"businessId": {"value": "a"}}]}),
     )
-    resource = ytj_assets.LocalDuckDBResource(database_path=str(database_path))
+    resource = duckdb_resource(database_path)
     result = ytj_assets.all_companies_non_empty(resource)
     assert result.passed is True
     assert result.metadata["row_count"].value == 1
