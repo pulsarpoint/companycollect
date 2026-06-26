@@ -10,7 +10,7 @@ import (
 // INSERT (ch tag). They MUST name the same column, or the `load` command silently maps to the
 // wrong/missing column. Pin ch == the parquet column name (the part before any ,option).
 func TestRowTagsConsistent(t *testing.T) {
-	for _, v := range []any{DomainRow{}, TechRow{}, IdentifierRow{}, ProfileRow{}} {
+	for _, v := range []any{DomainRow{}, TechRow{}, IdentifierRow{}, ProfileRow{}, RegistryRow{}} {
 		rt := reflect.TypeOf(v)
 		for i := 0; i < rt.NumField(); i++ {
 			f := rt.Field(i)

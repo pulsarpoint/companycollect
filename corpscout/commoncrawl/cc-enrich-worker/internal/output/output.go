@@ -93,10 +93,23 @@ type ProfileRow struct {
 	ResolvedAt    time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
+// RegistryRow mirrors corpscout.commoncrawl_domain_registry (migration 000063): the domain master,
+// one row per (domain, crawl) written by EVERY pass — only pass-invariant domain-level facts (no
+// NACE/contacts), so tech and industry never clobber each other's row.
+type RegistryRow struct {
+	CrawlID     string    `parquet:"crawl_id" ch:"crawl_id"`
+	RootDomain  string    `parquet:"root_domain" ch:"root_domain"`
+	Subdomain   string    `parquet:"subdomain" ch:"subdomain"`
+	SourceURL   string    `parquet:"source_url" ch:"source_url"`
+	SourceRunID string    `parquet:"source_run_id" ch:"source_run_id"`
+	ResolvedAt  time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
+}
+
 func WriteDomains(path string, rows []DomainRow) error         { return parquet.WriteFile(path, rows) }
 func WriteTech(path string, rows []TechRow) error              { return parquet.WriteFile(path, rows) }
 func WriteIdentifiers(path string, rows []IdentifierRow) error { return parquet.WriteFile(path, rows) }
 func WriteProfiles(path string, rows []ProfileRow) error       { return parquet.WriteFile(path, rows) }
+func WriteRegistry(path string, rows []RegistryRow) error      { return parquet.WriteFile(path, rows) }
 
 // UploadToS3 puts a local file at the given bucket/key.
 func UploadToS3(ctx context.Context, client *s3.Client, bucket, key, path string) error {
