@@ -23,8 +23,8 @@ import (
 	"cc-enrich-worker/internal/worker"
 )
 
-// WorklistRow is one row of the materialized worklist parquet (index_enrich/worklist.py
-// columns). content_languages is present in the file but unused by the worker.
+// WorklistRow is one row of the materialized worklist parquet (index-builder columns).
+// content_languages is present in the file but unused by the worker.
 type WorklistRow struct {
 	RootDomain   string `parquet:"root_domain"`
 	URL          string `parquet:"url"`
@@ -38,6 +38,83 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func usage() {
+	fmt.Fprint(os.Stderr, `cc-enrich-worker — enrich CommonCrawl domains into the corpscout database
+
+Usage:
+  cc-enrich-worker <command> [flags]
+
+Commands:
+  industry   embed each domain's page + classify NACE industry  (GPU-bound; needs ClickHouse + embed endpoint)
+  tech       fingerprint technologies + extract identifiers/profiles  (CPU-bound; S3 only)
+  both       run both in one fetch pass  (discouraged — co-locating throttles the GPU; prefer two processes)
+
+Run "cc-enrich-worker <command> -h" to see that command's flags.
+
+Config is via environment (see ../.env.example): COMMONCRAWL_EMBED_*, CLICKHOUSE_*,
+AWS_* (region defaults to us-east-1 — the CommonCrawl bucket), CC_BASE_URL.
+`)
+}
+
+// opts holds the parsed flags for a run. Mode-specific fields are only registered (and meaningful)
+// for the relevant command.
+type opts struct {
+	worklist, crawlID, out string
+	concurrency, chunk     int
+	anonymous              bool
+	s3Bucket, s3Prefix     string
+	techEngine             string // tech / both
+	techMax                int    // tech / both
+	batch, embedConc       int    // industry / both
+}
+
+// parse builds a per-command flag set (so tech flags don't show under industry and vice-versa).
+func parse(mode string, args []string) opts {
+	fs := flag.NewFlagSet("cc-enrich-worker "+mode, flag.ExitOnError)
+	var o opts
+	// common to every command
+	fs.StringVar(&o.worklist, "worklist", "", "worklist parquet shard (required)")
+	fs.StringVar(&o.crawlID, "crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 — stamped on every row (required)")
+	fs.StringVar(&o.out, "out", "out", "output prefix, e.g. <out>-domains.parquet / <out>-tech.parquet")
+	fs.IntVar(&o.concurrency, "concurrency", 32, "fetch/parse concurrency (push to ~128 to hide off-AWS fetch RTT)")
+	fs.IntVar(&o.chunk, "chunk", 1024, "domains per fetch+process chunk")
+	fs.BoolVar(&o.anonymous, "s3-anonymous", false, "fetch via the HTTPS CDN data.commoncrawl.org (off-AWS; rate-limited — signed S3 preferred)")
+	fs.StringVar(&o.s3Bucket, "s3-bucket", "", "if set, upload outputs to this bucket (in-AWS path)")
+	fs.StringVar(&o.s3Prefix, "s3-prefix", "", "key prefix for uploaded outputs")
+	if mode == "tech" || mode == "both" {
+		fs.StringVar(&o.techEngine, "tech-engine", "fast", "tech matcher: fast (Aho-Corasick gated) | wappalyzer (upstream full scan)")
+		fs.IntVar(&o.techMax, "tech-max-bytes", 131072, "cap body bytes fed to Wappalyzer (0 = full body; full-body regex ~1.2s/page)")
+	}
+	if mode == "industry" || mode == "both" {
+		fs.IntVar(&o.batch, "embed-batch", embed.DefaultBatch, "texts per embed request — keep small (big batches overflow the engine's token budget)")
+		fs.IntVar(&o.embedConc, "embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
+	}
+	_ = fs.Parse(args)
+	if o.worklist == "" || o.crawlID == "" {
+		fmt.Fprintln(os.Stderr, "error: --worklist and --crawl-id are required")
+		fs.Usage()
+		os.Exit(2)
+	}
+	return o
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		usage()
+		os.Exit(2)
+	}
+	switch cmd := os.Args[1]; cmd {
+	case "industry", "tech", "both":
+		run(cmd, parse(cmd, os.Args[2:]))
+	case "-h", "--help", "help":
+		usage()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
+		usage()
+		os.Exit(2)
+	}
 }
 
 func chConnect(ctx context.Context) (driver.Conn, error) {
@@ -72,8 +149,8 @@ func detectModel(baseURL string) (string, error) {
 	return parsed.Data[0].ID, nil
 }
 
-// readWorklist loads the shard and marks the first row per domain as the primary
-// page (the worklist is ordered shallowest-first, so rn=1 leads each domain group).
+// readWorklist loads the shard and marks the first row per domain as the primary page (the
+// worklist is ordered shallowest-first, so rn=1 leads each domain group).
 func readWorklist(path string) ([]mdl.WorklistItem, error) {
 	rows, err := parquet.ReadFile[WorklistRow](path)
 	if err != nil {
@@ -92,39 +169,11 @@ func readWorklist(path string) ([]mdl.WorklistItem, error) {
 	return items, nil
 }
 
-func main() {
-	worklist := flag.String("worklist", "", "worklist parquet shard (required)")
-	out := flag.String("out", "out", "output prefix: writes <out>-domains.parquet, <out>-tech.parquet")
-	crawlID := flag.String("crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 (required)")
-	concurrency := flag.Int("concurrency", 32, "fetch/parse/tech concurrency")
-	techMax := flag.Int("tech-max-bytes", 131072, "cap body bytes fed to Wappalyzer (0=full body; full-body regex is ~1.2s/page)")
-	techEngine := flag.String("tech-engine", "fast", "tech matcher: fast (Aho-Corasick gated) | wappalyzer (upstream full scan)")
-	modeFlag := flag.String("mode", "both", "industry (domains, needs CH+embedder) | tech (tech only, no CH/embedder) | both")
-	skipTech := flag.Bool("skip-tech", false, "alias for --mode industry (skip Wappalyzer)")
-	anonymous := flag.Bool("s3-anonymous", false, "fetch via the anonymous HTTPS CDN data.commoncrawl.org (off-AWS; S3 API denies anon)")
-	batch := flag.Int("embed-batch", embed.DefaultBatch, "embed batch size")
-	embedConc := flag.Int("embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
-	chunkSize := flag.Int("chunk", 1024, "domains per fetch+embed chunk (pipelines fetch/embed; lower = earlier GPU traffic)")
-	region := flag.String("region", envOr("AWS_REGION", "us-east-1"), "S3 region")
-	s3Bucket := flag.String("s3-bucket", "", "if set, upload outputs to this bucket")
-	s3Prefix := flag.String("s3-prefix", "", "key prefix for uploaded outputs")
-	flag.Parse()
-
-	if *worklist == "" || *crawlID == "" {
-		log.Fatal("--worklist and --crawl-id are required")
-	}
+func run(mode string, o opts) {
 	ctx := context.Background()
 
-	mode := *modeFlag
-	if *skipTech && mode == "both" {
-		mode = "industry"
-	}
-	if mode != "industry" && mode != "tech" && mode != "both" {
-		log.Fatalf("--mode must be industry|tech|both, got %q", mode)
-	}
-
 	if mode != "industry" { // tech matcher only needed when we fingerprint
-		switch *techEngine {
+		switch o.techEngine {
 		case "fast":
 			fm, err := tech.NewFastMatcher()
 			if err != nil {
@@ -135,7 +184,7 @@ func main() {
 		case "wappalyzer":
 			log.Printf("tech engine: wappalyzer (upstream full scan)")
 		default:
-			log.Fatalf("--tech-engine must be fast|wappalyzer, got %q", *techEngine)
+			log.Fatalf("--tech-engine must be fast|wappalyzer, got %q", o.techEngine)
 		}
 	}
 
@@ -171,7 +220,7 @@ func main() {
 			}
 		}
 		log.Printf("embed endpoint=%s model=%s", baseURL, model)
-		emb = embed.NewEmbedClient(baseURL, model, *batch, *embedConc)
+		emb = embed.NewEmbedClient(baseURL, model, o.batch, o.embedConc)
 
 		// Fail fast unless the reference covers every NACE category and was built with the same
 		// model + dim this worker will embed pages with (the matching-vector-space invariant).
@@ -179,31 +228,29 @@ func main() {
 			log.Fatalf("reference check failed: %v", err)
 		}
 		log.Printf("reference check OK: %d/%d categories, model=%s dim=%d", meta.Count, meta.Expected, meta.Model, meta.Dim)
-	} else {
-		log.Printf("mode=tech: skipping ClickHouse reference + embedder")
 	}
 
 	var getter fetch.RangeGetter
-	if *anonymous {
-		getter = fetch.NewHTTPGetter(envOr("CC_BASE_URL", ""), *concurrency)
+	if o.anonymous {
+		getter = fetch.NewHTTPGetter(envOr("CC_BASE_URL", ""), o.concurrency)
 		log.Printf("fetch: anonymous HTTPS CDN (data.commoncrawl.org)")
 	} else {
-		g, err := fetch.NewS3Getter(ctx, *region)
+		g, err := fetch.NewS3Getter(ctx, envOr("AWS_REGION", "us-east-1"))
 		if err != nil {
 			log.Fatalf("s3 init: %v", err)
 		}
 		getter = g
 	}
 
-	items, err := readWorklist(*worklist)
+	items, err := readWorklist(o.worklist)
 	if err != nil {
 		log.Fatalf("read worklist: %v", err)
 	}
 	log.Printf("worklist: %d pages", len(items))
 
 	cfg := worker.ShardConfig{
-		CrawlID: *crawlID, SourceRunID: fmt.Sprintf("go-%d", time.Now().Unix()),
-		ResolvedAt: time.Now().UTC(), Concurrency: *concurrency, TechMaxBytes: *techMax,
+		CrawlID: o.crawlID, SourceRunID: fmt.Sprintf("go-%d", time.Now().Unix()),
+		ResolvedAt: time.Now().UTC(), Concurrency: o.concurrency, TechMaxBytes: o.techMax,
 		Mode: mode,
 	}
 	start := time.Now()
@@ -211,8 +258,8 @@ func main() {
 	var techRows []output.TechRow
 	var idents []output.IdentifierRow
 	var profiles []output.ProfileRow
-	for i := 0; i < len(items); i += *chunkSize {
-		end := i + *chunkSize
+	for i := 0; i < len(items); i += o.chunk {
+		end := i + o.chunk
 		if end > len(items) {
 			end = len(items)
 		}
@@ -229,7 +276,7 @@ func main() {
 			end, len(items), len(domains), len(techRows), len(idents), len(profiles), float64(end)/el)
 	}
 
-	domPath, techPath := *out+"-domains.parquet", *out+"-tech.parquet"
+	domPath, techPath := o.out+"-domains.parquet", o.out+"-tech.parquet"
 	var written []string
 	if mode != "tech" {
 		if err := output.WriteDomains(domPath, domains); err != nil {
@@ -242,12 +289,12 @@ func main() {
 			log.Fatalf("write tech: %v", err)
 		}
 		written = append(written, techPath)
-		identPath := *out + "-identifiers.parquet"
+		identPath := o.out + "-identifiers.parquet"
 		if err := output.WriteIdentifiers(identPath, idents); err != nil {
 			log.Fatalf("write identifiers: %v", err)
 		}
 		written = append(written, identPath)
-		profilePath := *out + "-profiles.parquet"
+		profilePath := o.out + "-profiles.parquet"
 		if err := output.WriteProfiles(profilePath, profiles); err != nil {
 			log.Fatalf("write profiles: %v", err)
 		}
@@ -260,17 +307,17 @@ func main() {
 	}
 	log.Printf("done: %d domains, %d tech rows in %.1fs (%.1f domains/s)", len(domains), len(techRows), dur, rate)
 
-	if *s3Bucket != "" {
+	if o.s3Bucket != "" {
 		g, ok := getter.(*fetch.S3Getter)
 		if !ok {
 			log.Printf("skip S3 upload: anonymous HTTP fetch mode has no S3 client")
 		} else {
 			for _, p := range written {
-				key := *s3Prefix + p
-				if err := output.UploadToS3(ctx, g.Client, *s3Bucket, key, p); err != nil {
+				key := o.s3Prefix + p
+				if err := output.UploadToS3(ctx, g.Client, o.s3Bucket, key, p); err != nil {
 					log.Fatalf("upload %s: %v", p, err)
 				}
-				log.Printf("uploaded s3://%s/%s", *s3Bucket, key)
+				log.Printf("uploaded s3://%s/%s", o.s3Bucket, key)
 			}
 		}
 	}

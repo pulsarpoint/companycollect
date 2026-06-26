@@ -30,11 +30,11 @@ It is the production processor behind the index-driven enrichment design. It is 
 The work splits into two independent passes with very different bottlenecks. Run them as
 **separate processes** (even on the same box) so each is sized to its own limit.
 
-| pass | `--mode` | does | bottleneck | needs |
+| pass | command | does | bottleneck | needs |
 |---|---|---|---|---|
-| **Industry** | `industry` | fetch primary page → embed → classify → `*-domains.parquet` | the **GPU** (embedding) | S3 + embedding endpoint + ClickHouse (reads reference) |
-| **Tech** | `tech` | fetch pages → Wappalyzer → `*-tech.parquet` | the **CPU** (regex) | S3 only |
-| both | `both` (default) | both in one fetch pass | mixed | S3 + embedder + ClickHouse |
+| **Industry** | `cc-enrich-worker industry` | fetch primary page → embed → classify → `*-domains.parquet` | the **GPU** (embedding) | S3 + embedding endpoint + ClickHouse (reads reference) |
+| **Tech** | `cc-enrich-worker tech` | fetch pages → Wappalyzer → `*-tech.parquet` | the **CPU** (regex) | S3 only |
+| both | `cc-enrich-worker both` | both in one fetch pass (discouraged) | mixed | S3 + embedder + ClickHouse |
 
 Why split: embedding is GPU-bound (~milliseconds of GPU time per domain) while Wappalyzer is
 CPU-bound (~hundreds of ms per page). Co-locating them throttles the GPU. As two processes, the
@@ -97,23 +97,34 @@ AWS_REGION=us-east-1
 Load them with `set -a; source .env; set +a` (exports every var; `env | grep` to verify the
 process will inherit them — `echo` shows set-but-unexported vars and lies).
 
-### Flags (`./cc-enrich-worker -h`)
+### Commands & flags
+
+The worker is **subcommand-based**: `cc-enrich-worker <industry|tech|both> [flags]`. Mode-specific
+flags only appear under their command (`cc-enrich-worker <cmd> -h`). The S3 region is not a flag —
+it defaults to `us-east-1` (the CommonCrawl bucket) and is overridable via `AWS_REGION`.
+
+**Common to every command:**
 | flag | default | meaning |
 |---|---|---|
 | `--worklist` | *(required)* | worklist Parquet shard |
 | `--crawl-id` | *(required)* | e.g. `CC-MAIN-2026-25`; stamped on every row |
-| `--out` | `out` | output prefix → `<out>-domains.parquet`, `<out>-tech.parquet` |
-| `--mode` | `both` | `industry` \| `tech` \| `both` |
-| `--tech-engine` | `fast` | `fast` (Aho-Corasick gated, ~4.6×) \| `wappalyzer` (upstream full scan) |
-| `--concurrency` | `32` | fetch/parse/tech goroutines (push to ~128 to hide off-AWS fetch RTT) |
+| `--out` | `out` | output prefix → `<out>-domains.parquet`, `<out>-tech.parquet`, … |
+| `--concurrency` | `32` | fetch/parse goroutines (push to ~128 to hide off-AWS fetch RTT) |
+| `--chunk` | `1024` | domains per fetch+process chunk (lower = earlier GPU traffic) |
+| `--s3-anonymous` | `false` | fetch via the HTTPS CDN instead of signed S3 (off-AWS, no creds) — **rate-limits**, avoid for bulk |
+| `--s3-bucket` / `--s3-prefix` | — | optionally upload outputs to S3 (in-AWS path; off-AWS the driver loads to local ClickHouse instead) |
+
+**`industry` (and `both`):**
+| flag | default | meaning |
+|---|---|---|
 | `--embed-concurrency` | `96` | concurrent embed requests in flight (a single stream leaves the GPU idle) |
 | `--embed-batch` | `16` | texts per embed request — **keep small**; 128-text requests blow past the engine's `max-num-batched-tokens` → `Running:1`, ~5× slower |
-| `--chunk` | `1024` | domains per fetch+embed chunk (lower = earlier GPU traffic) |
+
+**`tech` (and `both`):**
+| flag | default | meaning |
+|---|---|---|
+| `--tech-engine` | `fast` | `fast` (Aho-Corasick gated, ~4.6×) \| `wappalyzer` (upstream full scan) |
 | `--tech-max-bytes` | `131072` | cap body bytes fed to Wappalyzer (0 = full body) |
-| `--s3-anonymous` | `false` | fetch via the HTTPS CDN instead of signed S3 (off-AWS, no creds) — **rate-limits**, avoid for bulk |
-| `--region` | `us-east-1` | S3 region |
-| `--skip-tech` | `false` | alias for `--mode industry` |
-| `--s3-bucket` / `--s3-prefix` | — | optionally upload outputs to S3 (in-AWS path; off-AWS the driver loads to local ClickHouse instead) |
 
 ---
 
@@ -153,11 +164,11 @@ Worklist columns: `root_domain, url, warc_filename, warc_record_offset, warc_rec
 set -a; source ../.env; set +a   # shared config — see ../.env.example
 
 # Tech (CPU-bound) — no embedder/ClickHouse needed
-./cc-enrich-worker --mode tech --worklist ../dagster_v3/data/commoncrawl/shard0.parquet \
+./cc-enrich-worker tech --worklist ../dagster_v3/data/commoncrawl/shard0.parquet \
     --crawl-id CC-MAIN-2026-25 --out run0 --concurrency 128
 
 # Industry (GPU-bound) — needs the embedder + ClickHouse env
-./cc-enrich-worker --mode industry --worklist ../dagster_v3/data/commoncrawl/shard0.parquet \
+./cc-enrich-worker industry --worklist ../dagster_v3/data/commoncrawl/shard0.parquet \
     --crawl-id CC-MAIN-2026-25 --out run0 --concurrency 16 --embed-concurrency 128
 ```
 Each prints a per-chunk line: `timing/page (avg latency): fetch=… parse=… tech=… errs=N/total` and

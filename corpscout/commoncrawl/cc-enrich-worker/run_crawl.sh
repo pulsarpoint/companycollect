@@ -32,9 +32,9 @@ WORKER="$PWD/cc-enrich-worker"
 # OUTPUTS: the <table>:<parquet-suffix> pairs a mode produces (loaded in order).
 case "$MODE" in
 industry) OUTPUTS=("commoncrawl_domains:domains")
-          PASS_ARGS=(--mode industry --concurrency "${IND_CONC:-16}" --embed-concurrency "${EMBED_CONC:-128}") ;;
+          PASS_ARGS=(--concurrency "${IND_CONC:-16}" --embed-concurrency "${EMBED_CONC:-128}") ;;
 tech)     OUTPUTS=("commoncrawl_technologies:tech" "commoncrawl_company_identifiers:identifiers" "commoncrawl_company_profile:profiles")
-          PASS_ARGS=(--mode tech --tech-engine fast --concurrency "${TECH_CONC:-128}") ;;
+          PASS_ARGS=(--tech-engine fast --concurrency "${TECH_CONC:-128}") ;;
 *) echo "MODE must be industry|tech"; exit 1 ;;
 esac
 
@@ -71,7 +71,7 @@ for ((p = lo; p <= hi; p++)); do
 	# 2. run the pass once (produces every output for the mode)
 	if [ ! -f "$primary" ]; then
 		echo "[$MODE $p] $MODE pass…"
-		if ! "$WORKER" "${PASS_ARGS[@]}" --worklist "$shard" --crawl-id "$CRAWL" --out "$out"; then
+		if ! "$WORKER" "$MODE" "${PASS_ARGS[@]}" --worklist "$shard" --crawl-id "$CRAWL" --out "$out"; then
 			echo "[$MODE $p] worker FAILED — skip"; continue
 		fi
 	fi
