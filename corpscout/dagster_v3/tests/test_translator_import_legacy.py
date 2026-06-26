@@ -79,7 +79,7 @@ def test_import_only_dynamic_fields(tmp_path, monkeypatch):
     monkeypatch.setattr("translator.import_legacy.clickhouse_client_from_env", lambda: object())
     monkeypatch.setattr("translator.import_legacy.flush_translations", fake_flush)
 
-    rc = main(["--duckdb", str(db_path), "--source", "norway_brreg"])
+    rc = main(["--duckdb", str(db_path), "--source", "norway_brreg", "--env-file", str(tmp_path / "no.env")])
 
     assert rc == 0
     assert len(flushed_calls) == 1
@@ -111,7 +111,7 @@ def test_import_counts_are_correct(tmp_path, monkeypatch):
     monkeypatch.setattr("translator.import_legacy.clickhouse_client_from_env", lambda: object())
     monkeypatch.setattr("translator.import_legacy.flush_translations", fake_flush)
 
-    rc = main(["--duckdb", str(db_path), "--source", "norway_brreg"])
+    rc = main(["--duckdb", str(db_path), "--source", "norway_brreg", "--env-file", str(tmp_path / "no.env")])
 
     assert rc == 0
     assert len(captured) == 1
@@ -135,7 +135,7 @@ def test_dry_run_writes_nothing(tmp_path, monkeypatch):
         lambda *a, **kw: flush_calls.append(a) or 0,
     )
 
-    rc = main(["--duckdb", str(db_path), "--source", "norway_brreg", "--dry-run"])
+    rc = main(["--duckdb", str(db_path), "--source", "norway_brreg", "--dry-run", "--env-file", str(tmp_path / "no.env")])
 
     assert rc == 0
     assert flush_calls == [], "--dry-run must not call flush_translations"
@@ -144,7 +144,7 @@ def test_dry_run_writes_nothing(tmp_path, monkeypatch):
 
 def test_missing_duckdb_returns_nonzero(tmp_path):
     """A non-existent --duckdb path returns exit code 1."""
-    rc = main(["--duckdb", str(tmp_path / "does_not_exist.duckdb")])
+    rc = main(["--duckdb", str(tmp_path / "does_not_exist.duckdb"), "--env-file", str(tmp_path / "no.env")])
     assert rc == 1
 
 
@@ -152,7 +152,7 @@ def test_unknown_source_returns_nonzero(tmp_path):
     """An unregistered --source slug returns exit code 1."""
     db_path = tmp_path / "q.duckdb"
     TranslationQueue(db_path).initialize()
-    rc = main(["--duckdb", str(db_path), "--source", "nonexistent_source"])
+    rc = main(["--duckdb", str(db_path), "--source", "nonexistent_source", "--env-file", str(tmp_path / "no.env")])
     assert rc == 1
 
 
@@ -180,7 +180,7 @@ def test_empty_translated_text_excluded(tmp_path, monkeypatch):
         lambda *a, **kw: flush_calls.append(kw) or 0,
     )
 
-    rc = main(["--duckdb", str(db_path), "--source", "norway_brreg"])
+    rc = main(["--duckdb", str(db_path), "--source", "norway_brreg", "--env-file", str(tmp_path / "no.env")])
 
     assert rc == 0
     # empty translated_text → nothing to import → flush_translations never called
