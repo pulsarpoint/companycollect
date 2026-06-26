@@ -5,7 +5,6 @@ import json
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -105,7 +104,7 @@ def financial_fetch_failure_row(
 
 def run_brreg_financial_statement_fetches(
     *,
-    database_path: str | Path,
+    duckdb_connection: duckdb.DuckDBPyConnection,
     source_run_id: str,
     base_url: str = BRREG_REGNSKAP_BASE_URL,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
@@ -121,9 +120,9 @@ def run_brreg_financial_statement_fetches(
         user_agent=user_agent,
     )
     fetch_timestamp = fetched_at or _utc_now_iso()
-    candidates = _financial_fetch_candidates(database_path)
-    _ensure_financial_fetches_table(database_path)
-    existing_org_numbers = _existing_financial_fetch_org_numbers(database_path)
+    candidates = _financial_fetch_candidates(duckdb_connection)
+    _ensure_financial_fetches_table(duckdb_connection)
+    existing_org_numbers = _existing_financial_fetch_org_numbers(duckdb_connection)
     progress_log = log
     skipped_existing = 0
     fetched = 0
@@ -159,7 +158,7 @@ def run_brreg_financial_statement_fetches(
         status_counts[fetch_status] = status_counts.get(fetch_status, 0) + 1
 
         if len(pending_rows) >= commit_every_rows:
-            _upsert_financial_fetch_rows(database_path, pending_rows)
+            _upsert_financial_fetch_rows(duckdb_connection, pending_rows)
             pending_rows = []
 
         if (
@@ -177,9 +176,9 @@ def run_brreg_financial_statement_fetches(
             )
 
     if pending_rows:
-        _upsert_financial_fetch_rows(database_path, pending_rows)
+        _upsert_financial_fetch_rows(duckdb_connection, pending_rows)
 
-    final_rows = _financial_fetch_row_count(database_path)
+    final_rows = _financial_fetch_row_count(duckdb_connection)
     if progress_log is not None:
         progress_log(
             "Completed Norway Brreg financial statement fetches: fetched=%s "
@@ -338,18 +337,19 @@ def _fetch_brreg_financial_statement(
     )
 
 
-def _financial_fetch_candidates(database_path: str | Path) -> list[dict[str, Any]]:
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        rows = connection.execute(
-            """
-            select org_number, legal_name, website, last_submitted_accounts_year
-            from norway_brreg.entities
-            where is_active = true
-              and nullif(trim(website), '') is not null
-              and nullif(trim(last_submitted_accounts_year), '') is not null
-            order by org_number
-            """
-        ).fetchall()
+def _financial_fetch_candidates(
+    duckdb_connection: duckdb.DuckDBPyConnection,
+) -> list[dict[str, Any]]:
+    rows = duckdb_connection.execute(
+        """
+        select org_number, legal_name, website, last_submitted_accounts_year
+        from norway_brreg.entities
+        where is_active = true
+          and nullif(trim(website), '') is not null
+          and nullif(trim(last_submitted_accounts_year), '') is not null
+        order by org_number
+        """
+    ).fetchall()
     return [
         {
             "org_number": _string(org_number),
@@ -361,39 +361,41 @@ def _financial_fetch_candidates(database_path: str | Path) -> list[dict[str, Any
     ]
 
 
-def _ensure_financial_fetches_table(database_path: str | Path) -> None:
+def _ensure_financial_fetches_table(
+    duckdb_connection: duckdb.DuckDBPyConnection,
+) -> None:
     column_defs = ", ".join(
         f"{column_name} {_duckdb_type_for_financial_fetch_column(column_schema)}"
         for column_name, column_schema in BRREG_FINANCIAL_FETCHES_COLUMNS.items()
     )
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute("create schema if not exists norway_brreg")
-        connection.execute(
-            f"create table if not exists norway_brreg.{FINANCIAL_FETCHES_TABLE} ({column_defs})"
-        )
+    duckdb_connection.execute("create schema if not exists norway_brreg")
+    duckdb_connection.execute(
+        f"create table if not exists norway_brreg.{FINANCIAL_FETCHES_TABLE} ({column_defs})"
+    )
 
 
-def _existing_financial_fetch_org_numbers(database_path: str | Path) -> set[str]:
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        table_exists = connection.execute(
-            """
-            select count(*)
-            from information_schema.tables
-            where table_schema = 'norway_brreg'
-              and table_name = ?
-            """,
-            [FINANCIAL_FETCHES_TABLE],
-        ).fetchone()[0]
-        if table_exists == 0:
-            return set()
-        rows = connection.execute(
-            f"select org_number from norway_brreg.{FINANCIAL_FETCHES_TABLE}"
-        ).fetchall()
+def _existing_financial_fetch_org_numbers(
+    duckdb_connection: duckdb.DuckDBPyConnection,
+) -> set[str]:
+    table_exists = duckdb_connection.execute(
+        """
+        select count(*)
+        from information_schema.tables
+        where table_schema = 'norway_brreg'
+          and table_name = ?
+        """,
+        [FINANCIAL_FETCHES_TABLE],
+    ).fetchone()[0]
+    if table_exists == 0:
+        return set()
+    rows = duckdb_connection.execute(
+        f"select org_number from norway_brreg.{FINANCIAL_FETCHES_TABLE}"
+    ).fetchall()
     return {_string(row[0]) for row in rows}
 
 
 def _upsert_financial_fetch_rows(
-    database_path: str | Path,
+    duckdb_connection: duckdb.DuckDBPyConnection,
     rows: list[dict[str, Any]],
 ) -> None:
     if not rows:
@@ -401,33 +403,31 @@ def _upsert_financial_fetch_rows(
     column_names = tuple(BRREG_FINANCIAL_FETCHES_COLUMNS)
     placeholders = ", ".join("?" for _ in column_names)
     org_numbers = [_string(row.get("org_number")) for row in rows]
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute("begin transaction")
-        try:
-            connection.executemany(
-                f"delete from norway_brreg.{FINANCIAL_FETCHES_TABLE} where org_number = ?",
-                [(org_number,) for org_number in org_numbers],
-            )
-            connection.executemany(
-                f"""
-                insert into norway_brreg.{FINANCIAL_FETCHES_TABLE}
-                    ({", ".join(column_names)})
-                values ({placeholders})
-                """,
-                [tuple(row.get(column_name) for column_name in column_names) for row in rows],
-            )
-        except BaseException:
-            connection.execute("rollback")
-            raise
-        else:
-            connection.execute("commit")
+    duckdb_connection.execute("begin transaction")
+    try:
+        duckdb_connection.executemany(
+            f"delete from norway_brreg.{FINANCIAL_FETCHES_TABLE} where org_number = ?",
+            [(org_number,) for org_number in org_numbers],
+        )
+        duckdb_connection.executemany(
+            f"""
+            insert into norway_brreg.{FINANCIAL_FETCHES_TABLE}
+                ({", ".join(column_names)})
+            values ({placeholders})
+            """,
+            [tuple(row.get(column_name) for column_name in column_names) for row in rows],
+        )
+    except BaseException:
+        duckdb_connection.execute("rollback")
+        raise
+    else:
+        duckdb_connection.execute("commit")
 
 
-def _financial_fetch_row_count(database_path: str | Path) -> int:
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        return connection.execute(
-            f"select count(*) from norway_brreg.{FINANCIAL_FETCHES_TABLE}"
-        ).fetchone()[0]
+def _financial_fetch_row_count(duckdb_connection: duckdb.DuckDBPyConnection) -> int:
+    return duckdb_connection.execute(
+        f"select count(*) from norway_brreg.{FINANCIAL_FETCHES_TABLE}"
+    ).fetchone()[0]
 
 
 def _duckdb_type_for_financial_fetch_column(column_schema: dict[str, Any]) -> str:

@@ -12,10 +12,16 @@ import dlt
 import duckdb
 from dagster import AssetExecutionContext
 from dagster_clickhouse import ClickhouseResource
+from dagster_duckdb import DuckDBResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
-from dagster_v3.defs.clickhouse.resolved import export_duckdb_table_to_clickhouse
+from dagster_v3.defs.clickhouse.resolved import export_duckdb_connection_table_to_clickhouse
+from dagster_v3.defs.common.duckdb_resources import (
+    duckdb_database_path,
+    duckdb_resource,
+    read_only_duckdb_connection,
+)
 from dagster_v3.defs.norway_brreg import resources
 from dagster_v3.defs.norway_brreg import tables
 from dagster_v3.defs.norway_brreg.clickhouse import (
@@ -122,6 +128,7 @@ class NorwayBrregDltTranslator(DagsterDltTranslator):
 def norway_brreg_entities_duckdb_asset(
     context: AssetExecutionContext,
     dlt: DagsterDltResource,
+    norway_brreg_duckdb: DuckDBResource,
 ) -> Iterator[Any]:
     """Load Brreg entity bulk data to local DuckDB with dlt."""
     NORWAY_BRREG_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -134,10 +141,11 @@ def norway_brreg_entities_duckdb_asset(
         ENTITIES_TABLE,
     )
     yield from dlt.run(context=context)
-    row_count = _duckdb_table_count(
-        database_path=NORWAY_BRREG_DUCKDB_PATH,
-        table_name=f"{DLT_DATASET_NAME}.{ENTITIES_TABLE}",
-    )
+    with read_only_duckdb_connection(norway_brreg_duckdb) as connection:
+        row_count = _duckdb_table_count(
+            duckdb_connection=connection,
+            table_name=f"{DLT_DATASET_NAME}.{ENTITIES_TABLE}",
+        )
     context.log.info(
         "Completed Norway Brreg entity dlt load: duckdb_path=%s, dataset=%s, table=%s, rows=%s",
         NORWAY_BRREG_DUCKDB_PATH,
@@ -157,36 +165,39 @@ def norway_brreg_entities_duckdb_asset(
 )
 def norway_brreg_financial_fetches_duckdb_asset(
     context: AssetExecutionContext,
+    norway_brreg_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    NORWAY_BRREG_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    duckdb_path = duckdb_database_path(norway_brreg_duckdb)
+    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
     context.log.info(
         "Starting Norway Brreg financial fetch load: source_url=%s, duckdb_path=%s, "
         "input_table=%s.%s, output_table=%s.%s",
         BRREG_REGNSKAP_BASE_URL,
-        NORWAY_BRREG_DUCKDB_PATH,
+        duckdb_path,
         DLT_DATASET_NAME,
         ENTITIES_TABLE,
         DLT_DATASET_NAME,
         FINANCIAL_FETCHES_TABLE,
     )
-    counts = run_brreg_financial_statement_fetches(
-        database_path=NORWAY_BRREG_DUCKDB_PATH,
-        source_run_id=context.run_id,
-        base_url=BRREG_REGNSKAP_BASE_URL,
-        log=context.log.info,
-    )
-    row_count = _duckdb_table_count(
-        database_path=NORWAY_BRREG_DUCKDB_PATH,
-        table_name=f"{DLT_DATASET_NAME}.{FINANCIAL_FETCHES_TABLE}",
-    )
-    status_counts = _duckdb_fetch_status_counts(
-        database_path=NORWAY_BRREG_DUCKDB_PATH,
-        table_name=f"{DLT_DATASET_NAME}.{FINANCIAL_FETCHES_TABLE}",
-    )
+    with norway_brreg_duckdb.get_connection() as connection:
+        counts = run_brreg_financial_statement_fetches(
+            duckdb_connection=connection,
+            source_run_id=context.run_id,
+            base_url=BRREG_REGNSKAP_BASE_URL,
+            log=context.log.info,
+        )
+        row_count = _duckdb_table_count(
+            duckdb_connection=connection,
+            table_name=f"{DLT_DATASET_NAME}.{FINANCIAL_FETCHES_TABLE}",
+        )
+        status_counts = _duckdb_fetch_status_counts(
+            duckdb_connection=connection,
+            table_name=f"{DLT_DATASET_NAME}.{FINANCIAL_FETCHES_TABLE}",
+        )
     context.log.info(
         "Completed Norway Brreg financial fetch load: duckdb_path=%s, table=%s.%s, "
         "rows=%s, statuses=%s",
-        NORWAY_BRREG_DUCKDB_PATH,
+        duckdb_path,
         DLT_DATASET_NAME,
         FINANCIAL_FETCHES_TABLE,
         row_count,
@@ -205,21 +216,24 @@ def norway_brreg_financial_fetches_duckdb_asset(
 )
 def norway_brreg_financial_statements_duckdb_asset(
     context: AssetExecutionContext,
+    norway_brreg_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
+    duckdb_path = duckdb_database_path(norway_brreg_duckdb)
     context.log.info(
         "Starting Norway Brreg financial statement normalization: duckdb_path=%s, "
         "input_table=%s.%s, output_table=%s.%s",
-        NORWAY_BRREG_DUCKDB_PATH,
+        duckdb_path,
         DLT_DATASET_NAME,
         FINANCIAL_FETCHES_TABLE,
         DLT_DATASET_NAME,
         FINANCIAL_STATEMENTS_TABLE,
     )
-    counts = normalize_norway_brreg_financial_statements_duckdb(
-        database_path=NORWAY_BRREG_DUCKDB_PATH,
-        exchange_rates=ExchangeRateClient.from_env(),
-        log=context.log.info,
-    )
+    with norway_brreg_duckdb.get_connection() as connection:
+        counts = normalize_norway_brreg_financial_statements_duckdb(
+            duckdb_connection=connection,
+            exchange_rates=ExchangeRateClient.from_env(),
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata=counts)
 
 
@@ -234,17 +248,20 @@ def norway_brreg_financial_statements_duckdb_asset(
 def norway_brreg_clickhouse_companies(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
+    norway_brreg_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
+    duckdb_path = duckdb_database_path(norway_brreg_duckdb)
     context.log.info(
         "Starting Norway Brreg companies ClickHouse export: duckdb_path=%s, table=%s",
-        NORWAY_BRREG_DUCKDB_PATH,
+        duckdb_path,
         tables.QUALIFIED_COMPANIES_TABLE,
     )
-    rows = export_norway_brreg_clickhouse_companies(
-        database_path=NORWAY_BRREG_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with read_only_duckdb_connection(norway_brreg_duckdb) as connection:
+        rows = export_norway_brreg_clickhouse_companies(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     context.log.info(
         "Completed Norway Brreg companies ClickHouse export: rows=%s",
         rows,
@@ -268,18 +285,21 @@ def norway_brreg_clickhouse_companies(
 def norway_brreg_clickhouse_financial_statements(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
+    norway_brreg_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
+    duckdb_path = duckdb_database_path(norway_brreg_duckdb)
     context.log.info(
         "Starting Norway Brreg financial statements ClickHouse export: duckdb_path=%s, "
         "table=%s",
-        NORWAY_BRREG_DUCKDB_PATH,
+        duckdb_path,
         tables.QUALIFIED_FINANCIAL_STATEMENTS_TABLE,
     )
-    rows = export_norway_brreg_clickhouse_financial_statements(
-        database_path=NORWAY_BRREG_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with read_only_duckdb_connection(norway_brreg_duckdb) as connection:
+        rows = export_norway_brreg_clickhouse_financial_statements(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     context.log.info(
         "Completed Norway Brreg financial statements ClickHouse export: rows=%s",
         rows,
@@ -305,21 +325,28 @@ def norway_brreg_clickhouse_financial_statements(
 def norway_brreg_translation_queue(
     context: AssetExecutionContext,
     config: NorwayBrregTranslationConfig,
+    norway_brreg_duckdb: DuckDBResource,
+    norway_brreg_translation_queue_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
+    source_duckdb_path = duckdb_database_path(norway_brreg_duckdb)
+    queue_duckdb_path = duckdb_database_path(norway_brreg_translation_queue_duckdb)
+    queue_duckdb_path.parent.mkdir(parents=True, exist_ok=True)
     seed_started = perf_counter()
     context.log.info(
         "Starting Norway Brreg translation queue seed: queue_duckdb_path=%s "
         "source_duckdb_path=%s refresh_existing_queue=%s",
-        NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
-        NORWAY_BRREG_DUCKDB_PATH,
+        queue_duckdb_path,
+        source_duckdb_path,
         config.refresh_existing_queue,
     )
-    counts = seed_norway_brreg_translation_queue(
-        source_duckdb_path=NORWAY_BRREG_DUCKDB_PATH,
-        queue_duckdb_path=NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
-        log=context.log.info,
-        refresh_existing_queue=config.refresh_existing_queue,
-    )
+    with norway_brreg_translation_queue_duckdb.get_connection() as queue_connection:
+        counts = seed_norway_brreg_translation_queue(
+            source_duckdb_path=source_duckdb_path,
+            queue_duckdb_connection=queue_connection,
+            queue_duckdb_path=queue_duckdb_path,
+            log=context.log.info,
+            refresh_existing_queue=config.refresh_existing_queue,
+        )
     context.log.info(
         "Finished Norway Brreg translation queue seed: elapsed_seconds=%.3f "
         "source_scan_skipped=%s queue_total_items=%s queue_location_items=%s "
@@ -338,7 +365,7 @@ def norway_brreg_translation_queue(
     workflow = start_translation_workflow(
         workflow_id=NORWAY_BRREG_TRANSLATION_WORKFLOW_ID,
         params=TranslationQueueWorkflowInput(
-            duckdb_path=str(NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH),
+            duckdb_path=str(queue_duckdb_path),
             batch_size=config.batch_size,
             timeout_seconds=config.timeout_seconds,
             max_batch_failures=config.max_batch_failures,
@@ -412,8 +439,11 @@ def norway_brreg_translation_queue(
 )
 def norway_brreg_translation_workflow_status(
     context: AssetExecutionContext,
+    norway_brreg_translation_queue_duckdb: DuckDBResource,
 ) -> dg.ObserveResult:
-    queue_metadata = norway_brreg_translation_queue_status_metadata()
+    queue_metadata = norway_brreg_translation_queue_status_metadata(
+        queue_duckdb_path=duckdb_database_path(norway_brreg_translation_queue_duckdb),
+    )
     try:
         workflow = describe_norway_brreg_translation_workflow()
     except Exception as exc:
@@ -445,7 +475,10 @@ def norway_brreg_translation_workflow_status(
     description="Apply completed Norway Brreg translation queue results back to entity _en fields.",
     pool=NORWAY_BRREG_DUCKDB_POOL,
 )
-def norway_brreg_translations_applied(context: AssetExecutionContext) -> dg.MaterializeResult:
+def norway_brreg_translations_applied(
+    context: AssetExecutionContext,
+    norway_brreg_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
     try:
         workflow = describe_norway_brreg_translation_workflow()
     except Exception as exc:
@@ -468,10 +501,11 @@ def norway_brreg_translations_applied(context: AssetExecutionContext) -> dg.Mate
         context.log.info("Skipping Norway Brreg translation application", extra=metadata)
         return dg.MaterializeResult(metadata=metadata)
 
-    counts = apply_norway_brreg_translation_queue_results(
-        source_duckdb_path=NORWAY_BRREG_DUCKDB_PATH,
-        queue_duckdb_path=NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
-    )
+    with norway_brreg_duckdb.get_connection() as connection:
+        counts = apply_norway_brreg_translation_queue_results(
+            source_duckdb_connection=connection,
+            queue_duckdb_path=NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
+        )
     metadata = {
         **counts,
         "applied": True,
@@ -568,6 +602,7 @@ def norway_brreg_translation_workflow_status_metadata(
 
 def norway_brreg_translation_queue_status_metadata(
     *,
+    queue_duckdb_connection: duckdb.DuckDBPyConnection | None = None,
     queue_duckdb_path: str | Path = NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
 ) -> dict[str, Any]:
     queue_path = Path(queue_duckdb_path)
@@ -578,8 +613,17 @@ def norway_brreg_translation_queue_status_metadata(
             queue_duckdb_path=queue_path,
         )
     try:
-        with duckdb.connect(str(queue_path), read_only=True) as connection:
-            summary = _translation_queue_summary_from_connection(connection, table_prefix="main")
+        if queue_duckdb_connection is None:
+            with read_only_duckdb_connection(duckdb_resource(queue_path)) as connection:
+                summary = _translation_queue_summary_from_connection(
+                    connection,
+                    table_prefix="main",
+                )
+        else:
+            summary = _translation_queue_summary_from_connection(
+                queue_duckdb_connection,
+                table_prefix="main",
+            )
     except Exception as exc:
         return _empty_translation_queue_status_metadata(
             queue_available=False,
@@ -700,6 +744,7 @@ def build_norway_brreg_translation_queue_items(
 def seed_norway_brreg_translation_queue(
     *,
     source_duckdb_path: str | Path,
+    queue_duckdb_connection: duckdb.DuckDBPyConnection,
     queue_duckdb_path: str | Path,
     log: Callable[..., None] | None = None,
     lock_timeout_seconds: float = 120.0,
@@ -712,11 +757,10 @@ def seed_norway_brreg_translation_queue(
     start = perf_counter()
     if Path(queue_path).exists() and not refresh_existing_queue:
         try:
-            with duckdb.connect(str(queue_path), read_only=True) as connection:
-                summary = _translation_queue_summary_from_connection(
-                    connection,
-                    table_prefix="main",
-                )
+            summary = _translation_queue_summary_from_connection(
+                queue_duckdb_connection,
+                table_prefix="main",
+            )
         except duckdb.CatalogException:
             summary = None
         if summary is not None and summary.location_items > 0:
@@ -759,7 +803,9 @@ def seed_norway_brreg_translation_queue(
         source_path,
         queue_path,
     )
-    with duckdb.connect() as connection:
+    connection = queue_duckdb_connection
+    attached_source = False
+    try:
         _execute_with_duckdb_lock_retry(
             lambda: connection.execute(
                 f"attach {_duckdb_string_literal(source_path)} as source_db (read_only)"
@@ -768,13 +814,8 @@ def seed_norway_brreg_translation_queue(
             log=log,
             timeout_seconds=lock_timeout_seconds,
         )
-        _execute_with_duckdb_lock_retry(
-            lambda: connection.execute(f"attach {_duckdb_string_literal(queue_path)} as queue_db"),
-            description=f"attach translation queue DuckDB {queue_path}",
-            log=log,
-            timeout_seconds=lock_timeout_seconds,
-        )
-        TranslationQueue.initialize_tables(connection, table_prefix="queue_db")
+        attached_source = True
+        TranslationQueue.initialize_tables(connection, table_prefix="main")
         source_rows = int(
             connection.execute(
                 f"select count(*) from source_db.{DLT_DATASET_NAME}.{ENTITIES_TABLE}"
@@ -784,10 +825,10 @@ def seed_norway_brreg_translation_queue(
             connection.execute(_norway_brreg_translation_candidates_count_sql()).fetchone()[0]
         )
         queue_items_before = int(
-            connection.execute("select count(*) from queue_db.translation_items").fetchone()[0]
+            connection.execute("select count(*) from main.translation_items").fetchone()[0]
         )
         queue_locations_before = int(
-            connection.execute("select count(*) from queue_db.translation_locations").fetchone()[0]
+            connection.execute("select count(*) from main.translation_locations").fetchone()[0]
         )
         _log(
             log,
@@ -799,7 +840,7 @@ def seed_norway_brreg_translation_queue(
         _execute_with_duckdb_lock_retry(
             lambda: connection.execute(
                 f"""
-                insert into queue_db.translation_items (
+                insert into main.translation_items (
                     item_id,
                     source_text,
                     source_text_hash,
@@ -830,7 +871,7 @@ def seed_norway_brreg_translation_queue(
         _execute_with_duckdb_lock_retry(
             lambda: connection.execute(
                 f"""
-                insert into queue_db.translation_locations (
+                insert into main.translation_locations (
                     location_id,
                     item_id,
                     source_duckdb_path,
@@ -868,12 +909,15 @@ def seed_norway_brreg_translation_queue(
             timeout_seconds=lock_timeout_seconds,
         )
         queue_items_after = int(
-            connection.execute("select count(*) from queue_db.translation_items").fetchone()[0]
+            connection.execute("select count(*) from main.translation_items").fetchone()[0]
         )
         queue_locations_after = int(
-            connection.execute("select count(*) from queue_db.translation_locations").fetchone()[0]
+            connection.execute("select count(*) from main.translation_locations").fetchone()[0]
         )
-        summary = _translation_queue_summary_from_connection(connection, table_prefix="queue_db")
+        summary = _translation_queue_summary_from_connection(connection, table_prefix="main")
+    finally:
+        if attached_source:
+            connection.execute("detach source_db")
 
     inserted_items = queue_items_after - queue_items_before
     inserted_locations = queue_locations_after - queue_locations_before
@@ -1044,7 +1088,7 @@ def _norway_brreg_translation_candidates_sql() -> str:
 
 def apply_norway_brreg_translation_queue_results(
     *,
-    source_duckdb_path: str | Path,
+    source_duckdb_connection: duckdb.DuckDBPyConnection,
     queue_duckdb_path: str | Path,
 ) -> dict[str, int]:
     completed_results = TranslationQueue(queue_duckdb_path).completed_results()
@@ -1058,39 +1102,38 @@ def apply_norway_brreg_translation_queue_results(
         "skipped_already_applied": 0,
     }
     updated_org_numbers: set[str] = set()
-    with duckdb.connect(str(source_duckdb_path)) as connection:
-        for result in completed_results:
-            if result.source_table != f"{DLT_DATASET_NAME}.{ENTITIES_TABLE}":
-                counts["skipped_non_norway"] += 1
-                continue
-            target_field = NORWAY_BRREG_EN_FIELD_BY_ORIGINAL_FIELD.get(result.source_field)
-            if target_field is None:
-                counts["skipped_non_free_text"] += 1
-                continue
-            existing = connection.execute(
-                f"""
-                select {target_field}
-                from {DLT_DATASET_NAME}.{ENTITIES_TABLE}
-                where org_number = ?
-                """,
-                [result.source_pk],
-            ).fetchone()
-            if existing is None:
-                counts["skipped_missing_source_row"] += 1
-                continue
-            if _string(existing[0]) == result.translated_text:
-                counts["skipped_already_applied"] += 1
-                continue
-            connection.execute(
-                f"""
-                update {DLT_DATASET_NAME}.{ENTITIES_TABLE}
-                set {target_field} = ?
-                where org_number = ?
-                """,
-                [result.translated_text, result.source_pk],
-            )
-            counts["fields_updated"] += 1
-            updated_org_numbers.add(result.source_pk)
+    for result in completed_results:
+        if result.source_table != f"{DLT_DATASET_NAME}.{ENTITIES_TABLE}":
+            counts["skipped_non_norway"] += 1
+            continue
+        target_field = NORWAY_BRREG_EN_FIELD_BY_ORIGINAL_FIELD.get(result.source_field)
+        if target_field is None:
+            counts["skipped_non_free_text"] += 1
+            continue
+        existing = source_duckdb_connection.execute(
+            f"""
+            select {target_field}
+            from {DLT_DATASET_NAME}.{ENTITIES_TABLE}
+            where org_number = ?
+            """,
+            [result.source_pk],
+        ).fetchone()
+        if existing is None:
+            counts["skipped_missing_source_row"] += 1
+            continue
+        if _string(existing[0]) == result.translated_text:
+            counts["skipped_already_applied"] += 1
+            continue
+        source_duckdb_connection.execute(
+            f"""
+            update {DLT_DATASET_NAME}.{ENTITIES_TABLE}
+            set {target_field} = ?
+            where org_number = ?
+            """,
+            [result.translated_text, result.source_pk],
+        )
+        counts["fields_updated"] += 1
+        updated_org_numbers.add(result.source_pk)
     counts["rows_updated"] = len(updated_org_numbers)
     return counts
 
@@ -1101,7 +1144,7 @@ def _complete_all_translation_queue_items_for_test(
     translations_by_field: dict[str, str],
 ) -> None:
     queue = TranslationQueue(queue_duckdb_path)
-    with duckdb.connect(str(queue_duckdb_path), read_only=True) as connection:
+    with read_only_duckdb_connection(duckdb_resource(queue_duckdb_path)) as connection:
         source_fields_by_item_id: dict[str, list[str]] = {}
         for item_id, source_field in connection.execute(
             """
@@ -1186,28 +1229,27 @@ def build_financial_statement_rows(
 
 def normalize_norway_brreg_financial_statements_duckdb(
     *,
-    database_path: str | Path,
+    duckdb_connection: duckdb.DuckDBPyConnection,
     exchange_rates: ExchangeRates,
     log: Callable[..., None] | None = None,
 ) -> dict[str, int]:
-    with duckdb.connect(str(database_path)) as connection:
-        fetch_rows = _fetch_duckdb_dicts(
-            connection,
-            dataset=DLT_DATASET_NAME,
-            table=FINANCIAL_FETCHES_TABLE,
-            columns=tuple(BRREG_FINANCIAL_FETCHES_COLUMNS),
-        )
-        rows = build_financial_statement_rows_from_fetch_rows(
-            fetch_rows,
-            exchange_rates=exchange_rates,
-        )
-        _replace_duckdb_table_from_rows(
-            connection,
-            dataset=DLT_DATASET_NAME,
-            table=FINANCIAL_STATEMENTS_TABLE,
-            columns=tables.copy_dlt_columns(BRREG_FINANCIAL_STATEMENTS_COLUMNS),
-            rows=rows,
-        )
+    fetch_rows = _fetch_duckdb_dicts(
+        duckdb_connection,
+        dataset=DLT_DATASET_NAME,
+        table=FINANCIAL_FETCHES_TABLE,
+        columns=tuple(BRREG_FINANCIAL_FETCHES_COLUMNS),
+    )
+    rows = build_financial_statement_rows_from_fetch_rows(
+        fetch_rows,
+        exchange_rates=exchange_rates,
+    )
+    _replace_duckdb_table_from_rows(
+        duckdb_connection,
+        dataset=DLT_DATASET_NAME,
+        table=FINANCIAL_STATEMENTS_TABLE,
+        columns=tables.copy_dlt_columns(BRREG_FINANCIAL_STATEMENTS_COLUMNS),
+        rows=rows,
+    )
 
     counts = {
         "financial_fetches": len(fetch_rows),
@@ -1229,17 +1271,17 @@ def normalize_norway_brreg_financial_statements_duckdb(
 
 def export_norway_brreg_clickhouse_tables(
     *,
-    database_path: str | Path,
+    duckdb_connection: duckdb.DuckDBPyConnection,
     clickhouse: ClickhouseResource,
     log: Callable[..., None] | None = None,
 ) -> dict[str, int]:
     companies = export_norway_brreg_clickhouse_companies(
-        database_path=database_path,
+        duckdb_connection=duckdb_connection,
         clickhouse=clickhouse,
         log=log,
     )
     financial_statements = export_norway_brreg_clickhouse_financial_statements(
-        database_path=database_path,
+        duckdb_connection=duckdb_connection,
         clickhouse=clickhouse,
         log=log,
     )
@@ -1251,7 +1293,7 @@ def export_norway_brreg_clickhouse_tables(
 
 def export_norway_brreg_clickhouse_companies(
     *,
-    database_path: str | Path,
+    duckdb_connection: duckdb.DuckDBPyConnection,
     clickhouse: ClickhouseResource,
     log: Callable[..., None] | None = None,
 ) -> int:
@@ -1263,8 +1305,8 @@ def export_norway_brreg_clickhouse_companies(
     )
     prepare_norway_brreg_clickhouse_companies_table(clickhouse)
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_table_to_clickhouse(
-            duckdb_path=database_path,
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=ENTITIES_TABLE,
@@ -1280,7 +1322,7 @@ def export_norway_brreg_clickhouse_companies(
 
 def export_norway_brreg_clickhouse_financial_statements(
     *,
-    database_path: str | Path,
+    duckdb_connection: duckdb.DuckDBPyConnection,
     clickhouse: ClickhouseResource,
     log: Callable[..., None] | None = None,
 ) -> int:
@@ -1292,8 +1334,8 @@ def export_norway_brreg_clickhouse_financial_statements(
     )
     prepare_norway_brreg_clickhouse_financial_statements_table(clickhouse)
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_table_to_clickhouse(
-            duckdb_path=database_path,
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=FINANCIAL_STATEMENTS_TABLE,
@@ -1437,26 +1479,28 @@ def _duckdb_type_for_dlt_column(column_schema: dict[str, Any]) -> str:
     raise ValueError(f"Unsupported DuckDB column type: {data_type}")
 
 
-def _duckdb_table_count(*, database_path: str | Path, table_name: str) -> int:
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        value = connection.execute(f"select count(*) from {table_name}").fetchone()[0]
+def _duckdb_table_count(
+    *,
+    duckdb_connection: duckdb.DuckDBPyConnection,
+    table_name: str,
+) -> int:
+    value = duckdb_connection.execute(f"select count(*) from {table_name}").fetchone()[0]
     return int(value)
 
 
 def _duckdb_fetch_status_counts(
     *,
-    database_path: str | Path,
+    duckdb_connection: duckdb.DuckDBPyConnection,
     table_name: str,
 ) -> dict[str, int]:
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        rows = connection.execute(
-            f"""
-            select fetch_status, count(*) as row_count
-            from {table_name}
-            group by fetch_status
-            order by fetch_status
-            """
-        ).fetchall()
+    rows = duckdb_connection.execute(
+        f"""
+        select fetch_status, count(*) as row_count
+        from {table_name}
+        group by fetch_status
+        order by fetch_status
+        """
+    ).fetchall()
     return {str(status): int(row_count) for status, row_count in rows}
 
 

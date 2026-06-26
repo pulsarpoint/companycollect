@@ -15,6 +15,7 @@ import pyarrow as pa
 import pytest
 from temporalio.client import WorkflowExecutionStatus
 from dagster_clickhouse import ClickhouseResource
+from dagster_duckdb import DuckDBResource
 
 
 def test_norway_refresh_schedule_and_jobs_respect_translation_flow():
@@ -141,12 +142,56 @@ def _run_financial_fetches_for_test(
 ) -> Any:
     database_file = Path(database_path)
     database_file.parent.mkdir(parents=True, exist_ok=True)
-    return run_brreg_financial_statement_fetches(
-        database_path=database_file,
-        source_run_id="test-run",
-        client=client,
-        commit_every_rows=1,
-    )
+    with duckdb.connect(str(database_file)) as connection:
+        return run_brreg_financial_statement_fetches(
+            duckdb_connection=connection,
+            source_run_id="test-run",
+            client=client,
+            commit_every_rows=1,
+        )
+
+
+def _seed_translation_queue_for_test(
+    *,
+    source_duckdb_path: str | Path,
+    queue_duckdb_path: str | Path,
+    log: Any | None = None,
+    refresh_existing_queue: bool = False,
+) -> dict[str, Any]:
+    queue_file = Path(queue_duckdb_path)
+    queue_file.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb.connect(str(queue_file)) as queue_connection:
+        return brreg_assets.seed_norway_brreg_translation_queue(
+            source_duckdb_path=source_duckdb_path,
+            queue_duckdb_connection=queue_connection,
+            queue_duckdb_path=queue_file,
+            log=log,
+            refresh_existing_queue=refresh_existing_queue,
+        )
+
+
+def _apply_translation_queue_results_for_test(
+    *,
+    source_duckdb_path: str | Path,
+    queue_duckdb_path: str | Path,
+) -> dict[str, int]:
+    with duckdb.connect(str(source_duckdb_path)) as source_connection:
+        return brreg_assets.apply_norway_brreg_translation_queue_results(
+            source_duckdb_connection=source_connection,
+            queue_duckdb_path=queue_duckdb_path,
+        )
+
+
+def _normalize_financial_statements_for_test(
+    *,
+    database_path: str | Path,
+    exchange_rates: Any,
+) -> dict[str, int]:
+    with duckdb.connect(str(database_path)) as connection:
+        return brreg_assets.normalize_norway_brreg_financial_statements_duckdb(
+            duckdb_connection=connection,
+            exchange_rates=exchange_rates,
+        )
 
 
 def _entity_record(**overrides: Any) -> dict[str, Any]:
@@ -344,6 +389,16 @@ def test_norway_duckdb_path_is_a_source_constant_not_custom_resource() -> None:
     assert "NorwayDuckDBResource" not in brreg_assets.__dict__
 
 
+def test_norway_definitions_wire_official_duckdb_resources() -> None:
+    resources = load_project_defs().get_repository_def().get_top_level_resources()
+
+    assert resources["norway_brreg_duckdb"].configurable_resource_cls is DuckDBResource
+    assert (
+        resources["norway_brreg_translation_queue_duckdb"].configurable_resource_cls
+        is DuckDBResource
+    )
+
+
 def test_entity_resource_declares_explicit_table_schema() -> None:
     columns = brreg_resources.BRREG_ENTITIES_COLUMNS
     row = brreg_resources.build_entity_rows([_entity_record()], run_id="test-run")[0]
@@ -530,7 +585,7 @@ def test_seed_norway_brreg_translation_queue_reads_entities_duckdb(tmp_path: Pat
         connection.register("entity_rows", pa.Table.from_pylist(rows))
         connection.execute("create table norway_brreg.entities as select * from entity_rows")
 
-    counts = brreg_assets.seed_norway_brreg_translation_queue(
+    counts = _seed_translation_queue_for_test(
         source_duckdb_path=source_duckdb_path,
         queue_duckdb_path=queue_duckdb_path,
     )
@@ -571,7 +626,7 @@ def test_seed_norway_brreg_translation_queue_only_needs_translation_columns(
             """
         )
 
-    counts = brreg_assets.seed_norway_brreg_translation_queue(
+    counts = _seed_translation_queue_for_test(
         source_duckdb_path=source_duckdb_path,
         queue_duckdb_path=queue_duckdb_path,
         log=lambda message, *args: log_messages.append(message % args),
@@ -605,7 +660,7 @@ def test_seed_norway_brreg_translation_queue_skips_seeded_queue_source_scan(
         ]
     )
 
-    counts = brreg_assets.seed_norway_brreg_translation_queue(
+    counts = _seed_translation_queue_for_test(
         source_duckdb_path=source_duckdb_path,
         queue_duckdb_path=queue_duckdb_path,
     )
@@ -646,7 +701,7 @@ def test_seed_norway_brreg_translation_queue_does_not_initialize_seeded_queue(
 
     monkeypatch.setattr(brreg_assets.TranslationQueue, "initialize", fail_initialize)
 
-    counts = brreg_assets.seed_norway_brreg_translation_queue(
+    counts = _seed_translation_queue_for_test(
         source_duckdb_path=source_duckdb_path,
         queue_duckdb_path=queue_duckdb_path,
     )
@@ -681,7 +736,7 @@ def test_seed_norway_brreg_translation_queue_refreshes_seeded_queue_when_configu
         connection.register("entity_rows", pa.Table.from_pylist(rows))
         connection.execute("create table norway_brreg.entities as select * from entity_rows")
 
-    counts = brreg_assets.seed_norway_brreg_translation_queue(
+    counts = _seed_translation_queue_for_test(
         source_duckdb_path=source_duckdb_path,
         queue_duckdb_path=queue_duckdb_path,
         refresh_existing_queue=True,
@@ -701,7 +756,7 @@ def test_apply_norway_brreg_translation_queue_results_updates_free_text_fields(
 ) -> None:
     source_duckdb_path, queue_duckdb_path = _source_and_completed_translation_queue(tmp_path)
 
-    counts = brreg_assets.apply_norway_brreg_translation_queue_results(
+    counts = _apply_translation_queue_results_for_test(
         source_duckdb_path=source_duckdb_path,
         queue_duckdb_path=queue_duckdb_path,
     )
@@ -735,11 +790,11 @@ def test_apply_norway_brreg_translation_queue_results_updates_free_text_fields(
 def test_apply_norway_brreg_translation_queue_results_is_idempotent(tmp_path: Path) -> None:
     source_duckdb_path, queue_duckdb_path = _source_and_completed_translation_queue(tmp_path)
 
-    first = brreg_assets.apply_norway_brreg_translation_queue_results(
+    first = _apply_translation_queue_results_for_test(
         source_duckdb_path=source_duckdb_path,
         queue_duckdb_path=queue_duckdb_path,
     )
-    second = brreg_assets.apply_norway_brreg_translation_queue_results(
+    second = _apply_translation_queue_results_for_test(
         source_duckdb_path=source_duckdb_path,
         queue_duckdb_path=queue_duckdb_path,
     )
@@ -762,7 +817,7 @@ def test_apply_norway_brreg_translation_queue_results_ignores_reference_fields(
         translated_text="Extraction of crude petroleum",
     )
 
-    counts = brreg_assets.apply_norway_brreg_translation_queue_results(
+    counts = _apply_translation_queue_results_for_test(
         source_duckdb_path=source_duckdb_path,
         queue_duckdb_path=queue_duckdb_path,
     )
@@ -799,7 +854,7 @@ def _source_and_completed_translation_queue(tmp_path: Path) -> tuple[Path, Path]
         connection.register("entity_rows", pa.Table.from_pylist(rows))
         connection.execute("create table norway_brreg.entities as select * from entity_rows")
 
-    brreg_assets.seed_norway_brreg_translation_queue(
+    _seed_translation_queue_for_test(
         source_duckdb_path=source_duckdb_path,
         queue_duckdb_path=queue_duckdb_path,
     )
@@ -903,7 +958,7 @@ def test_financial_fetch_and_normalize_pipeline_loads_statements_table(tmp_path:
         database_path=database_path,
         client=client,
     )
-    counts = brreg_assets.normalize_norway_brreg_financial_statements_duckdb(
+    counts = _normalize_financial_statements_for_test(
         database_path=database_path,
         exchange_rates=FakeExchangeRates(),
     )
@@ -953,7 +1008,7 @@ def test_financial_normalize_persists_missing_fx_as_null_dates(tmp_path: Path) -
         database_path=database_path,
         client=client,
     )
-    counts = brreg_assets.normalize_norway_brreg_financial_statements_duckdb(
+    counts = _normalize_financial_statements_for_test(
         database_path=database_path,
         exchange_rates=FakeExchangeRatesWithMissing(),
     )
@@ -1000,7 +1055,7 @@ def test_financial_fetch_pipeline_persists_not_found_and_server_errors(tmp_path:
         database_path=database_path,
         client=client,
     )
-    counts = brreg_assets.normalize_norway_brreg_financial_statements_duckdb(
+    counts = _normalize_financial_statements_for_test(
         database_path=database_path,
         exchange_rates=FakeExchangeRates(),
     )
@@ -1137,7 +1192,7 @@ def test_export_norway_brreg_clickhouse_tables_reads_duckdb_and_inserts(
             }
         ),
     )
-    brreg_assets.normalize_norway_brreg_financial_statements_duckdb(
+    _normalize_financial_statements_for_test(
         database_path=database_path,
         exchange_rates=FakeExchangeRates(),
     )
@@ -1154,11 +1209,12 @@ def test_export_norway_brreg_clickhouse_tables_reads_duckdb_and_inserts(
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    result = brreg_assets.export_norway_brreg_clickhouse_tables(
-        database_path=database_path,
-        clickhouse=resource,
-        log=capture_log,
-    )
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        result = brreg_assets.export_norway_brreg_clickhouse_tables(
+            duckdb_connection=connection,
+            clickhouse=resource,
+            log=capture_log,
+        )
 
     assert result == {"companies": 1, "financial_statements": 1}
     assert [insert[0].split(" (", 1)[0] for insert in client.insert_calls] == [
@@ -1211,10 +1267,11 @@ def test_export_norway_brreg_clickhouse_companies_touches_only_company_table(
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    rows = brreg_assets.export_norway_brreg_clickhouse_companies(
-        database_path=database_path,
-        clickhouse=resource,
-    )
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        rows = brreg_assets.export_norway_brreg_clickhouse_companies(
+            duckdb_connection=connection,
+            clickhouse=resource,
+        )
 
     assert rows == 1
     assert client.statements == [
@@ -1247,7 +1304,7 @@ def test_export_norway_brreg_clickhouse_financials_touches_only_financial_table(
             }
         ),
     )
-    brreg_assets.normalize_norway_brreg_financial_statements_duckdb(
+    _normalize_financial_statements_for_test(
         database_path=database_path,
         exchange_rates=FakeExchangeRates(),
     )
@@ -1260,10 +1317,11 @@ def test_export_norway_brreg_clickhouse_financials_touches_only_financial_table(
 
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
-    rows = brreg_assets.export_norway_brreg_clickhouse_financial_statements(
-        database_path=database_path,
-        clickhouse=resource,
-    )
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        rows = brreg_assets.export_norway_brreg_clickhouse_financial_statements(
+            duckdb_connection=connection,
+            clickhouse=resource,
+        )
 
     assert rows == 1
     assert client.statements == [
@@ -1450,7 +1508,13 @@ def test_norway_entity_asset_is_registered() -> None:
     }
     assert "norway_brreg_translation_completion_job" in repository.job_names
     assert "norway_brreg_apply_translations_job" not in repository.job_names
-    assert "norway_duckdb" not in repository.get_top_level_resources().keys()
+    resources = repository.get_top_level_resources()
+    assert "norway_duckdb" not in resources.keys()
+    assert resources["norway_brreg_duckdb"].configurable_resource_cls is DuckDBResource
+    assert (
+        resources["norway_brreg_translation_queue_duckdb"].configurable_resource_cls
+        is DuckDBResource
+    )
 
 
 def test_norway_translation_config_exposes_operator_tunable_defaults() -> None:
@@ -1565,7 +1629,10 @@ def test_norway_translations_applied_skips_when_workflow_is_running(monkeypatch)
         fail_if_called,
     )
 
-    result = brreg_assets.norway_brreg_translations_applied(dg.build_asset_context())
+    result = brreg_assets.norway_brreg_translations_applied(
+        dg.build_asset_context(),
+        DuckDBResource(database=":memory:"),
+    )
 
     assert result.metadata["applied"] is False
     assert result.metadata["workflow_status"] == "RUNNING"
@@ -1590,7 +1657,10 @@ def test_norway_translations_applied_reports_unavailable_workflow(monkeypatch) -
         fail_if_called,
     )
 
-    result = brreg_assets.norway_brreg_translations_applied(dg.build_asset_context())
+    result = brreg_assets.norway_brreg_translations_applied(
+        dg.build_asset_context(),
+        DuckDBResource(database=":memory:"),
+    )
 
     assert result.metadata["applied"] is False
     assert result.metadata["workflow_status"] == "unavailable"
@@ -1627,7 +1697,10 @@ def test_norway_translations_applied_applies_when_workflow_is_completed(monkeypa
         apply_results,
     )
 
-    result = brreg_assets.norway_brreg_translations_applied(dg.build_asset_context())
+    result = brreg_assets.norway_brreg_translations_applied(
+        dg.build_asset_context(),
+        DuckDBResource(database=":memory:"),
+    )
 
     assert len(applied_calls) == 1
     assert result.metadata["applied"] is True
@@ -1693,7 +1766,8 @@ def test_norway_translation_workflow_status_observe_result(monkeypatch) -> None:
     )
 
     result = brreg_assets.norway_brreg_translation_workflow_status.observe_fn(
-        dg.build_asset_context()
+        dg.build_asset_context(),
+        DuckDBResource(database=":memory:"),
     )
 
     assert result.metadata["workflow_status"] == "RUNNING"

@@ -128,16 +128,17 @@ def test_resumable_financial_fetches_persist_completed_rows_before_interrupt(
     )
 
     try:
-        financial_fetches.run_brreg_financial_statement_fetches(
-            database_path=database_path,
-            base_url="https://data.brreg.no/regnskapsregisteret/regnskap",
-            source_run_id="run-1",
-            timeout_seconds=120,
-            user_agent="test-agent",
-            fetched_at="2026-06-17T00:00:00.000Z",
-            client=client,
-            commit_every_rows=1,
-        )
+        with duckdb.connect(str(database_path)) as connection:
+            financial_fetches.run_brreg_financial_statement_fetches(
+                duckdb_connection=connection,
+                base_url="https://data.brreg.no/regnskapsregisteret/regnskap",
+                source_run_id="run-1",
+                timeout_seconds=120,
+                user_agent="test-agent",
+                fetched_at="2026-06-17T00:00:00.000Z",
+                client=client,
+                commit_every_rows=1,
+            )
     except KeyboardInterrupt:
         pass
 
@@ -165,16 +166,17 @@ def test_resumable_financial_fetches_skip_existing_rows(tmp_path: Path) -> None:
             ),
         }
     )
-    financial_fetches.run_brreg_financial_statement_fetches(
-        database_path=database_path,
-        base_url="https://data.brreg.no/regnskapsregisteret/regnskap",
-        source_run_id="run-1",
-        timeout_seconds=120,
-        user_agent="test-agent",
-        fetched_at="2026-06-17T00:00:00.000Z",
-        client=client,
-        commit_every_rows=1,
-    )
+    with duckdb.connect(str(database_path)) as connection:
+        financial_fetches.run_brreg_financial_statement_fetches(
+            duckdb_connection=connection,
+            base_url="https://data.brreg.no/regnskapsregisteret/regnskap",
+            source_run_id="run-1",
+            timeout_seconds=120,
+            user_agent="test-agent",
+            fetched_at="2026-06-17T00:00:00.000Z",
+            client=client,
+            commit_every_rows=1,
+        )
     assert [url for url, _timeout in client.calls] == [
         "https://data.brreg.no/regnskapsregisteret/regnskap/811685852",
         "https://data.brreg.no/regnskapsregisteret/regnskap/814115232",
@@ -183,16 +185,17 @@ def test_resumable_financial_fetches_skip_existing_rows(tmp_path: Path) -> None:
     ]
 
     resume_client = FakeDltRequestsClient({})
-    counts = financial_fetches.run_brreg_financial_statement_fetches(
-        database_path=database_path,
-        base_url="https://data.brreg.no/regnskapsregisteret/regnskap",
-        source_run_id="run-2",
-        timeout_seconds=120,
-        user_agent="test-agent",
-        fetched_at="2026-06-17T00:00:00.000Z",
-        client=resume_client,
-        commit_every_rows=1,
-    )
+    with duckdb.connect(str(database_path)) as connection:
+        counts = financial_fetches.run_brreg_financial_statement_fetches(
+            duckdb_connection=connection,
+            base_url="https://data.brreg.no/regnskapsregisteret/regnskap",
+            source_run_id="run-2",
+            timeout_seconds=120,
+            user_agent="test-agent",
+            fetched_at="2026-06-17T00:00:00.000Z",
+            client=resume_client,
+            commit_every_rows=1,
+        )
 
     assert resume_client.calls == []
     assert counts["total_candidates"] == 4
