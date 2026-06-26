@@ -10,14 +10,16 @@ import dagster as dg
 import dlt as dlt_lib
 import duckdb
 from dagster_clickhouse import ClickhouseResource
+from dagster_duckdb import DuckDBResource
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 
 from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
     assert_clickhouse_tables_exist,
-    replace_duckdb_tables_in_clickhouse,
+    replace_duckdb_connection_tables_in_clickhouse,
 )
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.wikidata.source import (
     WIKIDATA_DUCKDB_DATASET_NAME,
@@ -125,8 +127,14 @@ def wikidata_listed_companies_duckdb_asset(
     ],
     pool=WIKIDATA_DUCKDB_POOL,
 )
-def wikidata_company_seed_duckdb_tables() -> Iterator[dg.MaterializeResult]:
-    row_counts = normalize_wikidata_listed_companies_duckdb(WIKIDATA_DUCKDB_PATH)
+def wikidata_company_seed_duckdb_tables(
+    wikidata_duckdb: DuckDBResource,
+) -> Iterator[dg.MaterializeResult]:
+    with wikidata_duckdb.get_connection() as connection:
+        row_counts = normalize_wikidata_listed_companies_duckdb(
+            connection,
+            catalog_name=WIKIDATA_DUCKDB_PATH.stem,
+        )
     for table_name in tables.WIKIDATA_TABLES:
         yield dg.MaterializeResult(
             asset_key=table_name,
@@ -169,91 +177,95 @@ def wikidata_company_seed_raw_objects(
 )
 def wikidata_company_seed_clickhouse(
     clickhouse: ClickhouseResource,
+    wikidata_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    return _export_wikidata_tables_to_clickhouse(clickhouse)
+    return _export_wikidata_tables_to_clickhouse(clickhouse, wikidata_duckdb)
 
 
 def _export_wikidata_tables_to_clickhouse(
     clickhouse: ClickhouseResource,
+    wikidata_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse,
         database=RESOLVED_DATABASE,
         tables=tables.WIKIDATA_TABLES,
     )
-    with clickhouse.get_connection() as client:
-        row_counts = replace_duckdb_tables_in_clickhouse(
-            duckdb_path=WIKIDATA_DUCKDB_PATH,
-            clickhouse_client=client,
-            duckdb_schema=_duckdb_schema_qualifier(
-                WIKIDATA_DUCKDB_PATH,
-                WIKIDATA_DUCKDB_SCHEMA,
-            ),
-            clickhouse_database=RESOLVED_DATABASE,
-            tables=tuple(
-                (table_name, tables.WIKIDATA_TABLE_COLUMNS[table_name])
-                for table_name in tables.WIKIDATA_TABLES
-            ),
-        )
+    with wikidata_duckdb.get_connection() as connection:
+        with clickhouse.get_connection() as client:
+            row_counts = replace_duckdb_connection_tables_in_clickhouse(
+                duckdb_connection=connection,
+                clickhouse_client=client,
+                duckdb_schema=_duckdb_schema_qualifier(
+                    WIKIDATA_DUCKDB_PATH,
+                    WIKIDATA_DUCKDB_SCHEMA,
+                ),
+                clickhouse_database=RESOLVED_DATABASE,
+                tables=tuple(
+                    (table_name, tables.WIKIDATA_TABLE_COLUMNS[table_name])
+                    for table_name in tables.WIKIDATA_TABLES
+                ),
+            )
     return dg.MaterializeResult(
         metadata={f"{table_name}_row_count": count for table_name, count in row_counts.items()}
     )
 
 
-def normalize_wikidata_listed_companies_duckdb(database_path: str | Path) -> dict[str, int]:
-    database_file = Path(database_path)
-    database_file.parent.mkdir(parents=True, exist_ok=True)
+def normalize_wikidata_listed_companies_duckdb(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    catalog_name: str,
+) -> dict[str, int]:
     source_table = _duckdb_qualified_table_name(
-        database_file,
+        catalog_name,
         WIKIDATA_DUCKDB_DATASET_NAME,
         WIKIDATA_LISTED_COMPANIES_TABLE,
     )
-    target_schema = _duckdb_qualified_schema_name(database_file, WIKIDATA_DUCKDB_SCHEMA)
-    with duckdb.connect(str(database_file)) as connection:
-        _assert_wikidata_listed_companies_table_exists(connection, source_table=source_table)
-        _ensure_optional_wikidata_source_columns(connection, source_table=source_table)
-        connection.execute(f"create schema if not exists {target_schema}")
-        _create_wikidata_companies_table(
+    target_schema = _duckdb_qualified_schema_name(catalog_name, WIKIDATA_DUCKDB_SCHEMA)
+    _assert_wikidata_listed_companies_table_exists(connection, source_table=source_table)
+    _ensure_optional_wikidata_source_columns(connection, source_table=source_table)
+    connection.execute(f"create schema if not exists {target_schema}")
+    _create_wikidata_companies_table(
+        connection,
+        source_table=source_table,
+        target_schema=target_schema,
+    )
+    _create_wikidata_company_listings_table(
+        connection,
+        source_table=source_table,
+        target_schema=target_schema,
+    )
+    _create_wikidata_company_identifiers_table(
+        connection,
+        source_table=source_table,
+        target_schema=target_schema,
+    )
+    _create_wikidata_company_websites_table(
+        connection,
+        source_table=source_table,
+        target_schema=target_schema,
+    )
+    _create_wikidata_company_relationships_table(
+        connection,
+        source_table=source_table,
+        target_schema=target_schema,
+    )
+    _create_wikidata_seed_extraction_runs_table(
+        connection,
+        source_table=source_table,
+        target_schema=target_schema,
+    )
+    return {
+        table_name: _duckdb_table_count(
             connection,
-            source_table=source_table,
-            target_schema=target_schema,
+            _duckdb_qualified_table_name(
+                catalog_name,
+                WIKIDATA_DUCKDB_SCHEMA,
+                table_name,
+            ),
         )
-        _create_wikidata_company_listings_table(
-            connection,
-            source_table=source_table,
-            target_schema=target_schema,
-        )
-        _create_wikidata_company_identifiers_table(
-            connection,
-            source_table=source_table,
-            target_schema=target_schema,
-        )
-        _create_wikidata_company_websites_table(
-            connection,
-            source_table=source_table,
-            target_schema=target_schema,
-        )
-        _create_wikidata_company_relationships_table(
-            connection,
-            source_table=source_table,
-            target_schema=target_schema,
-        )
-        _create_wikidata_seed_extraction_runs_table(
-            connection,
-            source_table=source_table,
-            target_schema=target_schema,
-        )
-        return {
-            table_name: _duckdb_table_count(
-                connection,
-                _duckdb_qualified_table_name(
-                    database_file,
-                    WIKIDATA_DUCKDB_SCHEMA,
-                    table_name,
-                ),
-            )
-            for table_name in tables.WIKIDATA_TABLES
-        }
+        for table_name in tables.WIKIDATA_TABLES
+    }
 
 
 def _assert_wikidata_listed_companies_table_exists(
@@ -1186,4 +1198,5 @@ defs = dg.Definitions(
     ],
     jobs=[wikidata_company_seed_weekly_job],
     schedules=[wikidata_company_seed_weekly_schedule],
+    resources={"wikidata_duckdb": duckdb_resource(WIKIDATA_DUCKDB_PATH)},
 )

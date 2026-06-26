@@ -91,11 +91,14 @@ def test_refresh_duckdb_state_normalizes_from_dlt_raw_tables(tmp_path: Path) -> 
         },
     )
 
-    result = duckdb_state.refresh_gleif_duckdb_state(
-        context=_FakeContext("run-full"),
-        object_store=object_store,
-        database_path=database_path,
-    )
+    with duckdb.connect(str(database_path)) as connection:
+        result = duckdb_state.refresh_gleif_duckdb_state(
+            context=_FakeContext("run-full"),
+            object_store=object_store,
+            connection=connection,
+            catalog_name=database_path.stem,
+            database_label=str(database_path),
+        )
 
     assert result.metadata["gleif_lei_records_row_count"] == 1
     assert source_key not in object_store.read_bytes_keys

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import dagster as dg
 import duckdb
 
@@ -62,7 +60,9 @@ def refresh_gleif_duckdb_state(
     *,
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
+    catalog_name: str,
+    database_label: str,
 ) -> dg.MaterializeResult:
     from dagster_v3.defs.gleif.csv_transforms import replace_current_from_dlt_raw_tables
 
@@ -70,7 +70,8 @@ def refresh_gleif_duckdb_state(
     load_mode = str(manifest["load_mode"])
     if load_mode == "full":
         row_counts = replace_current_from_dlt_raw_tables(
-            database_path=database_path,
+            connection=connection,
+            catalog_name=catalog_name,
             load_mode="full",
             publish_date=str(manifest["publish_date"]),
             run_id=str(manifest["run_id"]),
@@ -85,7 +86,8 @@ def refresh_gleif_duckdb_state(
         current_state = read_gleif_state(object_store)
         ensure_bootstrap_state_for_delta(current_state)
         row_counts = replace_current_from_dlt_raw_tables(
-            database_path=database_path,
+            connection=connection,
+            catalog_name=catalog_name,
             load_mode="delta",
             publish_date=str(manifest["publish_date"]),
             run_id=str(manifest["run_id"]),
@@ -104,7 +106,7 @@ def refresh_gleif_duckdb_state(
         metadata={
             "load_mode": load_mode,
             "publish_date": str(manifest["publish_date"]),
-            "duckdb_path": str(database_path),
+            "duckdb_path": database_label,
             **{f"{table_name}_row_count": count for table_name, count in row_counts.items()},
         }
     )
@@ -227,17 +229,19 @@ def _ensure_all_tables(
         )
 
 
-def _row_counts(database_path: Path) -> dict[str, int]:
-    catalog_name = database_path.stem
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        return {
-            table_name: int(
-                connection.execute(
-                    f"select count(*) from {_qualified_table(table_name, catalog_name=catalog_name, schema_name=DUCKDB_SCHEMA)}"
-                ).fetchone()[0]
-            )
-            for table_name in tables.GLEIF_TABLES
-        }
+def _row_counts(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    catalog_name: str,
+) -> dict[str, int]:
+    return {
+        table_name: int(
+            connection.execute(
+                f"select count(*) from {_qualified_table(table_name, catalog_name=catalog_name, schema_name=DUCKDB_SCHEMA)}"
+            ).fetchone()[0]
+        )
+        for table_name in tables.GLEIF_TABLES
+    }
 
 
 def _column_sql(columns: tuple[str, ...]) -> str:

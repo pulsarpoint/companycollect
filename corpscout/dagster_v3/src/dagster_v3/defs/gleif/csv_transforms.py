@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Literal
 
 import duckdb
@@ -28,55 +27,52 @@ from dagster_v3.defs.gleif.duckdb_state import (
 
 def replace_current_from_dlt_raw_tables(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
+    catalog_name: str,
     load_mode: Literal["full", "delta"],
     publish_date: str,
     run_id: str,
 ) -> dict[str, int]:
-    database_file = Path(database_path)
-    database_file.parent.mkdir(parents=True, exist_ok=True)
-    catalog_name = database_file.stem
-    with duckdb.connect(str(database_file)) as connection:
-        _ensure_required_raw_tables(connection)
-        _ensure_schema(connection, catalog_name, schema_name=DUCKDB_SCHEMA)
-        _ensure_schema(connection, catalog_name, schema_name=DUCKDB_STAGING_SCHEMA)
-        if load_mode == "delta":
-            _ensure_all_tables(
-                connection,
-                catalog_name=catalog_name,
-                schema_name=DUCKDB_SCHEMA,
-            )
-        _ensure_empty_tables(
+    _ensure_required_raw_tables(connection)
+    _ensure_schema(connection, catalog_name, schema_name=DUCKDB_SCHEMA)
+    _ensure_schema(connection, catalog_name, schema_name=DUCKDB_STAGING_SCHEMA)
+    if load_mode == "delta":
+        _ensure_all_tables(
             connection,
             catalog_name=catalog_name,
-            schema_name=DUCKDB_STAGING_SCHEMA,
+            schema_name=DUCKDB_SCHEMA,
         )
-        _build_staging_tables(
+    _ensure_empty_tables(
+        connection,
+        catalog_name=catalog_name,
+        schema_name=DUCKDB_STAGING_SCHEMA,
+    )
+    _build_staging_tables(
+        connection,
+        catalog_name=catalog_name,
+        publish_date=publish_date,
+        run_id=run_id,
+    )
+    staged_counts = _staging_row_counts(connection, catalog_name=catalog_name)
+    if load_mode == "full" and staged_counts.get(tables.GLEIF_LEI_RECORDS_TABLE, 0) == 0:
+        raise ValueError(
+            "GLEIF full normalization produced 0 lei_records rows; "
+            "refusing to replace the current tables"
+        )
+    if load_mode == "full":
+        _replace_current_tables_from_schema(
             connection,
             catalog_name=catalog_name,
-            publish_date=publish_date,
-            run_id=run_id,
+            source_schema_name=DUCKDB_STAGING_SCHEMA,
         )
-        staged_counts = _staging_row_counts(connection, catalog_name=catalog_name)
-        if load_mode == "full" and staged_counts.get(tables.GLEIF_LEI_RECORDS_TABLE, 0) == 0:
-            raise ValueError(
-                "GLEIF full normalization produced 0 lei_records rows; "
-                "refusing to replace the current tables"
-            )
-        if load_mode == "full":
-            _replace_current_tables_from_schema(
-                connection,
-                catalog_name=catalog_name,
-                source_schema_name=DUCKDB_STAGING_SCHEMA,
-            )
-        else:
-            _upsert_current_tables_from_schema(
-                connection,
-                catalog_name=catalog_name,
-                source_schema_name=DUCKDB_STAGING_SCHEMA,
-                source_row_counts=staged_counts,
-            )
-    return _row_counts(database_file)
+    else:
+        _upsert_current_tables_from_schema(
+            connection,
+            catalog_name=catalog_name,
+            source_schema_name=DUCKDB_STAGING_SCHEMA,
+            source_row_counts=staged_counts,
+        )
+    return _row_counts(connection, catalog_name=catalog_name)
 
 
 def _ensure_required_raw_tables(connection: duckdb.DuckDBPyConnection) -> None:

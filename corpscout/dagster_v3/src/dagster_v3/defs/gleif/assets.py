@@ -7,12 +7,14 @@ from typing import Any, Literal, cast
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
+from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
     assert_clickhouse_tables_exist,
-    replace_duckdb_tables_in_clickhouse,
+    replace_duckdb_connection_tables_in_clickhouse,
 )
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.gleif import tables
 from dagster_v3.defs.gleif.dlt_csv import (
@@ -24,6 +26,7 @@ from dagster_v3.defs.gleif.dlt_csv import (
     RAW_TABLE_BY_FILE_KIND,
     extract_single_csv_member,
     load_gleif_csv_raw_tables,
+    raw_table_row_counts,
 )
 from dagster_v3.defs.gleif.source import (
     GLEIF_RAW_BUCKET,
@@ -115,6 +118,7 @@ def gleif_delta_raw_reference_files(
 def gleif_raw_duckdb_dlt_assets(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
+    gleif_duckdb: DuckDBResource,
 ) -> Iterator[Any]:
     manifest = manifest_for_run(object_store, context.run_id)
     with tempfile.TemporaryDirectory(prefix="gleif-dlt-csv-") as temp_path:
@@ -124,10 +128,12 @@ def gleif_raw_duckdb_dlt_assets(
             manifest=manifest,
             temp_dir=Path(temp_path),
         )
-        row_counts = load_gleif_csv_raw_tables(
+        load_gleif_csv_raw_tables(
             database_path=GLEIF_DUCKDB_PATH,
             extracted_files=extracted_files,
         )
+        with gleif_duckdb.get_connection() as connection:
+            row_counts = raw_table_row_counts(connection)
         _validate_raw_row_counts(manifest=manifest, row_counts=row_counts)
 
     for table_name, asset_name in GLEIF_DUCKDB_RAW_ASSET_BY_TABLE.items():
@@ -153,14 +159,18 @@ def gleif_raw_duckdb_dlt_assets(
 def gleif_reference_duckdb_state(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
+    gleif_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     from dagster_v3.defs.gleif.duckdb_state import refresh_gleif_duckdb_state
 
-    return refresh_gleif_duckdb_state(
-        context=context,
-        object_store=object_store,
-        database_path=GLEIF_DUCKDB_PATH,
-    )
+    with gleif_duckdb.get_connection() as connection:
+        return refresh_gleif_duckdb_state(
+            context=context,
+            object_store=object_store,
+            connection=connection,
+            catalog_name=GLEIF_DUCKDB_PATH.stem,
+            database_label=str(GLEIF_DUCKDB_PATH),
+        )
 
 
 @dg.asset(
@@ -170,23 +180,27 @@ def gleif_reference_duckdb_state(
     pool=GLEIF_DUCKDB_POOL,
     description="Exports current GLEIF DuckDB state to ClickHouse corpscout.gleif_* tables.",
 )
-def gleif_reference_clickhouse(clickhouse: ClickhouseResource) -> dg.MaterializeResult:
+def gleif_reference_clickhouse(
+    clickhouse: ClickhouseResource,
+    gleif_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse,
         database=RESOLVED_DATABASE,
         tables=tables.GLEIF_TABLES,
     )
-    with clickhouse.get_connection() as client:
-        row_counts = replace_duckdb_tables_in_clickhouse(
-            duckdb_path=GLEIF_DUCKDB_PATH,
-            clickhouse_client=client,
-            duckdb_schema=GLEIF_DUCKDB_SCHEMA,
-            clickhouse_database=RESOLVED_DATABASE,
-            tables=tuple(
-                (table_name, tables.GLEIF_TABLE_COLUMNS[table_name])
-                for table_name in tables.GLEIF_TABLES
-            ),
-        )
+    with gleif_duckdb.get_connection() as connection:
+        with clickhouse.get_connection() as client:
+            row_counts = replace_duckdb_connection_tables_in_clickhouse(
+                duckdb_connection=connection,
+                clickhouse_client=client,
+                duckdb_schema=GLEIF_DUCKDB_SCHEMA,
+                clickhouse_database=RESOLVED_DATABASE,
+                tables=tuple(
+                    (table_name, tables.GLEIF_TABLE_COLUMNS[table_name])
+                    for table_name in tables.GLEIF_TABLES
+                ),
+            )
     return dg.MaterializeResult(
         metadata={f"{table_name}_row_count": count for table_name, count in row_counts.items()}
     )
@@ -249,6 +263,7 @@ defs = dg.Definitions(
     ],
     jobs=[gleif_reference_bootstrap_job, gleif_reference_delta_job],
     schedules=[gleif_reference_delta_daily],
+    resources={"gleif_duckdb": duckdb_resource(GLEIF_DUCKDB_PATH)},
 )
 
 

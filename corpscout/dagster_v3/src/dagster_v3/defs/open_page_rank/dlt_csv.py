@@ -76,34 +76,28 @@ def load_open_page_rank_raw_table(
     *,
     database_path: str | Path,
     extracted_file: ExtractedOpenPageRankCsv,
-) -> dict[str, int]:
+) -> None:
     pipeline = open_page_rank_csv_dlt_pipeline(database_path)
     pipeline.drop_pending_packages()
     load_info = pipeline.run(open_page_rank_csv_dlt_source(extracted_file))
     load_info.raise_on_failed_jobs()
-    return {OPEN_PAGE_RANK_RAW_TABLE: raw_table_row_count(database_path)}
 
 
-def raw_table_row_count(database_path: str | Path) -> int:
-    database_file = Path(database_path)
-    if not database_file.exists():
+def raw_table_row_count(connection: duckdb.DuckDBPyConnection) -> int:
+    exists = connection.execute(
+        """
+        select 1
+        from information_schema.tables
+        where table_schema = ?
+          and table_name = ?
+        limit 1
+        """,
+        [OPEN_PAGE_RANK_DLT_DATASET_NAME, OPEN_PAGE_RANK_RAW_TABLE],
+    ).fetchone()
+    if exists is None:
         return 0
-
-    with duckdb.connect(str(database_file), read_only=True) as connection:
-        exists = connection.execute(
-            """
-            select 1
-            from information_schema.tables
-            where table_schema = ?
-              and table_name = ?
-            limit 1
-            """,
-            [OPEN_PAGE_RANK_DLT_DATASET_NAME, OPEN_PAGE_RANK_RAW_TABLE],
-        ).fetchone()
-        if exists is None:
-            return 0
-        return int(
-            connection.execute(
-                f'select count(*) from "{OPEN_PAGE_RANK_DLT_DATASET_NAME}"."{OPEN_PAGE_RANK_RAW_TABLE}"'
-            ).fetchone()[0]
-        )
+    return int(
+        connection.execute(
+            f'select count(*) from "{OPEN_PAGE_RANK_DLT_DATASET_NAME}"."{OPEN_PAGE_RANK_RAW_TABLE}"'
+        ).fetchone()[0]
+    )

@@ -83,26 +83,20 @@ def load_gleif_csv_raw_tables(
     *,
     database_path: str | Path,
     extracted_files: Iterable[ExtractedGleifCsv],
-) -> dict[str, int]:
+) -> None:
     files = list(extracted_files)
     pipeline = gleif_csv_dlt_pipeline(database_path)
     pipeline.drop_pending_packages()
     for item in files:
         load_info = pipeline.run(gleif_csv_dlt_source([item]))
         load_info.raise_on_failed_jobs()
-    return raw_table_row_counts(database_path)
 
 
-def raw_table_row_counts(database_path: str | Path) -> dict[str, int]:
-    database_file = Path(database_path)
-    if not database_file.exists():
-        return {table_name: 0 for table_name in RAW_TABLE_BY_FILE_KIND.values()}
-
-    with duckdb.connect(str(database_file), read_only=True) as connection:
-        return {
-            table_name: _raw_table_row_count(connection, table_name)
-            for table_name in RAW_TABLE_BY_FILE_KIND.values()
-        }
+def raw_table_row_counts(connection: duckdb.DuckDBPyConnection) -> dict[str, int]:
+    return {
+        table_name: _raw_table_row_count(connection, table_name)
+        for table_name in RAW_TABLE_BY_FILE_KIND.values()
+    }
 
 
 def _raw_table_row_count(

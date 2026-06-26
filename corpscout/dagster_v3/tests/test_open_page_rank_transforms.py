@@ -41,13 +41,13 @@ def test_replace_current_open_page_rank_domains_normalizes_raw_rows(
             '''
         )
 
-    row_count = replace_current_open_page_rank_domains(
-        database_path=database_path,
-        source_url="https://www.domcop.com/files/top/top10milliondomains.csv.zip",
-        source_run_id="run-1",
-        retrieved_date="2026-06-21",
-        retrieved_at="2026-06-21T10:30:00+00:00",
-    )
+        row_count = replace_current_open_page_rank_domains(
+            connection=connection,
+            source_url="https://www.domcop.com/files/top/top10milliondomains.csv.zip",
+            source_run_id="run-1",
+            retrieved_date="2026-06-21",
+            retrieved_at="2026-06-21T10:30:00+00:00",
+        )
 
     assert row_count == 1
     with duckdb.connect(str(database_path), read_only=True) as connection:
@@ -94,13 +94,13 @@ def test_replace_current_open_page_rank_domains_derives_extension_when_missing(
             '''
         )
 
-    row_count = replace_current_open_page_rank_domains(
-        database_path=database_path,
-        source_url="https://www.domcop.com/files/top/top10milliondomains.csv.zip",
-        source_run_id="run-1",
-        retrieved_date="2026-06-21",
-        retrieved_at="2026-06-21T10:30:00+00:00",
-    )
+        row_count = replace_current_open_page_rank_domains(
+            connection=connection,
+            source_url="https://www.domcop.com/files/top/top10milliondomains.csv.zip",
+            source_run_id="run-1",
+            retrieved_date="2026-06-21",
+            retrieved_at="2026-06-21T10:30:00+00:00",
+        )
 
     assert row_count == 1
     with duckdb.connect(str(database_path), read_only=True) as connection:

@@ -19,12 +19,13 @@ def test_replace_current_from_dlt_raw_tables_builds_normalized_tables(
     with duckdb.connect(str(database_path)) as connection:
         seed_raw_tables(connection)
 
-    row_counts = replace_current_from_dlt_raw_tables(
-        database_path=database_path,
-        load_mode="full",
-        publish_date="2026-06-20T16:00:00+00:00",
-        run_id="run-1",
-    )
+        row_counts = replace_current_from_dlt_raw_tables(
+            connection=connection,
+            catalog_name=database_path.stem,
+            load_mode="full",
+            publish_date="2026-06-20T16:00:00+00:00",
+            run_id="run-1",
+        )
 
     assert row_counts["gleif_lei_records"] == 1
     assert row_counts["gleif_lei_names"] == 2
@@ -59,12 +60,14 @@ def test_full_replace_refuses_empty_lei_records(tmp_path: Path) -> None:
         seed_raw_tables(connection, include_lei_row=False)
 
     with pytest.raises(ValueError, match="0 lei_records"):
-        replace_current_from_dlt_raw_tables(
-            database_path=database_path,
-            load_mode="full",
-            publish_date="2026-06-20T16:00:00+00:00",
-            run_id="run-empty",
-        )
+        with duckdb.connect(str(database_path)) as connection:
+            replace_current_from_dlt_raw_tables(
+                connection=connection,
+                catalog_name=database_path.stem,
+                load_mode="full",
+                publish_date="2026-06-20T16:00:00+00:00",
+                run_id="run-empty",
+            )
 
 
 def test_non_nullable_strings_are_coalesced_for_clickhouse(tmp_path: Path) -> None:
@@ -77,12 +80,13 @@ def test_non_nullable_strings_are_coalesced_for_clickhouse(tmp_path: Path) -> No
             registration_status=None,
         )
 
-    replace_current_from_dlt_raw_tables(
-        database_path=database_path,
-        load_mode="full",
-        publish_date="2026-06-20T16:00:00+00:00",
-        run_id="run-null",
-    )
+        replace_current_from_dlt_raw_tables(
+            connection=connection,
+            catalog_name=database_path.stem,
+            load_mode="full",
+            publish_date="2026-06-20T16:00:00+00:00",
+            run_id="run-null",
+        )
 
     with duckdb.connect(str(database_path), read_only=True) as connection:
         assert connection.execute(
@@ -98,12 +102,13 @@ def test_relationship_transform_tolerates_missing_deleted_at_column(tmp_path: Pa
     with duckdb.connect(str(database_path)) as connection:
         seed_raw_tables(connection, include_relationship_deleted_at=False)
 
-    replace_current_from_dlt_raw_tables(
-        database_path=database_path,
-        load_mode="full",
-        publish_date="2026-06-20T16:00:00+00:00",
-        run_id="run-without-deleted-at",
-    )
+        replace_current_from_dlt_raw_tables(
+            connection=connection,
+            catalog_name=database_path.stem,
+            load_mode="full",
+            publish_date="2026-06-20T16:00:00+00:00",
+            run_id="run-without-deleted-at",
+        )
 
     with duckdb.connect(str(database_path), read_only=True) as connection:
         assert connection.execute(
@@ -124,12 +129,13 @@ def test_reporting_exception_transform_tolerates_missing_registration_columns(
             include_reporting_exception_registration_columns=False,
         )
 
-    replace_current_from_dlt_raw_tables(
-        database_path=database_path,
-        load_mode="full",
-        publish_date="2026-06-20T16:00:00+00:00",
-        run_id="run-without-exception-registration",
-    )
+        replace_current_from_dlt_raw_tables(
+            connection=connection,
+            catalog_name=database_path.stem,
+            load_mode="full",
+            publish_date="2026-06-20T16:00:00+00:00",
+            run_id="run-without-exception-registration",
+        )
 
     with duckdb.connect(str(database_path), read_only=True) as connection:
         assert connection.execute(

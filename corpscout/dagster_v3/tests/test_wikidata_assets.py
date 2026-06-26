@@ -10,6 +10,7 @@ import dagster as dg
 import duckdb
 from dagster import AssetKey
 from dagster_clickhouse import ClickhouseResource
+from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.definitions import defs as load_project_defs
@@ -626,7 +627,11 @@ def test_wikidata_normalization_builds_final_duckdb_tables(tmp_path: Path) -> No
     database_path = tmp_path / "wikidata.duckdb"
     _seed_wikidata_listed_companies(database_path)
 
-    row_counts = assets.normalize_wikidata_listed_companies_duckdb(database_path)
+    with duckdb.connect(str(database_path)) as connection:
+        row_counts = assets.normalize_wikidata_listed_companies_duckdb(
+            connection,
+            catalog_name=database_path.stem,
+        )
 
     assert row_counts == {
         "wikidata_companies": 2,
@@ -814,7 +819,7 @@ def test_wikidata_clickhouse_export_uses_final_table_contract(monkeypatch) -> No
             "tables": tables,
         }
 
-    def fake_replace_duckdb_tables_in_clickhouse(**kwargs: Any) -> dict[str, int]:
+    def fake_replace_duckdb_connection_tables_in_clickhouse(**kwargs: Any) -> dict[str, int]:
         calls["replace"] = kwargs
         return {table_name: index + 1 for index, table_name in enumerate(tables.WIKIDATA_TABLES)}
 
@@ -825,20 +830,27 @@ def test_wikidata_clickhouse_export_uses_final_table_contract(monkeypatch) -> No
     )
     monkeypatch.setattr(
         assets,
-        "replace_duckdb_tables_in_clickhouse",
-        fake_replace_duckdb_tables_in_clickhouse,
+        "replace_duckdb_connection_tables_in_clickhouse",
+        fake_replace_duckdb_connection_tables_in_clickhouse,
     )
 
     clickhouse = ClickhouseResource(host="localhost")
+    wikidata_duckdb = DuckDBResource(database=":memory:")
     client = object()
+    duckdb_connection = object()
 
     @contextmanager
     def fake_connection(self: ClickhouseResource) -> Iterator[object]:
         yield client
 
-    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_connection)
+    @contextmanager
+    def fake_duckdb_connection(self: DuckDBResource) -> Iterator[object]:
+        yield duckdb_connection
 
-    result = assets._export_wikidata_tables_to_clickhouse(clickhouse)
+    monkeypatch.setattr(ClickhouseResource, "get_connection", fake_connection)
+    monkeypatch.setattr(DuckDBResource, "get_connection", fake_duckdb_connection)
+
+    result = assets._export_wikidata_tables_to_clickhouse(clickhouse, wikidata_duckdb)
 
     assert calls["assert"] == {
         "clickhouse": clickhouse,
@@ -846,7 +858,7 @@ def test_wikidata_clickhouse_export_uses_final_table_contract(monkeypatch) -> No
         "tables": tables.WIKIDATA_TABLES,
     }
     assert calls["replace"] == {
-        "duckdb_path": Path("data/wikidata.duckdb"),
+        "duckdb_connection": duckdb_connection,
         "clickhouse_client": client,
         "duckdb_schema": "wikidata.wikidata",
         "clickhouse_database": "corpscout",

@@ -16,6 +16,7 @@ from dagster_v3.defs.gleif.dlt_csv import (
     gleif_csv_dlt_source,
     gleif_definition_time_csv_files,
     load_gleif_csv_raw_tables,
+    raw_table_row_counts,
 )
 
 
@@ -76,7 +77,7 @@ def test_gleif_csv_dlt_pipeline_loads_duckdb_raw_table(tmp_path: Path) -> None:
     )
     database_path = tmp_path / "gleif_reference.duckdb"
 
-    row_counts = load_gleif_csv_raw_tables(
+    load_gleif_csv_raw_tables(
         database_path=database_path,
         extracted_files=[
             ExtractedGleifCsv(
@@ -92,8 +93,9 @@ def test_gleif_csv_dlt_pipeline_loads_duckdb_raw_table(tmp_path: Path) -> None:
         ],
     )
 
-    assert row_counts[GLEIF_RAW_LEI_RECORDS_TABLE] == 1
     with duckdb.connect(str(database_path), read_only=True) as connection:
+        row_counts = raw_table_row_counts(connection)
+        assert row_counts[GLEIF_RAW_LEI_RECORDS_TABLE] == 1
         assert (
             connection.execute(
                 f"select count(*) from {GLEIF_DLT_RAW_DATASET_NAME}.{GLEIF_RAW_LEI_RECORDS_TABLE}"
@@ -121,7 +123,7 @@ def test_gleif_csv_dlt_pipeline_loads_more_than_one_csv_chunk(tmp_path: Path) ->
     )
     database_path = tmp_path / "gleif_reference.duckdb"
 
-    row_counts = load_gleif_csv_raw_tables(
+    load_gleif_csv_raw_tables(
         database_path=database_path,
         extracted_files=[
             ExtractedGleifCsv(
@@ -137,8 +139,9 @@ def test_gleif_csv_dlt_pipeline_loads_more_than_one_csv_chunk(tmp_path: Path) ->
         ],
     )
 
-    assert row_counts[GLEIF_RAW_LEI_RECORDS_TABLE] == row_count
     with duckdb.connect(str(database_path), read_only=True) as connection:
+        row_counts = raw_table_row_counts(connection)
+        assert row_counts[GLEIF_RAW_LEI_RECORDS_TABLE] == row_count
         assert (
             connection.execute(
                 f"select count(*) from {GLEIF_DLT_RAW_DATASET_NAME}.{GLEIF_RAW_LEI_RECORDS_TABLE}"
@@ -187,16 +190,17 @@ def test_gleif_csv_raw_loader_loads_all_chunks_for_multiple_resources(
     ]
 
     database_path = tmp_path / "gleif_reference.duckdb"
-    row_counts = load_gleif_csv_raw_tables(
+    load_gleif_csv_raw_tables(
         database_path=database_path,
         extracted_files=extracted_files,
     )
 
-    assert row_counts == {
-        GLEIF_RAW_LEI_RECORDS_TABLE: row_count,
-        GLEIF_RAW_RELATIONSHIPS_TABLE: row_count,
-        GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE: row_count,
-    }
+    with duckdb.connect(str(database_path), read_only=True) as connection:
+        assert raw_table_row_counts(connection) == {
+            GLEIF_RAW_LEI_RECORDS_TABLE: row_count,
+            GLEIF_RAW_RELATIONSHIPS_TABLE: row_count,
+            GLEIF_RAW_REPORTING_EXCEPTIONS_TABLE: row_count,
+        }
 
 
 def _write_extracted_csv(

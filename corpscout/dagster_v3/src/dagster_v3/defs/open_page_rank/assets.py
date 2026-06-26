@@ -4,18 +4,22 @@ import tempfile
 
 import dagster as dg
 from dagster_clickhouse import ClickhouseResource
+from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
     assert_clickhouse_tables_exist,
-    export_duckdb_table_to_clickhouse,
+    export_duckdb_connection_table_to_clickhouse,
 )
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.open_page_rank import tables
 from dagster_v3.defs.open_page_rank.dlt_csv import (
+    OPEN_PAGE_RANK_RAW_TABLE,
     ExtractedOpenPageRankCsv,
     extract_single_csv_member,
     load_open_page_rank_raw_table,
+    raw_table_row_count,
 )
 from dagster_v3.defs.open_page_rank.source import (
     OPEN_PAGE_RANK_RAW_BUCKET,
@@ -64,6 +68,7 @@ def open_page_rank_raw_archive(
 def open_page_rank_raw_duckdb(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
+    open_page_rank_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     manifest = manifest_for_run(object_store, context.run_id)
     with tempfile.TemporaryDirectory(prefix="open-page-rank-") as temp_path:
@@ -75,10 +80,12 @@ def open_page_rank_raw_duckdb(
             bucket=OPEN_PAGE_RANK_RAW_BUCKET,
         )
         csv_path = extract_single_csv_member(zip_path=zip_path, output_dir=temp_dir)
-        row_counts = load_open_page_rank_raw_table(
+        load_open_page_rank_raw_table(
             database_path=OPEN_PAGE_RANK_DUCKDB_PATH,
             extracted_file=ExtractedOpenPageRankCsv(csv_path=csv_path),
         )
+        with open_page_rank_duckdb.get_connection() as connection:
+            row_counts = {OPEN_PAGE_RANK_RAW_TABLE: raw_table_row_count(connection)}
 
     row_count = int(next(iter(row_counts.values())))
     if row_count < MIN_OPEN_PAGE_RANK_ROWS:
@@ -104,15 +111,17 @@ def open_page_rank_raw_duckdb(
 def open_page_rank_domains_duckdb(
     context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
+    open_page_rank_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     manifest = manifest_for_run(object_store, context.run_id)
-    row_count = replace_current_open_page_rank_domains(
-        database_path=OPEN_PAGE_RANK_DUCKDB_PATH,
-        source_url=str(manifest["file"]["source_url"]),
-        source_run_id=str(manifest["run_id"]),
-        retrieved_date=str(manifest["retrieved_date"]),
-        retrieved_at=str(manifest["retrieved_at"]),
-    )
+    with open_page_rank_duckdb.get_connection() as connection:
+        row_count = replace_current_open_page_rank_domains(
+            connection=connection,
+            source_url=str(manifest["file"]["source_url"]),
+            source_run_id=str(manifest["run_id"]),
+            retrieved_date=str(manifest["retrieved_date"]),
+            retrieved_at=str(manifest["retrieved_at"]),
+        )
     return dg.MaterializeResult(metadata={"row_count": row_count})
 
 
@@ -123,23 +132,27 @@ def open_page_rank_domains_duckdb(
     pool=OPEN_PAGE_RANK_DUCKDB_POOL,
     description="Exports current Open PageRank domains from DuckDB to ClickHouse.",
 )
-def open_page_rank_domains_clickhouse(clickhouse: ClickhouseResource) -> dg.MaterializeResult:
+def open_page_rank_domains_clickhouse(
+    clickhouse: ClickhouseResource,
+    open_page_rank_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(
         clickhouse,
         database=RESOLVED_DATABASE,
         tables=tables.OPEN_PAGE_RANK_TABLES,
     )
-    with clickhouse.get_connection() as client:
-        row_count = export_duckdb_table_to_clickhouse(
-            duckdb_path=OPEN_PAGE_RANK_DUCKDB_PATH,
-            clickhouse_client=client,
-            duckdb_schema=OPEN_PAGE_RANK_DUCKDB_SCHEMA,
-            duckdb_table=tables.OPEN_PAGE_RANK_DOMAINS_TABLE,
-            clickhouse_database=RESOLVED_DATABASE,
-            clickhouse_table=tables.OPEN_PAGE_RANK_DOMAINS_TABLE,
-            columns=tables.OPEN_PAGE_RANK_DOMAINS_COLUMNS,
-            truncate=True,
-        )
+    with open_page_rank_duckdb.get_connection() as connection:
+        with clickhouse.get_connection() as client:
+            row_count = export_duckdb_connection_table_to_clickhouse(
+                duckdb_connection=connection,
+                clickhouse_client=client,
+                duckdb_schema=OPEN_PAGE_RANK_DUCKDB_SCHEMA,
+                duckdb_table=tables.OPEN_PAGE_RANK_DOMAINS_TABLE,
+                clickhouse_database=RESOLVED_DATABASE,
+                clickhouse_table=tables.OPEN_PAGE_RANK_DOMAINS_TABLE,
+                columns=tables.OPEN_PAGE_RANK_DOMAINS_COLUMNS,
+                truncate=True,
+            )
     return dg.MaterializeResult(metadata={"row_count": row_count})
 
 
@@ -198,4 +211,5 @@ defs = dg.Definitions(
         open_page_rank_domains_process_existing_raw_job,
     ],
     schedules=[open_page_rank_domains_weekly],
+    resources={"open_page_rank_duckdb": duckdb_resource(OPEN_PAGE_RANK_DUCKDB_PATH)},
 )
