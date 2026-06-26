@@ -18,6 +18,7 @@
 - ClickHouse env: `CLICKHOUSE_HOST`, `CLICKHOUSE_HTTP_PORT` (default `8123` — `clickhouse-connect` uses HTTP, not the native 9002), `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_SECURE`.
 - LLM env: `TRANSLATION_PROVIDER_LOCAL_BASE_URL`, `TRANSLATION_PROVIDER_LOCAL_MODEL`, `TRANSLATION_PROVIDER_LOCAL_API_KEY` (default `not-needed`).
 - Heavy imports (`duckdb`, `clickhouse_connect`) stay **inside activity function bodies** (matching the absorbed `activities.py` style) so the workflow sandbox stays clean.
+- **DuckDB access here is intentionally plain `duckdb.connect`** (inside the absorbed `translator/queue.py`), NOT the Dagster `DuckDBResource` pattern used by the ingestion assets. This worker runs *outside* Dagster, so it has no resource injection — do not convert it to `DuckDBResource`. The queue is tiny (translation items), so the resource's `temp_directory`/`threads`/`memory_limit` tuning is unnecessary; if profiling later shows pressure, pass a `config={...}` to `duckdb.connect` reading the same `DUCKDB_*` env vars `common/duckdb_resources.py` uses.
 - Run tests with `uv run pytest` from `corpscout/dagster_v3/`.
 - Commit by explicit path; never `git add -A`.
 

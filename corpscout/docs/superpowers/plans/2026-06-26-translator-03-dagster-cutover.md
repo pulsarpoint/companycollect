@@ -16,6 +16,8 @@
 - The 3 free-text `_en` columns: `articles_purpose_en`, `activity_text_en`, `company_description_en`. The 4 reference `_en` columns (`legal_form_description_en`, `nace1/2/3_description_en`) stay everywhere.
 - Trigger is fire-and-forget: start the workflow, return its run id, never `.result()`. Workflow id `translate-norway_brreg`, conflict policy `USE_EXISTING`, task queue `translation-local-llm`.
 - Run tests with `uv run pytest` and validate definitions with `uv run dg check defs`, both from `corpscout/dagster_v3/`.
+- **DuckDB resource pattern (already adopted):** Norway assets receive `norway_brreg_duckdb: DuckDBResource` and use `duckdb_database_path(...)` / `read_only_duckdb_connection(...)` / `export_norway_brreg_clickhouse_companies(duckdb_connection=...)` (helpers from `dagster_v3.defs.common.duckdb_resources` and `…clickhouse.resolved`). `definitions.py` wires a `resources={...}` dict via `duckdb_resource(<path>)`. This plan must **preserve** the `norway_brreg_duckdb` resource and only remove the translation-specific `norway_brreg_translation_queue_duckdb` resource + its `NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH` constant. The standalone translator worker (Plan 02) does **not** use this resource — it runs outside Dagster on plain `duckdb.connect`.
+- Asset line numbers below are approximate (the DuckDB-resource refactor shifted them); act on the named symbol and confirm with the given `rg`.
 - Commit by explicit path; never `git add -A`.
 
 ---
@@ -120,7 +122,7 @@ COMPANIES_EXPORT_COLUMNS = tuple(
 
 - [ ] **Step 4: Repoint the companies export dependency**
 
-In `src/dagster_v3/defs/norway_brreg/assets.py`, change line 227 from:
+In `src/dagster_v3/defs/norway_brreg/assets.py`, find the `@dg.asset` decorator for `norway_brreg_clickhouse_companies` (≈line 240, its `deps` currently `norway_brreg_translations_applied`) and change that one line:
 
 ```python
     deps=[dg.AssetKey("norway_brreg_translations_applied")],
@@ -131,6 +133,11 @@ to:
 ```python
     deps=[dg.AssetKey("norway_brreg_entities_duckdb")],
 ```
+
+Leave the asset body unchanged — it already reads via the DuckDB resource (`read_only_duckdb_connection(norway_brreg_duckdb)` + `export_norway_brreg_clickhouse_companies(duckdb_connection=...)`), and the entities asset writes the table it reads, so the dep is satisfied. Confirm exactly one site changed:
+
+Run: `rg -n 'deps=\[dg.AssetKey\("norway_brreg_translations_applied"\)\]' src/dagster_v3/defs/norway_brreg/assets.py`
+Expected: no matches after the edit.
 
 - [ ] **Step 5: Fix the existing export-row assertions**
 
@@ -444,7 +451,7 @@ git commit -m "feat(norway): fire-and-forget translation trigger asset"
 - Modify: `tests/test_norway_brreg_assets.py` (remove translation tests)
 
 **Interfaces:**
-- Removes: assets `norway_brreg_translation_queue`, `norway_brreg_translation_workflow_status`, `norway_brreg_translations_applied`; `norway_brreg_translation_completion_job`; `norway_brreg_translation_completion_sensor`; helpers `seed_norway_brreg_translation_queue`, `apply_norway_brreg_translation_queue_results`, `describe_norway_brreg_translation_workflow` (+ `_describe…`), `norway_brreg_translation_queue_status_metadata`, `norway_brreg_translation_workflow_status_metadata`, `log_norway_brreg_translation_workflow_status`, `NorwayBrregTranslationConfig`, and the `NORWAY_BRREG_TRANSLATION_*` constants. Removes the `from dagster_v3.defs.translations.assets import …` and `from temporal.translations.queue import …` and `from translations.* import …` imports in `assets.py`.
+- Removes: assets `norway_brreg_translation_queue`, `norway_brreg_translation_workflow_status`, `norway_brreg_translations_applied`; `norway_brreg_translation_completion_job`; `norway_brreg_translation_completion_sensor`; helpers `seed_norway_brreg_translation_queue`, `apply_norway_brreg_translation_queue_results`, `describe_norway_brreg_translation_workflow` (+ `_describe…`), `norway_brreg_translation_queue_status_metadata`, `norway_brreg_translation_workflow_status_metadata`, `log_norway_brreg_translation_workflow_status`, `NorwayBrregTranslationConfig`, the `NORWAY_BRREG_TRANSLATION_*` constants (including `NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH`), the `NORWAY_BRREG_LLM_TRANSLATION_FIELDS` / `NORWAY_BRREG_EN_FIELD_BY_ORIGINAL_FIELD` constants, and the **`norway_brreg_translation_queue_duckdb` resource** wiring in `definitions.py`. Removes the `from dagster_v3.defs.translations.assets import …`, `from temporal.translations.queue import …`, and `from translations.* import …` imports in `assets.py`. The `norway_brreg_translation_queue` asset was the only consumer of the `norway_brreg_translation_queue_duckdb` resource — so that resource and its path constant are now dead.
 - Produces: `norway_brreg_refresh_job` selection covering financials + companies + trigger.
 
 - [ ] **Step 1: Delete the translation tests first (so the suite reflects the new surface)**
@@ -487,12 +494,14 @@ git rm corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/sensors.py
 
 - [ ] **Step 4: Update `definitions.py`**
 
-Replace `src/dagster_v3/defs/norway_brreg/definitions.py` with:
+Replace `src/dagster_v3/defs/norway_brreg/definitions.py` with the version below. **Note the `resources` dict is preserved** — only the `norway_brreg_translation_queue_duckdb` resource and the `NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH` import are dropped; `norway_brreg_duckdb` and the `duckdb_resource` import stay (every Norway asset still needs that resource):
 
 ```python
 import dagster as dg
 
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.norway_brreg.assets import (
+    NORWAY_BRREG_DUCKDB_PATH,
     norway_brreg_clickhouse_companies,
     norway_brreg_clickhouse_financial_statements,
     norway_brreg_entities_duckdb_asset,
@@ -515,13 +524,16 @@ defs = dg.Definitions(
     ],
     jobs=[norway_brreg_refresh_job],
     schedules=[norway_brreg_refresh_schedule],
+    resources={
+        "norway_brreg_duckdb": duckdb_resource(NORWAY_BRREG_DUCKDB_PATH),
+    },
 )
 ```
 
 - [ ] **Step 5: Verify no dangling references and definitions load**
 
-Run: `rg -n "translation_queue|translations_applied|translation_workflow_status|translation_completion|start_translation_workflow|NorwayBrregTranslationConfig" src/dagster_v3/defs/norway_brreg/`
-Expected: no matches.
+Run: `rg -ni "translation_queue|translations_applied|translation_workflow_status|translation_completion|start_translation_workflow|NorwayBrregTranslationConfig" src/dagster_v3/defs/norway_brreg/`
+Expected: no matches (the `-i` also catches `NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH` and the `norway_brreg_translation_queue_duckdb` resource).
 
 Run: `uv run dg check defs`
 Expected: PASS (definitions load; no missing asset keys).
