@@ -1,5 +1,9 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
+ALTER TABLE corpscout.companies DROP COLUMN IF EXISTS articles_purpose_en;
+ALTER TABLE corpscout.companies DROP COLUMN IF EXISTS activity_text_en;
+ALTER TABLE corpscout.companies DROP COLUMN IF EXISTS company_description_en;
+
 CREATE OR REPLACE VIEW corpscout.norway_companies_translated AS
 SELECT
     c.*,
@@ -25,7 +29,3 @@ LEFT JOIN (
     WHERE source_slug = 'norway_brreg' AND field = 'company_description'
     GROUP BY source_text_hash
 ) AS cd ON cd.source_text_hash = cityHash64(c.company_description_original);
-
-ALTER TABLE corpscout.companies DROP COLUMN IF EXISTS articles_purpose_en;
-ALTER TABLE corpscout.companies DROP COLUMN IF EXISTS activity_text_en;
-ALTER TABLE corpscout.companies DROP COLUMN IF EXISTS company_description_en;
