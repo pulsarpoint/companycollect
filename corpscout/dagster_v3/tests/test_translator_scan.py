@@ -6,7 +6,7 @@ def test_build_scan_sql_selects_distinct_untranslated_terms():
     config = get_source_config("norway_brreg")
     sql = build_scan_sql(config, config.fields[2])  # company_description
     assert "SELECT DISTINCT c.company_description_original AS source_text" in sql
-    assert "FROM corpscout.companies AS c" in sql
+    assert "FROM corpscout.no_companies AS c" in sql
     assert "corpscout.text_translations" in sql
     assert "field = {field:String}" in sql
     assert "source_slug = {slug:String}" in sql

@@ -117,6 +117,45 @@ FREE_TEXT_ORIGINAL_COLUMNS = (
 )
 
 
+NO_COMPANIES_TRANSLATED_VIEW_UP = (
+    MIGRATIONS_DIR / "000060_corpscout_no_companies_translated_view.up.sql"
+)
+NO_COMPANIES_TRANSLATED_VIEW_DOWN = (
+    MIGRATIONS_DIR / "000060_corpscout_no_companies_translated_view.down.sql"
+)
+
+NO_COMPANIES_FREE_TEXT_FIELDS = (
+    ("articles_purpose", "articles_purpose_original", "articles_purpose_en"),
+    ("activity_text", "activity_text_original", "activity_text_en"),
+    ("company_description", "company_description_original", "company_description_en"),
+)
+
+
+def test_no_companies_translated_view_up_targets_no_companies_and_joins_cache():
+    sql = NO_COMPANIES_TRANSLATED_VIEW_UP.read_text(encoding="utf-8")
+    assert "corpscout.no_companies_translated" in sql
+    assert "FROM corpscout.no_companies AS c" in sql
+    assert "corpscout.text_translations" in sql
+    # No EXCEPT clause — no_companies never had base _en columns.
+    assert "EXCEPT (" not in sql
+    # Each field joins on the raw-text cityHash64 and selects argMax over version.
+    for field, original, _en in NO_COMPANIES_FREE_TEXT_FIELDS:
+        assert f"field = '{field}'" in sql, f"view must filter field {field!r}"
+        assert f"cityHash64(c.{original})" in sql, f"view must join on cityHash64(c.{original})"
+    assert "argMax(translated_text, version)" in sql
+
+
+def test_no_companies_translated_view_up_surfaces_all_three_en_columns():
+    sql = NO_COMPANIES_TRANSLATED_VIEW_UP.read_text(encoding="utf-8")
+    for _field, _original, en_col in NO_COMPANIES_FREE_TEXT_FIELDS:
+        assert en_col in sql, f"view must produce {en_col}"
+
+
+def test_no_companies_translated_view_down_drops_view():
+    sql = NO_COMPANIES_TRANSLATED_VIEW_DOWN.read_text(encoding="utf-8")
+    assert "DROP VIEW IF EXISTS corpscout.no_companies_translated" in sql
+
+
 def test_no_companies_free_text_up_adds_three_nullable_columns():
     sql = NO_COMPANIES_FREE_TEXT_UP.read_text(encoding="utf-8")
     assert "ALTER TABLE corpscout.no_companies" in sql

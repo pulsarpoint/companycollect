@@ -72,6 +72,7 @@ EXPECTED_MIGRATIONS = (
     "000057_corpscout_norway_companies_translated_view",
     "000058_corpscout_companies_drop_free_text_en",
     "000059_corpscout_no_companies_free_text_columns",
+    "000060_corpscout_no_companies_translated_view",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (

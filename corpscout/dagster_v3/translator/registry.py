@@ -21,7 +21,7 @@ REGISTRY: dict[str, SourceConfig] = {
     "norway_brreg": SourceConfig(
         source_slug="norway_brreg",
         source_lang="no",
-        ch_table="corpscout.companies",
+        ch_table="corpscout.no_companies",
         fields=(
             FieldConfig(field="articles_purpose", original_col="articles_purpose_original"),
             FieldConfig(field="activity_text", original_col="activity_text_original"),
