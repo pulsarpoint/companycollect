@@ -1,11 +1,11 @@
 from collections.abc import Callable
-from pathlib import Path
+from typing import Any
 
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
-    export_duckdb_table_to_clickhouse,
+    export_duckdb_connection_table_to_clickhouse,
 )
 from dagster_v3.defs.uk_companies_house import tables
 
@@ -14,7 +14,7 @@ DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 
 def export_uk_companies_house_clickhouse_companies(
     *,
-    database_path: str | Path,
+    duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> int:
@@ -26,13 +26,12 @@ def export_uk_companies_house_clickhouse_companies(
     )
     if log is not None:
         log(
-            "Exporting UK Companies House companies to ClickHouse: duckdb_path=%s, table=%s",
-            database_path,
+            "Exporting UK Companies House companies to ClickHouse: table=%s",
             tables.QUALIFIED_COMPANIES_TABLE,
         )
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_table_to_clickhouse(
-            duckdb_path=database_path,
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.COMPANIES_TABLE,
@@ -48,7 +47,7 @@ def export_uk_companies_house_clickhouse_companies(
 
 def export_uk_companies_house_clickhouse_industries(
     *,
-    database_path: str | Path,
+    duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     log: Callable[..., object] | None = None,
 ) -> int:
@@ -60,13 +59,12 @@ def export_uk_companies_house_clickhouse_industries(
     )
     if log is not None:
         log(
-            "Exporting UK Companies House industries to ClickHouse: duckdb_path=%s, table=%s",
-            database_path,
+            "Exporting UK Companies House industries to ClickHouse: table=%s",
             tables.QUALIFIED_INDUSTRIES_TABLE,
         )
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_table_to_clickhouse(
-            duckdb_path=database_path,
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.INDUSTRIES_RAW_TABLE,
@@ -82,7 +80,7 @@ def export_uk_companies_house_clickhouse_industries(
 
 def export_uk_companies_house_clickhouse_financial_metrics(
     *,
-    database_path: str | Path,
+    duckdb_connection: Any,
     clickhouse: ClickhouseResource,
     truncate: bool = True,
     log: Callable[..., object] | None = None,
@@ -99,13 +97,12 @@ def export_uk_companies_house_clickhouse_financial_metrics(
     )
     if log is not None:
         log(
-            "Exporting UK Companies House financial metrics to ClickHouse: duckdb_path=%s, table=%s",
-            database_path,
+            "Exporting UK Companies House financial metrics to ClickHouse: table=%s",
             tables.QUALIFIED_FINANCIAL_METRICS_TABLE,
         )
     with clickhouse.get_connection() as client:
-        rows = export_duckdb_table_to_clickhouse(
-            duckdb_path=database_path,
+        rows = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=duckdb_connection,
             clickhouse_client=client,
             duckdb_schema=DLT_DATASET_NAME,
             duckdb_table=tables.FINANCIAL_METRICS_TABLE,

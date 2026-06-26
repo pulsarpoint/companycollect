@@ -71,11 +71,16 @@ def slovakia_rpo_companies_duckdb(
     description="Slovak RPO companies exported to ClickHouse corpscout.sk_companies.",
 )
 def slovakia_rpo_clickhouse_companies(
-    context: AssetExecutionContext, clickhouse: ClickhouseResource
+    context: AssetExecutionContext,
+    slovakia_rpo_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    rows = export_slovakia_rpo_clickhouse_companies(
-        database_path=SLOVAKIA_RPO_DUCKDB_PATH, clickhouse=clickhouse, log=context.log.info
-    )
+    with slovakia_rpo_duckdb.get_connection() as connection:
+        rows = export_slovakia_rpo_clickhouse_companies(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata={"rows": rows, "table": tables.QUALIFIED_COMPANIES_TABLE})
 
 
@@ -110,11 +115,16 @@ def slovakia_rpo_industries_duckdb(
     ),
 )
 def slovakia_rpo_clickhouse_industries(
-    context: AssetExecutionContext, clickhouse: ClickhouseResource
+    context: AssetExecutionContext,
+    slovakia_rpo_duckdb: DuckDBResource,
+    clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    rows = export_slovakia_rpo_clickhouse_industries(
-        database_path=SLOVAKIA_RPO_DUCKDB_PATH, clickhouse=clickhouse, log=context.log.info
-    )
+    with slovakia_rpo_duckdb.get_connection() as connection:
+        rows = export_slovakia_rpo_clickhouse_industries(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(metadata={"rows": rows, "table": tables.QUALIFIED_INDUSTRIES_TABLE})
 
 

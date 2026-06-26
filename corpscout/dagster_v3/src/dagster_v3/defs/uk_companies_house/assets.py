@@ -102,13 +102,15 @@ def uk_companies_house_companies_duckdb(
 )
 def uk_companies_house_clickhouse_companies(
     context: AssetExecutionContext,
+    uk_companies_house_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    rows = export_uk_companies_house_clickhouse_companies(
-        database_path=UK_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with uk_companies_house_duckdb.get_connection() as connection:
+        rows = export_uk_companies_house_clickhouse_companies(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_COMPANIES_TABLE},
     )
@@ -151,13 +153,15 @@ def uk_companies_house_industries_duckdb(
 )
 def uk_companies_house_clickhouse_industries(
     context: AssetExecutionContext,
+    uk_companies_house_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    rows = export_uk_companies_house_clickhouse_industries(
-        database_path=UK_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with uk_companies_house_duckdb.get_connection() as connection:
+        rows = export_uk_companies_house_clickhouse_industries(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_INDUSTRIES_TABLE},
     )
@@ -227,14 +231,16 @@ def uk_companies_house_financial_metrics_usd_duckdb(
 )
 def uk_companies_house_clickhouse_financial_metrics(
     context: AssetExecutionContext,
+    uk_companies_house_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    rows = export_uk_companies_house_clickhouse_financial_metrics(
-        database_path=UK_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        truncate=False,  # append; gb_financial_metrics accumulates (ReplacingMergeTree)
-        log=context.log.info,
-    )
+    with uk_companies_house_duckdb.get_connection() as connection:
+        rows = export_uk_companies_house_clickhouse_financial_metrics(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            truncate=False,  # append; gb_financial_metrics accumulates (ReplacingMergeTree)
+            log=context.log.info,
+        )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_FINANCIAL_METRICS_TABLE},
     )
@@ -313,11 +319,13 @@ def uk_companies_house_pdf_financial_metrics(
                 exchange_rates=ExchangeRateClient.from_env(),
                 log=context.log.info,
             )
-    if rows:
-        export_uk_companies_house_clickhouse_financial_metrics(
-            database_path=UK_DUCKDB_PATH, clickhouse=clickhouse, truncate=False,
-            log=context.log.info,
-        )
+        if rows:
+            export_uk_companies_house_clickhouse_financial_metrics(
+                duckdb_connection=connection,
+                clickhouse=clickhouse,
+                truncate=False,
+                log=context.log.info,
+            )
     return dg.MaterializeResult(metadata={**counts, "fetched": fetched, "missing": missing})
 
 
@@ -361,20 +369,19 @@ def uk_companies_house_accounts_incremental(
                 exchange_rates=ExchangeRateClient.from_env(),
                 log=context.log.info,
             )
-    if not counts["processed_archives"]:
-        context.log.info(
-            "No new UK accounts archives since cursor=%s", counts["cursor_before"]
-        )
-        return dg.MaterializeResult(metadata=counts)
+        if not counts["processed_archives"]:
+            context.log.info(
+                "No new UK accounts archives since cursor=%s", counts["cursor_before"]
+            )
+            return dg.MaterializeResult(metadata=counts)
 
-    rows = export_uk_companies_house_clickhouse_financial_metrics(
-        database_path=UK_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        truncate=False,
-        log=context.log.info,
-    )
-    # Advance the cursor only after a successful append.
-    with uk_companies_house_duckdb.get_connection() as connection:
+        rows = export_uk_companies_house_clickhouse_financial_metrics(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            truncate=False,
+            log=context.log.info,
+        )
+        # Advance the cursor only after a successful append.
         write_cursor(connection, max(counts["processed_archives"]))
     context.log.info("Appended UK incremental metrics: rows=%s", rows)
     return dg.MaterializeResult(metadata={**counts, "exported_rows": rows})
@@ -420,12 +427,12 @@ def uk_companies_house_api_financial_metrics(
             exchange_rates=ExchangeRateClient.from_env(),
             log=context.log.info,
         )
-    rows = export_uk_companies_house_clickhouse_financial_metrics(
-        database_path=UK_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        truncate=False,  # append; do not wipe the archive-sourced rows
-        log=context.log.info,
-    )
+        rows = export_uk_companies_house_clickhouse_financial_metrics(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            truncate=False,  # append; do not wipe the archive-sourced rows
+            log=context.log.info,
+        )
     context.log.info("Appended UK API financial metrics to ClickHouse: rows=%s", rows)
     return dg.MaterializeResult(metadata={**counts, "exported_rows": rows})
 

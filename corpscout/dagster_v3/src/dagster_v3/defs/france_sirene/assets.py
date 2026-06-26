@@ -125,13 +125,15 @@ def france_sirene_companies_duckdb(
 )
 def france_sirene_clickhouse_companies(
     context: AssetExecutionContext,
+    france_sirene_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    rows = export_france_sirene_clickhouse_companies(
-        database_path=FRANCE_SIRENE_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with france_sirene_duckdb.get_connection() as connection:
+        rows = export_france_sirene_clickhouse_companies(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_COMPANIES_TABLE},
     )
@@ -174,13 +176,15 @@ def france_sirene_industries_duckdb(
 )
 def france_sirene_clickhouse_industries(
     context: AssetExecutionContext,
+    france_sirene_duckdb: DuckDBResource,
     clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
-    rows = export_france_sirene_clickhouse_industries(
-        database_path=FRANCE_SIRENE_DUCKDB_PATH,
-        clickhouse=clickhouse,
-        log=context.log.info,
-    )
+    with france_sirene_duckdb.get_connection() as connection:
+        rows = export_france_sirene_clickhouse_industries(
+            duckdb_connection=connection,
+            clickhouse=clickhouse,
+            log=context.log.info,
+        )
     return dg.MaterializeResult(
         metadata={"rows": rows, "table": tables.QUALIFIED_INDUSTRIES_TABLE},
     )

@@ -13,12 +13,14 @@ from dagster_dbt import (
     dbt_assets,
     get_asset_key_for_model,
 )
+from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.clickhouse.resolved import (
     RESOLVED_DATABASE,
     assert_clickhouse_tables_exist,
-    replace_duckdb_tables_in_clickhouse,
+    replace_duckdb_connection_tables_in_clickhouse,
 )
+from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.norway_resolved import tables
 
 GROUP_NAME = "norway_resolved"
@@ -77,6 +79,7 @@ def norway_resolved_dbt_assets(
 def norway_resolved_clickhouse(
     context: AssetExecutionContext,
     clickhouse: ClickhouseResource,
+    norway_brreg_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     context.log.info(
         "Starting Norway resolved ClickHouse export: duckdb_path=%s, tables=%s",
@@ -88,17 +91,18 @@ def norway_resolved_clickhouse(
         database=RESOLVED_DATABASE,
         tables=tables.NORWAY_RESOLVED_TABLES,
     )
-    with clickhouse.get_connection() as client:
-        row_counts = replace_duckdb_tables_in_clickhouse(
-            duckdb_path=NORWAY_BRREG_DUCKDB_PATH,
-            clickhouse_client=client,
-            duckdb_schema=NORWAY_RESOLVED_DUCKDB_SCHEMA,
-            clickhouse_database=RESOLVED_DATABASE,
-            tables=tuple(
-                (table, tables.RESOLVED_EXPORT_COLUMNS[table])
-                for table in tables.NORWAY_RESOLVED_TABLES
-            ),
-        )
+    with norway_brreg_duckdb.get_connection() as connection:
+        with clickhouse.get_connection() as client:
+            row_counts = replace_duckdb_connection_tables_in_clickhouse(
+                duckdb_connection=connection,
+                clickhouse_client=client,
+                duckdb_schema=NORWAY_RESOLVED_DUCKDB_SCHEMA,
+                clickhouse_database=RESOLVED_DATABASE,
+                tables=tuple(
+                    (table, tables.RESOLVED_EXPORT_COLUMNS[table])
+                    for table in tables.NORWAY_RESOLVED_TABLES
+                ),
+            )
     context.log.info("Completed Norway resolved ClickHouse export: row_counts=%s", row_counts)
     return dg.MaterializeResult(
         metadata={f"{table}_row_count": count for table, count in row_counts.items()}
@@ -113,6 +117,7 @@ def defs() -> dg.Definitions:
             norway_resolved_clickhouse,
         ],
         resources={
+            "norway_brreg_duckdb": duckdb_resource(_DEFAULT_DUCKDB_PATH),
             "norway_resolved_dbt": DbtCliResource(
                 project_dir=norway_resolved_dbt_project,
                 profiles_dir=NORWAY_RESOLVED_DBT_PROJECT_DIR,
