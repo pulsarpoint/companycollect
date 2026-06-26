@@ -69,6 +69,27 @@ services:
       - ../companies/data:/var/lib/corpscout/company-source-fixtures:ro
     restart: unless-stopped
 
+  translator:
+    build:
+      context: .
+      dockerfile: dagster_v3/translator/Dockerfile
+    extra_hosts:
+      - "companycollect:100.85.212.113"
+    environment:
+      TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS:-companycollect:7233}
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-companycollect}
+      CLICKHOUSE_HTTP_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-change-me}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-corpscout}
+      CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-false}
+      TRANSLATION_PROVIDER_LOCAL_BASE_URL: ${TRANSLATION_PROVIDER_LOCAL_BASE_URL:-}
+      TRANSLATION_PROVIDER_LOCAL_MODEL: ${TRANSLATION_PROVIDER_LOCAL_MODEL:-}
+      TRANSLATION_PROVIDER_LOCAL_API_KEY: ${TRANSLATION_PROVIDER_LOCAL_API_KEY:-not-needed}
+    volumes:
+      - ./data/translator-queues:/app/dagster_v3/data/translator
+    restart: unless-stopped
+
   ui:
     build: ./ui
     depends_on:

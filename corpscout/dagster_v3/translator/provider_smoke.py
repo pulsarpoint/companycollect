@@ -8,12 +8,12 @@ from pathlib import Path
 import time
 from typing import Protocol
 
-from translations.smoke import (
+from translator.smoke import (
     DEFAULT_EXTRA_BODY,
     DEFAULT_MAX_TOKENS,
     LocalOpenAICompatibleTranslationProvider,
 )
-from translations.types import SmokeTranslationInput, SmokeTranslationResult
+from translator.types import SmokeTranslationInput, SmokeTranslationResult
 
 
 DEFAULT_BATCH_SIZES = (1, 5, 10, 50)

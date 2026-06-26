@@ -28,11 +28,7 @@ dependencies = [
 ]
 
 [project.scripts]
-translation-provider-smoke = "translations.provider_smoke:main"
-translation-queue-smoke = "translations.queue_smoke:main"
-translation-temporal-worker = "temporal.translations.queue_cli:worker_main"
-translation-temporal-start = "temporal.translations.queue_cli:start_main"
-translation-temporal-status = "temporal.translations.queue_cli:status_main"
+translator-worker = "translator.worker:worker_main"
 
 [dependency-groups]
 dev = [
@@ -46,7 +42,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dagster_v3", "translations", "temporal", "exchange_rates"]
+packages = ["src/dagster_v3", "exchange_rates", "translator"]
 force-include = { "pyproject.toml" = "pyproject.toml" }
 
 [tool.dg]

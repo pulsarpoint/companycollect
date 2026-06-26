@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import duckdb
 
-from translations.types import SmokeTranslationResult
+from translator.types import SmokeTranslationResult
 
 
 QUEUE_STATUS_PENDING = "pending"
@@ -82,6 +82,13 @@ class CompletedTranslationQueueResult:
     source_field: str
     source_text_hash: str
     target_language: str
+    translated_text: str
+
+
+@dataclass(frozen=True)
+class FlushTranslationRow:
+    field: str
+    source_text: str
     translated_text: str
 
 
@@ -502,6 +509,27 @@ class TranslationQueue:
                 target_language=row[6],
                 translated_text=row[7],
             )
+            for row in rows
+        ]
+
+    def completed_results_for_flush(self) -> list[FlushTranslationRow]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                select
+                    l.source_field,
+                    i.source_text,
+                    r.translated_text
+                from translation_items i
+                join translation_locations l on l.item_id = i.item_id
+                join translation_results r on r.item_id = i.item_id
+                where i.status = ?
+                order by l.source_field, i.source_text
+                """,
+                [QUEUE_STATUS_COMPLETED],
+            ).fetchall()
+        return [
+            FlushTranslationRow(field=row[0], source_text=row[1], translated_text=row[2])
             for row in rows
         ]
 

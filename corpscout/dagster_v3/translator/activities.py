@@ -9,7 +9,7 @@ import time
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 
-from translations.types import SmokeTranslationResult
+from translator.types import SmokeTranslationResult
 
 
 LOCAL_LLM_TRANSLATION_TASK_QUEUE = "translation-local-llm"
@@ -69,7 +69,7 @@ class ProcessTranslationBatchResult:
 
 
 def initialize_translation_queue_once(params: InitializeTranslationQueueInput) -> int:
-    from translations.queue import TranslationQueue
+    from translator.queue import TranslationQueue
 
     queue = TranslationQueue(params.duckdb_path)
     queue.initialize()
@@ -81,13 +81,13 @@ def process_translation_batch_once(
     *,
     provider: object | None = None,
 ) -> ProcessTranslationBatchResult:
-    from translations.provider_smoke import _categorize_exception, _parse_extra_body
-    from translations.queue import TranslationQueue
-    from translations.queue_smoke import (
+    from translator.provider_smoke import _categorize_exception, _parse_extra_body
+    from translator.queue import TranslationQueue
+    from translator.queue_smoke import (
         _map_provider_results_to_queue_ids,
         _provider_inputs,
     )
-    from translations.smoke import LocalOpenAICompatibleTranslationProvider
+    from translator.smoke import LocalOpenAICompatibleTranslationProvider
 
     queue = TranslationQueue(params.duckdb_path)
     queue.initialize()
@@ -243,7 +243,7 @@ async def summarize_translation_queue(duckdb_path: str) -> dict[str, int]:
 
 
 def summarize_translation_queue_once(duckdb_path: str) -> dict[str, int]:
-    from translations.queue import TranslationQueue
+    from translator.queue import TranslationQueue
 
     summary = TranslationQueue(duckdb_path).summary()
     return {

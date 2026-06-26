@@ -3,8 +3,6 @@ import os
 from collections.abc import Callable
 from collections.abc import Iterator
 from pathlib import Path
-from time import perf_counter
-from time import sleep
 from typing import Any, Protocol
 
 import dagster as dg
@@ -19,7 +17,6 @@ from dagster_dlt.translator import DltResourceTranslatorData
 from dagster_v3.defs.clickhouse.resolved import export_duckdb_connection_table_to_clickhouse
 from dagster_v3.defs.common.duckdb_resources import (
     duckdb_database_path,
-    duckdb_resource,
     read_only_duckdb_connection,
 )
 from dagster_v3.defs.norway_brreg import resources
@@ -39,19 +36,12 @@ from dagster_v3.defs.norway_brreg.financial_normalize import (
 from dagster_v3.defs.norway_brreg.financial_normalize import (
     build_financial_statement_rows_from_fetch_rows,
 )
-from dagster_v3.defs.translations.assets import (
-    TemporalClient,
-    start_translation_workflow,
-)
 from exchange_rates import ExchangeRateClient, ExchangeRateRequest
-from temporal.translations.queue import TranslationQueueWorkflowInput
 from temporalio.client import Client
-from translations.queue import (
-    TranslationQueue,
-    TranslationQueueItem,
-    TranslationQueueSummary,
-)
-from translations.types import SmokeTranslationResult
+from temporalio.common import WorkflowIDConflictPolicy
+
+from translator.activities import LOCAL_LLM_TRANSLATION_TASK_QUEUE
+from translator.workflow import TranslateSourceWorkflow, TranslateSourceWorkflowInput
 
 BRREG_BASE_URL = resources.BRREG_BASE_URL
 BRREG_FINANCIAL_STATEMENTS_COLUMNS = resources.BRREG_FINANCIAL_STATEMENTS_COLUMNS
@@ -63,35 +53,7 @@ GROUP_NAME = "norway_brreg"
 NORWAY_BRREG_DUCKDB_POOL = "norway_brreg_duckdb"
 FINANCIAL_STATEMENTS_TABLE = "financial_statements"
 FINANCIAL_SOURCE_SLUG = "norway_brregregnskap"
-NORWAY_BRREG_TRANSLATION_SOURCE_SLUG = "norway-brreg"
-NORWAY_BRREG_TRANSLATION_WORKFLOW_ID = "translation-norway-brreg"
-NORWAY_BRREG_TRANSLATION_WORKFLOW_STATUS_ASSET_KEY = dg.AssetKey(
-    "norway_brreg_translation_workflow_status"
-)
 NORWAY_BRREG_DUCKDB_PATH = Path("data/norway_brreg_source.duckdb")
-NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH = Path("data/norway_brreg_translation_queue.duckdb")
-NORWAY_BRREG_LLM_TRANSLATION_FIELDS = (
-    ("articles_purpose_original", "articles_purpose_en"),
-    ("activity_text_original", "activity_text_en"),
-    ("company_description_original", "company_description_en"),
-)
-NORWAY_BRREG_EN_FIELD_BY_ORIGINAL_FIELD = dict(NORWAY_BRREG_LLM_TRANSLATION_FIELDS)
-
-
-class NorwayBrregTranslationConfig(dg.Config):
-    batch_size: int = 50
-    timeout_seconds: int = 120
-    max_batch_failures: int = 0
-    refresh_existing_queue: bool = False
-    worker_id: str = "translation-temporal-worker"
-    max_tokens: int = 4096
-    extra_body_json: str = '{"chat_template_kwargs":{"enable_thinking":false}}'
-    initialize_timeout_seconds: int = 300
-    batch_timeout_buffer_seconds: int = 600
-    summarize_timeout_seconds: int = 30
-    activity_maximum_attempts: int = 1
-    lease_timeout_seconds: int = 1800
-    temporal_address: str = ""
 
 
 class ExchangeRates(Protocol):
@@ -238,7 +200,7 @@ def norway_brreg_financial_statements_duckdb_asset(
 
 
 @dg.asset(
-    deps=[dg.AssetKey("norway_brreg_translations_applied")],
+    deps=[dg.AssetKey("norway_brreg_entities_duckdb")],
     group_name=GROUP_NAME,
     kinds={"duckdb", "clickhouse"},
     description="Norway Brreg final companies table exported to ClickHouse.",
@@ -312,234 +274,80 @@ def norway_brreg_clickhouse_financial_statements(
     )
 
 
+NORWAY_BRREG_TRANSLATE_WORKFLOW_ID = "translate-norway_brreg"
+
+
+def build_norway_brreg_translate_input() -> TranslateSourceWorkflowInput:
+    return TranslateSourceWorkflowInput(
+        source_slug="norway_brreg",
+        queue_dir="data/translator",
+        batch_size=50,
+        timeout_seconds=120,
+        max_batch_failures=20,
+        worker_id="translation-temporal-worker",
+        max_tokens=2048,
+        extra_body_json='{"chat_template_kwargs": {"enable_thinking": false}}',
+        initialize_timeout_seconds=60,
+        batch_timeout_buffer_seconds=30,
+        summarize_timeout_seconds=60,
+        activity_maximum_attempts=3,
+        lease_timeout_seconds=600,
+        scan_timeout_seconds=300,
+        flush_timeout_seconds=300,
+    )
+
+
+async def _start_norway_brreg_translation(temporal_address: str) -> str:
+    client = await Client.connect(temporal_address)
+    handle = await client.start_workflow(
+        TranslateSourceWorkflow.run,
+        build_norway_brreg_translate_input(),
+        id=NORWAY_BRREG_TRANSLATE_WORKFLOW_ID,
+        task_queue=LOCAL_LLM_TRANSLATION_TASK_QUEUE,
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+    return handle.result_run_id
+
+
 @dg.asset(
-    deps=[dg.AssetKey("norway_brreg_entities_duckdb")],
+    deps=[dg.AssetKey("norway_brreg_clickhouse_companies")],
     group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "temporal"},
+    kinds={"python", "temporal"},
     description=(
-        "Seed the Norway Brreg translation queue table and start or reuse the "
-        "serialized Temporal translation workflow."
+        "Fire-and-forget: start (or reuse) the standalone translator Temporal "
+        "workflow after companies land in ClickHouse. Does not wait for completion."
     ),
-    pool=NORWAY_BRREG_DUCKDB_POOL,
 )
-def norway_brreg_translation_queue(
-    context: AssetExecutionContext,
-    config: NorwayBrregTranslationConfig,
-    norway_brreg_duckdb: DuckDBResource,
-    norway_brreg_translation_queue_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    source_duckdb_path = duckdb_database_path(norway_brreg_duckdb)
-    queue_duckdb_path = duckdb_database_path(norway_brreg_translation_queue_duckdb)
-    queue_duckdb_path.parent.mkdir(parents=True, exist_ok=True)
-    seed_started = perf_counter()
-    context.log.info(
-        "Starting Norway Brreg translation queue seed: queue_duckdb_path=%s "
-        "source_duckdb_path=%s refresh_existing_queue=%s",
-        queue_duckdb_path,
-        source_duckdb_path,
-        config.refresh_existing_queue,
-    )
-    with norway_brreg_translation_queue_duckdb.get_connection() as queue_connection:
-        counts = seed_norway_brreg_translation_queue(
-            source_duckdb_path=source_duckdb_path,
-            queue_duckdb_connection=queue_connection,
-            queue_duckdb_path=queue_duckdb_path,
-            log=context.log.info,
-            refresh_existing_queue=config.refresh_existing_queue,
-        )
-    context.log.info(
-        "Finished Norway Brreg translation queue seed: elapsed_seconds=%.3f "
-        "source_scan_skipped=%s queue_total_items=%s queue_location_items=%s "
-        "queue_remaining_items=%s",
-        perf_counter() - seed_started,
-        counts["source_scan_skipped"],
-        counts["queue_total_items"],
-        counts["queue_location_items"],
-        counts["queue_remaining_items"],
-    )
-    workflow_started = perf_counter()
-    context.log.info(
-        "Starting Norway Brreg translation Temporal workflow: workflow_id=%s",
-        NORWAY_BRREG_TRANSLATION_WORKFLOW_ID,
-    )
-    workflow = start_translation_workflow(
-        workflow_id=NORWAY_BRREG_TRANSLATION_WORKFLOW_ID,
-        params=TranslationQueueWorkflowInput(
-            duckdb_path=str(queue_duckdb_path),
-            batch_size=config.batch_size,
-            timeout_seconds=config.timeout_seconds,
-            max_batch_failures=config.max_batch_failures,
-            worker_id=config.worker_id,
-            max_tokens=config.max_tokens,
-            extra_body_json=config.extra_body_json,
-            initialize_timeout_seconds=config.initialize_timeout_seconds,
-            batch_timeout_buffer_seconds=config.batch_timeout_buffer_seconds,
-            summarize_timeout_seconds=config.summarize_timeout_seconds,
-            activity_maximum_attempts=config.activity_maximum_attempts,
-            lease_timeout_seconds=config.lease_timeout_seconds,
-        ),
-        temporal_address=config.temporal_address,
-    )
-    context.log.info(
-        "Finished Norway Brreg translation Temporal workflow start: elapsed_seconds=%.3f "
-        "workflow_id=%s workflow_run_id=%s workflow_task_queue=%s",
-        perf_counter() - workflow_started,
-        workflow["workflow_id"],
-        workflow["run_id"],
-        workflow["task_queue"],
-    )
-    metadata = {
-        **counts,
-        "workflow_id": workflow["workflow_id"],
-        "workflow_run_id": workflow["run_id"],
-        "workflow_task_queue": workflow["task_queue"],
-    }
-    context.log.info(
-        "Norway Brreg translation queue status: source_scan_skipped=%s "
-        "source_rows=%s candidate_items=%s "
-        "inserted_items=%s inserted_locations=%s queue_total_items=%s "
-        "queue_location_items=%s queue_remaining_items=%s queue_pending_items=%s "
-        "queue_completed_items=%s queue_leased_items=%s queue_failed_retryable_items=%s "
-        "results=%s batch_attempts=%s "
-        "successful_batches=%s failed_batches=%s workflow_id=%s workflow_run_id=%s "
-        "workflow_task_queue=%s",
-        metadata["source_scan_skipped"],
-        metadata["source_rows"],
-        metadata["candidate_items"],
-        metadata["inserted_items"],
-        metadata["inserted_locations"],
-        metadata["queue_total_items"],
-        metadata["queue_location_items"],
-        metadata["queue_remaining_items"],
-        metadata["queue_pending_items"],
-        metadata["queue_completed_items"],
-        metadata["queue_leased_items"],
-        metadata["queue_failed_retryable_items"],
-        metadata["queue_result_items"],
-        metadata["queue_batch_attempts"],
-        metadata["queue_successful_batches"],
-        metadata["queue_failed_batches"],
-        metadata["workflow_id"],
-        metadata["workflow_run_id"],
-        metadata["workflow_task_queue"],
-    )
-    return dg.MaterializeResult(metadata=metadata)
+def norway_brreg_translation_trigger(context: AssetExecutionContext) -> dg.MaterializeResult:
+    import asyncio as _asyncio
+    import os
 
-
-@dg.observable_source_asset(
-    key=NORWAY_BRREG_TRANSLATION_WORKFLOW_STATUS_ASSET_KEY,
-    group_name=GROUP_NAME,
-    description="Observed Temporal status for the serialized Norway Brreg translation workflow.",
-    tags={
-        "system": "temporal",
-        "temporal": "true",
-        "dagster/kind/temporal": "",
-        "source_slug": NORWAY_BRREG_TRANSLATION_SOURCE_SLUG,
-    },
-)
-def norway_brreg_translation_workflow_status(
-    context: AssetExecutionContext,
-    norway_brreg_translation_queue_duckdb: DuckDBResource,
-) -> dg.ObserveResult:
-    queue_metadata = norway_brreg_translation_queue_status_metadata(
-        queue_duckdb_path=duckdb_database_path(norway_brreg_translation_queue_duckdb),
+    address = os.environ.get("TEMPORAL_ADDRESS", "companycollect:7233")
+    run_id = _asyncio.run(_start_norway_brreg_translation(address))
+    context.log.info(
+        "Started Norway Brreg translation workflow: workflow_id=%s run_id=%s",
+        NORWAY_BRREG_TRANSLATE_WORKFLOW_ID,
+        run_id,
     )
-    try:
-        workflow = describe_norway_brreg_translation_workflow()
-    except Exception as exc:
-        metadata = norway_brreg_translation_workflow_status_metadata(
-            error=str(exc),
-            queue_metadata=queue_metadata,
-        )
-        log_norway_brreg_translation_workflow_status(context.log.info, metadata)
-        return dg.ObserveResult(
-            metadata=metadata
-        )
-    metadata = norway_brreg_translation_workflow_status_metadata(
-        workflow,
-        queue_metadata=queue_metadata,
-    )
-    log_norway_brreg_translation_workflow_status(context.log.info, metadata)
-    return dg.ObserveResult(
-        metadata=metadata
-    )
-
-
-@dg.asset(
-    deps=[
-        dg.AssetKey("norway_brreg_translation_queue"),
-        NORWAY_BRREG_TRANSLATION_WORKFLOW_STATUS_ASSET_KEY,
-    ],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb"},
-    description="Apply completed Norway Brreg translation queue results back to entity _en fields.",
-    pool=NORWAY_BRREG_DUCKDB_POOL,
-)
-def norway_brreg_translations_applied(
-    context: AssetExecutionContext,
-    norway_brreg_duckdb: DuckDBResource,
-    norway_brreg_translation_queue_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    try:
-        workflow = describe_norway_brreg_translation_workflow()
-    except Exception as exc:
-        metadata = {
-            "applied": False,
-            "workflow_id": NORWAY_BRREG_TRANSLATION_WORKFLOW_ID,
-            "workflow_status": "unavailable",
-            "workflow_error": str(exc),
+    return dg.MaterializeResult(
+        metadata={
+            "workflow_id": NORWAY_BRREG_TRANSLATE_WORKFLOW_ID,
+            "workflow_run_id": run_id,
+            "task_queue": LOCAL_LLM_TRANSLATION_TASK_QUEUE,
         }
-        context.log.info("Skipping Norway Brreg translation application", extra=metadata)
-        return dg.MaterializeResult(metadata=metadata)
-
-    if workflow["workflow_status"] != "COMPLETED":
-        metadata = {
-            "applied": False,
-            "workflow_id": workflow["workflow_id"],
-            "workflow_run_id": workflow["workflow_run_id"],
-            "workflow_status": workflow["workflow_status"],
-        }
-        context.log.info("Skipping Norway Brreg translation application", extra=metadata)
-        return dg.MaterializeResult(metadata=metadata)
-
-    with norway_brreg_duckdb.get_connection() as connection:
-        counts = apply_norway_brreg_translation_queue_results(
-            source_duckdb_connection=connection,
-            queue_duckdb_path=duckdb_database_path(
-                norway_brreg_translation_queue_duckdb
-            ),
-        )
-    metadata = {
-        **counts,
-        "applied": True,
-        "workflow_id": workflow["workflow_id"],
-        "workflow_run_id": workflow["workflow_run_id"],
-        "workflow_status": workflow["workflow_status"],
-    }
-    context.log.info("Applied Norway Brreg translation queue results", extra=metadata)
-    return dg.MaterializeResult(metadata=metadata)
-
-
-norway_brreg_translation_completion_job = dg.define_asset_job(
-    "norway_brreg_translation_completion_job",
-    # translations_applied writes the EN columns into DuckDB; clickhouse_companies
-    # then publishes the final companies table. Run both so the sensor-driven
-    # completion lands companies in ClickHouse automatically when translation finishes.
-    selection=dg.AssetSelection.assets("norway_brreg_translations_applied")
-    | dg.AssetSelection.assets("norway_brreg_clickhouse_companies"),
-)
+    )
 
 
 # Monthly coordinated refresh (see dagster_v3/CLAUDE.md "Scheduling"). Loads
-# entities once, then kicks off the start-or-reuse Temporal translation workflow
-# (returns immediately; the workflow runs async) AND runs the financials chain.
-# Companies land via the existing completion sensor when translation finishes.
-# Monthly because the translation is long-running and the per-company financial
-# fetch is heavy. Excludes translations_applied/clickhouse_companies (sensor's job).
+# entities once, runs the financials chain, exports companies to ClickHouse, then
+# fires the standalone translator Temporal workflow (returns immediately; the
+# workflow runs async).
 norway_brreg_refresh_job = dg.define_asset_job(
     "norway_brreg_refresh_job",
-    selection=dg.AssetSelection.assets("norway_brreg_clickhouse_financial_statements").upstream()
-    | dg.AssetSelection.assets("norway_brreg_translation_queue"),
+    selection=dg.AssetSelection.assets(
+        "norway_brreg_clickhouse_financial_statements",
+        "norway_brreg_translation_trigger",
+    ).upstream(),
 )
 norway_brreg_refresh_schedule = dg.ScheduleDefinition(
     name="norway_brreg_refresh_schedule",
@@ -547,670 +355,6 @@ norway_brreg_refresh_schedule = dg.ScheduleDefinition(
     cron_schedule="0 6 7 * *",  # monthly, 7th 06:00 (staggered vs estonia/latvia)
     execution_timezone="Europe/Belgrade",
 )
-
-
-def describe_norway_brreg_translation_workflow(
-    *,
-    temporal_client: TemporalClient | None = None,
-) -> dict[str, str]:
-    return asyncio.run(_describe_norway_brreg_translation_workflow(temporal_client=temporal_client))
-
-
-async def _describe_norway_brreg_translation_workflow(
-    *,
-    temporal_client: TemporalClient | None = None,
-) -> dict[str, str]:
-    client = temporal_client or await Client.connect(
-        os.environ.get("TEMPORAL_ADDRESS", "companycollect:7233")
-    )
-    description = await client.get_workflow_handle(NORWAY_BRREG_TRANSLATION_WORKFLOW_ID).describe()
-    return {
-        "workflow_id": NORWAY_BRREG_TRANSLATION_WORKFLOW_ID,
-        "workflow_run_id": description.run_id,
-        "workflow_status": _workflow_status_name(description.status),
-    }
-
-
-def _workflow_status_name(status: Any) -> str:
-    return str(getattr(status, "name", status))
-
-
-def norway_brreg_translation_workflow_status_metadata(
-    workflow: dict[str, str] | None = None,
-    *,
-    error: str = "",
-    queue_metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    queue_status = queue_metadata or _empty_translation_queue_status_metadata(
-        queue_available=False,
-        queue_error="queue status not loaded",
-    )
-    if workflow is None:
-        return {
-            "workflow_id": NORWAY_BRREG_TRANSLATION_WORKFLOW_ID,
-            "workflow_status": "unavailable",
-            "workflow_available": False,
-            "workflow_error": error,
-            **queue_status,
-        }
-    return {
-        "workflow_id": workflow["workflow_id"],
-        "workflow_run_id": workflow["workflow_run_id"],
-        "workflow_status": workflow["workflow_status"],
-        "workflow_available": True,
-        "workflow_complete": workflow["workflow_status"] == "COMPLETED",
-        **queue_status,
-    }
-
-
-def norway_brreg_translation_queue_status_metadata(
-    *,
-    queue_duckdb_connection: duckdb.DuckDBPyConnection | None = None,
-    queue_duckdb_path: str | Path = NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
-) -> dict[str, Any]:
-    queue_path = Path(queue_duckdb_path)
-    if not queue_path.exists():
-        return _empty_translation_queue_status_metadata(
-            queue_available=False,
-            queue_error=f"queue DuckDB does not exist: {queue_path}",
-            queue_duckdb_path=queue_path,
-        )
-    try:
-        if queue_duckdb_connection is None:
-            with read_only_duckdb_connection(duckdb_resource(queue_path)) as connection:
-                summary = _translation_queue_summary_from_connection(
-                    connection,
-                    table_prefix="main",
-                )
-        else:
-            summary = _translation_queue_summary_from_connection(
-                queue_duckdb_connection,
-                table_prefix="main",
-            )
-    except Exception as exc:
-        return _empty_translation_queue_status_metadata(
-            queue_available=False,
-            queue_error=str(exc),
-            queue_duckdb_path=queue_path,
-        )
-    remaining_items = (
-        summary.pending_items + summary.leased_items + summary.failed_retryable_items
-    )
-    completed_percent = (
-        round((summary.completed_items / summary.total_items) * 100, 3)
-        if summary.total_items > 0
-        else 0.0
-    )
-    return {
-        "queue_available": True,
-        "queue_duckdb_path": str(queue_path),
-        "queue_total_items": summary.total_items,
-        "queue_location_items": summary.location_items,
-        "queue_remaining_items": remaining_items,
-        "queue_pending_items": summary.pending_items,
-        "queue_leased_items": summary.leased_items,
-        "queue_completed_items": summary.completed_items,
-        "queue_failed_retryable_items": summary.failed_retryable_items,
-        "queue_result_items": summary.result_items,
-        "queue_batch_attempts": summary.batch_attempts,
-        "queue_successful_batches": summary.successful_batches,
-        "queue_failed_batches": summary.failed_batches,
-        "queue_completed_percent": completed_percent,
-        "queue_error": "",
-    }
-
-
-def _empty_translation_queue_status_metadata(
-    *,
-    queue_available: bool,
-    queue_error: str,
-    queue_duckdb_path: str | Path = NORWAY_BRREG_TRANSLATION_QUEUE_DUCKDB_PATH,
-) -> dict[str, Any]:
-    return {
-        "queue_available": queue_available,
-        "queue_duckdb_path": str(queue_duckdb_path),
-        "queue_total_items": 0,
-        "queue_location_items": 0,
-        "queue_remaining_items": 0,
-        "queue_pending_items": 0,
-        "queue_leased_items": 0,
-        "queue_completed_items": 0,
-        "queue_failed_retryable_items": 0,
-        "queue_result_items": 0,
-        "queue_batch_attempts": 0,
-        "queue_successful_batches": 0,
-        "queue_failed_batches": 0,
-        "queue_completed_percent": 0.0,
-        "queue_error": queue_error,
-    }
-
-
-def log_norway_brreg_translation_workflow_status(
-    log: Callable[..., None] | None,
-    metadata: dict[str, Any],
-) -> None:
-    _log(
-        log,
-        "Norway Brreg translation workflow status: workflow_status=%s "
-        "workflow_run_id=%s queue_available=%s queue_total_items=%s "
-        "queue_location_items=%s queue_remaining_items=%s queue_pending_items=%s "
-        "queue_leased_items=%s queue_completed_items=%s queue_failed_retryable_items=%s "
-        "queue_result_items=%s queue_batch_attempts=%s "
-        "queue_successful_batches=%s queue_failed_batches=%s "
-        "queue_completed_percent=%s queue_error=%s",
-        metadata.get("workflow_status", ""),
-        metadata.get("workflow_run_id", ""),
-        metadata.get("queue_available", False),
-        metadata.get("queue_total_items", 0),
-        metadata.get("queue_location_items", 0),
-        metadata.get("queue_remaining_items", 0),
-        metadata.get("queue_pending_items", 0),
-        metadata.get("queue_leased_items", 0),
-        metadata.get("queue_completed_items", 0),
-        metadata.get("queue_failed_retryable_items", 0),
-        metadata.get("queue_result_items", 0),
-        metadata.get("queue_batch_attempts", 0),
-        metadata.get("queue_successful_batches", 0),
-        metadata.get("queue_failed_batches", 0),
-        metadata.get("queue_completed_percent", 0.0),
-        metadata.get("queue_error", ""),
-    )
-
-
-def build_norway_brreg_translation_queue_items(
-    rows: list[dict[str, Any]],
-    *,
-    source_duckdb_path: str | Path,
-) -> list[TranslationQueueItem]:
-    items: list[TranslationQueueItem] = []
-    for row in rows:
-        org_number = _string(row.get("org_number"))
-        if org_number == "":
-            continue
-        for original_field, english_field in NORWAY_BRREG_LLM_TRANSLATION_FIELDS:
-            source_text = _string(row.get(original_field))
-            if source_text == "" or _string(row.get(english_field)) != "":
-                continue
-            items.append(
-                TranslationQueueItem(
-                    source_duckdb_path=str(source_duckdb_path),
-                    source_table=f"{DLT_DATASET_NAME}.{ENTITIES_TABLE}",
-                    source_pk=org_number,
-                    source_field=original_field,
-                    source_text=source_text,
-                    target_language="en",
-                )
-            )
-    return items
-
-
-def seed_norway_brreg_translation_queue(
-    *,
-    source_duckdb_path: str | Path,
-    queue_duckdb_connection: duckdb.DuckDBPyConnection,
-    queue_duckdb_path: str | Path,
-    log: Callable[..., None] | None = None,
-    lock_timeout_seconds: float = 120.0,
-    refresh_existing_queue: bool = False,
-) -> dict[str, Any]:
-    source_path = str(source_duckdb_path)
-    queue_path = str(queue_duckdb_path)
-    Path(queue_path).parent.mkdir(parents=True, exist_ok=True)
-    source_table = f"{DLT_DATASET_NAME}.{ENTITIES_TABLE}"
-    start = perf_counter()
-    if Path(queue_path).exists() and not refresh_existing_queue:
-        try:
-            summary = _translation_queue_summary_from_connection(
-                queue_duckdb_connection,
-                table_prefix="main",
-            )
-        except duckdb.CatalogException:
-            summary = None
-        if summary is not None and summary.location_items > 0:
-            remaining_items = (
-                summary.pending_items + summary.leased_items + summary.failed_retryable_items
-            )
-            _log(
-                log,
-                "Skipping Norway Brreg translation queue source scan because queue is already "
-                "seeded: queue_duckdb_path=%s queue_total_items=%s queue_location_items=%s "
-                "queue_remaining_items=%s elapsed_seconds=%.3f",
-                queue_path,
-                summary.total_items,
-                summary.location_items,
-                remaining_items,
-                perf_counter() - start,
-            )
-            return {
-                "source_scan_skipped": True,
-                "source_rows": 0,
-                "candidate_items": 0,
-                "inserted_items": 0,
-                "inserted_locations": 0,
-                "queue_total_items": summary.total_items,
-                "queue_location_items": summary.location_items,
-                "queue_remaining_items": remaining_items,
-                "queue_pending_items": summary.pending_items,
-                "queue_leased_items": summary.leased_items,
-                "queue_completed_items": summary.completed_items,
-                "queue_failed_retryable_items": summary.failed_retryable_items,
-                "queue_result_items": summary.result_items,
-                "queue_batch_attempts": summary.batch_attempts,
-                "queue_successful_batches": summary.successful_batches,
-                "queue_failed_batches": summary.failed_batches,
-            }
-    _log(
-        log,
-        "Counting Norway Brreg translation candidates: source_duckdb_path=%s, "
-        "queue_duckdb_path=%s",
-        source_path,
-        queue_path,
-    )
-    connection = queue_duckdb_connection
-    attached_source = False
-    try:
-        _execute_with_duckdb_lock_retry(
-            lambda: connection.execute(
-                f"attach {_duckdb_string_literal(source_path)} as source_db (read_only)"
-            ),
-            description=f"attach source DuckDB {source_path}",
-            log=log,
-            timeout_seconds=lock_timeout_seconds,
-        )
-        attached_source = True
-        TranslationQueue.initialize_tables(connection, table_prefix="main")
-        source_rows = int(
-            connection.execute(
-                f"select count(*) from source_db.{DLT_DATASET_NAME}.{ENTITIES_TABLE}"
-            ).fetchone()[0]
-        )
-        candidate_items = int(
-            connection.execute(_norway_brreg_translation_candidates_count_sql()).fetchone()[0]
-        )
-        queue_items_before = int(
-            connection.execute("select count(*) from main.translation_items").fetchone()[0]
-        )
-        queue_locations_before = int(
-            connection.execute("select count(*) from main.translation_locations").fetchone()[0]
-        )
-        _log(
-            log,
-            "Inserting Norway Brreg translation queue candidates: source_rows=%s, "
-            "candidate_items=%s",
-            source_rows,
-            candidate_items,
-        )
-        _execute_with_duckdb_lock_retry(
-            lambda: connection.execute(
-                f"""
-                insert into main.translation_items (
-                    item_id,
-                    source_text,
-                    source_text_hash,
-                    target_language,
-                    status,
-                    attempt_count,
-                    created_at,
-                    updated_at
-                )
-                select
-                    sha256(concat_ws('|', sha256(source_text), 'en')) as item_id,
-                    any_value(source_text) as source_text,
-                    sha256(source_text) as source_text_hash,
-                    'en' as target_language,
-                    'pending' as status,
-                    0 as attempt_count,
-                    min(current_timestamp) as created_at,
-                    max(current_timestamp) as updated_at
-                from ({_norway_brreg_translation_candidates_sql()})
-                group by sha256(source_text)
-                on conflict (item_id) do nothing
-                """
-            ),
-            description="insert Norway Brreg translation queue items",
-            log=log,
-            timeout_seconds=lock_timeout_seconds,
-        )
-        _execute_with_duckdb_lock_retry(
-            lambda: connection.execute(
-                f"""
-                insert into main.translation_locations (
-                    location_id,
-                    item_id,
-                    source_duckdb_path,
-                    source_table,
-                    source_pk,
-                    source_field,
-                    created_at,
-                    updated_at
-                )
-                select
-                    sha256(
-                        concat_ws(
-                            '|',
-                            {_duckdb_string_literal(source_path)},
-                            {_duckdb_string_literal(source_table)},
-                            org_number,
-                            source_field,
-                            sha256(source_text),
-                            'en'
-                        )
-                    ) as location_id,
-                    sha256(concat_ws('|', sha256(source_text), 'en')) as item_id,
-                    {_duckdb_string_literal(source_path)} as source_duckdb_path,
-                    {_duckdb_string_literal(source_table)} as source_table,
-                    org_number as source_pk,
-                    source_field,
-                    current_timestamp as created_at,
-                    current_timestamp as updated_at
-                from ({_norway_brreg_translation_candidates_sql()})
-                on conflict (location_id) do nothing
-                """
-            ),
-            description="insert Norway Brreg translation queue locations",
-            log=log,
-            timeout_seconds=lock_timeout_seconds,
-        )
-        queue_items_after = int(
-            connection.execute("select count(*) from main.translation_items").fetchone()[0]
-        )
-        queue_locations_after = int(
-            connection.execute("select count(*) from main.translation_locations").fetchone()[0]
-        )
-        summary = _translation_queue_summary_from_connection(connection, table_prefix="main")
-    finally:
-        if attached_source:
-            connection.execute("detach source_db")
-
-    inserted_items = queue_items_after - queue_items_before
-    inserted_locations = queue_locations_after - queue_locations_before
-    _log(
-        log,
-        "Inserted Norway Brreg translation queue candidates: inserted_items=%s, "
-        "inserted_locations=%s, queue_total_items=%s, queue_location_items=%s, "
-        "queue_remaining_items=%s, queue_pending_items=%s, queue_completed_items=%s, "
-        "queue_leased_items=%s, queue_failed_retryable_items=%s, queue_result_items=%s, "
-        "queue_batch_attempts=%s, queue_successful_batches=%s, queue_failed_batches=%s, "
-        "elapsed_seconds=%.3f",
-        inserted_items,
-        inserted_locations,
-        summary.total_items,
-        summary.location_items,
-        summary.pending_items + summary.leased_items + summary.failed_retryable_items,
-        summary.pending_items,
-        summary.completed_items,
-        summary.leased_items,
-        summary.failed_retryable_items,
-        summary.result_items,
-        summary.batch_attempts,
-        summary.successful_batches,
-        summary.failed_batches,
-        perf_counter() - start,
-    )
-    remaining_items = summary.pending_items + summary.leased_items + summary.failed_retryable_items
-    return {
-        "source_scan_skipped": False,
-        "source_rows": source_rows,
-        "candidate_items": candidate_items,
-        "inserted_items": inserted_items,
-        "inserted_locations": inserted_locations,
-        "queue_total_items": summary.total_items,
-        "queue_location_items": summary.location_items,
-        "queue_remaining_items": remaining_items,
-        "queue_pending_items": summary.pending_items,
-        "queue_leased_items": summary.leased_items,
-        "queue_completed_items": summary.completed_items,
-        "queue_failed_retryable_items": summary.failed_retryable_items,
-        "queue_result_items": summary.result_items,
-        "queue_batch_attempts": summary.batch_attempts,
-        "queue_successful_batches": summary.successful_batches,
-        "queue_failed_batches": summary.failed_batches,
-    }
-
-
-def _norway_brreg_translation_candidates_count_sql() -> str:
-    return f"select count(*) from ({_norway_brreg_translation_candidates_sql()})"
-
-
-def _translation_queue_summary_from_connection(
-    connection: duckdb.DuckDBPyConnection,
-    *,
-    table_prefix: str,
-) -> TranslationQueueSummary:
-    return TranslationQueueSummary(
-        total_items=_count_attached_translation_queue_rows(connection, table_prefix, None),
-        location_items=int(
-            connection.execute(
-                f"select count(*) from {table_prefix}.translation_locations"
-            ).fetchone()[0]
-        ),
-        pending_items=_count_attached_translation_queue_rows(
-            connection,
-            table_prefix,
-            "pending",
-        ),
-        leased_items=_count_attached_translation_queue_rows(
-            connection,
-            table_prefix,
-            "leased",
-        ),
-        completed_items=_count_attached_translation_queue_rows(
-            connection,
-            table_prefix,
-            "completed",
-        ),
-        failed_retryable_items=_count_attached_translation_queue_rows(
-            connection,
-            table_prefix,
-            "failed_retryable",
-        ),
-        result_items=int(
-            connection.execute(
-                f"select count(*) from {table_prefix}.translation_results"
-            ).fetchone()[0]
-        ),
-        batch_attempts=int(
-            connection.execute(
-                f"select count(*) from {table_prefix}.translation_batch_attempts"
-            ).fetchone()[0]
-        ),
-        successful_batches=int(
-            connection.execute(
-                f"""
-                select count(*)
-                from {table_prefix}.translation_batch_attempts
-                where status = 'success'
-                """
-            ).fetchone()[0]
-        ),
-        failed_batches=int(
-            connection.execute(
-                f"""
-                select count(*)
-                from {table_prefix}.translation_batch_attempts
-                where status = 'failed'
-                """
-            ).fetchone()[0]
-        ),
-    )
-
-
-def _count_attached_translation_queue_rows(
-    connection: duckdb.DuckDBPyConnection,
-    table_prefix: str,
-    status: str | None,
-) -> int:
-    if status is None:
-        return int(
-            connection.execute(f"select count(*) from {table_prefix}.translation_items").fetchone()[
-                0
-            ]
-        )
-    return int(
-        connection.execute(
-            f"""
-            select count(*)
-            from {table_prefix}.translation_items
-            where status = ?
-            """,
-            [status],
-        ).fetchone()[0]
-    )
-
-
-def _norway_brreg_translation_candidates_sql() -> str:
-    return f"""
-        select
-            org_number,
-            'articles_purpose_original' as source_field,
-            articles_purpose_original as source_text
-        from source_db.{DLT_DATASET_NAME}.{ENTITIES_TABLE}
-        where nullif(trim(coalesce(org_number, '')), '') is not null
-          and nullif(trim(coalesce(articles_purpose_original, '')), '') is not null
-          and nullif(trim(coalesce(articles_purpose_en, '')), '') is null
-        union all
-        select
-            org_number,
-            'activity_text_original' as source_field,
-            activity_text_original as source_text
-        from source_db.{DLT_DATASET_NAME}.{ENTITIES_TABLE}
-        where nullif(trim(coalesce(org_number, '')), '') is not null
-          and nullif(trim(coalesce(activity_text_original, '')), '') is not null
-          and nullif(trim(coalesce(activity_text_en, '')), '') is null
-        union all
-        select
-            org_number,
-            'company_description_original' as source_field,
-            company_description_original as source_text
-        from source_db.{DLT_DATASET_NAME}.{ENTITIES_TABLE}
-        where nullif(trim(coalesce(org_number, '')), '') is not null
-          and nullif(trim(coalesce(company_description_original, '')), '') is not null
-          and nullif(trim(coalesce(company_description_en, '')), '') is null
-    """
-
-
-def apply_norway_brreg_translation_queue_results(
-    *,
-    source_duckdb_connection: duckdb.DuckDBPyConnection,
-    queue_duckdb_path: str | Path,
-) -> dict[str, int]:
-    completed_results = TranslationQueue(queue_duckdb_path).completed_results()
-    counts = {
-        "completed_translations": len(completed_results),
-        "rows_updated": 0,
-        "fields_updated": 0,
-        "skipped_non_norway": 0,
-        "skipped_non_free_text": 0,
-        "skipped_missing_source_row": 0,
-        "skipped_already_applied": 0,
-    }
-    updated_org_numbers: set[str] = set()
-    for result in completed_results:
-        if result.source_table != f"{DLT_DATASET_NAME}.{ENTITIES_TABLE}":
-            counts["skipped_non_norway"] += 1
-            continue
-        target_field = NORWAY_BRREG_EN_FIELD_BY_ORIGINAL_FIELD.get(result.source_field)
-        if target_field is None:
-            counts["skipped_non_free_text"] += 1
-            continue
-        existing = source_duckdb_connection.execute(
-            f"""
-            select {target_field}
-            from {DLT_DATASET_NAME}.{ENTITIES_TABLE}
-            where org_number = ?
-            """,
-            [result.source_pk],
-        ).fetchone()
-        if existing is None:
-            counts["skipped_missing_source_row"] += 1
-            continue
-        if _string(existing[0]) == result.translated_text:
-            counts["skipped_already_applied"] += 1
-            continue
-        source_duckdb_connection.execute(
-            f"""
-            update {DLT_DATASET_NAME}.{ENTITIES_TABLE}
-            set {target_field} = ?
-            where org_number = ?
-            """,
-            [result.translated_text, result.source_pk],
-        )
-        counts["fields_updated"] += 1
-        updated_org_numbers.add(result.source_pk)
-    counts["rows_updated"] = len(updated_org_numbers)
-    return counts
-
-
-def _complete_all_translation_queue_items_for_test(
-    *,
-    queue_duckdb_path: str | Path,
-    translations_by_field: dict[str, str],
-) -> None:
-    queue = TranslationQueue(queue_duckdb_path)
-    with read_only_duckdb_connection(duckdb_resource(queue_duckdb_path)) as connection:
-        source_fields_by_item_id: dict[str, list[str]] = {}
-        for item_id, source_field in connection.execute(
-            """
-            select item_id, source_field
-            from translation_locations
-            order by item_id, source_field
-            """
-        ).fetchall():
-            source_fields_by_item_id.setdefault(item_id, []).append(source_field)
-    while True:
-        claimed = queue.claim_batch(limit=1000, worker_id="test-worker")
-        if not claimed:
-            break
-        queue.complete_batch(
-            claimed,
-            [
-                SmokeTranslationResult(
-                    item_id=item.item_id,
-                    translated_text=next(
-                        (
-                            translations_by_field[source_field]
-                            for source_field in source_fields_by_item_id.get(item.item_id, [])
-                            if source_field in translations_by_field
-                        ),
-                        f"Translated {item.source_text}",
-                    ),
-                )
-                for item in claimed
-            ],
-            provider="test",
-            model="test-model",
-            duration_seconds=0.0,
-        )
-
-
-def _insert_completed_translation_for_test(
-    *,
-    queue_duckdb_path: str | Path,
-    source_duckdb_path: str | Path,
-    source_pk: str,
-    source_field: str,
-    source_text: str,
-    translated_text: str,
-) -> None:
-    queue = TranslationQueue(queue_duckdb_path)
-    queue.initialize()
-    item = TranslationQueueItem(
-        source_duckdb_path=str(source_duckdb_path),
-        source_table=f"{DLT_DATASET_NAME}.{ENTITIES_TABLE}",
-        source_pk=source_pk,
-        source_field=source_field,
-        source_text=source_text,
-        target_language="en",
-    )
-    queue.enqueue_items([item])
-    claimed = queue.claim_batch(limit=1, worker_id="test-worker")
-    queue.complete_batch(
-        claimed,
-        [SmokeTranslationResult(item_id=claimed[0].item_id, translated_text=translated_text)],
-        provider="test",
-        model="test-model",
-        duration_seconds=0.0,
-    )
 
 
 def build_financial_statement_rows(
@@ -1356,52 +500,6 @@ def export_norway_brreg_clickhouse_financial_statements(
     return rows
 
 
-def _duckdb_string_literal(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
-def _execute_with_duckdb_lock_retry(
-    operation: Callable[[], Any],
-    *,
-    description: str,
-    log: Callable[..., None] | None,
-    timeout_seconds: float,
-) -> Any:
-    started_at = perf_counter()
-    attempt = 1
-    while True:
-        try:
-            return operation()
-        except duckdb.IOException as exc:
-            if not _is_duckdb_lock_error(exc):
-                raise
-            elapsed_seconds = perf_counter() - started_at
-            if elapsed_seconds >= timeout_seconds:
-                raise RuntimeError(
-                    f"DuckDB is still locked while trying to {description} after "
-                    f"{elapsed_seconds:.1f}s. Stop the process holding the DuckDB file "
-                    "or wait for the active translation/Dagster run to finish before "
-                    "materializing this asset again."
-                ) from exc
-            wait_seconds = min(5.0, max(0.5, timeout_seconds - elapsed_seconds))
-            _log(
-                log,
-                "Waiting for DuckDB lock before %s: attempt=%s elapsed_seconds=%.1f "
-                "sleep_seconds=%.1f error=%s",
-                description,
-                attempt,
-                elapsed_seconds,
-                wait_seconds,
-                exc,
-            )
-            sleep(wait_seconds)
-            attempt += 1
-
-
-def _is_duckdb_lock_error(exc: duckdb.IOException) -> bool:
-    return "Could not set lock on file" in str(exc)
-
-
 def _log(log: Callable[..., None] | None, message: str, *args: Any) -> None:
     if log is not None:
         log(message, *args)
@@ -1505,7 +603,3 @@ def _duckdb_fetch_status_counts(
         """
     ).fetchall()
     return {str(status): int(row_count) for status, row_count in rows}
-
-
-def _string(value: Any) -> str:
-    return "" if value is None else str(value)

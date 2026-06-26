@@ -9,22 +9,22 @@ import time
 from typing import Protocol
 from uuid import uuid4
 
-from translations.provider_smoke import (
+from translator.provider_smoke import (
     _categorize_exception,
     _load_env_file,
     _parse_extra_body,
 )
-from translations.queue import (
+from translator.queue import (
     ClaimedTranslationItem,
     TranslationQueue,
     TranslationQueueItem,
 )
-from translations.smoke import (
+from translator.smoke import (
     DEFAULT_EXTRA_BODY,
     DEFAULT_MAX_TOKENS,
     LocalOpenAICompatibleTranslationProvider,
 )
-from translations.types import SmokeTranslationInput, SmokeTranslationResult
+from translator.types import SmokeTranslationInput, SmokeTranslationResult
 
 
 DEFAULT_BATCH_SIZE = 50

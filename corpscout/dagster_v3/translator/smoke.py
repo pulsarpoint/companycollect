@@ -4,7 +4,7 @@ import json
 
 from openai import OpenAI
 
-from translations.types import SmokeTranslationInput, SmokeTranslationResult
+from translator.types import SmokeTranslationInput, SmokeTranslationResult
 
 
 DEFAULT_MAX_TOKENS = 2048

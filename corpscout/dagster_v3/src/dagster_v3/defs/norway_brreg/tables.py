@@ -248,7 +248,19 @@ def _export_columns(columns: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(column for column in columns if column not in CLICKHOUSE_EXCLUDED_COLUMNS)
 
 
-COMPANIES_EXPORT_COLUMNS = _export_columns(COMPANIES_COLUMNS)
+# Free-text _en columns are supplied by the translator service via the
+# corpscout.norway_companies_translated view (migration 000058 drops them from the
+# base companies table). They are no longer exported from DuckDB. The 4 reference
+# _en columns (legal_form/nace) stay — they are populated by reference-data joins.
+COMPANIES_TRANSLATED_EN_COLUMNS = frozenset(
+    {"articles_purpose_en", "activity_text_en", "company_description_en"}
+)
+
+COMPANIES_EXPORT_COLUMNS = tuple(
+    column
+    for column in COMPANIES_COLUMNS
+    if column not in (CLICKHOUSE_EXCLUDED_COLUMNS | COMPANIES_TRANSLATED_EN_COLUMNS)
+)
 FINANCIAL_STATEMENTS_EXPORT_COLUMNS = _export_columns(FINANCIAL_STATEMENTS_COLUMNS)
 
 COMPANIES_DDL = f"""

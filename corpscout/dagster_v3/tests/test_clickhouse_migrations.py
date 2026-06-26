@@ -68,6 +68,9 @@ EXPECTED_MIGRATIONS = (
     "000053_corpscout_commoncrawl_company_profile",
     "000054_corpscout_br_rfb_registry",
     "000055_corpscout_br_rfb_contact_domains",
+    "000056_corpscout_text_translations",
+    "000057_corpscout_norway_companies_translated_view",
+    "000058_corpscout_companies_drop_free_text_en",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -395,6 +398,7 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
             "CREATE TABLE IF NOT EXISTS" in sql
             or "ALTER TABLE" in sql
             or "CREATE VIEW IF NOT EXISTS" in sql
+            or "CREATE OR REPLACE VIEW" in sql
         )
         assert "TRUNCATE" not in sql.upper()
 
