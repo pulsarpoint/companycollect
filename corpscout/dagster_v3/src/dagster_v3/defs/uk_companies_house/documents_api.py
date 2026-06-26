@@ -13,9 +13,9 @@ import logging
 import os
 import time
 from collections.abc import Callable, Iterable
-from pathlib import Path
 from typing import Any
 
+import duckdb
 from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.uk_companies_house import financials
@@ -128,7 +128,7 @@ class CompaniesHouseClient:
 
 def build_financials_for_company_numbers(
     *,
-    database_path: str | Path,
+    connection: duckdb.DuckDBPyConnection,
     company_numbers: Iterable[str],
     source_run_id: str,
     client: CompaniesHouseClient,
@@ -161,7 +161,7 @@ def build_financials_for_company_numbers(
         fetched += 1
 
     counts = financials.write_metrics_table(
-        database_path=database_path,
+        connection=connection,
         rows=rows,
         source_run_id=source_run_id,
         source_slug="uk_companies_house_accounts_api",

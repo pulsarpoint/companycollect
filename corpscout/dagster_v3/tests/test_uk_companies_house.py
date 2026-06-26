@@ -218,10 +218,11 @@ def test_api_latest_accounts_fetch_and_build(tmp_path):
     session = _Session()
     client = documents_api.CompaniesHouseClient("KEY", session=session)
     db = tmp_path / "api.duckdb"
-    counts = documents_api.build_financials_for_company_numbers(
-        database_path=db, company_numbers=["01234567"], source_run_id="r1",
-        client=client, request_delay_seconds=0,
-    )
+    with duckdb.connect(str(db)) as con:
+        counts = documents_api.build_financials_for_company_numbers(
+            connection=con, company_numbers=["01234567"], source_run_id="r1",
+            client=client, request_delay_seconds=0,
+        )
     assert counts["requested"] == 1 and counts["fetched"] == 1 and counts["companies"] == 1
     # newest filing's document fetched first (sorted by date desc).
     assert any(u.endswith("/document/NEW/content") for u in session.calls)
@@ -252,10 +253,11 @@ def test_api_missing_company_yields_empty(tmp_path):
             return _Resp()
 
     client = documents_api.CompaniesHouseClient("KEY", session=_Session())
-    counts = documents_api.build_financials_for_company_numbers(
-        database_path=tmp_path / "e.duckdb", company_numbers=["99999999"],
-        source_run_id="r1", client=client, request_delay_seconds=0,
-    )
+    with duckdb.connect(str(tmp_path / "e.duckdb")) as con:
+        counts = documents_api.build_financials_for_company_numbers(
+            connection=con, company_numbers=["99999999"],
+            source_run_id="r1", client=client, request_delay_seconds=0,
+        )
     assert counts == {"companies": 0, "with_revenue": 0, "requested": 1, "fetched": 0, "missing": 1}
 
 

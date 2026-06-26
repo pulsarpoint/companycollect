@@ -407,14 +407,14 @@ def uk_companies_house_api_financial_metrics(
     from exchange_rates import ExchangeRateClient
 
     client = CompaniesHouseClient.from_env()
-    counts = build_financials_for_company_numbers(
-        database_path=UK_DUCKDB_PATH,
-        company_numbers=config.company_numbers,
-        source_run_id=context.run_id,
-        client=client,
-        log=context.log.info,
-    )
     with uk_companies_house_duckdb.get_connection() as connection:
+        counts = build_financials_for_company_numbers(
+            connection=connection,
+            company_numbers=config.company_numbers,
+            source_run_id=context.run_id,
+            client=client,
+            log=context.log.info,
+        )
         apply_uk_usd_conversion(
             connection=connection,
             exchange_rates=ExchangeRateClient.from_env(),

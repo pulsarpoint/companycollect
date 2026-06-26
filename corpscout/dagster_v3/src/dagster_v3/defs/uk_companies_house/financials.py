@@ -7,7 +7,6 @@ from typing import Any, Protocol
 
 import duckdb
 
-from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.uk_companies_house import resources, tables
 from dagster_v3.defs.xbrl_common.parser import parse_ixbrl
 
@@ -124,30 +123,13 @@ def metrics_row(company_number: str, period_end: Any, metrics: dict[str, Any]) -
     )
 
 
-def write_metrics_table(
-    *,
-    connection: duckdb.DuckDBPyConnection | None = None,
-    database_path: str | Path | None = None,
+def write_metrics_table(*, connection: duckdb.DuckDBPyConnection,
     rows: list[tuple[Any, ...]],
     source_run_id: str,
     source_slug: str,
     allow_empty: bool = False,
 ) -> dict[str, int]:
     """Write staging metric rows into the DuckDB metrics table (latest period/company)."""
-    if connection is None:
-        if database_path is None:
-            raise ValueError("write_metrics_table requires connection or database_path")
-        database_file = Path(database_path)
-        database_file.parent.mkdir(parents=True, exist_ok=True)
-        with duckdb_resource(database_file).get_connection() as managed_connection:
-            return write_metrics_table(
-                connection=managed_connection,
-                rows=rows,
-                source_run_id=source_run_id,
-                source_slug=source_slug,
-                allow_empty=allow_empty,
-            )
-
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
     amount_cols = ", ".join(f"{m}_amount_original decimal(38, 2)" for m in METRIC_NAMES)
     placeholders = ", ".join(["?"] * (4 + len(METRIC_NAMES)))
