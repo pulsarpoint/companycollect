@@ -133,11 +133,11 @@ def test_duckdb_runtime_settings_are_applied_before_heavy_transforms(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("BRAZIL_RFB_DUCKDB_MEMORY_LIMIT", "8GiB")
-    monkeypatch.setenv("BRAZIL_RFB_DUCKDB_THREADS", "2")
-    monkeypatch.setenv("BRAZIL_RFB_DUCKDB_MAX_TEMP_DIRECTORY_SIZE", "100GiB")
+    monkeypatch.setenv("DUCKDB_MEMORY_LIMIT", "8GiB")
+    monkeypatch.setenv("DUCKDB_THREADS", "2")
+    monkeypatch.setenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE", "100GiB")
     monkeypatch.setenv(
-        "BRAZIL_RFB_DUCKDB_TEMP_DIRECTORY",
+        "DUCKDB_TEMP_DIRECTORY",
         str(tmp_path / "duckdb-temp"),
     )
     connection = duckdb.connect(":memory:")
