@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Uzbekistan Company Profile",
+  "description": "Country-specific company profile for Uzbekistan. The universal key is the 9-digit STIR/INN (taxpayer identification number); the EGRPO statistical code is an alternative id. The authoritative register is the EGRPO (Unified State Register of Enterprises and Organizations), maintained by the Statistics Agency (stat.uz) and published via the open-data portal data.egov.uz — but data.egov.uz/data.gov.uz were FIREWALLED from the investigation environment (planning-only). The State Tax Committee (soliq.uz) adds tax/VAT status by STIR/INN (also firewalled here, planning-only). Listed companies come from the Republican Stock Exchange 'Toshkent' (UZSE) by ISIN (browser-public JS SPA). Language Uzbek (Latin/Cyrillic) + Russian; currency UZS; activity classified by OKED. Director/head (EGRPO, if present) and individual taxpayers (soliq) are personal data — redact. No per-company values were captured (firewalled). The firewall is environmental, not a real-world access block.",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Uzbekistan" },
+    "country_slug": { "type": "string", "const": "uzbekistan" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "required": ["stir_inn"],
+      "properties": {
+        "stir_inn": { "type": "string", "description": "9-digit STIR/INN — registration number, tax id, and universal join key.", "x-source": "egrpo_register", "x-source-path": "stir_inn", "x-join-key": true, "x-access": "firewalled", "x-source-alt": "soliq_taxpayer.stir_inn" },
+        "egrpo_code": { "type": ["string", "null"], "description": "EGRPO statistical register code (alternative id).", "x-source": "egrpo_register", "x-source-path": "egrpo_code", "x-access": "firewalled" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "properties": {
+        "legal_name": { "type": ["string", "null"], "description": "Entity name (UZ/RU). EGRPO authoritative; soliq taxpayer_name as alt.", "x-source": "egrpo_register", "x-source-path": "legal_name", "x-source-alt": "soliq_taxpayer.taxpayer_name", "x-access": "firewalled" },
+        "legal_form": { "type": ["string", "null"], "description": "MCHJ (LLC) / AJ (JSC) / YaTT (individual entrepreneur).", "x-source": "egrpo_register", "x-source-path": "legal_form", "x-access": "firewalled" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "registration_status": { "type": ["string", "null"], "description": "EGRPO status (active/liquidated). Planning-only (firewalled).", "x-source": "egrpo_register", "x-source-path": "status", "x-access": "firewalled" },
+        "taxpayer_status": { "type": ["string", "null"], "description": "soliq taxpayer status (active/inactive) — TAX status, not registration status.", "x-source": "soliq_taxpayer", "x-source-path": "taxpayer_status", "x-access": "firewalled" },
+        "vat_status": { "type": ["string", "null"], "description": "soliq VAT (QQS) registration status.", "x-source": "soliq_taxpayer", "x-source-path": "vat_status", "x-access": "firewalled" },
+        "registration_date": { "type": ["string", "null"], "x-source": "egrpo_register", "x-source-path": "registration_date", "x-access": "firewalled" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "oked_activity": { "type": ["string", "null"], "description": "Economic activity (OKED).", "x-source": "egrpo_register", "x-source-path": "oked_activity", "x-access": "firewalled" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source": "egrpo_register", "x-source-path": "registered_address", "x-access": "firewalled" }
+      }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for UZSE-listed companies (browser-public SPA).",
+      "x-source": "uzse_listed",
+      "properties": {
+        "ticker": { "type": ["string", "null"], "x-source-path": "ticker" },
+        "isin": { "type": ["string", "null"], "x-source-path": "isin" }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

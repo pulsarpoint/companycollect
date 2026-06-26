@@ -1,0 +1,74 @@
+{
+  "country": "Uzbekistan",
+  "country_slug": "uzbekistan",
+  "source_slug": "uzse_listed",
+  "source_identity": "uzbekistan_uzse_listed",
+  "source_package": "uzse",
+  "env_prefix": "UZ_UZSE",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "Republican Stock Exchange 'Toshkent' (UZSE) — listed issuers",
+    "source_type": "financial_disclosure",
+    "organization": "Republican Stock Exchange 'Toshkent' (uzse.uz)",
+    "source_url": "https://uzse.uz/issuers",
+    "license": "public_disclosure",
+    "access": "public_browser_spa",
+    "data_freshness": "event_driven",
+    "attribution": "Republican Stock Exchange 'Toshkent' (UZSE)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://uzse.uz/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html", "json"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public via browser; JS SPA"
+  },
+  "snapshot": {
+    "strategy": "preserve_json_if_endpoint_found",
+    "file_extension": ".json",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "UzseListedIssuer",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "UZSE listed-issuers site is a JS SPA; /issuers/ returns a ~11 KB shell and data is client-side. A REST backend exists (uzse.uz/api/... returns JSON 404 for guessed paths) but the correct issuers route was not located. Discover the SPA data endpoint (browser network tab) before implementing; do NOT bypass site controls. Listed companies only; ISIN. No STIR published — join to EGRPO by name. Currency UZS."
+  },
+  "keys": {
+    "primary_keys": ["isin"],
+    "join_keys": ["isin", "issuer_name"],
+    "dedupe_keys": ["isin"]
+  },
+  "mapping_rules": {
+    "company_id": "ISIN (listed security).",
+    "legal_name": "Issuer Name.",
+    "listing": "Ticker + ISIN."
+  },
+  "fixture_requirements": [
+    "equity listing with an ISIN",
+    "record asserting join-by-name to EGRPO"
+  ],
+  "live_test_plan": {
+    "smoke": "Load uzse.uz/issuers in a browser; capture the XHR endpoint feeding the issuer list.",
+    "full": "Blocked on transport discovery — identify the SPA data endpoint; listed subset only."
+  },
+  "blockers": [
+    "JS SPA; issuer list client-side; REST API route not located",
+    "No STIR published (join by name)",
+    "Listed companies only"
+  ]
+}

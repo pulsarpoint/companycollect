@@ -1,0 +1,47 @@
+{
+  "country": "Uzbekistan",
+  "country_slug": "uzbekistan",
+  "country_profile_version": "2026-06-26",
+  "registration": {
+    "stir_inn": null,
+    "egrpo_code": null
+  },
+  "legal_identity": {
+    "legal_name": null,
+    "legal_form": null
+  },
+  "status": {
+    "registration_status": null,
+    "taxpayer_status": null,
+    "vat_status": null,
+    "registration_date": null
+  },
+  "activity": {
+    "oked_activity": null
+  },
+  "registered_location": {
+    "registered_address": null
+  },
+  "listing": {
+    "ticker": null,
+    "isin": null
+  },
+  "source_provenance": [
+    {
+      "source_slug": "egrpo_register",
+      "section": "registration / legal_identity / status.registration_status / activity / registered_location (planning-only, firewalled)",
+      "source_url": "https://data.egov.uz/",
+      "access": "firewalled_from_environment",
+      "license": "unknown",
+      "retrieved_at": null
+    },
+    {
+      "source_slug": "soliq_taxpayer",
+      "section": "status.taxpayer_status / status.vat_status (planning-only, firewalled)",
+      "source_url": "https://soliq.uz/",
+      "access": "firewalled_from_environment",
+      "license": "restricted",
+      "retrieved_at": null
+    }
+  ]
+}

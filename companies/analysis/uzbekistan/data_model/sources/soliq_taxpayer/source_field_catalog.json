@@ -1,0 +1,22 @@
+{
+  "country": "Uzbekistan",
+  "country_slug": "uzbekistan",
+  "source_slug": "soliq_taxpayer",
+  "source_name": "State Tax Committee (soliq.uz) — taxpayer search",
+  "source_type": "tax_register",
+  "organization": "State Tax Committee of the Republic of Uzbekistan (soliq.uz)",
+  "source_url": "https://soliq.uz/",
+  "license": "restricted",
+  "access": "firewalled_from_environment",
+  "data_freshness": "live",
+  "record_shape": "per_stir_search_planning_only",
+  "primary_keys": ["stir_inn"],
+  "join_keys": ["stir_inn", "taxpayer_name"],
+  "field_count": 4,
+  "fields": [
+    { "path": "stir_inn", "source_field": "СТИР/ИНН (STIR/INN)", "english_name": "stir_inn", "meaning": "9-digit taxpayer identification number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; soliq.uz firewalled from this environment.", "source_confidence": "high", "analysis_notes": "Join key to EGRPO." },
+    { "path": "taxpayer_name", "source_field": "Солик туловчи номи (Taxpayer Name)", "english_name": "taxpayer_name", "meaning": "Registered taxpayer name (company or individual).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "uz/ru", "limitations": "Individuals are personal data — redact. Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "vat_status", "source_field": "ҚҚС рўйхати (VAT Registration)", "english_name": "vat_status", "meaning": "VAT (QQS / ҚҚС) registration status of the taxpayer.", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "uz", "limitations": "Planning-only.", "source_confidence": "medium", "analysis_notes": "ҚҚС / QQS = VAT in Uzbek." },
+    { "path": "taxpayer_status", "source_field": "Солик туловчи холати (Taxpayer Status)", "english_name": "taxpayer_status", "meaning": "Taxpayer status (active / inactive).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "uz", "limitations": "Planning-only; tax status, not registration status.", "source_confidence": "medium", "analysis_notes": null }
+  ]
+}

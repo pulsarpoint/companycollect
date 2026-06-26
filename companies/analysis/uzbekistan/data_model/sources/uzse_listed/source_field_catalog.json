@@ -1,0 +1,21 @@
+{
+  "country": "Uzbekistan",
+  "country_slug": "uzbekistan",
+  "source_slug": "uzse_listed",
+  "source_name": "Republican Stock Exchange 'Toshkent' (UZSE) — listed issuers",
+  "source_type": "financial_disclosure",
+  "organization": "Republican Stock Exchange 'Toshkent' (uzse.uz)",
+  "source_url": "https://uzse.uz/issuers",
+  "license": "public_disclosure",
+  "access": "public_browser_spa",
+  "data_freshness": "event_driven",
+  "record_shape": "listed_issuers_js_spa",
+  "primary_keys": ["isin"],
+  "join_keys": ["isin", "issuer_name"],
+  "field_count": 3,
+  "fields": [
+    { "path": "issuer_name", "source_field": "Issuer Name", "english_name": "issuer_name", "meaning": "Listed company / issuer name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "uz/ru", "limitations": "Listed only; SPA — issuer list client-side, not statically captured.", "source_confidence": "medium", "analysis_notes": "Join to EGRPO by name (no STIR published on the page)." },
+    { "path": "ticker", "source_field": "Ticker", "english_name": "ticker", "meaning": "UZSE ticker symbol.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Listed only.", "source_confidence": "low", "analysis_notes": null },
+    { "path": "isin", "source_field": "ISIN", "english_name": "isin", "meaning": "International Securities Identification Number.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Listed only; not captured (SPA).", "source_confidence": "low", "analysis_notes": "Listed-security key." }
+  ]
+}

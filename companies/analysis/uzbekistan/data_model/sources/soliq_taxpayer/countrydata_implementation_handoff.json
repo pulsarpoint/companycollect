@@ -1,0 +1,76 @@
+{
+  "country": "Uzbekistan",
+  "country_slug": "uzbekistan",
+  "source_slug": "soliq_taxpayer",
+  "source_identity": "uzbekistan_soliq_taxpayer",
+  "source_package": "soliq",
+  "env_prefix": "UZ_SOLIQ",
+  "implementation_status": "planning_only",
+  "source": {
+    "source_name": "State Tax Committee (soliq.uz) — taxpayer search",
+    "source_type": "tax_register",
+    "organization": "State Tax Committee of the Republic of Uzbekistan (soliq.uz)",
+    "source_url": "https://soliq.uz/",
+    "license": "restricted",
+    "access": "firewalled_from_environment",
+    "data_freshness": "live",
+    "attribution": "State Tax Committee (Uzbekistan)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://soliq.uz/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["unblocked network (host firewalled here)"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "soliq.uz firewalled from this environment (timeout)"
+  },
+  "snapshot": {
+    "strategy": "none_firewalled",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "UzSoliqTaxpayer",
+    "date_formats": ["02.01.2006"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "State Tax Committee taxpayer search by STIR/INN + VAT-payers registry. From this environment soliq.uz TIMED OUT (firewalled) — transport/shape not confirmable. Re-run from an unblocked network. Key = STIR/INN (9-digit; join to EGRPO). taxpayer_status is tax status, not registration status. Covers individuals — REDACT individuals (personal data). The firewall is environmental, not a real-world block."
+  },
+  "keys": {
+    "primary_keys": ["stir_inn"],
+    "join_keys": ["stir_inn", "taxpayer_name"],
+    "dedupe_keys": ["stir_inn"]
+  },
+  "mapping_rules": {
+    "tax_id": "STIR/INN.",
+    "legal_name": "Taxpayer Name (companies only; redact individuals).",
+    "vat_id": "VAT (QQS / ҚҚС) registration status.",
+    "status": "Taxpayer Status (TAX status, not registration status)."
+  },
+  "fixture_requirements": [
+    "VAT-registered legal entity",
+    "non-VAT taxpayer",
+    "individual taxpayer (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable from this environment (firewalled). From an unblocked network, run a per-STIR taxpayer search.",
+    "full": "Blocked here on the environmental firewall — implement from an unblocked network; join to EGRPO on STIR/INN; redact individuals."
+  },
+  "blockers": [
+    "soliq.uz firewalled from this environment (timeout)",
+    "Transport/request shape not confirmable here",
+    "Covers individuals (personal data)"
+  ]
+}

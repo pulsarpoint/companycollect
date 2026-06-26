@@ -1,0 +1,26 @@
+{
+  "country": "Uzbekistan",
+  "country_slug": "uzbekistan",
+  "source_slug": "egrpo_register",
+  "source_name": "EGRPO — Unified State Register of Enterprises and Organizations (data.egov.uz / stat.uz)",
+  "source_type": "official_registry",
+  "organization": "Statistics Agency under the President of the Republic of Uzbekistan; open-data portal data.egov.uz",
+  "source_url": "https://data.egov.uz/",
+  "license": "unknown",
+  "access": "firewalled_from_environment",
+  "data_freshness": "periodic",
+  "record_shape": "per_entity_register_planning_only",
+  "primary_keys": ["stir_inn"],
+  "join_keys": ["stir_inn", "egrpo_code", "legal_name"],
+  "field_count": 8,
+  "fields": [
+    { "path": "stir_inn", "source_field": "СТИР/ИНН (STIR/INN)", "english_name": "stir_inn", "meaning": "9-digit taxpayer identification number — the universal company identifier.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; data.egov.uz firewalled from this environment.", "source_confidence": "high", "analysis_notes": "Primary key + join key (tax committee)." },
+    { "path": "egrpo_code", "source_field": "ОКПО / EGRPO code", "english_name": "egrpo_code", "meaning": "Statistical register code (Unified State Register of Enterprises and Organizations).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only.", "source_confidence": "medium", "analysis_notes": "Statistical code; alternative id." },
+    { "path": "legal_name", "source_field": "Наименование (Name)", "english_name": "legal_name", "meaning": "Registered legal-entity name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "uz/ru", "limitations": "Planning-only; Uzbek (Latin/Cyrillic) + Russian.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "legal_form", "source_field": "Ташкилий-хукукий шакли (Legal Form)", "english_name": "legal_form", "meaning": "Legal form (e.g. MCHJ = LLC, AJ = JSC, YaTT = individual entrepreneur).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "Uzbek legal forms", "language": "uz", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "status", "source_field": "Холати (Status)", "english_name": "status", "meaning": "Registration status (active / liquidated).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "uz", "limitations": "Planning-only.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "registration_date", "source_field": "Рўйхатдан ўтган сана (Registration Date)", "english_name": "registration_date", "meaning": "Date of state registration.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; Gregorian.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "registered_address", "source_field": "Манзил (Address)", "english_name": "registered_address", "meaning": "Registered (legal) address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "uz/ru", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "oked_activity", "source_field": "ОКЭД (OKED Activity)", "english_name": "oked_activity", "meaning": "Economic activity (OKED classifier).", "data_type": "string", "semantic_type": "activity", "example_values": [], "nullable": true, "repeatable": false, "code_list": "OKED", "language": "uz/ru", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": "OKED is the UZ economic-activity classifier (analogue of NACE/ISIC)." }
+  ]
+}
