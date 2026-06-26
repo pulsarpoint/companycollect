@@ -11,6 +11,7 @@ from dagster_duckdb import DuckDBResource
 DEFAULT_DUCKDB_THREADS = "4"
 DEFAULT_DUCKDB_MAX_TEMP_DIRECTORY_SIZE = "100GiB"
 DEFAULT_DUCKDB_TEMP_DIRECTORY = Path("data/duckdb_tmp")
+_RESOURCE_CACHE: dict[tuple[str, tuple[tuple[str, Any], ...]], DuckDBResource] = {}
 
 
 def duckdb_resource(
@@ -18,7 +19,7 @@ def duckdb_resource(
     *,
     default_temp_directory: str | Path | None = None,
 ) -> DuckDBResource:
-    database_path = Path(database)
+    database_path = _normal_database_path(database)
     connection_config = duckdb_connection_config(
         default_temp_directory=(
             default_temp_directory
@@ -26,14 +27,28 @@ def duckdb_resource(
             else database_path.parent / "duckdb_tmp"
         )
     )
-    return DuckDBResource(
-        database=str(database_path),
-        connection_config=connection_config,
-    )
+    cache_key = (str(database_path), tuple(sorted(connection_config.items())))
+    resource = _RESOURCE_CACHE.get(cache_key)
+    if resource is None:
+        resource = DuckDBResource(
+            database=str(database_path),
+            connection_config=connection_config,
+        )
+        _RESOURCE_CACHE[cache_key] = resource
+    return resource
 
 
 def duckdb_database_path(resource: DuckDBResource) -> Path:
     return Path(str(resource.database))
+
+
+def _normal_database_path(database: str | Path) -> Path:
+    database_path = Path(database).expanduser()
+    if str(database_path) == ":memory:":
+        return database_path
+    if not database_path.is_absolute():
+        database_path = database_path.resolve()
+    return database_path
 
 
 @contextmanager

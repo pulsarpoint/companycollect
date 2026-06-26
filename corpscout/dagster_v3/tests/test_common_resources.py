@@ -32,6 +32,20 @@ def test_duckdb_resource_factory_uses_generic_runtime_env(
     assert resource.connection_config["preserve_insertion_order"] is False
 
 
+def test_duckdb_resource_reuses_same_object_for_same_normalized_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helpers = importlib.import_module("dagster_v3.defs.common.duckdb_resources")
+    monkeypatch.chdir(tmp_path)
+
+    relative = helpers.duckdb_resource("data/source.duckdb")
+    absolute = helpers.duckdb_resource(tmp_path / "data" / "source.duckdb")
+
+    assert relative is absolute
+    assert helpers.duckdb_database_path(relative) == tmp_path / "data" / "source.duckdb"
+
+
 def test_read_only_duckdb_connection_rejects_writes(tmp_path: Path) -> None:
     helpers = importlib.import_module("dagster_v3.defs.common.duckdb_resources")
     database_path = tmp_path / "source.duckdb"
