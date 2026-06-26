@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +19,6 @@ def duckdb_resource(
     default_temp_directory: str | Path | None = None,
 ) -> DuckDBResource:
     database_path = Path(database)
-    database_path.parent.mkdir(parents=True, exist_ok=True)
     connection_config = duckdb_connection_config(
         default_temp_directory=(
             default_temp_directory
@@ -35,12 +36,21 @@ def duckdb_database_path(resource: DuckDBResource) -> Path:
     return Path(str(resource.database))
 
 
+@contextmanager
+def read_only_duckdb_connection(resource: DuckDBResource) -> Iterator[Any]:
+    read_only_resource = DuckDBResource(
+        database=str(duckdb_database_path(resource)),
+        connection_config={**resource.connection_config, "access_mode": "READ_ONLY"},
+    )
+    with read_only_resource.get_connection() as connection:
+        yield connection
+
+
 def duckdb_connection_config(
     *,
     default_temp_directory: str | Path = DEFAULT_DUCKDB_TEMP_DIRECTORY,
 ) -> dict[str, Any]:
     temp_directory = Path(_env_value("DUCKDB_TEMP_DIRECTORY") or default_temp_directory)
-    temp_directory.mkdir(parents=True, exist_ok=True)
 
     config: dict[str, Any] = {
         "temp_directory": str(temp_directory),

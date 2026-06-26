@@ -21,6 +21,7 @@ from dlt.sources.helpers import requests as dlt_requests
 from dagster_v3.defs.common.duckdb_resources import (
     duckdb_database_path,
     duckdb_resource,
+    read_only_duckdb_connection,
 )
 
 COUNTRY = "FI"
@@ -168,7 +169,7 @@ def finland_ytj_all_companies_duckdb_asset(
 
 @dg.asset_check(asset="finland_ytj_all_companies_duckdb", name="all_companies_non_empty")
 def all_companies_non_empty(ytj_duckdb: DuckDBResource) -> dg.AssetCheckResult:
-    with ytj_duckdb.get_connection() as connection:
+    with read_only_duckdb_connection(ytj_duckdb) as connection:
         row_count = connection.execute(
             f"select count(*) from {DLT_DATASET_NAME}.{DLT_COMPANIES_TABLE}"
         ).fetchone()[0]
