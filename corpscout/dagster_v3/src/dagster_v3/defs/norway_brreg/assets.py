@@ -259,9 +259,9 @@ def norway_brreg_translation_trigger(context: AssetExecutionContext) -> dg.Mater
 
 
 # Monthly coordinated refresh (see dagster_v3/CLAUDE.md "Scheduling"). Loads
-# entities once, runs the financials chain, exports companies to ClickHouse, then
-# fires the standalone translator Temporal workflow (returns immediately; the
-# workflow runs async).
+# entities once, runs the resolved chain (dbt -> norway_resolved_clickhouse, which
+# lands corpscout.no_companies), then fires the standalone translator Temporal
+# workflow (returns immediately; the workflow runs async).
 norway_brreg_refresh_job = dg.define_asset_job(
     "norway_brreg_refresh_job",
     selection=dg.AssetSelection.assets("norway_brreg_translation_trigger").upstream(),
