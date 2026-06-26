@@ -228,6 +228,13 @@ SHARD=../data/index/CC-MAIN-2026-25/shard_tech_0.parquet
 ./bin/cc-enrich-worker load --dir ../data/crawl/run0
 # or one file: ./bin/cc-enrich-worker load --file ../data/crawl/run0/tech.parquet
 ```
+**Industry is identical** — same `--out` dir / `--load` / `load --dir`, it just produces one file
+(`domains.parquet` → `commoncrawl_domains`) instead of three (needs the reference built first, §3 A1):
+```bash
+( cd ../index-builder && uv run python -m index_builder --mode industry --part 0 )
+./bin/cc-enrich-worker industry --worklist ../data/index/CC-MAIN-2026-25/shard_industry_0.parquet \
+    --crawl-id CC-MAIN-2026-25 --load            # -> ../data/crawl/shard_industry_0/domains.parquet + loaded
+```
 `load --dir` loads whichever of the four fixed files are present (an `industry` run produces just
 `domains.parquet` → `commoncrawl_domains`). Tables must exist
 (`make clickhouse-migrate-up`); ReplacingMergeTree dedupes, so re-loading a file is safe.
