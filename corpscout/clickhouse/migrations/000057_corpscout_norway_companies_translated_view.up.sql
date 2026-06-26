@@ -1,6 +1,6 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
-CREATE VIEW IF NOT EXISTS corpscout.norway_companies_translated AS
+CREATE OR REPLACE VIEW corpscout.norway_companies_translated AS
 SELECT
     c.* EXCEPT (articles_purpose_en, activity_text_en, company_description_en),
     ifNull(ap.translated_text, '') AS articles_purpose_en,

@@ -397,6 +397,7 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
             "CREATE TABLE IF NOT EXISTS" in sql
             or "ALTER TABLE" in sql
             or "CREATE VIEW IF NOT EXISTS" in sql
+            or "CREATE OR REPLACE VIEW" in sql
         )
         assert "TRUNCATE" not in sql.upper()
 
