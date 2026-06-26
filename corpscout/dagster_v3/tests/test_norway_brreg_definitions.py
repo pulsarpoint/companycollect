@@ -1,10 +1,11 @@
-"""Graph-contract tests for the Norway Brreg definitions after in-graph translation removal.
+"""Graph-contract tests for the Norway Brreg definitions after retargeting the translation trigger.
 
-Restores coverage deleted in commit d9d17e3 (Plan 03 Task 4):
+Coverage:
 1. All surviving assets are registered, including norway_brreg_translation_trigger.
 2. Dependency edges: entities→fetches, fetches→statements, entities→clickhouse_companies,
-   statements→clickhouse_financial, clickhouse_companies→translation_trigger.
-3. norway_brreg_refresh_job expanded membership after AssetSelection rewrite.
+   statements→clickhouse_financial, norway_resolved_clickhouse→translation_trigger.
+3. norway_brreg_refresh_job expanded membership now includes the resolved dbt models and
+   resolved ClickHouse export via upstream() resolution across modules.
 4. resources["norway_brreg_duckdb"] is wired as DuckDBResource.
 """
 
@@ -62,9 +63,9 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     assert {k.path[-1] for k in clickhouse_financial_node.parent_keys} == {
         "norway_brreg_financial_statements_duckdb"
     }
-    # clickhouse_companies → translation_trigger  (new fire-and-forget edge)
+    # norway_resolved_clickhouse → translation_trigger  (fires after no_companies lands)
     assert {k.path[-1] for k in trigger_node.parent_keys} == {
-        "norway_brreg_clickhouse_companies"
+        "norway_resolved_clickhouse"
     }
 
 
@@ -78,14 +79,24 @@ def test_norway_brreg_refresh_job_membership() -> None:
         k.path[-1]
         for k in repo.get_job("norway_brreg_refresh_job").asset_layer.executable_asset_keys
     }
+    # Trigger fires after the resolved export; the full chain runs through it.
     assert refresh == {
+        # brreg raw chain
         "norway_brreg_entities_duckdb",
         "norway_brreg_financial_fetches_duckdb",
         "norway_brreg_financial_statements_duckdb",
-        "norway_brreg_clickhouse_financial_statements",
-        "norway_brreg_clickhouse_companies",
+        # resolved dbt models
+        "norway_resolved_no_companies",
+        "norway_resolved_no_websites",
+        "norway_resolved_no_industries",
+        "norway_resolved_no_financial_statements",
+        # resolved ClickHouse export + trigger
+        "norway_resolved_clickhouse",
         "norway_brreg_translation_trigger",
     }
+    # Raw brreg ClickHouse exports are no longer in the job chain
+    assert "norway_brreg_clickhouse_companies" not in refresh
+    assert "norway_brreg_clickhouse_financial_statements" not in refresh
     # Old translation-in-graph assets must be absent from the job
     assert "norway_brreg_translation_queue" not in refresh
     assert "norway_brreg_translations_applied" not in refresh

@@ -310,12 +310,13 @@ async def _start_norway_brreg_translation(temporal_address: str) -> str:
 
 
 @dg.asset(
-    deps=[dg.AssetKey("norway_brreg_clickhouse_companies")],
+    deps=[dg.AssetKey("norway_resolved_clickhouse")],
     group_name=GROUP_NAME,
     kinds={"python", "temporal"},
     description=(
         "Fire-and-forget: start (or reuse) the standalone translator Temporal "
-        "workflow after companies land in ClickHouse. Does not wait for completion."
+        "workflow after no_companies lands in ClickHouse via the resolved export. "
+        "Does not wait for completion."
     ),
 )
 def norway_brreg_translation_trigger(context: AssetExecutionContext) -> dg.MaterializeResult:
@@ -344,10 +345,7 @@ def norway_brreg_translation_trigger(context: AssetExecutionContext) -> dg.Mater
 # workflow runs async).
 norway_brreg_refresh_job = dg.define_asset_job(
     "norway_brreg_refresh_job",
-    selection=dg.AssetSelection.assets(
-        "norway_brreg_clickhouse_financial_statements",
-        "norway_brreg_translation_trigger",
-    ).upstream(),
+    selection=dg.AssetSelection.assets("norway_brreg_translation_trigger").upstream(),
 )
 norway_brreg_refresh_schedule = dg.ScheduleDefinition(
     name="norway_brreg_refresh_schedule",
