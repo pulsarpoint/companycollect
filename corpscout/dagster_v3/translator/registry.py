@@ -34,7 +34,6 @@ REGISTRY: dict[str, SourceConfig] = {
         fields=(
             FieldConfig(original_col="articles_purpose_original"),
             FieldConfig(original_col="activity_text_original"),
-            FieldConfig(original_col="company_description_original"),
             FieldConfig(
                 original_col="legal_form_description_original",
                 static_map=tuple(LEGAL_FORM_DESCRIPTION_EN_BY_CODE.items()),

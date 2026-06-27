@@ -292,7 +292,6 @@ def test_entity_resource_declares_explicit_table_schema() -> None:
     assert columns["source_line_number"]["data_type"] == "bigint"
     assert columns["employee_count"]["data_type"] == "bigint"
     assert columns["is_active"]["data_type"] == "bool"
-    assert columns["company_description_en"]["data_type"] == "text"
     assert columns["raw_entity"]["data_type"] == "text"
 
 
@@ -371,8 +370,6 @@ def test_entity_rows_extract_company_spine_fields() -> None:
         "og avledede produkter og tjenester"
     )
     assert rows[0]["activity_text_en"] == ""
-    assert rows[0]["company_description_original"] == rows[0]["activity_text_original"]
-    assert rows[0]["company_description_en"] == ""
     assert rows[0]["employee_count"] == 21467
     assert rows[0]["status"] == "active"
     assert rows[0]["is_active"] is True
@@ -647,8 +644,6 @@ def test_norway_brreg_clickhouse_schema_contract() -> None:
         == "corpscout.financial_statements"
     )
     assert "org_number" in brreg_tables.COMPANIES_COLUMNS
-    assert "company_description_original" in brreg_tables.COMPANIES_COLUMNS
-    assert "company_description_en" in brreg_tables.COMPANIES_COLUMNS
     assert "operating_revenue_amount_original" in (
         brreg_tables.FINANCIAL_STATEMENTS_COLUMNS
     )

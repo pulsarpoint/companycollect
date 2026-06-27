@@ -199,14 +199,13 @@ def test_no_companies_model_carries_free_text_originals(
 
     with duckdb.connect(str(db), read_only=True) as conn:
         rows = conn.execute(
-            "select org_number, company_description_original, "
-            "articles_purpose_original, activity_text_original "
+            "select org_number, articles_purpose_original, activity_text_original "
             "from norway_resolved.no_companies order by org_number"
         ).fetchall()
 
     assert rows == [
-        ("1000", "A software company.", "To develop software.", "Technology services."),
-        ("2000", None, None, None),
+        ("1000", "To develop software.", "Technology services."),
+        ("2000", None, None),
     ]
 
 

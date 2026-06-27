@@ -16,7 +16,7 @@ def _item(source_column: str, text: str) -> TranslationQueueItem:
 def test_completed_results_for_flush_returns_source_column_text_translation(tmp_path):
     queue = TranslationQueue(tmp_path / "q.duckdb")
     queue.initialize()
-    queue.enqueue_items([_item("company_description_original", "Holdingselskap")])
+    queue.enqueue_items([_item("activity_text_original", "Holdingselskap")])
 
     claimed = queue.claim_batch(limit=10, worker_id="w1")
     queue.complete_batch(
@@ -30,12 +30,12 @@ def test_completed_results_for_flush_returns_source_column_text_translation(tmp_
     result = queue.completed_results_for_flush()
     assert result == [
         FlushTranslationRow(
-            source_column="company_description_original",
+            source_column="activity_text_original",
             source_text="Holdingselskap",
             translated_text="Holding company",
         )
     ]
-    assert result[0].source_column == "company_description_original"
+    assert result[0].source_column == "activity_text_original"
 
 
 def test_completed_results_for_flush_excludes_pending(tmp_path):

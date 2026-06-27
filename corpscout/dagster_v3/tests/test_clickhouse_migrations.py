@@ -81,6 +81,7 @@ EXPECTED_MIGRATIONS = (
     "000067_corpscout_commoncrawl_domain_metadata",
     "000068_corpscout_commoncrawl_domain_contact_info",
     "000069_corpscout_text_translations_table_column",
+    "000070_corpscout_no_companies_drop_company_description",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -455,9 +456,10 @@ def test_clickhouse_migrations_only_target_corpscout_database() -> None:
 
 
 def test_clickhouse_migrations_match_existing_python_ddl_constants() -> None:
+    # norway_brreg_tables.COMPANIES_DDL now reflects the post-000070 schema (without
+    # company_description columns), so we no longer pin it against 000003's initial DDL.
     expected_ddl_by_file = {
         "000001_reference_nace_categories.up.sql": nace_tables.NACE_CATEGORIES_DDL,
-        "000003_norway_brreg_companies.up.sql": norway_brreg_tables.COMPANIES_DDL,
         "000004_norway_brreg_financial_statements.up.sql": (
             norway_brreg_tables.FINANCIAL_STATEMENTS_DDL
         ),
@@ -561,8 +563,8 @@ def test_finland_xbrl_raw_first_migration_covers_reprocessible_statement_data() 
 
 
 NO_COMPANIES_ALTER_COLUMNS = frozenset({
-    # Added later via ALTER migration 000059
-    "company_description_original",
+    # Added later via ALTER migration 000059; company_description_original was
+    # subsequently dropped by migration 000070 and removed from RESOLVED_TABLE_COLUMNS.
     "articles_purpose_original",
     "activity_text_original",
 })
@@ -579,7 +581,8 @@ def test_norway_resolved_migration_covers_exported_columns() -> None:
                 continue
             assert f"    {column_name} " in sql
 
-    # The 3 free-text columns are added by the ALTER migration 000059.
+    # articles_purpose_original and activity_text_original were added by ALTER migration 000059.
+    # (company_description_original was also added by 000059 but dropped by 000070.)
     alter_sql = _migration_sql("000059_corpscout_no_companies_free_text_columns.up.sql")
     for column_name in NO_COMPANIES_ALTER_COLUMNS:
         assert f"ADD COLUMN IF NOT EXISTS {column_name} " in alter_sql

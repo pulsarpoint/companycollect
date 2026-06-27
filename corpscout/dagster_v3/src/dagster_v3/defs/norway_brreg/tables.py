@@ -38,8 +38,6 @@ BRREG_ENTITIES_COLUMNS: dict[str, dict[str, Any]] = {
     "articles_purpose_en": {"data_type": "text"},
     "activity_text_original": {"data_type": "text"},
     "activity_text_en": {"data_type": "text"},
-    "company_description_original": {"data_type": "text"},
-    "company_description_en": {"data_type": "text"},
     "employee_count": {"data_type": "bigint"},
     "has_registered_employee_count": {"data_type": "bool"},
     "business_address_lines": {"data_type": "text"},
@@ -154,8 +152,6 @@ COMPANIES_COLUMNS = (
     "articles_purpose_en",
     "activity_text_original",
     "activity_text_en",
-    "company_description_original",
-    "company_description_en",
     "employee_count",
     "has_registered_employee_count",
     "business_address_lines",
@@ -253,7 +249,7 @@ def _export_columns(columns: tuple[str, ...]) -> tuple[str, ...]:
 # base companies table). They are no longer exported from DuckDB. The 4 reference
 # _en columns (legal_form/nace) stay — they are populated by reference-data joins.
 COMPANIES_TRANSLATED_EN_COLUMNS = frozenset(
-    {"articles_purpose_en", "activity_text_en", "company_description_en"}
+    {"articles_purpose_en", "activity_text_en"}
 )
 
 COMPANIES_EXPORT_COLUMNS = tuple(
@@ -295,8 +291,6 @@ CREATE TABLE IF NOT EXISTS {QUALIFIED_COMPANIES_TABLE}
     articles_purpose_en String,
     activity_text_original String,
     activity_text_en String,
-    company_description_original String,
-    company_description_en String,
     employee_count Nullable(Int64),
     has_registered_employee_count UInt8,
     business_address_lines String,

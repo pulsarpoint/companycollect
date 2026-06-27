@@ -2,7 +2,7 @@ from dagster_v3.defs.norway_brreg import tables
 
 
 def test_free_text_en_columns_are_not_exported():
-    for column in ("articles_purpose_en", "activity_text_en", "company_description_en"):
+    for column in ("articles_purpose_en", "activity_text_en"):
         assert column not in tables.COMPANIES_EXPORT_COLUMNS
 
 
@@ -20,6 +20,5 @@ def test_original_free_text_columns_are_still_exported():
     for column in (
         "articles_purpose_original",
         "activity_text_original",
-        "company_description_original",
     ):
         assert column in tables.COMPANIES_EXPORT_COLUMNS

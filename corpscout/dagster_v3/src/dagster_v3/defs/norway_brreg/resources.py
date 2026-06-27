@@ -191,8 +191,6 @@ def _entity_row(entity: dict[str, Any], *, line_number: int, run_id: str) -> dic
         "articles_purpose_en": "",
         "activity_text_original": activity_text_original,
         "activity_text_en": "",
-        "company_description_original": activity_text_original,
-        "company_description_en": "",
         "employee_count": _int_or_none(entity.get("antallAnsatte")),
         "has_registered_employee_count": _bool(entity.get("harRegistrertAntallAnsatte")),
         "business_address_lines": _address_lines(business_address),

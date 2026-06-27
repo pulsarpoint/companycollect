@@ -28,7 +28,6 @@ RESOLVED_TABLE_COLUMNS = {
         "is_active",
         "legal_form_code",
         "legal_form_description_original",
-        "company_description_original",
         "articles_purpose_original",
         "activity_text_original",
         "primary_website_url",

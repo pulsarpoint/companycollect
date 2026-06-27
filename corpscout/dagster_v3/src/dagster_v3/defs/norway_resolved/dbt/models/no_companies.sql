@@ -11,7 +11,6 @@ select
   coalesce(is_active, false) as is_active,
   nullif(legal_form_code, '') as legal_form_code,
   nullif(legal_form_description_original, '') as legal_form_description_original,
-  nullif(company_description_original, '') as company_description_original,
   nullif(articles_purpose_original, '') as articles_purpose_original,
   nullif(activity_text_original, '') as activity_text_original,
   nullif(normalized_url(website), '') as primary_website_url,

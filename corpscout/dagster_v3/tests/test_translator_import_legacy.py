@@ -29,7 +29,7 @@ def _build_old_queue(path: Path) -> TranslationQueue:
     norway_brreg queue does), which the importer must remap to the logical field.
 
     source_field → outcome:
-        company_description_original    — dynamic → imported as 'company_description'
+        activity_text_original          — dynamic → imported as 'activity_text'
         articles_purpose_original       — dynamic → imported as 'articles_purpose'
         legal_form_description_original — static  → skipped
         bogus_field                     — unknown → skipped
@@ -37,7 +37,7 @@ def _build_old_queue(path: Path) -> TranslationQueue:
     queue = TranslationQueue(path)
     queue.initialize()
     items = [
-        _item("company_description_original", "Holdingselskap"),
+        _item("activity_text_original", "Holdingselskap"),
         _item("articles_purpose_original", "Produksjon av software"),
         _item("legal_form_description_original", "Aksjeselskap"),
         _item("bogus_field", "Noe ukjent"),
@@ -89,7 +89,7 @@ def test_import_only_dynamic_fields(tmp_path, monkeypatch):
 
     call = flushed_calls[0]
     imported_fields = {r.source_column for r in call["rows"]}
-    assert imported_fields == {"company_description_original", "articles_purpose_original"}
+    assert imported_fields == {"activity_text_original", "articles_purpose_original"}
     assert "legal_form_description_original" not in imported_fields, "static field must be skipped"
     assert "bogus_field" not in imported_fields, "unknown field must be skipped"
 
@@ -163,7 +163,7 @@ def test_empty_translated_text_excluded(tmp_path, monkeypatch):
     queue = TranslationQueue(db_path)
     queue.initialize()
     # Enqueue one item; complete it with an empty translation.
-    items = [_item("company_description_original", "Tom tekst")]
+    items = [_item("activity_text_original", "Tom tekst")]
     queue.enqueue_items(items)
     claimed = queue.claim_batch(limit=10, worker_id="w")
     queue.complete_batch(
@@ -184,5 +184,5 @@ def test_empty_translated_text_excluded(tmp_path, monkeypatch):
     rc = main(["--duckdb", str(db_path), "--source", "norway_brreg", "--env-file", str(tmp_path / "no.env")])
 
     assert rc == 0
-    # empty translated_text → nothing to import → flush_translations never called
+    # empty translated_text -> nothing to import -> flush_translations never called
     assert flush_calls == [], "empty translation must not reach flush"

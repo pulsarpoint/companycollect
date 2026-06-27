@@ -295,3 +295,45 @@ def test_000069_down_restores_slug_field_schema_and_view():
     assert "CREATE OR REPLACE VIEW corpscout.no_companies_translated" in sql
     for field in ("articles_purpose", "activity_text", "company_description", "legal_form_description"):
         assert f"field = '{field}'" in sql
+
+
+DROP_COMPANY_DESC_UP = (
+    MIGRATIONS_DIR / "000070_corpscout_no_companies_drop_company_description.up.sql"
+)
+DROP_COMPANY_DESC_DOWN = (
+    MIGRATIONS_DIR / "000070_corpscout_no_companies_drop_company_description.down.sql"
+)
+
+THREE_FIELD_VIEW_ORIGINALS = (
+    ("articles_purpose_original", "articles_purpose_en"),
+    ("activity_text_original", "activity_text_en"),
+    ("legal_form_description_original", "legal_form_description_en"),
+)
+
+
+def test_000070_up_drops_company_description_column():
+    sql = DROP_COMPANY_DESC_UP.read_text(encoding="utf-8")
+    assert "CREATE DATABASE IF NOT EXISTS corpscout" in sql
+    assert "DROP COLUMN IF EXISTS company_description_original" in sql
+
+
+def test_000070_up_rebuilds_view_with_three_joins():
+    sql = DROP_COMPANY_DESC_UP.read_text(encoding="utf-8")
+    assert "CREATE OR REPLACE VIEW corpscout.no_companies_translated" in sql
+    assert "FROM corpscout.no_companies AS c" in sql
+    for original, en_col in THREE_FIELD_VIEW_ORIGINALS:
+        assert f"source_column = '{original}'" in sql
+        assert f"cityHash64(c.{original})" in sql
+        assert en_col in sql
+    # company_description must be gone from the view definition (only present in DROP COLUMN)
+    view_section = sql.split("CREATE OR REPLACE VIEW", 1)[1]
+    assert "company_description_original" not in view_section
+    assert "company_description_en" not in view_section
+
+
+def test_000070_down_readds_company_description_column_and_restores_view():
+    sql = DROP_COMPANY_DESC_DOWN.read_text(encoding="utf-8")
+    assert "ADD COLUMN IF NOT EXISTS company_description_original" in sql
+    assert "company_description_en" in sql
+    assert "CREATE OR REPLACE VIEW corpscout.no_companies_translated" in sql
+    assert "source_column = 'company_description_original'" in sql
