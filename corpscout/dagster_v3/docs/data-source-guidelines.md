@@ -158,12 +158,12 @@ in the graph.
 
 The base ClickHouse table carries only `<field>_original` — **do not add `<field>_en` (or
 `_translated_at`/`_provider`/`_model`) columns to it.** English values live in the shared
-`corpscout.text_translations` cache (term-level, hash-keyed by `cityHash64(<original>)`) and are exposed
-by a per-source `<source>_translated` join view. The cache survives the wipe-and-replace export, so a
-refresh only translates genuinely new/changed text.
+`corpscout.text_translations` cache, **keyed by `(source_table, source_column, source_text_hash)`** — a
+cache row names its exact table and column. Results are exposed by a per-source `<source>_translated` join
+view. The cache survives the wipe-and-replace export, so a refresh only translates genuinely new/changed text.
 
 To make a source's fields translatable:
-1. **Register** the columns in `translator/registry.py` — one `FieldConfig(field, original_col)` per
+1. **Register** the columns in `translator/registry.py` — one `FieldConfig(original_col=…)` per
    field on the `SourceConfig`. Pick the mechanism by field kind:
    - **Free text** (company description, activity text) → LLM (leave `static_map` unset).
    - **Finite enumeration** (legal form, status, size category) → set `static_map` (an authoritative

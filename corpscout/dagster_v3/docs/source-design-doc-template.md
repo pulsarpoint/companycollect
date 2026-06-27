@@ -38,13 +38,14 @@
 - Export subset: `<TABLE>_EXPORT_COLUMNS` drops `raw_*`/`source_payload_hash`.
 
 ## 6. Translation (§8) — registered in `translator/registry.py`
-| field | original col | mechanism | static_map / notes |
+| label | source_column (= original_col) | mechanism | static_map / notes |
 |---|---|---|---|
 | legal form | `legal_form_original` | static dict | `<CC>_LEGAL_FORM_EN_BY_CODE`, `static_key_col=legal_form_code` |
 | status | `status_original` | static dict | |
 | description (if any) | `<field>_original` | LLM | free text |
 - `_en` is served by the `<source>_translated` join view from the `text_translations` cache — **not**
-  base-table columns (the base table carries only `<field>_original`).
+  base-table columns (the base table carries only `<field>_original`). The cache key is
+  `(source_table, source_column, source_text_hash)` where `source_column` = the `original_col` value above.
 - A fire-and-forget trigger asset starts the standalone translator after the ClickHouse export (no sensor).
 - Fields deliberately **not** translated (proper nouns): <name, address>.
 

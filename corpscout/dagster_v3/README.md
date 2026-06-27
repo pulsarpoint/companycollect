@@ -99,12 +99,11 @@ REGISTRY: dict[str, SourceConfig] = {
         ch_table="corpscout.no_companies",   # ClickHouse table holding the *_original columns
         fields=(
             # dynamic (LLM) free-text fields:
-            FieldConfig(field="articles_purpose",    original_col="articles_purpose_original"),
-            FieldConfig(field="activity_text",       original_col="activity_text_original"),
-            FieldConfig(field="company_description",  original_col="company_description_original"),
+            FieldConfig(original_col="articles_purpose_original"),
+            FieldConfig(original_col="activity_text_original"),
+            FieldConfig(original_col="company_description_original"),
             # static (dict) reference field — resolved from a code→EN map, no LLM:
             FieldConfig(
-                field="legal_form_description",
                 original_col="legal_form_description_original",
                 static_map=LEGAL_FORM_DESCRIPTION_EN_BY_CODE,   # from translator/static_maps.py
                 static_key_col="legal_form_code",              # the column whose value keys the dict
@@ -115,8 +114,7 @@ REGISTRY: dict[str, SourceConfig] = {
 }
 ```
 
-- `field` — the logical name stored in `text_translations.field` and joined by the view.
-- `original_col` — the column holding the native-language text (the cache/view key is `cityHash64` of this).
+- `original_col` — the column holding the native-language text; the cache row stores this as `source_column` and keys on `cityHash64` of the value. The cache row is self-describing via `source_table`/`source_column`.
 - `static_map` / `static_key_col` — set both to make a field **static**: instead of the LLM, the value is
   `static_map[row[static_key_col]]`. The cache row is still keyed by `cityHash64(original_col)`, so the same
   view serves it. Unknown keys resolve to nothing (left untranslated, never re-sent). Static maps live in
@@ -138,7 +136,7 @@ When the workflow starts, the `scan_and_seed` activity scans ClickHouse for untr
 SELECT DISTINCT c.<original_col> AS source_text
 FROM corpscout.no_companies AS c
 LEFT JOIN ( SELECT source_text_hash FROM corpscout.text_translations
-            WHERE source_slug = {slug:String} AND field = {field:String}
+            WHERE source_table = {table:String} AND source_column = {column:String}
             GROUP BY source_text_hash ) AS t
        ON t.source_text_hash = cityHash64(c.<original_col>)
 WHERE c.<original_col> <> '' AND t.source_text_hash IS NULL
@@ -175,13 +173,13 @@ batches (default `20`), leftovers retried on the next trigger. No completion sen
 
 Completed dynamic results (and static results) are written to `corpscout.text_translations`
 (`translator/flush.py`). **The Python side never computes the hash** — it stages the raw
-`(field, source_text, translated_text)` rows in a `Memory` table, then lets ClickHouse compute the hash:
+`(source_column, source_text, translated_text)` rows in a `Memory` table, then lets ClickHouse compute the hash:
 
 ```sql
 INSERT INTO corpscout.text_translations
-    (source_slug, field, source_text_hash, source_lang, target_lang,
+    (source_table, source_column, source_text_hash, source_lang, target_lang,
      translated_text, provider, model, version)
-SELECT {slug:String}, field, cityHash64(source_text), {lang:String}, 'en',
+SELECT {table:String}, source_column, cityHash64(source_text), {lang:String}, 'en',
        translated_text, {provider:String}, {model:String}, {version:UInt64}
 FROM <staging>;
 ```
@@ -190,13 +188,13 @@ ClickHouse computes `cityHash64(source_text)` on **both** write and read (the vi
 definition of the join key — no cross-language hash drift. Empty translations are skipped. `provider` records
 the origin: the LLM model name, `'static'` (dict), or `'legacy-import'` (see §7).
 
-`text_translations` is a `ReplacingMergeTree(version)` keyed by `(source_slug, field, source_text_hash)` —
+`text_translations` is a `ReplacingMergeTree(version)` keyed by `(source_table, source_column, source_text_hash)` —
 re-translating the same term just replaces the row (latest `version` wins):
 
 ```sql
 corpscout.text_translations
-    source_slug       LowCardinality(String)   -- 'norway_brreg'
-    field             LowCardinality(String)   -- 'company_description'
+    source_table      LowCardinality(String)   -- 'corpscout.no_companies'
+    source_column     LowCardinality(String)   -- 'company_description_original'
     source_text_hash  UInt64                    -- cityHash64(original text)
     source_lang       LowCardinality(String)   -- 'no'
     target_lang       LowCardinality(String)   -- 'en'
@@ -222,21 +220,22 @@ LIMIT 10;
 Inspect / monitor the cache directly:
 
 ```sql
--- coverage per field (incl. provider: model / static / legacy-import)
-SELECT field, provider, count() AS terms
+-- coverage per column (incl. provider: model / static / legacy-import)
+SELECT source_column, provider, count() AS terms
 FROM corpscout.text_translations
-WHERE source_slug = 'norway_brreg'
-GROUP BY field, provider;
+WHERE source_table = 'corpscout.no_companies'
+GROUP BY source_column, provider;
 
 -- look up one source string
-SELECT field, translated_text, provider, model
+SELECT source_column, translated_text, provider, model
 FROM corpscout.text_translations
-WHERE source_slug = 'norway_brreg' AND source_text_hash = cityHash64('Holdingselskap');
+WHERE source_table = 'corpscout.no_companies' AND source_text_hash = cityHash64('Holdingselskap');
 ```
 
 Schema is owned by golang-migrate migrations in `corpscout/clickhouse/migrations/`:
-`000056` (`text_translations` table) and `000059`–`000062` (the `no_companies` `*_original` columns + the
-`no_companies_translated` view; `000061` dropped the legacy raw `corpscout.companies`/`financial_statements`).
+`000056` (`text_translations` table), `000059`–`000062` (the `no_companies` `*_original` columns + the
+`no_companies_translated` view; `000061` dropped the legacy raw `corpscout.companies`/`financial_statements`),
+and `000069` (re-keyed `text_translations` to `(source_table, source_column, source_text_hash)`).
 
 ## 7. Reusing already-translated terms (legacy import)
 
@@ -256,7 +255,7 @@ the dict) and unknown fields are skipped and reported. After import, the scan's 
 
 ## 8. Operational runbook — translating an existing table
 
-1. **Deploy + migrate:** `make clickhouse-migrate-up` (applies `000056`–`000062`).
+1. **Deploy + migrate:** `make clickhouse-migrate-up` (applies `000056`–`000062` and `000069`).
 2. **Rebuild the resolved table** so `*_original` is populated — materialize `norway_resolved` (the dbt
    models + `norway_resolved_clickhouse`). The `*_original` columns are new; existing rows are empty until a
    rebuild. *(Skip this and the scan finds nothing to translate.)*
