@@ -1,4 +1,6 @@
 import json
+import re
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,6 +38,39 @@ def test_committed_seed_exists_and_is_well_formed():
     seed = [json.loads(s) for s in build.PAGE_TYPE_SEED_PATH.read_text().splitlines() if s.strip()]
     assert len(seed) > 50
     assert all({"page_type", "text"} <= r.keys() for r in seed)
+
+
+def test_under_construction_seed_is_site_placeholder_not_topical_content():
+    seed = [json.loads(s) for s in build.PAGE_TYPE_SEED_PATH.read_text().splitlines() if s.strip()]
+    site_placeholder = re.compile(
+        r"(?is)("
+        r"\b(?:site|website|web site)\s+(?:is\s+)?(?:currently\s+)?(?:still\s+)?under construction\b|"
+        r"\b[a-z0-9.-]+\.[a-z]{2,}\s+is under construction\b|"
+        r"\b(?:https?://)?\s+is under construction\b|"
+        r"\bis under construction\b.{0,180}\bdoing some work on the site\b|"
+        r"\bunder construction\b.{0,180}\b(?:site|website|coming soon|check back|stay tuned|be back|available soon)\b|"
+        r"\b(?:site|website)\s+coming soon\b|"
+        r"\bcoming soon\b.{0,180}\b(?:under construction|check back|new experience|launch|available soon|stay tuned)\b|"
+        r"\b(?:we're|we are|we)\s+(?:doing some work|working hard|building something)\b.{0,180}"
+        r"\b(?:site|experience|check back|stay tuned|be back)\b|"
+        r"\b(?:maintenance mode|under maintenance|be back shortly)\b|"
+        r"\bstiamo effettuando dei lavori sul sito\b|"
+        r"\btorner[òo] prestissimo online\b"
+        r")"
+    )
+    offenders = [
+        r["root_domain"]
+        for r in seed
+        if r["page_type"] == "under_construction" and not site_placeholder.search(r["text"])
+    ]
+    assert offenders == []
+
+
+def test_seed_has_minimum_page_type_coverage():
+    seed = [json.loads(s) for s in build.PAGE_TYPE_SEED_PATH.read_text().splitlines() if s.strip()]
+    counts = Counter(r["page_type"] for r in seed)
+    assert counts["default_server"] >= 8
+    assert counts["parking_provider"] >= 8
 
 
 def test_division():
