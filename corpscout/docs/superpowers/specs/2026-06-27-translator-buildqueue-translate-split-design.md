@@ -48,6 +48,17 @@ Python row-by-row seed with a **bulk Arrow load**, and replace fixed activity du
   knobs are removed.
 - **Done** = `TranslateWorkflow` reaches `COMPLETED` (queue drained + dumped); visible in the Temporal UI
   with its output counts, and reflected by `corpscout.no_companies_translated._en` coverage.
+- **One shared runtime, per-source code.** Isolation comes from per-source packages, per-source DuckDB
+  queues, per-source workflows, and per-source Dagster triggers — but a **single shared worker fleet**
+  runs them all. Adding a source = a folder + its two registered workflows + a trigger; **no new process
+  per source**.
+- **Two shared task queues + a global LLM gate.** `translation-build` runs the BuildQueue + seed/dump/
+  summarize activities at normal concurrency (sources build in parallel). `translation-llm` runs **only**
+  the `translate_loop` activity, bounded to **`K` concurrent** (the LLM-safe limit). Because all sources
+  share the one `translation-llm` queue, `K` is a **true global cap** on how many sources hit the single
+  LLM at once; the rest wait in the queue. Size `K` to the LLM; raise `K` / scale the LLM for throughput.
+- **`python-dotenv`** for `.env` loading — `load_dotenv(path, override=False)` (shell / `docker -e` still
+  win), replacing the hand-rolled `load_env_file` parser (added as a direct dependency).
 
 ## Package structure
 
@@ -55,10 +66,13 @@ Python row-by-row seed with a **bulk Arrow load**, and replace fixed activity du
 translator/
   queue.py        # shared: DuckDB queue schema + status ops + a bulk-insert (Arrow→queue) helper
   llm_batch.py    # shared: translate-N-entries-via-LLM (the common function)
-  smoke.py        # shared: OpenAI-compatible LLM provider (unchanged)
+  provider.py     # shared: OpenAI-compatible LLM provider (renamed from smoke.py; de-smoked)
+  errors.py       # shared: LLM exception categorization (moved out of the deleted provider_smoke.py)
   clickhouse.py   # shared: CH client, query_arrow helper, cityHash64/sha helpers
-  types.py        # shared dataclasses (ScannedTerm/FlushTranslationRow/etc.)
-  worker.py       # shared: registers EVERY source's BuildQueue + Translate workflows + activities
+  types.py        # shared: TranslationInput / TranslationResult (renamed from Smoke*), etc.
+  worker.py       # shared: starts the worker fleet — a 'translation-build' worker (workflows +
+                  #   seed/dump/summarize) and a 'translation-llm' worker (translate_loop only,
+                  #   max_concurrent_activities=K); registers EVERY source's workflows
   norway_brreg/
     __init__.py
     config.py     # SourceConfig: ch_table, source_lang, fields (column + static_map + static_key_col)
@@ -69,6 +83,30 @@ translator/
 
 A second source later adds a sibling folder (`translator/finland_ytj/…`) and registers its two workflows
 in `worker.py`. Nothing source-specific lives in the shared core.
+
+## Running the service at scale (10+ sources)
+
+The runtime is **one shared service**, not one per source:
+
+- **Worker fleet.** `worker.py` starts two Temporal workers in one process:
+  - a **`translation-build`** worker (the workflows + the seed / dump / summarize / handoff activities) at
+    normal concurrency, so multiple sources build and dump in parallel;
+  - a **`translation-llm`** worker that runs **only** the `translate_loop` activity, with
+    `max_concurrent_activities = K`.
+- **Global LLM gate.** The single LLM endpoint is the one truly shared resource, so the cap must be global.
+  `TranslateWorkflow` dispatches its `translate_loop` activity to the `translation-llm` queue; because all
+  sources share that one queue, at most **`K`** translate-loops hit the LLM at once. The rest sit as pending
+  activity tasks (no `schedule_to_start` cap) and drain as slots free — no overload, nothing lost.
+- **Triggering.** Each source has its own Dagster trigger firing its `BuildQueueWorkflow` on the source's
+  schedule (staggered). 10 sources = 10 independent triggers.
+- **Why not per-source workers:** N per-source workers each with their own limit would allow up to N×limit
+  concurrent LLM streams — no global cap. One shared `translation-llm` queue gives the true global limit for
+  free. Run a single `translation-llm` worker so `K` is one global cap; for throughput, raise `K` and/or
+  scale the LLM — not by adding uncoordinated workers.
+- **`K` is config** (e.g. default 2), tuned to the single LLM's capacity.
+
+Net: per-source code + per-source queues/workflows/triggers for isolation; one shared worker fleet + one
+shared `translation-llm` queue (the global gate) for the runtime.
 
 ## Components
 
@@ -83,9 +121,9 @@ in `worker.py`. Nothing source-specific lives in the shared core.
      SQL. Heartbeat between fields / row-chunks.
   3. For **static** fields: resolve via the dict (tiny, ~40 values) and write them straight to
      `text_translations` (`provider='static'`) — they never enter the LLM queue.
-- **`translator/llm_batch.py`** — `translate_batch(items, *, provider, model, max_tokens, extra_body,
-  timeout) -> results`: the shared LLM call (JSON-in/JSON-out, temperature 0), returning per-item
-  translations. Used by every source's Translate loop.
+- **`translator/llm_batch.py`** — `translate_batch(items, *, provider, timeout) -> results`: the shared
+  LLM call (the `provider` object already carries model / max_tokens / extra_body). Returns per-item
+  translations keyed back to queue item ids. Used by every source's Translate loop.
 - **`norway_brreg/dump.py`** — `dump_to_clickhouse(...)`: reads completed queue results and writes them
   to `corpscout.text_translations` (`source_table`/`source_column`, `cityHash64` in SQL), **batched**
   (chunked staging inserts like the import CLI). Self-contained.
@@ -132,7 +170,8 @@ no_companies_translated view joins text_translations → *_en
 
 - `corpscout.text_translations` cache + `corpscout.no_companies_translated` view + all migrations
   (000056, 000059–000070). Keying stays `(source_table, source_column, source_text_hash)`.
-- The OpenAI-compatible LLM provider (`smoke.py`).
+- The OpenAI-compatible LLM provider logic (renamed `smoke.py` → `provider.py` in the de-smoke task; the
+  provider class itself is unchanged).
 - The DuckDB queue schema (`translation_items` / `translation_locations` / `translation_results` /
   `translation_batch_attempts`) — but populated by a bulk Arrow insert instead of Python `executemany`.
 
