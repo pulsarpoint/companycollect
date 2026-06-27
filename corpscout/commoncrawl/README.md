@@ -3,11 +3,13 @@
 Global domain enrichment from [CommonCrawl](https://commoncrawl.org). For every domain in a crawl
 it produces **two independent things**:
 
-- **An industry category** — a NACE code per domain (+ confidence), by embedding the page and
-  matching it against the NACE taxonomy. → `commoncrawl_domains`
-- **Technologies & company info** — the tech stack (Wappalyzer), company identifiers (LEI / VAT →
-  registry join keys), and a firmographic profile (schema.org JSON-LD). → `commoncrawl_technologies`,
-  `commoncrawl_company_identifiers`, `commoncrawl_company_profile`
+- **Industry** — NACE code(s) per domain, by embedding the page and matching the NACE taxonomy.
+  → `commoncrawl_industries` (many rows/domain) + `commoncrawl_page_signals`
+- **Technologies & contacts** — the tech stack (Wappalyzer), registry identifiers (LEI / VAT →
+  join keys), self-reported metadata (schema.org JSON-LD), and contacts. → `commoncrawl_technologies`,
+  `commoncrawl_domain_identifiers`, `commoncrawl_domain_metadata`, `commoncrawl_domain_contact_info`
+
+Both write the identity master `commoncrawl_domains` (one row/domain). Full schema: `docs/schema.md`.
 
 These are **two separate workflows** (this README is organised around that split — §3 and §4). They
 share the fetch path but otherwise differ completely: industry is GPU/embedding-bound and needs a
@@ -24,7 +26,8 @@ This is the single doc for all three packages — the worker (Go) and the two Py
 
 | Dir | Lang | Role |
 |---|---|---|
-| `cc-enrich-worker/` | Go | The **processor**. Subcommand CLI `cc-enrich-worker <industry\|tech\|both>`; byte-range-fetches WARC pages, runs the chosen workflow → Parquet → ClickHouse. Reference §6. |
+| `cc-crawl/` | Go | The **orchestrator** (replaces `run_crawl.sh`). Drives the per-part loop: worklist → produce → load, structured JSON logs. Reference §5, design `docs/cc-crawl-design.md`. |
+| `cc-enrich-worker/` | Go | The **processor**. Subcommand CLI `cc-enrich-worker <industry\|tech\|both>` + `load`; byte-range-fetches WARC pages, runs the chosen workflow → Parquet, and (separately) loads it. Reference §6. |
 | `index-builder/` | Python (duckdb, pyarrow) | Builds **worklists** from the CommonCrawl URL index — the "what to fetch" list. Two shapes: `industry` (1 page/domain), `tech` (many). Reference §7. |
 | `reference-builder/` | Python (numpy, openai, clickhouse) | Builds the **reference embeddings** (industry only) — NACE categories + page-type seed → `nace_category_embeddings`/`page_type_exemplars`. Reference §8. |
 
@@ -39,7 +42,7 @@ From `corpscout/` unless noted.
 
 **a. Apply the ClickHouse schema**
 ```bash
-make clickhouse-migrate-up     # 044/045 reference tables + 046–053 result tables
+make clickhouse-migrate-up     # 044/045 reference tables + 046–068 result tables
 ```
 
 **b. Fill in the shared config** (`commoncrawl/.env`, copied from `.env.example`). It is read by the
@@ -63,19 +66,20 @@ Load with `set -a; source ../.env; set +a` (exports every var; `env | grep` to v
 shows set-but-unexported vars and lies). `AWS_REGION` is the only place the S3 region is set (the
 CommonCrawl bucket is permanently `us-east-1`); there is no region flag.
 
-**c. Build the worker** (`cmd/cc-enrich-worker` → `bin/cc-enrich-worker`, gitignored)
+**c. Build the binaries** — one `make` at `commoncrawl/` builds **both** Go binaries (gitignored `bin/`)
 ```bash
-cd commoncrawl/cc-enrich-worker && make build     # static binary at bin/cc-enrich-worker
-# make arm    # cross-compile linux/arm64 (Graviton)
-# make test   # go test ./...
-# or: docker build -t cc-enrich-worker .          (distroless image, see Dockerfile)
+cd commoncrawl && make             # -> cc-enrich-worker/bin/cc-enrich-worker  +  cc-crawl/bin/cc-crawl
+# make worker  /  make crawl       # build just one
+# make vet  /  make test           # vet both / test the worker
+# make -C cc-enrich-worker arm     # cross-compile the worker linux/arm64 (Graviton)
+# or: docker build -t cc-enrich-worker cc-enrich-worker/   (distroless image, see Dockerfile)
 ```
 
 **d. Worklists — the worker's input (`--worklist`).** Every pass consumes a *worklist shard*: a
 Parquet file with one row per page to fetch (`root_domain, url, warc_filename, warc_record_offset,
 warc_record_length, content_languages`), built by `index-builder` from the CommonCrawl URL index.
-The crawl's index is ~300 parts; one part → one shard. **`run_crawl.sh` (§5) builds them
-automatically per shard**, so you usually don't touch this. To build one by hand:
+The crawl's index is ~300 parts; one part → one shard. **`cc-crawl` (§5) builds them automatically
+per part**, so you usually don't touch this. To build one by hand:
 ```bash
 cd commoncrawl/index-builder
 uv run python -m index_builder --crawl CC-MAIN-2026-25 --list                                     # how many parts
@@ -129,29 +133,33 @@ If `embedded < expected` or the model/dim differ from your `.env`, **re-run A1**
 
 ### A3. Run it
 ```bash
-./run_crawl.sh industry 0-0      # or a range, e.g. 0-299
+cc-crawl/bin/cc-crawl -mode industry -parts 0-0 -crawl CC-MAIN-2026-25   # or a range, e.g. 0-299
 ```
 Per domain it fetches the **one** representative page (the main-site homepage, from the `industry`
 worklist), embeds it, cosine-matches the NACE reference + page-type prototypes, and applies the
 confidence gate. Junk/parked pages are tagged via `page_type` and skip NACE.
 
-### A4. Output — `commoncrawl_domains` (one row/domain)
-`nace_code/label/division`, `nace_confident` (binary), `nace_confidence` (0–1), `nace_margin`,
-`nace_top3_*`, `page_type`(+score), contacts (`emails[]`).
+### A4. Output (multi-row split)
+- `commoncrawl_industries` — **many rows/domain**, one per candidate NACE code: `nace_code/label/
+  division`, `rank`, `is_primary`, `score`, `nace_method`.
+- `commoncrawl_page_signals` — one row/domain: `page_type`(+score), `nace_confident`, `nace_margin`.
+- `commoncrawl_domains` — the identity master row (also written by the tech pass).
 
 ---
 
 ## 4. Workflow B — resolve technologies & company info  (`tech`)
 
-**Goal:** from a domain's pages, resolve its tech stack + identifiers + firmographic profile.
+**Goal:** from a domain's pages, resolve its tech stack + identifiers + metadata + contacts.
 **Needs:** S3 only (no GPU, no reference, no endpoint). **Bottleneck:** the CPU. **Output:**
-`commoncrawl_technologies`, `commoncrawl_company_identifiers`, `commoncrawl_company_profile`.
+`commoncrawl_technologies`, `commoncrawl_domain_identifiers`, `commoncrawl_domain_metadata`,
+`commoncrawl_domain_contact_info`.
 
 ```
 index-builder --mode tech (MANY pages/domain, multilingual legal-page ranking) ─► worker tech ─►
    Aho-Corasick-gated Wappalyzer    ─► commoncrawl_technologies
-   LEI / VAT (checksum-validated)   ─► commoncrawl_company_identifiers   (→ GLEIF / country registries)
-   schema.org Organization JSON-LD  ─► commoncrawl_company_profile
+   LEI / VAT (checksum-validated)   ─► commoncrawl_domain_identifiers    (→ GLEIF / country registries)
+   schema.org JSON-LD "about"       ─► commoncrawl_domain_metadata
+   emails (regex) + phone + same_as ─► commoncrawl_domain_contact_info
 ```
 
 ### B1. Why a different worklist than industry
@@ -171,76 +179,77 @@ identical results, just slower; it exists only as the parity/reference baseline,
 
 ### B2. Run it
 ```bash
-./run_crawl.sh tech 0-0          # MAX_PAGES=25 by default
+cc-crawl/bin/cc-crawl -mode tech -parts 0-0 -crawl CC-MAIN-2026-25   # MAX_PAGES=25 by default
 ```
 The worker fetches each domain's pages and, per page, runs the tech matcher + LEI/VAT extractors +
-the JSON-LD profile parser, **unioning results per domain**.
+the JSON-LD parser + email regex, **unioning results per domain**.
 
 ### B3. Output
 - `commoncrawl_technologies` — one row / (domain, technology): `technology`, `category`, `version`.
-- `commoncrawl_company_identifiers` — one row / (domain, identifier): `id_type` (`lei`/`vat`/`tax`/
+- `commoncrawl_domain_identifiers` — one row / (domain, identifier): `id_type` (`lei`/`vat`/`tax`/
   `duns`/`naics`), `id_value`, `valid` (checksum), `source` (`jsonld`/`text`). Join `WHERE
   id_type='lei'` to `gleif_reference_data`; `vat` → the country company tables.
-- `commoncrawl_company_profile` — one row / domain: `name`, `country`, `founding_year`,
-  `employee_count`, `email`, `phone`, `same_as[]` (LinkedIn/Wikidata/…).
+- `commoncrawl_domain_metadata` — one row / domain: `name`, `description`, `logo`, `country`,
+  `founding_year`, `employee_count` (self-reported JSON-LD).
+- `commoncrawl_domain_contact_info` — **many** rows / domain: `contact_type` (`email`/`phone`/
+  `social`), `value`, `source` (`regex`/`jsonld`).
 
 ---
 
-## 5. The driver (`run_crawl.sh`) — runs either workflow, resumable
+## 5. The driver (`cc-crawl`) — runs either workflow, resumable
 
-Top-level in `commoncrawl/` (it drives all three packages). Paths are anchored to the script, so it
-runs from anywhere; it auto-loads `commoncrawl/.env`.
+`cc-crawl` (Go binary in `cc-crawl/`, the replacement for the old `run_crawl.sh`) drives the per-part
+loop. Design doc: `docs/cc-crawl-design.md`. It only orchestrates (`os/exec`) — it does **not** import
+the worker. Build both binaries with one `make` (§2c), then run from `commoncrawl/`:
 
 ```bash
-cd commoncrawl
-make -C cc-enrich-worker build     # build the worker once
-./run_crawl.sh tech     0-299      # workflow B over shards 0..299 (CPU pass)
-./run_crawl.sh industry 0-299      # workflow A over shards 0..299 (GPU pass)
+cc-crawl/bin/cc-crawl -mode tech     -parts 0-299 -crawl CC-MAIN-2026-25   # workflow B (CPU pass)
+cc-crawl/bin/cc-crawl -mode industry -parts 0-299 -crawl CC-MAIN-2026-25   # workflow A (GPU pass)
 ```
-For each shard it: generates the **per-mode** worklist on demand (`shard_<mode>_<part>.parquet`,
-cached/skipped if present), runs the worker pass **with `--load`** (writes the per-shard output dir
-and INSERTs it into ClickHouse over the native driver — no `clickhouse-client`), and touches a
-`.loaded` marker. Re-running **skips completed shards**
-(idempotent; ReplacingMergeTree dedupes). Run the two workflows as **separate processes** so tech
-pegs the cores while industry feeds the GPU. Env tunables: `CRAWL`, `WHERE` (worklist SQL filter),
-`MAX_PAGES`, `TECH_CONC`, `IND_CONC`, `EMBED_CONC`.
+Flags (`flag` package; each defaults from the same-named env var). **Required:** `-mode`
+(`industry|tech`), `-parts` (`lo-hi` or a single `N`), `-crawl` (no default). Optional: `-data`,
+`-builder-dir`, `-worker`, `-max-pages`, `-ind-conc`, `-embed-conc`, `-tech-conc`.
 
-### Running the worker yourself (without `run_crawl.sh`)
+For each part it: builds the **per-mode** worklist on demand (`shard_<mode>_<part>.parquet`, cached),
+then runs **two separate worker executions** — (1) the **pass** that produces `out_<mode>_<part>/`,
+then (2) **`load --dir`** into ClickHouse — and touches a `.loaded` marker. **The loader runs only if
+the pass exited 0 and wrote `domains.parquet`**, so a bad produce is never loaded. Re-running **skips
+completed parts** (idempotent; ReplacingMergeTree dedupes). Run the two workflows as **separate
+processes** so tech pegs the cores while industry feeds the GPU.
 
-Each run writes Parquet into an **output directory** with **fixed filenames** (`domains.parquet`,
-`tech.parquet`, `identifiers.parquet`, `profiles.parquet`). The dir is **unique per shard** so
-parallel runs never collide. Load into ClickHouse either inline with **`--load`**, or afterwards by
-pointing **`load --dir`** at the folder — both use the worker's own native driver, so
-**`clickhouse-client` is not needed on the box**.
+**Logging:** structured **JSON** (`log/slog`) to **stdout AND** `data/logs/crawl_<mode>_<lo>-<hi>_<ts>.log`.
+Each command logs its full args + exit code; each part ends with `domains_from_s3` / `rows_to_clickhouse`;
+the run ends with a `done/skipped/failed` summary. Example:
+```json
+{"level":"INFO","msg":"done","mode":"industry","part":5,"domains_from_s3":102804,"rows_to_clickhouse":408019}
+```
+
+### Running the worker yourself (without `cc-crawl`)
+
+The pass writes Parquet into an **output directory** with **fixed filenames** (`domains.parquet`,
+`industries.parquet`, `page_signals.parquet` for industry; `tech/identifiers/metadata/contacts.parquet`
+for tech). The dir is unique per shard. **The pass no longer loads** — loading is a separate step,
+`load --dir`, so produce and load are independently checkable (both use the native driver, so
+**`clickhouse-client` is not needed**).
 
 ```bash
 cd commoncrawl/cc-enrich-worker
-make build                                 # -> bin/cc-enrich-worker
+make build                                 # or `make` at commoncrawl/ to build both binaries
 set -a; source ../.env; set +a
 
 # 1. build a worklist (or reuse one under ../data/index/) — §2d
 ( cd ../index-builder && uv run python -m index_builder --mode tech --part 0 )
 SHARD=../data/index/CC-MAIN-2026-25/shard_tech_0.parquet
 
-# 2a. run + load in one step (--load):
-./bin/cc-enrich-worker tech --worklist "$SHARD" --crawl-id CC-MAIN-2026-25 --load
-#    default --out = ../data/crawl/shard_tech_0/ (the worklist name); files: tech/identifiers/profiles.parquet
-
-# 2b. …or run now, load later: write to a dir (must be empty), then load every file in it
+# 2. produce, then load (two steps; check the produce before loading)
 ./bin/cc-enrich-worker tech --worklist "$SHARD" --crawl-id CC-MAIN-2026-25 --out ../data/crawl/run0
 ./bin/cc-enrich-worker load --dir ../data/crawl/run0
 # or one file: ./bin/cc-enrich-worker load --file ../data/crawl/run0/tech.parquet
 ```
-**Industry is identical** — same `--out` dir / `--load` / `load --dir`, it just produces one file
-(`domains.parquet` → `commoncrawl_domains`) instead of three (needs the reference built first, §3 A1):
-```bash
-( cd ../index-builder && uv run python -m index_builder --mode industry --part 0 )
-./bin/cc-enrich-worker industry --worklist ../data/index/CC-MAIN-2026-25/shard_industry_0.parquet \
-    --crawl-id CC-MAIN-2026-25 --load            # -> ../data/crawl/shard_industry_0/domains.parquet + loaded
-```
-`load --dir` loads whichever of the four fixed files are present (an `industry` run produces just
-`domains.parquet` → `commoncrawl_domains`). Tables must exist
-(`make clickhouse-migrate-up`); ReplacingMergeTree dedupes, so re-loading a file is safe.
+**Industry is identical** — same `--out` dir then `load --dir`; it produces `domains.parquet` +
+`industries.parquet` + `page_signals.parquet` (needs the reference built first, §3 A1).
+`load --dir` loads whichever fixed files are present. Tables must exist (`make clickhouse-migrate-up`);
+ReplacingMergeTree dedupes, so re-loading is safe.
 
 ---
 
@@ -255,8 +264,7 @@ one fetch pass (discouraged — co-locating throttles the GPU; prefer two proces
 |---|---|---|
 | `--worklist` | *(required)* | worklist Parquet shard (§2d) |
 | `--crawl-id` | *(required)* | e.g. `CC-MAIN-2026-25`; stamped on every row |
-| `--out` | `../data/crawl/<worklist-name>/` | output **directory** (fixed names `domains/tech/identifiers/profiles.parquet`); default unique per shard; an explicit dir must be empty |
-| `--load` | `false` | after writing, INSERT into ClickHouse via the native driver (no `clickhouse-client`) |
+| `--out` | `../data/crawl/<worklist-name>/` | output **directory** (fixed per-mode filenames); default unique per shard; an explicit dir must be empty |
 | `--concurrency` | `32` | fetch/parse goroutines (push to ~128 to hide off-AWS fetch RTT) |
 | `--chunk` | `1024` | domains per fetch+process chunk (lower = earlier GPU traffic) |
 | `--s3-anonymous` | `false` | fetch via the HTTPS CDN instead of signed S3 — **rate-limits**, avoid for bulk |
@@ -272,13 +280,15 @@ fed to Wappalyzer, 0 = full body).
 **Fetch path:** **signed S3** (AWS creds) is the only reliable bulk source — the anonymous S3 API is
 denied, and the `data.commoncrawl.org` HTTPS CDN (`--s3-anonymous`) works but is latency-bound and
 rate-limits. Reads are free (Open Data). The worker streams each page through memory and discards it
-(no on-disk page cache). A run writes Parquet and, with `--load`, also INSERTs it; the **`load`
-command** does the same for already-written output — both over the native driver (no `clickhouse-client`).
+(no on-disk page cache). A pass **only writes Parquet**; loading is the separate **`load` command**
+over the native driver (no `clickhouse-client`), so produce and load are independently checkable.
 
-**`load`** — `cc-enrich-worker load --dir <shard-dir>` loads every `{domains,tech,identifiers,
-profiles}.parquet` present in the directory (the fixed name maps to the table); `--file <path>` loads
-one (kind from its filename, or `--kind`). Reads via the env-driven ClickHouse connection
-(`CLICKHOUSE_*`); tables must exist (`make clickhouse-migrate-up`).
+**`load`** — `cc-enrich-worker load --dir <shard-dir>` loads every
+`{domains,industries,page_signals,metadata,contacts,tech,identifiers}.parquet` present in the
+directory (the fixed name maps to the table); `--file <path>` loads one (kind from its filename, or
+`--kind`). An **old fat `domains.parquet`** (pre-split shard output) is detected and fanned into the
+split tables automatically. Reads via the env-driven ClickHouse connection (`CLICKHOUSE_*`); tables
+must exist (`make clickhouse-migrate-up`).
 
 ---
 
@@ -295,7 +305,6 @@ python -m index_builder --crawl CC-MAIN-2026-25 --mode tech --part 0          # 
 python -m index_builder --crawl CC-MAIN-2026-25 --mode tech --max-pages 0 --part 0   # every HTML page
 python -m index_builder --crawl CC-MAIN-2026-25 --parts 0-9                   # a range, skip cached
 python -m index_builder --crawl CC-MAIN-2026-25 --part 0 --out ../data/index/my-shard.parquet  # explicit path (must be under data/)
-python -m index_builder --crawl CC-MAIN-2026-25 --part 0 --where "content_languages like '%eng%'"
 ```
 | flag | default | meaning |
 |---|---|---|
@@ -304,7 +313,6 @@ python -m index_builder --crawl CC-MAIN-2026-25 --part 0 --where "content_langua
 | `--max-pages` | `25` | tech only: max pages/domain (`0` = every 200/HTML page = ~3B, expensive) |
 | `--part` / `--parts` | — | single 0-based part, or inclusive range `A-B` |
 | `--list` | — | print the part count and exit |
-| `--where` | *(empty = all)* | extra SQL filter on the index rows |
 | `--out` | *(cache)* | explicit output path (single part) instead of the cache |
 
 Both modes pick each domain's **main-site homepage** (apex/`www`, shallowest path) over functional
@@ -325,28 +333,36 @@ model change** so the reference matches the vectors the worker produces.
 
 ## 9. Output tables & coverage queries
 
-Schema in `../clickhouse/migrations/`:
+Full per-column schema: **`docs/schema.md`**. DDL in `../clickhouse/migrations/`. The schema is now
+**domain-centric** — `commoncrawl_*` hold only crawl-derived domain data; everything is
+`ReplacingMergeTree`, so **read with `FINAL`**.
 
 | Table | Migration | Workflow | Grain |
 |---|---|---|---|
-| `commoncrawl_domains` | 046 (+049) | A | one row / domain — industry + contacts |
+| `commoncrawl_domains` | 046 (slim 066) | every | identity master — one row / domain (the spine) |
+| `commoncrawl_industries` | 063 | A | NACE — **many** rows / domain (one per candidate, rank/is_primary/score) |
+| `commoncrawl_page_signals` | 064 | A | one row / domain — page_type + NACE decision quality |
 | `commoncrawl_technologies` | 047 | B | one row / (domain, technology) |
-| `commoncrawl_company_identifiers` | 051 | B | one row / (domain, identifier) |
-| `commoncrawl_company_profile` | 053 | B | one row / domain |
+| `commoncrawl_domain_identifiers` | 051 | B | one row / (domain, identifier) — LEI/VAT/… (ex `company_identifiers`) |
+| `commoncrawl_domain_metadata` | 067 | B | one row / domain — self-reported JSON-LD (name, description, logo, country, founding, size) |
+| `commoncrawl_domain_contact_info` | 068 | B | **many** rows / domain — email \| phone \| social |
 | `nace_category_embeddings` / `page_type_exemplars` | 044 / 045 | A (reference) | written by reference-builder, read by the worker |
 
-After a run, these decide what to build next:
+`commoncrawl_company_profile` was **dropped** (split into `domain_metadata` + `domain_contact_info`).
+Authoritative company facts (legal name from GLEIF, …) are a **separate, general** concern keyed by
+the identifier — not a `commoncrawl_*` table (see `docs/schema.md`). After a run, these decide what to
+build next:
 ```sql
 -- B: identifier hit-rate (worth more id_types? VAT vs LEI coverage?)
 SELECT id_type, count() rows, uniqExact(root_domain) domains, sum(valid) valid
-FROM commoncrawl_company_identifiers GROUP BY id_type;
+FROM commoncrawl_domain_identifiers FINAL GROUP BY id_type;
 
--- B: JSON-LD profile coverage
-SELECT count() FROM commoncrawl_company_profile WHERE name != '';
+-- B: contact / metadata coverage
+SELECT contact_type, count() FROM commoncrawl_domain_contact_info FINAL GROUP BY contact_type;
+SELECT count() FROM commoncrawl_domain_metadata FINAL WHERE name != '';
 
--- A: confidence distribution → size of the low-confidence LLM-escalation tail
-SELECT round(nace_confidence, 1) conf, count()
-FROM commoncrawl_domains GROUP BY conf ORDER BY conf;
+-- A: NACE confidence → size of the low-confidence escalation tail
+SELECT nace_confident, count() FROM commoncrawl_page_signals FINAL GROUP BY nace_confident;
 ```
 
 ---
@@ -356,8 +372,8 @@ FROM commoncrawl_domains GROUP BY conf ORDER BY conf;
 - **Model-match invariant (workflow A)** — reference and worker must use the same
   `COMMONCRAWL_EMBED_MODEL`/`BASE_URL` (both read `commoncrawl/.env`; the startup check enforces it).
   Swap the model → rebuild the reference (A1) **and** re-run the industry pass.
-- **Resumable** — `run_crawl.sh` skips shards with a `.loaded` marker; a partial shard re-runs
-  cleanly. The worker refuses to replace a table on empty input.
+- **Resumable** — `cc-crawl` skips parts with a `.loaded` marker; a partial part re-runs cleanly, and
+  its loader runs only after a clean produce. The worker refuses to replace a table on empty input.
 - **Identifier/profile provenance (workflow B)** — rows carry `source_url =` the domain's first
   fetched page, not the exact page a given LEI/VAT was found on. `root_domain` (the join key) is
   unaffected; per-page provenance is a future change.
@@ -369,10 +385,14 @@ FROM commoncrawl_domains GROUP BY conf ORDER BY conf;
 ## 11. Build, test & code layout
 
 ```bash
-cd cc-enrich-worker     && make test && make build      # binary -> bin/ (gitignored)
+make                                                    # at commoncrawl/: build BOTH Go binaries (gitignored bin/)
+make test                                               # worker go test ./...
 cd ../index-builder     && uv run --with pytest --with duckdb --with pyarrow pytest tests/
 cd ../reference-builder && uv run --with pytest --with numpy pytest tests/
 ```
+
+`cc-crawl/` is a tiny standalone module (`main.go`, stdlib only) — the orchestrator; it shells out to
+`cc-enrich-worker` + `index_builder` and does the JSON logging (§5).
 
 The Go worker is `cmd/cc-enrich-worker/main.go` (entry point: flags, env, ClickHouse/embedder/getter
 wiring, the chunked process loop) + `internal/` packages: `model` (shared structs), `vec` (math),
