@@ -16,7 +16,7 @@ import (
 
 // DomainRow mirrors corpscout.commoncrawl_domains (migration 000046 + 000066 slim): the domain
 // master/identity, one row per domain, written by EVERY pass. Classification moved to IndustryRow,
-// page/decision signals to PageSignalRow, contacts to commoncrawl_company_profile.
+// page/decision signals to PageSignalRow, self-reported "about" to MetadataRow, contacts to ContactRow.
 type DomainRow struct {
 	CrawlID     string    `parquet:"crawl_id" ch:"crawl_id"`
 	URL         string    `parquet:"url" ch:"url"`
@@ -75,7 +75,7 @@ type TechRow struct {
 	ResolvedAt  time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
-// IdentifierRow mirrors corpscout.commoncrawl_company_identifiers (migration 000051):
+// IdentifierRow mirrors corpscout.commoncrawl_domain_identifiers (migration 000051):
 // one row per (domain, identifier) scraped from a page (e.g. an LEI → GLEIF).
 type IdentifierRow struct {
 	CrawlID     string    `parquet:"crawl_id" ch:"crawl_id"`
@@ -91,30 +91,27 @@ type IdentifierRow struct {
 	ResolvedAt  time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
-// ProfileRow mirrors corpscout.commoncrawl_company_profile (migration 000053): one row
-// per domain, the firmographics distilled from schema.org Organization JSON-LD.
-type ProfileRow struct {
+// MetadataRow mirrors corpscout.commoncrawl_domain_metadata (migration 000067): one row per domain,
+// what a domain's pages say ABOUT THEMSELVES (schema.org Organization JSON-LD). Self-reported, not
+// verified. Contacts moved to ContactRow; authoritative company facts are the external company master.
+type MetadataRow struct {
 	CrawlID       string    `parquet:"crawl_id" ch:"crawl_id"`
 	RootDomain    string    `parquet:"root_domain" ch:"root_domain"`
-	URL           string    `parquet:"url" ch:"url"`
 	Subdomain     string    `parquet:"subdomain" ch:"subdomain"`
 	Name          string    `parquet:"name" ch:"name"`
 	Description   string    `parquet:"description" ch:"description"`
 	Logo          string    `parquet:"logo" ch:"logo"`
 	Country       string    `parquet:"country" ch:"country"`
-	Email         string    `parquet:"email" ch:"email"`
-	Phone         string    `parquet:"phone" ch:"phone"`
 	FoundingYear  uint16    `parquet:"founding_year" ch:"founding_year"`
 	EmployeeCount uint32    `parquet:"employee_count" ch:"employee_count"`
-	SameAs        []string  `parquet:"same_as" ch:"same_as"`
 	Source        string    `parquet:"source" ch:"source"`
 	SourceURL     string    `parquet:"source_url" ch:"source_url"`
 	SourceRunID   string    `parquet:"source_run_id" ch:"source_run_id"`
 	ResolvedAt    time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
-// ContactRow mirrors corpscout.commoncrawl_company_contacts (migration 000067): one row per
-// (domain, contact_type, value) — many emails/phones per domain. Written by the TECH pass.
+// ContactRow mirrors corpscout.commoncrawl_domain_contact_info (migration 000068): one row per
+// (domain, contact_type, value) — many emails/phones/socials per domain. Written by the TECH pass.
 type ContactRow struct {
 	CrawlID     string    `parquet:"crawl_id" ch:"crawl_id"`
 	RootDomain  string    `parquet:"root_domain" ch:"root_domain"`
@@ -130,9 +127,9 @@ func WriteDomains(path string, rows []DomainRow) error         { return parquet.
 func WriteIndustries(path string, rows []IndustryRow) error    { return parquet.WriteFile(path, rows) }
 func WritePageSignals(path string, rows []PageSignalRow) error { return parquet.WriteFile(path, rows) }
 func WriteContacts(path string, rows []ContactRow) error       { return parquet.WriteFile(path, rows) }
+func WriteMetadata(path string, rows []MetadataRow) error      { return parquet.WriteFile(path, rows) }
 func WriteTech(path string, rows []TechRow) error              { return parquet.WriteFile(path, rows) }
 func WriteIdentifiers(path string, rows []IdentifierRow) error { return parquet.WriteFile(path, rows) }
-func WriteProfiles(path string, rows []ProfileRow) error       { return parquet.WriteFile(path, rows) }
 
 // UploadToS3 puts a local file at the given bucket/key.
 func UploadToS3(ctx context.Context, client *s3.Client, bucket, key, path string) error {

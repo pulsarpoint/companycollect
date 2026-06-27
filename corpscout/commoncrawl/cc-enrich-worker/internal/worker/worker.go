@@ -35,8 +35,8 @@ type ShardResult struct {
 	PageSignals []output.PageSignalRow
 	Tech        []output.TechRow
 	Identifiers []output.IdentifierRow
-	Profiles    []output.ProfileRow
-	Contacts    []output.ContactRow // emails/phones, from the tech pass
+	Metadata    []output.MetadataRow // self-reported "about", from the tech pass
+	Contacts    []output.ContactRow  // emails/phones/social, from the tech pass
 }
 
 func b2u8(b bool) uint8 {
@@ -285,7 +285,7 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 	var pageSignals []output.PageSignalRow
 	var techRows []output.TechRow
 	var identRows []output.IdentifierRow
-	var profileRows []output.ProfileRow
+	var metaRows []output.MetadataRow
 	var contacts []output.ContactRow
 
 	if runEmbed {
@@ -368,16 +368,17 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
 			}
-			if p := a.profile; !p.Empty() {
-				profileRows = append(profileRows, output.ProfileRow{
-					CrawlID: cfg.CrawlID, RootDomain: a.rootDomain, URL: a.primaryURL, Subdomain: a.primarySub,
+			// metadata: the self-reported "about" fields (no contacts — those fan into ContactRows)
+			if p := a.profile; p.Name != "" || p.Description != "" || p.Logo != "" || p.Country != "" || p.FoundingYear != 0 || p.EmployeeCount != 0 {
+				metaRows = append(metaRows, output.MetadataRow{
+					CrawlID: cfg.CrawlID, RootDomain: a.rootDomain, Subdomain: a.primarySub,
 					Name: p.Name, Description: p.Description, Logo: p.Logo, Country: p.Country,
-					Email: p.Email, Phone: p.Phone, FoundingYear: p.FoundingYear, EmployeeCount: p.EmployeeCount,
-					SameAs: p.SameAs, Source: "jsonld",
+					FoundingYear: p.FoundingYear, EmployeeCount: p.EmployeeCount, Source: "jsonld",
 					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
 			}
-			for _, e := range a.emails { // regex emails scraped from the pages
+			// contacts: emails (regex + jsonld), phone (jsonld), social links (jsonld same_as)
+			for _, e := range a.emails {
 				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "email", e, "regex"))
 			}
 			if a.profile.Email != "" {
@@ -386,9 +387,12 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 			if a.profile.Phone != "" {
 				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "phone", a.profile.Phone, "jsonld"))
 			}
+			for _, s := range a.profile.SameAs {
+				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "social", s, "jsonld"))
+			}
 		}
 	}
-	return ShardResult{Domains: domains, Industries: industries, PageSignals: pageSignals, Tech: techRows, Identifiers: identRows, Profiles: profileRows, Contacts: contacts}, nil
+	return ShardResult{Domains: domains, Industries: industries, PageSignals: pageSignals, Tech: techRows, Identifiers: identRows, Metadata: metaRows, Contacts: contacts}, nil
 }
 
 // streamItem is one fetched primary page handed from the fetch stage to an embed worker.

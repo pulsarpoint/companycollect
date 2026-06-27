@@ -93,6 +93,7 @@ func loadLegacyDomains(ctx context.Context, conn driver.Conn, path string) ([]Re
 	doms := make([]output.DomainRow, 0, len(rows))
 	sigs := make([]output.PageSignalRow, 0, len(rows))
 	var inds []output.IndustryRow
+	var cons []output.ContactRow
 	for i := range rows {
 		r := &rows[i]
 		doms = append(doms, output.DomainRow{
@@ -119,6 +120,12 @@ func loadLegacyDomains(ctx context.Context, conn driver.Conn, path string) ([]Re
 				SourceURL: r.SourceURL, SourceRunID: r.SourceRunID, ResolvedAt: r.ResolvedAt,
 			})
 		}
+		for _, e := range r.Emails { // recover the industry-pass regex emails -> contacts
+			cons = append(cons, output.ContactRow{
+				CrawlID: r.CrawlID, RootDomain: r.RootDomain, ContactType: "email", Value: e, Source: "regex",
+				SourceURL: r.SourceURL, SourceRunID: r.SourceRunID, ResolvedAt: r.ResolvedAt,
+			})
+		}
 	}
 	var out []Result
 	nd, err := Insert(ctx, conn, Tables["domains"], doms)
@@ -133,5 +140,10 @@ func loadLegacyDomains(ctx context.Context, conn driver.Conn, path string) ([]Re
 	}
 	ni, err := Insert(ctx, conn, Tables["industries"], inds)
 	out = append(out, Result{Path: path, Table: Tables["industries"], Rows: ni})
+	if err != nil {
+		return out, err
+	}
+	nc, err := Insert(ctx, conn, Tables["contacts"], cons)
+	out = append(out, Result{Path: path, Table: Tables["contacts"], Rows: nc})
 	return out, err
 }

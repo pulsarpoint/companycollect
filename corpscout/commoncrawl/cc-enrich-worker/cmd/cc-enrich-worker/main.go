@@ -140,9 +140,9 @@ func main() {
 // shard's output dir); `--file` loads one. The kind→table mapping comes from the FIXED filenames.
 func runLoad(args []string) {
 	fs := flag.NewFlagSet("cc-enrich-worker load", flag.ExitOnError)
-	dir := fs.String("dir", "", "a shard output directory; loads every {domains,tech,identifiers,profiles}.parquet in it")
+	dir := fs.String("dir", "", "a shard output directory; loads every {domains,industries,page_signals,metadata,contacts,tech,identifiers}.parquet in it")
 	file := fs.String("file", "", "a single Parquet output file to load")
-	kind := fs.String("kind", "", "override the kind for --file: domains|tech|identifiers|profiles")
+	kind := fs.String("kind", "", "override the kind for --file: domains|industries|page_signals|metadata|contacts|tech|identifiers")
 	_ = fs.Parse(args)
 	if (*dir == "") == (*file == "") {
 		fmt.Fprintln(os.Stderr, "error: pass exactly one of --dir or --file")
@@ -331,7 +331,8 @@ func run(mode string, o opts) {
 	var pageSignals []output.PageSignalRow
 	var techRows []output.TechRow
 	var idents []output.IdentifierRow
-	var profiles []output.ProfileRow
+	var metadata []output.MetadataRow
+	var contacts []output.ContactRow
 
 	// Industry: one continuous fetch→embed stream over the whole shard, so the GPU is fed
 	// non-stop (no per-chunk "embed all then wait" barrier). tech/both keep the chunk pipeline.
@@ -376,10 +377,11 @@ func run(mode string, o opts) {
 			pageSignals = append(pageSignals, res.PageSignals...)
 			techRows = append(techRows, res.Tech...)
 			idents = append(idents, res.Identifiers...)
-			profiles = append(profiles, res.Profiles...)
+			metadata = append(metadata, res.Metadata...)
+			contacts = append(contacts, res.Contacts...)
 			el := time.Since(start).Seconds()
-			log.Printf("progress: %d/%d pages, %d domains, %d tech, %d ids, %d profiles (%.1f pages/s)",
-				end, len(items), len(domains), len(techRows), len(idents), len(profiles), float64(end)/el)
+			log.Printf("progress: %d/%d pages, %d domains, %d tech, %d ids, %d contacts (%.1f pages/s)",
+				end, len(items), len(domains), len(techRows), len(idents), len(contacts), float64(end)/el)
 			if nextCh != nil {
 				fetched = <-nextCh
 			}
@@ -400,9 +402,10 @@ func run(mode string, o opts) {
 		write("page_signals.parquet", func(p string) error { return output.WritePageSignals(p, pageSignals) })
 	}
 	if mode != "industry" {
+		write("metadata.parquet", func(p string) error { return output.WriteMetadata(p, metadata) })
+		write("contacts.parquet", func(p string) error { return output.WriteContacts(p, contacts) })
 		write("tech.parquet", func(p string) error { return output.WriteTech(p, techRows) })
 		write("identifiers.parquet", func(p string) error { return output.WriteIdentifiers(p, idents) })
-		write("profiles.parquet", func(p string) error { return output.WriteProfiles(p, profiles) })
 	}
 	dur := time.Since(start).Seconds()
 	rate := 0.0
