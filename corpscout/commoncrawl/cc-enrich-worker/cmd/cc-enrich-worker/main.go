@@ -330,7 +330,6 @@ func run(mode string, o opts) {
 	var techRows []output.TechRow
 	var idents []output.IdentifierRow
 	var profiles []output.ProfileRow
-	var registry []output.RegistryRow // domain master, written by every mode
 
 	// Industry: one continuous fetch→embed stream over the whole shard, so the GPU is fed
 	// non-stop (no per-chunk "embed all then wait" barrier). tech/both keep the chunk pipeline.
@@ -340,7 +339,6 @@ func run(mode string, o opts) {
 			log.Fatalf("industry stream: %v", err)
 		}
 		domains = res.Domains
-		registry = res.Registry
 		log.Printf("progress: %d/%d pages, %d domains (%.1f pages/s)",
 			len(items), len(items), len(domains), float64(len(items))/time.Since(start).Seconds())
 	} else {
@@ -373,7 +371,6 @@ func run(mode string, o opts) {
 			techRows = append(techRows, res.Tech...)
 			idents = append(idents, res.Identifiers...)
 			profiles = append(profiles, res.Profiles...)
-			registry = append(registry, res.Registry...)
 			el := time.Since(start).Seconds()
 			log.Printf("progress: %d/%d pages, %d domains, %d tech, %d ids, %d profiles (%.1f pages/s)",
 				end, len(items), len(domains), len(techRows), len(idents), len(profiles), float64(end)/el)
@@ -391,7 +388,6 @@ func run(mode string, o opts) {
 		}
 		written = append(written, p)
 	}
-	write("registry.parquet", func(p string) error { return output.WriteRegistry(p, registry) }) // every mode
 	if mode != "tech" {
 		write("domains.parquet", func(p string) error { return output.WriteDomains(p, domains) })
 	}
@@ -420,7 +416,6 @@ func run(mode string, o opts) {
 			}
 			log.Printf("loaded %d rows -> %s", n, load.Tables[kind])
 		}
-		loadInto("registry", func() (int, error) { return load.Insert(ctx, conn, load.Tables["registry"], registry) }) // every mode
 		if mode != "tech" {
 			loadInto("domains", func() (int, error) { return load.Insert(ctx, conn, load.Tables["domains"], domains) })
 		}

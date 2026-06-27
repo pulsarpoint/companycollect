@@ -34,7 +34,6 @@ type ShardResult struct {
 	Tech        []output.TechRow
 	Identifiers []output.IdentifierRow
 	Profiles    []output.ProfileRow
-	Registry    []output.RegistryRow // domain master: one row/domain, written by EVERY pass
 }
 
 type ShardConfig struct {
@@ -307,18 +306,7 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 			}
 		}
 	}
-	// Registry: one row per fetched domain, regardless of mode — the pass-invariant domain master.
-	var registry []output.RegistryRow
-	for _, a := range aggs {
-		if a == nil || a.primaryURL == "" {
-			continue
-		}
-		registry = append(registry, output.RegistryRow{
-			CrawlID: cfg.CrawlID, RootDomain: a.rootDomain, Subdomain: a.primarySub,
-			SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
-		})
-	}
-	return ShardResult{Domains: domains, Tech: techRows, Identifiers: identRows, Profiles: profileRows, Registry: registry}, nil
+	return ShardResult{Domains: domains, Tech: techRows, Identifiers: identRows, Profiles: profileRows}, nil
 }
 
 // streamItem is one fetched primary page handed from the fetch stage to an embed worker.
@@ -508,17 +496,12 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 		}
 	}
 	out := domains[:0]
-	registry := make([]output.RegistryRow, 0, len(domains))
 	for _, d := range domains {
 		if d.RootDomain != "" {
 			out = append(out, d)
-			registry = append(registry, output.RegistryRow{
-				CrawlID: d.CrawlID, RootDomain: d.RootDomain, Subdomain: d.Subdomain,
-				SourceURL: d.SourceURL, SourceRunID: d.SourceRunID, ResolvedAt: d.ResolvedAt,
-			})
 		}
 	}
-	return ShardResult{Domains: out, Registry: registry}, nil
+	return ShardResult{Domains: out}, nil
 }
 
 // ProcessShard processes one worklist chunk end-to-end (fetch then finalize). Use FetchChunk +

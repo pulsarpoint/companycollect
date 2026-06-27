@@ -75,7 +75,6 @@ EXPECTED_MIGRATIONS = (
     "000060_corpscout_no_companies_translated_view",
     "000061_corpscout_drop_raw_norway_exports",
     "000062_corpscout_no_companies_legal_form_via_cache",
-    "000063_corpscout_commoncrawl_domain_registry",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -780,21 +779,6 @@ def test_commoncrawl_domains_migration_covers_industry_and_top3_audit() -> None:
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
     assert "ORDER BY (root_domain, url, crawl_id)" in sql
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domains" in down_sql
-
-
-def test_commoncrawl_domain_registry_migration_is_pass_invariant_parent() -> None:
-    sql = _migration_sql("000063_corpscout_commoncrawl_domain_registry.up.sql")
-    down_sql = _migration_sql("000063_corpscout_commoncrawl_domain_registry.down.sql")
-    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_registry" in sql
-    # only domain-level facts every pass produces — no NACE/emails, so passes can't clobber each other
-    for column_name in ("crawl_id", "root_domain", "subdomain", "source_url", "source_run_id", "resolved_at"):
-        assert f"    {column_name} " in sql
-    # no NACE/contacts columns -> nothing for the two passes to clobber
-    assert "nace_code" not in sql.lower()
-    assert "emails" not in sql.lower()
-    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
-    assert "ORDER BY (root_domain, crawl_id)" in sql
-    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_registry" in down_sql
 
 
 def test_commoncrawl_technologies_migration_is_normalized_per_page_tech() -> None:

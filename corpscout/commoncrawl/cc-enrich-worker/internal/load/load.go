@@ -19,15 +19,14 @@ import (
 // Each output kind has ONE fixed filename "<kind>.parquet" and one table. The worker writes these
 // exact names; the loader reads them. No filename parsing.
 var Tables = map[string]string{
-	"registry":    "commoncrawl_domain_registry",
 	"domains":     "commoncrawl_domains",
 	"tech":        "commoncrawl_technologies",
 	"identifiers": "commoncrawl_company_identifiers",
 	"profiles":    "commoncrawl_company_profile",
 }
 
-// Kinds is the load order (registry first — the parent; then per-pass outputs).
-var Kinds = []string{"registry", "domains", "tech", "identifiers", "profiles"}
+// Kinds is the load order (domains for industry; the three tech outputs).
+var Kinds = []string{"domains", "tech", "identifiers", "profiles"}
 
 // Result is one loaded file.
 type Result struct {
@@ -81,13 +80,6 @@ func FromFile(ctx context.Context, conn driver.Conn, path, kind string) (string,
 		return "", 0, fmt.Errorf("%q is not an output file (want <%s>.parquet, or pass --kind)", path, strings.Join(Kinds, "|"))
 	}
 	switch kind {
-	case "registry":
-		rows, err := parquet.ReadFile[output.RegistryRow](path)
-		if err != nil {
-			return table, 0, err
-		}
-		n, err := Insert(ctx, conn, table, rows)
-		return table, n, err
 	case "domains":
 		rows, err := parquet.ReadFile[output.DomainRow](path)
 		if err != nil {
