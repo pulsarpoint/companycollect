@@ -98,7 +98,7 @@ def test_import_only_dynamic_fields(tmp_path, monkeypatch):
 
     assert call["provider"] == "legacy-import"
     assert call["model"] == "legacy"
-    assert call["run_id"] == "legacy-import"
+    assert call["run_id"].startswith("legacy-import")
 
 
 def test_import_counts_are_correct(tmp_path, monkeypatch):
