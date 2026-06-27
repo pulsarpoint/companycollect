@@ -37,6 +37,7 @@ def test_flush_skips_empty_and_writes_rows():
     assert written == 1
     assert any("CREATE TABLE" in c and "ENGINE = Memory" in c for c in client.commands)
     assert client.inserts and client.inserts[0][1] == [["company_description_original", "Holdingselskap", "Holding company"]]
+    assert client.inserts[0][2] == ("source_column", "source_text", "translated_text")
     assert any("INSERT INTO corpscout.text_translations" in c for c in client.commands)
     assert any(c.startswith("DROP TABLE") for c in client.commands)
 
