@@ -63,9 +63,8 @@ EXPECTED_MIGRATIONS = (
     "000048_corpscout_commoncrawl_page_signals",
     "000049_corpscout_commoncrawl_domains_nace_confidence",
     "000050_corpscout_br_cnae_to_nace",
-    "000051_corpscout_commoncrawl_company_identifiers",
+    "000051_corpscout_commoncrawl_domain_identifiers",
     "000052_corpscout_lei_wikidata_companies_view",
-    "000053_corpscout_commoncrawl_company_profile",
     "000054_corpscout_br_rfb_registry",
     "000055_corpscout_br_rfb_contact_domains",
     "000056_corpscout_text_translations",
@@ -79,7 +78,8 @@ EXPECTED_MIGRATIONS = (
     "000064_corpscout_commoncrawl_page_signals",
     "000065_corpscout_commoncrawl_industries_signals_backfill",
     "000066_corpscout_commoncrawl_domains_slim",
-    "000067_corpscout_commoncrawl_company_contacts",
+    "000067_corpscout_commoncrawl_domain_metadata",
+    "000068_corpscout_commoncrawl_domain_contact_info",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -862,18 +862,45 @@ def test_commoncrawl_domains_slim_drops_classification_columns() -> None:
         assert f"ADD COLUMN IF NOT EXISTS {column_name} " in down_sql
 
 
-def test_commoncrawl_company_contacts_migration_is_multi_valued() -> None:
-    sql = _migration_sql("000067_corpscout_commoncrawl_company_contacts.up.sql")
-    down_sql = _migration_sql("000067_corpscout_commoncrawl_company_contacts.down.sql")
-    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_company_contacts" in sql
+def test_commoncrawl_domain_metadata_migration_is_self_reported_about() -> None:
+    sql = _migration_sql("000067_corpscout_commoncrawl_domain_metadata.up.sql")
+    down_sql = _migration_sql("000067_corpscout_commoncrawl_domain_metadata.down.sql")
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_metadata" in sql
+    for column_name in (
+        "crawl_id", "root_domain", "subdomain", "name", "description", "logo", "country",
+        "founding_year", "employee_count", "source", "source_url", "source_run_id", "resolved_at",
+    ):
+        assert f"    {column_name} " in sql
+    # contacts and authoritative company facts live elsewhere -> not here
+    for absent in ("email", "phone", "same_as", "company_name", "id_value"):
+        assert f"    {absent} " not in sql
+    assert "ORDER BY (root_domain, crawl_id)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_metadata" in down_sql
+
+
+def test_commoncrawl_domain_contact_info_migration_is_multi_valued() -> None:
+    sql = _migration_sql("000068_corpscout_commoncrawl_domain_contact_info.up.sql")
+    down_sql = _migration_sql("000068_corpscout_commoncrawl_domain_contact_info.down.sql")
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_contact_info" in sql
     for column_name in (
         "crawl_id", "root_domain", "contact_type", "value", "source",
         "source_url", "source_run_id", "resolved_at",
     ):
         assert f"    {column_name} " in sql
-    # one row per (domain, type, value) -> many emails/phones per domain
+    # one row per (domain, type, value) -> many emails/phones/socials per domain
     assert "ORDER BY (root_domain, contact_type, value)" in sql
-    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_company_contacts" in down_sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domain_contact_info" in down_sql
+
+
+def test_commoncrawl_domain_identifiers_migration_holds_raw_codes() -> None:
+    sql = _migration_sql("000051_corpscout_commoncrawl_domain_identifiers.up.sql")
+    down_sql = _migration_sql("000051_corpscout_commoncrawl_domain_identifiers.down.sql")
+    # renamed in place from company_identifiers -> no trace of the old name
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_identifiers" in sql
+    assert "company_identifiers" not in sql
+    assert "company_identifiers" not in down_sql
+    for column_name in ("id_type", "id_value", "valid", "source"):
+        assert f"    {column_name} " in sql
 
 
 def test_commoncrawl_technologies_migration_is_normalized_per_page_tech() -> None:

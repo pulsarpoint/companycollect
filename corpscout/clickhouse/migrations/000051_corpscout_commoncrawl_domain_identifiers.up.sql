@@ -1,6 +1,6 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
-CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_company_identifiers
+CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_domain_identifiers
 (
     crawl_id LowCardinality(String),
     root_domain String,
