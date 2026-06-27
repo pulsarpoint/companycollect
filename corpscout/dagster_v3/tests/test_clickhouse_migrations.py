@@ -76,7 +76,8 @@ EXPECTED_MIGRATIONS = (
     "000061_corpscout_drop_raw_norway_exports",
     "000062_corpscout_no_companies_legal_form_via_cache",
     "000063_corpscout_commoncrawl_industries",
-    "000064_corpscout_commoncrawl_industries_backfill",
+    "000064_corpscout_commoncrawl_page_signals",
+    "000065_corpscout_commoncrawl_industries_signals_backfill",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -795,33 +796,53 @@ def test_no_semicolon_inside_sql_comments() -> None:
                 assert ";" not in line, f"{path.name}:{lineno} has ';' inside a comment"
 
 
-def test_commoncrawl_industries_migration_splits_classification_from_domain_master() -> None:
+def test_commoncrawl_industries_migration_is_multi_row_per_domain() -> None:
     sql = _migration_sql("000063_corpscout_commoncrawl_industries.up.sql")
     down_sql = _migration_sql("000063_corpscout_commoncrawl_industries.down.sql")
     assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_industries" in sql
+    # one row per (domain, nace_code): rank + is_primary, no top3 arrays, no contacts
     for column_name in (
-        "crawl_id", "root_domain", "source_url", "emails", "email_count",
-        "page_type", "page_type_score", "nace_code", "nace_label", "nace_division",
-        "nace_confident", "nace_confidence", "nace_margin", "nace_score", "nace_method",
-        "nace_top3_codes", "nace_top3_labels", "nace_top3_scores",
-        "source_run_id", "resolved_at",
+        "crawl_id", "root_domain", "nace_code", "nace_label", "nace_division",
+        "rank", "is_primary", "score", "nace_method", "source_url", "source_run_id", "resolved_at",
     ):
         assert f"    {column_name} " in sql
-    # one row per domain per crawl, keyed to commoncrawl_domains via root_domain
+    for absent in ("nace_top3", "emails", "page_type", "nace_confidence", "nace_margin"):
+        assert absent not in sql
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
-    assert "ORDER BY (root_domain, crawl_id)" in sql
+    assert "ORDER BY (root_domain, crawl_id, nace_code)" in sql
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_industries" in down_sql
 
 
-def test_commoncrawl_industries_backfill_copies_classification_from_domains() -> None:
-    sql = _migration_sql("000064_corpscout_commoncrawl_industries_backfill.up.sql")
-    down_sql = _migration_sql("000064_corpscout_commoncrawl_industries_backfill.down.sql")
+def test_commoncrawl_page_signals_migration_holds_page_and_decision_signals() -> None:
+    sql = _migration_sql("000064_corpscout_commoncrawl_page_signals.up.sql")
+    down_sql = _migration_sql("000064_corpscout_commoncrawl_page_signals.down.sql")
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_page_signals" in sql
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_page_signals" in sql
+    for column_name in (
+        "crawl_id", "root_domain", "subdomain", "source_url",
+        "page_type", "page_type_score", "nace_confident", "nace_margin",
+        "source_run_id", "resolved_at",
+    ):
+        assert f"    {column_name} " in sql
+    # contacts/socials moved out (profile owns them)
+    for absent in ("emails", "social_platforms"):
+        assert absent not in sql
+    assert "ORDER BY (root_domain, crawl_id)" in sql
+    # down restores the original 000048 shape
+    assert "social_platforms" in down_sql
+
+
+def test_commoncrawl_industries_signals_backfill_from_domains() -> None:
+    sql = _migration_sql("000065_corpscout_commoncrawl_industries_signals_backfill.up.sql")
+    down_sql = _migration_sql("000065_corpscout_commoncrawl_industries_signals_backfill.up.sql".replace(".up.", ".down."))
+    assert "INSERT INTO corpscout.commoncrawl_page_signals" in sql
     assert "INSERT INTO corpscout.commoncrawl_industries" in sql
     assert "FROM corpscout.commoncrawl_domains FINAL" in sql
-    for column_name in ("nace_code", "page_type", "emails", "nace_confidence", "nace_top3_scores", "resolved_at"):
-        assert column_name in sql
-    # identity columns belong to the master, not the classification table -> not in the SELECT/INSERT lists
-    assert "subdomain," not in sql
+    # the top-N is fanned into rows with rank/is_primary
+    assert "ARRAY JOIN" in sql
+    assert "arrayZip(nace_top3_codes, nace_top3_labels, nace_top3_scores" in sql
+    for absent in ("emails", "email_count"):
+        assert absent not in sql
     assert "TRUNCATE TABLE IF EXISTS corpscout.commoncrawl_industries" in down_sql
 
 
