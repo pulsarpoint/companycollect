@@ -1,6 +1,7 @@
 import pytest
 
-from translator.norway_brreg.config import FieldConfig, SourceConfig, get_config
+from translator.config import FieldConfig, SourceConfig
+from translator.norway_brreg.config import get_config
 from translator.static_maps import LEGAL_FORM_DESCRIPTION_EN_BY_CODE
 
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from translator.flush import flush_translations
-from translator.norway_brreg.config import SourceConfig
+from translator.config import SourceConfig
 from translator.queue import TranslationQueue
 
 

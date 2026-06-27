@@ -11,7 +11,7 @@ import duckdb
 
 from translator.clickhouse import build_scan_sql, query_arrow
 from translator.flush import FlushTranslationRow, flush_translations
-from translator.norway_brreg.config import SourceConfig
+from translator.config import SourceConfig
 from translator.queue import TranslationQueue
 
 

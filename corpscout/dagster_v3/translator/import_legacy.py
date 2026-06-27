@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # The DuckDB queue records each location's source_field as the *_original column name, which is
-    # exactly the cache's source_column. Classify by the registry's columns; no remap needed.
+    # exactly the cache's source_column. Classify by the source config's columns; no remap needed.
     dynamic_columns = {f.original_col for f in config.fields if f.static_map is None}
     static_columns = {f.original_col for f in config.fields if f.static_map is not None}
 

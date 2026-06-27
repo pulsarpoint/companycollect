@@ -1,41 +1,10 @@
-"""Per-source translation config for Norway Brreg.
-
-Owns the FieldConfig / SourceConfig dataclasses (shared across the translator
-package via imports from this module).
-"""
+"""Per-source translation config for Norway Brreg."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-
+from translator.config import FieldConfig, SourceConfig
 from translator.static_maps import LEGAL_FORM_DESCRIPTION_EN_BY_CODE
 
-
-@dataclass(frozen=True)
-class FieldConfig:
-    """Config for a single translatable field.
-
-    ``static_map`` is a tuple-of-pairs (hashable) so FieldConfig itself is
-    hashable.  Convert to dict at use-time via ``static_map_dict()``.
-    ``static_key_col`` is the companion CH column whose value is the map key.
-    """
-
-    original_col: str
-    static_map: tuple[tuple[str, str], ...] | None = None
-    static_key_col: str | None = None
-
-    def static_map_dict(self) -> dict[str, str] | None:
-        if self.static_map is None:
-            return None
-        return dict(self.static_map)
-
-
-@dataclass(frozen=True)
-class SourceConfig:
-    source_slug: str
-    source_lang: str
-    ch_table: str
-    fields: tuple[FieldConfig, ...]
-
+__all__ = ["FieldConfig", "SourceConfig", "get_config"]
 
 _NORWAY_BRREG_CONFIG = SourceConfig(
     source_slug="norway_brreg",

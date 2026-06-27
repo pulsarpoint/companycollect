@@ -24,19 +24,24 @@ Both land in the same cache and are exposed through the same view.
 ```
 Dagster (ingestion)                          translator worker (this package)
 ────────────────────                         ─────────────────────────────────
-ingest source                                Temporal worker, task queue "translation-local-llm"
+ingest source                                Temporal worker, two task queues:
+   │                                           "translation-build" (seed)
+norway_resolved → corpscout.no_companies      "translation-llm"   (K-gated LLM drain)
+   (resolved table, *_original text)
    │
-norway_resolved → corpscout.no_companies      TranslateSourceWorkflow(source_slug):
-   (resolved table, *_original text)            1. scan ClickHouse for untranslated terms (per field)
+fire BuildQueueWorkflow ───────────────────►  BuildQueueWorkflow(source_slug):
+  (fire-and-forget, USE_EXISTING)               1. scan ClickHouse for untranslated terms (per field)
    │                                            2a. static fields → resolve from dict, flush directly
-fire Temporal workflow ────────────────────►   2b. dynamic fields → seed per-source DuckDB queue
-  (fire-and-forget, USE_EXISTING)               3.  loop: claim batch → LLM translate → save
-   │                                            4.  flush results → corpscout.text_translations
-   ▼                                                  │
-asset completes immediately                          │
-queries read the view  ◄──────────────────────────────┘
+   ▼                                            2b. dynamic fields → Arrow seed → DuckDB queue
+asset completes immediately                     3.  start TranslateWorkflow (queue → LLM → dump)
+                                                       │
+queries read the view  ◄───────────────────────────────┘
 corpscout.no_companies_translated = no_companies LEFT JOIN text_translations (cityHash64 join)
 ```
+
+`max_concurrent_activities=K` on the `translation-llm` worker (env `TRANSLATOR_LLM_CONCURRENCY`, default 2)
+is the global LLM gate — K batches fly in parallel at most. Note: K is per worker process; run a single
+process to keep the gate tight (K×N in-flight if N processes are up).
 
 The English values live in a separate `corpscout.text_translations` cache table, so they **survive** the
 wipe-and-replace that every ClickHouse export does (`no_companies` is rebuilt by dbt + `EXCHANGE TABLES`
@@ -44,7 +49,7 @@ each run). A re-export only creates work for genuinely new or changed source tex
 
 ## 1. Running the worker
 
-A long-running process registered on the Temporal task queue `translation-local-llm`.
+A long-running process registered on Temporal task queues `translation-build` and `translation-llm`.
 
 ```bash
 # from corpscout/dagster_v3/
@@ -53,8 +58,8 @@ uv run translator-worker
 
 It **auto-loads a `.env` file** from the current directory (so plain `uv run translator-worker` from
 `corpscout/dagster_v3/` just works), then connects to Temporal at `$TEMPORAL_ADDRESS`
-(default `companycollect:7233`), registers `TranslateSourceWorkflow` plus its activities, and waits for work.
-Stop it with Ctrl-C.
+(default `companycollect:7233`), registers `BuildQueueWorkflow` and `TranslateWorkflow` plus their
+activities, and waits for work. Stop it with Ctrl-C.
 
 - `--env-file PATH` points at a different env file. Real environment variables always take precedence over
   the `.env` file (so `docker -e` / shell exports win).
@@ -73,6 +78,7 @@ Stop it with Ctrl-C.
 | `TRANSLATION_PROVIDER_LOCAL_BASE_URL` | OpenAI-compatible LLM endpoint | — (required) |
 | `TRANSLATION_PROVIDER_LOCAL_MODEL` | model name | — (required) |
 | `TRANSLATION_PROVIDER_LOCAL_API_KEY` | API key (local servers ignore it) | `not-needed` |
+| `TRANSLATOR_LLM_CONCURRENCY` | max parallel LLM activities (K-gate) | `2` |
 
 ### How a run is started
 
@@ -87,31 +93,34 @@ To start a run by hand, materialize the trigger asset in Dagster, or run `norway
 
 ## 2. Specifying sources to translate
 
-Which columns get translated is a **static, in-code registry** — `translator/registry.py`. It is the source
-of truth for *which* columns are translatable (the base tables no longer carry the free-text `_en` columns,
-so the list can't be inferred from the schema). To add a source, add a `SourceConfig`:
+Which columns get translated is a **per-source `SourceConfig`** in `translator/<source>/config.py`. It is
+the source of truth for *which* columns are translatable (the base tables no longer carry the free-text `_en`
+columns, so the list can't be inferred from the schema). To add a source, create a `get_config()` returning a
+`SourceConfig` (from `translator.config`):
 
 ```python
-REGISTRY: dict[str, SourceConfig] = {
-    "norway_brreg": SourceConfig(
-        source_slug="norway_brreg",          # identifier; also the workflow id suffix
-        source_lang="no",                    # source language passed to the LLM / stored in the cache
-        ch_table="corpscout.no_companies",   # ClickHouse table holding the *_original columns
-        fields=(
-            # dynamic (LLM) free-text fields:
-            FieldConfig(original_col="articles_purpose_original"),
-            FieldConfig(original_col="activity_text_original"),
-            FieldConfig(original_col="company_description_original"),
-            # static (dict) reference field — resolved from a code→EN map, no LLM:
-            FieldConfig(
-                original_col="legal_form_description_original",
-                static_map=LEGAL_FORM_DESCRIPTION_EN_BY_CODE,   # from translator/static_maps.py
-                static_key_col="legal_form_code",              # the column whose value keys the dict
-            ),
+# translator/norway_brreg/config.py
+from translator.config import FieldConfig, SourceConfig
+
+_NORWAY_BRREG_CONFIG = SourceConfig(
+    source_slug="norway_brreg",          # identifier; also the workflow id suffix
+    source_lang="no",                    # source language passed to the LLM / stored in the cache
+    ch_table="corpscout.no_companies",   # ClickHouse table holding the *_original columns
+    fields=(
+        # dynamic (LLM) free-text fields:
+        FieldConfig(original_col="articles_purpose_original"),
+        FieldConfig(original_col="activity_text_original"),
+        # static (dict) reference field — resolved from a code→EN map, no LLM:
+        FieldConfig(
+            original_col="legal_form_description_original",
+            static_map=tuple(LEGAL_FORM_DESCRIPTION_EN_BY_CODE.items()),  # from translator/static_maps.py
+            static_key_col="legal_form_code",              # the column whose value keys the dict
         ),
     ),
-    # add another source here ...
-}
+)
+
+def get_config() -> SourceConfig:
+    return _NORWAY_BRREG_CONFIG
 ```
 
 - `original_col` — the column holding the native-language text; the cache row stores this as `source_column` and keys on `cityHash64` of the value. The cache row is self-describing via `source_table`/`source_column`.
@@ -156,10 +165,10 @@ string shared by thousands of companies is handled once.
 
 ## 4. How dynamic terms are sent to the LLM
 
-The workflow loops, calling `process_translation_batch` until the queue drains:
+`TranslateWorkflow` (task queue `translation-llm`) drains the DuckDB queue until it's empty:
 
 - **Claim** a batch of pending (or `failed_retryable`) items — default `batch_size = 50`.
-- Send them to the **OpenAI-compatible** provider (`translator/smoke.py`) via `chat.completions.create`
+- Send them to the **OpenAI-compatible** provider (`translator/provider.py`) via `chat.completions.create`
   against `TRANSLATION_PROVIDER_LOCAL_BASE_URL` / `_MODEL`. JSON-in / JSON-out, `temperature = 0`,
   `max_tokens = 8192` (sized so a 50-item batch's combined output can't truncate), and a configurable
   `extra_body` (e.g. `{"chat_template_kwargs": {"enable_thinking": false}}`).
@@ -269,6 +278,6 @@ the dict) and unknown fields are skipped and reported. After import, the scan's 
 ## Tests
 
 ```bash
-uv run pytest tests/ -q -k translator     # registry, scan, flush, static map, workflow, worker, import
+uv run pytest tests/ -q -k translator     # config, scan, flush, static map, workflow, worker, import
 uv run pytest tests/test_text_translations_schema.py tests/test_clickhouse_migrations.py -q
 ```
