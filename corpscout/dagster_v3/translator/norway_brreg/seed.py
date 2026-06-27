@@ -26,7 +26,7 @@ def build_queue(
     ch_client: Any,
     queue_duckdb_path: str | Path,
     *,
-    heartbeat_fn: Callable[[], None] | None = None,
+    heartbeat_fn: Callable[[str], None] | None = None,
 ) -> SeedResult:
     """Seed the DuckDB translation queue for one source.
 
@@ -106,12 +106,9 @@ def build_queue(
             else:
                 # Static field → resolve dict, write directly to CH.
                 mapping = field.static_map_dict() or {}
-                if hasattr(arrow_table, "to_pydict"):
-                    col_data = arrow_table.to_pydict()
-                    texts = col_data.get("source_text", [])
-                    keys = col_data.get("static_key", [""] * len(texts))
-                else:
-                    texts, keys = [], []
+                col_data = arrow_table.to_pydict()
+                texts = col_data.get("source_text", [])
+                keys = col_data.get("static_key", [""] * len(texts))
 
                 static_rows: list[FlushTranslationRow] = []
                 for source_text, static_key in zip(texts, keys):
