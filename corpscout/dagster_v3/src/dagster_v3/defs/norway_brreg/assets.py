@@ -34,8 +34,11 @@ from exchange_rates import ExchangeRateClient, ExchangeRateRequest
 from temporalio.client import Client
 from temporalio.common import WorkflowIDConflictPolicy
 
-from translator.activities import LOCAL_LLM_TRANSLATION_TASK_QUEUE
-from translator.workflow import TranslateSourceWorkflow, TranslateSourceWorkflowInput
+from translator.task_queues import BUILD_TASK_QUEUE
+from translator.norway_brreg.workflows import (
+    BuildQueueWorkflow,
+    BuildQueueWorkflowInput,
+)
 
 BRREG_BASE_URL = resources.BRREG_BASE_URL
 BRREG_FINANCIAL_STATEMENTS_COLUMNS = resources.BRREG_FINANCIAL_STATEMENTS_COLUMNS
@@ -193,40 +196,29 @@ def norway_brreg_financial_statements_duckdb_asset(
     return dg.MaterializeResult(metadata=counts)
 
 
-NORWAY_BRREG_TRANSLATE_WORKFLOW_ID = "translate-norway_brreg"
+NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID = "build-queue-norway_brreg"
 
 
-def build_norway_brreg_translate_input() -> TranslateSourceWorkflowInput:
-    return TranslateSourceWorkflowInput(
+def build_norway_brreg_build_queue_input() -> BuildQueueWorkflowInput:
+    return BuildQueueWorkflowInput(
         source_slug="norway_brreg",
-        queue_dir="data/translator",
+        queue_duckdb_path="data/translator/norway_brreg.duckdb",
+        translate_workflow_id="translate-norway_brreg",
+        translate_task_queue=BUILD_TASK_QUEUE,
         batch_size=50,
-        timeout_seconds=120,
-        max_batch_failures=20,
-        worker_id="translation-temporal-worker",
         max_tokens=8192,
         extra_body_json='{"chat_template_kwargs": {"enable_thinking": false}}',
-        initialize_timeout_seconds=60,
-        batch_timeout_buffer_seconds=30,
-        summarize_timeout_seconds=60,
-        activity_maximum_attempts=3,
-        lease_timeout_seconds=600,
-        # scan_and_seed scans ~1.16M rows across multiple anti-joins AND seeds
-        # hundreds of thousands of terms into the DuckDB queue; 5 min is far too
-        # short for a full first run (it timed out → CancelledError). Allow 1h.
-        scan_timeout_seconds=3600,
-        # The final flush writes the whole completed set in one pass; allow 30 min.
-        flush_timeout_seconds=1800,
+        max_batch_failures=20,
     )
 
 
-async def _start_norway_brreg_translation(temporal_address: str) -> str:
+async def _start_norway_brreg_build_queue(temporal_address: str) -> str:
     client = await Client.connect(temporal_address)
     handle = await client.start_workflow(
-        TranslateSourceWorkflow.run,
-        build_norway_brreg_translate_input(),
-        id=NORWAY_BRREG_TRANSLATE_WORKFLOW_ID,
-        task_queue=LOCAL_LLM_TRANSLATION_TASK_QUEUE,
+        BuildQueueWorkflow.run,
+        build_norway_brreg_build_queue_input(),
+        id=NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID,
+        task_queue=BUILD_TASK_QUEUE,
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )
     return handle.result_run_id
@@ -237,9 +229,9 @@ async def _start_norway_brreg_translation(temporal_address: str) -> str:
     group_name=GROUP_NAME,
     kinds={"python", "temporal"},
     description=(
-        "Fire-and-forget: start (or reuse) the standalone translator Temporal "
-        "workflow after no_companies lands in ClickHouse via the resolved export. "
-        "Does not wait for completion."
+        "Fire-and-forget: start (or reuse) the BuildQueueWorkflow Temporal workflow "
+        "after no_companies lands in ClickHouse. BuildQueueWorkflow seeds the DuckDB "
+        "queue then starts TranslateWorkflow autonomously. Does not wait for completion."
     ),
 )
 def norway_brreg_translation_trigger(context: AssetExecutionContext) -> dg.MaterializeResult:
@@ -247,17 +239,17 @@ def norway_brreg_translation_trigger(context: AssetExecutionContext) -> dg.Mater
     import os
 
     address = os.environ.get("TEMPORAL_ADDRESS", "companycollect:7233")
-    run_id = _asyncio.run(_start_norway_brreg_translation(address))
+    run_id = _asyncio.run(_start_norway_brreg_build_queue(address))
     context.log.info(
-        "Started Norway Brreg translation workflow: workflow_id=%s run_id=%s",
-        NORWAY_BRREG_TRANSLATE_WORKFLOW_ID,
+        "Started Norway Brreg BuildQueueWorkflow: workflow_id=%s run_id=%s",
+        NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID,
         run_id,
     )
     return dg.MaterializeResult(
         metadata={
-            "workflow_id": NORWAY_BRREG_TRANSLATE_WORKFLOW_ID,
+            "workflow_id": NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID,
             "workflow_run_id": run_id,
-            "task_queue": LOCAL_LLM_TRANSLATION_TASK_QUEUE,
+            "task_queue": BUILD_TASK_QUEUE,
         }
     )
 
