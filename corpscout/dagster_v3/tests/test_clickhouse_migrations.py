@@ -76,6 +76,7 @@ EXPECTED_MIGRATIONS = (
     "000061_corpscout_drop_raw_norway_exports",
     "000062_corpscout_no_companies_legal_form_via_cache",
     "000063_corpscout_commoncrawl_industries",
+    "000064_corpscout_commoncrawl_industries_backfill",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -407,8 +408,9 @@ def test_clickhouse_migrations_create_databases_and_tables() -> None:
             or "CREATE OR REPLACE VIEW" in sql
             or "DROP TABLE IF EXISTS" in sql
             or "DROP VIEW IF EXISTS" in sql
+            or "INSERT INTO" in sql  # data migration (e.g. backfill into a new table)
         )
-        assert "TRUNCATE" not in sql.upper()
+        assert "TRUNCATE" not in sql.upper()  # never truncate in an up migration
 
 
 def test_clickhouse_migrations_have_down_files() -> None:
@@ -422,6 +424,7 @@ def test_clickhouse_migrations_have_down_files() -> None:
             or "DROP VIEW IF EXISTS" in sql
             or "CREATE TABLE IF NOT EXISTS" in sql
             or "CREATE OR REPLACE VIEW" in sql
+            or "TRUNCATE TABLE IF EXISTS" in sql  # undo a data backfill
         )
 
 
@@ -808,6 +811,18 @@ def test_commoncrawl_industries_migration_splits_classification_from_domain_mast
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
     assert "ORDER BY (root_domain, crawl_id)" in sql
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_industries" in down_sql
+
+
+def test_commoncrawl_industries_backfill_copies_classification_from_domains() -> None:
+    sql = _migration_sql("000064_corpscout_commoncrawl_industries_backfill.up.sql")
+    down_sql = _migration_sql("000064_corpscout_commoncrawl_industries_backfill.down.sql")
+    assert "INSERT INTO corpscout.commoncrawl_industries" in sql
+    assert "FROM corpscout.commoncrawl_domains FINAL" in sql
+    for column_name in ("nace_code", "page_type", "emails", "nace_confidence", "nace_top3_scores", "resolved_at"):
+        assert column_name in sql
+    # identity columns belong to the master, not the classification table -> not in the SELECT/INSERT lists
+    assert "subdomain," not in sql
+    assert "TRUNCATE TABLE IF EXISTS corpscout.commoncrawl_industries" in down_sql
 
 
 def test_commoncrawl_technologies_migration_is_normalized_per_page_tech() -> None:
