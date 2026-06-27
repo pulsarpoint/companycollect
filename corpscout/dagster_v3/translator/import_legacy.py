@@ -20,7 +20,7 @@ from pathlib import Path
 
 from translator.clickhouse import clickhouse_client_from_env
 from translator.flush import flush_translations
-from translator.queue import TranslationQueue
+from translator.queue import FlushTranslationRow, TranslationQueue
 from translator.registry import get_source_config
 from translator.worker import load_env_file
 
@@ -78,9 +78,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: Unknown source slug: {args.source!r}")
         return 1
 
-    # Identify which fields are dynamic (no static_map) vs static.
+    # The old queue records each location's source_field as the *_original COLUMN name, while the
+    # registry + cache key on the logical field name. Map either form (original_col OR logical field)
+    # to the logical field, so legacy rows resolve regardless of which the old seed recorded.
     dynamic_fields: set[str] = {f.field for f in config.fields if f.static_map is None}
-    all_config_fields: set[str] = {f.field for f in config.fields}
+    dynamic_key_to_field: dict[str, str] = {}
+    static_keys: set[str] = set()
+    for f in config.fields:
+        if f.static_map is None:
+            dynamic_key_to_field[f.original_col] = f.field
+            dynamic_key_to_field[f.field] = f.field
+        else:
+            static_keys.add(f.original_col)
+            static_keys.add(f.field)
 
     # Open the old queue, migrate any legacy on-disk schema, then pull completed rows.
     queue = TranslationQueue(duckdb_path)
@@ -88,18 +98,25 @@ def main(argv: list[str] | None = None) -> int:
     all_rows = queue.completed_results_for_flush()
     total_in_queue = len(all_rows)
 
-    # Classify rows.
-    import_rows = []
+    # Classify rows, remapping the queue's source_field to the logical field name.
+    import_rows: list[FlushTranslationRow] = []
     imported_per_field: dict[str, int] = {}
     skipped_static: dict[str, int] = {}
     skipped_unknown: dict[str, int] = {}
 
     for row in all_rows:
-        if row.field in dynamic_fields:
+        logical_field = dynamic_key_to_field.get(row.field)
+        if logical_field is not None:
             if row.translated_text:  # drop empty translations (flush does this too, but count accurately)
-                import_rows.append(row)
-                imported_per_field[row.field] = imported_per_field.get(row.field, 0) + 1
-        elif row.field in all_config_fields:
+                import_rows.append(
+                    FlushTranslationRow(
+                        field=logical_field,
+                        source_text=row.source_text,
+                        translated_text=row.translated_text,
+                    )
+                )
+                imported_per_field[logical_field] = imported_per_field.get(logical_field, 0) + 1
+        elif row.field in static_keys:
             skipped_static[row.field] = skipped_static.get(row.field, 0) + 1
         else:
             skipped_unknown[row.field] = skipped_unknown.get(row.field, 0) + 1

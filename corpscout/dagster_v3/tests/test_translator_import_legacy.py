@@ -25,18 +25,21 @@ def _item(field: str, text: str) -> TranslationQueueItem:
 def _build_old_queue(path: Path) -> TranslationQueue:
     """Create a synthetic old-style queue with 4 fields, all completed.
 
-    Fields used:
-        company_description  — dynamic (should be imported)
-        articles_purpose     — dynamic (should be imported)
-        legal_form_description — static (should be skipped)
-        bogus_field          — unknown, not in registry (should be skipped)
+    The old queue records source_field as the *_original COLUMN name (as the real
+    norway_brreg queue does), which the importer must remap to the logical field.
+
+    source_field → outcome:
+        company_description_original    — dynamic → imported as 'company_description'
+        articles_purpose_original       — dynamic → imported as 'articles_purpose'
+        legal_form_description_original — static  → skipped
+        bogus_field                     — unknown → skipped
     """
     queue = TranslationQueue(path)
     queue.initialize()
     items = [
-        _item("company_description", "Holdingselskap"),
-        _item("articles_purpose", "Produksjon av software"),
-        _item("legal_form_description", "Aksjeselskap"),
+        _item("company_description_original", "Holdingselskap"),
+        _item("articles_purpose_original", "Produksjon av software"),
+        _item("legal_form_description_original", "Aksjeselskap"),
         _item("bogus_field", "Noe ukjent"),
     ]
     queue.enqueue_items(items)
@@ -87,8 +90,9 @@ def test_import_only_dynamic_fields(tmp_path, monkeypatch):
     call = flushed_calls[0]
     imported_fields = {r.field for r in call["rows"]}
 
-    assert "company_description" in imported_fields, "dynamic field should be imported"
-    assert "articles_purpose" in imported_fields, "dynamic field should be imported"
+    # Imported under the LOGICAL field name (remapped from the *_original column name).
+    assert imported_fields == {"company_description", "articles_purpose"}
+    assert "company_description_original" not in imported_fields, "must remap, not keep *_original"
     assert "legal_form_description" not in imported_fields, "static field must be skipped"
     assert "bogus_field" not in imported_fields, "unknown field must be skipped"
 
@@ -162,7 +166,7 @@ def test_empty_translated_text_excluded(tmp_path, monkeypatch):
     queue = TranslationQueue(db_path)
     queue.initialize()
     # Enqueue one item; complete it with an empty translation.
-    items = [_item("company_description", "Tom tekst")]
+    items = [_item("company_description_original", "Tom tekst")]
     queue.enqueue_items(items)
     claimed = queue.claim_batch(limit=10, worker_id="w")
     queue.complete_batch(
