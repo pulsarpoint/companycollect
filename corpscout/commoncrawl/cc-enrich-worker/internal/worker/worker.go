@@ -100,11 +100,14 @@ func contactRow(cfg ShardConfig, root, url, typ, value, source string) output.Co
 	}
 }
 
-// embeddingRow keeps the raw page vector (the expensive GPU artifact) so it never has to be recomputed.
-func embeddingRow(cfg ShardConfig, root, url string, vec []float32) output.EmbeddingRow {
+// embeddingRow keeps the raw page vector (the expensive GPU artifact) so it never has to be recomputed,
+// plus the page metadata to identify and re-fetch the exact source page.
+func embeddingRow(cfg ShardConfig, b streamItem, vec []float32) output.EmbeddingRow {
 	return output.EmbeddingRow{
-		CrawlID: cfg.CrawlID, RootDomain: root, Embedding: vec, EmbedDim: uint16(len(vec)),
-		SourceURL: url, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+		CrawlID: cfg.CrawlID, RootDomain: b.root, Subdomain: b.sub,
+		Embedding: vec, EmbedDim: uint16(len(vec)), TextLen: uint32(len(b.text)),
+		SourceURL: b.url, WarcFilename: b.warc, WarcOffset: b.off, WarcLength: b.length,
+		SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 	}
 }
 
@@ -406,10 +409,12 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 
 // streamItem is one fetched primary page handed from the fetch stage to an embed worker.
 type streamItem struct {
-	di        int
-	root, url string
-	sub       string
-	text      string
+	di          int
+	root, url   string
+	sub         string
+	text        string
+	warc        string // archived page location — carried to the embedding for re-fetch
+	off, length int64
 }
 
 // ProcessIndustryStream runs the WHOLE industry shard as a continuous fetch→embed pipeline: fetch
@@ -511,7 +516,7 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 					domains[b.di] = domainRow(cfg, b.root, b.url, b.sub)
 					indByDi[b.di] = industryRows(cfg, b.root, b.url, res)
 					sigByDi[b.di] = pageSignalRow(cfg, b.root, b.url, b.sub, res)
-					embByDi[b.di] = embeddingRow(cfg, b.root, b.url, vecs[k]) // keep the raw vector
+					embByDi[b.di] = embeddingRow(cfg, b, vecs[k]) // keep the raw vector + page metadata
 				}
 				atomic.AddInt64(&done, int64(len(batch)))
 				batch = batch[:0]
@@ -554,7 +559,8 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 				text, _, _ := parse.ParseHTML(string(body))
 				atomic.AddInt64(&parseNs, time.Since(t1).Nanoseconds())
 				select {
-				case ch <- streamItem{di: di, root: dom, url: wit.URL, sub: subdomainOf(wit.URL, dom), text: text}:
+				case ch <- streamItem{di: di, root: dom, url: wit.URL, sub: subdomainOf(wit.URL, dom), text: text,
+					warc: wit.WarcFilename, off: wit.Offset, length: wit.Length}:
 				case <-cctx.Done():
 				}
 				return

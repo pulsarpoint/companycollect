@@ -126,14 +126,21 @@ type ContactRow struct {
 // EmbeddingRow is the raw page embedding from the industry pass — the expensive GPU artifact, kept so
 // we never have to recompute it (re-classification, similarity, Qdrant all derive from it on CPU).
 // Stored as Parquet only (NOT ClickHouse), in a separate data/embedding/ tree. fp32, one row/domain.
+// Self-describing: the (warc_filename, warc_offset, warc_length) triple re-fetches the EXACT archived
+// page that produced this vector, without re-resolving the CommonCrawl index.
 type EmbeddingRow struct {
-	CrawlID     string    `parquet:"crawl_id"`
-	RootDomain  string    `parquet:"root_domain"`
-	Embedding   []float32 `parquet:"embedding"`
-	EmbedDim    uint16    `parquet:"embed_dim"`
-	SourceURL   string    `parquet:"source_url"`
-	SourceRunID string    `parquet:"source_run_id"`
-	ResolvedAt  time.Time `parquet:"resolved_at,timestamp"`
+	CrawlID      string    `parquet:"crawl_id"`
+	RootDomain   string    `parquet:"root_domain"`
+	Subdomain    string    `parquet:"subdomain"` // page host (apex/www -> "")
+	Embedding    []float32 `parquet:"embedding"`
+	EmbedDim     uint16    `parquet:"embed_dim"`
+	TextLen      uint32    `parquet:"text_len"`      // chars embedded (capped at MAX_CHARS)
+	SourceURL    string    `parquet:"source_url"`    // the page URL
+	WarcFilename string    `parquet:"warc_filename"` // archived page location — re-fetch coords
+	WarcOffset   int64     `parquet:"warc_offset"`
+	WarcLength   int64     `parquet:"warc_length"`
+	SourceRunID  string    `parquet:"source_run_id"`
+	ResolvedAt   time.Time `parquet:"resolved_at,timestamp"`
 }
 
 func WriteDomains(path string, rows []DomainRow) error         { return parquet.WriteFile(path, rows) }
