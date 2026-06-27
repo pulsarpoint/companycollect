@@ -76,7 +76,6 @@ AWS_* (region defaults to us-east-1 — the CommonCrawl bucket), CC_BASE_URL.
 // for the relevant command.
 type opts struct {
 	worklist, crawlID, out string
-	load                   bool
 	concurrency, chunk     int
 	anonymous              bool
 	s3Bucket, s3Prefix     string
@@ -93,7 +92,6 @@ func parse(mode string, args []string) opts {
 	fs.StringVar(&o.worklist, "worklist", "", "worklist parquet shard (required)")
 	fs.StringVar(&o.crawlID, "crawl-id", "", "crawl id, e.g. CC-MAIN-2026-25 — stamped on every row (required)")
 	fs.StringVar(&o.out, "out", "", "output DIRECTORY for the Parquet files (default ../data/crawl/<worklist-name>/, unique per shard; an explicit dir must be empty)")
-	fs.BoolVar(&o.load, "load", false, "after writing Parquet, INSERT it into ClickHouse over the native driver (no clickhouse-client needed)")
 	fs.IntVar(&o.concurrency, "concurrency", 32, "fetch/parse concurrency (push to ~128 to hide off-AWS fetch RTT)")
 	fs.IntVar(&o.chunk, "chunk", 1024, "domains per fetch+process chunk")
 	fs.BoolVar(&o.anonymous, "s3-anonymous", false, "fetch via the HTTPS CDN data.commoncrawl.org (off-AWS; rate-limited — signed S3 preferred)")
@@ -414,22 +412,8 @@ func run(mode string, o opts) {
 	}
 	log.Printf("done: %d domains, %d tech rows in %.1fs (%.1f domains/s) -> %s", len(domains), len(techRows), dur, rate, outDir)
 
-	if o.load {
-		conn, err := chConnect(ctx)
-		if err != nil {
-			log.Fatalf("clickhouse connect (load): %v", err)
-		}
-		defer conn.Close()
-		// Load the parquet we just wrote via the SAME loader as the `load --dir` subcommand — one
-		// implementation, so what the auto-load does is exactly what a manual re-load does.
-		results, err := load.FromDir(ctx, conn, outDir)
-		if err != nil {
-			log.Fatalf("load %s: %v", outDir, err)
-		}
-		for _, r := range results {
-			log.Printf("loaded %d rows -> %s", r.Rows, r.Table)
-		}
-	}
+	// Loading is a SEPARATE step (the `load` subcommand / `load --dir`) so produce and load can be
+	// run and checked independently — a bad produce never gets auto-loaded. See docs/cc-crawl-design.md.
 
 	if o.s3Bucket != "" {
 		g, ok := getter.(*fetch.S3Getter)
