@@ -71,31 +71,29 @@ func TestProcessShardAndParquet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Domains) != 1 {
-		t.Fatalf("want 1 domain, got %d", len(res.Domains))
+	if len(res.Domains) != 1 || res.Domains[0].RootDomain != "acme.com" {
+		t.Fatalf("want 1 domain master row for acme.com, got %+v", res.Domains)
 	}
-	d := res.Domains[0]
-	if d.NaceCode != "62.01" || d.NaceConfident != 1 {
-		t.Fatalf("classify wrong: %+v", d)
+	if len(res.Industries) < 1 || res.Industries[0].NaceCode != "62.01" || res.Industries[0].Rank != 1 || res.Industries[0].IsPrimary != 1 {
+		t.Fatalf("industry classify wrong: %+v", res.Industries)
+	}
+	if len(res.PageSignals) != 1 {
+		t.Fatalf("want 1 page-signal row, got %d", len(res.PageSignals))
 	}
 	if !hasTechRow(res.Tech, "Nginx") || !hasTechRow(res.Tech, "WordPress") {
 		t.Fatalf("tech union wrong: %+v", res.Tech)
 	}
 
-	// Parquet round-trip with the migration column order.
-	dir := t.TempDir()
-	dp, tp := filepath.Join(dir, "domains.parquet"), filepath.Join(dir, "tech.parquet")
-	if err := output.WriteDomains(dp, res.Domains); err != nil {
+	// Parquet round-trip on the new industry rows (the classification output).
+	ip := filepath.Join(t.TempDir(), "industries.parquet")
+	if err := output.WriteIndustries(ip, res.Industries); err != nil {
 		t.Fatal(err)
 	}
-	if err := output.WriteTech(tp, res.Tech); err != nil {
-		t.Fatal(err)
-	}
-	back, err := parquet.ReadFile[output.DomainRow](dp)
+	back, err := parquet.ReadFile[output.IndustryRow](ip)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(back) != 1 || back[0].NaceCode != "62.01" || back[0].RootDomain != "acme.com" {
+	if len(back) < 1 || back[0].NaceCode != "62.01" || back[0].RootDomain != "acme.com" {
 		t.Fatalf("round-trip mismatch: %+v", back)
 	}
 }
@@ -115,8 +113,11 @@ func TestProcessShardIndustryMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Domains) != 1 || res.Domains[0].NaceCode != "62.01" {
-		t.Fatalf("industry classify wrong: %+v", res.Domains)
+	if len(res.Domains) != 1 {
+		t.Fatalf("want 1 domain master row, got %d", len(res.Domains))
+	}
+	if len(res.Industries) < 1 || res.Industries[0].NaceCode != "62.01" {
+		t.Fatalf("industry classify wrong: %+v", res.Industries)
 	}
 	if len(res.Tech) != 0 {
 		t.Fatalf("industry mode should emit no tech rows, got %d", len(res.Tech))
@@ -139,8 +140,11 @@ func TestProcessShardTechMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Domains) != 0 {
-		t.Fatalf("tech mode should emit no domain rows, got %d", len(res.Domains))
+	if len(res.Domains) != 1 || res.Domains[0].RootDomain != "acme.com" {
+		t.Fatalf("tech mode should emit the domain master row, got %+v", res.Domains)
+	}
+	if len(res.Industries) != 0 || len(res.PageSignals) != 0 {
+		t.Fatalf("tech mode should emit no industries/signals, got %d/%d", len(res.Industries), len(res.PageSignals))
 	}
 	if !hasTechRow(res.Tech, "Nginx") || !hasTechRow(res.Tech, "WordPress") {
 		t.Fatalf("tech mode tech rows wrong: %+v", res.Tech)

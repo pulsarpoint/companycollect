@@ -78,6 +78,7 @@ EXPECTED_MIGRATIONS = (
     "000063_corpscout_commoncrawl_industries",
     "000064_corpscout_commoncrawl_page_signals",
     "000065_corpscout_commoncrawl_industries_signals_backfill",
+    "000066_corpscout_commoncrawl_domains_slim",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -844,6 +845,20 @@ def test_commoncrawl_industries_signals_backfill_from_domains() -> None:
     for absent in ("emails", "email_count"):
         assert absent not in sql
     assert "TRUNCATE TABLE IF EXISTS corpscout.commoncrawl_industries" in down_sql
+
+
+def test_commoncrawl_domains_slim_drops_classification_columns() -> None:
+    sql = _migration_sql("000066_corpscout_commoncrawl_domains_slim.up.sql")
+    down_sql = _migration_sql("000066_corpscout_commoncrawl_domains_slim.down.sql")
+    assert "ALTER TABLE corpscout.commoncrawl_domains" in sql
+    for column_name in (
+        "emails", "email_count", "page_type", "page_type_score",
+        "nace_code", "nace_label", "nace_division", "nace_confident", "nace_confidence",
+        "nace_margin", "nace_score", "nace_method",
+        "nace_top3_codes", "nace_top3_labels", "nace_top3_scores",
+    ):
+        assert f"DROP COLUMN IF EXISTS {column_name}" in sql
+        assert f"ADD COLUMN IF NOT EXISTS {column_name} " in down_sql
 
 
 def test_commoncrawl_technologies_migration_is_normalized_per_page_tech() -> None:

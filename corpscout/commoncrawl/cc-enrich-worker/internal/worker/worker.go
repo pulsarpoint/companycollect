@@ -30,10 +30,65 @@ type embedderIface = classify.Embedder
 // ShardResult bundles the per-pass outputs (domains from industry; tech/identifiers/
 // profiles from tech). Each maps to its own ClickHouse table.
 type ShardResult struct {
-	Domains     []output.DomainRow
+	Domains     []output.DomainRow // identity master, written by every pass
+	Industries  []output.IndustryRow
+	PageSignals []output.PageSignalRow
 	Tech        []output.TechRow
 	Identifiers []output.IdentifierRow
 	Profiles    []output.ProfileRow
+}
+
+func b2u8(b bool) uint8 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// divisionOf is the NACE division: the part of a code before the first '.' ("29.31" -> "29").
+func divisionOf(code string) string {
+	if i := strings.IndexByte(code, '.'); i >= 0 {
+		return code[:i]
+	}
+	return code
+}
+
+func domainRow(cfg ShardConfig, root, url, sub string) output.DomainRow {
+	return output.DomainRow{
+		CrawlID: cfg.CrawlID, URL: url, RootDomain: root, Subdomain: sub,
+		SourceURL: url, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+	}
+}
+
+// industryRows fans a classified domain's ranked candidates into one row per (domain, nace_code):
+// rank 1..N by score, is_primary on the top match. Empty for junk/keyword pages (no candidates).
+func industryRows(cfg ShardConfig, root, url string, res model.DomainResult) []output.IndustryRow {
+	n := len(res.Top3Codes)
+	if len(res.Top3Labels) < n {
+		n = len(res.Top3Labels)
+	}
+	if len(res.Top3Scores) < n {
+		n = len(res.Top3Scores)
+	}
+	rows := make([]output.IndustryRow, 0, n)
+	for i := 0; i < n; i++ {
+		rows = append(rows, output.IndustryRow{
+			CrawlID: cfg.CrawlID, RootDomain: root,
+			NaceCode: res.Top3Codes[i], NaceLabel: res.Top3Labels[i], NaceDivision: divisionOf(res.Top3Codes[i]),
+			Rank: uint8(i + 1), IsPrimary: b2u8(i == 0), Score: res.Top3Scores[i], NaceMethod: res.NaceMethod,
+			SourceURL: url, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+		})
+	}
+	return rows
+}
+
+func pageSignalRow(cfg ShardConfig, root, url, sub string, res model.DomainResult) output.PageSignalRow {
+	return output.PageSignalRow{
+		CrawlID: cfg.CrawlID, RootDomain: root, Subdomain: sub, SourceURL: url,
+		PageType: res.PageType, PageTypeScore: res.PageTypeScore,
+		NaceConfident: b2u8(res.NaceConfident), NaceMargin: res.NaceMargin,
+		SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+	}
 }
 
 type ShardConfig struct {
@@ -48,7 +103,6 @@ type ShardConfig struct {
 
 type domainAgg struct {
 	rootDomain, primaryURL, primarySub, primaryText string
-	emails                                          []string
 	tech                                            []model.Technology
 	identifiers                                     []model.Identifier
 	profile                                         model.CompanyProfile
@@ -173,11 +227,10 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 				}
 				if runEmbed && it.Primary && !agg.hasPrimary {
 					t1 := time.Now()
-					text, emails, _ := parse.ParseHTML(string(body))
+					text, _, _ := parse.ParseHTML(string(body))
 					atomic.AddInt64(&parseNs, time.Since(t1).Nanoseconds())
 					agg.hasPrimary = true
 					agg.primaryText = text
-					agg.emails = emails
 				}
 			}
 			aggs[di] = agg
@@ -203,7 +256,17 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 	_, runEmbed, runTech := modeFlags(cfg)
 	aggs := fc.aggs
 
+	// Thin domain master: one identity row per fetched domain, written by every mode.
 	var domains []output.DomainRow
+	for _, a := range aggs {
+		if a == nil || a.primaryURL == "" {
+			continue
+		}
+		domains = append(domains, domainRow(cfg, a.rootDomain, a.primaryURL, a.primarySub))
+	}
+
+	var industries []output.IndustryRow
+	var pageSignals []output.PageSignalRow
 	var techRows []output.TechRow
 	var identRows []output.IdentifierRow
 	var profileRows []output.ProfileRow
@@ -228,9 +291,10 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 		embedDur := time.Since(tEmbed)
 
 		// Classify is a per-domain cosine over the whole NACE matrix (1k×4k) — fan it across all
-		// cores instead of one. Each worker writes its own non-overlapping range of domains.
+		// cores. Each worker writes its own non-overlapping index range (no shared write).
 		tClass := time.Now()
-		domains = make([]output.DomainRow, len(idx))
+		indByI := make([][]output.IndustryRow, len(idx))
+		sigByI := make([]output.PageSignalRow, len(idx))
 		cw := runtime.NumCPU()
 		if cw > len(idx) {
 			cw = len(idx)
@@ -240,7 +304,7 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 			cwg.Add(1)
 			go func(w int) {
 				defer cwg.Done()
-				for vi := w; vi < len(idx); vi += cw { // stride partition -> balanced, no shared write
+				for vi := w; vi < len(idx); vi += cw {
 					a := aggs[idx[vi]]
 					var res model.DomainResult
 					if label := classify.MatchSignal(a.primaryText); label != "" {
@@ -248,24 +312,16 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 					} else {
 						res = classify.Classify(vecs[vi], ref, protos)
 					}
-					conf := uint8(0)
-					if res.NaceConfident {
-						conf = 1
-					}
-					domains[vi] = output.DomainRow{
-						CrawlID: cfg.CrawlID, URL: a.primaryURL, RootDomain: a.rootDomain, Subdomain: a.primarySub,
-						Emails: a.emails, EmailCount: uint32(len(a.emails)),
-						PageType: res.PageType, PageTypeScore: res.PageTypeScore,
-						NaceCode: res.NaceCode, NaceLabel: res.NaceLabel, NaceDivision: res.NaceDivision,
-						NaceConfident: conf, NaceConfidence: res.NaceConfidence,
-						NaceMargin: res.NaceMargin, NaceScore: res.NaceScore, NaceMethod: res.NaceMethod,
-						Top3Codes: res.Top3Codes, Top3Labels: res.Top3Labels, Top3Scores: res.Top3Scores,
-						SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
-					}
+					indByI[vi] = industryRows(cfg, a.rootDomain, a.primaryURL, res)
+					sigByI[vi] = pageSignalRow(cfg, a.rootDomain, a.primaryURL, a.primarySub, res)
 				}
 			}(w)
 		}
 		cwg.Wait()
+		for vi := range idx {
+			industries = append(industries, indByI[vi]...)
+			pageSignals = append(pageSignals, sigByI[vi])
+		}
 		if len(idx) > 0 {
 			log.Printf("  embed=%.1fs classify=%.1fs for %d domains (%d classify workers)",
 				embedDur.Seconds(), time.Since(tClass).Seconds(), len(idx), cw)
@@ -306,7 +362,7 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 			}
 		}
 	}
-	return ShardResult{Domains: domains, Tech: techRows, Identifiers: identRows, Profiles: profileRows}, nil
+	return ShardResult{Domains: domains, Industries: industries, PageSignals: pageSignals, Tech: techRows, Identifiers: identRows, Profiles: profileRows}, nil
 }
 
 // streamItem is one fetched primary page handed from the fetch stage to an embed worker.
@@ -315,7 +371,6 @@ type streamItem struct {
 	root, url string
 	sub       string
 	text      string
-	emails    []string
 }
 
 // ProcessIndustryStream runs the WHOLE industry shard as a continuous fetch→embed pipeline: fetch
@@ -333,7 +388,9 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 		}
 		byDomain[it.RootDomain] = append(byDomain[it.RootDomain], it)
 	}
-	domains := make([]output.DomainRow, len(order)) // written by di; empty rows filtered at end
+	domains := make([]output.DomainRow, len(order))     // written by di; empty rows filtered at end
+	indByDi := make([][]output.IndustryRow, len(order)) // industries per domain, written by di
+	sigByDi := make([]output.PageSignalRow, len(order)) // page signals per domain, written by di
 
 	conc := cfg.Concurrency
 	if conc <= 0 {
@@ -411,20 +468,9 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 					} else {
 						res = classify.Classify(vecs[k], ref, protos)
 					}
-					conf := uint8(0)
-					if res.NaceConfident {
-						conf = 1
-					}
-					domains[b.di] = output.DomainRow{
-						CrawlID: cfg.CrawlID, URL: b.url, RootDomain: b.root, Subdomain: b.sub,
-						Emails: b.emails, EmailCount: uint32(len(b.emails)),
-						PageType: res.PageType, PageTypeScore: res.PageTypeScore,
-						NaceCode: res.NaceCode, NaceLabel: res.NaceLabel, NaceDivision: res.NaceDivision,
-						NaceConfident: conf, NaceConfidence: res.NaceConfidence,
-						NaceMargin: res.NaceMargin, NaceScore: res.NaceScore, NaceMethod: res.NaceMethod,
-						Top3Codes: res.Top3Codes, Top3Labels: res.Top3Labels, Top3Scores: res.Top3Scores,
-						SourceURL: b.url, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
-					}
+					domains[b.di] = domainRow(cfg, b.root, b.url, b.sub)
+					indByDi[b.di] = industryRows(cfg, b.root, b.url, res)
+					sigByDi[b.di] = pageSignalRow(cfg, b.root, b.url, b.sub, res)
 				}
 				atomic.AddInt64(&done, int64(len(batch)))
 				batch = batch[:0]
@@ -464,10 +510,10 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 					return
 				}
 				t1 := time.Now()
-				text, emails, _ := parse.ParseHTML(string(body))
+				text, _, _ := parse.ParseHTML(string(body))
 				atomic.AddInt64(&parseNs, time.Since(t1).Nanoseconds())
 				select {
-				case ch <- streamItem{di: di, root: dom, url: wit.URL, sub: subdomainOf(wit.URL, dom), text: text, emails: emails}:
+				case ch <- streamItem{di: di, root: dom, url: wit.URL, sub: subdomainOf(wit.URL, dom), text: text}:
 				case <-cctx.Done():
 				}
 				return
@@ -496,12 +542,16 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 		}
 	}
 	out := domains[:0]
-	for _, d := range domains {
-		if d.RootDomain != "" {
-			out = append(out, d)
+	var industries []output.IndustryRow
+	var pageSignals []output.PageSignalRow
+	for di := range domains {
+		if domains[di].RootDomain != "" {
+			out = append(out, domains[di])
+			industries = append(industries, indByDi[di]...)
+			pageSignals = append(pageSignals, sigByDi[di])
 		}
 	}
-	return ShardResult{Domains: out}, nil
+	return ShardResult{Domains: out, Industries: industries, PageSignals: pageSignals}, nil
 }
 
 // ProcessShard processes one worklist chunk end-to-end (fetch then finalize). Use FetchChunk +

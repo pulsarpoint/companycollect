@@ -19,14 +19,16 @@ import (
 // Each output kind has ONE fixed filename "<kind>.parquet" and one table. The worker writes these
 // exact names; the loader reads them. No filename parsing.
 var Tables = map[string]string{
-	"domains":     "commoncrawl_domains",
-	"tech":        "commoncrawl_technologies",
-	"identifiers": "commoncrawl_company_identifiers",
-	"profiles":    "commoncrawl_company_profile",
+	"domains":      "commoncrawl_domains",
+	"industries":   "commoncrawl_industries",
+	"page_signals": "commoncrawl_page_signals",
+	"tech":         "commoncrawl_technologies",
+	"identifiers":  "commoncrawl_company_identifiers",
+	"profiles":     "commoncrawl_company_profile",
 }
 
-// Kinds is the load order (domains for industry; the three tech outputs).
-var Kinds = []string{"domains", "tech", "identifiers", "profiles"}
+// Kinds is the load order (domains is the parent master, written by every pass).
+var Kinds = []string{"domains", "industries", "page_signals", "tech", "identifiers", "profiles"}
 
 // Result is one loaded file.
 type Result struct {
@@ -82,6 +84,20 @@ func FromFile(ctx context.Context, conn driver.Conn, path, kind string) (string,
 	switch kind {
 	case "domains":
 		rows, err := parquet.ReadFile[output.DomainRow](path)
+		if err != nil {
+			return table, 0, err
+		}
+		n, err := Insert(ctx, conn, table, rows)
+		return table, n, err
+	case "industries":
+		rows, err := parquet.ReadFile[output.IndustryRow](path)
+		if err != nil {
+			return table, 0, err
+		}
+		n, err := Insert(ctx, conn, table, rows)
+		return table, n, err
+	case "page_signals":
+		rows, err := parquet.ReadFile[output.PageSignalRow](path)
 		if err != nil {
 			return table, 0, err
 		}

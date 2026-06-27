@@ -327,6 +327,8 @@ func run(mode string, o opts) {
 	}
 	start := time.Now()
 	var domains []output.DomainRow
+	var industries []output.IndustryRow
+	var pageSignals []output.PageSignalRow
 	var techRows []output.TechRow
 	var idents []output.IdentifierRow
 	var profiles []output.ProfileRow
@@ -339,6 +341,8 @@ func run(mode string, o opts) {
 			log.Fatalf("industry stream: %v", err)
 		}
 		domains = res.Domains
+		industries = res.Industries
+		pageSignals = res.PageSignals
 		log.Printf("progress: %d/%d pages, %d domains (%.1f pages/s)",
 			len(items), len(items), len(domains), float64(len(items))/time.Since(start).Seconds())
 	} else {
@@ -368,6 +372,8 @@ func run(mode string, o opts) {
 				log.Fatalf("process chunk at %d: %v", i, err)
 			}
 			domains = append(domains, res.Domains...)
+			industries = append(industries, res.Industries...)
+			pageSignals = append(pageSignals, res.PageSignals...)
 			techRows = append(techRows, res.Tech...)
 			idents = append(idents, res.Identifiers...)
 			profiles = append(profiles, res.Profiles...)
@@ -388,8 +394,10 @@ func run(mode string, o opts) {
 		}
 		written = append(written, p)
 	}
+	write("domains.parquet", func(p string) error { return output.WriteDomains(p, domains) }) // master, every mode
 	if mode != "tech" {
-		write("domains.parquet", func(p string) error { return output.WriteDomains(p, domains) })
+		write("industries.parquet", func(p string) error { return output.WriteIndustries(p, industries) })
+		write("page_signals.parquet", func(p string) error { return output.WritePageSignals(p, pageSignals) })
 	}
 	if mode != "industry" {
 		write("tech.parquet", func(p string) error { return output.WriteTech(p, techRows) })
@@ -416,8 +424,10 @@ func run(mode string, o opts) {
 			}
 			log.Printf("loaded %d rows -> %s", n, load.Tables[kind])
 		}
+		loadInto("domains", func() (int, error) { return load.Insert(ctx, conn, load.Tables["domains"], domains) }) // every mode
 		if mode != "tech" {
-			loadInto("domains", func() (int, error) { return load.Insert(ctx, conn, load.Tables["domains"], domains) })
+			loadInto("industries", func() (int, error) { return load.Insert(ctx, conn, load.Tables["industries"], industries) })
+			loadInto("page_signals", func() (int, error) { return load.Insert(ctx, conn, load.Tables["page_signals"], pageSignals) })
 		}
 		if mode != "industry" {
 			loadInto("tech", func() (int, error) { return load.Insert(ctx, conn, load.Tables["tech"], techRows) })

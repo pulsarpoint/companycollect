@@ -1,0 +1,16 @@
+ALTER TABLE corpscout.commoncrawl_domains
+    ADD COLUMN IF NOT EXISTS emails Array(String),
+    ADD COLUMN IF NOT EXISTS email_count UInt32,
+    ADD COLUMN IF NOT EXISTS page_type LowCardinality(String),
+    ADD COLUMN IF NOT EXISTS page_type_score Float32,
+    ADD COLUMN IF NOT EXISTS nace_code String,
+    ADD COLUMN IF NOT EXISTS nace_label String,
+    ADD COLUMN IF NOT EXISTS nace_division LowCardinality(String),
+    ADD COLUMN IF NOT EXISTS nace_confident UInt8,
+    ADD COLUMN IF NOT EXISTS nace_confidence Float32,
+    ADD COLUMN IF NOT EXISTS nace_margin Float32,
+    ADD COLUMN IF NOT EXISTS nace_score Float32,
+    ADD COLUMN IF NOT EXISTS nace_method LowCardinality(String),
+    ADD COLUMN IF NOT EXISTS nace_top3_codes Array(String),
+    ADD COLUMN IF NOT EXISTS nace_top3_labels Array(String),
+    ADD COLUMN IF NOT EXISTS nace_top3_scores Array(Float32);

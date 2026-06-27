@@ -14,30 +14,50 @@ import (
 // (for the native-protocol INSERT done by the `load` command / internal/load). The two must name
 // the same column; a test pins ch==parquet so they can't drift.
 
-// DomainRow mirrors corpscout.commoncrawl_domains (migration 000046) column order.
+// DomainRow mirrors corpscout.commoncrawl_domains (migration 000046 + 000066 slim): the domain
+// master/identity, one row per domain, written by EVERY pass. Classification moved to IndustryRow,
+// page/decision signals to PageSignalRow, contacts to commoncrawl_company_profile.
 type DomainRow struct {
-	CrawlID        string    `parquet:"crawl_id" ch:"crawl_id"`
-	URL            string    `parquet:"url" ch:"url"`
-	RootDomain     string    `parquet:"root_domain" ch:"root_domain"`
-	Subdomain      string    `parquet:"subdomain" ch:"subdomain"`
-	Emails         []string  `parquet:"emails" ch:"emails"`
-	EmailCount     uint32    `parquet:"email_count" ch:"email_count"`
-	PageType       string    `parquet:"page_type" ch:"page_type"`
-	PageTypeScore  float32   `parquet:"page_type_score" ch:"page_type_score"`
-	NaceCode       string    `parquet:"nace_code" ch:"nace_code"`
-	NaceLabel      string    `parquet:"nace_label" ch:"nace_label"`
-	NaceDivision   string    `parquet:"nace_division" ch:"nace_division"`
-	NaceConfident  uint8     `parquet:"nace_confident" ch:"nace_confident"`
-	NaceConfidence float32   `parquet:"nace_confidence" ch:"nace_confidence"`
-	NaceMargin     float32   `parquet:"nace_margin" ch:"nace_margin"`
-	NaceScore      float32   `parquet:"nace_score" ch:"nace_score"`
-	NaceMethod     string    `parquet:"nace_method" ch:"nace_method"`
-	Top3Codes      []string  `parquet:"nace_top3_codes" ch:"nace_top3_codes"`
-	Top3Labels     []string  `parquet:"nace_top3_labels" ch:"nace_top3_labels"`
-	Top3Scores     []float32 `parquet:"nace_top3_scores" ch:"nace_top3_scores"`
-	SourceURL      string    `parquet:"source_url" ch:"source_url"`
-	SourceRunID    string    `parquet:"source_run_id" ch:"source_run_id"`
-	ResolvedAt     time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
+	CrawlID     string    `parquet:"crawl_id" ch:"crawl_id"`
+	URL         string    `parquet:"url" ch:"url"`
+	RootDomain  string    `parquet:"root_domain" ch:"root_domain"`
+	Subdomain   string    `parquet:"subdomain" ch:"subdomain"`
+	SourceURL   string    `parquet:"source_url" ch:"source_url"`
+	SourceRunID string    `parquet:"source_run_id" ch:"source_run_id"`
+	ResolvedAt  time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
+}
+
+// IndustryRow mirrors corpscout.commoncrawl_industries (migration 000063): one row per
+// (domain, nace_code) — a domain can have multiple industries. rank orders them, is_primary marks
+// the headline. Written by the industry pass.
+type IndustryRow struct {
+	CrawlID      string    `parquet:"crawl_id" ch:"crawl_id"`
+	RootDomain   string    `parquet:"root_domain" ch:"root_domain"`
+	NaceCode     string    `parquet:"nace_code" ch:"nace_code"`
+	NaceLabel    string    `parquet:"nace_label" ch:"nace_label"`
+	NaceDivision string    `parquet:"nace_division" ch:"nace_division"`
+	Rank         uint8     `parquet:"rank" ch:"rank"`
+	IsPrimary    uint8     `parquet:"is_primary" ch:"is_primary"`
+	Score        float32   `parquet:"score" ch:"score"`
+	NaceMethod   string    `parquet:"nace_method" ch:"nace_method"`
+	SourceURL    string    `parquet:"source_url" ch:"source_url"`
+	SourceRunID  string    `parquet:"source_run_id" ch:"source_run_id"`
+	ResolvedAt   time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
+}
+
+// PageSignalRow mirrors corpscout.commoncrawl_page_signals (migration 000064): per-domain page
+// classification + NACE ranking quality. Written by the industry pass.
+type PageSignalRow struct {
+	CrawlID       string    `parquet:"crawl_id" ch:"crawl_id"`
+	RootDomain    string    `parquet:"root_domain" ch:"root_domain"`
+	Subdomain     string    `parquet:"subdomain" ch:"subdomain"`
+	SourceURL     string    `parquet:"source_url" ch:"source_url"`
+	PageType      string    `parquet:"page_type" ch:"page_type"`
+	PageTypeScore float32   `parquet:"page_type_score" ch:"page_type_score"`
+	NaceConfident uint8     `parquet:"nace_confident" ch:"nace_confident"`
+	NaceMargin    float32   `parquet:"nace_margin" ch:"nace_margin"`
+	SourceRunID   string    `parquet:"source_run_id" ch:"source_run_id"`
+	ResolvedAt    time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
 // TechRow mirrors corpscout.commoncrawl_technologies (migration 000047) column order.
@@ -94,6 +114,8 @@ type ProfileRow struct {
 }
 
 func WriteDomains(path string, rows []DomainRow) error         { return parquet.WriteFile(path, rows) }
+func WriteIndustries(path string, rows []IndustryRow) error    { return parquet.WriteFile(path, rows) }
+func WritePageSignals(path string, rows []PageSignalRow) error { return parquet.WriteFile(path, rows) }
 func WriteTech(path string, rows []TechRow) error              { return parquet.WriteFile(path, rows) }
 func WriteIdentifiers(path string, rows []IdentifierRow) error { return parquet.WriteFile(path, rows) }
 func WriteProfiles(path string, rows []ProfileRow) error       { return parquet.WriteFile(path, rows) }
