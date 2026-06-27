@@ -75,6 +75,7 @@ EXPECTED_MIGRATIONS = (
     "000060_corpscout_no_companies_translated_view",
     "000061_corpscout_drop_raw_norway_exports",
     "000062_corpscout_no_companies_legal_form_via_cache",
+    "000063_corpscout_commoncrawl_industries",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -779,6 +780,24 @@ def test_commoncrawl_domains_migration_covers_industry_and_top3_audit() -> None:
     assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
     assert "ORDER BY (root_domain, url, crawl_id)" in sql
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domains" in down_sql
+
+
+def test_commoncrawl_industries_migration_splits_classification_from_domain_master() -> None:
+    sql = _migration_sql("000063_corpscout_commoncrawl_industries.up.sql")
+    down_sql = _migration_sql("000063_corpscout_commoncrawl_industries.down.sql")
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_industries" in sql
+    for column_name in (
+        "crawl_id", "root_domain", "source_url", "emails", "email_count",
+        "page_type", "page_type_score", "nace_code", "nace_label", "nace_division",
+        "nace_confident", "nace_confidence", "nace_margin", "nace_score", "nace_method",
+        "nace_top3_codes", "nace_top3_labels", "nace_top3_scores",
+        "source_run_id", "resolved_at",
+    ):
+        assert f"    {column_name} " in sql
+    # one row per domain per crawl, keyed to commoncrawl_domains via root_domain
+    assert "ENGINE = ReplacingMergeTree(resolved_at)" in sql
+    assert "ORDER BY (root_domain, crawl_id)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_industries" in down_sql
 
 
 def test_commoncrawl_technologies_migration_is_normalized_per_page_tech() -> None:
