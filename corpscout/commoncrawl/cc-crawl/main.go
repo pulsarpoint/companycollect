@@ -102,6 +102,13 @@ func main() {
 		fail("-parts %q: %v", *partsF, err)
 	}
 	crawl, data, builder, worker, maxPages := *crawlF, *dataF, *builderF, *workerF, *maxPagesF
+	// Resolve to absolute paths: index_builder runs with cwd=builder, so a relative --out would land
+	// under builder/, not data/. Absolute paths make every child write to the right place.
+	for _, p := range []*string{&data, &builder, &worker} {
+		if abs, err := filepath.Abs(*p); err == nil {
+			*p = abs
+		}
+	}
 
 	if err := os.MkdirAll(filepath.Join(data, "logs"), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, err)
