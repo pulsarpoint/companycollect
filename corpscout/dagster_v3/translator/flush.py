@@ -14,10 +14,10 @@ def _staging_table_name(run_id: str) -> str:
 def build_flush_select_sql(staging_table: str) -> str:
     return (
         "INSERT INTO corpscout.text_translations\n"
-        "    (source_slug, field, source_text_hash, source_lang, target_lang,\n"
+        "    (source_table, source_column, source_text_hash, source_lang, target_lang,\n"
         "     translated_text, provider, model, version)\n"
         "SELECT\n"
-        "    {slug:String}, field, cityHash64(source_text), {lang:String}, 'en',\n"
+        "    {table:String}, source_column, cityHash64(source_text), {lang:String}, 'en',\n"
         "    translated_text, {provider:String}, {model:String}, {version:UInt64}\n"
         f"FROM {staging_table}"
     )
@@ -34,7 +34,7 @@ def flush_translations(
     run_id: str,
 ) -> int:
     data = [
-        [row.field, row.source_text, row.translated_text]
+        [row.source_column, row.source_text, row.translated_text]
         for row in rows
         if row.translated_text != ""
     ]
@@ -44,14 +44,14 @@ def flush_translations(
     staging = _staging_table_name(run_id)
     client.command(
         f"CREATE TABLE IF NOT EXISTS {staging} "
-        "(field String, source_text String, translated_text String) ENGINE = Memory"
+        "(source_column String, source_text String, translated_text String) ENGINE = Memory"
     )
     try:
-        client.insert(staging, data, column_names=["field", "source_text", "translated_text"])
+        client.insert(staging, data, column_names=["source_column", "source_text", "translated_text"])
         client.command(
             build_flush_select_sql(staging),
             parameters={
-                "slug": source_config.source_slug,
+                "table": source_config.ch_table,
                 "lang": source_config.source_lang,
                 "provider": provider,
                 "model": model,

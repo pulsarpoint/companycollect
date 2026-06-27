@@ -88,12 +88,9 @@ def test_import_only_dynamic_fields(tmp_path, monkeypatch):
     assert len(flushed_calls) == 1
 
     call = flushed_calls[0]
-    imported_fields = {r.field for r in call["rows"]}
-
-    # Imported under the LOGICAL field name (remapped from the *_original column name).
-    assert imported_fields == {"company_description", "articles_purpose"}
-    assert "company_description_original" not in imported_fields, "must remap, not keep *_original"
-    assert "legal_form_description" not in imported_fields, "static field must be skipped"
+    imported_fields = {r.source_column for r in call["rows"]}
+    assert imported_fields == {"company_description_original", "articles_purpose_original"}
+    assert "legal_form_description_original" not in imported_fields, "static field must be skipped"
     assert "bogus_field" not in imported_fields, "unknown field must be skipped"
 
     assert call["provider"] == "legacy-import"

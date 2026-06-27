@@ -87,7 +87,7 @@ class CompletedTranslationQueueResult:
 
 @dataclass(frozen=True)
 class FlushTranslationRow:
-    field: str
+    source_column: str
     source_text: str
     translated_text: str
 
@@ -529,7 +529,7 @@ class TranslationQueue:
                 [QUEUE_STATUS_COMPLETED],
             ).fetchall()
         return [
-            FlushTranslationRow(field=row[0], source_text=row[1], translated_text=row[2])
+            FlushTranslationRow(source_column=row[0], source_text=row[1], translated_text=row[2])
             for row in rows
         ]
 

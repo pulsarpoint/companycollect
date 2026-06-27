@@ -8,12 +8,11 @@ def test_build_scan_sql_selects_distinct_untranslated_terms():
     assert "SELECT DISTINCT c.company_description_original AS source_text" in sql
     assert "FROM corpscout.no_companies AS c" in sql
     assert "corpscout.text_translations" in sql
-    assert "field = {field:String}" in sql
-    assert "source_slug = {slug:String}" in sql
+    assert "source_table = {table:String}" in sql
+    assert "source_column = {column:String}" in sql
     assert "cityHash64(c.company_description_original)" in sql
     assert "c.company_description_original <> ''" in sql
     assert "t.source_text_hash IS NULL" in sql
-    # Dynamic field must NOT include a static_key column.
     assert "static_key" not in sql
 
 
@@ -40,12 +39,11 @@ def test_build_scan_sql_for_legal_form_description_includes_key_column():
 
 
 def test_scanned_term_is_frozen_dataclass():
-    t = ScannedTerm(field="legal_form_description", source_text="Aksjeselskap", static_key="AS")
-    assert t.field == "legal_form_description"
+    t = ScannedTerm(source_column="legal_form_description_original", source_text="Aksjeselskap", static_key="AS")
+    assert t.source_column == "legal_form_description_original"
     assert t.source_text == "Aksjeselskap"
     assert t.static_key == "AS"
-
-    t_dynamic = ScannedTerm(field="company_description", source_text="Holding", static_key=None)
+    t_dynamic = ScannedTerm(source_column="company_description_original", source_text="Holding", static_key=None)
     assert t_dynamic.static_key is None
 
 

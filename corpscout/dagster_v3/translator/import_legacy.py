@@ -84,54 +84,37 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: Unknown source slug: {args.source!r}")
         return 1
 
-    # The old queue records each location's source_field as the *_original COLUMN name, while the
-    # registry + cache key on the logical field name. Map either form (original_col OR logical field)
-    # to the logical field, so legacy rows resolve regardless of which the old seed recorded.
-    dynamic_fields: set[str] = {f.field for f in config.fields if f.static_map is None}
-    dynamic_key_to_field: dict[str, str] = {}
-    static_keys: set[str] = set()
-    for f in config.fields:
-        if f.static_map is None:
-            dynamic_key_to_field[f.original_col] = f.field
-            dynamic_key_to_field[f.field] = f.field
-        else:
-            static_keys.add(f.original_col)
-            static_keys.add(f.field)
+    # The DuckDB queue records each location's source_field as the *_original column name, which is
+    # exactly the cache's source_column. Classify by the registry's columns; no remap needed.
+    dynamic_columns = {f.original_col for f in config.fields if f.static_map is None}
+    static_columns = {f.original_col for f in config.fields if f.static_map is not None}
 
-    # Open the old queue, migrate any legacy on-disk schema, then pull completed rows.
     queue = TranslationQueue(duckdb_path)
     queue.initialize()
     all_rows = queue.completed_results_for_flush()
     total_in_queue = len(all_rows)
 
-    # Classify rows, remapping the queue's source_field to the logical field name.
     import_rows: list[FlushTranslationRow] = []
     imported_per_field: dict[str, int] = {}
     skipped_static: dict[str, int] = {}
     skipped_unknown: dict[str, int] = {}
 
     for row in all_rows:
-        logical_field = dynamic_key_to_field.get(row.field)
-        if logical_field is not None:
+        col = row.source_column
+        if col in dynamic_columns:
             if row.translated_text:  # drop empty translations (flush does this too, but count accurately)
-                import_rows.append(
-                    FlushTranslationRow(
-                        field=logical_field,
-                        source_text=row.source_text,
-                        translated_text=row.translated_text,
-                    )
-                )
-                imported_per_field[logical_field] = imported_per_field.get(logical_field, 0) + 1
-        elif row.field in static_keys:
-            skipped_static[row.field] = skipped_static.get(row.field, 0) + 1
+                import_rows.append(row)
+                imported_per_field[col] = imported_per_field.get(col, 0) + 1
+        elif col in static_columns:
+            skipped_static[col] = skipped_static.get(col, 0) + 1
         else:
-            skipped_unknown[row.field] = skipped_unknown.get(row.field, 0) + 1
+            skipped_unknown[col] = skipped_unknown.get(col, 0) + 1
 
     # Print summary.
     print(f"Legacy queue: {duckdb_path}")
     print(f"  Total completed rows in queue : {total_in_queue}")
     print(f"  Source                        : {args.source}")
-    print(f"  Dynamic fields                : {sorted(dynamic_fields)}")
+    print(f"  Dynamic columns               : {sorted(dynamic_columns)}")
     print()
 
     if imported_per_field:

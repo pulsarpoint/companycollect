@@ -24,12 +24,11 @@ def clickhouse_client_from_env() -> Any:
 class ScannedTerm:
     """A single untranslated term discovered during a scan.
 
-    For dynamic fields ``static_key`` is None.  For static fields it holds the
-    value of the companion key column (e.g. ``legal_form_code``) used to look
-    up the translation in the field's static map.
+    ``static_key`` is None for dynamic fields; for static fields it holds the
+    companion key-column value (e.g. ``legal_form_code``).
     """
 
-    field: str
+    source_column: str
     source_text: str
     static_key: str | None
 
@@ -37,9 +36,7 @@ class ScannedTerm:
 def build_scan_sql(source_config: SourceConfig, field: FieldConfig) -> str:
     original = field.original_col
     if field.static_key_col:
-        select_cols = (
-            f"c.{original} AS source_text, c.{field.static_key_col} AS static_key"
-        )
+        select_cols = f"c.{original} AS source_text, c.{field.static_key_col} AS static_key"
     else:
         select_cols = f"c.{original} AS source_text"
     return (
@@ -48,7 +45,7 @@ def build_scan_sql(source_config: SourceConfig, field: FieldConfig) -> str:
         f"LEFT JOIN (\n"
         f"    SELECT source_text_hash\n"
         f"    FROM corpscout.text_translations\n"
-        f"    WHERE source_slug = {{slug:String}} AND field = {{field:String}}\n"
+        f"    WHERE source_table = {{table:String}} AND source_column = {{column:String}}\n"
         f"    GROUP BY source_text_hash\n"
         f") AS t ON t.source_text_hash = cityHash64(c.{original})\n"
         f"WHERE c.{original} <> '' AND t.source_text_hash IS NULL"
@@ -60,10 +57,12 @@ def scan_untranslated_terms(client: Any, source_config: SourceConfig) -> list[Sc
     for field in source_config.fields:
         result = client.query(
             build_scan_sql(source_config, field),
-            parameters={"slug": source_config.source_slug, "field": field.field},
+            parameters={"table": source_config.ch_table, "column": field.original_col},
         )
         for row in result.result_rows:
             source_text = row[0]
             static_key = row[1] if field.static_key_col else None
-            terms.append(ScannedTerm(field=field.field, source_text=source_text, static_key=static_key))
+            terms.append(
+                ScannedTerm(source_column=field.original_col, source_text=source_text, static_key=static_key)
+            )
     return terms

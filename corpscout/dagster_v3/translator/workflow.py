@@ -80,7 +80,7 @@ def scan_and_seed_once(params: ScanAndSeedInput) -> ScanAndSeedResult:
     from translator.queue import FlushTranslationRow, TranslationQueue, TranslationQueueItem
 
     source_config = get_source_config(params.source_slug)
-    field_by_name = {f.field: f for f in source_config.fields}
+    field_by_col = {f.original_col: f for f in source_config.fields}
 
     client = clickhouse_client_from_env()
     static_flushed = 0
@@ -90,7 +90,7 @@ def scan_and_seed_once(params: ScanAndSeedInput) -> ScanAndSeedResult:
         static_terms = []
         dynamic_terms = []
         for term in terms:
-            fc = field_by_name.get(term.field)
+            fc = field_by_col.get(term.source_column)
             if fc is not None and fc.static_map is not None:
                 static_terms.append(term)
             else:
@@ -99,12 +99,12 @@ def scan_and_seed_once(params: ScanAndSeedInput) -> ScanAndSeedResult:
         if static_terms:
             static_rows: list[FlushTranslationRow] = []
             for term in static_terms:
-                fc = field_by_name[term.field]
+                fc = field_by_col[term.source_column]
                 translation = (fc.static_map_dict() or {}).get(term.static_key or "", "")
                 if translation:
                     static_rows.append(
                         FlushTranslationRow(
-                            field=term.field,
+                            source_column=term.source_column,
                             source_text=term.source_text,
                             translated_text=translation,
                         )
@@ -131,7 +131,7 @@ def scan_and_seed_once(params: ScanAndSeedInput) -> ScanAndSeedResult:
             source_duckdb_path="clickhouse",
             source_table=source_config.ch_table,
             source_pk="",
-            source_field=term.field,
+            source_field=term.source_column,
             source_text=term.source_text,
             target_language="en",
         )

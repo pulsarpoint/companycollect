@@ -15,8 +15,8 @@ def test_translate_source_workflow_scans_translates_flushes(tmp_path, monkeypatc
         wf,
         "scan_untranslated_terms",
         lambda client, cfg: [
-            ScannedTerm("company_description", "Holdingselskap", None),
-            ScannedTerm("activity_text", "Bygg", None),
+            ScannedTerm("company_description_original", "Holdingselskap", None),
+            ScannedTerm("activity_text_original", "Bygg", None),
         ],
     )
 
@@ -85,8 +85,8 @@ def test_translate_source_workflow_terminates_on_persistent_failure(tmp_path, mo
         wf,
         "scan_untranslated_terms",
         lambda client, cfg: [
-            ScannedTerm("company_description", "Holdingselskap", None),
-            ScannedTerm("activity_text", "Bygg", None),
+            ScannedTerm("company_description_original", "Holdingselskap", None),
+            ScannedTerm("activity_text_original", "Bygg", None),
         ],
     )
     monkeypatch.setattr(wf, "flush_translations", lambda client, cfg, rows, **kw: len(list(rows)))
@@ -130,7 +130,7 @@ def test_translate_source_workflow_static_field_flushed_without_llm(tmp_path, mo
         wf,
         "scan_untranslated_terms",
         lambda client, cfg: [
-            ScannedTerm("legal_form_description", "Aksjeselskap", "AS"),
+            ScannedTerm("legal_form_description_original", "Aksjeselskap", "AS"),
         ],
     )
 
