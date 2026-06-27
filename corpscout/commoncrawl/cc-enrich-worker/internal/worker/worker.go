@@ -35,8 +35,9 @@ type ShardResult struct {
 	PageSignals []output.PageSignalRow
 	Tech        []output.TechRow
 	Identifiers []output.IdentifierRow
-	Metadata    []output.MetadataRow // self-reported "about", from the tech pass
-	Contacts    []output.ContactRow  // emails/phones/social, from the tech pass
+	Metadata    []output.MetadataRow  // self-reported "about", from the tech pass
+	Contacts    []output.ContactRow   // emails/phones/social, from the tech pass
+	Embeddings  []output.EmbeddingRow // raw page vectors, from the industry pass (saved separately)
 }
 
 func b2u8(b bool) uint8 {
@@ -95,6 +96,14 @@ func pageSignalRow(cfg ShardConfig, root, url, sub string, res model.DomainResul
 func contactRow(cfg ShardConfig, root, url, typ, value, source string) output.ContactRow {
 	return output.ContactRow{
 		CrawlID: cfg.CrawlID, RootDomain: root, ContactType: typ, Value: value, Source: source,
+		SourceURL: url, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+	}
+}
+
+// embeddingRow keeps the raw page vector (the expensive GPU artifact) so it never has to be recomputed.
+func embeddingRow(cfg ShardConfig, root, url string, vec []float32) output.EmbeddingRow {
+	return output.EmbeddingRow{
+		CrawlID: cfg.CrawlID, RootDomain: root, Embedding: vec, EmbedDim: uint16(len(vec)),
 		SourceURL: url, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 	}
 }
@@ -421,6 +430,7 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 	domains := make([]output.DomainRow, len(order))     // written by di; empty rows filtered at end
 	indByDi := make([][]output.IndustryRow, len(order)) // industries per domain, written by di
 	sigByDi := make([]output.PageSignalRow, len(order)) // page signals per domain, written by di
+	embByDi := make([]output.EmbeddingRow, len(order))  // raw page vector per domain, written by di
 
 	conc := cfg.Concurrency
 	if conc <= 0 {
@@ -501,6 +511,7 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 					domains[b.di] = domainRow(cfg, b.root, b.url, b.sub)
 					indByDi[b.di] = industryRows(cfg, b.root, b.url, res)
 					sigByDi[b.di] = pageSignalRow(cfg, b.root, b.url, b.sub, res)
+					embByDi[b.di] = embeddingRow(cfg, b.root, b.url, vecs[k]) // keep the raw vector
 				}
 				atomic.AddInt64(&done, int64(len(batch)))
 				batch = batch[:0]
@@ -574,14 +585,16 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 	out := domains[:0]
 	var industries []output.IndustryRow
 	var pageSignals []output.PageSignalRow
+	var embeddings []output.EmbeddingRow
 	for di := range domains {
 		if domains[di].RootDomain != "" {
 			out = append(out, domains[di])
 			industries = append(industries, indByDi[di]...)
 			pageSignals = append(pageSignals, sigByDi[di])
+			embeddings = append(embeddings, embByDi[di])
 		}
 	}
-	return ShardResult{Domains: out, Industries: industries, PageSignals: pageSignals}, nil
+	return ShardResult{Domains: out, Industries: industries, PageSignals: pageSignals, Embeddings: embeddings}, nil
 }
 
 // ProcessShard processes one worklist chunk end-to-end (fetch then finalize). Use FetchChunk +

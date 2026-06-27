@@ -331,6 +331,7 @@ func run(mode string, o opts) {
 	var idents []output.IdentifierRow
 	var metadata []output.MetadataRow
 	var contacts []output.ContactRow
+	var embeddings []output.EmbeddingRow
 
 	// Industry: one continuous fetch→embed stream over the whole shard, so the GPU is fed
 	// non-stop (no per-chunk "embed all then wait" barrier). tech/both keep the chunk pipeline.
@@ -342,6 +343,7 @@ func run(mode string, o opts) {
 		domains = res.Domains
 		industries = res.Industries
 		pageSignals = res.PageSignals
+		embeddings = res.Embeddings
 		log.Printf("progress: %d/%d pages, %d domains (%.1f pages/s)",
 			len(items), len(items), len(domains), float64(len(items))/time.Since(start).Seconds())
 	} else {
@@ -377,6 +379,7 @@ func run(mode string, o opts) {
 			idents = append(idents, res.Identifiers...)
 			metadata = append(metadata, res.Metadata...)
 			contacts = append(contacts, res.Contacts...)
+			embeddings = append(embeddings, res.Embeddings...)
 			el := time.Since(start).Seconds()
 			log.Printf("progress: %d/%d pages, %d domains, %d tech, %d ids, %d contacts (%.1f pages/s)",
 				end, len(items), len(domains), len(techRows), len(idents), len(contacts), float64(end)/el)
@@ -404,6 +407,20 @@ func run(mode string, o opts) {
 		write("contacts.parquet", func(p string) error { return output.WriteContacts(p, contacts) })
 		write("tech.parquet", func(p string) error { return output.WriteTech(p, techRows) })
 		write("identifiers.parquet", func(p string) error { return output.WriteIdentifiers(p, idents) })
+	}
+	// Embeddings are the expensive GPU artifact — keep them, but in a SEPARATE data/embedding/<stem>/
+	// tree (not data/crawl/), since they're large (~16 KB/domain) and never loaded into ClickHouse.
+	if len(embeddings) > 0 {
+		embedDir := filepath.Join(filepath.Dir(filepath.Dir(outDir)), "embedding", filepath.Base(outDir))
+		if err := os.MkdirAll(embedDir, 0o755); err != nil {
+			log.Fatalf("create embedding dir %s: %v", embedDir, err)
+		}
+		p := filepath.Join(embedDir, "embeddings.parquet")
+		if err := output.WriteEmbeddings(p, embeddings); err != nil {
+			log.Fatalf("write embeddings: %v", err)
+		}
+		written = append(written, p)
+		log.Printf("saved %d embeddings -> %s", len(embeddings), p)
 	}
 	dur := time.Since(start).Seconds()
 	rate := 0.0

@@ -123,6 +123,19 @@ type ContactRow struct {
 	ResolvedAt  time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
+// EmbeddingRow is the raw page embedding from the industry pass — the expensive GPU artifact, kept so
+// we never have to recompute it (re-classification, similarity, Qdrant all derive from it on CPU).
+// Stored as Parquet only (NOT ClickHouse), in a separate data/embedding/ tree. fp32, one row/domain.
+type EmbeddingRow struct {
+	CrawlID     string    `parquet:"crawl_id"`
+	RootDomain  string    `parquet:"root_domain"`
+	Embedding   []float32 `parquet:"embedding"`
+	EmbedDim    uint16    `parquet:"embed_dim"`
+	SourceURL   string    `parquet:"source_url"`
+	SourceRunID string    `parquet:"source_run_id"`
+	ResolvedAt  time.Time `parquet:"resolved_at,timestamp"`
+}
+
 func WriteDomains(path string, rows []DomainRow) error         { return parquet.WriteFile(path, rows) }
 func WriteIndustries(path string, rows []IndustryRow) error    { return parquet.WriteFile(path, rows) }
 func WritePageSignals(path string, rows []PageSignalRow) error { return parquet.WriteFile(path, rows) }
@@ -130,6 +143,7 @@ func WriteContacts(path string, rows []ContactRow) error       { return parquet.
 func WriteMetadata(path string, rows []MetadataRow) error      { return parquet.WriteFile(path, rows) }
 func WriteTech(path string, rows []TechRow) error              { return parquet.WriteFile(path, rows) }
 func WriteIdentifiers(path string, rows []IdentifierRow) error { return parquet.WriteFile(path, rows) }
+func WriteEmbeddings(path string, rows []EmbeddingRow) error   { return parquet.WriteFile(path, rows) }
 
 // UploadToS3 puts a local file at the given bucket/key.
 func UploadToS3(ctx context.Context, client *s3.Client, bucket, key, path string) error {
