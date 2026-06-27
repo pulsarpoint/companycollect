@@ -121,7 +121,7 @@ class TranslateWorkflowOutput:
 # ---------------------------------------------------------------------------
 
 
-def build_queue_once(params: BuildQueueActivityInput):
+def build_queue_once(params: BuildQueueActivityInput) -> SeedResult:
     from translator.clickhouse import clickhouse_client_from_env
     from translator.norway_brreg.config import get_config
     from translator.norway_brreg.seed import build_queue
@@ -205,7 +205,7 @@ def translate_loop_once(params: TranslateLoopActivityInput):
                 logger.warning(
                     "translate_loop: batch failed (%s): %s", error_category, exc
                 )
-                if params.max_batch_failures > 0 and failure_count > params.max_batch_failures:
+                if params.max_batch_failures > 0 and failure_count >= params.max_batch_failures:
                     logger.warning(
                         "translate_loop: exceeded max_batch_failures=%d, stopping",
                         params.max_batch_failures,
@@ -271,6 +271,8 @@ async def build_queue_activity(params: BuildQueueActivityInput) -> SeedResult:
 @activity.defn
 async def start_translate_workflow_activity(params: StartTranslateWorkflowInput) -> str:
     address = os.environ.get("TEMPORAL_ADDRESS", "companycollect:7233")
+    # temporalio Client has no close() method or async-context-manager support;
+    # the per-call connect is intentional — this activity runs once per BuildQueue run.
     client = await Client.connect(address)
     handle = await client.start_workflow(
         TranslateWorkflow.run,
