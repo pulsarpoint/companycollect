@@ -26,7 +26,7 @@ def _seed_norway_brreg_source(db_path: Path) -> None:
                 '70.100', 'Hovedkontortjenester', 'Activities of head offices',
                 '', '', '',
                 'active', true,
-                'A software company.', 'To develop software.', 'Technology services.'
+                'To develop software.', 'Technology services.'
               ),
               (
                 'NO', 'norway_brreg', 'run-1', '2000', 'hash2',
@@ -36,7 +36,7 @@ def _seed_norway_brreg_source(db_path: Path) -> None:
                 '', '', '',
                 '', '', '',
                 'inactive', false,
-                '', '', ''
+                '', ''
               )
             ) as t(
               country_iso2, source_slug, source_run_id, source_record_id, source_payload_hash,
@@ -47,7 +47,7 @@ def _seed_norway_brreg_source(db_path: Path) -> None:
               nace2_code, nace2_description_original, nace2_description_en,
               nace3_code, nace3_description_original, nace3_description_en,
               status, is_active,
-              company_description_original, articles_purpose_original, activity_text_original
+              articles_purpose_original, activity_text_original
             )
             """
         )
