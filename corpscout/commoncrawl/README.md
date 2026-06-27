@@ -224,6 +224,26 @@ the run ends with a `done/skipped/failed` summary. Example:
 {"level":"INFO","msg":"done","mode":"industry","part":5,"domains_from_s3":102804,"rows_to_clickhouse":408019}
 ```
 
+### Re-running, forcing, and reloading
+
+The **`.loaded` marker** (`out_<mode>_<part>.loaded`) is an **empty file** — cc-crawl checks only its
+*existence*, never its contents — and it gates the **whole** part (both produce and load):
+
+| You run | `.loaded` present? | produce (fetch+embed) | load → ClickHouse |
+|---|---|---|---|
+| `cc-crawl … -parts N` | **yes** | — skipped | — skipped |
+| `cc-crawl … -parts N` | no | ✅ | ✅ |
+| `cc-enrich-worker load --dir out_<mode>_N` | (ignored) | — | ✅ |
+
+- **Re-running a `.loaded` part does nothing** — it skips produce *and* load (no GPU, no ClickHouse
+  writes). The marker exists precisely to avoid paying the fetch+embed twice.
+- **Force a full re-run** (re-fetch + re-embed + reload): `rm data/crawl/out_<mode>_N.loaded`, then run
+  cc-crawl — the produce step `rm -rf`s the dir and regenerates the parquet (also delete
+  `shard_<mode>_N.parquet` for a fresh worklist).
+- **Reload the existing parquet only** (no re-produce): `cc-enrich-worker load --dir
+  data/crawl/out_<mode>_N` — it ignores the marker. Idempotent: ReplacingMergeTree dedupes on the sort
+  key and the newest `resolved_at` wins, so you never double-count.
+
 ### Running the worker yourself (without `cc-crawl`)
 
 The pass writes Parquet into an **output directory** with **fixed filenames** (`domains.parquet`,
