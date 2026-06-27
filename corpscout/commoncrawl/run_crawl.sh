@@ -12,7 +12,7 @@
 # <out>.loaded marker exists is skipped; ReplacingMergeTree dedupes any re-load.
 # Paths are anchored to this script's directory, so it works from any working directory.
 #
-# Tunables via env: CRAWL, WHERE (worklist SQL filter; empty = ALL domains), DATA, BUILDER_DIR,
+# Tunables via env: CRAWL, DATA, BUILDER_DIR,
 # WORKER, MAX_PAGES (tech pages/domain, default 25; 0=all), TECH_CONC, IND_CONC, EMBED_CONC.
 #
 # industry and tech build SEPARATE worklists: industry = 1 representative page/domain (homepage),
@@ -29,7 +29,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # commoncrawl/
 MODE="${1:?usage: run_crawl.sh <industry|tech> <lo-hi>}"
 RANGE="${2:?usage: run_crawl.sh <industry|tech> <lo-hi>}"
 CRAWL="${CRAWL:-CC-MAIN-2026-25}"
-WHERE="${WHERE:-}" # empty = all domains (global dataset); e.g. "content_languages like '%eng%'"
 DATA="${DATA:-$HERE/data/crawl}" # commoncrawl/data/crawl (gitignored); never write data inside a code dir
 BUILDER_DIR="${BUILDER_DIR:-$HERE/index-builder}" # standalone Python worklist builder
 WORKER="${WORKER:-$HERE/cc-enrich-worker/bin/cc-enrich-worker}" # built by `make -C cc-enrich-worker build`
@@ -56,7 +55,7 @@ for ((p = lo; p <= hi; p++)); do
 		echo "[$MODE $p] generating worklist…"
 		tmp="${shard}.tmp.$$"
 		if (cd "$BUILDER_ABS" && uv run python -m index_builder --mode "$MODE" \
-			--max-pages "${MAX_PAGES:-25}" --crawl "$CRAWL" --part "$p" --where "$WHERE" --out "$tmp"); then
+			--max-pages "${MAX_PAGES:-25}" --crawl "$CRAWL" --part "$p" --out "$tmp"); then
 			mv -f "$tmp" "$shard"
 		else
 			echo "[$MODE $p] worklist FAILED — skip"; rm -f "$tmp"; continue

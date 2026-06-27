@@ -48,12 +48,12 @@ def chosen_parts(part: str, parts: str) -> list[int]:
     return [int(part)]
 
 
-def _build(con, url: str, out: Path, mode: str, max_pages: int, where: str) -> None:
+def _build(con, url: str, out: Path, mode: str, max_pages: int) -> None:
     """Build one shard atomically (tmp + rename) so a crash can't leave a half file."""
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(out.name + f".tmp.{out.stem}")
     src = "read_parquet(" + repr([url]) + ", hive_partitioning=true)"
-    n = build_worklist(con, src, str(tmp), mode=mode, max_pages=max_pages, where=where)
+    n = build_worklist(con, src, str(tmp), mode=mode, max_pages=max_pages)
     tmp.replace(out)
     print(f"{out}: {n} rows ({mode})")
 
@@ -70,7 +70,6 @@ def main() -> None:
     ap.add_argument("--part", default="", help="single 0-based part index")
     ap.add_argument("--parts", default="", help="inclusive range, e.g. 0-9 (overrides --part)")
     ap.add_argument("--list", action="store_true", help="print how many parts the crawl has, then exit")
-    ap.add_argument("--where", default="", help="extra SQL filter; empty (default) = all domains")
     ap.add_argument("--index-dir", default=str(DEFAULT_INDEX_DIR), help="shard cache dir")
     ap.add_argument("--out", default="", help="explicit output path (single part only; bypasses the cache)")
     args = ap.parse_args()
@@ -89,7 +88,7 @@ def main() -> None:
     if args.out:
         if len(parts) != 1:
             ap.error("--out is only valid with a single --part")
-        _build(con, urls[parts[0]], Path(args.out), args.mode, args.max_pages, args.where)
+        _build(con, urls[parts[0]], Path(args.out), args.mode, args.max_pages)
         return
 
     index_dir = Path(args.index_dir)
@@ -101,7 +100,7 @@ def main() -> None:
         if out.exists():
             print(f"{out}: cached, skip")
             continue
-        _build(con, urls[p], out, args.mode, args.max_pages, args.where)
+        _build(con, urls[p], out, args.mode, args.max_pages)
 
 
 if __name__ == "__main__":

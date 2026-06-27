@@ -62,8 +62,7 @@ def _order_by(mode: str) -> str:
     """
 
 
-def worklist_query(source: str, *, mode: str = "industry", max_pages: int = 25, where: str = "") -> str:
-    extra = f" AND ({where})" if where else ""
+def worklist_query(source: str, *, mode: str = "industry", max_pages: int = 25) -> str:
     mime = ", ".join(f"'{m}'" for m in _HTML_MIME)
     if mode == "industry":
         rn = "rn = 1"
@@ -82,22 +81,22 @@ def worklist_query(source: str, *, mode: str = "industry", max_pages: int = 25, 
                  ) AS rn
           FROM {source}
           WHERE fetch_status = 200
-            AND content_mime_detected IN ({mime}){extra}
+            AND content_mime_detected IN ({mime})
         ) WHERE {rn}
     """
 
 
 def run_worklist(con, source: str, *, crawl: str = "", mode: str = "industry",
-                 max_pages: int = 25, where: str = ""):
+                 max_pages: int = 25):
     """Execute the worklist query; returns a DuckDB result (use .fetchall() or .arrow())."""
-    return con.execute(worklist_query(source, mode=mode, max_pages=max_pages, where=where))
+    return con.execute(worklist_query(source, mode=mode, max_pages=max_pages))
 
 
 def build_worklist(con, source: str, out_path, *, mode: str = "industry",
-                   max_pages: int = 25, where: str = "") -> int:
+                   max_pages: int = 25) -> int:
     """Write the worklist to a Parquet file; returns row count."""
     import pyarrow.parquet as pq
 
-    table = run_worklist(con, source, mode=mode, max_pages=max_pages, where=where).to_arrow_table()
+    table = run_worklist(con, source, mode=mode, max_pages=max_pages).to_arrow_table()
     pq.write_table(table, out_path)
     return table.num_rows

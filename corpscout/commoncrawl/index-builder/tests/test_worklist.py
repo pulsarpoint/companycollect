@@ -113,7 +113,7 @@ def test_industry_mode_still_one_page_per_domain(tmp_path):
     assert len(rows) == 1 and rows[0][1] == "http://ex.com/"
 
 
-def test_build_worklist_writes_parquet_and_where_filter(tmp_path):
+def test_build_worklist_writes_parquet_all_domains(tmp_path):
     idx = tmp_path / "idx.parquet"
     _write_index(idx, [
         ("a.sk", "a.sk", "http://a.sk/", "/", 200, "text/html", "w.gz", 0, 5),
@@ -121,7 +121,8 @@ def test_build_worklist_writes_parquet_and_where_filter(tmp_path):
     ])
     con = duckdb.connect()
     out = tmp_path / "wl.parquet"
-    n = worklist.build_worklist(con, f"read_parquet('{idx}')", out,
-                                where="url_host_registered_domain LIKE '%.sk'")
-    assert n == 1
-    assert pq.read_table(out).to_pylist()[0]["root_domain"] == "a.sk"
+    # no filtering capability — every 200/HTML domain is included (global dataset)
+    n = worklist.build_worklist(con, f"read_parquet('{idx}')", out)
+    assert n == 2
+    roots = {r["root_domain"] for r in pq.read_table(out).to_pylist()}
+    assert roots == {"a.sk", "b.cz"}
