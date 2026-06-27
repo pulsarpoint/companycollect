@@ -11,12 +11,15 @@
 ## Global Constraints
 
 - Per-source package `translator/norway_brreg/` over a shared core; nothing source-specific in the shared core.
-- Two workflows: `BuildQueueWorkflow` (bulk seed) + `TranslateWorkflow` (drain + dump). `BuildQueueWorkflow`'s final step calls `start_workflow(TranslateWorkflow, id="translate-norway_brreg", id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING, task_queue="translation-local-llm")` then completes. This is a **separate top-level workflow, NOT a child**.
+- Two workflows: `BuildQueueWorkflow` (bulk seed) + `TranslateWorkflow` (drain + dump). `BuildQueueWorkflow`'s final step calls `start_workflow(TranslateWorkflow, id="translate-norway_brreg", id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING, task_queue=BUILD_TASK_QUEUE)` then completes. This is a **separate top-level workflow, NOT a child**.
+- Two shared task queues + a global LLM gate. `BUILD_TASK_QUEUE = "translation-build"` runs the workflows (BuildQueue + Translate) and the seed / dump / summarize / start-translate-handoff activities at normal concurrency. `LLM_TASK_QUEUE = "translation-llm"` runs **only** `translate_loop_activity`, bounded to `K` concurrent (`max_concurrent_activities=K` on a single shared worker) — a true global cap on how many sources hit the one LLM at once. `K` from env `TRANSLATOR_LLM_CONCURRENCY` (default 2). `worker.py` starts BOTH workers in one process via `asyncio.gather`. `TranslateWorkflow` dispatches `translate_loop_activity` with `task_queue=LLM_TASK_QUEUE` and **no `schedule_to_start_timeout`** (loops wait in queue for a slot); `dump`/`summarize` stay on the default (build) queue. The two constants live in shared `translator/task_queues.py`.
+- `.env` loading uses **python-dotenv** (`load_dotenv(path, override=False)` — shell / `docker -e` still win), a direct dependency; the hand-rolled `load_env_file` parser is deleted.
 - Seed = `clickhouse-connect` `query_arrow()` of the per-field `LEFT ANTI JOIN` scan → register Arrow table in DuckDB → set-based `INSERT … SELECT` into queue tables with `item_id = sha256(sha256(source_text) || '|en')` computed in DuckDB SQL. NO per-row Python.
 - Dump = fully self-contained per source (`norway_brreg/dump.py`), batched staging-table writes to `corpscout.text_translations` keyed `(source_table, source_column, source_text_hash=cityHash64(source_text))`, hashing in ClickHouse SQL. Reuses `translator/flush.py:flush_translations`.
-- Shared `translator/llm_batch.py` = the common "translate N claimed queue items via the LLM" function (extracted from current `activities.py` / `queue_smoke.py` / `provider_smoke.py`).
+- De-smoke first: the historical `Smoke*` names are smoke-test leftovers on production code. Before any new code, rename `translator/types.py` `SmokeTranslationInput`/`SmokeTranslationResult` → `TranslationInput`/`TranslationResult`, `translator/smoke.py` → `translator/provider.py` (`build_smoke_translation_prompt`→`build_translation_prompt`, `parse_smoke_translation_response`→`parse_translation_response`, keep the class `LocalOpenAICompatibleTranslationProvider`, add `_parse_extra_body`), move error helpers to `translator/errors.py`, and delete the smoke-test files (`provider_smoke.py`, `queue_smoke.py`). No production `Smoke`/`smoke` identifiers may remain anywhere.
+- Shared `translator/llm_batch.py` = the common "translate N claimed queue items via the LLM" function (it builds the provider inputs + queue-id mapping itself, superseding the old `queue_smoke._provider_inputs`/`_map_provider_results_to_queue_ids`).
 - Liveness = heartbeat only: long activities call `activity.heartbeat()` (~30 s / N items); activity options `heartbeat_timeout=timedelta(seconds=150)`, `start_to_close_timeout=timedelta(hours=24)` backstop, `RetryPolicy(maximum_attempts=3)`. REMOVE `scan_timeout_seconds` / `flush_timeout_seconds` from the workflow input.
-- Reuse unchanged: `corpscout.text_translations` + `corpscout.no_companies_translated` view + migrations 000056 / 000059–000070; the LLM provider (`smoke.py`); the DuckDB queue schema (`translation_items` / `translation_locations` / `translation_results` / `translation_batch_attempts`).
+- Reuse unchanged: `corpscout.text_translations` + `corpscout.no_companies_translated` view + migrations 000056 / 000059–000070; the LLM provider (`translator/provider.py`, formerly `smoke.py`); the DuckDB queue schema (`translation_items` / `translation_locations` / `translation_results` / `translation_batch_attempts`).
 - Cutover: delete `data/translator/norway_brreg.duckdb` (+ `.wal`) so the new seed builds a fresh queue. The Norway Dagster trigger now fires `BuildQueueWorkflow` (id `build-queue-norway_brreg`).
 - No `from __future__ import annotations` in modules defining `@dg.asset` / `@dlt_assets` / `@dbt_assets` — translator modules are temporalio so this rule applies only to the Dagster trigger file (`assets.py`).
 - Validate with: `uv run dg check defs` + `uv run pytest -q`.
@@ -29,18 +32,27 @@
 
 | Action | Path |
 |--------|------|
+| **Modify (Task 1)** | `translator/types.py` — `Smoke*` → `Translation*` renames |
+| **Create (Task 1)** | `translator/provider.py` — from `smoke.py` (renamed fns + `_parse_extra_body`) |
+| **Create (Task 1)** | `translator/errors.py` — relocated error-categorisation helpers |
+| **Modify (Task 1)** | `translator/queue.py`, `translator/activities.py` — de-smoke imports |
+| **Delete (Task 1)** | `translator/smoke.py`, `translator/provider_smoke.py`, `translator/queue_smoke.py` |
 | **Create** | `translator/llm_batch.py` |
 | **Modify** | `translator/clickhouse.py` |
 | **Create** | `translator/norway_brreg/__init__.py` |
 | **Create** | `translator/norway_brreg/config.py` |
 | **Create** | `translator/norway_brreg/seed.py` |
 | **Create** | `translator/norway_brreg/dump.py` |
+| **Create (Task 7)** | `translator/task_queues.py` — shared `BUILD_TASK_QUEUE` / `LLM_TASK_QUEUE` constants |
 | **Create** | `translator/norway_brreg/workflows.py` |
-| **Modify** | `translator/worker.py` |
+| **Modify (Task 8)** | `pyproject.toml` — add `python-dotenv>=1.0` dependency |
+| **Modify** | `translator/worker.py` — two-worker fleet + python-dotenv |
+| **Modify (Task 8)** | `translator/import_legacy.py` — switch env load to `load_dotenv` |
 | **Modify** | `src/dagster_v3/defs/norway_brreg/assets.py` |
-| **Delete (Task 9)** | `translator/workflow.py` |
-| **Delete (Task 9)** | `translator/activities.py` |
-| **Modify (Task 9)** | `translator/registry.py` → deleted; `import_legacy.py` updated |
+| **Delete (Task 10)** | `translator/workflow.py` |
+| **Delete (Task 10)** | `translator/activities.py` |
+| **Modify (Task 10)** | `translator/registry.py` → deleted; `import_legacy.py` updated |
+| **Modify (Task 1)** | `tests/test_translator_workflow.py`, `tests/test_translator_queue_flush_results.py`, `tests/test_translator_imports.py`, `tests/test_translator_import_legacy.py` — de-smoke names |
 | **Create** | `tests/test_translator_llm_batch.py` |
 | **Create** | `tests/test_norway_brreg_config.py` |
 | **Create** | `tests/test_norway_brreg_seed.py` |
@@ -49,28 +61,410 @@
 | **Replace** | `tests/test_translator_workflow.py` |
 | **Modify** | `tests/test_translator_worker.py` |
 | **Modify** | `tests/test_translator_trigger.py` |
-| **Replace** | `tests/test_translator_registry.py` → `tests/test_norway_brreg_config.py` (Task 3) |
+| **Replace** | `tests/test_translator_registry.py` → `tests/test_norway_brreg_config.py` (Task 4) |
 | **Modify** | `tests/test_translator_imports.py` |
 
 ---
 
-### Task 1: `translator/llm_batch.py` — shared LLM batch call
+### Task 1: De-smoke the translator
+
+The `Smoke*` names are historical smoke-test leftovers on production code. This task is a **behaviour-preserving refactor of the existing translator** — it renames the production types/modules, relocates the production helpers into clearly-named modules, and deletes the genuine one-off smoke-test CLIs. It runs **before** any new code so every later task references the clean names. The safety net is the existing test suite (kept green throughout). It runs **before** the dead-code deletion (Task 10).
+
+**Smoke-test CLI decision:** `pyproject.toml [project.scripts]` exposes only `translator-worker` and `translator-import-legacy-queue` — neither `provider_smoke:main` nor `queue_smoke:main`. No test imports `run_translation_provider_smoke` / `run_translation_queue_smoke`. They are unreferenced one-off prototypes → **deleted** (no `provider_check.py` kept).
+
+**Files:**
+- Modify: `translator/types.py` — rename the two dataclasses
+- Create: `translator/provider.py` — from `translator/smoke.py` (renamed functions + `_parse_extra_body`)
+- Create: `translator/errors.py` — relocated error-categorisation helpers
+- Modify: `translator/queue.py` — de-smoke type import + annotation
+- Modify: `translator/activities.py` — de-smoke imports; inline the two superseded helpers
+- Delete: `translator/smoke.py`, `translator/provider_smoke.py`, `translator/queue_smoke.py`
+- Modify: `tests/test_translator_workflow.py`, `tests/test_translator_queue_flush_results.py`, `tests/test_translator_imports.py`, `tests/test_translator_import_legacy.py`
+
+**Interfaces:**
+- Produces (consumed by Tasks 2–10):
+  - `translator.types.TranslationInput(item_id: str, source_text: str)`, `translator.types.TranslationResult(item_id: str, translated_text: str)` — frozen dataclasses (renamed from `Smoke*`)
+  - `translator.provider`: `build_translation_prompt(items) -> str`, `parse_translation_response(text, *, expected_item_ids) -> list[TranslationResult]`, `_parse_extra_body(value: str) -> dict | None`, class `LocalOpenAICompatibleTranslationProvider`
+  - `translator.errors`: `_categorize_exception(exc) -> str`, `_exception_chain_messages(exc) -> list[str]`, `_exception_chain_class_names(exc) -> str`
+
+- [ ] **Step 1.1: Capture the green baseline**
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3
+uv run pytest -q 2>&1 | tail -5
+```
+Expected: the suite passes (this is the refactor's safety net). Note the passing count.
+
+- [ ] **Step 1.2: Rename the dataclasses in `translator/types.py`**
+
+Replace the whole body below the `from dataclasses import dataclass` line:
+
+```python
+# translator/types.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class TranslationInput:
+    item_id: str
+    source_text: str
+
+
+@dataclass(frozen=True)
+class TranslationResult:
+    item_id: str
+    translated_text: str
+```
+
+- [ ] **Step 1.3: Create `translator/errors.py`**
+
+Move `_categorize_exception`, `_exception_chain_messages`, `_exception_chain_class_names` out of `provider_smoke.py` verbatim:
+
+```python
+# translator/errors.py
+"""Error categorisation helpers for the translation provider."""
+from __future__ import annotations
+
+
+def _categorize_exception(exc: Exception) -> str:
+    message = str(exc).lower()
+    chain_messages = _exception_chain_messages(exc)
+    combined = " ".join([message, *chain_messages])
+    class_names = _exception_chain_class_names(exc)
+
+    if "connectionrefusederror" in class_names or "connection refused" in combined:
+        return "connection_refused"
+    if "timeout" in combined or "timeout" in class_names:
+        return "timeout"
+    if "json" in combined or "jsondecodeerror" in class_names:
+        return "invalid_json"
+    if "missing item_id" in combined:
+        return "missing_item_ids"
+    if "item_id" in combined or "translation response" in combined:
+        return "invalid_response"
+    return "provider_error"
+
+
+def _exception_chain_messages(exc: BaseException) -> list[str]:
+    messages: list[str] = []
+    current = exc.__cause__ or exc.__context__
+    while current is not None:
+        messages.append(str(current).lower())
+        current = current.__cause__ or current.__context__
+    return messages
+
+
+def _exception_chain_class_names(exc: BaseException) -> str:
+    names: list[str] = []
+    current: BaseException | None = exc
+    while current is not None:
+        names.append(type(current).__name__.lower())
+        current = current.__cause__ or current.__context__
+    return " ".join(names)
+```
+
+- [ ] **Step 1.4: Create `translator/provider.py` (from `smoke.py`)**
+
+Rename `build_smoke_translation_prompt`→`build_translation_prompt`, `parse_smoke_translation_response`→`parse_translation_response`, switch to `TranslationInput`/`TranslationResult`, and fold in `_parse_extra_body` (moved from `provider_smoke.py`). The class keeps its name.
+
+```python
+# translator/provider.py
+"""OpenAI-compatible local translation provider (formerly smoke.py)."""
+from __future__ import annotations
+
+import json
+
+from openai import OpenAI
+
+from translator.types import TranslationInput, TranslationResult
+
+
+DEFAULT_MAX_TOKENS = 2048
+DEFAULT_EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def build_translation_prompt(items: list[TranslationInput]) -> str:
+    payload = {
+        "source_language": "Norwegian",
+        "target_language": "English",
+        "items": [
+            {"item_id": item.item_id, "source_text": item.source_text}
+            for item in items
+        ],
+    }
+    return (
+        "/no_think\n"
+        "Translate each Norwegian company registry text fragment to English. "
+        "Preserve legal and business meaning. Do not add explanations. "
+        "Do not produce reasoning, chain-of-thought, thinking tags, or Markdown. "
+        "Return only valid JSON with shape "
+        '{"translations":[{"item_id":"...","translated_text":"..."}]}. '
+        "Every item_id in the response must match an input item_id. Input JSON: "
+        f"{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
+    )
+
+
+def parse_translation_response(
+    response_text: str,
+    *,
+    expected_item_ids: set[str],
+) -> list[TranslationResult]:
+    payload = json.loads(_strip_json_fence(response_text))
+    translations = payload.get("translations")
+    if not isinstance(translations, list):
+        raise ValueError("translation response must contain translations list")
+
+    results: list[TranslationResult] = []
+    seen: set[str] = set()
+    for row in translations:
+        if not isinstance(row, dict):
+            raise ValueError("translation response row must be object")
+        item_id = row.get("item_id")
+        translated_text = row.get("translated_text")
+        if not isinstance(item_id, str) or item_id not in expected_item_ids:
+            raise ValueError(f"unexpected item_id: {item_id}")
+        if item_id in seen:
+            raise ValueError(f"duplicate item_id: {item_id}")
+        if not isinstance(translated_text, str) or translated_text.strip() == "":
+            raise ValueError(f"empty translated_text for item_id: {item_id}")
+        seen.add(item_id)
+        results.append(
+            TranslationResult(
+                item_id=item_id,
+                translated_text=translated_text.strip(),
+            )
+        )
+    missing_item_ids = expected_item_ids - seen
+    if missing_item_ids:
+        raise ValueError(f"missing item_id values: {sorted(missing_item_ids)}")
+    return results
+
+
+def _parse_extra_body(value: str) -> dict[str, object] | None:
+    if value.strip() == "":
+        return None
+    payload = json.loads(value)
+    if not isinstance(payload, dict):
+        raise ValueError("extra body JSON must be an object")
+    return payload
+
+
+class LocalOpenAICompatibleTranslationProvider:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        api_key: str,
+        client: OpenAI | None = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        extra_body: dict[str, object] | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.api_key = api_key
+        self.max_tokens = max_tokens
+        self.extra_body = extra_body if extra_body is not None else DEFAULT_EXTRA_BODY
+        self._owns_client = client is None
+        if client is None:
+            self.client = OpenAI(
+                base_url=self.base_url,
+                api_key=self.api_key,
+                max_retries=0,
+            )
+        else:
+            self.client = client
+
+    def translate(
+        self,
+        items: list[TranslationInput],
+        *,
+        timeout_seconds: int,
+    ) -> list[TranslationResult]:
+        prompt = build_translation_prompt(items)
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=self.max_tokens,
+            extra_body=self.extra_body,
+            timeout=timeout_seconds,
+        )
+        content = response.choices[0].message.content
+        if content is None:
+            raise ValueError("translation response content is empty")
+        return parse_translation_response(
+            content,
+            expected_item_ids={item.item_id for item in items},
+        )
+
+    def close(self) -> None:
+        if self._owns_client:
+            self.client.close()
+
+
+def _strip_json_fence(response_text: str) -> str:
+    stripped = response_text.strip()
+    if stripped.startswith("```json") and stripped.endswith("```"):
+        return stripped.removeprefix("```json").removesuffix("```").strip()
+    if stripped.startswith("```") and stripped.endswith("```"):
+        return stripped.removeprefix("```").removesuffix("```").strip()
+    return stripped
+```
+
+- [ ] **Step 1.5: Update `translator/queue.py`**
+
+Replace the import (line 11) and the `complete_batch` annotation:
+
+```python
+# In translator/queue.py — replace:
+from translator.types import SmokeTranslationResult
+# With:
+from translator.types import TranslationResult
+```
+
+```python
+# In translator/queue.py — replace the complete_batch signature line:
+        translations: list[SmokeTranslationResult],
+# With:
+        translations: list[TranslationResult],
+```
+
+- [ ] **Step 1.6: Update `translator/activities.py`**
+
+(a) Replace the top-of-file types import (line 13):
+
+```python
+# replace:
+from translator.types import SmokeTranslationResult
+# with:
+from typing import TYPE_CHECKING
+
+from translator.types import TranslationInput, TranslationResult
+
+if TYPE_CHECKING:
+    from translator.queue import ClaimedTranslationItem
+```
+
+(b) Replace the lazy imports inside `process_translation_batch_once`:
+
+```python
+# replace:
+    from translator.provider_smoke import _categorize_exception, _parse_extra_body
+    from translator.queue import TranslationQueue
+    from translator.queue_smoke import (
+        _map_provider_results_to_queue_ids,
+        _provider_inputs,
+    )
+    from translator.smoke import LocalOpenAICompatibleTranslationProvider
+# with:
+    from translator.errors import _categorize_exception
+    from translator.provider import (
+        LocalOpenAICompatibleTranslationProvider,
+        _parse_extra_body,
+    )
+    from translator.queue import TranslationQueue
+```
+
+(c) Add the two superseded helpers (formerly in `queue_smoke.py`) as module-level functions at the end of `translator/activities.py`:
+
+```python
+def _provider_inputs(items: list["ClaimedTranslationItem"]) -> list[TranslationInput]:
+    return [
+        TranslationInput(
+            item_id=f"batch-item-{index:03d}",
+            source_text=item.source_text,
+        )
+        for index, item in enumerate(items)
+    ]
+
+
+def _map_provider_results_to_queue_ids(
+    translations: list[TranslationResult],
+    *,
+    queue_id_by_provider_id: dict[str, str],
+) -> list[TranslationResult]:
+    return [
+        TranslationResult(
+            item_id=queue_id_by_provider_id[translation.item_id],
+            translated_text=translation.translated_text,
+        )
+        for translation in translations
+    ]
+```
+
+- [ ] **Step 1.7: De-smoke the four affected test files**
+
+Apply these exact substitutions in `tests/test_translator_workflow.py`, `tests/test_translator_queue_flush_results.py`, `tests/test_translator_imports.py`, and `tests/test_translator_import_legacy.py`:
+
+- `SmokeTranslationResult` → `TranslationResult`
+- `SmokeTranslationInput` → `TranslationInput`
+- `from translator.smoke import LocalOpenAICompatibleTranslationProvider` → `from translator.provider import LocalOpenAICompatibleTranslationProvider`
+
+Run the substitutions and verify nothing was missed:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3
+sed -i '' \
+  -e 's/SmokeTranslationResult/TranslationResult/g' \
+  -e 's/SmokeTranslationInput/TranslationInput/g' \
+  -e 's/from translator\.smoke import/from translator.provider import/g' \
+  tests/test_translator_workflow.py \
+  tests/test_translator_queue_flush_results.py \
+  tests/test_translator_imports.py \
+  tests/test_translator_import_legacy.py
+rg -n "Smoke|translator\.smoke" tests/test_translator_*.py
+```
+Expected: the `rg` prints nothing (no residual smoke references in tests).
+
+- [ ] **Step 1.8: Delete the smoke files**
+
+```bash
+git rm translator/smoke.py translator/provider_smoke.py translator/queue_smoke.py
+```
+
+- [ ] **Step 1.9: Run the full suite + dg check — expect GREEN**
+
+```bash
+uv run pytest -q 2>&1 | tail -5
+uv run dg check defs
+echo "=== no production smoke references remain ==="
+rg -n "Smoke|from translator\.smoke|translator\.provider_smoke|translator\.queue_smoke" translator/ tests/
+```
+Expected: suite passes (same count as Step 1.1), `dg check defs` exits 0, and the final `rg` prints nothing.
+
+- [ ] **Step 1.10: Commit**
+
+```bash
+git add translator/types.py translator/provider.py translator/errors.py \
+        translator/queue.py translator/activities.py \
+        tests/test_translator_workflow.py tests/test_translator_queue_flush_results.py \
+        tests/test_translator_imports.py tests/test_translator_import_legacy.py
+# the smoke files were already staged for deletion by `git rm` in Step 1.8
+git commit -m "refactor(translator): de-smoke — rename Translation types, add provider.py + errors.py, drop smoke-test CLIs"
+```
+
+---
+
+### Task 2: `translator/llm_batch.py` — shared LLM batch call
 
 **Files:**
 - Create: `translator/llm_batch.py`
 - Create: `tests/test_translator_llm_batch.py`
 
 **Interfaces:**
-- Consumes: `ClaimedTranslationItem` from `translator.queue`; `SmokeTranslationInput`, `SmokeTranslationResult` from `translator.types`; `LocalOpenAICompatibleTranslationProvider` protocol from `translator.smoke` (the `.translate(items, *, timeout_seconds)` method).
-- Produces: `translate_batch(items: list[ClaimedTranslationItem], *, provider: Any, timeout: int) -> list[SmokeTranslationResult]` — results have `item_id` values matching the **queue** `item_id` (not positional provider ids). Raises on provider error — caller handles fail_batch.
+- Consumes: `ClaimedTranslationItem` from `translator.queue`; `TranslationInput`, `TranslationResult` from `translator.types`; `LocalOpenAICompatibleTranslationProvider` protocol from `translator.provider` (the `.translate(items, *, timeout_seconds)` method).
+- Produces: `translate_batch(items: list[ClaimedTranslationItem], *, provider: Any, timeout: int) -> list[TranslationResult]` — results have `item_id` values matching the **queue** `item_id` (not positional provider ids). Raises on provider error — caller handles fail_batch.
 
-- [ ] **Step 1.1: Write the failing test**
+- [ ] **Step 2.1: Write the failing test**
 
 ```python
 # tests/test_translator_llm_batch.py
 from translator.llm_batch import translate_batch
 from translator.queue import ClaimedTranslationItem
-from translator.types import SmokeTranslationInput, SmokeTranslationResult
+from translator.types import TranslationInput, TranslationResult
 
 
 def _claimed(n: int) -> list[ClaimedTranslationItem]:
@@ -89,17 +483,17 @@ def _claimed(n: int) -> list[ClaimedTranslationItem]:
 class _FakeProvider:
     """Echoes source_text uppercased; tracks calls."""
 
-    called_with: list[list[SmokeTranslationInput]] = []
+    called_with: list[list[TranslationInput]] = []
 
     def translate(
         self,
-        items: list[SmokeTranslationInput],
+        items: list[TranslationInput],
         *,
         timeout_seconds: int,
-    ) -> list[SmokeTranslationResult]:
+    ) -> list[TranslationResult]:
         _FakeProvider.called_with.append(items)
         return [
-            SmokeTranslationResult(item_id=item.item_id, translated_text=item.source_text.upper())
+            TranslationResult(item_id=item.item_id, translated_text=item.source_text.upper())
             for item in items
         ]
 
@@ -145,7 +539,7 @@ def test_translate_batch_empty_items_returns_empty():
     assert results == []
 ```
 
-- [ ] **Step 1.2: Run test — expect FAIL**
+- [ ] **Step 2.2: Run test — expect FAIL**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3
@@ -153,7 +547,7 @@ uv run pytest tests/test_translator_llm_batch.py -v 2>&1 | head -20
 ```
 Expected: `ModuleNotFoundError: No module named 'translator.llm_batch'`
 
-- [ ] **Step 1.3: Implement `translator/llm_batch.py`**
+- [ ] **Step 2.3: Implement `translator/llm_batch.py`**
 
 ```python
 # translator/llm_batch.py
@@ -163,7 +557,7 @@ from __future__ import annotations
 from typing import Any
 
 from translator.queue import ClaimedTranslationItem
-from translator.types import SmokeTranslationInput, SmokeTranslationResult
+from translator.types import TranslationInput, TranslationResult
 
 
 def translate_batch(
@@ -171,7 +565,7 @@ def translate_batch(
     *,
     provider: Any,
     timeout: int,
-) -> list[SmokeTranslationResult]:
+) -> list[TranslationResult]:
     """Call the LLM provider for a list of claimed queue items.
 
     Constructs positional provider item_ids (batch-item-NNN) so the provider
@@ -181,18 +575,18 @@ def translate_batch(
     Args:
         items:    Claimed items from the DuckDB queue.
         provider: Any object with a ``.translate(items, *, timeout_seconds)``
-                  method returning ``list[SmokeTranslationResult]``.
+                  method returning ``list[TranslationResult]``.
         timeout:  Per-call timeout in seconds passed to the provider.
 
     Returns:
-        ``SmokeTranslationResult`` list with ``item_id`` values matching the
+        ``TranslationResult`` list with ``item_id`` values matching the
         input ``ClaimedTranslationItem.item_id`` values (queue ids).
     """
     if not items:
         return []
 
     provider_inputs = [
-        SmokeTranslationInput(
+        TranslationInput(
             item_id=f"batch-item-{index:03d}",
             source_text=item.source_text,
         )
@@ -207,7 +601,7 @@ def translate_batch(
     raw_results = provider.translate(provider_inputs, timeout_seconds=timeout)
 
     return [
-        SmokeTranslationResult(
+        TranslationResult(
             item_id=queue_id_by_provider_id[result.item_id],
             translated_text=result.translated_text,
         )
@@ -215,14 +609,14 @@ def translate_batch(
     ]
 ```
 
-- [ ] **Step 1.4: Run tests — expect PASS**
+- [ ] **Step 2.4: Run tests — expect PASS**
 
 ```bash
 uv run pytest tests/test_translator_llm_batch.py -v
 ```
 Expected: 4 tests pass.
 
-- [ ] **Step 1.5: Commit**
+- [ ] **Step 2.5: Commit**
 
 ```bash
 git add translator/llm_batch.py tests/test_translator_llm_batch.py
@@ -231,7 +625,7 @@ git commit -m "feat(translator): add shared llm_batch.translate_batch"
 
 ---
 
-### Task 2: `translator/clickhouse.py` — add `query_arrow()` helper
+### Task 3: `translator/clickhouse.py` — add `query_arrow()` helper
 
 **Files:**
 - Modify: `translator/clickhouse.py`
@@ -241,7 +635,7 @@ git commit -m "feat(translator): add shared llm_batch.translate_batch"
 - Consumes: `clickhouse_connect` client (already has `.query_arrow(sql, parameters=dict)` method returning a `pyarrow.Table`).
 - Produces: `query_arrow(client: Any, sql: str, parameters: dict[str, Any] | None = None) -> Any` — returns whatever the client's `query_arrow` returns (a PyArrow Table). Type annotation uses `Any` to avoid a hard pyarrow dep at import time.
 
-- [ ] **Step 2.1: Write the failing tests**
+- [ ] **Step 3.1: Write the failing tests**
 
 Add to `tests/test_translator_scan.py`:
 
@@ -277,14 +671,14 @@ def test_query_arrow_passes_empty_dict_when_parameters_is_none():
     assert client.calls[0]["parameters"] == {}
 ```
 
-- [ ] **Step 2.2: Run tests — expect FAIL**
+- [ ] **Step 3.2: Run tests — expect FAIL**
 
 ```bash
 uv run pytest tests/test_translator_scan.py::test_query_arrow_delegates_to_client_query_arrow -v
 ```
 Expected: `ImportError: cannot import name 'query_arrow'`
 
-- [ ] **Step 2.3: Add `query_arrow` to `translator/clickhouse.py`**
+- [ ] **Step 3.3: Add `query_arrow` to `translator/clickhouse.py`**
 
 Open `translator/clickhouse.py` and add after the `scan_untranslated_terms` function:
 
@@ -304,14 +698,14 @@ from typing import Any
 ```
 (`clickhouse.py` already imports `Any` via `from typing import Any`.)
 
-- [ ] **Step 2.4: Run tests — expect PASS**
+- [ ] **Step 3.4: Run tests — expect PASS**
 
 ```bash
 uv run pytest tests/test_translator_scan.py -v
 ```
 Expected: all tests (including the 2 new ones) pass.
 
-- [ ] **Step 2.5: Commit**
+- [ ] **Step 3.5: Commit**
 
 ```bash
 git add translator/clickhouse.py tests/test_translator_scan.py
@@ -320,7 +714,7 @@ git commit -m "feat(translator/clickhouse): add query_arrow() helper"
 
 ---
 
-### Task 3: `translator/norway_brreg/` package + `config.py`
+### Task 4: `translator/norway_brreg/` package + `config.py`
 
 **Files:**
 - Create: `translator/norway_brreg/__init__.py`
@@ -335,7 +729,7 @@ git commit -m "feat(translator/clickhouse): add query_arrow() helper"
   - `get_config() -> SourceConfig` — returns the Norway Brreg config
   - `translator.registry.get_source_config("norway_brreg")` continues to work (imports from `norway_brreg/config.py`)
 
-- [ ] **Step 3.1: Write the failing tests**
+- [ ] **Step 4.1: Write the failing tests**
 
 ```python
 # tests/test_norway_brreg_config.py
@@ -395,21 +789,21 @@ def test_registry_unknown_source_raises_key_error():
         get_source_config("atlantis")
 ```
 
-- [ ] **Step 3.2: Run tests — expect FAIL**
+- [ ] **Step 4.2: Run tests — expect FAIL**
 
 ```bash
 uv run pytest tests/test_norway_brreg_config.py -v 2>&1 | head -10
 ```
 Expected: `ModuleNotFoundError: No module named 'translator.norway_brreg'`
 
-- [ ] **Step 3.3: Create `translator/norway_brreg/__init__.py`**
+- [ ] **Step 4.3: Create `translator/norway_brreg/__init__.py`**
 
 ```python
 # translator/norway_brreg/__init__.py
 ```
 (empty file)
 
-- [ ] **Step 3.4: Create `translator/norway_brreg/config.py`**
+- [ ] **Step 4.4: Create `translator/norway_brreg/config.py`**
 
 ```python
 # translator/norway_brreg/config.py
@@ -474,7 +868,7 @@ def get_config() -> SourceConfig:
     return _NORWAY_BRREG_CONFIG
 ```
 
-- [ ] **Step 3.5: Update `translator/registry.py` to delegate**
+- [ ] **Step 4.5: Update `translator/registry.py` to delegate**
 
 Replace the entire `registry.py` with a thin shim that imports from the per-source package. This preserves `import_legacy.py` and the existing tests that import from `translator.registry`.
 
@@ -484,7 +878,7 @@ Replace the entire `registry.py` with a thin shim that imports from the per-sour
 
 New code should import directly from e.g. ``translator.norway_brreg.config``.
 This module exists solely so ``translator.import_legacy`` and legacy tests keep
-working without change until they are updated in Task 9.
+working without change until they are updated in Task 10.
 """
 from __future__ import annotations
 
@@ -502,14 +896,14 @@ def get_source_config(source_slug: str) -> SourceConfig:
 __all__ = ["FieldConfig", "SourceConfig", "get_source_config"]
 ```
 
-- [ ] **Step 3.6: Run tests — expect PASS**
+- [ ] **Step 4.6: Run tests — expect PASS**
 
 ```bash
 uv run pytest tests/test_norway_brreg_config.py tests/test_translator_registry.py -v
 ```
 Expected: all pass (both old registry tests and new config tests).
 
-- [ ] **Step 3.7: Commit**
+- [ ] **Step 4.7: Commit**
 
 ```bash
 git add translator/norway_brreg/__init__.py translator/norway_brreg/config.py \
@@ -519,7 +913,7 @@ git commit -m "feat(translator): add norway_brreg/config.py, shim registry.py"
 
 ---
 
-### Task 4: `translator/norway_brreg/seed.py` — Arrow bulk INSERT seed
+### Task 5: `translator/norway_brreg/seed.py` — Arrow bulk INSERT seed
 
 **Files:**
 - Create: `translator/norway_brreg/seed.py`
@@ -544,7 +938,7 @@ git commit -m "feat(translator): add norway_brreg/config.py, shim registry.py"
 - Arrow table registered as `_scan_result` in DuckDB, then unregistered after INSERT.
 - Static fields resolved via `static_map_dict().get(static_key, "")`, written via `flush_translations(..., provider="static", model="static")`.
 
-- [ ] **Step 4.1: Write the failing tests**
+- [ ] **Step 5.1: Write the failing tests**
 
 ```python
 # tests/test_norway_brreg_seed.py
@@ -718,14 +1112,14 @@ def test_build_queue_empty_source_returns_zero_counts(tmp_path):
     assert result.static_flushed == 0
 ```
 
-- [ ] **Step 4.2: Run tests — expect FAIL**
+- [ ] **Step 5.2: Run tests — expect FAIL**
 
 ```bash
 uv run pytest tests/test_norway_brreg_seed.py -v 2>&1 | head -10
 ```
 Expected: `ModuleNotFoundError: No module named 'translator.norway_brreg.seed'`
 
-- [ ] **Step 4.3: Implement `translator/norway_brreg/seed.py`**
+- [ ] **Step 5.3: Implement `translator/norway_brreg/seed.py`**
 
 ```python
 # translator/norway_brreg/seed.py
@@ -872,14 +1266,14 @@ def build_queue(
     return SeedResult(dynamic_enqueued=dynamic_enqueued, static_flushed=static_flushed)
 ```
 
-- [ ] **Step 4.4: Run tests — expect PASS**
+- [ ] **Step 5.4: Run tests — expect PASS**
 
 ```bash
 uv run pytest tests/test_norway_brreg_seed.py -v
 ```
 Expected: all 6 tests pass.
 
-- [ ] **Step 4.5: Commit**
+- [ ] **Step 5.5: Commit**
 
 ```bash
 git add translator/norway_brreg/seed.py tests/test_norway_brreg_seed.py
@@ -888,7 +1282,7 @@ git commit -m "feat(translator/norway_brreg): add seed.py — Arrow bulk INSERT 
 
 ---
 
-### Task 5: `translator/norway_brreg/dump.py` — queue → ClickHouse
+### Task 6: `translator/norway_brreg/dump.py` — queue → ClickHouse
 
 **Files:**
 - Create: `translator/norway_brreg/dump.py`
@@ -901,7 +1295,7 @@ git commit -m "feat(translator/norway_brreg): add seed.py — Arrow bulk INSERT 
   - `SourceConfig` from `translator.norway_brreg.config`
 - Produces: `dump_to_clickhouse(queue_duckdb_path: str | Path, ch_client: Any, config: SourceConfig, *, provider: str, model: str, batch_size: int = 50_000, heartbeat_fn: Callable[[], None] | None = None) -> int` — total rows written.
 
-- [ ] **Step 5.1: Write the failing tests**
+- [ ] **Step 6.1: Write the failing tests**
 
 ```python
 # tests/test_norway_brreg_dump.py
@@ -911,7 +1305,7 @@ from __future__ import annotations
 from translator.norway_brreg.config import get_config
 from translator.norway_brreg.dump import dump_to_clickhouse
 from translator.queue import TranslationQueue, TranslationQueueItem
-from translator.types import SmokeTranslationResult
+from translator.types import TranslationResult
 
 
 # ---------------------------------------------------------------------------
@@ -955,7 +1349,7 @@ def _enqueue_and_complete(tmp_path, texts: list[str]) -> None:
     claimed = q.claim_batch(limit=len(items), worker_id="test")
     q.complete_batch(
         claimed,
-        [SmokeTranslationResult(item_id=c.item_id, translated_text=c.source_text.upper()) for c in claimed],
+        [TranslationResult(item_id=c.item_id, translated_text=c.source_text.upper()) for c in claimed],
         provider="fake",
         model="fake-model",
         duration_seconds=0.1,
@@ -1055,7 +1449,7 @@ def test_dump_skips_empty_translations(tmp_path):
     # Translate to empty string — flush_translations will skip it.
     q.complete_batch(
         claimed,
-        [SmokeTranslationResult(item_id=claimed[0].item_id, translated_text="")],
+        [TranslationResult(item_id=claimed[0].item_id, translated_text="")],
         provider="fake",
         model="fake",
         duration_seconds=0.0,
@@ -1070,14 +1464,14 @@ def test_dump_skips_empty_translations(tmp_path):
     assert written == 0
 ```
 
-- [ ] **Step 5.2: Run tests — expect FAIL**
+- [ ] **Step 6.2: Run tests — expect FAIL**
 
 ```bash
 uv run pytest tests/test_norway_brreg_dump.py -v 2>&1 | head -10
 ```
 Expected: `ModuleNotFoundError: No module named 'translator.norway_brreg.dump'`
 
-- [ ] **Step 5.3: Implement `translator/norway_brreg/dump.py`**
+- [ ] **Step 6.3: Implement `translator/norway_brreg/dump.py`**
 
 ```python
 # translator/norway_brreg/dump.py
@@ -1142,14 +1536,14 @@ def dump_to_clickhouse(
     return written
 ```
 
-- [ ] **Step 5.4: Run tests — expect PASS**
+- [ ] **Step 6.4: Run tests — expect PASS**
 
 ```bash
 uv run pytest tests/test_norway_brreg_dump.py -v
 ```
 Expected: all 5 tests pass.
 
-- [ ] **Step 5.5: Commit**
+- [ ] **Step 6.5: Commit**
 
 ```bash
 git add translator/norway_brreg/dump.py tests/test_norway_brreg_dump.py
@@ -1158,16 +1552,17 @@ git commit -m "feat(translator/norway_brreg): add dump.py — batched queue→Cl
 
 ---
 
-### Task 6: `translator/norway_brreg/workflows.py` — BuildQueueWorkflow + TranslateWorkflow
+### Task 7: `translator/norway_brreg/workflows.py` — BuildQueueWorkflow + TranslateWorkflow
 
 **Files:**
 - Create: `translator/norway_brreg/workflows.py`
 - Create: `tests/test_norway_brreg_workflows.py`
 
 **Interfaces:**
-- Consumes: `SeedResult`, `build_queue` (Task 4); `dump_to_clickhouse` (Task 5); `translate_batch` (Task 1); `TranslationQueue`, `ClaimedTranslationItem` (queue.py); `clickhouse_client_from_env` (clickhouse.py); `_categorize_exception`, `_parse_extra_body` (provider_smoke.py); `LocalOpenAICompatibleTranslationProvider` (smoke.py).
-- Produces (used by Tasks 7 and 8):
-  - `LOCAL_LLM_TRANSLATION_TASK_QUEUE = "translation-local-llm"` (re-exported from activities.py until Task 9 deletes it; declare it here too)
+- Consumes: `SeedResult`, `build_queue` (Task 5); `dump_to_clickhouse` (Task 6); `translate_batch` (Task 2); `TranslationQueue`, `ClaimedTranslationItem` (queue.py); `clickhouse_client_from_env` (clickhouse.py); `_categorize_exception` (`translator.errors`); `_parse_extra_body`, `LocalOpenAICompatibleTranslationProvider` (`translator.provider`).
+- Also creates the shared `translator/task_queues.py` with `BUILD_TASK_QUEUE = "translation-build"` and `LLM_TASK_QUEUE = "translation-llm"` (imported by `workflows.py`, `worker.py`, `assets.py`).
+- Produces (used by Tasks 8 and 9):
+  - `BUILD_TASK_QUEUE`, `LLM_TASK_QUEUE` (in `translator/task_queues.py`); re-imported into `workflows.py`
   - `BuildQueueWorkflowInput(source_slug, queue_duckdb_path, translate_workflow_id, translate_task_queue, batch_size, max_tokens, extra_body_json, max_batch_failures)` — frozen dataclass
   - `BuildQueueWorkflowOutput(dynamic_enqueued, static_flushed)` — frozen dataclass
   - `TranslateWorkflowInput(source_slug, queue_duckdb_path, batch_size, max_tokens, extra_body_json, max_batch_failures)` — frozen dataclass
@@ -1184,7 +1579,7 @@ SHORT_TIMEOUT = timedelta(seconds=60)   # for the handoff activity
 RETRY_POLICY = RetryPolicy(maximum_attempts=3)
 ```
 
-- [ ] **Step 6.1: Write the failing tests**
+- [ ] **Step 7.1: Write the failing tests**
 
 ```python
 # tests/test_norway_brreg_workflows.py
@@ -1202,7 +1597,7 @@ from temporalio.worker import Worker
 from translator.norway_brreg.seed import SeedResult
 from translator.norway_brreg import workflows as wf
 from translator.queue import TranslationQueue, TranslationQueueItem
-from translator.types import SmokeTranslationResult
+from translator.types import TranslationResult
 
 
 # ---------------------------------------------------------------------------
@@ -1258,7 +1653,7 @@ def test_build_queue_workflow_seeds_then_starts_translate(tmp_path, monkeypatch)
         source_slug="norway_brreg",
         queue_duckdb_path=str(tmp_path / "q.duckdb"),
         translate_workflow_id="translate-norway_brreg",
-        translate_task_queue="translation-local-llm",
+        translate_task_queue="translation-build",
         batch_size=50,
         max_tokens=8192,
         extra_body_json="{}",
@@ -1313,7 +1708,7 @@ def test_translate_workflow_drains_queue_and_dumps(tmp_path, monkeypatch):
                 break
             q.complete_batch(
                 claimed,
-                [SmokeTranslationResult(item_id=c.item_id, translated_text=c.source_text.upper()) for c in claimed],
+                [TranslationResult(item_id=c.item_id, translated_text=c.source_text.upper()) for c in claimed],
                 provider="fake",
                 model="fake",
                 duration_seconds=0.0,
@@ -1342,11 +1737,19 @@ def test_translate_workflow_drains_queue_and_dumps(tmp_path, monkeypatch):
 
     async def _run():
         async with await WorkflowEnvironment.start_time_skipping() as env:
+            # Build worker (workflow + dump + summarize on the workflow's own queue)
+            # AND a separate LLM-queue worker for translate_loop_activity — this
+            # proves the loop is routed to LLM_TASK_QUEUE (only that worker can
+            # run it; if routing were wrong the workflow would never complete).
             async with Worker(
                 env.client,
                 task_queue="test-tr",
                 workflows=[wf.TranslateWorkflow],
-                activities=[wf.translate_loop_activity, wf.dump_activity, wf.summarize_queue_activity],
+                activities=[wf.dump_activity, wf.summarize_queue_activity],
+            ), Worker(
+                env.client,
+                task_queue=wf.LLM_TASK_QUEUE,
+                activities=[wf.translate_loop_activity],
             ):
                 return await env.client.execute_workflow(
                     wf.TranslateWorkflow.run,
@@ -1394,7 +1797,11 @@ def test_translate_workflow_tolerates_max_batch_failures(tmp_path, monkeypatch):
                 env.client,
                 task_queue="test-tr2",
                 workflows=[wf.TranslateWorkflow],
-                activities=[wf.translate_loop_activity, wf.dump_activity, wf.summarize_queue_activity],
+                activities=[wf.dump_activity, wf.summarize_queue_activity],
+            ), Worker(
+                env.client,
+                task_queue=wf.LLM_TASK_QUEUE,
+                activities=[wf.translate_loop_activity],
             ):
                 return await env.client.execute_workflow(
                     wf.TranslateWorkflow.run,
@@ -1409,14 +1816,33 @@ def test_translate_workflow_tolerates_max_batch_failures(tmp_path, monkeypatch):
     assert result.failed_batches == 6
 ```
 
-- [ ] **Step 6.2: Run tests — expect FAIL**
+- [ ] **Step 7.2: Run tests — expect FAIL**
 
 ```bash
 uv run pytest tests/test_norway_brreg_workflows.py -v 2>&1 | head -10
 ```
 Expected: `ModuleNotFoundError: No module named 'translator.norway_brreg.workflows'`
 
-- [ ] **Step 6.3: Implement `translator/norway_brreg/workflows.py`**
+- [ ] **Step 7.3: Implement `translator/task_queues.py` + `translator/norway_brreg/workflows.py`**
+
+First the shared task-queue constants:
+
+```python
+# translator/task_queues.py
+"""Shared Temporal task-queue names for the translator worker fleet.
+
+- BUILD_TASK_QUEUE runs the workflows (BuildQueue + Translate) and the
+  seed / dump / summarize / start-translate-handoff activities (normal concurrency).
+- LLM_TASK_QUEUE runs ONLY translate_loop_activity, bounded to K concurrent on a
+  single shared worker — the global LLM gate.
+"""
+from __future__ import annotations
+
+BUILD_TASK_QUEUE = "translation-build"
+LLM_TASK_QUEUE = "translation-llm"
+```
+
+Then the workflows:
 
 ```python
 # translator/norway_brreg/workflows.py
@@ -1443,9 +1869,9 @@ from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.common import RetryPolicy, WorkflowIDConflictPolicy
 
-logger = logging.getLogger("translator.norway_brreg.workflows")
+from translator.task_queues import LLM_TASK_QUEUE
 
-LOCAL_LLM_TRANSLATION_TASK_QUEUE = "translation-local-llm"
+logger = logging.getLogger("translator.norway_brreg.workflows")
 
 HEARTBEAT_TIMEOUT = timedelta(seconds=150)
 START_TO_CLOSE_TIMEOUT = timedelta(hours=24)
@@ -1560,10 +1986,13 @@ def build_queue_once(params: BuildQueueActivityInput):
 
 
 def translate_loop_once(params: TranslateLoopActivityInput):
+    from translator.errors import _categorize_exception
     from translator.llm_batch import translate_batch
-    from translator.provider_smoke import _categorize_exception, _parse_extra_body
+    from translator.provider import (
+        LocalOpenAICompatibleTranslationProvider,
+        _parse_extra_body,
+    )
     from translator.queue import TranslationQueue
-    from translator.smoke import LocalOpenAICompatibleTranslationProvider
 
     queue = TranslationQueue(params.queue_duckdb_path)
     queue.initialize()
@@ -1771,6 +2200,8 @@ class TranslateWorkflow:
 
     @workflow.run
     async def run(self, params: TranslateWorkflowInput) -> TranslateWorkflowOutput:
+        # Route the LLM drain loop to the gated LLM queue. NO schedule_to_start_timeout:
+        # the loop waits in the queue until one of the K global slots frees up.
         loop_result: TranslateLoopResult = await workflow.execute_activity(
             translate_loop_activity,
             TranslateLoopActivityInput(
@@ -1780,11 +2211,13 @@ class TranslateWorkflow:
                 extra_body_json=params.extra_body_json,
                 max_batch_failures=params.max_batch_failures,
             ),
+            task_queue=LLM_TASK_QUEUE,
             heartbeat_timeout=HEARTBEAT_TIMEOUT,
             start_to_close_timeout=START_TO_CLOSE_TIMEOUT,
             retry_policy=RETRY_POLICY,
         )
 
+        # dump + summarize stay on the workflow's own (build) task queue.
         flushed: int = await workflow.execute_activity(
             dump_activity,
             DumpActivityInput(
@@ -1814,145 +2247,175 @@ class TranslateWorkflow:
 
 > **Sandbox safety:** Neither `BuildQueueWorkflow.run` nor `TranslateWorkflow.run` reads `os.environ` or does any I/O in the workflow body — all env access happens inside activities (which run outside the deterministic sandbox). This keeps the workflows replay-deterministic.
 
-- [ ] **Step 6.4: Run tests — expect PASS**
+- [ ] **Step 7.4: Run tests — expect PASS**
 
 ```bash
 uv run pytest tests/test_norway_brreg_workflows.py -v
 ```
 Expected: all 3 tests pass.
 
-- [ ] **Step 6.5: Commit**
+- [ ] **Step 7.5: Commit**
 
 ```bash
-git add translator/norway_brreg/workflows.py tests/test_norway_brreg_workflows.py
-git commit -m "feat(translator/norway_brreg): add BuildQueueWorkflow + TranslateWorkflow"
+git add translator/task_queues.py translator/norway_brreg/workflows.py tests/test_norway_brreg_workflows.py
+git commit -m "feat(translator/norway_brreg): add BuildQueueWorkflow + TranslateWorkflow + shared task_queues"
 ```
 
 ---
 
-### Task 7: `translator/worker.py` — register new workflows
+### Task 8: `translator/worker.py` — two-worker fleet + python-dotenv
 
 **Files:**
-- Modify: `translator/worker.py`
+- Modify: `pyproject.toml` — add `python-dotenv>=1.0`
+- Modify: `translator/worker.py` — two-worker fleet (build + LLM gate); python-dotenv
+- Modify: `translator/import_legacy.py` — switch env loading to `load_dotenv`
 - Modify: `tests/test_translator_worker.py`
 
 **Interfaces:**
-- Consumes: all activities and workflows from `translator.norway_brreg.workflows`.
-- Produces: `build_worker(client) -> Worker` — registers `BuildQueueWorkflow`, `TranslateWorkflow`, and all 5 activities from norway_brreg.
+- Consumes: `BUILD_TASK_QUEUE`, `LLM_TASK_QUEUE` from `translator.task_queues`; all activities + workflows from `translator.norway_brreg.workflows`.
+- Produces:
+  - `build_build_worker(client) -> Worker` — `task_queue=BUILD_TASK_QUEUE`, `workflows=[BuildQueueWorkflow, TranslateWorkflow]`, `activities=[build_queue_activity, start_translate_workflow_activity, dump_activity, summarize_queue_activity]`
+  - `build_llm_worker(client, *, max_concurrent: int) -> Worker` — `task_queue=LLM_TASK_QUEUE`, `activities=[translate_loop_activity]`, `max_concurrent_activities=max_concurrent`
+  - `llm_concurrency() -> int` — reads `TRANSLATOR_LLM_CONCURRENCY` (default 2)
+  - `run_worker(...)` runs both via `asyncio.gather`
 
-- [ ] **Step 7.1: Update `tests/test_translator_worker.py`**
+- [ ] **Step 8.1: Add `python-dotenv` to `pyproject.toml`**
 
-Replace the entire file:
+Add the dependency to the `[project] dependencies` array (keep it alphabetical-ish, after `polars`):
+
+```toml
+    "polars[rtcompat]>=1.41.2",
+    "pyarrow>=24.0.0",
+    "python-dotenv>=1.0",
+    "requests>=2.34.2",
+```
+
+Then sync the env:
+
+```bash
+cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3
+uv sync
+```
+
+- [ ] **Step 8.2: Update `tests/test_translator_worker.py`**
+
+Replace the entire file (drops the two `load_env_file` unit tests; adds a `load_dotenv` override-False test and the two-worker assertions):
 
 ```python
 # tests/test_translator_worker.py
 import os
 
+from dotenv import load_dotenv
+
 from translator import worker as w
+from translator.task_queues import BUILD_TASK_QUEUE, LLM_TASK_QUEUE
 from translator.norway_brreg.workflows import (
-    LOCAL_LLM_TRANSLATION_TASK_QUEUE,
     BuildQueueWorkflow,
     TranslateWorkflow,
-    build_queue_activity,
-    dump_activity,
-    start_translate_workflow_activity,
-    summarize_queue_activity,
-    translate_loop_activity,
 )
 
 
-def test_build_worker_registers_both_workflows(monkeypatch):
-    captured = {}
+class _FakeWorker:
+    """Captures Worker(...) kwargs; one instance recorded per construction."""
 
-    class _FakeWorker:
-        def __init__(self, client, *, task_queue, workflows, activities):
-            captured.update(task_queue=task_queue, workflows=list(workflows), activities=list(activities))
+    instances: list[dict] = []
 
+    def __init__(self, client, *, task_queue, activities, workflows=None, max_concurrent_activities=None):
+        _FakeWorker.instances.append({
+            "task_queue": task_queue,
+            "workflows": list(workflows or []),
+            "activities": list(activities),
+            "max_concurrent_activities": max_concurrent_activities,
+        })
+
+
+def _activity_names(activities) -> set[str]:
+    return {getattr(a, "__name__", getattr(a, "name", "")) for a in activities}
+
+
+def test_build_build_worker_registers_workflows_on_build_queue(monkeypatch):
+    _FakeWorker.instances = []
     monkeypatch.setattr(w, "Worker", _FakeWorker)
-    w.build_worker(object())
+    w.build_build_worker(object())
 
-    assert captured["task_queue"] == LOCAL_LLM_TRANSLATION_TASK_QUEUE
-    assert BuildQueueWorkflow in captured["workflows"]
-    assert TranslateWorkflow in captured["workflows"]
+    rec = _FakeWorker.instances[0]
+    assert rec["task_queue"] == BUILD_TASK_QUEUE
+    assert BuildQueueWorkflow in rec["workflows"]
+    assert TranslateWorkflow in rec["workflows"]
+    names = _activity_names(rec["activities"])
+    assert {"build_queue_activity", "start_translate_workflow_activity",
+            "dump_activity", "summarize_queue_activity"} <= names
+    # translate_loop runs ONLY on the LLM worker, never the build worker.
+    assert "translate_loop_activity" not in names
 
 
-def test_build_worker_registers_all_norway_brreg_activities(monkeypatch):
-    captured = {}
-
-    class _FakeWorker:
-        def __init__(self, client, *, task_queue, workflows, activities):
-            captured["activities"] = list(activities)
-
+def test_build_llm_worker_gates_translate_loop_with_k(monkeypatch):
+    _FakeWorker.instances = []
     monkeypatch.setattr(w, "Worker", _FakeWorker)
-    w.build_worker(object())
+    w.build_llm_worker(object(), max_concurrent=3)
 
-    names = {getattr(a, "__name__", getattr(a, "name", "")) for a in captured["activities"]}
-    expected = {
-        "build_queue_activity",
-        "start_translate_workflow_activity",
-        "translate_loop_activity",
-        "dump_activity",
-        "summarize_queue_activity",
-    }
-    assert expected <= names
+    rec = _FakeWorker.instances[0]
+    assert rec["task_queue"] == LLM_TASK_QUEUE
+    assert rec["max_concurrent_activities"] == 3
+    names = _activity_names(rec["activities"])
+    assert names == {"translate_loop_activity"}
+    # No workflows on the LLM worker.
+    assert rec["workflows"] == []
 
 
-def test_load_env_file_sets_vars_without_overriding(tmp_path, monkeypatch):
+def test_llm_concurrency_defaults_to_2_and_reads_env(monkeypatch):
+    monkeypatch.delenv("TRANSLATOR_LLM_CONCURRENCY", raising=False)
+    assert w.llm_concurrency() == 2
+    monkeypatch.setenv("TRANSLATOR_LLM_CONCURRENCY", "5")
+    assert w.llm_concurrency() == 5
+
+
+def test_load_dotenv_does_not_override_existing(tmp_path, monkeypatch):
     env = tmp_path / ".env"
-    env.write_text(
-        "# a comment\n"
-        "\n"
-        "export FOO=bar\n"
-        'QUOTED="baz qux"\n'
-        'JSONV={"chat_template_kwargs":{"enable_thinking":false}}\n'
-        "ALREADY=fromfile\n",
-        encoding="utf-8",
-    )
+    env.write_text("FOO=fromfile\nALREADY=fromfile\n", encoding="utf-8")
     monkeypatch.delenv("FOO", raising=False)
-    monkeypatch.delenv("QUOTED", raising=False)
-    monkeypatch.delenv("JSONV", raising=False)
     monkeypatch.setenv("ALREADY", "fromenv")
 
-    loaded = w.load_env_file(env)
+    load_dotenv(env, override=False)
 
-    assert os.environ["FOO"] == "bar"
-    assert os.environ["QUOTED"] == "baz qux"
-    assert os.environ["JSONV"] == '{"chat_template_kwargs":{"enable_thinking":false}}'
-    assert os.environ["ALREADY"] == "fromenv"
-    assert loaded == 3
-
-
-def test_load_env_file_missing_is_noop(tmp_path):
-    assert w.load_env_file(tmp_path / "does-not-exist.env") == 0
+    assert os.environ["FOO"] == "fromfile"     # newly set from file
+    assert os.environ["ALREADY"] == "fromenv"  # real env wins; not overridden
 ```
 
-- [ ] **Step 7.2: Run tests — expect FAIL**
+- [ ] **Step 8.3: Run tests — expect FAIL**
 
 ```bash
 uv run pytest tests/test_translator_worker.py -v 2>&1 | head -20
 ```
-Expected: `AssertionError` — `BuildQueueWorkflow` not in captured workflows (old worker still registers `TranslateSourceWorkflow`).
+Expected: `AttributeError` / `ImportError` — `w.build_build_worker` / `w.llm_concurrency` / `translator.task_queues` do not exist yet.
 
-- [ ] **Step 7.3: Update `translator/worker.py`**
-
-Replace `build_worker`:
+- [ ] **Step 8.4: Rewrite `translator/worker.py`**
 
 ```python
 # translator/worker.py
-"""Translator Temporal worker — registers all source workflows and activities."""
+"""Translator Temporal worker fleet.
+
+Starts TWO workers in one process:
+  - a BUILD worker (BUILD_TASK_QUEUE): all source workflows + the
+    seed / dump / summarize / start-translate handoff activities, normal concurrency;
+  - an LLM worker (LLM_TASK_QUEUE): ONLY translate_loop_activity, bounded to K
+    concurrent — the single global LLM gate shared by every source.
+
+.env loading uses python-dotenv (load_dotenv(..., override=False) — shell / docker -e win).
+"""
 from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
 import os
-from pathlib import Path
 
+from dotenv import load_dotenv
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+from translator.task_queues import BUILD_TASK_QUEUE, LLM_TASK_QUEUE
 from translator.norway_brreg.workflows import (
-    LOCAL_LLM_TRANSLATION_TASK_QUEUE,
     BuildQueueWorkflow,
     TranslateWorkflow,
     build_queue_activity,
@@ -1964,66 +2427,59 @@ from translator.norway_brreg.workflows import (
 
 logger = logging.getLogger("translator.worker")
 
-
-def load_env_file(path: Path) -> int:
-    """Load KEY=VALUE lines from a .env file into os.environ.
-
-    Existing environment variables are NOT overridden (shell / docker -e win).
-    Blank lines and ``#`` comments are ignored; optional leading ``export ``
-    is stripped; matching surrounding quotes are removed.
-    Returns the number of variables actually set.
-    """
-    if not path.is_file():
-        return 0
-    loaded = 0
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        if line.startswith("export "):
-            line = line[len("export "):]
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-            value = value[1:-1]
-        if not key or key in os.environ:
-            continue
-        os.environ[key] = value
-        loaded += 1
-    return loaded
+DEFAULT_LLM_CONCURRENCY = 2
 
 
-def build_worker(client: object) -> Worker:
+def llm_concurrency() -> int:
+    """Global LLM gate size K, from TRANSLATOR_LLM_CONCURRENCY (default 2)."""
+    return int(os.environ.get("TRANSLATOR_LLM_CONCURRENCY", str(DEFAULT_LLM_CONCURRENCY)))
+
+
+def build_build_worker(client: object) -> Worker:
+    """Worker for the workflows + build/dump/summarize/handoff activities."""
     return Worker(
         client,
-        task_queue=LOCAL_LLM_TRANSLATION_TASK_QUEUE,
+        task_queue=BUILD_TASK_QUEUE,
         workflows=[BuildQueueWorkflow, TranslateWorkflow],
         activities=[
             build_queue_activity,
             start_translate_workflow_activity,
-            translate_loop_activity,
             dump_activity,
             summarize_queue_activity,
         ],
     )
 
 
+def build_llm_worker(client: object, *, max_concurrent: int) -> Worker:
+    """Worker that runs ONLY translate_loop_activity, capped at max_concurrent (global gate)."""
+    return Worker(
+        client,
+        task_queue=LLM_TASK_QUEUE,
+        activities=[translate_loop_activity],
+        max_concurrent_activities=max_concurrent,
+    )
+
+
 async def run_worker(temporal_address: str | None = None) -> None:
     address = temporal_address or os.environ.get("TEMPORAL_ADDRESS", "companycollect:7233")
     client = await Client.connect(address)
+    k = llm_concurrency()
     logger.info(
-        "connected to Temporal at %s | polling task queue %r (Ctrl-C to stop)",
+        "connected to Temporal at %s | build queue %r, llm queue %r (K=%d) (Ctrl-C to stop)",
         address,
-        LOCAL_LLM_TRANSLATION_TASK_QUEUE,
+        BUILD_TASK_QUEUE,
+        LLM_TASK_QUEUE,
+        k,
     )
-    await build_worker(client).run()
+    build_worker = build_build_worker(client)
+    llm_worker = build_llm_worker(client, max_concurrent=k)
+    await asyncio.gather(build_worker.run(), llm_worker.run())
 
 
 def worker_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="translator-worker",
-        description="Run the standalone translator Temporal worker.",
+        description="Run the standalone translator Temporal worker fleet.",
     )
     parser.add_argument(
         "--env-file",
@@ -2036,12 +2492,12 @@ def worker_main(argv: list[str] | None = None) -> int:
         help="Temporal frontend address (overrides TEMPORAL_ADDRESS).",
     )
     args = parser.parse_args(argv)
-    load_env_file(Path(args.env_file))
+    load_dotenv(args.env_file, override=False)
     logging.basicConfig(
         level=os.environ.get("TRANSLATOR_LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s | %(message)s",
     )
-    logger.info("starting translator worker")
+    logger.info("starting translator worker fleet")
     try:
         asyncio.run(run_worker(temporal_address=args.temporal_address))
     except KeyboardInterrupt:
@@ -2049,30 +2505,51 @@ def worker_main(argv: list[str] | None = None) -> int:
     return 0
 ```
 
-- [ ] **Step 7.4: Run tests — expect PASS**
+- [ ] **Step 8.5: Switch `translator/import_legacy.py` env loading to `load_dotenv`**
 
-```bash
-uv run pytest tests/test_translator_worker.py -v
+`import_legacy.py` imported the now-deleted `load_env_file` from `worker.py`. Replace the import and call:
+
+```python
+# In translator/import_legacy.py — replace:
+from translator.worker import load_env_file
+# With:
+from dotenv import load_dotenv
 ```
-Expected: all 4 tests pass.
 
-- [ ] **Step 7.5: Commit**
+```python
+# In translator/import_legacy.py — replace:
+    load_env_file(Path(args.env_file))
+# With:
+    load_dotenv(args.env_file, override=False)
+```
+
+If `Path` is now otherwise unused in `import_legacy.py`, leave its import (the `--duckdb` handling still uses `Path`).
+
+- [ ] **Step 8.6: Run tests — expect PASS**
 
 ```bash
-git add translator/worker.py tests/test_translator_worker.py
-git commit -m "feat(translator/worker): register BuildQueueWorkflow + TranslateWorkflow"
+uv run pytest tests/test_translator_worker.py tests/test_translator_import_legacy.py -v
+```
+Expected: all pass (4 worker tests + the legacy-import tests).
+
+- [ ] **Step 8.7: Commit**
+
+```bash
+git add pyproject.toml translator/worker.py \
+        translator/import_legacy.py tests/test_translator_worker.py
+git commit -m "feat(translator): two-queue worker fleet (build + K-gated LLM) on python-dotenv"
 ```
 
 ---
 
-### Task 8: Dagster trigger — fire `BuildQueueWorkflow`
+### Task 9: Dagster trigger — fire `BuildQueueWorkflow`
 
 **Files:**
 - Modify: `src/dagster_v3/defs/norway_brreg/assets.py`
 - Modify: `tests/test_translator_trigger.py`
 
 **Interfaces:**
-- Consumes: `BuildQueueWorkflow`, `BuildQueueWorkflowInput` from `translator.norway_brreg.workflows`; `LOCAL_LLM_TRANSLATION_TASK_QUEUE` from same.
+- Consumes: `BuildQueueWorkflow`, `BuildQueueWorkflowInput` from `translator.norway_brreg.workflows`; `BUILD_TASK_QUEUE` from `translator.task_queues`.
 - Produces:
   - `NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID = "build-queue-norway_brreg"` (module-level constant)
   - `build_norway_brreg_build_queue_input() -> BuildQueueWorkflowInput`
@@ -2080,7 +2557,7 @@ git commit -m "feat(translator/worker): register BuildQueueWorkflow + TranslateW
 
 **Constraint:** No `from __future__ import annotations` in `assets.py` (Dagster context-type rule).
 
-- [ ] **Step 8.1: Update `tests/test_translator_trigger.py`**
+- [ ] **Step 9.1: Update `tests/test_translator_trigger.py`**
 
 ```python
 # tests/test_translator_trigger.py
@@ -2088,7 +2565,7 @@ from dagster_v3.defs.norway_brreg.assets import (
     NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID,
     build_norway_brreg_build_queue_input,
 )
-from translator.norway_brreg.workflows import LOCAL_LLM_TRANSLATION_TASK_QUEUE
+from translator.task_queues import BUILD_TASK_QUEUE
 
 
 def test_build_queue_workflow_id_is_stable():
@@ -2100,7 +2577,9 @@ def test_build_queue_input_targets_norway_brreg():
     assert params.source_slug == "norway_brreg"
     assert params.queue_duckdb_path == "data/translator/norway_brreg.duckdb"
     assert params.translate_workflow_id == "translate-norway_brreg"
-    assert params.translate_task_queue == LOCAL_LLM_TRANSLATION_TASK_QUEUE
+    # The build-queue trigger and the Translate handoff both run on the build queue.
+    assert params.translate_task_queue == BUILD_TASK_QUEUE
+    assert BUILD_TASK_QUEUE == "translation-build"
     assert params.batch_size == 50
     assert params.max_tokens == 8192
     assert params.max_batch_failures == 20
@@ -2114,14 +2593,14 @@ def test_build_queue_input_has_no_scan_or_flush_timeout():
     assert not hasattr(params, "source_slug") or params.source_slug == "norway_brreg"
 ```
 
-- [ ] **Step 8.2: Run tests — expect FAIL**
+- [ ] **Step 9.2: Run tests — expect FAIL**
 
 ```bash
 uv run pytest tests/test_translator_trigger.py -v 2>&1 | head -10
 ```
 Expected: `ImportError: cannot import name 'NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID'`
 
-- [ ] **Step 8.3: Update `src/dagster_v3/defs/norway_brreg/assets.py`**
+- [ ] **Step 9.3: Update `src/dagster_v3/defs/norway_brreg/assets.py`**
 
 Find and replace the translator-related imports and functions. The lines to change are near the bottom of the file (lines 37–38 imports and lines 196–262 — the `NORWAY_BRREG_TRANSLATE_WORKFLOW_ID`, `build_norway_brreg_translate_input`, `_start_norway_brreg_translation`, and `norway_brreg_translation_trigger` definitions).
 
@@ -2135,8 +2614,8 @@ from translator.workflow import TranslateSourceWorkflow, TranslateSourceWorkflow
 With:
 
 ```python
+from translator.task_queues import BUILD_TASK_QUEUE
 from translator.norway_brreg.workflows import (
-    LOCAL_LLM_TRANSLATION_TASK_QUEUE,
     BuildQueueWorkflow,
     BuildQueueWorkflowInput,
 )
@@ -2153,7 +2632,7 @@ def build_norway_brreg_build_queue_input() -> BuildQueueWorkflowInput:
         source_slug="norway_brreg",
         queue_duckdb_path="data/translator/norway_brreg.duckdb",
         translate_workflow_id="translate-norway_brreg",
-        translate_task_queue=LOCAL_LLM_TRANSLATION_TASK_QUEUE,
+        translate_task_queue=BUILD_TASK_QUEUE,
         batch_size=50,
         max_tokens=8192,
         extra_body_json='{"chat_template_kwargs": {"enable_thinking": false}}',
@@ -2167,7 +2646,7 @@ async def _start_norway_brreg_build_queue(temporal_address: str) -> str:
         BuildQueueWorkflow.run,
         build_norway_brreg_build_queue_input(),
         id=NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID,
-        task_queue=LOCAL_LLM_TRANSLATION_TASK_QUEUE,
+        task_queue=BUILD_TASK_QUEUE,
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )
     return handle.result_run_id
@@ -2198,14 +2677,14 @@ def norway_brreg_translation_trigger(context: AssetExecutionContext) -> dg.Mater
         metadata={
             "workflow_id": NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID,
             "workflow_run_id": run_id,
-            "task_queue": LOCAL_LLM_TRANSLATION_TASK_QUEUE,
+            "task_queue": BUILD_TASK_QUEUE,
         }
     )
 ```
 
 Also remove the now-unused `NORWAY_BRREG_TRANSLATE_WORKFLOW_ID` constant and `build_norway_brreg_translate_input` function.
 
-- [ ] **Step 8.4: Run tests — expect PASS**
+- [ ] **Step 9.4: Run tests — expect PASS**
 
 ```bash
 uv run pytest tests/test_translator_trigger.py -v
@@ -2213,7 +2692,7 @@ uv run dg check defs
 ```
 Expected: 3 tests pass; `dg check defs` exits 0.
 
-- [ ] **Step 8.5: Commit**
+- [ ] **Step 9.5: Commit**
 
 ```bash
 git add src/dagster_v3/defs/norway_brreg/assets.py tests/test_translator_trigger.py
@@ -2222,12 +2701,12 @@ git commit -m "feat(dagster/norway_brreg): trigger BuildQueueWorkflow, remove sc
 
 ---
 
-### Task 9: Remove dead code + final suite
+### Task 10: Remove dead code + final suite
 
 **Files:**
 - Delete: `translator/workflow.py`
 - Delete: `translator/activities.py`
-- Delete: `translator/registry.py` (replaced by shim in Task 3, now fully superseded)
+- Delete: `translator/registry.py` (replaced by shim in Task 4, now fully superseded)
 - Modify: `translator/import_legacy.py` — update import from `norway_brreg/config.py`
 - Replace: `tests/test_translator_workflow.py` — replace with new workflow tests (old ones test deleted code)
 - Modify: `tests/test_translator_registry.py` — remove (covered by `test_norway_brreg_config.py`); or keep as a redirect
@@ -2236,7 +2715,7 @@ git commit -m "feat(dagster/norway_brreg): trigger BuildQueueWorkflow, remove sc
 
 **Before deleting files, verify no living code imports from the modules being deleted:**
 
-- [ ] **Step 9.1: Audit remaining imports**
+- [ ] **Step 10.1: Audit remaining imports**
 
 ```bash
 cd /Users/graovic/pulsarpoint/ppoint/companycollect/corpscout/dagster_v3
@@ -2246,7 +2725,7 @@ rg "from translator\.workflow import|from translator\.activities import|from tra
 
 Expected: only `translator/import_legacy.py` imports from `translator.registry` (and possibly `tests/test_translator_workflow.py`). If any other files still import from these modules, update them before deleting.
 
-- [ ] **Step 9.2: Update `translator/import_legacy.py`**
+- [ ] **Step 10.2: Update `translator/import_legacy.py`**
 
 Replace the registry import and the `get_source_config` call:
 
@@ -2274,19 +2753,19 @@ And replace `config = get_source_config(args.source)` with:
 
 Remove the now-redundant `except KeyError` block that was after the old call.
 
-- [ ] **Step 9.3: Delete the dead modules**
+- [ ] **Step 10.3: Delete the dead modules**
 
 ```bash
-rm translator/workflow.py translator/activities.py translator/registry.py
+git rm translator/workflow.py translator/activities.py translator/registry.py
 ```
 
-- [ ] **Step 9.4: Replace `tests/test_translator_workflow.py`**
+- [ ] **Step 10.4: Replace `tests/test_translator_workflow.py`**
 
-The old file tests `TranslateSourceWorkflow` (deleted). Replace it with a thin smoke test confirming the new workflows can be imported:
+The old file tests `TranslateSourceWorkflow` (deleted). Replace it with a thin import-sanity test confirming the new workflows can be imported:
 
 ```python
 # tests/test_translator_workflow.py
-"""Smoke tests confirming the new per-source workflow modules are importable and well-formed."""
+"""Import-sanity tests confirming the new per-source workflow modules are importable and well-formed."""
 from translator.norway_brreg.workflows import (
     BuildQueueWorkflow,
     BuildQueueWorkflowInput,
@@ -2318,7 +2797,7 @@ def test_translate_workflow_input_has_no_scan_or_flush_timeout():
     assert "flush_timeout_seconds" not in fields
 ```
 
-- [ ] **Step 9.5: Update `tests/test_translator_registry.py`**
+- [ ] **Step 10.5: Update `tests/test_translator_registry.py`**
 
 The file tests `translator.registry.get_source_config`. Since `registry.py` is deleted, redirect tests to `norway_brreg/config.py`:
 
@@ -2352,9 +2831,9 @@ def test_unknown_source_raises_key_error():
         _get_source_config_by_slug("atlantis")
 ```
 
-- [ ] **Step 9.6: Update `tests/test_translator_imports.py`**
+- [ ] **Step 10.6: Update `tests/test_translator_imports.py`**
 
-Replace the imports smoke test to reflect the new module layout:
+Replace the imports sanity test to reflect the new module layout:
 
 ```python
 # tests/test_translator_imports.py
@@ -2364,24 +2843,25 @@ def test_translator_core_is_self_contained_and_importable():
     from translator.norway_brreg.dump import dump_to_clickhouse
     from translator.norway_brreg.seed import SeedResult, build_queue
     from translator.norway_brreg.workflows import (
-        LOCAL_LLM_TRANSLATION_TASK_QUEUE,
         BuildQueueWorkflow,
         BuildQueueWorkflowInput,
         TranslateWorkflow,
         TranslateWorkflowInput,
     )
+    from translator.task_queues import BUILD_TASK_QUEUE, LLM_TASK_QUEUE
     from translator.queue import TranslationQueue, TranslationQueueItem
-    from translator.smoke import LocalOpenAICompatibleTranslationProvider
-    from translator.types import SmokeTranslationInput, SmokeTranslationResult
+    from translator.provider import LocalOpenAICompatibleTranslationProvider
+    from translator.types import TranslationInput, TranslationResult
 
-    assert LOCAL_LLM_TRANSLATION_TASK_QUEUE == "translation-local-llm"
+    assert BUILD_TASK_QUEUE == "translation-build"
+    assert LLM_TASK_QUEUE == "translation-llm"
     assert callable(translate_batch)
     assert callable(build_queue)
     assert callable(dump_to_clickhouse)
     assert BuildQueueWorkflow and TranslateWorkflow
     assert TranslationQueue and TranslationQueueItem
     assert LocalOpenAICompatibleTranslationProvider
-    assert SmokeTranslationInput and SmokeTranslationResult
+    assert TranslationInput and TranslationResult
     assert get_config is not None
 
 
@@ -2389,7 +2869,12 @@ def test_translator_modules_do_not_reference_deleted_modules():
     import pathlib
 
     pkg = pathlib.Path(__file__).resolve().parents[1] / "translator"
-    deleted = {"workflow.py", "activities.py", "registry.py"}
+    # workflow/activities/registry deleted here in Task 10; smoke/provider_smoke/
+    # queue_smoke deleted in Task 1.
+    deleted = {
+        "workflow.py", "activities.py", "registry.py",
+        "smoke.py", "provider_smoke.py", "queue_smoke.py",
+    }
     for py in pkg.glob("*.py"):
         assert py.name not in deleted, f"{py.name} was supposed to be deleted"
 
@@ -2397,30 +2882,43 @@ def test_translator_modules_do_not_reference_deleted_modules():
         text = py.read_text(encoding="utf-8")
         assert "from translator.workflow import" not in text, f"{py} still imports translator.workflow"
         assert "from translator.activities import" not in text, f"{py} still imports translator.activities"
+        assert "from translator.smoke import" not in text, f"{py} still imports translator.smoke"
+        assert "Smoke" not in text, f"{py} still references a Smoke* identifier"
+
+
+def test_no_production_smoke_identifiers_remain():
+    """No production module may carry the historical Smoke*/smoke names."""
+    import pathlib
+
+    pkg = pathlib.Path(__file__).resolve().parents[1] / "translator"
+    for py in pkg.rglob("*.py"):
+        text = py.read_text(encoding="utf-8")
+        assert "SmokeTranslation" not in text, f"{py} still references SmokeTranslation*"
+        assert "smoke" not in text.lower(), f"{py} still references 'smoke'"
 ```
 
-- [ ] **Step 9.7: Run the full test suite**
+- [ ] **Step 10.7: Run the full test suite**
 
 ```bash
 uv run pytest -q 2>&1 | tail -20
 ```
 Expected: all tests pass, 0 failures.
 
-- [ ] **Step 9.8: Validate Dagster definitions**
+- [ ] **Step 10.8: Validate Dagster definitions**
 
 ```bash
 uv run dg check defs
 ```
 Expected: exits 0 with no errors.
 
-- [ ] **Step 9.9: Commit**
+- [ ] **Step 10.9: Commit**
 
 ```bash
 git add translator/import_legacy.py \
         tests/test_translator_workflow.py \
         tests/test_translator_registry.py \
         tests/test_translator_imports.py
-git add -u  # stages the deleted files (workflow.py, activities.py, registry.py)
+# the dead modules were already staged for deletion by `git rm` in Step 10.3
 git commit -m "refactor(translator): remove TranslateSourceWorkflow, activities, registry; finalize per-source package"
 ```
 
@@ -2432,21 +2930,25 @@ git commit -m "refactor(translator): remove TranslateSourceWorkflow, activities,
 
 | Spec requirement | Task |
 |-----------------|------|
-| Per-source packages, nothing source-specific in shared core | Tasks 3–6: all Norway-specific code in `norway_brreg/`; shared core unchanged |
-| Two workflows: BuildQueueWorkflow + TranslateWorkflow | Task 6 |
-| BuildQueue's final step starts TranslateWorkflow (USE_EXISTING) then completes | Task 6: `start_translate_workflow_activity` |
-| Seed = query_arrow + set-based INSERT, sha256 in DuckDB SQL | Tasks 2, 4 |
-| NO per-row Python in seed | Task 4: Arrow registered → single INSERT…SELECT |
-| Static fields → text_translations directly (provider='static') | Task 4: static branch in `build_queue` |
-| Shared `llm_batch.py` | Task 1 |
-| Dump = self-contained per source, batched staging inserts | Task 5 |
-| heartbeat_timeout=150s, start_to_close_timeout=24h, max_attempts=3 | Task 6: HEARTBEAT_TIMEOUT, START_TO_CLOSE_TIMEOUT, RETRY_POLICY constants |
-| Remove scan_timeout_seconds / flush_timeout_seconds | Tasks 6, 8, 9: not present in new input dataclasses |
-| Dagster trigger fires BuildQueueWorkflow (id build-queue-norway_brreg) | Task 8 |
+| De-smoke: no production `Smoke`/`smoke` identifiers | Task 1: `Translation*` types, `provider.py`, `errors.py`; smoke files deleted |
+| python-dotenv replaces hand-rolled `load_env_file` (`override=False`) | Task 8: `pyproject.toml` dep; `worker.py` + `import_legacy.py` use `load_dotenv` |
+| Two task queues + global LLM gate (`K` concurrent) | Task 7 (`task_queues.py`, route `translate_loop` to `LLM_TASK_QUEUE`, no `schedule_to_start`); Task 8 (two-worker fleet, `max_concurrent_activities=K`, `K` from `TRANSLATOR_LLM_CONCURRENCY`) |
+| One shared worker fleet (no process per source) | Task 8: `run_worker` starts both workers via `asyncio.gather` |
+| Per-source packages, nothing source-specific in shared core | Tasks 4–7: all Norway-specific code in `norway_brreg/`; shared core unchanged |
+| Two workflows: BuildQueueWorkflow + TranslateWorkflow | Task 7 |
+| BuildQueue's final step starts TranslateWorkflow (USE_EXISTING) then completes | Task 7: `start_translate_workflow_activity` |
+| Seed = query_arrow + set-based INSERT, sha256 in DuckDB SQL | Tasks 3, 5 |
+| NO per-row Python in seed | Task 5: Arrow registered → single INSERT…SELECT |
+| Static fields → text_translations directly (provider='static') | Task 5: static branch in `build_queue` |
+| Shared `llm_batch.py` | Task 2 |
+| Dump = self-contained per source, batched staging inserts | Task 6 |
+| heartbeat_timeout=150s, start_to_close_timeout=24h, max_attempts=3 | Task 7: HEARTBEAT_TIMEOUT, START_TO_CLOSE_TIMEOUT, RETRY_POLICY constants |
+| Remove scan_timeout_seconds / flush_timeout_seconds | Tasks 7, 9, 10: not present in new input dataclasses |
+| Dagster trigger fires BuildQueueWorkflow (id build-queue-norway_brreg) | Task 9 |
 | Delete data/translator/norway_brreg.duckdb on cutover | MANUAL operator step (outside code) — noted in spec, not in code |
-| uv run dg check defs + pytest green | Tasks 8, 9 |
-| Reuse queue schema (translation_items/locations/results/batch_attempts) | Task 4: same table names, same schema |
-| Reuse text_translations + no_companies_translated | Tasks 4, 5: flush_translations writes to same tables |
+| uv run dg check defs + pytest green | Tasks 1, 9, 10 |
+| Reuse queue schema (translation_items/locations/results/batch_attempts) | Task 5: same table names, same schema |
+| Reuse text_translations + no_companies_translated | Tasks 5, 6: flush_translations writes to same tables |
 
 **Gap: cutover instruction (delete the DuckDB file)** is an operator step, not encoded in code. No code change needed, but the plan should remind the executor: before the first production run of `BuildQueueWorkflow`, delete `data/translator/norway_brreg.duckdb` and `data/translator/norway_brreg.duckdb.wal`.
 
@@ -2454,18 +2956,24 @@ git commit -m "refactor(translator): remove TranslateSourceWorkflow, activities,
 
 - No "TBD", "TODO", or "fill in" language found.
 - Every step with code changes shows the complete code.
-- The `_once` function pattern is repeated in full in Task 6 (not referred to as "similar to Task N").
-- The `dynamic_enqueued` counting note in Task 4 explains the design choice explicitly.
+- The `_once` function pattern is repeated in full in Task 7 (not referred to as "similar to Task N").
+- The `dynamic_enqueued` counting note in Task 5 explains the design choice explicitly.
+- No production `Smoke`/`smoke` identifiers remain (verified by grep); only the rename-explaining prose mentions them.
 
 ### 3. Type Consistency
 
-- `SeedResult` defined in `translator/norway_brreg/seed.py` (Task 4), consumed in `workflows.py` (Task 6, `build_queue_activity` → `build_queue_once` → `build_queue` returns `SeedResult`). ✓
-- `BuildQueueActivityInput` defined in `workflows.py` (Task 6), `build_queue_once(params: BuildQueueActivityInput)` uses it. ✓
-- `TranslateLoopActivityInput` / `TranslateLoopResult` defined and used in Task 6. ✓
-- `DumpActivityInput` defined and used in Task 6; `dump_once` consumes it. ✓
+- `TranslationInput` / `TranslationResult` defined in `translator/types.py` (Task 1), used by `provider.py`, `llm_batch.py`, and every test. ✓
+- `_categorize_exception` in `translator/errors.py` and `_parse_extra_body` in `translator/provider.py` (Task 1), imported by `activities.py` and Task 7's `translate_loop_once`. ✓
+- `BUILD_TASK_QUEUE` / `LLM_TASK_QUEUE` defined in `translator/task_queues.py` (Task 7); imported by `workflows.py` (uses `LLM_TASK_QUEUE` for the loop dispatch), `worker.py` (both queues, Task 8), `assets.py` (`BUILD_TASK_QUEUE`, Task 9), and the worker/trigger tests. The single `translation-local-llm` queue is fully removed. ✓
+- `llm_concurrency()` / `build_build_worker` / `build_llm_worker(max_concurrent=K)` defined in `worker.py` (Task 8); `run_worker` runs both via `asyncio.gather`; `K` from `TRANSLATOR_LLM_CONCURRENCY` (default 2). ✓
+- `load_dotenv(path, override=False)` replaces `load_env_file` in `worker.py` + `import_legacy.py` (Task 8); `python-dotenv>=1.0` added to `pyproject.toml`. ✓
+- `SeedResult` defined in `translator/norway_brreg/seed.py` (Task 5), consumed in `workflows.py` (Task 7, `build_queue_activity` → `build_queue_once` → `build_queue` returns `SeedResult`). ✓
+- `BuildQueueActivityInput` defined in `workflows.py` (Task 7), `build_queue_once(params: BuildQueueActivityInput)` uses it. ✓
+- `TranslateLoopActivityInput` / `TranslateLoopResult` defined and used in Task 7. ✓
+- `DumpActivityInput` defined and used in Task 7; `dump_once` consumes it. ✓
 - `FlushTranslationRow` from `translator.queue` (existing, unchanged) — used in both seed.py and dump.py via `flush_translations`. ✓
-- `translate_batch(items: list[ClaimedTranslationItem], *, provider, timeout)` — Task 1 signature; Task 6 `translate_loop_once` calls `translate_batch(claimed, provider=provider, timeout=120)`. ✓
-- `query_arrow(client, sql, parameters)` — Task 2 signature; Task 4 `build_queue` calls `query_arrow(ch_client, sql, params)`. ✓
-- `build_norway_brreg_build_queue_input() -> BuildQueueWorkflowInput` — Task 8; test imports same name. ✓
-- `NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID` — defined in `assets.py` Task 8, imported in `test_translator_trigger.py` Task 8. ✓
-- Old constants (`NORWAY_BRREG_TRANSLATE_WORKFLOW_ID`, `build_norway_brreg_translate_input`) removed in Task 8 and confirmed absent in Task 9's import audit. ✓
+- `translate_batch(items: list[ClaimedTranslationItem], *, provider, timeout)` — Task 2 signature; Task 7 `translate_loop_once` calls `translate_batch(claimed, provider=provider, timeout=120)`. ✓
+- `query_arrow(client, sql, parameters)` — Task 3 signature; Task 5 `build_queue` calls `query_arrow(ch_client, sql, params)`. ✓
+- `build_norway_brreg_build_queue_input() -> BuildQueueWorkflowInput` — Task 9; test imports same name. ✓
+- `NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID` — defined in `assets.py` Task 9, imported in `test_translator_trigger.py` Task 9. ✓
+- Old constants (`NORWAY_BRREG_TRANSLATE_WORKFLOW_ID`, `build_norway_brreg_translate_input`) removed in Task 9 and confirmed absent in Task 10's import audit. ✓
