@@ -12,8 +12,10 @@
 //	cc-crawl -mode industry -parts 0-299 -crawl CC-MAIN-2026-25     (bare N = single part)
 //
 // -mode embed is the exception: it REUSES the industry worklist, runs a single embed-only exec (no
-// load), and writes just the raw vectors into the sibling data/embedding/out_industry_<p>/ tree — used
-// to backfill embeddings for already-classified segments without re-touching ClickHouse.
+// load), and writes just the raw vectors into the sibling data/embedding/out_industry_<p>/ tree. It has
+// NO .loaded marker and is NOT wiped before the run — instead the worker opens the existing
+// embeddings.parquet and skips the part if it's already a valid, non-empty file (the write is atomic, so
+// a readable parquet == a complete run). Used to backfill vectors for already-classified segments.
 //
 // All settings are flags; each defaults from the same-named env var. -mode, -parts, -crawl required.
 package main
@@ -43,9 +45,9 @@ func env(key, def string) string {
 
 // Parsed from the worker's own log lines for the per-part counts.
 var (
-	reDomains = regexp.MustCompile(`done:\s+(\d+)\s+domains`)    // produce step: "done: 87916 domains, …"
-	reEmbeds  = regexp.MustCompile(`done:\s+(\d+)\s+embeddings`) // embed produce: "done: 87916 embeddings …"
-	reLoaded  = regexp.MustCompile(`loaded\s+(\d+)\s+rows`)      // load step: "loaded 87916 rows -> table"
+	reDomains = regexp.MustCompile(`done:\s+(\d+)\s+domains`) // produce step: "done: 87916 domains, …"
+	reEmbeds  = regexp.MustCompile(`(\d+)\s+embeddings`)      // embed: "done: 87916 embeddings" / "skip: 87916 embeddings already present"
+	reLoaded  = regexp.MustCompile(`loaded\s+(\d+)\s+rows`)   // load step: "loaded 87916 rows -> table"
 )
 
 // runStep execs name+args (optionally in dir), streaming the child's stdout/stderr to the terminal as
@@ -149,12 +151,16 @@ func main() {
 		if mode == "embed" {
 			outDir = filepath.Join(embedTree, fmt.Sprintf("out_industry_%d", p))
 		}
+		// industry/tech gate on the .loaded marker — a "done" part includes a remote ClickHouse load that
+		// isn't visible in local files. embed has NO marker: its only output is embeddings.parquet, so the
+		// worker verifies that file directly (skip if a valid non-empty parquet already exists).
 		marker := outDir + ".loaded"
-
-		if _, err := os.Stat(marker); err == nil {
-			plg.Info("skip", "reason", "already loaded")
-			skipped++
-			continue
+		if mode != "embed" {
+			if _, err := os.Stat(marker); err == nil {
+				plg.Info("skip", "reason", "already loaded")
+				skipped++
+				continue
+			}
 		}
 
 		// 1. worklist — build if missing (atomic tmp + rename).
@@ -174,8 +180,13 @@ func main() {
 			os.Rename(tmp, shard)
 		}
 
-		// 2. produce (exec #1) — pass only, NO load. Gate the loader on a clean produce.
-		os.RemoveAll(outDir)
+		// 2. produce (exec #1). embed: NO RemoveAll — the worker verifies the existing embeddings.parquet
+		// and skips when it's already complete, so wiping it here would defeat the whole point. industry/
+		// tech: clear any stale/partial output (the worker requires an empty --out) — safe, since a done
+		// part already `continue`d above on its marker.
+		if mode != "embed" {
+			os.RemoveAll(outDir)
+		}
 		pArgs := append(append([]string{mode}, passArgs(mode, *indConcF, *embedConcF, *techConcF)...),
 			"--worklist", shard, "--crawl-id", crawl, "--out", outDir)
 		plg.Info("produce.run", "cmd", worker+" "+strings.Join(pArgs, " "))
@@ -185,32 +196,44 @@ func main() {
 			failed++
 			continue
 		}
-		// embed mode produces embeddings.parquet (no ClickHouse table); other modes produce domains.parquet.
-		gateFile, produced := "domains.parquet", firstInt(reDomains, pout)
-		if mode == "embed" {
-			gateFile, produced = "embeddings.parquet", firstInt(reEmbeds, pout)
-		}
-		if _, err := os.Stat(filepath.Join(outDir, gateFile)); err != nil {
-			plg.Error("failed", "step", "produce", "exit", 0, "reason", gateFile+" missing", "loader", "skipped")
-			failed++
-			continue
-		}
-		plg.Info("produce.exit", "exit", 0, "produced", produced, "elapsed", pel.String())
 
-		// 3. load (exec #2) — industry/tech only; embed writes vectors to disk, nothing to load.
-		rows := 0
-		if mode != "embed" {
-			lArgs := []string{"load", "--dir", outDir}
-			plg.Info("load.run", "cmd", worker+" "+strings.Join(lArgs, " "))
-			lcode, lout, lel := runStep(worker, lArgs, "")
-			rows = sumInt(reLoaded, lout)
-			if lcode != 0 {
-				plg.Error("failed", "step", "load", "exit", lcode, "elapsed", lel.String())
+		// embed: no load, no marker. The worker self-verified embeddings.parquet — it either skipped a
+		// complete one ("already present") or wrote a fresh one. The parquet IS the done-signal.
+		if mode == "embed" {
+			if _, err := os.Stat(filepath.Join(outDir, "embeddings.parquet")); err != nil {
+				plg.Error("failed", "step", "embed", "exit", 0, "reason", "embeddings.parquet missing")
 				failed++
 				continue
 			}
-			plg.Info("load.exit", "exit", 0, "rows_to_clickhouse", rows, "elapsed", lel.String())
+			if strings.Contains(pout, "already present") {
+				plg.Info("skip", "reason", "already embedded", "embeddings", firstInt(reEmbeds, pout))
+				skipped++
+			} else {
+				plg.Info("done", "embeddings", firstInt(reEmbeds, pout), "elapsed", pel.String())
+				done++
+			}
+			continue
 		}
+
+		// 3. industry/tech: gate the loader on a clean produce, load into ClickHouse, then mark.
+		if _, err := os.Stat(filepath.Join(outDir, "domains.parquet")); err != nil {
+			plg.Error("failed", "step", "produce", "exit", 0, "reason", "domains.parquet missing", "loader", "skipped")
+			failed++
+			continue
+		}
+		produced := firstInt(reDomains, pout)
+		plg.Info("produce.exit", "exit", 0, "produced", produced, "elapsed", pel.String())
+
+		lArgs := []string{"load", "--dir", outDir}
+		plg.Info("load.run", "cmd", worker+" "+strings.Join(lArgs, " "))
+		lcode, lout, lel := runStep(worker, lArgs, "")
+		rows := sumInt(reLoaded, lout)
+		if lcode != 0 {
+			plg.Error("failed", "step", "load", "exit", lcode, "elapsed", lel.String())
+			failed++
+			continue
+		}
+		plg.Info("load.exit", "exit", 0, "rows_to_clickhouse", rows, "elapsed", lel.String())
 
 		if err := os.WriteFile(marker, nil, 0o644); err != nil {
 			plg.Warn("marker.write", "err", err.Error())

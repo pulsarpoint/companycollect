@@ -225,6 +225,34 @@ func readWorklist(path string) ([]mdl.WorklistItem, error) {
 	return items, nil
 }
 
+// parquetRows returns a Parquet file's row count by reading only its footer. It errors if the file is
+// missing or not a valid/complete Parquet (e.g. a write killed mid-flush) — used by embed verify-and-skip.
+func parquetRows(path string) (int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	pf, err := parquet.OpenFile(f, st.Size())
+	if err != nil {
+		return 0, err
+	}
+	return pf.NumRows(), nil
+}
+
+// uniqueDomains counts distinct root domains in a worklist (industry/embed embed one page per domain).
+func uniqueDomains(items []mdl.WorklistItem) int {
+	seen := make(map[string]struct{}, len(items))
+	for _, it := range items {
+		seen[it.RootDomain] = struct{}{}
+	}
+	return len(seen)
+}
+
 func run(mode string, o opts) {
 	ctx := context.Background()
 
@@ -236,6 +264,22 @@ func run(mode string, o opts) {
 	if outDir == "" {
 		stem := strings.TrimSuffix(filepath.Base(o.worklist), filepath.Ext(o.worklist))
 		outDir = filepath.Join("../data/crawl", stem)
+	}
+	// embed VERIFY-AND-SKIP: the embeddings write is atomic (one WriteFile at the very end), so an
+	// embeddings.parquet that OPENS with rows>0 is a COMPLETE run — a killed run leaves no file or an
+	// unreadable (truncated) one. If it's already complete, skip the whole part (no re-fetch/re-embed);
+	// otherwise fall through and (over)write it. embed deliberately reuses the dir (no empty-dir rule).
+	if mode == "embed" {
+		embPath := filepath.Join(outDir, "embeddings.parquet")
+		if rows, verr := parquetRows(embPath); verr == nil && rows > 0 {
+			dom := 0
+			if items, werr := readWorklist(o.worklist); werr == nil {
+				dom = uniqueDomains(items)
+			}
+			log.Printf("skip: %d embeddings already present (%.0f%% of %d worklist domains) -> %s",
+				rows, 100*float64(rows)/float64(max(dom, 1)), dom, embPath)
+			return
+		}
 	} else if entries, _ := os.ReadDir(outDir); len(entries) > 0 {
 		log.Fatalf("output dir %s is not empty — point --out at a fresh/empty directory", outDir)
 	}
