@@ -11,6 +11,10 @@
 //
 //	cc-crawl -mode industry -parts 0-299 -crawl CC-MAIN-2026-25     (bare N = single part)
 //
+// -mode embed is the exception: it REUSES the industry worklist, runs a single embed-only exec (no
+// load), and writes just the raw vectors into the sibling data/embedding/out_industry_<p>/ tree — used
+// to backfill embeddings for already-classified segments without re-touching ClickHouse.
+//
 // All settings are flags; each defaults from the same-named env var. -mode, -parts, -crawl required.
 package main
 
@@ -39,8 +43,9 @@ func env(key, def string) string {
 
 // Parsed from the worker's own log lines for the per-part counts.
 var (
-	reDomains = regexp.MustCompile(`done:\s+(\d+)\s+domains`) // produce step: "done: 87916 domains, …"
-	reLoaded  = regexp.MustCompile(`loaded\s+(\d+)\s+rows`)   // load step: "loaded 87916 rows -> table"
+	reDomains = regexp.MustCompile(`done:\s+(\d+)\s+domains`)    // produce step: "done: 87916 domains, …"
+	reEmbeds  = regexp.MustCompile(`done:\s+(\d+)\s+embeddings`) // embed produce: "done: 87916 embeddings …"
+	reLoaded  = regexp.MustCompile(`loaded\s+(\d+)\s+rows`)      // load step: "loaded 87916 rows -> table"
 )
 
 // runStep execs name+args (optionally in dir), streaming the child's stdout/stderr to the terminal as
@@ -73,7 +78,7 @@ func main() {
 	_ = godotenv.Overload(env("DOTENV", ".env"))
 
 	fs := flag.NewFlagSet("cc-crawl", flag.ExitOnError)
-	modeF := fs.String("mode", "", "pass to run: industry | tech  (required)")
+	modeF := fs.String("mode", "", "pass to run: industry | tech | embed  (required; embed = vectors only, no ClickHouse)")
 	partsF := fs.String("parts", "", "part range lo-hi, or a single part N  (required)")
 	crawlF := fs.String("crawl", env("CRAWL", ""), "CommonCrawl crawl id, e.g. CC-MAIN-2026-25  (required; or env CRAWL)")
 	dataF := fs.String("data", env("DATA", "data/crawl"), "data dir (shards, output, logs)")
@@ -91,8 +96,8 @@ func main() {
 		os.Exit(2)
 	}
 	mode := *modeF
-	if mode != "industry" && mode != "tech" {
-		fail("-mode must be industry|tech")
+	if mode != "industry" && mode != "tech" && mode != "embed" {
+		fail("-mode must be industry|tech|embed")
 	}
 	if *crawlF == "" {
 		fail("-crawl is required (no default crawl)")
@@ -108,6 +113,14 @@ func main() {
 		if abs, err := filepath.Abs(*p); err == nil {
 			*p = abs
 		}
+	}
+
+	// embed mode REUSES the industry worklist (same pages) and writes only the raw vectors into the
+	// sibling data/embedding/ tree — no ClickHouse, no load step.
+	wlMode, embedTree := mode, ""
+	if mode == "embed" {
+		wlMode = "industry"
+		embedTree = filepath.Join(filepath.Dir(data), "embedding")
 	}
 
 	if err := os.MkdirAll(filepath.Join(data, "logs"), 0o755); err != nil {
@@ -131,8 +144,11 @@ func main() {
 	var done, skipped, failed int
 	for p := lo; p <= hi; p++ {
 		plg := lg.With("mode", mode, "part", p)
-		shard := filepath.Join(data, fmt.Sprintf("shard_%s_%d.parquet", mode, p))
+		shard := filepath.Join(data, fmt.Sprintf("shard_%s_%d.parquet", wlMode, p))
 		outDir := filepath.Join(data, fmt.Sprintf("out_%s_%d", mode, p))
+		if mode == "embed" {
+			outDir = filepath.Join(embedTree, fmt.Sprintf("out_industry_%d", p))
+		}
 		marker := outDir + ".loaded"
 
 		if _, err := os.Stat(marker); err == nil {
@@ -145,7 +161,7 @@ func main() {
 		if _, err := os.Stat(shard); err != nil {
 			tmp := shard + ".tmp"
 			args := []string{"run", "python", "-m", "index_builder",
-				"--mode", mode, "--max-pages", maxPages, "--crawl", crawl, "--part", strconv.Itoa(p), "--out", tmp}
+				"--mode", wlMode, "--max-pages", maxPages, "--crawl", crawl, "--part", strconv.Itoa(p), "--out", tmp}
 			plg.Info("worklist.run", "cmd", "uv "+strings.Join(args, " "))
 			code, _, el := runStep("uv", args, builder)
 			plg.Info("worklist.exit", "exit", code, "elapsed", el.String())
@@ -164,35 +180,42 @@ func main() {
 			"--worklist", shard, "--crawl-id", crawl, "--out", outDir)
 		plg.Info("produce.run", "cmd", worker+" "+strings.Join(pArgs, " "))
 		code, pout, pel := runStep(worker, pArgs, "")
-		domains := firstInt(reDomains, pout)
 		if code != 0 {
 			plg.Error("failed", "step", "produce", "exit", code, "elapsed", pel.String(), "loader", "skipped")
 			failed++
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(outDir, "domains.parquet")); err != nil {
-			plg.Error("failed", "step", "produce", "exit", 0, "reason", "domains.parquet missing", "loader", "skipped")
+		// embed mode produces embeddings.parquet (no ClickHouse table); other modes produce domains.parquet.
+		gateFile, produced := "domains.parquet", firstInt(reDomains, pout)
+		if mode == "embed" {
+			gateFile, produced = "embeddings.parquet", firstInt(reEmbeds, pout)
+		}
+		if _, err := os.Stat(filepath.Join(outDir, gateFile)); err != nil {
+			plg.Error("failed", "step", "produce", "exit", 0, "reason", gateFile+" missing", "loader", "skipped")
 			failed++
 			continue
 		}
-		plg.Info("produce.exit", "exit", 0, "domains_from_s3", domains, "elapsed", pel.String())
+		plg.Info("produce.exit", "exit", 0, "produced", produced, "elapsed", pel.String())
 
-		// 3. load (exec #2) — only reached on a good produce.
-		lArgs := []string{"load", "--dir", outDir}
-		plg.Info("load.run", "cmd", worker+" "+strings.Join(lArgs, " "))
-		lcode, lout, lel := runStep(worker, lArgs, "")
-		rows := sumInt(reLoaded, lout)
-		if lcode != 0 {
-			plg.Error("failed", "step", "load", "exit", lcode, "elapsed", lel.String())
-			failed++
-			continue
+		// 3. load (exec #2) — industry/tech only; embed writes vectors to disk, nothing to load.
+		rows := 0
+		if mode != "embed" {
+			lArgs := []string{"load", "--dir", outDir}
+			plg.Info("load.run", "cmd", worker+" "+strings.Join(lArgs, " "))
+			lcode, lout, lel := runStep(worker, lArgs, "")
+			rows = sumInt(reLoaded, lout)
+			if lcode != 0 {
+				plg.Error("failed", "step", "load", "exit", lcode, "elapsed", lel.String())
+				failed++
+				continue
+			}
+			plg.Info("load.exit", "exit", 0, "rows_to_clickhouse", rows, "elapsed", lel.String())
 		}
-		plg.Info("load.exit", "exit", 0, "rows_to_clickhouse", rows, "elapsed", lel.String())
 
 		if err := os.WriteFile(marker, nil, 0o644); err != nil {
 			plg.Warn("marker.write", "err", err.Error())
 		}
-		plg.Info("done", "domains_from_s3", domains, "rows_to_clickhouse", rows)
+		plg.Info("done", "produced", produced, "rows_to_clickhouse", rows)
 		done++
 	}
 	lg.Info("complete", "mode", mode, "lo", lo, "hi", hi, "done", done, "skipped", skipped, "failed", failed)
@@ -201,7 +224,7 @@ func main() {
 // passArgs builds the per-mode cc-enrich-worker pass flags.
 func passArgs(mode, indConc, embedConc, techConc string) []string {
 	switch mode {
-	case "industry":
+	case "industry", "embed": // embed runs the same fetch→embed stream, just without classify
 		return []string{"--concurrency", indConc, "--embed-concurrency", embedConc}
 	case "tech":
 		return []string{"--tech-engine", "fast", "--concurrency", techConc}

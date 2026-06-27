@@ -118,7 +118,8 @@ type ShardConfig struct {
 	EmbedConcurrency     int    // industry stream: embed requests kept continuously in flight
 	EmbedBatch           int    // industry stream: texts per embed request
 	TechMaxBytes         int    // body cap fed to Wappalyzer; 0 => no cap (full body)
-	Mode                 string // "industry" | "tech" | "both" (default "both")
+	Mode                 string // "industry" | "tech" | "both" | "embed" (default "both")
+	EmbedOnly            bool   // embed mode: fetch+embed+keep the vector, skip NACE classify & rows
 }
 
 type domainAgg struct {
@@ -507,6 +508,10 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 				}
 				for k := range batch {
 					b := batch[k]
+					embByDi[b.di] = embeddingRow(cfg, b, vecs[k]) // keep the raw vector + page metadata
+					if cfg.EmbedOnly {
+						continue // embed-only: no NACE classify, no domain/industry/signal rows
+					}
 					var res model.DomainResult
 					if label := classify.MatchSignal(b.text); label != "" {
 						res = model.DomainResult{PageType: label, NaceMethod: "keyword"}
@@ -516,7 +521,6 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 					domains[b.di] = domainRow(cfg, b.root, b.url, b.sub)
 					indByDi[b.di] = industryRows(cfg, b.root, b.url, res)
 					sigByDi[b.di] = pageSignalRow(cfg, b.root, b.url, b.sub, res)
-					embByDi[b.di] = embeddingRow(cfg, b, vecs[k]) // keep the raw vector + page metadata
 				}
 				atomic.AddInt64(&done, int64(len(batch)))
 				batch = batch[:0]
@@ -593,6 +597,12 @@ func ProcessIndustryStream(ctx context.Context, items []model.WorklistItem, gett
 	var pageSignals []output.PageSignalRow
 	var embeddings []output.EmbeddingRow
 	for di := range domains {
+		if cfg.EmbedOnly { // embed-only fills only embByDi, never domains
+			if embByDi[di].RootDomain != "" {
+				embeddings = append(embeddings, embByDi[di])
+			}
+			continue
+		}
 		if domains[di].RootDomain != "" {
 			out = append(out, domains[di])
 			industries = append(industries, indByDi[di]...)

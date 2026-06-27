@@ -61,6 +61,7 @@ Usage:
 
 Commands:
   industry   embed each domain's page + classify NACE industry  (GPU-bound; needs ClickHouse + embed endpoint)
+  embed      embed each domain's page, save the raw vector only — no NACE, no ClickHouse  (GPU + embed endpoint)
   tech       fingerprint technologies + extract identifiers/profiles  (CPU-bound; S3 only)
   both       run both in one fetch pass  (discouraged — co-locating throttles the GPU; prefer two processes)
   load       load an already-produced Parquet output into ClickHouse (native driver — no clickhouse-client needed)
@@ -101,7 +102,7 @@ func parse(mode string, args []string) opts {
 		fs.StringVar(&o.techEngine, "tech-engine", "fast", "tech matcher: fast (Aho-Corasick gated) | wappalyzer (upstream full scan)")
 		fs.IntVar(&o.techMax, "tech-max-bytes", 131072, "cap body bytes fed to Wappalyzer (0 = full body; full-body regex ~1.2s/page)")
 	}
-	if mode == "industry" || mode == "both" {
+	if mode == "industry" || mode == "both" || mode == "embed" {
 		fs.IntVar(&o.batch, "embed-batch", embed.DefaultBatch, "texts per embed request — keep small (big batches overflow the engine's token budget)")
 		fs.IntVar(&o.embedConc, "embed-concurrency", 96, "concurrent embed requests in flight (saturate the GPU)")
 	}
@@ -120,7 +121,7 @@ func main() {
 		os.Exit(2)
 	}
 	switch cmd := os.Args[1]; cmd {
-	case "industry", "tech", "both":
+	case "industry", "tech", "both", "embed":
 		run(cmd, parse(cmd, os.Args[2:]))
 	case "load":
 		runLoad(os.Args[2:])
@@ -242,7 +243,7 @@ func run(mode string, o opts) {
 		log.Fatalf("create output dir %s: %v", outDir, err)
 	}
 
-	if mode != "industry" { // tech matcher only needed when we fingerprint
+	if mode == "tech" || mode == "both" { // tech matcher only needed when we fingerprint
 		switch o.techEngine {
 		case "fast":
 			fm, err := tech.NewFastMatcher()
@@ -258,46 +259,52 @@ func run(mode string, o opts) {
 		}
 	}
 
-	// ClickHouse reference + embedder are only needed when we classify (industry/both).
+	// The embedder is needed whenever we embed pages (industry/both/embed). The NACE reference +
+	// ClickHouse are needed only when we ALSO classify (industry/both) — embed-only skips them.
 	var ref *mdl.Reference
 	var protos *mdl.Prototypes
 	var emb classify.Embedder
 	if mode != "tech" {
-		conn, err := chConnect(ctx)
-		if err != nil {
-			log.Fatalf("clickhouse connect: %v", err)
-		}
-		ref, protos, err = classify.LoadReference(ctx, conn)
-		if err != nil {
-			conn.Close()
-			log.Fatalf("load reference: %v", err)
-		}
-		meta, metaErr := classify.LoadReferenceMeta(ctx, conn)
-		conn.Close()
-		if metaErr != nil {
-			log.Fatalf("load reference meta: %v", metaErr)
-		}
-		if len(ref.M) == 0 {
-			log.Fatal("empty NACE reference — rebuild corpscout.nace_category_embeddings")
-		}
-		log.Printf("reference: nace=%d page_types=%d dim=%d model=%s", len(ref.M), len(protos.P), len(ref.M[0]), meta.Model)
-
 		baseURL := envOr("COMMONCRAWL_EMBED_BASE_URL", "http://localhost:8000/v1")
 		model := envOr("COMMONCRAWL_EMBED_MODEL", "")
 		if model == "" {
-			if model, err = detectModel(baseURL); err != nil {
-				log.Fatalf("detect embed model: %v", err)
+			var derr error
+			if model, derr = detectModel(baseURL); derr != nil {
+				log.Fatalf("detect embed model: %v", derr)
 			}
 		}
 		log.Printf("embed endpoint=%s model=%s", baseURL, model)
 		emb = embed.NewEmbedClient(baseURL, model, o.batch, o.embedConc, envInt("COMMONCRAWL_EMBED_MAX_CHARS", 0))
 
-		// Fail fast unless the reference covers every NACE category and was built with the same
-		// model + dim this worker will embed pages with (the matching-vector-space invariant).
-		if err := classify.VerifyReference(meta, model, emb); err != nil {
-			log.Fatalf("reference check failed: %v", err)
+		if mode == "embed" {
+			log.Printf("embed-only mode: no NACE reference, no ClickHouse, no load")
+		} else {
+			conn, err := chConnect(ctx)
+			if err != nil {
+				log.Fatalf("clickhouse connect: %v", err)
+			}
+			ref, protos, err = classify.LoadReference(ctx, conn)
+			if err != nil {
+				conn.Close()
+				log.Fatalf("load reference: %v", err)
+			}
+			meta, metaErr := classify.LoadReferenceMeta(ctx, conn)
+			conn.Close()
+			if metaErr != nil {
+				log.Fatalf("load reference meta: %v", metaErr)
+			}
+			if len(ref.M) == 0 {
+				log.Fatal("empty NACE reference — rebuild corpscout.nace_category_embeddings")
+			}
+			log.Printf("reference: nace=%d page_types=%d dim=%d model=%s", len(ref.M), len(protos.P), len(ref.M[0]), meta.Model)
+
+			// Fail fast unless the reference covers every NACE category and was built with the same
+			// model + dim this worker will embed pages with (the matching-vector-space invariant).
+			if err := classify.VerifyReference(meta, model, emb); err != nil {
+				log.Fatalf("reference check failed: %v", err)
+			}
+			log.Printf("reference check OK: %d/%d categories, model=%s dim=%d", meta.Count, meta.Expected, meta.Model, meta.Dim)
 		}
-		log.Printf("reference check OK: %d/%d categories, model=%s dim=%d", meta.Count, meta.Expected, meta.Model, meta.Dim)
 	}
 
 	var getter fetch.RangeGetter
@@ -322,6 +329,7 @@ func run(mode string, o opts) {
 		CrawlID: o.crawlID, SourceRunID: fmt.Sprintf("go-%d", time.Now().Unix()),
 		ResolvedAt: time.Now().UTC(), Concurrency: o.concurrency, TechMaxBytes: o.techMax,
 		EmbedConcurrency: o.embedConc, EmbedBatch: o.batch, Mode: mode,
+		EmbedOnly: mode == "embed",
 	}
 	start := time.Now()
 	var domains []output.DomainRow
@@ -335,7 +343,7 @@ func run(mode string, o opts) {
 
 	// Industry: one continuous fetch→embed stream over the whole shard, so the GPU is fed
 	// non-stop (no per-chunk "embed all then wait" barrier). tech/both keep the chunk pipeline.
-	if mode == "industry" {
+	if mode == "industry" || mode == "embed" {
 		res, err := worker.ProcessIndustryStream(ctx, items, getter, emb, ref, protos, cfg)
 		if err != nil {
 			log.Fatalf("industry stream: %v", err)
@@ -344,8 +352,12 @@ func run(mode string, o opts) {
 		industries = res.Industries
 		pageSignals = res.PageSignals
 		embeddings = res.Embeddings
-		log.Printf("progress: %d/%d pages, %d domains (%.1f pages/s)",
-			len(items), len(items), len(domains), float64(len(items))/time.Since(start).Seconds())
+		unit, n := "domains", len(domains)
+		if mode == "embed" {
+			unit, n = "embeddings", len(embeddings)
+		}
+		log.Printf("progress: %d/%d pages, %d %s (%.1f pages/s)",
+			len(items), len(items), n, unit, float64(len(items))/time.Since(start).Seconds())
 	} else {
 		// Pipeline fetch and finalize: while chunk N embeds on the GPU (Finalize), chunk N+1 downloads
 		// on the network (FetchChunk) — so the GPU isn't idle during the fetch phase.
@@ -397,19 +409,22 @@ func run(mode string, o opts) {
 		}
 		written = append(written, p)
 	}
-	write("domains.parquet", func(p string) error { return output.WriteDomains(p, domains) }) // master, every mode
-	if mode != "tech" {
-		write("industries.parquet", func(p string) error { return output.WriteIndustries(p, industries) })
-		write("page_signals.parquet", func(p string) error { return output.WritePageSignals(p, pageSignals) })
+	if mode != "embed" { // embed-only writes nothing to data/crawl/ — just the vectors below
+		write("domains.parquet", func(p string) error { return output.WriteDomains(p, domains) }) // master, every mode
+		if mode != "tech" {
+			write("industries.parquet", func(p string) error { return output.WriteIndustries(p, industries) })
+			write("page_signals.parquet", func(p string) error { return output.WritePageSignals(p, pageSignals) })
+		}
+		if mode != "industry" {
+			write("metadata.parquet", func(p string) error { return output.WriteMetadata(p, metadata) })
+			write("contacts.parquet", func(p string) error { return output.WriteContacts(p, contacts) })
+			write("tech.parquet", func(p string) error { return output.WriteTech(p, techRows) })
+			write("identifiers.parquet", func(p string) error { return output.WriteIdentifiers(p, idents) })
+		}
 	}
-	if mode != "industry" {
-		write("metadata.parquet", func(p string) error { return output.WriteMetadata(p, metadata) })
-		write("contacts.parquet", func(p string) error { return output.WriteContacts(p, contacts) })
-		write("tech.parquet", func(p string) error { return output.WriteTech(p, techRows) })
-		write("identifiers.parquet", func(p string) error { return output.WriteIdentifiers(p, idents) })
-	}
-	// Embeddings are the expensive GPU artifact — keep them, but in a SEPARATE data/embedding/<stem>/
-	// tree (not data/crawl/), since they're large (~16 KB/domain) and never loaded into ClickHouse.
+	// Embeddings are the expensive GPU artifact — keep them in a SEPARATE data/embedding/<stem>/ tree
+	// (large, never loaded into ClickHouse). For embed mode --out is already that tree, so the derivation
+	// maps data/embedding/<stem> -> itself; for industry it maps data/crawl/<stem> -> data/embedding/<stem>.
 	if len(embeddings) > 0 {
 		embedDir := filepath.Join(filepath.Dir(filepath.Dir(outDir)), "embedding", filepath.Base(outDir))
 		if err := os.MkdirAll(embedDir, 0o755); err != nil {
@@ -427,7 +442,15 @@ func run(mode string, o opts) {
 	if dur > 0 {
 		rate = float64(len(domains)) / dur
 	}
-	log.Printf("done: %d domains, %d tech rows in %.1fs (%.1f domains/s) -> %s", len(domains), len(techRows), dur, rate, outDir)
+	if mode == "embed" {
+		erate := 0.0
+		if dur > 0 {
+			erate = float64(len(embeddings)) / dur
+		}
+		log.Printf("done: %d embeddings in %.1fs (%.1f embeddings/s)", len(embeddings), dur, erate)
+	} else {
+		log.Printf("done: %d domains, %d tech rows in %.1fs (%.1f domains/s) -> %s", len(domains), len(techRows), dur, rate, outDir)
+	}
 
 	// Loading is a SEPARATE step (the `load` subcommand / `load --dir`) so produce and load can be
 	// run and checked independently — a bad produce never gets auto-loaded. See docs/cc-crawl-design.md.
