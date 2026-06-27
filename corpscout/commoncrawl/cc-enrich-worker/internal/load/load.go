@@ -25,10 +25,11 @@ var Tables = map[string]string{
 	"tech":         "commoncrawl_technologies",
 	"identifiers":  "commoncrawl_company_identifiers",
 	"profiles":     "commoncrawl_company_profile",
+	"contacts":     "commoncrawl_company_contacts",
 }
 
 // Kinds is the load order (domains is the parent master, written by every pass).
-var Kinds = []string{"domains", "industries", "page_signals", "tech", "identifiers", "profiles"}
+var Kinds = []string{"domains", "industries", "page_signals", "tech", "identifiers", "profiles", "contacts"}
 
 // Result is one loaded file.
 type Result struct {
@@ -83,6 +84,19 @@ func FromFile(ctx context.Context, conn driver.Conn, path, kind string) (string,
 	}
 	switch kind {
 	case "domains":
+		// Old shard output has the fat single-table domains.parquet; fan it into the split tables.
+		legacy, err := domainsParquetIsLegacy(path)
+		if err != nil {
+			return table, 0, err
+		}
+		if legacy {
+			res, err := loadLegacyDomains(ctx, conn, path)
+			total := 0
+			for _, r := range res {
+				total += r.Rows
+			}
+			return table, total, err
+		}
 		rows, err := parquet.ReadFile[output.DomainRow](path)
 		if err != nil {
 			return table, 0, err
@@ -124,6 +138,13 @@ func FromFile(ctx context.Context, conn driver.Conn, path, kind string) (string,
 		}
 		n, err := Insert(ctx, conn, table, rows)
 		return table, n, err
+	case "contacts":
+		rows, err := parquet.ReadFile[output.ContactRow](path)
+		if err != nil {
+			return table, 0, err
+		}
+		n, err := Insert(ctx, conn, table, rows)
+		return table, n, err
 	}
 	return table, 0, fmt.Errorf("unhandled kind %q", kind)
 }
@@ -131,7 +152,28 @@ func FromFile(ctx context.Context, conn driver.Conn, path, kind string) (string,
 // FromDir inserts every <kind>.parquet present in dir (whichever the run produced).
 func FromDir(ctx context.Context, conn driver.Conn, dir string) ([]Result, error) {
 	var out []Result
+	// An old shard dir has only a fat domains.parquet (no industries/page_signals files): fan it into
+	// all three split tables, then skip those kinds in the normal loop.
+	skipSplit := false
+	domPath := filepath.Join(dir, "domains.parquet")
+	if _, err := os.Stat(domPath); err == nil {
+		legacy, err := domainsParquetIsLegacy(domPath)
+		if err != nil {
+			return out, fmt.Errorf("%s: %w", domPath, err)
+		}
+		if legacy {
+			res, err := loadLegacyDomains(ctx, conn, domPath)
+			out = append(out, res...)
+			if err != nil {
+				return out, fmt.Errorf("%s: %w", domPath, err)
+			}
+			skipSplit = true
+		}
+	}
 	for _, k := range Kinds {
+		if skipSplit && (k == "domains" || k == "industries" || k == "page_signals") {
+			continue
+		}
 		p := filepath.Join(dir, k+".parquet")
 		if _, err := os.Stat(p); err != nil {
 			continue

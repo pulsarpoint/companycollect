@@ -79,6 +79,7 @@ EXPECTED_MIGRATIONS = (
     "000064_corpscout_commoncrawl_page_signals",
     "000065_corpscout_commoncrawl_industries_signals_backfill",
     "000066_corpscout_commoncrawl_domains_slim",
+    "000067_corpscout_commoncrawl_company_contacts",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -859,6 +860,20 @@ def test_commoncrawl_domains_slim_drops_classification_columns() -> None:
     ):
         assert f"DROP COLUMN IF EXISTS {column_name}" in sql
         assert f"ADD COLUMN IF NOT EXISTS {column_name} " in down_sql
+
+
+def test_commoncrawl_company_contacts_migration_is_multi_valued() -> None:
+    sql = _migration_sql("000067_corpscout_commoncrawl_company_contacts.up.sql")
+    down_sql = _migration_sql("000067_corpscout_commoncrawl_company_contacts.down.sql")
+    assert "CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_company_contacts" in sql
+    for column_name in (
+        "crawl_id", "root_domain", "contact_type", "value", "source",
+        "source_url", "source_run_id", "resolved_at",
+    ):
+        assert f"    {column_name} " in sql
+    # one row per (domain, type, value) -> many emails/phones per domain
+    assert "ORDER BY (root_domain, contact_type, value)" in sql
+    assert "DROP TABLE IF EXISTS corpscout.commoncrawl_company_contacts" in down_sql
 
 
 def test_commoncrawl_technologies_migration_is_normalized_per_page_tech() -> None:

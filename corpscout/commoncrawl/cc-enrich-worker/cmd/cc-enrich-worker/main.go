@@ -417,22 +417,14 @@ func run(mode string, o opts) {
 			log.Fatalf("clickhouse connect (load): %v", err)
 		}
 		defer conn.Close()
-		loadInto := func(kind string, do func() (int, error)) {
-			n, err := do()
-			if err != nil {
-				log.Fatalf("load %s: %v", kind, err)
-			}
-			log.Printf("loaded %d rows -> %s", n, load.Tables[kind])
+		// Load the parquet we just wrote via the SAME loader as the `load --dir` subcommand — one
+		// implementation, so what the auto-load does is exactly what a manual re-load does.
+		results, err := load.FromDir(ctx, conn, outDir)
+		if err != nil {
+			log.Fatalf("load %s: %v", outDir, err)
 		}
-		loadInto("domains", func() (int, error) { return load.Insert(ctx, conn, load.Tables["domains"], domains) }) // every mode
-		if mode != "tech" {
-			loadInto("industries", func() (int, error) { return load.Insert(ctx, conn, load.Tables["industries"], industries) })
-			loadInto("page_signals", func() (int, error) { return load.Insert(ctx, conn, load.Tables["page_signals"], pageSignals) })
-		}
-		if mode != "industry" {
-			loadInto("tech", func() (int, error) { return load.Insert(ctx, conn, load.Tables["tech"], techRows) })
-			loadInto("identifiers", func() (int, error) { return load.Insert(ctx, conn, load.Tables["identifiers"], idents) })
-			loadInto("profiles", func() (int, error) { return load.Insert(ctx, conn, load.Tables["profiles"], profiles) })
+		for _, r := range results {
+			log.Printf("loaded %d rows -> %s", r.Rows, r.Table)
 		}
 	}
 

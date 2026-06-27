@@ -113,9 +113,23 @@ type ProfileRow struct {
 	ResolvedAt    time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
 }
 
+// ContactRow mirrors corpscout.commoncrawl_company_contacts (migration 000067): one row per
+// (domain, contact_type, value) — many emails/phones per domain. Written by the TECH pass.
+type ContactRow struct {
+	CrawlID     string    `parquet:"crawl_id" ch:"crawl_id"`
+	RootDomain  string    `parquet:"root_domain" ch:"root_domain"`
+	ContactType string    `parquet:"contact_type" ch:"contact_type"`
+	Value       string    `parquet:"value" ch:"value"`
+	Source      string    `parquet:"source" ch:"source"`
+	SourceURL   string    `parquet:"source_url" ch:"source_url"`
+	SourceRunID string    `parquet:"source_run_id" ch:"source_run_id"`
+	ResolvedAt  time.Time `parquet:"resolved_at,timestamp" ch:"resolved_at"`
+}
+
 func WriteDomains(path string, rows []DomainRow) error         { return parquet.WriteFile(path, rows) }
 func WriteIndustries(path string, rows []IndustryRow) error    { return parquet.WriteFile(path, rows) }
 func WritePageSignals(path string, rows []PageSignalRow) error { return parquet.WriteFile(path, rows) }
+func WriteContacts(path string, rows []ContactRow) error       { return parquet.WriteFile(path, rows) }
 func WriteTech(path string, rows []TechRow) error              { return parquet.WriteFile(path, rows) }
 func WriteIdentifiers(path string, rows []IdentifierRow) error { return parquet.WriteFile(path, rows) }
 func WriteProfiles(path string, rows []ProfileRow) error       { return parquet.WriteFile(path, rows) }

@@ -36,6 +36,7 @@ type ShardResult struct {
 	Tech        []output.TechRow
 	Identifiers []output.IdentifierRow
 	Profiles    []output.ProfileRow
+	Contacts    []output.ContactRow // emails/phones, from the tech pass
 }
 
 func b2u8(b bool) uint8 {
@@ -91,6 +92,13 @@ func pageSignalRow(cfg ShardConfig, root, url, sub string, res model.DomainResul
 	}
 }
 
+func contactRow(cfg ShardConfig, root, url, typ, value, source string) output.ContactRow {
+	return output.ContactRow{
+		CrawlID: cfg.CrawlID, RootDomain: root, ContactType: typ, Value: value, Source: source,
+		SourceURL: url, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
+	}
+}
+
 type ShardConfig struct {
 	CrawlID, SourceRunID string
 	ResolvedAt           time.Time
@@ -103,6 +111,7 @@ type ShardConfig struct {
 
 type domainAgg struct {
 	rootDomain, primaryURL, primarySub, primaryText string
+	emails                                          []string // regex-scraped, deduped (tech pass)
 	tech                                            []model.Technology
 	identifiers                                     []model.Identifier
 	profile                                         model.CompanyProfile
@@ -172,6 +181,7 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 			agg := &domainAgg{rootDomain: dom}
 			techSeen := map[string]bool{}
 			idSeen := map[string]bool{}
+			emailSeen := map[string]bool{}
 			for _, it := range byDomain[dom] {
 				t0 := time.Now()
 				fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -200,6 +210,12 @@ func FetchChunk(ctx context.Context, items []model.WorklistItem, getter fetch.Ra
 						if !techSeen[t.Name] {
 							techSeen[t.Name] = true
 							agg.tech = append(agg.tech, t)
+						}
+					}
+					for _, e := range parse.Emails(string(body)) { // regex emails over the full page
+						if !emailSeen[e] {
+							emailSeen[e] = true
+							agg.emails = append(agg.emails, e)
 						}
 					}
 					prof, structIDs := extract.ExtractProfile(techBody) // schema.org Organization JSON-LD
@@ -270,6 +286,7 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 	var techRows []output.TechRow
 	var identRows []output.IdentifierRow
 	var profileRows []output.ProfileRow
+	var contacts []output.ContactRow
 
 	if runEmbed {
 		var idx []int
@@ -360,9 +377,18 @@ func Finalize(ctx context.Context, fc FetchedChunk, emb embedderIface, ref *mode
 					SourceURL: a.primaryURL, SourceRunID: cfg.SourceRunID, ResolvedAt: cfg.ResolvedAt,
 				})
 			}
+			for _, e := range a.emails { // regex emails scraped from the pages
+				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "email", e, "regex"))
+			}
+			if a.profile.Email != "" {
+				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "email", a.profile.Email, "jsonld"))
+			}
+			if a.profile.Phone != "" {
+				contacts = append(contacts, contactRow(cfg, a.rootDomain, a.primaryURL, "phone", a.profile.Phone, "jsonld"))
+			}
 		}
 	}
-	return ShardResult{Domains: domains, Industries: industries, PageSignals: pageSignals, Tech: techRows, Identifiers: identRows, Profiles: profileRows}, nil
+	return ShardResult{Domains: domains, Industries: industries, PageSignals: pageSignals, Tech: techRows, Identifiers: identRows, Profiles: profileRows, Contacts: contacts}, nil
 }
 
 // streamItem is one fetched primary page handed from the fetch stage to an embed worker.

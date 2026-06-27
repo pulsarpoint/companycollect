@@ -64,6 +64,10 @@ func ParseHTML(htmlStr string) (text string, emails []string, socials []string) 
 	return text, emails, socials
 }
 
+// Emails returns the de-duplicated email addresses in s via the same regex as ParseHTML, but
+// without the full HTML→text conversion — cheap enough to run on every page in the tech pass.
+func Emails(s string) []string { return dedupe(emailRe.FindAllString(s, -1)) }
+
 func extractSocials(hrefs []string) []string {
 	seen := map[string]bool{}
 	var out []string
