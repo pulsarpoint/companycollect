@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from translator.workflow import (
     flush_activity,
     scan_and_seed_activity,
 )
+
+logger = logging.getLogger("translator.worker")
 
 
 def load_env_file(path: Path) -> int:
@@ -66,6 +69,11 @@ def build_worker(client: object) -> Worker:
 async def run_worker(temporal_address: str | None = None) -> None:
     address = temporal_address or os.environ.get("TEMPORAL_ADDRESS", "companycollect:7233")
     client = await Client.connect(address)
+    logger.info(
+        "connected to Temporal at %s | polling task queue %r (Ctrl-C to stop)",
+        address,
+        LOCAL_LLM_TRANSLATION_TASK_QUEUE,
+    )
     await build_worker(client).run()
 
 
@@ -88,6 +96,12 @@ def worker_main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     load_env_file(Path(args.env_file))
+
+    logging.basicConfig(
+        level=os.environ.get("TRANSLATOR_LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s | %(message)s",
+    )
+    logger.info("starting translator worker")
 
     try:
         asyncio.run(run_worker(temporal_address=args.temporal_address))

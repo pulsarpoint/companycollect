@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 import os
@@ -11,6 +12,7 @@ from temporalio.common import RetryPolicy
 
 from translator.types import SmokeTranslationResult
 
+logger = logging.getLogger("translator.activities")
 
 LOCAL_LLM_TRANSLATION_TASK_QUEUE = "translation-local-llm"
 
@@ -99,11 +101,13 @@ def process_translation_batch_once(
     )
     claimed = queue.claim_batch(limit=params.batch_size, worker_id=params.worker_id)
     if not claimed:
+        logger.info("process_batch: queue drained (no pending items)")
         return ProcessTranslationBatchResult(
             status="empty",
             item_count=0,
             duration_seconds=0.0,
         )
+    logger.info("process_batch: claimed %d item(s) (model=%s)", len(claimed), model)
 
     provider_inputs = _provider_inputs(claimed)
     queue_id_by_provider_id = {
@@ -140,6 +144,12 @@ def process_translation_batch_once(
             error_message=error_message,
             duration_seconds=duration_seconds,
         )
+        logger.warning(
+            "process_batch: batch FAILED (%s) for %d item(s): %s",
+            error_category,
+            len(claimed),
+            error_message,
+        )
         return ProcessTranslationBatchResult(
             status="failed",
             item_count=len(claimed),
@@ -161,6 +171,7 @@ def process_translation_batch_once(
         model=model,
         duration_seconds=duration_seconds,
     )
+    logger.info("process_batch: translated %d item(s) in %.1fs", len(claimed), duration_seconds)
     return ProcessTranslationBatchResult(
         status="success",
         item_count=len(claimed),

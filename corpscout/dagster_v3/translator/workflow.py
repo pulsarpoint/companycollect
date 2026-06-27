@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass
 from datetime import timedelta
@@ -21,6 +22,8 @@ with workflow.unsafe.imports_passed_through():
     from translator.clickhouse import clickhouse_client_from_env, scan_untranslated_terms
     from translator.flush import flush_translations
     from translator.registry import get_source_config
+
+logger = logging.getLogger("translator.workflow")
 
 
 @dataclass(frozen=True)
@@ -86,6 +89,16 @@ def scan_and_seed_once(params: ScanAndSeedInput) -> ScanAndSeedResult:
     static_flushed = 0
     try:
         terms = scan_untranslated_terms(client, source_config)
+        logger.info(
+            "scan_and_seed[%s]: scanned %d untranslated term(s) from %s",
+            params.source_slug, len(terms), source_config.ch_table,
+        )
+        if not terms:
+            logger.warning(
+                "scan_and_seed[%s]: 0 untranslated terms — nothing to translate "
+                "(is %s populated, and is the cache anti-join correct?)",
+                params.source_slug, source_config.ch_table,
+            )
 
         static_terms = []
         dynamic_terms = []
@@ -138,6 +151,10 @@ def scan_and_seed_once(params: ScanAndSeedInput) -> ScanAndSeedResult:
         for term in dynamic_terms
     ]
     dynamic_enqueued = queue.enqueue_items(items)
+    logger.info(
+        "scan_and_seed[%s]: static_flushed=%d dynamic_enqueued=%d",
+        params.source_slug, static_flushed, dynamic_enqueued,
+    )
     return ScanAndSeedResult(dynamic_enqueued=dynamic_enqueued, static_flushed=static_flushed)
 
 
@@ -149,10 +166,11 @@ def flush_once(params: FlushInput) -> int:
     source_config = get_source_config(params.source_slug)
     rows = TranslationQueue(params.queue_duckdb_path).completed_results_for_flush()
     if not rows:
+        logger.info("flush[%s]: no completed rows to flush", params.source_slug)
         return 0
     client = clickhouse_client_from_env()
     try:
-        return flush_translations(
+        written = flush_translations(
             client,
             source_config,
             rows,
@@ -161,6 +179,8 @@ def flush_once(params: FlushInput) -> int:
             version=params.version,
             run_id=params.queue_duckdb_path,
         )
+        logger.info("flush[%s]: wrote %d row(s) to text_translations", params.source_slug, written)
+        return written
     finally:
         close = getattr(client, "close", None)
         if callable(close):
