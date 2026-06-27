@@ -26,6 +26,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 func env(key, def string) string {
@@ -66,6 +68,10 @@ func runStep(name string, args []string, dir string) (code int, output string, e
 }
 
 func main() {
+	// Load .env (overriding the ambient shell, like the old run_crawl.sh `set -a; . ./.env; set +a`)
+	// so the worker + index_builder children get the shared config. Missing file is fine.
+	_ = godotenv.Overload(env("DOTENV", ".env"))
+
 	fs := flag.NewFlagSet("cc-crawl", flag.ExitOnError)
 	modeF := fs.String("mode", "", "pass to run: industry | tech  (required)")
 	partsF := fs.String("parts", "", "part range lo-hi, or a single part N  (required)")
