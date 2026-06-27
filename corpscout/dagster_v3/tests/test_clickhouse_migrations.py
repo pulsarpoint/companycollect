@@ -782,6 +782,16 @@ def test_commoncrawl_domains_migration_covers_industry_and_top3_audit() -> None:
     assert "DROP TABLE IF EXISTS corpscout.commoncrawl_domains" in down_sql
 
 
+def test_no_semicolon_inside_sql_comments() -> None:
+    # The clickhouse migrate driver runs with x-multi-statement=true (splits the file on ';') and
+    # does NOT strip comments first, so a ';' inside a '--' comment becomes a comment-only chunk ->
+    # ClickHouse "Empty query" (code 62) and the migration fails. Forbid ';' in any comment line.
+    for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if line.lstrip().startswith("--"):
+                assert ";" not in line, f"{path.name}:{lineno} has ';' inside a comment"
+
+
 def test_commoncrawl_industries_migration_splits_classification_from_domain_master() -> None:
     sql = _migration_sql("000063_corpscout_commoncrawl_industries.up.sql")
     down_sql = _migration_sql("000063_corpscout_commoncrawl_industries.down.sql")

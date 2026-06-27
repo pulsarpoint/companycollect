@@ -2,8 +2,8 @@ CREATE DATABASE IF NOT EXISTS corpscout;
 
 -- Industry classification of a domain from the embedding/NACE pass, split out of commoncrawl_domains
 -- so that table can become the thin domain master (written by every pass). One row per (domain,
--- crawl), written by the industry pass only; keyed to commoncrawl_domains via root_domain. This
--- migration only creates the table — backfilling the existing rows and slimming commoncrawl_domains
+-- crawl), written by the industry pass only, keyed to commoncrawl_domains via root_domain. This
+-- migration only creates the table. Backfilling the existing rows and slimming commoncrawl_domains
 -- are separate, later steps.
 CREATE TABLE IF NOT EXISTS corpscout.commoncrawl_industries
 (
