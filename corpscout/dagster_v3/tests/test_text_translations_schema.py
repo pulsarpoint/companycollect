@@ -245,3 +245,53 @@ def test_legal_form_via_cache_down_restores_three_field_view():
     # legal_form_description_en is re-added as a base column (ADD COLUMN) but
     # must not appear as a view-level alias produced by a cache JOIN.
     assert "AS legal_form_description_en" not in sql
+
+
+TABLE_COLUMN_UP = (
+    MIGRATIONS_DIR / "000069_corpscout_text_translations_table_column.up.sql"
+)
+TABLE_COLUMN_DOWN = (
+    MIGRATIONS_DIR / "000069_corpscout_text_translations_table_column.down.sql"
+)
+
+TABLE_COLUMN_FIELDS = (
+    ("articles_purpose_original", "articles_purpose_en"),
+    ("activity_text_original", "activity_text_en"),
+    ("company_description_original", "company_description_en"),
+    ("legal_form_description_original", "legal_form_description_en"),
+)
+
+
+def test_000063_up_recreates_table_keyed_on_table_and_column():
+    sql = TABLE_COLUMN_UP.read_text(encoding="utf-8")
+    assert "CREATE DATABASE IF NOT EXISTS corpscout;" in sql
+    assert "DROP TABLE IF EXISTS corpscout.text_translations" in sql
+    assert "source_table      LowCardinality(String)" in sql
+    assert "source_column     LowCardinality(String)" in sql
+    # Old key columns are gone from the new table definition.
+    assert "source_slug" not in sql
+    assert "ReplacingMergeTree(version)" in sql
+    assert "ORDER BY (source_table, source_column, source_text_hash)" in sql
+
+
+def test_000063_up_repoints_view_to_table_and_column():
+    sql = TABLE_COLUMN_UP.read_text(encoding="utf-8")
+    assert "CREATE OR REPLACE VIEW corpscout.no_companies_translated" in sql
+    assert "FROM corpscout.no_companies AS c" in sql
+    assert "EXCEPT (" not in sql
+    for original, en_col in TABLE_COLUMN_FIELDS:
+        assert f"source_table = 'corpscout.no_companies' AND source_column = '{original}'" in sql
+        assert f"cityHash64(c.{original})" in sql
+        assert en_col in sql
+    assert "argMax(translated_text, version)" in sql
+    # The old key column must not appear in the new view's WHERE clauses.
+    assert "field = '" not in sql
+
+
+def test_000063_down_restores_slug_field_schema_and_view():
+    sql = TABLE_COLUMN_DOWN.read_text(encoding="utf-8")
+    assert "DROP TABLE IF EXISTS corpscout.text_translations" in sql
+    assert "ORDER BY (source_slug, field, source_text_hash)" in sql
+    assert "CREATE OR REPLACE VIEW corpscout.no_companies_translated" in sql
+    for field in ("articles_purpose", "activity_text", "company_description", "legal_form_description"):
+        assert f"field = '{field}'" in sql

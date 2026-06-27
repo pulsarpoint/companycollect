@@ -80,6 +80,7 @@ EXPECTED_MIGRATIONS = (
     "000066_corpscout_commoncrawl_domains_slim",
     "000067_corpscout_commoncrawl_domain_metadata",
     "000068_corpscout_commoncrawl_domain_contact_info",
+    "000069_corpscout_text_translations_table_column",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
