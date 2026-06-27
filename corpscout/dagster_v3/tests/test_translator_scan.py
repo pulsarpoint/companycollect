@@ -65,3 +65,13 @@ def test_static_map_resolution_unknown_code_returns_empty():
     mapping = lf_field.static_map_dict() or {}
     assert mapping.get("UNKNOWN", "") == ""
     assert mapping.get("", "") == ""
+
+
+def test_static_map_covers_all_register_legal_form_codes():
+    """The legal-form dict must cover every code present in the Norway register
+    (40 as of 2026-06), including the high-volume ones that were previously missing."""
+    config = get_source_config("norway_brreg")
+    mapping = config.fields[3].static_map_dict() or {}
+    for code in ("FLI", "ESEK", "UTLA", "BRL", "KBO", "SAM", "ANNA", "KF", "FKF", "SÆR", "STAT"):
+        assert mapping.get(code), f"{code} must have an English translation"
+    assert len(mapping) >= 40
