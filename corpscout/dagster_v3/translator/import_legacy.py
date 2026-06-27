@@ -59,6 +59,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to a .env file to load before connecting (default: .env).",
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=50_000,
+        help="Rows per ClickHouse flush (bounds the Memory staging table; default: 50000).",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Scan and report counts without writing anything to ClickHouse.",
@@ -159,15 +165,20 @@ def main(argv: list[str] | None = None) -> int:
 
     client = clickhouse_client_from_env()
     version = int(time.time())
-    written = flush_translations(
-        client,
-        config,
-        import_rows,
-        provider=args.provider,
-        model=args.model,
-        version=version,
-        run_id="legacy-import",
-    )
+    batch_size = max(1, args.batch_size)
+    written = 0
+    for idx in range(0, len(import_rows), batch_size):
+        chunk = import_rows[idx : idx + batch_size]
+        written += flush_translations(
+            client,
+            config,
+            chunk,
+            provider=args.provider,
+            model=args.model,
+            version=version,
+            run_id=f"legacy-import-{idx // batch_size}",
+        )
+        print(f"  flushed {written}/{len(import_rows)} ...")
     print()
     print(f"Written {written} rows to ClickHouse (corpscout.text_translations).")
     return 0
