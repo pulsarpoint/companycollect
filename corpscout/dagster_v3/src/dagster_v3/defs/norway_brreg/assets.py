@@ -211,8 +211,12 @@ def build_norway_brreg_translate_input() -> TranslateSourceWorkflowInput:
         summarize_timeout_seconds=60,
         activity_maximum_attempts=3,
         lease_timeout_seconds=600,
-        scan_timeout_seconds=300,
-        flush_timeout_seconds=300,
+        # scan_and_seed scans ~1.16M rows across multiple anti-joins AND seeds
+        # hundreds of thousands of terms into the DuckDB queue; 5 min is far too
+        # short for a full first run (it timed out → CancelledError). Allow 1h.
+        scan_timeout_seconds=3600,
+        # The final flush writes the whole completed set in one pass; allow 30 min.
+        flush_timeout_seconds=1800,
     )
 
 
