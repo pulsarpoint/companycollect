@@ -10,7 +10,12 @@ import time
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 
-from translator.types import SmokeTranslationResult
+from typing import TYPE_CHECKING
+
+from translator.types import TranslationInput, TranslationResult
+
+if TYPE_CHECKING:
+    from translator.queue import ClaimedTranslationItem
 
 logger = logging.getLogger("translator.activities")
 
@@ -83,13 +88,12 @@ def process_translation_batch_once(
     *,
     provider: object | None = None,
 ) -> ProcessTranslationBatchResult:
-    from translator.provider_smoke import _categorize_exception, _parse_extra_body
-    from translator.queue import TranslationQueue
-    from translator.queue_smoke import (
-        _map_provider_results_to_queue_ids,
-        _provider_inputs,
+    from translator.errors import _categorize_exception
+    from translator.provider import (
+        LocalOpenAICompatibleTranslationProvider,
+        _parse_extra_body,
     )
-    from translator.smoke import LocalOpenAICompatibleTranslationProvider
+    from translator.queue import TranslationQueue
 
     queue = TranslationQueue(params.duckdb_path)
     queue.initialize()
@@ -272,3 +276,27 @@ def summarize_translation_queue_once(duckdb_path: str) -> dict[str, int]:
 
 def _elapsed_seconds(started_at: float) -> float:
     return round(time.perf_counter() - started_at, 3)
+
+
+def _provider_inputs(items: list["ClaimedTranslationItem"]) -> list[TranslationInput]:
+    return [
+        TranslationInput(
+            item_id=f"batch-item-{index:03d}",
+            source_text=item.source_text,
+        )
+        for index, item in enumerate(items)
+    ]
+
+
+def _map_provider_results_to_queue_ids(
+    translations: list[TranslationResult],
+    *,
+    queue_id_by_provider_id: dict[str, str],
+) -> list[TranslationResult]:
+    return [
+        TranslationResult(
+            item_id=queue_id_by_provider_id[translation.item_id],
+            translated_text=translation.translated_text,
+        )
+        for translation in translations
+    ]

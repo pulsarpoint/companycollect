@@ -1,17 +1,19 @@
+# translator/provider.py
+"""OpenAI-compatible local translation provider (formerly smoke.py)."""
 from __future__ import annotations
 
 import json
 
 from openai import OpenAI
 
-from translator.types import SmokeTranslationInput, SmokeTranslationResult
+from translator.types import TranslationInput, TranslationResult
 
 
 DEFAULT_MAX_TOKENS = 2048
 DEFAULT_EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
 
 
-def build_smoke_translation_prompt(items: list[SmokeTranslationInput]) -> str:
+def build_translation_prompt(items: list[TranslationInput]) -> str:
     payload = {
         "source_language": "Norwegian",
         "target_language": "English",
@@ -32,17 +34,17 @@ def build_smoke_translation_prompt(items: list[SmokeTranslationInput]) -> str:
     )
 
 
-def parse_smoke_translation_response(
+def parse_translation_response(
     response_text: str,
     *,
     expected_item_ids: set[str],
-) -> list[SmokeTranslationResult]:
+) -> list[TranslationResult]:
     payload = json.loads(_strip_json_fence(response_text))
     translations = payload.get("translations")
     if not isinstance(translations, list):
         raise ValueError("translation response must contain translations list")
 
-    results: list[SmokeTranslationResult] = []
+    results: list[TranslationResult] = []
     seen: set[str] = set()
     for row in translations:
         if not isinstance(row, dict):
@@ -57,7 +59,7 @@ def parse_smoke_translation_response(
             raise ValueError(f"empty translated_text for item_id: {item_id}")
         seen.add(item_id)
         results.append(
-            SmokeTranslationResult(
+            TranslationResult(
                 item_id=item_id,
                 translated_text=translated_text.strip(),
             )
@@ -66,6 +68,15 @@ def parse_smoke_translation_response(
     if missing_item_ids:
         raise ValueError(f"missing item_id values: {sorted(missing_item_ids)}")
     return results
+
+
+def _parse_extra_body(value: str) -> dict[str, object] | None:
+    if value.strip() == "":
+        return None
+    payload = json.loads(value)
+    if not isinstance(payload, dict):
+        raise ValueError("extra body JSON must be an object")
+    return payload
 
 
 class LocalOpenAICompatibleTranslationProvider:
@@ -96,11 +107,11 @@ class LocalOpenAICompatibleTranslationProvider:
 
     def translate(
         self,
-        items: list[SmokeTranslationInput],
+        items: list[TranslationInput],
         *,
         timeout_seconds: int,
-    ) -> list[SmokeTranslationResult]:
-        prompt = build_smoke_translation_prompt(items)
+    ) -> list[TranslationResult]:
+        prompt = build_translation_prompt(items)
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
@@ -112,7 +123,7 @@ class LocalOpenAICompatibleTranslationProvider:
         content = response.choices[0].message.content
         if content is None:
             raise ValueError("translation response content is empty")
-        return parse_smoke_translation_response(
+        return parse_translation_response(
             content,
             expected_item_ids={item.item_id for item in items},
         )

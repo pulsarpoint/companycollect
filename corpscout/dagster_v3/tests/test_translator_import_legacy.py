@@ -3,7 +3,7 @@ from pathlib import Path
 
 from translator.import_legacy import main
 from translator.queue import TranslationQueue, TranslationQueueItem
-from translator.types import SmokeTranslationResult
+from translator.types import TranslationResult
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ def _build_old_queue(path: Path) -> TranslationQueue:
     queue.enqueue_items(items)
     claimed = queue.claim_batch(limit=10, worker_id="test-worker")
     translations = [
-        SmokeTranslationResult(
+        TranslationResult(
             item_id=c.item_id,
             translated_text=f"translated_{c.source_text}",
         )
@@ -168,7 +168,7 @@ def test_empty_translated_text_excluded(tmp_path, monkeypatch):
     claimed = queue.claim_batch(limit=10, worker_id="w")
     queue.complete_batch(
         claimed,
-        [SmokeTranslationResult(item_id=claimed[0].item_id, translated_text="")],
+        [TranslationResult(item_id=claimed[0].item_id, translated_text="")],
         provider="p",
         model="m",
         duration_seconds=0.1,

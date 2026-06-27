@@ -31,7 +31,7 @@ def test_translate_source_workflow_scans_translates_flushes(tmp_path, monkeypatc
 
     def fake_process_once(params, *, provider=None):
         from translator.queue import TranslationQueue
-        from translator.types import SmokeTranslationResult
+        from translator.types import TranslationResult
 
         q = TranslationQueue(params.duckdb_path)
         q.initialize()
@@ -40,7 +40,7 @@ def test_translate_source_workflow_scans_translates_flushes(tmp_path, monkeypatc
             return acts.ProcessTranslationBatchResult(status="empty", item_count=0, duration_seconds=0.0)
         q.complete_batch(
             claimed,
-            [SmokeTranslationResult(item_id=c.item_id, translated_text=c.source_text.upper()) for c in claimed],
+            [TranslationResult(item_id=c.item_id, translated_text=c.source_text.upper()) for c in claimed],
             provider="fake", model="fake", duration_seconds=0.0,
         )
         return acts.ProcessTranslationBatchResult(status="success", item_count=len(claimed), duration_seconds=0.0)

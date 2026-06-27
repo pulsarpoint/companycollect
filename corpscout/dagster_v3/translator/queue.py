@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import duckdb
 
-from translator.types import SmokeTranslationResult
+from translator.types import TranslationResult
 
 
 QUEUE_STATUS_PENDING = "pending"
@@ -338,7 +338,7 @@ class TranslationQueue:
     def complete_batch(
         self,
         items: list[ClaimedTranslationItem],
-        translations: list[SmokeTranslationResult],
+        translations: list[TranslationResult],
         *,
         provider: str,
         model: str,

@@ -1,5 +1,5 @@
 from translator.queue import FlushTranslationRow, TranslationQueue, TranslationQueueItem
-from translator.types import SmokeTranslationResult
+from translator.types import TranslationResult
 
 
 def _item(source_column: str, text: str) -> TranslationQueueItem:
@@ -21,7 +21,7 @@ def test_completed_results_for_flush_returns_source_column_text_translation(tmp_
     claimed = queue.claim_batch(limit=10, worker_id="w1")
     queue.complete_batch(
         claimed,
-        [SmokeTranslationResult(item_id=claimed[0].item_id, translated_text="Holding company")],
+        [TranslationResult(item_id=claimed[0].item_id, translated_text="Holding company")],
         provider="prov",
         model="model",
         duration_seconds=0.1,

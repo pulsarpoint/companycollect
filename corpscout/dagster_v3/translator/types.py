@@ -4,12 +4,12 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class SmokeTranslationInput:
+class TranslationInput:
     item_id: str
     source_text: str
 
 
 @dataclass(frozen=True)
-class SmokeTranslationResult:
+class TranslationResult:
     item_id: str
     translated_text: str

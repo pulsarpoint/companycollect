@@ -6,8 +6,8 @@ def test_translator_core_is_self_contained_and_importable():
         summarize_translation_queue,
     )
     from translator.queue import TranslationQueue, TranslationQueueItem
-    from translator.smoke import LocalOpenAICompatibleTranslationProvider
-    from translator.types import SmokeTranslationInput, SmokeTranslationResult
+    from translator.provider import LocalOpenAICompatibleTranslationProvider
+    from translator.types import TranslationInput, TranslationResult
 
     assert LOCAL_LLM_TRANSLATION_TASK_QUEUE == "translation-local-llm"
     assert ProcessTranslationBatchInput is not None
@@ -15,7 +15,7 @@ def test_translator_core_is_self_contained_and_importable():
     assert callable(summarize_translation_queue)
     assert TranslationQueue and TranslationQueueItem
     assert LocalOpenAICompatibleTranslationProvider
-    assert SmokeTranslationInput and SmokeTranslationResult
+    assert TranslationInput and TranslationResult
 
 
 def test_translator_modules_do_not_import_old_packages():
