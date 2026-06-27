@@ -144,6 +144,9 @@ confidence gate. Junk/parked pages are tagged via `page_type` and skip NACE.
   division`, `rank`, `is_primary`, `score`, `nace_method`.
 - `commoncrawl_page_signals` — one row/domain: `page_type`(+score), `nace_confident`, `nace_margin`.
 - `commoncrawl_domains` — the identity master row (also written by the tech pass).
+- **`data/embedding/out_industry_<part>/embeddings.parquet`** (on disk, **not** ClickHouse) — the raw
+  fp32 page vector + page metadata, saved on every industry run so it's never recomputed. Source of
+  record for re-classification + similarity/Qdrant (see §5b, `docs/embeddings-design.md`).
 
 ---
 
@@ -205,9 +208,10 @@ the worker. Build both binaries with one `make` (§2c), then run from `commoncra
 ```bash
 cc-crawl/bin/cc-crawl -mode tech     -parts 0-299 -crawl CC-MAIN-2026-25   # workflow B (CPU pass)
 cc-crawl/bin/cc-crawl -mode industry -parts 0-299 -crawl CC-MAIN-2026-25   # workflow A (GPU pass)
+cc-crawl/bin/cc-crawl -mode embed    -parts 0-70  -crawl CC-MAIN-2026-25   # embed-only backfill (§5b)
 ```
 Flags (`flag` package; each defaults from the same-named env var). **Required:** `-mode`
-(`industry|tech`), `-parts` (`lo-hi` or a single `N`), `-crawl` (no default). Optional: `-data`,
+(`industry|tech|embed`), `-parts` (`lo-hi` or a single `N`), `-crawl` (no default). Optional: `-data`,
 `-builder-dir`, `-worker`, `-max-pages`, `-ind-conc`, `-embed-conc`, `-tech-conc`.
 
 For each part it: builds the **per-mode** worklist on demand (`shard_<mode>_<part>.parquet`, cached),
@@ -223,6 +227,31 @@ the run ends with a `done/skipped/failed` summary. Example:
 ```json
 {"level":"INFO","msg":"done","mode":"industry","part":5,"domains_from_s3":102804,"rows_to_clickhouse":408019}
 ```
+
+### 5b. Embed-only backfill (`-mode embed`)
+
+The industry pass embeds each page (the expensive GPU artifact) and now **persists the raw vector** to a
+separate tree `data/embedding/out_industry_<part>/embeddings.parquet` (fp32, one row/domain, with the
+page metadata — `source_url` + the WARC re-fetch coords + `subdomain` + `text_len`). Vectors are **not**
+loaded into ClickHouse (too large, incompressible); they're the source of record for cheap
+re-classification + similarity/Qdrant later (see `docs/embeddings-design.md`).
+
+`-mode embed` exists to **backfill segments that were classified before this change** (their vectors were
+discarded). It:
+- **reuses the industry worklist** `shard_industry_<part>.parquet` (no index rebuild for done parts),
+- runs a **single** embed exec — fetch → embed → write `embeddings.parquet` — with **no NACE classify,
+  no ClickHouse, no load step**,
+- writes to `data/embedding/out_industry_<part>/`, resumable on its own
+  `data/embedding/out_industry_<part>.loaded` marker (independent of the industry/tech markers).
+
+```bash
+cc-crawl/bin/cc-crawl -mode embed -parts 0-70 -crawl CC-MAIN-2026-25   # backfill done segments
+# or one segment straight through the worker:
+cc-enrich-worker embed --worklist data/crawl/shard_industry_43.parquet \
+                       --crawl-id CC-MAIN-2026-25 --out data/embedding/out_industry_43
+```
+Cost is just the unavoidable re-fetch + re-embed (no stored copy exists): ≈16 KB/domain fp32. Future
+industry parts save their vectors on the first pass — no backfill needed. See `docs/embed-only-mode-plan.md`.
 
 ### Re-running, forcing, and reloading
 
@@ -275,9 +304,10 @@ ReplacingMergeTree dedupes, so re-loading is safe.
 
 ## 6. Reference — `cc-enrich-worker` CLI
 
-Subcommand-based: `cc-enrich-worker <industry|tech|both> [flags]`. The command **is** the workflow;
+Subcommand-based: `cc-enrich-worker <industry|embed|tech|both> [flags]`. The command **is** the workflow;
 mode-specific flags appear only under their command (`cc-enrich-worker tech -h`). `both` runs both in
-one fetch pass (discouraged — co-locating throttles the GPU; prefer two processes).
+one fetch pass (discouraged — co-locating throttles the GPU; prefer two processes). `embed` is industry's
+fetch→embed stream **without** the NACE classify or ClickHouse — it writes only the raw vectors (§5b).
 
 **Common to every command:**
 | flag | default | meaning |
@@ -290,8 +320,10 @@ one fetch pass (discouraged — co-locating throttles the GPU; prefer two proces
 | `--s3-anonymous` | `false` | fetch via the HTTPS CDN instead of signed S3 — **rate-limits**, avoid for bulk |
 | `--s3-bucket` / `--s3-prefix` | — | optionally upload outputs to S3 (in-AWS path) |
 
-**`industry` (and `both`):** `--embed-concurrency` (96; in-flight embed requests), `--embed-batch`
-(16; texts/request — keep small, big batches overflow the engine's token budget).
+**`industry`, `embed` (and `both`):** `--embed-concurrency` (96; in-flight embed requests), `--embed-batch`
+(16; texts/request — keep small, big batches overflow the engine's token budget). `embed`'s `--out` is the
+embed dir directly (e.g. `data/embedding/out_industry_<p>`) and it writes only `embeddings.parquet` — no
+reference, no ClickHouse, no `load`.
 
 **`tech` (and `both`):** `--tech-engine` (`fast` = Aho-Corasick-gated, ~4.6×, default | `wappalyzer` =
 unmodified library, every fingerprint, slower reference — both detect the same techs), `--tech-max-bytes` (131072; cap body
