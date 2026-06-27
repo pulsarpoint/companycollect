@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     if imported_per_field:
-        print("  Rows to import (dynamic fields):")
+        print("  Rows to import (dynamic columns):")
         for field in sorted(imported_per_field):
             print(f"    {field}: {imported_per_field[field]}")
     if skipped_static:

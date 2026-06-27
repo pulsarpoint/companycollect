@@ -262,7 +262,7 @@ TABLE_COLUMN_FIELDS = (
 )
 
 
-def test_000063_up_recreates_table_keyed_on_table_and_column():
+def test_000069_up_recreates_table_keyed_on_table_and_column():
     sql = TABLE_COLUMN_UP.read_text(encoding="utf-8")
     assert "CREATE DATABASE IF NOT EXISTS corpscout;" in sql
     assert "DROP TABLE IF EXISTS corpscout.text_translations" in sql
@@ -274,7 +274,7 @@ def test_000063_up_recreates_table_keyed_on_table_and_column():
     assert "ORDER BY (source_table, source_column, source_text_hash)" in sql
 
 
-def test_000063_up_repoints_view_to_table_and_column():
+def test_000069_up_repoints_view_to_table_and_column():
     sql = TABLE_COLUMN_UP.read_text(encoding="utf-8")
     assert "CREATE OR REPLACE VIEW corpscout.no_companies_translated" in sql
     assert "FROM corpscout.no_companies AS c" in sql
@@ -288,7 +288,7 @@ def test_000063_up_repoints_view_to_table_and_column():
     assert "field = '" not in sql
 
 
-def test_000063_down_restores_slug_field_schema_and_view():
+def test_000069_down_restores_slug_field_schema_and_view():
     sql = TABLE_COLUMN_DOWN.read_text(encoding="utf-8")
     assert "DROP TABLE IF EXISTS corpscout.text_translations" in sql
     assert "ORDER BY (source_slug, field, source_text_hash)" in sql
