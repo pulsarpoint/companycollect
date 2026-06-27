@@ -1,6 +1,6 @@
 CREATE DATABASE IF NOT EXISTS corpscout;
 
--- corpscout.companies was dropped in migration 000061; only corpscout.no_companies remains.
+-- corpscout.companies was dropped in migration 000061, so only corpscout.no_companies remains.
 ALTER TABLE corpscout.no_companies DROP COLUMN IF EXISTS company_description_original;
 
 CREATE OR REPLACE VIEW corpscout.no_companies_translated AS
