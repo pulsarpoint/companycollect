@@ -1,4 +1,4 @@
-from translator.clickhouse import ScannedTerm, build_scan_sql
+from translator.clickhouse import ScannedTerm, build_scan_sql, query_arrow
 from translator.registry import get_source_config
 
 
@@ -78,3 +78,30 @@ def test_static_map_covers_all_register_legal_form_codes():
     for code in ("FLI", "ESEK", "UTLA", "BRL", "KBO", "SAM", "ANNA", "KF", "FKF", "SÆR", "STAT"):
         assert mapping.get(code), f"{code} must have an English translation"
     assert len(mapping) >= 40
+
+
+class _FakeArrowClient:
+    """Minimal fake that records calls and returns a list as a stand-in for a Table."""
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.calls: list[dict] = []
+
+    def query_arrow(self, sql, *, parameters=None):
+        self.calls.append({"sql": sql, "parameters": parameters})
+        return self._rows  # stand-in for pa.Table
+
+
+def test_query_arrow_delegates_to_client_query_arrow():
+    client = _FakeArrowClient(["row1", "row2"])
+    result = query_arrow(client, "SELECT 1", {"p": "v"})
+    assert result == ["row1", "row2"]
+    assert len(client.calls) == 1
+    assert client.calls[0]["sql"] == "SELECT 1"
+    assert client.calls[0]["parameters"] == {"p": "v"}
+
+
+def test_query_arrow_passes_empty_dict_when_parameters_is_none():
+    client = _FakeArrowClient([])
+    query_arrow(client, "SELECT 2")
+    assert client.calls[0]["parameters"] == {}

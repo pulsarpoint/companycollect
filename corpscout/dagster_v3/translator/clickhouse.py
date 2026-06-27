@@ -70,3 +70,12 @@ def scan_untranslated_terms(client: Any, source_config: SourceConfig) -> list[Sc
                 ScannedTerm(source_column=field.original_col, source_text=source_text, static_key=static_key)
             )
     return terms
+
+
+def query_arrow(client: Any, sql: str, parameters: dict[str, Any] | None = None) -> Any:
+    """Execute a ClickHouse query and return the result as a PyArrow Table.
+
+    Wraps ``client.query_arrow()`` (clickhouse-connect) with a default empty
+    parameters dict so callers never need to special-case None.
+    """
+    return client.query_arrow(sql, parameters=parameters or {})
