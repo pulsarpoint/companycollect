@@ -39,16 +39,20 @@ def build_scan_sql(source_config: SourceConfig, field: FieldConfig) -> str:
         select_cols = f"c.{original} AS source_text, c.{field.static_key_col} AS static_key"
     else:
         select_cols = f"c.{original} AS source_text"
+    # LEFT ANTI JOIN returns rows of `c` that have NO match in the cache subquery —
+    # the correct ClickHouse anti-join. Do NOT use `LEFT JOIN ... WHERE t.hash IS NULL`:
+    # with join_use_nulls=0 (the default) unmatched rows get hash=0, not NULL, so the
+    # IS NULL filter matches nothing and the scan returns 0 untranslated terms.
     return (
         f"SELECT DISTINCT {select_cols}\n"
         f"FROM {source_config.ch_table} AS c\n"
-        f"LEFT JOIN (\n"
+        f"LEFT ANTI JOIN (\n"
         f"    SELECT source_text_hash\n"
         f"    FROM corpscout.text_translations\n"
         f"    WHERE source_table = {{table:String}} AND source_column = {{column:String}}\n"
         f"    GROUP BY source_text_hash\n"
         f") AS t ON t.source_text_hash = cityHash64(c.{original})\n"
-        f"WHERE c.{original} <> '' AND t.source_text_hash IS NULL"
+        f"WHERE c.{original} <> ''"
     )
 
 

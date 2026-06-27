@@ -12,7 +12,10 @@ def test_build_scan_sql_selects_distinct_untranslated_terms():
     assert "source_column = {column:String}" in sql
     assert "cityHash64(c.company_description_original)" in sql
     assert "c.company_description_original <> ''" in sql
-    assert "t.source_text_hash IS NULL" in sql
+    # Correct ClickHouse anti-join — NOT `LEFT JOIN ... WHERE t.hash IS NULL`
+    # (which silently returns 0 rows under join_use_nulls=0).
+    assert "LEFT ANTI JOIN" in sql
+    assert "IS NULL" not in sql
     assert "static_key" not in sql
 
 
