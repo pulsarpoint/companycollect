@@ -22,7 +22,7 @@ from translator.clickhouse import clickhouse_client_from_env
 from translator.flush import flush_translations
 from translator.queue import FlushTranslationRow, TranslationQueue
 from translator.registry import get_source_config
-from translator.worker import load_env_file
+from dotenv import load_dotenv
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -71,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    load_env_file(Path(args.env_file))
+    load_dotenv(args.env_file, override=False)
 
     duckdb_path = Path(args.duckdb)
     if not duckdb_path.exists():

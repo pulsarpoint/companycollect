@@ -1,52 +1,78 @@
+# tests/test_translator_worker.py
 import os
 
+from dotenv import load_dotenv
+
 from translator import worker as w
-from translator.activities import LOCAL_LLM_TRANSLATION_TASK_QUEUE
-from translator.workflow import TranslateSourceWorkflow
+from translator.task_queues import BUILD_TASK_QUEUE, LLM_TASK_QUEUE
+from translator.norway_brreg.workflows import (
+    BuildQueueWorkflow,
+    TranslateWorkflow,
+)
 
 
-def test_build_worker_registers_workflow_and_activities(monkeypatch):
-    captured = {}
+class _FakeWorker:
+    """Captures Worker(...) kwargs; one instance recorded per construction."""
 
-    class _FakeWorker:
-        def __init__(self, client, *, task_queue, workflows, activities):
-            captured.update(task_queue=task_queue, workflows=workflows, activities=activities)
+    instances: list[dict] = []
 
+    def __init__(self, client, *, task_queue, activities, workflows=None, max_concurrent_activities=None):
+        _FakeWorker.instances.append({
+            "task_queue": task_queue,
+            "workflows": list(workflows or []),
+            "activities": list(activities),
+            "max_concurrent_activities": max_concurrent_activities,
+        })
+
+
+def _activity_names(activities) -> set[str]:
+    return {getattr(a, "__name__", getattr(a, "name", "")) for a in activities}
+
+
+def test_build_build_worker_registers_workflows_on_build_queue(monkeypatch):
+    _FakeWorker.instances = []
     monkeypatch.setattr(w, "Worker", _FakeWorker)
-    w.build_worker(object())
+    w.build_build_worker(object())
 
-    assert captured["task_queue"] == LOCAL_LLM_TRANSLATION_TASK_QUEUE
-    assert TranslateSourceWorkflow in captured["workflows"]
-    names = {getattr(a, "__name__", "") for a in captured["activities"]}
-    assert {"scan_and_seed_activity", "flush_activity",
-            "process_translation_batch", "summarize_translation_queue"} <= names
+    rec = _FakeWorker.instances[0]
+    assert rec["task_queue"] == BUILD_TASK_QUEUE
+    assert BuildQueueWorkflow in rec["workflows"]
+    assert TranslateWorkflow in rec["workflows"]
+    names = _activity_names(rec["activities"])
+    assert {"build_queue_activity", "start_translate_workflow_activity",
+            "dump_activity", "summarize_queue_activity"} <= names
+    # translate_loop runs ONLY on the LLM worker, never the build worker.
+    assert "translate_loop_activity" not in names
 
 
-def test_load_env_file_sets_vars_without_overriding(tmp_path, monkeypatch):
+def test_build_llm_worker_gates_translate_loop_with_k(monkeypatch):
+    _FakeWorker.instances = []
+    monkeypatch.setattr(w, "Worker", _FakeWorker)
+    w.build_llm_worker(object(), max_concurrent=3)
+
+    rec = _FakeWorker.instances[0]
+    assert rec["task_queue"] == LLM_TASK_QUEUE
+    assert rec["max_concurrent_activities"] == 3
+    names = _activity_names(rec["activities"])
+    assert names == {"translate_loop_activity"}
+    # No workflows on the LLM worker.
+    assert rec["workflows"] == []
+
+
+def test_llm_concurrency_defaults_to_2_and_reads_env(monkeypatch):
+    monkeypatch.delenv("TRANSLATOR_LLM_CONCURRENCY", raising=False)
+    assert w.llm_concurrency() == 2
+    monkeypatch.setenv("TRANSLATOR_LLM_CONCURRENCY", "5")
+    assert w.llm_concurrency() == 5
+
+
+def test_load_dotenv_does_not_override_existing(tmp_path, monkeypatch):
     env = tmp_path / ".env"
-    env.write_text(
-        "# a comment\n"
-        "\n"
-        "export FOO=bar\n"
-        'QUOTED="baz qux"\n'
-        'JSONV={"chat_template_kwargs":{"enable_thinking":false}}\n'
-        "ALREADY=fromfile\n",
-        encoding="utf-8",
-    )
-    # delenv records original (absent) so monkeypatch restores/cleans after the test
+    env.write_text("FOO=fromfile\nALREADY=fromfile\n", encoding="utf-8")
     monkeypatch.delenv("FOO", raising=False)
-    monkeypatch.delenv("QUOTED", raising=False)
-    monkeypatch.delenv("JSONV", raising=False)
     monkeypatch.setenv("ALREADY", "fromenv")
 
-    loaded = w.load_env_file(env)
+    load_dotenv(env, override=False)
 
-    assert os.environ["FOO"] == "bar"
-    assert os.environ["QUOTED"] == "baz qux"
-    assert os.environ["JSONV"] == '{"chat_template_kwargs":{"enable_thinking":false}}'
+    assert os.environ["FOO"] == "fromfile"     # newly set from file
     assert os.environ["ALREADY"] == "fromenv"  # real env wins; not overridden
-    assert loaded == 3
-
-
-def test_load_env_file_missing_is_noop(tmp_path):
-    assert w.load_env_file(tmp_path / "does-not-exist.env") == 0
