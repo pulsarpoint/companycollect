@@ -41,14 +41,8 @@ def test_static_map_covers_all_40_legal_form_codes():
     assert len(mapping) >= 40
 
 
-def test_registry_still_resolves_norway_brreg():
-    """registry.get_source_config must still work for import_legacy.py compatibility."""
-    from translator.registry import get_source_config
-    cfg = get_source_config("norway_brreg")
-    assert cfg.source_slug == "norway_brreg"
-
-
-def test_registry_unknown_source_raises_key_error():
-    from translator.registry import get_source_config
+def test_import_legacy_unknown_source_raises_key_error():
+    """_get_source_config_by_slug (import_legacy.py) raises KeyError for unknown slugs."""
+    from translator.import_legacy import _get_source_config_by_slug
     with pytest.raises(KeyError):
-        get_source_config("atlantis")
+        _get_source_config_by_slug("atlantis")

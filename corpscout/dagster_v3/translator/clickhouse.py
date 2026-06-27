@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from translator.registry import FieldConfig, SourceConfig
+from translator.norway_brreg.config import FieldConfig, SourceConfig
 
 
 def clickhouse_client_from_env() -> Any:

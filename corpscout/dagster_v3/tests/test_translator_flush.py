@@ -1,6 +1,6 @@
 from translator.flush import build_flush_select_sql, flush_translations
+from translator.norway_brreg.config import get_config
 from translator.queue import FlushTranslationRow
-from translator.registry import get_source_config
 
 
 def test_build_flush_select_sql_computes_hash_in_clickhouse():
@@ -26,7 +26,7 @@ class _FakeClient:
 
 def test_flush_skips_empty_and_writes_rows():
     client = _FakeClient()
-    config = get_source_config("norway_brreg")
+    config = get_config()
     rows = [
         FlushTranslationRow("activity_text_original", "Holdingselskap", "Holding company"),
         FlushTranslationRow("articles_purpose_original", "Tomt", ""),  # empty -> skipped
@@ -44,6 +44,6 @@ def test_flush_skips_empty_and_writes_rows():
 
 def test_flush_no_rows_is_noop():
     client = _FakeClient()
-    config = get_source_config("norway_brreg")
+    config = get_config()
     assert flush_translations(client, config, [], provider="p", model="m", version=1, run_id="r") == 0
     assert client.commands == []

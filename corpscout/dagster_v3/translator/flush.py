@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from translator.queue import FlushTranslationRow
-from translator.registry import SourceConfig
+from translator.norway_brreg.config import SourceConfig
 
 
 def _staging_table_name(run_id: str) -> str:

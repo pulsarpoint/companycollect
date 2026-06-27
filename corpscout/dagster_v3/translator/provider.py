@@ -1,5 +1,5 @@
 # translator/provider.py
-"""OpenAI-compatible local translation provider (formerly smoke.py)."""
+"""OpenAI-compatible local translation provider."""
 from __future__ import annotations
 
 import json

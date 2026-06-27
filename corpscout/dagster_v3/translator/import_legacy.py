@@ -20,9 +20,15 @@ from pathlib import Path
 
 from translator.clickhouse import clickhouse_client_from_env
 from translator.flush import flush_translations
+from translator.norway_brreg.config import get_config as _get_norway_config
 from translator.queue import FlushTranslationRow, TranslationQueue
-from translator.registry import get_source_config
 from dotenv import load_dotenv
+
+
+def _get_source_config_by_slug(slug: str):
+    if slug == "norway_brreg":
+        return _get_norway_config()
+    raise KeyError(f"Unknown source slug: {slug!r}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -79,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        config = get_source_config(args.source)
+        config = _get_source_config_by_slug(args.source)
     except KeyError:
         print(f"ERROR: Unknown source slug: {args.source!r}")
         return 1

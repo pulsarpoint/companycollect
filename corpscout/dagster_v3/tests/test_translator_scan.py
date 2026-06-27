@@ -1,9 +1,9 @@
 from translator.clickhouse import ScannedTerm, build_scan_sql, query_arrow
-from translator.registry import get_source_config
+from translator.norway_brreg.config import get_config
 
 
 def test_build_scan_sql_selects_distinct_untranslated_terms():
-    config = get_source_config("norway_brreg")
+    config = get_config()
     sql = build_scan_sql(config, config.fields[1])  # activity_text (dynamic)
     assert "SELECT DISTINCT c.activity_text_original AS source_text" in sql
     assert "FROM corpscout.no_companies AS c" in sql
@@ -20,7 +20,7 @@ def test_build_scan_sql_selects_distinct_untranslated_terms():
 
 
 def test_build_scan_sql_per_field_uses_its_original_column():
-    config = get_source_config("norway_brreg")
+    config = get_config()
     sql = build_scan_sql(config, config.fields[0])  # articles_purpose (dynamic)
     assert "c.articles_purpose_original" in sql
     assert "company_description_original" not in sql
@@ -28,7 +28,7 @@ def test_build_scan_sql_per_field_uses_its_original_column():
 
 
 def test_build_scan_sql_for_legal_form_description_includes_key_column():
-    config = get_source_config("norway_brreg")
+    config = get_config()
     lf_field = config.fields[2]  # legal_form_description (static)
     sql = build_scan_sql(config, lf_field)
     # source_text column must be present.
@@ -52,7 +52,7 @@ def test_scanned_term_is_frozen_dataclass():
 
 def test_static_map_resolution_known_code():
     """Known legal-form code resolves to the correct English description."""
-    config = get_source_config("norway_brreg")
+    config = get_config()
     lf_field = config.fields[2]  # legal_form_description
     mapping = lf_field.static_map_dict()
     assert mapping is not None
@@ -63,7 +63,7 @@ def test_static_map_resolution_known_code():
 
 def test_static_map_resolution_unknown_code_returns_empty():
     """An unrecognised code must fall back to empty string (no translation)."""
-    config = get_source_config("norway_brreg")
+    config = get_config()
     lf_field = config.fields[2]
     mapping = lf_field.static_map_dict() or {}
     assert mapping.get("UNKNOWN", "") == ""
@@ -73,7 +73,7 @@ def test_static_map_resolution_unknown_code_returns_empty():
 def test_static_map_covers_all_register_legal_form_codes():
     """The legal-form dict must cover every code present in the Norway register
     (40 as of 2026-06), including the high-volume ones that were previously missing."""
-    config = get_source_config("norway_brreg")
+    config = get_config()
     mapping = config.fields[2].static_map_dict() or {}
     for code in ("FLI", "ESEK", "UTLA", "BRL", "KBO", "SAM", "ANNA", "KF", "FKF", "SÆR", "STAT"):
         assert mapping.get(code), f"{code} must have an English translation"

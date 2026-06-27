@@ -1,8 +1,7 @@
 """Per-source translation config for Norway Brreg.
 
 Owns the FieldConfig / SourceConfig dataclasses (shared across the translator
-package via imports from this module or from translator.registry which delegates
-here).
+package via imports from this module).
 """
 from __future__ import annotations
 
