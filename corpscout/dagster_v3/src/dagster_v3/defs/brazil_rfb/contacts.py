@@ -56,7 +56,7 @@ def _denylist_sql() -> str:
 def register_domain_udfs(connection: duckdb.DuckDBPyConnection) -> None:
     try:
         connection.remove_function("root_domain")
-    except (duckdb.InvalidInputException, duckdb.CatalogException):
+    except duckdb.InvalidInputException, duckdb.CatalogException:
         pass
     try:
         connection.create_function(
@@ -252,7 +252,8 @@ def build_brazil_rfb_websites(
             f"{contact_info_path}. Materialize brazil_rfb_contact_info_duckdb "
             "before brazil_rfb_websites_duckdb. If this is a retry after the "
             "contact/websites stage split, rerun brazil_rfb_contact_info_duckdb "
-            "first so data/brazil_rfb_contact_info.duckdb is created."
+            "first for the same monthly partition so the snapshot-scoped "
+            "contact_info.duckdb stage is created."
         )
 
     websites_table = f"{DLT_DATASET_NAME}.{tables.WEBSITES_TABLE}"

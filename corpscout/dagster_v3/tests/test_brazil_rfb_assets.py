@@ -26,14 +26,20 @@ def test_brazil_rfb_assets_are_registered_with_stage_specific_pools() -> None:
     assert "brazil_rfb_clickhouse_contact_info" in keys
     assert "brazil_rfb_clickhouse_websites" in keys
 
-    snapshot_asset = repo.assets_defs_by_key[dg.AssetKey("brazil_rfb_snapshot_files_duckdb")]
+    snapshot_asset = repo.assets_defs_by_key[
+        dg.AssetKey("brazil_rfb_snapshot_files_duckdb")
+    ]
     empresas_asset = repo.assets_defs_by_key[dg.AssetKey("brazil_rfb_empresas_duckdb")]
     estabelecimentos_asset = repo.assets_defs_by_key[
         dg.AssetKey("brazil_rfb_estabelecimentos_duckdb")
     ]
     simples_asset = repo.assets_defs_by_key[dg.AssetKey("brazil_rfb_simples_duckdb")]
-    reference_asset = repo.assets_defs_by_key[dg.AssetKey("brazil_rfb_reference_duckdb")]
-    companies_asset = repo.assets_defs_by_key[dg.AssetKey("brazil_rfb_companies_duckdb")]
+    reference_asset = repo.assets_defs_by_key[
+        dg.AssetKey("brazil_rfb_reference_duckdb")
+    ]
+    companies_asset = repo.assets_defs_by_key[
+        dg.AssetKey("brazil_rfb_companies_duckdb")
+    ]
     contact_info_asset = repo.assets_defs_by_key[
         dg.AssetKey("brazil_rfb_contact_info_duckdb")
     ]
@@ -64,11 +70,11 @@ def test_brazil_rfb_assets_are_registered_with_stage_specific_pools() -> None:
     assert clickhouse_websites_asset.op.pool is None
 
 
-def test_brazil_rfb_assets_are_not_partitioned() -> None:
+def test_brazil_rfb_assets_use_monthly_snapshot_partitions() -> None:
     from dagster_v3.definitions import defs as load_defs
 
     repo = load_defs().get_repository_def()
-    expected_current_state_assets = (
+    expected_snapshot_assets = (
         "brazil_rfb_snapshot_files_duckdb",
         "brazil_rfb_empresas_duckdb",
         "brazil_rfb_estabelecimentos_duckdb",
@@ -83,41 +89,55 @@ def test_brazil_rfb_assets_are_not_partitioned() -> None:
         "brazil_rfb_clickhouse_websites",
     )
 
-    for asset_name in expected_current_state_assets:
+    for asset_name in expected_snapshot_assets:
         node = repo.asset_graph.get(dg.AssetKey(asset_name))
-        assert node.partitions_def is None
+        assert type(node.partitions_def).__name__ == "MonthlyPartitionsDefinition"
+        assert node.partitions_def.get_first_partition_key() == "2024-01-01"
 
 
-def test_brazil_rfb_snapshot_config_requires_explicit_snapshot_year_month() -> None:
+def test_brazil_rfb_snapshot_config_uses_partition_for_snapshot_year_month() -> None:
     from dagster_v3.defs.brazil_rfb.assets import BrazilRfbConfig
 
     fields = BrazilRfbConfig.model_fields
 
-    assert "snapshot_year_month" in fields
+    assert "snapshot_year_month" not in fields
     assert "snapshot_month" not in fields
-    assert fields["snapshot_year_month"].is_required()
-    assert fields["snapshot_year_month"].description is not None
-    assert "YYYY-MM" in (fields["snapshot_year_month"].description or "")
-    assert "full CNPJ registry snapshot" in (
-        fields["snapshot_year_month"].description or ""
-    )
     assert fields["snapshot_base_url"].description is not None
     assert "dados-abertos-rf-cnpj.casadosdados.com.br" in (
         fields["snapshot_base_url"].description or ""
     )
     assert "YYYY-MM-DD" in (fields["snapshot_base_url"].description or "")
-    assert "snapshot_year_month controls the YYYY-MM snapshot" in (
+    assert "partition key controls the YYYY-MM snapshot" in (
         fields["snapshot_base_url"].description or ""
     )
 
 
-def test_brazil_rfb_snapshot_asset_uses_configured_snapshot_year_month(monkeypatch) -> None:
+def test_brazil_rfb_stage_paths_are_snapshot_scoped() -> None:
+    from dagster_v3.defs.brazil_rfb import assets
+
+    paths = assets.brazil_rfb_stage_paths("2026-05")
+    snapshot_root = assets.BRAZIL_RFB_DATA_ROOT / "2026-05"
+
+    assert paths.manifest == snapshot_root / "manifest.duckdb"
+    assert paths.empresas == snapshot_root / "empresas.duckdb"
+    assert paths.estabelecimentos == snapshot_root / "estabelecimentos.duckdb"
+    assert paths.simples == snapshot_root / "simples.duckdb"
+    assert paths.reference == snapshot_root / "reference.duckdb"
+    assert paths.companies == snapshot_root / "companies.duckdb"
+    assert paths.contact_info == snapshot_root / "contact_info.duckdb"
+    assert paths.websites == snapshot_root / "websites.duckdb"
+
+
+def test_brazil_rfb_snapshot_asset_uses_partition_snapshot_year_month(
+    monkeypatch,
+) -> None:
     from dagster_v3.defs.brazil_rfb import assets
 
     calls = {}
 
     class FakeContext:
         run_id = "run-1"
+        partition_key = "2024-02-01"
 
     class FakeDlt:
         def run(self, **kwargs):
@@ -139,7 +159,6 @@ def test_brazil_rfb_snapshot_asset_uses_configured_snapshot_year_month(monkeypat
         assets.brazil_rfb_snapshot_files_duckdb.node_def.compute_fn.decorated_fn(
             FakeContext(),
             assets.BrazilRfbConfig(
-                snapshot_year_month="2024-02",
                 snapshot_base_url="https://mirror.test/cnpj/",
             ),
             FakeDlt(),
@@ -151,6 +170,9 @@ def test_brazil_rfb_snapshot_asset_uses_configured_snapshot_year_month(monkeypat
     assert calls["source"]["snapshot_year_month"] == "2024-02"
     assert calls["source"]["snapshot_base_url"] == "https://mirror.test/cnpj/"
     assert calls["source"]["download_dir"] == assets.BRAZIL_RFB_DOWNLOAD_DIR / "2024-02"
+    assert calls["pipeline_database_path"] == (
+        assets.BRAZIL_RFB_DATA_ROOT / "2024-02" / "manifest.duckdb"
+    )
     assert calls["run"]["dlt_source"] == "dlt-source"
     assert calls["run"]["dlt_pipeline"] == "dlt-pipeline"
 
@@ -224,11 +246,10 @@ def test_brazil_rfb_resolve_job_covers_brazil_outputs_and_domain_graph() -> None
     assert "brazil_rfb_resolve_job" in set(repo.job_names)
     resolve_job = repo.get_job("brazil_rfb_resolve_job")
     resolve_keys = {
-        key.path[-1]
-        for key in resolve_job.asset_layer.executable_asset_keys
+        key.path[-1] for key in resolve_job.asset_layer.executable_asset_keys
     }
 
-    assert resolve_job.partitions_def is None
+    assert type(resolve_job.partitions_def).__name__ == "MonthlyPartitionsDefinition"
     assert resolve_job.run_config is None
     assert {
         "brazil_rfb_snapshot_files_duckdb",
@@ -243,7 +264,7 @@ def test_brazil_rfb_resolve_job_covers_brazil_outputs_and_domain_graph() -> None
         "brazil_rfb_clickhouse_establishments",
         "brazil_rfb_clickhouse_contact_info",
         "brazil_rfb_clickhouse_websites",
-        "domains_clickhouse",
     }.issubset(resolve_keys)
+    assert "domains_clickhouse" not in resolve_keys
     assert "estonia_ar_general_data_duckdb" not in resolve_keys
     assert "norway_resolved_clickhouse" not in resolve_keys
