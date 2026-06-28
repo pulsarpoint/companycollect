@@ -1,4 +1,3 @@
-import datetime as dt
 from pathlib import Path
 
 import dagster as dg
@@ -15,11 +14,14 @@ from dagster_v3.defs.finland_financials.clickhouse import (
 GROUP_NAME = "finland_financials"
 FINLAND_FINANCIALS_DUCKDB_POOL = "finland_financials_duckdb"
 FINLAND_FINANCIALS_DUCKDB_PATH = Path("data/finland_financials_source.duckdb")
-# Generous per-month cap so a backfill partition fully covers that month.
-BACKFILL_MAX_REPORTS = 50000
-# Monthly registration-date partitions for the historical backfill.
-MONTHLY_PARTITIONS = dg.MonthlyPartitionsDefinition(
-    start_date="2023-01-01", end_offset=1
+BACKFILL_PARTITIONS = dg.MonthlyPartitionsDefinition(
+    start_date="2025-06-01", end_date="2026-06-01"
+)
+DAILY_PARTITIONS = dg.DailyPartitionsDefinition(
+    start_date="2026-06-01",
+    end_offset=1,
+    hour_offset=6,
+    timezone="Europe/Belgrade",
 )
 
 
@@ -30,7 +32,6 @@ def _ingest_window(
     *,
     start: str,
     end: str,
-    max_reports: int,
 ) -> dict:
     """Discover+parse the registration-date window, EUR→USD, append to ClickHouse."""
     with finland_financials_duckdb.get_connection() as connection:
@@ -39,7 +40,6 @@ def _ingest_window(
             source_run_id=context.run_id,
             registered_date_start=start,
             registered_date_end=end,
-            max_reports=max_reports,
             log=context.log.info,
         )
         if counts.get("statements", 0) > 0:
@@ -59,36 +59,28 @@ def _ingest_window(
     return counts
 
 
-class FinlandIncrementalConfig(dg.Config):
-    max_reports: int = 5000
-
-
 @dg.asset(
     name="finland_financials_incremental",
+    partitions_def=DAILY_PARTITIONS,
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     pool=FINLAND_FINANCIALS_DUCKDB_POOL,
     metadata={"table": tables.QUALIFIED_METRICS_TABLE},
     description=(
-        "Forward-only: fetch statements registered since the cursor (PRH "
-        "registration-date window), parse via xbrl_common, EUR→USD, APPEND to "
-        "fi_financial_metrics; advance the cursor after a successful export."
+        "Forward-only: fetch statements registered in the daily PRH registration-date "
+        "partition, parse via xbrl_common, EUR→USD, APPEND to fi_financial_metrics."
     ),
 )
 def finland_financials_incremental(
     context: AssetExecutionContext,
-    config: FinlandIncrementalConfig,
     clickhouse: ClickhouseResource,
     finland_financials_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    with finland_financials_duckdb.get_connection() as connection:
-        cursor = incremental.read_cursor(connection)
-    start, end = incremental.incremental_window(cursor, dt.date.today())
+    start, end = incremental.day_window(context.partition_key)
     context.log.info(
-        "Finland incremental registration window: %s -> %s (cursor=%s)",
+        "Finland incremental registration day: %s..%s",
         start,
         end,
-        cursor,
     )
     counts = _ingest_window(
         context,
@@ -96,16 +88,13 @@ def finland_financials_incremental(
         finland_financials_duckdb,
         start=start,
         end=end,
-        max_reports=config.max_reports,
     )
-    with finland_financials_duckdb.get_connection() as connection:
-        incremental.write_cursor(connection, end)
-    return dg.MaterializeResult(metadata={**counts, "window_start": start, "window_end": end})
+    return dg.MaterializeResult(metadata={**counts, "partition": context.partition_key})
 
 
 @dg.asset(
     name="finland_financials_backfill",
-    partitions_def=MONTHLY_PARTITIONS,
+    partitions_def=BACKFILL_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
@@ -130,7 +119,6 @@ def finland_financials_backfill(
         finland_financials_duckdb,
         start=start,
         end=end,
-        max_reports=BACKFILL_MAX_REPORTS,
     )
     return dg.MaterializeResult(metadata={**counts, "partition": context.partition_key})
 
@@ -139,18 +127,18 @@ def finland_financials_backfill(
 finland_financials_incremental_job = dg.define_asset_job(
     "finland_financials_incremental_job",
     selection=dg.AssetSelection.assets("finland_financials_incremental"),
+    partitions_def=DAILY_PARTITIONS,
 )
-finland_financials_incremental_schedule = dg.ScheduleDefinition(
+
+finland_financials_incremental_schedule = dg.build_schedule_from_partitioned_job(
+    finland_financials_incremental_job,
     name="finland_financials_incremental_schedule",
-    job=finland_financials_incremental_job,
-    cron_schedule="0 6 * * *",  # daily 06:00
-    execution_timezone="Europe/Belgrade",
 )
 # Backfill job (launch partition-range backfills from the UI/daemon).
 finland_financials_backfill_job = dg.define_asset_job(
     "finland_financials_backfill_job",
     selection=dg.AssetSelection.assets("finland_financials_backfill"),
-    partitions_def=MONTHLY_PARTITIONS,
+    partitions_def=BACKFILL_PARTITIONS,
 )
 
 defs = dg.Definitions(

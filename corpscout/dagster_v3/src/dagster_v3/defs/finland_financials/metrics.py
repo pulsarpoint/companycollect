@@ -1,10 +1,12 @@
 import csv
 import hashlib
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
 import duckdb
+import requests
 
 from dagster_v3.defs.finland_financials import tables
 from dagster_v3.defs.xbrl_common.parser import parse_xbrl
@@ -13,6 +15,12 @@ DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 METRICS_TABLE = tables.METRICS_TABLE
 METRIC_NAMES = tables.FI_METRIC_NAMES
 _RATE_REQUEST_BATCH = 50
+_PRH_TIMEOUT_SECONDS = 120
+_PRH_RETRY_DELAYS_SECONDS = (30.0, 60.0, 120.0, 240.0, 480.0)
+_PRH_RETRYABLE_ERRORS = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+)
 
 
 class ExchangeRates(Protocol):
@@ -23,6 +31,56 @@ def _request(currency: str, rate_date: str) -> Any:
     from exchange_rates import ExchangeRateRequest
 
     return ExchangeRateRequest(currency=currency, rate_date=rate_date)
+
+
+def _retry_after_seconds(response: Any) -> float | None:
+    headers = getattr(response, "headers", None)
+    if not hasattr(headers, "get"):
+        return None
+    retry_after = headers.get("Retry-After")
+    if retry_after is None:
+        return None
+    try:
+        seconds = float(str(retry_after).strip())
+    except ValueError:
+        return None
+    if seconds < 0:
+        return None
+    return seconds
+
+
+def _is_retryable_http_error(exc: requests.HTTPError) -> bool:
+    response = getattr(exc, "response", None)
+    return getattr(response, "status_code", None) == 429
+
+
+def _get_with_retries(
+    *,
+    session: Any,
+    url: str,
+    params: dict[str, Any],
+    sleep: Callable[[float], object],
+) -> Any:
+    last_delay_index = len(_PRH_RETRY_DELAYS_SECONDS) - 1
+    for attempt_index in range(len(_PRH_RETRY_DELAYS_SECONDS) + 1):
+        try:
+            response = session.get(url, params=params, timeout=_PRH_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            return response
+        except requests.HTTPError as exc:
+            if not _is_retryable_http_error(exc) or attempt_index > last_delay_index:
+                raise
+            retry_after = _retry_after_seconds(getattr(exc, "response", None))
+            sleep(
+                retry_after
+                if retry_after is not None
+                else _PRH_RETRY_DELAYS_SECONDS[attempt_index]
+            )
+        except _PRH_RETRYABLE_ERRORS:
+            if attempt_index > last_delay_index:
+                raise
+            sleep(_PRH_RETRY_DELAYS_SECONDS[attempt_index])
+    raise RuntimeError("unreachable PRH retry state")
 
 
 def load_metric_map(path: Path = tables.METRIC_MAP_PATH) -> dict[tuple[str, str], str]:
@@ -38,34 +96,33 @@ def discover_reports(
     *,
     registered_date_start: str,
     registered_date_end: str,
-    max_reports: int,
     session: Any = None,
     base_url: str = tables.XBRL_BASE_URL,
-    max_pages: int = 100,
+    sleep: Callable[[float], object] = time.sleep,
 ) -> list[dict[str, str]]:
     """List eligible (businessId, financialDate) reports in a registration window."""
     from dlt.sources.helpers import requests as dlt_requests
 
     http_session = session or dlt_requests.Session()
     reports: list[dict[str, str]] = []
-    for page in range(1, max_pages + 1):
-        response = http_session.get(
-            f"{base_url}/all_financial_statements",
+    page = 1
+    while True:
+        response = _get_with_retries(
+            session=http_session,
+            url=f"{base_url}/all_financial_statements",
             params={
                 "registeredDateStart": registered_date_start,
                 "registeredDateEnd": registered_date_end,
                 "page": page,
             },
-            timeout=120,
+            sleep=sleep,
         )
-        response.raise_for_status()
         items = (response.json() or {}).get("financials") or []
         if not items:
             break
         reports.extend(items)
-        if len(reports) >= max_reports:
-            break
-    return reports[:max_reports]
+        page += 1
+    return reports
 
 
 def extract_statement_metrics(
@@ -116,14 +173,12 @@ def build_finland_financials(
     source_run_id: str,
     registered_date_start: str,
     registered_date_end: str,
-    max_reports: int = 200,
     session: Any = None,
     request_delay_seconds: float = 0.3,
+    sleep: Callable[[float], object] = time.sleep,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     """Discover + fetch recent statements, parse with xbrl_common, build metrics."""
-    import time
-
     from dlt.sources.helpers import requests as dlt_requests
 
     http_session = session or dlt_requests.Session()
@@ -131,13 +186,12 @@ def build_finland_financials(
     reports = discover_reports(
         registered_date_start=registered_date_start,
         registered_date_end=registered_date_end,
-        max_reports=max_reports,
         session=http_session,
+        sleep=sleep,
     )
 
     rows: list[tuple[Any, ...]] = []
     parsed = 0
-    fetch_failed = 0
     no_metrics = 0
     for index, report in enumerate(reports):
         business_id = report.get("businessId")
@@ -145,20 +199,14 @@ def build_finland_financials(
         if not business_id or not financial_date:
             continue
         if index and request_delay_seconds:
-            time.sleep(request_delay_seconds)  # be polite; avoid rate-limiting
-        try:
-            response = http_session.get(
-                f"{tables.XBRL_BASE_URL}/financial",
-                params={"businessId": business_id, "financialDate": financial_date},
-                timeout=120,
-            )
-            response.raise_for_status()
-            body = response.content
-        except Exception as exc:  # noqa: BLE001 - count, don't hide
-            fetch_failed += 1
-            if log is not None:
-                log("Finland statement fetch failed for %s/%s: %s", business_id, financial_date, exc)
-            continue
+            sleep(request_delay_seconds)  # be polite; avoid rate-limiting
+        response = _get_with_retries(
+            session=http_session,
+            url=f"{tables.XBRL_BASE_URL}/financial",
+            params={"businessId": business_id, "financialDate": financial_date},
+            sleep=sleep,
+        )
+        body = response.content
         extracted = extract_statement_metrics(body, metric_map)
         if extracted is None:
             no_metrics += 1
@@ -180,12 +228,11 @@ def build_finland_financials(
     counts = _write_metrics_table(connection, rows, source_run_id, log=log)
     counts["reports"] = len(reports)
     counts["parsed"] = parsed
-    counts["fetch_failed"] = fetch_failed
     counts["no_metrics"] = no_metrics
     if log is not None:
         log(
-            "Built Finland financial metrics: reports=%s parsed=%s fetch_failed=%s no_metrics=%s",
-            len(reports), parsed, fetch_failed, no_metrics,
+            "Built Finland financial metrics: reports=%s parsed=%s no_metrics=%s",
+            len(reports), parsed, no_metrics,
         )
     return counts
 
