@@ -186,6 +186,18 @@ def test_finland_xbrl_backfill_and_incremental_partitions() -> None:
 def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
     repo = load_project_defs().get_repository_def()
 
+    reference_refresh = {
+        key.path[-1]
+        for key in repo.get_job(
+            "finland_xbrl_reference_refresh_job"
+        ).asset_layer.executable_asset_keys
+    }
+    assert reference_refresh == {
+        "finland_ytj_all_companies_duckdb",
+        "finland_xbrl_company_seed_duckdb",
+    }
+    assert repo.get_job("finland_xbrl_reference_refresh_job").partitions_def is None
+
     historical_backfill = {
         key.path[-1]
         for key in repo.get_job(
@@ -193,7 +205,6 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         ).asset_layer.executable_asset_keys
     }
     assert historical_backfill == {
-        "finland_xbrl_company_seed_duckdb",
         "finland_xbrl_financial_reports_backfill_duckdb",
         "finland_xbrl_raw_xml_documents_backfill",
         "finland_xbrl_parse_backfill",
@@ -209,7 +220,6 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         for key in repo.get_job("finland_xbrl_incremental_job").asset_layer.executable_asset_keys
     }
     assert incremental == {
-        "finland_xbrl_company_seed_duckdb",
         "finland_xbrl_financial_reports_incremental_duckdb",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_incremental",

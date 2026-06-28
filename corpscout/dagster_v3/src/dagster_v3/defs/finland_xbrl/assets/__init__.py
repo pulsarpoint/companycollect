@@ -43,6 +43,7 @@ from dagster_v3.defs.finland_xbrl.assets.jobs import (
     finland_xbrl_historical_backfill_job,
     finland_xbrl_incremental_job,
     finland_xbrl_incremental_schedule,
+    finland_xbrl_reference_refresh_job,
 )
 from dagster_v3.defs.finland_xbrl.assets.parse import (
     XbrlParsedConfig,
@@ -130,6 +131,7 @@ __all__ = [
     "finland_xbrl_raw_xml_documents",
     "finland_xbrl_raw_xml_documents_backfill",
     "finland_xbrl_raw_xml_documents_incremental",
+    "finland_xbrl_reference_refresh_job",
     "finland_xbrl_xml_documents",
     "load_eligible_financial_report_rows",
     "load_parsed_object_keys",
@@ -163,7 +165,11 @@ defs = dg.Definitions(
         finland_xbrl_parse_incremental,
         finland_xbrl_parsed_tables,
     ],
-    jobs=[finland_xbrl_historical_backfill_job, finland_xbrl_incremental_job],
+    jobs=[
+        finland_xbrl_reference_refresh_job,
+        finland_xbrl_historical_backfill_job,
+        finland_xbrl_incremental_job,
+    ],
     schedules=[finland_xbrl_incremental_schedule],
     resources={
         "xbrl_api": XbrlApiResource(),
