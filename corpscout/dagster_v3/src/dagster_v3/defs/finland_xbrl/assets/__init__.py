@@ -31,11 +31,13 @@ from dagster_v3.defs.finland_xbrl.assets.financial_reports import (
 from dagster_v3.defs.finland_xbrl.assets.financial_metrics import (
     build_financial_metric_rows,
     finland_xbrl_financial_metrics,
+    finland_xbrl_financial_metrics_clickhouse,
 )
 from dagster_v3.defs.finland_xbrl.assets.jobs import (
     finland_xbrl_historical_backfill_job,
     finland_xbrl_incremental_job,
     finland_xbrl_incremental_schedule,
+    finland_xbrl_publish_job,
     finland_xbrl_reference_refresh_job,
 )
 from dagster_v3.defs.finland_xbrl.assets.parse import (
@@ -99,6 +101,7 @@ __all__ = [
     "finland_xbrl_historical_backfill_job",
     "finland_xbrl_eligible_companies",
     "finland_xbrl_financial_metrics",
+    "finland_xbrl_financial_metrics_clickhouse",
     "finland_xbrl_financial_reports",
     "finland_xbrl_financial_reports_backfill",
     "finland_xbrl_financial_reports_incremental",
@@ -106,6 +109,7 @@ __all__ = [
     "finland_xbrl_incremental_schedule",
     "finland_xbrl_parse_backfill",
     "finland_xbrl_parse_incremental",
+    "finland_xbrl_publish_job",
     "finland_xbrl_raw_xml_documents",
     "finland_xbrl_raw_xml_documents_backfill",
     "finland_xbrl_raw_xml_documents_incremental",
@@ -131,11 +135,13 @@ defs = dg.Definitions(
         finland_xbrl_parse_backfill,
         finland_xbrl_parse_incremental,
         finland_xbrl_financial_metrics,
+        finland_xbrl_financial_metrics_clickhouse,
     ],
     jobs=[
         finland_xbrl_reference_refresh_job,
         finland_xbrl_historical_backfill_job,
         finland_xbrl_incremental_job,
+        finland_xbrl_publish_job,
     ],
     schedules=[finland_xbrl_incremental_schedule],
     resources={

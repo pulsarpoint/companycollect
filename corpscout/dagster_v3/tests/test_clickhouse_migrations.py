@@ -83,6 +83,7 @@ EXPECTED_MIGRATIONS = (
     "000069_corpscout_text_translations_table_column",
     "000070_corpscout_no_companies_drop_company_description",
     "000071_corpscout_br_rfb_registry_date32",
+    "000072_corpscout_fi_financial_metrics_xbrl_publish",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -345,8 +346,14 @@ FINLAND_FINANCIAL_METRIC_COLUMNS = (
     "statement_key",
     "business_id",
     "financial_date",
+    "registration_date",
     "period_start",
     "period_end",
+    "reported_company_name",
+    "source_url",
+    "xml_object_key",
+    "xml_sha256",
+    "xml_size_bytes",
     "currency_original",
     "revenue_amount_original",
     "revenue_amount_usd",
@@ -524,6 +531,22 @@ def test_finland_financial_migrations_cover_statements_and_usd_metrics() -> None
 
     for column_name in FINLAND_FINANCIAL_METRIC_COLUMNS:
         assert f"    {column_name} " in financial_metrics_sql
+
+    assert "    employees Nullable(UInt64)" in financial_metrics_sql
+    assert "    reported_company_name Nullable(String)" in financial_metrics_sql
+    assert "    xml_size_bytes Nullable(UInt64)" in financial_metrics_sql
+
+    xbrl_publish_sql = _migration_sql(
+        "000072_corpscout_fi_financial_metrics_xbrl_publish.up.sql"
+    )
+    assert "ALTER TABLE corpscout.fi_financial_metrics" in xbrl_publish_sql
+    assert "ADD COLUMN IF NOT EXISTS reported_company_name Nullable(String)" in (
+        xbrl_publish_sql
+    )
+    assert "ADD COLUMN IF NOT EXISTS xml_size_bytes Nullable(UInt64)" in (
+        xbrl_publish_sql
+    )
+    assert "MODIFY COLUMN employees Nullable(UInt64)" in xbrl_publish_sql
 
 
 def test_finland_ytj_registry_migration_covers_source_structures() -> None:

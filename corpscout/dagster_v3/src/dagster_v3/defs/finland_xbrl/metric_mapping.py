@@ -15,6 +15,7 @@ XBRL_METRIC_MAPPINGS: Final[tuple[tuple[str, str, str], ...]] = (
     ("fi_met:mi53", "fi_MC:x1811", "current_liabilities"),
     ("fi_met:md103", "fi_MC:x5", "personnel_expenses"),
     ("fi_met:md103", "fi_MC:x6", "wages_and_salaries"),
+    ("fi_met:ii52", "", "employees"),
 )
 METRIC_CODES: Final[tuple[str, ...]] = (
     "revenue",

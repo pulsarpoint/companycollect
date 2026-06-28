@@ -5,6 +5,12 @@ import dagster as dg
 import polars as pl
 
 from dagster_v3.defs.finland_xbrl import metric_mapping, tables
+from dagster_v3.defs.finland_xbrl.clickhouse import (
+    CLICKHOUSE_DATABASE,
+    FINANCIAL_METRICS_CLICKHOUSE_TABLE,
+    export_finland_xbrl_financial_metrics_clickhouse,
+)
+from dagster_v3.defs.clickhouse.resources import ClickHouseConnectResource
 from dagster_v3.defs.finland_xbrl.assets.parse import (
     finland_xbrl_parse_backfill,
     finland_xbrl_parse_incremental,
@@ -62,6 +68,7 @@ def build_financial_metric_rows(
             pl.col("source_fact_count").fill_null(0).cast(pl.Int64),
             pl.col("mapped_fact_count").fill_null(0).cast(pl.Int64),
             pl.col("unmapped_numeric_fact_count").fill_null(0).cast(pl.Int64),
+            pl.col("employees").round(0).cast(pl.Int64, strict=False),
             pl.lit(metric_mapping.MAPPING_VERSION).alias("mapping_version"),
             pl.lit(built_at).alias("built_at"),
         )
@@ -118,6 +125,31 @@ def finland_xbrl_financial_metrics(
     )
 
 
+@dg.asset(
+    name="finland_xbrl_financial_metrics_clickhouse",
+    group_name="finland_xbrl",
+    deps=[dg.AssetKey(tables.FINANCIAL_METRICS_TABLE)],
+    kinds={"python", "parquet", "clickhouse"},
+)
+def finland_xbrl_financial_metrics_clickhouse(
+    context: dg.AssetExecutionContext,
+    xbrl_parquet_storage: XbrlParquetStorageResource,
+    clickhouse: ClickHouseConnectResource,
+) -> dg.MaterializeResult:
+    row_count = export_finland_xbrl_financial_metrics_clickhouse(
+        xbrl_parquet_storage=xbrl_parquet_storage,
+        clickhouse=clickhouse,
+        log=context.log.info,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "row_count": row_count,
+            "clickhouse_database": CLICKHOUSE_DATABASE,
+            "clickhouse_table": FINANCIAL_METRICS_CLICKHOUSE_TABLE,
+        }
+    )
+
+
 def _metric_pivot(current_numeric_facts: pl.DataFrame) -> pl.DataFrame:
     if current_numeric_facts.is_empty():
         return pl.DataFrame(
@@ -125,7 +157,10 @@ def _metric_pivot(current_numeric_facts: pl.DataFrame) -> pl.DataFrame:
                 "statement_key": pl.Utf8,
                 "mapped_fact_count": pl.Int64,
                 "unmapped_numeric_fact_count": pl.Int64,
-                **{metric_code: pl.Float64 for metric_code in metric_mapping.METRIC_CODES},
+                **{
+                    metric_code: _metric_column_dtype(metric_code)
+                    for metric_code in metric_mapping.METRIC_CODES
+                },
             }
         )
     return current_numeric_facts.group_by("statement_key").agg(
@@ -140,6 +175,12 @@ def _metric_pivot(current_numeric_facts: pl.DataFrame) -> pl.DataFrame:
             for metric_code in metric_mapping.METRIC_CODES
         ],
     )
+
+
+def _metric_column_dtype(metric_code: str) -> pl.DataType:
+    if metric_code == "employees":
+        return pl.Int64
+    return pl.Float64
 
 
 def _frame(

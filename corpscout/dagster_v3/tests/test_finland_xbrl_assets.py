@@ -1,11 +1,14 @@
 from datetime import date, datetime
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import dagster as dg
 import duckdb
 from dagster import AssetKey
+import pyarrow as pa
 import pytest
 from pydantic import ValidationError
 
@@ -117,6 +120,35 @@ class FakeS3Client:
 class FakeS3Error(Exception):
     def __init__(self, code: str) -> None:
         self.response = {"Error": {"Code": code}}
+
+
+class FakeClickHouseClient:
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+        self.arrow_insert_calls: list[tuple[str | None, str, pa.Table]] = []
+
+    def execute(self, sql: str, params: object | None = None) -> list[tuple[str, ...]]:
+        self.statements.append(sql)
+        if "system.tables" in sql:
+            return [("fi_financial_metrics",)]
+        return []
+
+    def insert_arrow(
+        self,
+        table: str,
+        arrow_table: pa.Table,
+        database: str | None = None,
+    ) -> None:
+        self.arrow_insert_calls.append((database, table, arrow_table))
+
+
+class FakeClickHouseResource:
+    def __init__(self, client: FakeClickHouseClient) -> None:
+        self.client = client
+
+    @contextmanager
+    def get_connection(self):
+        yield self.client
 
 
 def _object_store() -> tuple[ObjectStoreResource, FakeS3Client]:
@@ -282,6 +314,16 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
 
     schedule = repo.get_schedule_def("finland_xbrl_incremental_schedule")
     assert schedule.cron_schedule == "0 6 * * *"
+
+    publish = {
+        key.path[-1]
+        for key in repo.get_job("finland_xbrl_publish_job").asset_layer.executable_asset_keys
+    }
+    assert publish == {
+        "fi_prh_xbrl_financial_metrics",
+        "finland_xbrl_financial_metrics_clickhouse",
+    }
+    assert repo.get_job("finland_xbrl_publish_job").partitions_def is None
 
 
 def test_financial_reports_write_separate_partition_parquet_files(tmp_path: Path) -> None:
@@ -589,34 +631,7 @@ def test_xbrl_parquet_storage_writes_parsed_output_partitions(
 
 def test_xbrl_parquet_storage_writes_financial_metrics(tmp_path: Path) -> None:
     storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-    rows = [
-        {
-            "statement_key": "statement-1",
-            "business_id": "active-web",
-            "financial_date": "2026-05-31",
-            "period_start": "2026-01-01",
-            "period_end": "2026-05-31",
-            "revenue": 100.0,
-            "operating_profit_loss": None,
-            "profit_loss": None,
-            "total_assets": None,
-            "equity": None,
-            "liabilities": None,
-            "cash_and_bank": None,
-            "current_assets": None,
-            "current_receivables": None,
-            "current_liabilities": None,
-            "personnel_expenses": None,
-            "wages_and_salaries": None,
-            "employees": None,
-            "source_fact_count": 1,
-            "mapped_fact_count": 1,
-            "unmapped_numeric_fact_count": 0,
-            "metric_warnings": "[]",
-            "mapping_version": "finland-prh-xbrl-metrics-v1",
-            "built_at": "2026-06-01T00:00:00+00:00",
-        }
-    ]
+    rows = [_financial_metric_row("statement-1")]
 
     storage.write_financial_metrics(rows)
 
@@ -635,26 +650,39 @@ def test_xbrl_metric_mapping_is_code_backed() -> None:
     assert len(rows) == len(
         {(row["concept_qname"], row["mcy_member_code"]) for row in rows}
     )
+    assert {
+        "concept_qname": "fi_met:ii52",
+        "mcy_member_code": "",
+        "metric_code": "employees",
+    } in rows
 
 
 def test_build_financial_metric_rows_maps_current_numeric_facts() -> None:
     statement = _statement_document_row("statement-1")
     fact = _fact_row("statement-1", fact_ordinal=1)
-    unmapped_fact = {
+    employee_fact = {
         **_fact_row("statement-1", fact_ordinal=2),
+        "concept_qname": "fi_met:ii52",
+        "concept_local_name": "ii52",
+        "mcy_member_code": "",
+        "numeric_value": "12",
+        "raw_value": "12",
+    }
+    unmapped_fact = {
+        **_fact_row("statement-1", fact_ordinal=3),
         "concept_qname": "unknown:metric",
         "mcy_member_code": "unknown:member",
         "numeric_value": "7",
     }
     comparative_fact = {
-        **_fact_row("statement-1", fact_ordinal=3),
+        **_fact_row("statement-1", fact_ordinal=4),
         "numeric_value": "999",
         "is_comparative": True,
     }
 
     rows = financial_metrics.build_financial_metric_rows(
         statement_documents=[statement],
-        facts=[fact, unmapped_fact, comparative_fact],
+        facts=[fact, employee_fact, unmapped_fact, comparative_fact],
         built_at="2026-06-01T00:00:00+00:00",
     )
 
@@ -663,8 +691,15 @@ def test_build_financial_metric_rows_maps_current_numeric_facts() -> None:
             "statement_key": "statement-1",
             "business_id": "active-web",
             "financial_date": "2026-05-31",
+            "registration_date": "2026-06-01",
             "period_start": "2026-01-01",
             "period_end": "2026-05-31",
+            "reported_company_name": "Active Oy",
+            "source_url": "https://example.test/financial",
+            "xml_object_key": "companies/active-web/2026-05-31.xml",
+            "xml_sha256": "hash",
+            "xml_size_bytes": 8,
+            "source_run_id": "test-run",
             "revenue": 100.0,
             "operating_profit_loss": None,
             "profit_loss": None,
@@ -677,9 +712,9 @@ def test_build_financial_metric_rows_maps_current_numeric_facts() -> None:
             "current_liabilities": None,
             "personnel_expenses": None,
             "wages_and_salaries": None,
-            "employees": None,
-            "source_fact_count": 3,
-            "mapped_fact_count": 1,
+            "employees": 12,
+            "source_fact_count": 4,
+            "mapped_fact_count": 2,
             "unmapped_numeric_fact_count": 1,
             "metric_warnings": "[\"unmapped numeric facts: 1\"]",
             "mapping_version": "finland-prh-xbrl-metrics-v1",
@@ -757,6 +792,49 @@ def test_xbrl_asset_graph_models_financial_metrics_downstream_of_parse_parquet_a
         dg.AssetKey("finland_xbrl_parse_backfill"),
         dg.AssetKey("finland_xbrl_parse_incremental"),
     }
+    assert asset_graph.get(
+        dg.AssetKey("finland_xbrl_financial_metrics_clickhouse")
+    ).parent_keys == {
+        dg.AssetKey(FINANCIAL_METRICS_TABLE),
+    }
+
+
+def test_finland_xbrl_clickhouse_export_casts_employees_to_nullable_uint(
+    tmp_path: Path,
+) -> None:
+    from dagster_v3.defs.finland_xbrl.clickhouse import (
+        export_finland_xbrl_financial_metrics_clickhouse,
+    )
+
+    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
+    storage.write_financial_metrics(
+        [
+            {
+                **_financial_metric_row("statement-with-employees"),
+                "employees": 12,
+            },
+            {
+                **_financial_metric_row("statement-without-employees"),
+                "employees": None,
+            },
+        ]
+    )
+    client = FakeClickHouseClient()
+
+    row_count = export_finland_xbrl_financial_metrics_clickhouse(
+        xbrl_parquet_storage=storage,
+        clickhouse=FakeClickHouseResource(client),
+    )
+
+    assert row_count == 2
+    assert client.arrow_insert_calls
+    database, table, arrow_table = client.arrow_insert_calls[0]
+    assert database == "corpscout"
+    assert table.startswith("fi_financial_metrics__stage_")
+    assert arrow_table.schema.field("employees").type == pa.uint64()
+    assert arrow_table.to_pylist()[0]["employees"] == 12
+    assert arrow_table.to_pylist()[1]["employees"] is None
+    assert any(statement.startswith("EXCHANGE TABLES") for statement in client.statements)
 
 
 def test_xbrl_api_resource_keeps_source_api_methods() -> None:
@@ -1149,6 +1227,42 @@ def _statement_document_row(statement_key: str) -> dict:
         "validation_warnings": "[]",
         "parser_version": "test-parser",
         "parsed_at": "2026-06-01T00:00:00+00:00",
+    }
+
+
+def _financial_metric_row(statement_key: str) -> dict[str, Any]:
+    return {
+        "statement_key": statement_key,
+        "business_id": "active-web",
+        "financial_date": "2026-05-31",
+        "registration_date": "2026-06-01",
+        "period_start": "2026-01-01",
+        "period_end": "2026-05-31",
+        "reported_company_name": "Active Oy",
+        "source_url": "https://example.test/financial",
+        "xml_object_key": "companies/active-web/2026-05-31.xml",
+        "xml_sha256": "0" * 64,
+        "xml_size_bytes": 8,
+        "source_run_id": "test-run",
+        "revenue": 100.0,
+        "operating_profit_loss": None,
+        "profit_loss": None,
+        "total_assets": None,
+        "equity": None,
+        "liabilities": None,
+        "cash_and_bank": None,
+        "current_assets": None,
+        "current_receivables": None,
+        "current_liabilities": None,
+        "personnel_expenses": None,
+        "wages_and_salaries": None,
+        "employees": None,
+        "source_fact_count": 1,
+        "mapped_fact_count": 1,
+        "unmapped_numeric_fact_count": 0,
+        "metric_warnings": "[]",
+        "mapping_version": "finland-prh-xbrl-metrics-v1",
+        "built_at": "2026-06-01T00:00:00+00:00",
     }
 
 
