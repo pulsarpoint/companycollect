@@ -120,12 +120,10 @@ def test_read_only_duckdb_connection_rejects_writes(tmp_path: Path) -> None:
             connection.execute("insert into companies values ('b')")
 
 
-def test_old_finland_ytj_resources_module_is_gone() -> None:
-    try:
-        importlib.import_module("dagster_v3.defs.finland_ytj.resources")
-    except ModuleNotFoundError:
-        return
-    raise AssertionError("finland_ytj.resources should no longer exist")
+def test_finland_ytj_resources_module_exposes_api_resource() -> None:
+    resources = importlib.import_module("dagster_v3.defs.finland_ytj.resources")
+
+    assert resources.YtjApiResource.__name__ == "YtjApiResource"
 
 
 class _FakeClickHouseConnectClient:

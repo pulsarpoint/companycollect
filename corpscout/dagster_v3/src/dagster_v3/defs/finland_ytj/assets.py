@@ -1,50 +1,32 @@
 import hashlib
 import json
-import shutil
-import tempfile
 import urllib.parse
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Protocol
-from zipfile import ZipFile, is_zipfile
+from typing import Any
 
 import dagster as dg
 import dlt
-import ijson
 from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 from dagster_duckdb import DuckDBResource
 from dlt.extract.resource import DltResource
 from dlt.pipeline.pipeline import Pipeline
-from dlt.sources.helpers import requests as dlt_requests
 
 from dagster_v3.defs.common.duckdb_resources import (
     duckdb_database_path,
     duckdb_resource,
     read_only_duckdb_connection,
 )
+from dagster_v3.defs.finland_ytj import resources as ytj_resources
 
 COUNTRY = "FI"
 SOURCE = "finland_prhytj"
-YTJ_BASE_URL = "https://avoindata.prh.fi/opendata-ytj-api/v3"
-YTJ_TIMEOUT_SECONDS = 120
 DLT_DATASET_NAME = "finland_prhytj"
 DLT_COMPANIES_TABLE = "all_companies"
 DEFAULT_DUCKDB_PATH = "data/finland_ytj.duckdb"
 PRH_NAME_TYPE_PRIMARY = "1"             # PRH name "type": current primary trade name
 PRH_TRADE_REGISTER_STATUS_CEASED = "3"  # PRH tradeRegisterStatus: removed from trade register
-
-
-class HttpSession(Protocol):
-    def get(
-        self,
-        url: str,
-        *,
-        headers: dict[str, str] | None = None,
-        stream: bool = False,
-        timeout: int = 120,
-    ) -> Any:
-        ...
 
 
 class FinlandYtjDltTranslator(DagsterDltTranslator):
@@ -64,59 +46,40 @@ class FinlandYtjDltTranslator(DagsterDltTranslator):
 @dlt.source(name="finland_ytj")
 def finland_ytj_source(
     *,
-    base_url: str = YTJ_BASE_URL,
-    timeout_seconds: int = YTJ_TIMEOUT_SECONDS,
-    user_agent: str = "corpscout-dagster-v3-dev/0.1",
     run_id: str = "",
-    session: HttpSession | None = None,
+    ytj_api: ytj_resources.YtjApiResource | None = None,
 ) -> DltResource:
     return _all_companies_resource(
-        base_url=base_url,
-        timeout_seconds=timeout_seconds,
-        user_agent=user_agent,
         run_id=run_id,
-        session=session,
+        ytj_api=ytj_api or ytj_resources.YtjApiResource(),
     )
 
 
 @dlt.resource(name=DLT_COMPANIES_TABLE, write_disposition="replace", primary_key="business_id")
 def _all_companies_resource(
     *,
-    base_url: str,
-    timeout_seconds: int,
-    user_agent: str,
     run_id: str,
-    session: HttpSession | None,
+    ytj_api: ytj_resources.YtjApiResource,
 ) -> Iterator[dict[str, Any]]:
-    with tempfile.TemporaryDirectory(prefix="finland_ytj_") as tmpdir:
-        work_dir = Path(tmpdir)
-        download_path = _download_all_companies(
-            base_url=base_url,
-            timeout_seconds=timeout_seconds,
-            user_agent=user_agent,
-            session=session,
-            work_dir=work_dir,
+    seen = False
+    for index, company in enumerate(ytj_api.iter_all_companies(), start=1):
+        seen = True
+        yield _dlt_company_row(company, line_number=index, run_id=run_id)
+    if not seen:
+        raise ValueError(
+            "PRH all_companies returned no companies; refusing to replace the table"
         )
-        json_path = _json_path_from_download(download_path, work_dir=work_dir)
-        seen = False
-        for index, company in enumerate(_iter_companies(json_path), start=1):
-            seen = True
-            yield _dlt_company_row(company, line_number=index, run_id=run_id)
-        if not seen:
-            raise ValueError(
-                "PRH all_companies returned no companies; refusing to replace the table"
-            )
 
 
 def run_finland_ytj_dlt_pipeline(
     *,
     database_path: str | Path,
     run_id: str,
-    session: HttpSession | None = None,
+    ytj_api: ytj_resources.YtjApiResource | None = None,
     pipelines_dir: str | Path | None = None,
 ) -> Any:
     return finland_ytj_pipeline(database_path, pipelines_dir=pipelines_dir).run(
-        finland_ytj_source(run_id=run_id, session=session)
+        finland_ytj_source(run_id=run_id, ytj_api=ytj_api)
     )
 
 
@@ -157,12 +120,13 @@ def finland_ytj_all_companies_duckdb_asset(
     context: dg.AssetExecutionContext,
     dlt: DagsterDltResource,
     ytj_duckdb: DuckDBResource,
+    ytj_api: ytj_resources.YtjApiResource,
 ) -> Iterator[Any]:
     """Load Finland PRH YTJ all-companies data to a local DuckDB database with dlt."""
     context.log.info("Materializing Finland YTJ dlt DuckDB table")
     yield from dlt.run(
         context=context,
-        dlt_source=finland_ytj_source(run_id=context.run_id),
+        dlt_source=finland_ytj_source(run_id=context.run_id, ytj_api=ytj_api),
         dlt_pipeline=finland_ytj_pipeline(duckdb_database_path(ytj_duckdb)),
     )
 
@@ -186,6 +150,7 @@ defs = dg.Definitions(
     asset_checks=[all_companies_non_empty],
     resources={
         "ytj_duckdb": duckdb_resource(DEFAULT_DUCKDB_PATH),
+        "ytj_api": ytj_resources.YtjApiResource(),
     },
 )
 
@@ -232,30 +197,6 @@ def _dlt_company_row(company: dict[str, Any], *, line_number: int, run_id: str) 
     }
 
 
-def _download_all_companies(
-    *,
-    base_url: str,
-    timeout_seconds: int,
-    user_agent: str,
-    session: HttpSession | None,
-    work_dir: Path,
-) -> Path:
-    http_session = session or dlt_requests.Session()  # dlt's client retries/backoff by default
-    target = work_dir / "all_companies.download"
-    with http_session.get(
-        f"{base_url}/all_companies",
-        headers={"User-Agent": user_agent},  # per-request: never mutates the session
-        stream=True,
-        timeout=timeout_seconds,
-    ) as response:
-        response.raise_for_status()
-        with target.open("wb") as out:
-            for chunk in response.iter_content(chunk_size=1 << 20):
-                if chunk:
-                    out.write(chunk)
-    return target
-
-
 def _stable_normalized_url_parts(raw: str) -> tuple[str, str, str]:
     normalized_url, host, path = normalized_url_parts(raw)
     parsed = urllib.parse.urlparse(normalized_url)
@@ -276,36 +217,6 @@ def normalized_url_parts(raw: str) -> tuple[str, str, str]:
     normalized = value if parsed.scheme else f"https://{value}"
     normalized_parsed = urllib.parse.urlparse(normalized)
     return normalized, normalized_parsed.hostname or "", normalized_parsed.path
-
-
-def _json_path_from_download(download_path: Path, *, work_dir: Path) -> Path:
-    if not is_zipfile(download_path):
-        return download_path
-    with ZipFile(download_path) as archive:
-        json_names = [name for name in archive.namelist() if name.lower().endswith(".json")]
-        if not json_names:
-            raise ValueError("PRH all_companies zip did not contain a JSON file")
-        target = work_dir / "all_companies.json"
-        with archive.open(json_names[0]) as member, target.open("wb") as out:
-            shutil.copyfileobj(member, out)
-        return target
-
-
-def _iter_companies(json_path: Path) -> Iterator[dict[str, Any]]:
-    prefix = _ijson_prefix(json_path)
-    with json_path.open("rb") as handle:
-        for company in ijson.items(handle, prefix):
-            if isinstance(company, dict):
-                yield company
-
-
-def _ijson_prefix(json_path: Path) -> str:
-    with json_path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1), b""):
-            if chunk.isspace():
-                continue
-            return "item" if chunk == b"[" else "companies.item"
-    return "item"
 
 
 def _primary_name(company: dict[str, Any]) -> str:
