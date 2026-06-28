@@ -5,7 +5,6 @@ from pathlib import Path
 import dagster as dg
 import duckdb
 from dagster import AssetKey
-from dlt.extract.exceptions import ResourceExtractionError
 import polars as pl
 import pytest
 from pydantic import ValidationError
@@ -19,7 +18,10 @@ from dagster_v3.defs.finland_xbrl.assets import (
     download_finland_xbrl_raw_xml_documents,
     resolve_xbrl_documents_key,
 )
-from dagster_v3.defs.finland_xbrl.resources import XbrlApiResource
+from dagster_v3.defs.finland_xbrl.resources import (
+    XbrlApiResource,
+    XbrlParquetStorageResource,
+)
 from dagster_v3.defs.finland_xbrl.tables import (
     FACTS_TABLE,
     FINANCIAL_METRICS_TABLE,
@@ -128,9 +130,27 @@ def test_xbrl_financial_reports_config_has_launchpad_defaults() -> None:
     config = xbrl_assets.XbrlFinancialReportsConfig()
 
     assert config.request_delay_seconds == 1.0
-    assert config.max_retries == 6
-    assert config.retry_initial_delay_seconds == 30.0
-    assert config.retry_max_delay_seconds == 480.0
+
+
+def test_xbrl_parquet_storage_resource_maps_financial_report_partitions(
+    tmp_path: Path,
+) -> None:
+    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
+
+    assert storage.financial_reports_backfill_path("2026-05-01") == (
+        tmp_path
+        / "parquet"
+        / "financial_reports_backfill"
+        / "partition_key=2026-05-01"
+        / "data.parquet"
+    )
+    assert storage.financial_reports_incremental_path("2026-06-28") == (
+        tmp_path
+        / "parquet"
+        / "financial_reports_incremental"
+        / "partition_key=2026-06-28"
+        / "data.parquet"
+    )
 
 
 def test_finland_xbrl_backfill_and_incremental_partitions() -> None:
@@ -198,8 +218,8 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
     assert schedule.cron_schedule == "0 6 * * *"
 
 
-def test_financial_reports_merge_accumulates_across_windows(tmp_path: Path) -> None:
-    db = tmp_path / "finland_xbrl.duckdb"
+def test_financial_reports_write_separate_partition_parquet_files(tmp_path: Path) -> None:
+    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
     window_one_session = FakePagedFinancialReportsSession(
         {
             1: [
@@ -225,35 +245,38 @@ def test_financial_reports_merge_accumulates_across_windows(tmp_path: Path) -> N
         }
     )
 
-    xbrl_assets.run_finland_xbrl_financial_reports_dlt_pipeline(
-        database_path=db,
-        registered_date_start="2024-03-01",
-        registered_date_end="2024-03-31",
-        run_id="r1",
-        session=window_one_session,
+    storage.write_financial_reports_backfill(
+        "2024-03-01",
+        list(
+            XbrlApiResource(session=window_one_session).iter_financial_report_rows(
+                registered_date_start="2024-03-01",
+                registered_date_end="2024-03-31",
+                request_delay_seconds=0,
+                run_id="r1",
+                sleep=lambda _: None,
+            )
+        ),
     )
-    xbrl_assets.run_finland_xbrl_financial_reports_dlt_pipeline(
-        database_path=db,
-        registered_date_start="2024-04-01",
-        registered_date_end="2024-04-30",
-        run_id="r2",
-        session=window_two_session,
+    storage.write_financial_reports_backfill(
+        "2024-04-01",
+        list(
+            XbrlApiResource(session=window_two_session).iter_financial_report_rows(
+                registered_date_start="2024-04-01",
+                registered_date_end="2024-04-30",
+                request_delay_seconds=0,
+                run_id="r2",
+                sleep=lambda _: None,
+            )
+        ),
     )
 
-    with duckdb.connect(str(db), read_only=True) as conn:
-        ids = [
-            row[0]
-            for row in conn.execute(
-                f"select business_id from "
-                f"{xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE} "
-                f"order by business_id"
-            ).fetchall()
-        ]
-
-    assert ids == ["a", "b"]
+    assert storage.read_financial_reports_backfill("2024-03-01")[0]["business_id"] == "a"
+    assert storage.read_financial_reports_backfill("2024-04-01")[0]["business_id"] == "b"
+    assert storage.financial_reports_backfill_path("2024-03-01").exists()
+    assert storage.financial_reports_backfill_path("2024-04-01").exists()
 
 
-def test_xbrl_raw_config_uses_duckdb_selection_by_default() -> None:
+def test_xbrl_raw_config_defaults() -> None:
     config = XbrlRawConfig()
 
     assert config.refresh_existing is False
@@ -311,7 +334,10 @@ def test_xbrl_asset_graph_models_company_seed_duckdb_downstream_of_ytj_duckdb() 
 
 
 def test_xbrl_financial_reports_are_modeled_as_partitioned_writer_assets() -> None:
-    assert "finland_xbrl_financial_reports_source" in xbrl_assets.__dict__
+    assert "finland_xbrl_financial_reports_source" not in xbrl_assets.__dict__
+    assert "_financial_reports_resource" not in xbrl_assets.__dict__
+    assert "finland_xbrl_financial_reports_pipeline" not in xbrl_assets.__dict__
+    assert "run_finland_xbrl_financial_reports_dlt_pipeline" not in xbrl_assets.__dict__
     graph = load_project_defs().get_repository_def().asset_graph
     canonical = graph.get(AssetKey("finland_xbrl_financial_reports_duckdb"))
     assert canonical.partitions_def is None
@@ -321,28 +347,32 @@ def test_xbrl_financial_reports_are_modeled_as_partitioned_writer_assets() -> No
     }
 
 
-def test_xbrl_dlt_source_pages_financial_report_listing() -> None:
+def test_xbrl_api_resource_pages_financial_report_listing() -> None:
     session = FakePagedFinancialReportsSession()
     sleeps: list[float] = []
     log_messages: list[str] = []
+    api = XbrlApiResource(session=session)
 
-    source = xbrl_assets.finland_xbrl_financial_reports_source(
-        registered_date_start="2026-06-01",
-        registered_date_end="2026-06-30",
-        request_delay_seconds=0.5,
-        run_id="test-run",
-        session=session,
-        sleep=sleeps.append,
-        log_info=log_messages.append,
+    listings = list(
+        api.iter_financial_reports(
+            registered_date_start="2026-06-01",
+            registered_date_end="2026-06-30",
+            request_delay_seconds=0.5,
+            sleep=sleeps.append,
+            log_info=log_messages.append,
+        )
     )
-    rows = list(source.resources[xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE])
 
-    assert [row["business_id"] for row in rows] == ["active-web", "second-active-web"]
-    assert rows[0]["financial_date"] == "2026-05-31"
-    assert rows[0]["registration_date"] == "2026-06-01"
-    assert rows[0]["source_run_id"] == "test-run"
-    assert rows[0]["source_page_number"] == 1
-    assert rows[1]["source_page_number"] == 2
+    assert [listing.financial["businessId"] for listing in listings] == [
+        "active-web",
+        "second-active-web",
+    ]
+    assert listings[0].source_page_number == 1
+    assert listings[0].source_page_record_number == 1
+    assert listings[0].source_record_number == 1
+    assert listings[1].source_page_number == 2
+    assert listings[1].source_page_record_number == 1
+    assert listings[1].source_record_number == 2
     assert [call[1]["page"] for call in session.calls] == [1, 2, 3]
     assert session.calls[0][1]["registeredDateStart"] == "2026-06-01"
     assert session.calls[0][1]["registeredDateEnd"] == "2026-06-30"
@@ -356,89 +386,121 @@ def test_xbrl_dlt_source_pages_financial_report_listing() -> None:
     ]
 
 
-def test_xbrl_dlt_source_rejects_registration_start_before_prh_floor() -> None:
+def test_xbrl_api_resource_produces_financial_report_rows() -> None:
     session = FakePagedFinancialReportsSession()
-    source = xbrl_assets.finland_xbrl_financial_reports_source(
-        registered_date_start="2014-01-01",
-        registered_date_end="2014-01-31",
-        request_delay_seconds=0,
-        run_id="test-run",
-        session=session,
+    api = XbrlApiResource(session=session)
+
+    rows = list(
+        api.iter_financial_report_rows(
+            registered_date_start="2026-06-01",
+            registered_date_end="2026-06-30",
+            request_delay_seconds=0.5,
+            run_id="test-run",
+            sleep=lambda _: None,
+        )
     )
 
-    with pytest.raises(ResourceExtractionError, match="2023-07-01"):
-        list(source.resources[xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE])
+    assert [row["business_id"] for row in rows] == ["active-web", "second-active-web"]
+    assert rows[0]["financial_date"] == "2026-05-31"
+    assert rows[0]["registration_date"] == "2026-06-01"
+    assert rows[0]["source_run_id"] == "test-run"
+    assert rows[0]["source_page_number"] == 1
+    assert rows[1]["source_page_number"] == 2
+    assert [call[1]["page"] for call in session.calls] == [1, 2, 3]
+
+
+def test_xbrl_api_resource_rejects_registration_start_before_prh_floor() -> None:
+    session = FakePagedFinancialReportsSession()
+    api = XbrlApiResource(session=session)
+
+    with pytest.raises(ValueError, match="2023-07-01"):
+        list(
+            api.iter_financial_report_rows(
+                registered_date_start="2014-01-01",
+                registered_date_end="2014-01-31",
+                request_delay_seconds=0,
+                run_id="test-run",
+                sleep=lambda _: None,
+            )
+        )
 
     assert session.calls == []
 
 
-def test_xbrl_financial_reports_http_client_uses_dlt_retry_client() -> None:
-    client = xbrl_assets._financial_reports_http_client(
-        timeout_seconds=120,
-        user_agent="test-agent",
-        max_retries=6,
-        retry_initial_delay_seconds=30.0,
-        retry_max_delay_seconds=480.0,
+def test_xbrl_parquet_storage_overwrites_financial_report_partition(tmp_path: Path) -> None:
+    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
+    rows = list(
+        XbrlApiResource(session=FakePagedFinancialReportsSession()).iter_financial_report_rows(
+            registered_date_start="2026-06-01",
+            registered_date_end="2026-06-30",
+            request_delay_seconds=0,
+            run_id="first-run",
+            sleep=lambda _: None,
+        )
     )
 
-    assert client.__class__.__module__ == "dlt.sources.helpers.requests.retry"
-    assert client._retry_kwargs["status_codes"] == (429, *range(500, 600))
-    assert client._retry_kwargs["max_attempts"] == 6
-    assert client._retry_kwargs["backoff_factor"] == 30.0
-    assert client._retry_kwargs["respect_retry_after_header"] is True
-    assert client._retry_kwargs["max_delay"] == 480.0
-
-
-def test_xbrl_dlt_pipeline_loads_financial_reports_table(tmp_path: Path) -> None:
-    session = FakePagedFinancialReportsSession()
-    database_path = tmp_path / "source.duckdb"
-
-    load_info = xbrl_assets.run_finland_xbrl_financial_reports_dlt_pipeline(
-        database_path=database_path,
-        registered_date_start="2026-06-01",
-        registered_date_end="2026-06-30",
-        run_id="test-run",
-        session=session,
+    storage.write_financial_reports_incremental("2026-06-01", rows)
+    storage.write_financial_reports_incremental(
+        "2026-06-01",
+        [
+            {
+                **rows[0],
+                "source_run_id": "second-run",
+                "source_page_number": 9,
+            }
+        ],
     )
 
-    assert load_info
+    stored = storage.read_financial_reports_incremental("2026-06-01")
 
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        rows = connection.execute(
-            f"""
-            select business_id, financial_date, registration_date, source_page_number
-            from {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE}
-            order by business_id
-            """
-        ).fetchall()
-
-    assert rows == [
-        ("active-web", "2026-05-31", "2026-06-01", 1),
-        ("second-active-web", "2026-04-30", "2026-06-02", 2),
+    assert stored == [
+        {
+            **rows[0],
+            "source_run_id": "second-run",
+            "source_page_number": 9,
+        }
     ]
 
 
-def test_xbrl_dlt_pipeline_resolves_empty_registration_window(tmp_path: Path) -> None:
-    session = FakePagedFinancialReportsSession({1: []})
-    database_path = tmp_path / "source.duckdb"
-    log_messages: list[str] = []
+def test_xbrl_parquet_storage_writes_empty_financial_report_partition(
+    tmp_path: Path,
+) -> None:
+    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
 
-    load_info = xbrl_assets.run_finland_xbrl_financial_reports_dlt_pipeline(
-        database_path=database_path,
-        registered_date_start="2026-06-28",
-        registered_date_end="2026-06-28",
-        run_id="test-run",
-        session=session,
-        log_info=log_messages.append,
+    storage.write_financial_reports_incremental("2026-06-28", [])
+
+    assert storage.read_financial_reports_incremental("2026-06-28") == []
+
+
+def test_financial_report_materialization_loads_api_rows(tmp_path: Path) -> None:
+    session = FakePagedFinancialReportsSession()
+    api = XbrlApiResource(session=session)
+    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
+    context = dg.build_asset_context(
+        partition_key="2026-06-01",
     )
 
-    assert load_info
-    assert xbrl_assets.financial_reports_duckdb_row_count(duckdb_resource(database_path)) == 0
-    assert [call[1]["page"] for call in session.calls] == [1]
-    assert log_messages == [
-        "PRH XBRL financial reports discovery 2026-06-28..2026-06-28 started",
-        "PRH XBRL financial reports discovery 2026-06-28..2026-06-28 page 1 returned 0 reports; stopping",
-        "PRH XBRL financial reports discovery 2026-06-28..2026-06-28 completed: 0 reports across 0 non-empty pages",
+    result = xbrl_assets.materialize_financial_reports_window(
+        context,
+        xbrl_assets.XbrlFinancialReportsConfig(request_delay_seconds=0),
+        storage,
+        api,
+        registered_date_start="2026-06-01",
+        registered_date_end="2026-06-30",
+        run_id="test-run",
+        write_financial_reports=storage.write_financial_reports_incremental,
+    )
+
+    assert result.metadata["row_count"] == 2
+    assert result.metadata["parquet_path"] == str(
+        storage.financial_reports_incremental_path("2026-06-01")
+    )
+    assert [
+        (row["business_id"], row["financial_date"], row["registration_date"], row["source_page_number"])
+        for row in storage.read_financial_reports_incremental("2026-06-01")
+    ] == [
+        ("active-web", "2026-05-31", "2026-06-01", 1),
+        ("second-active-web", "2026-04-30", "2026-06-02", 2),
     ]
 
 
@@ -493,9 +555,11 @@ def test_xbrl_asset_graph_models_financial_metrics_downstream_of_parsed_tables()
     assert dg.AssetKey("xbrl_metric_map") in parent_keys
 
 
-def test_xbrl_api_resource_only_keeps_xml_download_methods() -> None:
+def test_xbrl_api_resource_keeps_source_api_methods() -> None:
     assert not hasattr(XbrlApiResource, "iter_registration_window")
     assert not hasattr(XbrlApiResource, "_list_registration_window")
+    assert hasattr(XbrlApiResource, "iter_financial_reports")
+    assert hasattr(XbrlApiResource, "download_statement_xml")
 
 
 def test_xbrl_api_resource_uses_dlt_retry_client_for_xml_downloads() -> None:
@@ -631,33 +695,11 @@ def test_load_eligible_financial_report_rows_filters_by_registration_window_only
         connection.execute(f"create schema {xbrl_assets.XBRL_DLT_DATASET_NAME}")
         connection.execute(
             f"""
-            create table {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE} (
-                business_id varchar,
-                financial_date varchar,
-                registration_date varchar,
-                discovery_registered_date_start varchar,
-                discovery_registered_date_end varchar
-            )
-            """
-        )
-        connection.execute(
-            f"""
             create table {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_ELIGIBLE_COMPANIES_TABLE} (
                 business_id varchar,
                 primary_name varchar,
                 website_normalized_url varchar
             )
-            """
-        )
-        connection.execute(
-            f"""
-            insert into {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE} values
-            ('old-financial-date', '2023-12-31', '2026-06-01', '2026-06-01', '2026-06-30'),
-            ('outside-window', '2026-05-31', '2026-05-31', '2026-05-01', '2026-05-31'),
-            ('inactive-company', '2026-04-30', '2026-06-02', '2026-06-01', '2026-06-30'),
-            ('missing-website', '2026-04-30', '2026-06-02', '2026-06-01', '2026-06-30'),
-            ('active-web', '2026-05-31', '2026-06-01', '2026-06-01', '2026-06-30'),
-            ('second-active-web', '2026-04-30', '2026-06-02', '2026-06-01', '2026-06-30')
             """
         )
         connection.execute(
@@ -669,9 +711,54 @@ def test_load_eligible_financial_report_rows_filters_by_registration_window_only
             ('second-active-web', 'Second Oy', 'https://second.example')
             """
         )
+    financial_reports = [
+        {
+            "business_id": "old-financial-date",
+            "financial_date": "2023-12-31",
+            "registration_date": "2026-06-01",
+            "discovery_registered_date_start": "2026-06-01",
+            "discovery_registered_date_end": "2026-06-30",
+        },
+        {
+            "business_id": "outside-window",
+            "financial_date": "2026-05-31",
+            "registration_date": "2026-05-31",
+            "discovery_registered_date_start": "2026-05-01",
+            "discovery_registered_date_end": "2026-05-31",
+        },
+        {
+            "business_id": "inactive-company",
+            "financial_date": "2026-04-30",
+            "registration_date": "2026-06-02",
+            "discovery_registered_date_start": "2026-06-01",
+            "discovery_registered_date_end": "2026-06-30",
+        },
+        {
+            "business_id": "missing-website",
+            "financial_date": "2026-04-30",
+            "registration_date": "2026-06-02",
+            "discovery_registered_date_start": "2026-06-01",
+            "discovery_registered_date_end": "2026-06-30",
+        },
+        {
+            "business_id": "active-web",
+            "financial_date": "2026-05-31",
+            "registration_date": "2026-06-01",
+            "discovery_registered_date_start": "2026-06-01",
+            "discovery_registered_date_end": "2026-06-30",
+        },
+        {
+            "business_id": "second-active-web",
+            "financial_date": "2026-04-30",
+            "registration_date": "2026-06-02",
+            "discovery_registered_date_start": "2026-06-01",
+            "discovery_registered_date_end": "2026-06-30",
+        },
+    ]
 
     rows = xbrl_assets.load_eligible_financial_report_rows(
         duckdb_resource(database_path),
+        financial_reports=financial_reports,
         registered_date_start="2026-06-01",
         registered_date_end="2026-06-30",
     )

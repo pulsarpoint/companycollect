@@ -20,7 +20,6 @@ from dagster_v3.defs.finland_xbrl.assets.common import (
     RAW_XML_DOCUMENTS_OBJECT_KEY,
     XBRL_BUCKET,
     XBRL_DLT_DATASET_NAME,
-    XBRL_DLT_FINANCIAL_REPORTS_TABLE,
     XBRL_ELIGIBLE_COMPANIES_TABLE,
     _registration_window,
 )
@@ -31,7 +30,10 @@ from dagster_v3.defs.finland_xbrl.assets.financial_reports import (
     finland_xbrl_financial_reports_backfill_duckdb,
     finland_xbrl_financial_reports_incremental_duckdb,
 )
-from dagster_v3.defs.finland_xbrl.resources import XbrlApiResource
+from dagster_v3.defs.finland_xbrl.resources import (
+    XbrlApiResource,
+    XbrlParquetStorageResource,
+)
 
 class XbrlRawConfig(dg.Config):
     refresh_existing: bool = False
@@ -190,6 +192,7 @@ def _materialize_raw_xml_window(
     *,
     registered_date_start: str,
     registered_date_end: str,
+    read_financial_reports: Callable[[str], list[dict[str, Any]]],
 ) -> dg.MaterializeResult:
     context.log.info(
         "XBRL raw XML partition %s: loading eligible reports registered %s..%s",
@@ -197,8 +200,10 @@ def _materialize_raw_xml_window(
         registered_date_start,
         registered_date_end,
     )
+    financial_report_rows = read_financial_reports(context.partition_key)
     financial_reports = load_eligible_financial_report_rows(
         source_duckdb,
+        financial_reports=financial_report_rows,
         registered_date_start=registered_date_start,
         registered_date_end=registered_date_end,
     )
@@ -249,6 +254,7 @@ def finland_xbrl_raw_xml_documents_backfill(
     context: dg.AssetExecutionContext,
     config: XbrlRawConfig,
     xbrl_api: XbrlApiResource,
+    xbrl_parquet_storage: XbrlParquetStorageResource,
     object_store: ObjectStoreResource,
     source_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
@@ -261,6 +267,7 @@ def finland_xbrl_raw_xml_documents_backfill(
         source_duckdb,
         registered_date_start=start,
         registered_date_end=end,
+        read_financial_reports=xbrl_parquet_storage.read_financial_reports_backfill,
     )
 
 
@@ -279,6 +286,7 @@ def finland_xbrl_raw_xml_documents_incremental(
     context: dg.AssetExecutionContext,
     config: XbrlRawConfig,
     xbrl_api: XbrlApiResource,
+    xbrl_parquet_storage: XbrlParquetStorageResource,
     object_store: ObjectStoreResource,
     source_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
@@ -291,6 +299,7 @@ def finland_xbrl_raw_xml_documents_incremental(
         source_duckdb,
         registered_date_start=start,
         registered_date_end=end,
+        read_financial_reports=xbrl_parquet_storage.read_financial_reports_incremental,
     )
 
 
@@ -352,6 +361,7 @@ def finland_xbrl_xml_documents(
 
 def load_eligible_financial_report_rows(
     source_duckdb: DuckDBResource,
+    financial_reports: list[dict[str, Any]],
     *,
     registered_date_start: str,
     registered_date_end: str,
@@ -359,37 +369,25 @@ def load_eligible_financial_report_rows(
     with read_only_duckdb_connection(source_duckdb) as connection:
         rows = connection.execute(
             f"""
-            select
-                reports.business_id,
-                reports.financial_date,
-                reports.registration_date,
-                reports.discovery_registered_date_start,
-                reports.discovery_registered_date_end
-            from {XBRL_DLT_DATASET_NAME}.{XBRL_DLT_FINANCIAL_REPORTS_TABLE} as reports
-            inner join {XBRL_DLT_DATASET_NAME}.{XBRL_ELIGIBLE_COMPANIES_TABLE} as companies
-                on reports.business_id = companies.business_id
-            where reports.registration_date >= ?
-              and reports.registration_date <= ?
-            order by reports.registration_date, reports.financial_date, reports.business_id
-            """,
-            [registered_date_start, registered_date_end],
+            select business_id
+            from {XBRL_DLT_DATASET_NAME}.{XBRL_ELIGIBLE_COMPANIES_TABLE}
+            order by business_id
+            """
         ).fetchall()
-    return [
-        {
-            "business_id": business_id,
-            "financial_date": financial_date,
-            "registration_date": registration_date,
-            "discovery_registered_date_start": discovery_registered_date_start,
-            "discovery_registered_date_end": discovery_registered_date_end,
-        }
-        for (
-            business_id,
-            financial_date,
-            registration_date,
-            discovery_registered_date_start,
-            discovery_registered_date_end,
-        ) in rows
-    ]
+    eligible_business_ids = {business_id for (business_id,) in rows}
+    return sorted(
+        [
+            report
+            for report in financial_reports
+            if report["business_id"] in eligible_business_ids
+            and registered_date_start <= report["registration_date"] <= registered_date_end
+        ],
+        key=lambda report: (
+            report["registration_date"],
+            report["financial_date"],
+            report["business_id"],
+        ),
+    )
 
 
 def _optional_string(value: Any) -> str:
