@@ -4,6 +4,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
+import pyarrow as pa
 from dagster_clickhouse import ClickhouseResource
 
 RESOLVED_DATABASE = "corpscout"
@@ -16,7 +17,6 @@ REQUIRED_FINLAND_RESOLVED_TABLES = (
     "fi_registered_entries",
     "fi_legal_forms",
     "fi_financial_statements",
-    "fi_financial_metrics",
 )
 
 DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE = 50_000
@@ -43,7 +43,9 @@ def assert_clickhouse_tables_exist(
     existing = {str(row[0]) for row in rows}
     missing = [table for table in requested_tables if table not in existing]
     if missing:
-        raise ValueError(f"Missing ClickHouse tables in {database}: {', '.join(missing)}")
+        raise ValueError(
+            f"Missing ClickHouse tables in {database}: {', '.join(missing)}"
+        )
 
 
 def export_duckdb_connection_table_to_clickhouse(
@@ -59,17 +61,21 @@ def export_duckdb_connection_table_to_clickhouse(
     batch_size: int = DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
 ) -> int:
     _validate_batch_size(batch_size)
-    clickhouse_columns = ", ".join(_quote_clickhouse_identifier(column) for column in columns)
+    clickhouse_columns = ", ".join(
+        _quote_clickhouse_identifier(column) for column in columns
+    )
     clickhouse_qualified_table = (
         f"{_quote_clickhouse_identifier(clickhouse_database)}."
         f"{_quote_clickhouse_identifier(clickhouse_table)}"
     )
     if not truncate:
-        return _insert_duckdb_rows_in_batches(
+        return _insert_duckdb_table_in_batches(
             duckdb_connection=duckdb_connection,
             clickhouse_client=clickhouse_client,
             duckdb_schema=duckdb_schema,
             duckdb_table=duckdb_table,
+            clickhouse_database=clickhouse_database,
+            clickhouse_table=clickhouse_table,
             clickhouse_qualified_table=clickhouse_qualified_table,
             clickhouse_columns=clickhouse_columns,
             columns=columns,
@@ -87,11 +93,13 @@ def export_duckdb_connection_table_to_clickhouse(
     primary_error: Exception | None = None
     row_count = 0
     try:
-        row_count = _insert_duckdb_rows_in_batches(
+        row_count = _insert_duckdb_table_in_batches(
             duckdb_connection=duckdb_connection,
             clickhouse_client=clickhouse_client,
             duckdb_schema=duckdb_schema,
             duckdb_table=duckdb_table,
+            clickhouse_database=clickhouse_database,
+            clickhouse_table=clickhouse_stage_table,
             clickhouse_qualified_table=clickhouse_qualified_stage_table,
             clickhouse_columns=clickhouse_columns,
             columns=columns,
@@ -127,11 +135,15 @@ def replace_duckdb_connection_tables_in_clickhouse(
     )
 
     clickhouse_columns_by_table = {
-        clickhouse_table: ", ".join(_quote_clickhouse_identifier(column) for column in columns)
+        clickhouse_table: ", ".join(
+            _quote_clickhouse_identifier(column) for column in columns
+        )
         for clickhouse_table, columns in requested_tables
     }
     clickhouse_qualified_tables = {
-        clickhouse_table: _quote_clickhouse_qualified_table(clickhouse_database, clickhouse_table)
+        clickhouse_table: _quote_clickhouse_qualified_table(
+            clickhouse_database, clickhouse_table
+        )
         for clickhouse_table, _ in requested_tables
     }
     clickhouse_qualified_stage_tables: dict[str, str] = {}
@@ -147,7 +159,9 @@ def replace_duckdb_connection_tables_in_clickhouse(
                 clickhouse_database,
                 clickhouse_stage_table,
             )
-            clickhouse_qualified_stage_tables[clickhouse_table] = clickhouse_qualified_stage_table
+            clickhouse_qualified_stage_tables[clickhouse_table] = (
+                clickhouse_qualified_stage_table
+            )
             created_stage_tables.append(clickhouse_table)
             clickhouse_client.execute(
                 f"CREATE TABLE {clickhouse_qualified_stage_table} AS "
@@ -155,14 +169,15 @@ def replace_duckdb_connection_tables_in_clickhouse(
             )
 
         for clickhouse_table, columns in requested_tables:
-            row_counts[clickhouse_table] = _insert_duckdb_rows_in_batches(
+            clickhouse_stage_table = clickhouse_qualified_stage_tables[clickhouse_table]
+            row_counts[clickhouse_table] = _insert_duckdb_table_in_batches(
                 duckdb_connection=duckdb_connection,
                 clickhouse_client=clickhouse_client,
                 duckdb_schema=duckdb_schema,
                 duckdb_table=clickhouse_table,
-                clickhouse_qualified_table=clickhouse_qualified_stage_tables[
-                    clickhouse_table
-                ],
+                clickhouse_database=clickhouse_database,
+                clickhouse_table=_unqualified_clickhouse_table(clickhouse_stage_table),
+                clickhouse_qualified_table=clickhouse_stage_table,
                 clickhouse_columns=clickhouse_columns_by_table[clickhouse_table],
                 columns=columns,
                 batch_size=batch_size,
@@ -192,8 +207,7 @@ def replace_duckdb_connection_tables_in_clickhouse(
         if rollback_failures:
             raise RuntimeError(
                 "Rollback failed after ClickHouse publish error; ClickHouse may be inconsistent. "
-                "Failed rollback exchange(s): "
-                + ", ".join(rollback_failures)
+                "Failed rollback exchange(s): " + ", ".join(rollback_failures)
             ) from exc
         raise
     finally:
@@ -207,6 +221,75 @@ def replace_duckdb_connection_tables_in_clickhouse(
         )
 
     return row_counts
+
+
+def _insert_duckdb_table_in_batches(
+    *,
+    duckdb_connection: Any,
+    clickhouse_client: Any,
+    duckdb_schema: str,
+    duckdb_table: str,
+    clickhouse_database: str,
+    clickhouse_table: str,
+    clickhouse_qualified_table: str,
+    clickhouse_columns: str,
+    columns: Sequence[str],
+    batch_size: int,
+) -> int:
+    if callable(getattr(clickhouse_client, "insert_arrow", None)):
+        return _insert_duckdb_arrow_batches(
+            duckdb_connection=duckdb_connection,
+            clickhouse_client=clickhouse_client,
+            duckdb_schema=duckdb_schema,
+            duckdb_table=duckdb_table,
+            clickhouse_database=clickhouse_database,
+            clickhouse_table=clickhouse_table,
+            columns=columns,
+            batch_size=batch_size,
+        )
+    return _insert_duckdb_rows_in_batches(
+        duckdb_connection=duckdb_connection,
+        clickhouse_client=clickhouse_client,
+        duckdb_schema=duckdb_schema,
+        duckdb_table=duckdb_table,
+        clickhouse_qualified_table=clickhouse_qualified_table,
+        clickhouse_columns=clickhouse_columns,
+        columns=columns,
+        batch_size=batch_size,
+    )
+
+
+def _insert_duckdb_arrow_batches(
+    *,
+    duckdb_connection: Any,
+    clickhouse_client: Any,
+    duckdb_schema: str,
+    duckdb_table: str,
+    clickhouse_database: str,
+    clickhouse_table: str,
+    columns: Sequence[str],
+    batch_size: int,
+) -> int:
+    duckdb_columns = ", ".join(_quote_duckdb_identifier(column) for column in columns)
+    duckdb_qualified_table = (
+        f"{_quote_duckdb_qualified_schema(duckdb_schema)}."
+        f"{_quote_duckdb_identifier(duckdb_table)}"
+    )
+    result = duckdb_connection.execute(
+        f"select {duckdb_columns} from {duckdb_qualified_table}"
+    )
+
+    row_count = 0
+    for record_batch in result.to_arrow_reader(batch_size=batch_size):
+        if record_batch.num_rows < 1:
+            continue
+        clickhouse_client.insert_arrow(
+            clickhouse_table,
+            pa.Table.from_batches([record_batch]),
+            database=clickhouse_database,
+        )
+        row_count += record_batch.num_rows
+    return row_count
 
 
 def _insert_duckdb_rows_in_batches(
@@ -265,6 +348,13 @@ def _quote_clickhouse_qualified_table(database: str, table: str) -> str:
         f"{_quote_clickhouse_identifier(database)}."
         f"{_quote_clickhouse_identifier(table)}"
     )
+
+
+def _unqualified_clickhouse_table(qualified_table: str) -> str:
+    escaped_table = qualified_table.rsplit(".", maxsplit=1)[-1]
+    if escaped_table.startswith("`") and escaped_table.endswith("`"):
+        escaped_table = escaped_table[1:-1]
+    return escaped_table.replace("``", "`")
 
 
 def _clickhouse_stage_table_name(table: str) -> str:

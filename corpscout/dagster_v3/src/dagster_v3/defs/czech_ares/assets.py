@@ -140,12 +140,6 @@ czech_ares_register_schedule = dg.ScheduleDefinition(
     execution_timezone="Europe/Belgrade",
 )
 
-czech_ares_full_refresh_job = dg.define_asset_job(
-    "czech_ares_full_refresh_job",
-    selection=dg.AssetSelection.groups(GROUP_NAME),
-)
-
-
 defs = dg.Definitions(
     assets=[
         czech_ares_res_raw_duckdb,
@@ -156,7 +150,6 @@ defs = dg.Definitions(
     ],
     jobs=[
         czech_ares_register_job,
-        czech_ares_full_refresh_job,
     ],
     schedules=[czech_ares_register_schedule],
     resources={

@@ -2,6 +2,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 import duckdb
+import pyarrow as pa
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.defs.clickhouse import resolved as clickhouse_resolved
@@ -34,7 +35,9 @@ class FakeClickHouseClient:
         self.existing_tables = existing_tables
         self.statements: list[str] = []
 
-    def execute(self, sql: str, params: dict[str, object] | None = None) -> list[tuple[str]]:
+    def execute(
+        self, sql: str, params: dict[str, object] | None = None
+    ) -> list[tuple[str]]:
         self.statements.append(sql)
         if "system.tables" not in sql:
             raise AssertionError(sql)
@@ -43,7 +46,8 @@ class FakeClickHouseClient:
         return [
             (table.removeprefix(f"{database}."),)
             for table in sorted(self.existing_tables)
-            if table.startswith(f"{database}.") and table.removeprefix(f"{database}.") in requested
+            if table.startswith(f"{database}.")
+            and table.removeprefix(f"{database}.") in requested
         ]
 
 
@@ -56,15 +60,12 @@ def test_required_finland_resolved_tables_are_explicit() -> None:
         "fi_registered_entries",
         "fi_legal_forms",
         "fi_financial_statements",
-        "fi_financial_metrics",
     )
 
 
 def test_assert_clickhouse_tables_exist_uses_official_resource(monkeypatch) -> None:
     resource = ClickhouseResource(host="localhost")
-    client = FakeClickHouseClient(
-        {"corpscout.fi_companies", "corpscout.fi_websites"}
-    )
+    client = FakeClickHouseClient({"corpscout.fi_companies", "corpscout.fi_websites"})
 
     @contextmanager
     def fake_get_connection(self: ClickhouseResource) -> Iterator[FakeClickHouseClient]:
@@ -192,6 +193,63 @@ def test_export_duckdb_connection_table_to_clickhouse_inserts_rows_in_batches(
     ]
 
 
+def test_export_duckdb_connection_table_to_clickhouse_prefers_arrow_batches(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into finland_resolved.fi_companies values
+              ('1000001-1'),
+              ('1000002-2'),
+              ('1000003-3')
+            """
+        )
+
+        client = FakeArrowClickHouseClient()
+
+        row_count = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=connection,
+            clickhouse_client=client,
+            duckdb_schema="finland_resolved",
+            duckdb_table="fi_companies",
+            clickhouse_database="corpscout",
+            clickhouse_table="fi_companies",
+            columns=("business_id",),
+            truncate=False,
+            batch_size=2,
+        )
+
+    assert row_count == 3
+    assert client.insert_calls == []
+    assert [
+        (database, table, arrow_table.column_names, arrow_table.to_pylist())
+        for database, table, arrow_table in client.arrow_insert_calls
+    ] == [
+        (
+            "corpscout",
+            "fi_companies",
+            ["business_id"],
+            [{"business_id": "1000001-1"}, {"business_id": "1000002-2"}],
+        ),
+        (
+            "corpscout",
+            "fi_companies",
+            ["business_id"],
+            [{"business_id": "1000003-3"}],
+        ),
+    ]
+
+
 def test__export_table_inserts_rows_in_batches(tmp_path) -> None:
     database_path = tmp_path / "source.duckdb"
     with duckdb.connect(str(database_path)) as connection:
@@ -289,9 +347,7 @@ def test__export_table_uses_stage_then_exchange_for_truncate(
     ]
 
 
-def test__export_table_returns_zero_for_empty_table(
-    tmp_path, monkeypatch
-) -> None:
+def test__export_table_returns_zero_for_empty_table(tmp_path, monkeypatch) -> None:
     database_path = tmp_path / "source.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         connection.execute("create schema finland_resolved")
@@ -336,16 +392,16 @@ def test__export_table_escapes_identifiers(tmp_path) -> None:
     with duckdb.connect(str(database_path)) as connection:
         connection.execute('create schema "schema""name"')
         connection.execute(
-            '''
+            """
             create table "schema""name"."table""name" (
                 "column""name" varchar
             )
-            '''
+            """
         )
         connection.execute(
-            '''
+            """
             insert into "schema""name"."table""name" values ('value')
-            '''
+            """
         )
 
     client = FakeInsertClickHouseClient()
@@ -364,7 +420,7 @@ def test__export_table_escapes_identifiers(tmp_path) -> None:
     assert row_count == 1
     assert client.insert_calls == [
         (
-            "INSERT INTO `corp``scout`.`fi``companies` (`column\"name`) VALUES",
+            'INSERT INTO `corp``scout`.`fi``companies` (`column"name`) VALUES',
             [("value",)],
         )
     ]
@@ -383,7 +439,9 @@ def test__export_table_supports_dotted_schema_qualifier(
             )
             """
         )
-        connection.execute("insert into wikidata.wikidata.wikidata_companies values ('Q1')")
+        connection.execute(
+            "insert into wikidata.wikidata.wikidata_companies values ('Q1')"
+        )
 
     client = FakeInsertClickHouseClient()
 
@@ -420,7 +478,9 @@ def test__export_table_cleanup_attempts_drop_on_insert_failure(
             )
             """
         )
-        connection.execute("insert into finland_resolved.fi_companies values ('1234567-8')")
+        connection.execute(
+            "insert into finland_resolved.fi_companies values ('1234567-8')"
+        )
 
     monkeypatch.setattr(
         clickhouse_resolved.uuid,
@@ -470,7 +530,9 @@ def test__export_table_raises_cleanup_error_after_successful_exchange(
             )
             """
         )
-        connection.execute("insert into finland_resolved.fi_companies values ('1234567-8')")
+        connection.execute(
+            "insert into finland_resolved.fi_companies values ('1234567-8')"
+        )
 
     monkeypatch.setattr(
         clickhouse_resolved.uuid,
@@ -514,9 +576,7 @@ def test__export_table_raises_cleanup_error_after_successful_exchange(
     ]
 
 
-def test__replace_tables_rolls_back_on_exchange_failure(
-    tmp_path, monkeypatch
-) -> None:
+def test__replace_tables_rolls_back_on_exchange_failure(tmp_path, monkeypatch) -> None:
     database_path = tmp_path / "source.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         connection.execute("create schema finland_resolved")
@@ -534,8 +594,12 @@ def test__replace_tables_rolls_back_on_exchange_failure(
             )
             """
         )
-        connection.execute("insert into finland_resolved.fi_companies values ('1234567-8')")
-        connection.execute("insert into finland_resolved.fi_websites values ('1234567-8')")
+        connection.execute(
+            "insert into finland_resolved.fi_companies values ('1234567-8')"
+        )
+        connection.execute(
+            "insert into finland_resolved.fi_websites values ('1234567-8')"
+        )
 
     stage_names = iter(["first", "second"])
     monkeypatch.setattr(
@@ -582,9 +646,7 @@ def test__replace_tables_rolls_back_on_exchange_failure(
     ]
 
 
-def test__replace_tables_loads_stages_in_batches(
-    tmp_path, monkeypatch
-) -> None:
+def test__replace_tables_loads_stages_in_batches(tmp_path, monkeypatch) -> None:
     database_path = tmp_path / "source.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         connection.execute("create schema finland_resolved")
@@ -770,8 +832,12 @@ def test__replace_tables_surfaces_rollback_exchange_failures(
             )
             """
         )
-        connection.execute("insert into finland_resolved.fi_companies values ('1234567-8')")
-        connection.execute("insert into finland_resolved.fi_websites values ('1234567-8')")
+        connection.execute(
+            "insert into finland_resolved.fi_companies values ('1234567-8')"
+        )
+        connection.execute(
+            "insert into finland_resolved.fi_websites values ('1234567-8')"
+        )
 
     stage_names = iter(["first", "second"])
     monkeypatch.setattr(
@@ -846,8 +912,12 @@ def test__replace_tables_raises_cleanup_error_after_successful_exchange(
             )
             """
         )
-        connection.execute("insert into finland_resolved.fi_companies values ('1234567-8')")
-        connection.execute("insert into finland_resolved.fi_websites values ('1234567-8')")
+        connection.execute(
+            "insert into finland_resolved.fi_companies values ('1234567-8')"
+        )
+        connection.execute(
+            "insert into finland_resolved.fi_websites values ('1234567-8')"
+        )
 
     stage_names = iter(["first", "second"])
     monkeypatch.setattr(
@@ -875,15 +945,13 @@ def test__replace_tables_raises_cleanup_error_after_successful_exchange(
         )
     except RuntimeError as exc:
         assert (
-            str(exc)
-            == "Failed to drop ClickHouse stage table(s): "
+            str(exc) == "Failed to drop ClickHouse stage table(s): "
             "`corpscout`.`_tmp_fi_websites_second`, "
             "`corpscout`.`_tmp_fi_companies_first`"
         )
         assert isinstance(exc.__cause__, RuntimeError)
         assert str(exc.__cause__) == (
-            "drop failed for "
-            "DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_websites_second`"
+            "drop failed for DROP TABLE IF EXISTS `corpscout`.`_tmp_fi_websites_second`"
         )
     else:
         raise AssertionError("expected cleanup failure")
@@ -911,6 +979,20 @@ class FakeInsertClickHouseClient(FakeClickHouseClient):
             return []
         self.statements.append(sql)
         return []
+
+
+class FakeArrowClickHouseClient(FakeInsertClickHouseClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.arrow_insert_calls: list[tuple[str | None, str, pa.Table]] = []
+
+    def insert_arrow(
+        self,
+        table: str,
+        arrow_table: pa.Table,
+        database: str | None = None,
+    ) -> None:
+        self.arrow_insert_calls.append((database, table, arrow_table))
 
 
 class FailingInsertClickHouseClient(FakeInsertClickHouseClient):

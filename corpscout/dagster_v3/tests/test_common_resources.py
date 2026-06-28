@@ -11,6 +11,52 @@ def test_shared_resources_live_in_common() -> None:
     assert hasattr(module, "ObjectStoreResource")
 
 
+def test_clickhouse_resource_factory_uses_http_arrow_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helpers = importlib.import_module("dagster_v3.defs.clickhouse.resources")
+    monkeypatch.setenv("CLICKHOUSE_HTTP_PORT", "9443")
+    monkeypatch.setenv("CLICKHOUSE_SECURE", "on")
+
+    resource = helpers.clickhouse_resource_from_env()
+
+    assert isinstance(resource, helpers.ClickHouseConnectResource)
+    assert resource.port == 9443
+    assert resource.secure is True
+
+
+def test_clickhouse_connect_resource_resolves_env_and_exposes_arrow_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helpers = importlib.import_module("dagster_v3.defs.clickhouse.resources")
+    calls: dict[str, object] = {}
+    fake_client = _FakeClickHouseConnectClient()
+
+    def fake_get_client(**kwargs: object) -> _FakeClickHouseConnectClient:
+        calls.update(kwargs)
+        return fake_client
+
+    monkeypatch.setenv("CLICKHOUSE_HOST", "clickhouse.test")
+    monkeypatch.setenv("CLICKHOUSE_USER", "exporter")
+    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "secret")
+    monkeypatch.setenv("CLICKHOUSE_DATABASE", "corpscout")
+    monkeypatch.setattr(helpers.clickhouse_connect, "get_client", fake_get_client)
+    resource = helpers.clickhouse_resource_from_env()
+
+    with resource.get_connection() as client:
+        assert client.execute("SELECT name FROM system.tables") == [("br_companies",)]
+        client.execute("CREATE DATABASE IF NOT EXISTS corpscout")
+        client.insert_arrow("br_companies", object(), database="corpscout")
+
+    assert calls["host"] == "clickhouse.test"
+    assert calls["username"] == "exporter"
+    assert calls["password"] == "secret"
+    assert calls["database"] == "corpscout"
+    assert fake_client.commands == ["CREATE DATABASE IF NOT EXISTS corpscout"]
+    assert fake_client.arrow_tables == [("corpscout", "br_companies")]
+    assert fake_client.closed is True
+
+
 def test_duckdb_resource_factory_uses_generic_runtime_env(
     monkeypatch,
     tmp_path: Path,
@@ -67,7 +113,9 @@ def test_read_only_duckdb_connection_rejects_writes(tmp_path: Path) -> None:
     resource = helpers.duckdb_resource(database_path)
 
     with helpers.read_only_duckdb_connection(resource) as connection:
-        assert connection.execute("select business_id from companies").fetchone()[0] == "a"
+        assert (
+            connection.execute("select business_id from companies").fetchone()[0] == "a"
+        )
         with pytest.raises(Exception):
             connection.execute("insert into companies values ('b')")
 
@@ -78,3 +126,30 @@ def test_old_finland_ytj_resources_module_is_gone() -> None:
     except ModuleNotFoundError:
         return
     raise AssertionError("finland_ytj.resources should no longer exist")
+
+
+class _FakeClickHouseConnectClient:
+    def __init__(self) -> None:
+        self.commands: list[str] = []
+        self.arrow_tables: list[tuple[str | None, str]] = []
+        self.closed = False
+
+    def query(self, sql: str, parameters: object | None = None) -> object:
+        assert parameters is None
+        assert sql == "SELECT name FROM system.tables"
+        return type("Result", (), {"result_rows": [("br_companies",)]})()
+
+    def command(self, sql: str, parameters: object | None = None) -> None:
+        assert parameters is None
+        self.commands.append(sql)
+
+    def insert_arrow(
+        self,
+        table: str,
+        arrow_table: object,
+        database: str | None = None,
+    ) -> None:
+        self.arrow_tables.append((database, table))
+
+    def close(self) -> None:
+        self.closed = True

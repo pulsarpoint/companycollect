@@ -1,3 +1,4 @@
+from collections import Counter
 from pathlib import Path
 
 import duckdb
@@ -178,7 +179,9 @@ def test_build_companies_selects_hq_then_fallback_establishment(tmp_path: Path) 
     ]
 
 
-def test_establishments_keep_contact_columns_for_contact_unpivot(tmp_path: Path) -> None:
+def test_establishments_keep_contact_columns_for_contact_unpivot(
+    tmp_path: Path,
+) -> None:
     companies_path = _build_company_stage(tmp_path)
 
     with duckdb.connect(str(companies_path), read_only=True) as connection:
@@ -259,11 +262,19 @@ def _insert_contact_filter_rows(database_path: Path) -> None:
 
 def test_build_contact_info_and_websites_extracts_unique_email_domains(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     companies_path = _build_company_stage(tmp_path)
     contacts_path = tmp_path / "br_contact_info.duckdb"
     websites_path = tmp_path / "br_websites.duckdb"
     _insert_contact_filter_rows(companies_path)
+    root_domain_calls: list[str] = []
+
+    def fake_root_domain(raw: str) -> str:
+        root_domain_calls.append(raw)
+        return raw.removeprefix("https://")
+
+    monkeypatch.setattr(contacts, "root_domain", fake_root_domain)
 
     with duckdb.connect(str(contacts_path)) as connection:
         contact_counts = contacts.build_brazil_rfb_contact_info(
@@ -305,6 +316,13 @@ def test_build_contact_info_and_websites_extracts_unique_email_domains(
             """
         ).fetchall()
 
+    assert Counter(root_domain_calls) == Counter(
+        {
+            "https://acme.com.br": 1,
+            "https://contador.com.br": 1,
+            "https://gmail.com": 1,
+        }
+    )
     assert (
         "12345678",
         "email",
@@ -326,6 +344,32 @@ def test_build_contact_info_and_websites_extracts_unique_email_domains(
     assert ("44444444", "email", "", "owner@gmail.com", "", "") in contact_rows
     assert website_rows == [
         ("12345678", "acme.com.br", "email", "", "", "", 1),
+    ]
+    with duckdb.connect(str(contacts_path), read_only=True) as connection:
+        raw_domain_rows = connection.execute(
+            f"""
+            select raw_email_domain
+            from {tables.DLT_DATASET_NAME}.{contacts.EMAIL_CONTACT_DOMAINS_TABLE}
+            order by raw_email_domain
+            """
+        ).fetchall()
+        domain_map_rows = connection.execute(
+            f"""
+            select raw_email_domain, email_root_domain
+            from {tables.DLT_DATASET_NAME}.{contacts.EMAIL_ROOT_DOMAIN_MAP_TABLE}
+            order by raw_email_domain
+            """
+        ).fetchall()
+
+    assert raw_domain_rows == [
+        ("acme.com.br",),
+        ("contador.com.br",),
+        ("gmail.com",),
+    ]
+    assert domain_map_rows == [
+        ("acme.com.br", "acme.com.br"),
+        ("contador.com.br", "contador.com.br"),
+        ("gmail.com", "gmail.com"),
     ]
 
 

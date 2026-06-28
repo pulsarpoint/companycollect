@@ -11,6 +11,8 @@ from dagster_v3.domains import root_domain
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 DOMAINS_SOURCE_SLUG = "brazil_rfb"
+EMAIL_CONTACT_DOMAINS_TABLE = "email_contact_domains"
+EMAIL_ROOT_DOMAIN_MAP_TABLE = "email_root_domain_map"
 EMAIL_DOMAIN_MAX_COMPANIES = 1
 EMAIL_PROVIDER_DENYLIST = frozenset(
     {
@@ -79,6 +81,8 @@ def build_brazil_rfb_contact_info(
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
     contacts_table = f"{DLT_DATASET_NAME}.{tables.COMPANY_CONTACT_INFO_TABLE}"
+    email_contact_domains_table = f"{DLT_DATASET_NAME}.{EMAIL_CONTACT_DOMAINS_TABLE}"
+    email_root_domain_map_table = f"{DLT_DATASET_NAME}.{EMAIL_ROOT_DOMAIN_MAP_TABLE}"
     keep_email = (
         "email_root_domain <> '' "
         f"and email_company_count <= {EMAIL_DOMAIN_MAX_COMPANIES} "
@@ -97,6 +101,31 @@ def build_brazil_rfb_contact_info(
         )
         connection.execute(
             f"""
+            create or replace table {email_contact_domains_table} as
+            select distinct raw_email_domain
+            from (
+                select
+                    lower(trim(regexp_extract(correio_eletronico, '[^@]+$')))
+                    as raw_email_domain
+                from {establishments_table}
+                where nullif(trim(correio_eletronico), '') is not null
+                  and contains(trim(correio_eletronico), '@')
+            )
+            where raw_email_domain <> ''
+            """
+        )
+        connection.execute(
+            f"""
+            create or replace table {email_root_domain_map_table} as
+            select
+                raw_email_domain,
+                coalesce(root_domain(concat('https://', raw_email_domain)), '')
+                as email_root_domain
+            from {email_contact_domains_table}
+            """
+        )
+        connection.execute(
+            f"""
             create or replace table {contacts_table} as
             with base as (
                 select
@@ -109,6 +138,8 @@ def build_brazil_rfb_contact_info(
                     'Email' as contact_type_en,
                     '' as contact_area_code,
                     lower(trim(correio_eletronico)) as contact_value,
+                    lower(trim(regexp_extract(correio_eletronico, '[^@]+$')))
+                    as raw_email_domain,
                     case when status_code = '02' then 1 else 0 end as is_current
                 from {establishments_table}
                 where nullif(trim(correio_eletronico), '') is not null
@@ -125,6 +156,7 @@ def build_brazil_rfb_contact_info(
                     'Phone' as contact_type_en,
                     trim(ddd_1) as contact_area_code,
                     trim(telefone_1) as contact_value,
+                    '' as raw_email_domain,
                     case when status_code = '02' then 1 else 0 end as is_current
                 from {establishments_table}
                 where nullif(trim(telefone_1), '') is not null
@@ -141,6 +173,7 @@ def build_brazil_rfb_contact_info(
                     'Phone' as contact_type_en,
                     trim(ddd_2) as contact_area_code,
                     trim(telefone_2) as contact_value,
+                    '' as raw_email_domain,
                     case when status_code = '02' then 1 else 0 end as is_current
                 from {establishments_table}
                 where nullif(trim(telefone_2), '') is not null
@@ -157,27 +190,22 @@ def build_brazil_rfb_contact_info(
                     'Fax' as contact_type_en,
                     trim(ddd_fax) as contact_area_code,
                     trim(fax) as contact_value,
+                    '' as raw_email_domain,
                     case when status_code = '02' then 1 else 0 end as is_current
                 from {establishments_table}
                 where nullif(trim(fax), '') is not null
             ),
             enriched as (
                 select
-                    *,
+                    base.*,
                     case
-                        when contact_type = 'email' and contains(contact_value, '@')
-                        then coalesce(
-                            root_domain(
-                                concat(
-                                    'https://',
-                                    lower(trim(regexp_extract(contact_value, '[^@]+$')))
-                                )
-                            ),
-                            ''
-                        )
+                        when base.contact_type = 'email'
+                        then coalesce(domain_map.email_root_domain, '')
                         else ''
                     end as email_root_domain
                 from base
+                left join {email_root_domain_map_table} as domain_map
+                    on base.raw_email_domain = domain_map.raw_email_domain
             ),
             email_counts as (
                 select
