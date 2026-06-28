@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pyarrow as pa
@@ -59,8 +59,10 @@ def export_duckdb_connection_table_to_clickhouse(
     columns: Sequence[str],
     truncate: bool,
     batch_size: int = DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
+    column_expressions: Mapping[str, str] | None = None,
 ) -> int:
     _validate_batch_size(batch_size)
+    _validate_column_expressions(columns, column_expressions)
     clickhouse_columns = ", ".join(
         _quote_clickhouse_identifier(column) for column in columns
     )
@@ -80,6 +82,7 @@ def export_duckdb_connection_table_to_clickhouse(
             clickhouse_columns=clickhouse_columns,
             columns=columns,
             batch_size=batch_size,
+            column_expressions=column_expressions,
         )
 
     clickhouse_stage_table = _clickhouse_stage_table_name(clickhouse_table)
@@ -104,6 +107,7 @@ def export_duckdb_connection_table_to_clickhouse(
             clickhouse_columns=clickhouse_columns,
             columns=columns,
             batch_size=batch_size,
+            column_expressions=column_expressions,
         )
         clickhouse_client.execute(
             f"EXCHANGE TABLES {clickhouse_qualified_stage_table} AND {clickhouse_qualified_table}"
@@ -235,6 +239,7 @@ def _insert_duckdb_table_in_batches(
     clickhouse_columns: str,
     columns: Sequence[str],
     batch_size: int,
+    column_expressions: Mapping[str, str] | None = None,
 ) -> int:
     if callable(getattr(clickhouse_client, "insert_arrow", None)):
         return _insert_duckdb_arrow_batches(
@@ -246,6 +251,7 @@ def _insert_duckdb_table_in_batches(
             clickhouse_table=clickhouse_table,
             columns=columns,
             batch_size=batch_size,
+            column_expressions=column_expressions,
         )
     return _insert_duckdb_rows_in_batches(
         duckdb_connection=duckdb_connection,
@@ -256,6 +262,7 @@ def _insert_duckdb_table_in_batches(
         clickhouse_columns=clickhouse_columns,
         columns=columns,
         batch_size=batch_size,
+        column_expressions=column_expressions,
     )
 
 
@@ -269,8 +276,9 @@ def _insert_duckdb_arrow_batches(
     clickhouse_table: str,
     columns: Sequence[str],
     batch_size: int,
+    column_expressions: Mapping[str, str] | None = None,
 ) -> int:
-    duckdb_columns = ", ".join(_quote_duckdb_identifier(column) for column in columns)
+    duckdb_columns = _duckdb_select_list(columns, column_expressions)
     duckdb_qualified_table = (
         f"{_quote_duckdb_qualified_schema(duckdb_schema)}."
         f"{_quote_duckdb_identifier(duckdb_table)}"
@@ -302,8 +310,9 @@ def _insert_duckdb_rows_in_batches(
     clickhouse_columns: str,
     columns: Sequence[str],
     batch_size: int,
+    column_expressions: Mapping[str, str] | None = None,
 ) -> int:
-    duckdb_columns = ", ".join(_quote_duckdb_identifier(column) for column in columns)
+    duckdb_columns = _duckdb_select_list(columns, column_expressions)
     duckdb_qualified_table = (
         f"{_quote_duckdb_qualified_schema(duckdb_schema)}."
         f"{_quote_duckdb_identifier(duckdb_table)}"
@@ -327,6 +336,33 @@ def _insert_duckdb_rows_in_batches(
 def _validate_batch_size(batch_size: int) -> None:
     if batch_size < 1:
         raise ValueError("batch_size must be greater than zero")
+
+
+def _validate_column_expressions(
+    columns: Sequence[str],
+    column_expressions: Mapping[str, str] | None,
+) -> None:
+    if column_expressions is None:
+        return
+    unknown_columns = sorted(set(column_expressions) - set(columns))
+    if unknown_columns:
+        raise ValueError(
+            "column_expressions contains columns not present in export columns: "
+            + ", ".join(unknown_columns)
+        )
+
+
+def _duckdb_select_list(
+    columns: Sequence[str],
+    column_expressions: Mapping[str, str] | None,
+) -> str:
+    expressions = column_expressions or {}
+    return ", ".join(
+        f"{expressions[column]} as {_quote_duckdb_identifier(column)}"
+        if column in expressions
+        else _quote_duckdb_identifier(column)
+        for column in columns
+    )
 
 
 def _quote_duckdb_identifier(identifier: str) -> str:

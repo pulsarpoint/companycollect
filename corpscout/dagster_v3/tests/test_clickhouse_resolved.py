@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import date
 
 import duckdb
 import pyarrow as pa
@@ -247,6 +248,59 @@ def test_export_duckdb_connection_table_to_clickhouse_prefers_arrow_batches(
             ["business_id"],
             [{"business_id": "1000003-3"}],
         ),
+    ]
+
+
+def test_export_duckdb_connection_table_to_clickhouse_applies_column_expressions(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema finland_resolved")
+        connection.execute(
+            """
+            create table finland_resolved.fi_companies (
+                business_id varchar,
+                activity_start_date date
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into finland_resolved.fi_companies values
+              ('old', date '1893-07-05'),
+              ('valid', date '2020-01-01')
+            """
+        )
+
+        client = FakeArrowClickHouseClient()
+
+        row_count = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=connection,
+            clickhouse_client=client,
+            duckdb_schema="finland_resolved",
+            duckdb_table="fi_companies",
+            clickhouse_database="corpscout",
+            clickhouse_table="fi_companies",
+            columns=("business_id", "activity_start_date"),
+            truncate=False,
+            column_expressions={
+                "activity_start_date": (
+                    "case when activity_start_date >= date '1900-01-01' "
+                    "then activity_start_date else null end"
+                ),
+            },
+        )
+
+    assert row_count == 2
+    assert [
+        arrow_table.to_pylist()
+        for _, _, arrow_table in client.arrow_insert_calls
+    ] == [
+        [
+            {"business_id": "old", "activity_start_date": None},
+            {"business_id": "valid", "activity_start_date": date(2020, 1, 1)},
+        ],
     ]
 
 

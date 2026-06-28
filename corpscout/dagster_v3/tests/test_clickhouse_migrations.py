@@ -82,6 +82,7 @@ EXPECTED_MIGRATIONS = (
     "000068_corpscout_commoncrawl_domain_contact_info",
     "000069_corpscout_text_translations_table_column",
     "000070_corpscout_no_companies_drop_company_description",
+    "000071_corpscout_br_rfb_registry_date32",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -1024,6 +1025,18 @@ def test_brazil_rfb_contact_domains_migration_covers_exported_columns() -> None:
     assert "ORDER BY (cnpj_basico, root_domain)" in sql
     assert "DROP TABLE IF EXISTS corpscout.br_websites" in down_sql
     assert "DROP TABLE IF EXISTS corpscout.br_company_contact_info" in down_sql
+
+
+def test_brazil_rfb_registry_dates_are_date32_for_historical_rows() -> None:
+    sql = _migration_sql("000071_corpscout_br_rfb_registry_date32.up.sql")
+    down_sql = _migration_sql("000071_corpscout_br_rfb_registry_date32.down.sql")
+
+    for table_name in ("br_companies", "br_establishments"):
+        for column_name in ("status_date", "activity_start_date"):
+            assert f"ALTER TABLE corpscout.{table_name}" in sql
+            assert f"MODIFY COLUMN {column_name} Nullable(Date32)" in sql
+            assert f"ALTER TABLE corpscout.{table_name}" in down_sql
+            assert f"MODIFY COLUMN {column_name} Nullable(Date)" in down_sql
 
 
 def test_drop_raw_norway_exports_migration_removes_orphaned_tables() -> None:

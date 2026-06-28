@@ -66,6 +66,58 @@ def test_clickhouse_exports_replace_companies_and_establishments(tmp_path: Path)
     assert len(establishment_insert_rows[0]) == len(tables.BR_ESTABLISHMENTS_EXPORT_COLUMNS)
 
 
+def test_clickhouse_company_exports_null_dates_outside_date32_range(
+    tmp_path: Path,
+) -> None:
+    companies_path = _build_company_stage(tmp_path)
+    with duckdb.connect(str(companies_path)) as connection:
+        connection.execute(
+            f"""
+            update {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}
+            set status_date = date '1893-07-05',
+                activity_start_date = date '1893-07-05'
+            where cnpj_basico = '12345678'
+            """
+        )
+        connection.execute(
+            f"""
+            update {tables.DLT_DATASET_NAME}.{tables.ESTABLISHMENTS_TABLE}
+            set status_date = date '1893-07-05',
+                activity_start_date = date '1893-07-05'
+            where cnpj = '12345678000190'
+            """
+        )
+
+        fake_client = FakeClickHouseClient()
+        fake_resource = FakeClickHouseResource(fake_client)
+        clickhouse.export_brazil_rfb_clickhouse_companies(
+            duckdb_connection=connection,
+            clickhouse=fake_resource,
+        )
+        clickhouse.export_brazil_rfb_clickhouse_establishments(
+            duckdb_connection=connection,
+            clickhouse=fake_resource,
+        )
+
+    company_rows = fake_client.inserts[0][1]
+    establishment_rows = fake_client.inserts[1][1]
+    company_status_date_index = tables.BR_COMPANIES_EXPORT_COLUMNS.index("status_date")
+    company_activity_date_index = tables.BR_COMPANIES_EXPORT_COLUMNS.index(
+        "activity_start_date"
+    )
+    establishment_status_date_index = tables.BR_ESTABLISHMENTS_EXPORT_COLUMNS.index(
+        "status_date"
+    )
+    establishment_activity_date_index = tables.BR_ESTABLISHMENTS_EXPORT_COLUMNS.index(
+        "activity_start_date"
+    )
+
+    assert company_rows[0][company_status_date_index] is None
+    assert company_rows[0][company_activity_date_index] is None
+    assert establishment_rows[0][establishment_status_date_index] is None
+    assert establishment_rows[0][establishment_activity_date_index] is None
+
+
 def test_clickhouse_exports_replace_contact_info_and_websites(tmp_path: Path) -> None:
     companies_path = _build_company_stage(tmp_path)
     contacts_path = tmp_path / "br_contact_info.duckdb"

@@ -23,6 +23,9 @@ COMPANY_SIZE_EN_BY_CODE = {
     "03": "Small",
     "05": "Other",
 }
+CLICKHOUSE_DATE32_MIN = "1900-01-01"
+CLICKHOUSE_DATE32_MAX = "2299-12-31"
+
 
 def _sql_literal(value: object) -> str:
     return sql_literal(value)
@@ -34,6 +37,15 @@ def _case_map(column: str, mapping: dict[str, str]) -> str:
         for code, label in mapping.items()
     )
     return f"case {column} {cases} else '' end"
+
+
+def _clickhouse_date32_or_null(column: str) -> str:
+    return (
+        "case "
+        f"when {column} between date '{CLICKHOUSE_DATE32_MIN}' "
+        f"and date '{CLICKHOUSE_DATE32_MAX}' then {column} "
+        "else null end"
+    )
 
 
 def build_brazil_rfb_companies_and_establishments(
@@ -79,6 +91,15 @@ def build_brazil_rfb_companies_and_establishments(
         connection.execute(
             f"""
             create or replace table {dataset}.{tables.ESTABLISHMENTS_TABLE} as
+            with parsed_establishments as (
+                select
+                    e.*,
+                    try_strptime(nullif(e.data_situacao_cadastral, ''), '%Y%m%d')::date
+                        as parsed_status_date,
+                    try_strptime(nullif(e.data_inicio_atividade, ''), '%Y%m%d')::date
+                        as parsed_activity_start_date
+                from {estabelecimentos_raw} e
+            )
             select
                 'BR' as country_iso2,
                 'brazil_rfb' as source_slug,
@@ -92,9 +113,9 @@ def build_brazil_rfb_companies_and_establishments(
                 coalesce(trim(e.nome_fantasia), '') as trade_name,
                 coalesce(e.situacao_cadastral, '') as status_code,
                 {status_en} as status_en,
-                try_strptime(nullif(e.data_situacao_cadastral, ''), '%Y%m%d')::date as status_date,
+                {_clickhouse_date32_or_null("e.parsed_status_date")} as status_date,
                 coalesce(e.motivo_situacao_cadastral, '') as status_reason_code,
-                try_strptime(nullif(e.data_inicio_atividade, ''), '%Y%m%d')::date as activity_start_date,
+                {_clickhouse_date32_or_null("e.parsed_activity_start_date")} as activity_start_date,
                 coalesce(e.cnae_fiscal_principal, '') as primary_cnae_code,
                 coalesce(e.cnae_fiscal_secundaria, '') as secondary_cnae_codes,
                 coalesce(e.tipo_logradouro, '') as street_type,
@@ -116,7 +137,7 @@ def build_brazil_rfb_companies_and_establishments(
                 coalesce(e.situacao_especial, '') as situacao_especial,
                 coalesce(e.data_situacao_especial, '') as data_situacao_especial,
                 now() as resolved_at
-            from {estabelecimentos_raw} e
+            from parsed_establishments e
             left join {municipios_raw} m on m.code = e.municipio
             """
         )

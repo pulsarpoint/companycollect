@@ -179,6 +179,51 @@ def test_build_companies_selects_hq_then_fallback_establishment(tmp_path: Path) 
     ]
 
 
+def test_build_companies_nulls_dates_outside_clickhouse_date32_range(
+    tmp_path: Path,
+) -> None:
+    raw_paths = _create_split_raw_tables(tmp_path)
+    with duckdb.connect(str(raw_paths["estabelecimentos"])) as connection:
+        connection.execute(
+            f"""
+            update {tables.DLT_DATASET_NAME}.estabelecimentos_raw
+            set data_situacao_cadastral = '18930705',
+                data_inicio_atividade = '18930705'
+            where cnpj_basico = '12345678'
+            """
+        )
+    companies_path = tmp_path / "br_companies.duckdb"
+
+    with duckdb.connect(str(companies_path)) as connection:
+        transforms.build_brazil_rfb_companies_and_establishments(
+            connection=connection,
+            source_run_id="run-1",
+            empresas_database_path=raw_paths["empresas"],
+            estabelecimentos_database_path=raw_paths["estabelecimentos"],
+            simples_database_path=raw_paths["simples"],
+            reference_database_path=raw_paths["reference"],
+        )
+
+    with duckdb.connect(str(companies_path), read_only=True) as connection:
+        company_dates = connection.execute(
+            f"""
+            select status_date, activity_start_date
+            from {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE}
+            where cnpj_basico = '12345678'
+            """
+        ).fetchone()
+        establishment_dates = connection.execute(
+            f"""
+            select status_date, activity_start_date
+            from {tables.DLT_DATASET_NAME}.{tables.ESTABLISHMENTS_TABLE}
+            where cnpj = '12345678000190'
+            """
+        ).fetchone()
+
+    assert company_dates == (None, None)
+    assert establishment_dates == (None, None)
+
+
 def test_establishments_keep_contact_columns_for_contact_unpivot(
     tmp_path: Path,
 ) -> None:

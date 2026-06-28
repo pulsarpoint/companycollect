@@ -304,6 +304,10 @@ statement grain.
   to UTF-8 before DuckDB ingestion, use explicit schemas, and never infer columns
   from the first row.
 - **Brazilian decimal text**: normalize `capital_social` carefully before casting.
+- **Historical dates**: RFB can contain establishment dates before ClickHouse's
+  supported `Date32` range. Registry `status_date` and `activity_start_date`
+  use `Nullable(Date32)` in ClickHouse; parsed source dates outside
+  `1900-01-01` through `2299-12-31` are exported as `NULL`.
 - **Secondary CNAE list**: split the source list set-based in DuckDB and handle
   empty values.
 - **LGPD**: defer `Socios` from this phase and never commit partner-name samples.

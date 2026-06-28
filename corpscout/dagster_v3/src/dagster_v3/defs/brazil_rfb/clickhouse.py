@@ -10,6 +10,16 @@ from dagster_v3.defs.clickhouse.resolved import (
 )
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
+CLICKHOUSE_DATE32_EXPORT_EXPRESSIONS = {
+    "status_date": (
+        "case when status_date between date '1900-01-01' and date '2299-12-31' "
+        "then status_date else null end"
+    ),
+    "activity_start_date": (
+        "case when activity_start_date between date '1900-01-01' and date '2299-12-31' "
+        "then activity_start_date else null end"
+    ),
+}
 
 
 def export_brazil_rfb_clickhouse_companies(
@@ -39,6 +49,7 @@ def export_brazil_rfb_clickhouse_companies(
             clickhouse_table=tables.BR_COMPANIES_TABLE_CH,
             columns=tables.BR_COMPANIES_EXPORT_COLUMNS,
             truncate=True,
+            column_expressions=CLICKHOUSE_DATE32_EXPORT_EXPRESSIONS,
         )
     if log is not None:
         log("Finished Brazil RFB companies ClickHouse export: rows=%s", rows)
@@ -72,6 +83,7 @@ def export_brazil_rfb_clickhouse_establishments(
             clickhouse_table=tables.BR_ESTABLISHMENTS_TABLE_CH,
             columns=tables.BR_ESTABLISHMENTS_EXPORT_COLUMNS,
             truncate=True,
+            column_expressions=CLICKHOUSE_DATE32_EXPORT_EXPRESSIONS,
         )
     if log is not None:
         log("Finished Brazil RFB establishments ClickHouse export: rows=%s", rows)
