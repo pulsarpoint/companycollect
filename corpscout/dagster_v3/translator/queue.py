@@ -308,6 +308,12 @@ class TranslationQueue:
             ]
 
     def release_stale_leases(self, *, older_than_seconds: int) -> int:
+        """Release stale leases back to pending status.
+
+        Note: Resetting a stale lease to pending does NOT increment attempt_count.
+        This bounds perpetually-timing-out workers by Temporal's activity retry
+        policy (RetryPolicy.maximum_attempts), not by DEFAULT_MAX_ATTEMPTS.
+        """
         if older_than_seconds <= 0:
             return 0
 

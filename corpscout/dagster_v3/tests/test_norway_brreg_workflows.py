@@ -181,6 +181,7 @@ def test_translate_workflow_drains_queue_and_dumps(tmp_path, monkeypatch):
     result = asyncio.run(_run())
 
     assert result.completed_items == 2
+    assert result.failed_items == 0
     assert result.flushed_rows == 2
     assert len(dump_calls) == 1
     assert dump_calls[0].queue_duckdb_path == queue_path

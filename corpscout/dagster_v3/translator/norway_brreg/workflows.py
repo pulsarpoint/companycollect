@@ -106,6 +106,7 @@ class TranslateWorkflowInput:
 class TranslateWorkflowOutput:
     completed_items: int
     failed_retryable_items: int
+    failed_items: int
     flushed_rows: int
     successful_batches: int
     failed_batches: int
@@ -382,6 +383,7 @@ class TranslateWorkflow:
         return TranslateWorkflowOutput(
             completed_items=summary["completed_items"],
             failed_retryable_items=summary["failed_retryable_items"],
+            failed_items=summary["failed_items"],
             flushed_rows=flushed,
             successful_batches=loop_result.successful_batches,
             failed_batches=loop_result.failed_batches,
