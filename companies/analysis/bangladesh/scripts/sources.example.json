@@ -1,0 +1,38 @@
+[
+  {
+    "name": "DSE listed-companies listing",
+    "slug": "dse_listing",
+    "type": "api_page",
+    "url": "https://www.dsebd.org/company_listing.php",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Open listed-companies index (~640 instruments). Parse anchors: displayCompany.php?name=<CODE> followed by a <span>(Full Name)</span>. Then fetch each detail page for fields. Key = DSE trading code."
+  },
+  {
+    "name": "DSE company detail",
+    "slug": "dse_company",
+    "type": "api_page",
+    "url": "https://www.dsebd.org/displayCompany.php?name=ACMELAB",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Per-company detail (Trading Code, Scrip Code, Sector, Authorized Capital (mn), Paid-up Capital (mn), Listing Year, Market Category, Type of Instrument). Substitute {CODE}. Plain parseable HTML. Currency BDT."
+  },
+  {
+    "name": "RJSC registrar (gated/paid)",
+    "slug": "rjsc_register",
+    "type": "api_page",
+    "url": "https://www.roc.gov.bd/",
+    "method": "GET",
+    "headers": { "Accept": "text/html" },
+    "page_param": "page",
+    "page_start": 1,
+    "max_pages": 1,
+    "note": "Authoritative full register (RJSC registration number). Name search free; documents pay-per-use. TLS intermediate-cert issue; eservices host did not resolve. No open bulk/API. Do NOT bypass payment. Redact directors (personal data)."
+  }
+]
