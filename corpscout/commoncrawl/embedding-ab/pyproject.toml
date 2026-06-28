@@ -1,0 +1,18 @@
+[project]
+name = "embedding-ab"
+version = "0.1.0"
+description = "Instructed vs neutral embedding A/B test for CommonCrawl domain enrichment (standalone; touches no Go code)"
+requires-python = ">=3.13"
+dependencies = [
+    "pyarrow>=18",
+    "numpy>=2",
+    "scikit-learn>=1.5",
+    "requests>=2.32",
+    "boto3>=1.35",
+    "warcio>=1.7",
+    "beautifulsoup4>=4.12",
+]
+
+# Scripts only — there is no importable package to build/install, so uv manages just the env + deps.
+[tool.uv]
+package = false

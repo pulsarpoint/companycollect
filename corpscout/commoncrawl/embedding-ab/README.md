@@ -24,12 +24,22 @@ scripts measure the difference so we don't re-embed ~19M pages twice.
 ## Env (read from environment; source the repo `.env`)
 `COMMONCRAWL_EMBED_BASE_URL`, `COMMONCRAWL_EMBED_MODEL`, `COMMONCRAWL_EMBED_MAX_CHARS`, `AWS_*`, `CLICKHOUSE_*`.
 
+## Setup — this is a `uv` project
+```bash
+cd corpscout/commoncrawl/embedding-ab
+uv sync                 # creates .venv and installs pyarrow / numpy / scikit-learn / requests / boto3 / warcio / bs4
+uv add <pkg>            # to add another dependency later
+```
+
 ## Run (on the box, where the endpoint + S3 + ClickHouse are reachable)
 ```bash
-cd /opt/companycollect/corpscout/commoncrawl
-set -a; . ./.env; set +a
-uv run --with pyarrow,numpy python embedding-ab/general_quality.py data/embedding/out_industry_68/embeddings.parquet
-uv run --with pyarrow,numpy,scikit-learn python embedding-ab/intrinsic_purposes.py data/embedding/out_industry_68/embeddings.parquet
+cd /opt/companycollect/corpscout/commoncrawl/embedding-ab
+set -a; . ../.env; set +a          # endpoint + AWS + ClickHouse creds
+DATA=../data/embedding/out_industry_68/embeddings.parquet
+uv run python general_quality.py    "$DATA"
+uv run python intrinsic_purposes.py "$DATA"
+# the one GPU+fetch step (produces neutral vectors + text):
+uv run python embed_neutral_block.py "$DATA" ../data/embedding_neutral/out_industry_68/embeddings.parquet 50   # validate on 50 first
 ```
 
 ## Findings so far (out_industry_68, instructed embeddings, n=8000)
