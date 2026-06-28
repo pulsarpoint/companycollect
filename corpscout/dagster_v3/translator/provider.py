@@ -9,7 +9,7 @@ from openai import OpenAI
 from translator.types import TranslationInput, TranslationResult
 
 
-DEFAULT_MAX_TOKENS = 2048
+DEFAULT_MAX_TOKENS = 32768
 DEFAULT_EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
 
 

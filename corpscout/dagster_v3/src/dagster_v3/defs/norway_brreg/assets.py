@@ -199,24 +199,33 @@ def norway_brreg_financial_statements_duckdb_asset(
 NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID = "build-queue-norway_brreg"
 
 
-def build_norway_brreg_build_queue_input() -> BuildQueueWorkflowInput:
+class NorwayBrregTranslationConfig(dg.Config):
+    batch_size: int = 25
+    max_tokens: int = 32768
+    extra_body_json: str = '{"chat_template_kwargs": {"enable_thinking": false}}'
+
+
+def build_norway_brreg_build_queue_input(
+    config: NorwayBrregTranslationConfig,
+) -> BuildQueueWorkflowInput:
     return BuildQueueWorkflowInput(
         source_slug="norway_brreg",
         queue_duckdb_path="data/translator/norway_brreg.duckdb",
         translate_workflow_id="translate-norway_brreg",
         translate_task_queue=BUILD_TASK_QUEUE,
-        batch_size=50,
-        max_tokens=8192,
-        extra_body_json='{"chat_template_kwargs": {"enable_thinking": false}}',
-        max_batch_failures=20,
+        batch_size=config.batch_size,
+        max_tokens=config.max_tokens,
+        extra_body_json=config.extra_body_json,
     )
 
 
-async def _start_norway_brreg_build_queue(temporal_address: str) -> str:
+async def _start_norway_brreg_build_queue(
+    temporal_address: str, config: NorwayBrregTranslationConfig
+) -> str:
     client = await Client.connect(temporal_address)
     handle = await client.start_workflow(
         BuildQueueWorkflow.run,
-        build_norway_brreg_build_queue_input(),
+        build_norway_brreg_build_queue_input(config),
         id=NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID,
         task_queue=BUILD_TASK_QUEUE,
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
@@ -234,12 +243,14 @@ async def _start_norway_brreg_build_queue(temporal_address: str) -> str:
         "queue then starts TranslateWorkflow autonomously. Does not wait for completion."
     ),
 )
-def norway_brreg_translation_trigger(context: AssetExecutionContext) -> dg.MaterializeResult:
+def norway_brreg_translation_trigger(
+    context: AssetExecutionContext, config: NorwayBrregTranslationConfig
+) -> dg.MaterializeResult:
     import asyncio as _asyncio
     import os
 
     address = os.environ.get("TEMPORAL_ADDRESS", "companycollect:7233")
-    run_id = _asyncio.run(_start_norway_brreg_build_queue(address))
+    run_id = _asyncio.run(_start_norway_brreg_build_queue(address, config))
     context.log.info(
         "Started Norway Brreg BuildQueueWorkflow: workflow_id=%s run_id=%s",
         NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID,

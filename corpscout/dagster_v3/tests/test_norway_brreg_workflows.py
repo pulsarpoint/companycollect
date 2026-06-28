@@ -74,7 +74,6 @@ def test_build_queue_workflow_seeds_then_starts_translate(tmp_path, monkeypatch)
         batch_size=50,
         max_tokens=8192,
         extra_body_json="{}",
-        max_batch_failures=5,
     )
 
     async def _run():
@@ -152,7 +151,6 @@ def test_translate_workflow_drains_queue_and_dumps(tmp_path, monkeypatch):
         batch_size=10,
         max_tokens=64,
         extra_body_json="{}",
-        max_batch_failures=5,
     )
 
     async def _run():
@@ -188,19 +186,21 @@ def test_translate_workflow_drains_queue_and_dumps(tmp_path, monkeypatch):
     assert dump_calls[0].queue_duckdb_path == queue_path
 
 
-def test_translate_loop_once_stops_at_max_batch_failures(tmp_path, monkeypatch):
-    """translate_loop_once must stop after exactly max_batch_failures failed batches.
+def test_translate_loop_once_drains_via_attempt_cap(tmp_path, monkeypatch):
+    """translate_loop_once must drain via the per-item attempt cap (not max_batch_failures).
 
-    With max_batch_failures=2 and a provider that always fails, the loop must
-    break after exactly 2 failures (not 3, which the old failure_count >
-    max_batch_failures predicate would have tolerated).
+    With provider_error (retryable) and DEFAULT_MAX_ATTEMPTS=3, each item gets 3
+    attempts then goes terminal. The loop ends only when claim_batch returns empty.
+    With 2 items and batch_size=2, there should be exactly 3 failure batches total
+    (one per attempt round) before the loop drains.
     """
     import temporalio.activity
     import translator.llm_batch
     import translator.provider as translator_provider
+    from translator.queue import DEFAULT_MAX_ATTEMPTS
 
-    # Seed 5 items (batch_size=1 → up to 5 separate claim_batch calls possible).
-    queue_path = _seed_queue(tmp_path, ["A", "B", "C", "D", "E"])
+    # Seed 2 items (batch_size=2 → each claim gets both items at once).
+    queue_path = _seed_queue(tmp_path, ["A", "B"])
 
     class _FakeProvider:
         def close(self) -> None:
@@ -215,31 +215,33 @@ def test_translate_loop_once_stops_at_max_batch_failures(tmp_path, monkeypatch):
     )
 
     def _always_fail(*args, **kwargs):
+        # RuntimeError maps to provider_error (retryable), so items retry up to cap.
         raise RuntimeError("LLM unavailable")
 
     monkeypatch.setattr(translator.llm_batch, "translate_batch", _always_fail)
-    # Heartbeat is a no-op outside a real Temporal activity context.
     monkeypatch.setattr(temporalio.activity, "heartbeat", lambda *a, **kw: None)
 
     result = wf.translate_loop_once(
         wf.TranslateLoopActivityInput(
             queue_duckdb_path=queue_path,
-            batch_size=1,
+            batch_size=2,
             max_tokens=64,
             extra_body_json="{}",
-            max_batch_failures=2,
         )
     )
 
-    assert result.failed_batches == 2, (
-        f"expected exactly 2 failed batches, got {result.failed_batches}"
+    # With DEFAULT_MAX_ATTEMPTS=3 and 2 items per batch, the loop runs exactly
+    # DEFAULT_MAX_ATTEMPTS times (once per attempt round), then claim returns empty.
+    assert result.failed_batches == DEFAULT_MAX_ATTEMPTS, (
+        f"expected exactly {DEFAULT_MAX_ATTEMPTS} failed batches (one per attempt), "
+        f"got {result.failed_batches}"
     )
     assert result.completed_items == 0
     assert result.successful_batches == 0
 
 
-def test_translate_workflow_tolerates_max_batch_failures(tmp_path, monkeypatch):
-    """TranslateWorkflow must stop after max_batch_failures and still dump."""
+def test_translate_workflow_completes_after_all_failures(tmp_path, monkeypatch):
+    """TranslateWorkflow must complete (dump + summarize) even when the loop returns only failures."""
     queue_path = _seed_queue(tmp_path, ["A", "B"])
     dump_calls = []
 
@@ -260,7 +262,6 @@ def test_translate_workflow_tolerates_max_batch_failures(tmp_path, monkeypatch):
         batch_size=10,
         max_tokens=64,
         extra_body_json="{}",
-        max_batch_failures=5,
     )
 
     async def _run():
@@ -365,7 +366,6 @@ def test_build_queue_activity_heartbeat_via_real_worker(tmp_path, monkeypatch):
         batch_size=50,
         max_tokens=8192,
         extra_body_json="{}",
-        max_batch_failures=5,
     )
 
     @activity.defn(name="start_translate_workflow_activity")

@@ -53,7 +53,6 @@ class StartTranslateWorkflowInput:
     batch_size: int
     max_tokens: int
     extra_body_json: str
-    max_batch_failures: int
 
 
 @dataclass(frozen=True)
@@ -62,7 +61,6 @@ class TranslateLoopActivityInput:
     batch_size: int
     max_tokens: int
     extra_body_json: str
-    max_batch_failures: int
 
 
 @dataclass(frozen=True)
@@ -87,7 +85,6 @@ class BuildQueueWorkflowInput:
     batch_size: int
     max_tokens: int
     extra_body_json: str
-    max_batch_failures: int
 
 
 @dataclass(frozen=True)
@@ -103,7 +100,6 @@ class TranslateWorkflowInput:
     batch_size: int
     max_tokens: int
     extra_body_json: str
-    max_batch_failures: int
 
 
 @dataclass(frozen=True)
@@ -204,12 +200,6 @@ def translate_loop_once(params: TranslateLoopActivityInput):
                 logger.warning(
                     "translate_loop: batch failed (%s): %s", error_category, exc
                 )
-                if params.max_batch_failures > 0 and failure_count >= params.max_batch_failures:
-                    logger.warning(
-                        "translate_loop: exceeded max_batch_failures=%d, stopping",
-                        params.max_batch_failures,
-                    )
-                    break
     finally:
         provider.close()
 
@@ -253,6 +243,7 @@ def summarize_queue_once(queue_duckdb_path: str) -> dict:
         "total_items": s.total_items,
         "completed_items": s.completed_items,
         "failed_retryable_items": s.failed_retryable_items,
+        "failed_items": s.failed_items,
         "pending_items": s.pending_items,
     }
 
@@ -281,7 +272,6 @@ async def start_translate_workflow_activity(params: StartTranslateWorkflowInput)
             batch_size=params.batch_size,
             max_tokens=params.max_tokens,
             extra_body_json=params.extra_body_json,
-            max_batch_failures=params.max_batch_failures,
         ),
         id=params.workflow_id,
         task_queue=params.task_queue,
@@ -337,7 +327,6 @@ class BuildQueueWorkflow:
                 batch_size=params.batch_size,
                 max_tokens=params.max_tokens,
                 extra_body_json=params.extra_body_json,
-                max_batch_failures=params.max_batch_failures,
             ),
             start_to_close_timeout=SHORT_TIMEOUT,
             retry_policy=RETRY_POLICY,
@@ -364,7 +353,6 @@ class TranslateWorkflow:
                 batch_size=params.batch_size,
                 max_tokens=params.max_tokens,
                 extra_body_json=params.extra_body_json,
-                max_batch_failures=params.max_batch_failures,
             ),
             task_queue=LLM_TASK_QUEUE,
             heartbeat_timeout=HEARTBEAT_TIMEOUT,

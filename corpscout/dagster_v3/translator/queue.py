@@ -15,6 +15,15 @@ QUEUE_STATUS_PENDING = "pending"
 QUEUE_STATUS_LEASED = "leased"
 QUEUE_STATUS_COMPLETED = "completed"
 QUEUE_STATUS_FAILED_RETRYABLE = "failed_retryable"
+QUEUE_STATUS_FAILED = "failed"
+
+DEFAULT_MAX_ATTEMPTS = 3
+
+_RETRYABLE_CATEGORIES = {"connection_refused", "timeout", "provider_error"}
+
+
+def _is_retryable(error_category: str) -> bool:
+    return error_category in _RETRYABLE_CATEGORIES
 
 
 @dataclass(frozen=True)
@@ -67,6 +76,7 @@ class TranslationQueueSummary:
     leased_items: int
     completed_items: int
     failed_retryable_items: int
+    failed_items: int
     result_items: int
     batch_attempts: int
     successful_batches: int
@@ -419,32 +429,37 @@ class TranslationQueue:
             return
         batch_id = _single_batch_id(items)
         now = _now()
+        retryable = _is_retryable(error_category)
         with self._connect() as conn:
-            conn.executemany(
-                """
-                update translation_items
-                set
-                    status = ?,
-                    attempt_count = attempt_count + 1,
-                    leased_by = null,
-                    leased_at = null,
-                    batch_id = null,
-                    last_error_category = ?,
-                    last_error_message = ?,
-                    updated_at = ?
-                where item_id = ?
-                """,
-                [
+            for item in items:
+                new_attempt_count = item.attempt_count + 1
+                if retryable and new_attempt_count < DEFAULT_MAX_ATTEMPTS:
+                    new_status = QUEUE_STATUS_FAILED_RETRYABLE
+                else:
+                    new_status = QUEUE_STATUS_FAILED
+                conn.execute(
+                    """
+                    update translation_items
+                    set
+                        status = ?,
+                        attempt_count = ?,
+                        leased_by = null,
+                        leased_at = null,
+                        batch_id = null,
+                        last_error_category = ?,
+                        last_error_message = ?,
+                        updated_at = ?
+                    where item_id = ?
+                    """,
                     (
-                        QUEUE_STATUS_FAILED_RETRYABLE,
+                        new_status,
+                        new_attempt_count,
                         error_category,
                         error_message,
                         now,
                         item.item_id,
-                    )
-                    for item in items
-                ],
-            )
+                    ),
+                )
             self._insert_batch_attempt(
                 conn,
                 batch_id=batch_id,
@@ -467,6 +482,7 @@ class TranslationQueue:
                 failed_retryable_items=self._count(
                     conn, "translation_items", QUEUE_STATUS_FAILED_RETRYABLE
                 ),
+                failed_items=self._count(conn, "translation_items", QUEUE_STATUS_FAILED),
                 result_items=self._count(conn, "translation_results", None),
                 batch_attempts=self._count(conn, "translation_batch_attempts", None),
                 successful_batches=self._count(conn, "translation_batch_attempts", "success"),
