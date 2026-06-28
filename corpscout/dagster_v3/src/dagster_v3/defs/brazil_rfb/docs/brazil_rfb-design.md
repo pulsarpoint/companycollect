@@ -113,6 +113,13 @@ statement grain.
   stay in DuckDB only.
 - **Empty input rule**: every file-family asset refuses to replace its staging
   table on zero rows.
+- **Resume rule**: every DuckDB stage is file-backed and idempotent. If the
+  expected partition file already exists with the expected non-empty tables, the
+  asset emits a Dagster materialization with existing row counts and does not
+  rebuild that stage. The snapshot asset also reuses an existing manifest when
+  all recorded CSV paths still exist, so rerunning a partition can backfill
+  missing Dagster materialization events without re-downloading valid source
+  files.
 - **Concurrency model**: each writable DuckDB stage has its own pool. Raw family
   loads read the manifest database through a read-only `ATTACH`, then write only
   their own stage database. Downstream transforms attach completed upstream

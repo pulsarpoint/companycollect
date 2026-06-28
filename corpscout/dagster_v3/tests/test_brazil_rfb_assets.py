@@ -1,4 +1,5 @@
 import dagster as dg
+import duckdb
 
 
 RAW_STAGE_ASSET_KEYS = {
@@ -7,6 +8,25 @@ RAW_STAGE_ASSET_KEYS = {
     "brazil_rfb_simples_duckdb",
     "brazil_rfb_reference_duckdb",
 }
+
+
+class _FakeLog:
+    def info(self, *_args, **_kwargs) -> None:
+        pass
+
+
+class _FakeContext:
+    run_id = "run-1"
+    partition_key = "2026-04-01"
+    log = _FakeLog()
+
+
+def _create_brazil_schema(database_path) -> None:
+    from dagster_v3.defs.brazil_rfb import tables
+
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(f"create schema if not exists {tables.DLT_DATASET_NAME}")
 
 
 def test_brazil_rfb_assets_are_registered_with_stage_specific_pools() -> None:
@@ -175,6 +195,165 @@ def test_brazil_rfb_snapshot_asset_uses_partition_snapshot_year_month(
     )
     assert calls["run"]["dlt_source"] == "dlt-source"
     assert calls["run"]["dlt_pipeline"] == "dlt-pipeline"
+
+
+def test_brazil_rfb_snapshot_asset_reuses_existing_manifest(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from dagster_v3.defs.brazil_rfb import assets, source, tables
+
+    monkeypatch.setattr(assets, "BRAZIL_RFB_DATA_ROOT", tmp_path / "brazil_rfb")
+    stage_paths = assets.brazil_rfb_stage_paths("2026-04")
+    stage_paths.ensure_root()
+    csv_paths = {}
+    for family in source.DEFAULT_FAMILIES:
+        csv_path = tmp_path / "downloads" / family / f"{family}.csv"
+        csv_path.parent.mkdir(parents=True)
+        csv_path.write_text("row\n")
+        csv_paths[family] = csv_path
+    _create_brazil_schema(stage_paths.manifest)
+    with duckdb.connect(str(stage_paths.manifest)) as connection:
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.{tables.SNAPSHOT_FILES_TABLE} (
+                family varchar,
+                archive_url varchar,
+                archive_name varchar,
+                archive_sha256 varchar,
+                csv_member_name varchar,
+                csv_path varchar,
+                source_run_id varchar,
+                retrieved_at timestamp
+            )
+            """
+        )
+        for family, csv_path in csv_paths.items():
+            connection.execute(
+                f"""
+                insert into {tables.DLT_DATASET_NAME}.{tables.SNAPSHOT_FILES_TABLE}
+                values (?, ?, ?, 'hash', ?, ?, 'old-run', now())
+                """,
+                [
+                    family,
+                    f"https://example.test/{family}.zip",
+                    f"{family}.zip",
+                    f"{family}.csv",
+                    str(csv_path),
+                ],
+            )
+
+    calls = {}
+
+    class FakeDlt:
+        def run(self, **kwargs):
+            calls["run"] = kwargs
+            yield "materialization"
+
+    def fake_source(**kwargs):
+        calls["source"] = kwargs
+        return "dlt-source"
+
+    def fake_pipeline(database_path):
+        calls["pipeline_database_path"] = database_path
+        return "dlt-pipeline"
+
+    monkeypatch.setattr(assets.source, "brazil_rfb_source", fake_source)
+    monkeypatch.setattr(assets.source, "brazil_rfb_pipeline", fake_pipeline)
+
+    result = list(
+        assets.brazil_rfb_snapshot_files_duckdb.node_def.compute_fn.decorated_fn(
+            _FakeContext(),
+            assets.BrazilRfbConfig(
+                snapshot_base_url="https://mirror.test/cnpj/",
+            ),
+            FakeDlt(),
+        )
+    )
+
+    assert result == ["materialization"]
+    assert "manifest_rows" in calls["source"]
+    assert calls["source"]["source_run_id"] == "run-1"
+    assert {row["source_run_id"] for row in calls["source"]["manifest_rows"]} == {
+        "run-1"
+    }
+    assert "snapshot_year_month" not in calls["source"]
+    assert calls["pipeline_database_path"] == stage_paths.manifest
+
+
+def test_brazil_rfb_empresas_asset_reuses_existing_stage(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from dagster_v3.defs.brazil_rfb import assets, tables
+
+    monkeypatch.setattr(assets, "BRAZIL_RFB_DATA_ROOT", tmp_path / "brazil_rfb")
+    stage_paths = assets.brazil_rfb_stage_paths("2026-04")
+    _create_brazil_schema(stage_paths.empresas)
+    with duckdb.connect(str(stage_paths.empresas)) as connection:
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.{tables.RAW_TABLE_BY_FAMILY["empresas"]} as
+            select '12345678' as cnpj_basico
+            """
+        )
+
+    def fail_load(*_args, **_kwargs):
+        raise AssertionError("existing raw stage should not be rebuilt")
+
+    monkeypatch.setattr(assets.staging, "load_raw_family_from_manifest", fail_load)
+
+    result = assets.brazil_rfb_empresas_duckdb.node_def.compute_fn.decorated_fn(
+        _FakeContext()
+    )
+
+    assert result.metadata == {"empresas": 1, "reused_existing_stage": True}
+
+
+def test_brazil_rfb_companies_asset_reuses_existing_stage(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from dagster_v3.defs.brazil_rfb import assets, tables
+
+    monkeypatch.setattr(assets, "BRAZIL_RFB_DATA_ROOT", tmp_path / "brazil_rfb")
+    stage_paths = assets.brazil_rfb_stage_paths("2026-04")
+    _create_brazil_schema(stage_paths.companies)
+    with duckdb.connect(str(stage_paths.companies)) as connection:
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.{tables.COMPANIES_TABLE} as
+            select '12345678' as cnpj_basico, 1 as is_active
+            union all
+            select '99999999' as cnpj_basico, 0 as is_active
+            """
+        )
+        connection.execute(
+            f"""
+            create table {tables.DLT_DATASET_NAME}.{tables.ESTABLISHMENTS_TABLE} as
+            select '12345678000190' as cnpj
+            """
+        )
+
+    def fail_build(*_args, **_kwargs):
+        raise AssertionError("existing companies stage should not be rebuilt")
+
+    monkeypatch.setattr(
+        assets.transforms,
+        "build_brazil_rfb_companies_and_establishments",
+        fail_build,
+    )
+
+    result = assets.brazil_rfb_companies_duckdb.node_def.compute_fn.decorated_fn(
+        _FakeContext()
+    )
+
+    assert result.metadata == {
+        "companies": 2,
+        "establishments": 1,
+        "active_companies": 1,
+        "reused_existing_stage": True,
+    }
 
 
 def test_brazil_rfb_raw_assets_depend_on_snapshot_manifest_only() -> None:

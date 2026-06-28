@@ -9,7 +9,14 @@ from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
 from dagster_dlt.translator import DltResourceTranslatorData
 from pydantic import Field
 
-from dagster_v3.defs.brazil_rfb import contacts, source, staging, tables, transforms
+from dagster_v3.defs.brazil_rfb import (
+    contacts,
+    resume,
+    source,
+    staging,
+    tables,
+    transforms,
+)
 from dagster_v3.defs.brazil_rfb.clickhouse import (
     export_brazil_rfb_clickhouse_contact_info,
     export_brazil_rfb_clickhouse_companies,
@@ -101,6 +108,20 @@ def _stage_paths_for_context(context: dg.AssetExecutionContext) -> BrazilRfbStag
     return brazil_rfb_stage_paths(brazil_rfb_snapshot_year_month(context.partition_key))
 
 
+def _metadata_reused(counts: dict[str, int]) -> dict[str, object]:
+    return {**counts, "reused_existing_stage": True}
+
+
+def _log_reused_stage(
+    context: dg.AssetExecutionContext,
+    stage_name: str,
+    counts: dict[str, int],
+) -> None:
+    context.log.info(
+        "Reusing existing Brazil RFB %s DuckDB stage: counts=%s", stage_name, counts
+    )
+
+
 class BrazilRfbConfig(dg.Config):
     snapshot_base_url: str = Field(
         default=source.DEFAULT_BASE_URL,
@@ -158,6 +179,30 @@ def brazil_rfb_snapshot_files_duckdb(
             BRAZIL_RFB_DOWNLOAD_DIR / snapshot_year_month,
             stage_paths.manifest,
         )
+    existing_manifest_rows = resume.existing_snapshot_manifest_rows(
+        stage_paths.manifest,
+        source_run_id=context.run_id,
+        required_families=source.DEFAULT_FAMILIES,
+    )
+    if existing_manifest_rows is not None:
+        if log_info is not None:
+            log_info(
+                "Reusing existing Brazil RFB snapshot manifest: "
+                "snapshot_year_month=%s rows=%s manifest_db=%s",
+                snapshot_year_month,
+                len(existing_manifest_rows),
+                stage_paths.manifest,
+            )
+        yield from dlt.run(
+            context=context,
+            dlt_source=source.brazil_rfb_source(
+                source_run_id=context.run_id,
+                manifest_rows=existing_manifest_rows,
+            ),
+            dlt_pipeline=source.brazil_rfb_pipeline(stage_paths.manifest),
+        )
+        return
+
     yield from dlt.run(
         context=context,
         dlt_source=source.brazil_rfb_source(
@@ -185,6 +230,13 @@ def brazil_rfb_empresas_duckdb(
 ) -> dg.MaterializeResult:
     stage_paths = _stage_paths_for_context(context)
     stage_paths.ensure_root()
+    table_name = tables.RAW_TABLE_BY_FAMILY["empresas"]
+    existing_counts = resume.stage_table_counts(stage_paths.empresas, (table_name,))
+    if existing_counts is not None:
+        counts = {"empresas": existing_counts[table_name]}
+        _log_reused_stage(context, "Empresas", counts)
+        return dg.MaterializeResult(metadata=_metadata_reused(counts))
+
     with duckdb_resource(stage_paths.empresas).get_connection() as connection:
         rows = staging.load_raw_family_from_manifest(
             connection=connection,
@@ -212,6 +264,15 @@ def brazil_rfb_estabelecimentos_duckdb(
 ) -> dg.MaterializeResult:
     stage_paths = _stage_paths_for_context(context)
     stage_paths.ensure_root()
+    table_name = tables.RAW_TABLE_BY_FAMILY["estabelecimentos"]
+    existing_counts = resume.stage_table_counts(
+        stage_paths.estabelecimentos, (table_name,)
+    )
+    if existing_counts is not None:
+        counts = {"estabelecimentos": existing_counts[table_name]}
+        _log_reused_stage(context, "Estabelecimentos", counts)
+        return dg.MaterializeResult(metadata=_metadata_reused(counts))
+
     with duckdb_resource(stage_paths.estabelecimentos).get_connection() as connection:
         rows = staging.load_raw_family_from_manifest(
             connection=connection,
@@ -237,6 +298,13 @@ def brazil_rfb_simples_duckdb(
 ) -> dg.MaterializeResult:
     stage_paths = _stage_paths_for_context(context)
     stage_paths.ensure_root()
+    table_name = tables.RAW_TABLE_BY_FAMILY["simples"]
+    existing_counts = resume.stage_table_counts(stage_paths.simples, (table_name,))
+    if existing_counts is not None:
+        counts = {"simples": existing_counts[table_name]}
+        _log_reused_stage(context, "Simples", counts)
+        return dg.MaterializeResult(metadata=_metadata_reused(counts))
+
     with duckdb_resource(stage_paths.simples).get_connection() as connection:
         rows = staging.load_raw_family_from_manifest(
             connection=connection,
@@ -262,6 +330,18 @@ def brazil_rfb_reference_duckdb(
 ) -> dg.MaterializeResult:
     stage_paths = _stage_paths_for_context(context)
     stage_paths.ensure_root()
+    table_names = tuple(
+        tables.RAW_TABLE_BY_FAMILY[family] for family in REFERENCE_FAMILIES
+    )
+    existing_counts = resume.stage_table_counts(stage_paths.reference, table_names)
+    if existing_counts is not None:
+        counts = {
+            family: existing_counts[tables.RAW_TABLE_BY_FAMILY[family]]
+            for family in REFERENCE_FAMILIES
+        }
+        _log_reused_stage(context, "reference", counts)
+        return dg.MaterializeResult(metadata=_metadata_reused(counts))
+
     with duckdb_resource(stage_paths.reference).get_connection() as connection:
         counts = staging.load_raw_families_from_manifest(
             connection=connection,
@@ -292,6 +372,11 @@ def brazil_rfb_companies_duckdb(
 ) -> dg.MaterializeResult:
     stage_paths = _stage_paths_for_context(context)
     stage_paths.ensure_root()
+    existing_counts = resume.existing_companies_counts(stage_paths.companies)
+    if existing_counts is not None:
+        _log_reused_stage(context, "companies", existing_counts)
+        return dg.MaterializeResult(metadata=_metadata_reused(existing_counts))
+
     with duckdb_resource(stage_paths.companies).get_connection() as connection:
         counts = transforms.build_brazil_rfb_companies_and_establishments(
             connection=connection,
@@ -324,6 +409,11 @@ def brazil_rfb_contact_info_duckdb(
 ) -> dg.MaterializeResult:
     stage_paths = _stage_paths_for_context(context)
     stage_paths.ensure_root()
+    existing_counts = resume.existing_contact_info_counts(stage_paths.contact_info)
+    if existing_counts is not None:
+        _log_reused_stage(context, "contact info", existing_counts)
+        return dg.MaterializeResult(metadata=_metadata_reused(existing_counts))
+
     with duckdb_resource(stage_paths.contact_info).get_connection() as connection:
         counts = contacts.build_brazil_rfb_contact_info(
             connection=connection,
@@ -351,6 +441,11 @@ def brazil_rfb_websites_duckdb(
 ) -> dg.MaterializeResult:
     stage_paths = _stage_paths_for_context(context)
     stage_paths.ensure_root()
+    existing_counts = resume.existing_websites_counts(stage_paths.websites)
+    if existing_counts is not None:
+        _log_reused_stage(context, "websites", existing_counts)
+        return dg.MaterializeResult(metadata=_metadata_reused(existing_counts))
+
     with duckdb_resource(stage_paths.websites).get_connection() as connection:
         counts = contacts.build_brazil_rfb_websites(
             connection=connection,
