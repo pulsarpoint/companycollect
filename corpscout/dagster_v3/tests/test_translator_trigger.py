@@ -20,7 +20,7 @@ def test_build_queue_input_from_default_config():
     assert params.translate_task_queue == BUILD_TASK_QUEUE
     assert BUILD_TASK_QUEUE == "translation-build"
     # Default config values
-    assert params.batch_size == 25
+    assert params.batch_size == 50
     assert params.max_tokens == 32768
     assert params.extra_body_json == '{"chat_template_kwargs": {"enable_thinking": false}}'
 

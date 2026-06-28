@@ -200,7 +200,7 @@ NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID = "build-queue-norway_brreg"
 
 
 class NorwayBrregTranslationConfig(dg.Config):
-    batch_size: int = 25
+    batch_size: int = 50
     max_tokens: int = 32768
     extra_body_json: str = '{"chat_template_kwargs": {"enable_thinking": false}}'
 
