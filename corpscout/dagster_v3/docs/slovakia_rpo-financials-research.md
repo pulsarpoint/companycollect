@@ -94,7 +94,7 @@ a documented JSON API with structured numbers and a clean incremental feed. No O
 > Validated on 60 live statements (52 mapped). Non-POD/MUJ templates (NUJ etc.)
 > are recorded with null metrics — extend `TEMPLATE_METRIC_ROWS` to cover them.
 
-The original plan (mirrors `estonia_ar`/`finland_financials`), for reference:
+The original plan (mirrors `estonia_ar`/`latvia_ur`), for reference:
 
 1. **Resolve entity ids for our companies.** We already have ~1.3M IČOs in `sk_companies`.
    Either (a) map IČO→RÚZ entity id via `/uctovne-jednotky?ico=`, or (b) page the whole
@@ -111,7 +111,7 @@ The original plan (mirrors `estonia_ar`/`finland_financials`), for reference:
    schema; exclude raw JSON / hash).
 
 **Scheduling:** RÚZ is a continuous-update register → incremental by `zmenene-od` cursor
-(like `finland_financials`), monthly-partitioned backfill for history. No giant download;
+(like the existing statement-feed sources), monthly-partitioned backfill for history. No giant download;
 it's per-id API paging, so use a per-source pool + request delay and the cursor.
 
 **Effort:** medium. The only real work is the template row→metric map per template family
