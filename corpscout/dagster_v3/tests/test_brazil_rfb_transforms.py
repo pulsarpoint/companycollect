@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import duckdb
+import pytest
 
 from dagster_v3.defs.brazil_rfb import contacts, tables, transforms
 
@@ -326,6 +327,18 @@ def test_build_contact_info_and_websites_extracts_unique_email_domains(
     assert website_rows == [
         ("12345678", "acme.com.br", "email", "", "", "", 1),
     ]
+
+
+def test_build_websites_requires_contact_info_database(tmp_path: Path) -> None:
+    websites_path = tmp_path / "br_websites.duckdb"
+    missing_contact_info_path = tmp_path / "br_contact_info.duckdb"
+
+    with duckdb.connect(str(websites_path)) as connection:
+        with pytest.raises(FileNotFoundError, match="brazil_rfb_contact_info_duckdb"):
+            contacts.build_brazil_rfb_websites(
+                connection=connection,
+                contact_info_database_path=missing_contact_info_path,
+            )
 
 
 def test_contact_domain_tables_match_clickhouse_export_contract(tmp_path: Path) -> None:

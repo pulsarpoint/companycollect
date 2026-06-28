@@ -243,12 +243,24 @@ def build_brazil_rfb_websites(
     contact_info_database_path: str | Path,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
+    contact_info_path = Path(contact_info_database_path).expanduser()
+    if not contact_info_path.is_absolute():
+        contact_info_path = contact_info_path.resolve()
+    if not contact_info_path.exists():
+        raise FileNotFoundError(
+            "Brazil RFB websites require the contact-info DuckDB stage at "
+            f"{contact_info_path}. Materialize brazil_rfb_contact_info_duckdb "
+            "before brazil_rfb_websites_duckdb. If this is a retry after the "
+            "contact/websites stage split, rerun brazil_rfb_contact_info_duckdb "
+            "first so data/brazil_rfb_contact_info.duckdb is created."
+        )
+
     websites_table = f"{DLT_DATASET_NAME}.{tables.WEBSITES_TABLE}"
 
     connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
     with attached_read_only_database(
         connection,
-        database_path=contact_info_database_path,
+        database_path=contact_info_path,
         alias="contact_info_db",
     ) as contact_info_alias:
         contacts_table = (
