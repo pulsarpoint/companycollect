@@ -186,19 +186,23 @@ def test_finland_xbrl_backfill_and_incremental_partitions() -> None:
 def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
     repo = load_project_defs().get_repository_def()
 
-    backfill = {
+    historical_backfill = {
         key.path[-1]
-        for key in repo.get_job("finland_xbrl_backfill_job").asset_layer.executable_asset_keys
+        for key in repo.get_job(
+            "finland_xbrl_historical_backfill_job"
+        ).asset_layer.executable_asset_keys
     }
-    assert backfill == {
+    assert historical_backfill == {
         "finland_xbrl_company_seed_duckdb",
         "finland_xbrl_financial_reports_backfill_duckdb",
         "finland_xbrl_raw_xml_documents_backfill",
         "finland_xbrl_parse_backfill",
     }
-    assert type(repo.get_job("finland_xbrl_backfill_job").partitions_def).__name__ == (
-        "MonthlyPartitionsDefinition"
-    )
+    assert type(
+        repo.get_job("finland_xbrl_historical_backfill_job").partitions_def
+    ).__name__ == "MonthlyPartitionsDefinition"
+    with pytest.raises(Exception):
+        repo.get_job("finland_xbrl_backfill_job")
 
     incremental = {
         key.path[-1]

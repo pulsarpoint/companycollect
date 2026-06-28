@@ -40,7 +40,7 @@ from dagster_v3.defs.finland_xbrl.assets.financial_reports import (
     materialize_financial_reports_window,
 )
 from dagster_v3.defs.finland_xbrl.assets.jobs import (
-    finland_xbrl_backfill_job,
+    finland_xbrl_historical_backfill_job,
     finland_xbrl_incremental_job,
     finland_xbrl_incremental_schedule,
 )
@@ -115,7 +115,7 @@ __all__ = [
     "documents_missing_registration_date",
     "download_finland_xbrl_raw_xml_documents",
     "finland_xbrl_arelle_source",
-    "finland_xbrl_backfill_job",
+    "finland_xbrl_historical_backfill_job",
     "finland_xbrl_dbt_assets",
     "finland_xbrl_dbt_project",
     "finland_xbrl_company_seed_duckdb",
@@ -163,7 +163,7 @@ defs = dg.Definitions(
         finland_xbrl_parse_incremental,
         finland_xbrl_parsed_tables,
     ],
-    jobs=[finland_xbrl_backfill_job, finland_xbrl_incremental_job],
+    jobs=[finland_xbrl_historical_backfill_job, finland_xbrl_incremental_job],
     schedules=[finland_xbrl_incremental_schedule],
     resources={
         "xbrl_api": XbrlApiResource(),
