@@ -8,6 +8,10 @@ sources:
         meta:
           dagster:
             asset_key: ["finland_xbrl_financial_reports_duckdb"]
+      - name: eligible_companies
+        meta:
+          dagster:
+            asset_key: ["finland_xbrl_eligible_companies"]
       - name: fi_prh_xbrl_statement_documents
         meta:
           dagster:
@@ -16,13 +20,6 @@ sources:
         meta:
           dagster:
             asset_key: ["fi_prh_xbrl_facts_raw"]
-  - name: finland_prhytj
-    schema: finland_prhytj
-    tables:
-      - name: all_companies
-        meta:
-          dagster:
-            asset_key: ["finland_ytj_all_companies_duckdb"]
 
 models:
   - name: eligible_financial_reports

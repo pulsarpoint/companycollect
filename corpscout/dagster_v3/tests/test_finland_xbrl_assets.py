@@ -171,6 +171,7 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         for key in repo.get_job("finland_xbrl_backfill_job").asset_layer.executable_asset_keys
     }
     assert backfill == {
+        "finland_xbrl_eligible_companies",
         "finland_xbrl_financial_reports_backfill_duckdb",
         "finland_xbrl_raw_xml_documents_backfill",
         "finland_xbrl_parse_backfill",
@@ -184,6 +185,7 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         for key in repo.get_job("finland_xbrl_incremental_job").asset_layer.executable_asset_keys
     }
     assert incremental == {
+        "finland_xbrl_eligible_companies",
         "finland_xbrl_financial_reports_incremental_duckdb",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_incremental",
@@ -197,7 +199,7 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
 
 
 def test_financial_reports_merge_accumulates_across_windows(tmp_path: Path) -> None:
-    db = tmp_path / "finland_ytj.duckdb"
+    db = tmp_path / "finland_xbrl.duckdb"
     window_one_session = FakePagedFinancialReportsSession(
         {
             1: [
@@ -267,10 +269,10 @@ def test_xbrl_transforms_are_dbt_assets():
     deps = graph.get(AssetKey(["finland_xbrl_raw_xml_documents"])).parent_keys
     assert AssetKey(["finland_xbrl_raw_xml_documents_backfill"]) in deps
     assert AssetKey(["finland_xbrl_raw_xml_documents_incremental"]) in deps
-    # eligible model depends on its two sources
+    # eligible model depends on XBRL reports plus the copied YTJ eligibility snapshot.
     eligible_deps = graph.get(AssetKey(["finland_xbrl_eligible_financial_reports"])).parent_keys
     dep_names = {k.path[-1] for k in eligible_deps}
-    assert {"finland_xbrl_financial_reports_duckdb", "finland_ytj_all_companies_duckdb"} <= dep_names
+    assert {"finland_xbrl_financial_reports_duckdb", "finland_xbrl_eligible_companies"} <= dep_names
 
 
 def test_xbrl_parsed_config_uses_xml_documents_manifest_by_default() -> None:
@@ -298,9 +300,11 @@ def test_xbrl_asset_graph_models_eligible_companies_downstream_of_ytj_duckdb() -
     assert dg.AssetKey("fi_prhytj_statuses") not in asset_graph.get_all_asset_keys()
     assert dg.AssetKey("fi_prhytj_websites") not in asset_graph.get_all_asset_keys()
     assert dg.AssetKey("finland_xbrl_financial_reports_duckdb") in asset_graph.get_all_asset_keys()
-    assert dg.AssetKey("finland_xbrl_eligible_companies") not in asset_graph.get_all_asset_keys()
+    assert asset_graph.get(dg.AssetKey("finland_xbrl_eligible_companies")).parent_keys == {
+        dg.AssetKey("finland_ytj_all_companies_duckdb")
+    }
     assert asset_graph.get(dg.AssetKey("finland_xbrl_eligible_financial_reports")).parent_keys == {
-        dg.AssetKey("finland_ytj_all_companies_duckdb"),
+        dg.AssetKey("finland_xbrl_eligible_companies"),
         dg.AssetKey("finland_xbrl_financial_reports_duckdb"),
     }
 
@@ -414,13 +418,13 @@ def test_xbrl_asset_graph_models_xml_documents_catalog_as_bridge() -> None:
     }
     assert asset_graph.get(dg.AssetKey("finland_xbrl_raw_xml_documents_backfill")).parent_keys == {
         dg.AssetKey("finland_xbrl_financial_reports_backfill_duckdb"),
-        dg.AssetKey("finland_ytj_all_companies_duckdb"),
+        dg.AssetKey("finland_xbrl_eligible_companies"),
     }
     assert asset_graph.get(
         dg.AssetKey("finland_xbrl_raw_xml_documents_incremental")
     ).parent_keys == {
         dg.AssetKey("finland_xbrl_financial_reports_incremental_duckdb"),
-        dg.AssetKey("finland_ytj_all_companies_duckdb"),
+        dg.AssetKey("finland_xbrl_eligible_companies"),
     }
     assert asset_graph.get(dg.AssetKey(XML_DOCUMENTS_TABLE)).parent_keys == {
         dg.AssetKey("finland_xbrl_raw_xml_documents")
@@ -582,7 +586,6 @@ def test_load_eligible_financial_report_rows_filters_by_registration_window_only
     database_path = tmp_path / "source.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         connection.execute(f"create schema {xbrl_assets.XBRL_DLT_DATASET_NAME}")
-        connection.execute("create schema finland_prhytj")
         connection.execute(
             f"""
             create table {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE} (
@@ -595,10 +598,10 @@ def test_load_eligible_financial_report_rows_filters_by_registration_window_only
             """
         )
         connection.execute(
-            """
-            create table finland_prhytj.all_companies (
+            f"""
+            create table {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_ELIGIBLE_COMPANIES_TABLE} (
                 business_id varchar,
-                is_active boolean,
+                primary_name varchar,
                 website_normalized_url varchar
             )
             """
@@ -615,14 +618,12 @@ def test_load_eligible_financial_report_rows_filters_by_registration_window_only
             """
         )
         connection.execute(
-            """
-            insert into finland_prhytj.all_companies values
-            ('old-financial-date', true, 'https://old.example'),
-            ('outside-window', true, 'https://outside.example'),
-            ('inactive-company', false, 'https://inactive.example'),
-            ('missing-website', true, ''),
-            ('active-web', true, 'https://active.example'),
-            ('second-active-web', true, 'https://second.example')
+            f"""
+            insert into {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_ELIGIBLE_COMPANIES_TABLE} values
+            ('old-financial-date', 'Old Oy', 'https://old.example'),
+            ('outside-window', 'Outside Oy', 'https://outside.example'),
+            ('active-web', 'Active Oy', 'https://active.example'),
+            ('second-active-web', 'Second Oy', 'https://second.example')
             """
         )
 
@@ -654,6 +655,54 @@ def test_load_eligible_financial_report_rows_filters_by_registration_window_only
             "discovery_registered_date_start": "2026-06-01",
             "discovery_registered_date_end": "2026-06-30",
         },
+    ]
+
+
+def test_materialize_eligible_companies_snapshot_copies_active_companies_with_websites(
+    tmp_path: Path,
+) -> None:
+    ytj_database_path = tmp_path / "finland_ytj.duckdb"
+    xbrl_database_path = tmp_path / "finland_xbrl.duckdb"
+    with duckdb.connect(str(ytj_database_path)) as connection:
+        connection.execute("create schema finland_prhytj")
+        connection.execute(
+            """
+            create table finland_prhytj.all_companies (
+                business_id varchar,
+                primary_name varchar,
+                is_active boolean,
+                website_normalized_url varchar
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into finland_prhytj.all_companies values
+            ('active-web', 'Active Oy', true, 'https://active.example'),
+            ('inactive-web', 'Inactive Oy', false, 'https://inactive.example'),
+            ('active-missing-web', 'No Web Oy', true, ''),
+            ('second-active-web', 'Second Oy', true, 'https://second.example')
+            """
+        )
+
+    result = xbrl_assets.materialize_eligible_companies_snapshot(
+        source_duckdb=duckdb_resource(xbrl_database_path),
+        ytj_duckdb=duckdb_resource(ytj_database_path),
+    )
+
+    assert result.metadata["row_count"] == 2
+    with duckdb.connect(str(xbrl_database_path), read_only=True) as connection:
+        rows = connection.execute(
+            f"""
+            select business_id, primary_name, website_normalized_url
+            from {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_ELIGIBLE_COMPANIES_TABLE}
+            order by business_id
+            """
+        ).fetchall()
+
+    assert rows == [
+        ("active-web", "Active Oy", "https://active.example"),
+        ("second-active-web", "Second Oy", "https://second.example"),
     ]
 
 
@@ -709,11 +758,12 @@ def _eligible_financial_reports() -> list[dict]:
     ]
 
 
-def test_duckdb_xbrl_assets_share_the_finland_ytj_duckdb_pool():
+def test_duckdb_xbrl_assets_use_dedicated_finland_xbrl_duckdb_pool():
     graph = load_project_defs().get_repository_def().asset_graph
     for key in (
         "finland_xbrl_financial_reports_backfill_duckdb",
         "finland_xbrl_financial_reports_incremental_duckdb",
+        "finland_xbrl_eligible_companies",
         "finland_xbrl_raw_xml_documents_backfill",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_backfill",
@@ -723,4 +773,9 @@ def test_duckdb_xbrl_assets_share_the_finland_ytj_duckdb_pool():
         "fi_prh_xbrl_financial_metrics",
     ):
         node = graph.get(AssetKey([key]))
-        assert "finland_ytj_duckdb" in node.pools, f"{key} missing pool"
+        assert "finland_xbrl_duckdb" in node.pools, f"{key} missing pool"
+        assert "finland_ytj_duckdb" not in node.pools, f"{key} still uses YTJ pool"
+
+
+def test_finland_xbrl_uses_dedicated_duckdb_file() -> None:
+    assert xbrl_assets._XBRL_DUCKDB_PATH.name == "finland_xbrl.duckdb"

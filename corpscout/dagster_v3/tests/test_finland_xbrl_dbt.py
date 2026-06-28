@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import duckdb
-import pytest
 from dbt.cli.main import dbtRunner
 
 DBT_DIR = (
@@ -24,7 +23,7 @@ def _seed(db_path, sql_statements):
 
 
 def test_metric_map_seed_loads(tmp_path, monkeypatch):
-    db = tmp_path / "finland_ytj.duckdb"
+    db = tmp_path / "finland_xbrl.duckdb"
     _dbt(["seed"], db, monkeypatch)
     conn = duckdb.connect(str(db), read_only=True)
     rows = conn.execute(
@@ -39,20 +38,18 @@ def test_metric_map_seed_loads(tmp_path, monkeypatch):
 
 
 def test_eligible_model(tmp_path, monkeypatch):
-    db = tmp_path / "finland_ytj.duckdb"
+    db = tmp_path / "finland_xbrl.duckdb"
     _seed(db, [
         "create schema if not exists finland_prh_xbrl",
-        "create schema if not exists finland_prhytj",
         """create table finland_prh_xbrl.financial_reports as select * from (values
             ('a','2023-12-31','2024-03-01','2024-01-01','2024-03-01','run-1', 5),
             ('b','2023-12-31','2024-03-01','2024-01-01','2024-03-01','run-1', 6)
           ) as t(business_id,financial_date,registration_date,
                  discovery_registered_date_start,discovery_registered_date_end,
                  source_run_id,source_record_number)""",
-        """create table finland_prhytj.all_companies as select * from (values
-            ('a','A Oy', true,  'https://a.fi'),
-            ('b','B Oy', false, 'https://b.fi')
-          ) as t(business_id,primary_name,is_active,website_normalized_url)""",
+        """create table finland_prh_xbrl.eligible_companies as select * from (values
+            ('a','A Oy', 'https://a.fi')
+          ) as t(business_id,primary_name,website_normalized_url)""",
     ])
     _dbt(["build", "--select", "eligible_financial_reports"], db, monkeypatch)
     conn = duckdb.connect(str(db), read_only=True)
@@ -63,7 +60,7 @@ def test_eligible_model(tmp_path, monkeypatch):
 
 
 def test_financial_metrics_model(tmp_path, monkeypatch):
-    db = tmp_path / "finland_ytj.duckdb"
+    db = tmp_path / "finland_xbrl.duckdb"
     _seed(db, [
         "create schema if not exists finland_prh_xbrl",
         """create table finland_prh_xbrl.fi_prh_xbrl_statement_documents as select * from (values

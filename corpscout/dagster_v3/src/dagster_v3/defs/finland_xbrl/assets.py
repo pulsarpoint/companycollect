@@ -44,12 +44,13 @@ XBRL_TIMEOUT_SECONDS = 120
 XBRL_DLT_DATASET_NAME = "finland_prh_xbrl"
 XBRL_DLT_FINANCIAL_REPORTS_TABLE = "financial_reports"
 XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE = "eligible_financial_reports"
+XBRL_ELIGIBLE_COMPANIES_TABLE = "eligible_companies"
 DEFAULT_XBRL_REQUEST_DELAY_SECONDS = 1.0
 DEFAULT_XBRL_REQUEST_MAX_ATTEMPTS = 6
 DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS = 30.0
 DEFAULT_XBRL_RETRY_MAX_DELAY_SECONDS = 480.0
 PRH_XBRL_REGISTRATION_SEARCH_START = "2023-07-01"
-FINLAND_XBRL_DUCKDB_POOL = "finland_ytj_duckdb"
+FINLAND_XBRL_DUCKDB_POOL = "finland_xbrl_duckdb"
 BACKFILL_PARTITIONS = dg.MonthlyPartitionsDefinition(
     start_date="2025-06-01", end_date="2026-06-01"
 )
@@ -61,7 +62,7 @@ DAILY_PARTITIONS = dg.DailyPartitionsDefinition(
 )
 
 FINLAND_XBRL_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
-_XBRL_DUCKDB_PATH = Path("data/finland_ytj.duckdb").expanduser()
+_XBRL_DUCKDB_PATH = Path("data/finland_xbrl.duckdb").expanduser()
 if not _XBRL_DUCKDB_PATH.is_absolute():
     _XBRL_DUCKDB_PATH = _XBRL_DUCKDB_PATH.resolve()
 os.environ["FINLAND_XBRL_DUCKDB_PATH"] = str(_XBRL_DUCKDB_PATH)
@@ -386,6 +387,67 @@ def finland_xbrl_financial_reports_duckdb(
             "duckdb_table": XBRL_DLT_FINANCIAL_REPORTS_TABLE,
             "row_count": financial_reports_duckdb_row_count(source_duckdb),
         }
+    )
+
+
+def _duckdb_string_literal(value: str | Path) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def materialize_eligible_companies_snapshot(
+    *,
+    source_duckdb: DuckDBResource,
+    ytj_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    ytj_database_path = duckdb_database_path(ytj_duckdb)
+    with source_duckdb.get_connection() as connection:
+        connection.execute(f"create schema if not exists {XBRL_DLT_DATASET_NAME}")
+        connection.execute(
+            f"attach {_duckdb_string_literal(ytj_database_path)} as ytj_source (READ_ONLY)"
+        )
+        try:
+            connection.execute(
+                f"""
+                create or replace table {XBRL_DLT_DATASET_NAME}.{XBRL_ELIGIBLE_COMPANIES_TABLE} as
+                select
+                    business_id,
+                    primary_name,
+                    website_normalized_url
+                from ytj_source.finland_prhytj.all_companies
+                where is_active = true
+                  and coalesce(website_normalized_url, '') <> ''
+                """
+            )
+            row_count = connection.execute(
+                f"select count(*) from {XBRL_DLT_DATASET_NAME}.{XBRL_ELIGIBLE_COMPANIES_TABLE}"
+            ).fetchone()[0]
+        finally:
+            connection.execute("detach ytj_source")
+
+    return dg.MaterializeResult(
+        metadata={
+            "duckdb_schema": XBRL_DLT_DATASET_NAME,
+            "duckdb_table": XBRL_ELIGIBLE_COMPANIES_TABLE,
+            "row_count": row_count,
+        }
+    )
+
+
+@dg.asset(
+    name="finland_xbrl_eligible_companies",
+    group_name="finland_xbrl",
+    deps=["finland_ytj_all_companies_duckdb"],
+    kinds={"python", "duckdb"},
+    pool=FINLAND_XBRL_DUCKDB_POOL,
+    description="Active Finland YTJ companies with websites copied into the PRH XBRL DuckDB boundary.",
+)
+def finland_xbrl_eligible_companies(
+    source_duckdb: DuckDBResource,
+    ytj_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    return materialize_eligible_companies_snapshot(
+        source_duckdb=source_duckdb,
+        ytj_duckdb=ytj_duckdb,
     )
 
 
@@ -758,7 +820,7 @@ def _materialize_raw_xml_window(
     group_name="finland_xbrl",
     deps=[
         finland_xbrl_financial_reports_backfill_duckdb,
-        "finland_ytj_all_companies_duckdb",
+        finland_xbrl_eligible_companies,
     ],
     partitions_def=BACKFILL_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
@@ -789,7 +851,7 @@ def finland_xbrl_raw_xml_documents_backfill(
     group_name="finland_xbrl",
     deps=[
         finland_xbrl_financial_reports_incremental_duckdb,
-        "finland_ytj_all_companies_duckdb",
+        finland_xbrl_eligible_companies,
     ],
     partitions_def=DAILY_PARTITIONS,
     kinds={"python", "s3", "xml"},
@@ -1012,6 +1074,7 @@ def finland_xbrl_parsed_tables(
 finland_xbrl_backfill_job = dg.define_asset_job(
     "finland_xbrl_backfill_job",
     selection=dg.AssetSelection.assets(
+        "finland_xbrl_eligible_companies",
         "finland_xbrl_financial_reports_backfill_duckdb",
         "finland_xbrl_raw_xml_documents_backfill",
         "finland_xbrl_parse_backfill",
@@ -1021,6 +1084,7 @@ finland_xbrl_backfill_job = dg.define_asset_job(
 finland_xbrl_incremental_job = dg.define_asset_job(
     "finland_xbrl_incremental_job",
     selection=dg.AssetSelection.assets(
+        "finland_xbrl_eligible_companies",
         "finland_xbrl_financial_reports_incremental_duckdb",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_incremental",
@@ -1038,6 +1102,7 @@ defs = dg.Definitions(
         finland_xbrl_financial_reports_backfill_duckdb,
         finland_xbrl_financial_reports_incremental_duckdb,
         finland_xbrl_financial_reports_duckdb,
+        finland_xbrl_eligible_companies,
         finland_xbrl_dbt_assets,
         finland_xbrl_raw_xml_documents_backfill,
         finland_xbrl_raw_xml_documents_incremental,
@@ -1178,12 +1243,10 @@ def load_eligible_financial_report_rows(
                 reports.discovery_registered_date_start,
                 reports.discovery_registered_date_end
             from {XBRL_DLT_DATASET_NAME}.{XBRL_DLT_FINANCIAL_REPORTS_TABLE} as reports
-            inner join finland_prhytj.all_companies as companies
+            inner join {XBRL_DLT_DATASET_NAME}.{XBRL_ELIGIBLE_COMPANIES_TABLE} as companies
                 on reports.business_id = companies.business_id
             where reports.registration_date >= ?
               and reports.registration_date <= ?
-              and companies.is_active = true
-              and coalesce(companies.website_normalized_url, '') <> ''
             order by reports.registration_date, reports.financial_date, reports.business_id
             """,
             [registered_date_start, registered_date_end],

@@ -608,7 +608,7 @@ def test_unparsed_documents_skips_by_object_key():
 
 
 def _xbrl_resource(tmp_path):
-    return duckdb_resource(tmp_path / "finland_ytj.duckdb")
+    return duckdb_resource(tmp_path / "finland_xbrl.duckdb")
 
 
 def test_load_parsed_object_keys_empty_when_no_table(tmp_path):
