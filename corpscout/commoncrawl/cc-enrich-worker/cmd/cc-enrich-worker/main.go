@@ -466,11 +466,14 @@ func run(mode string, o opts) {
 			write("identifiers.parquet", func(p string) error { return output.WriteIdentifiers(p, idents) })
 		}
 	}
-	// Embeddings are the expensive GPU artifact — keep them in a SEPARATE data/embedding/<stem>/ tree
-	// (large, never loaded into ClickHouse). For embed mode --out is already that tree, so the derivation
-	// maps data/embedding/<stem> -> itself; for industry it maps data/crawl/<stem> -> data/embedding/<stem>.
+	// Embeddings are the expensive GPU artifact — kept large, never loaded into ClickHouse. For embed
+	// mode, --out IS the embed dir, so write straight there (and it's exactly where embed's verify-and-skip
+	// looks). For industry/both, write to a SEPARATE sibling tree: data/crawl/<stem> -> data/embedding/<stem>.
 	if len(embeddings) > 0 {
-		embedDir := filepath.Join(filepath.Dir(filepath.Dir(outDir)), "embedding", filepath.Base(outDir))
+		embedDir := outDir
+		if mode != "embed" {
+			embedDir = filepath.Join(filepath.Dir(filepath.Dir(outDir)), "embedding", filepath.Base(outDir))
+		}
 		if err := os.MkdirAll(embedDir, 0o755); err != nil {
 			log.Fatalf("create embedding dir %s: %v", embedDir, err)
 		}
