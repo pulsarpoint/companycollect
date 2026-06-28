@@ -29,9 +29,7 @@ from dagster_v3.defs.finland_xbrl.assets.common import (
     FINLAND_XBRL_DUCKDB_POOL,
     XBRL_BUCKET,
     XBRL_DLT_DATASET_NAME,
-    _duckdb_column_type,
     _duckdb_table_exists,
-    _table_row,
 )
 from dagster_v3.defs.finland_xbrl.assets.raw_xml_documents import (
     finland_xbrl_raw_xml_documents_backfill,
@@ -204,10 +202,8 @@ def parse_xbrl_documents(
             )
             continue
         warning_count += len(parsed.warnings)
-        statement_rows.append(
-            _table_row(tables.STATEMENT_DOCUMENTS_TABLE, parsed.statement_document)
-        )
-        fact_rows.extend(_table_row(tables.FACTS_TABLE, fact) for fact in parsed.facts)
+        statement_rows.append(_statement_document_row(parsed.statement_document))
+        fact_rows.extend(_fact_row(fact) for fact in parsed.facts)
         if _should_log_parse_progress(
             document_index=document_index,
             total_documents=total_documents,
@@ -448,6 +444,7 @@ def finland_xbrl_parsed_tables(
 def load_parsed_table_frame(source_duckdb: DuckDBResource, *, table: str) -> pl.DataFrame:
     if table not in {tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE}:
         raise ValueError(f"Unsupported parsed XBRL DuckDB table {table!r}")
+    columns = _parsed_table_columns(table)
     with read_only_duckdb_connection(source_duckdb) as connection:
         if not _duckdb_table_exists(connection, table=table):
             raise ValueError(
@@ -455,8 +452,7 @@ def load_parsed_table_frame(source_duckdb: DuckDBResource, *, table: str) -> pl.
                 "Materialize fi_prh_xbrl_statement_documents and fi_prh_xbrl_facts_raw first."
             )
         arrow_table = connection.execute(
-            f"select {', '.join(tables.TABLE_COLUMNS[table])} "
-            f"from {XBRL_DLT_DATASET_NAME}.{table}"
+            f"select {', '.join(columns)} from {XBRL_DLT_DATASET_NAME}.{table}"
         ).to_arrow_table()
     return pl.from_arrow(arrow_table)
 
@@ -544,13 +540,32 @@ def parsed_duckdb_observability_metadata(
 
 def _ensure_parsed_duckdb_tables(connection: Any) -> None:
     connection.execute(f"create schema if not exists {XBRL_DLT_DATASET_NAME}")
-    for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE):
+    for table, schema in (
+        (tables.STATEMENT_DOCUMENTS_TABLE, tables.STATEMENT_DOCUMENTS_DUCKDB_SCHEMA),
+        (tables.FACTS_TABLE, tables.FACTS_DUCKDB_SCHEMA),
+    ):
         column_definitions = ", ".join(
-            f"{column} {_duckdb_column_type(column)}" for column in tables.TABLE_COLUMNS[table]
+            f"{column} {duckdb_type}" for column, duckdb_type in schema.items()
         )
         connection.execute(
             f"create table if not exists {XBRL_DLT_DATASET_NAME}.{table} ({column_definitions})"
         )
+
+
+def _statement_document_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {column: row.get(column) for column in tables.STATEMENT_DOCUMENTS_COLUMNS}
+
+
+def _fact_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {column: row.get(column) for column in tables.FACTS_COLUMNS}
+
+
+def _parsed_table_columns(table: str) -> list[str]:
+    if table == tables.STATEMENT_DOCUMENTS_TABLE:
+        return tables.STATEMENT_DOCUMENTS_COLUMNS
+    if table == tables.FACTS_TABLE:
+        return tables.FACTS_COLUMNS
+    raise ValueError(f"Unsupported parsed XBRL DuckDB table {table!r}")
 
 
 def build_parse_quality_row(

@@ -24,7 +24,7 @@ from dagster_v3.defs.finland_xbrl.tables import (
     FACTS_TABLE,
     FINANCIAL_METRICS_TABLE,
     STATEMENT_DOCUMENTS_TABLE,
-    TABLE_COLUMNS,
+    XML_DOCUMENTS_POLARS_SCHEMA,
     XML_DOCUMENTS_TABLE,
 )
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
@@ -756,20 +756,9 @@ def _xml_documents_parquet(rows: list[dict]) -> bytes:
     output = BytesIO()
     pl.DataFrame(
         rows,
-        schema={
-            column: _xml_document_column_dtype(column)
-            for column in TABLE_COLUMNS[XML_DOCUMENTS_TABLE]
-        },
+        schema=XML_DOCUMENTS_POLARS_SCHEMA,
     ).write_parquet(output)
     return output.getvalue()
-
-
-def _xml_document_column_dtype(column: str) -> pl.DataType:
-    if column == "xml_size_bytes":
-        return pl.Int64
-    if column in {"downloaded", "reused"}:
-        return pl.Boolean
-    return pl.Utf8
 
 
 def _eligible_financial_reports() -> list[dict]:

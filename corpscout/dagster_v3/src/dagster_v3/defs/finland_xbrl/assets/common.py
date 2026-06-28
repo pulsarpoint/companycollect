@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any
 
 import dagster as dg
-import polars as pl
 
 from dagster_v3.defs.finland_xbrl import tables
 
@@ -59,16 +58,6 @@ def _duckdb_table_exists(connection: Any, *, table: str) -> bool:
     )
 
 
-def _duckdb_column_type(column: str) -> str:
-    dtype = _xbrl_column_dtype(column)
-    if dtype == pl.Boolean:
-        return "boolean"
-    if dtype == pl.Int64:
-        return "bigint"
-    if dtype == pl.Float64:
-        return "double"
-    return "varchar"
-
 def _optional_iso_date(value: object) -> str | None:
     if value is None:
         return None
@@ -86,51 +75,3 @@ def _parse_iso_date(value: str, *, field_name: str) -> date:
         return date.fromisoformat(value)
     except ValueError as error:
         raise ValueError(f"{field_name} must be an ISO date in YYYY-MM-DD format") from error
-
-def _xbrl_table_frame(table: str, rows: list[dict[str, Any]]) -> pl.DataFrame:
-    return pl.DataFrame(
-        rows,
-        schema={column: _xbrl_column_dtype(column) for column in tables.TABLE_COLUMNS[table]},
-    )
-
-
-def _table_row(table: str, row: dict[str, Any]) -> dict[str, Any]:
-    return {column: row.get(column) for column in tables.TABLE_COLUMNS[table]}
-
-
-def _xbrl_column_dtype(column: str) -> pl.DataType:
-    if column in {
-        "xml_size_bytes",
-        "statement_count",
-        "business_count",
-        "financial_date_count",
-        "numeric_count",
-        "date_count",
-        "text_count",
-        "current_period_count",
-        "comparative_count",
-        "xml_documents_count",
-        "statement_documents_count",
-        "facts_count",
-        "statements_with_zero_facts_count",
-        "duplicate_statement_keys_count",
-        "parser_warning_statements_count",
-        "missing_statement_business_ids_count",
-        "missing_statement_financial_dates_count",
-        "missing_fact_business_ids_count",
-        "missing_fact_financial_dates_count",
-        "facts_per_statement_min",
-        "facts_per_statement_max",
-        "contexts_count",
-        "units_count",
-        "fact_ordinal",
-        "source_fact_count",
-        "mapped_fact_count",
-        "unmapped_numeric_fact_count",
-    }:
-        return pl.Int64
-    if column == "facts_per_statement_avg":
-        return pl.Float64
-    if column in {"downloaded", "reused", "is_comparative"}:
-        return pl.Boolean
-    return pl.Utf8

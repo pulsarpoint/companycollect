@@ -23,7 +23,6 @@ from dagster_v3.defs.finland_xbrl.assets.common import (
     XBRL_DLT_FINANCIAL_REPORTS_TABLE,
     XBRL_ELIGIBLE_COMPANIES_TABLE,
     _registration_window,
-    _xbrl_table_frame,
 )
 from dagster_v3.defs.finland_xbrl.assets.eligible_companies import (
     finland_xbrl_eligible_companies,
@@ -374,7 +373,7 @@ def merge_xml_document_catalog(
     object_store: ObjectStoreResource,
     new_rows: list[dict[str, Any]],
 ) -> pl.DataFrame:
-    new_frame = _xbrl_table_frame(tables.XML_DOCUMENTS_TABLE, new_rows)
+    new_frame = pl.DataFrame(new_rows, schema=tables.XML_DOCUMENTS_POLARS_SCHEMA)
     if object_store.exists(RAW_XML_DOCUMENTS_OBJECT_KEY, bucket=XBRL_BUCKET):
         existing_frame = pl.read_parquet(
             BytesIO(object_store.read_bytes(RAW_XML_DOCUMENTS_OBJECT_KEY, bucket=XBRL_BUCKET))
@@ -390,7 +389,7 @@ def merge_xml_document_catalog(
             maintain_order=True,
         )
     output = BytesIO()
-    catalog.select(tables.TABLE_COLUMNS[tables.XML_DOCUMENTS_TABLE]).write_parquet(output)
+    catalog.select(tables.XML_DOCUMENTS_COLUMNS).write_parquet(output)
     object_store.write_bytes(RAW_XML_DOCUMENTS_OBJECT_KEY, output.getvalue(), bucket=XBRL_BUCKET)
     return catalog
 
