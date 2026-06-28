@@ -167,6 +167,7 @@ def finland_xbrl_financial_reports_source(
     run_id: str = "",
     session: HttpSession | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    log_info: Callable[[str], None] | None = None,
 ) -> DltResource:
     return _financial_reports_resource(
         registered_date_start=registered_date_start,
@@ -181,6 +182,7 @@ def finland_xbrl_financial_reports_source(
         run_id=run_id,
         session=session,
         sleep=sleep,
+        log_info=log_info,
     )
 
 
@@ -203,16 +205,23 @@ def _financial_reports_resource(
     run_id: str,
     session: HttpSession | None,
     sleep: Callable[[float], None],
+    log_info: Callable[[str], None] | None,
 ) -> Iterator[dict[str, Any]]:
     _ensure_supported_registered_date_start(registered_date_start)
     page_number = 1
     source_record_number = 1
+    report_count = 0
+    non_empty_page_count = 0
     http_client = session or _financial_reports_http_client(
         timeout_seconds=timeout_seconds,
         user_agent=user_agent,
         max_retries=max_retries,
         retry_initial_delay_seconds=retry_initial_delay_seconds,
         retry_max_delay_seconds=retry_max_delay_seconds,
+    )
+    _log_financial_reports_discovery(
+        log_info,
+        f"PRH XBRL financial reports discovery {registered_date_start}..{registered_date_end} started",
     )
     while True:
         payload = _download_financial_reports_page(
@@ -226,7 +235,21 @@ def _financial_reports_resource(
         )
         financials = _financials_from_payload(payload)
         if not financials:
+            _log_financial_reports_discovery(
+                log_info,
+                "PRH XBRL financial reports discovery "
+                f"{registered_date_start}..{registered_date_end} page {page_number} "
+                "returned 0 reports; stopping",
+            )
             break
+        non_empty_page_count += 1
+        report_count += len(financials)
+        _log_financial_reports_discovery(
+            log_info,
+            "PRH XBRL financial reports discovery "
+            f"{registered_date_start}..{registered_date_end} page {page_number} "
+            f"returned {len(financials)} reports",
+        )
         for page_record_number, financial in enumerate(financials, start=1):
             yield _dlt_financial_report_row(
                 financial,
@@ -241,6 +264,20 @@ def _financial_reports_resource(
         page_number += 1
         if request_delay_seconds > 0:
             sleep(request_delay_seconds)
+    _log_financial_reports_discovery(
+        log_info,
+        "PRH XBRL financial reports discovery "
+        f"{registered_date_start}..{registered_date_end} completed: {report_count} "
+        f"reports across {non_empty_page_count} non-empty pages",
+    )
+
+
+def _log_financial_reports_discovery(
+    log_info: Callable[[str], None] | None,
+    message: str,
+) -> None:
+    if log_info is not None:
+        log_info(message)
 
 
 def run_finland_xbrl_financial_reports_dlt_pipeline(
@@ -254,6 +291,7 @@ def run_finland_xbrl_financial_reports_dlt_pipeline(
     max_retries: int = DEFAULT_XBRL_REQUEST_MAX_ATTEMPTS,
     retry_initial_delay_seconds: float = DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS,
     retry_max_delay_seconds: float = DEFAULT_XBRL_RETRY_MAX_DELAY_SECONDS,
+    log_info: Callable[[str], None] | None = None,
 ) -> Any:
     return finland_xbrl_financial_reports_pipeline(database_path).run(
         finland_xbrl_financial_reports_source(
@@ -265,6 +303,7 @@ def run_finland_xbrl_financial_reports_dlt_pipeline(
             max_retries=max_retries,
             retry_initial_delay_seconds=retry_initial_delay_seconds,
             retry_max_delay_seconds=retry_max_delay_seconds,
+            log_info=log_info,
         )
     )
 
@@ -309,13 +348,21 @@ def _materialize_financial_reports_window(
         max_retries=config.max_retries,
         retry_initial_delay_seconds=config.retry_initial_delay_seconds,
         retry_max_delay_seconds=config.retry_max_delay_seconds,
+        log_info=context.log.info,
+    )
+    row_count = financial_reports_duckdb_row_count(source_duckdb)
+    context.log.info(
+        "Loaded XBRL financial reports registered %s..%s; table row count is %d",
+        registered_date_start,
+        registered_date_end,
+        row_count,
     )
     return dg.MaterializeResult(
         metadata={
             "partition": context.partition_key,
             "registered_date_start": registered_date_start,
             "registered_date_end": registered_date_end,
-            "row_count": financial_reports_duckdb_row_count(source_duckdb),
+            "row_count": row_count,
         }
     )
 

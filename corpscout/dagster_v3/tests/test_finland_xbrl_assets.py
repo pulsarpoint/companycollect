@@ -323,6 +323,7 @@ def test_xbrl_financial_reports_are_modeled_as_partitioned_writer_assets() -> No
 def test_xbrl_dlt_source_pages_financial_report_listing() -> None:
     session = FakePagedFinancialReportsSession()
     sleeps: list[float] = []
+    log_messages: list[str] = []
 
     source = xbrl_assets.finland_xbrl_financial_reports_source(
         registered_date_start="2026-06-01",
@@ -331,6 +332,7 @@ def test_xbrl_dlt_source_pages_financial_report_listing() -> None:
         run_id="test-run",
         session=session,
         sleep=sleeps.append,
+        log_info=log_messages.append,
     )
     rows = list(source.resources[xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE])
 
@@ -344,6 +346,13 @@ def test_xbrl_dlt_source_pages_financial_report_listing() -> None:
     assert session.calls[0][1]["registeredDateStart"] == "2026-06-01"
     assert session.calls[0][1]["registeredDateEnd"] == "2026-06-30"
     assert sleeps == [0.5, 0.5]
+    assert log_messages == [
+        "PRH XBRL financial reports discovery 2026-06-01..2026-06-30 started",
+        "PRH XBRL financial reports discovery 2026-06-01..2026-06-30 page 1 returned 1 reports",
+        "PRH XBRL financial reports discovery 2026-06-01..2026-06-30 page 2 returned 1 reports",
+        "PRH XBRL financial reports discovery 2026-06-01..2026-06-30 page 3 returned 0 reports; stopping",
+        "PRH XBRL financial reports discovery 2026-06-01..2026-06-30 completed: 2 reports across 2 non-empty pages",
+    ]
 
 
 def test_xbrl_dlt_source_rejects_registration_start_before_prh_floor() -> None:
@@ -405,6 +414,30 @@ def test_xbrl_dlt_pipeline_loads_financial_reports_table(tmp_path: Path) -> None
     assert rows == [
         ("active-web", "2026-05-31", "2026-06-01", 1),
         ("second-active-web", "2026-04-30", "2026-06-02", 2),
+    ]
+
+
+def test_xbrl_dlt_pipeline_resolves_empty_registration_window(tmp_path: Path) -> None:
+    session = FakePagedFinancialReportsSession({1: []})
+    database_path = tmp_path / "source.duckdb"
+    log_messages: list[str] = []
+
+    load_info = xbrl_assets.run_finland_xbrl_financial_reports_dlt_pipeline(
+        database_path=database_path,
+        registered_date_start="2026-06-28",
+        registered_date_end="2026-06-28",
+        run_id="test-run",
+        session=session,
+        log_info=log_messages.append,
+    )
+
+    assert load_info
+    assert xbrl_assets.financial_reports_duckdb_row_count(duckdb_resource(database_path)) == 0
+    assert [call[1]["page"] for call in session.calls] == [1]
+    assert log_messages == [
+        "PRH XBRL financial reports discovery 2026-06-28..2026-06-28 started",
+        "PRH XBRL financial reports discovery 2026-06-28..2026-06-28 page 1 returned 0 reports; stopping",
+        "PRH XBRL financial reports discovery 2026-06-28..2026-06-28 completed: 0 reports across 0 non-empty pages",
     ]
 
 
