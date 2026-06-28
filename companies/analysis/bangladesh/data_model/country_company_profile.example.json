@@ -1,0 +1,57 @@
+{
+  "country": "Bangladesh",
+  "country_slug": "bangladesh",
+  "country_profile_version": "2026-06-28",
+  "registration": {
+    "rjsc_registration_number": null,
+    "dse_trading_code": "ACMELAB",
+    "bin": null,
+    "e_tin": null
+  },
+  "legal_identity": {
+    "legal_name": "The ACME Laboratories Limited",
+    "entity_type": null
+  },
+  "status": {
+    "registration_status": null,
+    "vat_status": null,
+    "incorporation_date": null,
+    "listing_year": null
+  },
+  "activity": {
+    "sector": "Pharmaceuticals & Chemicals"
+  },
+  "registered_location": {
+    "registered_address": null
+  },
+  "officers": [
+    { "name": "[REDACTED-PII]", "role": "Director (RJSC; paid documents; redacted as personal data)" }
+  ],
+  "listing": {
+    "trading_code": "ACMELAB",
+    "scrip_code": null,
+    "market_category": null,
+    "type_of_instrument": "Equity"
+  },
+  "financial_statements": [
+    { "authorized_capital_mn": null, "paid_up_capital_mn": null, "currency": "BDT" }
+  ],
+  "source_provenance": [
+    {
+      "source_slug": "dse_listed",
+      "section": "registration.dse_trading_code / legal_identity.legal_name / activity.sector / listing / financial_statements",
+      "source_url": "https://www.dsebd.org/displayCompany.php?name=ACMELAB",
+      "access": "public_browser",
+      "license": "public_disclosure",
+      "retrieved_at": "2026-06-28T00:00:00Z"
+    },
+    {
+      "source_slug": "rjsc_register",
+      "section": "registration.rjsc_registration_number / legal_identity.entity_type / status / registered_location / officers (planning-only, documents paid)",
+      "source_url": "https://www.roc.gov.bd/",
+      "access": "name_search_free_documents_paid",
+      "license": "restricted",
+      "retrieved_at": null
+    }
+  ]
+}

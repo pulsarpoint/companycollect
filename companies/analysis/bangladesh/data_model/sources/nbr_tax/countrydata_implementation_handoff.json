@@ -1,0 +1,76 @@
+{
+  "country": "Bangladesh",
+  "country_slug": "bangladesh",
+  "source_slug": "nbr_tax",
+  "source_identity": "bangladesh_nbr_tax",
+  "source_package": "nbr",
+  "env_prefix": "BD_NBR",
+  "implementation_status": "insufficient_transport_info",
+  "source": {
+    "source_name": "National Board of Revenue (NBR) — taxpayer / BIN verification",
+    "source_type": "tax_register",
+    "organization": "National Board of Revenue (NBR), Bangladesh (nbr.gov.bd)",
+    "source_url": "https://nbr.gov.bd/",
+    "license": "restricted",
+    "access": "public_browser_verification",
+    "data_freshness": "live",
+    "attribution": "National Board of Revenue (Bangladesh)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://nbr.gov.bd/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": [],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "per-BIN/TIN verification; no bulk/API"
+  },
+  "snapshot": {
+    "strategy": "none_per_id_verification",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "BdNbrTaxpayer",
+    "date_formats": [],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "NBR provides BIN (VAT) and e-TIN (income tax) verification; VAT runs through the NBR VAT online system. Per-BIN/TIN verification only — no bulk download or open API located. Discover the exact verification request shape (likely a VAT/TIN lookup form) before implementing; do NOT scrape aggressively. Keys = BIN / e-TIN. Does not directly key to RJSC — join by name. Covers individuals — REDACT individuals (personal data)."
+  },
+  "keys": {
+    "primary_keys": ["bin"],
+    "join_keys": ["bin", "e_tin", "taxpayer_name"],
+    "dedupe_keys": ["bin"]
+  },
+  "mapping_rules": {
+    "tax_id": "e-TIN (income tax).",
+    "vat_id": "BIN (VAT).",
+    "legal_name": "Taxpayer Name (companies only; redact individuals).",
+    "status": "VAT Registration Status."
+  },
+  "fixture_requirements": [
+    "VAT-registered company (BIN)",
+    "company with e-TIN",
+    "individual taxpayer (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Run a BIN/e-TIN verification; confirm name + status returned.",
+    "full": "Blocked on transport discovery — resolve the verification request shape; per-ID only (no bulk); redact individuals."
+  },
+  "blockers": [
+    "Per-BIN/TIN verification; no bulk file or open API",
+    "Exact request shape not resolved",
+    "Covers individuals (personal data)"
+  ]
+}

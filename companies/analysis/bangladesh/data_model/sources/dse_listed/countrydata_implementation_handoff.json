@@ -1,0 +1,74 @@
+{
+  "country": "Bangladesh",
+  "country_slug": "bangladesh",
+  "source_slug": "dse_listed",
+  "source_identity": "bangladesh_dse_listed",
+  "source_package": "dse",
+  "env_prefix": "BD_DSE",
+  "implementation_status": "ready",
+  "source": {
+    "source_name": "Dhaka Stock Exchange (DSE) — listed companies",
+    "source_type": "financial_disclosure",
+    "organization": "Dhaka Stock Exchange PLC (dsebd.org)",
+    "source_url": "https://www.dsebd.org/displayCompany.php",
+    "license": "public_disclosure",
+    "access": "public_browser",
+    "data_freshness": "daily",
+    "attribution": "Dhaka Stock Exchange (DSE)"
+  },
+  "access": {
+    "requires_authentication": false,
+    "requires_payment": false,
+    "credential_env_vars": []
+  },
+  "transport": {
+    "access_mode": "html_index_plus_detail_pages",
+    "base_url": "https://www.dsebd.org/company_listing.php",
+    "download_url": "https://www.dsebd.org/displayCompany.php?name={TRADING_CODE}",
+    "http_method": "GET",
+    "headers_required": ["Accept: text/html"],
+    "formats": ["html"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "single_index_page", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "public; be polite (one index page + ~640 detail pages)"
+  },
+  "snapshot": {
+    "strategy": "preserve_html_pages",
+    "file_extension": ".html",
+    "preserve_raw_download": true
+  },
+  "parsing": {
+    "record_type_hint": "DseListedCompany",
+    "date_formats": ["2006"],
+    "datetime_formats": [],
+    "number_formats": ["1,234.56"],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Open DSE listed companies. Step 1: GET company_listing.php and parse anchors `displayCompany.php?name=<CODE>` each followed by `<span>(Full Name)</span>` (~640 instruments; 637 verified). Step 2: GET displayCompany.php?name=<CODE> per company and parse Trading Code, Scrip Code, Sector, Authorized Capital (mn), Paid-up Capital (mn), Listing Year, Market Category, Type of Instrument. Filter type_of_instrument=Equity for operating companies. Currency BDT (capital in millions). Key = trading code. No RJSC number published — join to RJSC by name. No personal data."
+  },
+  "keys": {
+    "primary_keys": ["trading_code"],
+    "join_keys": ["trading_code", "company_name"],
+    "dedupe_keys": ["trading_code"]
+  },
+  "mapping_rules": {
+    "company_id": "trading_code (listed).",
+    "legal_name": "company_name.",
+    "activity_code": "sector.",
+    "financials": "authorized_capital_mn / paid_up_capital_mn (BDT millions).",
+    "listing": "trading_code + scrip_code + listing_year + market_category."
+  },
+  "fixture_requirements": [
+    "equity company (type_of_instrument=Equity)",
+    "mutual fund (assert filtered/flagged)",
+    "company with full capital + listing year fields",
+    "listing index parse (code + (name))"
+  ],
+  "live_test_plan": {
+    "smoke": "GET company_listing.php; expect ~640 code+(name) anchors; then GET displayCompany.php?name=ACMELAB.",
+    "full": "Parse the index, then fetch + parse each detail page (be polite); filter Equity; convert capital (mn)."
+  },
+  "blockers": []
+}

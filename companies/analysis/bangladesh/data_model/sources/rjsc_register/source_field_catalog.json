@@ -1,0 +1,27 @@
+{
+  "country": "Bangladesh",
+  "country_slug": "bangladesh",
+  "source_slug": "rjsc_register",
+  "source_name": "RJSC — Registrar of Joint Stock Companies and Firms",
+  "source_type": "official_registry",
+  "organization": "Registrar of Joint Stock Companies and Firms (RJSC), Ministry of Commerce (roc.gov.bd)",
+  "source_url": "https://www.roc.gov.bd/",
+  "license": "restricted",
+  "access": "name_search_free_documents_paid",
+  "data_freshness": "live",
+  "record_shape": "per_entity_extract_paid_planning_only",
+  "primary_keys": ["rjsc_registration_number"],
+  "join_keys": ["rjsc_registration_number", "entity_name"],
+  "field_count": 9,
+  "fields": [
+    { "path": "rjsc_registration_number", "source_field": "Registration Number", "english_name": "rjsc_registration_number", "meaning": "RJSC registration number — the authoritative company/firm registrar id.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; documents pay-per-use; site TLS cert issue.", "source_confidence": "high", "analysis_notes": "Registry key." },
+    { "path": "entity_name", "source_field": "Entity Name", "english_name": "entity_name", "meaning": "Registered entity name.", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": "Free name search returns name + number; particulars are paid." },
+    { "path": "entity_type", "source_field": "Entity Type", "english_name": "entity_type", "meaning": "Entity type (private/public limited company, partnership firm, society, trade organization).", "data_type": "string", "semantic_type": "legal_form", "example_values": [], "nullable": true, "repeatable": false, "code_list": "RJSC entity types", "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": "RJSC registers companies, firms, societies, trade orgs." },
+    { "path": "status", "source_field": "Status", "english_name": "status", "meaning": "Registration status (active / struck-off / dissolved).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "Planning-only.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "registration_date", "source_field": "Registration Date", "english_name": "registration_date", "meaning": "Date of registration / incorporation.", "data_type": "date", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": "This is the true incorporation date (DSE only has listing year)." },
+    { "path": "registered_address", "source_field": "Registered Address", "english_name": "registered_address", "meaning": "Registered office address.", "data_type": "string", "semantic_type": "address", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "Planning-only.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "authorized_capital", "source_field": "Authorized Capital", "english_name": "authorized_capital", "meaning": "Authorized capital (BDT).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; BDT.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "paid_up_capital", "source_field": "Paid-up Capital", "english_name": "paid_up_capital", "meaning": "Paid-up capital (BDT).", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Planning-only; BDT.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "directors", "source_field": "Directors", "english_name": "directors", "meaning": "Company directors.", "data_type": "array", "semantic_type": "person", "example_values": [], "nullable": true, "repeatable": true, "code_list": null, "language": "en", "limitations": "PERSONAL DATA — redact. Planning-only; in paid documents (e.g. Schedule X / return of directors).", "source_confidence": "medium", "analysis_notes": "Do not store cleartext." }
+  ]
+}

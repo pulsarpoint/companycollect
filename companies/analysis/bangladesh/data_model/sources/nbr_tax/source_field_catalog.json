@@ -1,0 +1,22 @@
+{
+  "country": "Bangladesh",
+  "country_slug": "bangladesh",
+  "source_slug": "nbr_tax",
+  "source_name": "National Board of Revenue (NBR) — taxpayer / BIN verification",
+  "source_type": "tax_register",
+  "organization": "National Board of Revenue (NBR), Bangladesh (nbr.gov.bd)",
+  "source_url": "https://nbr.gov.bd/",
+  "license": "restricted",
+  "access": "public_browser_verification",
+  "data_freshness": "live",
+  "record_shape": "per_bin_or_tin_verification",
+  "primary_keys": ["bin"],
+  "join_keys": ["bin", "e_tin", "taxpayer_name"],
+  "field_count": 4,
+  "fields": [
+    { "path": "bin", "source_field": "BIN (Business Identification Number)", "english_name": "bin", "meaning": "VAT Business Identification Number — issued for VAT registration.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Per-BIN verification; no bulk.", "source_confidence": "medium", "analysis_notes": "VAT identifier (NBR VAT online system)." },
+    { "path": "e_tin", "source_field": "e-TIN (Taxpayer Identification Number)", "english_name": "e_tin", "meaning": "Electronic Taxpayer Identification Number (income tax).", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Per-TIN verification; no bulk.", "source_confidence": "medium", "analysis_notes": "Income-tax identifier." },
+    { "path": "taxpayer_name", "source_field": "Taxpayer Name", "english_name": "taxpayer_name", "meaning": "Registered taxpayer name (company or individual).", "data_type": "string", "semantic_type": "legal_name", "example_values": [], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": "Individuals are personal data — redact.", "source_confidence": "medium", "analysis_notes": null },
+    { "path": "vat_status", "source_field": "VAT Registration Status", "english_name": "vat_status", "meaning": "VAT registration status (active / inactive).", "data_type": "string", "semantic_type": "status", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "From the VAT online system.", "source_confidence": "low", "analysis_notes": null }
+  ]
+}

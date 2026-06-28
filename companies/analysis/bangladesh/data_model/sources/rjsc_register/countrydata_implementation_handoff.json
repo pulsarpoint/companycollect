@@ -1,0 +1,82 @@
+{
+  "country": "Bangladesh",
+  "country_slug": "bangladesh",
+  "source_slug": "rjsc_register",
+  "source_identity": "bangladesh_rjsc_register",
+  "source_package": "rjsc",
+  "env_prefix": "BD_RJSC",
+  "implementation_status": "blocked_payment",
+  "source": {
+    "source_name": "RJSC — Registrar of Joint Stock Companies and Firms",
+    "source_type": "official_registry",
+    "organization": "Registrar of Joint Stock Companies and Firms (RJSC), Ministry of Commerce (roc.gov.bd)",
+    "source_url": "https://www.roc.gov.bd/",
+    "license": "restricted",
+    "access": "name_search_free_documents_paid",
+    "data_freshness": "live",
+    "attribution": "Registrar of Joint Stock Companies and Firms (Bangladesh)"
+  },
+  "access": {
+    "requires_authentication": true,
+    "requires_payment": true,
+    "credential_env_vars": ["BD_RJSC_ACCOUNT"]
+  },
+  "transport": {
+    "access_mode": "unknown",
+    "base_url": "https://www.roc.gov.bd/",
+    "download_url": null,
+    "http_method": "GET",
+    "headers_required": ["eservices session; payment for documents"],
+    "formats": ["html", "pdf"],
+    "compression": null,
+    "encoding": "utf-8",
+    "record_path": null,
+    "total_results_path": null,
+    "pagination": { "type": "unknown", "page_param": null, "page_start": null, "page_size": null, "page_size_param": null, "next_page_path": null },
+    "rate_limit": "name search free; documents pay-per-use; no open bulk/API; site TLS cert issue"
+  },
+  "snapshot": {
+    "strategy": "none_paid",
+    "file_extension": ".html",
+    "preserve_raw_download": false
+  },
+  "parsing": {
+    "record_type_hint": "BdRjscEntity",
+    "date_formats": ["02-01-2006", "2006-01-02"],
+    "datetime_formats": [],
+    "number_formats": [],
+    "malformed_record_policy": "log_warn_and_continue",
+    "notes": "Authoritative Bangladeshi registrar (RJSC). The eservices portal offers a free company name search (name + registration number), but particulars/documents are pay-per-use; no open bulk or free API. From this environment the main site had a TLS intermediate-certificate issue and eservices.roc.gov.bd did not resolve. Do NOT bypass payment. Key = RJSC registration number. registration_date is the true incorporation date. Directors are personal data (paid documents) — redact. Field model from public knowledge; no values captured. Confirm whether RJSC offers an official data-sharing channel."
+  },
+  "keys": {
+    "primary_keys": ["rjsc_registration_number"],
+    "join_keys": ["rjsc_registration_number", "entity_name"],
+    "dedupe_keys": ["rjsc_registration_number"]
+  },
+  "mapping_rules": {
+    "company_id": "RJSC registration number.",
+    "registration_number": "RJSC registration number.",
+    "legal_name": "Entity Name.",
+    "legal_form": "Entity Type (company/firm/society/trade org).",
+    "status": "Status.",
+    "incorporation_date": "Registration Date.",
+    "registered_address": "Registered Address.",
+    "officers": "Directors (REDACT — personal data; paid documents)."
+  },
+  "fixture_requirements": [
+    "private limited company",
+    "public limited company",
+    "partnership firm / society / trade organization",
+    "struck-off entity",
+    "record with directors (assert redaction)"
+  ],
+  "live_test_plan": {
+    "smoke": "Not runnable openly (documents paid; cert issue). Use the free name search to confirm name + number.",
+    "full": "Blocked on payment — requires an RJSC paid/eservices path or an official data arrangement; redact personal data."
+  },
+  "blockers": [
+    "Document/particulars retrieval is pay-per-use",
+    "No open bulk file or free API; eservices host did not resolve; TLS cert issue",
+    "Directors are personal data"
+  ]
+}

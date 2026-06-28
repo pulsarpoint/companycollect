@@ -1,0 +1,27 @@
+{
+  "country": "Bangladesh",
+  "country_slug": "bangladesh",
+  "source_slug": "dse_listed",
+  "source_name": "Dhaka Stock Exchange (DSE) — listed companies",
+  "source_type": "financial_disclosure",
+  "organization": "Dhaka Stock Exchange PLC (dsebd.org)",
+  "source_url": "https://www.dsebd.org/displayCompany.php",
+  "license": "public_disclosure",
+  "access": "public_browser",
+  "data_freshness": "daily",
+  "record_shape": "listing_index_plus_per_company_html",
+  "primary_keys": ["trading_code"],
+  "join_keys": ["trading_code", "company_name"],
+  "field_count": 9,
+  "fields": [
+    { "path": "trading_code", "source_field": "Trading Code", "english_name": "trading_code", "meaning": "DSE trading code / ticker for the listed company.", "data_type": "string", "semantic_type": "identifier", "example_values": ["AAMRANET", "ACMELAB", "AAMRATECH"], "nullable": false, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Listed companies only.", "source_confidence": "high", "analysis_notes": "Primary key; appears in company_listing.php as displayCompany.php?name=<CODE>." },
+    { "path": "scrip_code", "source_field": "Scrip Code", "english_name": "scrip_code", "meaning": "Numeric DSE security code.", "data_type": "string", "semantic_type": "identifier", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": "Alternative listed-security id." },
+    { "path": "company_name", "source_field": "Company Name", "english_name": "company_name", "meaning": "Listed company name.", "data_type": "string", "semantic_type": "legal_name", "example_values": ["aamra networks limited", "The ACME Laboratories Limited"], "nullable": false, "repeatable": false, "code_list": null, "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": "From the listing span next to the code." },
+    { "path": "sector", "source_field": "Sector", "english_name": "sector", "meaning": "DSE sector classification.", "data_type": "string", "semantic_type": "activity", "example_values": ["Pharmaceuticals & Chemicals", "IT - Sector", "Bank"], "nullable": true, "repeatable": false, "code_list": "DSE sectors", "language": "en", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "authorized_capital_mn", "source_field": "Authorized Capital (mn)", "english_name": "authorized_capital_mn", "meaning": "Authorized capital in BDT millions.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "BDT millions.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "paid_up_capital_mn", "source_field": "Paid-up Capital (mn)", "english_name": "paid_up_capital_mn", "meaning": "Paid-up capital in BDT millions.", "data_type": "decimal", "semantic_type": "financial", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "BDT millions.", "source_confidence": "high", "analysis_notes": null },
+    { "path": "listing_year", "source_field": "Listing Year", "english_name": "listing_year", "meaning": "Year the company was listed on DSE.", "data_type": "string", "semantic_type": "date", "example_values": [], "nullable": true, "repeatable": false, "code_list": null, "language": "n/a", "limitations": "Year only (not the incorporation date).", "source_confidence": "high", "analysis_notes": "Listing year != incorporation date (which is in RJSC)." },
+    { "path": "market_category", "source_field": "Market Category", "english_name": "market_category", "meaning": "DSE market category (A / B / N / Z).", "data_type": "string", "semantic_type": "status", "example_values": ["A", "B", "N", "Z"], "nullable": true, "repeatable": false, "code_list": "DSE market categories", "language": "n/a", "limitations": null, "source_confidence": "high", "analysis_notes": null },
+    { "path": "type_of_instrument", "source_field": "Type of Instrument", "english_name": "type_of_instrument", "meaning": "Instrument type (Equity / Mutual Fund / Bond / Debenture).", "data_type": "string", "semantic_type": "metadata", "example_values": ["Equity", "Mutual Fund"], "nullable": true, "repeatable": false, "code_list": null, "language": "en", "limitations": "Filter Equity for operating companies.", "source_confidence": "high", "analysis_notes": "~640 instruments include mutual funds/bonds; filter by Equity." }
+  ]
+}

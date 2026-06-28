@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bangladesh Company Profile",
+  "description": "Country-specific company profile for Bangladesh. Bangladesh splits between an OPEN listed layer and a gated/paid full register. The Dhaka Stock Exchange (DSE) is the cleanest open source: ~640 listed instruments (plain parseable HTML) keyed on the DSE trading code, with sector, authorized/paid-up capital (BDT mn), listing year, market category, instrument type. The authoritative full register is RJSC (Registrar of Joint Stock Companies and Firms), keyed on the RJSC registration number — name search free, particulars/documents pay-per-use (planning-only). The NBR adds tax identity: BIN (VAT) and e-TIN (income tax), per-ID verification. There is no single national identifier shared across all sources; DSE↔RJSC↔NBR join by name. Language English + Bangla; currency BDT. Directors (RJSC) and individual taxpayers (NBR) are personal data — redact. Listing year (DSE) is NOT the incorporation date (that is in RJSC).",
+  "type": "object",
+  "required": ["country", "country_slug", "registration", "source_provenance"],
+  "properties": {
+    "country": { "type": "string", "const": "Bangladesh" },
+    "country_slug": { "type": "string", "const": "bangladesh" },
+    "country_profile_version": { "type": "string" },
+    "registration": {
+      "type": "object",
+      "description": "At least one identifier. Listed companies have a DSE trading code; the authoritative registry id is the RJSC registration number (paid).",
+      "properties": {
+        "rjsc_registration_number": { "type": ["string", "null"], "description": "RJSC registrar id (authoritative; documents paid).", "x-source": "rjsc_register", "x-source-path": "rjsc_registration_number", "x-join-key": true, "x-access": "documents_paid" },
+        "dse_trading_code": { "type": ["string", "null"], "description": "DSE trading code (listed companies; open).", "x-source": "dse_listed", "x-source-path": "trading_code", "x-join-key": true, "x-access": "public" },
+        "bin": { "type": ["string", "null"], "description": "VAT Business Identification Number (NBR).", "x-source": "nbr_tax", "x-source-path": "bin", "x-access": "per_id_verification" },
+        "e_tin": { "type": ["string", "null"], "description": "Income-tax e-TIN (NBR).", "x-source": "nbr_tax", "x-source-path": "e_tin", "x-access": "per_id_verification" }
+      }
+    },
+    "legal_identity": {
+      "type": "object",
+      "required": ["legal_name"],
+      "properties": {
+        "legal_name": { "type": "string", "description": "Company name. Open from DSE (listed); authoritative from RJSC.", "x-source": "dse_listed", "x-source-path": "company_name", "x-source-alt": "rjsc_register.entity_name", "x-join-key": true },
+        "entity_type": { "type": ["string", "null"], "description": "RJSC entity type (company/firm/society/trade org). Planning-only.", "x-source": "rjsc_register", "x-source-path": "entity_type", "x-access": "documents_paid" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "registration_status": { "type": ["string", "null"], "description": "RJSC status (active/struck-off). Planning-only.", "x-source": "rjsc_register", "x-source-path": "status", "x-access": "documents_paid" },
+        "vat_status": { "type": ["string", "null"], "description": "NBR VAT registration status.", "x-source": "nbr_tax", "x-source-path": "vat_status", "x-access": "per_id_verification" },
+        "incorporation_date": { "type": ["string", "null"], "description": "RJSC registration date (true incorporation date).", "x-source": "rjsc_register", "x-source-path": "registration_date", "x-access": "documents_paid" },
+        "listing_year": { "type": ["string", "null"], "description": "DSE listing year (NOT the incorporation date).", "x-source": "dse_listed", "x-source-path": "listing_year" }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "sector": { "type": ["string", "null"], "description": "DSE sector (listed).", "x-source": "dse_listed", "x-source-path": "sector" }
+      }
+    },
+    "registered_location": {
+      "type": "object",
+      "description": "Registered office — RJSC only (paid; planning-only).",
+      "x-source": "rjsc_register",
+      "x-access": "documents_paid",
+      "properties": {
+        "registered_address": { "type": ["string", "null"], "x-source-path": "registered_address" }
+      }
+    },
+    "officers": {
+      "type": "array",
+      "description": "Directors (RJSC). PERSONAL DATA — REDACT. Planning-only (paid documents).",
+      "x-source": "rjsc_register",
+      "x-source-path": "directors",
+      "x-access": "documents_paid_redact",
+      "items": { "type": "object", "properties": { "name": { "type": "string", "x-personal-data": true }, "role": { "type": ["string", "null"] } } }
+    },
+    "listing": {
+      "type": "object",
+      "description": "Present only for DSE-listed companies (open).",
+      "x-source": "dse_listed",
+      "properties": {
+        "trading_code": { "type": ["string", "null"], "x-source-path": "trading_code" },
+        "scrip_code": { "type": ["string", "null"], "x-source-path": "scrip_code" },
+        "market_category": { "type": ["string", "null"], "x-source-path": "market_category" },
+        "type_of_instrument": { "type": ["string", "null"], "x-source-path": "type_of_instrument" }
+      }
+    },
+    "financial_statements": {
+      "type": "array",
+      "description": "Capital figures (BDT). DSE gives authorized/paid-up capital (mn) for listed; RJSC gives capital for all (paid).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "authorized_capital_mn": { "type": ["number", "null"], "x-source": "dse_listed", "x-source-path": "authorized_capital_mn" },
+          "paid_up_capital_mn": { "type": ["number", "null"], "x-source": "dse_listed", "x-source-path": "paid_up_capital_mn" },
+          "currency": { "type": "string", "const": "BDT" }
+        }
+      }
+    },
+    "source_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_slug", "section"],
+        "properties": {
+          "source_slug": { "type": "string" },
+          "section": { "type": "string" },
+          "source_url": { "type": "string" },
+          "access": { "type": "string" },
+          "license": { "type": "string" },
+          "retrieved_at": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

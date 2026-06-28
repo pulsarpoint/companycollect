@@ -1,0 +1,9 @@
+{
+  "trading_code": "ACMELAB",
+  "company_name": "The ACME Laboratories Limited",
+  "sector": "Pharmaceuticals & Chemicals",
+  "type_of_instrument": "Equity",
+  "currency": "BDT",
+  "source": "https://www.dsebd.org/displayCompany.php?name=ACMELAB",
+  "note": "Field shape from the DSE per-company detail page; authorized/paid-up capital (mn), listing year, scrip code, and market category are present on the live page and read at ingest time."
+}
