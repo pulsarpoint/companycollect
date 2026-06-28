@@ -9,7 +9,7 @@ concurrency:
   # concurrently — queued runs hold no process/connection, which keeps backfills
   # from exhausting the shared Postgres connection slots. Tune to taste.
   runs:
-    max_concurrent_runs: 4
+    max_concurrent_runs: 32
   # Per-pool op limit (default 1). Assets that share a single-writer DuckDB file
   # (e.g. pool="exchange_rates_v2_duckdb") are serialized to one writer.
   pools:
