@@ -113,8 +113,8 @@ statement grain.
   - `data/brazil_rfb_reference.duckdb`: code-list raw tables.
   - `data/brazil_rfb_companies.duckdb`: normalized `companies` and
     `establishments`.
-  - `data/brazil_rfb_contacts.duckdb`: normalized `company_contact_info` and
-    `websites`.
+  - `data/brazil_rfb_contact_info.duckdb`: normalized `company_contact_info`.
+  - `data/brazil_rfb_websites.duckdb`: email-derived `websites`.
 - **Staging tables**: `empresas_raw`, `estabelecimentos_raw`, `simples_raw`,
   `cnaes_raw`, `naturezas_raw`, `municipios_raw`, `paises_raw`,
   `qualificacoes_raw`, `motivos_raw`. Raw provenance and `source_payload_hash`
@@ -142,8 +142,10 @@ statement grain.
   joins, casts, code-list resolution, contact unpivoting, and CNAE unnesting.
 - **Stage boundaries**: company/establishment SQL writes to
   `brazil_rfb_companies.duckdb` after attaching raw-family databases read-only.
-  Contact/domain SQL writes to `brazil_rfb_contacts.duckdb` after attaching
-  `brazil_rfb_companies.duckdb` read-only.
+  Contact SQL writes to `brazil_rfb_contact_info.duckdb` after attaching
+  `brazil_rfb_companies.duckdb` read-only. Website SQL writes to
+  `brazil_rfb_websites.duckdb` after attaching `brazil_rfb_contact_info.duckdb`
+  read-only.
 - **Company grain**: `br_companies` is one row per `cnpj_basico` legal entity.
   It joins `Empresas` to the headquarters establishment (`cnpj_ordem='0001'`) for
   company-facing status, address, trade name, and primary CNAE. If a headquarters

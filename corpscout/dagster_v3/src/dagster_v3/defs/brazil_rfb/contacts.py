@@ -240,65 +240,75 @@ def build_brazil_rfb_contact_info(
 def build_brazil_rfb_websites(
     *,
     connection: duckdb.DuckDBPyConnection,
+    contact_info_database_path: str | Path,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
-    contacts_table = f"{DLT_DATASET_NAME}.{tables.COMPANY_CONTACT_INFO_TABLE}"
     websites_table = f"{DLT_DATASET_NAME}.{tables.WEBSITES_TABLE}"
 
-    connection.execute(
-        f"""
-        create or replace table {websites_table} as
-        with src as (
+    connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+    with attached_read_only_database(
+        connection,
+        database_path=contact_info_database_path,
+        alias="contact_info_db",
+    ) as contact_info_alias:
+        contacts_table = (
+            f"{contact_info_alias}.{DLT_DATASET_NAME}."
+            f"{tables.COMPANY_CONTACT_INFO_TABLE}"
+        )
+        connection.execute(
+            f"""
+            create or replace table {websites_table} as
+            with src as (
+                select
+                    country_iso2,
+                    source_slug,
+                    source_run_id,
+                    source_record_id,
+                    cnpj_basico,
+                    root_domain,
+                    domain_source,
+                    is_current
+                from {contacts_table}
+                where root_domain <> ''
+            ),
+            deduped as (
+                select
+                    *,
+                    row_number() over (
+                        partition by cnpj_basico, root_domain
+                        order by is_current desc, source_record_id
+                    ) as rn
+                from src
+            ),
+            picked as (
+                select * from deduped where rn = 1
+            ),
+            primaried as (
+                select
+                    *,
+                    case when row_number() over (
+                        partition by cnpj_basico
+                        order by is_current desc, length(root_domain), root_domain
+                    ) = 1 then 1 else 0 end as is_primary
+                from picked
+            )
             select
                 country_iso2,
                 source_slug,
                 source_run_id,
-                source_record_id,
+                concat('br_websites:', cnpj_basico, ':', root_domain) as source_record_id,
                 cnpj_basico,
                 root_domain,
                 domain_source,
-                is_current
-            from {contacts_table}
-            where root_domain <> ''
-        ),
-        deduped as (
-            select
-                *,
-                row_number() over (
-                    partition by cnpj_basico, root_domain
-                    order by is_current desc, source_record_id
-                ) as rn
-            from src
-        ),
-        picked as (
-            select * from deduped where rn = 1
-        ),
-        primaried as (
-            select
-                *,
-                case when row_number() over (
-                    partition by cnpj_basico
-                    order by is_current desc, length(root_domain), root_domain
-                ) = 1 then 1 else 0 end as is_primary
-            from picked
+                '' as website_url,
+                '' as website_normalized_url,
+                '' as website_host,
+                is_current,
+                is_primary,
+                now() as resolved_at
+            from primaried
+            """
         )
-        select
-            country_iso2,
-            source_slug,
-            source_run_id,
-            concat('br_websites:', cnpj_basico, ':', root_domain) as source_record_id,
-            cnpj_basico,
-            root_domain,
-            domain_source,
-            '' as website_url,
-            '' as website_normalized_url,
-            '' as website_host,
-            is_current,
-            is_primary,
-            now() as resolved_at
-        from primaried
-        """
-    )
     websites = int(
         connection.execute(f"select count(*) from {websites_table}").fetchone()[0]
     )
@@ -317,26 +327,4 @@ def build_brazil_rfb_websites(
     return {
         "websites": websites,
         "companies_with_websites": companies_with_websites,
-    }
-
-
-def build_brazil_rfb_contact_info_and_websites(
-    *,
-    connection: duckdb.DuckDBPyConnection,
-    companies_database_path: str | Path,
-    source_run_id: str,
-    log: Callable[..., object] | None = None,
-) -> dict[str, int]:
-    contact_counts = build_brazil_rfb_contact_info(
-        connection=connection,
-        companies_database_path=companies_database_path,
-        source_run_id=source_run_id,
-        log=log,
-    )
-    website_counts = build_brazil_rfb_websites(connection=connection, log=log)
-    return {
-        "contacts": contact_counts["contacts"],
-        "websites": website_counts["websites"],
-        "email_domains": contact_counts["email_domains"],
-        "companies_with_contacts": contact_counts["companies_with_contacts"],
     }

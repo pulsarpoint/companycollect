@@ -56,8 +56,8 @@ def test_brazil_rfb_assets_are_registered_with_stage_specific_pools() -> None:
     assert simples_asset.op.pool == "brazil_rfb_simples_duckdb"
     assert reference_asset.op.pool == "brazil_rfb_reference_duckdb"
     assert companies_asset.op.pool == "brazil_rfb_companies_duckdb"
-    assert contact_info_asset.op.pool == "brazil_rfb_contacts_duckdb"
-    assert websites_asset.op.pool == "brazil_rfb_contacts_duckdb"
+    assert contact_info_asset.op.pool == "brazil_rfb_contact_info_duckdb"
+    assert websites_asset.op.pool == "brazil_rfb_websites_duckdb"
     assert clickhouse_companies_asset.op.pool is None
     assert clickhouse_establishments_asset.op.pool is None
     assert clickhouse_contact_info_asset.op.pool is None

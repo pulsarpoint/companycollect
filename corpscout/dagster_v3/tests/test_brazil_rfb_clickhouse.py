@@ -68,12 +68,13 @@ def test_clickhouse_exports_replace_companies_and_establishments(tmp_path: Path)
 
 def test_clickhouse_exports_replace_contact_info_and_websites(tmp_path: Path) -> None:
     companies_path = _build_company_stage(tmp_path)
-    contacts_path = tmp_path / "br_contacts.duckdb"
+    contacts_path = tmp_path / "br_contact_info.duckdb"
+    websites_path = tmp_path / "br_websites.duckdb"
     fake_client = FakeClickHouseClient()
     fake_resource = FakeClickHouseResource(fake_client)
 
     with duckdb.connect(str(contacts_path)) as connection:
-        contacts.build_brazil_rfb_contact_info_and_websites(
+        contacts.build_brazil_rfb_contact_info(
             connection=connection,
             companies_database_path=companies_path,
             source_run_id="run-contacts",
@@ -81,6 +82,11 @@ def test_clickhouse_exports_replace_contact_info_and_websites(tmp_path: Path) ->
         contact_rows = clickhouse.export_brazil_rfb_clickhouse_contact_info(
             duckdb_connection=connection,
             clickhouse=fake_resource,
+        )
+    with duckdb.connect(str(websites_path)) as connection:
+        contacts.build_brazil_rfb_websites(
+            connection=connection,
+            contact_info_database_path=contacts_path,
         )
         website_rows = clickhouse.export_brazil_rfb_clickhouse_websites(
             duckdb_connection=connection,

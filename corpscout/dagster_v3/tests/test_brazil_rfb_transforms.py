@@ -260,21 +260,30 @@ def test_build_contact_info_and_websites_extracts_unique_email_domains(
     tmp_path: Path,
 ) -> None:
     companies_path = _build_company_stage(tmp_path)
-    contacts_path = tmp_path / "br_contacts.duckdb"
+    contacts_path = tmp_path / "br_contact_info.duckdb"
+    websites_path = tmp_path / "br_websites.duckdb"
     _insert_contact_filter_rows(companies_path)
 
     with duckdb.connect(str(contacts_path)) as connection:
-        counts = contacts.build_brazil_rfb_contact_info_and_websites(
+        contact_counts = contacts.build_brazil_rfb_contact_info(
             connection=connection,
             companies_database_path=companies_path,
             source_run_id="run-contacts",
         )
+    with duckdb.connect(str(websites_path)) as connection:
+        website_counts = contacts.build_brazil_rfb_websites(
+            connection=connection,
+            contact_info_database_path=contacts_path,
+        )
 
-    assert counts == {
+    assert contact_counts == {
         "contacts": 6,
-        "websites": 1,
         "email_domains": 1,
         "companies_with_contacts": 5,
+    }
+    assert website_counts == {
+        "websites": 1,
+        "companies_with_websites": 1,
     }
     with duckdb.connect(str(contacts_path), read_only=True) as connection:
         contact_rows = connection.execute(
@@ -285,6 +294,7 @@ def test_build_contact_info_and_websites_extracts_unique_email_domains(
             order by cnpj_basico, contact_type, contact_value
             """
         ).fetchall()
+    with duckdb.connect(str(websites_path), read_only=True) as connection:
         website_rows = connection.execute(
             f"""
             select cnpj_basico, root_domain, domain_source, website_url,
@@ -320,13 +330,19 @@ def test_build_contact_info_and_websites_extracts_unique_email_domains(
 
 def test_contact_domain_tables_match_clickhouse_export_contract(tmp_path: Path) -> None:
     companies_path = _build_company_stage(tmp_path)
-    contacts_path = tmp_path / "br_contacts.duckdb"
+    contacts_path = tmp_path / "br_contact_info.duckdb"
+    websites_path = tmp_path / "br_websites.duckdb"
 
     with duckdb.connect(str(contacts_path)) as connection:
-        contacts.build_brazil_rfb_contact_info_and_websites(
+        contacts.build_brazil_rfb_contact_info(
             connection=connection,
             companies_database_path=companies_path,
             source_run_id="run-contacts",
+        )
+    with duckdb.connect(str(websites_path)) as connection:
+        contacts.build_brazil_rfb_websites(
+            connection=connection,
+            contact_info_database_path=contacts_path,
         )
 
     with duckdb.connect(str(contacts_path), read_only=True) as connection:
@@ -336,6 +352,7 @@ def test_contact_domain_tables_match_clickhouse_export_contract(tmp_path: Path) 
                 f"describe {tables.DLT_DATASET_NAME}.{tables.COMPANY_CONTACT_INFO_TABLE}"
             ).fetchall()
         ]
+    with duckdb.connect(str(websites_path), read_only=True) as connection:
         website_columns = [
             row[0]
             for row in connection.execute(
