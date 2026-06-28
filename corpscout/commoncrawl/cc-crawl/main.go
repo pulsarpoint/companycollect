@@ -117,14 +117,6 @@ func main() {
 		}
 	}
 
-	// embed mode REUSES the industry worklist (same pages) and writes only the raw vectors into the
-	// sibling data/embedding/ tree — no ClickHouse, no load step.
-	wlMode, embedTree := mode, ""
-	if mode == "embed" {
-		wlMode = "industry"
-		embedTree = filepath.Join(filepath.Dir(data), "embedding")
-	}
-
 	if err := os.MkdirAll(filepath.Join(data, "logs"), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -143,105 +135,154 @@ func main() {
 	lg := slog.New(slog.NewJSONHandler(io.MultiWriter(os.Stdout, logFile), nil))
 	lg.Info("start", "mode", mode, "parts", *partsF, "crawl", crawl, "log", logPath)
 
+	pc := partCtx{
+		lg: lg, data: data, builder: builder, worker: worker, crawl: crawl, maxPages: maxPages,
+		indConc: *indConcF, embedConc: *embedConcF, techConc: *techConcF,
+	}
 	var done, skipped, failed int
 	for p := lo; p <= hi; p++ {
-		plg := lg.With("mode", mode, "part", p)
-		shard := filepath.Join(data, fmt.Sprintf("shard_%s_%d.parquet", wlMode, p))
-		outDir := filepath.Join(data, fmt.Sprintf("out_%s_%d", mode, p))
-		if mode == "embed" {
-			outDir = filepath.Join(embedTree, fmt.Sprintf("out_industry_%d", p))
+		var oc outcome
+		switch mode {
+		case "industry":
+			oc = runIndustryPart(pc, p)
+		case "tech":
+			oc = runTechPart(pc, p)
+		case "embed":
+			oc = runEmbedPart(pc, p)
 		}
-		// industry/tech gate on the .loaded marker — a "done" part includes a remote ClickHouse load that
-		// isn't visible in local files. embed has NO marker: its only output is embeddings.parquet, so the
-		// worker verifies that file directly (skip if a valid non-empty parquet already exists).
-		marker := outDir + ".loaded"
-		if mode != "embed" {
-			if _, err := os.Stat(marker); err == nil {
-				plg.Info("skip", "reason", "already loaded")
-				skipped++
-				continue
-			}
-		}
-
-		// 1. worklist — build if missing (atomic tmp + rename).
-		if _, err := os.Stat(shard); err != nil {
-			tmp := shard + ".tmp"
-			args := []string{"run", "python", "-m", "index_builder",
-				"--mode", wlMode, "--max-pages", maxPages, "--crawl", crawl, "--part", strconv.Itoa(p), "--out", tmp}
-			plg.Info("worklist.run", "cmd", "uv "+strings.Join(args, " "))
-			code, _, el := runStep("uv", args, builder)
-			plg.Info("worklist.exit", "exit", code, "elapsed", el.String())
-			if code != 0 {
-				os.Remove(tmp)
-				plg.Error("failed", "step", "worklist", "exit", code)
-				failed++
-				continue
-			}
-			os.Rename(tmp, shard)
-		}
-
-		// 2. produce (exec #1). embed: NO RemoveAll — the worker verifies the existing embeddings.parquet
-		// and skips when it's already complete, so wiping it here would defeat the whole point. industry/
-		// tech: clear any stale/partial output (the worker requires an empty --out) — safe, since a done
-		// part already `continue`d above on its marker.
-		if mode != "embed" {
-			os.RemoveAll(outDir)
-		}
-		pArgs := append(append([]string{mode}, passArgs(mode, *indConcF, *embedConcF, *techConcF)...),
-			"--worklist", shard, "--crawl-id", crawl, "--out", outDir)
-		plg.Info("produce.run", "cmd", worker+" "+strings.Join(pArgs, " "))
-		code, pout, pel := runStep(worker, pArgs, "")
-		if code != 0 {
-			plg.Error("failed", "step", "produce", "exit", code, "elapsed", pel.String(), "loader", "skipped")
+		switch oc {
+		case ocDone:
+			done++
+		case ocSkipped:
+			skipped++
+		case ocFailed:
 			failed++
-			continue
 		}
-
-		// embed: no load, no marker. The worker self-verified embeddings.parquet — it either skipped a
-		// complete one ("already present") or wrote a fresh one. The parquet IS the done-signal.
-		if mode == "embed" {
-			if _, err := os.Stat(filepath.Join(outDir, "embeddings.parquet")); err != nil {
-				plg.Error("failed", "step", "embed", "exit", 0, "reason", "embeddings.parquet missing")
-				failed++
-				continue
-			}
-			if strings.Contains(pout, "already present") {
-				plg.Info("skip", "reason", "already embedded", "embeddings", firstInt(reEmbeds, pout))
-				skipped++
-			} else {
-				plg.Info("done", "embeddings", firstInt(reEmbeds, pout), "elapsed", pel.String())
-				done++
-			}
-			continue
-		}
-
-		// 3. industry/tech: gate the loader on a clean produce, load into ClickHouse, then mark.
-		if _, err := os.Stat(filepath.Join(outDir, "domains.parquet")); err != nil {
-			plg.Error("failed", "step", "produce", "exit", 0, "reason", "domains.parquet missing", "loader", "skipped")
-			failed++
-			continue
-		}
-		produced := firstInt(reDomains, pout)
-		plg.Info("produce.exit", "exit", 0, "produced", produced, "elapsed", pel.String())
-
-		lArgs := []string{"load", "--dir", outDir}
-		plg.Info("load.run", "cmd", worker+" "+strings.Join(lArgs, " "))
-		lcode, lout, lel := runStep(worker, lArgs, "")
-		rows := sumInt(reLoaded, lout)
-		if lcode != 0 {
-			plg.Error("failed", "step", "load", "exit", lcode, "elapsed", lel.String())
-			failed++
-			continue
-		}
-		plg.Info("load.exit", "exit", 0, "rows_to_clickhouse", rows, "elapsed", lel.String())
-
-		if err := os.WriteFile(marker, nil, 0o644); err != nil {
-			plg.Warn("marker.write", "err", err.Error())
-		}
-		plg.Info("done", "produced", produced, "rows_to_clickhouse", rows)
-		done++
 	}
 	lg.Info("complete", "mode", mode, "lo", lo, "hi", hi, "done", done, "skipped", skipped, "failed", failed)
+}
+
+// outcome is what a per-part runner reports back to the main loop for tallying.
+type outcome int
+
+const (
+	ocFailed outcome = iota
+	ocSkipped
+	ocDone
+)
+
+// partCtx is the shared, per-run configuration handed to each per-part runner.
+type partCtx struct {
+	lg                                     *slog.Logger
+	data, builder, worker, crawl, maxPages string
+	indConc, embedConc, techConc           string
+}
+
+// ensureWorklist returns the path to shard_<wlMode>_<p>.parquet, building it via index_builder if absent
+// (atomic tmp + rename). ok=false means the build failed (the caller should fail the part).
+func ensureWorklist(pc partCtx, plg *slog.Logger, wlMode string, p int) (shard string, ok bool) {
+	shard = filepath.Join(pc.data, fmt.Sprintf("shard_%s_%d.parquet", wlMode, p))
+	if _, err := os.Stat(shard); err == nil {
+		return shard, true
+	}
+	tmp := shard + ".tmp"
+	args := []string{"run", "python", "-m", "index_builder",
+		"--mode", wlMode, "--max-pages", pc.maxPages, "--crawl", pc.crawl, "--part", strconv.Itoa(p), "--out", tmp}
+	plg.Info("worklist.run", "cmd", "uv "+strings.Join(args, " "))
+	code, _, el := runStep("uv", args, pc.builder)
+	plg.Info("worklist.exit", "exit", code, "elapsed", el.String())
+	if code != 0 {
+		os.Remove(tmp)
+		plg.Error("failed", "step", "worklist", "exit", code)
+		return "", false
+	}
+	os.Rename(tmp, shard)
+	return shard, true
+}
+
+// runIndustryPart / runTechPart are the load-gated modes: produce → load into ClickHouse → mark. A "done"
+// part means produced AND loaded, recorded by the out_<mode>_<p>.loaded marker (the load is a remote side
+// effect not visible in local files, so the marker is the only record of it).
+func runIndustryPart(pc partCtx, p int) outcome { return runProduceLoad(pc, "industry", p) }
+func runTechPart(pc partCtx, p int) outcome     { return runProduceLoad(pc, "tech", p) }
+
+func runProduceLoad(pc partCtx, mode string, p int) outcome {
+	plg := pc.lg.With("mode", mode, "part", p)
+	outDir := filepath.Join(pc.data, fmt.Sprintf("out_%s_%d", mode, p))
+	marker := outDir + ".loaded"
+	if _, err := os.Stat(marker); err == nil {
+		plg.Info("skip", "reason", "already loaded")
+		return ocSkipped
+	}
+	shard, ok := ensureWorklist(pc, plg, mode, p)
+	if !ok {
+		return ocFailed
+	}
+
+	// Clear any stale/partial output (the worker requires an empty --out); safe — a done part already
+	// returned above on its marker.
+	os.RemoveAll(outDir)
+	pArgs := append(append([]string{mode}, passArgs(mode, pc.indConc, pc.embedConc, pc.techConc)...),
+		"--worklist", shard, "--crawl-id", pc.crawl, "--out", outDir)
+	plg.Info("produce.run", "cmd", pc.worker+" "+strings.Join(pArgs, " "))
+	code, pout, pel := runStep(pc.worker, pArgs, "")
+	if code != 0 {
+		plg.Error("failed", "step", "produce", "exit", code, "elapsed", pel.String(), "loader", "skipped")
+		return ocFailed
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "domains.parquet")); err != nil {
+		plg.Error("failed", "step", "produce", "exit", 0, "reason", "domains.parquet missing", "loader", "skipped")
+		return ocFailed
+	}
+	produced := firstInt(reDomains, pout)
+	plg.Info("produce.exit", "exit", 0, "produced", produced, "elapsed", pel.String())
+
+	lArgs := []string{"load", "--dir", outDir}
+	plg.Info("load.run", "cmd", pc.worker+" "+strings.Join(lArgs, " "))
+	lcode, lout, lel := runStep(pc.worker, lArgs, "")
+	rows := sumInt(reLoaded, lout)
+	if lcode != 0 {
+		plg.Error("failed", "step", "load", "exit", lcode, "elapsed", lel.String())
+		return ocFailed
+	}
+	plg.Info("load.exit", "exit", 0, "rows_to_clickhouse", rows, "elapsed", lel.String())
+
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		plg.Warn("marker.write", "err", err.Error())
+	}
+	plg.Info("done", "produced", produced, "rows_to_clickhouse", rows)
+	return ocDone
+}
+
+// runEmbedPart is the embed-only mode: REUSE the industry worklist, run ONE embed exec, no load, no
+// marker. There is deliberately NO RemoveAll — the worker opens the existing embeddings.parquet and skips
+// the part if it's already complete (the write is atomic, so a readable parquet == a complete run);
+// wiping it would defeat that. Vectors land in the sibling data/embedding/ tree.
+func runEmbedPart(pc partCtx, p int) outcome {
+	plg := pc.lg.With("mode", "embed", "part", p)
+	shard, ok := ensureWorklist(pc, plg, "industry", p) // embed reuses the industry worklist
+	if !ok {
+		return ocFailed
+	}
+	outDir := filepath.Join(filepath.Dir(pc.data), "embedding", fmt.Sprintf("out_industry_%d", p))
+	pArgs := append(append([]string{"embed"}, passArgs("embed", pc.indConc, pc.embedConc, pc.techConc)...),
+		"--worklist", shard, "--crawl-id", pc.crawl, "--out", outDir)
+	plg.Info("embed.run", "cmd", pc.worker+" "+strings.Join(pArgs, " "))
+	code, pout, pel := runStep(pc.worker, pArgs, "")
+	if code != 0 {
+		plg.Error("failed", "step", "embed", "exit", code, "elapsed", pel.String())
+		return ocFailed
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "embeddings.parquet")); err != nil {
+		plg.Error("failed", "step", "embed", "exit", 0, "reason", "embeddings.parquet missing")
+		return ocFailed
+	}
+	if strings.Contains(pout, "already present") { // worker verified an existing complete output
+		plg.Info("skip", "reason", "already embedded", "embeddings", firstInt(reEmbeds, pout))
+		return ocSkipped
+	}
+	plg.Info("done", "embeddings", firstInt(reEmbeds, pout), "elapsed", pel.String())
+	return ocDone
 }
 
 // passArgs builds the per-mode cc-enrich-worker pass flags.
