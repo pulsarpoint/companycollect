@@ -11,7 +11,7 @@ sources:
       - name: eligible_companies
         meta:
           dagster:
-            asset_key: ["finland_xbrl_eligible_companies"]
+            asset_key: ["finland_xbrl_company_seed_duckdb"]
       - name: fi_prh_xbrl_statement_documents
         meta:
           dagster:

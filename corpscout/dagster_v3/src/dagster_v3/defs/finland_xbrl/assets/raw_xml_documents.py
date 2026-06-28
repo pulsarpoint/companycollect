@@ -24,8 +24,8 @@ from dagster_v3.defs.finland_xbrl.assets.common import (
     XBRL_ELIGIBLE_COMPANIES_TABLE,
     _registration_window,
 )
-from dagster_v3.defs.finland_xbrl.assets.eligible_companies import (
-    finland_xbrl_eligible_companies,
+from dagster_v3.defs.finland_xbrl.assets.company_seed_duckdb import (
+    finland_xbrl_company_seed_duckdb,
 )
 from dagster_v3.defs.finland_xbrl.assets.financial_reports import (
     finland_xbrl_financial_reports_backfill_duckdb,
@@ -238,7 +238,7 @@ def _materialize_raw_xml_window(
     group_name="finland_xbrl",
     deps=[
         finland_xbrl_financial_reports_backfill_duckdb,
-        finland_xbrl_eligible_companies,
+        finland_xbrl_company_seed_duckdb,
     ],
     partitions_def=BACKFILL_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
@@ -269,7 +269,7 @@ def finland_xbrl_raw_xml_documents_backfill(
     group_name="finland_xbrl",
     deps=[
         finland_xbrl_financial_reports_incremental_duckdb,
-        finland_xbrl_eligible_companies,
+        finland_xbrl_company_seed_duckdb,
     ],
     partitions_def=DAILY_PARTITIONS,
     kinds={"python", "s3", "xml"},

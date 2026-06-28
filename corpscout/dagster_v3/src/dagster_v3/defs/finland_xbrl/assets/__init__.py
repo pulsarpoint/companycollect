@@ -28,9 +28,9 @@ from dagster_v3.defs.finland_xbrl.assets.dbt_assets import (
     finland_xbrl_dbt_assets,
     finland_xbrl_dbt_project,
 )
-from dagster_v3.defs.finland_xbrl.assets.eligible_companies import (
-    finland_xbrl_eligible_companies,
-    materialize_eligible_companies_snapshot,
+from dagster_v3.defs.finland_xbrl.assets.company_seed_duckdb import (
+    build_finland_xbrl_company_seed_duckdb,
+    finland_xbrl_company_seed_duckdb,
 )
 from dagster_v3.defs.finland_xbrl.assets.financial_reports import (
     XbrlFinancialReportsConfig,
@@ -120,7 +120,7 @@ __all__ = [
     "finland_xbrl_backfill_job",
     "finland_xbrl_dbt_assets",
     "finland_xbrl_dbt_project",
-    "finland_xbrl_eligible_companies",
+    "finland_xbrl_company_seed_duckdb",
     "finland_xbrl_financial_reports_backfill_duckdb",
     "finland_xbrl_financial_reports_duckdb",
     "finland_xbrl_financial_reports_incremental_duckdb",
@@ -140,7 +140,7 @@ __all__ = [
     "load_parsed_table_frame",
     "load_xbrl_document_manifest",
     "load_xml_document_catalog_frame",
-    "materialize_eligible_companies_snapshot",
+    "build_finland_xbrl_company_seed_duckdb",
     "merge_xml_document_catalog",
     "parse_xbrl_documents",
     "parsed_duckdb_observability_metadata",
@@ -157,7 +157,7 @@ defs = dg.Definitions(
         finland_xbrl_financial_reports_backfill_duckdb,
         finland_xbrl_financial_reports_incremental_duckdb,
         finland_xbrl_financial_reports_duckdb,
-        finland_xbrl_eligible_companies,
+        finland_xbrl_company_seed_duckdb,
         finland_xbrl_dbt_assets,
         finland_xbrl_raw_xml_documents_backfill,
         finland_xbrl_raw_xml_documents_incremental,

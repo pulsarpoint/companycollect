@@ -171,7 +171,7 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         for key in repo.get_job("finland_xbrl_backfill_job").asset_layer.executable_asset_keys
     }
     assert backfill == {
-        "finland_xbrl_eligible_companies",
+        "finland_xbrl_company_seed_duckdb",
         "finland_xbrl_financial_reports_backfill_duckdb",
         "finland_xbrl_raw_xml_documents_backfill",
         "finland_xbrl_parse_backfill",
@@ -185,7 +185,7 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         for key in repo.get_job("finland_xbrl_incremental_job").asset_layer.executable_asset_keys
     }
     assert incremental == {
-        "finland_xbrl_eligible_companies",
+        "finland_xbrl_company_seed_duckdb",
         "finland_xbrl_financial_reports_incremental_duckdb",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_incremental",
@@ -272,7 +272,7 @@ def test_xbrl_transforms_are_dbt_assets():
     # eligible model depends on XBRL reports plus the copied YTJ eligibility snapshot.
     eligible_deps = graph.get(AssetKey(["finland_xbrl_eligible_financial_reports"])).parent_keys
     dep_names = {k.path[-1] for k in eligible_deps}
-    assert {"finland_xbrl_financial_reports_duckdb", "finland_xbrl_eligible_companies"} <= dep_names
+    assert {"finland_xbrl_financial_reports_duckdb", "finland_xbrl_company_seed_duckdb"} <= dep_names
 
 
 def test_xbrl_parsed_config_uses_xml_documents_manifest_by_default() -> None:
@@ -294,17 +294,18 @@ def test_xbrl_parsed_config_rejects_non_manifest_config(kwargs: dict) -> None:
         XbrlParsedConfig(**kwargs)
 
 
-def test_xbrl_asset_graph_models_eligible_companies_downstream_of_ytj_duckdb() -> None:
+def test_xbrl_asset_graph_models_company_seed_duckdb_downstream_of_ytj_duckdb() -> None:
     asset_graph = load_project_defs().resolve_asset_graph()
 
     assert dg.AssetKey("fi_prhytj_statuses") not in asset_graph.get_all_asset_keys()
     assert dg.AssetKey("fi_prhytj_websites") not in asset_graph.get_all_asset_keys()
     assert dg.AssetKey("finland_xbrl_financial_reports_duckdb") in asset_graph.get_all_asset_keys()
-    assert asset_graph.get(dg.AssetKey("finland_xbrl_eligible_companies")).parent_keys == {
+    assert dg.AssetKey("finland_xbrl_eligible_companies") not in asset_graph.get_all_asset_keys()
+    assert asset_graph.get(dg.AssetKey("finland_xbrl_company_seed_duckdb")).parent_keys == {
         dg.AssetKey("finland_ytj_all_companies_duckdb")
     }
     assert asset_graph.get(dg.AssetKey("finland_xbrl_eligible_financial_reports")).parent_keys == {
-        dg.AssetKey("finland_xbrl_eligible_companies"),
+        dg.AssetKey("finland_xbrl_company_seed_duckdb"),
         dg.AssetKey("finland_xbrl_financial_reports_duckdb"),
     }
 
@@ -451,13 +452,13 @@ def test_xbrl_asset_graph_models_xml_documents_catalog_as_bridge() -> None:
     }
     assert asset_graph.get(dg.AssetKey("finland_xbrl_raw_xml_documents_backfill")).parent_keys == {
         dg.AssetKey("finland_xbrl_financial_reports_backfill_duckdb"),
-        dg.AssetKey("finland_xbrl_eligible_companies"),
+        dg.AssetKey("finland_xbrl_company_seed_duckdb"),
     }
     assert asset_graph.get(
         dg.AssetKey("finland_xbrl_raw_xml_documents_incremental")
     ).parent_keys == {
         dg.AssetKey("finland_xbrl_financial_reports_incremental_duckdb"),
-        dg.AssetKey("finland_xbrl_eligible_companies"),
+        dg.AssetKey("finland_xbrl_company_seed_duckdb"),
     }
     assert asset_graph.get(dg.AssetKey(XML_DOCUMENTS_TABLE)).parent_keys == {
         dg.AssetKey("finland_xbrl_raw_xml_documents")
@@ -700,7 +701,7 @@ def test_load_eligible_financial_report_rows_filters_by_registration_window_only
     ]
 
 
-def test_materialize_eligible_companies_snapshot_copies_active_companies_with_websites(
+def test_build_finland_xbrl_company_seed_duckdb_copies_active_companies_with_websites(
     tmp_path: Path,
 ) -> None:
     ytj_database_path = tmp_path / "finland_ytj.duckdb"
@@ -728,16 +729,17 @@ def test_materialize_eligible_companies_snapshot_copies_active_companies_with_we
             """
         )
 
-    result = xbrl_assets.materialize_eligible_companies_snapshot(
+    result = xbrl_assets.build_finland_xbrl_company_seed_duckdb(
         source_duckdb=duckdb_resource(xbrl_database_path),
         ytj_duckdb=duckdb_resource(ytj_database_path),
         log_info=log_messages.append,
     )
 
-    assert result.metadata["row_count"] == 2
+    assert result.metadata["eligible_companies_row_count"] == 2
+    assert result.metadata["seed_table"] == xbrl_assets.XBRL_ELIGIBLE_COMPANIES_TABLE
     assert log_messages == [
-        f"Copying Finland XBRL eligible companies from YTJ DuckDB {ytj_database_path}",
-        "Finland XBRL eligible companies copied: row_count=2",
+        f"Building Finland XBRL company seed DuckDB from YTJ DuckDB {ytj_database_path}",
+        "Finland XBRL company seed DuckDB built: eligible_companies_row_count=2",
     ]
     with duckdb.connect(str(xbrl_database_path), read_only=True) as connection:
         rows = connection.execute(
@@ -800,7 +802,7 @@ def test_duckdb_xbrl_assets_use_dedicated_finland_xbrl_duckdb_pool():
     for key in (
         "finland_xbrl_financial_reports_backfill_duckdb",
         "finland_xbrl_financial_reports_incremental_duckdb",
-        "finland_xbrl_eligible_companies",
+        "finland_xbrl_company_seed_duckdb",
         "finland_xbrl_raw_xml_documents_backfill",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_backfill",

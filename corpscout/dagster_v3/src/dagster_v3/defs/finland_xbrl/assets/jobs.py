@@ -5,7 +5,7 @@ from dagster_v3.defs.finland_xbrl.assets.common import BACKFILL_PARTITIONS, DAIL
 finland_xbrl_backfill_job = dg.define_asset_job(
     "finland_xbrl_backfill_job",
     selection=dg.AssetSelection.assets(
-        "finland_xbrl_eligible_companies",
+        "finland_xbrl_company_seed_duckdb",
         "finland_xbrl_financial_reports_backfill_duckdb",
         "finland_xbrl_raw_xml_documents_backfill",
         "finland_xbrl_parse_backfill",
@@ -15,7 +15,7 @@ finland_xbrl_backfill_job = dg.define_asset_job(
 finland_xbrl_incremental_job = dg.define_asset_job(
     "finland_xbrl_incremental_job",
     selection=dg.AssetSelection.assets(
-        "finland_xbrl_eligible_companies",
+        "finland_xbrl_company_seed_duckdb",
         "finland_xbrl_financial_reports_incremental_duckdb",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_incremental",
