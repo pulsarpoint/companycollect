@@ -10,7 +10,6 @@ TranslateWorkflow:
   2. dump_activity           — queue → corpscout.text_translations (batched, heartbeating)
   3. summarize_queue_activity — read final queue summary
 """
-import asyncio
 import logging
 import os
 import time
@@ -264,8 +263,8 @@ def summarize_queue_once(queue_duckdb_path: str) -> dict:
 
 
 @activity.defn
-async def build_queue_activity(params: BuildQueueActivityInput) -> SeedResult:
-    return await asyncio.to_thread(build_queue_once, params)
+def build_queue_activity(params: BuildQueueActivityInput) -> SeedResult:
+    return build_queue_once(params)
 
 
 @activity.defn
@@ -292,18 +291,18 @@ async def start_translate_workflow_activity(params: StartTranslateWorkflowInput)
 
 
 @activity.defn
-async def translate_loop_activity(params: TranslateLoopActivityInput) -> TranslateLoopResult:
-    return await asyncio.to_thread(translate_loop_once, params)
+def translate_loop_activity(params: TranslateLoopActivityInput) -> TranslateLoopResult:
+    return translate_loop_once(params)
 
 
 @activity.defn
-async def dump_activity(params: DumpActivityInput) -> int:
-    return await asyncio.to_thread(dump_once, params)
+def dump_activity(params: DumpActivityInput) -> int:
+    return dump_once(params)
 
 
 @activity.defn
-async def summarize_queue_activity(queue_duckdb_path: str) -> dict:
-    return await asyncio.to_thread(summarize_queue_once, queue_duckdb_path)
+def summarize_queue_activity(queue_duckdb_path: str) -> dict:
+    return summarize_queue_once(queue_duckdb_path)
 
 
 # ---------------------------------------------------------------------------

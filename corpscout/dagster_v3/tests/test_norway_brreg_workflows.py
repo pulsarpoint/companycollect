@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import uuid
 
+import pyarrow as pa
 import pytest
 from temporalio import activity
 from temporalio.testing import WorkflowEnvironment
@@ -82,6 +84,9 @@ def test_build_queue_workflow_seeds_then_starts_translate(tmp_path, monkeypatch)
                 task_queue="test-bq",
                 workflows=[wf.BuildQueueWorkflow],
                 activities=[wf.build_queue_activity, _fake_start],
+                # Sync activities require an executor (heartbeat uses
+                # run_coroutine_threadsafe — only available for sync+executor).
+                activity_executor=concurrent.futures.ThreadPoolExecutor(max_workers=2),
             ):
                 return await env.client.execute_workflow(
                     wf.BuildQueueWorkflow.run,
@@ -161,10 +166,12 @@ def test_translate_workflow_drains_queue_and_dumps(tmp_path, monkeypatch):
                 task_queue="test-tr",
                 workflows=[wf.TranslateWorkflow],
                 activities=[wf.dump_activity, wf.summarize_queue_activity],
+                activity_executor=concurrent.futures.ThreadPoolExecutor(max_workers=2),
             ), Worker(
                 env.client,
                 task_queue=wf.LLM_TASK_QUEUE,
                 activities=[wf.translate_loop_activity],
+                activity_executor=concurrent.futures.ThreadPoolExecutor(max_workers=2),
             ):
                 return await env.client.execute_workflow(
                     wf.TranslateWorkflow.run,
@@ -263,10 +270,12 @@ def test_translate_workflow_tolerates_max_batch_failures(tmp_path, monkeypatch):
                 task_queue="test-tr2",
                 workflows=[wf.TranslateWorkflow],
                 activities=[wf.dump_activity, wf.summarize_queue_activity],
+                activity_executor=concurrent.futures.ThreadPoolExecutor(max_workers=2),
             ), Worker(
                 env.client,
                 task_queue=wf.LLM_TASK_QUEUE,
                 activities=[wf.translate_loop_activity],
+                activity_executor=concurrent.futures.ThreadPoolExecutor(max_workers=2),
             ):
                 return await env.client.execute_workflow(
                     wf.TranslateWorkflow.run,
@@ -279,3 +288,117 @@ def test_translate_workflow_tolerates_max_batch_failures(tmp_path, monkeypatch):
     # dump still called even on failure.
     assert len(dump_calls) == 1
     assert result.failed_batches == 6
+
+
+# ---------------------------------------------------------------------------
+# Integration test: real build_queue_activity via real Worker + fake CH client
+#
+# This test exercises the FULL activity path through a real Temporal worker
+# (WorkflowEnvironment) to catch the 'no running event loop' regression where
+# build_queue_once called activity.heartbeat() inside asyncio.to_thread().
+# ---------------------------------------------------------------------------
+
+
+class _FakeCHClient:
+    """Minimal ClickHouse fake that returns pre-canned Arrow tables.
+
+    Mirrors the fake in test_norway_brreg_seed.py but lives here to keep
+    this file self-contained.
+    """
+
+    def __init__(self, arrow_per_column: dict[str, pa.Table]):
+        self._data = arrow_per_column
+        self.calls: list[str] = []
+
+    def query_arrow(self, sql: str, *, parameters: dict | None = None) -> pa.Table:
+        col = (parameters or {}).get("column", "")
+        self.calls.append(col)
+        return self._data.get(col, pa.table({"source_text": pa.array([], type=pa.string())}))
+
+    def command(self, sql, parameters=None):
+        pass
+
+    def insert(self, table, data, column_names=None):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_build_queue_activity_heartbeat_via_real_worker(tmp_path, monkeypatch):
+    """build_queue_activity must complete when run through a real Temporal worker.
+
+    This is the regression test for the 'no running event loop' crash.  The
+    bug was that build_queue_activity was declared async and delegated to
+    asyncio.to_thread.  When build_queue_once called activity.heartbeat() from
+    that thread, temporalio's _heartbeat() called asyncio.create_task() which
+    raises RuntimeError from a non-event-loop thread.
+
+    The fix: declare the four blocking activities as plain sync defs and give
+    both workers an activity_executor=ThreadPoolExecutor.  Temporalio then
+    wraps the heartbeat with asyncio.run_coroutine_threadsafe before passing it
+    to the worker thread — the correct thread-safe path.
+    """
+    queue_path = str(tmp_path / "q.duckdb")
+
+    fake_ch = _FakeCHClient({
+        "articles_purpose_original": pa.table(
+            {"source_text": pa.array(["Holding", "Bygg"], type=pa.string())}
+        ),
+        "activity_text_original": pa.table(
+            {"source_text": pa.array(["Energi"], type=pa.string())}
+        ),
+        "legal_form_description_original": pa.table({
+            "source_text": pa.array(["Aksjeselskap"], type=pa.string()),
+            "static_key": pa.array(["AS"], type=pa.string()),
+        }),
+    })
+
+    import translator.clickhouse as _ch_mod
+    monkeypatch.setattr(_ch_mod, "clickhouse_client_from_env", lambda: fake_ch)
+
+    params = wf.BuildQueueWorkflowInput(
+        source_slug="norway_brreg",
+        queue_duckdb_path=queue_path,
+        translate_workflow_id="translate-norway_brreg-test",
+        translate_task_queue="test-bq-integ-llm",
+        batch_size=50,
+        max_tokens=8192,
+        extra_body_json="{}",
+        max_batch_failures=5,
+    )
+
+    @activity.defn(name="start_translate_workflow_activity")
+    async def _fake_start(p: wf.StartTranslateWorkflowInput) -> str:
+        return "fake-translate-workflow-id"
+
+    async def _run():
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+            async with Worker(
+                env.client,
+                task_queue="test-bq-integ",
+                workflows=[wf.BuildQueueWorkflow],
+                activities=[wf.build_queue_activity, _fake_start],
+                activity_executor=executor,
+                max_concurrent_activities=8,
+            ):
+                return await env.client.execute_workflow(
+                    wf.BuildQueueWorkflow.run,
+                    params,
+                    id=f"test-integ-{uuid.uuid4()}",
+                    task_queue="test-bq-integ",
+                )
+
+    result = asyncio.run(_run())
+
+    # The seed must have processed items from the fake CH client.
+    assert result.dynamic_enqueued >= 0  # no crash = the fix works
+
+    # The DuckDB queue must contain the seeded items (3 dynamic texts).
+    q = TranslationQueue(queue_path)
+    q.initialize()
+    summary = q.summary()
+    assert summary.total_items == 3, (
+        f"expected 3 items in queue, got {summary.total_items}"
+    )

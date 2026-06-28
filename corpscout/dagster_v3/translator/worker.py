@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import concurrent.futures
 import logging
 import os
 
@@ -41,8 +42,20 @@ def llm_concurrency() -> int:
     return int(os.environ.get("TRANSLATOR_LLM_CONCURRENCY", str(DEFAULT_LLM_CONCURRENCY)))
 
 
+BUILD_MAX_WORKERS = 8
+
+
 def build_build_worker(client: object) -> Worker:
-    """Worker for the workflows + build/dump/summarize/handoff activities."""
+    """Worker for the workflows + build/dump/summarize/handoff activities.
+
+    The four blocking sync activities (build_queue, dump, summarize) run via
+    ThreadPoolExecutor so that activity.heartbeat() works correctly — heartbeat
+    requires the Temporal SDK's thread-safe heartbeat path, which is only
+    available for sync activities with a ThreadPoolExecutor executor.  Using
+    asyncio.to_thread() for async activities broke heartbeating because the
+    _heartbeat() path calls asyncio.create_task() which raises RuntimeError
+    ('no running event loop') from the worker thread.
+    """
     return Worker(
         client,
         task_queue=BUILD_TASK_QUEUE,
@@ -53,6 +66,8 @@ def build_build_worker(client: object) -> Worker:
             dump_activity,
             summarize_queue_activity,
         ],
+        activity_executor=concurrent.futures.ThreadPoolExecutor(max_workers=BUILD_MAX_WORKERS),
+        max_concurrent_activities=BUILD_MAX_WORKERS,
     )
 
 
@@ -63,6 +78,7 @@ def build_llm_worker(client: object, *, max_concurrent: int) -> Worker:
         task_queue=LLM_TASK_QUEUE,
         activities=[translate_loop_activity],
         max_concurrent_activities=max_concurrent,
+        activity_executor=concurrent.futures.ThreadPoolExecutor(max_workers=max_concurrent),
     )
 
 

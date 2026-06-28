@@ -1,4 +1,5 @@
 # tests/test_translator_worker.py
+import concurrent.futures
 import os
 
 from dotenv import load_dotenv
@@ -16,12 +17,22 @@ class _FakeWorker:
 
     instances: list[dict] = []
 
-    def __init__(self, client, *, task_queue, activities, workflows=None, max_concurrent_activities=None):
+    def __init__(
+        self,
+        client,
+        *,
+        task_queue,
+        activities,
+        workflows=None,
+        max_concurrent_activities=None,
+        activity_executor=None,
+    ):
         _FakeWorker.instances.append({
             "task_queue": task_queue,
             "workflows": list(workflows or []),
             "activities": list(activities),
             "max_concurrent_activities": max_concurrent_activities,
+            "activity_executor": activity_executor,
         })
 
 
@@ -43,6 +54,9 @@ def test_build_build_worker_registers_workflows_on_build_queue(monkeypatch):
             "dump_activity", "summarize_queue_activity"} <= names
     # translate_loop runs ONLY on the LLM worker, never the build worker.
     assert "translate_loop_activity" not in names
+    # Sync activities require a ThreadPoolExecutor so heartbeat works correctly.
+    assert isinstance(rec["activity_executor"], concurrent.futures.ThreadPoolExecutor)
+    assert rec["max_concurrent_activities"] == w.BUILD_MAX_WORKERS
 
 
 def test_build_llm_worker_gates_translate_loop_with_k(monkeypatch):
@@ -57,6 +71,8 @@ def test_build_llm_worker_gates_translate_loop_with_k(monkeypatch):
     assert names == {"translate_loop_activity"}
     # No workflows on the LLM worker.
     assert rec["workflows"] == []
+    # Sync translate_loop_activity requires a ThreadPoolExecutor for heartbeating.
+    assert isinstance(rec["activity_executor"], concurrent.futures.ThreadPoolExecutor)
 
 
 def test_llm_concurrency_defaults_to_2_and_reads_env(monkeypatch):
