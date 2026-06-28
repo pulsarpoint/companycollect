@@ -53,6 +53,8 @@ def download_finland_xbrl_raw_xml_documents(
     refresh_existing: bool,
     download_delay_seconds: float,
     sleep: Callable[[float], None] = time.sleep,
+    log_info: Callable[[str], None] | None = None,
+    progress_interval: int = 25,
 ) -> dg.MaterializeResult:
     object_store.ensure_bucket(XBRL_BUCKET)
 
@@ -62,13 +64,21 @@ def download_finland_xbrl_raw_xml_documents(
     bytes_downloaded = 0
     selected_at = datetime.now(UTC).isoformat()
     selected_financial_reports = financial_reports
+    total_reports = len(selected_financial_reports)
+    _log_raw_xml_download(
+        log_info,
+        f"XBRL raw XML download started: reports={total_reports} "
+        f"refresh_existing={refresh_existing}",
+    )
 
-    for report_index, report in enumerate(selected_financial_reports):
+    for report_index, report in enumerate(selected_financial_reports, start=1):
         business_id = str(report["business_id"])
         financial_date = str(report["financial_date"])
         registration_date = _optional_string(report.get("registration_date"))
         object_key = document_object_key(business_id, financial_date)
+        action = "downloaded"
         if not refresh_existing and object_store.exists(object_key, bucket=XBRL_BUCKET):
+            action = "reused"
             reused_count += 1
             documents.append(
                 {
@@ -88,34 +98,49 @@ def download_finland_xbrl_raw_xml_documents(
                     ),
                 }
             )
-            continue
-
-        body, source_url = xbrl_api.download_statement_xml(
-            business_id,
-            financial_date,
-        )
-        object_store.write_bytes(object_key, body, bucket=XBRL_BUCKET)
-        downloaded_count += 1
-        bytes_downloaded += len(body)
-        documents.append(
-            {
-                "business_id": business_id,
-                "financial_date": financial_date,
-                "registration_date": registration_date,
-                "object_key": object_key,
-                "source_url": source_url,
-                "xml_sha256": sha256(body).hexdigest(),
-                "xml_size_bytes": len(body),
-                "downloaded": True,
-                "discovery_registered_date_start": _optional_string(
-                    report.get("discovery_registered_date_start")
-                ),
-                "discovery_registered_date_end": _optional_string(
-                    report.get("discovery_registered_date_end")
-                ),
-            }
-        )
-        if download_delay_seconds > 0 and report_index < len(selected_financial_reports) - 1:
+        else:
+            body, source_url = xbrl_api.download_statement_xml(
+                business_id,
+                financial_date,
+            )
+            object_store.write_bytes(object_key, body, bucket=XBRL_BUCKET)
+            downloaded_count += 1
+            bytes_downloaded += len(body)
+            documents.append(
+                {
+                    "business_id": business_id,
+                    "financial_date": financial_date,
+                    "registration_date": registration_date,
+                    "object_key": object_key,
+                    "source_url": source_url,
+                    "xml_sha256": sha256(body).hexdigest(),
+                    "xml_size_bytes": len(body),
+                    "downloaded": True,
+                    "discovery_registered_date_start": _optional_string(
+                        report.get("discovery_registered_date_start")
+                    ),
+                    "discovery_registered_date_end": _optional_string(
+                        report.get("discovery_registered_date_end")
+                    ),
+                }
+            )
+        if _should_log_raw_xml_progress(
+            report_index=report_index,
+            total_reports=total_reports,
+            progress_interval=progress_interval,
+        ):
+            _log_raw_xml_download(
+                log_info,
+                "XBRL raw XML document "
+                f"{report_index}/{total_reports}: "
+                f"business_id={business_id} "
+                f"financial_date={financial_date} "
+                f"action={action} "
+                f"downloaded={downloaded_count} "
+                f"reused={reused_count} "
+                f"bytes_downloaded={bytes_downloaded}",
+            )
+        if download_delay_seconds > 0 and report_index < total_reports:
             sleep(download_delay_seconds)
 
     xml_document_rows = [
@@ -130,6 +155,16 @@ def download_finland_xbrl_raw_xml_documents(
     xml_documents_catalog = merge_xml_document_catalog(
         object_store=object_store,
         new_rows=xml_document_rows,
+    )
+    _log_raw_xml_download(
+        log_info,
+        "XBRL raw XML download completed: "
+        f"selected_reports={len(selected_financial_reports)} "
+        f"documents={len(documents)} "
+        f"downloaded={downloaded_count} "
+        f"reused={reused_count} "
+        f"bytes_downloaded={bytes_downloaded} "
+        f"catalog_rows={xml_documents_catalog.height}",
     )
 
     return dg.MaterializeResult(
@@ -156,16 +191,37 @@ def _materialize_raw_xml_window(
     registered_date_start: str,
     registered_date_end: str,
 ) -> dg.MaterializeResult:
+    context.log.info(
+        "XBRL raw XML partition %s: loading eligible reports registered %s..%s",
+        context.partition_key,
+        registered_date_start,
+        registered_date_end,
+    )
+    financial_reports = load_eligible_financial_report_rows(
+        source_duckdb,
+        registered_date_start=registered_date_start,
+        registered_date_end=registered_date_end,
+    )
+    context.log.info(
+        "XBRL raw XML partition %s: %d eligible financial reports selected",
+        context.partition_key,
+        len(financial_reports),
+    )
     result = download_finland_xbrl_raw_xml_documents(
         xbrl_api=xbrl_api,
         object_store=object_store,
-        financial_reports=load_eligible_financial_report_rows(
-            source_duckdb,
-            registered_date_start=registered_date_start,
-            registered_date_end=registered_date_end,
-        ),
+        financial_reports=financial_reports,
         refresh_existing=config.refresh_existing,
         download_delay_seconds=config.download_delay_seconds,
+        log_info=context.log.info,
+    )
+    context.log.info(
+        "XBRL raw XML partition %s complete: selected=%s downloaded=%s reused=%s catalog_rows=%s",
+        context.partition_key,
+        result.metadata["selected_reports_count"],
+        result.metadata["downloaded_count"],
+        result.metadata["reused_count"],
+        result.metadata["xml_documents_catalog_count"],
     )
     return dg.MaterializeResult(
         metadata={
@@ -245,12 +301,19 @@ def finland_xbrl_raw_xml_documents_incremental(
     kinds={"python", "s3", "xml"},
 )
 def finland_xbrl_raw_xml_documents(
+    context: dg.AssetExecutionContext,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
     """Catalog marker for PRH XBRL XML statements downloaded into object storage."""
+    context.log.info(
+        "Loading Finland XBRL raw XML document catalog from s3://%s/%s",
+        XBRL_BUCKET,
+        RAW_XML_DOCUMENTS_OBJECT_KEY,
+    )
     frame = load_xml_document_catalog_frame(
         object_store, documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY
     )
+    context.log.info("Finland XBRL raw XML document catalog row_count=%d", frame.height)
     return dg.MaterializeResult(
         metadata={
             "bucket": XBRL_BUCKET,
@@ -266,9 +329,18 @@ def finland_xbrl_raw_xml_documents(
     deps=[finland_xbrl_raw_xml_documents],
     kinds={"python", "s3", "parquet"},
 )
-def finland_xbrl_xml_documents(object_store: ObjectStoreResource) -> dg.MaterializeResult:
+def finland_xbrl_xml_documents(
+    context: dg.AssetExecutionContext,
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
     """Catalog of raw Finland PRH XBRL XML documents available in object storage."""
+    context.log.info(
+        "Loading Finland XBRL XML document table marker from s3://%s/%s",
+        XBRL_BUCKET,
+        RAW_XML_DOCUMENTS_OBJECT_KEY,
+    )
     frame = load_xml_document_catalog_frame(object_store, documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY)
+    context.log.info("Finland XBRL XML document table marker row_count=%d", frame.height)
     return dg.MaterializeResult(
         metadata={
             "bucket": XBRL_BUCKET,
@@ -326,6 +398,27 @@ def _optional_string(value: Any) -> str:
 
 def document_object_key(business_id: str, financial_date: str) -> str:
     return f"companies/{business_id}/{financial_date}.xml"
+
+
+def _should_log_raw_xml_progress(
+    *,
+    report_index: int,
+    total_reports: int,
+    progress_interval: int,
+) -> bool:
+    if total_reports == 0:
+        return False
+    if report_index == 1 or report_index == total_reports:
+        return True
+    return progress_interval > 0 and report_index % progress_interval == 0
+
+
+def _log_raw_xml_download(
+    log_info: Callable[[str], None] | None,
+    message: str,
+) -> None:
+    if log_info is not None:
+        log_info(message)
 
 
 def resolve_xbrl_documents_key(

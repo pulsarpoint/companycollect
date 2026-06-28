@@ -296,6 +296,13 @@ def _materialize_parse_window(
     window_end: date,
 ) -> dg.MaterializeResult:
     documents_key = resolve_xbrl_documents_key(config=config)
+    context.log.info(
+        "XBRL parse partition %s started: window=%s..%s documents_key=%s",
+        context.partition_key,
+        window_start.isoformat(),
+        window_end.isoformat(),
+        documents_key,
+    )
 
     documents, _meta = load_xbrl_document_manifest(
         object_store=object_store, documents_key=documents_key
@@ -342,8 +349,21 @@ def _materialize_parse_window(
                 "(will retry next run)",
                 context.partition_key, failed_this_run,
             )
+    else:
+        context.log.info(
+            "XBRL parse partition %s: no unparsed documents in window",
+            context.partition_key,
+        )
 
     row_counts = parsed_duckdb_row_counts(source_duckdb)
+    context.log.info(
+        "XBRL parse partition %s complete: parsed=%d failed=%d statement_rows_total=%d facts_total=%d",
+        context.partition_key,
+        parsed_this_run,
+        failed_this_run,
+        row_counts[tables.STATEMENT_DOCUMENTS_TABLE],
+        row_counts[tables.FACTS_TABLE],
+    )
     return dg.MaterializeResult(
         metadata={
             "partition": context.partition_key,
@@ -427,10 +447,13 @@ def finland_xbrl_parse_incremental(
     pool=FINLAND_XBRL_DUCKDB_POOL,
 )
 def finland_xbrl_parsed_tables(
+    context: dg.AssetExecutionContext,
     source_duckdb: DuckDBResource,
 ) -> Iterator[dg.MaterializeResult]:
+    context.log.info("Loading Finland XBRL parsed DuckDB table markers")
     row_counts = parsed_duckdb_row_counts(source_duckdb)
     for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE):
+        context.log.info("Finland XBRL parsed DuckDB table %s row_count=%d", table, row_counts[table])
         yield dg.MaterializeResult(
             asset_key=table,
             metadata={

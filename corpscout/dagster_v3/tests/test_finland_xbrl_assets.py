@@ -514,6 +514,7 @@ def test_xbrl_raw_download_uses_eligible_financial_report_rows() -> None:
     api = XbrlApiResource(session=session)
     object_store, s3_client = _object_store()
     sleeps: list[float] = []
+    log_messages: list[str] = []
 
     result = download_finland_xbrl_raw_xml_documents(
         xbrl_api=api,
@@ -522,6 +523,8 @@ def test_xbrl_raw_download_uses_eligible_financial_report_rows() -> None:
         refresh_existing=False,
         download_delay_seconds=0.5,
         sleep=sleeps.append,
+        log_info=log_messages.append,
+        progress_interval=1,
     )
 
     assert result.metadata["downloaded_count"] == 2
@@ -566,6 +569,12 @@ def test_xbrl_raw_download_uses_eligible_financial_report_rows() -> None:
     ]
     assert xml_documents_frame["financial_start_date"].to_list() == ["", ""]
     assert xml_documents_frame["max_reports"].to_list() == ["", ""]
+    assert log_messages == [
+        "XBRL raw XML download started: reports=2 refresh_existing=False",
+        "XBRL raw XML document 1/2: business_id=active-web financial_date=2026-05-31 action=downloaded downloaded=1 reused=0 bytes_downloaded=34",
+        "XBRL raw XML document 2/2: business_id=second-active-web financial_date=2026-04-30 action=downloaded downloaded=2 reused=0 bytes_downloaded=75",
+        "XBRL raw XML download completed: selected_reports=2 documents=2 downloaded=2 reused=0 bytes_downloaded=75 catalog_rows=2",
+    ]
 
 
 def test_xbrl_raw_download_preserves_existing_xml_document_catalog_when_selection_is_empty() -> None:
@@ -696,6 +705,7 @@ def test_materialize_eligible_companies_snapshot_copies_active_companies_with_we
 ) -> None:
     ytj_database_path = tmp_path / "finland_ytj.duckdb"
     xbrl_database_path = tmp_path / "finland_xbrl.duckdb"
+    log_messages: list[str] = []
     with duckdb.connect(str(ytj_database_path)) as connection:
         connection.execute("create schema finland_prhytj")
         connection.execute(
@@ -721,9 +731,14 @@ def test_materialize_eligible_companies_snapshot_copies_active_companies_with_we
     result = xbrl_assets.materialize_eligible_companies_snapshot(
         source_duckdb=duckdb_resource(xbrl_database_path),
         ytj_duckdb=duckdb_resource(ytj_database_path),
+        log_info=log_messages.append,
     )
 
     assert result.metadata["row_count"] == 2
+    assert log_messages == [
+        f"Copying Finland XBRL eligible companies from YTJ DuckDB {ytj_database_path}",
+        "Finland XBRL eligible companies copied: row_count=2",
+    ]
     with duckdb.connect(str(xbrl_database_path), read_only=True) as connection:
         rows = connection.execute(
             f"""

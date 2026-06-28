@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Callable
 
 import dagster as dg
 from dagster_duckdb import DuckDBResource
@@ -18,8 +19,11 @@ def materialize_eligible_companies_snapshot(
     *,
     source_duckdb: DuckDBResource,
     ytj_duckdb: DuckDBResource,
+    log_info: Callable[[str], None] | None = None,
 ) -> dg.MaterializeResult:
     ytj_database_path = duckdb_database_path(ytj_duckdb)
+    if log_info is not None:
+        log_info(f"Copying Finland XBRL eligible companies from YTJ DuckDB {ytj_database_path}")
     with source_duckdb.get_connection() as connection:
         connection.execute(f"create schema if not exists {XBRL_DLT_DATASET_NAME}")
         connection.execute(
@@ -44,6 +48,8 @@ def materialize_eligible_companies_snapshot(
         finally:
             connection.execute("detach ytj_source")
 
+    if log_info is not None:
+        log_info(f"Finland XBRL eligible companies copied: row_count={row_count}")
     return dg.MaterializeResult(
         metadata={
             "duckdb_schema": XBRL_DLT_DATASET_NAME,
@@ -62,11 +68,12 @@ def materialize_eligible_companies_snapshot(
     description="Active Finland YTJ companies with websites copied into the PRH XBRL DuckDB boundary.",
 )
 def finland_xbrl_eligible_companies(
+    context: dg.AssetExecutionContext,
     source_duckdb: DuckDBResource,
     ytj_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     return materialize_eligible_companies_snapshot(
         source_duckdb=source_duckdb,
         ytj_duckdb=ytj_duckdb,
+        log_info=context.log.info,
     )
-

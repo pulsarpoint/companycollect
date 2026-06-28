@@ -237,7 +237,8 @@ def _materialize_financial_reports_window(
     registered_date_end: str,
 ) -> dg.MaterializeResult:
     context.log.info(
-        "Loading XBRL financial reports registered %s..%s",
+        "XBRL financial reports partition %s: loading reports registered %s..%s",
+        context.partition_key,
         registered_date_start,
         registered_date_end,
     )
@@ -254,7 +255,8 @@ def _materialize_financial_reports_window(
     )
     row_count = financial_reports_duckdb_row_count(source_duckdb)
     context.log.info(
-        "Loaded XBRL financial reports registered %s..%s; table row count is %d",
+        "XBRL financial reports partition %s complete: registered %s..%s table_row_count=%d",
+        context.partition_key,
         registered_date_start,
         registered_date_end,
         row_count,
@@ -328,13 +330,17 @@ def finland_xbrl_financial_reports_incremental_duckdb(
     description="Catalog marker for the shared PRH XBRL financial report listing DuckDB table.",
 )
 def finland_xbrl_financial_reports_duckdb(
+    context: dg.AssetExecutionContext,
     source_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
+    context.log.info("Loading Finland XBRL financial reports DuckDB table marker")
+    row_count = financial_reports_duckdb_row_count(source_duckdb)
+    context.log.info("Finland XBRL financial reports DuckDB table row_count=%d", row_count)
     return dg.MaterializeResult(
         metadata={
             "duckdb_schema": XBRL_DLT_DATASET_NAME,
             "duckdb_table": XBRL_DLT_FINANCIAL_REPORTS_TABLE,
-            "row_count": financial_reports_duckdb_row_count(source_duckdb),
+            "row_count": row_count,
         }
     )
 

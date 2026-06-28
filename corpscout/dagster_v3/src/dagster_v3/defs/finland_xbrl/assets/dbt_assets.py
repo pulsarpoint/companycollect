@@ -38,4 +38,6 @@ def finland_xbrl_dbt_assets(
     context: dg.AssetExecutionContext,
     finland_xbrl_dbt: DbtCliResource,
 ):
+    context.log.info("Starting Finland XBRL dbt build")
     yield from finland_xbrl_dbt.cli(["build"], context=context).stream()
+    context.log.info("Finished Finland XBRL dbt build")
