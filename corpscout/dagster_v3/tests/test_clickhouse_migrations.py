@@ -4,7 +4,7 @@ from dagster_v3.defs.brazil_cnae import tables as brazil_cnae_tables
 from dagster_v3.defs.brazil_rfb import tables as brazil_rfb_tables
 from dagster_v3.defs.exchange_rates_v2 import tables as exchange_rate_tables
 from dagster_v3.defs.domains import tables as domain_tables
-from dagster_v3.defs.finland_resolved import tables as finland_resolved_tables
+from dagster_v3.defs.finland_ytj import resolved_tables as finland_resolved_tables
 from dagster_v3.defs.nace import tables as nace_tables
 from dagster_v3.defs.norway_brreg import tables as norway_brreg_tables
 from dagster_v3.defs.norway_resolved import tables as norway_resolved_tables

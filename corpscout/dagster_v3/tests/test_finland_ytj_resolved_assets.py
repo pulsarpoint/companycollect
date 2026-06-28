@@ -26,6 +26,20 @@ def test_clickhouse_depends_on_dbt_models() -> None:
     } <= dep_names
 
 
+def test_ytj_register_and_resolved_assets_share_dagster_group() -> None:
+    repo = load_project_defs().get_repository_def()
+
+    for asset_name in (
+        "finland_ytj_all_companies_duckdb",
+        "finland_ytj_resolved_fi_companies",
+        "finland_ytj_resolved_fi_names",
+        "finland_ytj_resolved_fi_websites",
+        "finland_ytj_resolved_fi_industries",
+        "finland_ytj_resolved_clickhouse",
+    ):
+        assert repo.asset_graph.get(AssetKey([asset_name])).group_name == "finland_ytj"
+
+
 def test_resolved_schedule_covers_register_dbt_and_export() -> None:
     repo = load_project_defs().get_repository_def()
     sched = repo.get_schedule_def("finland_ytj_resolved_schedule")
@@ -37,7 +51,7 @@ def test_resolved_schedule_covers_register_dbt_and_export() -> None:
         for k in repo.get_job("finland_ytj_resolved_job").asset_layer.executable_asset_keys
     }
     assert "finland_ytj_all_companies_duckdb" in keys  # register load (finland_ytj module)
-    assert "finland_ytj_resolved_clickhouse" in keys  # export (finland_resolved module)
+    assert "finland_ytj_resolved_clickhouse" in keys  # export (finland_ytj package)
     assert {
         "finland_ytj_resolved_fi_companies",
         "finland_ytj_resolved_fi_names",

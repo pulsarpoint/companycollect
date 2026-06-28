@@ -21,9 +21,9 @@ from dagster_v3.defs.clickhouse.resolved import (
     replace_duckdb_connection_tables_in_clickhouse,
 )
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
-from dagster_v3.defs.finland_resolved import tables
+from dagster_v3.defs.finland_ytj import resolved_tables as tables
 
-GROUP_NAME = "finland_resolved"
+GROUP_NAME = "finland_ytj"
 RESOLVED_DUCKDB_SCHEMA = "finland_resolved"
 FINLAND_RESOLVED_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
 

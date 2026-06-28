@@ -7,8 +7,7 @@
 ## 1. Source overview
 - **Country / registry**: Finland — PRH (Patentti- ja rekisterihallitus) open data.
 - **Modules**:
-  - `finland_ytj/` — bulk register load · DuckDB `data/finland_ytj.duckdb` · pool `finland_ytj_duckdb`
-  - `finland_resolved/` — dbt over the ytj DuckDB → ClickHouse (shares the ytj DuckDB + pool)
+  - `finland_ytj/` — bulk register load plus resolved dbt/ClickHouse export · DuckDB `data/finland_ytj.duckdb` · pool `finland_ytj_duckdb`
   - `finland_xbrl/` — XBRL financials · own DuckDB + S3 object store `source-finland-prh-xbrl`
 - **ClickHouse**: resolved `fi_companies`/`fi_names`/`fi_websites`/`fi_industries` (000005–000007,
   000010, 000014); XBRL raw tables `fi_xbrl_*` (000011) — **not exported yet** (see §9).
@@ -58,7 +57,7 @@
 - **finland_xbrl has no ClickHouse export asset** — its 5 assets stop at dbt/DuckDB, and
   `…_parsed_tables` is **partitioned** (arelle parse per registration-month). It needs its own design
   pass (export path + partition/cadence) before it gets a schedule; deliberately deferred.
-- `finland_resolved` dbt reads `finland_ytj.duckdb` via `FINLAND_YTJ_DUCKDB_PATH`, set
+- the resolved dbt project reads `finland_ytj.duckdb` via `FINLAND_YTJ_DUCKDB_PATH`, set
   **unconditionally** from the resource default so a stale env var can't silently point dbt at a
   different file.
 - Provenance (`source_payload_hash`) dropped from the resolved ClickHouse exports (000022) — kept in

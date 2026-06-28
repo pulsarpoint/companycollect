@@ -5,7 +5,7 @@ from typing import Any
 from dbt.adapters.duckdb.plugins import BasePlugin
 
 from dagster_v3.domains import root_domain
-from dagster_v3.defs.finland_resolved.industry import primary_industry_json
+from dagster_v3.defs.finland_ytj.industry import primary_industry_json
 
 
 class Plugin(BasePlugin):

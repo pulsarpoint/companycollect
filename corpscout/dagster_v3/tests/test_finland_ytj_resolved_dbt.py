@@ -6,11 +6,11 @@ import duckdb
 import pytest
 from dbt.cli.main import dbtRunner
 
-from dagster_v3.defs.finland_resolved import dbt_plugin
+from dagster_v3.defs.finland_ytj import dbt_plugin
 
 DBT_DIR = (
     Path(__file__).parents[1]
-    / "src" / "dagster_v3" / "defs" / "finland_resolved" / "dbt"
+    / "src" / "dagster_v3" / "defs" / "finland_ytj" / "dbt"
 )
 
 
