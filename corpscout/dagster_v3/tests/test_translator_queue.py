@@ -6,7 +6,6 @@ All tests run against a REAL temp DuckDB (no SQL-string mocking).
 import pytest
 
 from translator.queue import (
-    DEFAULT_MAX_ATTEMPTS,
     QUEUE_STATUS_FAILED,
     QUEUE_STATUS_FAILED_RETRYABLE,
     TranslationQueue,
@@ -69,16 +68,17 @@ def test_fail_batch_invalid_json_becomes_terminal_immediately(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# fail_batch with retryable category → stays retryable until attempt cap
+# fail_batch with retryable category → stays failed_retryable INDEFINITELY
 # ---------------------------------------------------------------------------
 
 
-def test_fail_batch_timeout_retryable_until_attempt_cap(tmp_path):
-    """fail_batch with error_category='timeout' keeps items failed_retryable and
-    re-claimable until attempt_count reaches DEFAULT_MAX_ATTEMPTS, then terminal."""
+def test_fail_batch_timeout_retryable_never_becomes_terminal(tmp_path):
+    """fail_batch with a retryable category (timeout) NEVER terminates items —
+    they stay failed_retryable and remain claimable regardless of how many times
+    they fail.  A transient LLM outage must not permanently lose work."""
     q = _seed_queue(tmp_path, ["Bygg og anlegg"])
 
-    for attempt in range(1, DEFAULT_MAX_ATTEMPTS + 1):
+    for attempt in range(1, 7):  # 6 attempts — well beyond any former cap
         claimed = q.claim_batch(limit=10, worker_id=f"w{attempt}")
         assert len(claimed) == 1, (
             f"expected to claim 1 item on attempt {attempt}, got {len(claimed)}"
@@ -97,23 +97,17 @@ def test_fail_batch_timeout_retryable_until_attempt_cap(tmp_path):
                 "select status, attempt_count from translation_items where 1=1"
             ).fetchone()
 
-        if attempt < DEFAULT_MAX_ATTEMPTS:
-            # Still retryable
-            assert row[0] == QUEUE_STATUS_FAILED_RETRYABLE, (
-                f"expected failed_retryable after attempt {attempt}, got {row[0]}"
-            )
-            assert row[1] == attempt
-        else:
-            # Hit the cap → terminal
-            assert row[0] == QUEUE_STATUS_FAILED, (
-                f"expected terminal failed after attempt {attempt} (cap={DEFAULT_MAX_ATTEMPTS}), got {row[0]}"
-            )
-            assert row[1] == DEFAULT_MAX_ATTEMPTS
+        # Must ALWAYS remain retryable — no cap.
+        assert row[0] == QUEUE_STATUS_FAILED_RETRYABLE, (
+            f"expected failed_retryable after attempt {attempt}, got '{row[0]}' "
+            "(retryable items must never become terminal)"
+        )
+        assert row[1] == attempt
 
-    # After reaching the cap, claim returns empty.
-    final_claim = q.claim_batch(limit=10, worker_id="final")
-    assert final_claim == [], (
-        "items that hit the attempt cap must not be re-claimable"
+    # Even after 6 failures the item is still claimable.
+    reclaimed = q.claim_batch(limit=10, worker_id="w7")
+    assert len(reclaimed) == 1, (
+        "retryable items must remain claimable indefinitely; got empty claim after 6 failures"
     )
 
 

@@ -187,21 +187,27 @@ def test_translate_workflow_drains_queue_and_dumps(tmp_path, monkeypatch):
     assert dump_calls[0].queue_duckdb_path == queue_path
 
 
-def test_translate_loop_once_drains_via_attempt_cap(tmp_path, monkeypatch):
-    """translate_loop_once must drain via the per-item attempt cap (not max_batch_failures).
+def test_translate_loop_once_transient_failures_then_success(tmp_path, monkeypatch):
+    """translate_loop_once must retry indefinitely on transient errors and complete
+    when the provider eventually recovers.
 
-    With provider_error (retryable) and DEFAULT_MAX_ATTEMPTS=3, each item gets 3
-    attempts then goes terminal. The loop ends only when claim_batch returns empty.
-    With 2 items and batch_size=2, there should be exactly 3 failure batches total
-    (one per attempt round) before the loop drains.
+    Policy: transient (retryable) failures keep items as failed_retryable — never
+    terminal.  This test proves a transient LLM outage does NOT permanently fail work.
+
+    _backoff_sleep is patched to a no-op so the test doesn't actually sleep.
     """
     import temporalio.activity
     import translator.llm_batch
     import translator.provider as translator_provider
-    from translator.queue import DEFAULT_MAX_ATTEMPTS
+    import translator.norway_brreg.workflows as wf_module
 
-    # Seed 2 items (batch_size=2 → each claim gets both items at once).
+    # Patch module-level sleep so the loop doesn't actually wait.
+    monkeypatch.setattr(wf_module, "_backoff_sleep", lambda _: None)
+
     queue_path = _seed_queue(tmp_path, ["A", "B"])
+
+    fail_count = [0]
+    TRANSIENT_FAILURES = 3
 
     class _FakeProvider:
         def close(self) -> None:
@@ -215,11 +221,16 @@ def test_translate_loop_once_drains_via_attempt_cap(tmp_path, monkeypatch):
         lambda **kw: _FakeProvider(),
     )
 
-    def _always_fail(*args, **kwargs):
-        # RuntimeError maps to provider_error (retryable), so items retry up to cap.
-        raise RuntimeError("LLM unavailable")
+    def _fail_then_succeed(claimed, *, provider, timeout):
+        if fail_count[0] < TRANSIENT_FAILURES:
+            fail_count[0] += 1
+            raise RuntimeError("LLM unavailable")  # → provider_error (retryable)
+        return [
+            TranslationResult(item_id=c.item_id, translated_text=c.source_text.upper())
+            for c in claimed
+        ]
 
-    monkeypatch.setattr(translator.llm_batch, "translate_batch", _always_fail)
+    monkeypatch.setattr(translator.llm_batch, "translate_batch", _fail_then_succeed)
     monkeypatch.setattr(temporalio.activity, "heartbeat", lambda *a, **kw: None)
 
     result = wf.translate_loop_once(
@@ -231,14 +242,22 @@ def test_translate_loop_once_drains_via_attempt_cap(tmp_path, monkeypatch):
         )
     )
 
-    # With DEFAULT_MAX_ATTEMPTS=3 and 2 items per batch, the loop runs exactly
-    # DEFAULT_MAX_ATTEMPTS times (once per attempt round), then claim returns empty.
-    assert result.failed_batches == DEFAULT_MAX_ATTEMPTS, (
-        f"expected exactly {DEFAULT_MAX_ATTEMPTS} failed batches (one per attempt), "
-        f"got {result.failed_batches}"
+    # After TRANSIENT_FAILURES transient failures the provider recovers — items complete.
+    assert result.completed_items == 2, (
+        f"expected 2 completed items after transient failures resolved, got {result.completed_items}"
     )
-    assert result.completed_items == 0
-    assert result.successful_batches == 0
+    assert result.failed_batches == TRANSIENT_FAILURES
+    assert result.successful_batches == 1
+
+    # Queue state: all completed, none terminal-failed.
+    from translator.queue import TranslationQueue
+    q = TranslationQueue(queue_path)
+    q.initialize()
+    summary = q.summary()
+    assert summary.completed_items == 2
+    assert summary.failed_items == 0, (
+        f"transient failures must never leave terminal failed items, got {summary.failed_items}"
+    )
 
 
 def test_translate_workflow_completes_after_all_failures(tmp_path, monkeypatch):

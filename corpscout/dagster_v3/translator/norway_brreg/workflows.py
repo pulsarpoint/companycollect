@@ -33,6 +33,14 @@ START_TO_CLOSE_TIMEOUT = timedelta(hours=24)
 SHORT_TIMEOUT = timedelta(seconds=60)
 RETRY_POLICY = RetryPolicy(maximum_attempts=3)
 
+# Backoff for consecutive transient LLM failures (keeps the loop from tight-spinning
+# while the provider is down; cap is well under the 150 s heartbeat_timeout).
+BACKOFF_BASE_SECONDS: float = 2.0
+BACKOFF_CAP_SECONDS: float = 60.0
+
+# Patchable in tests so the loop doesn't actually sleep.
+_backoff_sleep = time.sleep
+
 # ---------------------------------------------------------------------------
 # Input / Output dataclasses
 # ---------------------------------------------------------------------------
@@ -144,7 +152,7 @@ def translate_loop_once(params: TranslateLoopActivityInput):
         LocalOpenAICompatibleTranslationProvider,
         _parse_extra_body,
     )
-    from translator.queue import TranslationQueue
+    from translator.queue import TranslationQueue, _is_retryable
 
     queue = TranslationQueue(params.queue_duckdb_path)
     queue.initialize()
@@ -160,6 +168,7 @@ def translate_loop_once(params: TranslateLoopActivityInput):
     success_count = 0
     failure_count = 0
     completed_items = 0
+    consecutive_transient_failures = 0
     last_heartbeat_at = time.time()
 
     try:
@@ -186,6 +195,7 @@ def translate_loop_once(params: TranslateLoopActivityInput):
                 )
                 success_count += 1
                 completed_items += len(claimed)
+                consecutive_transient_failures = 0
                 activity.heartbeat(completed_items)
                 last_heartbeat_at = time.time()
             except Exception as exc:
@@ -201,6 +211,18 @@ def translate_loop_once(params: TranslateLoopActivityInput):
                 logger.warning(
                     "translate_loop: batch failed (%s): %s", error_category, exc
                 )
+                if _is_retryable(error_category):
+                    consecutive_transient_failures += 1
+                    backoff = min(
+                        BACKOFF_CAP_SECONDS,
+                        BACKOFF_BASE_SECONDS * 2 ** (consecutive_transient_failures - 1),
+                    )
+                    activity.heartbeat(completed_items)
+                    _backoff_sleep(backoff)
+                    activity.heartbeat(completed_items)
+                    last_heartbeat_at = time.time()
+                else:
+                    consecutive_transient_failures = 0
     finally:
         provider.close()
 

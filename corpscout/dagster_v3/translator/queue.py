@@ -17,8 +17,6 @@ QUEUE_STATUS_COMPLETED = "completed"
 QUEUE_STATUS_FAILED_RETRYABLE = "failed_retryable"
 QUEUE_STATUS_FAILED = "failed"
 
-DEFAULT_MAX_ATTEMPTS = 3
-
 _RETRYABLE_CATEGORIES = {"connection_refused", "timeout", "provider_error"}
 
 
@@ -311,8 +309,8 @@ class TranslationQueue:
         """Release stale leases back to pending status.
 
         Note: Resetting a stale lease to pending does NOT increment attempt_count.
-        This bounds perpetually-timing-out workers by Temporal's activity retry
-        policy (RetryPolicy.maximum_attempts), not by DEFAULT_MAX_ATTEMPTS.
+        Stale-lease recovery is bounded by Temporal's activity retry policy
+        (RetryPolicy.maximum_attempts), not by any queue-level attempt cap.
         """
         if older_than_seconds <= 0:
             return 0
@@ -436,13 +434,14 @@ class TranslationQueue:
         batch_id = _single_batch_id(items)
         now = _now()
         retryable = _is_retryable(error_category)
+        # Transient (retryable) categories stay failed_retryable indefinitely so
+        # a temporary LLM outage can never permanently lose work.  Only deterministic
+        # bad output (non-retryable: invalid_json, invalid_response, etc.) terminates
+        # immediately — retrying identical malformed output would spin forever.
+        new_status = QUEUE_STATUS_FAILED_RETRYABLE if retryable else QUEUE_STATUS_FAILED
         with self._connect() as conn:
             for item in items:
                 new_attempt_count = item.attempt_count + 1
-                if retryable and new_attempt_count < DEFAULT_MAX_ATTEMPTS:
-                    new_status = QUEUE_STATUS_FAILED_RETRYABLE
-                else:
-                    new_status = QUEUE_STATUS_FAILED
                 conn.execute(
                     """
                     update translation_items
