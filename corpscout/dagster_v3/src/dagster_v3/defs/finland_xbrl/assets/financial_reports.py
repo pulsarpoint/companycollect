@@ -8,7 +8,6 @@ from dagster_v3.defs.finland_xbrl.assets.common import (
     BACKFILL_PARTITIONS,
     DAILY_PARTITIONS,
     DEFAULT_XBRL_REQUEST_DELAY_SECONDS,
-    FINLAND_XBRL_DUCKDB_POOL,
     _registration_window,
 )
 from dagster_v3.defs.finland_xbrl.resources import (
@@ -31,7 +30,6 @@ class XbrlFinancialReportsConfig(dg.Config):
 def materialize_financial_reports_window(
     context: dg.AssetExecutionContext,
     config: XbrlFinancialReportsConfig,
-    parquet_storage: XbrlParquetStorageResource,
     xbrl_api: XbrlApiResource,
     *,
     registered_date_start: str,
@@ -77,15 +75,14 @@ def materialize_financial_reports_window(
 
 
 @dg.asset(
-    name="finland_xbrl_financial_reports_backfill_duckdb",
+    name="finland_xbrl_financial_reports_backfill",
     group_name="finland_xbrl",
     partitions_def=BACKFILL_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     kinds={"python", "parquet"},
-    pool=FINLAND_XBRL_DUCKDB_POOL,
-    description="Monthly backfill writer for PRH XBRL financial report listings by registration date.",
+    description="Monthly backfill parquet writer for PRH XBRL financial report listings by registration date.",
 )
-def finland_xbrl_financial_reports_backfill_duckdb(
+def finland_xbrl_financial_reports_backfill(
     context: dg.AssetExecutionContext,
     config: XbrlFinancialReportsConfig,
     xbrl_parquet_storage: XbrlParquetStorageResource,
@@ -95,7 +92,6 @@ def finland_xbrl_financial_reports_backfill_duckdb(
     return materialize_financial_reports_window(
         context,
         config,
-        xbrl_parquet_storage,
         xbrl_api,
         registered_date_start=start,
         registered_date_end=end,
@@ -105,14 +101,13 @@ def finland_xbrl_financial_reports_backfill_duckdb(
 
 
 @dg.asset(
-    name="finland_xbrl_financial_reports_incremental_duckdb",
+    name="finland_xbrl_financial_reports_incremental",
     group_name="finland_xbrl",
     partitions_def=DAILY_PARTITIONS,
     kinds={"python", "parquet"},
-    pool=FINLAND_XBRL_DUCKDB_POOL,
-    description="Daily incremental writer for PRH XBRL financial report listings by registration date.",
+    description="Daily incremental parquet writer for PRH XBRL financial report listings by registration date.",
 )
-def finland_xbrl_financial_reports_incremental_duckdb(
+def finland_xbrl_financial_reports_incremental(
     context: dg.AssetExecutionContext,
     config: XbrlFinancialReportsConfig,
     xbrl_parquet_storage: XbrlParquetStorageResource,
@@ -122,7 +117,6 @@ def finland_xbrl_financial_reports_incremental_duckdb(
     return materialize_financial_reports_window(
         context,
         config,
-        xbrl_parquet_storage,
         xbrl_api,
         registered_date_start=start,
         registered_date_end=end,
@@ -132,17 +126,16 @@ def finland_xbrl_financial_reports_incremental_duckdb(
 
 
 @dg.asset(
-    name="finland_xbrl_financial_reports_duckdb",
+    name="finland_xbrl_financial_reports",
     group_name="finland_xbrl",
     deps=[
-        finland_xbrl_financial_reports_backfill_duckdb,
-        finland_xbrl_financial_reports_incremental_duckdb,
+        finland_xbrl_financial_reports_backfill,
+        finland_xbrl_financial_reports_incremental,
     ],
     kinds={"parquet"},
-    pool=FINLAND_XBRL_DUCKDB_POOL,
-    description="Catalog marker for the shared PRH XBRL financial report listing DuckDB table.",
+    description="Catalog marker for PRH XBRL financial report listing parquet partitions.",
 )
-def finland_xbrl_financial_reports_duckdb(
+def finland_xbrl_financial_reports(
     context: dg.AssetExecutionContext,
     xbrl_parquet_storage: XbrlParquetStorageResource,
 ) -> dg.MaterializeResult:

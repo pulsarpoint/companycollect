@@ -1,34 +1,28 @@
 import time
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
+from dataclasses import dataclass
 from hashlib import sha256
-from io import BytesIO
+from pathlib import Path
 from typing import Any, Callable
 
 import dagster as dg
-import polars as pl
-from dagster_duckdb import DuckDBResource
 from pydantic import field_validator
 
-from dagster_v3.defs.common.duckdb_resources import read_only_duckdb_connection
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.finland_xbrl import tables
 from dagster_v3.defs.finland_xbrl.assets.common import (
     BACKFILL_PARTITIONS,
     DAILY_PARTITIONS,
     DEFAULT_XBRL_REQUEST_DELAY_SECONDS,
-    FINLAND_XBRL_DUCKDB_POOL,
-    RAW_XML_DOCUMENTS_OBJECT_KEY,
     XBRL_BUCKET,
-    XBRL_DLT_DATASET_NAME,
-    XBRL_ELIGIBLE_COMPANIES_TABLE,
     _registration_window,
 )
-from dagster_v3.defs.finland_xbrl.assets.company_seed_duckdb import (
-    finland_xbrl_company_seed_duckdb,
+from dagster_v3.defs.finland_xbrl.assets.eligible_companies import (
+    finland_xbrl_eligible_companies,
 )
 from dagster_v3.defs.finland_xbrl.assets.financial_reports import (
-    finland_xbrl_financial_reports_backfill_duckdb,
-    finland_xbrl_financial_reports_incremental_duckdb,
+    finland_xbrl_financial_reports_backfill,
+    finland_xbrl_financial_reports_incremental,
 )
 from dagster_v3.defs.finland_xbrl.resources import (
     XbrlApiResource,
@@ -47,6 +41,12 @@ class XbrlRawConfig(dg.Config):
         return value
 
 
+@dataclass(frozen=True)
+class RawXmlDownloadResult:
+    rows: list[dict[str, Any]]
+    metadata: dict[str, Any]
+
+
 def download_finland_xbrl_raw_xml_documents(
     *,
     xbrl_api: XbrlApiResource,
@@ -57,7 +57,7 @@ def download_finland_xbrl_raw_xml_documents(
     sleep: Callable[[float], None] = time.sleep,
     log_info: Callable[[str], None] | None = None,
     progress_interval: int = 25,
-) -> dg.MaterializeResult:
+) -> RawXmlDownloadResult:
     object_store.ensure_bucket(XBRL_BUCKET)
 
     documents: list[dict[str, Any]] = []
@@ -154,10 +154,6 @@ def download_finland_xbrl_raw_xml_documents(
         )
         for document in documents
     ]
-    xml_documents_catalog = merge_xml_document_catalog(
-        object_store=object_store,
-        new_rows=xml_document_rows,
-    )
     _log_raw_xml_download(
         log_info,
         "XBRL raw XML download completed: "
@@ -165,20 +161,18 @@ def download_finland_xbrl_raw_xml_documents(
         f"documents={len(documents)} "
         f"downloaded={downloaded_count} "
         f"reused={reused_count} "
-        f"bytes_downloaded={bytes_downloaded} "
-        f"catalog_rows={xml_documents_catalog.height}",
+        f"bytes_downloaded={bytes_downloaded}",
     )
 
-    return dg.MaterializeResult(
+    return RawXmlDownloadResult(
+        rows=xml_document_rows,
         metadata={
             "selected_reports_count": len(selected_financial_reports),
             "documents_count": len(documents),
             "downloaded_count": downloaded_count,
             "reused_count": reused_count,
             "bytes_downloaded": bytes_downloaded,
-            "xml_documents_object_key": RAW_XML_DOCUMENTS_OBJECT_KEY,
-            "xml_documents_catalog_count": xml_documents_catalog.height,
-        }
+        },
     )
 
 
@@ -188,11 +182,12 @@ def _materialize_raw_xml_window(
     config: XbrlRawConfig,
     xbrl_api: XbrlApiResource,
     object_store: ObjectStoreResource,
-    source_duckdb: DuckDBResource,
     *,
     registered_date_start: str,
     registered_date_end: str,
     read_financial_reports: Callable[[str], list[dict[str, Any]]],
+    read_eligible_companies: Callable[[], list[dict[str, Any]]],
+    write_raw_xml_documents: Callable[[str, list[dict[str, Any]]], Path],
 ) -> dg.MaterializeResult:
     context.log.info(
         "XBRL raw XML partition %s: loading eligible reports registered %s..%s",
@@ -202,7 +197,7 @@ def _materialize_raw_xml_window(
     )
     financial_report_rows = read_financial_reports(context.partition_key)
     financial_reports = load_eligible_financial_report_rows(
-        source_duckdb,
+        eligible_companies=read_eligible_companies(),
         financial_reports=financial_report_rows,
         registered_date_start=registered_date_start,
         registered_date_end=registered_date_end,
@@ -220,13 +215,15 @@ def _materialize_raw_xml_window(
         download_delay_seconds=config.download_delay_seconds,
         log_info=context.log.info,
     )
+    parquet_path = write_raw_xml_documents(context.partition_key, result.rows)
     context.log.info(
-        "XBRL raw XML partition %s complete: selected=%s downloaded=%s reused=%s catalog_rows=%s",
+        "XBRL raw XML partition %s complete: selected=%s downloaded=%s reused=%s manifest_rows=%s parquet_path=%s",
         context.partition_key,
         result.metadata["selected_reports_count"],
         result.metadata["downloaded_count"],
         result.metadata["reused_count"],
-        result.metadata["xml_documents_catalog_count"],
+        len(result.rows),
+        parquet_path,
     )
     return dg.MaterializeResult(
         metadata={
@@ -234,6 +231,8 @@ def _materialize_raw_xml_window(
             "partition": context.partition_key,
             "registered_date_start": registered_date_start,
             "registered_date_end": registered_date_end,
+            "raw_xml_documents_parquet_path": str(parquet_path),
+            "raw_xml_documents_row_count": len(result.rows),
         }
     )
 
@@ -242,13 +241,12 @@ def _materialize_raw_xml_window(
     name="finland_xbrl_raw_xml_documents_backfill",
     group_name="finland_xbrl",
     deps=[
-        finland_xbrl_financial_reports_backfill_duckdb,
-        finland_xbrl_company_seed_duckdb,
+        finland_xbrl_financial_reports_backfill,
+        finland_xbrl_eligible_companies,
     ],
     partitions_def=BACKFILL_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     kinds={"python", "s3", "xml"},
-    pool=FINLAND_XBRL_DUCKDB_POOL,
 )
 def finland_xbrl_raw_xml_documents_backfill(
     context: dg.AssetExecutionContext,
@@ -256,7 +254,6 @@ def finland_xbrl_raw_xml_documents_backfill(
     xbrl_api: XbrlApiResource,
     xbrl_parquet_storage: XbrlParquetStorageResource,
     object_store: ObjectStoreResource,
-    source_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     start, end = _registration_window(context)
     return _materialize_raw_xml_window(
@@ -264,10 +261,11 @@ def finland_xbrl_raw_xml_documents_backfill(
         config,
         xbrl_api,
         object_store,
-        source_duckdb,
         registered_date_start=start,
         registered_date_end=end,
         read_financial_reports=xbrl_parquet_storage.read_financial_reports_backfill,
+        read_eligible_companies=xbrl_parquet_storage.read_eligible_companies,
+        write_raw_xml_documents=xbrl_parquet_storage.write_raw_xml_documents_backfill,
     )
 
 
@@ -275,12 +273,11 @@ def finland_xbrl_raw_xml_documents_backfill(
     name="finland_xbrl_raw_xml_documents_incremental",
     group_name="finland_xbrl",
     deps=[
-        finland_xbrl_financial_reports_incremental_duckdb,
-        finland_xbrl_company_seed_duckdb,
+        finland_xbrl_financial_reports_incremental,
+        finland_xbrl_eligible_companies,
     ],
     partitions_def=DAILY_PARTITIONS,
     kinds={"python", "s3", "xml"},
-    pool=FINLAND_XBRL_DUCKDB_POOL,
 )
 def finland_xbrl_raw_xml_documents_incremental(
     context: dg.AssetExecutionContext,
@@ -288,7 +285,6 @@ def finland_xbrl_raw_xml_documents_incremental(
     xbrl_api: XbrlApiResource,
     xbrl_parquet_storage: XbrlParquetStorageResource,
     object_store: ObjectStoreResource,
-    source_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     start, end = _registration_window(context)
     return _materialize_raw_xml_window(
@@ -296,10 +292,11 @@ def finland_xbrl_raw_xml_documents_incremental(
         config,
         xbrl_api,
         object_store,
-        source_duckdb,
         registered_date_start=start,
         registered_date_end=end,
         read_financial_reports=xbrl_parquet_storage.read_financial_reports_incremental,
+        read_eligible_companies=xbrl_parquet_storage.read_eligible_companies,
+        write_raw_xml_documents=xbrl_parquet_storage.write_raw_xml_documents_incremental,
     )
 
 
@@ -311,23 +308,24 @@ def finland_xbrl_raw_xml_documents_incremental(
 )
 def finland_xbrl_raw_xml_documents(
     context: dg.AssetExecutionContext,
-    object_store: ObjectStoreResource,
+    xbrl_parquet_storage: XbrlParquetStorageResource,
 ) -> dg.MaterializeResult:
     """Catalog marker for PRH XBRL XML statements downloaded into object storage."""
+    backfill_count = xbrl_parquet_storage.raw_xml_documents_backfill_row_count()
+    incremental_count = xbrl_parquet_storage.raw_xml_documents_incremental_row_count()
+    row_count = backfill_count + incremental_count
     context.log.info(
-        "Loading Finland XBRL raw XML document catalog from s3://%s/%s",
-        XBRL_BUCKET,
-        RAW_XML_DOCUMENTS_OBJECT_KEY,
+        "Finland XBRL raw XML document partition manifests row_count=%d backfill=%d incremental=%d",
+        row_count,
+        backfill_count,
+        incremental_count,
     )
-    frame = load_xml_document_catalog_frame(
-        object_store, documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY
-    )
-    context.log.info("Finland XBRL raw XML document catalog row_count=%d", frame.height)
     return dg.MaterializeResult(
         metadata={
             "bucket": XBRL_BUCKET,
-            "object_key": RAW_XML_DOCUMENTS_OBJECT_KEY,
-            "row_count": frame.height,
+            "row_count": row_count,
+            "backfill_row_count": backfill_count,
+            "incremental_row_count": incremental_count,
         }
     )
 
@@ -340,41 +338,36 @@ def finland_xbrl_raw_xml_documents(
 )
 def finland_xbrl_xml_documents(
     context: dg.AssetExecutionContext,
-    object_store: ObjectStoreResource,
+    xbrl_parquet_storage: XbrlParquetStorageResource,
 ) -> dg.MaterializeResult:
     """Catalog of raw Finland PRH XBRL XML documents available in object storage."""
+    backfill_count = xbrl_parquet_storage.raw_xml_documents_backfill_row_count()
+    incremental_count = xbrl_parquet_storage.raw_xml_documents_incremental_row_count()
+    row_count = backfill_count + incremental_count
     context.log.info(
-        "Loading Finland XBRL XML document table marker from s3://%s/%s",
-        XBRL_BUCKET,
-        RAW_XML_DOCUMENTS_OBJECT_KEY,
+        "Finland XBRL XML document table marker row_count=%d backfill=%d incremental=%d",
+        row_count,
+        backfill_count,
+        incremental_count,
     )
-    frame = load_xml_document_catalog_frame(object_store, documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY)
-    context.log.info("Finland XBRL XML document table marker row_count=%d", frame.height)
     return dg.MaterializeResult(
         metadata={
             "bucket": XBRL_BUCKET,
-            "object_key": RAW_XML_DOCUMENTS_OBJECT_KEY,
-            "row_count": frame.height,
+            "row_count": row_count,
+            "backfill_row_count": backfill_count,
+            "incremental_row_count": incremental_count,
         }
     )
 
 
 def load_eligible_financial_report_rows(
-    source_duckdb: DuckDBResource,
-    financial_reports: list[dict[str, Any]],
     *,
+    eligible_companies: list[dict[str, Any]],
+    financial_reports: list[dict[str, Any]],
     registered_date_start: str,
     registered_date_end: str,
 ) -> list[dict[str, Any]]:
-    with read_only_duckdb_connection(source_duckdb) as connection:
-        rows = connection.execute(
-            f"""
-            select business_id
-            from {XBRL_DLT_DATASET_NAME}.{XBRL_ELIGIBLE_COMPANIES_TABLE}
-            order by business_id
-            """
-        ).fetchall()
-    eligible_business_ids = {business_id for (business_id,) in rows}
+    eligible_business_ids = {company["business_id"] for company in eligible_companies}
     return sorted(
         [
             report
@@ -419,71 +412,6 @@ def _log_raw_xml_download(
         log_info(message)
 
 
-def resolve_xbrl_documents_key(
-    *,
-    config: Any,
-    object_store: ObjectStoreResource | None = None,
-    run_date: date | None = None,
-) -> str:
-    del object_store, run_date
-    if config.documents_key is not None:
-        return config.documents_key
-    return RAW_XML_DOCUMENTS_OBJECT_KEY
-
-
-def load_xbrl_document_manifest(
-    *,
-    object_store: ObjectStoreResource,
-    documents_key: str,
-) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    frame = load_xml_document_catalog_frame(object_store, documents_key=documents_key)
-    return (
-        [_normalize_xml_document_row(row) for row in frame.to_dicts()],
-        {"xml_documents_object_key": documents_key},
-    )
-
-
-def load_xml_document_catalog_frame(
-    object_store: ObjectStoreResource,
-    *,
-    documents_key: str,
-) -> pl.DataFrame:
-    if not object_store.exists(documents_key, bucket=XBRL_BUCKET):
-        raise ValueError(
-            f"XBRL XML document manifest {documents_key!r} does not exist in "
-            f"{XBRL_BUCKET!r}. Materialize finland_xbrl_raw_xml_documents first."
-        )
-
-    return pl.read_parquet(
-        BytesIO(object_store.read_bytes(documents_key, bucket=XBRL_BUCKET))
-    )
-
-
-def merge_xml_document_catalog(
-    *,
-    object_store: ObjectStoreResource,
-    new_rows: list[dict[str, Any]],
-) -> pl.DataFrame:
-    new_frame = pl.DataFrame(new_rows, schema=tables.XML_DOCUMENTS_POLARS_SCHEMA)
-    if object_store.exists(RAW_XML_DOCUMENTS_OBJECT_KEY, bucket=XBRL_BUCKET):
-        existing_frame = pl.read_parquet(
-            BytesIO(object_store.read_bytes(RAW_XML_DOCUMENTS_OBJECT_KEY, bucket=XBRL_BUCKET))
-        )
-        catalog = pl.concat([existing_frame, new_frame], how="vertical_relaxed")
-    else:
-        catalog = new_frame
-
-    if catalog.height > 0:
-        catalog = catalog.unique(
-            subset=["business_id", "financial_date", "xml_object_key"],
-            keep="last",
-            maintain_order=True,
-        )
-    output = BytesIO()
-    catalog.select(tables.XML_DOCUMENTS_COLUMNS).write_parquet(output)
-    object_store.write_bytes(RAW_XML_DOCUMENTS_OBJECT_KEY, output.getvalue(), bucket=XBRL_BUCKET)
-    return catalog
-
 def _xml_document_row(
     document: dict[str, Any],
     *,
@@ -507,17 +435,4 @@ def _xml_document_row(
         "financial_start_date": "",
         "max_reports": "",
         "selected_at": selected_at,
-    }
-
-
-def _normalize_xml_document_row(row: dict[str, Any]) -> dict[str, Any]:
-    xml_object_key = str(row.get("xml_object_key") or row.get("object_key") or "").strip()
-    if not xml_object_key:
-        raise ValueError("XBRL document manifest row is missing xml_object_key")
-    return {
-        "business_id": str(row.get("business_id") or ""),
-        "financial_date": str(row.get("financial_date") or ""),
-        "registration_date": row.get("registration_date"),
-        "source_url": str(row.get("source_url") or ""),
-        "xml_object_key": xml_object_key,
     }

@@ -1,22 +1,13 @@
 import json
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Callable
 
 import dagster as dg
-import dlt
 import polars as pl
-from dagster_duckdb import DuckDBResource
-from dlt.extract.resource import DltResource
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict
 
-from dagster_v3.defs.common.duckdb_resources import (
-    duckdb_database_path,
-    duckdb_resource,
-    read_only_duckdb_connection,
-)
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.finland_xbrl import tables
 from dagster_v3.defs.finland_xbrl.arelle_parser import (
@@ -26,45 +17,27 @@ from dagster_v3.defs.finland_xbrl.arelle_parser import (
 from dagster_v3.defs.finland_xbrl.assets.common import (
     BACKFILL_PARTITIONS,
     DAILY_PARTITIONS,
-    FINLAND_XBRL_DUCKDB_POOL,
     XBRL_BUCKET,
-    XBRL_DLT_DATASET_NAME,
-    _duckdb_table_exists,
 )
 from dagster_v3.defs.finland_xbrl.assets.raw_xml_documents import (
     finland_xbrl_raw_xml_documents_backfill,
     finland_xbrl_raw_xml_documents_incremental,
-    load_xml_document_catalog_frame,
-    load_xbrl_document_manifest,
-    resolve_xbrl_documents_key,
 )
+from dagster_v3.defs.finland_xbrl.resources import XbrlParquetStorageResource
 
 class XbrlParsedConfig(dg.Config):
     model_config = ConfigDict(extra="forbid")
 
-    documents_key: str | None = None
-
-    @field_validator("documents_key", mode="before")
-    @classmethod
-    def normalize_object_key(cls, value: object) -> str | None:
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            raise ValueError("object keys must be strings")
-        stripped = value.strip()
-        return stripped or None
-
 
 @dataclass
 class XbrlParseRunResult:
-    load_info: Any
-    parsed: int
-    failed: int
+    statement_rows: list[dict[str, Any]]
+    fact_rows: list[dict[str, Any]]
+    failed_rows: list[dict[str, Any]]
 
 
-def run_finland_xbrl_arelle_dlt_pipeline(
+def run_finland_xbrl_arelle_parse(
     *,
-    database_path: str | Path,
     object_store: ObjectStoreResource,
     documents: list[dict[str, Any]],
     run_id: str,
@@ -72,8 +45,6 @@ def run_finland_xbrl_arelle_dlt_pipeline(
     log_info: Callable[[str], None] | None = None,
     progress_interval: int = 25,
 ) -> XbrlParseRunResult:
-    database_file = Path(database_path)
-    database_file.parent.mkdir(parents=True, exist_ok=True)
     _log_parse_progress(log_info, f"Parsing {len(documents)} XBRL XML documents")
     statement_rows, fact_rows, failed = parse_xbrl_documents(
         documents,
@@ -83,26 +54,16 @@ def run_finland_xbrl_arelle_dlt_pipeline(
         log_info=log_info,
         progress_interval=progress_interval,
     )
-    pipeline = dlt.pipeline(
-        pipeline_name="finland_xbrl_arelle_parsed_tables",
-        destination=dlt.destinations.duckdb(str(database_file)),
-        dataset_name=XBRL_DLT_DATASET_NAME,
-        dev_mode=False,
-    )
-    load_info = pipeline.run(
-        finland_xbrl_arelle_source(
-            statement_rows=statement_rows,
-            fact_rows=fact_rows,
-        )
-    )
-    with duckdb_resource(database_file).get_connection() as connection:
-        _ensure_parsed_duckdb_tables(connection)
     if log_info is not None:
-        log_info("dlt loaded parsed XBRL tables into DuckDB")
+        log_info(
+            "Parsed XBRL rows ready for parquet: "
+            f"statement_rows={len(statement_rows)} fact_rows={len(fact_rows)} "
+            f"failed={len(failed)}"
+        )
     return XbrlParseRunResult(
-        load_info=load_info,
-        parsed=len(statement_rows),
-        failed=len(failed),
+        statement_rows=statement_rows,
+        fact_rows=fact_rows,
+        failed_rows=failed,
     )
 
 
@@ -138,19 +99,6 @@ def documents_missing_registration_date(
         document
         for document in documents
         if _parse_registration_date(document.get("registration_date")) is None
-    ]
-
-
-def unparsed_documents(
-    documents: list[dict[str, Any]],
-    *,
-    parsed_object_keys: set[str],
-) -> list[dict[str, Any]]:
-    """Drop docs whose S3 object key is already present in the parsed output."""
-    return [
-        document
-        for document in documents
-        if document["xml_object_key"] not in parsed_object_keys
     ]
 
 
@@ -235,39 +183,6 @@ def parse_xbrl_documents(
     return statement_rows, fact_rows, failed
 
 
-@dlt.source(name="finland_xbrl_arelle")
-def finland_xbrl_arelle_source(
-    *,
-    statement_rows: list[dict[str, Any]],
-    fact_rows: list[dict[str, Any]],
-) -> list[DltResource]:
-    return _finland_xbrl_arelle_resources(
-        statement_rows=statement_rows,
-        fact_rows=fact_rows,
-    )
-
-
-def _finland_xbrl_arelle_resources(
-    *,
-    statement_rows: list[dict[str, Any]],
-    fact_rows: list[dict[str, Any]],
-) -> list[DltResource]:
-    return [
-        dlt.resource(
-            statement_rows,
-            name=tables.STATEMENT_DOCUMENTS_TABLE,
-            write_disposition="append",
-            primary_key="statement_key",
-        ),
-        dlt.resource(
-            fact_rows,
-            name=tables.FACTS_TABLE,
-            write_disposition="append",
-            primary_key=("statement_key", "fact_ordinal"),
-        ),
-    ]
-
-
 def _should_log_parse_progress(
     *,
     document_index: int,
@@ -288,25 +203,25 @@ def _log_parse_progress(log_info: Callable[[str], None] | None, message: str) ->
 
 def _materialize_parse_window(
     context: dg.AssetExecutionContext,
-    config: XbrlParsedConfig,
     object_store: ObjectStoreResource,
-    source_duckdb: DuckDBResource,
     *,
     window_start: date,
     window_end: date,
+    documents: list[dict[str, Any]],
+    documents_manifest_path: Path,
+    run_id: str,
+    write_statement_documents: Callable[[str, list[dict[str, Any]]], Path],
+    write_facts: Callable[[str, list[dict[str, Any]]], Path],
+    parser: ArelleStatementParser = parse_statement_xml_with_arelle,
 ) -> dg.MaterializeResult:
-    documents_key = resolve_xbrl_documents_key(config=config)
     context.log.info(
-        "XBRL parse partition %s started: window=%s..%s documents_key=%s",
+        "XBRL parse partition %s started: window=%s..%s documents_manifest_path=%s",
         context.partition_key,
         window_start.isoformat(),
         window_end.isoformat(),
-        documents_key,
+        documents_manifest_path,
     )
 
-    documents, _meta = load_xbrl_document_manifest(
-        object_store=object_store, documents_key=documents_key
-    )
     # Docs without a parseable registration_date fall outside every month partition,
     # so they are never parsed. Surface that gap rather than dropping it silently.
     missing_registration = len(documents_missing_registration_date(documents))
@@ -319,50 +234,50 @@ def _materialize_parse_window(
     in_window = documents_in_registration_window(
         documents, window_start=window_start, window_end=window_end
     )
-    to_parse = unparsed_documents(
-        in_window, parsed_object_keys=load_parsed_object_keys(source_duckdb)
-    )
     context.log.info(
-        "XBRL parse partition %s: %d catalog docs, %d in window, %d to parse",
-        context.partition_key, len(documents), len(in_window), len(to_parse),
+        "XBRL parse partition %s: %d manifest docs, %d in window",
+        context.partition_key,
+        len(documents),
+        len(in_window),
     )
 
-    parsed_this_run = 0
-    failed_this_run = 0
-    if to_parse:
-        result = run_finland_xbrl_arelle_dlt_pipeline(
-            database_path=duckdb_database_path(source_duckdb),
-            object_store=object_store,
-            documents=to_parse,
-            run_id=context.run_id,
-            log_info=context.log.info,
+    result = run_finland_xbrl_arelle_parse(
+        object_store=object_store,
+        documents=in_window,
+        run_id=run_id,
+        parser=parser,
+        log_info=context.log.info,
+    )
+    statement_documents_path = write_statement_documents(
+        context.partition_key,
+        result.statement_rows,
+    )
+    facts_path = write_facts(context.partition_key, result.fact_rows)
+    failed_this_run = len(result.failed_rows)
+    if failed_this_run:
+        # Failed docs are not written, so they are re-attempted on the next run
+        # (and keep failing until the source document is fixed/removed).
+        context.log.warning(
+            "XBRL parse partition %s: %d documents failed to parse and were skipped "
+            "(will retry next run)",
+            context.partition_key,
+            failed_this_run,
         )
-        with source_duckdb.get_connection() as connection:
-            _ensure_parsed_duckdb_tables(connection)
-        parsed_this_run = result.parsed
-        failed_this_run = result.failed
-        if failed_this_run:
-            # Failed docs are not written, so they are re-attempted on the next run
-            # (and keep failing until the source document is fixed/removed).
-            context.log.warning(
-                "XBRL parse partition %s: %d documents failed to parse and were skipped "
-                "(will retry next run)",
-                context.partition_key, failed_this_run,
-            )
-    else:
+    if not in_window:
         context.log.info(
-            "XBRL parse partition %s: no unparsed documents in window",
+            "XBRL parse partition %s: no documents in window",
             context.partition_key,
         )
 
-    row_counts = parsed_duckdb_row_counts(source_duckdb)
     context.log.info(
-        "XBRL parse partition %s complete: parsed=%d failed=%d statement_rows_total=%d facts_total=%d",
+        "XBRL parse partition %s complete: parsed=%d failed=%d statement_rows=%d facts=%d statement_path=%s facts_path=%s",
         context.partition_key,
-        parsed_this_run,
+        len(result.statement_rows),
         failed_this_run,
-        row_counts[tables.STATEMENT_DOCUMENTS_TABLE],
-        row_counts[tables.FACTS_TABLE],
+        len(result.statement_rows),
+        len(result.fact_rows),
+        statement_documents_path,
+        facts_path,
     )
     return dg.MaterializeResult(
         metadata={
@@ -370,14 +285,14 @@ def _materialize_parse_window(
             "window_start": window_start.isoformat(),
             "window_end": window_end.isoformat(),
             "documents_in_window": len(in_window),
-            "documents_parsed_this_run": parsed_this_run,
+            "documents_parsed_this_run": len(result.statement_rows),
             "documents_failed_this_run": failed_this_run,
             "documents_missing_registration_date": missing_registration,
-            "statement_documents_total_row_count": row_counts[
-                tables.STATEMENT_DOCUMENTS_TABLE
-            ],
-            "facts_total_row_count": row_counts[tables.FACTS_TABLE],
-            "xml_documents_object_key": documents_key,
+            "statement_documents_row_count": len(result.statement_rows),
+            "facts_row_count": len(result.fact_rows),
+            "xml_documents_manifest_path": str(documents_manifest_path),
+            "statement_documents_parquet_path": str(statement_documents_path),
+            "facts_parquet_path": str(facts_path),
         }
     )
 
@@ -388,23 +303,30 @@ def _materialize_parse_window(
     deps=[finland_xbrl_raw_xml_documents_backfill],
     partitions_def=BACKFILL_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    kinds={"python", "dlt", "duckdb", "arelle"},
-    pool=FINLAND_XBRL_DUCKDB_POOL,
+    kinds={"python", "parquet", "arelle"},
 )
 def finland_xbrl_parse_backfill(
     context: dg.AssetExecutionContext,
     config: XbrlParsedConfig,
+    xbrl_parquet_storage: XbrlParquetStorageResource,
     object_store: ObjectStoreResource,
-    source_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     window = context.partition_time_window
+    del config
     return _materialize_parse_window(
         context,
-        config,
         object_store,
-        source_duckdb,
         window_start=window.start.date(),
         window_end=window.end.date(),
+        documents=xbrl_parquet_storage.read_raw_xml_documents_backfill(
+            context.partition_key
+        ),
+        documents_manifest_path=xbrl_parquet_storage.raw_xml_documents_backfill_path(
+            context.partition_key
+        ),
+        run_id=context.run.run_id,
+        write_statement_documents=xbrl_parquet_storage.write_statement_documents_backfill,
+        write_facts=xbrl_parquet_storage.write_facts_backfill,
     )
 
 
@@ -413,166 +335,31 @@ def finland_xbrl_parse_backfill(
     group_name="finland_xbrl",
     deps=[finland_xbrl_raw_xml_documents_incremental],
     partitions_def=DAILY_PARTITIONS,
-    kinds={"python", "dlt", "duckdb", "arelle"},
-    pool=FINLAND_XBRL_DUCKDB_POOL,
+    kinds={"python", "parquet", "arelle"},
 )
 def finland_xbrl_parse_incremental(
     context: dg.AssetExecutionContext,
     config: XbrlParsedConfig,
+    xbrl_parquet_storage: XbrlParquetStorageResource,
     object_store: ObjectStoreResource,
-    source_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
     window = context.partition_time_window
+    del config
     return _materialize_parse_window(
         context,
-        config,
         object_store,
-        source_duckdb,
         window_start=window.start.date(),
         window_end=window.end.date(),
+        documents=xbrl_parquet_storage.read_raw_xml_documents_incremental(
+            context.partition_key
+        ),
+        documents_manifest_path=xbrl_parquet_storage.raw_xml_documents_incremental_path(
+            context.partition_key
+        ),
+        run_id=context.run.run_id,
+        write_statement_documents=xbrl_parquet_storage.write_statement_documents_incremental,
+        write_facts=xbrl_parquet_storage.write_facts_incremental,
     )
-
-
-@dg.multi_asset(
-    specs=[
-        dg.AssetSpec(
-            table,
-            deps=[finland_xbrl_parse_backfill, finland_xbrl_parse_incremental],
-            group_name="finland_xbrl",
-            kinds={"duckdb"},
-            description=f"Catalog marker for parsed Finland PRH XBRL DuckDB table `{table}`.",
-        )
-        for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE)
-    ],
-    pool=FINLAND_XBRL_DUCKDB_POOL,
-)
-def finland_xbrl_parsed_tables(
-    context: dg.AssetExecutionContext,
-    source_duckdb: DuckDBResource,
-) -> Iterator[dg.MaterializeResult]:
-    context.log.info("Loading Finland XBRL parsed DuckDB table markers")
-    row_counts = parsed_duckdb_row_counts(source_duckdb)
-    for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE):
-        context.log.info("Finland XBRL parsed DuckDB table %s row_count=%d", table, row_counts[table])
-        yield dg.MaterializeResult(
-            asset_key=table,
-            metadata={
-                "duckdb_schema": XBRL_DLT_DATASET_NAME,
-                "duckdb_table": table,
-                "total_table_row_count": row_counts[table],
-            },
-        )
-
-
-def load_parsed_table_frame(source_duckdb: DuckDBResource, *, table: str) -> pl.DataFrame:
-    if table not in {tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE}:
-        raise ValueError(f"Unsupported parsed XBRL DuckDB table {table!r}")
-    columns = _parsed_table_columns(table)
-    with read_only_duckdb_connection(source_duckdb) as connection:
-        if not _duckdb_table_exists(connection, table=table):
-            raise ValueError(
-                f"XBRL parsed DuckDB table {XBRL_DLT_DATASET_NAME}.{table} does not exist. "
-                "Materialize fi_prh_xbrl_statement_documents and fi_prh_xbrl_facts_raw first."
-            )
-        arrow_table = connection.execute(
-            f"select {', '.join(columns)} from {XBRL_DLT_DATASET_NAME}.{table}"
-        ).to_arrow_table()
-    return pl.from_arrow(arrow_table)
-
-
-def parsed_duckdb_row_counts(source_duckdb: DuckDBResource) -> dict[str, int]:
-    parsed_tables = (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE)
-    if not duckdb_database_path(source_duckdb).exists():
-        return {table: 0 for table in parsed_tables}
-    with read_only_duckdb_connection(source_duckdb) as connection:
-        return {
-            table: (
-                int(
-                    connection.execute(
-                        f"select count(*) from {XBRL_DLT_DATASET_NAME}.{table}"
-                    ).fetchone()[0]
-                )
-                if _duckdb_table_exists(connection, table=table)
-                else 0
-            )
-            for table in parsed_tables
-        }
-
-
-def load_parsed_object_keys(source_duckdb: DuckDBResource) -> set[str]:
-    """Set of xml_object_keys already present in the parsed statement table."""
-    if not duckdb_database_path(source_duckdb).exists():
-        return set()
-    with read_only_duckdb_connection(source_duckdb) as connection:
-        if not _duckdb_table_exists(connection, table=tables.STATEMENT_DOCUMENTS_TABLE):
-            return set()
-        rows = connection.execute(
-            f"select distinct xml_object_key "
-            f"from {XBRL_DLT_DATASET_NAME}.{tables.STATEMENT_DOCUMENTS_TABLE}"
-        ).fetchall()
-    return {row[0] for row in rows}
-
-
-def parsed_duckdb_observability_metadata(
-    *,
-    object_store: ObjectStoreResource,
-    source_duckdb: DuckDBResource,
-    documents_key: str,
-) -> dict[str, Any]:
-    xml_documents_frame = load_xml_document_catalog_frame(
-        object_store,
-        documents_key=documents_key,
-    )
-    statement_documents_frame = load_parsed_table_frame(
-        source_duckdb,
-        table=tables.STATEMENT_DOCUMENTS_TABLE,
-    )
-    facts_frame = load_parsed_table_frame(
-        source_duckdb,
-        table=tables.FACTS_TABLE,
-    )
-    quality = build_parse_quality_row(
-        xml_documents_frame=xml_documents_frame,
-        statement_documents_frame=statement_documents_frame,
-        facts_frame=facts_frame,
-        generated_at=datetime.now(UTC).isoformat(),
-    )
-    concept_rows = build_concept_profile_rows(facts_frame, example_limit=3)
-    return {
-        "xml_documents_count": quality["xml_documents_count"],
-        "statement_documents_count": quality["statement_documents_count"],
-        "facts_count": quality["facts_count"],
-        "statements_with_zero_facts_count": quality["statements_with_zero_facts_count"],
-        "duplicate_statement_keys_count": quality["duplicate_statement_keys_count"],
-        "parser_warning_statements_count": quality["parser_warning_statements_count"],
-        "missing_statement_business_ids_count": quality["missing_statement_business_ids_count"],
-        "missing_statement_financial_dates_count": quality[
-            "missing_statement_financial_dates_count"
-        ],
-        "missing_fact_business_ids_count": quality["missing_fact_business_ids_count"],
-        "missing_fact_financial_dates_count": quality["missing_fact_financial_dates_count"],
-        "facts_per_statement_min": quality["facts_per_statement_min"],
-        "facts_per_statement_avg": quality["facts_per_statement_avg"],
-        "facts_per_statement_max": quality["facts_per_statement_max"],
-        "latest_parsed_at": quality["latest_parsed_at"],
-        "top_concept_namespaces": json.loads(quality["top_concept_namespaces"]),
-        "top_concepts": json.loads(quality["top_concepts"]),
-        "concept_count": len(concept_rows),
-    }
-
-
-def _ensure_parsed_duckdb_tables(connection: Any) -> None:
-    connection.execute(f"create schema if not exists {XBRL_DLT_DATASET_NAME}")
-    for table, schema in (
-        (tables.STATEMENT_DOCUMENTS_TABLE, tables.STATEMENT_DOCUMENTS_DUCKDB_SCHEMA),
-        (tables.FACTS_TABLE, tables.FACTS_DUCKDB_SCHEMA),
-    ):
-        column_definitions = ", ".join(
-            f"{column} {duckdb_type}" for column, duckdb_type in schema.items()
-        )
-        connection.execute(
-            f"create table if not exists {XBRL_DLT_DATASET_NAME}.{table} ({column_definitions})"
-        )
 
 
 def _statement_document_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -581,14 +368,6 @@ def _statement_document_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def _fact_row(row: dict[str, Any]) -> dict[str, Any]:
     return {column: row.get(column) for column in tables.FACTS_COLUMNS}
-
-
-def _parsed_table_columns(table: str) -> list[str]:
-    if table == tables.STATEMENT_DOCUMENTS_TABLE:
-        return tables.STATEMENT_DOCUMENTS_COLUMNS
-    if table == tables.FACTS_TABLE:
-        return tables.FACTS_COLUMNS
-    raise ValueError(f"Unsupported parsed XBRL DuckDB table {table!r}")
 
 
 def build_parse_quality_row(

@@ -14,6 +14,8 @@ import polars as pl
 from dlt.sources.helpers.requests import Client as DltRequestsClient
 from pydantic import PrivateAttr
 
+from dagster_v3.defs.finland_xbrl import tables
+
 PRH_XBRL_REGISTRATION_SEARCH_START = "2023-07-01"
 FINANCIAL_REPORT_COLUMNS = (
     "business_id",
@@ -67,6 +69,30 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
     def financial_reports_incremental_path(self, partition_key: str) -> Path:
         return self._partition_path("financial_reports_incremental", partition_key)
 
+    def raw_xml_documents_backfill_path(self, partition_key: str) -> Path:
+        return self._partition_path("raw_xml_documents_backfill", partition_key)
+
+    def raw_xml_documents_incremental_path(self, partition_key: str) -> Path:
+        return self._partition_path("raw_xml_documents_incremental", partition_key)
+
+    def statement_documents_backfill_path(self, partition_key: str) -> Path:
+        return self._partition_path("statement_documents_backfill", partition_key)
+
+    def statement_documents_incremental_path(self, partition_key: str) -> Path:
+        return self._partition_path("statement_documents_incremental", partition_key)
+
+    def facts_backfill_path(self, partition_key: str) -> Path:
+        return self._partition_path("facts_backfill", partition_key)
+
+    def facts_incremental_path(self, partition_key: str) -> Path:
+        return self._partition_path("facts_incremental", partition_key)
+
+    def financial_metrics_path(self) -> Path:
+        return Path(self.base_path) / "financial_metrics" / "data.parquet"
+
+    def eligible_companies_path(self) -> Path:
+        return Path(self.base_path) / "eligible_companies" / "data.parquet"
+
     def write_financial_reports_backfill(
         self,
         partition_key: str,
@@ -95,11 +121,157 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
             self.financial_reports_incremental_path(partition_key)
         )
 
+    def write_eligible_companies(self, rows: list[dict[str, Any]]) -> Path:
+        return self._write_rows(
+            self.eligible_companies_path(),
+            rows,
+            columns=tables.ELIGIBLE_COMPANIES_COLUMNS,
+            schema=tables.ELIGIBLE_COMPANIES_POLARS_SCHEMA,
+        )
+
+    def read_eligible_companies(self) -> list[dict[str, Any]]:
+        return self._read_rows(self.eligible_companies_path())
+
+    def write_raw_xml_documents_backfill(
+        self,
+        partition_key: str,
+        rows: list[dict[str, Any]],
+    ) -> Path:
+        return self._write_rows(
+            self.raw_xml_documents_backfill_path(partition_key),
+            rows,
+            columns=tables.XML_DOCUMENTS_COLUMNS,
+            schema=tables.XML_DOCUMENTS_POLARS_SCHEMA,
+        )
+
+    def write_raw_xml_documents_incremental(
+        self,
+        partition_key: str,
+        rows: list[dict[str, Any]],
+    ) -> Path:
+        return self._write_rows(
+            self.raw_xml_documents_incremental_path(partition_key),
+            rows,
+            columns=tables.XML_DOCUMENTS_COLUMNS,
+            schema=tables.XML_DOCUMENTS_POLARS_SCHEMA,
+        )
+
+    def read_raw_xml_documents_backfill(self, partition_key: str) -> list[dict[str, Any]]:
+        return self._read_rows(self.raw_xml_documents_backfill_path(partition_key))
+
+    def read_raw_xml_documents_incremental(self, partition_key: str) -> list[dict[str, Any]]:
+        return self._read_rows(self.raw_xml_documents_incremental_path(partition_key))
+
+    def write_statement_documents_backfill(
+        self,
+        partition_key: str,
+        rows: list[dict[str, Any]],
+    ) -> Path:
+        return self._write_rows(
+            self.statement_documents_backfill_path(partition_key),
+            rows,
+            columns=tables.STATEMENT_DOCUMENTS_COLUMNS,
+            schema=tables.STATEMENT_DOCUMENTS_POLARS_SCHEMA,
+        )
+
+    def write_statement_documents_incremental(
+        self,
+        partition_key: str,
+        rows: list[dict[str, Any]],
+    ) -> Path:
+        return self._write_rows(
+            self.statement_documents_incremental_path(partition_key),
+            rows,
+            columns=tables.STATEMENT_DOCUMENTS_COLUMNS,
+            schema=tables.STATEMENT_DOCUMENTS_POLARS_SCHEMA,
+        )
+
+    def write_facts_backfill(
+        self,
+        partition_key: str,
+        rows: list[dict[str, Any]],
+    ) -> Path:
+        return self._write_rows(
+            self.facts_backfill_path(partition_key),
+            rows,
+            columns=tables.FACTS_COLUMNS,
+            schema=tables.FACTS_POLARS_SCHEMA,
+        )
+
+    def write_facts_incremental(
+        self,
+        partition_key: str,
+        rows: list[dict[str, Any]],
+    ) -> Path:
+        return self._write_rows(
+            self.facts_incremental_path(partition_key),
+            rows,
+            columns=tables.FACTS_COLUMNS,
+            schema=tables.FACTS_POLARS_SCHEMA,
+        )
+
+    def read_statement_documents_backfill(self, partition_key: str) -> list[dict[str, Any]]:
+        return self._read_rows(self.statement_documents_backfill_path(partition_key))
+
+    def read_statement_documents_incremental(self, partition_key: str) -> list[dict[str, Any]]:
+        return self._read_rows(self.statement_documents_incremental_path(partition_key))
+
+    def read_facts_backfill(self, partition_key: str) -> list[dict[str, Any]]:
+        return self._read_rows(self.facts_backfill_path(partition_key))
+
+    def read_facts_incremental(self, partition_key: str) -> list[dict[str, Any]]:
+        return self._read_rows(self.facts_incremental_path(partition_key))
+
+    def read_statement_documents(self) -> list[dict[str, Any]]:
+        return [
+            *self._read_asset_rows("statement_documents_backfill"),
+            *self._read_asset_rows("statement_documents_incremental"),
+        ]
+
+    def read_facts(self) -> list[dict[str, Any]]:
+        return [
+            *self._read_asset_rows("facts_backfill"),
+            *self._read_asset_rows("facts_incremental"),
+        ]
+
+    def write_financial_metrics(self, rows: list[dict[str, Any]]) -> Path:
+        return self._write_rows(
+            self.financial_metrics_path(),
+            rows,
+            columns=tables.FINANCIAL_METRICS_COLUMNS,
+            schema=tables.FINANCIAL_METRICS_POLARS_SCHEMA,
+        )
+
+    def read_financial_metrics(self) -> list[dict[str, Any]]:
+        return self._read_rows(self.financial_metrics_path())
+
     def financial_reports_backfill_row_count(self) -> int:
         return self._row_count("financial_reports_backfill")
 
     def financial_reports_incremental_row_count(self) -> int:
         return self._row_count("financial_reports_incremental")
+
+    def raw_xml_documents_backfill_row_count(self) -> int:
+        return self._row_count("raw_xml_documents_backfill")
+
+    def raw_xml_documents_incremental_row_count(self) -> int:
+        return self._row_count("raw_xml_documents_incremental")
+
+    def statement_documents_row_count(self) -> int:
+        return self._row_count("statement_documents_backfill") + self._row_count(
+            "statement_documents_incremental"
+        )
+
+    def facts_row_count(self) -> int:
+        return self._row_count("facts_backfill") + self._row_count(
+            "facts_incremental"
+        )
+
+    def financial_metrics_row_count(self) -> int:
+        return len(self.read_financial_metrics())
+
+    def eligible_companies_row_count(self) -> int:
+        return len(self.read_eligible_companies())
 
     def _partition_path(self, asset_name: str, partition_key: str) -> Path:
         return (
@@ -114,15 +286,42 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
         path: Path,
         rows: list[dict[str, Any]],
     ) -> Path:
+        return self._write_rows(
+            path,
+            rows,
+            columns=FINANCIAL_REPORT_COLUMNS,
+            schema=FINANCIAL_REPORT_POLARS_SCHEMA,
+        )
+
+    def _write_rows(
+        self,
+        path: Path,
+        rows: list[dict[str, Any]],
+        *,
+        columns: tuple[str, ...] | list[str],
+        schema: dict[str, pl.DataType],
+    ) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
-        frame = _financial_report_frame(rows)
+        frame = _row_frame(rows, columns=columns, schema=schema)
         frame.write_parquet(path)
         return path
 
     def _read_financial_reports(self, path: Path) -> list[dict[str, Any]]:
+        return self._read_rows(path)
+
+    def _read_rows(self, path: Path) -> list[dict[str, Any]]:
         if not path.exists():
             return []
         return pl.read_parquet(path).to_dicts()
+
+    def _read_asset_rows(self, asset_name: str) -> list[dict[str, Any]]:
+        root = Path(self.base_path) / asset_name
+        if not root.exists():
+            return []
+        rows: list[dict[str, Any]] = []
+        for path in sorted(root.glob("*/data.parquet")):
+            rows.extend(pl.read_parquet(path).to_dicts())
+        return rows
 
     def _row_count(self, asset_name: str) -> int:
         root = Path(self.base_path) / asset_name
@@ -354,13 +553,18 @@ def _source_payload_hash(payload: dict[str, Any]) -> str:
     return sha256(body.encode("utf-8")).hexdigest()
 
 
-def _financial_report_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
+def _row_frame(
+    rows: list[dict[str, Any]],
+    *,
+    columns: tuple[str, ...] | list[str],
+    schema: dict[str, pl.DataType],
+) -> pl.DataFrame:
     if not rows:
-        return pl.DataFrame(schema=FINANCIAL_REPORT_POLARS_SCHEMA)
+        return pl.DataFrame(schema=schema)
     return pl.DataFrame(
         [
-            {column: row.get(column) for column in FINANCIAL_REPORT_COLUMNS}
+            {column: row.get(column) for column in columns}
             for row in rows
         ],
-        schema=FINANCIAL_REPORT_POLARS_SCHEMA,
+        schema=schema,
     )

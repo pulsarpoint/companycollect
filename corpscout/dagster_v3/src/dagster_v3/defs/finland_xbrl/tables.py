@@ -7,6 +7,13 @@ FACTS_TABLE = "fi_prh_xbrl_facts_raw"
 XML_DOCUMENTS_TABLE = "fi_prh_xbrl_xml_documents"
 FINANCIAL_METRICS_TABLE = "fi_prh_xbrl_financial_metrics"
 
+ELIGIBLE_COMPANIES_POLARS_SCHEMA = {
+    "business_id": pl.Utf8,
+    "primary_name": pl.Utf8,
+    "website_normalized_url": pl.Utf8,
+}
+ELIGIBLE_COMPANIES_COLUMNS = list(ELIGIBLE_COMPANIES_POLARS_SCHEMA)
+
 XML_DOCUMENTS_POLARS_SCHEMA = {
     "business_id": pl.Utf8,
     "financial_date": pl.Utf8,
@@ -25,59 +32,59 @@ XML_DOCUMENTS_POLARS_SCHEMA = {
 }
 XML_DOCUMENTS_COLUMNS = list(XML_DOCUMENTS_POLARS_SCHEMA)
 
-STATEMENT_DOCUMENTS_DUCKDB_SCHEMA = {
-    "statement_key": "varchar",
-    "source_run_id": "varchar",
-    "business_id": "varchar",
-    "financial_date": "varchar",
-    "registration_date": "varchar",
-    "source_url": "varchar",
-    "xml_object_key": "varchar",
-    "xml_sha256": "varchar",
-    "xml_size_bytes": "bigint",
-    "root_name": "varchar",
-    "schema_refs": "varchar",
-    "taxonomy_entrypoint": "varchar",
-    "reported_business_id": "varchar",
-    "reported_company_name": "varchar",
-    "reported_period_start": "varchar",
-    "reported_period_end": "varchar",
-    "contexts_count": "bigint",
-    "units_count": "bigint",
-    "facts_count": "bigint",
-    "validation_warnings": "varchar",
-    "parser_version": "varchar",
-    "parsed_at": "varchar",
+STATEMENT_DOCUMENTS_POLARS_SCHEMA = {
+    "statement_key": pl.Utf8,
+    "source_run_id": pl.Utf8,
+    "business_id": pl.Utf8,
+    "financial_date": pl.Utf8,
+    "registration_date": pl.Utf8,
+    "source_url": pl.Utf8,
+    "xml_object_key": pl.Utf8,
+    "xml_sha256": pl.Utf8,
+    "xml_size_bytes": pl.Int64,
+    "root_name": pl.Utf8,
+    "schema_refs": pl.Utf8,
+    "taxonomy_entrypoint": pl.Utf8,
+    "reported_business_id": pl.Utf8,
+    "reported_company_name": pl.Utf8,
+    "reported_period_start": pl.Utf8,
+    "reported_period_end": pl.Utf8,
+    "contexts_count": pl.Int64,
+    "units_count": pl.Int64,
+    "facts_count": pl.Int64,
+    "validation_warnings": pl.Utf8,
+    "parser_version": pl.Utf8,
+    "parsed_at": pl.Utf8,
 }
-STATEMENT_DOCUMENTS_COLUMNS = list(STATEMENT_DOCUMENTS_DUCKDB_SCHEMA)
+STATEMENT_DOCUMENTS_COLUMNS = list(STATEMENT_DOCUMENTS_POLARS_SCHEMA)
 
-FACTS_DUCKDB_SCHEMA = {
-    "statement_key": "varchar",
-    "business_id": "varchar",
-    "financial_date": "varchar",
-    "fact_ordinal": "bigint",
-    "concept_qname": "varchar",
-    "concept_namespace": "varchar",
-    "concept_local_name": "varchar",
-    "context_id": "varchar",
-    "unit_id": "varchar",
-    "decimals": "varchar",
-    "precision": "varchar",
-    "value_kind": "varchar",
-    "raw_value": "varchar",
-    "numeric_value": "varchar",
-    "date_value": "varchar",
-    "text_value": "varchar",
-    "mcy_member_code": "varchar",
-    "mcy_member_label_fi": "varchar",
-    "ref_member_code": "varchar",
-    "ref_member_label_fi": "varchar",
-    "is_comparative": "boolean",
-    "dimensions": "varchar",
-    "parser_version": "varchar",
-    "parsed_at": "varchar",
+FACTS_POLARS_SCHEMA = {
+    "statement_key": pl.Utf8,
+    "business_id": pl.Utf8,
+    "financial_date": pl.Utf8,
+    "fact_ordinal": pl.Int64,
+    "concept_qname": pl.Utf8,
+    "concept_namespace": pl.Utf8,
+    "concept_local_name": pl.Utf8,
+    "context_id": pl.Utf8,
+    "unit_id": pl.Utf8,
+    "decimals": pl.Utf8,
+    "precision": pl.Utf8,
+    "value_kind": pl.Utf8,
+    "raw_value": pl.Utf8,
+    "numeric_value": pl.Utf8,
+    "date_value": pl.Utf8,
+    "text_value": pl.Utf8,
+    "mcy_member_code": pl.Utf8,
+    "mcy_member_label_fi": pl.Utf8,
+    "ref_member_code": pl.Utf8,
+    "ref_member_label_fi": pl.Utf8,
+    "is_comparative": pl.Boolean,
+    "dimensions": pl.Utf8,
+    "parser_version": pl.Utf8,
+    "parsed_at": pl.Utf8,
 }
-FACTS_COLUMNS = list(FACTS_DUCKDB_SCHEMA)
+FACTS_COLUMNS = list(FACTS_POLARS_SCHEMA)
 
 FINANCIAL_METRICS_COLUMNS = [
     "statement_key",
@@ -105,3 +112,29 @@ FINANCIAL_METRICS_COLUMNS = [
     "mapping_version",
     "built_at",
 ]
+FINANCIAL_METRICS_POLARS_SCHEMA = {
+    "statement_key": pl.Utf8,
+    "business_id": pl.Utf8,
+    "financial_date": pl.Utf8,
+    "period_start": pl.Utf8,
+    "period_end": pl.Utf8,
+    "revenue": pl.Float64,
+    "operating_profit_loss": pl.Float64,
+    "profit_loss": pl.Float64,
+    "total_assets": pl.Float64,
+    "equity": pl.Float64,
+    "liabilities": pl.Float64,
+    "cash_and_bank": pl.Float64,
+    "current_assets": pl.Float64,
+    "current_receivables": pl.Float64,
+    "current_liabilities": pl.Float64,
+    "personnel_expenses": pl.Float64,
+    "wages_and_salaries": pl.Float64,
+    "employees": pl.Float64,
+    "source_fact_count": pl.Int64,
+    "mapped_fact_count": pl.Int64,
+    "unmapped_numeric_fact_count": pl.Int64,
+    "metric_warnings": pl.Utf8,
+    "mapping_version": pl.Utf8,
+    "built_at": pl.Utf8,
+}

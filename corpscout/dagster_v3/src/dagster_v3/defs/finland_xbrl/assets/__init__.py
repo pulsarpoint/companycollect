@@ -1,7 +1,5 @@
 import dagster as dg
-from dagster_dbt import DbtCliResource
 
-from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.finland_xbrl import arelle_parser, tables
 from dagster_v3.defs.finland_xbrl.assets.common import (
@@ -11,9 +9,6 @@ from dagster_v3.defs.finland_xbrl.assets.common import (
     DEFAULT_XBRL_REQUEST_MAX_ATTEMPTS,
     DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS,
     DEFAULT_XBRL_RETRY_MAX_DELAY_SECONDS,
-    FINLAND_XBRL_DBT_PROJECT_DIR,
-    FINLAND_XBRL_DUCKDB_POOL,
-    RAW_XML_DOCUMENTS_OBJECT_KEY,
     XBRL_BASE_URL,
     XBRL_BUCKET,
     XBRL_DLT_DATASET_NAME,
@@ -21,23 +16,21 @@ from dagster_v3.defs.finland_xbrl.assets.common import (
     XBRL_ELIGIBLE_COMPANIES_TABLE,
     XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE,
     XBRL_TIMEOUT_SECONDS,
-    _XBRL_DUCKDB_PATH,
 )
-from dagster_v3.defs.finland_xbrl.assets.dbt_assets import (
-    FinlandXbrlDbtTranslator,
-    finland_xbrl_dbt_assets,
-    finland_xbrl_dbt_project,
-)
-from dagster_v3.defs.finland_xbrl.assets.company_seed_duckdb import (
-    build_finland_xbrl_company_seed_duckdb,
-    finland_xbrl_company_seed_duckdb,
+from dagster_v3.defs.finland_xbrl.assets.eligible_companies import (
+    build_finland_xbrl_eligible_companies,
+    finland_xbrl_eligible_companies,
 )
 from dagster_v3.defs.finland_xbrl.assets.financial_reports import (
     XbrlFinancialReportsConfig,
-    finland_xbrl_financial_reports_backfill_duckdb,
-    finland_xbrl_financial_reports_duckdb,
-    finland_xbrl_financial_reports_incremental_duckdb,
+    finland_xbrl_financial_reports,
+    finland_xbrl_financial_reports_backfill,
+    finland_xbrl_financial_reports_incremental,
     materialize_financial_reports_window,
+)
+from dagster_v3.defs.finland_xbrl.assets.financial_metrics import (
+    build_financial_metric_rows,
+    finland_xbrl_financial_metrics,
 )
 from dagster_v3.defs.finland_xbrl.assets.jobs import (
     finland_xbrl_historical_backfill_job,
@@ -52,19 +45,13 @@ from dagster_v3.defs.finland_xbrl.assets.parse import (
     build_parse_quality_row,
     documents_in_registration_window,
     documents_missing_registration_date,
-    finland_xbrl_arelle_source,
     finland_xbrl_parse_backfill,
     finland_xbrl_parse_incremental,
-    finland_xbrl_parsed_tables,
-    load_parsed_object_keys,
-    load_parsed_table_frame,
     parse_xbrl_documents,
-    parsed_duckdb_observability_metadata,
-    parsed_duckdb_row_counts,
-    run_finland_xbrl_arelle_dlt_pipeline,
-    unparsed_documents,
+    run_finland_xbrl_arelle_parse,
 )
 from dagster_v3.defs.finland_xbrl.assets.raw_xml_documents import (
+    RawXmlDownloadResult,
     XbrlRawConfig,
     document_object_key,
     download_finland_xbrl_raw_xml_documents,
@@ -73,10 +60,6 @@ from dagster_v3.defs.finland_xbrl.assets.raw_xml_documents import (
     finland_xbrl_raw_xml_documents_incremental,
     finland_xbrl_xml_documents,
     load_eligible_financial_report_rows,
-    load_xbrl_document_manifest,
-    load_xml_document_catalog_frame,
-    merge_xml_document_catalog,
-    resolve_xbrl_documents_key,
 )
 from dagster_v3.defs.finland_xbrl.resources import (
     XbrlApiResource,
@@ -90,10 +73,7 @@ __all__ = [
     "DEFAULT_XBRL_REQUEST_MAX_ATTEMPTS",
     "DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS",
     "DEFAULT_XBRL_RETRY_MAX_DELAY_SECONDS",
-    "FINLAND_XBRL_DBT_PROJECT_DIR",
-    "FINLAND_XBRL_DUCKDB_POOL",
-    "FinlandXbrlDbtTranslator",
-    "RAW_XML_DOCUMENTS_OBJECT_KEY",
+    "RawXmlDownloadResult",
     "XBRL_BASE_URL",
     "XBRL_BUCKET",
     "XBRL_DLT_DATASET_NAME",
@@ -106,64 +86,51 @@ __all__ = [
     "XbrlParsedConfig",
     "XbrlParseRunResult",
     "XbrlRawConfig",
-    "_XBRL_DUCKDB_PATH",
     "arelle_parser",
     "build_concept_profile_rows",
+    "build_finland_xbrl_eligible_companies",
+    "build_financial_metric_rows",
     "build_parse_quality_row",
     "defs",
     "document_object_key",
     "documents_in_registration_window",
     "documents_missing_registration_date",
     "download_finland_xbrl_raw_xml_documents",
-    "finland_xbrl_arelle_source",
     "finland_xbrl_historical_backfill_job",
-    "finland_xbrl_dbt_assets",
-    "finland_xbrl_dbt_project",
-    "finland_xbrl_company_seed_duckdb",
-    "finland_xbrl_financial_reports_backfill_duckdb",
-    "finland_xbrl_financial_reports_duckdb",
-    "finland_xbrl_financial_reports_incremental_duckdb",
+    "finland_xbrl_eligible_companies",
+    "finland_xbrl_financial_metrics",
+    "finland_xbrl_financial_reports",
+    "finland_xbrl_financial_reports_backfill",
+    "finland_xbrl_financial_reports_incremental",
     "finland_xbrl_incremental_job",
     "finland_xbrl_incremental_schedule",
     "finland_xbrl_parse_backfill",
     "finland_xbrl_parse_incremental",
-    "finland_xbrl_parsed_tables",
     "finland_xbrl_raw_xml_documents",
     "finland_xbrl_raw_xml_documents_backfill",
     "finland_xbrl_raw_xml_documents_incremental",
     "finland_xbrl_reference_refresh_job",
     "finland_xbrl_xml_documents",
     "load_eligible_financial_report_rows",
-    "load_parsed_object_keys",
-    "load_parsed_table_frame",
-    "load_xbrl_document_manifest",
-    "load_xml_document_catalog_frame",
-    "build_finland_xbrl_company_seed_duckdb",
-    "merge_xml_document_catalog",
     "materialize_financial_reports_window",
     "parse_xbrl_documents",
-    "parsed_duckdb_observability_metadata",
-    "parsed_duckdb_row_counts",
-    "resolve_xbrl_documents_key",
-    "run_finland_xbrl_arelle_dlt_pipeline",
+    "run_finland_xbrl_arelle_parse",
     "tables",
-    "unparsed_documents",
 ]
 
 defs = dg.Definitions(
     assets=[
-        finland_xbrl_financial_reports_backfill_duckdb,
-        finland_xbrl_financial_reports_incremental_duckdb,
-        finland_xbrl_financial_reports_duckdb,
-        finland_xbrl_company_seed_duckdb,
-        finland_xbrl_dbt_assets,
+        finland_xbrl_financial_reports_backfill,
+        finland_xbrl_financial_reports_incremental,
+        finland_xbrl_financial_reports,
+        finland_xbrl_eligible_companies,
         finland_xbrl_raw_xml_documents_backfill,
         finland_xbrl_raw_xml_documents_incremental,
         finland_xbrl_raw_xml_documents,
         finland_xbrl_xml_documents,
         finland_xbrl_parse_backfill,
         finland_xbrl_parse_incremental,
-        finland_xbrl_parsed_tables,
+        finland_xbrl_financial_metrics,
     ],
     jobs=[
         finland_xbrl_reference_refresh_job,
@@ -175,10 +142,5 @@ defs = dg.Definitions(
         "xbrl_api": XbrlApiResource(),
         "xbrl_parquet_storage": XbrlParquetStorageResource(),
         "object_store": ObjectStoreResource(),
-        "source_duckdb": duckdb_resource(_XBRL_DUCKDB_PATH),
-        "finland_xbrl_dbt": DbtCliResource(
-            project_dir=finland_xbrl_dbt_project,
-            profiles_dir=FINLAND_XBRL_DBT_PROJECT_DIR,
-        ),
     },
 )
