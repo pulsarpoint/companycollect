@@ -19,9 +19,9 @@ class XbrlApiResource(dg.ConfigurableResource):
     base_url: str = "https://avoindata.prh.fi/opendata-xbrl-api/v3"
     user_agent: str = "corpscout-dagster-v3-dev/0.1"
     timeout_seconds: int = 120
-    max_retries: int = 5
-    retry_initial_delay_seconds: float = 10.0
-    retry_max_delay_seconds: float = 120.0
+    max_retries: int = 6
+    retry_initial_delay_seconds: float = 30.0
+    retry_max_delay_seconds: float = 480.0
 
     _session: HttpSession | None = PrivateAttr(default=None)
 

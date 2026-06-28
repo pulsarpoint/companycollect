@@ -128,28 +128,72 @@ def test_xbrl_financial_reports_config_has_launchpad_defaults() -> None:
     config = xbrl_assets.XbrlFinancialReportsConfig()
 
     assert config.request_delay_seconds == 1.0
-    assert config.max_retries == 5
-    assert config.retry_initial_delay_seconds == 10.0
-    assert config.retry_max_delay_seconds == 120.0
+    assert config.max_retries == 6
+    assert config.retry_initial_delay_seconds == 30.0
+    assert config.retry_max_delay_seconds == 480.0
 
 
-def test_financial_reports_asset_is_monthly_partitioned():
-    node = load_project_defs().get_repository_def().asset_graph.get(
-        AssetKey(["finland_xbrl_financial_reports_duckdb"])
+def test_finland_xbrl_backfill_and_incremental_partitions() -> None:
+    graph = load_project_defs().get_repository_def().asset_graph
+
+    for key in (
+        "finland_xbrl_financial_reports_backfill_duckdb",
+        "finland_xbrl_raw_xml_documents_backfill",
+        "finland_xbrl_parse_backfill",
+    ):
+        node = graph.get(AssetKey(key))
+        assert type(node.partitions_def).__name__ == "MonthlyPartitionsDefinition"
+        partition_keys = node.partitions_def.get_partition_keys(
+            current_time=datetime(2026, 6, 22)
+        )
+        assert partition_keys[0] == "2025-06-01"
+        assert "2026-05-01" in partition_keys
+        assert "2026-06-01" not in partition_keys
+
+    for key in (
+        "finland_xbrl_financial_reports_incremental_duckdb",
+        "finland_xbrl_raw_xml_documents_incremental",
+        "finland_xbrl_parse_incremental",
+    ):
+        node = graph.get(AssetKey(key))
+        assert type(node.partitions_def).__name__ == "DailyPartitionsDefinition"
+        partition_keys = node.partitions_def.get_partition_keys(
+            current_time=datetime(2026, 6, 22)
+        )
+        assert partition_keys[0] == "2026-06-01"
+
+
+def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
+    repo = load_project_defs().get_repository_def()
+
+    backfill = {
+        key.path[-1]
+        for key in repo.get_job("finland_xbrl_backfill_job").asset_layer.executable_asset_keys
+    }
+    assert backfill == {
+        "finland_xbrl_financial_reports_backfill_duckdb",
+        "finland_xbrl_raw_xml_documents_backfill",
+        "finland_xbrl_parse_backfill",
+    }
+    assert type(repo.get_job("finland_xbrl_backfill_job").partitions_def).__name__ == (
+        "MonthlyPartitionsDefinition"
     )
-    assert node.partitions_def is not None
-    assert type(node.partitions_def).__name__ == "MonthlyPartitionsDefinition"
 
-
-def test_financial_reports_partitions_start_at_prh_supported_registration_floor() -> None:
-    node = load_project_defs().get_repository_def().asset_graph.get(
-        AssetKey(["finland_xbrl_financial_reports_duckdb"])
+    incremental = {
+        key.path[-1]
+        for key in repo.get_job("finland_xbrl_incremental_job").asset_layer.executable_asset_keys
+    }
+    assert incremental == {
+        "finland_xbrl_financial_reports_incremental_duckdb",
+        "finland_xbrl_raw_xml_documents_incremental",
+        "finland_xbrl_parse_incremental",
+    }
+    assert type(repo.get_job("finland_xbrl_incremental_job").partitions_def).__name__ == (
+        "DailyPartitionsDefinition"
     )
 
-    assert node.partitions_def is not None
-    partition_keys = node.partitions_def.get_partition_keys(current_time=datetime(2026, 6, 22))
-
-    assert partition_keys[0] == "2023-07-01"
+    schedule = repo.get_schedule_def("finland_xbrl_incremental_schedule")
+    assert schedule.cron_schedule == "0 6 * * *"
 
 
 def test_financial_reports_merge_accumulates_across_windows(tmp_path: Path) -> None:
@@ -210,18 +254,8 @@ def test_financial_reports_merge_accumulates_across_windows(tmp_path: Path) -> N
 def test_xbrl_raw_config_uses_duckdb_selection_by_default() -> None:
     config = XbrlRawConfig()
 
-    assert config.financial_start_date is None
-    assert config.max_reports is None
     assert config.refresh_existing is False
     assert config.download_delay_seconds == 1.0
-
-
-def test_xbrl_raw_config_treats_blank_optional_dates_as_missing() -> None:
-    config = XbrlRawConfig(
-        financial_start_date=" ",
-    )
-
-    assert config.financial_start_date is None
 
 
 def test_xbrl_transforms_are_dbt_assets():
@@ -231,17 +265,12 @@ def test_xbrl_transforms_are_dbt_assets():
     assert "fi_prh_xbrl_financial_metrics" in keys
     # the download re-pointed to the dbt eligible model
     deps = graph.get(AssetKey(["finland_xbrl_raw_xml_documents"])).parent_keys
-    assert AssetKey(["finland_xbrl_eligible_financial_reports"]) in deps
+    assert AssetKey(["finland_xbrl_raw_xml_documents_backfill"]) in deps
+    assert AssetKey(["finland_xbrl_raw_xml_documents_incremental"]) in deps
     # eligible model depends on its two sources
     eligible_deps = graph.get(AssetKey(["finland_xbrl_eligible_financial_reports"])).parent_keys
     dep_names = {k.path[-1] for k in eligible_deps}
     assert {"finland_xbrl_financial_reports_duckdb", "finland_ytj_all_companies_duckdb"} <= dep_names
-
-
-@pytest.mark.parametrize("value", [0, -1])
-def test_xbrl_raw_config_rejects_non_positive_max_reports(value: int) -> None:
-    with pytest.raises(ValidationError):
-        XbrlRawConfig(max_reports=value)
 
 
 def test_xbrl_parsed_config_uses_xml_documents_manifest_by_default() -> None:
@@ -276,13 +305,15 @@ def test_xbrl_asset_graph_models_eligible_companies_downstream_of_ytj_duckdb() -
     }
 
 
-def test_xbrl_financial_reports_are_modeled_as_dlt_source() -> None:
-    repository = load_project_defs().get_repository_def()
-    resource_keys = repository.get_top_level_resources().keys()
-
-    assert "dlt" in resource_keys
+def test_xbrl_financial_reports_are_modeled_as_partitioned_writer_assets() -> None:
     assert "finland_xbrl_financial_reports_source" in xbrl_assets.__dict__
-    assert "dlt" in xbrl_assets.finland_xbrl_financial_reports_duckdb_asset.required_resource_keys
+    graph = load_project_defs().get_repository_def().asset_graph
+    canonical = graph.get(AssetKey("finland_xbrl_financial_reports_duckdb"))
+    assert canonical.partitions_def is None
+    assert canonical.parent_keys == {
+        AssetKey("finland_xbrl_financial_reports_backfill_duckdb"),
+        AssetKey("finland_xbrl_financial_reports_incremental_duckdb"),
+    }
 
 
 def test_xbrl_dlt_source_pages_financial_report_listing() -> None:
@@ -331,17 +362,17 @@ def test_xbrl_financial_reports_http_client_uses_dlt_retry_client() -> None:
     client = xbrl_assets._financial_reports_http_client(
         timeout_seconds=120,
         user_agent="test-agent",
-        max_retries=5,
-        retry_initial_delay_seconds=10.0,
-        retry_max_delay_seconds=120.0,
+        max_retries=6,
+        retry_initial_delay_seconds=30.0,
+        retry_max_delay_seconds=480.0,
     )
 
     assert client.__class__.__module__ == "dlt.sources.helpers.requests.retry"
     assert client._retry_kwargs["status_codes"] == (429, *range(500, 600))
-    assert client._retry_kwargs["max_attempts"] == 5
-    assert client._retry_kwargs["backoff_factor"] == 10.0
+    assert client._retry_kwargs["max_attempts"] == 6
+    assert client._retry_kwargs["backoff_factor"] == 30.0
     assert client._retry_kwargs["respect_retry_after_header"] is True
-    assert client._retry_kwargs["max_delay"] == 120.0
+    assert client._retry_kwargs["max_delay"] == 480.0
 
 
 def test_xbrl_dlt_pipeline_loads_financial_reports_table(tmp_path: Path) -> None:
@@ -378,16 +409,29 @@ def test_xbrl_asset_graph_models_xml_documents_catalog_as_bridge() -> None:
 
     assert dg.AssetKey(XML_DOCUMENTS_TABLE) in asset_graph.get_all_asset_keys()
     assert asset_graph.get(dg.AssetKey("finland_xbrl_raw_xml_documents")).parent_keys == {
-        dg.AssetKey("finland_xbrl_eligible_financial_reports")
+        dg.AssetKey("finland_xbrl_raw_xml_documents_backfill"),
+        dg.AssetKey("finland_xbrl_raw_xml_documents_incremental"),
+    }
+    assert asset_graph.get(dg.AssetKey("finland_xbrl_raw_xml_documents_backfill")).parent_keys == {
+        dg.AssetKey("finland_xbrl_financial_reports_backfill_duckdb"),
+        dg.AssetKey("finland_ytj_all_companies_duckdb"),
+    }
+    assert asset_graph.get(
+        dg.AssetKey("finland_xbrl_raw_xml_documents_incremental")
+    ).parent_keys == {
+        dg.AssetKey("finland_xbrl_financial_reports_incremental_duckdb"),
+        dg.AssetKey("finland_ytj_all_companies_duckdb"),
     }
     assert asset_graph.get(dg.AssetKey(XML_DOCUMENTS_TABLE)).parent_keys == {
         dg.AssetKey("finland_xbrl_raw_xml_documents")
     }
     assert asset_graph.get(dg.AssetKey(STATEMENT_DOCUMENTS_TABLE)).parent_keys == {
-        dg.AssetKey(XML_DOCUMENTS_TABLE)
+        dg.AssetKey("finland_xbrl_parse_backfill"),
+        dg.AssetKey("finland_xbrl_parse_incremental"),
     }
     assert asset_graph.get(dg.AssetKey(FACTS_TABLE)).parent_keys == {
-        dg.AssetKey(XML_DOCUMENTS_TABLE)
+        dg.AssetKey("finland_xbrl_parse_backfill"),
+        dg.AssetKey("finland_xbrl_parse_incremental"),
     }
 
 
@@ -422,10 +466,10 @@ def test_xbrl_api_resource_uses_dlt_retry_client_for_xml_downloads() -> None:
 
     assert client.__class__.__module__ == "dlt.sources.helpers.requests.retry"
     assert client._retry_kwargs["status_codes"] == (429, *range(500, 600))
-    assert client._retry_kwargs["max_attempts"] == 5
-    assert client._retry_kwargs["backoff_factor"] == 10.0
+    assert client._retry_kwargs["max_attempts"] == 6
+    assert client._retry_kwargs["backoff_factor"] == 30.0
     assert client._retry_kwargs["respect_retry_after_header"] is True
-    assert client._retry_kwargs["max_delay"] == 120.0
+    assert client._retry_kwargs["max_delay"] == 480.0
 
 
 def test_xbrl_raw_download_uses_eligible_financial_report_rows() -> None:
@@ -438,8 +482,6 @@ def test_xbrl_raw_download_uses_eligible_financial_report_rows() -> None:
         xbrl_api=api,
         object_store=object_store,
         financial_reports=_eligible_financial_reports(),
-        financial_start_date="2024-06-15",
-        max_reports=None,
         refresh_existing=False,
         download_delay_seconds=0.5,
         sleep=sleeps.append,
@@ -485,28 +527,8 @@ def test_xbrl_raw_download_uses_eligible_financial_report_rows() -> None:
         "2026-06-01",
         "2026-06-01",
     ]
-
-
-def test_xbrl_raw_download_limits_accepted_financial_reports() -> None:
-    session = FakeHttpSession()
-    api = XbrlApiResource(session=session)
-    object_store, s3_client = _object_store()
-
-    result = download_finland_xbrl_raw_xml_documents(
-        xbrl_api=api,
-        object_store=object_store,
-        financial_reports=_eligible_financial_reports(),
-        financial_start_date="2024-06-15",
-        max_reports=1,
-        refresh_existing=False,
-        download_delay_seconds=0.0,
-    )
-
-    assert result.metadata["max_reports"] == 1
-    assert result.metadata["documents_count"] == 1
-    assert result.metadata["downloaded_count"] == 1
-    assert ("source-finland-prh-xbrl", "companies/active-web/2026-05-31.xml") in s3_client.objects
-    assert ("source-finland-prh-xbrl", "companies/second-active-web/2026-04-30.xml") not in s3_client.objects
+    assert xml_documents_frame["financial_start_date"].to_list() == ["", ""]
+    assert xml_documents_frame["max_reports"].to_list() == ["", ""]
 
 
 def test_xbrl_raw_download_preserves_existing_xml_document_catalog_when_selection_is_empty() -> None:
@@ -540,8 +562,6 @@ def test_xbrl_raw_download_preserves_existing_xml_document_catalog_when_selectio
         xbrl_api=api,
         object_store=object_store,
         financial_reports=[],
-        financial_start_date="2024-06-15",
-        max_reports=None,
         refresh_existing=False,
         download_delay_seconds=0.0,
     )
@@ -556,15 +576,16 @@ def test_xbrl_raw_download_preserves_existing_xml_document_catalog_when_selectio
     ]
 
 
-def test_load_eligible_financial_report_rows_filters_by_financial_date_and_limit(
+def test_load_eligible_financial_report_rows_filters_by_registration_window_only(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "source.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         connection.execute(f"create schema {xbrl_assets.XBRL_DLT_DATASET_NAME}")
+        connection.execute("create schema finland_prhytj")
         connection.execute(
             f"""
-            create table {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE} (
+            create table {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE} (
                 business_id varchar,
                 financial_date varchar,
                 registration_date varchar,
@@ -574,28 +595,65 @@ def test_load_eligible_financial_report_rows_filters_by_financial_date_and_limit
             """
         )
         connection.execute(
+            """
+            create table finland_prhytj.all_companies (
+                business_id varchar,
+                is_active boolean,
+                website_normalized_url varchar
+            )
+            """
+        )
+        connection.execute(
             f"""
-            insert into {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE} values
-            ('old-financial', '2023-12-31', '2024-01-01', '2024-01-01', '2024-01-31'),
+            insert into {xbrl_assets.XBRL_DLT_DATASET_NAME}.{xbrl_assets.XBRL_DLT_FINANCIAL_REPORTS_TABLE} values
+            ('old-financial-date', '2023-12-31', '2026-06-01', '2026-06-01', '2026-06-30'),
+            ('outside-window', '2026-05-31', '2026-05-31', '2026-05-01', '2026-05-31'),
+            ('inactive-company', '2026-04-30', '2026-06-02', '2026-06-01', '2026-06-30'),
+            ('missing-website', '2026-04-30', '2026-06-02', '2026-06-01', '2026-06-30'),
             ('active-web', '2026-05-31', '2026-06-01', '2026-06-01', '2026-06-30'),
             ('second-active-web', '2026-04-30', '2026-06-02', '2026-06-01', '2026-06-30')
+            """
+        )
+        connection.execute(
+            """
+            insert into finland_prhytj.all_companies values
+            ('old-financial-date', true, 'https://old.example'),
+            ('outside-window', true, 'https://outside.example'),
+            ('inactive-company', false, 'https://inactive.example'),
+            ('missing-website', true, ''),
+            ('active-web', true, 'https://active.example'),
+            ('second-active-web', true, 'https://second.example')
             """
         )
 
     rows = xbrl_assets.load_eligible_financial_report_rows(
         duckdb_resource(database_path),
-        financial_start_date="2024-06-15",
-        max_reports=1,
+        registered_date_start="2026-06-01",
+        registered_date_end="2026-06-30",
     )
 
     assert rows == [
+        {
+            "business_id": "old-financial-date",
+            "financial_date": "2023-12-31",
+            "registration_date": "2026-06-01",
+            "discovery_registered_date_start": "2026-06-01",
+            "discovery_registered_date_end": "2026-06-30",
+        },
+        {
+            "business_id": "active-web",
+            "financial_date": "2026-05-31",
+            "registration_date": "2026-06-01",
+            "discovery_registered_date_start": "2026-06-01",
+            "discovery_registered_date_end": "2026-06-30",
+        },
         {
             "business_id": "second-active-web",
             "financial_date": "2026-04-30",
             "registration_date": "2026-06-02",
             "discovery_registered_date_start": "2026-06-01",
             "discovery_registered_date_end": "2026-06-30",
-        }
+        },
     ]
 
 
@@ -654,7 +712,12 @@ def _eligible_financial_reports() -> list[dict]:
 def test_duckdb_xbrl_assets_share_the_finland_ytj_duckdb_pool():
     graph = load_project_defs().get_repository_def().asset_graph
     for key in (
-        "finland_xbrl_financial_reports_duckdb",
+        "finland_xbrl_financial_reports_backfill_duckdb",
+        "finland_xbrl_financial_reports_incremental_duckdb",
+        "finland_xbrl_raw_xml_documents_backfill",
+        "finland_xbrl_raw_xml_documents_incremental",
+        "finland_xbrl_parse_backfill",
+        "finland_xbrl_parse_incremental",
         "finland_xbrl_eligible_financial_reports",
         "fi_prh_xbrl_statement_documents",
         "fi_prh_xbrl_financial_metrics",

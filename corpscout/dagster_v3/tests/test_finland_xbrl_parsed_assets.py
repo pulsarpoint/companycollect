@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -7,8 +7,11 @@ from typing import Any
 import duckdb
 import polars as pl
 import pytest
+from dagster import AssetKey
 
 import dagster_v3.defs.finland_xbrl.arelle_parser as arelle_parser
+import dagster_v3.defs.finland_xbrl.assets as xbrl
+from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.finland_xbrl.arelle_parser import ArelleParsedStatement
 from dagster_v3.defs.finland_xbrl.assets import (
     RAW_XML_DOCUMENTS_OBJECT_KEY,
@@ -532,11 +535,6 @@ def _fake_arelle_parser(**kwargs: Any) -> ArelleParsedStatement:
     )
 
 
-from datetime import date
-
-import dagster_v3.defs.finland_xbrl.assets as xbrl
-
-
 def _raising_parser(**kwargs):
     if kwargs["business_id"] == "bad":
         raise ValueError("boom: unparseable XBRL")
@@ -647,15 +645,18 @@ def test_load_parsed_object_keys_returns_distinct_keys(tmp_path):
     }
 
 
-from dagster import AssetKey
-from dagster_v3.definitions import defs as load_project_defs
-
-
-def test_parse_asset_is_monthly_partitioned():
+def test_parse_writer_assets_are_partitioned_and_table_assets_are_canonical():
     graph = load_project_defs().get_repository_def().asset_graph
+    backfill = graph.get(AssetKey(["finland_xbrl_parse_backfill"]))
+    assert type(backfill.partitions_def).__name__ == "MonthlyPartitionsDefinition"
+    incremental = graph.get(AssetKey(["finland_xbrl_parse_incremental"]))
+    assert type(incremental.partitions_def).__name__ == "DailyPartitionsDefinition"
     node = graph.get(AssetKey(["fi_prh_xbrl_statement_documents"]))
-    assert node.partitions_def is not None
-    assert type(node.partitions_def).__name__ == "MonthlyPartitionsDefinition"
+    assert node.partitions_def is None
+    assert node.parent_keys == {
+        AssetKey(["finland_xbrl_parse_backfill"]),
+        AssetKey(["finland_xbrl_parse_incremental"]),
+    }
     metrics = graph.get(AssetKey(["fi_prh_xbrl_financial_metrics"]))
     assert metrics.partitions_def is None
 

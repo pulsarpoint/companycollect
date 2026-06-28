@@ -12,15 +12,12 @@ from typing import Any, Callable
 import dagster as dg
 import dlt
 import polars as pl
-from dateutil.relativedelta import relativedelta
 from dagster_dbt import (
     DagsterDbtTranslator,
     DbtCliResource,
     DbtProject,
     dbt_assets,
 )
-from dagster_dlt import DagsterDltResource, DagsterDltTranslator, dlt_assets
-from dagster_dlt.translator import DltResourceTranslatorData
 from dagster_duckdb import DuckDBResource
 from dlt.extract.resource import DltResource
 from dlt.pipeline.pipeline import Pipeline
@@ -48,12 +45,20 @@ XBRL_DLT_DATASET_NAME = "finland_prh_xbrl"
 XBRL_DLT_FINANCIAL_REPORTS_TABLE = "financial_reports"
 XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE = "eligible_financial_reports"
 DEFAULT_XBRL_REQUEST_DELAY_SECONDS = 1.0
-DEFAULT_XBRL_REQUEST_MAX_ATTEMPTS = 5
-DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS = 10.0
-DEFAULT_XBRL_RETRY_MAX_DELAY_SECONDS = 120.0
+DEFAULT_XBRL_REQUEST_MAX_ATTEMPTS = 6
+DEFAULT_XBRL_RETRY_INITIAL_DELAY_SECONDS = 30.0
+DEFAULT_XBRL_RETRY_MAX_DELAY_SECONDS = 480.0
 PRH_XBRL_REGISTRATION_SEARCH_START = "2023-07-01"
-FI_XBRL_PARSE_PARTITION_START = PRH_XBRL_REGISTRATION_SEARCH_START
-fi_xbrl_parse_partitions = dg.MonthlyPartitionsDefinition(start_date=FI_XBRL_PARSE_PARTITION_START)
+FINLAND_XBRL_DUCKDB_POOL = "finland_ytj_duckdb"
+BACKFILL_PARTITIONS = dg.MonthlyPartitionsDefinition(
+    start_date="2025-06-01", end_date="2026-06-01"
+)
+DAILY_PARTITIONS = dg.DailyPartitionsDefinition(
+    start_date="2026-06-01",
+    end_offset=1,
+    hour_offset=6,
+    timezone="Europe/Belgrade",
+)
 
 FINLAND_XBRL_DBT_PROJECT_DIR = Path(__file__).parent / "dbt"
 _XBRL_DUCKDB_PATH = Path("data/finland_ytj.duckdb").expanduser()
@@ -84,27 +89,13 @@ class FinlandXbrlDbtTranslator(DagsterDbtTranslator):
     manifest=finland_xbrl_dbt_project.manifest_path,
     project=finland_xbrl_dbt_project,
     dagster_dbt_translator=FinlandXbrlDbtTranslator(),
-    pool="finland_ytj_duckdb",
+    pool=FINLAND_XBRL_DUCKDB_POOL,
 )
 def finland_xbrl_dbt_assets(
     context: dg.AssetExecutionContext,
     finland_xbrl_dbt: DbtCliResource,
 ):
     yield from finland_xbrl_dbt.cli(["build"], context=context).stream()
-
-
-class FinlandXbrlDltTranslator(DagsterDltTranslator):
-    def get_asset_spec(self, data: DltResourceTranslatorData) -> dg.AssetSpec:
-        spec = super().get_asset_spec(data)
-        if data.resource.name != XBRL_DLT_FINANCIAL_REPORTS_TABLE:
-            return spec
-        return spec.replace_attributes(
-            key="finland_xbrl_financial_reports_duckdb",
-            deps=[],
-            group_name="finland_xbrl",
-            description="Finland PRH XBRL financial report listing loaded to local DuckDB with dlt.",
-            kinds={"python", "dlt", "duckdb"},
-        )
 
 
 class XbrlFinancialReportsConfig(dg.Config):
@@ -133,22 +124,8 @@ class XbrlFinancialReportsConfig(dg.Config):
 
 
 class XbrlRawConfig(dg.Config):
-    financial_start_date: str | None = None
-    max_reports: int | None = None
     refresh_existing: bool = False
     download_delay_seconds: float = DEFAULT_XBRL_REQUEST_DELAY_SECONDS
-
-    @field_validator("financial_start_date", mode="before")
-    @classmethod
-    def normalize_optional_iso_date(cls, value: object) -> str | None:
-        return _optional_iso_date(value)
-
-    @field_validator("max_reports")
-    @classmethod
-    def validate_max_reports(cls, value: int | None) -> int | None:
-        if value is not None and value <= 0:
-            raise ValueError("max_reports must be greater than zero")
-        return value
 
     @field_validator("download_delay_seconds")
     @classmethod
@@ -302,46 +279,113 @@ def finland_xbrl_financial_reports_pipeline(database_path: str | Path) -> Pipeli
     )
 
 
-@dlt_assets(
-    dlt_source=finland_xbrl_financial_reports_source(
-        registered_date_start="2023-07-01",
-        registered_date_end="2023-07-01",
-    ),
-    dlt_pipeline=finland_xbrl_financial_reports_pipeline(_XBRL_DUCKDB_PATH),
-    name="finland_xbrl_financial_reports_duckdb",
-    dagster_dlt_translator=FinlandXbrlDltTranslator(),
-    partitions_def=fi_xbrl_parse_partitions,
-    pool="finland_ytj_duckdb",
-)
-def finland_xbrl_financial_reports_duckdb_asset(
+def _registration_window(context: dg.AssetExecutionContext) -> tuple[str, str]:
+    window = context.partition_time_window
+    start = window.start.date().isoformat()
+    end = (window.end.date() - timedelta(days=1)).isoformat()
+    return start, end
+
+
+def _materialize_financial_reports_window(
     context: dg.AssetExecutionContext,
     config: XbrlFinancialReportsConfig,
-    dlt: DagsterDltResource,
     source_duckdb: DuckDBResource,
-) -> Iterator[Any]:
-    """Load PRH XBRL financial report listings to a local DuckDB database with dlt."""
-    window = context.partition_time_window
-    registered_date_start = window.start.date().isoformat()
-    registered_date_end = (window.end.date() - timedelta(days=1)).isoformat()  # inclusive last day of month
+    *,
+    registered_date_start: str,
+    registered_date_end: str,
+) -> dg.MaterializeResult:
     context.log.info(
         "Loading XBRL financial reports registered %s..%s",
         registered_date_start,
         registered_date_end,
     )
-    yield from dlt.run(
-        context=context,
-        dlt_source=finland_xbrl_financial_reports_source(
-            registered_date_start=registered_date_start,
-            registered_date_end=registered_date_end,
-            request_delay_seconds=config.request_delay_seconds,
-            max_retries=config.max_retries,
-            retry_initial_delay_seconds=config.retry_initial_delay_seconds,
-            retry_max_delay_seconds=config.retry_max_delay_seconds,
-            run_id=context.run_id,
-        ),
-        dlt_pipeline=finland_xbrl_financial_reports_pipeline(
-            duckdb_database_path(source_duckdb)
-        ),
+    run_finland_xbrl_financial_reports_dlt_pipeline(
+        database_path=duckdb_database_path(source_duckdb),
+        registered_date_start=registered_date_start,
+        registered_date_end=registered_date_end,
+        run_id=context.run_id,
+        request_delay_seconds=config.request_delay_seconds,
+        max_retries=config.max_retries,
+        retry_initial_delay_seconds=config.retry_initial_delay_seconds,
+        retry_max_delay_seconds=config.retry_max_delay_seconds,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "partition": context.partition_key,
+            "registered_date_start": registered_date_start,
+            "registered_date_end": registered_date_end,
+            "row_count": financial_reports_duckdb_row_count(source_duckdb),
+        }
+    )
+
+
+@dg.asset(
+    name="finland_xbrl_financial_reports_backfill_duckdb",
+    group_name="finland_xbrl",
+    partitions_def=BACKFILL_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    kinds={"python", "dlt", "duckdb"},
+    pool=FINLAND_XBRL_DUCKDB_POOL,
+    description="Monthly backfill writer for PRH XBRL financial report listings by registration date.",
+)
+def finland_xbrl_financial_reports_backfill_duckdb(
+    context: dg.AssetExecutionContext,
+    config: XbrlFinancialReportsConfig,
+    source_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    start, end = _registration_window(context)
+    return _materialize_financial_reports_window(
+        context,
+        config,
+        source_duckdb,
+        registered_date_start=start,
+        registered_date_end=end,
+    )
+
+
+@dg.asset(
+    name="finland_xbrl_financial_reports_incremental_duckdb",
+    group_name="finland_xbrl",
+    partitions_def=DAILY_PARTITIONS,
+    kinds={"python", "dlt", "duckdb"},
+    pool=FINLAND_XBRL_DUCKDB_POOL,
+    description="Daily incremental writer for PRH XBRL financial report listings by registration date.",
+)
+def finland_xbrl_financial_reports_incremental_duckdb(
+    context: dg.AssetExecutionContext,
+    config: XbrlFinancialReportsConfig,
+    source_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    start, end = _registration_window(context)
+    return _materialize_financial_reports_window(
+        context,
+        config,
+        source_duckdb,
+        registered_date_start=start,
+        registered_date_end=end,
+    )
+
+
+@dg.asset(
+    name="finland_xbrl_financial_reports_duckdb",
+    group_name="finland_xbrl",
+    deps=[
+        finland_xbrl_financial_reports_backfill_duckdb,
+        finland_xbrl_financial_reports_incremental_duckdb,
+    ],
+    kinds={"duckdb"},
+    pool=FINLAND_XBRL_DUCKDB_POOL,
+    description="Catalog marker for the shared PRH XBRL financial report listing DuckDB table.",
+)
+def finland_xbrl_financial_reports_duckdb(
+    source_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    return dg.MaterializeResult(
+        metadata={
+            "duckdb_schema": XBRL_DLT_DATASET_NAME,
+            "duckdb_table": XBRL_DLT_FINANCIAL_REPORTS_TABLE,
+            "row_count": financial_reports_duckdb_row_count(source_duckdb),
+        }
     )
 
 
@@ -350,8 +394,6 @@ def download_finland_xbrl_raw_xml_documents(
     xbrl_api: XbrlApiResource,
     object_store: ObjectStoreResource,
     financial_reports: list[dict[str, Any]],
-    financial_start_date: str,
-    max_reports: int | None,
     refresh_existing: bool,
     download_delay_seconds: float,
     sleep: Callable[[float], None] = time.sleep,
@@ -363,9 +405,7 @@ def download_finland_xbrl_raw_xml_documents(
     reused_count = 0
     bytes_downloaded = 0
     selected_at = datetime.now(UTC).isoformat()
-    selected_financial_reports = (
-        financial_reports[:max_reports] if max_reports is not None else financial_reports
-    )
+    selected_financial_reports = financial_reports
 
     for report_index, report in enumerate(selected_financial_reports):
         business_id = str(report["business_id"])
@@ -427,8 +467,6 @@ def download_finland_xbrl_raw_xml_documents(
             document,
             discovery_registered_date_start=document["discovery_registered_date_start"],
             discovery_registered_date_end=document["discovery_registered_date_end"],
-            financial_start_date=financial_start_date,
-            max_reports=max_reports,
             selected_at=selected_at,
         )
         for document in documents
@@ -440,8 +478,6 @@ def download_finland_xbrl_raw_xml_documents(
 
     return dg.MaterializeResult(
         metadata={
-            "financial_start_date": financial_start_date,
-            "max_reports": max_reports,
             "selected_reports_count": len(selected_financial_reports),
             "documents_count": len(documents),
             "downloaded_count": downloaded_count,
@@ -686,35 +722,117 @@ def _log_parse_progress(log_info: Callable[[str], None] | None, message: str) ->
         log_info(message)
 
 
+def _materialize_raw_xml_window(
+    context: dg.AssetExecutionContext,
+    config: XbrlRawConfig,
+    xbrl_api: XbrlApiResource,
+    object_store: ObjectStoreResource,
+    source_duckdb: DuckDBResource,
+    *,
+    registered_date_start: str,
+    registered_date_end: str,
+) -> dg.MaterializeResult:
+    result = download_finland_xbrl_raw_xml_documents(
+        xbrl_api=xbrl_api,
+        object_store=object_store,
+        financial_reports=load_eligible_financial_report_rows(
+            source_duckdb,
+            registered_date_start=registered_date_start,
+            registered_date_end=registered_date_end,
+        ),
+        refresh_existing=config.refresh_existing,
+        download_delay_seconds=config.download_delay_seconds,
+    )
+    return dg.MaterializeResult(
+        metadata={
+            **result.metadata,
+            "partition": context.partition_key,
+            "registered_date_start": registered_date_start,
+            "registered_date_end": registered_date_end,
+        }
+    )
+
+
 @dg.asset(
-    name="finland_xbrl_raw_xml_documents",
+    name="finland_xbrl_raw_xml_documents_backfill",
     group_name="finland_xbrl",
-    deps=["finland_xbrl_eligible_financial_reports"],
+    deps=[
+        finland_xbrl_financial_reports_backfill_duckdb,
+        "finland_ytj_all_companies_duckdb",
+    ],
+    partitions_def=BACKFILL_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     kinds={"python", "s3", "xml"},
+    pool=FINLAND_XBRL_DUCKDB_POOL,
 )
-def finland_xbrl_raw_xml_documents(
+def finland_xbrl_raw_xml_documents_backfill(
+    context: dg.AssetExecutionContext,
     config: XbrlRawConfig,
     xbrl_api: XbrlApiResource,
     object_store: ObjectStoreResource,
     source_duckdb: DuckDBResource,
 ) -> dg.MaterializeResult:
-    """Download PRH XBRL XML statements for eligible DuckDB financial report rows."""
-    run_date = datetime.now(UTC).date()
-    financial_start_date = config.financial_start_date or (
-        run_date - relativedelta(years=2)
-    ).isoformat()
-    return download_finland_xbrl_raw_xml_documents(
-        xbrl_api=xbrl_api,
-        object_store=object_store,
-        financial_reports=load_eligible_financial_report_rows(
-            source_duckdb,
-            financial_start_date=financial_start_date,
-            max_reports=config.max_reports,
-        ),
-        financial_start_date=financial_start_date,
-        max_reports=config.max_reports,
-        refresh_existing=config.refresh_existing,
-        download_delay_seconds=config.download_delay_seconds,
+    start, end = _registration_window(context)
+    return _materialize_raw_xml_window(
+        context,
+        config,
+        xbrl_api,
+        object_store,
+        source_duckdb,
+        registered_date_start=start,
+        registered_date_end=end,
+    )
+
+
+@dg.asset(
+    name="finland_xbrl_raw_xml_documents_incremental",
+    group_name="finland_xbrl",
+    deps=[
+        finland_xbrl_financial_reports_incremental_duckdb,
+        "finland_ytj_all_companies_duckdb",
+    ],
+    partitions_def=DAILY_PARTITIONS,
+    kinds={"python", "s3", "xml"},
+    pool=FINLAND_XBRL_DUCKDB_POOL,
+)
+def finland_xbrl_raw_xml_documents_incremental(
+    context: dg.AssetExecutionContext,
+    config: XbrlRawConfig,
+    xbrl_api: XbrlApiResource,
+    object_store: ObjectStoreResource,
+    source_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    start, end = _registration_window(context)
+    return _materialize_raw_xml_window(
+        context,
+        config,
+        xbrl_api,
+        object_store,
+        source_duckdb,
+        registered_date_start=start,
+        registered_date_end=end,
+    )
+
+
+@dg.asset(
+    name="finland_xbrl_raw_xml_documents",
+    group_name="finland_xbrl",
+    deps=[finland_xbrl_raw_xml_documents_backfill, finland_xbrl_raw_xml_documents_incremental],
+    kinds={"python", "s3", "xml"},
+)
+def finland_xbrl_raw_xml_documents(
+    object_store: ObjectStoreResource,
+) -> dg.MaterializeResult:
+    """Catalog marker for PRH XBRL XML statements downloaded into object storage."""
+    frame = load_xml_document_catalog_frame(
+        object_store, documents_key=RAW_XML_DOCUMENTS_OBJECT_KEY
+    )
+    return dg.MaterializeResult(
+        metadata={
+            "bucket": XBRL_BUCKET,
+            "object_key": RAW_XML_DOCUMENTS_OBJECT_KEY,
+            "row_count": frame.height,
+        }
     )
 
 
@@ -736,30 +854,16 @@ def finland_xbrl_xml_documents(object_store: ObjectStoreResource) -> dg.Material
     )
 
 
-@dg.multi_asset(
-    specs=[
-        dg.AssetSpec(
-            table,
-            deps=[tables.XML_DOCUMENTS_TABLE],
-            group_name="finland_xbrl",
-            kinds={"python", "dlt", "duckdb", "arelle"},
-            description=f"Parsed Finland PRH XBRL DuckDB table for `{table}`.",
-        )
-        for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE)
-    ],
-    partitions_def=fi_xbrl_parse_partitions,
-    pool="finland_ytj_duckdb",
-)
-def finland_xbrl_parsed_tables(
+def _materialize_parse_window(
     context: dg.AssetExecutionContext,
     config: XbrlParsedConfig,
     object_store: ObjectStoreResource,
     source_duckdb: DuckDBResource,
-) -> Iterator[dg.MaterializeResult]:
+    *,
+    window_start: date,
+    window_end: date,
+) -> dg.MaterializeResult:
     documents_key = resolve_xbrl_documents_key(config=config)
-    window = context.partition_time_window
-    window_start = window.start.date()
-    window_end = window.end.date()
 
     documents, _meta = load_xbrl_document_manifest(
         object_store=object_store, documents_key=documents_key
@@ -808,31 +912,143 @@ def finland_xbrl_parsed_tables(
             )
 
     row_counts = parsed_duckdb_row_counts(source_duckdb)
+    return dg.MaterializeResult(
+        metadata={
+            "partition": context.partition_key,
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+            "documents_in_window": len(in_window),
+            "documents_parsed_this_run": parsed_this_run,
+            "documents_failed_this_run": failed_this_run,
+            "documents_missing_registration_date": missing_registration,
+            "statement_documents_total_row_count": row_counts[
+                tables.STATEMENT_DOCUMENTS_TABLE
+            ],
+            "facts_total_row_count": row_counts[tables.FACTS_TABLE],
+            "xml_documents_object_key": documents_key,
+        }
+    )
+
+
+@dg.asset(
+    name="finland_xbrl_parse_backfill",
+    group_name="finland_xbrl",
+    deps=[finland_xbrl_raw_xml_documents_backfill],
+    partitions_def=BACKFILL_PARTITIONS,
+    backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
+    kinds={"python", "dlt", "duckdb", "arelle"},
+    pool=FINLAND_XBRL_DUCKDB_POOL,
+)
+def finland_xbrl_parse_backfill(
+    context: dg.AssetExecutionContext,
+    config: XbrlParsedConfig,
+    object_store: ObjectStoreResource,
+    source_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    window = context.partition_time_window
+    return _materialize_parse_window(
+        context,
+        config,
+        object_store,
+        source_duckdb,
+        window_start=window.start.date(),
+        window_end=window.end.date(),
+    )
+
+
+@dg.asset(
+    name="finland_xbrl_parse_incremental",
+    group_name="finland_xbrl",
+    deps=[finland_xbrl_raw_xml_documents_incremental],
+    partitions_def=DAILY_PARTITIONS,
+    kinds={"python", "dlt", "duckdb", "arelle"},
+    pool=FINLAND_XBRL_DUCKDB_POOL,
+)
+def finland_xbrl_parse_incremental(
+    context: dg.AssetExecutionContext,
+    config: XbrlParsedConfig,
+    object_store: ObjectStoreResource,
+    source_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    window = context.partition_time_window
+    return _materialize_parse_window(
+        context,
+        config,
+        object_store,
+        source_duckdb,
+        window_start=window.start.date(),
+        window_end=window.end.date(),
+    )
+
+
+@dg.multi_asset(
+    specs=[
+        dg.AssetSpec(
+            table,
+            deps=[finland_xbrl_parse_backfill, finland_xbrl_parse_incremental],
+            group_name="finland_xbrl",
+            kinds={"duckdb"},
+            description=f"Catalog marker for parsed Finland PRH XBRL DuckDB table `{table}`.",
+        )
+        for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE)
+    ],
+    pool=FINLAND_XBRL_DUCKDB_POOL,
+)
+def finland_xbrl_parsed_tables(
+    source_duckdb: DuckDBResource,
+) -> Iterator[dg.MaterializeResult]:
+    row_counts = parsed_duckdb_row_counts(source_duckdb)
     for table in (tables.STATEMENT_DOCUMENTS_TABLE, tables.FACTS_TABLE):
         yield dg.MaterializeResult(
             asset_key=table,
             metadata={
                 "duckdb_schema": XBRL_DLT_DATASET_NAME,
                 "duckdb_table": table,
-                "partition": context.partition_key,
-                "documents_in_window": len(in_window),
-                "documents_parsed_this_run": parsed_this_run,
-                "documents_failed_this_run": failed_this_run,
-                "documents_missing_registration_date": missing_registration,
                 "total_table_row_count": row_counts[table],
-                "xml_documents_object_key": documents_key,
             },
         )
 
 
+finland_xbrl_backfill_job = dg.define_asset_job(
+    "finland_xbrl_backfill_job",
+    selection=dg.AssetSelection.assets(
+        "finland_xbrl_financial_reports_backfill_duckdb",
+        "finland_xbrl_raw_xml_documents_backfill",
+        "finland_xbrl_parse_backfill",
+    ),
+    partitions_def=BACKFILL_PARTITIONS,
+)
+finland_xbrl_incremental_job = dg.define_asset_job(
+    "finland_xbrl_incremental_job",
+    selection=dg.AssetSelection.assets(
+        "finland_xbrl_financial_reports_incremental_duckdb",
+        "finland_xbrl_raw_xml_documents_incremental",
+        "finland_xbrl_parse_incremental",
+    ),
+    partitions_def=DAILY_PARTITIONS,
+)
+finland_xbrl_incremental_schedule = dg.build_schedule_from_partitioned_job(
+    finland_xbrl_incremental_job,
+    name="finland_xbrl_incremental_schedule",
+)
+
+
 defs = dg.Definitions(
     assets=[
-        finland_xbrl_financial_reports_duckdb_asset,
+        finland_xbrl_financial_reports_backfill_duckdb,
+        finland_xbrl_financial_reports_incremental_duckdb,
+        finland_xbrl_financial_reports_duckdb,
         finland_xbrl_dbt_assets,
+        finland_xbrl_raw_xml_documents_backfill,
+        finland_xbrl_raw_xml_documents_incremental,
         finland_xbrl_raw_xml_documents,
         finland_xbrl_xml_documents,
+        finland_xbrl_parse_backfill,
+        finland_xbrl_parse_incremental,
         finland_xbrl_parsed_tables,
     ],
+    jobs=[finland_xbrl_backfill_job, finland_xbrl_incremental_job],
+    schedules=[finland_xbrl_incremental_schedule],
     resources={
         "xbrl_api": XbrlApiResource(),
         "object_store": ObjectStoreResource(),
@@ -949,25 +1165,28 @@ def _source_payload_hash(payload: dict[str, Any]) -> str:
 def load_eligible_financial_report_rows(
     source_duckdb: DuckDBResource,
     *,
-    financial_start_date: str,
-    max_reports: int | None,
+    registered_date_start: str,
+    registered_date_end: str,
 ) -> list[dict[str, Any]]:
-    limit_clause = "" if max_reports is None else f"limit {max_reports}"
     with read_only_duckdb_connection(source_duckdb) as connection:
         rows = connection.execute(
             f"""
             select
-                business_id,
-                financial_date,
-                registration_date,
-                discovery_registered_date_start,
-                discovery_registered_date_end
-            from {XBRL_DLT_DATASET_NAME}.{XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE}
-            where financial_date >= ?
-            order by financial_date, business_id
-            {limit_clause}
+                reports.business_id,
+                reports.financial_date,
+                reports.registration_date,
+                reports.discovery_registered_date_start,
+                reports.discovery_registered_date_end
+            from {XBRL_DLT_DATASET_NAME}.{XBRL_DLT_FINANCIAL_REPORTS_TABLE} as reports
+            inner join finland_prhytj.all_companies as companies
+                on reports.business_id = companies.business_id
+            where reports.registration_date >= ?
+              and reports.registration_date <= ?
+              and companies.is_active = true
+              and coalesce(companies.website_normalized_url, '') <> ''
+            order by reports.registration_date, reports.financial_date, reports.business_id
             """,
-            [financial_start_date],
+            [registered_date_start, registered_date_end],
         ).fetchall()
     return [
         {
@@ -985,6 +1204,22 @@ def load_eligible_financial_report_rows(
             discovery_registered_date_end,
         ) in rows
     ]
+
+
+def financial_reports_duckdb_row_count(source_duckdb: DuckDBResource) -> int:
+    if not duckdb_database_path(source_duckdb).exists():
+        return 0
+    with read_only_duckdb_connection(source_duckdb) as connection:
+        if not _duckdb_table_exists(
+            connection, table=XBRL_DLT_FINANCIAL_REPORTS_TABLE
+        ):
+            return 0
+        return int(
+            connection.execute(
+                f"select count(*) from "
+                f"{XBRL_DLT_DATASET_NAME}.{XBRL_DLT_FINANCIAL_REPORTS_TABLE}"
+            ).fetchone()[0]
+        )
 
 
 def _optional_string(value: Any) -> str:
@@ -1451,8 +1686,6 @@ def _xml_document_row(
     *,
     discovery_registered_date_start: str,
     discovery_registered_date_end: str,
-    financial_start_date: str,
-    max_reports: int | None,
     selected_at: str,
 ) -> dict[str, Any]:
     downloaded = bool(document["downloaded"])
@@ -1468,8 +1701,8 @@ def _xml_document_row(
         "reused": not downloaded,
         "discovery_registered_date_start": discovery_registered_date_start,
         "discovery_registered_date_end": discovery_registered_date_end,
-        "financial_start_date": financial_start_date,
-        "max_reports": "" if max_reports is None else str(max_reports),
+        "financial_start_date": "",
+        "max_reports": "",
         "selected_at": selected_at,
     }
 
