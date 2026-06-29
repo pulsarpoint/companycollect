@@ -8,13 +8,6 @@ XML_DOCUMENTS_TABLE = "fi_prh_xbrl_xml_documents"
 FINANCIAL_METRICS_TABLE = "fi_prh_xbrl_financial_metrics"
 FINANCIAL_METRICS_USD_TABLE = "fi_prh_xbrl_financial_metrics_usd"
 
-ELIGIBLE_COMPANIES_POLARS_SCHEMA = {
-    "business_id": pl.Utf8,
-    "primary_name": pl.Utf8,
-    "website_normalized_url": pl.Utf8,
-}
-ELIGIBLE_COMPANIES_COLUMNS = list(ELIGIBLE_COMPANIES_POLARS_SCHEMA)
-
 XML_DOCUMENTS_POLARS_SCHEMA = {
     "business_id": pl.Utf8,
     "financial_date": pl.Utf8,

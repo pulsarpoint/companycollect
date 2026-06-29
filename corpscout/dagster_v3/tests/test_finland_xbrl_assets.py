@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import dagster as dg
-import duckdb
 from dagster import AssetKey
 import pyarrow as pa
 import pytest
@@ -33,7 +32,6 @@ from dagster_v3.defs.finland_xbrl.tables import (
     STATEMENT_DOCUMENTS_TABLE,
     XML_DOCUMENTS_TABLE,
 )
-from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
 
 FINANCIAL_METRICS_USD_TABLE = "fi_prh_xbrl_financial_metrics_usd"
@@ -265,12 +263,6 @@ def test_xbrl_parquet_storage_resource_maps_partition_paths(
         / "financial_metrics_usd"
         / "data.parquet"
     )
-    assert storage.eligible_companies_path() == (
-        tmp_path
-        / "parquet"
-        / "eligible_companies"
-        / "data.parquet"
-    )
 
 
 def test_finland_xbrl_backfill_and_incremental_partitions() -> None:
@@ -306,17 +298,8 @@ def test_finland_xbrl_backfill_and_incremental_partitions() -> None:
 def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
     repo = load_project_defs().get_repository_def()
 
-    reference_refresh = {
-        key.path[-1]
-        for key in repo.get_job(
-            "finland_xbrl_reference_refresh_job"
-        ).asset_layer.executable_asset_keys
-    }
-    assert reference_refresh == {
-        "finland_ytj_all_companies_duckdb",
-        "finland_xbrl_eligible_companies",
-    }
-    assert repo.get_job("finland_xbrl_reference_refresh_job").partitions_def is None
+    with pytest.raises(Exception):
+        repo.get_job("finland_xbrl_reference_refresh_job")
 
     historical_backfill = {
         key.path[-1]
@@ -356,7 +339,6 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         for key in repo.get_job("finland_xbrl_publish_job").asset_layer.executable_asset_keys
     }
     assert publish == {
-        "finland_xbrl_eligible_companies",
         "fi_prh_xbrl_financial_metrics",
         "fi_prh_xbrl_financial_metrics_usd",
         "finland_xbrl_financial_metrics_clickhouse",
@@ -434,6 +416,7 @@ def test_xbrl_transforms_are_python_assets():
     keys = {k.path[-1] for k in graph.get_all_asset_keys()}
     assert "fi_prh_xbrl_financial_metrics" in keys
     assert "fi_prh_xbrl_financial_metrics_usd" in keys
+    assert "finland_xbrl_eligible_companies" not in keys
     assert "finland_xbrl_eligible_financial_reports" not in keys
     assert "xbrl_metric_map" not in keys
     assert "finland_xbrl_dbt_assets" not in xbrl_assets.__dict__
@@ -461,17 +444,15 @@ def test_xbrl_parsed_config_rejects_non_manifest_config(kwargs: dict) -> None:
         XbrlParsedConfig(**kwargs)
 
 
-def test_xbrl_asset_graph_models_eligible_companies_parquet_downstream_of_ytj_duckdb() -> None:
+def test_xbrl_asset_graph_does_not_model_ytj_eligibility() -> None:
     asset_graph = load_project_defs().resolve_asset_graph()
 
     assert dg.AssetKey("fi_prhytj_statuses") not in asset_graph.get_all_asset_keys()
     assert dg.AssetKey("fi_prhytj_websites") not in asset_graph.get_all_asset_keys()
+    assert dg.AssetKey("finland_xbrl_eligible_companies") not in asset_graph.get_all_asset_keys()
     assert dg.AssetKey("finland_xbrl_financial_reports") not in asset_graph.get_all_asset_keys()
     assert dg.AssetKey("finland_xbrl_financial_reports_duckdb") not in asset_graph.get_all_asset_keys()
     assert dg.AssetKey("finland_xbrl_company_seed_duckdb") not in asset_graph.get_all_asset_keys()
-    assert asset_graph.get(dg.AssetKey("finland_xbrl_eligible_companies")).parent_keys == {
-        dg.AssetKey("finland_ytj_all_companies_duckdb")
-    }
 
 
 def test_xbrl_financial_reports_are_modeled_as_partitioned_writer_assets() -> None:
@@ -676,15 +657,6 @@ def test_xbrl_parquet_storage_writes_financial_metrics(tmp_path: Path) -> None:
     assert storage.financial_metrics_row_count() == 1
 
 
-def test_xbrl_parquet_storage_fails_when_required_eligible_companies_are_missing(
-    tmp_path: Path,
-) -> None:
-    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-
-    with pytest.raises(FileNotFoundError, match="eligible_companies/data.parquet"):
-        storage.read_eligible_companies()
-
-
 def test_xbrl_parquet_storage_fails_when_required_financial_report_partition_is_missing(
     tmp_path: Path,
 ) -> None:
@@ -753,7 +725,6 @@ def test_build_financial_metric_rows_maps_current_numeric_facts() -> None:
     rows = financial_metrics.build_financial_metric_rows(
         statement_documents=[statement],
         facts=[fact, employee_fact, unmapped_fact, comparative_fact],
-        eligible_companies=[{"business_id": "active-web"}],
         built_at="2026-06-01T00:00:00+00:00",
     )
 
@@ -794,7 +765,7 @@ def test_build_financial_metric_rows_maps_current_numeric_facts() -> None:
     ]
 
 
-def test_build_financial_metric_rows_filters_to_eligible_companies() -> None:
+def test_build_financial_metric_rows_keeps_all_parsed_companies() -> None:
     active_statement = _statement_document_row("statement-active")
     inactive_statement = {
         **_statement_document_row("statement-inactive"),
@@ -808,12 +779,14 @@ def test_build_financial_metric_rows_filters_to_eligible_companies() -> None:
             _fact_row("statement-active", fact_ordinal=1),
             _fact_row("statement-inactive", fact_ordinal=1),
         ],
-        eligible_companies=[{"business_id": "active-web"}],
         built_at="2026-06-01T00:00:00+00:00",
     )
 
-    assert [row["statement_key"] for row in rows] == ["statement-active"]
-    assert [row["business_id"] for row in rows] == ["active-web"]
+    assert [row["statement_key"] for row in rows] == [
+        "statement-active",
+        "statement-inactive",
+    ]
+    assert [row["business_id"] for row in rows] == ["active-web", "inactive-company"]
 
 
 def test_build_financial_metric_usd_rows_converts_eur_amounts() -> None:
@@ -937,7 +910,6 @@ def test_xbrl_asset_graph_models_financial_metrics_downstream_of_parse_parquet_a
 
     parent_keys = asset_graph.get(dg.AssetKey(FINANCIAL_METRICS_TABLE)).parent_keys
     assert parent_keys == {
-        dg.AssetKey("finland_xbrl_eligible_companies"),
         dg.AssetKey("finland_xbrl_parse_backfill"),
         dg.AssetKey("finland_xbrl_parse_incremental"),
     }
@@ -1024,7 +996,7 @@ def test_xbrl_raw_download_uses_eligible_financial_report_rows() -> None:
     result = download_finland_xbrl_raw_xml_documents(
         xbrl_api=api,
         object_store=object_store,
-        financial_reports=_eligible_financial_reports(),
+        financial_reports=_financial_reports(),
         refresh_existing=False,
         download_delay_seconds=0.5,
         sleep=sleeps.append,
@@ -1288,61 +1260,7 @@ def test_financial_report_rows_in_registration_window_keeps_all_companies() -> N
     ]
 
 
-def test_build_finland_xbrl_eligible_companies_writes_active_companies_with_websites_parquet(
-    tmp_path: Path,
-) -> None:
-    ytj_database_path = tmp_path / "finland_ytj.duckdb"
-    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-    log_messages: list[str] = []
-    with duckdb.connect(str(ytj_database_path)) as connection:
-        connection.execute("create schema finland_prhytj")
-        connection.execute(
-            """
-            create table finland_prhytj.all_companies (
-                business_id varchar,
-                primary_name varchar,
-                is_active boolean,
-                website_normalized_url varchar
-            )
-            """
-        )
-        connection.execute(
-            """
-            insert into finland_prhytj.all_companies values
-            ('active-web', 'Active Oy', true, 'https://active.example'),
-            ('inactive-web', 'Inactive Oy', false, 'https://inactive.example'),
-            ('active-missing-web', 'No Web Oy', true, ''),
-            ('second-active-web', 'Second Oy', true, 'https://second.example')
-            """
-        )
-
-    result = xbrl_assets.build_finland_xbrl_eligible_companies(
-        ytj_duckdb=duckdb_resource(ytj_database_path),
-        xbrl_parquet_storage=storage,
-        log_info=log_messages.append,
-    )
-
-    assert result.metadata["eligible_companies_row_count"] == 2
-    assert result.metadata["parquet_path"] == str(storage.eligible_companies_path())
-    assert log_messages == [
-        f"Building Finland XBRL eligible companies parquet from YTJ DuckDB {ytj_database_path}",
-        "Finland XBRL eligible companies parquet built: eligible_companies_row_count=2",
-    ]
-    assert storage.read_eligible_companies() == [
-        {
-            "business_id": "active-web",
-            "primary_name": "Active Oy",
-            "website_normalized_url": "https://active.example",
-        },
-        {
-            "business_id": "second-active-web",
-            "primary_name": "Second Oy",
-            "website_normalized_url": "https://second.example",
-        },
-    ]
-
-
-def _eligible_financial_reports() -> list[dict]:
+def _financial_reports() -> list[dict]:
     return [
         {
             "business_id": "active-web",
@@ -1468,12 +1386,6 @@ def _fake_statement_parser(**kwargs) -> ParsedStatement:
 def test_duckdb_xbrl_assets_use_dedicated_finland_xbrl_duckdb_pool():
     graph = load_project_defs().get_repository_def().asset_graph
     for key in (
-        "finland_xbrl_eligible_companies",
-    ):
-        node = graph.get(AssetKey([key]))
-        assert "finland_ytj_duckdb" in node.pools, f"{key} missing YTJ pool"
-        assert "finland_xbrl_duckdb" not in node.pools, f"{key} still uses XBRL pool"
-    for key in (
         "finland_xbrl_financial_reports_backfill",
         "finland_xbrl_financial_reports_incremental",
         "finland_xbrl_raw_xml_documents_backfill",
@@ -1484,6 +1396,7 @@ def test_duckdb_xbrl_assets_use_dedicated_finland_xbrl_duckdb_pool():
         "fi_prh_xbrl_financial_metrics_usd",
     ):
         node = graph.get(AssetKey([key]))
+        assert "finland_ytj_duckdb" not in node.pools, f"{key} should not use YTJ pool"
         assert "finland_xbrl_duckdb" not in node.pools, f"{key} should not use DuckDB pool"
 
 

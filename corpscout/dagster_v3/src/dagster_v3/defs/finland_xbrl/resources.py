@@ -93,9 +93,6 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
     def financial_metrics_usd_path(self) -> Path:
         return Path(self.base_path) / "financial_metrics_usd" / "data.parquet"
 
-    def eligible_companies_path(self) -> Path:
-        return Path(self.base_path) / "eligible_companies" / "data.parquet"
-
     def write_financial_reports_backfill(
         self,
         partition_key: str,
@@ -125,17 +122,6 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
         return self._read_required_financial_reports(
             self.financial_reports_incremental_path(partition_key)
         )
-
-    def write_eligible_companies(self, rows: list[dict[str, Any]]) -> Path:
-        return self._write_rows(
-            self.eligible_companies_path(),
-            rows,
-            columns=tables.ELIGIBLE_COMPANIES_COLUMNS,
-            schema=tables.ELIGIBLE_COMPANIES_POLARS_SCHEMA,
-        )
-
-    def read_eligible_companies(self) -> list[dict[str, Any]]:
-        return self._read_required_rows(self.eligible_companies_path())
 
     def write_raw_xml_documents_backfill(
         self,
@@ -292,9 +278,6 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
 
     def financial_metrics_usd_row_count(self) -> int:
         return len(self.read_financial_metrics_usd())
-
-    def eligible_companies_row_count(self) -> int:
-        return len(self.read_eligible_companies())
 
     def _partition_path(self, asset_name: str, partition_key: str) -> Path:
         return (

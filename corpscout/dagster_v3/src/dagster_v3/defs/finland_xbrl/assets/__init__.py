@@ -13,13 +13,7 @@ from dagster_v3.defs.finland_xbrl.assets.common import (
     XBRL_BUCKET,
     XBRL_DLT_DATASET_NAME,
     XBRL_DLT_FINANCIAL_REPORTS_TABLE,
-    XBRL_ELIGIBLE_COMPANIES_TABLE,
-    XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE,
     XBRL_TIMEOUT_SECONDS,
-)
-from dagster_v3.defs.finland_xbrl.assets.eligible_companies import (
-    build_finland_xbrl_eligible_companies,
-    finland_xbrl_eligible_companies,
 )
 from dagster_v3.defs.finland_xbrl.assets.financial_reports import (
     XbrlFinancialReportsConfig,
@@ -39,7 +33,6 @@ from dagster_v3.defs.finland_xbrl.assets.jobs import (
     finland_xbrl_incremental_job,
     finland_xbrl_incremental_schedule,
     finland_xbrl_publish_job,
-    finland_xbrl_reference_refresh_job,
 )
 from dagster_v3.defs.finland_xbrl.assets.parse import (
     XbrlParsedConfig,
@@ -81,8 +74,6 @@ __all__ = [
     "XBRL_BUCKET",
     "XBRL_DLT_DATASET_NAME",
     "XBRL_DLT_FINANCIAL_REPORTS_TABLE",
-    "XBRL_ELIGIBLE_COMPANIES_TABLE",
-    "XBRL_ELIGIBLE_FINANCIAL_REPORTS_TABLE",
     "XBRL_TIMEOUT_SECONDS",
     "XbrlFinancialReportsConfig",
     "XbrlParquetStorageResource",
@@ -90,7 +81,6 @@ __all__ = [
     "XbrlParseRunResult",
     "XbrlRawConfig",
     "build_concept_profile_rows",
-    "build_finland_xbrl_eligible_companies",
     "build_financial_metric_rows",
     "build_financial_metric_usd_rows",
     "build_parse_quality_row",
@@ -100,7 +90,6 @@ __all__ = [
     "documents_missing_registration_date",
     "download_finland_xbrl_raw_xml_documents",
     "finland_xbrl_historical_backfill_job",
-    "finland_xbrl_eligible_companies",
     "finland_xbrl_financial_metrics",
     "finland_xbrl_financial_metrics_clickhouse",
     "finland_xbrl_financial_metrics_usd",
@@ -114,7 +103,6 @@ __all__ = [
     "finland_xbrl_raw_xml_documents",
     "finland_xbrl_raw_xml_documents_backfill",
     "finland_xbrl_raw_xml_documents_incremental",
-    "finland_xbrl_reference_refresh_job",
     "finland_xbrl_xml_documents",
     "financial_report_rows_in_registration_window",
     "materialize_financial_reports_window",
@@ -127,7 +115,6 @@ defs = dg.Definitions(
     assets=[
         finland_xbrl_financial_reports_backfill,
         finland_xbrl_financial_reports_incremental,
-        finland_xbrl_eligible_companies,
         finland_xbrl_raw_xml_documents_backfill,
         finland_xbrl_raw_xml_documents_incremental,
         finland_xbrl_raw_xml_documents,
@@ -139,7 +126,6 @@ defs = dg.Definitions(
         finland_xbrl_financial_metrics_clickhouse,
     ],
     jobs=[
-        finland_xbrl_reference_refresh_job,
         finland_xbrl_historical_backfill_job,
         finland_xbrl_incremental_job,
         finland_xbrl_publish_job,

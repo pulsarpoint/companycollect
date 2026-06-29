@@ -15,9 +15,6 @@ from dagster_v3.defs.finland_xbrl.clickhouse import (
     export_finland_xbrl_financial_metrics_clickhouse,
 )
 from dagster_v3.defs.clickhouse.resources import ClickHouseConnectResource
-from dagster_v3.defs.finland_xbrl.assets.eligible_companies import (
-    finland_xbrl_eligible_companies,
-)
 from dagster_v3.defs.finland_xbrl.assets.parse import (
     finland_xbrl_parse_backfill,
     finland_xbrl_parse_incremental,
@@ -31,7 +28,6 @@ def build_financial_metric_rows(
     *,
     statement_documents: list[dict[str, Any]],
     facts: list[dict[str, Any]],
-    eligible_companies: list[dict[str, Any]],
     built_at: str,
 ) -> list[dict[str, Any]]:
     statements = _frame(
@@ -39,8 +35,6 @@ def build_financial_metric_rows(
         columns=tables.STATEMENT_DOCUMENTS_COLUMNS,
         schema=tables.STATEMENT_DOCUMENTS_POLARS_SCHEMA,
     )
-    eligible_business_ids = [company["business_id"] for company in eligible_companies]
-    statements = statements.filter(pl.col("business_id").is_in(eligible_business_ids))
     fact_frame = _frame(
         facts,
         columns=tables.FACTS_COLUMNS,
@@ -171,7 +165,6 @@ def build_financial_metric_usd_rows(
     name=tables.FINANCIAL_METRICS_TABLE,
     group_name="finland_xbrl",
     deps=[
-        finland_xbrl_eligible_companies,
         finland_xbrl_parse_backfill,
         finland_xbrl_parse_incremental,
     ],
@@ -185,7 +178,6 @@ def finland_xbrl_financial_metrics(
     rows = build_financial_metric_rows(
         statement_documents=xbrl_parquet_storage.read_statement_documents(),
         facts=xbrl_parquet_storage.read_facts(),
-        eligible_companies=xbrl_parquet_storage.read_eligible_companies(),
         built_at=datetime.now(UTC).isoformat(),
     )
     parquet_path = xbrl_parquet_storage.write_financial_metrics(rows)
