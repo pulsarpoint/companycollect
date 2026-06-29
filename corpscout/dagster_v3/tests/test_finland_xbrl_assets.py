@@ -289,6 +289,7 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         ).asset_layer.executable_asset_keys
     }
     assert historical_backfill == {
+        "finland_xbrl_eligible_companies",
         "finland_xbrl_financial_reports_backfill",
         "finland_xbrl_raw_xml_documents_backfill",
         "finland_xbrl_parse_backfill",
@@ -304,6 +305,7 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         for key in repo.get_job("finland_xbrl_incremental_job").asset_layer.executable_asset_keys
     }
     assert incremental == {
+        "finland_xbrl_eligible_companies",
         "finland_xbrl_financial_reports_incremental",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_incremental",
