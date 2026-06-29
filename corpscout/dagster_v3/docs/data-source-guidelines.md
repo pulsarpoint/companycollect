@@ -101,11 +101,10 @@ decouple the stages.
 1. **Registry already publishes the extracted facts (CSV/JSON) → skip XBRL entirely** (bulk-file
    golden path). *Always check first.* Estonia is this — `elemendi_nimetus`/`vaartus` are already
    concept+value pairs, so we just pivot, no parser.
-2. **Only raw XBRL/iXBRL → parse with Arelle**, the regulator-grade reference processor (handles
-   taxonomies/dimensions/units/validation and **iXBRL/ESEF**, which is impractical to parse by hand).
-   Finland (`finland_xbrl`) is this. Run it as a **partitioned** extraction stage (§4).
-3. **A lighter `lxml`/`py-xbrl` instance parser** → only for *plain* (non-inline) XBRL at extreme
-   volume, and **only after** measuring Arelle as the bottleneck. You give up iXBRL + validation.
+2. **Only raw XBRL/iXBRL → use an explicit parser stage** that is tested against real filings from
+   the source. Run it as a **partitioned** extraction stage (§4).
+3. **A lighter `lxml`/`py-xbrl` instance parser** → only for *plain* (non-inline) XBRL where the
+   source files and expected concepts are verified. You give up full taxonomy validation.
 
 **Decouple three stages — this is what scales XBRL across many countries:**
 - **Extraction** (the parser's only job): XBRL → a generic flat fact table
@@ -116,11 +115,11 @@ decouple the stages.
 - **Normalize / USD**: downstream SQL/dbt per the standard (§5–§7). **Translation** is a separate
   out-of-graph step (§8) — not dbt/SQL.
 
-**Make XBRL extraction a shared component**, not per-country code: a reusable `xbrl_common` Arelle
-wrapper (→ flat fact table) parameterized by `(taxonomy entrypoint, concept→metric map)`. A new XBRL
-country then = configure it + supply a mapping table, rather than re-implementing a parser.
+**Make XBRL extraction a shared component**, not per-country code: a reusable `xbrl_common` extractor
+(→ flat fact table) parameterized by `(source format, concept→metric map)`. A new XBRL country then =
+configure it + supply a mapping table, rather than re-implementing a parser.
 
-**Scaling Arelle** (it's the heavy stage — mitigate, don't rewrite):
+**Scaling XBRL parsing**:
 - **Partition by registration window** (parse incrementally, never the whole corpus).
 - **Parse once, cache the flat fact output** (S3/DuckDB) — never re-parse a filing.
 - **Cache the taxonomy DTS locally** — per-doc cost is dominated by resolving/loading taxonomy files

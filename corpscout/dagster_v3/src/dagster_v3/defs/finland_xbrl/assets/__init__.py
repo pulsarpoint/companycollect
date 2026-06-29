@@ -1,7 +1,7 @@
 import dagster as dg
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.finland_xbrl import arelle_parser, tables
+from dagster_v3.defs.finland_xbrl import tables
 from dagster_v3.defs.finland_xbrl.assets.common import (
     BACKFILL_PARTITIONS,
     DAILY_PARTITIONS,
@@ -49,7 +49,7 @@ from dagster_v3.defs.finland_xbrl.assets.parse import (
     finland_xbrl_parse_backfill,
     finland_xbrl_parse_incremental,
     parse_xbrl_documents,
-    run_finland_xbrl_arelle_parse,
+    run_finland_xbrl_parse,
 )
 from dagster_v3.defs.finland_xbrl.assets.raw_xml_documents import (
     RawXmlDownloadResult,
@@ -87,7 +87,6 @@ __all__ = [
     "XbrlParsedConfig",
     "XbrlParseRunResult",
     "XbrlRawConfig",
-    "arelle_parser",
     "build_concept_profile_rows",
     "build_finland_xbrl_eligible_companies",
     "build_financial_metric_rows",
@@ -116,7 +115,7 @@ __all__ = [
     "financial_report_rows_in_registration_window",
     "materialize_financial_reports_window",
     "parse_xbrl_documents",
-    "run_finland_xbrl_arelle_parse",
+    "run_finland_xbrl_parse",
     "tables",
 ]
 

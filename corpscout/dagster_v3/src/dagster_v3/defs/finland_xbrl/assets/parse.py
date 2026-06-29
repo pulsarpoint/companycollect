@@ -10,10 +10,7 @@ from pydantic import ConfigDict
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.finland_xbrl import tables
-from dagster_v3.defs.finland_xbrl.arelle_parser import (
-    ArelleStatementParser,
-    parse_statement_xml_with_arelle,
-)
+from dagster_v3.defs.finland_xbrl.parser import ParsedStatement, parse_statement_xml
 from dagster_v3.defs.finland_xbrl.assets.common import (
     BACKFILL_PARTITIONS,
     DAILY_PARTITIONS,
@@ -24,6 +21,9 @@ from dagster_v3.defs.finland_xbrl.assets.raw_xml_documents import (
     finland_xbrl_raw_xml_documents_incremental,
 )
 from dagster_v3.defs.finland_xbrl.resources import XbrlParquetStorageResource
+
+StatementParser = Callable[..., ParsedStatement]
+
 
 class XbrlParsedConfig(dg.Config):
     model_config = ConfigDict(extra="forbid")
@@ -36,12 +36,12 @@ class XbrlParseRunResult:
     failed_rows: list[dict[str, Any]]
 
 
-def run_finland_xbrl_arelle_parse(
+def run_finland_xbrl_parse(
     *,
     object_store: ObjectStoreResource,
     documents: list[dict[str, Any]],
     run_id: str,
-    parser: ArelleStatementParser = parse_statement_xml_with_arelle,
+    parser: StatementParser = parse_statement_xml,
     log_info: Callable[[str], None] | None = None,
     progress_interval: int = 25,
 ) -> XbrlParseRunResult:
@@ -107,7 +107,7 @@ def parse_xbrl_documents(
     *,
     object_store: ObjectStoreResource,
     run_id: str,
-    parser: ArelleStatementParser = parse_statement_xml_with_arelle,
+    parser: StatementParser = parse_statement_xml,
     log_info: Callable[[str], None] | None = None,
     progress_interval: int = 25,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -149,9 +149,11 @@ def parse_xbrl_documents(
                 f"error={type(exc).__name__}: {exc}",
             )
             continue
+        document_statement_rows = parsed.rows_by_table[tables.STATEMENT_DOCUMENTS_TABLE]
+        document_fact_rows = parsed.rows_by_table[tables.FACTS_TABLE]
         warning_count += len(parsed.warnings)
-        statement_rows.append(_statement_document_row(parsed.statement_document))
-        fact_rows.extend(_fact_row(fact) for fact in parsed.facts)
+        statement_rows.extend(_statement_document_row(row) for row in document_statement_rows)
+        fact_rows.extend(_fact_row(fact) for fact in document_fact_rows)
         if _should_log_parse_progress(
             document_index=document_index,
             total_documents=total_documents,
@@ -164,7 +166,7 @@ def parse_xbrl_documents(
                 f"{document_index}/{total_documents}: "
                 f"business_id={document['business_id']} "
                 f"financial_date={document['financial_date']} "
-                f"facts={len(parsed.facts)} "
+                f"facts={len(document_fact_rows)} "
                 f"warnings={len(parsed.warnings)} "
                 f"elapsed_seconds={elapsed_seconds:.1f}",
             )
@@ -212,7 +214,7 @@ def _materialize_parse_window(
     run_id: str,
     write_statement_documents: Callable[[str, list[dict[str, Any]]], Path],
     write_facts: Callable[[str, list[dict[str, Any]]], Path],
-    parser: ArelleStatementParser = parse_statement_xml_with_arelle,
+    parser: StatementParser = parse_statement_xml,
 ) -> dg.MaterializeResult:
     context.log.info(
         "XBRL parse partition %s started: window=%s..%s documents_manifest_path=%s",
@@ -241,7 +243,7 @@ def _materialize_parse_window(
         len(in_window),
     )
 
-    result = run_finland_xbrl_arelle_parse(
+    result = run_finland_xbrl_parse(
         object_store=object_store,
         documents=in_window,
         run_id=run_id,
@@ -303,7 +305,7 @@ def _materialize_parse_window(
     deps=[finland_xbrl_raw_xml_documents_backfill],
     partitions_def=BACKFILL_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
-    kinds={"python", "parquet", "arelle"},
+    kinds={"python", "parquet", "lxml"},
 )
 def finland_xbrl_parse_backfill(
     context: dg.AssetExecutionContext,
@@ -335,7 +337,7 @@ def finland_xbrl_parse_backfill(
     group_name="finland_xbrl",
     deps=[finland_xbrl_raw_xml_documents_incremental],
     partitions_def=DAILY_PARTITIONS,
-    kinds={"python", "parquet", "arelle"},
+    kinds={"python", "parquet", "lxml"},
 )
 def finland_xbrl_parse_incremental(
     context: dg.AssetExecutionContext,

@@ -2,7 +2,6 @@ from datetime import date, datetime
 from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import dagster as dg
@@ -26,8 +25,11 @@ from dagster_v3.defs.finland_xbrl.resources import (
     XbrlApiResource,
     XbrlParquetStorageResource,
 )
+from dagster_v3.defs.finland_xbrl.parser import ParsedStatement
 from dagster_v3.defs.finland_xbrl.tables import (
+    FACTS_TABLE,
     FINANCIAL_METRICS_TABLE,
+    STATEMENT_DOCUMENTS_TABLE,
     XML_DOCUMENTS_TABLE,
 )
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
@@ -1063,7 +1065,7 @@ def test_xbrl_parse_window_writes_parsed_partition_parquet(
         run_id="test-run",
         write_statement_documents=storage.write_statement_documents_incremental,
         write_facts=storage.write_facts_incremental,
-        parser=_fake_arelle_parser,
+        parser=_fake_statement_parser,
     )
 
     assert result.metadata["documents_parsed_this_run"] == 1
@@ -1081,6 +1083,15 @@ def test_xbrl_parse_outputs_are_parquet_without_duckdb_bridge() -> None:
     assert "load_parsed_table_frame" not in xbrl_assets.__dict__
     assert "parsed_duckdb_row_counts" not in xbrl_assets.__dict__
     assert "parsed_duckdb_observability_metadata" not in xbrl_assets.__dict__
+
+
+def test_finland_xbrl_parse_assets_use_lxml_parser() -> None:
+    assert "run_finland_xbrl_parse" in xbrl_assets.__dict__
+
+    graph = load_project_defs().get_repository_def().asset_graph
+    for key in ("finland_xbrl_parse_backfill", "finland_xbrl_parse_incremental"):
+        node = graph.get(AssetKey([key]))
+        assert node.kinds == {"lxml", "parquet", "python"}
 
 
 
@@ -1340,11 +1351,14 @@ def _fact_row(statement_key: str, fact_ordinal: int) -> dict:
     }
 
 
-def _fake_arelle_parser(**kwargs) -> SimpleNamespace:
+def _fake_statement_parser(**kwargs) -> ParsedStatement:
     del kwargs
-    return SimpleNamespace(
-        statement_document=_statement_document_row("statement-active-web"),
-        facts=[_fact_row("statement-active-web", fact_ordinal=1)],
+    return ParsedStatement(
+        statement_key="statement-active-web",
+        rows_by_table={
+            STATEMENT_DOCUMENTS_TABLE: [_statement_document_row("statement-active-web")],
+            FACTS_TABLE: [_fact_row("statement-active-web", fact_ordinal=1)],
+        },
         warnings=[],
     )
 

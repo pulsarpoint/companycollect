@@ -56,7 +56,7 @@ mirroring `france_sirene`.
 ## 9. Financials — XBRL accounts (Phase 1: latest archive)
 - Source: Companies House **Accounts Data Product** — daily iXBRL archives
   (`Accounts_Bulk_Data-YYYY-MM-DD.zip`, ~283 MB), URL resolved from the accounts index. Free.
-- Parsed with the shared **`xbrl_common`** extractor (no Arelle). Per filing → company_number
+- Parsed with the shared **`xbrl_common`** extractor. Per filing → company_number
   (from the iXBRL entity identifier) + reporting period end + a canonical metric set mapped from
   FRC core concepts (`UK_METRIC_CONCEPTS`). **`gb_financial_metrics`** (migration `000037`), native
   GBP + **GBP→USD** via the shared `ExchangeRateClient` (separate step, keyed on period_end_date).

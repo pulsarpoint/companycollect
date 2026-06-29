@@ -18,20 +18,21 @@
 ## 2. Ingest mode — two shapes in one source
 - **Register (ytj)**: bulk all-companies download → DuckDB → **non-partitioned full-refresh**.
 - **Financials (xbrl)**: **partitioned-API** — `MonthlyPartitionsDefinition` over the report
-  registration window; downloads XBRL XML per window, stores it in S3, parses with **arelle**, then
-  dbt. *This is the reference impl for the §4 "per-window API ⇒ partitioned incremental" rule.*
+  registration window; downloads XBRL XML per window, stores it in S3, parses with the lxml XBRL
+  instance parser, then builds financial metrics. *This is the reference impl for the §4
+  "per-window API ⇒ partitioned incremental" rule.*
 
 ## 3. Loading
 - ytj: dlt source pulls the all-companies dataset into `finland_ytj.duckdb`
   (`finland_ytj_all_companies_duckdb`, with an `all_companies_non_empty` asset check).
 - xbrl: `…_financial_reports_duckdb` (report metadata) → `…_raw_xml_documents` → `…_xml_documents`
-  (S3) → `…_parsed_tables` (arelle, **partitioned**) → dbt.
+  (S3) → partitioned lxml parse parquet → financial metrics.
 
 ## 4. Transform
 - **Resolved → tier 3 (dbt)**: `finland_resolved_dbt_assets` builds `fi_companies`/`fi_names`/
   `fi_websites`/`fi_industries` from the ytj DuckDB (a genuine multi-model DAG over nested YTJ data →
   dbt earns its keep here), then `finland_ytj_resolved_clickhouse` exports the resolved tables.
-- **XBRL → tier 3 (dbt)** over the arelle-parsed facts → `fi_financial_metrics_long` (EAV).
+- **XBRL → tier 3** over the lxml-parsed facts → `fi_prh_xbrl_financial_metrics`.
 
 ## 5. ClickHouse schema — deviations
 - Resolved tables are **normalized per relation** (companies/names/websites/industries) rather than
@@ -54,9 +55,8 @@
   04:45**, default STOPPED. The XBRL financials are **not scheduled** yet (see §9).
 
 ## 9. Issues / open items
-- **finland_xbrl has no ClickHouse export asset** — its 5 assets stop at dbt/DuckDB, and
-  `…_parsed_tables` is **partitioned** (arelle parse per registration-month). It needs its own design
-  pass (export path + partition/cadence) before it gets a schedule; deliberately deferred.
+- XBRL parsing is **partitioned** by report registration window; publish/export assets consume the
+  partitioned parquet outputs after parse.
 - the resolved dbt project reads `finland_ytj.duckdb` via `FINLAND_YTJ_DUCKDB_PATH`, set
   **unconditionally** from the resource default so a stale env var can't silently point dbt at a
   different file.

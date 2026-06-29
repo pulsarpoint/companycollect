@@ -3,7 +3,6 @@ name = "dagster_v3"
 requires-python = ">=3.14,<3.15"
 version = "0.1.0"
 dependencies = [
-    "arelle-release>=2.41.4",
     "boto3>=1.43.29",
     "clickhouse-connect>=0.10.0",
     "dagster==1.13.9",

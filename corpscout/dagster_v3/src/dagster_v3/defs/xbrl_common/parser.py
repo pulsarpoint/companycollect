@@ -2,8 +2,8 @@
 
 Targets the practical need — pull a known set of financial concepts out of filing
 documents (UK Companies House FRC taxonomy, Finland, …) — WITHOUT loading the full
-taxonomy DTS the way Arelle does. Arelle is far too heavy/slow to run over millions
-of filings; for extracting a fixed concept set we only need the inline facts plus
+taxonomy DTS. Full taxonomy loading is too heavy/slow to run over millions of
+filings; for extracting a fixed concept set we only need the inline facts plus
 their contexts. Parses `ix:nonFraction`/`ix:nonNumeric` facts and `xbrli:context`
 periods/dimensions, applying `scale`/`sign`.
 """
