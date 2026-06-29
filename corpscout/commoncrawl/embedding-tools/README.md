@@ -10,19 +10,19 @@ fp32 on 0/20000 top-1 picks). Reads `embeddings.parquet`, narrows the `embedding
 `list<float32>` to `list<float16>`, and writes `embeddings_fp16.parquet` **beside** the original (all other
 columns unchanged; the fp32 file is left in place).
 
-Per file:
-- `load_as_fp16(src) -> (table, fp16_array)` — read the **fp32** parquet; embedding downcast to a numpy fp16 array.
-- `save_fp16(src, table, arr) -> out_path` — write `<src_stem>_fp16.parquet` in the same folder.
-- `convert_one(src)` — the full job for one file.
+`convert_one(src)` reads the fp32 parquet and downcasts the `embedding` column in place — a pyarrow
+`cast(list<float16>, safe=False)` narrows the child floats and reuses the offsets, so no numpy/flatten and
+every other column is untouched — then writes the sibling `_fp16.parquet` (parquet `version="2.6"`, which
+carries the HALF_FLOAT type).
 
 Multiple files are converted **in parallel** (one process each — `WORKERS`, default 8). The total I/O is
-fixed, but independent files use the NVMe queue depth so wall-clock drops. Memory ≈ `WORKERS` × one file
-(~2–4 GB each), so lower `WORKERS` if RAM is tight.
+fixed, but independent files use the NVMe queue depth so wall-clock drops. Memory ≈ `WORKERS` × one file,
+so lower `WORKERS` if RAM is tight.
 
 ## Setup + run
 ```bash
 cd corpscout/commoncrawl/embedding-tools
-uv sync                       # pyarrow + numpy
+uv sync                       # pyarrow
 
 # one file:
 uv run python convert_fp16.py /path/to/embeddings.parquet

@@ -5,7 +5,6 @@ description = "Offline utilities for the CommonCrawl page-embedding parquet file
 requires-python = ">=3.13"
 dependencies = [
     "pyarrow>=18",
-    "numpy>=2",
 ]
 
 # Scripts only — uv manages just the env + deps.
