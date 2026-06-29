@@ -4,13 +4,14 @@ embedding-ab/precision_ab.py: fp16 == fp32 on 0/20000 top-1 picks).
 
 convert_one(src): read the fp32 parquet, downcast the `embedding` column in place (list<float32> ->
 list<float16> — pyarrow casts the child and reuses the offsets; every other column untouched), and write
-`<src_dir>/<src_stem>_fp16.parquet` beside it. The fp32 original is left in place.
+the sibling fp16 file (`embeddings_fp32.parquet` -> `embeddings_fp16.parquet`; a name without `_fp32` just
+gets `_fp16` appended). The fp32 original is left in place.
 
 The job is I/O-bound and files are independent, so multiple are converted in PARALLEL (one process each,
 `WORKERS`, default 8) to use the NVMe queue depth. Memory ≈ WORKERS × one file.
 
-  python convert_fp16.py <embeddings.parquet> [more.parquet ...]
-  WORKERS=8 python convert_fp16.py data/embedding/out_industry_*/embeddings.parquet     # shell expands the glob
+  python convert_fp16.py <embeddings_fp32.parquet> [more ...]
+  WORKERS=8 python convert_fp16.py data/embedding/out_industry_*/embeddings_fp32.parquet   # shell expands the glob
 """
 import os
 import sys
@@ -25,7 +26,8 @@ def convert_one(src):
     i = t.column_names.index("embedding")
     emb16 = t.column(i).cast(pa.list_(pa.float16()), safe=False)  # safe=False: a stray edge value can't abort the batch
     t = t.set_column(i, "embedding", emb16)
-    out = os.path.splitext(src)[0] + "_fp16.parquet"
+    stem = os.path.splitext(src)[0]
+    out = (stem[:-5] if stem.endswith("_fp32") else stem) + "_fp16.parquet"  # embeddings_fp32 -> embeddings_fp16
     pq.write_table(t, out, compression="zstd", version="2.6")      # 2.6: parquet format that carries HALF_FLOAT
     s0, s1 = os.path.getsize(src), os.path.getsize(out)
     return f"{out}  {s0/1e6:.0f}MB -> {s1/1e6:.0f}MB ({100*s1/s0:.0f}%)  rows={t.num_rows}"

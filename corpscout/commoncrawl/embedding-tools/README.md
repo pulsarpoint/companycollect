@@ -6,7 +6,7 @@ production-side tooling.)
 
 ## convert_fp16.py — fp32 → fp16
 Halves the embedding files with **zero NACE loss** (proven in `embedding-ab/precision_ab.py`: fp16 matched
-fp32 on 0/20000 top-1 picks). Reads `embeddings.parquet`, narrows the `embedding` column from
+fp32 on 0/20000 top-1 picks). Reads `embeddings_fp32.parquet`, narrows the `embedding` column from
 `list<float32>` to `list<float16>`, and writes `embeddings_fp16.parquet` **beside** the original (all other
 columns unchanged; the fp32 file is left in place).
 
@@ -25,13 +25,13 @@ cd corpscout/commoncrawl/embedding-tools
 uv sync                       # pyarrow
 
 # one file:
-uv run python convert_fp16.py /path/to/embeddings.parquet
+uv run python convert_fp16.py /path/to/embeddings_fp32.parquet
 # whole tree (shell expands the glob):
-uv run python convert_fp16.py /path/to/data/embedding/out_industry_*/embeddings.parquet
+uv run python convert_fp16.py /path/to/data/embedding/out_industry_*/embeddings_fp32.parquet
 ```
 On the box, `data/` is root-owned — run with `sudo` (and tune `WORKERS`):
 ```bash
-sudo WORKERS=8 .venv/bin/python convert_fp16.py data/embedding/out_industry_*/embeddings.parquet
+sudo WORKERS=8 .venv/bin/python convert_fp16.py data/embedding/out_industry_*/embeddings_fp32.parquet
 ```
 Each file prints `MB -> MB (%)`. After verifying, delete the fp32 originals to reclaim disk (the script
 never deletes anything itself). 300 chunks of fp32 ≈ 600 GB → fp16 ≈ 300 GB.

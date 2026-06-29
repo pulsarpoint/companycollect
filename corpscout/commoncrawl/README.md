@@ -144,7 +144,7 @@ confidence gate. Junk/parked pages are tagged via `page_type` and skip NACE.
   division`, `rank`, `is_primary`, `score`, `nace_method`.
 - `commoncrawl_page_signals` — one row/domain: `page_type`(+score), `nace_confident`, `nace_margin`.
 - `commoncrawl_domains` — the identity master row (also written by the tech pass).
-- **`data/embedding/out_industry_<part>/embeddings.parquet`** (on disk, **not** ClickHouse) — the raw
+- **`data/embedding/out_industry_<part>/embeddings_fp32.parquet`** (on disk, **not** ClickHouse) — the raw
   fp32 page vector + page metadata, saved on every industry run so it's never recomputed. Source of
   record for re-classification + similarity/Qdrant (see §5b, `docs/embeddings-design.md`).
 
@@ -231,7 +231,7 @@ the run ends with a `done/skipped/failed` summary. Example:
 ### 5b. Embed-only backfill (`-mode embed`)
 
 The industry pass embeds each page (the expensive GPU artifact) and now **persists the raw vector** to a
-separate tree `data/embedding/out_industry_<part>/embeddings.parquet` (fp32, one row/domain, with the
+separate tree `data/embedding/out_industry_<part>/embeddings_fp32.parquet` (fp32, one row/domain, with the
 page metadata — `source_url` + the WARC re-fetch coords + `subdomain` + `text_len`). Vectors are **not**
 loaded into ClickHouse (too large, incompressible); they're the source of record for cheap
 re-classification + similarity/Qdrant later (see `docs/embeddings-design.md`).
@@ -239,7 +239,7 @@ re-classification + similarity/Qdrant later (see `docs/embeddings-design.md`).
 `-mode embed` exists to **backfill segments that were classified before this change** (their vectors were
 discarded). It:
 - **reuses the industry worklist** `shard_industry_<part>.parquet` (no index rebuild for done parts),
-- runs a **single** embed exec — fetch → embed → write `embeddings.parquet` — with **no NACE classify,
+- runs a **single** embed exec — fetch → embed → write `embeddings_fp32.parquet` — with **no NACE classify,
   no ClickHouse, no load step**,
 - writes to `data/embedding/out_industry_<part>/`, resumable on its own
   `data/embedding/out_industry_<part>.loaded` marker (independent of the industry/tech markers).
@@ -322,7 +322,7 @@ fetch→embed stream **without** the NACE classify or ClickHouse — it writes o
 
 **`industry`, `embed` (and `both`):** `--embed-concurrency` (96; in-flight embed requests), `--embed-batch`
 (16; texts/request — keep small, big batches overflow the engine's token budget). `embed`'s `--out` is the
-embed dir directly (e.g. `data/embedding/out_industry_<p>`) and it writes only `embeddings.parquet` — no
+embed dir directly (e.g. `data/embedding/out_industry_<p>`) and it writes only `embeddings_fp32.parquet` — no
 reference, no ClickHouse, no `load`.
 
 **`tech` (and `both`):** `--tech-engine` (`fast` = Aho-Corasick-gated, ~4.6×, default | `wappalyzer` =
