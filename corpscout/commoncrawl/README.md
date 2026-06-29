@@ -300,6 +300,45 @@ SHARD=../data/index/CC-MAIN-2026-25/shard_tech_0.parquet
 `load --dir` loads whichever fixed files are present. Tables must exist (`make clickhouse-migrate-up`);
 ReplacingMergeTree dedupes, so re-loading is safe.
 
+### 5c. Data flow — where every ClickHouse row comes from (produce vs load)
+
+The system is **two separable stages, and every ClickHouse `INSERT` happens in stage 2 (`load`)** — never
+during the fetch/embed compute in stage 1. This is the model to keep in your head:
+
+**The domain list is the crawl itself, not a curated set.** `index-builder` builds the worklist straight
+from the **CommonCrawl URL index** — every crawled URL grouped by registered domain, keeping the
+representative page(s) (`industry` = one homepage/domain, `tech` = many; §7). So `commoncrawl_domains` ends
+up being **every domain in the crawl** (that has an HTML page), materialized **shard by shard** as you
+process parts — not a known-company subset. The worker only ever consumes this fixed worklist; **it never
+discovers new domains** (a domain absent from the worklist never enters the system).
+
+**Stage 1 — produce** (`cc-enrich-worker industry|tech|embed`) fetches those pages and writes **Parquet
+only**. The *single* ClickHouse touch in this stage is `industry`/`tech` **reading** the NACE reference
+matrix at startup — **no row is ever inserted here.** What each mode produces:
+
+| mode | embeds? | classifies NACE? | Parquet written | →inserted by `load` into |
+|---|---|---|---|---|
+| `industry` | yes (instructed vector) | yes | `domains`, `industries`, `page_signals`, + `embedding/…/embeddings.parquet` | `commoncrawl_domains`, `_industries`, `_page_signals` |
+| `tech` | no | no | `domains`, `technologies`, `identifiers`, `metadata`, `contacts` | the matching `commoncrawl_*` tables |
+| `embed` | yes (vector only) | no | **only** `embedding/…/embeddings.parquet` | **nothing — no load step** |
+
+**Stage 2 — load** (`cc-enrich-worker load --dir …`, in `internal/load/load.go`) reads those Parquet files
+and `INSERT`s each into its matching table (filename → table). **This is the only place rows enter
+ClickHouse.** `cc-crawl` runs it automatically after a clean `industry`/`tech` produce — **but not after
+`embed`** (§5b), which has no load step.
+
+So, to answer the questions this section exists for:
+- **`commoncrawl_domains`** is populated by the **load** step of an `industry` *or* `tech` pass (both write
+  `domains.parquet`) — i.e. as you process index parts; its universe is the whole crawl (above).
+- **`commoncrawl_industries`** (the **top-3** NACE candidates per domain — `rank`/`is_primary`/`score`; §3 A4)
+  and **`commoncrawl_page_signals`** (the per-domain `nace_confident`/`nace_margin` quality, 1 row/domain)
+  are inserted by the **load** step of an **`industry`** pass only — and they're produced by the produce
+  step, but **inserted only at load**, never during the embed compute.
+- **The embed (embedding) phase inserts NOTHING into ClickHouse.** It writes only the raw vectors to
+  `data/embedding/…` and runs no load; it re-embeds domains the industry pass *already* inserted, so it adds
+  no rows to any `commoncrawl_*` table. (Re-classifying NACE later from those stored vectors regenerates the
+  `commoncrawl_industries` + `page_signals` rows as a CPU matmul — see §5b / `docs/embeddings-design.md`.)
+
 ---
 
 ## 6. Reference — `cc-enrich-worker` CLI
