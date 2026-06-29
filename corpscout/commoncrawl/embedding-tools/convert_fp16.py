@@ -4,14 +4,14 @@ embedding-ab/precision_ab.py: fp16 == fp32 on 0/20000 top-1 picks).
 
 convert_one(src): read the fp32 parquet, downcast the `embedding` column in place (list<float32> ->
 list<float16> — pyarrow casts the child and reuses the offsets; every other column untouched), and write
-the sibling fp16 file (`embeddings_fp32.parquet` -> `embeddings_fp16.parquet`; a name without `_fp32` just
+the sibling fp16 file (`embeddings.parquet` -> `embeddings_fp16.parquet`; a name without `_fp32` just
 gets `_fp16` appended). The fp32 original is left in place.
 
 The job is I/O-bound and files are independent, so multiple are converted in PARALLEL (one process each,
 `WORKERS`, default 8) to use the NVMe queue depth. Memory ≈ WORKERS × one file.
 
-  python convert_fp16.py <embeddings_fp32.parquet> [more ...]
-  WORKERS=8 python convert_fp16.py data/embedding/out_industry_*/embeddings_fp32.parquet   # shell expands the glob
+  python convert_fp16.py <embeddings.parquet> [more ...]
+  WORKERS=8 python convert_fp16.py data/embedding/out_industry_*/embeddings.parquet   # shell expands the glob
 """
 import os
 import sys

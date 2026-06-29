@@ -32,9 +32,9 @@ in Parquet (on S3, like the worker's other outputs) + Qdrant.
 - Raw fp32/4096 (16 KB/domain → 1.6 TB at 100M) is the lossless ceiling, kept only if the eval says the
   compact form loses too much.
 
-## `embeddings_fp32.parquet` (new worker output) → S3
+## `embeddings.parquet` (new worker output) → S3
 
-One row per domain (industry mode = 1 representative page/domain). Fixed filename `embeddings_fp32.parquet`
+One row per domain (industry mode = 1 representative page/domain). Fixed filename `embeddings.parquet`
 in the shard output dir, uploaded to S3 with the other outputs.
 
 | Column | Type | What |
@@ -65,13 +65,13 @@ in the shard output dir, uploaded to S3 with the other outputs.
 ## Pipeline integration
 
 - **Worker (industry pass)** — `worker.go` already computes the vector (`vecs[vi]`) and discards it after
-  classify. Instead: L2-normalize → int8-quantize → emit `embeddings_fp32.parquet` (new `output.EmbeddingRow`
+  classify. Instead: L2-normalize → int8-quantize → emit `embeddings.parquet` (new `output.EmbeddingRow`
   + `WriteEmbeddings`; `ShardResult.Embeddings`; `main.go` writes it in industry/both). No new fetch/GPU
   cost — the vector is already in hand.
-- **Indexer** — a small step that reads `embeddings_fp32.parquet` and **upserts to Qdrant** (Go Qdrant client,
+- **Indexer** — a small step that reads `embeddings.parquet` and **upserts to Qdrant** (Go Qdrant client,
   or a Python loader). Decoupled from the ClickHouse load, so the Qdrant index is rebuildable from the
   parquet. Could be a `cc-crawl` third step (`index`) or a standalone `qdrant-loader`.
-- **Re-classification** (future, no GPU) — read all `embeddings_fp32.parquet` (S3), dequantize, matmul against
+- **Re-classification** (future, no GPU) — read all `embeddings.parquet` (S3), dequantize, matmul against
   the re-embedded NACE matrix at the same dim, write `commoncrawl_industries`. Turns "reclassify the whole
   crawl" from a multi-day GPU job into a CPU matmul.
 
@@ -79,7 +79,7 @@ in the shard output dir, uploaded to S3 with the other outputs.
 
 - `internal/output`: `EmbeddingRow` + `WriteEmbeddings` (worker — the one cc-enrich-worker change).
 - `internal/worker`: keep + quantize the vector, add to `ShardResult`.
-- `cmd`: write `embeddings_fp32.parquet`; S3 upload already covers it.
+- `cmd`: write `embeddings.parquet`; S3 upload already covers it.
 - A vector **indexer** (new small binary or script) → Qdrant.
 - **No ClickHouse migration for vectors** (they don't go to CH). Optional: a thin
   `commoncrawl_domain_embeddings` table *only if* you later want SQL-joined access — not in v1.

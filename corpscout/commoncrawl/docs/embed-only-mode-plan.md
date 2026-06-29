@@ -2,7 +2,7 @@
 
 ## Goal
 The ~100 already-done industry parts (≈6.4M domains) discarded their page vectors. Add an **embed-only**
-pass that re-fetches + re-embeds those pages and writes `embeddings_fp32.parquet` — **without** re-classifying
+pass that re-fetches + re-embeds those pages and writes `embeddings.parquet` — **without** re-classifying
 (NACE), **without** ClickHouse inserts, **without** the load step. Run it over the done parts to backfill
 the embedding store. (Future parts already get vectors from the normal industry pass.)
 
@@ -19,7 +19,7 @@ cc-enrich-worker embed --worklist <shard_industry_p> --crawl-id <crawl> --out <e
 ```
 Reuses the existing `ProcessIndustryStream` fetch→embed pipeline (GPU fed continuously) with a new
 `EmbedOnly` flag. Skips: reference load, ClickHouse connect, NACE classify, `domains`/`industries`/
-`page_signals`, and the load step. Writes **only** `embeddings_fp32.parquet` (the same `EmbeddingRow` with
+`page_signals`, and the load step. Writes **only** `embeddings.parquet` (the same `EmbeddingRow` with
 page metadata: warc coords, subdomain, text_len, source_url) to `--out`.
 
 `--out` is the **embed dir directly** (e.g. `data/embedding/out_industry_43`), so embed-only output lands
@@ -41,7 +41,7 @@ in the **same `data/embedding/` tree** as the industry pass — uniform for the 
       only when the reference was actually loaded (embed-only logs "embed-only, no reference").
     - Process routing (line ~338): `industry || embed` → `ProcessIndustryStream` (with
       `cfg.EmbedOnly = (mode == "embed")`, `ref`/`protos` nil for embed).
-    - Write block: for `embed`, write **only** `embeddings_fp32.parquet` to `outDir`; skip the
+    - Write block: for `embed`, write **only** `embeddings.parquet` to `outDir`; skip the
       domains/industries/page_signals/tech writes.
 
 ### 2. cc-crawl `-mode embed`
@@ -56,7 +56,7 @@ Loops parts; per part:
 - **marker** = `<embed-dir>.loaded`.
 - run `cc-enrich-worker embed --worklist shard_industry_<p> --crawl-id <crawl> --out <embed-dir>` +
   concurrency flags. **No load step.**
-- gate the marker on exit 0 **and** `<embed-dir>/embeddings_fp32.parquet` exists.
+- gate the marker on exit 0 **and** `<embed-dir>/embeddings.parquet` exists.
 
 **Touch points (`cc-crawl/main.go`):**
 - mode validation (line ~94): allow `embed`.
@@ -67,7 +67,7 @@ Loops parts; per part:
 
 ## Resumability / idempotency
 - Per-part marker `data/embedding/out_industry_<p>.loaded` → re-running skips done parts.
-- Re-running a part overwrites `embeddings_fp32.parquet`; the future Qdrant indexer dedupes on `root_domain`.
+- Re-running a part overwrites `embeddings.parquet`; the future Qdrant indexer dedupes on `root_domain`.
 - The empty-input refusal still applies (a part that yields zero embeddings fails rather than writing
   an empty file).
 
