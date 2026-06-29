@@ -14,7 +14,7 @@
 // -mode embed is the exception: it REUSES the industry worklist, runs a single embed-only exec (no
 // load), and writes just the raw vectors into the sibling data/embedding/out_industry_<p>/ tree. It has
 // NO .loaded marker and is NOT wiped before the run — instead the worker opens the existing
-// embeddings_fp32.parquet and skips the part if it's already a valid, non-empty file (the write is atomic, so
+// embeddings.parquet and skips the part if it's already a valid, non-empty file (the write is atomic, so
 // a readable parquet == a complete run). Used to backfill vectors for already-classified segments.
 //
 // All settings are flags; each defaults from the same-named env var. -mode, -parts, -crawl required.
@@ -255,7 +255,7 @@ func runProduceLoad(pc partCtx, mode string, p int) outcome {
 }
 
 // runEmbedPart is the embed-only mode: REUSE the industry worklist, run ONE embed exec, no load, no
-// marker. There is deliberately NO RemoveAll — the worker opens the existing embeddings_fp32.parquet and skips
+// marker. There is deliberately NO RemoveAll — the worker opens the existing embeddings.parquet and skips
 // the part if it's already complete (the write is atomic, so a readable parquet == a complete run);
 // wiping it would defeat that. Vectors land in the sibling data/embedding/ tree.
 func runEmbedPart(pc partCtx, p int) outcome {
@@ -273,8 +273,8 @@ func runEmbedPart(pc partCtx, p int) outcome {
 		plg.Error("failed", "step", "embed", "exit", code, "elapsed", pel.String())
 		return ocFailed
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "embeddings_fp32.parquet")); err != nil {
-		plg.Error("failed", "step", "embed", "exit", 0, "reason", "embeddings_fp32.parquet missing")
+	if _, err := os.Stat(filepath.Join(outDir, "embeddings.parquet")); err != nil {
+		plg.Error("failed", "step", "embed", "exit", 0, "reason", "embeddings.parquet missing")
 		return ocFailed
 	}
 	if strings.Contains(pout, "already present") { // worker verified an existing complete output

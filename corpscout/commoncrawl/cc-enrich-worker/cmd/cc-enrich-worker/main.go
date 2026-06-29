@@ -266,11 +266,11 @@ func run(mode string, o opts) {
 		outDir = filepath.Join("../data/crawl", stem)
 	}
 	// embed VERIFY-AND-SKIP: the embeddings write is atomic (one WriteFile at the very end), so an
-	// embeddings_fp32.parquet that OPENS with rows>0 is a COMPLETE run — a killed run leaves no file or an
+	// embeddings.parquet that OPENS with rows>0 is a COMPLETE run — a killed run leaves no file or an
 	// unreadable (truncated) one. If it's already complete, skip the whole part (no re-fetch/re-embed);
 	// otherwise fall through and (over)write it. embed deliberately reuses the dir (no empty-dir rule).
 	if mode == "embed" {
-		embPath := filepath.Join(outDir, "embeddings_fp32.parquet")
+		embPath := filepath.Join(outDir, "embeddings.parquet")
 		if rows, verr := parquetRows(embPath); verr == nil && rows > 0 {
 			dom := 0
 			if items, werr := readWorklist(o.worklist); werr == nil {
@@ -477,7 +477,7 @@ func run(mode string, o opts) {
 		if err := os.MkdirAll(embedDir, 0o755); err != nil {
 			log.Fatalf("create embedding dir %s: %v", embedDir, err)
 		}
-		p := filepath.Join(embedDir, "embeddings_fp32.parquet")
+		p := filepath.Join(embedDir, "embeddings.parquet")
 		if err := output.WriteEmbeddings(p, embeddings); err != nil {
 			log.Fatalf("write embeddings: %v", err)
 		}
