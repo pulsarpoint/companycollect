@@ -84,6 +84,7 @@ EXPECTED_MIGRATIONS = (
     "000070_corpscout_no_companies_drop_company_description",
     "000071_corpscout_br_rfb_registry_date32",
     "000072_corpscout_fi_financial_metrics_xbrl_publish",
+    "000073_corpscout_commoncrawl_domain_graph_signals",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
