@@ -1,0 +1,13 @@
+[project]
+name = "embedding-tools"
+version = "0.1.0"
+description = "Offline utilities for the CommonCrawl page-embedding parquet files (fp32->fp16 quantization, etc.). Standalone; touches no Go code."
+requires-python = ">=3.13"
+dependencies = [
+    "pyarrow>=18",
+    "numpy>=2",
+]
+
+# Scripts only — uv manages just the env + deps.
+[tool.uv]
+package = false
