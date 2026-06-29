@@ -33,7 +33,7 @@ uv run python convert_fp16.py /path/to/data/embedding/out_industry_*/embeddings_
 ```
 On the box, `data/` is root-owned — run with `sudo` (and tune `WORKERS`):
 ```bash
-sudo WORKERS=8 .venv/bin/python convert_fp16.py data/embedding/out_industry_*/embeddings_fp32.parquet
+sudo WORKERS=2 .venv/bin/python convert_fp16.py data/embedding/out_industry_*/embeddings_fp32.parquet
 ```
 Each file prints `MB -> MB (%)`. After verifying, delete the fp32 originals to reclaim disk (the script
 never deletes anything itself). 300 chunks of fp32 ≈ 600 GB → fp16 ≈ 300 GB.
@@ -46,15 +46,16 @@ throws away the parallelism):
 ```bash
 # from embedding-tools/ (root on the box, venv active). Match the legacy name embeddings.parquet;
 # for files from the updated worker, use embeddings_fp32.parquet instead.
-find ../data/ -type f -name embeddings.parquet -print0 | WORKERS=8 xargs -0 python ./convert_fp16.py
+find ../data/ -type f -name embeddings.parquet -print0 | WORKERS=2 xargs -0 python ./convert_fp16.py
 ```
 
 `xargs` appends every path to a single `python ./convert_fp16.py file1 file2 …` call, and the
-`ProcessPoolExecutor(max_workers=WORKERS)` processes **all** of them — 8 in flight at a time. As each worker
-finishes a file it pulls the next off the queue, so e.g. 150 files → 8-at-a-time → *all* converted (not
-"first 8 only"). Notes: put `WORKERS=` **before** `xargs` so the child `python` inherits it; `-print0`/`-0`
+`ProcessPoolExecutor(max_workers=WORKERS)` processes **all** of them — `WORKERS` in flight at a time (2 on
+the box). As each worker finishes a file it pulls the next off the queue, so e.g. 150 files at WORKERS=2 →
+2-at-a-time → *all* converted (not "first 2 only"). Notes: put `WORKERS=` **before** `xargs` so the child
+`python` inherits it; `-print0`/`-0`
 is space-safe; if the list ever exceeds the shell's arg limit `xargs` just splits it into a few batches,
-each still 8-at-a-time.
+each still WORKERS-at-a-time.
 
 Then **verify** the outputs and **prune** the fp32 with the two scripts below — never a blind `rm`, which
 would delete an fp32 whose fp16 is partial/corrupt.
