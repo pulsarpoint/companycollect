@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from contextlib import contextmanager
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,8 @@ from dagster_v3.defs.finland_xbrl.tables import (
 )
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.common.resources import ObjectStoreResource
+
+FINANCIAL_METRICS_USD_TABLE = "fi_prh_xbrl_financial_metrics_usd"
 
 
 class FakeResponse:
@@ -153,6 +156,31 @@ class FakeClickHouseResource:
         yield self.client
 
 
+class FakeUsdRate:
+    currency = "EUR"
+    requested_rate_date = "2026-05-31"
+    rate_date = "2026-05-30"
+    rate = Decimal("1.10")
+    source = "test-fx"
+
+
+class FakeExchangeRates:
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str]] = []
+
+    def usd_rates(self, requests):
+        self.requests.extend((request.currency, request.rate_date) for request in requests)
+        return {
+            (request.currency, request.rate_date): FakeUsdRate()
+            for request in requests
+        }
+
+
+class FakeExchangeRatesWithMissing:
+    def usd_rates(self, requests):
+        raise LookupError("No USD exchange rate for EUR on, before, or after 2026-05-31")
+
+
 def _object_store() -> tuple[ObjectStoreResource, FakeS3Client]:
     s3_client = FakeS3Client()
     return ObjectStoreResource(bucket="source-finland-prh-xbrl", s3_client=s3_client), s3_client
@@ -229,6 +257,12 @@ def test_xbrl_parquet_storage_resource_maps_partition_paths(
         tmp_path
         / "parquet"
         / "financial_metrics"
+        / "data.parquet"
+    )
+    assert storage.financial_metrics_usd_path() == (
+        tmp_path
+        / "parquet"
+        / "financial_metrics_usd"
         / "data.parquet"
     )
     assert storage.eligible_companies_path() == (
@@ -324,6 +358,7 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
     assert publish == {
         "finland_xbrl_eligible_companies",
         "fi_prh_xbrl_financial_metrics",
+        "fi_prh_xbrl_financial_metrics_usd",
         "finland_xbrl_financial_metrics_clickhouse",
     }
     assert repo.get_job("finland_xbrl_publish_job").partitions_def is None
@@ -398,6 +433,7 @@ def test_xbrl_transforms_are_python_assets():
     graph = load_project_defs().get_repository_def().asset_graph
     keys = {k.path[-1] for k in graph.get_all_asset_keys()}
     assert "fi_prh_xbrl_financial_metrics" in keys
+    assert "fi_prh_xbrl_financial_metrics_usd" in keys
     assert "finland_xbrl_eligible_financial_reports" not in keys
     assert "xbrl_metric_map" not in keys
     assert "finland_xbrl_dbt_assets" not in xbrl_assets.__dict__
@@ -780,6 +816,63 @@ def test_build_financial_metric_rows_filters_to_eligible_companies() -> None:
     assert [row["business_id"] for row in rows] == ["active-web"]
 
 
+def test_build_financial_metric_usd_rows_converts_eur_amounts() -> None:
+    exchange_rates = FakeExchangeRates()
+
+    rows = financial_metrics.build_financial_metric_usd_rows(
+        financial_metrics=[
+            {
+                **_financial_metric_row("statement-1"),
+                "revenue": 100.0,
+                "profit_loss": -25.5,
+                "employees": 12,
+            }
+        ],
+        exchange_rates=exchange_rates,
+        converted_at="2026-06-02T00:00:00+00:00",
+    )
+
+    assert exchange_rates.requests == [("EUR", "2026-05-31")]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["statement_key"] == "statement-1"
+    assert row["currency_original"] == "EUR"
+    assert row["revenue_amount_original"] == 100.0
+    assert row["revenue_amount_usd"] == 110.0
+    assert row["profit_loss_amount_original"] == -25.5
+    assert row["profit_loss_amount_usd"] == -28.05
+    assert row["employees"] == 12
+    assert row["fx_rate_to_usd"] == 1.1
+    assert row["fx_rate_date"] == "2026-05-30"
+    assert row["fx_converted_at"] == "2026-06-02T00:00:00+00:00"
+    assert row["source_system"] == "finland_prh_xbrl"
+    assert row["source_record_id"] == "statement-1"
+    assert row["source_payload_hash"] == "0" * 64
+
+
+def test_build_financial_metric_usd_rows_fails_when_required_rate_is_missing() -> None:
+    with pytest.raises(LookupError, match="Missing EUR/USD exchange rates"):
+        financial_metrics.build_financial_metric_usd_rows(
+            financial_metrics=[_financial_metric_row("statement-1")],
+            exchange_rates=FakeExchangeRatesWithMissing(),
+            converted_at="2026-06-02T00:00:00+00:00",
+        )
+
+
+def test_xbrl_parquet_storage_writes_financial_metrics_usd(tmp_path: Path) -> None:
+    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
+    rows = financial_metrics.build_financial_metric_usd_rows(
+        financial_metrics=[_financial_metric_row("statement-1")],
+        exchange_rates=FakeExchangeRates(),
+        converted_at="2026-06-02T00:00:00+00:00",
+    )
+
+    storage.write_financial_metrics_usd(rows)
+
+    assert storage.read_financial_metrics_usd() == rows
+    assert storage.financial_metrics_usd_row_count() == 1
+
+
 def test_financial_report_materialization_loads_api_rows(tmp_path: Path) -> None:
     session = FakePagedFinancialReportsSession()
     api = XbrlApiResource(session=session)
@@ -848,10 +941,13 @@ def test_xbrl_asset_graph_models_financial_metrics_downstream_of_parse_parquet_a
         dg.AssetKey("finland_xbrl_parse_backfill"),
         dg.AssetKey("finland_xbrl_parse_incremental"),
     }
+    assert asset_graph.get(dg.AssetKey(FINANCIAL_METRICS_USD_TABLE)).parent_keys == {
+        dg.AssetKey(FINANCIAL_METRICS_TABLE),
+    }
     assert asset_graph.get(
         dg.AssetKey("finland_xbrl_financial_metrics_clickhouse")
     ).parent_keys == {
-        dg.AssetKey(FINANCIAL_METRICS_TABLE),
+        dg.AssetKey(FINANCIAL_METRICS_USD_TABLE),
     }
 
 
@@ -863,17 +959,21 @@ def test_finland_xbrl_clickhouse_export_casts_employees_to_nullable_uint(
     )
 
     storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
-    storage.write_financial_metrics(
-        [
-            {
-                **_financial_metric_row("statement-with-employees"),
-                "employees": 12,
-            },
-            {
-                **_financial_metric_row("statement-without-employees"),
-                "employees": None,
-            },
-        ]
+    storage.write_financial_metrics_usd(
+        financial_metrics.build_financial_metric_usd_rows(
+            financial_metrics=[
+                {
+                    **_financial_metric_row("statement-with-employees"),
+                    "employees": 12,
+                },
+                {
+                    **_financial_metric_row("statement-without-employees"),
+                    "employees": None,
+                },
+            ],
+            exchange_rates=FakeExchangeRates(),
+            converted_at="2026-06-02T00:00:00+00:00",
+        )
     )
     client = FakeClickHouseClient()
 
@@ -890,6 +990,8 @@ def test_finland_xbrl_clickhouse_export_casts_employees_to_nullable_uint(
     assert arrow_table.schema.field("employees").type == pa.uint64()
     assert arrow_table.to_pylist()[0]["employees"] == 12
     assert arrow_table.to_pylist()[1]["employees"] is None
+    assert arrow_table.to_pylist()[0]["revenue_amount_usd"] == Decimal("110.000000")
+    assert arrow_table.to_pylist()[0]["fx_rate_to_usd"] == Decimal("1.100000000000")
     assert any(statement.startswith("EXCHANGE TABLES") for statement in client.statements)
 
 
@@ -1379,6 +1481,7 @@ def test_duckdb_xbrl_assets_use_dedicated_finland_xbrl_duckdb_pool():
         "finland_xbrl_parse_backfill",
         "finland_xbrl_parse_incremental",
         "fi_prh_xbrl_financial_metrics",
+        "fi_prh_xbrl_financial_metrics_usd",
     ):
         node = graph.get(AssetKey([key]))
         assert "finland_xbrl_duckdb" not in node.pools, f"{key} should not use DuckDB pool"

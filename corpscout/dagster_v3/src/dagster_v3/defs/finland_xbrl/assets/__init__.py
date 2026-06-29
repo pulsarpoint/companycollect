@@ -29,8 +29,10 @@ from dagster_v3.defs.finland_xbrl.assets.financial_reports import (
 )
 from dagster_v3.defs.finland_xbrl.assets.financial_metrics import (
     build_financial_metric_rows,
+    build_financial_metric_usd_rows,
     finland_xbrl_financial_metrics,
     finland_xbrl_financial_metrics_clickhouse,
+    finland_xbrl_financial_metrics_usd,
 )
 from dagster_v3.defs.finland_xbrl.assets.jobs import (
     finland_xbrl_historical_backfill_job,
@@ -90,6 +92,7 @@ __all__ = [
     "build_concept_profile_rows",
     "build_finland_xbrl_eligible_companies",
     "build_financial_metric_rows",
+    "build_financial_metric_usd_rows",
     "build_parse_quality_row",
     "defs",
     "document_object_key",
@@ -100,6 +103,7 @@ __all__ = [
     "finland_xbrl_eligible_companies",
     "finland_xbrl_financial_metrics",
     "finland_xbrl_financial_metrics_clickhouse",
+    "finland_xbrl_financial_metrics_usd",
     "finland_xbrl_financial_reports_backfill",
     "finland_xbrl_financial_reports_incremental",
     "finland_xbrl_incremental_job",
@@ -131,6 +135,7 @@ defs = dg.Definitions(
         finland_xbrl_parse_backfill,
         finland_xbrl_parse_incremental,
         finland_xbrl_financial_metrics,
+        finland_xbrl_financial_metrics_usd,
         finland_xbrl_financial_metrics_clickhouse,
     ],
     jobs=[

@@ -90,6 +90,9 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
     def financial_metrics_path(self) -> Path:
         return Path(self.base_path) / "financial_metrics" / "data.parquet"
 
+    def financial_metrics_usd_path(self) -> Path:
+        return Path(self.base_path) / "financial_metrics_usd" / "data.parquet"
+
     def eligible_companies_path(self) -> Path:
         return Path(self.base_path) / "eligible_companies" / "data.parquet"
 
@@ -251,6 +254,17 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
     def read_financial_metrics(self) -> list[dict[str, Any]]:
         return self._read_rows(self.financial_metrics_path())
 
+    def write_financial_metrics_usd(self, rows: list[dict[str, Any]]) -> Path:
+        return self._write_rows(
+            self.financial_metrics_usd_path(),
+            rows,
+            columns=tables.FINANCIAL_METRICS_USD_COLUMNS,
+            schema=tables.FINANCIAL_METRICS_USD_POLARS_SCHEMA,
+        )
+
+    def read_financial_metrics_usd(self) -> list[dict[str, Any]]:
+        return self._read_rows(self.financial_metrics_usd_path())
+
     def financial_reports_backfill_row_count(self) -> int:
         return self._row_count("financial_reports_backfill")
 
@@ -275,6 +289,9 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
 
     def financial_metrics_row_count(self) -> int:
         return len(self.read_financial_metrics())
+
+    def financial_metrics_usd_row_count(self) -> int:
+        return len(self.read_financial_metrics_usd())
 
     def eligible_companies_row_count(self) -> int:
         return len(self.read_eligible_companies())

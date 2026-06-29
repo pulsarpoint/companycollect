@@ -32,6 +32,7 @@ finland_xbrl_publish_job = dg.define_asset_job(
     selection=dg.AssetSelection.assets(
         "finland_xbrl_eligible_companies",
         "fi_prh_xbrl_financial_metrics",
+        "fi_prh_xbrl_financial_metrics_usd",
         "finland_xbrl_financial_metrics_clickhouse",
     ),
 )

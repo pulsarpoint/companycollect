@@ -14,6 +14,7 @@ FINANCIAL_METRICS_CLICKHOUSE_TABLE = "fi_financial_metrics"
 SOURCE_SYSTEM = "finland_prh_xbrl"
 EUR_CURRENCY = "EUR"
 DECIMAL_SCALE = Decimal("0.000001")
+RATE_DECIMAL_SCALE = Decimal("0.000000000001")
 EMPTY_SHA256 = "0" * 64
 
 FINANCIAL_METRICS_CLICKHOUSE_COLUMNS = (
@@ -151,7 +152,7 @@ def export_finland_xbrl_financial_metrics_clickhouse(
         database=CLICKHOUSE_DATABASE,
         tables=(FINANCIAL_METRICS_CLICKHOUSE_TABLE,),
     )
-    rows = xbrl_parquet_storage.read_financial_metrics()
+    rows = xbrl_parquet_storage.read_financial_metrics_usd()
     arrow_table = financial_metrics_arrow_table(rows)
 
     if log is not None:
@@ -186,7 +187,7 @@ def financial_metrics_arrow_table(rows: list[dict[str, Any]]) -> pa.Table:
 
 
 def _clickhouse_financial_metric_row(row: dict[str, Any]) -> dict[str, Any]:
-    resolved_at = _datetime_value(row.get("built_at")) or datetime.now(UTC)
+    resolved_at = _datetime_value(row.get("resolved_at")) or datetime.now(UTC)
     clickhouse_row = {
         "statement_key": str(row.get("statement_key") or ""),
         "business_id": str(row.get("business_id") or ""),
@@ -199,7 +200,7 @@ def _clickhouse_financial_metric_row(row: dict[str, Any]) -> dict[str, Any]:
         "xml_object_key": str(row.get("xml_object_key") or ""),
         "xml_sha256": _sha256_value(row.get("xml_sha256")),
         "xml_size_bytes": _uint_value(row.get("xml_size_bytes")),
-        "currency_original": EUR_CURRENCY,
+        "currency_original": str(row.get("currency_original") or EUR_CURRENCY),
         "employees": _uint_value(row.get("employees")),
         "source_fact_count": _uint_value(row.get("source_fact_count")) or 0,
         "mapped_fact_count": _uint_value(row.get("mapped_fact_count")) or 0,
@@ -209,18 +210,20 @@ def _clickhouse_financial_metric_row(row: dict[str, Any]) -> dict[str, Any]:
         or 0,
         "metric_warnings": str(row.get("metric_warnings") or "[]"),
         "mapping_version": str(row.get("mapping_version") or ""),
-        "fx_rate_to_usd": None,
-        "fx_rate_date": None,
-        "fx_converted_at": None,
-        "source_system": SOURCE_SYSTEM,
+        "fx_rate_to_usd": _rate_decimal_value(row.get("fx_rate_to_usd")),
+        "fx_rate_date": _date_value(row.get("fx_rate_date")),
+        "fx_converted_at": _datetime_value(row.get("fx_converted_at")),
+        "source_system": str(row.get("source_system") or SOURCE_SYSTEM),
         "source_run_id": str(row.get("source_run_id") or ""),
-        "source_record_id": str(row.get("statement_key") or ""),
-        "source_payload_hash": _sha256_value(row.get("xml_sha256")),
+        "source_record_id": str(row.get("source_record_id") or row.get("statement_key") or ""),
+        "source_payload_hash": _sha256_value(row.get("source_payload_hash")),
         "resolved_at": resolved_at,
     }
     for metric_name, clickhouse_column in MONEY_METRIC_TO_CLICKHOUSE_COLUMN.items():
-        clickhouse_row[clickhouse_column] = _decimal_value(row.get(metric_name))
-        clickhouse_row[clickhouse_column.replace("_original", "_usd")] = None
+        clickhouse_row[clickhouse_column] = _decimal_value(row.get(clickhouse_column))
+        clickhouse_row[clickhouse_column.replace("_original", "_usd")] = _decimal_value(
+            row.get(clickhouse_column.replace("_original", "_usd"))
+        )
     return {
         column: clickhouse_row.get(column)
         for column in FINANCIAL_METRICS_CLICKHOUSE_COLUMNS
@@ -262,6 +265,12 @@ def _decimal_value(value: object) -> Decimal | None:
     if value is None or value == "":
         return None
     return Decimal(str(value)).quantize(DECIMAL_SCALE)
+
+
+def _rate_decimal_value(value: object) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    return Decimal(str(value)).quantize(RATE_DECIMAL_SCALE)
 
 
 def _uint_value(value: object) -> int | None:
