@@ -114,10 +114,12 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
         )
 
     def read_financial_reports_backfill(self, partition_key: str) -> list[dict[str, Any]]:
-        return self._read_financial_reports(self.financial_reports_backfill_path(partition_key))
+        return self._read_required_financial_reports(
+            self.financial_reports_backfill_path(partition_key)
+        )
 
     def read_financial_reports_incremental(self, partition_key: str) -> list[dict[str, Any]]:
-        return self._read_financial_reports(
+        return self._read_required_financial_reports(
             self.financial_reports_incremental_path(partition_key)
         )
 
@@ -130,7 +132,7 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
         )
 
     def read_eligible_companies(self) -> list[dict[str, Any]]:
-        return self._read_rows(self.eligible_companies_path())
+        return self._read_required_rows(self.eligible_companies_path())
 
     def write_raw_xml_documents_backfill(
         self,
@@ -157,10 +159,14 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
         )
 
     def read_raw_xml_documents_backfill(self, partition_key: str) -> list[dict[str, Any]]:
-        return self._read_rows(self.raw_xml_documents_backfill_path(partition_key))
+        return self._read_required_rows(
+            self.raw_xml_documents_backfill_path(partition_key)
+        )
 
     def read_raw_xml_documents_incremental(self, partition_key: str) -> list[dict[str, Any]]:
-        return self._read_rows(self.raw_xml_documents_incremental_path(partition_key))
+        return self._read_required_rows(
+            self.raw_xml_documents_incremental_path(partition_key)
+        )
 
     def write_statement_documents_backfill(
         self,
@@ -306,8 +312,15 @@ class XbrlParquetStorageResource(dg.ConfigurableResource):
         frame.write_parquet(path)
         return path
 
-    def _read_financial_reports(self, path: Path) -> list[dict[str, Any]]:
-        return self._read_rows(path)
+    def _read_required_financial_reports(self, path: Path) -> list[dict[str, Any]]:
+        return self._read_required_rows(path)
+
+    def _read_required_rows(self, path: Path) -> list[dict[str, Any]]:
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Required Finland XBRL parquet file is missing: {path}"
+            )
+        return pl.read_parquet(path).to_dicts()
 
     def _read_rows(self, path: Path) -> list[dict[str, Any]]:
         if not path.exists():

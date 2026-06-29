@@ -23,7 +23,6 @@ from dagster_v3.defs.finland_xbrl.assets.eligible_companies import (
 )
 from dagster_v3.defs.finland_xbrl.assets.financial_reports import (
     XbrlFinancialReportsConfig,
-    finland_xbrl_financial_reports,
     finland_xbrl_financial_reports_backfill,
     finland_xbrl_financial_reports_incremental,
     materialize_financial_reports_window,
@@ -102,7 +101,6 @@ __all__ = [
     "finland_xbrl_eligible_companies",
     "finland_xbrl_financial_metrics",
     "finland_xbrl_financial_metrics_clickhouse",
-    "finland_xbrl_financial_reports",
     "finland_xbrl_financial_reports_backfill",
     "finland_xbrl_financial_reports_incremental",
     "finland_xbrl_incremental_job",
@@ -126,7 +124,6 @@ defs = dg.Definitions(
     assets=[
         finland_xbrl_financial_reports_backfill,
         finland_xbrl_financial_reports_incremental,
-        finland_xbrl_financial_reports,
         finland_xbrl_eligible_companies,
         finland_xbrl_raw_xml_documents_backfill,
         finland_xbrl_raw_xml_documents_incremental,

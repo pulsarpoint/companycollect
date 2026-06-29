@@ -124,35 +124,3 @@ def finland_xbrl_financial_reports_incremental(
         write_financial_reports=xbrl_parquet_storage.write_financial_reports_incremental,
     )
 
-
-@dg.asset(
-    name="finland_xbrl_financial_reports",
-    group_name="finland_xbrl",
-    deps=[
-        finland_xbrl_financial_reports_backfill,
-        finland_xbrl_financial_reports_incremental,
-    ],
-    kinds={"parquet"},
-    description="Catalog marker for PRH XBRL financial report listing parquet partitions.",
-)
-def finland_xbrl_financial_reports(
-    context: dg.AssetExecutionContext,
-    xbrl_parquet_storage: XbrlParquetStorageResource,
-) -> dg.MaterializeResult:
-    context.log.info("Loading Finland XBRL financial reports parquet marker")
-    backfill_row_count = xbrl_parquet_storage.financial_reports_backfill_row_count()
-    incremental_row_count = xbrl_parquet_storage.financial_reports_incremental_row_count()
-    row_count = backfill_row_count + incremental_row_count
-    context.log.info(
-        "Finland XBRL financial reports parquet row_count=%d backfill_row_count=%d incremental_row_count=%d",
-        row_count,
-        backfill_row_count,
-        incremental_row_count,
-    )
-    return dg.MaterializeResult(
-        metadata={
-            "backfill_row_count": backfill_row_count,
-            "incremental_row_count": incremental_row_count,
-            "row_count": row_count,
-        }
-    )

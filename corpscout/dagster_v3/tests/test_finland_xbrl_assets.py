@@ -427,7 +427,7 @@ def test_xbrl_asset_graph_models_eligible_companies_parquet_downstream_of_ytj_du
 
     assert dg.AssetKey("fi_prhytj_statuses") not in asset_graph.get_all_asset_keys()
     assert dg.AssetKey("fi_prhytj_websites") not in asset_graph.get_all_asset_keys()
-    assert dg.AssetKey("finland_xbrl_financial_reports") in asset_graph.get_all_asset_keys()
+    assert dg.AssetKey("finland_xbrl_financial_reports") not in asset_graph.get_all_asset_keys()
     assert dg.AssetKey("finland_xbrl_financial_reports_duckdb") not in asset_graph.get_all_asset_keys()
     assert dg.AssetKey("finland_xbrl_company_seed_duckdb") not in asset_graph.get_all_asset_keys()
     assert asset_graph.get(dg.AssetKey("finland_xbrl_eligible_companies")).parent_keys == {
@@ -443,13 +443,11 @@ def test_xbrl_financial_reports_are_modeled_as_partitioned_writer_assets() -> No
     assert "finland_xbrl_financial_reports_backfill_duckdb" not in xbrl_assets.__dict__
     assert "finland_xbrl_financial_reports_incremental_duckdb" not in xbrl_assets.__dict__
     assert "finland_xbrl_financial_reports_duckdb" not in xbrl_assets.__dict__
+    assert "finland_xbrl_financial_reports" not in xbrl_assets.__dict__
     graph = load_project_defs().get_repository_def().asset_graph
-    canonical = graph.get(AssetKey("finland_xbrl_financial_reports"))
-    assert canonical.partitions_def is None
-    assert canonical.parent_keys == {
-        AssetKey("finland_xbrl_financial_reports_backfill"),
-        AssetKey("finland_xbrl_financial_reports_incremental"),
-    }
+    assert AssetKey("finland_xbrl_financial_reports_backfill") in graph.get_all_asset_keys()
+    assert AssetKey("finland_xbrl_financial_reports_incremental") in graph.get_all_asset_keys()
+    assert AssetKey("finland_xbrl_financial_reports") not in graph.get_all_asset_keys()
 
 
 def test_xbrl_api_resource_pages_financial_report_listing() -> None:
@@ -637,6 +635,39 @@ def test_xbrl_parquet_storage_writes_financial_metrics(tmp_path: Path) -> None:
 
     assert storage.read_financial_metrics() == rows
     assert storage.financial_metrics_row_count() == 1
+
+
+def test_xbrl_parquet_storage_fails_when_required_eligible_companies_are_missing(
+    tmp_path: Path,
+) -> None:
+    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
+
+    with pytest.raises(FileNotFoundError, match="eligible_companies/data.parquet"):
+        storage.read_eligible_companies()
+
+
+def test_xbrl_parquet_storage_fails_when_required_financial_report_partition_is_missing(
+    tmp_path: Path,
+) -> None:
+    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
+
+    with pytest.raises(
+        FileNotFoundError,
+        match="financial_reports_incremental/partition_key=2026-06-01/data.parquet",
+    ):
+        storage.read_financial_reports_incremental("2026-06-01")
+
+
+def test_xbrl_parquet_storage_fails_when_required_raw_xml_partition_is_missing(
+    tmp_path: Path,
+) -> None:
+    storage = XbrlParquetStorageResource(base_path=str(tmp_path / "parquet"))
+
+    with pytest.raises(
+        FileNotFoundError,
+        match="raw_xml_documents_incremental/partition_key=2026-06-01/data.parquet",
+    ):
+        storage.read_raw_xml_documents_incremental("2026-06-01")
 
 
 def test_xbrl_metric_mapping_is_code_backed() -> None:
@@ -1315,7 +1346,6 @@ def test_duckdb_xbrl_assets_use_dedicated_finland_xbrl_duckdb_pool():
     for key in (
         "finland_xbrl_financial_reports_backfill",
         "finland_xbrl_financial_reports_incremental",
-        "finland_xbrl_financial_reports",
         "finland_xbrl_raw_xml_documents_backfill",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_backfill",
