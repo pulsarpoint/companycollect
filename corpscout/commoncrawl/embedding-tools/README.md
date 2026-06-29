@@ -15,9 +15,11 @@ columns unchanged; the fp32 file is left in place).
 every other column is untouched — then writes the sibling `_fp16.parquet` (parquet `version="2.6"`, which
 carries the HALF_FLOAT type).
 
-Multiple files are converted **in parallel** (one process each — `WORKERS`, default 8). The total I/O is
-fixed, but independent files use the NVMe queue depth so wall-clock drops. Memory ≈ `WORKERS` × one file,
-so lower `WORKERS` if RAM is tight.
+Multiple files are converted **in parallel** (one process each — `WORKERS`, default 8). Independent files
+use the NVMe queue depth so wall-clock drops. **Memory is the real limit, not cores:** each worker reads the
+whole decompressed file + the fp16 copy + zstd write buffers, and pyarrow's pool doesn't return freed memory
+to the OS — so a ~1.6 GB file peaks at **~3–9 GB resident per worker**. Size `WORKERS` to RAM: on the **30 GB
+box use `WORKERS=2`** (≈18 GB peak); the default 8 only fits a big-RAM host.
 
 ## Setup + run
 ```bash
@@ -54,10 +56,55 @@ finishes a file it pulls the next off the queue, so e.g. 150 files → 8-at-a-ti
 is space-safe; if the list ever exceeds the shell's arg limit `xargs` just splits it into a few batches,
 each still 8-at-a-time.
 
-Then spot-check a couple of `_fp16` outputs and reclaim disk by deleting the fp32 originals:
+Then **verify** the outputs and **prune** the fp32 with the two scripts below — never a blind `rm`, which
+would delete an fp32 whose fp16 is partial/corrupt.
+
+## verify_fp16.py — confirm a conversion is correct
+For each `embeddings.parquet` it checks the `embeddings_fp16.parquet` sibling: it opens, the `embedding`
+column is float16, the **row count matches** the fp32, and a sampled vector round-trips (max abs diff
+~6e-5, cosine ~1.0). Footers + a small sample only → fast, memory-tiny, serial. Reports `OK` /
+`MISSING` (not converted yet) / `BAD` (exists but wrong — e.g. a partial write from a killed run).
 ```bash
-find ../data/ -type f -name embeddings.parquet -delete     # ONLY after verifying the _fp16 files
+find ../data/ -type f -name embeddings.parquet -print0 | xargs -0 python ./verify_fp16.py
+# per-file lines, then a summary:   OK 11   MISSING(not converted) 101   BAD 0
 ```
+
+## prune_fp32.py — delete fp32 only where conversion finished
+Removes an `embeddings.parquet` **only** if its `embeddings_fp16.parquet` opens **and** has the same row
+count (footers only — no data read). A partial/corrupt fp16 → its fp32 is **kept**, so it can't lose data.
+**Dry-run by default**; `--apply` to delete (`sudo` for root-owned `data/`).
+```bash
+# dry run — lists what WOULD be removed:
+find ../data/ -type f -name embeddings.parquet -print0 | xargs -0 python ./prune_fp32.py
+# apply:
+find ../data/ -type f -name embeddings.parquet -print0 | xargs -0 sudo .venv/bin/python ./prune_fp32.py --apply
+```
+
+## Procedure — convert → verify → prune (resumable, no redo)
+`prune_fp32.py` deletes a finished file's fp32, so a **done** dir holds only `_fp16.parquet` and a
+**not-done** dir holds only `embeddings.parquet`. Re-running the convert over `embeddings.parquet`
+therefore **skips the done ones automatically** (their fp32 is gone) — no redo, no flag, `convert_fp16.py`
+unchanged. The loop:
+
+1. **Convert** the remaining fp32 (size `WORKERS` to RAM — `WORKERS=2` on the 30 GB box):
+   ```bash
+   find ../data/ -type f -name embeddings.parquet -print0 | WORKERS=2 xargs -0 python ./convert_fp16.py
+   ```
+2. **Verify** — expect `BAD 0`:
+   ```bash
+   find ../data/ -type f -name embeddings.parquet -print0 | xargs -0 python ./verify_fp16.py
+   ```
+3. **If any BAD** (a killed run leaves a partial `_fp16.parquet`): delete those fp16, then step 1 redoes them:
+   ```bash
+   find ../data/ -name embeddings.parquet -print0 | xargs -0 python ./verify_fp16.py 2>&1 \
+     | grep -a '^BAD' | grep -oE 'data/embedding/[^ ]*_fp16[.]parquet' | xargs -r sudo rm -v
+   ```
+4. **Prune** the verified fp32 to reclaim disk:
+   ```bash
+   find ../data/ -type f -name embeddings.parquet -print0 | xargs -0 sudo .venv/bin/python ./prune_fp32.py --apply
+   ```
+5. Repeat from step 1 until `verify` shows `MISSING 0`. Safe to kill mid-convert and resume — the partial it
+   leaves is flagged `BAD` by step 2 and cleaned by step 3.
 
 ## Compatibility
 The fp16 `embedding` column is parquet `HALF_FLOAT` — read it back with pyarrow/numpy (the re-classification
