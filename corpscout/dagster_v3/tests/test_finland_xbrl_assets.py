@@ -289,7 +289,6 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         ).asset_layer.executable_asset_keys
     }
     assert historical_backfill == {
-        "finland_xbrl_eligible_companies",
         "finland_xbrl_financial_reports_backfill",
         "finland_xbrl_raw_xml_documents_backfill",
         "finland_xbrl_parse_backfill",
@@ -305,7 +304,6 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         for key in repo.get_job("finland_xbrl_incremental_job").asset_layer.executable_asset_keys
     }
     assert incremental == {
-        "finland_xbrl_eligible_companies",
         "finland_xbrl_financial_reports_incremental",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_incremental",
@@ -322,6 +320,7 @@ def test_finland_xbrl_jobs_and_incremental_schedule_registered() -> None:
         for key in repo.get_job("finland_xbrl_publish_job").asset_layer.executable_asset_keys
     }
     assert publish == {
+        "finland_xbrl_eligible_companies",
         "fi_prh_xbrl_financial_metrics",
         "finland_xbrl_financial_metrics_clickhouse",
     }
@@ -716,6 +715,7 @@ def test_build_financial_metric_rows_maps_current_numeric_facts() -> None:
     rows = financial_metrics.build_financial_metric_rows(
         statement_documents=[statement],
         facts=[fact, employee_fact, unmapped_fact, comparative_fact],
+        eligible_companies=[{"business_id": "active-web"}],
         built_at="2026-06-01T00:00:00+00:00",
     )
 
@@ -754,6 +754,28 @@ def test_build_financial_metric_rows_maps_current_numeric_facts() -> None:
             "built_at": "2026-06-01T00:00:00+00:00",
         }
     ]
+
+
+def test_build_financial_metric_rows_filters_to_eligible_companies() -> None:
+    active_statement = _statement_document_row("statement-active")
+    inactive_statement = {
+        **_statement_document_row("statement-inactive"),
+        "business_id": "inactive-company",
+        "reported_business_id": "inactive-company",
+    }
+
+    rows = financial_metrics.build_financial_metric_rows(
+        statement_documents=[active_statement, inactive_statement],
+        facts=[
+            _fact_row("statement-active", fact_ordinal=1),
+            _fact_row("statement-inactive", fact_ordinal=1),
+        ],
+        eligible_companies=[{"business_id": "active-web"}],
+        built_at="2026-06-01T00:00:00+00:00",
+    )
+
+    assert [row["statement_key"] for row in rows] == ["statement-active"]
+    assert [row["business_id"] for row in rows] == ["active-web"]
 
 
 def test_financial_report_materialization_loads_api_rows(tmp_path: Path) -> None:
@@ -797,13 +819,11 @@ def test_xbrl_asset_graph_models_xml_documents_catalog_as_bridge() -> None:
     }
     assert asset_graph.get(dg.AssetKey("finland_xbrl_raw_xml_documents_backfill")).parent_keys == {
         dg.AssetKey("finland_xbrl_financial_reports_backfill"),
-        dg.AssetKey("finland_xbrl_eligible_companies"),
     }
     assert asset_graph.get(
         dg.AssetKey("finland_xbrl_raw_xml_documents_incremental")
     ).parent_keys == {
         dg.AssetKey("finland_xbrl_financial_reports_incremental"),
-        dg.AssetKey("finland_xbrl_eligible_companies"),
     }
     assert asset_graph.get(dg.AssetKey(XML_DOCUMENTS_TABLE)).parent_keys == {
         dg.AssetKey("finland_xbrl_raw_xml_documents")
@@ -822,6 +842,7 @@ def test_xbrl_asset_graph_models_financial_metrics_downstream_of_parse_parquet_a
 
     parent_keys = asset_graph.get(dg.AssetKey(FINANCIAL_METRICS_TABLE)).parent_keys
     assert parent_keys == {
+        dg.AssetKey("finland_xbrl_eligible_companies"),
         dg.AssetKey("finland_xbrl_parse_backfill"),
         dg.AssetKey("finland_xbrl_parse_incremental"),
     }
@@ -1063,29 +1084,7 @@ def test_xbrl_parse_outputs_are_parquet_without_duckdb_bridge() -> None:
 
 
 
-def test_load_eligible_financial_report_rows_filters_by_registration_window_only() -> None:
-    eligible_companies = [
-        {
-            "business_id": "old-financial-date",
-            "primary_name": "Old Oy",
-            "website_normalized_url": "https://old.example",
-        },
-        {
-            "business_id": "outside-window",
-            "primary_name": "Outside Oy",
-            "website_normalized_url": "https://outside.example",
-        },
-        {
-            "business_id": "active-web",
-            "primary_name": "Active Oy",
-            "website_normalized_url": "https://active.example",
-        },
-        {
-            "business_id": "second-active-web",
-            "primary_name": "Second Oy",
-            "website_normalized_url": "https://second.example",
-        },
-    ]
+def test_financial_report_rows_in_registration_window_keeps_all_companies() -> None:
     financial_reports = [
         {
             "business_id": "old-financial-date",
@@ -1131,8 +1130,7 @@ def test_load_eligible_financial_report_rows_filters_by_registration_window_only
         },
     ]
 
-    rows = xbrl_assets.load_eligible_financial_report_rows(
-        eligible_companies=eligible_companies,
+    rows = xbrl_assets.financial_report_rows_in_registration_window(
         financial_reports=financial_reports,
         registered_date_start="2026-06-01",
         registered_date_end="2026-06-30",
@@ -1150,6 +1148,20 @@ def test_load_eligible_financial_report_rows_filters_by_registration_window_only
             "business_id": "active-web",
             "financial_date": "2026-05-31",
             "registration_date": "2026-06-01",
+            "discovery_registered_date_start": "2026-06-01",
+            "discovery_registered_date_end": "2026-06-30",
+        },
+        {
+            "business_id": "inactive-company",
+            "financial_date": "2026-04-30",
+            "registration_date": "2026-06-02",
+            "discovery_registered_date_start": "2026-06-01",
+            "discovery_registered_date_end": "2026-06-30",
+        },
+        {
+            "business_id": "missing-website",
+            "financial_date": "2026-04-30",
+            "registration_date": "2026-06-02",
             "discovery_registered_date_start": "2026-06-01",
             "discovery_registered_date_end": "2026-06-30",
         },

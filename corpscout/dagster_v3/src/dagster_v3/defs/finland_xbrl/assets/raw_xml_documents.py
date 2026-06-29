@@ -17,9 +17,6 @@ from dagster_v3.defs.finland_xbrl.assets.common import (
     XBRL_BUCKET,
     _registration_window,
 )
-from dagster_v3.defs.finland_xbrl.assets.eligible_companies import (
-    finland_xbrl_eligible_companies,
-)
 from dagster_v3.defs.finland_xbrl.assets.financial_reports import (
     finland_xbrl_financial_reports_backfill,
     finland_xbrl_financial_reports_incremental,
@@ -186,24 +183,22 @@ def _materialize_raw_xml_window(
     registered_date_start: str,
     registered_date_end: str,
     read_financial_reports: Callable[[str], list[dict[str, Any]]],
-    read_eligible_companies: Callable[[], list[dict[str, Any]]],
     write_raw_xml_documents: Callable[[str, list[dict[str, Any]]], Path],
 ) -> dg.MaterializeResult:
     context.log.info(
-        "XBRL raw XML partition %s: loading eligible reports registered %s..%s",
+        "XBRL raw XML partition %s: loading reports registered %s..%s",
         context.partition_key,
         registered_date_start,
         registered_date_end,
     )
     financial_report_rows = read_financial_reports(context.partition_key)
-    financial_reports = load_eligible_financial_report_rows(
-        eligible_companies=read_eligible_companies(),
+    financial_reports = financial_report_rows_in_registration_window(
         financial_reports=financial_report_rows,
         registered_date_start=registered_date_start,
         registered_date_end=registered_date_end,
     )
     context.log.info(
-        "XBRL raw XML partition %s: %d eligible financial reports selected",
+        "XBRL raw XML partition %s: %d financial reports selected",
         context.partition_key,
         len(financial_reports),
     )
@@ -240,10 +235,7 @@ def _materialize_raw_xml_window(
 @dg.asset(
     name="finland_xbrl_raw_xml_documents_backfill",
     group_name="finland_xbrl",
-    deps=[
-        finland_xbrl_financial_reports_backfill,
-        finland_xbrl_eligible_companies,
-    ],
+    deps=[finland_xbrl_financial_reports_backfill],
     partitions_def=BACKFILL_PARTITIONS,
     backfill_policy=dg.BackfillPolicy.multi_run(max_partitions_per_run=1),
     kinds={"python", "s3", "xml"},
@@ -264,7 +256,6 @@ def finland_xbrl_raw_xml_documents_backfill(
         registered_date_start=start,
         registered_date_end=end,
         read_financial_reports=xbrl_parquet_storage.read_financial_reports_backfill,
-        read_eligible_companies=xbrl_parquet_storage.read_eligible_companies,
         write_raw_xml_documents=xbrl_parquet_storage.write_raw_xml_documents_backfill,
     )
 
@@ -272,10 +263,7 @@ def finland_xbrl_raw_xml_documents_backfill(
 @dg.asset(
     name="finland_xbrl_raw_xml_documents_incremental",
     group_name="finland_xbrl",
-    deps=[
-        finland_xbrl_financial_reports_incremental,
-        finland_xbrl_eligible_companies,
-    ],
+    deps=[finland_xbrl_financial_reports_incremental],
     partitions_def=DAILY_PARTITIONS,
     kinds={"python", "s3", "xml"},
 )
@@ -295,7 +283,6 @@ def finland_xbrl_raw_xml_documents_incremental(
         registered_date_start=start,
         registered_date_end=end,
         read_financial_reports=xbrl_parquet_storage.read_financial_reports_incremental,
-        read_eligible_companies=xbrl_parquet_storage.read_eligible_companies,
         write_raw_xml_documents=xbrl_parquet_storage.write_raw_xml_documents_incremental,
     )
 
@@ -360,20 +347,17 @@ def finland_xbrl_xml_documents(
     )
 
 
-def load_eligible_financial_report_rows(
+def financial_report_rows_in_registration_window(
     *,
-    eligible_companies: list[dict[str, Any]],
     financial_reports: list[dict[str, Any]],
     registered_date_start: str,
     registered_date_end: str,
 ) -> list[dict[str, Any]]:
-    eligible_business_ids = {company["business_id"] for company in eligible_companies}
     return sorted(
         [
             report
             for report in financial_reports
-            if report["business_id"] in eligible_business_ids
-            and registered_date_start <= report["registration_date"] <= registered_date_end
+            if registered_date_start <= report["registration_date"] <= registered_date_end
         ],
         key=lambda report: (
             report["registration_date"],

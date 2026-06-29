@@ -12,7 +12,6 @@ finland_xbrl_reference_refresh_job = dg.define_asset_job(
 finland_xbrl_historical_backfill_job = dg.define_asset_job(
     "finland_xbrl_historical_backfill_job",
     selection=dg.AssetSelection.assets(
-        "finland_xbrl_eligible_companies",
         "finland_xbrl_financial_reports_backfill",
         "finland_xbrl_raw_xml_documents_backfill",
         "finland_xbrl_parse_backfill",
@@ -22,7 +21,6 @@ finland_xbrl_historical_backfill_job = dg.define_asset_job(
 finland_xbrl_incremental_job = dg.define_asset_job(
     "finland_xbrl_incremental_job",
     selection=dg.AssetSelection.assets(
-        "finland_xbrl_eligible_companies",
         "finland_xbrl_financial_reports_incremental",
         "finland_xbrl_raw_xml_documents_incremental",
         "finland_xbrl_parse_incremental",
@@ -32,6 +30,7 @@ finland_xbrl_incremental_job = dg.define_asset_job(
 finland_xbrl_publish_job = dg.define_asset_job(
     "finland_xbrl_publish_job",
     selection=dg.AssetSelection.assets(
+        "finland_xbrl_eligible_companies",
         "fi_prh_xbrl_financial_metrics",
         "finland_xbrl_financial_metrics_clickhouse",
     ),

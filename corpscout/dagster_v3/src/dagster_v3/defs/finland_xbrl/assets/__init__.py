@@ -60,7 +60,7 @@ from dagster_v3.defs.finland_xbrl.assets.raw_xml_documents import (
     finland_xbrl_raw_xml_documents_backfill,
     finland_xbrl_raw_xml_documents_incremental,
     finland_xbrl_xml_documents,
-    load_eligible_financial_report_rows,
+    financial_report_rows_in_registration_window,
 )
 from dagster_v3.defs.finland_xbrl.resources import (
     XbrlApiResource,
@@ -113,7 +113,7 @@ __all__ = [
     "finland_xbrl_raw_xml_documents_incremental",
     "finland_xbrl_reference_refresh_job",
     "finland_xbrl_xml_documents",
-    "load_eligible_financial_report_rows",
+    "financial_report_rows_in_registration_window",
     "materialize_financial_reports_window",
     "parse_xbrl_documents",
     "run_finland_xbrl_arelle_parse",
