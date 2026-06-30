@@ -151,6 +151,7 @@ def test_normalize_entity_records_to_no_tables_matches_clickhouse_shapes() -> No
             "activity_text_original",
             "primary_website_url",
             "primary_website_host",
+            "last_submitted_accounts_year",
             "source_system",
             "source_run_id",
             "source_record_id",
@@ -171,6 +172,7 @@ def test_normalize_entity_records_to_no_tables_matches_clickhouse_shapes() -> No
             "activity_text_original": "Technology services.",
             "primary_website_url": "https://www.activeone.no/about",
             "primary_website_host": "www.activeone.no",
+            "last_submitted_accounts_year": "2024",
             "source_system": "norway_brregenhet",
             "source_run_id": "run-1",
             "source_record_id": "1000",
@@ -190,6 +192,7 @@ def test_normalize_entity_records_to_no_tables_matches_clickhouse_shapes() -> No
             "activity_text_original": None,
             "primary_website_url": None,
             "primary_website_host": None,
+            "last_submitted_accounts_year": None,
             "source_system": "norway_brregenhet",
             "source_run_id": "run-1",
             "source_record_id": "2000",
@@ -463,6 +466,7 @@ def _active_entity() -> dict[str, object]:
         "naeringskode2": {"kode": "70.100", "beskrivelse": "Hovedkontortjenester"},
         "vedtektsfestetFormaal": ["To develop software."],
         "aktivitet": ["Technology services."],
+        "sisteInnsendteAarsregnskap": "2024",
         "_links": {"self": {"href": "https://data.brreg.no/enheter/1000"}},
     }
 

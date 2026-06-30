@@ -46,6 +46,7 @@ NO_COMPANIES_SCHEMA = {
     "activity_text_original": pl.Utf8,
     "primary_website_url": pl.Utf8,
     "primary_website_host": pl.Utf8,
+    "last_submitted_accounts_year": pl.Utf8,
     "source_system": pl.Utf8,
     "source_run_id": pl.Utf8,
     "source_record_id": pl.Utf8,
@@ -422,6 +423,9 @@ def _no_companies_row(row: dict[str, Any], *, resolved_at: datetime) -> dict[str
         "activity_text_original": _none_if_empty(row.get("activity_text_original")),
         "primary_website_url": _none_if_empty(normalized_url(website)),
         "primary_website_host": _none_if_empty(website_host(website)),
+        "last_submitted_accounts_year": _none_if_empty(
+            row.get("last_submitted_accounts_year")
+        ),
         "source_system": _string(row.get("source_slug")),
         "source_run_id": _string(row.get("source_run_id")),
         "source_record_id": _string(row.get("source_record_id")),

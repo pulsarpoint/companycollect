@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 import duckdb
+import polars as pl
 from dlt.sources.helpers.requests import Client as DltRequestsClient
 
 BRREG_REGNSKAP_BASE_URL = "https://data.brreg.no/regnskapsregisteret/regnskap"
@@ -21,6 +22,12 @@ FINANCIAL_FETCH_STATUS_NOT_FOUND = "not_found"
 FINANCIAL_FETCH_STATUS_SERVER_ERROR = "server_error"
 FINANCIAL_FETCH_STATUS_NETWORK_ERROR = "network_error"
 FINANCIAL_FETCH_STATUS_INVALID_PAYLOAD = "invalid_payload"
+SOURCE_OUTCOME_FETCH_STATUSES = {
+    FINANCIAL_FETCH_STATUS_SUCCESS,
+    FINANCIAL_FETCH_STATUS_NOT_FOUND,
+    "gone",
+    "empty",
+}
 
 BRREG_FINANCIAL_FETCHES_COLUMNS: dict[str, dict[str, Any]] = {
     "country_iso2": {"data_type": "text"},
@@ -100,6 +107,74 @@ def financial_fetch_failure_row(
         fetched_at=fetched_at,
         raw_response=raw_response,
     )
+
+
+def financial_fetch_status_requires_failure(fetch_status: str) -> bool:
+    return fetch_status not in SOURCE_OUTCOME_FETCH_STATUSES
+
+
+def financial_fetch_candidates_from_no_companies(frame: pl.DataFrame) -> list[dict[str, Any]]:
+    if frame.is_empty():
+        return []
+    return [
+        {
+            "org_number": str(row["org_number"]),
+            "legal_name": str(row["name"] or ""),
+            "website": str(row["primary_website_url"] or ""),
+            "last_submitted_accounts_year": str(row["last_submitted_accounts_year"] or ""),
+        }
+        for row in frame.filter(
+            pl.col("is_active") & pl.col("last_submitted_accounts_year").is_not_null()
+        )
+        .sort("org_number")
+        .to_dicts()
+    ]
+
+
+def fetch_financial_rows_for_orgs(
+    *,
+    orgs: Iterable[Mapping[str, Any]],
+    source_run_id: str,
+    base_url: str = BRREG_REGNSKAP_BASE_URL,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    user_agent: str = DEFAULT_USER_AGENT,
+    fetched_at: str | None = None,
+    client: Any | None = None,
+    log: Callable[..., None] | None = None,
+) -> list[dict[str, Any]]:
+    http_client = client or _default_financial_fetch_http_client(
+        timeout_seconds=timeout_seconds,
+        user_agent=user_agent,
+    )
+    fetch_timestamp = fetched_at or _utc_now_iso()
+    candidates = list(orgs)
+    rows: list[dict[str, Any]] = []
+    status_counts: dict[str, int] = {}
+    if log is not None:
+        log("Preparing Norway Brreg financial row fetches: candidates=%s", len(candidates))
+
+    for source_line_number, org in enumerate(candidates, start=1):
+        org_number = _string(org.get("org_number"))
+        row = _fetch_brreg_financial_statement(
+            client=http_client,
+            org=org,
+            source_url=f"{base_url}/{org_number}",
+            source_run_id=source_run_id,
+            source_line_number=source_line_number,
+            timeout_seconds=timeout_seconds,
+            fetched_at=fetch_timestamp,
+        )
+        rows.append(row)
+        fetch_status = _string(row.get("fetch_status"))
+        status_counts[fetch_status] = status_counts.get(fetch_status, 0) + 1
+
+    if log is not None:
+        log(
+            "Completed Norway Brreg financial row fetches: fetched=%s statuses=%s",
+            len(rows),
+            status_counts,
+        )
+    return rows
 
 
 def run_brreg_financial_statement_fetches(

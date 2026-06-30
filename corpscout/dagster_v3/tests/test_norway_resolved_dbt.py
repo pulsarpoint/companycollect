@@ -21,7 +21,7 @@ def _seed_norway_brreg_source(db_path: Path) -> None:
               (
                 'NO', 'norway_brreg', 'run-1', '1000', 'hash1',
                 '1000', 'Active One AS', '2020-01-02', '2020-01-01',
-                'WWW.ActiveOne.NO/about', 'AS', 'Aksjeselskap', 'Limited liability company',
+                'WWW.ActiveOne.NO/about', '2024', 'AS', 'Aksjeselskap', 'Limited liability company',
                 '62.010', 'Programmeringstjenester', 'Computer programming activities',
                 '70.100', 'Hovedkontortjenester', 'Activities of head offices',
                 '', '', '',
@@ -31,7 +31,7 @@ def _seed_norway_brreg_source(db_path: Path) -> None:
               (
                 'NO', 'norway_brreg', 'run-1', '2000', 'hash2',
                 '2000', 'Inactive Two AS', '2018-03-04', '',
-                '', 'AS', 'Aksjeselskap', 'Limited liability company',
+                '', '', 'AS', 'Aksjeselskap', 'Limited liability company',
                 '', '', '',
                 '', '', '',
                 '', '', '',
@@ -41,7 +41,7 @@ def _seed_norway_brreg_source(db_path: Path) -> None:
             ) as t(
               country_iso2, source_slug, source_run_id, source_record_id, source_payload_hash,
               org_number, legal_name, registration_date, incorporation_date,
-              website, legal_form_code, legal_form_description_original,
+              website, last_submitted_accounts_year, legal_form_code, legal_form_description_original,
               legal_form_description_en,
               nace1_code, nace1_description_original, nace1_description_en,
               nace2_code, nace2_description_original, nace2_description_en,
@@ -206,6 +206,25 @@ def test_no_companies_model_carries_free_text_originals(
     assert rows == [
         ("1000", "To develop software.", "Technology services."),
         ("2000", None, None),
+    ]
+
+
+def test_no_companies_model_carries_last_submitted_accounts_year(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "source.duckdb"
+    _seed_norway_brreg_source(db)
+    _dbt_build(db, monkeypatch)
+
+    with duckdb.connect(str(db), read_only=True) as conn:
+        rows = conn.execute(
+            "select org_number, last_submitted_accounts_year "
+            "from norway_resolved.no_companies order by org_number"
+        ).fetchall()
+
+    assert rows == [
+        ("1000", "2024"),
+        ("2000", None),
     ]
 
 

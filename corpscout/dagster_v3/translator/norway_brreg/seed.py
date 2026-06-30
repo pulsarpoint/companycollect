@@ -40,8 +40,7 @@ def build_queue(
 
     Calls ``heartbeat_fn`` after every field for activity liveness.
     """
-
-
+    queue_path = Path(queue_duckdb_path)
     LOGGER.info(
         "seed queue started source=%s table=%s queue_path=%s fields=%d",
         config.source_slug,
@@ -50,8 +49,6 @@ def build_queue(
         len(config.fields),
     )
 
-
-    queue_path = Path(queue_duckdb_path)
     TranslationQueue(queue_path).initialize()
 
     dynamic_enqueued = 0
@@ -68,15 +65,17 @@ def build_queue(
             arrow_table = query_arrow(ch_client, sql, params)
             field_col = field.original_col
             ch_table = config.ch_table
+            field_type = "static" if field.static_map is not None else "dynamic"
+            scanned_rows = arrow_table.num_rows
 
-                            LOGGER.info(
-                    "seed field scanned source=%s table=%s field=%s type=%s rows=%s",
-                    config.source_slug,
-                    ch_table,
-                    field_col,
-                    field_type,
-                    scanned_rows,
-                )
+            LOGGER.info(
+                "seed field scanned source=%s table=%s field=%s type=%s rows=%s",
+                config.source_slug,
+                ch_table,
+                field_col,
+                field_type,
+                scanned_rows,
+            )
 
 
             if field.static_map is None:
