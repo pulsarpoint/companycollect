@@ -227,11 +227,13 @@ func (q *Queue) ProcessBatch(
 	}
 
 	inputs := make([]translation.TranslationInput, 0, len(items))
+	expectedItemIDs := make(map[string]bool, len(items))
 	for _, item := range items {
 		inputs = append(inputs, translation.TranslationInput{
 			ItemID:     item.ItemID,
 			SourceText: item.SourceText,
 		})
+		expectedItemIDs[item.ItemID] = true
 	}
 
 	results, err := q.translator.Translate(ctx, inputs, timeoutSeconds)
@@ -243,6 +245,9 @@ func (q *Queue) ProcessBatch(
 	for _, result := range results {
 		if result.ItemID == "" {
 			return 0, errors.New("translation result item_id is required")
+		}
+		if !expectedItemIDs[result.ItemID] {
+			return 0, fmt.Errorf("unexpected translation result item_id: %s", result.ItemID)
 		}
 		if result.TranslatedText == "" {
 			return 0, fmt.Errorf("translation result for %s has empty translated text", result.ItemID)

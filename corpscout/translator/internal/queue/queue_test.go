@@ -157,6 +157,33 @@ func TestQueueHandlesUnsignedCityHashValues(t *testing.T) {
 	assertOutputRow(t, path, row, "translated high hash", "local", "qwen3:6b")
 }
 
+func TestProcessBatchRejectsUnexpectedTranslationResult(t *testing.T) {
+	ctx := context.Background()
+	path := createQueueFixture(t, 1)
+
+	q, err := queue.Init(path, unexpectedResultTranslator{})
+	if err != nil {
+		t.Fatalf("init queue: %v", err)
+	}
+
+	processed, err := q.ProcessBatch(ctx, 10, 45, "local", "qwen3:6b")
+	if err == nil {
+		t.Fatal("expected unexpected translation result to fail")
+	}
+	if processed != 0 {
+		t.Fatalf("expected zero processed rows on failure, got %d", processed)
+	}
+	if !strings.Contains(err.Error(), "unexpected translation result") {
+		t.Fatalf("expected unexpected result error, got %v", err)
+	}
+	if err := q.Close(); err != nil {
+		t.Fatalf("close queue: %v", err)
+	}
+	if got := outputCount(t, path); got != 0 {
+		t.Fatalf("expected no saved output rows after failure, got %d", got)
+	}
+}
+
 type fakeTranslator struct {
 	timeoutSeconds int
 	itemsSeen      int
@@ -178,6 +205,19 @@ func (f *fakeTranslator) Translate(
 		})
 	}
 	return results, nil
+}
+
+type unexpectedResultTranslator struct{}
+
+func (unexpectedResultTranslator) Translate(
+	ctx context.Context,
+	items []translation.TranslationInput,
+	timeoutSeconds int,
+) ([]translation.TranslationResult, error) {
+	return []translation.TranslationResult{
+		{ItemID: items[0].ItemID, TranslatedText: "translated expected"},
+		{ItemID: "unknown-item", TranslatedText: "translated unknown"},
+	}, nil
 }
 
 func createQueueFixture(t *testing.T, count int) string {
