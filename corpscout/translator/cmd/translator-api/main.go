@@ -80,7 +80,7 @@ func main() {
 	}()
 
 	temporalClient, err := client.Dial(client.Options{
-		HostPort:  cfg.Temporal.HostPort,
+		HostPort:  cfg.Temporal.Address,
 		Namespace: cfg.Temporal.Namespace,
 	})
 	if err != nil {
@@ -89,7 +89,7 @@ func main() {
 	}
 	defer temporalClient.Close()
 
-	temporalWorker := worker.New(temporalClient, cfg.Temporal.TaskQueue, worker.Options{})
+	temporalWorker := worker.New(temporalClient, orchestration.TaskQueueNorwayBRREG, worker.Options{})
 	orchestration.RegisterNorwayBRREG(temporalWorker, brregRuntime)
 	if err := temporalWorker.Start(); err != nil {
 		logger.Error("failed to start temporal worker", "error", err)
@@ -99,7 +99,7 @@ func main() {
 
 	workflowStarter := api.NewTemporalWorkflowStarter(
 		temporalClient,
-		cfg.Temporal.TaskQueue,
+		orchestration.TaskQueueNorwayBRREG,
 		cfg.Temporal.BatchSize,
 		cfg.Temporal.TimeoutSeconds,
 	)
@@ -119,9 +119,9 @@ func main() {
 		"starting translator api",
 		"addr", cfg.Server.ListenAddress,
 		"config_path", configPath,
-		"temporal_host", cfg.Temporal.HostPort,
+		"temporal_address", cfg.Temporal.Address,
 		"temporal_namespace", cfg.Temporal.Namespace,
-		"temporal_task_queue", cfg.Temporal.TaskQueue,
+		"brreg_temporal_task_queue", orchestration.TaskQueueNorwayBRREG,
 		"brreg_queue_path", sourceConfig.QueuePath,
 		"sources", len(cfg.Sources),
 		"endpoints", len(cfg.Endpoints),

@@ -3,6 +3,8 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 )
@@ -27,21 +29,21 @@ type ServerConfig struct {
 }
 
 type ClickHouseConfig struct {
-	NativeURL    string `json:"native_url"`
-	NativeURLEnv string `json:"native_url_env"`
+	Host       string `json:"host"`
+	NativePort int    `json:"native_port"`
+	User       string `json:"user"`
+	Database   string `json:"database"`
+	Secure     bool   `json:"secure"`
+
+	Password  string `json:"-"`
+	NativeURL string `json:"-"`
 }
 
 type TemporalConfig struct {
-	HostPort          string `json:"host_port"`
-	HostPortEnv       string `json:"host_port_env"`
-	Namespace         string `json:"namespace"`
-	NamespaceEnv      string `json:"namespace_env"`
-	TaskQueue         string `json:"task_queue"`
-	TaskQueueEnv      string `json:"task_queue_env"`
-	BatchSize         int    `json:"batch_size"`
-	BatchSizeEnv      string `json:"batch_size_env"`
-	TimeoutSeconds    int    `json:"timeout_seconds"`
-	TimeoutSecondsEnv string `json:"timeout_seconds_env"`
+	Address        string `json:"address"`
+	Namespace      string `json:"namespace"`
+	BatchSize      int    `json:"batch_size"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
 }
 
 type EndpointConfig struct {
@@ -102,20 +104,29 @@ func applyDefaults(cfg *Config) {
 	if cfg.Server.ListenAddress == "" {
 		cfg.Server.ListenAddress = ":8080"
 	}
-	if cfg.Temporal.HostPort == "" {
-		cfg.Temporal.HostPort = "localhost:7233"
+	if cfg.Temporal.Address == "" {
+		cfg.Temporal.Address = "localhost:7233"
 	}
 	if cfg.Temporal.Namespace == "" {
 		cfg.Temporal.Namespace = "default"
-	}
-	if cfg.Temporal.TaskQueue == "" {
-		cfg.Temporal.TaskQueue = "translator"
 	}
 	if cfg.Temporal.BatchSize <= 0 {
 		cfg.Temporal.BatchSize = 50
 	}
 	if cfg.Temporal.TimeoutSeconds <= 0 {
 		cfg.Temporal.TimeoutSeconds = 120
+	}
+	if cfg.ClickHouse.Host == "" {
+		cfg.ClickHouse.Host = "localhost"
+	}
+	if cfg.ClickHouse.NativePort <= 0 {
+		cfg.ClickHouse.NativePort = 9000
+	}
+	if cfg.ClickHouse.User == "" {
+		cfg.ClickHouse.User = "default"
+	}
+	if cfg.ClickHouse.Database == "" {
+		cfg.ClickHouse.Database = "corpscout"
 	}
 	if cfg.Endpoints == nil {
 		cfg.Endpoints = make(map[string]EndpointConfig)
@@ -130,41 +141,10 @@ func applyEnvironment(cfg *Config) {
 		cfg.Server.ListenAddress = listenAddress
 	}
 
-	if cfg.ClickHouse.NativeURLEnv != "" {
-		if nativeURL := os.Getenv(cfg.ClickHouse.NativeURLEnv); nativeURL != "" {
-			cfg.ClickHouse.NativeURL = nativeURL
-		}
-	}
-	if cfg.Temporal.HostPortEnv != "" {
-		if hostPort := os.Getenv(cfg.Temporal.HostPortEnv); hostPort != "" {
-			cfg.Temporal.HostPort = hostPort
-		}
-	}
-	if cfg.Temporal.NamespaceEnv != "" {
-		if namespace := os.Getenv(cfg.Temporal.NamespaceEnv); namespace != "" {
-			cfg.Temporal.Namespace = namespace
-		}
-	}
-	if cfg.Temporal.TaskQueueEnv != "" {
-		if taskQueue := os.Getenv(cfg.Temporal.TaskQueueEnv); taskQueue != "" {
-			cfg.Temporal.TaskQueue = taskQueue
-		}
-	}
-	if cfg.Temporal.BatchSizeEnv != "" {
-		if batchSize := os.Getenv(cfg.Temporal.BatchSizeEnv); batchSize != "" {
-			value, err := strconv.Atoi(batchSize)
-			if err == nil && value > 0 {
-				cfg.Temporal.BatchSize = value
-			}
-		}
-	}
-	if cfg.Temporal.TimeoutSecondsEnv != "" {
-		if timeoutSeconds := os.Getenv(cfg.Temporal.TimeoutSecondsEnv); timeoutSeconds != "" {
-			value, err := strconv.Atoi(timeoutSeconds)
-			if err == nil && value > 0 {
-				cfg.Temporal.TimeoutSeconds = value
-			}
-		}
+	applyClickHouseEnvironment(cfg)
+
+	if temporalAddress := os.Getenv("TEMPORAL_ADDRESS"); temporalAddress != "" {
+		cfg.Temporal.Address = temporalAddress
 	}
 
 	for name, endpoint := range cfg.Endpoints {
@@ -186,4 +166,44 @@ func applyEnvironment(cfg *Config) {
 		}
 		cfg.Endpoints[name] = endpoint
 	}
+}
+
+func applyClickHouseEnvironment(cfg *Config) {
+	if host := os.Getenv("CLICKHOUSE_HOST"); host != "" {
+		cfg.ClickHouse.Host = host
+	}
+	if nativePort := os.Getenv("CLICKHOUSE_NATIVE_PORT"); nativePort != "" {
+		value, err := strconv.Atoi(nativePort)
+		if err == nil && value > 0 {
+			cfg.ClickHouse.NativePort = value
+		}
+	}
+	if user := os.Getenv("CLICKHOUSE_USER"); user != "" {
+		cfg.ClickHouse.User = user
+	}
+	cfg.ClickHouse.Password = os.Getenv("CLICKHOUSE_PASSWORD")
+	if database := os.Getenv("CLICKHOUSE_DATABASE"); database != "" {
+		cfg.ClickHouse.Database = database
+	}
+	if secure := os.Getenv("CLICKHOUSE_SECURE"); secure != "" {
+		value, err := strconv.ParseBool(secure)
+		if err == nil {
+			cfg.ClickHouse.Secure = value
+		}
+	}
+	cfg.ClickHouse.NativeURL = buildClickHouseNativeURL(cfg.ClickHouse)
+}
+
+func buildClickHouseNativeURL(cfg ClickHouseConfig) string {
+	query := url.Values{}
+	query.Set("database", cfg.Database)
+	query.Set("password", cfg.Password)
+	query.Set("secure", strconv.FormatBool(cfg.Secure))
+	query.Set("username", cfg.User)
+
+	return (&url.URL{
+		Scheme:   "clickhouse",
+		Host:     net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.NativePort)),
+		RawQuery: query.Encode(),
+	}).String()
 }

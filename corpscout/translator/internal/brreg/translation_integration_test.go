@@ -13,7 +13,7 @@ import (
 
 func TestCreateInputQueueWithExistingClickHouseProducesNorwayBRREGDuckDBEntries(t *testing.T) {
 	if os.Getenv("TRANSLATOR_INTEGRATION_TESTS") != "true" {
-		t.Skip("set TRANSLATOR_INTEGRATION_TESTS=true and CLICKHOUSE_NATIVE_URL to run")
+		t.Skip("set TRANSLATOR_INTEGRATION_TESTS=true and CLICKHOUSE_* environment variables to run")
 	}
 
 	cfg, _, err := config.LoadFromEnvironment()
@@ -136,7 +136,7 @@ func duckDBCount(t *testing.T, db *sql.DB, query string) int {
 
 func TestInsertTextTranslationsWithExistingClickHouse(t *testing.T) {
 	if os.Getenv("TRANSLATOR_INTEGRATION_TESTS") != "true" {
-		t.Skip("set TRANSLATOR_INTEGRATION_TESTS=true and CLICKHOUSE_NATIVE_URL to run")
+		t.Skip("set TRANSLATOR_INTEGRATION_TESTS=true and CLICKHOUSE_* environment variables to run")
 	}
 
 	cfg, _, err := config.LoadFromEnvironment()

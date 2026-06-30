@@ -49,6 +49,15 @@ The service reads non-secret configuration from:
 config/translator.json
 ```
 
+Local environment variables can be started from:
+
+```bash
+cp .env.example .env
+set -a
+. ./.env
+set +a
+```
+
 Override the config file path:
 
 ```bash
@@ -62,8 +71,14 @@ Current environment variables:
 
 ```text
 TRANSLATOR_CONFIG_FILE
-TRANSLATOR_API_ADDR
-CLICKHOUSE_NATIVE_URL
+TEMPORAL_ADDRESS
+CLICKHOUSE_HOST
+CLICKHOUSE_NATIVE_PORT
+CLICKHOUSE_HTTP_PORT
+CLICKHOUSE_USER
+CLICKHOUSE_PASSWORD
+CLICKHOUSE_DATABASE
+CLICKHOUSE_SECURE
 TRANSLATOR_INTEGRATION_TESTS
 TRANSLATION_PROVIDER_LOCAL_BASE_URL
 TRANSLATION_PROVIDER_LOCAL_MODEL
@@ -82,19 +97,14 @@ prompt_data.target_language=English
 extra_body={"chat_template_kwargs":{"enable_thinking":false}}
 ```
 
-The ClickHouse connection is read from `CLICKHOUSE_NATIVE_URL`. The JSON config
-only stores the env var name, so credentials stay in `.env`.
+The ClickHouse connection is resolved from the same `CLICKHOUSE_*` environment
+variables used by `dagster_v3`. The Go service uses `CLICKHOUSE_NATIVE_PORT`
+because `clickhouse-go` connects over the native protocol.
 
 ## Run
 
 ```bash
 make run
-```
-
-Override the listen address:
-
-```bash
-TRANSLATOR_API_ADDR=:8090 make run
 ```
 
 The service expects ClickHouse and Temporal to be reachable at startup. It reads
@@ -118,6 +128,19 @@ curl -s -X POST http://localhost:8080/v1/sources/norway_brreg/run
 ```
 
 ## Build
+
+DuckDB is linked through `github.com/marcboeker/go-duckdb`, which requires cgo.
+The Makefile sets `CGO_ENABLED=1` for `build`, `test`, and `run`.
+
+On Debian/Ubuntu Linux, install a C/C++ toolchain before building:
+
+```bash
+apt-get update
+apt-get install -y build-essential
+```
+
+If cgo is disabled, Go will fail inside `go-duckdb` with errors such as
+`undefined: bindings.Type` or `undefined: bindings.State`.
 
 ```bash
 make build
@@ -160,8 +183,8 @@ temporary DuckDB queue, and may insert missing static legal-form translations
 into `corpscout.text_translations`.
 
 ```bash
-CLICKHOUSE_NATIVE_URL="$(grep '^CLICKHOUSE_NATIVE_URL=' ../.env | cut -d= -f2-)" \
-TRANSLATOR_INTEGRATION_TESTS=true \
-TRANSLATOR_CONFIG_FILE=../../config/translator.json \
-go test ./internal/brreg -run TestInitializeTranslationWithExistingClickHouse -v
+set -a
+. ./.env
+set +a
+TRANSLATOR_INTEGRATION_TESTS=true go test ./internal/brreg -run TestCreateInputQueueWithExistingClickHouseProducesNorwayBRREGDuckDBEntries -v
 ```

@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "golang-skills": {
+      "source": {
+        "source": "github",
+        "repo": "cxuu/golang-skills"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "golang-skills@golang-skills": true
+  }
+}

@@ -6,15 +6,16 @@ import (
 	"testing"
 )
 
-func TestLoadAppliesClickHouseNativeURLEnv(t *testing.T) {
-	t.Setenv("CLICKHOUSE_NATIVE_URL", "clickhouse://clickhouse.test:9000?username=test&password=secret&database=corpscout")
+func TestLoadBuildsClickHouseNativeURLFromDagsterEnv(t *testing.T) {
+	t.Setenv("CLICKHOUSE_HOST", "clickhouse.test")
+	t.Setenv("CLICKHOUSE_NATIVE_PORT", "9440")
+	t.Setenv("CLICKHOUSE_USER", "test-user")
+	t.Setenv("CLICKHOUSE_PASSWORD", "secret")
+	t.Setenv("CLICKHOUSE_DATABASE", "corpscout_test")
+	t.Setenv("CLICKHOUSE_SECURE", "true")
 
 	path := filepath.Join(t.TempDir(), "translator.json")
-	if err := os.WriteFile(path, []byte(`{
-  "clickhouse": {
-    "native_url_env": "CLICKHOUSE_NATIVE_URL"
-  }
-}`), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{}`), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -23,7 +24,8 @@ func TestLoadAppliesClickHouseNativeURLEnv(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 
-	if cfg.ClickHouse.NativeURL != "clickhouse://clickhouse.test:9000?username=test&password=secret&database=corpscout" {
+	expected := "clickhouse://clickhouse.test:9440?database=corpscout_test&password=secret&secure=true&username=test-user"
+	if cfg.ClickHouse.NativeURL != expected {
 		t.Fatalf("unexpected ClickHouse native URL: %q", cfg.ClickHouse.NativeURL)
 	}
 }
@@ -71,14 +73,11 @@ func TestLoadAppliesTemporalDefaults(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 
-	if cfg.Temporal.HostPort != "localhost:7233" {
-		t.Fatalf("unexpected Temporal host: %q", cfg.Temporal.HostPort)
+	if cfg.Temporal.Address != "localhost:7233" {
+		t.Fatalf("unexpected Temporal address: %q", cfg.Temporal.Address)
 	}
 	if cfg.Temporal.Namespace != "default" {
 		t.Fatalf("unexpected Temporal namespace: %q", cfg.Temporal.Namespace)
-	}
-	if cfg.Temporal.TaskQueue != "translator" {
-		t.Fatalf("unexpected Temporal task queue: %q", cfg.Temporal.TaskQueue)
 	}
 	if cfg.Temporal.BatchSize != 50 {
 		t.Fatalf("unexpected Temporal batch size: %d", cfg.Temporal.BatchSize)
@@ -89,18 +88,13 @@ func TestLoadAppliesTemporalDefaults(t *testing.T) {
 }
 
 func TestLoadAppliesTemporalEnv(t *testing.T) {
-	t.Setenv("TRANSLATOR_TEMPORAL_HOST", "temporal.test:7233")
-	t.Setenv("TRANSLATOR_TEMPORAL_TASK_QUEUE", "translator-test")
-	t.Setenv("TRANSLATOR_BATCH_SIZE", "13")
-	t.Setenv("TRANSLATOR_TIMEOUT_SECONDS", "44")
+	t.Setenv("TEMPORAL_ADDRESS", "temporal.test:7233")
 
 	path := filepath.Join(t.TempDir(), "translator.json")
 	if err := os.WriteFile(path, []byte(`{
   "temporal": {
-    "host_port_env": "TRANSLATOR_TEMPORAL_HOST",
-    "task_queue_env": "TRANSLATOR_TEMPORAL_TASK_QUEUE",
-    "batch_size_env": "TRANSLATOR_BATCH_SIZE",
-    "timeout_seconds_env": "TRANSLATOR_TIMEOUT_SECONDS"
+    "batch_size": 13,
+    "timeout_seconds": 44
   }
 }`), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -111,11 +105,8 @@ func TestLoadAppliesTemporalEnv(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 
-	if cfg.Temporal.HostPort != "temporal.test:7233" {
-		t.Fatalf("unexpected Temporal host: %q", cfg.Temporal.HostPort)
-	}
-	if cfg.Temporal.TaskQueue != "translator-test" {
-		t.Fatalf("unexpected Temporal task queue: %q", cfg.Temporal.TaskQueue)
+	if cfg.Temporal.Address != "temporal.test:7233" {
+		t.Fatalf("unexpected Temporal address: %q", cfg.Temporal.Address)
 	}
 	if cfg.Temporal.BatchSize != 13 {
 		t.Fatalf("unexpected Temporal batch size: %d", cfg.Temporal.BatchSize)

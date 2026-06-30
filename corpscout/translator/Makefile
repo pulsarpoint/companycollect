@@ -1,4 +1,5 @@
 GO ?= go
+CGO_ENABLED := 1
 BINARY_DIR ?= bin
 BINARY_NAME ?= translator-api
 BINARY ?= $(BINARY_DIR)/$(BINARY_NAME)
@@ -8,13 +9,13 @@ CMD ?= ./cmd/translator-api
 
 build:
 	mkdir -p $(BINARY_DIR)
-	$(GO) build -o $(BINARY) $(CMD)
+	CGO_ENABLED=$(CGO_ENABLED) $(GO) build -o $(BINARY) $(CMD)
 
 test:
-	$(GO) test ./...
+	CGO_ENABLED=$(CGO_ENABLED) $(GO) test ./...
 
 run:
-	$(GO) run $(CMD)
+	CGO_ENABLED=$(CGO_ENABLED) $(GO) run $(CMD)
 
 clean:
 	rm -rf $(BINARY_DIR)

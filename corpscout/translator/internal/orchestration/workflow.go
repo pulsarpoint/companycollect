@@ -11,6 +11,7 @@ import (
 
 const (
 	WorkflowIDNorwayBRREG = "translator/norway_brreg"
+	TaskQueueNorwayBRREG  = "translator-norway-brreg"
 
 	SignalSourceAction = "source-action"
 
