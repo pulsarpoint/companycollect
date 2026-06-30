@@ -116,17 +116,17 @@ def test_snapshot_financial_candidates_use_active_companies_without_website_filt
     frame = pl.DataFrame(
         [
             {
-                "org_number": "1",
-                "name": "Active No Website",
-                "is_active": True,
-                "primary_website_url": None,
-                "last_submitted_accounts_year": "2025",
-            },
-            {
                 "org_number": "2",
                 "name": "Active Website",
                 "is_active": True,
                 "primary_website_url": "https://x.no",
+                "last_submitted_accounts_year": "2025",
+            },
+            {
+                "org_number": "1",
+                "name": "Active No Website",
+                "is_active": True,
+                "primary_website_url": None,
                 "last_submitted_accounts_year": "2025",
             },
             {
@@ -168,6 +168,12 @@ def test_transport_failure_status_is_retryable_failure_for_downstream_guard() ->
 
     assert row["fetch_status"] == "server_error"
     assert financial_fetches.financial_fetch_status_requires_failure(row["fetch_status"]) is True
+    assert (
+        financial_fetches.financial_fetch_status_requires_failure(
+            financial_fetches.FINANCIAL_FETCH_STATUS_NETWORK_ERROR
+        )
+        is True
+    )
 
 
 def test_fetch_financial_rows_for_orgs_fetches_supplied_orgs_without_duckdb() -> None:
@@ -215,6 +221,44 @@ def test_fetch_financial_rows_for_orgs_fetches_supplied_orgs_without_duckdb() ->
     assert [row["source_line_number"] for row in rows] == [1, 2]
     assert rows[0]["raw_response"] == '[{"regnskapsperiode":{"fraDato":"2024-01-01"}}]'
     assert rows[1]["raw_response"] == "server error"
+
+
+def test_fetch_financial_rows_for_orgs_accepts_log_and_reports_status_counts() -> None:
+    client = FakeDltRequestsClient(
+        {
+            "https://data.brreg.no/regnskapsregisteret/regnskap/811685852": FakeResponse(
+                status_code=200,
+                payload=[{"id": 1}],
+                text='[{"id":1}]',
+            ),
+        }
+    )
+    messages: list[tuple[str, tuple[Any, ...]]] = []
+
+    rows = financial_fetches.fetch_financial_rows_for_orgs(
+        orgs=[
+            {
+                "org_number": "811685852",
+                "legal_name": "SUCCESS AS",
+                "website": "",
+                "last_submitted_accounts_year": "2024",
+            },
+        ],
+        source_run_id="run-1",
+        timeout_seconds=120,
+        fetched_at="2026-06-30T00:00:00.000Z",
+        client=client,
+        log=lambda message, *args: messages.append((message, args)),
+    )
+
+    assert [row["fetch_status"] for row in rows] == ["success"]
+    assert messages == [
+        ("Preparing Norway Brreg financial row fetches: candidates=%s", (1,)),
+        (
+            "Completed Norway Brreg financial row fetches: fetched=%s statuses=%s",
+            (1, {"success": 1}),
+        ),
+    ]
 
 
 def test_resumable_financial_fetches_persist_completed_rows_before_interrupt(

@@ -140,25 +140,39 @@ def fetch_financial_rows_for_orgs(
     user_agent: str = DEFAULT_USER_AGENT,
     fetched_at: str | None = None,
     client: Any | None = None,
+    log: Callable[..., None] | None = None,
 ) -> list[dict[str, Any]]:
     http_client = client or _default_financial_fetch_http_client(
         timeout_seconds=timeout_seconds,
         user_agent=user_agent,
     )
     fetch_timestamp = fetched_at or _utc_now_iso()
+    candidates = list(orgs)
     rows: list[dict[str, Any]] = []
-    for source_line_number, org in enumerate(orgs, start=1):
+    status_counts: dict[str, int] = {}
+    if log is not None:
+        log("Preparing Norway Brreg financial row fetches: candidates=%s", len(candidates))
+
+    for source_line_number, org in enumerate(candidates, start=1):
         org_number = _string(org.get("org_number"))
-        rows.append(
-            _fetch_brreg_financial_statement(
-                client=http_client,
-                org=org,
-                source_url=f"{base_url}/{org_number}",
-                source_run_id=source_run_id,
-                source_line_number=source_line_number,
-                timeout_seconds=timeout_seconds,
-                fetched_at=fetch_timestamp,
-            )
+        row = _fetch_brreg_financial_statement(
+            client=http_client,
+            org=org,
+            source_url=f"{base_url}/{org_number}",
+            source_run_id=source_run_id,
+            source_line_number=source_line_number,
+            timeout_seconds=timeout_seconds,
+            fetched_at=fetch_timestamp,
+        )
+        rows.append(row)
+        fetch_status = _string(row.get("fetch_status"))
+        status_counts[fetch_status] = status_counts.get(fetch_status, 0) + 1
+
+    if log is not None:
+        log(
+            "Completed Norway Brreg financial row fetches: fetched=%s statuses=%s",
+            len(rows),
+            status_counts,
         )
     return rows
 
