@@ -290,17 +290,60 @@ def test_export_duckdb_connection_table_to_clickhouse_applies_column_expressions
                     "then activity_start_date else null end"
                 ),
             },
+    )
+
+    assert row_count == 2
+    assert client.arrow_insert_calls == []
+    assert client.insert_calls == [
+        (
+            "INSERT INTO `corpscout`.`fi_companies` (`business_id`, `activity_start_date`) VALUES",
+            [("old", None), ("valid", date(2020, 1, 1))],
+        )
+    ]
+
+
+def test_export_duckdb_connection_table_to_clickhouse_uses_rows_for_nullable_dates(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "source.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute("create schema norway_resolved")
+        connection.execute(
+            """
+            create table norway_resolved.no_companies (
+                org_number varchar,
+                incorporation_date date
+            )
+            """
+        )
+        connection.execute(
+            """
+            insert into norway_resolved.no_companies values
+              ('old', null),
+              ('valid', date '2020-01-01')
+            """
+        )
+
+        client = FakeArrowClickHouseClient()
+
+        row_count = export_duckdb_connection_table_to_clickhouse(
+            duckdb_connection=connection,
+            clickhouse_client=client,
+            duckdb_schema="norway_resolved",
+            duckdb_table="no_companies",
+            clickhouse_database="corpscout",
+            clickhouse_table="no_companies",
+            columns=("org_number", "incorporation_date"),
+            truncate=False,
         )
 
     assert row_count == 2
-    assert [
-        arrow_table.to_pylist()
-        for _, _, arrow_table in client.arrow_insert_calls
-    ] == [
-        [
-            {"business_id": "old", "activity_start_date": None},
-            {"business_id": "valid", "activity_start_date": date(2020, 1, 1)},
-        ],
+    assert client.arrow_insert_calls == []
+    assert client.insert_calls == [
+        (
+            "INSERT INTO `corpscout`.`no_companies` (`org_number`, `incorporation_date`) VALUES",
+            [("old", None), ("valid", date(2020, 1, 1))],
+        )
     ]
 
 

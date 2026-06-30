@@ -249,6 +249,8 @@ def _insert_duckdb_table_in_batches(
             duckdb_table=duckdb_table,
             clickhouse_database=clickhouse_database,
             clickhouse_table=clickhouse_table,
+            clickhouse_qualified_table=clickhouse_qualified_table,
+            clickhouse_columns=clickhouse_columns,
             columns=columns,
             batch_size=batch_size,
             column_expressions=column_expressions,
@@ -274,6 +276,8 @@ def _insert_duckdb_arrow_batches(
     duckdb_table: str,
     clickhouse_database: str,
     clickhouse_table: str,
+    clickhouse_qualified_table: str,
+    clickhouse_columns: str,
     columns: Sequence[str],
     batch_size: int,
     column_expressions: Mapping[str, str] | None = None,
@@ -291,6 +295,13 @@ def _insert_duckdb_arrow_batches(
     for record_batch in result.to_arrow_reader(batch_size=batch_size):
         if record_batch.num_rows < 1:
             continue
+        if _arrow_batch_has_nullable_date(record_batch):
+            clickhouse_client.execute(
+                f"INSERT INTO {clickhouse_qualified_table} ({clickhouse_columns}) VALUES",
+                _arrow_batch_rows(record_batch, columns),
+            )
+            row_count += record_batch.num_rows
+            continue
         clickhouse_client.insert_arrow(
             clickhouse_table,
             pa.Table.from_batches([record_batch]),
@@ -298,6 +309,23 @@ def _insert_duckdb_arrow_batches(
         )
         row_count += record_batch.num_rows
     return row_count
+
+
+def _arrow_batch_has_nullable_date(record_batch: pa.RecordBatch) -> bool:
+    return any(
+        pa.types.is_date(field.type) and record_batch.column(index).null_count > 0
+        for index, field in enumerate(record_batch.schema)
+    )
+
+
+def _arrow_batch_rows(
+    record_batch: pa.RecordBatch,
+    columns: Sequence[str],
+) -> list[tuple[object, ...]]:
+    return [
+        tuple(row[column] for column in columns)
+        for row in record_batch.to_pylist()
+    ]
 
 
 def _insert_duckdb_rows_in_batches(
