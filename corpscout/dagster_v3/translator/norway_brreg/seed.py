@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
+import logging
 import duckdb
 
 from translator.clickhouse import build_scan_sql, query_arrow
@@ -14,6 +14,7 @@ from translator.flush import FlushTranslationRow, flush_translations
 from translator.config import SourceConfig
 from translator.queue import TranslationQueue
 
+LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SeedResult:
@@ -39,12 +40,26 @@ def build_queue(
 
     Calls ``heartbeat_fn`` after every field for activity liveness.
     """
+
+
+    LOGGER.info(
+        "seed queue started source=%s table=%s queue_path=%s fields=%d",
+        config.source_slug,
+        config.ch_table,
+        queue_path,
+        len(config.fields),
+    )
+
+
     queue_path = Path(queue_duckdb_path)
     TranslationQueue(queue_path).initialize()
 
     dynamic_enqueued = 0
     static_flushed = 0
     version = int(time.time())
+
+
+
 
     with duckdb.connect(str(queue_path)) as conn:
         for field in config.fields:
@@ -53,6 +68,16 @@ def build_queue(
             arrow_table = query_arrow(ch_client, sql, params)
             field_col = field.original_col
             ch_table = config.ch_table
+
+                            LOGGER.info(
+                    "seed field scanned source=%s table=%s field=%s type=%s rows=%s",
+                    config.source_slug,
+                    ch_table,
+                    field_col,
+                    field_type,
+                    scanned_rows,
+                )
+
 
             if field.static_map is None:
                 # Dynamic field → bulk insert into DuckDB queue.
