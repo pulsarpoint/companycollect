@@ -11,7 +11,7 @@ import (
 	"github.com/pulsarpoint/corpscout/translator/internal/config"
 )
 
-func TestInitializeTranslationWithExistingClickHouse(t *testing.T) {
+func TestCreateInputQueueWithExistingClickHouseProducesNorwayBRREGDuckDBEntries(t *testing.T) {
 	if os.Getenv("TRANSLATOR_INTEGRATION_TESTS") != "true" {
 		t.Skip("set TRANSLATOR_INTEGRATION_TESTS=true and CLICKHOUSE_NATIVE_URL to run")
 	}
@@ -40,8 +40,9 @@ func TestInitializeTranslationWithExistingClickHouse(t *testing.T) {
 		t.Fatal("corpscout.no_companies is empty")
 	}
 
-	expectedDynamicRows := clickHouseScanCount(t, ctx, db, articlesPurposeScanSQL) +
-		clickHouseScanCount(t, ctx, db, activityTextScanSQL)
+	expectedArticlesPurposeRows := clickHouseScanCount(t, ctx, db, articlesPurposeScanSQL)
+	expectedActivityTextRows := clickHouseScanCount(t, ctx, db, activityTextScanSQL)
+	expectedDynamicRows := expectedArticlesPurposeRows + expectedActivityTextRows
 	beforeStaticRows := clickHouseStaticTranslationCount(t, ctx, db)
 
 	source, err := OpenClickHouse(ctx, cfg.ClickHouse.NativeURL)
@@ -62,11 +63,54 @@ func TestInitializeTranslationWithExistingClickHouse(t *testing.T) {
 	if result.RowsInserted != expectedDynamicRows {
 		t.Fatalf("expected %d inserted dynamic rows, got %d", expectedDynamicRows, result.RowsInserted)
 	}
-	if got := tableCount(t, queuePath, "input_items"); got != expectedDynamicRows {
+	queueDB, err := sql.Open("duckdb", queuePath)
+	if err != nil {
+		t.Fatalf("open queue duckdb: %v", err)
+	}
+	defer queueDB.Close()
+
+	if got := duckDBCount(t, queueDB, "select count(*) from input_items"); got != expectedDynamicRows {
 		t.Fatalf("expected %d queue input rows, got %d", expectedDynamicRows, got)
 	}
-	if got := inputCountByColumn(t, queuePath, LegalFormDescriptionColumn); got != 0 {
+	if got := duckDBCount(t, queueDB, "select count(*) from output_items"); got != 0 {
+		t.Fatalf("expected empty output queue, got %d rows", got)
+	}
+	if got := duckDBCount(t, queueDB, "select count(*) from input_items where source_column = 'articles_purpose_original'"); got != expectedArticlesPurposeRows {
+		t.Fatalf("expected %d articles_purpose_original rows, got %d", expectedArticlesPurposeRows, got)
+	}
+	if got := duckDBCount(t, queueDB, "select count(*) from input_items where source_column = 'activity_text_original'"); got != expectedActivityTextRows {
+		t.Fatalf("expected %d activity_text_original rows, got %d", expectedActivityTextRows, got)
+	}
+	if got := duckDBCount(t, queueDB, "select count(*) from input_items where source_column = 'legal_form_description_original'"); got != 0 {
 		t.Fatalf("static legal-form rows must not enter input queue, got %d rows", got)
+	}
+	if got := duckDBCount(t, queueDB, `
+		select count(*)
+		from input_items
+		where source_table <> 'corpscout.no_companies'
+		   or source_lang <> 'no'
+		   or target_lang <> 'en'
+		   or source_text = ''
+	`); got != 0 {
+		t.Fatalf("queue has %d malformed rows", got)
+	}
+	if got := duckDBCount(t, queueDB, `
+		select count(*)
+		from input_items
+		where source_column not in ('articles_purpose_original', 'activity_text_original')
+	`); got != 0 {
+		t.Fatalf("queue has %d rows for unexpected columns", got)
+	}
+	if got := duckDBCount(t, queueDB, `
+		select count(*)
+		from (
+			select source_table, source_column, source_text_hash, source_lang, target_lang
+			from input_items
+			group by source_table, source_column, source_text_hash, source_lang, target_lang
+			having count(*) > 1
+		)
+	`); got != 0 {
+		t.Fatalf("queue has %d duplicate queue keys", got)
 	}
 	if afterStaticRows := clickHouseStaticTranslationCount(t, ctx, db); afterStaticRows < beforeStaticRows {
 		t.Fatalf("static translation rows decreased from %d to %d", beforeStaticRows, afterStaticRows)
@@ -78,6 +122,16 @@ func TestInitializeTranslationWithExistingClickHouse(t *testing.T) {
 		result.StaticRowsSeen,
 		result.StaticFlushed,
 	)
+}
+
+func duckDBCount(t *testing.T, db *sql.DB, query string) int {
+	t.Helper()
+
+	var count int
+	if err := db.QueryRow(query).Scan(&count); err != nil {
+		t.Fatalf("query duckdb count: %v\nSQL:\n%s", err, query)
+	}
+	return count
 }
 
 func TestInsertTextTranslationsWithExistingClickHouse(t *testing.T) {

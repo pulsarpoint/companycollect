@@ -2,9 +2,43 @@
 
 Standalone Go service for translation queue loading and translation runs.
 
-This is the initial API scaffold only. The endpoints return accepted responses;
-DuckDB queue loading, Temporal workflow starts, ClickHouse writes, and provider
-calls will be added behind this API boundary later.
+The HTTP API is still a scaffold: the endpoints return accepted responses while
+BRREG queue loading, queue processing, and ClickHouse upload are wired in behind
+the service boundary. The queue and local LLM translation packages already have
+runtime behavior and focused tests.
+
+## Packages
+
+```text
+cmd/translator-api        HTTP server entrypoint
+internal/api              Minimal router and health endpoint
+internal/config           JSON + environment config loading
+internal/brreg            Norway BRREG queue creation and static translations
+internal/queue            DuckDB queue runtime for existing source queue files
+internal/translation      OpenAI-compatible local LLM translator
+```
+
+`internal/queue` opens one existing DuckDB queue file per source. It does not
+create the file or schema. Source packages such as `internal/brreg` own queue
+file creation because they know the ClickHouse table, source columns, static
+translation rules, and language pair. Queue startup fails if the file is missing
+or does not contain the expected `input_items` and `output_items` tables.
+
+`GetBatch` reads untranslated rows by subtracting `output_items` from
+`input_items` inside that same DuckDB file. `SaveBatch` writes translated rows
+to `output_items`; no rows are deleted from `input_items`. `ProcessBatch` is a
+small runtime helper that gets a batch, calls the injected translator, and saves
+successful results with explicit provider/model metadata.
+
+`internal/translation` defines the translator boundary:
+
+```go
+Translate(ctx context.Context, items []TranslationInput, timeoutSeconds int) ([]TranslationResult, error)
+```
+
+The production provider is OpenAI-compatible and posts to
+`{base_url}/chat/completions`, matching the old Python translator behavior. Tests
+use fake translators and `httptest`; they do not call the real local LLM.
 
 ## Configuration
 
