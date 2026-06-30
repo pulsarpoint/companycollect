@@ -10,6 +10,7 @@ LLM endpoint for dynamic translations.
 
 ```text
 cmd/translator-api        HTTP server entrypoint
+cmd/translator-trigger    CLI trigger for the BRREG Temporal workflow
 internal/api              Minimal router and health endpoint
 internal/config           JSON + environment config loading
 internal/brreg            Norway BRREG queue creation and static translations
@@ -127,6 +128,40 @@ curl -s -X POST http://localhost:8080/v1/sources/norway_brreg/load-queue
 curl -s -X POST http://localhost:8080/v1/sources/norway_brreg/run
 ```
 
+## Direct Temporal Trigger
+
+Use the Go trigger command when you want to start the BRREG workflow directly
+through Temporal instead of the HTTP API:
+
+```bash
+make trigger-brreg-load-queue
+make trigger-brreg-run
+```
+
+Or run it directly:
+
+```bash
+go run ./cmd/translator-trigger -action load-queue
+go run ./cmd/translator-trigger -action run
+```
+
+The command uses Temporal `SignalWithStartWorkflow` with:
+
+```text
+workflow_id=translator/norway_brreg
+workflow_type=NorwayBRREGWorkflow
+task_queue=translator-norway-brreg
+signal_name=source-action
+```
+
+The `run` action processes batches until the input queue is empty, then uploads
+the output queue to ClickHouse. The `load-queue` action reloads new BRREG input
+from ClickHouse into the DuckDB queue.
+
+If the Temporal CLI is installed, `scripts/trigger-brreg-workflow.sh` can also
+send the same `source-action` signal through `temporal workflow
+signal-with-start`.
+
 ## Build
 
 DuckDB is linked through `github.com/marcboeker/go-duckdb`, which requires cgo.
@@ -150,6 +185,7 @@ This writes the binary to:
 
 ```text
 bin/translator-api
+bin/translator-trigger
 ```
 
 Run the compiled binary from the `translator` directory:
@@ -158,10 +194,11 @@ Run the compiled binary from the `translator` directory:
 ./bin/translator-api
 ```
 
-Override the output path when needed:
+Trigger BRREG through the compiled CLI:
 
 ```bash
-make build BINARY=/tmp/translator-api
+./bin/translator-trigger -action run
+./bin/translator-trigger -action load-queue
 ```
 
 Clean build outputs:
