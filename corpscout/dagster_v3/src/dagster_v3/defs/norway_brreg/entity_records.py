@@ -32,9 +32,13 @@ def updated_entity_record(
     update: dict[str, Any],
     *,
     entity: dict[str, Any] | None,
+    change_type_override: str | None = None,
 ) -> dict[str, Any]:
     source_change_type = _string(update.get("endringstype"))
-    change_type = _CHANGE_TYPE_BY_SOURCE.get(source_change_type, source_change_type.lower())
+    change_type = change_type_override or _CHANGE_TYPE_BY_SOURCE.get(
+        source_change_type,
+        source_change_type.lower(),
+    )
     return {
         "org_number": _string(update.get("organisasjonsnummer")),
         "change_type": change_type,

@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import requests
+
 from dagster_v3.defs.norway_brreg.resources import NorwayBrregApiResource
 
 
@@ -27,7 +29,7 @@ class FakeResponse:
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
+            raise requests.HTTPError(f"HTTP {self.status_code}", response=self)
 
     def json(self) -> Any:
         return self._payload
@@ -239,6 +241,56 @@ def test_iter_updated_entities_returns_removed_tombstone_without_entity_fetch() 
     assert records[0]["raw_update"] == update
     assert [call[0] for call in session.calls] == [
         "https://data.brreg.no/enhetsregisteret/api/oppdateringer/enheter"
+    ]
+
+
+def test_iter_updated_entities_treats_410_hydration_as_removed_tombstone() -> None:
+    update = {
+        "oppdateringsid": 24720425,
+        "dato": "2026-06-28T00:45:10.669Z",
+        "organisasjonsnummer": "937798849",
+        "endringstype": "Endring",
+        "_links": {
+            "enhet": {
+                "href": "https://data.brreg.no/enhetsregisteret/api/enheter/937798849"
+            }
+        },
+    }
+    session = FakeHttpSession(
+        {
+            "https://data.brreg.no/enhetsregisteret/api/oppdateringer/enheter": FakeResponse(
+                payload={
+                    "_embedded": {"oppdaterteEnheter": [update]},
+                    "page": {"size": 10000, "totalElements": 1, "totalPages": 1, "number": 0},
+                }
+            ),
+            "https://data.brreg.no/enhetsregisteret/api/enheter/937798849": FakeResponse(
+                status_code=410,
+                payload={"message": "gone"},
+            ),
+        }
+    )
+    resource = NorwayBrregApiResource(session=session)
+
+    records = list(
+        resource.iter_updated_entities(
+            start="2026-06-28T00:00:00.000Z",
+            end="2026-06-29T00:00:00.000Z",
+        )
+    )
+
+    assert len(records) == 1
+    assert records[0]["org_number"] == "937798849"
+    assert records[0]["change_type"] == "removed"
+    assert records[0]["source_change_type"] == "Endring"
+    assert records[0]["entity"] is None
+    assert records[0]["raw_update"] == update
+    assert records[0]["entity_url"] == (
+        "https://data.brreg.no/enhetsregisteret/api/enheter/937798849"
+    )
+    assert [call[0] for call in session.calls] == [
+        "https://data.brreg.no/enhetsregisteret/api/oppdateringer/enheter",
+        "https://data.brreg.no/enhetsregisteret/api/enheter/937798849",
     ]
 
 

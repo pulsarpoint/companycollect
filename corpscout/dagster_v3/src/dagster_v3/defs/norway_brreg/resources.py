@@ -170,23 +170,40 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
                 len(updates),
             )
             for update in updates:
+                change_type_override = None
                 if entity_records.entity_update_requires_hydration(update):
-                    entity = self.get_entity(_string(update.get("organisasjonsnummer")))
-                    hydrated_row_count += 1
-                    if (
-                        progress_every_rows > 0
-                        and hydrated_row_count % progress_every_rows == 0
-                    ):
+                    org_number = _string(update.get("organisasjonsnummer"))
+                    try:
+                        entity = self.get_entity(org_number)
+                        hydrated_row_count += 1
+                        if (
+                            progress_every_rows > 0
+                            and hydrated_row_count % progress_every_rows == 0
+                        ):
+                            progress_log(
+                                "Hydrated Norway Brreg entity update rows: rows=%s",
+                                hydrated_row_count,
+                            )
+                    except Exception as exc:
+                        if not _exception_has_http_status(exc, 410):
+                            raise
                         progress_log(
-                            "Hydrated Norway Brreg entity update rows: rows=%s",
-                            hydrated_row_count,
+                            "Norway Brreg entity update hydration returned 410; treating org as removed: org_number=%s update_id=%s",
+                            org_number,
+                            update.get("oppdateringsid"),
                         )
+                        entity = None
+                        change_type_override = entity_records.ENTITY_CHANGE_TYPE_REMOVED
                 else:
                     entity = None
                 row_count += 1
                 if progress_every_rows > 0 and row_count % progress_every_rows == 0:
                     progress_log("Processed Norway Brreg entity update rows: rows=%s", row_count)
-                yield entity_records.updated_entity_record(update, entity=entity)
+                yield entity_records.updated_entity_record(
+                    update,
+                    entity=entity,
+                    change_type_override=change_type_override,
+                )
 
             if not entity_records.update_payload_has_next_page(
                 payload, current_page=page_number
@@ -444,6 +461,11 @@ def _raise_for_status(response: Any) -> None:
     status_code = getattr(response, "status_code", 200)
     if status_code >= 400:
         raise RuntimeError(f"HTTP {status_code}")
+
+
+def _exception_has_http_status(exc: Exception, status_code: int) -> bool:
+    response = getattr(exc, "response", None)
+    return getattr(response, "status_code", None) == status_code
 
 
 def _stream_gzip_json_array(body: bytes) -> Iterator[dict[str, Any]]:
