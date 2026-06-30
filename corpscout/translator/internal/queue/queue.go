@@ -8,14 +8,11 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/pulsarpoint/corpscout/translator/internal/translation"
-
 	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
 type Queue struct {
 	db          *sql.DB
-	translator  translation.Translator
 	closeOnDone bool
 }
 
@@ -36,12 +33,14 @@ type TranslatedItem struct {
 	Model          string
 }
 
-func Init(path string, translator translation.Translator) (*Queue, error) {
+type FailedItem struct {
+	Item
+	ErrorMessage string
+}
+
+func Init(path string) (*Queue, error) {
 	if path == "" {
 		return nil, errors.New("queue duckdb path is required")
-	}
-	if translator == nil {
-		return nil, errors.New("translator is required")
 	}
 
 	info, err := os.Stat(path)
@@ -59,7 +58,7 @@ func Init(path string, translator translation.Translator) (*Queue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open queue duckdb: %w", err)
 	}
-	q, err := New(db, translator)
+	q, err := New(db)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
@@ -68,15 +67,12 @@ func Init(path string, translator translation.Translator) (*Queue, error) {
 	return q, nil
 }
 
-func New(db *sql.DB, translator translation.Translator) (*Queue, error) {
+func New(db *sql.DB) (*Queue, error) {
 	if db == nil {
 		return nil, errors.New("queue duckdb connection is required")
 	}
-	if translator == nil {
-		return nil, errors.New("translator is required")
-	}
 
-	q := &Queue{db: db, translator: translator}
+	q := &Queue{db: db}
 	if err := q.validateSchema(context.Background()); err != nil {
 		return nil, err
 	}
@@ -112,6 +108,15 @@ func (q *Queue) GetBatch(ctx context.Context, limit int) ([]Item, error) {
 				and o.source_text_hash = i.source_text_hash
 				and o.source_lang = i.source_lang
 				and o.target_lang = i.target_lang
+		)
+			and not exists (
+			select 1
+			from failed_items as f
+			where f.source_table = i.source_table
+				and f.source_column = i.source_column
+				and f.source_text_hash = i.source_text_hash
+				and f.source_lang = i.source_lang
+				and f.target_lang = i.target_lang
 		)
 		order by
 			i.source_table,
@@ -224,80 +229,67 @@ func (q *Queue) SaveBatch(ctx context.Context, rows []TranslatedItem) error {
 	return nil
 }
 
-func (q *Queue) ProcessBatch(
-	ctx context.Context,
-	limit int,
-	timeoutSeconds int,
-	provider string,
-	model string,
-) (int, error) {
-	if provider == "" {
-		return 0, errors.New("provider is required")
-	}
-	if model == "" {
-		return 0, errors.New("model is required")
+func (q *Queue) SaveFailed(ctx context.Context, rows []FailedItem) error {
+	if len(rows) == 0 {
+		return nil
 	}
 
-	items, err := q.GetBatch(ctx, limit)
+	tx, err := q.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("begin failed save: %w", err)
 	}
-	if len(items) == 0 {
-		return 0, nil
-	}
+	defer rollback(tx)
 
-	inputs := make([]translation.TranslationInput, 0, len(items))
-	expectedItemIDs := make(map[string]bool, len(items))
-	for _, item := range items {
-		inputs = append(inputs, translation.TranslationInput{
-			ItemID:     item.ItemID,
-			SourceText: item.SourceText,
-			SourceLang: item.SourceLang,
-			TargetLang: item.TargetLang,
-		})
-		expectedItemIDs[item.ItemID] = true
-	}
-
-	results, err := q.translator.Translate(ctx, inputs, timeoutSeconds)
+	stmt, err := tx.PrepareContext(ctx, `
+		insert into failed_items (
+			source_table,
+			source_column,
+			source_text,
+			source_text_hash,
+			source_lang,
+			target_lang,
+			error_message,
+			failed_at
+		)
+		values (?, ?, ?, cast(? as ubigint), ?, ?, ?, current_timestamp)
+		on conflict (
+			source_table,
+			source_column,
+			source_text_hash,
+			source_lang,
+			target_lang
+		) do update set
+			source_text = excluded.source_text,
+			error_message = excluded.error_message,
+			failed_at = excluded.failed_at
+	`)
 	if err != nil {
-		return 0, fmt.Errorf("translate queue batch: %w", err)
+		return fmt.Errorf("prepare failed save: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, row := range rows {
+		if err := validateFailedItem(row); err != nil {
+			return err
+		}
+		if _, err := stmt.ExecContext(
+			ctx,
+			row.SourceTable,
+			row.SourceColumn,
+			row.SourceText,
+			strconv.FormatUint(row.SourceTextHash, 10),
+			row.SourceLang,
+			row.TargetLang,
+			row.ErrorMessage,
+		); err != nil {
+			return fmt.Errorf("save failed item: %w", err)
+		}
 	}
 
-	resultsByID := make(map[string]string, len(results))
-	for _, result := range results {
-		if result.ItemID == "" {
-			return 0, errors.New("translation result item_id is required")
-		}
-		if !expectedItemIDs[result.ItemID] {
-			return 0, fmt.Errorf("unexpected translation result item_id: %s", result.ItemID)
-		}
-		if result.TranslatedText == "" {
-			return 0, fmt.Errorf("translation result for %s has empty translated text", result.ItemID)
-		}
-		if _, exists := resultsByID[result.ItemID]; exists {
-			return 0, fmt.Errorf("translation result for %s is duplicated", result.ItemID)
-		}
-		resultsByID[result.ItemID] = result.TranslatedText
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit failed save: %w", err)
 	}
-
-	output := make([]TranslatedItem, 0, len(items))
-	for _, item := range items {
-		translatedText, ok := resultsByID[item.ItemID]
-		if !ok {
-			return 0, fmt.Errorf("translation result for %s is missing", item.ItemID)
-		}
-		output = append(output, TranslatedItem{
-			Item:           item,
-			TranslatedText: translatedText,
-			Provider:       provider,
-			Model:          model,
-		})
-	}
-
-	if err := q.SaveBatch(ctx, output); err != nil {
-		return 0, err
-	}
-	return len(output), nil
+	return nil
 }
 
 func (q *Queue) validateSchema(ctx context.Context) error {
@@ -330,6 +322,19 @@ func (q *Queue) validateSchema(ctx context.Context) error {
 				"provider",
 				"model",
 				"completed_at",
+			},
+		},
+		{
+			table: "failed_items",
+			columns: []string{
+				"source_table",
+				"source_column",
+				"source_text",
+				"source_text_hash",
+				"source_lang",
+				"target_lang",
+				"error_message",
+				"failed_at",
 			},
 		},
 	}
@@ -394,6 +399,25 @@ func validateTranslatedItem(row TranslatedItem) error {
 		return errors.New("provider is required")
 	case row.Model == "":
 		return errors.New("model is required")
+	default:
+		return nil
+	}
+}
+
+func validateFailedItem(row FailedItem) error {
+	switch {
+	case row.SourceTable == "":
+		return errors.New("source_table is required")
+	case row.SourceColumn == "":
+		return errors.New("source_column is required")
+	case row.SourceText == "":
+		return errors.New("source_text is required")
+	case row.SourceLang == "":
+		return errors.New("source_lang is required")
+	case row.TargetLang == "":
+		return errors.New("target_lang is required")
+	case row.ErrorMessage == "":
+		return errors.New("error_message is required")
 	default:
 		return nil
 	}

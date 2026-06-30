@@ -14,7 +14,7 @@
     "namespace": "default",
     "batch_size": 50,
     "timeout_seconds": 120,
-    "max_batches_per_run": 500
+    "batches_per_run": 500
   },
   "endpoints": {
     "local_llm": {

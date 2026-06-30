@@ -38,13 +38,10 @@ func TestNorwayBRREGWorkflowProcessSignalRunsBatchesUntilEmptyThenUploads(t *tes
 
 	processInput := ProcessInput{BatchSize: 3, TimeoutSeconds: 30}
 	env.OnActivity(ActivityProcessOneBatch, mock.Anything, processInput).
-		Return(ProcessResult{TranslatedCount: 3}, nil).
+		Return(ProcessResult{TranslatedCount: 3, PendingCount: 2, OutputCount: 3}, nil).
 		Once()
 	env.OnActivity(ActivityProcessOneBatch, mock.Anything, processInput).
-		Return(ProcessResult{TranslatedCount: 2}, nil).
-		Once()
-	env.OnActivity(ActivityProcessOneBatch, mock.Anything, processInput).
-		Return(ProcessResult{TranslatedCount: 0}, nil).
+		Return(ProcessResult{TranslatedCount: 2, PendingCount: 0, OutputCount: 5}, nil).
 		Once()
 	env.OnActivity(ActivityUploadOutput, mock.Anything).
 		Return(UploadResult{RowsInserted: 5}, nil).
@@ -71,10 +68,7 @@ func TestNorwayBRREGWorkflowLoadAndRunSignalLoadsBeforeProcessing(t *testing.T) 
 		Return(InitResult{RowsInserted: 7}, nil).
 		Once()
 	env.OnActivity(ActivityProcessOneBatch, mock.Anything, processInput).
-		Return(ProcessResult{TranslatedCount: 3}, nil).
-		Once()
-	env.OnActivity(ActivityProcessOneBatch, mock.Anything, processInput).
-		Return(ProcessResult{TranslatedCount: 0}, nil).
+		Return(ProcessResult{TranslatedCount: 3, PendingCount: 0, OutputCount: 3}, nil).
 		Once()
 	env.OnActivity(ActivityUploadOutput, mock.Anything).
 		Return(UploadResult{RowsInserted: 3}, nil).
@@ -98,19 +92,19 @@ func TestNorwayBRREGWorkflowContinuesAsNewAfterBatchLimit(t *testing.T) {
 
 	processInput := ProcessInput{BatchSize: 3, TimeoutSeconds: 30}
 	env.OnActivity(ActivityProcessOneBatch, mock.Anything, processInput).
-		Return(ProcessResult{TranslatedCount: 3}, nil).
+		Return(ProcessResult{TranslatedCount: 3, PendingCount: 9, OutputCount: 3}, nil).
 		Once()
 	env.OnActivity(ActivityProcessOneBatch, mock.Anything, processInput).
-		Return(ProcessResult{TranslatedCount: 3}, nil).
+		Return(ProcessResult{TranslatedCount: 3, PendingCount: 6, OutputCount: 6}, nil).
 		Once()
 	env.RegisterDelayedCallback(func() {
 		env.SignalWorkflow(SignalSourceAction, SourceActionSignal{Action: ActionRun})
 	}, time.Millisecond)
 
 	env.ExecuteWorkflow(NorwayBRREGWorkflow, WorkflowInput{
-		BatchSize:        3,
-		TimeoutSeconds:   30,
-		MaxBatchesPerRun: 2,
+		BatchSize:      3,
+		TimeoutSeconds: 30,
+		BatchesPerRun:  2,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -128,17 +122,14 @@ func TestNorwayBRREGWorkflowContinuedRunProcessesWithoutSignal(t *testing.T) {
 
 	processInput := ProcessInput{BatchSize: 3, TimeoutSeconds: 30}
 	env.OnActivity(ActivityProcessOneBatch, mock.Anything, processInput).
-		Return(ProcessResult{TranslatedCount: 0}, nil).
-		Once()
-	env.OnActivity(ActivityUploadOutput, mock.Anything).
-		Return(UploadResult{RowsInserted: 0}, nil).
+		Return(ProcessResult{TranslatedCount: 0, PendingCount: 0, OutputCount: 0}, nil).
 		Once()
 
 	env.ExecuteWorkflow(NorwayBRREGWorkflow, WorkflowInput{
-		BatchSize:        3,
-		TimeoutSeconds:   30,
-		MaxBatchesPerRun: 2,
-		ResumeAction:     ActionRun,
+		BatchSize:      3,
+		TimeoutSeconds: 30,
+		BatchesPerRun:  2,
+		ResumeAction:   ActionRun,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())

@@ -74,9 +74,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := brregRuntime.Close(shutdownCtx); err != nil {
+		if err := brregRuntime.Close(); err != nil {
 			logger.Error("failed to close brreg runtime", "err", err)
 		}
 	}()
@@ -107,7 +105,7 @@ func main() {
 		brreg.TaskQueue,
 		cfg.Temporal.BatchSize,
 		cfg.Temporal.TimeoutSeconds,
-		cfg.Temporal.MaxBatchesPerRun,
+		cfg.Temporal.BatchesPerRun,
 	)
 
 	server := &http.Server{
@@ -127,7 +125,7 @@ func main() {
 		"config_path", configPath,
 		"temporal_address", cfg.Temporal.Address,
 		"temporal_namespace", cfg.Temporal.Namespace,
-		"max_batches_per_run", cfg.Temporal.MaxBatchesPerRun,
+		"batches_per_run", cfg.Temporal.BatchesPerRun,
 		"brreg_temporal_task_queue", brreg.TaskQueue,
 		"brreg_queue_path", sourceConfig.QueuePath,
 		"sources", len(cfg.Sources),

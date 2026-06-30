@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -108,7 +109,7 @@ func Init(config Config) (*LocalOpenAICompatibleProvider, error) {
 	}, nil
 }
 
-func (p *LocalOpenAICompatibleProvider) renderPrompt(items []TranslationInput) (string, error) {
+func (p *LocalOpenAICompatibleProvider) renderPrompt(items []TranslationInput) (string, map[string]string, error) {
 	payload := struct {
 		Items []struct {
 			ItemID     string `json:"item_id"`
@@ -125,14 +126,17 @@ func (p *LocalOpenAICompatibleProvider) renderPrompt(items []TranslationInput) (
 		}, 0, len(items)),
 	}
 
-	for _, item := range items {
+	promptIDToItemID := make(map[string]string, len(items))
+	for index, item := range items {
+		promptID := strconv.Itoa(index + 1)
+		promptIDToItemID[promptID] = item.ItemID
 		payload.Items = append(payload.Items, struct {
 			ItemID     string `json:"item_id"`
 			SourceText string `json:"source_text"`
 			SourceLang string `json:"source_lang"`
 			TargetLang string `json:"target_lang"`
 		}{
-			ItemID:     item.ItemID,
+			ItemID:     promptID,
 			SourceText: item.SourceText,
 			SourceLang: item.SourceLang,
 			TargetLang: item.TargetLang,
@@ -141,7 +145,7 @@ func (p *LocalOpenAICompatibleProvider) renderPrompt(items []TranslationInput) (
 
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("marshal translation prompt payload: %w", err)
+		return "", nil, fmt.Errorf("marshal translation prompt payload: %w", err)
 	}
 
 	promptData := promptRenderData{
@@ -152,25 +156,25 @@ func (p *LocalOpenAICompatibleProvider) renderPrompt(items []TranslationInput) (
 
 	var prompt bytes.Buffer
 	if err := p.promptTemplate.Execute(&prompt, promptData); err != nil {
-		return "", fmt.Errorf("execute prompt template: %w", err)
+		return "", nil, fmt.Errorf("execute prompt template: %w", err)
 	}
-	return prompt.String(), nil
+	return prompt.String(), promptIDToItemID, nil
 }
 
 func ParseTranslationResponse(responseText string, expectedItemIDs map[string]bool) ([]TranslationResult, error) {
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(stripJSONFence(responseText)), &payload); err != nil {
-		return nil, fmt.Errorf("parse translation response JSON: %w", err)
+		return nil, fmt.Errorf("%w: parse translation response JSON: %v", ErrModelOutput, err)
 	}
 
 	rawTranslations, ok := payload["translations"]
 	if !ok {
-		return nil, errors.New("translation response must contain translations list")
+		return nil, fmt.Errorf("%w: translation response must contain translations list", ErrModelOutput)
 	}
 
 	var rows []map[string]any
 	if err := json.Unmarshal(rawTranslations, &rows); err != nil {
-		return nil, errors.New("translation response must contain translations list")
+		return nil, fmt.Errorf("%w: translation response must contain translations list", ErrModelOutput)
 	}
 
 	results := make([]TranslationResult, 0, len(rows))
@@ -178,16 +182,16 @@ func ParseTranslationResponse(responseText string, expectedItemIDs map[string]bo
 	for _, row := range rows {
 		itemID, ok := row["item_id"].(string)
 		if !ok || !expectedItemIDs[itemID] {
-			return nil, fmt.Errorf("unexpected item_id: %v", row["item_id"])
+			return nil, fmt.Errorf("%w: unexpected item_id: %v", ErrModelOutput, row["item_id"])
 		}
 		if seen[itemID] {
-			return nil, fmt.Errorf("duplicate item_id: %s", itemID)
+			return nil, fmt.Errorf("%w: duplicate item_id: %s", ErrModelOutput, itemID)
 		}
 
 		translatedText, ok := row["translated_text"].(string)
 		translatedText = strings.TrimSpace(translatedText)
 		if !ok || translatedText == "" {
-			return nil, fmt.Errorf("empty translated_text for item_id: %s", itemID)
+			return nil, fmt.Errorf("%w: empty translated_text for item_id: %s", ErrModelOutput, itemID)
 		}
 
 		seen[itemID] = true
@@ -205,7 +209,7 @@ func ParseTranslationResponse(responseText string, expectedItemIDs map[string]bo
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		return nil, fmt.Errorf("missing item_id values: %v", missing)
+		return nil, fmt.Errorf("%w: missing item_id values: %v", ErrModelOutput, missing)
 	}
 
 	return results, nil
@@ -227,7 +231,7 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 		"max_tokens", p.maxTokens,
 	)
 
-	prompt, err := p.renderPrompt(items)
+	prompt, promptIDToItemID, err := p.renderPrompt(items)
 	if err != nil {
 		p.logger.Error(
 			"translation provider request failed",
@@ -327,7 +331,7 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 		return nil, fmt.Errorf("decode translation provider response: %w", err)
 	}
 	if len(providerResponse.Choices) == 0 || providerResponse.Choices[0].Message.Content == nil {
-		err := errors.New("translation response content is empty")
+		err := fmt.Errorf("%w: translation response content is empty", ErrModelOutput)
 		p.logger.Error(
 			"translation provider request failed",
 			"err", err,
@@ -338,11 +342,11 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 		return nil, err
 	}
 
-	expectedItemIDs := make(map[string]bool, len(items))
-	for _, item := range items {
-		expectedItemIDs[item.ItemID] = true
+	expectedPromptIDs := make(map[string]bool, len(promptIDToItemID))
+	for promptID := range promptIDToItemID {
+		expectedPromptIDs[promptID] = true
 	}
-	results, err := ParseTranslationResponse(*providerResponse.Choices[0].Message.Content, expectedItemIDs)
+	results, err := ParseTranslationResponse(*providerResponse.Choices[0].Message.Content, expectedPromptIDs)
 	if err != nil {
 		p.logger.Error(
 			"translation provider request failed",
@@ -352,6 +356,21 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 			"duration_ms", time.Since(start).Milliseconds(),
 		)
 		return nil, err
+	}
+	for index := range results {
+		itemID, ok := promptIDToItemID[results[index].ItemID]
+		if !ok {
+			err := fmt.Errorf("unexpected request-local item_id after validation: %s", results[index].ItemID)
+			p.logger.Error(
+				"translation provider request failed",
+				"err", err,
+				"status_code", resp.StatusCode,
+				"item_count", len(items),
+				"duration_ms", time.Since(start).Milliseconds(),
+			)
+			return nil, err
+		}
+		results[index].ItemID = itemID
 	}
 	p.logger.Info(
 		"translation provider request completed",

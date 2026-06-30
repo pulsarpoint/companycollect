@@ -26,11 +26,11 @@ type WorkflowActionResult struct {
 }
 
 type TemporalWorkflowStarter struct {
-	client           temporalSignalStarter
-	taskQueue        string
-	batchSize        int
-	timeoutSeconds   int
-	maxBatchesPerRun int
+	client         temporalSignalStarter
+	taskQueue      string
+	batchSize      int
+	timeoutSeconds int
+	batchesPerRun  int
 }
 
 func NewTemporalWorkflowStarter(
@@ -38,14 +38,14 @@ func NewTemporalWorkflowStarter(
 	taskQueue string,
 	batchSize int,
 	timeoutSeconds int,
-	maxBatchesPerRun int,
+	batchesPerRun int,
 ) *TemporalWorkflowStarter {
 	return &TemporalWorkflowStarter{
-		client:           temporalClient,
-		taskQueue:        taskQueue,
-		batchSize:        batchSize,
-		timeoutSeconds:   timeoutSeconds,
-		maxBatchesPerRun: maxBatchesPerRun,
+		client:         temporalClient,
+		taskQueue:      taskQueue,
+		batchSize:      batchSize,
+		timeoutSeconds: timeoutSeconds,
+		batchesPerRun:  batchesPerRun,
 	}
 }
 
@@ -80,9 +80,9 @@ func (s *TemporalWorkflowStarter) StartSourceAction(
 		},
 		brreg.NorwayBRREGWorkflow,
 		brreg.WorkflowInput{
-			BatchSize:        s.batchSize,
-			TimeoutSeconds:   s.timeoutSeconds,
-			MaxBatchesPerRun: s.maxBatchesPerRun,
+			BatchSize:      s.batchSize,
+			TimeoutSeconds: s.timeoutSeconds,
+			BatchesPerRun:  s.batchesPerRun,
 		},
 	)
 	if err != nil {

@@ -25,13 +25,13 @@ const (
 	ActivityUploadOutput    = "brreg.UploadOutput"
 )
 
-const DefaultMaxBatchesPerRun = 500
+const DefaultBatchesPerRun = 500
 
 type WorkflowInput struct {
-	BatchSize        int
-	TimeoutSeconds   int
-	MaxBatchesPerRun int
-	ResumeAction     string
+	BatchSize      int
+	TimeoutSeconds int
+	BatchesPerRun  int
+	ResumeAction   string
 }
 
 type SourceActionSignal struct {
@@ -45,8 +45,8 @@ func NorwayBRREGWorkflow(ctx workflow.Context, input WorkflowInput) error {
 	if input.TimeoutSeconds <= 0 {
 		input.TimeoutSeconds = 120
 	}
-	if input.MaxBatchesPerRun <= 0 {
-		input.MaxBatchesPerRun = DefaultMaxBatchesPerRun
+	if input.BatchesPerRun <= 0 {
+		input.BatchesPerRun = DefaultBatchesPerRun
 	}
 
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
@@ -63,24 +63,23 @@ func NorwayBRREGWorkflow(ctx workflow.Context, input WorkflowInput) error {
 			TimeoutSeconds: input.TimeoutSeconds,
 		}
 
-		batchesProcessed := 0
-		for {
+		for batch := 0; batch < input.BatchesPerRun; batch++ {
 			var processResult ProcessResult
 			if err := workflow.ExecuteActivity(ctx, ActivityProcessOneBatch, processInput).Get(ctx, &processResult); err != nil {
 				return err
 			}
-			if processResult.TranslatedCount == 0 {
+			if processResult.PendingCount == 0 {
+				if processResult.OutputCount == 0 {
+					return nil
+				}
 				var uploadResult UploadResult
 				return workflow.ExecuteActivity(ctx, ActivityUploadOutput).Get(ctx, &uploadResult)
 			}
-
-			batchesProcessed++
-			if batchesProcessed >= input.MaxBatchesPerRun {
-				nextInput := input
-				nextInput.ResumeAction = ActionRun
-				return workflow.NewContinueAsNewError(ctx, NorwayBRREGWorkflow, nextInput)
-			}
 		}
+
+		nextInput := input
+		nextInput.ResumeAction = ActionRun
+		return workflow.NewContinueAsNewError(ctx, NorwayBRREGWorkflow, nextInput)
 	}
 
 	signalChannel := workflow.GetSignalChannel(ctx, SignalSourceAction)

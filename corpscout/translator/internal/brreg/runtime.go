@@ -19,8 +19,16 @@ import (
 )
 
 type Runtime struct {
-	requests chan runtimeRequest
-	done     chan struct{}
+	queuePath    string
+	queueCreated bool
+	db           *sql.DB
+	queue        *queue.Queue
+	source       ClickHouseSource
+	translator   translation.Translator
+	providerName string
+	model        string
+	logger       *slog.Logger
+	closed       bool
 }
 
 type RuntimeConfig struct {
@@ -39,45 +47,13 @@ type ProcessInput struct {
 
 type ProcessResult struct {
 	TranslatedCount int
+	PendingCount    int
+	OutputCount     int
 }
 
 type UploadResult struct {
 	RowsSeen     int
 	RowsInserted int
-}
-
-type runtimeRequestKind int
-
-const (
-	runtimeRequestLoad runtimeRequestKind = iota
-	runtimeRequestProcess
-	runtimeRequestUpload
-	runtimeRequestClose
-)
-
-type runtimeRequest struct {
-	ctx     context.Context
-	kind    runtimeRequestKind
-	process ProcessInput
-	resp    chan runtimeResponse
-}
-
-type runtimeResponse struct {
-	load    InitResult
-	process ProcessResult
-	upload  UploadResult
-	err     error
-}
-
-type runtimeState struct {
-	queuePath    string
-	queueCreated bool
-	db           *sql.DB
-	queue        *queue.Queue
-	source       ClickHouseSource
-	providerName string
-	model        string
-	logger       *slog.Logger
 }
 
 func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
@@ -126,22 +102,19 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		return nil, err
 	}
 
-	q, err := queue.New(db, config.Translator)
+	q, err := queue.New(db)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 
 	runtime := &Runtime{
-		requests: make(chan runtimeRequest),
-		done:     make(chan struct{}),
-	}
-	state := runtimeState{
 		queuePath:    config.QueuePath,
 		queueCreated: created,
 		db:           db,
 		queue:        q,
 		source:       config.Source,
+		translator:   config.Translator,
 		providerName: config.ProviderName,
 		model:        config.Model,
 		logger:       logger,
@@ -152,99 +125,24 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		"provider", config.ProviderName,
 		"model", config.Model,
 	)
-	go runtime.run(state)
 
 	return runtime, nil
 }
 
 func (r *Runtime) LoadNewInput(ctx context.Context) (InitResult, error) {
-	resp, err := r.call(ctx, runtimeRequest{ctx: ctx, kind: runtimeRequestLoad})
-	if err != nil {
-		return InitResult{}, err
-	}
-	return resp.load, resp.err
-}
-
-func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (ProcessResult, error) {
-	resp, err := r.call(ctx, runtimeRequest{ctx: ctx, kind: runtimeRequestProcess, process: input})
-	if err != nil {
-		return ProcessResult{}, err
-	}
-	return resp.process, resp.err
-}
-
-func (r *Runtime) UploadOutput(ctx context.Context) (UploadResult, error) {
-	resp, err := r.call(ctx, runtimeRequest{ctx: ctx, kind: runtimeRequestUpload})
-	if err != nil {
-		return UploadResult{}, err
-	}
-	return resp.upload, resp.err
-}
-
-func (r *Runtime) Close(ctx context.Context) error {
-	resp, err := r.call(ctx, runtimeRequest{ctx: ctx, kind: runtimeRequestClose})
-	if err != nil {
-		return err
-	}
-	<-r.done
-	return resp.err
-}
-
-func (r *Runtime) call(ctx context.Context, request runtimeRequest) (runtimeResponse, error) {
-	request.resp = make(chan runtimeResponse, 1)
-
-	select {
-	case r.requests <- request:
-	case <-ctx.Done():
-		return runtimeResponse{}, ctx.Err()
-	case <-r.done:
-		return runtimeResponse{}, errors.New("brreg runtime is closed")
+	if r.closed {
+		return InitResult{}, errors.New("brreg runtime is closed")
 	}
 
-	select {
-	case resp := <-request.resp:
-		return resp, nil
-	case <-ctx.Done():
-		return runtimeResponse{}, ctx.Err()
-	case <-r.done:
-		return runtimeResponse{}, errors.New("brreg runtime is closed")
-	}
-}
-
-func (r *Runtime) run(state runtimeState) {
-	defer close(r.done)
-
-	for request := range r.requests {
-		switch request.kind {
-		case runtimeRequestLoad:
-			result, err := state.loadNewInput(request.ctx)
-			request.resp <- runtimeResponse{load: result, err: err}
-		case runtimeRequestProcess:
-			result, err := state.processOneBatch(request.ctx, request.process)
-			request.resp <- runtimeResponse{process: result, err: err}
-		case runtimeRequestUpload:
-			result, err := state.uploadOutput(request.ctx)
-			request.resp <- runtimeResponse{upload: result, err: err}
-		case runtimeRequestClose:
-			err := state.db.Close()
-			request.resp <- runtimeResponse{err: err}
-			return
-		default:
-			request.resp <- runtimeResponse{err: fmt.Errorf("unknown runtime request kind: %d", request.kind)}
-		}
-	}
-}
-
-func (s *runtimeState) loadNewInput(ctx context.Context) (InitResult, error) {
 	start := time.Now()
-	s.logger.Info("brreg load input started")
-	result, err := initializeTranslationWithDB(ctx, s.source, s.db, s.queuePath, s.queueCreated)
-	s.queueCreated = false
+	r.logger.Info("brreg load input started")
+	result, err := initializeTranslationWithDB(ctx, r.source, r.db, r.queuePath, r.queueCreated)
+	r.queueCreated = false
 	if err != nil {
-		s.logger.Error("brreg load input failed", "err", err, "duration_ms", elapsedMillis(start))
+		r.logger.Error("brreg load input failed", "err", err, "duration_ms", elapsedMillis(start))
 		return result, err
 	}
-	s.logger.Info(
+	r.logger.Info(
 		"brreg load input completed",
 		"rows_seen", result.RowsSeen,
 		"rows_inserted", result.RowsInserted,
@@ -256,24 +154,22 @@ func (s *runtimeState) loadNewInput(ctx context.Context) (InitResult, error) {
 	return result, err
 }
 
-func (s *runtimeState) processOneBatch(ctx context.Context, input ProcessInput) (ProcessResult, error) {
+func (r *Runtime) ProcessOneBatch(ctx context.Context, input ProcessInput) (ProcessResult, error) {
+	if r.closed {
+		return ProcessResult{}, errors.New("brreg runtime is closed")
+	}
+
 	start := time.Now()
-	s.logger.Info(
+	r.logger.Info(
 		"brreg process batch started",
 		"batch_size", input.BatchSize,
 		"timeout_seconds", input.TimeoutSeconds,
-		"provider", s.providerName,
-		"model", s.model,
+		"provider", r.providerName,
+		"model", r.model,
 	)
-	translatedCount, err := s.queue.ProcessBatch(
-		ctx,
-		input.BatchSize,
-		input.TimeoutSeconds,
-		s.providerName,
-		s.model,
-	)
+	items, err := r.queue.GetBatch(ctx, input.BatchSize)
 	if err != nil {
-		s.logger.Error(
+		r.logger.Error(
 			"brreg process batch failed",
 			"err", err,
 			"batch_size", input.BatchSize,
@@ -282,12 +178,55 @@ func (s *runtimeState) processOneBatch(ctx context.Context, input ProcessInput) 
 		)
 		return ProcessResult{}, err
 	}
-	counts, err := s.queueCounts(ctx)
+
+	translatedCount := 0
+	if len(items) > 0 {
+		output, failed, err := translation.TranslateItems(
+			ctx,
+			r.translator,
+			items,
+			input.TimeoutSeconds,
+			r.providerName,
+			r.model,
+		)
+		if err != nil {
+			r.logger.Error(
+				"brreg process batch failed",
+				"err", err,
+				"batch_size", input.BatchSize,
+				"timeout_seconds", input.TimeoutSeconds,
+				"duration_ms", elapsedMillis(start),
+			)
+			return ProcessResult{}, err
+		}
+		if err := r.queue.SaveBatch(ctx, output); err != nil {
+			r.logger.Error(
+				"brreg process batch failed",
+				"err", err,
+				"batch_size", input.BatchSize,
+				"timeout_seconds", input.TimeoutSeconds,
+				"duration_ms", elapsedMillis(start),
+			)
+			return ProcessResult{}, err
+		}
+		if err := r.queue.SaveFailed(ctx, failed); err != nil {
+			r.logger.Error(
+				"brreg process batch failed",
+				"err", err,
+				"batch_size", input.BatchSize,
+				"timeout_seconds", input.TimeoutSeconds,
+				"duration_ms", elapsedMillis(start),
+			)
+			return ProcessResult{}, err
+		}
+		translatedCount = len(output)
+	}
+	counts, err := r.queueCounts(ctx)
 	if err != nil {
-		s.logger.Error("brreg queue counts failed", "err", err, "duration_ms", elapsedMillis(start))
+		r.logger.Error("brreg queue counts failed", "err", err, "duration_ms", elapsedMillis(start))
 		return ProcessResult{}, err
 	}
-	s.logger.Info(
+	r.logger.Info(
 		"brreg process batch completed",
 		"translated_count", translatedCount,
 		"input_count", counts.input,
@@ -297,25 +236,33 @@ func (s *runtimeState) processOneBatch(ctx context.Context, input ProcessInput) 
 		"timeout_seconds", input.TimeoutSeconds,
 		"duration_ms", elapsedMillis(start),
 	)
-	return ProcessResult{TranslatedCount: translatedCount}, nil
+	return ProcessResult{
+		TranslatedCount: translatedCount,
+		PendingCount:    counts.pending,
+		OutputCount:     counts.output,
+	}, nil
 }
 
-func (s *runtimeState) uploadOutput(ctx context.Context) (UploadResult, error) {
+func (r *Runtime) UploadOutput(ctx context.Context) (UploadResult, error) {
+	if r.closed {
+		return UploadResult{}, errors.New("brreg runtime is closed")
+	}
+
 	start := time.Now()
-	s.logger.Info("brreg upload output started")
-	translations, err := s.outputTranslations(ctx)
+	r.logger.Info("brreg upload output started")
+	translations, err := r.outputTranslations(ctx)
 	if err != nil {
-		s.logger.Error("brreg upload output failed", "err", err, "duration_ms", elapsedMillis(start))
+		r.logger.Error("brreg upload output failed", "err", err, "duration_ms", elapsedMillis(start))
 		return UploadResult{}, err
 	}
 	if len(translations) == 0 {
-		s.logger.Info("brreg upload output completed", "rows_seen", 0, "rows_inserted", 0, "duration_ms", elapsedMillis(start))
+		r.logger.Info("brreg upload output completed", "rows_seen", 0, "rows_inserted", 0, "duration_ms", elapsedMillis(start))
 		return UploadResult{}, nil
 	}
 
-	inserted, err := s.source.InsertTextTranslations(ctx, translations)
+	inserted, err := r.source.InsertTextTranslations(ctx, translations)
 	if err != nil {
-		s.logger.Error(
+		r.logger.Error(
 			"brreg upload output failed",
 			"err", err,
 			"rows_seen", len(translations),
@@ -323,7 +270,7 @@ func (s *runtimeState) uploadOutput(ctx context.Context) (UploadResult, error) {
 		)
 		return UploadResult{RowsSeen: len(translations)}, err
 	}
-	s.logger.Info(
+	r.logger.Info(
 		"brreg upload output completed",
 		"rows_seen", len(translations),
 		"rows_inserted", inserted,
@@ -332,8 +279,16 @@ func (s *runtimeState) uploadOutput(ctx context.Context) (UploadResult, error) {
 	return UploadResult{RowsSeen: len(translations), RowsInserted: inserted}, nil
 }
 
-func (s *runtimeState) outputTranslations(ctx context.Context) ([]TextTranslation, error) {
-	rows, err := s.db.QueryContext(ctx, `
+func (r *Runtime) Close() error {
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+	return r.db.Close()
+}
+
+func (r *Runtime) outputTranslations(ctx context.Context) ([]TextTranslation, error) {
+	rows, err := r.db.QueryContext(ctx, `
 		select
 			source_table,
 			source_column,
@@ -390,15 +345,15 @@ type queueCounts struct {
 	pending int
 }
 
-func (s *runtimeState) queueCounts(ctx context.Context) (queueCounts, error) {
+func (r *Runtime) queueCounts(ctx context.Context) (queueCounts, error) {
 	var counts queueCounts
-	if err := s.db.QueryRowContext(ctx, "select count(*) from input_items").Scan(&counts.input); err != nil {
+	if err := r.db.QueryRowContext(ctx, "select count(*) from input_items").Scan(&counts.input); err != nil {
 		return queueCounts{}, fmt.Errorf("count input_items: %w", err)
 	}
-	if err := s.db.QueryRowContext(ctx, "select count(*) from output_items").Scan(&counts.output); err != nil {
+	if err := r.db.QueryRowContext(ctx, "select count(*) from output_items").Scan(&counts.output); err != nil {
 		return queueCounts{}, fmt.Errorf("count output_items: %w", err)
 	}
-	if err := s.db.QueryRowContext(ctx, `
+	if err := r.db.QueryRowContext(ctx, `
 		select count(*)
 		from input_items as i
 		where not exists (
@@ -409,6 +364,15 @@ func (s *runtimeState) queueCounts(ctx context.Context) (queueCounts, error) {
 				and o.source_text_hash = i.source_text_hash
 				and o.source_lang = i.source_lang
 				and o.target_lang = i.target_lang
+		)
+			and not exists (
+			select 1
+			from failed_items as f
+			where f.source_table = i.source_table
+				and f.source_column = i.source_column
+				and f.source_text_hash = i.source_text_hash
+				and f.source_lang = i.source_lang
+				and f.target_lang = i.target_lang
 		)
 	`).Scan(&counts.pending); err != nil {
 		return queueCounts{}, fmt.Errorf("count pending queue items: %w", err)

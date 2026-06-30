@@ -12,7 +12,7 @@ Environment overrides:
   TEMPORAL_CLI                     default: temporal
   TRANSLATOR_BATCH_SIZE            default: 50
   TRANSLATOR_TIMEOUT_SECONDS       default: 120
-  TRANSLATOR_MAX_BATCHES_PER_RUN   default: 500
+  TRANSLATOR_BATCHES_PER_RUN       default: 500
   BRREG_TRANSLATOR_WORKFLOW_ID     default: translator/norway_brreg
   BRREG_TRANSLATOR_TASK_QUEUE      default: translator-norway-brreg
   BRREG_TRANSLATOR_WORKFLOW_TYPE   default: NorwayBRREGWorkflow
@@ -49,7 +49,7 @@ task_queue="${BRREG_TRANSLATOR_TASK_QUEUE:-translator-norway-brreg}"
 workflow_type="${BRREG_TRANSLATOR_WORKFLOW_TYPE:-NorwayBRREGWorkflow}"
 batch_size="${TRANSLATOR_BATCH_SIZE:-50}"
 timeout_seconds="${TRANSLATOR_TIMEOUT_SECONDS:-120}"
-max_batches_per_run="${TRANSLATOR_MAX_BATCHES_PER_RUN:-500}"
+batches_per_run="${TRANSLATOR_BATCHES_PER_RUN:-500}"
 signal_name="source-action"
 
 if [[ ! "$batch_size" =~ ^[1-9][0-9]*$ ]]; then
@@ -62,12 +62,12 @@ if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
 	exit 2
 fi
 
-if [[ ! "$max_batches_per_run" =~ ^[1-9][0-9]*$ ]]; then
-	echo "TRANSLATOR_MAX_BATCHES_PER_RUN must be a positive integer, got: $max_batches_per_run" >&2
+if [[ ! "$batches_per_run" =~ ^[1-9][0-9]*$ ]]; then
+	echo "TRANSLATOR_BATCHES_PER_RUN must be a positive integer, got: $batches_per_run" >&2
 	exit 2
 fi
 
-workflow_input="{\"BatchSize\":$batch_size,\"TimeoutSeconds\":$timeout_seconds,\"MaxBatchesPerRun\":$max_batches_per_run}"
+workflow_input="{\"BatchSize\":$batch_size,\"TimeoutSeconds\":$timeout_seconds,\"BatchesPerRun\":$batches_per_run}"
 signal_input="{\"Action\":\"$action\"}"
 
 exec "$temporal_cli" workflow signal-with-start \

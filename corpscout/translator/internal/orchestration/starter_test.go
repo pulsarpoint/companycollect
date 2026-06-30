@@ -40,7 +40,7 @@ func TestTemporalWorkflowStarterSignalsNorwayBRREGWorkflow(t *testing.T) {
 	if len(temporalClient.workflowArgs) != 1 {
 		t.Fatalf("SignalWithStartWorkflow() workflow arg count = %d, want 1", len(temporalClient.workflowArgs))
 	}
-	if temporalClient.workflowArgs[0] != (brreg.WorkflowInput{BatchSize: 25, TimeoutSeconds: 90, MaxBatchesPerRun: 400}) {
+	if temporalClient.workflowArgs[0] != (brreg.WorkflowInput{BatchSize: 25, TimeoutSeconds: 90, BatchesPerRun: 400}) {
 		t.Fatalf("SignalWithStartWorkflow() workflow input = %#v, want configured input", temporalClient.workflowArgs[0])
 	}
 }

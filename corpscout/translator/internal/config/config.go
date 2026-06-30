@@ -40,11 +40,11 @@ type ClickHouseConfig struct {
 }
 
 type TemporalConfig struct {
-	Address          string `json:"address"`
-	Namespace        string `json:"namespace"`
-	BatchSize        int    `json:"batch_size"`
-	TimeoutSeconds   int    `json:"timeout_seconds"`
-	MaxBatchesPerRun int    `json:"max_batches_per_run"`
+	Address        string `json:"address"`
+	Namespace      string `json:"namespace"`
+	BatchSize      int    `json:"batch_size"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	BatchesPerRun  int    `json:"batches_per_run"`
 }
 
 type EndpointConfig struct {
@@ -117,8 +117,8 @@ func applyDefaults(cfg *Config) {
 	if cfg.Temporal.TimeoutSeconds <= 0 {
 		cfg.Temporal.TimeoutSeconds = 120
 	}
-	if cfg.Temporal.MaxBatchesPerRun <= 0 {
-		cfg.Temporal.MaxBatchesPerRun = 500
+	if cfg.Temporal.BatchesPerRun <= 0 {
+		cfg.Temporal.BatchesPerRun = 500
 	}
 	if cfg.ClickHouse.Host == "" {
 		cfg.ClickHouse.Host = "localhost"
@@ -150,10 +150,10 @@ func applyEnvironment(cfg *Config) {
 	if temporalAddress := os.Getenv("TEMPORAL_ADDRESS"); temporalAddress != "" {
 		cfg.Temporal.Address = temporalAddress
 	}
-	if maxBatches := os.Getenv("TRANSLATOR_MAX_BATCHES_PER_RUN"); maxBatches != "" {
-		value, err := strconv.Atoi(maxBatches)
+	if batchesPerRun := os.Getenv("TRANSLATOR_BATCHES_PER_RUN"); batchesPerRun != "" {
+		value, err := strconv.Atoi(batchesPerRun)
 		if err == nil && value > 0 {
-			cfg.Temporal.MaxBatchesPerRun = value
+			cfg.Temporal.BatchesPerRun = value
 		}
 	}
 

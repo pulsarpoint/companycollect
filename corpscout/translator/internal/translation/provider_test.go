@@ -24,7 +24,7 @@ func TestInitRendersPackagePromptTemplateWithConfiguredLanguages(t *testing.T) {
 			"choices": [
 				{
 					"message": {
-						"content": "{\"translations\":[{\"item_id\":\"item-1\",\"translated_text\":\"Holding company\"}]}"
+						"content": "{\"translations\":[{\"item_id\":\"1\",\"translated_text\":\"Holding company\"}]}"
 					}
 				}
 			]
@@ -74,7 +74,7 @@ func TestInitRendersPackagePromptTemplateWithConfiguredLanguages(t *testing.T) {
 
 	required := []string{
 		"Translate each Danish text fragment to English.",
-		`"item_id":"item-1"`,
+		`"item_id":"1"`,
 		`"source_text":"Holdingselskab"`,
 		`"source_lang":"da"`,
 		`"target_lang":"en"`,
@@ -86,6 +86,9 @@ func TestInitRendersPackagePromptTemplateWithConfiguredLanguages(t *testing.T) {
 	}
 	if strings.Contains(content, "Norwegian") {
 		t.Fatalf("central translation provider must not hardcode Norwegian:\n%s", content)
+	}
+	if strings.Contains(content, "item-1") {
+		t.Fatalf("prompt must not expose canonical item id:\n%s", content)
 	}
 }
 
@@ -103,6 +106,68 @@ func TestInitRequiresPromptLanguages(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "source_language") {
 		t.Fatalf("expected source language error, got %v", err)
+	}
+}
+
+func TestLocalOpenAICompatibleProviderMapsRequestLocalItemIDsToCanonicalItemIDs(t *testing.T) {
+	const canonicalItemID = "corpscout.no_companies|activity_text_original|10012706760871717925|no|en"
+
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [
+				{
+					"message": {
+						"content": "{\"translations\":[{\"item_id\":\"1\",\"translated_text\":\"Business consulting\"}]}"
+					}
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	provider, err := translation.Init(translation.Config{
+		BaseURL: server.URL + "/v1",
+		Model:   "qwen3:6b",
+		APIKey:  "test-key",
+		PromptData: translation.PromptData{
+			SourceLanguage: "Norwegian",
+			TargetLanguage: "English",
+		},
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+
+	results, err := provider.Translate(context.Background(), []translation.TranslationInput{
+		{
+			ItemID:     canonicalItemID,
+			SourceText: "Bedriftsradgivning",
+			SourceLang: "no",
+			TargetLang: "en",
+		},
+	}, 30)
+	if err != nil {
+		t.Fatalf("Translate(canonical item id) error = %v, want nil", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Translate(canonical item id) result count = %d, want 1", len(results))
+	}
+	if results[0].ItemID != canonicalItemID {
+		t.Fatalf("Translate(canonical item id) item id = %q, want %q", results[0].ItemID, canonicalItemID)
+	}
+
+	content := requestPromptContent(t, requestBody)
+	if strings.Contains(content, canonicalItemID) {
+		t.Fatalf("prompt leaked canonical item id %q\nprompt:\n%s", canonicalItemID, content)
+	}
+	if !strings.Contains(content, `"item_id":"1"`) {
+		t.Fatalf("prompt did not contain request-local item id\nprompt:\n%s", content)
 	}
 }
 
@@ -151,7 +216,7 @@ func TestLocalOpenAICompatibleProviderSendsRequestAndParsesResponse(t *testing.T
 			"choices": [
 				{
 					"message": {
-						"content": "{\"translations\":[{\"item_id\":\"item-1\",\"translated_text\":\"Holding company\"}]}"
+						"content": "{\"translations\":[{\"item_id\":\"1\",\"translated_text\":\"Holding company\"}]}"
 					}
 				}
 			]
@@ -218,7 +283,7 @@ func TestLocalOpenAICompatibleProviderLogsRequestMetadataWithoutSecretsOrSourceT
 			"choices": [
 				{
 					"message": {
-						"content": "{\"translations\":[{\"item_id\":\"item-1\",\"translated_text\":\"Holding company\"}]}"
+						"content": "{\"translations\":[{\"item_id\":\"1\",\"translated_text\":\"Holding company\"}]}"
 					}
 				}
 			]
@@ -266,4 +331,22 @@ func TestLocalOpenAICompatibleProviderLogsRequestMetadataWithoutSecretsOrSourceT
 			t.Fatalf("provider logs leaked %q\nlogs:\n%s", forbidden, logText)
 		}
 	}
+}
+
+func requestPromptContent(t *testing.T, requestBody map[string]any) string {
+	t.Helper()
+
+	messages, ok := requestBody["messages"].([]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected one user message, got %#v", requestBody["messages"])
+	}
+	message, ok := messages[0].(map[string]any)
+	if !ok || message["role"] != "user" {
+		t.Fatalf("expected user message, got %#v", messages[0])
+	}
+	content, ok := message["content"].(string)
+	if !ok {
+		t.Fatalf("expected string prompt content, got %#v", message["content"])
+	}
+	return content
 }

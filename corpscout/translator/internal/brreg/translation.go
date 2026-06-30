@@ -332,6 +332,28 @@ func createQueueTables(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("create output_items: %w", err)
 	}
 
+	if _, err := db.ExecContext(ctx, `
+		create table if not exists failed_items (
+			source_table text not null,
+			source_column text not null,
+			source_text text not null,
+			source_text_hash ubigint not null,
+			source_lang text not null,
+			target_lang text not null,
+			error_message text not null,
+			failed_at timestamp not null,
+			primary key (
+				source_table,
+				source_column,
+				source_text_hash,
+				source_lang,
+				target_lang
+			)
+		)
+	`); err != nil {
+		return fmt.Errorf("create failed_items: %w", err)
+	}
+
 	return nil
 }
 

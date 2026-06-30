@@ -93,7 +93,7 @@ func newTemporalStarter(_ context.Context, cfg config.Config) (sourceActionStart
 			brreg.TaskQueue,
 			cfg.Temporal.BatchSize,
 			cfg.Temporal.TimeoutSeconds,
-			cfg.Temporal.MaxBatchesPerRun,
+			cfg.Temporal.BatchesPerRun,
 		),
 		temporalClient.Close,
 		nil

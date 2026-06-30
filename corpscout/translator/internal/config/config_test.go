@@ -85,21 +85,21 @@ func TestLoadAppliesTemporalDefaults(t *testing.T) {
 	if cfg.Temporal.TimeoutSeconds != 120 {
 		t.Fatalf("unexpected Temporal timeout seconds: %d", cfg.Temporal.TimeoutSeconds)
 	}
-	if cfg.Temporal.MaxBatchesPerRun != 500 {
-		t.Fatalf("unexpected Temporal max batches per run: %d", cfg.Temporal.MaxBatchesPerRun)
+	if cfg.Temporal.BatchesPerRun != 500 {
+		t.Fatalf("unexpected Temporal batches per run: %d", cfg.Temporal.BatchesPerRun)
 	}
 }
 
 func TestLoadAppliesTemporalEnv(t *testing.T) {
 	t.Setenv("TEMPORAL_ADDRESS", "temporal.test:7233")
-	t.Setenv("TRANSLATOR_MAX_BATCHES_PER_RUN", "17")
+	t.Setenv("TRANSLATOR_BATCHES_PER_RUN", "17")
 
 	path := filepath.Join(t.TempDir(), "translator.json")
 	if err := os.WriteFile(path, []byte(`{
-  "temporal": {
+    "temporal": {
     "batch_size": 13,
     "timeout_seconds": 44,
-    "max_batches_per_run": 22
+    "batches_per_run": 22
   }
 }`), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -119,7 +119,7 @@ func TestLoadAppliesTemporalEnv(t *testing.T) {
 	if cfg.Temporal.TimeoutSeconds != 44 {
 		t.Fatalf("unexpected Temporal timeout seconds: %d", cfg.Temporal.TimeoutSeconds)
 	}
-	if cfg.Temporal.MaxBatchesPerRun != 17 {
-		t.Fatalf("unexpected Temporal max batches per run: %d", cfg.Temporal.MaxBatchesPerRun)
+	if cfg.Temporal.BatchesPerRun != 17 {
+		t.Fatalf("unexpected Temporal batches per run: %d", cfg.Temporal.BatchesPerRun)
 	}
 }

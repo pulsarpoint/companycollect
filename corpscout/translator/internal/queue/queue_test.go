@@ -10,14 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pulsarpoint/corpscout/translator/internal/queue"
-	"github.com/pulsarpoint/corpscout/translator/internal/translation"
-
 	_ "github.com/marcboeker/go-duckdb/v2"
+	"github.com/pulsarpoint/corpscout/translator/internal/queue"
 )
 
 func TestInitFailsWhenQueueFileIsMissing(t *testing.T) {
-	_, err := queue.Init(filepath.Join(t.TempDir(), "missing.duckdb"), &fakeTranslator{})
+	_, err := queue.Init(filepath.Join(t.TempDir(), "missing.duckdb"))
 	if err == nil {
 		t.Fatal("expected missing queue file to fail")
 	}
@@ -39,7 +37,7 @@ func TestInitFailsWhenQueueFileDoesNotHaveQueueTables(t *testing.T) {
 		t.Fatalf("close fixture duckdb: %v", err)
 	}
 
-	_, err = queue.Init(path, &fakeTranslator{})
+	_, err = queue.Init(path)
 	if err == nil {
 		t.Fatal("expected invalid queue schema to fail")
 	}
@@ -56,7 +54,7 @@ func TestNewUsesExistingDuckDBConnectionWithoutClosingIt(t *testing.T) {
 	}
 	defer db.Close()
 
-	q, err := queue.New(db, &fakeTranslator{})
+	q, err := queue.New(db)
 	if err != nil {
 		t.Fatalf("new queue: %v", err)
 	}
@@ -73,7 +71,7 @@ func TestNewUsesExistingDuckDBConnectionWithoutClosingIt(t *testing.T) {
 	}
 }
 
-func TestQueueGetsSavesAndProcessesOnlyUntranslatedRows(t *testing.T) {
+func TestQueueGetsAndSavesOnlyUntranslatedRows(t *testing.T) {
 	ctx := context.Background()
 	path := createQueueFixture(t, 100)
 	pretranslated := map[uint64]bool{
@@ -85,8 +83,7 @@ func TestQueueGetsSavesAndProcessesOnlyUntranslatedRows(t *testing.T) {
 	insertOutput(t, path, inputFixtureRow(25), "already translated 25", "fixture-provider", "fixture-model")
 	insertOutput(t, path, inputFixtureRow(99), "already translated 99", "fixture-provider", "fixture-model")
 
-	translator := &fakeTranslator{}
-	q, err := queue.Init(path, translator)
+	q, err := queue.Init(path)
 	if err != nil {
 		t.Fatalf("init queue: %v", err)
 	}
@@ -105,45 +102,31 @@ func TestQueueGetsSavesAndProcessesOnlyUntranslatedRows(t *testing.T) {
 		}
 	}
 
-	totalProcessed := 0
-	for {
-		processed, err := q.ProcessBatch(ctx, 17, 45, "local", "qwen3:6b")
-		if err != nil {
-			t.Fatalf("process batch: %v", err)
-		}
-		if processed == 0 {
-			break
-		}
-		totalProcessed += processed
+	output := make([]queue.TranslatedItem, 0, len(firstBatch))
+	for _, item := range firstBatch {
+		output = append(output, queue.TranslatedItem{
+			Item:           item,
+			TranslatedText: "translated " + item.SourceText,
+			Provider:       "local",
+			Model:          "qwen3:6b",
+		})
 	}
-
-	if totalProcessed != 97 {
-		t.Fatalf("expected to process 97 untranslated rows, got %d", totalProcessed)
-	}
-	if translator.timeoutSeconds != 45 {
-		t.Fatalf("expected translator timeout 45, got %d", translator.timeoutSeconds)
-	}
-	if translator.itemsSeen != 97 {
-		t.Fatalf("expected translator to receive 97 rows, got %d", translator.itemsSeen)
-	}
-	for _, item := range translator.items {
-		if item.SourceLang != "no" || item.TargetLang != "en" {
-			t.Fatalf("expected translator input language no->en, got %s->%s", item.SourceLang, item.TargetLang)
-		}
+	if err := q.SaveBatch(ctx, output); err != nil {
+		t.Fatalf("save batch: %v", err)
 	}
 
 	remaining, err := q.GetBatch(ctx, 10)
 	if err != nil {
 		t.Fatalf("get remaining batch: %v", err)
 	}
-	if len(remaining) != 0 {
-		t.Fatalf("expected empty queue after processing, got %d rows", len(remaining))
+	if len(remaining) != 10 {
+		t.Fatalf("expected next batch of 10 untranslated rows, got %d", len(remaining))
 	}
 
-	if got := outputCount(t, path); got != 100 {
-		t.Fatalf("expected 100 output rows after processing, got %d", got)
+	if got := outputCount(t, path); got != 13 {
+		t.Fatalf("expected 13 output rows after save, got %d", got)
 	}
-	assertOutputRow(t, path, inputFixtureRow(42), "translated Norwegian text 042", "local", "qwen3:6b")
+	assertOutputRow(t, path, firstBatch[0], "translated "+firstBatch[0].SourceText, "local", "qwen3:6b")
 }
 
 func TestQueueHandlesUnsignedCityHashValues(t *testing.T) {
@@ -159,7 +142,7 @@ func TestQueueHandlesUnsignedCityHashValues(t *testing.T) {
 	}
 	insertInput(t, path, row)
 
-	q, err := queue.Init(path, &fakeTranslator{})
+	q, err := queue.Init(path)
 	if err != nil {
 		t.Fatalf("init queue: %v", err)
 	}
@@ -185,71 +168,6 @@ func TestQueueHandlesUnsignedCityHashValues(t *testing.T) {
 		t.Fatalf("save batch: %v", err)
 	}
 	assertOutputRow(t, path, row, "translated high hash", "local", "qwen3:6b")
-}
-
-func TestProcessBatchRejectsUnexpectedTranslationResult(t *testing.T) {
-	ctx := context.Background()
-	path := createQueueFixture(t, 1)
-
-	q, err := queue.Init(path, unexpectedResultTranslator{})
-	if err != nil {
-		t.Fatalf("init queue: %v", err)
-	}
-
-	processed, err := q.ProcessBatch(ctx, 10, 45, "local", "qwen3:6b")
-	if err == nil {
-		t.Fatal("expected unexpected translation result to fail")
-	}
-	if processed != 0 {
-		t.Fatalf("expected zero processed rows on failure, got %d", processed)
-	}
-	if !strings.Contains(err.Error(), "unexpected translation result") {
-		t.Fatalf("expected unexpected result error, got %v", err)
-	}
-	if err := q.Close(); err != nil {
-		t.Fatalf("close queue: %v", err)
-	}
-	if got := outputCount(t, path); got != 0 {
-		t.Fatalf("expected no saved output rows after failure, got %d", got)
-	}
-}
-
-type fakeTranslator struct {
-	timeoutSeconds int
-	itemsSeen      int
-	items          []translation.TranslationInput
-}
-
-func (f *fakeTranslator) Translate(
-	ctx context.Context,
-	items []translation.TranslationInput,
-	timeoutSeconds int,
-) ([]translation.TranslationResult, error) {
-	f.timeoutSeconds = timeoutSeconds
-	f.itemsSeen += len(items)
-	f.items = append(f.items, items...)
-
-	results := make([]translation.TranslationResult, 0, len(items))
-	for _, item := range items {
-		results = append(results, translation.TranslationResult{
-			ItemID:         item.ItemID,
-			TranslatedText: "translated " + item.SourceText,
-		})
-	}
-	return results, nil
-}
-
-type unexpectedResultTranslator struct{}
-
-func (unexpectedResultTranslator) Translate(
-	ctx context.Context,
-	items []translation.TranslationInput,
-	timeoutSeconds int,
-) ([]translation.TranslationResult, error) {
-	return []translation.TranslationResult{
-		{ItemID: items[0].ItemID, TranslatedText: "translated expected"},
-		{ItemID: "unknown-item", TranslatedText: "translated unknown"},
-	}, nil
 }
 
 func createQueueFixture(t *testing.T, count int) string {
@@ -315,6 +233,28 @@ func createEmptyQueueFixture(t *testing.T) string {
 		)
 	`); err != nil {
 		t.Fatalf("create output_items: %v", err)
+	}
+
+	if _, err := db.Exec(`
+		create table failed_items (
+			source_table text not null,
+			source_column text not null,
+			source_text text not null,
+			source_text_hash ubigint not null,
+			source_lang text not null,
+			target_lang text not null,
+			error_message text not null,
+			failed_at timestamp not null,
+			primary key (
+				source_table,
+				source_column,
+				source_text_hash,
+				source_lang,
+				target_lang
+			)
+		)
+	`); err != nil {
+		t.Fatalf("create failed_items: %v", err)
 	}
 
 	return path
