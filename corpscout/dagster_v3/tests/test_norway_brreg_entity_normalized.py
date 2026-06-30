@@ -51,13 +51,13 @@ class FakeObjectStore:
 class FakeEntityStorage:
     def __init__(self, raw_frame: pl.DataFrame) -> None:
         self.raw_frame = raw_frame
-        self.snapshot_read_calls: list[str] = []
+        self.snapshot_read_count = 0
         self.update_read_calls: list[str] = []
         self.snapshot_writes: dict[str, pl.DataFrame] = {}
         self.update_writes: dict[tuple[str, str], pl.DataFrame] = {}
 
-    def read_raw_snapshot_frame(self, run_id: str) -> pl.DataFrame:
-        self.snapshot_read_calls.append(run_id)
+    def read_raw_snapshot_frame(self) -> pl.DataFrame:
+        self.snapshot_read_count += 1
         return self.raw_frame
 
     def read_raw_update_frame(self, partition_date: str) -> pl.DataFrame:
@@ -82,12 +82,12 @@ def test_storage_resource_reads_raw_snapshot_and_writes_named_normalized_table()
     object_store = FakeObjectStore()
     run_id = "run-1"
     raw_frame = _raw_snapshot_frame()
-    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key(run_id))] = (
+    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())] = (
         _parquet_bytes(raw_frame)
     )
     storage = NorwayBrregEntityParquetStorageResource(object_store=object_store)
 
-    assert storage.read_raw_snapshot_frame(run_id).to_dicts() == raw_frame.to_dicts()
+    assert storage.read_raw_snapshot_frame().to_dicts() == raw_frame.to_dicts()
 
     key = storage.write_snapshot_table(
         run_id,
@@ -271,7 +271,6 @@ def test_normalize_entity_records_to_no_tables_matches_clickhouse_shapes() -> No
 def test_snapshot_multi_asset_reads_raw_once_and_materializes_all_table_parquets() -> None:
     storage = FakeEntityStorage(_raw_snapshot_frame())
     context = dg.build_asset_context()
-    run_id = context.op_execution_context.run_id
 
     results = list(
         norway_brreg_entities_snapshot_normalized_parquets(
@@ -280,7 +279,7 @@ def test_snapshot_multi_asset_reads_raw_once_and_materializes_all_table_parquets
         )
     )
 
-    assert storage.snapshot_read_calls == [run_id]
+    assert storage.snapshot_read_count == 1
     assert {result.asset_key.path[-1] for result in results} == {
         "norway_brreg_entities_snapshot_no_companies_parquet",
         "norway_brreg_entities_snapshot_no_websites_parquet",

@@ -189,7 +189,7 @@ def norway_brreg_entities_snapshot_normalized_parquets(
 ) -> Iterator[dg.MaterializeResult]:
     run_id = context.op_execution_context.run_id
     context.log.info("Normalizing Norway Brreg entity snapshot parquets for run_id=%s", run_id)
-    raw_frame = norway_brreg_entity_storage.read_raw_snapshot_frame(run_id)
+    raw_frame = norway_brreg_entity_storage.read_raw_snapshot_frame()
     resolved_at = datetime.now(UTC)
     context.log.info(
         "Norway Brreg entity snapshot loaded: run_id=%s rows=%d outputs=%d",

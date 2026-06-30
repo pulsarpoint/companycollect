@@ -8,6 +8,7 @@ import polars as pl
 
 from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
     NORWAY_BRREG_ENTITY_BUCKET,
+    entity_snapshot_object_key,
     norway_brreg_entities_snapshot_s3,
 )
 from dagster_v3.defs.norway_brreg.assets.entity_updates import (
@@ -51,6 +52,10 @@ class FakeObjectStore:
         assert bucket is not None
         self.objects[(bucket, key)] = body
 
+    def exists(self, key: str, bucket: str | None = None) -> bool:
+        assert bucket is not None
+        return (bucket, key) in self.objects
+
 
 def test_entities_snapshot_asset_writes_uniform_records_as_parquet_to_s3() -> None:
     api = FakeNorwayBrregApi()
@@ -68,10 +73,9 @@ def test_entities_snapshot_asset_writes_uniform_records_as_parquet_to_s3() -> No
     assert object_store.created_buckets == [NORWAY_BRREG_ENTITY_BUCKET]
     assert result.metadata["row_count"] == 1
     assert result.metadata["s3_bucket"] == NORWAY_BRREG_ENTITY_BUCKET
-    assert result.metadata["s3_key"].startswith(
-        f"norway_brreg/entities/snapshot/run_id={context.op_execution_context.run_id}/"
-    )
-    assert result.metadata["s3_key"].endswith("entities.parquet")
+    assert result.metadata["s3_key"] == entity_snapshot_object_key()
+    assert result.metadata["downloaded"] is True
+    assert result.metadata["reused_existing_snapshot"] is False
     assert len(result.metadata["parquet_sha256"]) == 64
 
     uploaded = object_store.objects[
@@ -107,6 +111,29 @@ def test_entities_snapshot_asset_writes_uniform_records_as_parquet_to_s3() -> No
             "raw_update_json": "",
         }
     ]
+
+
+def test_entities_snapshot_asset_reuses_existing_stable_snapshot_without_api_download() -> None:
+    class FailingApi:
+        def iter_all_entities(self, **_kwargs):
+            raise AssertionError("snapshot API should not be called when stable object exists")
+
+    object_store = FakeObjectStore()
+    object_store.objects[
+        (NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())
+    ] = b"existing parquet"
+
+    result = norway_brreg_entities_snapshot_s3(
+        context=dg.build_asset_context(),
+        norway_brreg_api=FailingApi(),
+        object_store=object_store,
+    )
+
+    assert object_store.created_buckets == []
+    assert result.metadata["s3_bucket"] == NORWAY_BRREG_ENTITY_BUCKET
+    assert result.metadata["s3_key"] == entity_snapshot_object_key()
+    assert result.metadata["downloaded"] is False
+    assert result.metadata["reused_existing_snapshot"] is True
 
 
 def test_entities_snapshot_asset_refuses_empty_snapshot() -> None:

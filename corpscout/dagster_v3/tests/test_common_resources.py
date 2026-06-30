@@ -3,6 +3,7 @@ from pathlib import Path
 
 import duckdb
 import pytest
+from botocore.exceptions import ClientError
 from dagster_duckdb import DuckDBResource
 
 
@@ -35,6 +36,23 @@ def test_object_store_resource_resolves_env_vars_before_creating_boto_client(
     assert calls["endpoint_url"] == "http://s3.test:9000"
     assert calls["aws_access_key_id"] == "test-access-key"
     assert calls["aws_secret_access_key"] == "test-secret-key"
+
+
+def test_object_store_exists_returns_false_when_bucket_is_missing() -> None:
+    resources = importlib.import_module("dagster_v3.defs.common.resources")
+
+    class FakeClient:
+        def head_object(self, Bucket: str, Key: str) -> None:
+            assert Bucket == "missing-bucket"
+            assert Key == "snapshot.parquet"
+            raise ClientError(
+                {"Error": {"Code": "NoSuchBucket"}},
+                operation_name="HeadObject",
+            )
+
+    resource = resources.ObjectStoreResource(s3_client=FakeClient())
+
+    assert resource.exists("snapshot.parquet", bucket="missing-bucket") is False
 
 
 def test_clickhouse_resource_factory_uses_http_arrow_client(

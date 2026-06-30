@@ -75,7 +75,7 @@ class ObjectStoreResource(dg.ConfigurableResource):
             self.client().head_object(Bucket=target_bucket, Key=key)
             return True
         except Exception as exc:
-            if _error_code(exc) in {"404", "NoSuchKey", "NotFound"}:
+            if _error_code(exc) in {"404", "NoSuchBucket", "NoSuchKey", "NotFound"}:
                 return False
             raise
 

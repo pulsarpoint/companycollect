@@ -40,10 +40,10 @@ class NorwayBrregEntityParquetStorageResource(dg.ConfigurableResource):
     def object_store(self) -> Any:
         return self._object_store
 
-    def read_raw_snapshot_frame(self, run_id: str) -> pl.DataFrame:
+    def read_raw_snapshot_frame(self) -> pl.DataFrame:
         return _read_parquet_bytes(
             self.object_store.read_bytes(
-                entity_snapshot_object_key(run_id),
+                entity_snapshot_object_key(),
                 bucket=NORWAY_BRREG_ENTITY_BUCKET,
             )
         )

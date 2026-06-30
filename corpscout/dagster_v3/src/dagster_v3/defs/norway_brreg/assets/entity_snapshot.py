@@ -10,6 +10,7 @@ from dagster_v3.defs.norway_brreg.resources import NorwayBrregApiResource
 
 GROUP_NAME = "norway_brreg"
 NORWAY_BRREG_ENTITY_BUCKET = "source-norway-brreg"
+ENTITY_SNAPSHOT_OBJECT_KEY = "norway_brreg/entities/snapshot/entities.parquet"
 
 
 @dg.asset(
@@ -23,6 +24,22 @@ def norway_brreg_entities_snapshot_s3(
     norway_brreg_api: NorwayBrregApiResource,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
+    s3_key = entity_snapshot_object_key()
+    if object_store.exists(s3_key, bucket=NORWAY_BRREG_ENTITY_BUCKET):
+        context.log.info(
+            "Reusing existing Norway Brreg full entity snapshot parquet: bucket=%s key=%s",
+            NORWAY_BRREG_ENTITY_BUCKET,
+            s3_key,
+        )
+        return dg.MaterializeResult(
+            metadata={
+                "s3_bucket": NORWAY_BRREG_ENTITY_BUCKET,
+                "s3_key": s3_key,
+                "downloaded": False,
+                "reused_existing_snapshot": True,
+            }
+        )
+
     context.log.info("Loading Norway Brreg full entity snapshot")
     records = list(norway_brreg_api.iter_all_entities(log=context.log.info))
     context.log.info("Loaded Norway Brreg full entity snapshot: rows=%d", len(records))
@@ -31,7 +48,6 @@ def norway_brreg_entities_snapshot_s3(
         empty_error_message="Norway Brreg entity snapshot produced no rows",
     )
     parquet_sha256 = hashlib.sha256(parquet_body).hexdigest()
-    s3_key = entity_snapshot_object_key(context.op_execution_context.run_id)
 
     context.log.info(
         "Writing Norway Brreg entity snapshot parquet: bucket=%s key=%s rows=%d",
@@ -55,9 +71,11 @@ def norway_brreg_entities_snapshot_s3(
             "s3_key": s3_key,
             "parquet_sha256": parquet_sha256,
             "parquet_size_bytes": len(parquet_body),
+            "downloaded": True,
+            "reused_existing_snapshot": False,
         }
     )
 
 
-def entity_snapshot_object_key(run_id: str) -> str:
-    return f"norway_brreg/entities/snapshot/run_id={run_id}/entities.parquet"
+def entity_snapshot_object_key() -> str:
+    return ENTITY_SNAPSHOT_OBJECT_KEY
