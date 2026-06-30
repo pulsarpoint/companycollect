@@ -15,18 +15,14 @@ from io import BytesIO
 from typing import Any, Protocol
 
 import dagster as dg
-import dlt
 import ijson
 import requests
-from dlt.extract.source import DltSource
 from pydantic import PrivateAttr
 
 from dagster_v3.defs.norway_brreg import entity_records
 from dagster_v3.defs.norway_brreg import tables
 
 COUNTRY = "NO"
-DLT_DATASET_NAME = "norway_brreg"
-ENTITIES_TABLE = "entities"
 ENTITY_SOURCE_SLUG = "norway_brregenhet"
 BRREG_BASE_URL = "https://data.brreg.no/enhetsregisteret/api"
 BRREG_REGNSKAP_BASE_URL = "https://data.brreg.no/regnskapsregisteret/regnskap"
@@ -39,7 +35,6 @@ UPDATE_MAX_RESULT_WINDOW = 10_000
 LOGGER = logging.getLogger(__name__)
 
 BRREG_ENTITIES_COLUMNS = tables.BRREG_ENTITIES_COLUMNS
-BRREG_FINANCIAL_STATEMENTS_COLUMNS = tables.BRREG_FINANCIAL_STATEMENTS_COLUMNS
 
 BRREG_LEGAL_FORM_DESCRIPTION_EN_BY_CODE = {
     "ANS": "General partnership",
@@ -323,55 +318,6 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
         )
         _raise_for_status(response)
         return response.json()
-
-
-@dlt.source(name="norway_brreg_entities")
-def norway_brreg_entities_source(
-    *,
-    base_url: str = BRREG_BASE_URL,
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
-    user_agent: str = DEFAULT_USER_AGENT,
-    session: HttpSession | None = None,
-    log: Callable[..., None] | None = None,
-    progress_every_rows: int = ENTITY_PROGRESS_LOG_EVERY_ROWS,
-    download_progress_every_bytes: int = DOWNLOAD_PROGRESS_LOG_EVERY_BYTES,
-) -> DltSource:
-    return _entities_resource(
-        base_url=base_url,
-        timeout_seconds=timeout_seconds,
-        user_agent=user_agent,
-        session=session,
-        log=log,
-        progress_every_rows=progress_every_rows,
-        download_progress_every_bytes=download_progress_every_bytes,
-    )
-
-
-@dlt.resource(
-    name=ENTITIES_TABLE,
-    write_disposition="replace",
-    primary_key="org_number",
-    columns=tables.copy_dlt_columns(BRREG_ENTITIES_COLUMNS),
-)
-def _entities_resource(
-    *,
-    base_url: str = BRREG_BASE_URL,
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
-    user_agent: str = DEFAULT_USER_AGENT,
-    session: HttpSession | None = None,
-    log: Callable[..., None] | None = None,
-    progress_every_rows: int = ENTITY_PROGRESS_LOG_EVERY_ROWS,
-    download_progress_every_bytes: int = DOWNLOAD_PROGRESS_LOG_EVERY_BYTES,
-) -> Iterator[dict[str, Any]]:
-    yield from iter_brreg_entity_rows(
-        base_url=base_url,
-        timeout_seconds=timeout_seconds,
-        user_agent=user_agent,
-        session=session,
-        log=log,
-        progress_every_rows=progress_every_rows,
-        download_progress_every_bytes=download_progress_every_bytes,
-    )
 
 
 def iter_brreg_entity_rows(

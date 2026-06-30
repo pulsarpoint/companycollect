@@ -5,11 +5,10 @@ Coverage:
 2. Dependency edges: parquet entity assets feed parquet-backed ClickHouse publish assets.
 3. norway_brreg_entities_full_snapshot_job uses the full snapshot parquet-to-ClickHouse path.
 4. norway_brreg_entity_updates_job uses the daily update parquet-to-ClickHouse path.
-5. resources["norway_brreg_duckdb"] is wired as DuckDBResource.
+5. legacy Norway DuckDB/dbt assets and resources are no longer registered.
 """
 
 import dagster as dg
-from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 import dagster_v3.defs.norway_brreg.assets as brreg_assets
@@ -44,9 +43,14 @@ def test_norway_brreg_all_assets_registered() -> None:
     assert "norway_brreg_entity_updates_clickhouse" in asset_names
     assert "norway_brreg_entities_snapshot_normalized_parquet" not in asset_names
     assert "norway_brreg_entity_updates_normalized_parquet" not in asset_names
-    assert "norway_brreg_entities_duckdb" in asset_names
-    assert "norway_brreg_financial_fetches_duckdb" in asset_names
-    assert "norway_brreg_financial_statements_duckdb" in asset_names
+    assert "norway_brreg_entities_duckdb" not in asset_names
+    assert "norway_brreg_financial_fetches_duckdb" not in asset_names
+    assert "norway_brreg_financial_statements_duckdb" not in asset_names
+    assert "norway_resolved_no_companies" not in asset_names
+    assert "norway_resolved_no_websites" not in asset_names
+    assert "norway_resolved_no_industries" not in asset_names
+    assert "norway_resolved_no_financial_statements" not in asset_names
+    assert "norway_resolved_clickhouse" not in asset_names
     assert "norway_brreg_financial_fetches_snapshot_parquet" in asset_names
     assert "norway_brreg_financial_fetches_updates_parquet" in asset_names
     assert "norway_brreg_financial_statements_snapshot_parquet" in asset_names
@@ -57,13 +61,9 @@ def test_norway_brreg_all_assets_registered() -> None:
     assert "norway_brreg_financial_statements_updates_clickhouse" in asset_names
     assert "norway_brreg_translation_trigger" in asset_names
 
-    # Raw ClickHouse export assets dropped in Task 4 (raw tables orphaned; replaced by
-    # norway_resolved → no_companies / no_financial_statements pipeline).
+    # Raw Brreg ClickHouse exports and old translation-in-graph assets are gone.
     assert "norway_brreg_clickhouse_companies" not in asset_names
     assert "norway_brreg_clickhouse_financial_statements" not in asset_names
-    # In-graph translation assets removed in d9d17e3 must be absent.
-    # Note: norway_brreg_translations_applied still appears as an *external source* in
-    # norway_resolved/dbt/models/sources.yml, so we only assert the pure Dagster assets are gone.
     assert "norway_brreg_translation_queue" not in asset_names
     assert "norway_brreg_translation_workflow_status" not in asset_names
 
@@ -72,10 +72,6 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     """Dep-edges in the graph after raw ClickHouse export assets were removed (Task 4)."""
     asset_graph = load_project_defs().get_repository_def().asset_graph
 
-    fetches_node = asset_graph.get(brreg_assets.norway_brreg_financial_fetches_duckdb_asset.key)
-    statements_node = asset_graph.get(
-        brreg_assets.norway_brreg_financial_statements_duckdb_asset.key
-    )
     snapshot_clickhouse_node = asset_graph.get(
         dg.AssetKey("norway_brreg_entities_snapshot_clickhouse")
     )
@@ -108,12 +104,6 @@ def test_norway_brreg_asset_dependency_edges() -> None:
         brreg_assets.norway_brreg_financial_statements_updates_clickhouse.key
     )
 
-    # entities → fetches
-    assert {k.path[-1] for k in fetches_node.parent_keys} == {"norway_brreg_entities_duckdb"}
-    # fetches → statements
-    assert {k.path[-1] for k in statements_node.parent_keys} == {
-        "norway_brreg_financial_fetches_duckdb"
-    }
     assert {k.path[-1] for k in snapshot_clickhouse_node.parent_keys} == {
         "norway_brreg_entities_snapshot_no_companies_parquet",
         "norway_brreg_entities_snapshot_no_websites_parquet",
@@ -244,12 +234,11 @@ def test_norway_brreg_financial_snapshot_job_membership() -> None:
     }
 
 
-def test_norway_brreg_duckdb_resource_is_wired() -> None:
-    """The norway_brreg_duckdb resource is a DuckDBResource; the removed queue resource is gone."""
+def test_norway_brreg_resources_are_wired() -> None:
+    """Norway Brreg uses API and parquet storage resources, not the old DuckDB resource."""
     top_level_resources = load_project_defs().get_repository_def().get_top_level_resources()
 
-    assert "norway_brreg_duckdb" in top_level_resources
-    assert top_level_resources["norway_brreg_duckdb"].configurable_resource_cls is DuckDBResource
+    assert "norway_brreg_duckdb" not in top_level_resources
     assert "norway_brreg_api" in top_level_resources
     assert (
         top_level_resources["norway_brreg_api"].configurable_resource_cls
@@ -268,19 +257,6 @@ def test_norway_brreg_duckdb_resource_is_wired() -> None:
         is NorwayBrregFinancialParquetStorageResource
     )
     assert "norway_brreg_translation_queue_duckdb" not in top_level_resources
-
-
-def test_norway_brreg_duckdb_pool_on_writing_assets() -> None:
-    """Every surviving DuckDB-writing asset declares the norway_brreg_duckdb pool."""
-    assert brreg_assets.norway_brreg_entities_duckdb_asset.op.pool == "norway_brreg_duckdb"
-    assert (
-        brreg_assets.norway_brreg_financial_fetches_duckdb_asset.op.pool
-        == "norway_brreg_duckdb"
-    )
-    assert (
-        brreg_assets.norway_brreg_financial_statements_duckdb_asset.op.pool
-        == "norway_brreg_duckdb"
-    )
 
 
 def test_norway_brreg_entities_full_snapshot_has_no_schedule() -> None:
