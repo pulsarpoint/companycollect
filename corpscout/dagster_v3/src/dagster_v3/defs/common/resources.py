@@ -53,9 +53,9 @@ class ObjectStoreResource(dg.ConfigurableResource):
         if self._s3_client is None:
             self._s3_client = boto3.client(
                 "s3",
-                endpoint_url=self.endpoint_url,
-                aws_access_key_id=self.access_key,
-                aws_secret_access_key=self.secret_key,
+                endpoint_url=_resolve_env_value(self.endpoint_url),
+                aws_access_key_id=_resolve_env_value(self.access_key),
+                aws_secret_access_key=_resolve_env_value(self.secret_key),
                 region_name=self.region_name,
                 config=Config(s3={"addressing_style": "path"}),
             )
@@ -128,3 +128,10 @@ def _error_code(exc: Exception) -> str:
     response = getattr(exc, "response", {})
     error = response.get("Error", {}) if isinstance(response, dict) else {}
     return str(error.get("Code", ""))
+
+
+def _resolve_env_value(value: Any) -> Any:
+    get_value = getattr(value, "get_value", None)
+    if callable(get_value):
+        return get_value()
+    return value

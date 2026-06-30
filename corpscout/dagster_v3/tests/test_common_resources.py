@@ -11,6 +11,32 @@ def test_shared_resources_live_in_common() -> None:
     assert hasattr(module, "ObjectStoreResource")
 
 
+def test_object_store_resource_resolves_env_vars_before_creating_boto_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resources = importlib.import_module("dagster_v3.defs.common.resources")
+    calls: dict[str, object] = {}
+    fake_client = object()
+
+    def fake_boto_client(service_name: str, **kwargs: object) -> object:
+        calls["service_name"] = service_name
+        calls.update(kwargs)
+        return fake_client
+
+    monkeypatch.setenv("CORPSCOUT_S3_ENDPOINT", "http://s3.test:9000")
+    monkeypatch.setenv("CORPSCOUT_S3_ACCESS_KEY", "test-access-key")
+    monkeypatch.setenv("CORPSCOUT_S3_SECRET_KEY", "test-secret-key")
+    monkeypatch.setattr(resources.boto3, "client", fake_boto_client)
+
+    resource = resources.ObjectStoreResource()
+
+    assert resource.client() is fake_client
+    assert calls["service_name"] == "s3"
+    assert calls["endpoint_url"] == "http://s3.test:9000"
+    assert calls["aws_access_key_id"] == "test-access-key"
+    assert calls["aws_secret_access_key"] == "test-secret-key"
+
+
 def test_clickhouse_resource_factory_uses_http_arrow_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
