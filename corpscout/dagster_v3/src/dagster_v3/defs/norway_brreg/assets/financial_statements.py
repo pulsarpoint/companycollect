@@ -67,8 +67,8 @@ FINANCIAL_STATEMENT_SCHEMA = {
     "accounts_type": pl.Utf8,
     "legal_form_code": pl.Utf8,
     "is_parent_company": pl.Boolean,
-    "period_start_date": pl.Utf8,
-    "period_end_date": pl.Utf8,
+    "period_start_date": pl.Date,
+    "period_end_date": pl.Date,
     "fiscal_year": pl.Int64,
     "currency": pl.Utf8,
     "liquidation_accounts": pl.Boolean,
@@ -104,7 +104,7 @@ FINANCIAL_STATEMENT_SCHEMA = {
     "long_term_liabilities_amount_original": pl.Decimal(38, 6),
     "long_term_liabilities_amount_usd": pl.Decimal(38, 6),
     "fx_rate_to_usd": pl.Decimal(38, 12),
-    "fx_rate_date": pl.Utf8,
+    "fx_rate_date": pl.Date,
     "fx_source": pl.Utf8,
     "source_url": pl.Utf8,
     "resolved_at": pl.Datetime(time_unit="ms", time_zone="UTC"),
@@ -507,7 +507,10 @@ def _usd_statement_frame(original_frame: pl.DataFrame) -> pl.DataFrame:
 def _financial_statement_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
     if not rows:
         return pl.DataFrame(schema=FINANCIAL_STATEMENT_SCHEMA)
-    frame = pl.DataFrame(rows)
+    return _coerce_financial_statement_frame(pl.DataFrame(rows))
+
+
+def _coerce_financial_statement_frame(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.select(
         [
             _financial_statement_column_expression(frame, column_name, data_type)
@@ -531,6 +534,7 @@ def _load_financial_frame_into_duckdb(
     frame: pl.DataFrame,
 ) -> None:
     _validate_financial_frame_columns(frame)
+    frame = _coerce_financial_statement_frame(frame)
     connection.execute(
         f"create schema {_quote_duckdb_identifier(FINANCIAL_STATEMENTS_DUCKDB_SCHEMA)}"
     )

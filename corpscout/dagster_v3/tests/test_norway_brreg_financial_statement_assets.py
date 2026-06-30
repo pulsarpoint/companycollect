@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from contextlib import contextmanager
 from datetime import UTC
+from datetime import date
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
 import dagster as dg
+import pyarrow as pa
 import polars as pl
 import pytest
 
@@ -173,6 +175,20 @@ class FakeClickHouseClient:
         self.row_insert_calls.append((database, table, rows, tuple(columns)))
 
 
+class FakeArrowClickHouseClient(FakeClickHouseClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.arrow_inserts: list[tuple[str | None, str, pa.Table]] = []
+
+    def insert_arrow(
+        self,
+        table: str,
+        arrow_table: pa.Table,
+        database: str | None = None,
+    ) -> None:
+        self.arrow_inserts.append((database, table, arrow_table))
+
+
 def test_snapshot_statements_asset_reads_fetches_and_writes_original_statements() -> None:
     storage = FakeFinancialStorage(
         snapshot_fetches=pl.DataFrame(
@@ -322,6 +338,28 @@ def test_snapshot_clickhouse_publish_replaces_target_table_from_snapshot_usd_par
         for sql, _params in client.events
     )
     assert result.metadata["row_count"] == 1
+
+
+def test_snapshot_clickhouse_publish_exports_date_columns_as_arrow_dates() -> None:
+    storage = FakeFinancialStorage(
+        snapshot_usd_statements=_financial_frame(
+            [_resolved_financial_row(org_number="923609016", usd=True)]
+        )
+    )
+    client = FakeArrowClickHouseClient()
+
+    result = norway_brreg_financial_statements_snapshot_clickhouse(
+        context=dg.build_asset_context(),
+        clickhouse=FakeClickHouseResource(client),
+        norway_brreg_financial_storage=storage,
+    )
+
+    assert result.metadata["row_count"] == 1
+    assert len(client.arrow_inserts) == 1
+    arrow_table = client.arrow_inserts[0][2]
+    assert pa.types.is_date(arrow_table.schema.field("period_start_date").type)
+    assert pa.types.is_date(arrow_table.schema.field("period_end_date").type)
+    assert pa.types.is_date(arrow_table.schema.field("fx_rate_date").type)
 
 
 def test_update_clickhouse_publish_deletes_affected_orgs_then_inserts_replacements() -> None:
@@ -563,7 +601,7 @@ def _resolved_financial_row(*, org_number: str, usd: bool) -> dict[str, Any]:
             "operating_revenue_amount_original": Decimal("1000"),
             "operating_revenue_amount_usd": Decimal("100") if usd else None,
             "fx_rate_to_usd": Decimal("0.10") if usd else None,
-            "fx_rate_date": "2024-12-31" if usd else None,
+            "fx_rate_date": date(2024, 12, 31) if usd else None,
             "fx_source": "test-fx" if usd else "",
             "source_url": f"https://data.brreg.no/regnskapsregisteret/regnskap/{org_number}",
             "resolved_at": datetime(2026, 6, 30, 12, 0, 0, tzinfo=UTC),
