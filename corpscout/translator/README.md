@@ -1,11 +1,10 @@
 # Corpscout Translator Service
 
-Standalone Go service for translation queue loading and translation runs.
+Standalone Go service for BRREG translation queue loading and translation runs.
 
-The HTTP API is still a scaffold: the endpoints return accepted responses while
-BRREG queue loading, queue processing, and ClickHouse upload are wired in behind
-the service boundary. The queue and local LLM translation packages already have
-runtime behavior and focused tests.
+The service owns the Norway BRREG DuckDB queue, registers the BRREG Temporal
+workflow and activities, exposes HTTP triggers, and uses the configured local
+LLM endpoint for dynamic translations.
 
 ## Packages
 
@@ -89,14 +88,18 @@ only stores the env var name, so credentials stay in `.env`.
 ## Run
 
 ```bash
-go run ./cmd/translator-api
+make run
 ```
 
 Override the listen address:
 
 ```bash
-TRANSLATOR_API_ADDR=:8090 go run ./cmd/translator-api
+TRANSLATOR_API_ADDR=:8090 make run
 ```
+
+The service expects ClickHouse and Temporal to be reachable at startup. It reads
+configuration from `config/translator.json` plus the environment variables
+listed above.
 
 ## Endpoints
 
@@ -117,7 +120,37 @@ curl -s -X POST http://localhost:8080/v1/sources/norway_brreg/run
 ## Build
 
 ```bash
-go build ./cmd/translator-api
+make build
+```
+
+This writes the binary to:
+
+```text
+bin/translator-api
+```
+
+Run the compiled binary from the `translator` directory:
+
+```bash
+./bin/translator-api
+```
+
+Override the output path when needed:
+
+```bash
+make build BINARY=/tmp/translator-api
+```
+
+Clean build outputs:
+
+```bash
+make clean
+```
+
+Run the package test suite:
+
+```bash
+make test
 ```
 
 ## Integration Test
