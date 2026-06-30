@@ -91,6 +91,12 @@ def test_clickhouse_connect_resource_resolves_env_and_exposes_arrow_client(
         assert client.execute("SELECT name FROM system.tables") == [("br_companies",)]
         client.execute("CREATE DATABASE IF NOT EXISTS corpscout")
         client.insert_arrow("br_companies", object(), database="corpscout")
+        client.insert_rows(
+            "br_companies",
+            [("123", "BR")],
+            columns=("company_id", "country_iso2"),
+            database="corpscout",
+        )
 
     assert calls["host"] == "clickhouse.test"
     assert calls["username"] == "exporter"
@@ -98,6 +104,14 @@ def test_clickhouse_connect_resource_resolves_env_and_exposes_arrow_client(
     assert calls["database"] == "corpscout"
     assert fake_client.commands == ["CREATE DATABASE IF NOT EXISTS corpscout"]
     assert fake_client.arrow_tables == [("corpscout", "br_companies")]
+    assert fake_client.inserted_rows == [
+        (
+            "corpscout",
+            "br_companies",
+            [("123", "BR")],
+            ["company_id", "country_iso2"],
+        )
+    ]
     assert fake_client.closed is True
 
 
@@ -174,6 +188,9 @@ class _FakeClickHouseConnectClient:
     def __init__(self) -> None:
         self.commands: list[str] = []
         self.arrow_tables: list[tuple[str | None, str]] = []
+        self.inserted_rows: list[
+            tuple[str | None, str, list[tuple[object, ...]], list[str]]
+        ] = []
         self.closed = False
 
     def query(self, sql: str, parameters: object | None = None) -> object:
@@ -192,6 +209,15 @@ class _FakeClickHouseConnectClient:
         database: str | None = None,
     ) -> None:
         self.arrow_tables.append((database, table))
+
+    def insert(
+        self,
+        table: str,
+        data: list[tuple[object, ...]],
+        column_names: list[str],
+        database: str | None = None,
+    ) -> None:
+        self.inserted_rows.append((database, table, data, column_names))
 
     def close(self) -> None:
         self.closed = True

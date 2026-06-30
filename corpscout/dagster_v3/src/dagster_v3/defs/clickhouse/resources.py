@@ -30,6 +30,20 @@ class ClickHouseConnectClientAdapter:
     ) -> object:
         return self._client.insert_arrow(table, arrow_table, database=database)
 
+    def insert_rows(
+        self,
+        table: str,
+        rows: list[tuple[object, ...]],
+        columns: tuple[str, ...] | list[str],
+        database: str | None = None,
+    ) -> object:
+        return self._client.insert(
+            table,
+            rows,
+            column_names=list(columns),
+            database=database,
+        )
+
 
 class ClickHouseConnectResource(dg.ConfigurableResource):
     host: str = Field(description="ClickHouse server host.")

@@ -296,10 +296,20 @@ def _insert_duckdb_arrow_batches(
         if record_batch.num_rows < 1:
             continue
         if _arrow_batch_has_nullable_date(record_batch):
-            clickhouse_client.execute(
-                f"INSERT INTO {clickhouse_qualified_table} ({clickhouse_columns}) VALUES",
-                _arrow_batch_rows(record_batch, columns),
-            )
+            rows = _arrow_batch_rows(record_batch, columns)
+            insert_rows = getattr(clickhouse_client, "insert_rows", None)
+            if callable(insert_rows):
+                insert_rows(
+                    clickhouse_table,
+                    rows,
+                    columns=tuple(columns),
+                    database=clickhouse_database,
+                )
+            else:
+                clickhouse_client.execute(
+                    f"INSERT INTO {clickhouse_qualified_table} ({clickhouse_columns}) VALUES",
+                    rows,
+                )
             row_count += record_batch.num_rows
             continue
         clickhouse_client.insert_arrow(

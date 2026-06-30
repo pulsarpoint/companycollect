@@ -294,10 +294,13 @@ def test_export_duckdb_connection_table_to_clickhouse_applies_column_expressions
 
     assert row_count == 2
     assert client.arrow_insert_calls == []
-    assert client.insert_calls == [
+    assert client.insert_calls == []
+    assert client.row_insert_calls == [
         (
-            "INSERT INTO `corpscout`.`fi_companies` (`business_id`, `activity_start_date`) VALUES",
+            "corpscout",
+            "fi_companies",
             [("old", None), ("valid", date(2020, 1, 1))],
+            ("business_id", "activity_start_date"),
         )
     ]
 
@@ -339,10 +342,13 @@ def test_export_duckdb_connection_table_to_clickhouse_uses_rows_for_nullable_dat
 
     assert row_count == 2
     assert client.arrow_insert_calls == []
-    assert client.insert_calls == [
+    assert client.insert_calls == []
+    assert client.row_insert_calls == [
         (
-            "INSERT INTO `corpscout`.`no_companies` (`org_number`, `incorporation_date`) VALUES",
+            "corpscout",
+            "no_companies",
             [("old", None), ("valid", date(2020, 1, 1))],
+            ("org_number", "incorporation_date"),
         )
     ]
 
@@ -1082,6 +1088,9 @@ class FakeArrowClickHouseClient(FakeInsertClickHouseClient):
     def __init__(self) -> None:
         super().__init__()
         self.arrow_insert_calls: list[tuple[str | None, str, pa.Table]] = []
+        self.row_insert_calls: list[
+            tuple[str | None, str, list[tuple[object, ...]], tuple[str, ...]]
+        ] = []
 
     def insert_arrow(
         self,
@@ -1090,6 +1099,15 @@ class FakeArrowClickHouseClient(FakeInsertClickHouseClient):
         database: str | None = None,
     ) -> None:
         self.arrow_insert_calls.append((database, table, arrow_table))
+
+    def insert_rows(
+        self,
+        table: str,
+        rows: list[tuple[object, ...]],
+        columns: tuple[str, ...] | list[str],
+        database: str | None = None,
+    ) -> None:
+        self.row_insert_calls.append((database, table, rows, tuple(columns)))
 
 
 class FailingInsertClickHouseClient(FakeInsertClickHouseClient):
