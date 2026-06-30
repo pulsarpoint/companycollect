@@ -23,7 +23,9 @@ def norway_brreg_entities_snapshot_s3(
     norway_brreg_api: NorwayBrregApiResource,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    records = list(norway_brreg_api.iter_all_entities())
+    context.log.info("Loading Norway Brreg full entity snapshot")
+    records = list(norway_brreg_api.iter_all_entities(log=context.log.info))
+    context.log.info("Loaded Norway Brreg full entity snapshot: rows=%d", len(records))
     parquet_body = entity_records_parquet_bytes(
         records,
         empty_error_message="Norway Brreg entity snapshot produced no rows",
@@ -39,6 +41,12 @@ def norway_brreg_entities_snapshot_s3(
     )
     object_store.ensure_bucket(NORWAY_BRREG_ENTITY_BUCKET)
     object_store.write_bytes(s3_key, parquet_body, bucket=NORWAY_BRREG_ENTITY_BUCKET)
+    context.log.info(
+        "Completed Norway Brreg entity snapshot parquet write: bucket=%s key=%s bytes=%d",
+        NORWAY_BRREG_ENTITY_BUCKET,
+        s3_key,
+        len(parquet_body),
+    )
 
     return dg.MaterializeResult(
         metadata={

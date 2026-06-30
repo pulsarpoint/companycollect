@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from io import BytesIO
 from typing import Any
 
@@ -54,7 +55,18 @@ def _json_string(value: Any) -> str:
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
+        default=_json_default,
     )
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            return str(value)
+        if value == value.to_integral_value():
+            return int(value)
+        return float(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def _string(value: Any) -> str:

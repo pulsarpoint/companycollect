@@ -17,7 +17,11 @@ from dagster_v3.defs.norway_brreg.assets.entity_updates import (
 
 
 class FakeNorwayBrregApi:
-    def iter_all_entities(self):
+    def __init__(self) -> None:
+        self.iter_all_entities_kwargs = None
+
+    def iter_all_entities(self, **kwargs):
+        self.iter_all_entities_kwargs = kwargs
         yield {
             "org_number": "923609016",
             "change_type": "snapshot",
@@ -49,15 +53,18 @@ class FakeObjectStore:
 
 
 def test_entities_snapshot_asset_writes_uniform_records_as_parquet_to_s3() -> None:
+    api = FakeNorwayBrregApi()
     object_store = FakeObjectStore()
     context = dg.build_asset_context()
 
     result = norway_brreg_entities_snapshot_s3(
         context=context,
-        norway_brreg_api=FakeNorwayBrregApi(),
+        norway_brreg_api=api,
         object_store=object_store,
     )
 
+    assert api.iter_all_entities_kwargs is not None
+    assert callable(api.iter_all_entities_kwargs["log"])
     assert object_store.created_buckets == [NORWAY_BRREG_ENTITY_BUCKET]
     assert result.metadata["row_count"] == 1
     assert result.metadata["s3_bucket"] == NORWAY_BRREG_ENTITY_BUCKET
@@ -104,7 +111,7 @@ def test_entities_snapshot_asset_writes_uniform_records_as_parquet_to_s3() -> No
 
 def test_entities_snapshot_asset_refuses_empty_snapshot() -> None:
     class EmptyApi:
-        def iter_all_entities(self):
+        def iter_all_entities(self, **_kwargs):
             return iter(())
 
     object_store = FakeObjectStore()
@@ -134,9 +141,11 @@ def test_entity_updates_asset_writes_changed_records_as_daily_parquet_to_s3() ->
     class UpdateApi:
         def __init__(self) -> None:
             self.calls: list[tuple[str, str]] = []
+            self.kwargs = None
 
-        def iter_updated_entities(self, *, start: str, end: str):
+        def iter_updated_entities(self, *, start: str, end: str, **kwargs):
             self.calls.append((start, end))
+            self.kwargs = kwargs
             yield {
                 "org_number": "923609016",
                 "change_type": "changed",
@@ -168,6 +177,8 @@ def test_entity_updates_asset_writes_changed_records_as_daily_parquet_to_s3() ->
     assert api.calls == [
         ("2026-06-28T00:00:00.000Z", "2026-06-28T23:59:59.999Z")
     ]
+    assert api.kwargs is not None
+    assert callable(api.kwargs["log"])
     assert object_store.created_buckets == [NORWAY_BRREG_ENTITY_BUCKET]
     assert result.metadata["partition_date"] == "2026-06-28"
     assert result.metadata["row_count"] == 1
@@ -222,7 +233,7 @@ def test_entity_updates_asset_writes_changed_records_as_daily_parquet_to_s3() ->
 
 def test_entity_updates_asset_writes_empty_daily_parquet_when_no_updates() -> None:
     class EmptyUpdateApi:
-        def iter_updated_entities(self, *, start: str, end: str):
+        def iter_updated_entities(self, *, start: str, end: str, **_kwargs):
             return iter(())
 
     object_store = FakeObjectStore()

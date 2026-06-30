@@ -85,18 +85,44 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
             self._session = session
         return self._session
 
-    def download_entities_snapshot(self) -> bytes:
+    def download_entities_snapshot(
+        self,
+        *,
+        log: Callable[..., None] | None = None,
+        download_progress_every_bytes: int = DOWNLOAD_PROGRESS_LOG_EVERY_BYTES,
+    ) -> bytes:
         return _download_bytes(
             url=f"{self.base_url}/enheter/lastned",
             timeout_seconds=self.timeout_seconds,
             user_agent=self.user_agent,
             session=self.session(),
+            log=log,
+            progress_every_bytes=download_progress_every_bytes,
         )
 
-    def iter_all_entities(self) -> Iterator[dict[str, Any]]:
-        response_body = self.download_entities_snapshot()
-        for entity in _stream_gzip_json_array(response_body):
+    def iter_all_entities(
+        self,
+        *,
+        log: Callable[..., None] | None = None,
+        progress_every_rows: int = ENTITY_PROGRESS_LOG_EVERY_ROWS,
+        download_progress_every_bytes: int = DOWNLOAD_PROGRESS_LOG_EVERY_BYTES,
+    ) -> Iterator[dict[str, Any]]:
+        progress_log = log or LOGGER.info
+        progress_log("Starting Norway Brreg entity snapshot download")
+        response_body = self.download_entities_snapshot(
+            log=progress_log,
+            download_progress_every_bytes=download_progress_every_bytes,
+        )
+        progress_log(
+            "Completed Norway Brreg entity snapshot download: bytes=%s",
+            len(response_body),
+        )
+        row_count = 0
+        for row_count, entity in enumerate(_stream_gzip_json_array(response_body), start=1):
+            if progress_every_rows > 0 and row_count % progress_every_rows == 0:
+                progress_log("Parsed Norway Brreg entity snapshot rows: rows=%s", row_count)
             yield entity_records.snapshot_entity_record(entity)
+        progress_log("Completed Norway Brreg entity snapshot parse: rows=%s", row_count)
 
     def iter_updated_entities(
         self,
@@ -104,8 +130,19 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
         start: str,
         end: str,
         include_changes: bool = False,
+        log: Callable[..., None] | None = None,
+        progress_every_rows: int = ENTITY_PROGRESS_LOG_EVERY_ROWS,
     ) -> Iterator[dict[str, Any]]:
+        progress_log = log or LOGGER.info
         page_number = 0
+        row_count = 0
+        hydrated_row_count = 0
+        progress_log(
+            "Loading Norway Brreg entity updates: updated_at=%s..%s include_changes=%s",
+            start,
+            end,
+            include_changes,
+        )
         while True:
             params: dict[str, Any] = {
                 "dato": start,
@@ -117,15 +154,38 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
             if include_changes:
                 params["includeChanges"] = "true"
 
+            progress_log(
+                "Requesting Norway Brreg entity updates page: page=%s size=%s",
+                page_number,
+                self.update_page_size,
+            )
             payload = self._get_json(
                 f"{self.base_url}/oppdateringer/enheter",
                 params=params,
             )
-            for update in entity_records.entity_updates_from_payload(payload):
+            updates = entity_records.entity_updates_from_payload(payload)
+            progress_log(
+                "Norway Brreg entity updates page loaded: page=%s updates=%s",
+                page_number,
+                len(updates),
+            )
+            for update in updates:
                 if entity_records.entity_update_requires_hydration(update):
                     entity = self.get_entity(_string(update.get("organisasjonsnummer")))
+                    hydrated_row_count += 1
+                    if (
+                        progress_every_rows > 0
+                        and hydrated_row_count % progress_every_rows == 0
+                    ):
+                        progress_log(
+                            "Hydrated Norway Brreg entity update rows: rows=%s",
+                            hydrated_row_count,
+                        )
                 else:
                     entity = None
+                row_count += 1
+                if progress_every_rows > 0 and row_count % progress_every_rows == 0:
+                    progress_log("Processed Norway Brreg entity update rows: rows=%s", row_count)
                 yield entity_records.updated_entity_record(update, entity=entity)
 
             if not entity_records.update_payload_has_next_page(
@@ -133,6 +193,12 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
             ):
                 break
             page_number += 1
+        progress_log(
+            "Completed Norway Brreg entity updates load: pages=%s rows=%s hydrated_rows=%s",
+            page_number + 1,
+            row_count,
+            hydrated_row_count,
+        )
 
     def get_entity(self, org_number: str) -> dict[str, Any]:
         payload = self._get_json(f"{self.base_url}/enheter/{org_number}")

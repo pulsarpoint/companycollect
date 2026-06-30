@@ -80,6 +80,31 @@ def test_iter_all_entities_returns_snapshot_records_with_real_brreg_shape() -> N
     assert records[0]["raw_update"] is None
 
 
+def test_iter_all_entities_emits_download_and_parse_progress_logs() -> None:
+    entity = _load_entity_fixture()
+    archive = gzip.compress(json.dumps([entity, entity]).encode("utf-8"))
+    session = FakeHttpSession(
+        {
+            "https://data.brreg.no/enhetsregisteret/api/enheter/lastned": FakeResponse(
+                content=archive
+            )
+        }
+    )
+    resource = NorwayBrregApiResource(session=session)
+    log_calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    records = list(
+        resource.iter_all_entities(
+            log=lambda message, *args: log_calls.append((message, args)),
+            progress_every_rows=1,
+            download_progress_every_bytes=len(archive),
+        )
+    )
+
+    assert len(records) == 2
+    assert len(log_calls) >= 6
+
+
 def test_iter_updated_entities_returns_same_shape_and_hydrates_changed_entities() -> None:
     entity = _load_entity_fixture()
     update = {
@@ -135,6 +160,49 @@ def test_iter_updated_entities_returns_same_shape_and_hydrates_changed_entities(
         "sort": "id,ASC",
         "includeChanges": "true",
     }
+
+
+def test_iter_updated_entities_emits_page_and_hydration_progress_logs() -> None:
+    entity = _load_entity_fixture()
+    update = {
+        "oppdateringsid": 24720423,
+        "dato": "2026-06-28T00:20:10.625Z",
+        "organisasjonsnummer": "923609016",
+        "endringstype": "Endring",
+        "endringer": [{"op": "replace", "path": "/navn", "value": "EQUINOR ASA"}],
+        "_links": {
+            "enhet": {
+                "href": "https://data.brreg.no/enhetsregisteret/api/enheter/923609016"
+            }
+        },
+    }
+    session = FakeHttpSession(
+        {
+            "https://data.brreg.no/enhetsregisteret/api/oppdateringer/enheter": FakeResponse(
+                payload={
+                    "_embedded": {"oppdaterteEnheter": [update]},
+                    "page": {"size": 10000, "totalElements": 1, "totalPages": 1, "number": 0},
+                }
+            ),
+            "https://data.brreg.no/enhetsregisteret/api/enheter/923609016": FakeResponse(
+                payload=entity
+            ),
+        }
+    )
+    resource = NorwayBrregApiResource(session=session)
+    log_calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    records = list(
+        resource.iter_updated_entities(
+            start="2026-06-28T00:00:00.000Z",
+            end="2026-06-28T23:59:59.999Z",
+            log=lambda message, *args: log_calls.append((message, args)),
+            progress_every_rows=1,
+        )
+    )
+
+    assert len(records) == 1
+    assert len(log_calls) >= 5
 
 
 def test_iter_updated_entities_returns_removed_tombstone_without_entity_fetch() -> None:

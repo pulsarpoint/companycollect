@@ -44,7 +44,13 @@ def norway_brreg_entity_updates_s3(
         norway_brreg_api.iter_updated_entities(
             start=updated_at_start,
             end=updated_at_end,
+            log=context.log.info,
         )
+    )
+    context.log.info(
+        "Loaded Norway Brreg entity updates partition %s: rows=%d",
+        partition_date,
+        len(records),
     )
     parquet_body = entity_records_parquet_bytes(records, allow_empty=True)
     parquet_sha256 = hashlib.sha256(parquet_body).hexdigest()
@@ -58,6 +64,13 @@ def norway_brreg_entity_updates_s3(
     )
     object_store.ensure_bucket(NORWAY_BRREG_ENTITY_BUCKET)
     object_store.write_bytes(s3_key, parquet_body, bucket=NORWAY_BRREG_ENTITY_BUCKET)
+    context.log.info(
+        "Completed Norway Brreg entity updates parquet write: partition=%s bucket=%s key=%s bytes=%d",
+        partition_date,
+        NORWAY_BRREG_ENTITY_BUCKET,
+        s3_key,
+        len(parquet_body),
+    )
 
     return dg.MaterializeResult(
         metadata={
