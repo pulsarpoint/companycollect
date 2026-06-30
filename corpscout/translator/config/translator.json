@@ -1,0 +1,30 @@
+{
+  "server": {
+    "listen_address": ":8080"
+  },
+  "clickhouse": {
+    "native_url_env": "CLICKHOUSE_NATIVE_URL"
+  },
+  "endpoints": {
+    "local_llm": {
+      "model": "qwen3:6b",
+      "model_env": "TRANSLATION_PROVIDER_LOCAL_MODEL",
+      "base_url": "http://100.77.62.33:8888/v1",
+      "base_url_env": "TRANSLATION_PROVIDER_LOCAL_BASE_URL",
+      "api_key_env": "TRANSLATION_PROVIDER_LOCAL_API_KEY",
+      "api_key_default": "not-needed",
+      "max_tokens": 32768,
+      "extra_body": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    }
+  },
+  "sources": {
+    "norway_brreg": {
+      "queue_path": "data/translator/norway_brreg.duckdb",
+      "endpoint_id": "local_llm"
+    }
+  }
+}
