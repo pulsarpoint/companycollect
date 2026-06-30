@@ -7,6 +7,9 @@ import logging
 from collections.abc import Callable
 from collections.abc import Iterator
 from collections.abc import Mapping
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
 from decimal import Decimal
 from io import BytesIO
 from typing import Any, Protocol
@@ -32,6 +35,7 @@ DEFAULT_USER_AGENT = "corpscout-dagster-v3-dev/0.1"
 DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 DOWNLOAD_PROGRESS_LOG_EVERY_BYTES = 100 * 1024 * 1024
 ENTITY_PROGRESS_LOG_EVERY_ROWS = 1000
+UPDATE_MAX_RESULT_WINDOW = 10_000
 LOGGER = logging.getLogger(__name__)
 
 BRREG_ENTITIES_COLUMNS = tables.BRREG_ENTITIES_COLUMNS
@@ -134,88 +138,149 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
         progress_every_rows: int = ENTITY_PROGRESS_LOG_EVERY_ROWS,
     ) -> Iterator[dict[str, Any]]:
         progress_log = log or LOGGER.info
-        page_number = 0
         row_count = 0
         hydrated_row_count = 0
+        seen_update_keys: set[str] = set()
         progress_log(
             "Loading Norway Brreg entity updates: updated_at=%s..%s include_changes=%s",
             start,
             end,
             include_changes,
         )
+        for update in self._iter_updated_entity_updates_window(
+            start=start,
+            end=end,
+            include_changes=include_changes,
+            log=progress_log,
+            depth=0,
+        ):
+            update_key = _entity_update_key(update)
+            if update_key in seen_update_keys:
+                continue
+            seen_update_keys.add(update_key)
+            change_type_override = None
+            if entity_records.entity_update_requires_hydration(update):
+                org_number = _string(update.get("organisasjonsnummer"))
+                try:
+                    entity = self.get_entity(org_number)
+                    hydrated_row_count += 1
+                    if progress_every_rows > 0 and hydrated_row_count % progress_every_rows == 0:
+                        progress_log(
+                            "Hydrated Norway Brreg entity update rows: rows=%s",
+                            hydrated_row_count,
+                        )
+                except Exception as exc:
+                    if not _exception_has_http_status(exc, 410):
+                        raise
+                    progress_log(
+                        "Norway Brreg entity update hydration returned 410; treating org as removed: org_number=%s update_id=%s",
+                        org_number,
+                        update.get("oppdateringsid"),
+                    )
+                    entity = None
+                    change_type_override = entity_records.ENTITY_CHANGE_TYPE_REMOVED
+            else:
+                entity = None
+            row_count += 1
+            if progress_every_rows > 0 and row_count % progress_every_rows == 0:
+                progress_log("Processed Norway Brreg entity update rows: rows=%s", row_count)
+            yield entity_records.updated_entity_record(
+                update,
+                entity=entity,
+                change_type_override=change_type_override,
+            )
+        progress_log(
+            "Completed Norway Brreg entity updates load: rows=%s hydrated_rows=%s",
+            row_count,
+            hydrated_row_count,
+        )
+
+    def _iter_updated_entity_updates_window(
+        self,
+        *,
+        start: str,
+        end: str,
+        include_changes: bool,
+        log: Callable[..., None],
+        depth: int,
+    ) -> Iterator[dict[str, Any]]:
+        page_number = 0
+        page_size = _brreg_update_page_size(self.update_page_size)
         while True:
             params: dict[str, Any] = {
                 "dato": start,
                 "updatedBefore": end,
-                "size": self.update_page_size,
+                "size": page_size,
                 "page": page_number,
                 "sort": "id,ASC",
             }
             if include_changes:
                 params["includeChanges"] = "true"
 
-            progress_log(
-                "Requesting Norway Brreg entity updates page: page=%s size=%s",
+            log(
+                "Requesting Norway Brreg entity updates page: window=%s..%s page=%s size=%s",
+                start,
+                end,
                 page_number,
-                self.update_page_size,
+                page_size,
             )
             payload = self._get_json(
                 f"{self.base_url}/oppdateringer/enheter",
                 params=params,
             )
+            total_elements = _update_payload_total_elements(payload)
+            if page_number == 0 and total_elements > UPDATE_MAX_RESULT_WINDOW:
+                left_start, left_end, right_start, right_end = _split_update_window(start, end)
+                log(
+                    "Splitting Norway Brreg entity updates window: window=%s..%s "
+                    "total_elements=%s max_result_window=%s left=%s..%s right=%s..%s",
+                    start,
+                    end,
+                    total_elements,
+                    UPDATE_MAX_RESULT_WINDOW,
+                    left_start,
+                    left_end,
+                    right_start,
+                    right_end,
+                )
+                yield from self._iter_updated_entity_updates_window(
+                    start=left_start,
+                    end=left_end,
+                    include_changes=include_changes,
+                    log=log,
+                    depth=depth + 1,
+                )
+                yield from self._iter_updated_entity_updates_window(
+                    start=right_start,
+                    end=right_end,
+                    include_changes=include_changes,
+                    log=log,
+                    depth=depth + 1,
+                )
+                return
+
             updates = entity_records.entity_updates_from_payload(payload)
-            progress_log(
-                "Norway Brreg entity updates page loaded: page=%s updates=%s",
+            log(
+                "Norway Brreg entity updates page loaded: window=%s..%s page=%s "
+                "updates=%s total_elements=%s",
+                start,
+                end,
                 page_number,
                 len(updates),
+                total_elements,
             )
-            for update in updates:
-                change_type_override = None
-                if entity_records.entity_update_requires_hydration(update):
-                    org_number = _string(update.get("organisasjonsnummer"))
-                    try:
-                        entity = self.get_entity(org_number)
-                        hydrated_row_count += 1
-                        if (
-                            progress_every_rows > 0
-                            and hydrated_row_count % progress_every_rows == 0
-                        ):
-                            progress_log(
-                                "Hydrated Norway Brreg entity update rows: rows=%s",
-                                hydrated_row_count,
-                            )
-                    except Exception as exc:
-                        if not _exception_has_http_status(exc, 410):
-                            raise
-                        progress_log(
-                            "Norway Brreg entity update hydration returned 410; treating org as removed: org_number=%s update_id=%s",
-                            org_number,
-                            update.get("oppdateringsid"),
-                        )
-                        entity = None
-                        change_type_override = entity_records.ENTITY_CHANGE_TYPE_REMOVED
-                else:
-                    entity = None
-                row_count += 1
-                if progress_every_rows > 0 and row_count % progress_every_rows == 0:
-                    progress_log("Processed Norway Brreg entity update rows: rows=%s", row_count)
-                yield entity_records.updated_entity_record(
-                    update,
-                    entity=entity,
-                    change_type_override=change_type_override,
-                )
+            yield from updates
 
             if not entity_records.update_payload_has_next_page(
                 payload, current_page=page_number
             ):
                 break
             page_number += 1
-        progress_log(
-            "Completed Norway Brreg entity updates load: pages=%s rows=%s hydrated_rows=%s",
-            page_number + 1,
-            row_count,
-            hydrated_row_count,
-        )
+            if page_size * (page_number + 1) > UPDATE_MAX_RESULT_WINDOW:
+                raise ValueError(
+                    "Norway Brreg entity updates pagination exceeded source result "
+                    f"window: window={start}..{end} page={page_number} size={page_size}"
+                )
 
     def get_entity(self, org_number: str) -> dict[str, Any]:
         payload = self._get_json(f"{self.base_url}/enheter/{org_number}")
@@ -466,6 +531,55 @@ def _raise_for_status(response: Any) -> None:
 def _exception_has_http_status(exc: Exception, status_code: int) -> bool:
     response = getattr(exc, "response", None)
     return getattr(response, "status_code", None) == status_code
+
+
+def _brreg_update_page_size(configured_page_size: int) -> int:
+    return max(1, min(configured_page_size, UPDATE_MAX_RESULT_WINDOW))
+
+
+def _update_payload_total_elements(payload: dict[str, Any]) -> int:
+    page = payload.get("page")
+    if not isinstance(page, dict):
+        return 0
+    total_elements = page.get("totalElements")
+    return total_elements if isinstance(total_elements, int) else 0
+
+
+def _split_update_window(start: str, end: str) -> tuple[str, str, str, str]:
+    start_time = _parse_brreg_timestamp(start)
+    end_time = _parse_brreg_timestamp(end)
+    if end_time <= start_time:
+        raise ValueError(f"Cannot split empty Norway Brreg update window: {start}..{end}")
+    if end_time - start_time <= timedelta(milliseconds=1):
+        raise ValueError(
+            "Cannot split Norway Brreg update window below 1 millisecond while "
+            f"respecting the source result window: {start}..{end}"
+        )
+    midpoint = start_time + ((end_time - start_time) / 2)
+    midpoint_text = _format_brreg_timestamp(midpoint)
+    return start, midpoint_text, midpoint_text, end
+
+
+def _parse_brreg_timestamp(value: str) -> datetime:
+    normalized = value.replace("Z", "+00:00")
+    timestamp = datetime.fromisoformat(normalized)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC)
+
+
+def _format_brreg_timestamp(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _entity_update_key(update: dict[str, Any]) -> str:
+    update_id = update.get("oppdateringsid")
+    if update_id is not None:
+        return f"id:{update_id}"
+    return (
+        f"fallback:{_string(update.get('organisasjonsnummer'))}:"
+        f"{_string(update.get('dato'))}:{_string(update.get('endringstype'))}"
+    )
 
 
 def _stream_gzip_json_array(body: bytes) -> Iterator[dict[str, Any]]:

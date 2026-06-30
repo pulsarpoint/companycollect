@@ -57,6 +57,31 @@ class FakeHttpSession:
         return self.responses[url]
 
 
+class ParamAwareFakeHttpSession:
+    def __init__(self, responses: dict[tuple[str, str, str, int], FakeResponse]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, dict[str, Any] | None, int, bool]] = []
+        self.headers: dict[str, str] = {}
+
+    def get(
+        self,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        timeout: int = 120,
+        stream: bool = False,
+    ) -> FakeResponse:
+        self.calls.append((url, params, timeout, stream))
+        params = params or {}
+        key = (
+            url,
+            str(params.get("dato")),
+            str(params.get("updatedBefore")),
+            int(params.get("page", 0)),
+        )
+        return self.responses[key]
+
+
 def test_iter_all_entities_returns_snapshot_records_with_real_brreg_shape() -> None:
     entity = _load_entity_fixture()
     session = FakeHttpSession(
@@ -207,6 +232,44 @@ def test_iter_updated_entities_emits_page_and_hydration_progress_logs() -> None:
     assert len(log_calls) >= 5
 
 
+def test_iter_updated_entities_splits_large_update_windows_instead_of_requesting_page_past_limit() -> None:
+    base_url = "https://data.brreg.no/enhetsregisteret/api/oppdateringer/enheter"
+    start = "2026-06-11T00:00:00.000Z"
+    midpoint = "2026-06-11T00:00:05.000Z"
+    end = "2026-06-11T00:00:10.000Z"
+    overflow_update = _update("999999999", 1, "2026-06-11T00:00:01.000Z")
+    left_update = _update("111111111", 2, "2026-06-11T00:00:02.000Z")
+    right_update = _update("222222222", 3, "2026-06-11T00:00:07.000Z")
+    session = ParamAwareFakeHttpSession(
+        {
+            (base_url, start, end, 0): FakeResponse(
+                payload=_updates_payload(
+                    [overflow_update],
+                    total_elements=10001,
+                    total_pages=2,
+                )
+            ),
+            (base_url, start, midpoint, 0): FakeResponse(
+                payload=_updates_payload([left_update], total_elements=1, total_pages=1)
+            ),
+            (base_url, midpoint, end, 0): FakeResponse(
+                payload=_updates_payload([right_update], total_elements=1, total_pages=1)
+            ),
+        }
+    )
+    resource = NorwayBrregApiResource(session=session)
+
+    records = list(resource.iter_updated_entities(start=start, end=end))
+
+    assert [record["org_number"] for record in records] == ["111111111", "222222222"]
+    assert [call[1]["page"] for call in session.calls if call[1] is not None] == [0, 0, 0]
+    assert [call[1]["dato"] for call in session.calls if call[1] is not None] == [
+        start,
+        start,
+        midpoint,
+    ]
+
+
 def test_iter_updated_entities_returns_removed_tombstone_without_entity_fetch() -> None:
     update = {
         "oppdateringsid": 24720424,
@@ -324,3 +387,29 @@ def _load_entity_fixture() -> dict[str, Any]:
         / "companies/analysis/norway/data_model/sources/brregenhet/sample_record.json"
     )
     return json.loads(fixture_path.read_text())
+
+
+def _update(org_number: str, update_id: int, updated_at: str) -> dict[str, Any]:
+    return {
+        "oppdateringsid": update_id,
+        "dato": updated_at,
+        "organisasjonsnummer": org_number,
+        "endringstype": "Fjernet",
+    }
+
+
+def _updates_payload(
+    updates: list[dict[str, Any]],
+    *,
+    total_elements: int,
+    total_pages: int,
+) -> dict[str, Any]:
+    return {
+        "_embedded": {"oppdaterteEnheter": updates},
+        "page": {
+            "size": 10000,
+            "totalElements": total_elements,
+            "totalPages": total_pages,
+            "number": 0,
+        },
+    }
