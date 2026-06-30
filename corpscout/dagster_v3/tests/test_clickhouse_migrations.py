@@ -85,6 +85,7 @@ EXPECTED_MIGRATIONS = (
     "000071_corpscout_br_rfb_registry_date32",
     "000072_corpscout_fi_financial_metrics_xbrl_publish",
     "000073_corpscout_commoncrawl_domain_graph_signals",
+    "000074_corpscout_no_companies_date32",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -621,6 +622,21 @@ def test_norway_financial_statements_sort_key_avoids_nullable_fiscal_year() -> N
         "ORDER BY (org_number, ifNull(fiscal_year, 0), accounts_type, source_record_id)"
         in sql
     )
+
+
+def test_no_companies_date32_migration_alters_existing_date_columns() -> None:
+    sql = _migration_sql("000074_corpscout_no_companies_date32.up.sql")
+    down_sql = _migration_sql("000074_corpscout_no_companies_date32.down.sql")
+
+    for column_name in ("registration_date", "incorporation_date"):
+        assert (
+            f"ALTER TABLE corpscout.no_companies MODIFY COLUMN {column_name} Nullable(Date32);"
+            in sql
+        )
+        assert (
+            f"ALTER TABLE corpscout.no_companies MODIFY COLUMN {column_name} Nullable(Date);"
+            in down_sql
+        )
 
 
 def test_domain_migration_covers_exported_columns() -> None:
