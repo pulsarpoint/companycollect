@@ -437,6 +437,7 @@ Full per-column schema: **`docs/schema.md`**. DDL in `../clickhouse/migrations/`
 | `commoncrawl_domain_identifiers` | 051 | B | one row / (domain, identifier) — LEI/VAT/… (ex `company_identifiers`) |
 | `commoncrawl_domain_metadata` | 067 | B | one row / domain — self-reported JSON-LD (name, description, logo, country, founding, size) |
 | `commoncrawl_domain_contact_info` | 068 | B | **many** rows / domain — email \| phone \| social |
+| `commoncrawl_domain_graph_signals` | 073 | **external** | one row / (domain, crawl) — webgraph PageRank + harmonic centrality (loaded by `load-domain-ranks.sh`, §9b — not the worker) |
 | `nace_category_embeddings` / `page_type_exemplars` | 044 / 045 | A (reference) | written by reference-builder, read by the worker |
 
 `commoncrawl_company_profile` was **dropped** (split into `domain_metadata` + `domain_contact_info`).
@@ -454,6 +455,37 @@ SELECT count() FROM commoncrawl_domain_metadata FINAL WHERE name != '';
 
 -- A: NACE confidence → size of the low-confidence escalation tail
 SELECT nace_confident, count() FROM commoncrawl_page_signals FINAL GROUP BY nace_confident;
+```
+
+### 9b. Domain graph signals — PageRank + harmonic centrality (external ingest)
+
+`commoncrawl_domain_graph_signals` (migration 073) holds CommonCrawl's **domain-level webgraph** authority
+scores — one row / (domain, crawl). It is **not** produced by the worker; it's an external file you load
+directly. Use the **domain-level** graph (not host-level) — it matches the `root_domain` grain and joins with
+no aggregation. It's a satellite keyed on `root_domain` (separate source/cadence from the worker, so it does
+**not** go on `commoncrawl_domains`; mirrors `open_page_rank_domains`).
+
+- **`cc_harmonic_centrality`** — shortest-path reachability; the **spam-resistant** complement to PageRank
+  (link farms can't fabricate real short paths). **`cc_pagerank`** — PageRank over CommonCrawl (mostly
+  redundant with `open_page_rank`). Plus the rank positions (`*_rank`) and `n_hosts`.
+
+Download the **domain** ranks file from <https://commoncrawl.org/web-graphs> (`*-domain-ranks.txt.gz`,
+gunzip), then load it with **`load-domain-ranks.sh`** — it streams the file with `clickhouse-local`,
+un-reverses `host_rev` (`com.example` → `example.com`), and bulk-inserts via `remote()`:
+```bash
+curl -s https://clickhouse.com/ | sh                 # one-time: the static clickhouse binary (or set CLICKHOUSE_BIN)
+(cd .. && make clickhouse-migrate-up)                # one-time: create the table (073)
+
+DRY=1 ./load-domain-ranks.sh /opt/cc-main-2026-apr-may-jun-domain-ranks.txt CC-MAIN-2026-apr-may-jun  # preview 5 rows
+./load-domain-ranks.sh       /opt/cc-main-2026-apr-may-jun-domain-ranks.txt CC-MAIN-2026-apr-may-jun  # load
+```
+`crawl_id` is the **webgraph release** (it spans several monthly crawls), e.g. `CC-MAIN-2026-apr-may-jun` —
+not a single `CC-MAIN-2026-NN`. Idempotent (ReplacingMergeTree dedup on `(root_domain, crawl_id)`), so
+re-loading a release is safe. Join it like any satellite:
+```sql
+SELECT d.root_domain, g.cc_harmonic_centrality, g.cc_pagerank
+FROM commoncrawl_domains d FINAL
+LEFT JOIN commoncrawl_domain_graph_signals g FINAL USING (root_domain);
 ```
 
 ---
@@ -492,3 +524,8 @@ Aho-Corasick), `extract` (LEI/VAT/profile), `classify` (NACE reference + classif
 startup check), `output` (Parquet rows + S3), `load` (native-driver INSERT for the `load` command),
 `worker` (`ProcessShard` orchestration). `Makefile` builds
 into `bin/`; binaries and `data/` are gitignored — code dirs never hold binary output.
+
+
+
+
+./cc-crawl/bin/cc-crawl -crawl CC-MAIN-2026-25 -mode industry -parts 64-220
