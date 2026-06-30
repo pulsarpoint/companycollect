@@ -265,19 +265,29 @@ func run(mode string, o opts) {
 		stem := strings.TrimSuffix(filepath.Base(o.worklist), filepath.Ext(o.worklist))
 		outDir = filepath.Join("../data/crawl", stem)
 	}
-	// embed VERIFY-AND-SKIP: the embeddings write is atomic (one WriteFile at the very end), so an
-	// embeddings.parquet that OPENS with rows>0 is a COMPLETE run — a killed run leaves no file or an
-	// unreadable (truncated) one. If it's already complete, skip the whole part (no re-fetch/re-embed);
-	// otherwise fall through and (over)write it. embed deliberately reuses the dir (no empty-dir rule).
+	// embed VERIFY-AND-SKIP: a part is DONE if its embed folder already holds a complete vector file under
+	// EITHER name — embeddings.parquet (fp32, fresh from this pass) or embeddings_fp16.parquet (converted
+	// offline once the fp32 was pruned). For fp32 the write is atomic (one WriteFile at the end), so
+	// parquetRows>0 proves completeness; parquetRows reads only the footer row count, so it usually works for
+	// fp16 too, and if parquet-go can't read the HALF_FLOAT footer we accept a non-empty file (the converted
+	// file was verified before its fp32 was pruned). If done, skip the whole part (no re-fetch/re-embed);
+	// else fall through and (over)write embeddings.parquet. embed deliberately reuses the dir (no empty rule).
 	if mode == "embed" {
-		embPath := filepath.Join(outDir, "embeddings.parquet")
-		if rows, verr := parquetRows(embPath); verr == nil && rows > 0 {
+		for _, name := range []string{"embeddings.parquet", "embeddings_fp16.parquet"} {
+			embPath := filepath.Join(outDir, name)
+			rows, verr := parquetRows(embPath)
+			if verr == nil {
+				if rows <= 0 {
+					continue // readable but empty -> not done under this name
+				}
+			} else if st, serr := os.Stat(embPath); serr != nil || st.Size() == 0 {
+				continue // missing, or unreadable-and-empty -> not done under this name
+			}
 			dom := 0
 			if items, werr := readWorklist(o.worklist); werr == nil {
 				dom = uniqueDomains(items)
 			}
-			log.Printf("skip: %d embeddings already present (%.0f%% of %d worklist domains) -> %s",
-				rows, 100*float64(rows)/float64(max(dom, 1)), dom, embPath)
+			log.Printf("skip: embeddings already present (rows=%d, %d worklist domains) -> %s", rows, dom, embPath)
 			return
 		}
 	} else if entries, _ := os.ReadDir(outDir); len(entries) > 0 {
