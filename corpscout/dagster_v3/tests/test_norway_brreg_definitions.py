@@ -1,18 +1,22 @@
-"""Graph-contract tests for the Norway Brreg definitions after retargeting the translation trigger.
+"""Graph-contract tests for the Norway Brreg definitions.
 
 Coverage:
 1. All surviving assets are registered, including norway_brreg_translation_trigger.
-2. Dependency edges: entities→fetches, fetches→statements, entities→clickhouse_companies,
-   statements→clickhouse_financial, norway_resolved_clickhouse→translation_trigger.
-3. norway_brreg_refresh_job expanded membership now includes the resolved dbt models and
-   resolved ClickHouse export via upstream() resolution across modules.
-4. resources["norway_brreg_duckdb"] is wired as DuckDBResource.
+2. Dependency edges: parquet entity assets feed parquet-backed ClickHouse publish assets.
+3. norway_brreg_refresh_job uses the full snapshot parquet-to-ClickHouse path.
+4. norway_brreg_entity_updates_job uses the daily update parquet-to-ClickHouse path.
+5. resources["norway_brreg_duckdb"] is wired as DuckDBResource.
 """
 
 import dagster as dg
 from dagster_duckdb import DuckDBResource
 
+from dagster_v3.defs.common.resources import ObjectStoreResource
 import dagster_v3.defs.norway_brreg.assets as brreg_assets
+from dagster_v3.defs.norway_brreg.entity_storage import (
+    NorwayBrregEntityParquetStorageResource,
+)
+from dagster_v3.defs.norway_brreg.resources import NorwayBrregApiResource
 from dagster_v3.definitions import defs as load_project_defs
 
 
@@ -21,6 +25,22 @@ def test_norway_brreg_all_assets_registered() -> None:
     repo = load_project_defs().get_repository_def()
     asset_names = {key.path[-1] for key in repo.asset_graph.get_all_asset_keys()}
 
+    assert "norway_brreg_entities_snapshot_s3" in asset_names
+    assert "norway_brreg_entity_updates_s3" in asset_names
+    assert "norway_brreg_entities_snapshot_no_companies_parquet" in asset_names
+    assert "norway_brreg_entities_snapshot_no_websites_parquet" in asset_names
+    assert "norway_brreg_entities_snapshot_no_industries_parquet" in asset_names
+    assert "norway_brreg_entities_snapshot_affected_orgs_parquet" in asset_names
+    assert "norway_brreg_entities_snapshot_removed_orgs_parquet" in asset_names
+    assert "norway_brreg_entity_updates_no_companies_parquet" in asset_names
+    assert "norway_brreg_entity_updates_no_websites_parquet" in asset_names
+    assert "norway_brreg_entity_updates_no_industries_parquet" in asset_names
+    assert "norway_brreg_entity_updates_affected_orgs_parquet" in asset_names
+    assert "norway_brreg_entity_updates_removed_orgs_parquet" in asset_names
+    assert "norway_brreg_entities_snapshot_clickhouse" in asset_names
+    assert "norway_brreg_entity_updates_clickhouse" in asset_names
+    assert "norway_brreg_entities_snapshot_normalized_parquet" not in asset_names
+    assert "norway_brreg_entity_updates_normalized_parquet" not in asset_names
     assert "norway_brreg_entities_duckdb" in asset_names
     assert "norway_brreg_financial_fetches_duckdb" in asset_names
     assert "norway_brreg_financial_statements_duckdb" in asset_names
@@ -45,6 +65,12 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     statements_node = asset_graph.get(
         brreg_assets.norway_brreg_financial_statements_duckdb_asset.key
     )
+    snapshot_clickhouse_node = asset_graph.get(
+        dg.AssetKey("norway_brreg_entities_snapshot_clickhouse")
+    )
+    update_clickhouse_node = asset_graph.get(
+        dg.AssetKey("norway_brreg_entity_updates_clickhouse")
+    )
     trigger_node = asset_graph.get(dg.AssetKey("norway_brreg_translation_trigger"))
 
     # entities → fetches
@@ -53,9 +79,21 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     assert {k.path[-1] for k in statements_node.parent_keys} == {
         "norway_brreg_financial_fetches_duckdb"
     }
-    # norway_resolved_clickhouse → translation_trigger  (fires after no_companies lands)
+    assert {k.path[-1] for k in snapshot_clickhouse_node.parent_keys} == {
+        "norway_brreg_entities_snapshot_no_companies_parquet",
+        "norway_brreg_entities_snapshot_no_websites_parquet",
+        "norway_brreg_entities_snapshot_no_industries_parquet",
+    }
+    assert {k.path[-1] for k in update_clickhouse_node.parent_keys} == {
+        "norway_brreg_entity_updates_no_companies_parquet",
+        "norway_brreg_entity_updates_no_websites_parquet",
+        "norway_brreg_entity_updates_no_industries_parquet",
+        "norway_brreg_entity_updates_affected_orgs_parquet",
+        "norway_brreg_entity_updates_removed_orgs_parquet",
+    }
+    # Snapshot parquet ClickHouse publish → translation_trigger.
     assert {k.path[-1] for k in trigger_node.parent_keys} == {
-        "norway_resolved_clickhouse"
+        "norway_brreg_entities_snapshot_clickhouse"
     }
 
 
@@ -63,27 +101,26 @@ def test_norway_brreg_refresh_job_membership() -> None:
     """norway_brreg_refresh_job contains the full expanded upstream selection."""
     repo = load_project_defs().get_repository_def()
     assert "norway_brreg_refresh_job" in repo.job_names
+    assert "norway_brreg_entity_updates_job" in repo.job_names
     assert "norway_brreg_translation_completion_job" not in repo.job_names
 
     refresh = {
         k.path[-1]
         for k in repo.get_job("norway_brreg_refresh_job").asset_layer.executable_asset_keys
     }
-    # Trigger fires after the resolved export; the full chain runs through it.
+    # Trigger fires after the parquet-backed full snapshot publish.
     assert refresh == {
-        # brreg raw chain
-        "norway_brreg_entities_duckdb",
-        "norway_brreg_financial_fetches_duckdb",
-        "norway_brreg_financial_statements_duckdb",
-        # resolved dbt models
-        "norway_resolved_no_companies",
-        "norway_resolved_no_websites",
-        "norway_resolved_no_industries",
-        "norway_resolved_no_financial_statements",
-        # resolved ClickHouse export + trigger
-        "norway_resolved_clickhouse",
+        "norway_brreg_entities_snapshot_s3",
+        "norway_brreg_entities_snapshot_no_companies_parquet",
+        "norway_brreg_entities_snapshot_no_websites_parquet",
+        "norway_brreg_entities_snapshot_no_industries_parquet",
+        "norway_brreg_entities_snapshot_affected_orgs_parquet",
+        "norway_brreg_entities_snapshot_removed_orgs_parquet",
+        "norway_brreg_entities_snapshot_clickhouse",
         "norway_brreg_translation_trigger",
     }
+    assert "norway_resolved_clickhouse" not in refresh
+    assert "norway_resolved_no_companies" not in refresh
     # Raw brreg ClickHouse exports are no longer in the job chain
     assert "norway_brreg_clickhouse_companies" not in refresh
     assert "norway_brreg_clickhouse_financial_statements" not in refresh
@@ -92,12 +129,44 @@ def test_norway_brreg_refresh_job_membership() -> None:
     assert "norway_brreg_translations_applied" not in refresh
 
 
+def test_norway_brreg_entity_updates_job_membership() -> None:
+    """norway_brreg_entity_updates_job contains the daily parquet update chain."""
+    repo = load_project_defs().get_repository_def()
+
+    update = {
+        k.path[-1]
+        for k in repo.get_job("norway_brreg_entity_updates_job").asset_layer.executable_asset_keys
+    }
+
+    assert update == {
+        "norway_brreg_entity_updates_s3",
+        "norway_brreg_entity_updates_no_companies_parquet",
+        "norway_brreg_entity_updates_no_websites_parquet",
+        "norway_brreg_entity_updates_no_industries_parquet",
+        "norway_brreg_entity_updates_affected_orgs_parquet",
+        "norway_brreg_entity_updates_removed_orgs_parquet",
+        "norway_brreg_entity_updates_clickhouse",
+    }
+
+
 def test_norway_brreg_duckdb_resource_is_wired() -> None:
     """The norway_brreg_duckdb resource is a DuckDBResource; the removed queue resource is gone."""
     top_level_resources = load_project_defs().get_repository_def().get_top_level_resources()
 
     assert "norway_brreg_duckdb" in top_level_resources
     assert top_level_resources["norway_brreg_duckdb"].configurable_resource_cls is DuckDBResource
+    assert "norway_brreg_api" in top_level_resources
+    assert (
+        top_level_resources["norway_brreg_api"].configurable_resource_cls
+        is NorwayBrregApiResource
+    )
+    assert "object_store" in top_level_resources
+    assert top_level_resources["object_store"].configurable_resource_cls is ObjectStoreResource
+    assert "norway_brreg_entity_storage" in top_level_resources
+    assert (
+        top_level_resources["norway_brreg_entity_storage"].configurable_resource_cls
+        is NorwayBrregEntityParquetStorageResource
+    )
     assert "norway_brreg_translation_queue_duckdb" not in top_level_resources
 
 
@@ -121,3 +190,12 @@ def test_norway_brreg_refresh_schedule_wiring() -> None:
 
     assert sched.cron_schedule == "0 6 7 * *"
     assert sched.job.name == "norway_brreg_refresh_job"
+
+
+def test_norway_brreg_entity_updates_schedule_wiring() -> None:
+    """norway_brreg_entity_updates_schedule is daily and wired to the partitioned update job."""
+    repo = load_project_defs().get_repository_def()
+    sched = repo.get_schedule_def("norway_brreg_entity_updates_schedule")
+
+    assert sched.cron_schedule == "0 0 * * *"
+    assert sched.job.name == "norway_brreg_entity_updates_job"

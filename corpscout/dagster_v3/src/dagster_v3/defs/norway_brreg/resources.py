@@ -6,15 +6,19 @@ import json
 import logging
 from collections.abc import Callable
 from collections.abc import Iterator
+from collections.abc import Mapping
 from decimal import Decimal
 from io import BytesIO
 from typing import Any, Protocol
 
+import dagster as dg
 import dlt
 import ijson
 import requests
 from dlt.extract.source import DltSource
+from pydantic import PrivateAttr
 
+from dagster_v3.defs.norway_brreg import entity_records
 from dagster_v3.defs.norway_brreg import tables
 
 COUNTRY = "NO"
@@ -51,7 +55,126 @@ BRREG_LEGAL_FORM_DESCRIPTION_EN_BY_CODE = {
 class HttpSession(Protocol):
     headers: dict[str, str]
 
-    def get(self, url: str, *, timeout: int, stream: bool = False) -> Any: ...
+    def get(
+        self,
+        url: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        timeout: int,
+        stream: bool = False,
+    ) -> Any: ...
+
+
+class NorwayBrregApiResource(dg.ConfigurableResource):
+    base_url: str = BRREG_BASE_URL
+    financial_base_url: str = BRREG_REGNSKAP_BASE_URL
+    user_agent: str = DEFAULT_USER_AGENT
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+    update_page_size: int = 10_000
+
+    _session: HttpSession | None = PrivateAttr(default=None)
+
+    def __init__(self, session: HttpSession | None = None, **data: Any) -> None:
+        super().__init__(**data)
+        self._session = session
+
+    def session(self) -> HttpSession:
+        if self._session is None:
+            session = requests.Session()
+            session.headers["User-Agent"] = self.user_agent
+            self._session = session
+        return self._session
+
+    def download_entities_snapshot(self) -> bytes:
+        return _download_bytes(
+            url=f"{self.base_url}/enheter/lastned",
+            timeout_seconds=self.timeout_seconds,
+            user_agent=self.user_agent,
+            session=self.session(),
+        )
+
+    def iter_all_entities(self) -> Iterator[dict[str, Any]]:
+        response_body = self.download_entities_snapshot()
+        for entity in _stream_gzip_json_array(response_body):
+            yield entity_records.snapshot_entity_record(entity)
+
+    def iter_updated_entities(
+        self,
+        *,
+        start: str,
+        end: str,
+        include_changes: bool = False,
+    ) -> Iterator[dict[str, Any]]:
+        page_number = 0
+        while True:
+            params: dict[str, Any] = {
+                "dato": start,
+                "updatedBefore": end,
+                "size": self.update_page_size,
+                "page": page_number,
+                "sort": "id,ASC",
+            }
+            if include_changes:
+                params["includeChanges"] = "true"
+
+            payload = self._get_json(
+                f"{self.base_url}/oppdateringer/enheter",
+                params=params,
+            )
+            for update in entity_records.entity_updates_from_payload(payload):
+                if entity_records.entity_update_requires_hydration(update):
+                    entity = self.get_entity(_string(update.get("organisasjonsnummer")))
+                else:
+                    entity = None
+                yield entity_records.updated_entity_record(update, entity=entity)
+
+            if not entity_records.update_payload_has_next_page(
+                payload, current_page=page_number
+            ):
+                break
+            page_number += 1
+
+    def get_entity(self, org_number: str) -> dict[str, Any]:
+        payload = self._get_json(f"{self.base_url}/enheter/{org_number}")
+        if not isinstance(payload, dict):
+            raise ValueError(f"Expected Brreg entity payload to be an object: {org_number}")
+        return payload
+
+    def get_financial_accounts(
+        self,
+        org_number: str,
+        *,
+        year: str | int | None = None,
+        account_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {}
+        if year is not None:
+            params["år"] = str(year)
+        if account_type is not None:
+            params["regnskapstype"] = account_type
+        payload = self._get_json(
+            f"{self.financial_base_url}/{org_number}",
+            params=params or None,
+        )
+        if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
+            raise ValueError(
+                f"Expected Brreg financial accounts payload to be a list: {org_number}"
+            )
+        return payload
+
+    def _get_json(
+        self,
+        url: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+    ) -> Any:
+        response = self.session().get(
+            url,
+            params=params,
+            timeout=self.timeout_seconds,
+        )
+        _raise_for_status(response)
+        return response.json()
 
 
 @dlt.source(name="norway_brreg_entities")
@@ -245,6 +368,16 @@ def _download_bytes(
             )
             next_progress_bytes += progress_every_bytes
     return b"".join(chunks)
+
+
+def _raise_for_status(response: Any) -> None:
+    raise_for_status = getattr(response, "raise_for_status", None)
+    if callable(raise_for_status):
+        raise_for_status()
+        return
+    status_code = getattr(response, "status_code", 200)
+    if status_code >= 400:
+        raise RuntimeError(f"HTTP {status_code}")
 
 
 def _stream_gzip_json_array(body: bytes) -> Iterator[dict[str, Any]]:
