@@ -92,19 +92,13 @@ def norway_brreg_translation_trigger(
     )
 
 
-# Monthly full entity refresh. The translation trigger runs after the parquet-backed
+# Manual full entity snapshot. The translation trigger runs after the parquet-backed
 # snapshot publish lands corpscout.no_companies in ClickHouse.
-norway_brreg_refresh_job = dg.define_asset_job(
-    "norway_brreg_refresh_job",
+norway_brreg_entities_full_snapshot_job = dg.define_asset_job(
+    "norway_brreg_entities_full_snapshot_job",
     selection=dg.AssetSelection.assets(
         "norway_brreg_translation_trigger"
     ).upstream().required_multi_asset_neighbors(),
-)
-norway_brreg_refresh_schedule = dg.ScheduleDefinition(
-    name="norway_brreg_refresh_schedule",
-    job=norway_brreg_refresh_job,
-    cron_schedule="0 6 7 * *",  # monthly, 7th 06:00 (staggered vs estonia/latvia)
-    execution_timezone="Europe/Belgrade",
 )
 
 norway_brreg_entity_updates_job = dg.define_asset_job(

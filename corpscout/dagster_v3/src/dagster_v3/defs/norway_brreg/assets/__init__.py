@@ -38,10 +38,9 @@ from dagster_v3.defs.norway_brreg.assets.translation import (
     NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID,
     NorwayBrregTranslationConfig,
     build_norway_brreg_build_queue_input,
+    norway_brreg_entities_full_snapshot_job,
     norway_brreg_entity_updates_job,
     norway_brreg_entity_updates_schedule,
-    norway_brreg_refresh_job,
-    norway_brreg_refresh_schedule,
     norway_brreg_translation_trigger,
 )
 
@@ -67,6 +66,7 @@ __all__ = [
     "entity_updates_object_key",
     "normalize_norway_brreg_financial_statements_duckdb",
     "norway_brreg_entities_duckdb_asset",
+    "norway_brreg_entities_full_snapshot_job",
     "norway_brreg_entities_snapshot_clickhouse",
     "norway_brreg_entities_snapshot_normalized_parquets",
     "norway_brreg_entities_snapshot_s3",
@@ -77,7 +77,5 @@ __all__ = [
     "norway_brreg_entity_updates_schedule",
     "norway_brreg_financial_fetches_duckdb_asset",
     "norway_brreg_financial_statements_duckdb_asset",
-    "norway_brreg_refresh_job",
-    "norway_brreg_refresh_schedule",
     "norway_brreg_translation_trigger",
 ]

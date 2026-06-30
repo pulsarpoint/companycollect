@@ -3,7 +3,7 @@
 Coverage:
 1. All surviving assets are registered, including norway_brreg_translation_trigger.
 2. Dependency edges: parquet entity assets feed parquet-backed ClickHouse publish assets.
-3. norway_brreg_refresh_job uses the full snapshot parquet-to-ClickHouse path.
+3. norway_brreg_entities_full_snapshot_job uses the full snapshot parquet-to-ClickHouse path.
 4. norway_brreg_entity_updates_job uses the daily update parquet-to-ClickHouse path.
 5. resources["norway_brreg_duckdb"] is wired as DuckDBResource.
 """
@@ -97,16 +97,19 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     }
 
 
-def test_norway_brreg_refresh_job_membership() -> None:
-    """norway_brreg_refresh_job contains the full expanded upstream selection."""
+def test_norway_brreg_entities_full_snapshot_job_membership() -> None:
+    """norway_brreg_entities_full_snapshot_job contains the full expanded upstream selection."""
     repo = load_project_defs().get_repository_def()
-    assert "norway_brreg_refresh_job" in repo.job_names
+    assert "norway_brreg_entities_full_snapshot_job" in repo.job_names
+    assert "norway_brreg_refresh_job" not in repo.job_names
     assert "norway_brreg_entity_updates_job" in repo.job_names
     assert "norway_brreg_translation_completion_job" not in repo.job_names
 
     refresh = {
         k.path[-1]
-        for k in repo.get_job("norway_brreg_refresh_job").asset_layer.executable_asset_keys
+        for k in repo.get_job(
+            "norway_brreg_entities_full_snapshot_job"
+        ).asset_layer.executable_asset_keys
     }
     # Trigger fires after the parquet-backed full snapshot publish.
     assert refresh == {
@@ -183,13 +186,13 @@ def test_norway_brreg_duckdb_pool_on_writing_assets() -> None:
     )
 
 
-def test_norway_brreg_refresh_schedule_wiring() -> None:
-    """norway_brreg_refresh_schedule is monthly, staggered, wired to the refresh job."""
+def test_norway_brreg_entities_full_snapshot_has_no_schedule() -> None:
+    """The full snapshot job is manual-only; daily updates own the recurring schedule."""
     repo = load_project_defs().get_repository_def()
-    sched = repo.get_schedule_def("norway_brreg_refresh_schedule")
+    schedule_names = {schedule.name for schedule in repo.schedule_defs}
 
-    assert sched.cron_schedule == "0 6 7 * *"
-    assert sched.job.name == "norway_brreg_refresh_job"
+    assert "norway_brreg_entities_full_snapshot_schedule" not in schedule_names
+    assert "norway_brreg_refresh_schedule" not in schedule_names
 
 
 def test_norway_brreg_entity_updates_schedule_wiring() -> None:

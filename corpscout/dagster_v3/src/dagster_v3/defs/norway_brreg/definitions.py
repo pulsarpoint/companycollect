@@ -4,6 +4,7 @@ from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.norway_brreg.assets import (
     NORWAY_BRREG_DUCKDB_PATH,
     norway_brreg_entities_duckdb_asset,
+    norway_brreg_entities_full_snapshot_job,
     norway_brreg_entities_snapshot_clickhouse,
     norway_brreg_entities_snapshot_normalized_parquets,
     norway_brreg_entities_snapshot_s3,
@@ -14,8 +15,6 @@ from dagster_v3.defs.norway_brreg.assets import (
     norway_brreg_entity_updates_schedule,
     norway_brreg_financial_fetches_duckdb_asset,
     norway_brreg_financial_statements_duckdb_asset,
-    norway_brreg_refresh_job,
-    norway_brreg_refresh_schedule,
     norway_brreg_translation_trigger,
 )
 from dagster_v3.defs.norway_brreg.entity_storage import (
@@ -38,11 +37,10 @@ defs = dg.Definitions(
         norway_brreg_translation_trigger,
     ],
     jobs=[
-        norway_brreg_refresh_job,
+        norway_brreg_entities_full_snapshot_job,
         norway_brreg_entity_updates_job,
     ],
     schedules=[
-        norway_brreg_refresh_schedule,
         norway_brreg_entity_updates_schedule,
     ],
     resources={
