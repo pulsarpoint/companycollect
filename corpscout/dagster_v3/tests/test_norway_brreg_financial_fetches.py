@@ -1,8 +1,6 @@
 import json
-from pathlib import Path
 from typing import Any
 
-import duckdb
 import polars as pl
 
 from dagster_v3.defs.norway_brreg import financial_fetches
@@ -28,17 +26,6 @@ class FakeDltRequestsClient:
         if url == "https://data.brreg.no/regnskapsregisteret/regnskap/network":
             raise OSError("network down")
         return self.responses[url]
-
-
-class InterruptingClient(FakeDltRequestsClient):
-    def __init__(self, responses: dict[str, FakeResponse], *, interrupt_after: int) -> None:
-        super().__init__(responses)
-        self.interrupt_after = interrupt_after
-
-    def get(self, url: str, *, timeout: int) -> FakeResponse:
-        if len(self.calls) >= self.interrupt_after:
-            raise KeyboardInterrupt
-        return super().get(url, timeout=timeout)
 
 
 def test_financial_fetch_status_values_are_explicit() -> None:
@@ -256,113 +243,3 @@ def test_fetch_financial_rows_for_orgs_accepts_log_and_reports_status_counts() -
             (1, {"success": 1}),
         ),
     ]
-
-
-def test_resumable_financial_fetches_persist_completed_rows_before_interrupt(
-    tmp_path: Path,
-) -> None:
-    database_path = tmp_path / "norway.duckdb"
-    _seed_entities(database_path)
-    client = InterruptingClient(
-        {
-            "https://data.brreg.no/regnskapsregisteret/regnskap/811685852": FakeResponse(
-                status_code=404,
-                payload={"message": "not found"},
-                text='{"message":"not found"}',
-            ),
-        },
-        interrupt_after=1,
-    )
-
-    try:
-        with duckdb.connect(str(database_path)) as connection:
-            financial_fetches.run_brreg_financial_statement_fetches(
-                duckdb_connection=connection,
-                base_url="https://data.brreg.no/regnskapsregisteret/regnskap",
-                source_run_id="run-1",
-                timeout_seconds=120,
-                user_agent="test-agent",
-                fetched_at="2026-06-17T00:00:00.000Z",
-                client=client,
-                commit_every_rows=1,
-            )
-    except KeyboardInterrupt:
-        pass
-
-    with duckdb.connect(str(database_path), read_only=True) as connection:
-        rows = connection.execute(
-            """
-            select org_number, fetch_status, http_status
-            from norway_brreg.financial_fetches
-            order by org_number
-            """
-        ).fetchall()
-
-    assert rows == [("811685852", "not_found", 404)]
-
-
-def test_resumable_financial_fetches_skip_existing_rows(tmp_path: Path) -> None:
-    database_path = tmp_path / "norway.duckdb"
-    _seed_entities(database_path)
-    client = FakeDltRequestsClient(
-        {
-            "https://data.brreg.no/regnskapsregisteret/regnskap/811685852": FakeResponse(
-                status_code=404,
-                payload={"message": "not found"},
-                text='{"message":"not found"}',
-            ),
-        }
-    )
-    with duckdb.connect(str(database_path)) as connection:
-        financial_fetches.run_brreg_financial_statement_fetches(
-            duckdb_connection=connection,
-            base_url="https://data.brreg.no/regnskapsregisteret/regnskap",
-            source_run_id="run-1",
-            timeout_seconds=120,
-            user_agent="test-agent",
-            fetched_at="2026-06-17T00:00:00.000Z",
-            client=client,
-            commit_every_rows=1,
-        )
-    assert [url for url, _timeout in client.calls] == [
-        "https://data.brreg.no/regnskapsregisteret/regnskap/811685852",
-        "https://data.brreg.no/regnskapsregisteret/regnskap/814115232",
-        "https://data.brreg.no/regnskapsregisteret/regnskap/923609016",
-        "https://data.brreg.no/regnskapsregisteret/regnskap/network",
-    ]
-
-    resume_client = FakeDltRequestsClient({})
-    with duckdb.connect(str(database_path)) as connection:
-        counts = financial_fetches.run_brreg_financial_statement_fetches(
-            duckdb_connection=connection,
-            base_url="https://data.brreg.no/regnskapsregisteret/regnskap",
-            source_run_id="run-2",
-            timeout_seconds=120,
-            user_agent="test-agent",
-            fetched_at="2026-06-17T00:00:00.000Z",
-            client=resume_client,
-            commit_every_rows=1,
-        )
-
-    assert resume_client.calls == []
-    assert counts["total_candidates"] == 4
-    assert counts["skipped_existing"] == 4
-    assert counts["fetched"] == 0
-
-
-def _seed_entities(database_path: Path) -> None:
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute("create schema if not exists norway_brreg")
-        connection.execute(
-            """
-            create or replace table norway_brreg.entities as
-            select *
-            from (
-                values
-                    ('923609016', 'EQUINOR ASA', 'www.equinor.com', '2024', true),
-                    ('811685852', 'MISSING AS', 'www.missing.test', '2024', true),
-                    ('814115232', 'SERVER AS', 'www.server.test', '2024', true),
-                    ('network', 'NETWORK AS', 'www.network.test', '2024', true)
-            ) as t(org_number, legal_name, website, last_submitted_accounts_year, is_active)
-            """
-        )

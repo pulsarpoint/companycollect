@@ -17,7 +17,7 @@ GROUP_NAME = "domains"
 @dg.asset(
     deps=[
         dg.AssetKey("finland_ytj_resolved_clickhouse"),
-        dg.AssetKey("norway_resolved_clickhouse"),
+        dg.AssetKey("norway_brreg_entities_snapshot_clickhouse"),
         dg.AssetKey("wikidata_company_seed_clickhouse"),
         dg.AssetKey("estonia_ar_clickhouse_company_domains"),
         dg.AssetKey("brazil_rfb_clickhouse_websites"),

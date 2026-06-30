@@ -104,3 +104,16 @@ def test_domains_clickhouse_depends_on_brazil_websites() -> None:
     }
 
     assert "brazil_rfb_clickhouse_websites" in parents
+
+
+def test_domains_clickhouse_depends_on_current_norway_brreg_websites() -> None:
+    from dagster_v3.definitions import defs as load_defs
+
+    repo = load_defs().get_repository_def()
+    parents = {
+        parent.path[-1]
+        for parent in repo.asset_graph.get(AssetKey("domains_clickhouse")).parent_keys
+    }
+
+    assert "norway_brreg_entities_snapshot_clickhouse" in parents
+    assert "norway_resolved_clickhouse" not in parents
