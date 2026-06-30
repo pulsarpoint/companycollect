@@ -15,6 +15,7 @@ select
   nullif(activity_text_original, '') as activity_text_original,
   nullif(normalized_url(website), '') as primary_website_url,
   nullif(website_host(website), '') as primary_website_host,
+  nullif(last_submitted_accounts_year, '') as last_submitted_accounts_year,
   source_slug as source_system,
   source_run_id,
   source_record_id,
