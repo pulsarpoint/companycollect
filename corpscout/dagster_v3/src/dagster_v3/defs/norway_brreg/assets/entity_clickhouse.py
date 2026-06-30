@@ -136,7 +136,7 @@ def replace_entity_snapshot_parquets_in_clickhouse(
     log: Callable[..., None] | None = None,
 ) -> dict[str, int]:
     frames = {
-        table_name: storage.read_normalized_snapshot_table(run_id, table_name)
+        table_name: storage.read_normalized_snapshot_table(table_name)
         for table_name in ENTITY_CLICKHOUSE_TABLES
     }
     _log(log, "Loaded Norway Brreg snapshot parquet frames: run_id=%s rows=%s", run_id, _row_counts(frames))

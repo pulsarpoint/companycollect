@@ -56,8 +56,8 @@ class NorwayBrregEntityParquetStorageResource(dg.ConfigurableResource):
             )
         )
 
-    def write_snapshot_table(self, run_id: str, table_name: str, frame: pl.DataFrame) -> str:
-        key = normalized_snapshot_table_object_key(run_id, table_name)
+    def write_snapshot_table(self, table_name: str, frame: pl.DataFrame) -> str:
+        key = normalized_snapshot_table_object_key(table_name)
         self.object_store.ensure_bucket(NORWAY_BRREG_ENTITY_BUCKET)
         self.object_store.write_bytes(
             key,
@@ -95,20 +95,19 @@ class NorwayBrregEntityParquetStorageResource(dg.ConfigurableResource):
 
     def read_normalized_snapshot_table(
         self,
-        run_id: str,
         table_name: str,
     ) -> pl.DataFrame:
         return _read_parquet_bytes(
             self.object_store.read_bytes(
-                normalized_snapshot_table_object_key(run_id, table_name),
+                normalized_snapshot_table_object_key(table_name),
                 bucket=NORWAY_BRREG_ENTITY_BUCKET,
             )
         )
 
 
-def normalized_snapshot_table_object_key(run_id: str, table_name: str) -> str:
+def normalized_snapshot_table_object_key(table_name: str) -> str:
     _validate_normalized_table_name(table_name)
-    return f"norway_brreg/entities/normalized/snapshot/run_id={run_id}/{table_name}.parquet"
+    return f"norway_brreg/entities/normalized/snapshot/{table_name}.parquet"
 
 
 def normalized_update_table_object_key(partition_date: str, table_name: str) -> str:

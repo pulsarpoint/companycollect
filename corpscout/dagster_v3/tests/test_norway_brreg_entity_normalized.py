@@ -64,9 +64,9 @@ class FakeEntityStorage:
         self.update_read_calls.append(partition_date)
         return self.raw_frame
 
-    def write_snapshot_table(self, run_id: str, table_name: str, frame: pl.DataFrame) -> str:
+    def write_snapshot_table(self, table_name: str, frame: pl.DataFrame) -> str:
         self.snapshot_writes[table_name] = frame
-        return f"snapshot/{run_id}/{table_name}.parquet"
+        return f"snapshot/{table_name}.parquet"
 
     def write_update_table(
         self,
@@ -80,7 +80,6 @@ class FakeEntityStorage:
 
 def test_storage_resource_reads_raw_snapshot_and_writes_named_normalized_table() -> None:
     object_store = FakeObjectStore()
-    run_id = "run-1"
     raw_frame = _raw_snapshot_frame()
     object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())] = (
         _parquet_bytes(raw_frame)
@@ -90,20 +89,18 @@ def test_storage_resource_reads_raw_snapshot_and_writes_named_normalized_table()
     assert storage.read_raw_snapshot_frame().to_dicts() == raw_frame.to_dicts()
 
     key = storage.write_snapshot_table(
-        run_id,
         ENTITY_NORMALIZED_TABLE_NO_COMPANIES,
         pl.DataFrame([{"org_number": "1000"}]),
     )
 
     assert key == (
-        "norway_brreg/entities/normalized/snapshot/run_id=run-1/no_companies.parquet"
+        "norway_brreg/entities/normalized/snapshot/no_companies.parquet"
     )
     assert object_store.created_buckets == [NORWAY_BRREG_ENTITY_BUCKET]
     assert pl.read_parquet(
         BytesIO(object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, key)])
     ).to_dicts() == [{"org_number": "1000"}]
     assert storage.read_normalized_snapshot_table(
-        run_id,
         ENTITY_NORMALIZED_TABLE_NO_COMPANIES,
     ).to_dicts() == [{"org_number": "1000"}]
 

@@ -201,7 +201,7 @@ def norway_brreg_entities_snapshot_normalized_parquets(
     )
     for asset_name, table_name, _description in SNAPSHOT_NORMALIZED_ASSETS:
         frame = _normalize_table(table_name, raw_frame, source_run_id=run_id, resolved_at=resolved_at)
-        s3_key = norway_brreg_entity_storage.write_snapshot_table(run_id, table_name, frame)
+        s3_key = norway_brreg_entity_storage.write_snapshot_table(table_name, frame)
         context.log.info(
             "Norway Brreg snapshot table %s written: rows=%d key=%s",
             table_name,

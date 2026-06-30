@@ -36,9 +36,9 @@ def test_replace_entity_snapshot_parquets_replaces_clickhouse_entity_tables() ->
     )
 
     assert storage.snapshot_read_calls == [
-        ("run-1", ENTITY_NORMALIZED_TABLE_NO_COMPANIES),
-        ("run-1", ENTITY_NORMALIZED_TABLE_NO_WEBSITES),
-        ("run-1", ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES),
+        ENTITY_NORMALIZED_TABLE_NO_COMPANIES,
+        ENTITY_NORMALIZED_TABLE_NO_WEBSITES,
+        ENTITY_NORMALIZED_TABLE_NO_INDUSTRIES,
     ]
     assert row_counts == {
         ENTITY_NORMALIZED_TABLE_NO_COMPANIES: 2,
@@ -125,11 +125,11 @@ class FakeEntityStorage:
     ) -> None:
         self.snapshot_tables = snapshot_tables or {}
         self.update_tables = update_tables or {}
-        self.snapshot_read_calls: list[tuple[str, str]] = []
+        self.snapshot_read_calls: list[str] = []
         self.update_read_calls: list[tuple[str, str]] = []
 
-    def read_normalized_snapshot_table(self, run_id: str, table_name: str) -> pl.DataFrame:
-        self.snapshot_read_calls.append((run_id, table_name))
+    def read_normalized_snapshot_table(self, table_name: str) -> pl.DataFrame:
+        self.snapshot_read_calls.append(table_name)
         return self.snapshot_tables[table_name]
 
     def read_normalized_update_table(self, partition_date: str, table_name: str) -> pl.DataFrame:
