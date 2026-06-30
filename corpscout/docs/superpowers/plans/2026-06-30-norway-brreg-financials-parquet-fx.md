@@ -15,9 +15,11 @@
 - Create `companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/financial_storage.py`
   - Owns S3 object keys and read/write methods for Norway financial parquet assets.
 - Modify `companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/financial_fetches.py`
-  - Keep row builders and HTTP status handling, but remove DuckDB candidate/state behavior from the new path.
+  - Keep row builders and HTTP status handling, add financial-update candidate handling, and remove DuckDB candidate/state behavior from the new path.
 - Modify `companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/financial_normalize.py`
   - Split original-currency statement normalization from USD conversion.
+- Modify `companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets/entity_updates.py`
+  - Ensure daily entity update downloads include Brreg change details so financial candidates can be derived without a second entity update API call.
 - Create `companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets/financial_fetches.py`
   - Adds raw financial fetch snapshot/update parquet assets.
 - Create `companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets/financial_statements.py`
@@ -43,6 +45,7 @@
 New asset names:
 
 - `norway_brreg_financial_fetches_snapshot_parquet`
+- `norway_brreg_financial_update_candidates_parquet`
 - `norway_brreg_financial_fetches_updates_parquet`
 - `norway_brreg_financial_statements_snapshot_parquet`
 - `norway_brreg_financial_statements_updates_parquet`
@@ -54,18 +57,21 @@ New asset names:
 New jobs:
 
 - `norway_brreg_financials_full_snapshot_job`
-- `norway_brreg_financials_daily_update_job`
+- `norway_brreg_daily_update_job`
 
 Selection rules:
 
 - Snapshot financial fetch candidates come from `norway_brreg_entities_snapshot_no_companies_parquet`.
 - Snapshot candidates require `is_active = true`.
-- Snapshot candidates do not require website and do not require `last_submitted_accounts_year`.
-- Daily update candidates come from `norway_brreg_entity_updates_affected_orgs_parquet` and `norway_brreg_entity_updates_no_companies_parquet`.
-- Daily update fetches only affected orgs with replacement company rows.
-- Removed orgs are not fetched; the ClickHouse update asset still deletes their old financial rows through `affected_orgs`.
+- Snapshot candidates require `last_submitted_accounts_year` because the initial financial seed is per org/year, not a public bulk financial download.
+- Snapshot candidates do not require website.
+- Daily financial update candidates come from `norway_brreg_financial_update_candidates_parquet`, which reads the raw entity update parquet produced with `includeChanges=true` and keeps only updates where `endringer[].path == "/sisteInnsendteAarsregnskap"`.
+- Company update assets and financial update assets run in one combined daily job, and both branches share the same raw entity update download. Do not make a second Brreg entity update API call for financials.
+- Removed companies from the entity update branch still cause entity table deletes, but they do not drive financial fetches.
 - Financial fetch uses no year filter, so Brreg can return all available annual accounts for the org.
-- Full snapshot raw fetch parquet is reused if it already exists. Re-running the job must not redownload all financial accounts by default.
+- Initial financial seed is resumable at `(org_number, last_submitted_accounts_year)`: if raw fetch data for that key already exists in S3, skip that org/year instead of updating existing raw data.
+- Daily financial update candidates are refreshes: if `/sisteInnsendteAarsregnskap` changes for an org, fetch it and overwrite/update the S3 raw fetch for that org/year.
+- The daily financial path has no "skip existing raw fetch" guard. The Brreg update feed is the signal that the source changed, so the raw fetch object for that `(org_number, last_submitted_accounts_year)` key is replaced.
 
 Error rules:
 
@@ -87,6 +93,8 @@ Error rules:
 from dagster_v3.defs.norway_brreg.financial_storage import (
     financial_fetches_snapshot_object_key,
     financial_fetches_update_object_key,
+    financial_raw_fetch_object_key,
+    financial_update_candidates_object_key,
     financial_statements_snapshot_object_key,
     financial_statements_update_object_key,
     financial_statements_usd_snapshot_object_key,
@@ -100,6 +108,12 @@ def test_norway_financial_storage_object_keys_are_stable() -> None:
     )
     assert financial_fetches_update_object_key("2026-06-30") == (
         "norway_brreg/financial/fetches/updates/date=2026-06-30/financial_fetches.parquet"
+    )
+    assert financial_raw_fetch_object_key("923609016", "2025") == (
+        "norway_brreg/financial/raw_fetches/org=923609016/year=2025/financial_fetch.parquet"
+    )
+    assert financial_update_candidates_object_key("2026-06-30") == (
+        "norway_brreg/financial/update_candidates/date=2026-06-30/financial_update_candidates.parquet"
     )
     assert financial_statements_snapshot_object_key() == (
         "norway_brreg/financial/statements/snapshot/financial_statements.parquet"
@@ -138,11 +152,24 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
         super().__init__(**data)
         self._object_store = object_store or ObjectStoreResource()
 
-    def snapshot_fetches_exist(self) -> bool:
+    def raw_fetch_exists(self, org_number: str, accounts_year: str) -> bool:
         return self._object_store.exists(
-            financial_fetches_snapshot_object_key(),
+            financial_raw_fetch_object_key(org_number, accounts_year),
             bucket=NORWAY_BRREG_ENTITY_BUCKET,
         )
+
+    def write_raw_fetch(
+        self,
+        org_number: str,
+        accounts_year: str,
+        frame: pl.DataFrame,
+        *,
+        overwrite: bool,
+    ) -> str:
+        key = financial_raw_fetch_object_key(org_number, accounts_year)
+        if not overwrite and self._object_store.exists(key, bucket=NORWAY_BRREG_ENTITY_BUCKET):
+            return key
+        return self._write_frame(key, frame)
 
     def write_snapshot_fetches(self, frame: pl.DataFrame) -> str:
         return self._write_frame(financial_fetches_snapshot_object_key(), frame)
@@ -155,6 +182,12 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
 
     def read_update_fetches(self, partition_date: str) -> pl.DataFrame:
         return self._read_frame(financial_fetches_update_object_key(partition_date))
+
+    def write_update_financial_candidates(self, partition_date: str, frame: pl.DataFrame) -> str:
+        return self._write_frame(financial_update_candidates_object_key(partition_date), frame)
+
+    def read_update_financial_candidates(self, partition_date: str) -> pl.DataFrame:
+        return self._read_frame(financial_update_candidates_object_key(partition_date))
 ```
 
 Also add equivalent read/write methods for original statements and USD statements.
@@ -192,9 +225,10 @@ Add tests proving:
 def test_snapshot_financial_candidates_use_active_companies_without_website_filter() -> None:
     frame = pl.DataFrame(
         [
-            {"org_number": "1", "name": "Active No Website", "is_active": True, "primary_website_url": None},
-            {"org_number": "2", "name": "Active Website", "is_active": True, "primary_website_url": "https://x.no"},
-            {"org_number": "3", "name": "Inactive", "is_active": False, "primary_website_url": "https://y.no"},
+            {"org_number": "1", "name": "Active No Website", "is_active": True, "primary_website_url": None, "last_submitted_accounts_year": "2025"},
+            {"org_number": "2", "name": "Active Website", "is_active": True, "primary_website_url": "https://x.no", "last_submitted_accounts_year": "2025"},
+            {"org_number": "3", "name": "Inactive", "is_active": False, "primary_website_url": "https://y.no", "last_submitted_accounts_year": "2025"},
+            {"org_number": "4", "name": "No Accounts", "is_active": True, "primary_website_url": None, "last_submitted_accounts_year": None},
         ]
     )
 
@@ -258,9 +292,12 @@ def financial_fetch_candidates_from_no_companies(frame: pl.DataFrame) -> list[di
             "org_number": str(row["org_number"]),
             "legal_name": str(row["name"] or ""),
             "website": str(row["primary_website_url"] or ""),
-            "last_submitted_accounts_year": "",
+            "last_submitted_accounts_year": str(row["last_submitted_accounts_year"] or ""),
         }
-        for row in frame.filter(pl.col("is_active") == True).sort("org_number").to_dicts()
+        for row in frame
+        .filter((pl.col("is_active") == True) & pl.col("last_submitted_accounts_year").is_not_null())
+        .sort("org_number")
+        .to_dicts()
     ]
 ```
 
@@ -285,21 +322,34 @@ git add companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/fin
 git commit -m "Refactor Norway financial fetch rows for parquet assets"
 ```
 
-### Task 3: Raw Financial Fetch Parquet Assets
+### Task 3: Financial Update Candidates And Raw Financial Fetch Parquet Assets
 
 **Files:**
+- Modify: `companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets/entity_updates.py`
 - Create: `companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets/financial_fetches.py`
 - Modify: `companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets/__init__.py`
 - Modify: `companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/definitions.py`
+- Test: `companycollect/corpscout/dagster_v3/tests/test_norway_brreg_entity_snapshot_asset.py`
 - Test: `companycollect/corpscout/dagster_v3/tests/test_norway_brreg_definitions.py`
 - Test: `companycollect/corpscout/dagster_v3/tests/test_norway_brreg_workflows.py`
 
-- [ ] **Step 1: Add graph tests for new raw fetch assets**
+- [ ] **Step 1: Add tests for entity update change details and new raw fetch assets**
 
-Add assertions that both assets are registered and have the expected parents:
+In `test_norway_brreg_entity_snapshot_asset.py`, extend `test_entity_updates_asset_writes_changed_records_as_daily_parquet_to_s3`:
+
+```python
+assert api.kwargs is not None
+assert api.kwargs["include_changes"] is True
+assert callable(api.kwargs["log"])
+```
+
+This proves the existing entity update parquet contains `raw_update.endringer`, which is the only trigger source for daily financial fetches.
+
+In `test_norway_brreg_definitions.py`, add assertions that all raw financial update assets are registered and have the expected parents:
 
 ```python
 assert "norway_brreg_financial_fetches_snapshot_parquet" in asset_names
+assert "norway_brreg_financial_update_candidates_parquet" in asset_names
 assert "norway_brreg_financial_fetches_updates_parquet" in asset_names
 ```
 
@@ -307,10 +357,8 @@ Expected parent sets:
 
 ```python
 snapshot parents == {"norway_brreg_entities_snapshot_no_companies_parquet"}
-updates parents == {
-    "norway_brreg_entity_updates_no_companies_parquet",
-    "norway_brreg_entity_updates_affected_orgs_parquet",
-}
+financial_update_candidates parents == {"norway_brreg_entity_updates_s3"}
+financial_fetch_updates parents == {"norway_brreg_financial_update_candidates_parquet"}
 ```
 
 - [ ] **Step 2: Run graph tests and verify failure**
@@ -319,12 +367,29 @@ Run:
 
 ```bash
 cd companycollect/corpscout/dagster_v3
-uv run pytest tests/test_norway_brreg_definitions.py -q
+uv run pytest tests/test_norway_brreg_entity_snapshot_asset.py tests/test_norway_brreg_definitions.py -q
 ```
 
-Expected: fails because assets are not registered.
+Expected: fails because the entity update asset is not passing `include_changes=True`, and financial assets are not registered.
 
-- [ ] **Step 3: Implement snapshot fetch asset**
+- [ ] **Step 3: Make daily entity updates include change details**
+
+Update `norway_brreg_entity_updates_s3` so the one shared daily entity update API call fetches Brreg change details:
+
+```python
+records = list(
+    norway_brreg_api.iter_updated_entities(
+        start=updated_at_start,
+        end=updated_at_end,
+        include_changes=True,
+        log=context.log.info,
+    )
+)
+```
+
+Do not add a second entity update API call in the financial pipeline.
+
+- [ ] **Step 4: Implement snapshot fetch asset**
 
 Core behavior:
 
@@ -341,27 +406,81 @@ def norway_brreg_financial_fetches_snapshot_parquet(
     norway_brreg_entity_storage: NorwayBrregEntityParquetStorageResource,
     norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
 ) -> dg.MaterializeResult:
-    if norway_brreg_financial_storage.snapshot_fetches_exist():
-        context.log.info("Reusing existing Norway Brreg financial fetch snapshot parquet")
-        frame = norway_brreg_financial_storage.read_snapshot_fetches()
-        return dg.MaterializeResult(metadata={"row_count": frame.height, "downloaded": False})
-
     companies = norway_brreg_entity_storage.read_normalized_snapshot_table("no_companies")
     candidates = financial_fetch_candidates_from_no_companies(companies)
-    rows = fetch_financial_rows_for_orgs(
-        orgs=candidates,
-        api=norway_brreg_api,
-        source_run_id=context.run_id,
-        log=context.log.info,
-    )
+    rows = []
+    skipped_existing = 0
+    downloaded = 0
+    for candidate in candidates:
+        org_number = candidate["org_number"]
+        accounts_year = candidate["last_submitted_accounts_year"]
+        if norway_brreg_financial_storage.raw_fetch_exists(org_number, accounts_year):
+            skipped_existing += 1
+            rows.append(reused_financial_fetch_catalog_row(candidate, source_run_id=context.run_id))
+            continue
+        fetch_rows = fetch_financial_rows_for_orgs(
+            orgs=[candidate],
+            api=norway_brreg_api,
+            source_run_id=context.run_id,
+            log=context.log.info,
+        )
+        fetch_frame = financial_fetch_rows_frame(fetch_rows)
+        norway_brreg_financial_storage.write_raw_fetch(
+            org_number,
+            accounts_year,
+            fetch_frame,
+            overwrite=False,
+        )
+        rows.extend(fetch_rows)
+        downloaded += 1
     frame = financial_fetch_rows_frame(rows)
     key = norway_brreg_financial_storage.write_snapshot_fetches(frame)
-    return dg.MaterializeResult(metadata={"row_count": frame.height, "s3_key": key, "downloaded": True})
+    return dg.MaterializeResult(
+        metadata={
+            "candidate_count": len(candidates),
+            "downloaded_count": downloaded,
+            "skipped_existing_count": skipped_existing,
+            "row_count": frame.height,
+            "s3_key": key,
+        }
+    )
 ```
 
-The asset must log candidate count, fetched count, status counts, and S3 key.
+The asset must log candidate count, downloaded count, skipped-existing count, status counts, and S3 key. This is a one-time seed that can be re-run safely until all `(org_number, last_submitted_accounts_year)` raw fetches exist.
 
-- [ ] **Step 4: Implement update fetch asset**
+- [ ] **Step 5: Implement financial update candidate asset**
+
+Core behavior:
+
+```python
+@dg.asset(
+    name="norway_brreg_financial_update_candidates_parquet",
+    partitions_def=NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
+    deps=[dg.AssetKey("norway_brreg_entity_updates_s3")],
+    group_name=GROUP_NAME,
+    kinds={"python", "s3", "parquet", "brreg"},
+)
+def norway_brreg_financial_update_candidates_parquet(
+    context,
+    norway_brreg_entity_storage: NorwayBrregEntityParquetStorageResource,
+    norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
+) -> dg.MaterializeResult:
+    partition_date = context.partition_key
+    raw_updates = norway_brreg_entity_storage.read_raw_update_frame(partition_date)
+    frame = financial_update_candidates_frame(raw_updates, source_run_id=context.run_id)
+    key = norway_brreg_financial_storage.write_update_financial_candidates(partition_date, frame)
+    return dg.MaterializeResult(
+        metadata={
+            "partition_date": partition_date,
+            "row_count": frame.height,
+            "s3_key": key,
+        }
+    )
+```
+
+The source update asset must call `NorwayBrregApiResource.iter_updated_entities` with `include_changes=True` so `raw_update.endringer` is present in the parquet. This candidate asset extracts one row per org where the raw update contains `/sisteInnsendteAarsregnskap`, carrying `org_number`, `last_submitted_accounts_year`, source update id/date, and source run id. The candidate asset should be empty, not failing, when there are no financial-account changes in the partition.
+
+- [ ] **Step 6: Implement update fetch asset**
 
 Core behavior:
 
@@ -369,27 +488,53 @@ Core behavior:
 @dg.asset(
     name="norway_brreg_financial_fetches_updates_parquet",
     partitions_def=NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
-    deps=[
-        dg.AssetKey("norway_brreg_entity_updates_no_companies_parquet"),
-        dg.AssetKey("norway_brreg_entity_updates_affected_orgs_parquet"),
-    ],
+    deps=[dg.AssetKey("norway_brreg_financial_update_candidates_parquet")],
     group_name=GROUP_NAME,
     kinds={"python", "s3", "parquet", "brreg"},
 )
-def norway_brreg_financial_fetches_updates_parquet(...):
+def norway_brreg_financial_fetches_updates_parquet(
+    context,
+    norway_brreg_api: NorwayBrregApiResource,
+    norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
+) -> dg.MaterializeResult:
     partition_date = context.partition_key
-    affected = norway_brreg_entity_storage.read_normalized_update_table(partition_date, "affected_orgs")
-    companies = norway_brreg_entity_storage.read_normalized_update_table(partition_date, "no_companies")
-    candidates = financial_update_candidates_from_frames(affected, companies)
-    rows = fetch_financial_rows_for_orgs(...)
+    candidates = norway_brreg_financial_storage.read_update_financial_candidates(partition_date)
+    rows = []
+    downloaded = 0
+    for candidate in candidates.to_dicts():
+        org_number = candidate["org_number"]
+        accounts_year = candidate["last_submitted_accounts_year"]
+        fetch_rows = fetch_financial_rows_for_orgs(
+            orgs=[candidate],
+            api=norway_brreg_api,
+            source_run_id=context.run_id,
+            log=context.log.info,
+        )
+        fetch_frame = financial_fetch_rows_frame(fetch_rows)
+        norway_brreg_financial_storage.write_raw_fetch(
+            org_number,
+            accounts_year,
+            fetch_frame,
+            overwrite=True,
+        )
+        rows.extend(fetch_rows)
+        downloaded += 1
     frame = financial_fetch_rows_frame(rows)
     key = norway_brreg_financial_storage.write_update_fetches(partition_date, frame)
-    return dg.MaterializeResult(metadata={"partition_date": partition_date, "row_count": frame.height, "s3_key": key})
+    return dg.MaterializeResult(
+        metadata={
+            "partition_date": partition_date,
+            "candidate_count": candidates.height,
+            "downloaded_count": downloaded,
+            "row_count": frame.height,
+            "s3_key": key,
+        }
+    )
 ```
 
-Removed orgs appear in affected orgs but not in `no_companies`; they are intentionally not fetched.
+This asset must not read `norway_brreg_entity_updates_affected_orgs_parquet`; only `/sisteInnsendteAarsregnskap` changes are financial fetch candidates. Unlike the initial seed, this daily asset intentionally overwrites the raw fetch object for each candidate `(org_number, last_submitted_accounts_year)` because Brreg has signaled that the accounts year changed.
 
-- [ ] **Step 5: Register resource and assets**
+- [ ] **Step 7: Register resource and assets**
 
 In `definitions.py`, add:
 
@@ -397,25 +542,27 @@ In `definitions.py`, add:
 "norway_brreg_financial_storage": NorwayBrregFinancialParquetStorageResource(),
 ```
 
-Register both raw fetch assets in `defs.assets`.
+Register the financial update candidate asset and both raw fetch assets in `defs.assets`.
 
-- [ ] **Step 6: Run graph tests**
+- [ ] **Step 8: Run graph tests**
 
 Run:
 
 ```bash
 cd companycollect/corpscout/dagster_v3
-uv run pytest tests/test_norway_brreg_definitions.py tests/test_norway_brreg_workflows.py -q
+uv run pytest tests/test_norway_brreg_entity_snapshot_asset.py tests/test_norway_brreg_definitions.py tests/test_norway_brreg_workflows.py -q
 ```
 
 Expected: pass for new raw fetch graph, with old financial DuckDB tests still passing until removal task.
 
-- [ ] **Step 7: Commit raw fetch assets**
+- [ ] **Step 9: Commit raw fetch assets**
 
 ```bash
-git add companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets/financial_fetches.py \
+git add companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets/entity_updates.py \
+  companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets/financial_fetches.py \
   companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/assets/__init__.py \
   companycollect/corpscout/dagster_v3/src/dagster_v3/defs/norway_brreg/definitions.py \
+  companycollect/corpscout/dagster_v3/tests/test_norway_brreg_entity_snapshot_asset.py \
   companycollect/corpscout/dagster_v3/tests/test_norway_brreg_definitions.py \
   companycollect/corpscout/dagster_v3/tests/test_norway_brreg_workflows.py
 git commit -m "Add Norway financial fetch parquet assets"
@@ -483,7 +630,25 @@ def build_original_financial_statement_rows_from_fetch_rows(
             f"Norway financial fetches contain retryable failures: "
             f"count={len(failed_status_rows)} sample_org_numbers={sample}"
         )
-    ...
+    rows: list[dict[str, Any]] = []
+    for fetch_row in fetch_rows:
+        if _string(fetch_row.get("fetch_status")) != FINANCIAL_FETCH_STATUS_SUCCESS:
+            continue
+        payload = json.loads(_string(fetch_row.get("raw_response")) or "[]")
+        if not isinstance(payload, list):
+            continue
+        for line_number, record in enumerate(payload, start=1):
+            if isinstance(record, dict):
+                rows.append(
+                    _original_financial_statement_row(
+                        record,
+                        org=fetch_row,
+                        line_number=line_number,
+                        run_id=_string(fetch_row.get("source_run_id")),
+                        source_url=_string(fetch_row.get("source_url")),
+                    )
+                )
+    return rows
 ```
 
 Original rows must include source/audit fields, identity fields, period fields, currency, and `*_amount_original` fields. They must not include `*_amount_usd`, `fx_rate_to_usd`, `fx_rate_date`, or `fx_source`.
@@ -638,8 +803,8 @@ git commit -m "Add Norway financial statement USD parquet assets"
 Cover:
 
 - snapshot publish calls replace for `corpscout.no_financial_statements`
-- update publish deletes all affected orgs, including removed orgs, then inserts replacement USD rows
-- empty affected-org partition skips ClickHouse mutation
+- update publish deletes orgs present in the financial USD update parquet, then inserts replacement USD rows
+- empty financial USD update parquet skips ClickHouse mutation
 
 Use the existing patterns from `test_norway_brreg_entity_clickhouse.py`.
 
@@ -665,10 +830,18 @@ Snapshot asset:
     group_name=GROUP_NAME,
     kinds={"python", "parquet", "duckdb", "clickhouse", "brreg"},
 )
-def norway_brreg_financial_statements_snapshot_clickhouse(...):
+def norway_brreg_financial_statements_snapshot_clickhouse(
+    clickhouse: ClickhouseResource,
+    norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
+) -> dg.MaterializeResult:
     assert_clickhouse_tables_exist(clickhouse, database=RESOLVED_DATABASE, tables=("no_financial_statements",))
     frame = norway_brreg_financial_storage.read_snapshot_statements_usd()
-    rows = replace_financial_snapshot_parquet_in_clickhouse(...)
+    rows = replace_financial_snapshot_parquet_in_clickhouse(
+        clickhouse=clickhouse,
+        frame=frame,
+        database=RESOLVED_DATABASE,
+        table="no_financial_statements",
+    )
     return dg.MaterializeResult(metadata={"row_count": rows, "clickhouse_table": "no_financial_statements"})
 ```
 
@@ -680,21 +853,27 @@ Update asset:
 @dg.asset(
     name="norway_brreg_financial_statements_updates_clickhouse",
     partitions_def=NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
-    deps=[
-        dg.AssetKey("norway_brreg_financial_statements_updates_usd_parquet"),
-        dg.AssetKey("norway_brreg_entity_updates_affected_orgs_parquet"),
-        dg.AssetKey("norway_brreg_entity_updates_removed_orgs_parquet"),
-    ],
+    deps=[dg.AssetKey("norway_brreg_financial_statements_updates_usd_parquet")],
     group_name=GROUP_NAME,
     kinds={"python", "parquet", "duckdb", "clickhouse", "brreg"},
 )
-def norway_brreg_financial_statements_updates_clickhouse(...):
-    affected_orgs = norway_brreg_entity_storage.read_normalized_update_table(partition_date, "affected_orgs")
+def norway_brreg_financial_statements_updates_clickhouse(
+    context,
+    clickhouse: ClickhouseResource,
+    norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
+) -> dg.MaterializeResult:
+    partition_date = context.partition_key
     usd_frame = norway_brreg_financial_storage.read_update_statements_usd(partition_date)
-    row_count = apply_financial_update_parquet_to_clickhouse(...)
+    row_count = apply_financial_update_parquet_to_clickhouse(
+        clickhouse=clickhouse,
+        frame=usd_frame,
+        database=RESOLVED_DATABASE,
+        table="no_financial_statements",
+    )
     return dg.MaterializeResult(metadata={"partition_date": partition_date, "row_count": row_count})
 ```
 
+Use the distinct `org_number` values from `usd_frame` as the financial affected-org set.
 Use the existing `insert_rows` staging-table pattern from entity updates, not a nullable-date SQL literal builder.
 
 - [ ] **Step 5: Run ClickHouse and graph tests**
@@ -742,7 +921,7 @@ Full financial snapshot job must contain:
 }
 ```
 
-Daily financial update job must contain:
+Combined daily update job must contain:
 
 ```python
 {
@@ -750,6 +929,8 @@ Daily financial update job must contain:
     "norway_brreg_entity_updates_no_companies_parquet",
     "norway_brreg_entity_updates_affected_orgs_parquet",
     "norway_brreg_entity_updates_removed_orgs_parquet",
+    "norway_brreg_entity_updates_clickhouse",
+    "norway_brreg_financial_update_candidates_parquet",
     "norway_brreg_financial_fetches_updates_parquet",
     "norway_brreg_financial_statements_updates_parquet",
     "norway_brreg_financial_statements_updates_usd_parquet",
@@ -762,6 +943,13 @@ Old assets must be absent from definitions:
 ```python
 assert "norway_brreg_financial_fetches_duckdb" not in asset_names
 assert "norway_brreg_financial_statements_duckdb" not in asset_names
+```
+
+The old entity-only daily job and schedule must be absent after the combined job is wired:
+
+```python
+assert "norway_brreg_entity_updates_job" not in repo.job_names
+assert "norway_brreg_entity_updates_schedule" not in schedule_names
 ```
 
 - [ ] **Step 2: Run failing job tests**
@@ -777,7 +965,7 @@ Expected: new jobs missing and old financial DuckDB assets still registered.
 
 - [ ] **Step 3: Define explicit jobs**
 
-Use `AssetSelection.assets(...).upstream()` or explicit asset lists. Keep names literal:
+Use `AssetSelection.assets("asset_name").upstream()` or explicit asset lists. Keep names literal:
 
 ```python
 norway_brreg_financials_full_snapshot_job = dg.define_asset_job(
@@ -785,13 +973,16 @@ norway_brreg_financials_full_snapshot_job = dg.define_asset_job(
     selection=dg.AssetSelection.assets("norway_brreg_financial_statements_snapshot_clickhouse").upstream(),
 )
 
-norway_brreg_financials_daily_update_job = dg.define_asset_job(
-    "norway_brreg_financials_daily_update_job",
+norway_brreg_daily_update_job = dg.define_asset_job(
+    "norway_brreg_daily_update_job",
     selection=dg.AssetSelection.assets("norway_brreg_financial_statements_updates_clickhouse").upstream(),
     partitions_def=NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
 )
 ```
 
+Add one daily schedule for `norway_brreg_daily_update_job`. Do not keep `norway_brreg_entity_updates_job`
+or `norway_brreg_entity_updates_schedule`; the combined daily job is the only scheduled Brreg update
+path so the API is not called twice for the same partition.
 Do not add a schedule for the full snapshot job.
 
 - [ ] **Step 4: Remove old financial DuckDB assets from active definitions**
@@ -895,11 +1086,11 @@ git commit -m "Clean up Norway financial parquet pipeline tests"
 ## Manual Dagster Checks After Deployment
 
 1. Materialize `norway_brreg_financial_fetches_snapshot_parquet`.
-2. Re-materialize it once and confirm logs say existing snapshot parquet was reused.
+2. Re-materialize it once and confirm logs show `skipped_existing_count` increasing for org/year raw fetches already present in S3.
 3. Materialize `norway_brreg_financial_statements_snapshot_parquet`.
 4. Materialize `norway_brreg_financial_statements_snapshot_usd_parquet`.
 5. Materialize `norway_brreg_financial_statements_snapshot_clickhouse`.
-6. For a daily partition, materialize `norway_brreg_financials_daily_update_job`.
+6. For a daily partition, materialize `norway_brreg_daily_update_job`.
 7. Query ClickHouse:
 
 ```sql

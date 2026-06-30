@@ -16,7 +16,6 @@ import (
 	"github.com/pulsarpoint/corpscout/translator/internal/config"
 	"github.com/pulsarpoint/corpscout/translator/internal/orchestration"
 	"github.com/pulsarpoint/corpscout/translator/internal/translation"
-	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 )
@@ -91,20 +90,7 @@ func main() {
 	defer temporalClient.Close()
 
 	temporalWorker := worker.New(temporalClient, cfg.Temporal.TaskQueue, worker.Options{})
-	temporalWorker.RegisterWorkflow(orchestration.NorwayBRREGWorkflow)
-	activities := orchestration.BRREGActivities{Runtime: brregRuntime}
-	temporalWorker.RegisterActivityWithOptions(
-		activities.LoadNewInput,
-		activity.RegisterOptions{Name: orchestration.ActivityLoadNewInput},
-	)
-	temporalWorker.RegisterActivityWithOptions(
-		activities.ProcessOneBatch,
-		activity.RegisterOptions{Name: orchestration.ActivityProcessOneBatch},
-	)
-	temporalWorker.RegisterActivityWithOptions(
-		activities.UploadOutput,
-		activity.RegisterOptions{Name: orchestration.ActivityUploadOutput},
-	)
+	orchestration.RegisterNorwayBRREG(temporalWorker, brregRuntime)
 	if err := temporalWorker.Start(); err != nil {
 		logger.Error("failed to start temporal worker", "error", err)
 		os.Exit(1)
