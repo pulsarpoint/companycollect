@@ -13,7 +13,8 @@ cmd/translator-api        HTTP server entrypoint
 cmd/translator-trigger    CLI trigger for the BRREG Temporal workflow
 internal/api              Minimal router and health endpoint
 internal/config           JSON + environment config loading
-internal/brreg            Norway BRREG queue creation and static translations
+internal/brreg            Norway BRREG workflow, queue loading, and translations
+internal/orchestration    Central Temporal registration and workflow starts
 internal/queue            DuckDB queue runtime for existing source queue files
 internal/translation      OpenAI-compatible local LLM translator
 ```
@@ -73,6 +74,7 @@ Current environment variables:
 ```text
 TRANSLATOR_CONFIG_FILE
 TEMPORAL_ADDRESS
+TRANSLATOR_MAX_BATCHES_PER_RUN
 CLICKHOUSE_HOST
 CLICKHOUSE_NATIVE_PORT
 CLICKHOUSE_HTTP_PORT
@@ -117,6 +119,7 @@ listed above.
 ```text
 GET  /healthz
 POST /v1/sources/{source}/load-queue
+POST /v1/sources/{source}/load-and-run
 POST /v1/sources/{source}/run
 ```
 
@@ -124,6 +127,7 @@ Examples:
 
 ```bash
 curl -s http://localhost:8080/healthz
+curl -s -X POST http://localhost:8080/v1/sources/norway_brreg/load-and-run
 curl -s -X POST http://localhost:8080/v1/sources/norway_brreg/load-queue
 curl -s -X POST http://localhost:8080/v1/sources/norway_brreg/run
 ```
@@ -134,6 +138,7 @@ Use the Go trigger command when you want to start the BRREG workflow directly
 through Temporal instead of the HTTP API:
 
 ```bash
+make trigger-brreg-load-and-run
 make trigger-brreg-load-queue
 make trigger-brreg-run
 ```
@@ -141,6 +146,7 @@ make trigger-brreg-run
 Or run it directly:
 
 ```bash
+go run ./cmd/translator-trigger -action load-and-run
 go run ./cmd/translator-trigger -action load-queue
 go run ./cmd/translator-trigger -action run
 ```
@@ -154,9 +160,16 @@ task_queue=translator-norway-brreg
 signal_name=source-action
 ```
 
-The `run` action processes batches until the input queue is empty, then uploads
-the output queue to ClickHouse. The `load-queue` action reloads new BRREG input
-from ClickHouse into the DuckDB queue.
+The `load-and-run` action first reloads new BRREG input from ClickHouse into the
+DuckDB queue, then processes batches until the queue is empty and uploads the
+output queue to ClickHouse. The `run` action only processes the existing DuckDB
+queue; it does not query ClickHouse. The `load-queue` action only reloads the
+input queue.
+
+Long queue runs use Temporal Continue-As-New after
+`max_batches_per_run` / `TRANSLATOR_MAX_BATCHES_PER_RUN` processed batches. The
+next run resumes with `run` against the same DuckDB queue, so progress is kept
+in `output_items` and workflow history stays bounded.
 
 If the Temporal CLI is installed, `scripts/trigger-brreg-workflow.sh` can also
 send the same `source-action` signal through `temporal workflow
@@ -197,6 +210,7 @@ Run the compiled binary from the `translator` directory:
 Trigger BRREG through the compiled CLI:
 
 ```bash
+./bin/translator-trigger -action load-and-run
 ./bin/translator-trigger -action run
 ./bin/translator-trigger -action load-queue
 ```

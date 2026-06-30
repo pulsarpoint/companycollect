@@ -6,7 +6,7 @@ TRIGGER_BINARY ?= $(BINARY_DIR)/translator-trigger
 API_CMD ?= ./cmd/translator-api
 TRIGGER_CMD ?= ./cmd/translator-trigger
 
-.PHONY: build build-api build-trigger test run trigger-brreg-run trigger-brreg-load-queue clean
+.PHONY: build build-api build-trigger test run trigger-brreg-load-and-run trigger-brreg-run trigger-brreg-load-queue clean
 
 build: build-api build-trigger
 
@@ -23,6 +23,9 @@ test:
 
 run:
 	CGO_ENABLED=$(CGO_ENABLED) $(GO) run $(API_CMD)
+
+trigger-brreg-load-and-run:
+	CGO_ENABLED=$(CGO_ENABLED) $(GO) run $(TRIGGER_CMD) -action load-and-run
 
 trigger-brreg-run:
 	CGO_ENABLED=$(CGO_ENABLED) $(GO) run $(TRIGGER_CMD) -action run

@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/pulsarpoint/corpscout/translator/internal/brreg"
+	"github.com/pulsarpoint/corpscout/translator/internal/orchestration"
 )
 
 type Router struct {
@@ -17,12 +20,7 @@ type Router struct {
 }
 
 type WorkflowStarter interface {
-	StartSourceAction(ctx context.Context, source string, action string) (WorkflowActionResult, error)
-}
-
-type WorkflowActionResult struct {
-	WorkflowID string
-	RunID      string
+	StartSourceAction(ctx context.Context, source string, action string) (orchestration.WorkflowActionResult, error)
 }
 
 func NewRouter(workflowStarter WorkflowStarter) *Router {
@@ -77,11 +75,11 @@ func (r *Router) sourceAction(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if source != "norway_brreg" {
+	if source != brreg.SourceName {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	if action != "load-queue" && action != "run" {
+	if !isBRREGAction(action) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -133,6 +131,15 @@ func parseSourceAction(path string) (string, string, bool) {
 		return "", "", false
 	}
 	return parts[2], parts[3], true
+}
+
+func isBRREGAction(action string) bool {
+	switch action {
+	case brreg.ActionLoadAndRun, brreg.ActionLoadQueue, brreg.ActionRun:
+		return true
+	default:
+		return false
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

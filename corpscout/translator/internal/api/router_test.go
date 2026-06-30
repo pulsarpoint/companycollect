@@ -9,11 +9,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/pulsarpoint/corpscout/translator/internal/brreg"
+	"github.com/pulsarpoint/corpscout/translator/internal/orchestration"
 )
 
 func TestSourceActionStartsWorkflow(t *testing.T) {
 	starter := &fakeWorkflowStarter{
-		result: WorkflowActionResult{
+		result: orchestration.WorkflowActionResult{
 			WorkflowID: "translator/norway_brreg",
 			RunID:      "run-1",
 		},
@@ -47,6 +50,28 @@ func TestSourceActionStartsWorkflow(t *testing.T) {
 	}
 }
 
+func TestSourceActionStartsLoadAndRunWorkflow(t *testing.T) {
+	starter := &fakeWorkflowStarter{
+		result: orchestration.WorkflowActionResult{
+			WorkflowID: brreg.WorkflowID,
+			RunID:      "run-1",
+		},
+	}
+	router := NewRouter(starter)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sources/norway_brreg/load-and-run", nil)
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if starter.source != brreg.SourceName || starter.action != brreg.ActionLoadAndRun {
+		t.Fatalf("expected starter call %s/%s, got %s/%s", brreg.SourceName, brreg.ActionLoadAndRun, starter.source, starter.action)
+	}
+}
+
 func TestSourceActionRejectsUnknownSource(t *testing.T) {
 	router := NewRouter(&fakeWorkflowStarter{})
 
@@ -63,7 +88,7 @@ func TestSourceActionRejectsUnknownSource(t *testing.T) {
 func TestSourceActionLogsAcceptedWorkflowTrigger(t *testing.T) {
 	var logs bytes.Buffer
 	router := NewRouterWithLogger(&fakeWorkflowStarter{
-		result: WorkflowActionResult{
+		result: orchestration.WorkflowActionResult{
 			WorkflowID: "translator/norway_brreg",
 			RunID:      "run-1",
 		},
@@ -95,7 +120,7 @@ func TestSourceActionLogsAcceptedWorkflowTrigger(t *testing.T) {
 type fakeWorkflowStarter struct {
 	source string
 	action string
-	result WorkflowActionResult
+	result orchestration.WorkflowActionResult
 	err    error
 }
 
@@ -103,7 +128,7 @@ func (f *fakeWorkflowStarter) StartSourceAction(
 	ctx context.Context,
 	source string,
 	action string,
-) (WorkflowActionResult, error) {
+) (orchestration.WorkflowActionResult, error) {
 	f.source = source
 	f.action = action
 	return f.result, f.err

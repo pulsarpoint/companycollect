@@ -184,6 +184,43 @@ func TestRuntimeWritesOperationalLogs(t *testing.T) {
 	}
 }
 
+func TestRuntimeLogsQueueCountsWhenBatchIsEmpty(t *testing.T) {
+	ctx := context.Background()
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	source := newFixtureSource(0)
+	runtime, err := NewRuntime(ctx, RuntimeConfig{
+		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		Source:       source,
+		Translator:   runtimeTranslator{},
+		ProviderName: "local",
+		Model:        "qwen3:6b",
+		Logger:       logger,
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	defer runtime.Close(ctx)
+
+	if _, err := runtime.ProcessOneBatch(ctx, ProcessInput{BatchSize: 1, TimeoutSeconds: 30}); err != nil {
+		t.Fatalf("process one batch: %v", err)
+	}
+
+	logText := logs.String()
+	required := []string{
+		`"msg":"brreg process batch completed"`,
+		`"translated_count":0`,
+		`"input_count":0`,
+		`"output_count":0`,
+		`"pending_count":0`,
+	}
+	for _, fragment := range required {
+		if !strings.Contains(logText, fragment) {
+			t.Fatalf("expected empty-batch logs to contain %s\nlogs:\n%s", fragment, logText)
+		}
+	}
+}
+
 type runtimeTranslator struct{}
 
 func (runtimeTranslator) Translate(

@@ -282,9 +282,17 @@ func (s *runtimeState) processOneBatch(ctx context.Context, input ProcessInput) 
 		)
 		return ProcessResult{}, err
 	}
+	counts, err := s.queueCounts(ctx)
+	if err != nil {
+		s.logger.Error("brreg queue counts failed", "err", err, "duration_ms", elapsedMillis(start))
+		return ProcessResult{}, err
+	}
 	s.logger.Info(
 		"brreg process batch completed",
 		"translated_count", translatedCount,
+		"input_count", counts.input,
+		"output_count", counts.output,
+		"pending_count", counts.pending,
 		"batch_size", input.BatchSize,
 		"timeout_seconds", input.TimeoutSeconds,
 		"duration_ms", elapsedMillis(start),
@@ -374,6 +382,38 @@ func (s *runtimeState) outputTranslations(ctx context.Context) ([]TextTranslatio
 		return nil, fmt.Errorf("read output translations: %w", err)
 	}
 	return translations, nil
+}
+
+type queueCounts struct {
+	input   int
+	output  int
+	pending int
+}
+
+func (s *runtimeState) queueCounts(ctx context.Context) (queueCounts, error) {
+	var counts queueCounts
+	if err := s.db.QueryRowContext(ctx, "select count(*) from input_items").Scan(&counts.input); err != nil {
+		return queueCounts{}, fmt.Errorf("count input_items: %w", err)
+	}
+	if err := s.db.QueryRowContext(ctx, "select count(*) from output_items").Scan(&counts.output); err != nil {
+		return queueCounts{}, fmt.Errorf("count output_items: %w", err)
+	}
+	if err := s.db.QueryRowContext(ctx, `
+		select count(*)
+		from input_items as i
+		where not exists (
+			select 1
+			from output_items as o
+			where o.source_table = i.source_table
+				and o.source_column = i.source_column
+				and o.source_text_hash = i.source_text_hash
+				and o.source_lang = i.source_lang
+				and o.target_lang = i.target_lang
+		)
+	`).Scan(&counts.pending); err != nil {
+		return queueCounts{}, fmt.Errorf("count pending queue items: %w", err)
+	}
+	return counts, nil
 }
 
 func elapsedMillis(start time.Time) int64 {

@@ -10,16 +10,14 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/pulsarpoint/corpscout/translator/internal/api"
+	"github.com/pulsarpoint/corpscout/translator/internal/brreg"
 	"github.com/pulsarpoint/corpscout/translator/internal/config"
 	"github.com/pulsarpoint/corpscout/translator/internal/orchestration"
 	"go.temporal.io/sdk/client"
 )
 
-const sourceNorwayBRREG = "norway_brreg"
-
 type sourceActionStarter interface {
-	StartSourceAction(ctx context.Context, source string, action string) (api.WorkflowActionResult, error)
+	StartSourceAction(ctx context.Context, source string, action string) (orchestration.WorkflowActionResult, error)
 }
 
 type starterFactory func(ctx context.Context, cfg config.Config) (sourceActionStarter, func(), error)
@@ -39,8 +37,8 @@ func run(ctx context.Context, args []string, stdout io.Writer, newStarter starte
 	fs.SetOutput(stdout)
 
 	configPath := fs.String("config", defaultConfigPath(), "path to translator config file")
-	source := fs.String("source", sourceNorwayBRREG, "translation source")
-	action := fs.String("action", orchestration.ActionRun, "source action: run or load-queue")
+	source := fs.String("source", brreg.SourceName, "translation source")
+	action := fs.String("action", brreg.ActionLoadAndRun, "source action: load-and-run, run, or load-queue")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -67,7 +65,7 @@ func run(ctx context.Context, args []string, stdout io.Writer, newStarter starte
 
 	result, err := starter.StartSourceAction(ctx, *source, *action)
 	if err != nil {
-		return fmt.Errorf("start source action: %w", err)
+		return fmt.Errorf("start %s action: %w", *action, err)
 	}
 
 	fmt.Fprintf(
@@ -90,23 +88,24 @@ func newTemporalStarter(_ context.Context, cfg config.Config) (sourceActionStart
 		return nil, nil, fmt.Errorf("connect temporal: %w", err)
 	}
 
-	return api.NewTemporalWorkflowStarter(
+	return orchestration.NewTemporalWorkflowStarter(
 			temporalClient,
-			orchestration.TaskQueueNorwayBRREG,
+			brreg.TaskQueue,
 			cfg.Temporal.BatchSize,
 			cfg.Temporal.TimeoutSeconds,
+			cfg.Temporal.MaxBatchesPerRun,
 		),
 		temporalClient.Close,
 		nil
 }
 
 func validateSourceAction(source string, action string) error {
-	if source != sourceNorwayBRREG {
+	if source != brreg.SourceName {
 		return fmt.Errorf("unsupported source: %s", source)
 	}
 
 	switch action {
-	case orchestration.ActionLoadQueue, orchestration.ActionRun:
+	case brreg.ActionLoadAndRun, brreg.ActionLoadQueue, brreg.ActionRun:
 		return nil
 	default:
 		return fmt.Errorf("unsupported action: %s", action)

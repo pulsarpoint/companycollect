@@ -1,26 +1,44 @@
 package orchestration
 
-import "go.temporal.io/sdk/activity"
+import (
+	"context"
+	"errors"
+
+	"github.com/pulsarpoint/corpscout/translator/internal/brreg"
+	"go.temporal.io/sdk/activity"
+)
+
+var ErrBRREGRuntimeRequired = errors.New("brreg runtime is required")
+
+type BRREGRuntime interface {
+	LoadNewInput(ctx context.Context) (brreg.InitResult, error)
+	ProcessOneBatch(ctx context.Context, input brreg.ProcessInput) (brreg.ProcessResult, error)
+	UploadOutput(ctx context.Context) (brreg.UploadResult, error)
+}
 
 type norwayBRREGRegistry interface {
 	RegisterWorkflow(workflow interface{})
 	RegisterActivityWithOptions(activity interface{}, options activity.RegisterOptions)
 }
 
-func RegisterNorwayBRREG(registry norwayBRREGRegistry, runtime BRREGRuntime) {
-	registry.RegisterWorkflow(NorwayBRREGWorkflow)
+func RegisterNorwayBRREG(registry norwayBRREGRegistry, runtime BRREGRuntime) error {
+	if runtime == nil {
+		return ErrBRREGRuntimeRequired
+	}
 
-	activities := BRREGActivities{Runtime: runtime}
+	registry.RegisterWorkflow(brreg.NorwayBRREGWorkflow)
+
 	registry.RegisterActivityWithOptions(
-		activities.LoadNewInput,
-		activity.RegisterOptions{Name: ActivityLoadNewInput},
+		runtime.LoadNewInput,
+		activity.RegisterOptions{Name: brreg.ActivityLoadNewInput},
 	)
 	registry.RegisterActivityWithOptions(
-		activities.ProcessOneBatch,
-		activity.RegisterOptions{Name: ActivityProcessOneBatch},
+		runtime.ProcessOneBatch,
+		activity.RegisterOptions{Name: brreg.ActivityProcessOneBatch},
 	)
 	registry.RegisterActivityWithOptions(
-		activities.UploadOutput,
-		activity.RegisterOptions{Name: ActivityUploadOutput},
+		runtime.UploadOutput,
+		activity.RegisterOptions{Name: brreg.ActivityUploadOutput},
 	)
+	return nil
 }

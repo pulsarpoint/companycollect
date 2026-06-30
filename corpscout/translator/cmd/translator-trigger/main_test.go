@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pulsarpoint/corpscout/translator/internal/api"
+	"github.com/pulsarpoint/corpscout/translator/internal/brreg"
 	"github.com/pulsarpoint/corpscout/translator/internal/config"
+	"github.com/pulsarpoint/corpscout/translator/internal/orchestration"
 )
 
 func TestRunStartsBRREGWorkflowWithConfigDefaults(t *testing.T) {
@@ -26,8 +27,8 @@ func TestRunStartsBRREGWorkflowWithConfigDefaults(t *testing.T) {
 
 	factory := &fakeStarterFactory{
 		starter: &fakeStarter{
-			result: api.WorkflowActionResult{
-				WorkflowID: "translator/norway_brreg",
+			result: orchestration.WorkflowActionResult{
+				WorkflowID: brreg.WorkflowID,
 				RunID:      "run-123",
 			},
 		},
@@ -57,14 +58,40 @@ func TestRunStartsBRREGWorkflowWithConfigDefaults(t *testing.T) {
 		t.Fatalf("run() Temporal timeout seconds = %d, want %d", factory.cfg.Temporal.TimeoutSeconds, 90)
 	}
 
-	if factory.starter.source != "norway_brreg" {
-		t.Fatalf("run() source = %q, want %q", factory.starter.source, "norway_brreg")
+	if factory.starter.source != brreg.SourceName {
+		t.Fatalf("run() source = %q, want %q", factory.starter.source, brreg.SourceName)
 	}
-	if factory.starter.action != "run" {
-		t.Fatalf("run() action = %q, want %q", factory.starter.action, "run")
+	if factory.starter.action != brreg.ActionRun {
+		t.Fatalf("run() action = %q, want %q", factory.starter.action, brreg.ActionRun)
 	}
-	if !strings.Contains(stdout.String(), "workflow_id=translator/norway_brreg") {
+	if !strings.Contains(stdout.String(), "workflow_id="+brreg.WorkflowID) {
 		t.Fatalf("run() stdout = %q, want workflow id", stdout.String())
+	}
+}
+
+func TestRunLoadAndRunStartsSingleLoadAndRunAction(t *testing.T) {
+	configPath := writeConfig(t, `{}`)
+	starter := &fakeStarter{
+		result: orchestration.WorkflowActionResult{
+			WorkflowID: brreg.WorkflowID,
+			RunID:      "run-123",
+		},
+	}
+
+	err := run(
+		context.Background(),
+		[]string{"-config", configPath, "-action", "load-and-run"},
+		&bytes.Buffer{},
+		func(_ context.Context, _ config.Config) (sourceActionStarter, func(), error) {
+			return starter, func() {}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("run(load-and-run) error = %v, want nil", err)
+	}
+
+	if starter.action != brreg.ActionLoadAndRun {
+		t.Fatalf("run(load-and-run) action = %q, want %q", starter.action, brreg.ActionLoadAndRun)
 	}
 }
 
@@ -126,14 +153,14 @@ func (f *fakeStarterFactory) newStarter(_ context.Context, cfg config.Config) (s
 type fakeStarter struct {
 	source string
 	action string
-	result api.WorkflowActionResult
+	result orchestration.WorkflowActionResult
 }
 
 func (f *fakeStarter) StartSourceAction(
 	_ context.Context,
 	source string,
 	action string,
-) (api.WorkflowActionResult, error) {
+) (orchestration.WorkflowActionResult, error) {
 	f.source = source
 	f.action = action
 	return f.result, nil

@@ -120,6 +120,12 @@
       "sourceType": "github",
       "skillPath": "skills/go-testing/SKILL.md",
       "computedHash": "06c756ac3b204ef83d5b965ae820b316e7da8f4dfe5e73509e5b9d599584e069"
+    },
+    "temporal-developer": {
+      "source": "temporalio/skill-temporal-developer",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "97da2947cca91b3e488a0a64f763c35f8b42d2fb648a29da1820fbb7d1c7aeeb"
     }
   }
 }

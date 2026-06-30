@@ -91,19 +91,23 @@ func main() {
 	}
 	defer temporalClient.Close()
 
-	temporalWorker := worker.New(temporalClient, orchestration.TaskQueueNorwayBRREG, worker.Options{})
-	orchestration.RegisterNorwayBRREG(temporalWorker, brregRuntime)
+	temporalWorker := worker.New(temporalClient, brreg.TaskQueue, worker.Options{})
+	if err := orchestration.RegisterNorwayBRREG(temporalWorker, brregRuntime); err != nil {
+		logger.Error("failed to register brreg temporal workflow", "err", err)
+		os.Exit(1)
+	}
 	if err := temporalWorker.Start(); err != nil {
 		logger.Error("failed to start temporal worker", "err", err)
 		os.Exit(1)
 	}
 	defer temporalWorker.Stop()
 
-	workflowStarter := api.NewTemporalWorkflowStarter(
+	workflowStarter := orchestration.NewTemporalWorkflowStarter(
 		temporalClient,
-		orchestration.TaskQueueNorwayBRREG,
+		brreg.TaskQueue,
 		cfg.Temporal.BatchSize,
 		cfg.Temporal.TimeoutSeconds,
+		cfg.Temporal.MaxBatchesPerRun,
 	)
 
 	server := &http.Server{
@@ -123,7 +127,8 @@ func main() {
 		"config_path", configPath,
 		"temporal_address", cfg.Temporal.Address,
 		"temporal_namespace", cfg.Temporal.Namespace,
-		"brreg_temporal_task_queue", orchestration.TaskQueueNorwayBRREG,
+		"max_batches_per_run", cfg.Temporal.MaxBatchesPerRun,
+		"brreg_temporal_task_queue", brreg.TaskQueue,
 		"brreg_queue_path", sourceConfig.QueuePath,
 		"sources", len(cfg.Sources),
 		"endpoints", len(cfg.Endpoints),
