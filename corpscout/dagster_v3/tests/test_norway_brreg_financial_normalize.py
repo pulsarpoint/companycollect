@@ -1,7 +1,10 @@
 import json
+from datetime import UTC
+from datetime import datetime
 from decimal import Decimal
 
 from dagster_v3.defs.norway_brreg import financial_normalize
+from dagster_v3.defs.norway_resolved import tables as no_tables
 
 
 class FakeUsdRate:
@@ -121,6 +124,95 @@ def test_build_financial_statement_rows_from_fetch_rows_skips_unsuccessful_fetch
 
     assert rows == []
     assert exchange_rates.requests == []
+
+
+def test_build_resolved_original_rows_from_successful_fetches_only() -> None:
+    resolved_at = datetime(2026, 6, 30, 12, 0, 0, tzinfo=UTC)
+
+    rows = financial_normalize.build_resolved_financial_statement_original_rows_from_fetch_rows(
+        [
+            {
+                "org_number": "923609016",
+                "legal_name": "EQUINOR ASA",
+                "website": "www.equinor.com",
+                "last_submitted_accounts_year": "2024",
+                "source_run_id": "run-1",
+                "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/923609016",
+                "fetch_status": "success",
+                "raw_response": json.dumps([_financial_record()]),
+            },
+            {
+                "org_number": "811685852",
+                "legal_name": "MISSING AS",
+                "website": "",
+                "last_submitted_accounts_year": "2024",
+                "source_run_id": "run-1",
+                "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/811685852",
+                "fetch_status": "not_found",
+                "raw_response": "",
+            },
+        ],
+        resolved_at=resolved_at,
+    )
+
+    assert len(rows) == 1
+    assert tuple(rows[0]) == no_tables.RESOLVED_EXPORT_COLUMNS[
+        no_tables.NO_FINANCIAL_STATEMENTS_TABLE
+    ]
+    assert "source_payload_hash" not in rows[0]
+    assert "source_line_number" not in rows[0]
+    assert rows[0]["source_system"] == "norway_brregregnskap"
+    assert rows[0]["org_number"] == "923609016"
+    assert rows[0]["operating_revenue_amount_original"] == Decimal("72543000000")
+    assert rows[0]["operating_revenue_amount_usd"] is None
+    assert rows[0]["fx_rate_to_usd"] is None
+    assert rows[0]["fx_rate_date"] is None
+    assert rows[0]["fx_source"] is None
+    assert rows[0]["resolved_at"] == resolved_at
+
+
+def test_build_resolved_usd_rows_converts_available_fx_and_keeps_missing_fx_rows() -> None:
+    resolved_at = datetime(2026, 6, 30, 12, 0, 0, tzinfo=UTC)
+    unsupported_record = _financial_record()
+    unsupported_record["id"] = 5667198
+    unsupported_record["valuta"] = "USN"
+    original_rows = financial_normalize.build_resolved_financial_statement_original_rows_from_fetch_rows(
+        [
+            {
+                "org_number": "923609016",
+                "legal_name": "EQUINOR ASA",
+                "website": "www.equinor.com",
+                "last_submitted_accounts_year": "2024",
+                "source_run_id": "run-1",
+                "source_url": "https://data.brreg.no/regnskapsregisteret/regnskap/923609016",
+                "fetch_status": "success",
+                "raw_response": json.dumps([_financial_record(), unsupported_record]),
+            }
+        ],
+        resolved_at=resolved_at,
+    )
+    exchange_rates = FakeExchangeRatesWithMissing()
+
+    usd_rows = financial_normalize.build_resolved_financial_statement_usd_rows(
+        original_rows,
+        exchange_rates=exchange_rates,
+    )
+
+    assert [row["currency"] for row in usd_rows] == ["NOK", "USN"]
+    assert [tuple(row) for row in usd_rows] == [
+        no_tables.RESOLVED_EXPORT_COLUMNS[no_tables.NO_FINANCIAL_STATEMENTS_TABLE],
+        no_tables.RESOLVED_EXPORT_COLUMNS[no_tables.NO_FINANCIAL_STATEMENTS_TABLE],
+    ]
+    assert usd_rows[0]["operating_revenue_amount_original"] == Decimal("72543000000")
+    assert usd_rows[0]["operating_revenue_amount_usd"] == Decimal("7254300000.00")
+    assert usd_rows[0]["fx_rate_to_usd"] == Decimal("0.10")
+    assert usd_rows[0]["fx_rate_date"] == "2024-12-31"
+    assert usd_rows[0]["fx_source"] == "test-fx"
+    assert usd_rows[1]["operating_revenue_amount_original"] == Decimal("72543000000")
+    assert usd_rows[1]["operating_revenue_amount_usd"] is None
+    assert usd_rows[1]["fx_rate_to_usd"] is None
+    assert usd_rows[1]["fx_rate_date"] is None
+    assert usd_rows[1]["fx_source"] is None
 
 
 def _financial_record() -> dict:

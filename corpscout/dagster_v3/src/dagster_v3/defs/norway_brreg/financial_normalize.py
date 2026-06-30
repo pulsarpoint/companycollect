@@ -7,8 +7,28 @@ from typing import Any, Protocol
 
 from exchange_rates import ExchangeRateRequest
 
+from dagster_v3.defs.norway_resolved import tables as no_tables
+
 COUNTRY = "NO"
 FINANCIAL_SOURCE_SLUG = "norway_brregregnskap"
+NO_FINANCIAL_STATEMENT_COLUMNS = no_tables.RESOLVED_EXPORT_COLUMNS[
+    no_tables.NO_FINANCIAL_STATEMENTS_TABLE
+]
+FINANCIAL_AMOUNT_NAMES = (
+    "operating_revenue",
+    "operating_costs",
+    "operating_result",
+    "net_financial_items",
+    "pretax_result",
+    "net_result",
+    "total_assets",
+    "current_assets",
+    "fixed_assets",
+    "equity",
+    "total_debt",
+    "current_liabilities",
+    "long_term_liabilities",
+)
 
 
 class ExchangeRates(Protocol):
@@ -20,25 +40,16 @@ def build_financial_statement_rows_from_fetch_rows(
     *,
     exchange_rates: ExchangeRates,
 ) -> list[dict[str, Any]]:
-    successful_records: list[tuple[dict[str, Any], dict[str, Any], int]] = []
+    successful_records = list(_successful_financial_records_from_fetch_rows(fetch_rows))
     rate_requests_by_key: dict[tuple[str, str], ExchangeRateRequest] = {}
-    for fetch_row in fetch_rows:
-        if fetch_row.get("fetch_status") != "success":
-            continue
-        payload = json.loads(_string(fetch_row.get("raw_response")) or "[]")
-        if not isinstance(payload, list):
-            continue
-        for line_number, record in enumerate(payload, start=1):
-            if not isinstance(record, dict):
-                continue
-            currency = _string(record.get("valuta")).upper()
-            period_end_date = _string(_dict(record.get("regnskapsperiode")).get("tilDato"))
-            if currency != "" and period_end_date != "":
-                rate_requests_by_key[(currency, period_end_date)] = ExchangeRateRequest(
-                    currency=currency,
-                    rate_date=period_end_date,
-                )
-            successful_records.append((fetch_row, record, line_number))
+    for _fetch_row, record, _line_number in successful_records:
+        currency = _string(record.get("valuta")).upper()
+        period_end_date = _string(_dict(record.get("regnskapsperiode")).get("tilDato"))
+        if currency != "" and period_end_date != "":
+            rate_requests_by_key[(currency, period_end_date)] = ExchangeRateRequest(
+                currency=currency,
+                rate_date=period_end_date,
+            )
 
     rates = _load_available_usd_rates(exchange_rates, list(rate_requests_by_key.values()))
     rows: list[dict[str, Any]] = []
@@ -55,6 +66,64 @@ def build_financial_statement_rows_from_fetch_rows(
                 source_url=_string(fetch_row.get("source_url")),
             )
         )
+    return rows
+
+
+def build_resolved_financial_statement_original_rows_from_fetch_rows(
+    fetch_rows: list[dict[str, Any]],
+    *,
+    resolved_at: Any,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for fetch_row, record, line_number in _successful_financial_records_from_fetch_rows(fetch_rows):
+        staging_row = _financial_statement_row(
+            record,
+            org=fetch_row,
+            line_number=line_number,
+            fx_rate=None,
+            run_id=_string(fetch_row.get("source_run_id")),
+            source_url=_string(fetch_row.get("source_url")),
+        )
+        rows.append(
+            _resolved_financial_statement_row(
+                staging_row,
+                resolved_at=resolved_at,
+            )
+        )
+    return rows
+
+
+def build_resolved_financial_statement_usd_rows(
+    financial_statements: list[dict[str, Any]],
+    *,
+    exchange_rates: ExchangeRates,
+) -> list[dict[str, Any]]:
+    rate_requests_by_key: dict[tuple[str, str], ExchangeRateRequest] = {}
+    for row in financial_statements:
+        currency = _string(row.get("currency")).upper()
+        period_end_date = _string(row.get("period_end_date"))
+        if currency != "" and period_end_date != "":
+            rate_requests_by_key[(currency, period_end_date)] = ExchangeRateRequest(
+                currency=currency,
+                rate_date=period_end_date,
+            )
+
+    rates = _load_available_usd_rates(exchange_rates, list(rate_requests_by_key.values()))
+    rows: list[dict[str, Any]] = []
+    for row in financial_statements:
+        currency = _string(row.get("currency")).upper()
+        period_end_date = _string(row.get("period_end_date"))
+        fx_rate = rates.get((currency, period_end_date))
+        usd_row = {column: row.get(column) for column in NO_FINANCIAL_STATEMENT_COLUMNS}
+        usd_row["fx_rate_to_usd"] = None if fx_rate is None else fx_rate.rate
+        usd_row["fx_rate_date"] = None if fx_rate is None else fx_rate.rate_date
+        usd_row["fx_source"] = None if fx_rate is None else fx_rate.source
+        for amount_name in FINANCIAL_AMOUNT_NAMES:
+            amount = _decimal_or_none(row.get(f"{amount_name}_amount_original"))
+            usd_row[f"{amount_name}_amount_usd"] = (
+                None if amount is None or fx_rate is None else fx_rate.convert(amount)
+            )
+        rows.append(usd_row)
     return rows
 
 
@@ -98,6 +167,66 @@ def _load_available_usd_rates(
             except LookupError:
                 continue
         return rates
+
+
+def _successful_financial_records_from_fetch_rows(
+    fetch_rows: list[dict[str, Any]],
+) -> list[tuple[dict[str, Any], dict[str, Any], int]]:
+    successful_records: list[tuple[dict[str, Any], dict[str, Any], int]] = []
+    for fetch_row in fetch_rows:
+        if fetch_row.get("fetch_status") != "success":
+            continue
+        payload = json.loads(_string(fetch_row.get("raw_response")) or "[]")
+        if not isinstance(payload, list):
+            continue
+        for line_number, record in enumerate(payload, start=1):
+            if isinstance(record, dict):
+                successful_records.append((fetch_row, record, line_number))
+    return successful_records
+
+
+def _resolved_financial_statement_row(
+    staging_row: dict[str, Any],
+    *,
+    resolved_at: Any,
+) -> dict[str, Any]:
+    row = {
+        "country_iso2": staging_row["country_iso2"],
+        "source_system": staging_row["source_slug"],
+        "source_run_id": staging_row["source_run_id"],
+        "source_record_id": staging_row["source_record_id"],
+        "org_number": staging_row["org_number"],
+        "legal_name": staging_row["legal_name"],
+        "last_submitted_accounts_year": _none_if_empty(
+            staging_row["last_submitted_accounts_year"]
+        ),
+        "filing_id": staging_row["filing_id"],
+        "journal_number": _none_if_empty(staging_row["journal_number"]),
+        "accounts_type": staging_row["accounts_type"],
+        "legal_form_code": _none_if_empty(staging_row["legal_form_code"]),
+        "is_parent_company": bool(staging_row["is_parent_company"]),
+        "period_start_date": staging_row["period_start_date"],
+        "period_end_date": staging_row["period_end_date"],
+        "fiscal_year": staging_row["fiscal_year"],
+        "currency": staging_row["currency"],
+        "liquidation_accounts": bool(staging_row["liquidation_accounts"]),
+        "statement_layout": _none_if_empty(staging_row["statement_layout"]),
+        "is_not_audited": bool(staging_row["is_not_audited"]),
+        "opted_out_audit": bool(staging_row["opted_out_audit"]),
+        "is_small_enterprise": bool(staging_row["is_small_enterprise"]),
+        "accounting_rules": _none_if_empty(staging_row["accounting_rules"]),
+        "fx_rate_to_usd": staging_row["fx_rate_to_usd"],
+        "fx_rate_date": staging_row["fx_rate_date"],
+        "fx_source": _none_if_empty(staging_row["fx_source"]),
+        "source_url": staging_row["source_url"],
+        "resolved_at": resolved_at,
+    }
+    for amount_name in FINANCIAL_AMOUNT_NAMES:
+        row[f"{amount_name}_amount_original"] = staging_row[
+            f"{amount_name}_amount_original"
+        ]
+        row[f"{amount_name}_amount_usd"] = staging_row[f"{amount_name}_amount_usd"]
+    return {column: row.get(column) for column in NO_FINANCIAL_STATEMENT_COLUMNS}
 
 
 def _financial_statement_row(
@@ -233,3 +362,7 @@ def _fiscal_year(period_end_date: str) -> int | None:
 
 def _string(value: Any) -> str:
     return "" if value is None else str(value)
+
+
+def _none_if_empty(value: Any) -> Any:
+    return None if value == "" else value
