@@ -5,6 +5,18 @@
   "clickhouse": {
     "native_url_env": "CLICKHOUSE_NATIVE_URL"
   },
+  "temporal": {
+    "host_port": "localhost:7233",
+    "host_port_env": "TRANSLATOR_TEMPORAL_HOST",
+    "namespace": "default",
+    "namespace_env": "TRANSLATOR_TEMPORAL_NAMESPACE",
+    "task_queue": "translator",
+    "task_queue_env": "TRANSLATOR_TEMPORAL_TASK_QUEUE",
+    "batch_size": 50,
+    "batch_size_env": "TRANSLATOR_BATCH_SIZE",
+    "timeout_seconds": 120,
+    "timeout_seconds_env": "TRANSLATOR_TIMEOUT_SECONDS"
+  },
   "endpoints": {
     "local_llm": {
       "model": "qwen3:6b",

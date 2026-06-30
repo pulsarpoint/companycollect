@@ -14,8 +14,9 @@ import (
 )
 
 type Queue struct {
-	db         *sql.DB
-	translator translation.Translator
+	db          *sql.DB
+	translator  translation.Translator
+	closeOnDone bool
 }
 
 type Item struct {
@@ -58,15 +59,34 @@ func Init(path string, translator translation.Translator) (*Queue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open queue duckdb: %w", err)
 	}
+	q, err := New(db, translator)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	q.closeOnDone = true
+	return q, nil
+}
+
+func New(db *sql.DB, translator translation.Translator) (*Queue, error) {
+	if db == nil {
+		return nil, errors.New("queue duckdb connection is required")
+	}
+	if translator == nil {
+		return nil, errors.New("translator is required")
+	}
+
 	q := &Queue{db: db, translator: translator}
 	if err := q.validateSchema(context.Background()); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	return q, nil
 }
 
 func (q *Queue) Close() error {
+	if !q.closeOnDone {
+		return nil
+	}
 	return q.db.Close()
 }
 

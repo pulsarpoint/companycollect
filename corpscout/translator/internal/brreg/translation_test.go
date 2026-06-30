@@ -46,6 +46,37 @@ func TestInitializeTranslationCreatesQueueDuckDBWithOneHundredRows(t *testing.T)
 	assertColumnCount(t, queuePath, ActivityTextColumn, 50)
 }
 
+func TestInitializeTranslationWithDBUsesCallerOwnedConnection(t *testing.T) {
+	ctx := context.Background()
+	source := newFixtureSource(10)
+	queuePath := filepath.Join(t.TempDir(), "norway_brreg.duckdb")
+
+	db, err := sql.Open("duckdb", queuePath)
+	if err != nil {
+		t.Fatalf("open duckdb: %v", err)
+	}
+	defer db.Close()
+
+	result, err := initializeTranslationWithDB(ctx, source, db, queuePath, true)
+	if err != nil {
+		t.Fatalf("initialize translation with db: %v", err)
+	}
+	if !result.Created {
+		t.Fatal("expected created flag to be preserved")
+	}
+	if result.RowsInserted != 10 {
+		t.Fatalf("expected 10 inserted rows, got %d", result.RowsInserted)
+	}
+
+	var count int
+	if err := db.QueryRow("select count(*) from input_items").Scan(&count); err != nil {
+		t.Fatalf("caller-owned db should remain usable: %v", err)
+	}
+	if count != 10 {
+		t.Fatalf("expected 10 input rows, got %d", count)
+	}
+}
+
 func TestInitializeTranslationUpsertsExistingQueueFile(t *testing.T) {
 	ctx := context.Background()
 	source := newFixtureSource(100)

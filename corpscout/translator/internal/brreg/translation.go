@@ -189,6 +189,16 @@ func InitializeTranslation(ctx context.Context, source ClickHouseSource, options
 	}
 	defer db.Close()
 
+	return initializeTranslationWithDB(ctx, source, db, options.QueuePath, created)
+}
+
+func initializeTranslationWithDB(
+	ctx context.Context,
+	source ClickHouseSource,
+	db *sql.DB,
+	queuePath string,
+	created bool,
+) (InitResult, error) {
 	if err := createQueueTables(ctx, db); err != nil {
 		return InitResult{}, err
 	}
@@ -229,7 +239,7 @@ func InitializeTranslation(ctx context.Context, source ClickHouseSource, options
 	}
 
 	return InitResult{
-		QueuePath:      options.QueuePath,
+		QueuePath:      queuePath,
 		Created:        created,
 		RowsSeen:       rowsSeen,
 		RowsInserted:   after - before,

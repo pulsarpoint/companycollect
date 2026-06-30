@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -8,11 +9,21 @@ import (
 )
 
 type Router struct {
-	startedAt time.Time
+	startedAt       time.Time
+	workflowStarter WorkflowStarter
 }
 
-func NewRouter() *Router {
-	return &Router{startedAt: time.Now().UTC()}
+type WorkflowStarter interface {
+	StartSourceAction(ctx context.Context, source string, action string) (WorkflowActionResult, error)
+}
+
+type WorkflowActionResult struct {
+	WorkflowID string
+	RunID      string
+}
+
+func NewRouter(workflowStarter WorkflowStarter) *Router {
+	return &Router{startedAt: time.Now().UTC(), workflowStarter: workflowStarter}
 }
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -51,17 +62,33 @@ func (r *Router) sourceAction(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	switch action {
-	case "load-queue", "run":
-		writeJSON(w, http.StatusAccepted, map[string]any{
-			"source":      source,
-			"action":      action,
-			"status":      "accepted",
-			"accepted_at": time.Now().UTC(),
-		})
-	default:
+	if source != "norway_brreg" {
 		writeError(w, http.StatusNotFound, "not found")
+		return
 	}
+	if action != "load-queue" && action != "run" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if r.workflowStarter == nil {
+		writeError(w, http.StatusServiceUnavailable, "workflow starter is not configured")
+		return
+	}
+
+	result, err := r.workflowStarter.StartSourceAction(req.Context(), source, action)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"source":      source,
+		"action":      action,
+		"workflow_id": result.WorkflowID,
+		"run_id":      result.RunID,
+		"status":      "accepted",
+		"accepted_at": time.Now().UTC(),
+	})
 }
 
 func parseSourceAction(path string) (string, string, bool) {

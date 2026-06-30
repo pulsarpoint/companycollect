@@ -59,3 +59,68 @@ func TestLoadEndpointPromptLanguages(t *testing.T) {
 		t.Fatalf("unexpected target language: %q", endpoint.PromptData.TargetLanguage)
 	}
 }
+
+func TestLoadAppliesTemporalDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "translator.json")
+	if err := os.WriteFile(path, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Temporal.HostPort != "localhost:7233" {
+		t.Fatalf("unexpected Temporal host: %q", cfg.Temporal.HostPort)
+	}
+	if cfg.Temporal.Namespace != "default" {
+		t.Fatalf("unexpected Temporal namespace: %q", cfg.Temporal.Namespace)
+	}
+	if cfg.Temporal.TaskQueue != "translator" {
+		t.Fatalf("unexpected Temporal task queue: %q", cfg.Temporal.TaskQueue)
+	}
+	if cfg.Temporal.BatchSize != 50 {
+		t.Fatalf("unexpected Temporal batch size: %d", cfg.Temporal.BatchSize)
+	}
+	if cfg.Temporal.TimeoutSeconds != 120 {
+		t.Fatalf("unexpected Temporal timeout seconds: %d", cfg.Temporal.TimeoutSeconds)
+	}
+}
+
+func TestLoadAppliesTemporalEnv(t *testing.T) {
+	t.Setenv("TRANSLATOR_TEMPORAL_HOST", "temporal.test:7233")
+	t.Setenv("TRANSLATOR_TEMPORAL_TASK_QUEUE", "translator-test")
+	t.Setenv("TRANSLATOR_BATCH_SIZE", "13")
+	t.Setenv("TRANSLATOR_TIMEOUT_SECONDS", "44")
+
+	path := filepath.Join(t.TempDir(), "translator.json")
+	if err := os.WriteFile(path, []byte(`{
+  "temporal": {
+    "host_port_env": "TRANSLATOR_TEMPORAL_HOST",
+    "task_queue_env": "TRANSLATOR_TEMPORAL_TASK_QUEUE",
+    "batch_size_env": "TRANSLATOR_BATCH_SIZE",
+    "timeout_seconds_env": "TRANSLATOR_TIMEOUT_SECONDS"
+  }
+}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Temporal.HostPort != "temporal.test:7233" {
+		t.Fatalf("unexpected Temporal host: %q", cfg.Temporal.HostPort)
+	}
+	if cfg.Temporal.TaskQueue != "translator-test" {
+		t.Fatalf("unexpected Temporal task queue: %q", cfg.Temporal.TaskQueue)
+	}
+	if cfg.Temporal.BatchSize != 13 {
+		t.Fatalf("unexpected Temporal batch size: %d", cfg.Temporal.BatchSize)
+	}
+	if cfg.Temporal.TimeoutSeconds != 44 {
+		t.Fatalf("unexpected Temporal timeout seconds: %d", cfg.Temporal.TimeoutSeconds)
+	}
+}

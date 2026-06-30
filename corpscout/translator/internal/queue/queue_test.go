@@ -48,6 +48,31 @@ func TestInitFailsWhenQueueFileDoesNotHaveQueueTables(t *testing.T) {
 	}
 }
 
+func TestNewUsesExistingDuckDBConnectionWithoutClosingIt(t *testing.T) {
+	path := createQueueFixture(t, 1)
+	db, err := sql.Open("duckdb", path)
+	if err != nil {
+		t.Fatalf("open fixture duckdb: %v", err)
+	}
+	defer db.Close()
+
+	q, err := queue.New(db, &fakeTranslator{})
+	if err != nil {
+		t.Fatalf("new queue: %v", err)
+	}
+	if err := q.Close(); err != nil {
+		t.Fatalf("close queue wrapper: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow("select count(*) from input_items").Scan(&count); err != nil {
+		t.Fatalf("expected caller-owned db connection to remain open: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 input row, got %d", count)
+	}
+}
+
 func TestQueueGetsSavesAndProcessesOnlyUntranslatedRows(t *testing.T) {
 	ctx := context.Background()
 	path := createQueueFixture(t, 100)
