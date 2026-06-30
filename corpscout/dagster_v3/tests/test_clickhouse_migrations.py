@@ -613,7 +613,10 @@ def test_norway_resolved_migration_covers_exported_columns() -> None:
     for table_name in norway_resolved_tables.NORWAY_RESOLVED_TABLES:
         assert f"CREATE TABLE IF NOT EXISTS corpscout.{table_name}" in sql
         for column_name in norway_resolved_tables.RESOLVED_TABLE_COLUMNS[table_name]:
-            if column_name in NO_COMPANIES_ALTER_COLUMNS:
+            if (
+                table_name == norway_resolved_tables.NO_COMPANIES_TABLE
+                and column_name in NO_COMPANIES_ALTER_COLUMNS
+            ):
                 # Added by a later ALTER migration; not in the base DDL.
                 continue
             assert f"    {column_name} " in sql
