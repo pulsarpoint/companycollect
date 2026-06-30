@@ -32,6 +32,7 @@ RESOLVED_TABLE_COLUMNS = {
         "activity_text_original",
         "primary_website_url",
         "primary_website_host",
+        "last_submitted_accounts_year",
         "source_system",
         "source_run_id",
         "source_record_id",

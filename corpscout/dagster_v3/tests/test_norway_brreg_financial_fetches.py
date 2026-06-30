@@ -167,13 +167,10 @@ def test_transport_failure_status_is_retryable_failure_for_downstream_guard() ->
     )
 
     assert row["fetch_status"] == "server_error"
-    assert financial_fetches.financial_fetch_status_requires_failure(row["fetch_status"]) is True
-    assert (
-        financial_fetches.financial_fetch_status_requires_failure(
-            financial_fetches.FINANCIAL_FETCH_STATUS_NETWORK_ERROR
-        )
-        is True
-    )
+    for fetch_status in ("success", "not_found", "gone", "empty"):
+        assert financial_fetches.financial_fetch_status_requires_failure(fetch_status) is False
+    for fetch_status in ("server_error", "network_error", "invalid_payload"):
+        assert financial_fetches.financial_fetch_status_requires_failure(fetch_status) is True
 
 
 def test_fetch_financial_rows_for_orgs_fetches_supplied_orgs_without_duckdb() -> None:

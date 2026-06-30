@@ -86,6 +86,7 @@ EXPECTED_MIGRATIONS = (
     "000072_corpscout_fi_financial_metrics_xbrl_publish",
     "000073_corpscout_commoncrawl_domain_graph_signals",
     "000074_corpscout_no_companies_date32",
+    "000075_corpscout_no_companies_last_accounts_year",
 )
 
 OBSOLETE_CLICKHOUSE_DATABASE_REFERENCES = (
@@ -593,7 +594,17 @@ NO_COMPANIES_ALTER_COLUMNS = frozenset({
     # subsequently dropped by migration 000070 and removed from RESOLVED_TABLE_COLUMNS.
     "articles_purpose_original",
     "activity_text_original",
+    # Added later via ALTER migration 000075 for the financial fetch parquet inputs.
+    "last_submitted_accounts_year",
 })
+
+NO_COMPANIES_ALTER_COLUMN_MIGRATIONS = {
+    "articles_purpose_original": "000059_corpscout_no_companies_free_text_columns.up.sql",
+    "activity_text_original": "000059_corpscout_no_companies_free_text_columns.up.sql",
+    "last_submitted_accounts_year": (
+        "000075_corpscout_no_companies_last_accounts_year.up.sql"
+    ),
+}
 
 
 def test_norway_resolved_migration_covers_exported_columns() -> None:
@@ -607,10 +618,8 @@ def test_norway_resolved_migration_covers_exported_columns() -> None:
                 continue
             assert f"    {column_name} " in sql
 
-    # articles_purpose_original and activity_text_original were added by ALTER migration 000059.
-    # (company_description_original was also added by 000059 but dropped by 000070.)
-    alter_sql = _migration_sql("000059_corpscout_no_companies_free_text_columns.up.sql")
-    for column_name in NO_COMPANIES_ALTER_COLUMNS:
+    for column_name, migration_file in NO_COMPANIES_ALTER_COLUMN_MIGRATIONS.items():
+        alter_sql = _migration_sql(migration_file)
         assert f"ADD COLUMN IF NOT EXISTS {column_name} " in alter_sql
 
 
@@ -637,6 +646,21 @@ def test_no_companies_date32_migration_alters_existing_date_columns() -> None:
             f"ALTER TABLE corpscout.no_companies MODIFY COLUMN {column_name} Nullable(Date);"
             in down_sql
         )
+
+
+def test_no_companies_last_accounts_year_migration_adds_existing_table_column() -> None:
+    sql = _migration_sql("000075_corpscout_no_companies_last_accounts_year.up.sql")
+    down_sql = _migration_sql("000075_corpscout_no_companies_last_accounts_year.down.sql")
+
+    assert (
+        "ALTER TABLE corpscout.no_companies "
+        "ADD COLUMN IF NOT EXISTS last_submitted_accounts_year Nullable(String) "
+        "AFTER primary_website_host;"
+    ) in sql
+    assert (
+        "ALTER TABLE corpscout.no_companies "
+        "DROP COLUMN IF EXISTS last_submitted_accounts_year;"
+    ) in down_sql
 
 
 def test_domain_migration_covers_exported_columns() -> None:
