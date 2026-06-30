@@ -236,22 +236,28 @@ page metadata — `source_url` + the WARC re-fetch coords + `subdomain` + `text_
 loaded into ClickHouse (too large, incompressible); they're the source of record for cheap
 re-classification + similarity/Qdrant later (see `docs/embeddings-design.md`).
 
-`-mode embed` exists to **backfill segments that were classified before this change** (their vectors were
-discarded). It:
+`-mode embed` exists to **fill segments that have no stored vector** — backfilling parts classified before
+vectors were persisted, or finishing parts the industry pass hasn't reached. It:
 - **reuses the industry worklist** `shard_industry_<part>.parquet` (no index rebuild for done parts),
 - runs a **single** embed exec — fetch → embed → write `embeddings.parquet` — with **no NACE classify,
   no ClickHouse, no load step**,
-- writes to `data/embedding/out_industry_<part>/`, resumable on its own
-  `data/embedding/out_industry_<part>.loaded` marker (independent of the industry/tech markers).
+- writes to `data/embedding/out_industry_<part>/`, and is **idempotent via verify-and-skip** (there is **no
+  `.loaded` marker** for embed — the vector file *is* the marker): the worker skips a part whose embed folder
+  already holds a complete vector file under **either** name — `embeddings.parquet` (fp32) **or**
+  `embeddings_fp16.parquet` (converted offline once the fp32 was pruned, see `embedding-tools/`). So a
+  converted part is **not** re-embedded.
 
+**To embed only the missing segments, just run the full part range** — every part that already has a vector
+(fp32 *or* fp16) is skipped, so only the gaps are fetched + embedded:
 ```bash
-cc-crawl/bin/cc-crawl -mode embed -parts 0-70 -crawl CC-MAIN-2026-25   # backfill done segments
+cc-crawl/bin/cc-crawl -mode embed -parts 0-299 -crawl CC-MAIN-2026-25   # fills only the parts with no vector
 # or one segment straight through the worker:
 cc-enrich-worker embed --worklist data/crawl/shard_industry_43.parquet \
                        --crawl-id CC-MAIN-2026-25 --out data/embedding/out_industry_43
 ```
-Cost is just the unavoidable re-fetch + re-embed (no stored copy exists): ≈16 KB/domain fp32. Future
-industry parts save their vectors on the first pass — no backfill needed. See `docs/embed-only-mode-plan.md`.
+Each already-done part logs `skip: embeddings already present …`; the gaps show the normal fetch→embed
+progress. Cost is just the re-fetch + re-embed of the gaps (no stored copy exists): ≈16 KB/domain fp32.
+Future industry parts save their vectors on the first pass. See `docs/embed-only-mode-plan.md`.
 
 ### Re-running, forcing, and reloading
 
