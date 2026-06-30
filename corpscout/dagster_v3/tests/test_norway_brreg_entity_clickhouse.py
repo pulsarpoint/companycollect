@@ -94,9 +94,11 @@ def test_apply_entity_update_parquets_deletes_affected_orgs_then_inserts_replace
         for sql, _params in client.events
     )
     assert any(
-        sql.startswith("INSERT INTO `corpscout`.`_tmp_no_affected_orgs_")
-        and params == [("1000",), ("3000",)]
-        for sql, params in client.events
+        database == "corpscout"
+        and table.startswith("_tmp_no_affected_orgs_")
+        and rows == [("1000",), ("3000",)]
+        and columns == ("org_number",)
+        for database, table, rows, columns in client.row_insert_calls
     )
     delete_positions = [
         index
@@ -140,10 +142,22 @@ class FakeEntityStorage:
 class FakeClickHouseClient:
     def __init__(self) -> None:
         self.events: list[tuple[str, object | None]] = []
+        self.row_insert_calls: list[
+            tuple[str | None, str, list[tuple[object, ...]], tuple[str, ...]]
+        ] = []
 
     def execute(self, sql: str, params: object | None = None) -> list[tuple[str]]:
         self.events.append((sql, params))
         return []
+
+    def insert_rows(
+        self,
+        table: str,
+        rows: list[tuple[object, ...]],
+        columns: tuple[str, ...] | list[str],
+        database: str | None = None,
+    ) -> None:
+        self.row_insert_calls.append((database, table, rows, tuple(columns)))
 
 
 def _statement_count(client: FakeClickHouseClient, prefix: str) -> int:

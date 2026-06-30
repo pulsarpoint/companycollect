@@ -205,10 +205,13 @@ def apply_entity_update_parquets_to_clickhouse(
     primary_error: Exception | None = None
     try:
         affected_org_rows = _affected_org_rows(affected_orgs)
-        clickhouse_client.execute(
-            f"INSERT INTO {affected_stage_qualified} "
-            f"({_quote_clickhouse_identifier('org_number')}) VALUES",
-            affected_org_rows,
+        _insert_clickhouse_rows(
+            clickhouse_client,
+            database=RESOLVED_DATABASE,
+            table=affected_stage_table,
+            qualified_table=affected_stage_qualified,
+            columns=("org_number",),
+            rows=affected_org_rows,
         )
         for table_name in ENTITY_CLICKHOUSE_TABLES:
             clickhouse_client.execute(
@@ -282,6 +285,26 @@ def _affected_org_rows(affected_orgs: pl.DataFrame) -> list[tuple[str]]:
             maintain_order=True
         )
     ]
+
+
+def _insert_clickhouse_rows(
+    clickhouse_client: Any,
+    *,
+    database: str,
+    table: str,
+    qualified_table: str,
+    columns: tuple[str, ...],
+    rows: list[tuple[object, ...]],
+) -> None:
+    insert_rows = getattr(clickhouse_client, "insert_rows", None)
+    if callable(insert_rows):
+        insert_rows(table, rows, columns=columns, database=database)
+        return
+    clickhouse_client.execute(
+        f"INSERT INTO {qualified_table} "
+        f"({', '.join(_quote_clickhouse_identifier(column) for column in columns)}) VALUES",
+        rows,
+    )
 
 
 def _validate_no_replacements_without_affected_orgs(frames: dict[str, pl.DataFrame]) -> None:
