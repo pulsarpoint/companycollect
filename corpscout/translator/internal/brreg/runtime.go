@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,6 +29,7 @@ type RuntimeConfig struct {
 	Translator   translation.Translator
 	ProviderName string
 	Model        string
+	Logger       *slog.Logger
 }
 
 type ProcessInput struct {
@@ -74,6 +77,7 @@ type runtimeState struct {
 	source       ClickHouseSource
 	providerName string
 	model        string
+	logger       *slog.Logger
 }
 
 func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
@@ -92,6 +96,15 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	if config.Model == "" {
 		return nil, errors.New("model is required")
 	}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	logger = logger.With(
+		"component", "brreg_runtime",
+		"source", "norway_brreg",
+		"queue_path", config.QueuePath,
+	)
 
 	created := false
 	if _, err := os.Stat(config.QueuePath); err != nil {
@@ -131,7 +144,14 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		source:       config.Source,
 		providerName: config.ProviderName,
 		model:        config.Model,
+		logger:       logger,
 	}
+	logger.Info(
+		"brreg runtime initialized",
+		"queue_created", created,
+		"provider", config.ProviderName,
+		"model", config.Model,
+	)
 	go runtime.run(state)
 
 	return runtime, nil
@@ -216,12 +236,35 @@ func (r *Runtime) run(state runtimeState) {
 }
 
 func (s *runtimeState) loadNewInput(ctx context.Context) (InitResult, error) {
+	start := time.Now()
+	s.logger.Info("brreg load input started")
 	result, err := initializeTranslationWithDB(ctx, s.source, s.db, s.queuePath, s.queueCreated)
 	s.queueCreated = false
+	if err != nil {
+		s.logger.Error("brreg load input failed", "err", err, "duration_ms", elapsedMillis(start))
+		return result, err
+	}
+	s.logger.Info(
+		"brreg load input completed",
+		"rows_seen", result.RowsSeen,
+		"rows_inserted", result.RowsInserted,
+		"static_rows_seen", result.StaticRowsSeen,
+		"static_flushed", result.StaticFlushed,
+		"created", result.Created,
+		"duration_ms", elapsedMillis(start),
+	)
 	return result, err
 }
 
 func (s *runtimeState) processOneBatch(ctx context.Context, input ProcessInput) (ProcessResult, error) {
+	start := time.Now()
+	s.logger.Info(
+		"brreg process batch started",
+		"batch_size", input.BatchSize,
+		"timeout_seconds", input.TimeoutSeconds,
+		"provider", s.providerName,
+		"model", s.model,
+	)
 	translatedCount, err := s.queue.ProcessBatch(
 		ctx,
 		input.BatchSize,
@@ -230,24 +273,54 @@ func (s *runtimeState) processOneBatch(ctx context.Context, input ProcessInput) 
 		s.model,
 	)
 	if err != nil {
+		s.logger.Error(
+			"brreg process batch failed",
+			"err", err,
+			"batch_size", input.BatchSize,
+			"timeout_seconds", input.TimeoutSeconds,
+			"duration_ms", elapsedMillis(start),
+		)
 		return ProcessResult{}, err
 	}
+	s.logger.Info(
+		"brreg process batch completed",
+		"translated_count", translatedCount,
+		"batch_size", input.BatchSize,
+		"timeout_seconds", input.TimeoutSeconds,
+		"duration_ms", elapsedMillis(start),
+	)
 	return ProcessResult{TranslatedCount: translatedCount}, nil
 }
 
 func (s *runtimeState) uploadOutput(ctx context.Context) (UploadResult, error) {
+	start := time.Now()
+	s.logger.Info("brreg upload output started")
 	translations, err := s.outputTranslations(ctx)
 	if err != nil {
+		s.logger.Error("brreg upload output failed", "err", err, "duration_ms", elapsedMillis(start))
 		return UploadResult{}, err
 	}
 	if len(translations) == 0 {
+		s.logger.Info("brreg upload output completed", "rows_seen", 0, "rows_inserted", 0, "duration_ms", elapsedMillis(start))
 		return UploadResult{}, nil
 	}
 
 	inserted, err := s.source.InsertTextTranslations(ctx, translations)
 	if err != nil {
+		s.logger.Error(
+			"brreg upload output failed",
+			"err", err,
+			"rows_seen", len(translations),
+			"duration_ms", elapsedMillis(start),
+		)
 		return UploadResult{RowsSeen: len(translations)}, err
 	}
+	s.logger.Info(
+		"brreg upload output completed",
+		"rows_seen", len(translations),
+		"rows_inserted", inserted,
+		"duration_ms", elapsedMillis(start),
+	)
 	return UploadResult{RowsSeen: len(translations), RowsInserted: inserted}, nil
 }
 
@@ -301,4 +374,8 @@ func (s *runtimeState) outputTranslations(ctx context.Context) ([]TextTranslatio
 		return nil, fmt.Errorf("read output translations: %w", err)
 	}
 	return translations, nil
+}
+
+func elapsedMillis(start time.Time) int64 {
+	return time.Since(start).Milliseconds()
 }

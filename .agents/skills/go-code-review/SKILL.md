@@ -1,9 +1,6 @@
 ---
-name: go-code-review
-description: Use when reviewing Go code or checking code against community style standards. Also use proactively before submitting a Go PR or when reviewing any Go code changes, even if the user doesn't explicitly request a style review. Does not cover language-specific syntax — delegates to specialized skills.
-allowed-tools: Bash(bash:*)
+description: "Use when reviewing Go code or checking code against community style standards. Also use proactively before submitting a Go PR or when reviewing any Go code changes, even if the user doesn't explicitly request a style review. Does not cover language-specific syntax — delegates to specialized skills."
 ---
-
 # Go Code Review Checklist
 
 > Compatibility: `references/WEB-SERVER.md` uses `log/slog` examples that require Go 1.21+.

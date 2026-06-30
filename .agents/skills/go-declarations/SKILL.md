@@ -1,8 +1,6 @@
 ---
-name: go-declarations
-description: Use when declaring or initializing Go variables, constants, structs, or maps — including var vs :=, reducing scope with if-init, formatting composite literals, designing iota enums, and using any instead of interface{}. Also use when writing a new struct or const block, even if the user doesn't ask about declaration style. Does not cover naming conventions (see go-naming).
+description: "Use when declaring or initializing Go variables, constants, structs, or maps — including var vs :=, reducing scope with if-init, formatting composite literals, designing iota enums, and using any instead of interface{}. Also use when writing a new struct or const block, even if the user doesn't ask about declaration style. Does not cover naming conventions (see go-naming)."
 ---
-
 # Go Declarations and Initialization
 
 > Compatibility: Examples may use `any`, which requires Go 1.18+.

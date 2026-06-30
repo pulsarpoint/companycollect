@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +13,7 @@ import (
 type Router struct {
 	startedAt       time.Time
 	workflowStarter WorkflowStarter
+	logger          *slog.Logger
 }
 
 type WorkflowStarter interface {
@@ -23,7 +26,18 @@ type WorkflowActionResult struct {
 }
 
 func NewRouter(workflowStarter WorkflowStarter) *Router {
-	return &Router{startedAt: time.Now().UTC(), workflowStarter: workflowStarter}
+	return NewRouterWithLogger(workflowStarter, nil)
+}
+
+func NewRouterWithLogger(workflowStarter WorkflowStarter, logger *slog.Logger) *Router {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	return &Router{
+		startedAt:       time.Now().UTC(),
+		workflowStarter: workflowStarter,
+		logger:          logger.With("component", "api"),
+	}
 }
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -51,6 +65,7 @@ func (r *Router) healthz(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) sourceAction(w http.ResponseWriter, req *http.Request) {
+	start := time.Now()
 	if req.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -77,9 +92,24 @@ func (r *Router) sourceAction(w http.ResponseWriter, req *http.Request) {
 
 	result, err := r.workflowStarter.StartSourceAction(req.Context(), source, action)
 	if err != nil {
+		r.logger.Error(
+			"source workflow trigger failed",
+			"err", err,
+			"source", source,
+			"action", action,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	r.logger.Info(
+		"source workflow trigger accepted",
+		"source", source,
+		"action", action,
+		"workflow_id", result.WorkflowID,
+		"run_id", result.RunID,
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"source":      source,

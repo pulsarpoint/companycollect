@@ -1,8 +1,6 @@
 ---
-name: go-defensive
-description: Use when hardening Go code at API boundaries — copying slices/maps, verifying interface compliance, using defer for cleanup, time.Time/time.Duration, or avoiding mutable globals. Also use when reviewing for robustness concerns like missing cleanup or unsafe crypto usage, even if the user doesn't mention "defensive programming." Does not cover error handling strategy (see go-error-handling).
+description: "Use when hardening Go code at API boundaries — copying slices/maps, verifying interface compliance, using defer for cleanup, time.Time/time.Duration, or avoiding mutable globals. Also use when reviewing for robustness concerns like missing cleanup or unsafe crypto usage, even if the user doesn't mention \"defensive programming.\" Does not cover error handling strategy (see go-error-handling)."
 ---
-
 # Go Defensive Programming Patterns
 
 > Compatibility: Crypto examples may use `crypto/rand.Text`, which requires Go 1.24+.

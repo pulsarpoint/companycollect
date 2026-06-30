@@ -1,8 +1,6 @@
 ---
-name: go-concurrency
-description: Use when writing concurrent Go code — goroutines, channels, mutexes, or thread-safety guarantees. Also use when parallelizing work, fixing data races, or protecting shared state, even if the user doesn't explicitly mention concurrency primitives. Does not cover context.Context patterns (see go-context).
+description: "Use when writing concurrent Go code — goroutines, channels, mutexes, or thread-safety guarantees. Also use when parallelizing work, fixing data races, or protecting shared state, even if the user doesn't explicitly mention concurrency primitives. Does not cover context.Context patterns (see go-context)."
 ---
-
 # Go Concurrency
 
 > Compatibility: Atomic examples may use standard-library typed atomics where available or `go.uber.org/atomic` where a project already depends on it.

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -26,6 +27,7 @@ type Config struct {
 	MaxTokens  int
 	ExtraBody  map[string]any
 	PromptData PromptData
+	Logger     *slog.Logger
 }
 
 type PromptData struct {
@@ -48,6 +50,7 @@ type LocalOpenAICompatibleProvider struct {
 	promptTemplate *template.Template
 	promptData     PromptData
 	client         *http.Client
+	logger         *slog.Logger
 }
 
 func Init(config Config) (*LocalOpenAICompatibleProvider, error) {
@@ -76,6 +79,16 @@ func Init(config Config) (*LocalOpenAICompatibleProvider, error) {
 	if strings.TrimSpace(config.PromptData.TargetLanguage) == "" {
 		return nil, errors.New("translation prompt target_language is required")
 	}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	logger = logger.With(
+		"component", "translation_provider",
+		"model", model,
+		"source_language", config.PromptData.SourceLanguage,
+		"target_language", config.PromptData.TargetLanguage,
+	)
 
 	promptTemplate, err := template.New("translation-prompt").Parse(promptTemplateSource)
 	if err != nil {
@@ -91,6 +104,7 @@ func Init(config Config) (*LocalOpenAICompatibleProvider, error) {
 		promptTemplate: promptTemplate,
 		promptData:     config.PromptData,
 		client:         http.DefaultClient,
+		logger:         logger,
 	}, nil
 }
 
@@ -205,9 +219,22 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 	if len(items) == 0 {
 		return []TranslationResult{}, nil
 	}
+	start := time.Now()
+	p.logger.Info(
+		"translation provider request started",
+		"item_count", len(items),
+		"timeout_seconds", timeoutSeconds,
+		"max_tokens", p.maxTokens,
+	)
 
 	prompt, err := p.renderPrompt(items)
 	if err != nil {
+		p.logger.Error(
+			"translation provider request failed",
+			"err", err,
+			"item_count", len(items),
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 		return nil, err
 	}
 
@@ -223,6 +250,12 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 
 	body, err := json.Marshal(requestBody)
 	if err != nil {
+		p.logger.Error(
+			"translation provider request failed",
+			"err", err,
+			"item_count", len(items),
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 		return nil, fmt.Errorf("marshal translation provider request: %w", err)
 	}
 
@@ -239,6 +272,12 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 		bytes.NewReader(body),
 	)
 	if err != nil {
+		p.logger.Error(
+			"translation provider request failed",
+			"err", err,
+			"item_count", len(items),
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 		return nil, fmt.Errorf("build translation provider request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -246,13 +285,28 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 
 	resp, err := p.client.Do(req)
 	if err != nil {
+		p.logger.Error(
+			"translation provider request failed",
+			"err", err,
+			"item_count", len(items),
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 		return nil, fmt.Errorf("send translation provider request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("translation provider returned %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+		err := fmt.Errorf("translation provider returned %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+		p.logger.Error(
+			"translation provider request failed",
+			"err", err,
+			"status", resp.Status,
+			"status_code", resp.StatusCode,
+			"item_count", len(items),
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+		return nil, err
 	}
 
 	var providerResponse struct {
@@ -263,17 +317,50 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 		} `json:"choices"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&providerResponse); err != nil {
+		p.logger.Error(
+			"translation provider request failed",
+			"err", err,
+			"status_code", resp.StatusCode,
+			"item_count", len(items),
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 		return nil, fmt.Errorf("decode translation provider response: %w", err)
 	}
 	if len(providerResponse.Choices) == 0 || providerResponse.Choices[0].Message.Content == nil {
-		return nil, errors.New("translation response content is empty")
+		err := errors.New("translation response content is empty")
+		p.logger.Error(
+			"translation provider request failed",
+			"err", err,
+			"status_code", resp.StatusCode,
+			"item_count", len(items),
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+		return nil, err
 	}
 
 	expectedItemIDs := make(map[string]bool, len(items))
 	for _, item := range items {
 		expectedItemIDs[item.ItemID] = true
 	}
-	return ParseTranslationResponse(*providerResponse.Choices[0].Message.Content, expectedItemIDs)
+	results, err := ParseTranslationResponse(*providerResponse.Choices[0].Message.Content, expectedItemIDs)
+	if err != nil {
+		p.logger.Error(
+			"translation provider request failed",
+			"err", err,
+			"status_code", resp.StatusCode,
+			"item_count", len(items),
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+		return nil, err
+	}
+	p.logger.Info(
+		"translation provider request completed",
+		"item_count", len(items),
+		"translated_count", len(results),
+		"status_code", resp.StatusCode,
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
+	return results, nil
 }
 
 func defaultExtraBody() map[string]any {

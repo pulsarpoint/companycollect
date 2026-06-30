@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +57,38 @@ func TestSourceActionRejectsUnknownSource(t *testing.T) {
 
 	if resp.Code != http.StatusNotFound {
 		t.Fatalf("expected status 404, got %d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestSourceActionLogsAcceptedWorkflowTrigger(t *testing.T) {
+	var logs bytes.Buffer
+	router := NewRouterWithLogger(&fakeWorkflowStarter{
+		result: WorkflowActionResult{
+			WorkflowID: "translator/norway_brreg",
+			RunID:      "run-1",
+		},
+	}, slog.New(slog.NewJSONHandler(&logs, nil)))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sources/norway_brreg/run", nil)
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	logText := logs.String()
+	required := []string{
+		`"msg":"source workflow trigger accepted"`,
+		`"source":"norway_brreg"`,
+		`"action":"run"`,
+		`"workflow_id":"translator/norway_brreg"`,
+		`"run_id":"run-1"`,
+	}
+	for _, fragment := range required {
+		if !strings.Contains(logText, fragment) {
+			t.Fatalf("expected router logs to contain %s\nlogs:\n%s", fragment, logText)
+		}
 	}
 }
 

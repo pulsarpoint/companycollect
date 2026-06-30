@@ -1,9 +1,12 @@
 package brreg
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -133,6 +136,51 @@ func TestRuntimeSerializesConcurrentBatchProcessing(t *testing.T) {
 	}
 	if uploadResult.RowsInserted != 20 {
 		t.Fatalf("expected 20 uploaded rows, got %d", uploadResult.RowsInserted)
+	}
+}
+
+func TestRuntimeWritesOperationalLogs(t *testing.T) {
+	ctx := context.Background()
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	source := newFixtureSource(2)
+	runtime, err := NewRuntime(ctx, RuntimeConfig{
+		QueuePath:    filepath.Join(t.TempDir(), "norway_brreg.duckdb"),
+		Source:       source,
+		Translator:   runtimeTranslator{},
+		ProviderName: "local",
+		Model:        "qwen3:6b",
+		Logger:       logger,
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	defer runtime.Close(ctx)
+
+	if _, err := runtime.LoadNewInput(ctx); err != nil {
+		t.Fatalf("load new input: %v", err)
+	}
+	if _, err := runtime.ProcessOneBatch(ctx, ProcessInput{BatchSize: 1, TimeoutSeconds: 30}); err != nil {
+		t.Fatalf("process one batch: %v", err)
+	}
+	if _, err := runtime.UploadOutput(ctx); err != nil {
+		t.Fatalf("upload output: %v", err)
+	}
+
+	logText := logs.String()
+	required := []string{
+		`"msg":"brreg runtime initialized"`,
+		`"msg":"brreg load input completed"`,
+		`"rows_inserted":2`,
+		`"msg":"brreg process batch completed"`,
+		`"translated_count":1`,
+		`"msg":"brreg upload output completed"`,
+		`"rows_seen":1`,
+	}
+	for _, fragment := range required {
+		if !strings.Contains(logText, fragment) {
+			t.Fatalf("expected runtime logs to contain %s\nlogs:\n%s", fragment, logText)
+		}
 	}
 }
 

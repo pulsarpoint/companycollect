@@ -27,19 +27,19 @@ func main() {
 
 	cfg, configPath, err := config.LoadFromEnvironment()
 	if err != nil {
-		logger.Error("failed to load translator config", "error", err)
+		logger.Error("failed to load translator config", "err", err)
 		os.Exit(1)
 	}
 
 	sourceConfig, endpointConfig, err := norwayBRREGConfig(cfg)
 	if err != nil {
-		logger.Error("invalid norway brreg translator config", "error", err)
+		logger.Error("invalid norway brreg translator config", "err", err)
 		os.Exit(1)
 	}
 
 	clickHouse, err := brreg.OpenClickHouse(ctx, cfg.ClickHouse.NativeURL)
 	if err != nil {
-		logger.Error("failed to connect clickhouse", "error", err)
+		logger.Error("failed to connect clickhouse", "err", err)
 		os.Exit(1)
 	}
 	defer clickHouse.Close()
@@ -50,13 +50,14 @@ func main() {
 		APIKey:    endpointConfig.APIKey,
 		MaxTokens: endpointConfig.MaxTokens,
 		ExtraBody: endpointConfig.ExtraBody,
+		Logger:    logger,
 		PromptData: translation.PromptData{
 			SourceLanguage: endpointConfig.PromptData.SourceLanguage,
 			TargetLanguage: endpointConfig.PromptData.TargetLanguage,
 		},
 	})
 	if err != nil {
-		logger.Error("failed to initialize translation provider", "error", err)
+		logger.Error("failed to initialize translation provider", "err", err)
 		os.Exit(1)
 	}
 
@@ -66,16 +67,17 @@ func main() {
 		Translator:   provider,
 		ProviderName: sourceConfig.EndpointID,
 		Model:        endpointConfig.Model,
+		Logger:       logger,
 	})
 	if err != nil {
-		logger.Error("failed to initialize brreg runtime", "error", err)
+		logger.Error("failed to initialize brreg runtime", "err", err)
 		os.Exit(1)
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := brregRuntime.Close(shutdownCtx); err != nil {
-			logger.Error("failed to close brreg runtime", "error", err)
+			logger.Error("failed to close brreg runtime", "err", err)
 		}
 	}()
 
@@ -84,7 +86,7 @@ func main() {
 		Namespace: cfg.Temporal.Namespace,
 	})
 	if err != nil {
-		logger.Error("failed to connect temporal", "error", err)
+		logger.Error("failed to connect temporal", "err", err)
 		os.Exit(1)
 	}
 	defer temporalClient.Close()
@@ -92,7 +94,7 @@ func main() {
 	temporalWorker := worker.New(temporalClient, orchestration.TaskQueueNorwayBRREG, worker.Options{})
 	orchestration.RegisterNorwayBRREG(temporalWorker, brregRuntime)
 	if err := temporalWorker.Start(); err != nil {
-		logger.Error("failed to start temporal worker", "error", err)
+		logger.Error("failed to start temporal worker", "err", err)
 		os.Exit(1)
 	}
 	defer temporalWorker.Stop()
@@ -106,7 +108,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.Server.ListenAddress,
-		Handler:           api.NewRouter(workflowStarter),
+		Handler:           api.NewRouterWithLogger(workflowStarter, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -132,12 +134,12 @@ func main() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			logger.Error("failed to shutdown translator api", "error", err)
+			logger.Error("failed to shutdown translator api", "err", err)
 			os.Exit(1)
 		}
 	case err := <-serverErrors:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("translator api stopped", "error", err)
+			logger.Error("translator api stopped", "err", err)
 			os.Exit(1)
 		}
 	}

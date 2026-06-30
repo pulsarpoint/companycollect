@@ -1,9 +1,6 @@
 ---
-name: go-linting
-description: Use when setting up linting for a Go project, configuring golangci-lint, or adding Go checks to a CI/CD pipeline. Also use when starting a new Go project and deciding which linters to enable, even if the user only asks about "code quality" or "static analysis" without mentioning specific linter names. Does not cover code review process (see go-code-review).
-allowed-tools: Bash(bash:*)
+description: "Use when setting up linting for a Go project, configuring golangci-lint, or adding Go checks to a CI/CD pipeline. Also use when starting a new Go project and deciding which linters to enable, even if the user only asks about \"code quality\" or \"static analysis\" without mentioning specific linter names. Does not cover code review process (see go-code-review)."
 ---
-
 # Go Linting
 
 ## Core Principle

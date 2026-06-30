@@ -1,8 +1,10 @@
 package translation_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -204,5 +206,64 @@ func TestLocalOpenAICompatibleProviderSendsRequestAndParsesResponse(t *testing.T
 	}
 	if content, ok := message["content"].(string); !ok || !strings.Contains(content, "Holdingselskap") {
 		t.Fatalf("expected prompt content with source text, got %#v", message["content"])
+	}
+}
+
+func TestLocalOpenAICompatibleProviderLogsRequestMetadataWithoutSecretsOrSourceText(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [
+				{
+					"message": {
+						"content": "{\"translations\":[{\"item_id\":\"item-1\",\"translated_text\":\"Holding company\"}]}"
+					}
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	provider, err := translation.Init(translation.Config{
+		BaseURL:   server.URL + "/v1",
+		Model:     "qwen3:6b",
+		APIKey:    "secret-api-key",
+		MaxTokens: 123,
+		Logger:    logger,
+		PromptData: translation.PromptData{
+			SourceLanguage: "Norwegian",
+			TargetLanguage: "English",
+		},
+	})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+
+	_, err = provider.Translate(context.Background(), []translation.TranslationInput{
+		{ItemID: "item-1", SourceText: "Holdingselskap", SourceLang: "no", TargetLang: "en"},
+	}, 30)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+
+	logText := logs.String()
+	required := []string{
+		`"msg":"translation provider request started"`,
+		`"msg":"translation provider request completed"`,
+		`"model":"qwen3:6b"`,
+		`"item_count":1`,
+		`"timeout_seconds":30`,
+	}
+	for _, fragment := range required {
+		if !strings.Contains(logText, fragment) {
+			t.Fatalf("expected provider logs to contain %s\nlogs:\n%s", fragment, logText)
+		}
+	}
+	for _, forbidden := range []string{"secret-api-key", "Holdingselskap"} {
+		if strings.Contains(logText, forbidden) {
+			t.Fatalf("provider logs leaked %q\nlogs:\n%s", forbidden, logText)
+		}
 	}
 }

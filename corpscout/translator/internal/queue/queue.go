@@ -301,32 +301,41 @@ func (q *Queue) ProcessBatch(
 }
 
 func (q *Queue) validateSchema(ctx context.Context) error {
-	required := map[string][]string{
-		"input_items": {
-			"source_table",
-			"source_column",
-			"source_text",
-			"source_text_hash",
-			"source_lang",
-			"target_lang",
-			"created_at",
+	required := []struct {
+		table   string
+		columns []string
+	}{
+		{
+			table: "input_items",
+			columns: []string{
+				"source_table",
+				"source_column",
+				"source_text",
+				"source_text_hash",
+				"source_lang",
+				"target_lang",
+				"created_at",
+			},
 		},
-		"output_items": {
-			"source_table",
-			"source_column",
-			"source_text",
-			"source_text_hash",
-			"source_lang",
-			"target_lang",
-			"translated_text",
-			"provider",
-			"model",
-			"completed_at",
+		{
+			table: "output_items",
+			columns: []string{
+				"source_table",
+				"source_column",
+				"source_text",
+				"source_text_hash",
+				"source_lang",
+				"target_lang",
+				"translated_text",
+				"provider",
+				"model",
+				"completed_at",
+			},
 		},
 	}
 
-	for table, columns := range required {
-		if err := validateTable(ctx, q.db, table, columns); err != nil {
+	for _, table := range required {
+		if err := validateTable(ctx, q.db, table.table, table.columns); err != nil {
 			return err
 		}
 	}

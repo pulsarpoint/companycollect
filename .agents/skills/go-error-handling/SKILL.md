@@ -1,9 +1,6 @@
 ---
-name: go-error-handling
-description: Use when writing Go code that returns, wraps, or handles errors — choosing between sentinel errors, custom types, and fmt.Errorf (%w vs %v), structuring error flow, or deciding whether to log or return. Also use when propagating errors across package boundaries or using errors.Is/As, even if the user doesn't ask about error strategy. Does not cover panic/recover patterns (see go-defensive).
-allowed-tools: Bash(bash:*)
+description: "Use when writing Go code that returns, wraps, or handles errors — choosing between sentinel errors, custom types, and fmt.Errorf (%w vs %v), structuring error flow, or deciding whether to log or return. Also use when propagating errors across package boundaries or using errors.Is/As, even if the user doesn't ask about error strategy. Does not cover panic/recover patterns (see go-defensive)."
 ---
-
 # Go Error Handling
 
 > Compatibility: `errors.Is`, `errors.As`, and `%w` wrapping require Go 1.13+; structured logging examples may use `log/slog` from Go 1.21+.
