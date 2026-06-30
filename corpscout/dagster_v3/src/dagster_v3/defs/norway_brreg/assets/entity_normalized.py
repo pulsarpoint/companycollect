@@ -102,6 +102,8 @@ ORG_LIST_SCHEMA = {
 NormalizeFn = Callable[[pl.DataFrame, str, datetime], pl.DataFrame]
 
 NORMALIZED_PARQUET_KINDS = {"python", "s3", "parquet", "brreg"}
+CLICKHOUSE_DATE_MIN = date(1900, 1, 1)
+CLICKHOUSE_DATE_MAX = date(2300, 1, 1)
 
 SNAPSHOT_NORMALIZED_ASSETS = (
     (
@@ -500,7 +502,12 @@ def _frame(rows: list[dict[str, Any]], *, schema: dict[str, pl.DataType]) -> pl.
 
 def _date_or_none(value: Any) -> date | None:
     text = _string(value)
-    return date.fromisoformat(text) if text else None
+    if not text:
+        return None
+    parsed_date = date.fromisoformat(text)
+    if CLICKHOUSE_DATE_MIN <= parsed_date <= CLICKHOUSE_DATE_MAX:
+        return parsed_date
+    return None
 
 
 def _none_if_empty(value: Any) -> str | None:

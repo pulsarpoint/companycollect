@@ -268,6 +268,43 @@ def test_normalize_entity_records_to_no_tables_matches_clickhouse_shapes() -> No
     ]
 
 
+def test_normalize_entity_records_nulls_dates_outside_clickhouse_range() -> None:
+    raw_frame = _read_parquet_bytes(
+        entity_records_parquet_bytes(
+            [
+                {
+                    "org_number": "3000",
+                    "change_type": "snapshot",
+                    "source_change_type": "snapshot",
+                    "updated_at": None,
+                    "update_id": None,
+                    "entity_url": "https://data.brreg.no/enhetsregisteret/api/enheter/3000",
+                    "entity": {
+                        **_active_entity(),
+                        "organisasjonsnummer": "3000",
+                        "registreringsdatoEnhetsregisteret": "1899-12-31",
+                        "stiftelsesdato": "1868-02-19",
+                    },
+                    "raw_update": None,
+                },
+            ]
+        )
+    )
+
+    no_companies = normalize_entity_records_to_no_companies(
+        raw_frame,
+        source_run_id="run-1",
+        resolved_at=datetime(2026, 6, 30, tzinfo=UTC),
+    )
+
+    assert no_companies.select(["registration_date", "incorporation_date"]).to_dicts() == [
+        {
+            "registration_date": None,
+            "incorporation_date": None,
+        }
+    ]
+
+
 def test_snapshot_multi_asset_reads_raw_once_and_materializes_all_table_parquets() -> None:
     storage = FakeEntityStorage(_raw_snapshot_frame())
     context = dg.build_asset_context()
