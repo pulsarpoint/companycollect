@@ -9,6 +9,8 @@ import pytest
 from dagster_v3.defs.norway_brreg import financial_fetches
 from dagster_v3.defs.norway_brreg.assets.financial_fetches import (
     FINANCIAL_FETCH_CANDIDATE_SCHEMA,
+    FINANCIAL_FETCHED_AT_DTYPE,
+    _polars_type_for_fetch_column,
     norway_brreg_financial_fetches_snapshot_parquet,
     norway_brreg_financial_fetches_updates_parquet,
 )
@@ -184,6 +186,60 @@ def test_snapshot_asset_fetches_missing_raw_and_writes_raw_and_aggregate(
     assert result.metadata["row_count"] == 1
 
 
+def test_snapshot_asset_refreshes_retryable_existing_raw_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    retryable_row = _failure_fetch_row(
+        "814115232",
+        "2024",
+        fetch_status=financial_fetches.FINANCIAL_FETCH_STATUS_SERVER_ERROR,
+    )
+    financial_storage = FakeFinancialStorage(
+        {("814115232", "2024"): pl.DataFrame([retryable_row])}
+    )
+    fetch_calls: list[list[dict[str, Any]]] = []
+
+    def fake_fetch(**kwargs: Any) -> list[dict[str, Any]]:
+        orgs = list(kwargs["orgs"])
+        fetch_calls.append(orgs)
+        return [_success_fetch_row(orgs[0]["org_number"], orgs[0]["last_submitted_accounts_year"])]
+
+    monkeypatch.setattr(financial_fetches, "fetch_financial_rows_for_orgs", fake_fetch)
+
+    result = norway_brreg_financial_fetches_snapshot_parquet(
+        context=dg.build_asset_context(),
+        norway_brreg_entity_storage=FakeEntityStorage(
+            snapshot_frame=_no_companies_frame(
+                [
+                    {
+                        "org_number": "814115232",
+                        "name": "SERVER AS",
+                        "is_active": True,
+                        "primary_website_url": None,
+                        "last_submitted_accounts_year": "2024",
+                    }
+                ]
+            )
+        ),
+        norway_brreg_financial_storage=financial_storage,
+    )
+
+    assert [[org["org_number"] for org in call] for call in fetch_calls] == [["814115232"]]
+    assert financial_storage.raw_read_calls == [("814115232", "2024")]
+    assert [(org, year, overwrite) for org, year, overwrite, _frame in financial_storage.raw_write_calls] == [
+        ("814115232", "2024", True)
+    ]
+    assert _fetch_statuses(financial_storage.raw_frames[("814115232", "2024")]) == [
+        ("814115232", "success")
+    ]
+    assert _fetch_statuses(financial_storage.snapshot_fetches_frame) == [
+        ("814115232", "success")
+    ]
+    assert result.metadata["reused_count"] == 0
+    assert result.metadata["fetched_count"] == 1
+    assert result.metadata["status_counts"] == {"success": 1}
+
+
 def test_update_asset_writes_candidates_overwrites_raw_and_writes_partition_fetches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -264,6 +320,14 @@ def test_empty_update_candidate_partition_writes_empty_parquets_and_succeeds(
     assert result.metadata["candidate_count"] == 0
     assert result.metadata["row_count"] == 0
     assert result.metadata["status_counts"] == {}
+
+
+def test_financial_fetch_column_type_mapping_rejects_unsupported_types() -> None:
+    assert _polars_type_for_fetch_column({"data_type": "text"}) == pl.Utf8
+    assert _polars_type_for_fetch_column({"data_type": "bigint"}) == pl.Int64
+    assert _polars_type_for_fetch_column({"data_type": "timestamp"}) == FINANCIAL_FETCHED_AT_DTYPE
+    with pytest.raises(ValueError, match="Unsupported Norway Brreg financial fetch column type"):
+        _polars_type_for_fetch_column({"data_type": "json"})
 
 
 def test_retryable_fetch_status_raises_after_writing_diagnostics(

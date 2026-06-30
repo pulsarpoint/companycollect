@@ -26,11 +26,13 @@ FINANCIAL_FETCHED_AT_DTYPE = pl.Datetime(time_unit="ms", time_zone="UTC")
 
 def _polars_type_for_fetch_column(column_schema: dict[str, Any]) -> pl.DataType:
     data_type = column_schema["data_type"]
+    if data_type == "text":
+        return pl.Utf8
     if data_type == "bigint":
         return pl.Int64
     if data_type == "timestamp":
         return FINANCIAL_FETCHED_AT_DTYPE
-    return pl.Utf8
+    raise ValueError(f"Unsupported Norway Brreg financial fetch column type: {data_type}")
 
 
 FINANCIAL_FETCH_PARQUET_KINDS = {"python", "s3", "parquet", "brreg"}
@@ -79,14 +81,18 @@ def norway_brreg_financial_fetches_snapshot_parquet(
     for candidate in candidates:
         org_number = _candidate_org_number(candidate)
         accounts_year = _candidate_accounts_year(candidate)
+        overwrite_raw_fetch = False
         if norway_brreg_financial_storage.raw_fetch_exists(org_number, accounts_year):
             raw_frame = norway_brreg_financial_storage.read_raw_fetch(
                 org_number,
                 accounts_year,
             )
-            rows.extend(raw_frame.to_dicts())
-            reused_count += 1
-            continue
+            raw_rows = raw_frame.to_dicts()
+            if _raw_fetch_rows_are_reusable(raw_rows):
+                rows.extend(raw_rows)
+                reused_count += 1
+                continue
+            overwrite_raw_fetch = True
 
         fetched_rows = financial_fetches.fetch_financial_rows_for_orgs(
             orgs=[candidate],
@@ -98,7 +104,7 @@ def norway_brreg_financial_fetches_snapshot_parquet(
             org_number,
             accounts_year,
             raw_frame,
-            overwrite=False,
+            overwrite=overwrite_raw_fetch,
         )
         rows.extend(fetched_rows)
         fetched_count += 1
@@ -250,6 +256,15 @@ def _status_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
         fetch_status = _string(row.get("fetch_status"))
         counts[fetch_status] = counts.get(fetch_status, 0) + 1
     return counts
+
+
+def _raw_fetch_rows_are_reusable(rows: list[dict[str, Any]]) -> bool:
+    return bool(rows) and all(
+        not financial_fetches.financial_fetch_status_requires_failure(
+            _string(row.get("fetch_status"))
+        )
+        for row in rows
+    )
 
 
 def _raise_for_retryable_fetch_statuses(rows: list[dict[str, Any]]) -> None:
