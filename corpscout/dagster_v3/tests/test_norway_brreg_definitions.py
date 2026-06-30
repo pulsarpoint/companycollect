@@ -16,6 +16,9 @@ import dagster_v3.defs.norway_brreg.assets as brreg_assets
 from dagster_v3.defs.norway_brreg.entity_storage import (
     NorwayBrregEntityParquetStorageResource,
 )
+from dagster_v3.defs.norway_brreg.financial_storage import (
+    NorwayBrregFinancialParquetStorageResource,
+)
 from dagster_v3.defs.norway_brreg.resources import NorwayBrregApiResource
 from dagster_v3.definitions import defs as load_project_defs
 
@@ -44,6 +47,8 @@ def test_norway_brreg_all_assets_registered() -> None:
     assert "norway_brreg_entities_duckdb" in asset_names
     assert "norway_brreg_financial_fetches_duckdb" in asset_names
     assert "norway_brreg_financial_statements_duckdb" in asset_names
+    assert "norway_brreg_financial_fetches_snapshot_parquet" in asset_names
+    assert "norway_brreg_financial_fetches_updates_parquet" in asset_names
     assert "norway_brreg_translation_trigger" in asset_names
 
     # Raw ClickHouse export assets dropped in Task 4 (raw tables orphaned; replaced by
@@ -72,6 +77,12 @@ def test_norway_brreg_asset_dependency_edges() -> None:
         dg.AssetKey("norway_brreg_entity_updates_clickhouse")
     )
     trigger_node = asset_graph.get(dg.AssetKey("norway_brreg_translation_trigger"))
+    snapshot_fetches_node = asset_graph.get(
+        brreg_assets.norway_brreg_financial_fetches_snapshot_parquet.key
+    )
+    update_fetches_node = asset_graph.get(
+        brreg_assets.norway_brreg_financial_fetches_updates_parquet.key
+    )
 
     # entities → fetches
     assert {k.path[-1] for k in fetches_node.parent_keys} == {"norway_brreg_entities_duckdb"}
@@ -94,6 +105,12 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     # Snapshot parquet ClickHouse publish → translation_trigger.
     assert {k.path[-1] for k in trigger_node.parent_keys} == {
         "norway_brreg_entities_snapshot_clickhouse"
+    }
+    assert {k.path[-1] for k in snapshot_fetches_node.parent_keys} == {
+        "norway_brreg_entities_snapshot_no_companies_parquet"
+    }
+    assert {k.path[-1] for k in update_fetches_node.parent_keys} == {
+        "norway_brreg_entity_updates_no_companies_parquet"
     }
 
 
@@ -169,6 +186,11 @@ def test_norway_brreg_duckdb_resource_is_wired() -> None:
     assert (
         top_level_resources["norway_brreg_entity_storage"].configurable_resource_cls
         is NorwayBrregEntityParquetStorageResource
+    )
+    assert "norway_brreg_financial_storage" in top_level_resources
+    assert (
+        top_level_resources["norway_brreg_financial_storage"].configurable_resource_cls
+        is NorwayBrregFinancialParquetStorageResource
     )
     assert "norway_brreg_translation_queue_duckdb" not in top_level_resources
 

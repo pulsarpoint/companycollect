@@ -45,6 +45,9 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
             return key
         return self._write_frame(key, frame)
 
+    def read_raw_fetch(self, org_number: str, accounts_year: str) -> pl.DataFrame:
+        return self._read_frame(financial_raw_fetch_object_key(org_number, accounts_year))
+
     def write_snapshot_fetches(self, frame: pl.DataFrame) -> str:
         return self._write_frame(financial_fetches_snapshot_object_key(), frame)
 

@@ -137,6 +137,24 @@ def test_raw_fetch_write_replaces_existing_object_when_overwrite_is_true() -> No
     assert object_store.created_buckets == [NORWAY_BRREG_ENTITY_BUCKET]
 
 
+def test_raw_fetch_read_round_trip() -> None:
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=FakeObjectStore())
+    frame = pl.DataFrame(
+        [
+            {
+                "org_number": "923609016",
+                "last_submitted_accounts_year": "2025",
+                "fetch_status": "success",
+            }
+        ]
+    )
+
+    key = storage.write_raw_fetch("923609016", "2025", frame, overwrite=False)
+
+    assert key == financial_raw_fetch_object_key("923609016", "2025")
+    assert storage.read_raw_fetch("923609016", "2025").to_dicts() == frame.to_dicts()
+
+
 def test_update_candidates_write_and_read_round_trip() -> None:
     storage = NorwayBrregFinancialParquetStorageResource(object_store=FakeObjectStore())
     frame = pl.DataFrame([{"org_number": "923609016", "accounts_year": "2025"}])
