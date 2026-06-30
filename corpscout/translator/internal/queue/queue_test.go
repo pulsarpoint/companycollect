@@ -101,6 +101,11 @@ func TestQueueGetsSavesAndProcessesOnlyUntranslatedRows(t *testing.T) {
 	if translator.itemsSeen != 97 {
 		t.Fatalf("expected translator to receive 97 rows, got %d", translator.itemsSeen)
 	}
+	for _, item := range translator.items {
+		if item.SourceLang != "no" || item.TargetLang != "en" {
+			t.Fatalf("expected translator input language no->en, got %s->%s", item.SourceLang, item.TargetLang)
+		}
+	}
 
 	remaining, err := q.GetBatch(ctx, 10)
 	if err != nil {
@@ -187,6 +192,7 @@ func TestProcessBatchRejectsUnexpectedTranslationResult(t *testing.T) {
 type fakeTranslator struct {
 	timeoutSeconds int
 	itemsSeen      int
+	items          []translation.TranslationInput
 }
 
 func (f *fakeTranslator) Translate(
@@ -196,6 +202,7 @@ func (f *fakeTranslator) Translate(
 ) ([]translation.TranslationResult, error) {
 	f.timeoutSeconds = timeoutSeconds
 	f.itemsSeen += len(items)
+	f.items = append(f.items, items...)
 
 	results := make([]translation.TranslationResult, 0, len(items))
 	for _, item := range items {

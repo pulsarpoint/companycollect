@@ -232,6 +232,8 @@ func (q *Queue) ProcessBatch(
 		inputs = append(inputs, translation.TranslationInput{
 			ItemID:     item.ItemID,
 			SourceText: item.SourceText,
+			SourceLang: item.SourceLang,
+			TargetLang: item.TargetLang,
 		})
 		expectedItemIDs[item.ItemID] = true
 	}

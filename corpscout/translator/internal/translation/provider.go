@@ -10,30 +10,50 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"text/template"
 	"time"
 )
 
 const DefaultMaxTokens = 32768
 
-type LocalOpenAICompatibleProvider struct {
-	baseURL   string
-	model     string
-	apiKey    string
-	maxTokens int
-	extraBody map[string]any
-	client    *http.Client
+const promptTemplateSource = `/no_think
+Translate each {{.SourceLanguage}} text fragment to {{.TargetLanguage}}. Preserve legal and business meaning. Do not add explanations. Do not produce reasoning, chain-of-thought, thinking tags, or Markdown. Return only valid JSON with shape {"translations":[{"item_id":"...","translated_text":"..."}]}. Every item_id in the response must match an input item_id. Input JSON: {{.ItemsJSON}}`
+
+type Config struct {
+	BaseURL    string
+	Model      string
+	APIKey     string
+	MaxTokens  int
+	ExtraBody  map[string]any
+	PromptData PromptData
 }
 
-func NewLocalOpenAICompatibleProvider(
-	baseURL string,
-	model string,
-	apiKey string,
-	maxTokens int,
-	extraBody map[string]any,
-) (*LocalOpenAICompatibleProvider, error) {
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	model = strings.TrimSpace(model)
-	apiKey = strings.TrimSpace(apiKey)
+type PromptData struct {
+	SourceLanguage string
+	TargetLanguage string
+}
+
+type promptRenderData struct {
+	SourceLanguage string
+	TargetLanguage string
+	ItemsJSON      string
+}
+
+type LocalOpenAICompatibleProvider struct {
+	baseURL        string
+	model          string
+	apiKey         string
+	maxTokens      int
+	extraBody      map[string]any
+	promptTemplate *template.Template
+	promptData     PromptData
+	client         *http.Client
+}
+
+func Init(config Config) (*LocalOpenAICompatibleProvider, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
+	model := strings.TrimSpace(config.Model)
+	apiKey := strings.TrimSpace(config.APIKey)
 
 	if baseURL == "" {
 		return nil, errors.New("translation provider base_url is required")
@@ -44,37 +64,50 @@ func NewLocalOpenAICompatibleProvider(
 	if apiKey == "" {
 		return nil, errors.New("translation provider api_key is required")
 	}
-	if maxTokens <= 0 {
-		maxTokens = DefaultMaxTokens
+	if config.MaxTokens <= 0 {
+		config.MaxTokens = DefaultMaxTokens
 	}
-	if extraBody == nil {
-		extraBody = defaultExtraBody()
+	if config.ExtraBody == nil {
+		config.ExtraBody = defaultExtraBody()
+	}
+	if strings.TrimSpace(config.PromptData.SourceLanguage) == "" {
+		return nil, errors.New("translation prompt source_language is required")
+	}
+	if strings.TrimSpace(config.PromptData.TargetLanguage) == "" {
+		return nil, errors.New("translation prompt target_language is required")
+	}
+
+	promptTemplate, err := template.New("translation-prompt").Parse(promptTemplateSource)
+	if err != nil {
+		return nil, fmt.Errorf("parse prompt template: %w", err)
 	}
 
 	return &LocalOpenAICompatibleProvider{
-		baseURL:   baseURL,
-		model:     model,
-		apiKey:    apiKey,
-		maxTokens: maxTokens,
-		extraBody: cloneMap(extraBody),
-		client:    http.DefaultClient,
+		baseURL:        baseURL,
+		model:          model,
+		apiKey:         apiKey,
+		maxTokens:      config.MaxTokens,
+		extraBody:      cloneMap(config.ExtraBody),
+		promptTemplate: promptTemplate,
+		promptData:     config.PromptData,
+		client:         http.DefaultClient,
 	}, nil
 }
 
-func BuildTranslationPrompt(items []TranslationInput) (string, error) {
+func (p *LocalOpenAICompatibleProvider) renderPrompt(items []TranslationInput) (string, error) {
 	payload := struct {
-		SourceLanguage string `json:"source_language"`
-		TargetLanguage string `json:"target_language"`
-		Items          []struct {
+		Items []struct {
 			ItemID     string `json:"item_id"`
 			SourceText string `json:"source_text"`
+			SourceLang string `json:"source_lang"`
+			TargetLang string `json:"target_lang"`
 		} `json:"items"`
 	}{
-		SourceLanguage: "Norwegian",
-		TargetLanguage: "English",
 		Items: make([]struct {
 			ItemID     string `json:"item_id"`
 			SourceText string `json:"source_text"`
+			SourceLang string `json:"source_lang"`
+			TargetLang string `json:"target_lang"`
 		}, 0, len(items)),
 	}
 
@@ -82,9 +115,13 @@ func BuildTranslationPrompt(items []TranslationInput) (string, error) {
 		payload.Items = append(payload.Items, struct {
 			ItemID     string `json:"item_id"`
 			SourceText string `json:"source_text"`
+			SourceLang string `json:"source_lang"`
+			TargetLang string `json:"target_lang"`
 		}{
 			ItemID:     item.ItemID,
 			SourceText: item.SourceText,
+			SourceLang: item.SourceLang,
+			TargetLang: item.TargetLang,
 		})
 	}
 
@@ -93,14 +130,17 @@ func BuildTranslationPrompt(items []TranslationInput) (string, error) {
 		return "", fmt.Errorf("marshal translation prompt payload: %w", err)
 	}
 
-	return "/no_think\n" +
-		"Translate each Norwegian company registry text fragment to English. " +
-		"Preserve legal and business meaning. Do not add explanations. " +
-		"Do not produce reasoning, chain-of-thought, thinking tags, or Markdown. " +
-		"Return only valid JSON with shape " +
-		`{"translations":[{"item_id":"...","translated_text":"..."}]}. ` +
-		"Every item_id in the response must match an input item_id. Input JSON: " +
-		string(data), nil
+	promptData := promptRenderData{
+		SourceLanguage: p.promptData.SourceLanguage,
+		TargetLanguage: p.promptData.TargetLanguage,
+		ItemsJSON:      string(data),
+	}
+
+	var prompt bytes.Buffer
+	if err := p.promptTemplate.Execute(&prompt, promptData); err != nil {
+		return "", fmt.Errorf("execute prompt template: %w", err)
+	}
+	return prompt.String(), nil
 }
 
 func ParseTranslationResponse(responseText string, expectedItemIDs map[string]bool) ([]TranslationResult, error) {
@@ -166,7 +206,7 @@ func (p *LocalOpenAICompatibleProvider) Translate(
 		return []TranslationResult{}, nil
 	}
 
-	prompt, err := BuildTranslationPrompt(items)
+	prompt, err := p.renderPrompt(items)
 	if err != nil {
 		return nil, err
 	}

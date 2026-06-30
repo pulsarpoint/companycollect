@@ -37,8 +37,10 @@ Translate(ctx context.Context, items []TranslationInput, timeoutSeconds int) ([]
 ```
 
 The production provider is OpenAI-compatible and posts to
-`{base_url}/chat/completions`, matching the old Python translator behavior. Tests
-use fake translators and `httptest`; they do not call the real local LLM.
+`{base_url}/chat/completions`. The prompt template is owned by the translation
+package and compiled by `translation.Init`. Config only provides the source and
+target language names used to fill that template. Tests use fake translators and
+`httptest`; they do not call the real local LLM.
 
 ## Configuration
 
@@ -76,6 +78,8 @@ TRANSLATION_PROVIDER_LOCAL_BASE_URL=http://100.77.62.33:8888/v1
 TRANSLATION_PROVIDER_LOCAL_MODEL=qwen3:6b
 TRANSLATION_PROVIDER_LOCAL_API_KEY=not-needed
 max_tokens=32768
+prompt_data.source_language=Norwegian
+prompt_data.target_language=English
 extra_body={"chat_template_kwargs":{"enable_thinking":false}}
 ```
 

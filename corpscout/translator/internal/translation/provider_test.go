@@ -11,27 +11,96 @@ import (
 	"github.com/pulsarpoint/corpscout/translator/internal/translation"
 )
 
-func TestBuildTranslationPromptContainsStrictJSONInstructionsAndInputItems(t *testing.T) {
-	prompt, err := translation.BuildTranslationPrompt([]translation.TranslationInput{
-		{ItemID: "item-1", SourceText: "Holdingselskap"},
+func TestInitRendersPackagePromptTemplateWithConfiguredLanguages(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [
+				{
+					"message": {
+						"content": "{\"translations\":[{\"item_id\":\"item-1\",\"translated_text\":\"Holding company\"}]}"
+					}
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	provider, err := translation.Init(translation.Config{
+		BaseURL:   server.URL + "/v1",
+		Model:     "qwen3:6b",
+		APIKey:    "test-key",
+		MaxTokens: 123,
+		ExtraBody: map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}},
+		PromptData: translation.PromptData{
+			SourceLanguage: "Danish",
+			TargetLanguage: "English",
+		},
 	})
 	if err != nil {
-		t.Fatalf("build prompt: %v", err)
+		t.Fatalf("init provider: %v", err)
+	}
+
+	_, err = provider.Translate(context.Background(), []translation.TranslationInput{
+		{
+			ItemID:     "item-1",
+			SourceText: "Holdingselskab",
+			SourceLang: "da",
+			TargetLang: "en",
+		},
+	}, 30)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+
+	messages, ok := requestBody["messages"].([]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected one user message, got %#v", requestBody["messages"])
+	}
+	message, ok := messages[0].(map[string]any)
+	if !ok || message["role"] != "user" {
+		t.Fatalf("expected user message, got %#v", messages[0])
+	}
+	content, ok := message["content"].(string)
+	if !ok {
+		t.Fatalf("expected string prompt content, got %#v", message["content"])
 	}
 
 	required := []string{
-		"/no_think",
-		"Translate each Norwegian company registry text fragment to English.",
-		"Return only valid JSON",
-		`"source_language":"Norwegian"`,
-		`"target_language":"English"`,
+		"Translate each Danish text fragment to English.",
 		`"item_id":"item-1"`,
-		`"source_text":"Holdingselskap"`,
+		`"source_text":"Holdingselskab"`,
+		`"source_lang":"da"`,
+		`"target_lang":"en"`,
 	}
 	for _, fragment := range required {
-		if !strings.Contains(prompt, fragment) {
-			t.Fatalf("expected prompt to contain %q\nprompt:\n%s", fragment, prompt)
+		if !strings.Contains(content, fragment) {
+			t.Fatalf("expected prompt to contain %q\nprompt:\n%s", fragment, content)
 		}
+	}
+	if strings.Contains(content, "Norwegian") {
+		t.Fatalf("central translation provider must not hardcode Norwegian:\n%s", content)
+	}
+}
+
+func TestInitRequiresPromptLanguages(t *testing.T) {
+	_, err := translation.Init(translation.Config{
+		BaseURL: "http://127.0.0.1:8888/v1",
+		Model:   "qwen3:6b",
+		APIKey:  "test-key",
+		PromptData: translation.PromptData{
+			TargetLanguage: "English",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected missing source language to fail")
+	}
+	if !strings.Contains(err.Error(), "source_language") {
+		t.Fatalf("expected source language error, got %v", err)
 	}
 }
 
@@ -88,19 +157,23 @@ func TestLocalOpenAICompatibleProviderSendsRequestAndParsesResponse(t *testing.T
 	}))
 	defer server.Close()
 
-	provider, err := translation.NewLocalOpenAICompatibleProvider(
-		server.URL+"/v1",
-		"qwen3:6b",
-		"test-key",
-		123,
-		map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}},
-	)
+	provider, err := translation.Init(translation.Config{
+		BaseURL:   server.URL + "/v1",
+		Model:     "qwen3:6b",
+		APIKey:    "test-key",
+		MaxTokens: 123,
+		ExtraBody: map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": false}},
+		PromptData: translation.PromptData{
+			SourceLanguage: "Norwegian",
+			TargetLanguage: "English",
+		},
+	})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
 
 	results, err := provider.Translate(context.Background(), []translation.TranslationInput{
-		{ItemID: "item-1", SourceText: "Holdingselskap"},
+		{ItemID: "item-1", SourceText: "Holdingselskap", SourceLang: "no", TargetLang: "en"},
 	}, 30)
 	if err != nil {
 		t.Fatalf("translate: %v", err)

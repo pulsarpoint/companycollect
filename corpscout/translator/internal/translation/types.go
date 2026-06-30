@@ -5,6 +5,8 @@ import "context"
 type TranslationInput struct {
 	ItemID     string
 	SourceText string
+	SourceLang string
+	TargetLang string
 }
 
 type TranslationResult struct {
