@@ -5,7 +5,12 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
-from norway_financial_bootstrap.activities import FetchBatchInput, FetchBatchResult, fetch_batch
+from norway_financial_bootstrap.activities import (
+    FetchBatchInput,
+    FetchBatchResult,
+    fetch_batch,
+    fetch_batch_with_dependencies,
+)
 from norway_financial_bootstrap.candidates import FinancialCandidate
 from norway_financial_bootstrap.cli import (
     FIXED_WORKFLOW_ID,
@@ -186,7 +191,7 @@ def test_fetch_batch_writes_missing_raw_reports_and_skips_existing_report_ids() 
         FinancialCandidate("200", "MISSING AS", "", "2024"),
     ]
 
-    result = fetch_batch(
+    result = fetch_batch_with_dependencies(
         FetchBatchInput(
             source_run_id="run-1",
             fetched_at="2026-07-01T00:00:00.000Z",
@@ -209,7 +214,7 @@ def test_fetch_batch_tracks_status_counts_and_writes_one_row_frame_per_missing_c
         FinancialCandidate("200", "MISSING AS", "", "2024"),
     ]
 
-    result = fetch_batch(
+    result = fetch_batch_with_dependencies(
         FetchBatchInput(
             source_run_id="run-1",
             fetched_at="2026-07-01T00:00:00.000Z",
@@ -232,7 +237,7 @@ def test_fetch_batch_raises_without_persisting_retryable_fetch_statuses() -> Non
     ]
 
     with pytest.raises(RuntimeError, match="server_error"):
-        fetch_batch(
+        fetch_batch_with_dependencies(
             FetchBatchInput(
                 source_run_id="run-1",
                 fetched_at="2026-07-01T00:00:00.000Z",
@@ -243,6 +248,12 @@ def test_fetch_batch_raises_without_persisting_retryable_fetch_statuses() -> Non
         )
 
     assert set(storage.raw_report_writes) == {("100", "2024", "SELSKAP", "200")}
+
+
+def test_fetch_batch_activity_registers_single_temporal_input_argument() -> None:
+    activity_definition = fetch_batch.__temporal_activity_definition
+
+    assert activity_definition.arg_types == [FetchBatchInput]
 
 
 def test_write_candidate_batches_returns_batch_keys_and_persists_candidates() -> None:

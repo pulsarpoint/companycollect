@@ -40,11 +40,20 @@ def storage_from_env(
 @activity.defn
 def fetch_batch(
     input: FetchBatchInput,
-    storage: Any | None = None,
-    client: BrregFinancialClient | None = None,
 ) -> FetchBatchResult:
-    storage = storage if storage is not None else storage_from_env()
-    client = client if client is not None else BrregFinancialClient()
+    return fetch_batch_with_dependencies(
+        input,
+        storage=storage_from_env(),
+        client=BrregFinancialClient(),
+    )
+
+
+def fetch_batch_with_dependencies(
+    input: FetchBatchInput,
+    *,
+    storage: Any,
+    client: BrregFinancialClient,
+) -> FetchBatchResult:
     candidates = storage.read_candidate_batch(input.candidate_batch_key)
 
     completed_report_ids = storage.existing_raw_report_ids()
