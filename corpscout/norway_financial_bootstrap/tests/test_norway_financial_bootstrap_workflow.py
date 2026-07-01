@@ -1,4 +1,5 @@
 import concurrent.futures
+import json
 from types import SimpleNamespace
 
 import polars as pl
@@ -7,10 +8,12 @@ import pytest
 from norway_financial_bootstrap.activities import FetchBatchInput, FetchBatchResult, fetch_batch
 from norway_financial_bootstrap.candidates import FinancialCandidate
 from norway_financial_bootstrap.cli import (
+    FIXED_WORKFLOW_ID,
     build_parser as build_start_parser,
     main as cli_main,
     write_candidate_batches,
 )
+from norway_financial_bootstrap.storage import COMPANY_SNAPSHOT_NO_COMPANIES_KEY
 from norway_financial_bootstrap.worker import build_parser as build_worker_parser
 from norway_financial_bootstrap.worker import build_worker
 from norway_financial_bootstrap.workflows import (
@@ -28,6 +31,20 @@ class FakeClient:
 
     def fetch_candidate(self, candidate, *, source_run_id, source_line_number, fetched_at):
         self.fetched.append(candidate.org_number)
+        raw_response = json.dumps(
+            [
+                {
+                    "id": int(candidate.org_number),
+                    "journalnr": f"journal-{candidate.org_number}",
+                    "regnskapstype": "SELSKAP",
+                    "regnskapsperiode": {
+                        "fraDato": f"{candidate.last_submitted_accounts_year}-01-01",
+                        "tilDato": f"{candidate.last_submitted_accounts_year}-12-31",
+                    },
+                }
+            ],
+            separators=(",", ":"),
+        )
         return {
             "country_iso2": "NO",
             "source_slug": "norway_brregregnskap_fetch",
@@ -46,7 +63,7 @@ class FakeClient:
             "error_message": "",
             "attempt_count": 1,
             "fetched_at": fetched_at,
-            "raw_response": "[]",
+            "raw_response": raw_response,
         }
 
 
@@ -56,6 +73,11 @@ class StatusClient:
 
     def fetch_candidate(self, candidate, *, source_run_id, source_line_number, fetched_at):
         status = self.statuses.pop(0)
+        raw_response = (
+            '[{"id":200,"journalnr":"journal-200","regnskapstype":"SELSKAP"}]'
+            if status == "success"
+            else "[]"
+        )
         return {
             "country_iso2": "NO",
             "source_slug": "norway_brregregnskap_fetch",
@@ -74,21 +96,23 @@ class StatusClient:
             "error_message": "",
             "attempt_count": 1,
             "fetched_at": fetched_at,
-            "raw_response": "[]",
+            "raw_response": raw_response,
         }
 
 
 class FakeStorage:
-    def __init__(self, completed: set[tuple[str, str]]) -> None:
+    def __init__(
+        self, completed: set[tuple[str, str]] | set[tuple[str, str, str, str]]
+    ) -> None:
         self.completed = completed
         self.candidate_batches: dict[str, list[FinancialCandidate]] = {}
         self.frames: dict[str, pl.DataFrame] = {}
         self.written_candidate_batches: list[
             tuple[str, str, int, list[FinancialCandidate]]
         ] = []
-        self.writes: dict[tuple[str, str], pl.DataFrame] = {}
+        self.raw_report_writes: dict[tuple[str, str, str, str], dict] = {}
 
-    def existing_raw_fetch_org_years(self) -> set[tuple[str, str]]:
+    def existing_raw_report_ids(self) -> set[tuple[str, str, str, str]]:
         return set(self.completed)
 
     def write_candidate_batch(
@@ -99,7 +123,7 @@ class FakeStorage:
         candidates: list[FinancialCandidate],
     ) -> str:
         key = (
-            "norway_brreg/financial/bootstrap_runs/"
+            "norway_brreg/finance/bootstrap_runs/"
             f"run={source_run_id}/attempt={attempt_id}/candidates/batch={batch_index:06d}.parquet"
         )
         self.candidate_batches[key] = list(candidates)
@@ -114,9 +138,24 @@ class FakeStorage:
     def read_parquet(self, key: str) -> pl.DataFrame:
         return self.frames[key]
 
-    def write_raw_fetch(self, org_number: str, accounts_year: str, frame: pl.DataFrame) -> str:
-        self.writes[(org_number, accounts_year)] = frame
-        return f"raw/{org_number}/{accounts_year}.parquet"
+    def raw_report_exists(
+        self, org_number: str, accounts_year: str, report_type: str, report_id: str
+    ) -> bool:
+        return (org_number, accounts_year, report_type, report_id) in self.completed
+
+    def write_raw_report(
+        self,
+        *,
+        org_number: str,
+        accounts_year: str,
+        report_type: str,
+        report_id: str,
+        report: dict,
+    ) -> str:
+        key = (org_number, accounts_year, report_type, report_id)
+        self.raw_report_writes[key] = report
+        self.completed.add(key)
+        return f"raw_reports/{org_number}/{accounts_year}/{report_type}/{report_id}.json"
 
 
 class FakeWorker:
@@ -143,9 +182,9 @@ class FakeWorker:
         )
 
 
-def test_fetch_batch_skips_existing_raw_fetches_and_writes_one_parquet_per_missing_candidate() -> None:
+def test_fetch_batch_writes_missing_raw_reports_and_skips_existing_report_ids() -> None:
     client = FakeClient()
-    storage = FakeStorage(completed={("100", "2024")})
+    storage = FakeStorage(completed={("100", "2024", "SELSKAP", "100")})
     storage.candidate_batches["batches/000001.parquet"] = [
         FinancialCandidate("100", "EXISTING AS", "", "2024"),
         FinancialCandidate("200", "MISSING AS", "", "2024"),
@@ -161,10 +200,10 @@ def test_fetch_batch_skips_existing_raw_fetches_and_writes_one_parquet_per_missi
         client=client,
     )
 
-    assert client.fetched == ["200"]
+    assert client.fetched == ["100", "200"]
     assert result.fetched_count == 1
     assert result.skipped_count == 1
-    assert ("200", "2024") in storage.writes
+    assert set(storage.raw_report_writes) == {("200", "2024", "SELSKAP", "200")}
 
 
 def test_fetch_batch_tracks_status_counts_and_writes_one_row_frame_per_missing_candidate() -> None:
@@ -185,9 +224,8 @@ def test_fetch_batch_tracks_status_counts_and_writes_one_row_frame_per_missing_c
     )
 
     assert result.status_counts == {"success": 1, "not_found": 1}
-    assert result.fetched_count == 2
-    assert storage.writes[("100", "2024")].height == 1
-    assert storage.writes[("200", "2024")].height == 1
+    assert result.fetched_count == 1
+    assert storage.raw_report_writes[("100", "2024", "SELSKAP", "200")]["id"] == 200
 
 
 def test_fetch_batch_raises_without_persisting_retryable_fetch_statuses() -> None:
@@ -208,7 +246,7 @@ def test_fetch_batch_raises_without_persisting_retryable_fetch_statuses() -> Non
             client=StatusClient(["success", "server_error"]),
         )
 
-    assert set(storage.writes) == {("100", "2024")}
+    assert set(storage.raw_report_writes) == {("100", "2024", "SELSKAP", "200")}
 
 
 def test_write_candidate_batches_returns_batch_keys_and_persists_candidates() -> None:
@@ -228,8 +266,8 @@ def test_write_candidate_batches_returns_batch_keys_and_persists_candidates() ->
     )
 
     assert batch_keys == [
-        "norway_brreg/financial/bootstrap_runs/run=run-1/attempt=attempt-a/candidates/batch=000000.parquet",
-        "norway_brreg/financial/bootstrap_runs/run=run-1/attempt=attempt-a/candidates/batch=000001.parquet",
+        "norway_brreg/finance/bootstrap_runs/run=run-1/attempt=attempt-a/candidates/batch=000000.parquet",
+        "norway_brreg/finance/bootstrap_runs/run=run-1/attempt=attempt-a/candidates/batch=000001.parquet",
     ]
     assert storage.read_candidate_batch(batch_keys[0]) == candidates[:2]
     assert storage.read_candidate_batch(batch_keys[1]) == candidates[2:]
@@ -255,10 +293,10 @@ def test_write_candidate_batches_uses_attempt_id_to_keep_keys_disjoint() -> None
     )
 
     assert first_batch_keys == [
-        "norway_brreg/financial/bootstrap_runs/run=run-1/attempt=attempt-a/candidates/batch=000000.parquet"
+        "norway_brreg/finance/bootstrap_runs/run=run-1/attempt=attempt-a/candidates/batch=000000.parquet"
     ]
     assert second_batch_keys == [
-        "norway_brreg/financial/bootstrap_runs/run=run-1/attempt=attempt-b/candidates/batch=000000.parquet"
+        "norway_brreg/finance/bootstrap_runs/run=run-1/attempt=attempt-b/candidates/batch=000000.parquet"
     ]
     assert first_batch_keys[0] != second_batch_keys[0]
     assert set(storage.candidate_batches) == {first_batch_keys[0], second_batch_keys[0]}
@@ -329,30 +367,21 @@ def test_bootstrap_input_uses_batch_keys_not_embedded_candidates() -> None:
     assert not hasattr(workflow_input, "candidates")
 
 
-def test_start_cli_parser_accepts_workflow_options() -> None:
+def test_start_cli_parser_accepts_only_temporal_and_s3_endpoint_options() -> None:
     args = build_start_parser().parse_args(
         [
-            "--snapshot-date",
-            "2026-07-01",
-            "--no-companies-key",
-            "snapshots/no_companies.parquet",
             "--temporal-address",
             "localhost:7233",
-            "--task-queue",
-            "norway-financial-test",
-            "--batch-size",
-            "25",
-            "--max-concurrent-batches",
-            "3",
+            "--s3-endpoint",
+            "http://localhost:9000",
         ]
     )
 
-    assert args.snapshot_date == "2026-07-01"
-    assert args.no_companies_key == "snapshots/no_companies.parquet"
     assert args.temporal_address == "localhost:7233"
-    assert args.task_queue == "norway-financial-test"
-    assert args.batch_size == 25
-    assert args.max_concurrent_batches == 3
+    assert args.s3_endpoint == "http://localhost:9000"
+    assert not hasattr(args, "task_queue")
+    assert not hasattr(args, "batch_size")
+    assert not hasattr(args, "max_concurrent_batches")
 
 
 def test_cli_main_writes_candidate_batches_and_starts_workflow_with_batch_keys(
@@ -360,8 +389,8 @@ def test_cli_main_writes_candidate_batches_and_starts_workflow_with_batch_keys(
 ) -> None:
     import norway_financial_bootstrap.cli as cli
 
-    storage = FakeStorage(completed={("100", "2024")})
-    storage.frames["snapshots/no_companies.parquet"] = pl.DataFrame(
+    storage = FakeStorage(completed=set())
+    storage.frames[COMPANY_SNAPSHOT_NO_COMPANIES_KEY] = pl.DataFrame(
         [
             {
                 "org_number": "100",
@@ -411,50 +440,38 @@ def test_cli_main_writes_candidate_batches_and_starts_workflow_with_batch_keys(
 
     exit_code = cli_main(
         [
-            "--snapshot-date",
-            "2026-07-01",
-            "--no-companies-key",
-            "snapshots/no_companies.parquet",
             "--temporal-address",
             "localhost:7233",
-            "--task-queue",
-            "norway-financial-test",
-            "--batch-size",
-            "1",
-            "--max-concurrent-batches",
-            "3",
+            "--s3-endpoint",
+            "http://localhost:9000",
         ]
     )
 
     assert exit_code == 0
-    assert capsys.readouterr().out == "norway-brreg-financial-raw-fetch-2026-07-01\n"
+    assert capsys.readouterr().out == f"{FIXED_WORKFLOW_ID}\n"
     assert captured["temporal_address"] == "localhost:7233"
-    assert captured["task_queue"] == "norway-financial-test"
-    assert captured["workflow_id"] == "norway-brreg-financial-raw-fetch-2026-07-01"
+    assert captured["task_queue"] == "norway-financial-bootstrap"
+    assert captured["workflow_id"] == FIXED_WORKFLOW_ID
     assert captured["input"] == BootstrapInput(
-        source_run_id="norway-brreg-financial-raw-fetch-2026-07-01",
+        source_run_id=FIXED_WORKFLOW_ID,
         fetched_at="2026-07-01T00:00:00.000Z",
-        candidate_count=2,
+        candidate_count=3,
         batch_keys=[
-            "norway_brreg/financial/bootstrap_runs/"
-            "run=norway-brreg-financial-raw-fetch-2026-07-01/attempt=attempt-a/candidates/batch=000000.parquet",
-            "norway_brreg/financial/bootstrap_runs/"
-            "run=norway-brreg-financial-raw-fetch-2026-07-01/attempt=attempt-a/candidates/batch=000001.parquet",
+            "norway_brreg/finance/bootstrap_runs/"
+            f"run={FIXED_WORKFLOW_ID}/attempt=attempt-a/candidates/batch=000000.parquet",
         ],
-        max_concurrent_batches=3,
+        max_concurrent_batches=4,
     )
     assert storage.written_candidate_batches == [
         (
-            "norway-brreg-financial-raw-fetch-2026-07-01",
+            FIXED_WORKFLOW_ID,
             "attempt-a",
             0,
-            [FinancialCandidate("200", "MISSING AS", "", "2024")],
-        ),
-        (
-            "norway-brreg-financial-raw-fetch-2026-07-01",
-            "attempt-a",
-            1,
-            [FinancialCandidate("300", "MISSING TWO AS", "", "2024")],
+            [
+                FinancialCandidate("100", "EXISTING AS", "", "2024"),
+                FinancialCandidate("200", "MISSING AS", "", "2024"),
+                FinancialCandidate("300", "MISSING TWO AS", "", "2024"),
+            ],
         ),
     ]
 
@@ -507,19 +524,16 @@ def test_worker_cli_parser_accepts_worker_options() -> None:
         [
             "--temporal-address",
             "localhost:7233",
-            "--task-queue",
-            "norway-financial-test",
-            "--max-workers",
-            "3",
-            "--env-file",
-            ".env.test",
+            "--s3-endpoint",
+            "http://localhost:9000",
         ]
     )
 
     assert args.temporal_address == "localhost:7233"
-    assert args.task_queue == "norway-financial-test"
-    assert args.max_workers == 3
-    assert args.env_file == ".env.test"
+    assert args.s3_endpoint == "http://localhost:9000"
+    assert not hasattr(args, "task_queue")
+    assert not hasattr(args, "max_workers")
+    assert not hasattr(args, "env_file")
 
 
 def test_build_worker_registers_workflow_activity_and_executor(monkeypatch) -> None:

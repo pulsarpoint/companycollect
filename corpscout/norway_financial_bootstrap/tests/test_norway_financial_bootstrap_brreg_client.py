@@ -48,7 +48,7 @@ def test_brreg_client_maps_success_to_existing_fetch_row_contract() -> None:
     )
 
     assert session.calls == [
-        "https://data.brreg.no/regnskapsregisteret/regnskap/811685852"
+        "https://data.brreg.no/regnskapsregisteret/regnskap/811685852?%C3%A5r=2024"
     ]
     assert row["fetch_status"] == "success"
     assert row["attempt_count"] == 1

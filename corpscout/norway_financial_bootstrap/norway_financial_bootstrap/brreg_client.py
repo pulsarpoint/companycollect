@@ -2,10 +2,11 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlencode
 
 import requests
 
-from dagster_v3.defs.norway_brreg import financial_fetches
+from norway_financial_bootstrap import fetch_status as financial_fetches
 from norway_financial_bootstrap.candidates import FinancialCandidate
 
 BRREG_REGNSKAP_BASE_URL = financial_fetches.BRREG_REGNSKAP_BASE_URL
@@ -41,7 +42,8 @@ class BrregFinancialClient:
     ) -> dict[str, Any]:
         fetch_timestamp = fetched_at or _utc_now_iso()
         org = candidate.as_org_mapping()
-        source_url = f"{self._base_url}/{candidate.org_number}"
+        query = urlencode({"år": candidate.last_submitted_accounts_year})
+        source_url = f"{self._base_url}/{candidate.org_number}?{query}"
         for retry_index in range(len(RETRY_DELAYS_SECONDS) + 1):
             attempt_count = retry_index + 1
             try:

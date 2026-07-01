@@ -3,7 +3,6 @@ import polars as pl
 from norway_financial_bootstrap.candidates import (
     FinancialCandidate,
     build_financial_candidates,
-    missing_candidates,
 )
 
 
@@ -37,15 +36,4 @@ def test_build_financial_candidates_filters_active_companies_with_accounts_year(
     assert build_financial_candidates(frame) == [
         FinancialCandidate("100", "A AS", "", "2023"),
         FinancialCandidate("200", "B AS", "https://b.example", "2024"),
-    ]
-
-
-def test_missing_candidates_skips_existing_raw_fetch_org_years() -> None:
-    candidates = [
-        FinancialCandidate("100", "A AS", "", "2023"),
-        FinancialCandidate("200", "B AS", "", "2024"),
-    ]
-
-    assert missing_candidates(candidates, {("100", "2023")}) == [
-        FinancialCandidate("200", "B AS", "", "2024")
     ]

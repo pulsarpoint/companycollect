@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any
 
 import boto3
 import polars as pl
 
-from dagster_v3.defs.norway_brreg.constants import NORWAY_BRREG_ENTITY_BUCKET
-from dagster_v3.defs.norway_brreg.financial_storage import (
-    financial_raw_fetch_object_key,
-)
 from norway_financial_bootstrap.candidates import FinancialCandidate
 
-DEFAULT_BUCKET = NORWAY_BRREG_ENTITY_BUCKET
-RAW_FETCH_PREFIX = "norway_brreg/financial/raw_fetches/"
-BOOTSTRAP_RUNS_PREFIX = "norway_brreg/financial/bootstrap_runs/"
+DEFAULT_BUCKET = "source-norway-brreg"
+COMPANY_SNAPSHOT_NO_COMPANIES_KEY = (
+    "norway_brreg/company/normalized/snapshot/no_companies.parquet"
+)
+RAW_REPORT_PREFIX = "norway_brreg/finance/raw_reports/"
+BOOTSTRAP_RUNS_PREFIX = "norway_brreg/finance/bootstrap_runs/"
 CANDIDATE_BATCH_SCHEMA: dict[str, pl.DataType] = {
     "org_number": pl.String,
     "legal_name": pl.String,
@@ -24,8 +24,13 @@ CANDIDATE_BATCH_SCHEMA: dict[str, pl.DataType] = {
 }
 
 
-def raw_fetch_key(org_number: str, accounts_year: str) -> str:
-    return financial_raw_fetch_object_key(org_number, accounts_year)
+def raw_report_key(
+    org_number: str, accounts_year: str, report_type: str, report_id: str
+) -> str:
+    return (
+        f"{RAW_REPORT_PREFIX}org={org_number}/"
+        f"year={accounts_year}/type={report_type}/id={report_id}.json"
+    )
 
 
 def candidate_batch_key(source_run_id: str, attempt_id: str, batch_index: int) -> str:
@@ -35,27 +40,36 @@ def candidate_batch_key(source_run_id: str, attempt_id: str, batch_index: int) -
     )
 
 
-def completed_key_from_raw_fetch_key(key: str) -> tuple[str, str] | None:
-    if not key.startswith(RAW_FETCH_PREFIX):
+def completed_key_from_raw_report_key(
+    key: str,
+) -> tuple[str, str, str, str] | None:
+    if not key.startswith(RAW_REPORT_PREFIX):
         return None
 
-    suffix = key.removeprefix(RAW_FETCH_PREFIX)
+    suffix = key.removeprefix(RAW_REPORT_PREFIX)
     parts = suffix.split("/")
-    if len(parts) != 3:
+    if len(parts) != 4:
         return None
 
-    org_part, year_part, filename = parts
-    if filename != "financial_fetch.parquet":
+    org_part, year_part, type_part, filename = parts
+    if not filename.endswith(".json"):
         return None
-    if not org_part.startswith("org=") or not year_part.startswith("year="):
+    if (
+        not org_part.startswith("org=")
+        or not year_part.startswith("year=")
+        or not type_part.startswith("type=")
+        or not filename.startswith("id=")
+    ):
         return None
 
     org_number = org_part.removeprefix("org=")
     accounts_year = year_part.removeprefix("year=")
-    if not org_number or not accounts_year:
+    report_type = type_part.removeprefix("type=")
+    report_id = filename.removeprefix("id=").removesuffix(".json")
+    if not org_number or not accounts_year or not report_type or not report_id:
         return None
 
-    return org_number, accounts_year
+    return org_number, accounts_year, report_type, report_id
 
 
 @dataclass
@@ -63,7 +77,7 @@ class NorwayFinancialBootstrapStorage:
     endpoint_url: str | None = None
     access_key: str | None = None
     secret_key: str | None = None
-    bucket: str = DEFAULT_BUCKET
+    bucket: str = field(init=False, default=DEFAULT_BUCKET)
     region_name: str = "us-east-1"
     s3_client: Any | None = None
 
@@ -85,12 +99,12 @@ class NorwayFinancialBootstrapStorage:
             keys.extend(item["Key"] for item in page.get("Contents", []))
         return keys
 
-    def existing_raw_fetch_org_years(self) -> set[tuple[str, str]]:
-        completed: set[tuple[str, str]] = set()
-        for key in self.list_keys(RAW_FETCH_PREFIX):
-            org_year = completed_key_from_raw_fetch_key(key)
-            if org_year is not None:
-                completed.add(org_year)
+    def existing_raw_report_ids(self) -> set[tuple[str, str, str, str]]:
+        completed: set[tuple[str, str, str, str]] = set()
+        for key in self.list_keys(RAW_REPORT_PREFIX):
+            report_id = completed_key_from_raw_report_key(key)
+            if report_id is not None:
+                completed.add(report_id)
         return completed
 
     def read_parquet(self, key: str) -> pl.DataFrame:
@@ -144,14 +158,30 @@ class NorwayFinancialBootstrapStorage:
         )
         return key
 
-    def write_raw_fetch(
-        self, org_number: str, accounts_year: str, frame: pl.DataFrame
+    def raw_report_exists(
+        self, org_number: str, accounts_year: str, report_type: str, report_id: str
+    ) -> bool:
+        return self.client_object_exists(
+            raw_report_key(org_number, accounts_year, report_type, report_id)
+        )
+
+    def client_object_exists(self, key: str) -> bool:
+        return any(item_key == key for item_key in self.list_keys(key))
+
+    def write_raw_report(
+        self,
+        *,
+        org_number: str,
+        accounts_year: str,
+        report_type: str,
+        report_id: str,
+        report: dict[str, Any],
     ) -> str:
-        key = raw_fetch_key(org_number, accounts_year)
+        key = raw_report_key(org_number, accounts_year, report_type, report_id)
         self.client().put_object(
             Bucket=self.bucket,
             Key=key,
-            Body=_parquet_bytes(frame),
+            Body=_json_bytes(report),
         )
         return key
 
@@ -160,3 +190,12 @@ def _parquet_bytes(frame: pl.DataFrame) -> bytes:
     buffer = BytesIO()
     frame.write_parquet(buffer)
     return buffer.getvalue()
+
+
+def _json_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
-
 import polars as pl
 
 
@@ -49,19 +47,4 @@ def build_financial_candidates(frame: pl.DataFrame) -> list[FinancialCandidate]:
             row["last_submitted_accounts_year"],
         )
         for row in rows
-    ]
-
-
-def missing_candidates(
-    candidates: Iterable[FinancialCandidate],
-    completed_org_years: set[tuple[str, str]],
-) -> list[FinancialCandidate]:
-    return [
-        candidate
-        for candidate in candidates
-        if (
-            candidate.org_number,
-            candidate.last_submitted_accounts_year,
-        )
-        not in completed_org_years
     ]

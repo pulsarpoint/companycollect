@@ -34,20 +34,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--task-queue",
-        default=DEFAULT_TASK_QUEUE,
-        help=f"Temporal task queue to poll. Default: {DEFAULT_TASK_QUEUE}.",
-    )
-    parser.add_argument(
-        "--max-workers",
-        type=_positive_int,
-        default=DEFAULT_MAX_WORKERS,
-        help=f"Maximum concurrent fetch activities. Default: {DEFAULT_MAX_WORKERS}.",
-    )
-    parser.add_argument(
-        "--env-file",
-        default=".env",
-        help="Path to a .env file to load before starting. Default: .env.",
+        "--s3-endpoint",
+        default=None,
+        help="S3-compatible endpoint URL. Defaults to CORPSCOUT_S3_ENDPOINT.",
     )
     return parser
 
@@ -79,7 +68,9 @@ async def run_worker(
 
 def worker_main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    load_dotenv(args.env_file, override=False)
+    load_dotenv(".env", override=False)
+    if args.s3_endpoint is not None:
+        os.environ["CORPSCOUT_S3_ENDPOINT"] = args.s3_endpoint
     logging.basicConfig(
         level=os.environ.get("NORWAY_FINANCIAL_BOOTSTRAP_LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s | %(message)s",
@@ -91,21 +82,13 @@ def worker_main(argv: list[str] | None = None) -> int:
         asyncio.run(
             run_worker(
                 temporal_address=temporal_address,
-                task_queue=args.task_queue,
-                max_workers=args.max_workers,
+                task_queue=DEFAULT_TASK_QUEUE,
+                max_workers=DEFAULT_MAX_WORKERS,
             )
         )
     except KeyboardInterrupt:
         return 130
     return 0
-
-
-def _positive_int(value: str) -> int:
-    parsed = int(value)
-    if parsed < 1:
-        raise argparse.ArgumentTypeError("must be at least 1")
-    return parsed
-
 
 if __name__ == "__main__":
     raise SystemExit(worker_main())

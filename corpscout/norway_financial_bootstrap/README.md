@@ -1,0 +1,163 @@
+# Norway Financial Bootstrap
+
+Standalone Temporal application for the one-time historical Norway BRREG
+financial report bootstrap.
+
+This package is intentionally independent of Dagster. It reads the fixed
+company snapshot parquet from S3, discovers financial reports from BRREG by
+organization and year, and writes raw report JSON objects back to S3. Dagster
+daily finance jobs use the same fixed raw report paths to decide which reports
+already exist.
+
+## Fixed Storage Contract
+
+The bucket and object keys are not configurable.
+
+Bucket:
+
+```text
+source-norway-brreg
+```
+
+Input company snapshot:
+
+```text
+norway_brreg/company/normalized/snapshot/no_companies.parquet
+```
+
+Candidate batch files written by the bootstrap starter:
+
+```text
+norway_brreg/finance/bootstrap_runs/run=norway-brreg-finance-historical-bootstrap/attempt={attempt_id}/candidates/batch={batch_index}.parquet
+```
+
+Raw financial reports written by workers:
+
+```text
+norway_brreg/finance/raw_reports/org={org_number}/year={year}/type={report_type}/id={report_id}.json
+```
+
+The raw report path is the completion marker. If that exact report object
+already exists, the worker skips it and does not call it completed again.
+
+## What It Fetches
+
+The starter reads active companies with a non-empty
+`last_submitted_accounts_year` from the fixed `no_companies.parquet` snapshot.
+
+For each candidate, workers call BRREG with the company and year:
+
+```text
+GET https://data.brreg.no/regnskapsregisteret/regnskap/{org_number}?år={year}
+```
+
+Each returned report is stored as a separate JSON object under the fixed raw
+report key. The bootstrap does not create ClickHouse tables, parse financial
+metrics, run FX conversion, or call Dagster.
+
+## Local Setup
+
+From this directory:
+
+```bash
+uv sync
+```
+
+Required environment variables:
+
+```bash
+export CORPSCOUT_S3_ACCESS_KEY=...
+export CORPSCOUT_S3_SECRET_KEY=...
+```
+
+Set the S3-compatible endpoint either as an environment variable or a CLI
+argument:
+
+```bash
+export CORPSCOUT_S3_ENDPOINT=http://s3-host:9000
+```
+
+Temporal address can also be supplied as an environment variable or CLI
+argument:
+
+```bash
+export TEMPORAL_ADDRESS=temporal-host:7233
+```
+
+The fixed Temporal task queue is:
+
+```text
+norway-financial-bootstrap
+```
+
+The fixed workflow id is:
+
+```text
+norway-brreg-finance-historical-bootstrap
+```
+
+## Run
+
+Start one or more workers:
+
+```bash
+uv run norway-financial-bootstrap-worker \
+  --temporal-address temporal-host:7233 \
+  --s3-endpoint http://s3-host:9000
+```
+
+Start the workflow:
+
+```bash
+uv run norway-financial-bootstrap \
+  --temporal-address temporal-host:7233 \
+  --s3-endpoint http://s3-host:9000
+```
+
+The starter prints the workflow id after Temporal accepts the workflow.
+
+## Resume And Rerun Behavior
+
+The application is safe to rerun against the same S3 bucket.
+
+On every activity batch, the worker lists existing raw report objects under:
+
+```text
+norway_brreg/finance/raw_reports/
+```
+
+For each BRREG report returned by `org + year`, it checks the exact
+`org/year/type/id` key. Existing report objects are skipped. Missing report
+objects are written.
+
+The starter may write new candidate batch files under a new `attempt=...`
+folder for the fixed workflow id. Those batch files are not the source of truth;
+the raw report JSON objects are.
+
+## Failure Behavior
+
+Retryable BRREG failures are not written as raw report objects.
+
+The worker retries transient network, `429`, and `5xx` failures using finite
+backoff. If the retry budget is exhausted for any candidate in an activity
+batch, the activity raises after processing the batch and Temporal retries the
+activity according to the workflow retry policy.
+
+Non-retryable `404` results are counted as `not_found` and do not create raw
+report objects.
+
+Invalid payloads are counted as `invalid_payload` and fail the batch.
+
+## Verification
+
+Run tests:
+
+```bash
+uv run pytest -q
+```
+
+Run lint:
+
+```bash
+uv run ruff check .
+```

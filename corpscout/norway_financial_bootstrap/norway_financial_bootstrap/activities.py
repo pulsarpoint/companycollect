@@ -1,11 +1,11 @@
+import json
 import os
 from dataclasses import dataclass
 from typing import Any
 
-import polars as pl
 from temporalio import activity
 
-from dagster_v3.defs.norway_brreg import financial_fetches
+from norway_financial_bootstrap import fetch_status as financial_fetches
 from norway_financial_bootstrap.brreg_client import BrregFinancialClient
 from norway_financial_bootstrap.storage import NorwayFinancialBootstrapStorage
 
@@ -26,19 +26,14 @@ class FetchBatchResult:
     status_counts: dict[str, int]
 
 
-def storage_from_env() -> NorwayFinancialBootstrapStorage:
+def storage_from_env(
+    *, endpoint_url: str | None = None
+) -> NorwayFinancialBootstrapStorage:
     kwargs: dict[str, str | None] = {
-        "endpoint_url": os.environ.get("CORPSCOUT_S3_ENDPOINT"),
+        "endpoint_url": endpoint_url or os.environ.get("CORPSCOUT_S3_ENDPOINT"),
         "access_key": os.environ.get("CORPSCOUT_S3_ACCESS_KEY"),
         "secret_key": os.environ.get("CORPSCOUT_S3_SECRET_KEY"),
     }
-    if "CORPSCOUT_S3_BUCKET" in os.environ:
-        kwargs["bucket"] = os.environ["CORPSCOUT_S3_BUCKET"]
-    region_name = os.environ.get("CORPSCOUT_S3_REGION") or os.environ.get(
-        "CORPSCOUT_S3_REGION_NAME"
-    )
-    if region_name is not None:
-        kwargs["region_name"] = region_name
     return NorwayFinancialBootstrapStorage(**kwargs)
 
 
@@ -52,7 +47,7 @@ def fetch_batch(
     client = client if client is not None else BrregFinancialClient()
     candidates = storage.read_candidate_batch(input.candidate_batch_key)
 
-    completed_org_years = storage.existing_raw_fetch_org_years()
+    completed_report_ids = storage.existing_raw_report_ids()
     fetched_count = 0
     skipped_count = 0
     status_counts: dict[str, int] = {}
@@ -61,12 +56,6 @@ def fetch_batch(
 
     for line_number, candidate in enumerate(candidates, start=1):
         processed_count += 1
-        org_year = (candidate.org_number, candidate.last_submitted_accounts_year)
-        if org_year in completed_org_years:
-            skipped_count += 1
-            _heartbeat_if_due(processed_count)
-            continue
-
         row = client.fetch_candidate(
             candidate,
             source_run_id=input.source_run_id,
@@ -80,13 +69,29 @@ def fetch_batch(
             _heartbeat_if_due(processed_count)
             continue
 
-        storage.write_raw_fetch(
-            candidate.org_number,
-            candidate.last_submitted_accounts_year,
-            pl.DataFrame([row]),
-        )
-        completed_org_years.add(org_year)
-        fetched_count += 1
+        if status == financial_fetches.FINANCIAL_FETCH_STATUS_SUCCESS:
+            for report in _reports_from_success_row(row):
+                report_id = _required_report_value(report, "id")
+                report_type = _required_report_value(report, "regnskapstype")
+                report_key = (
+                    candidate.org_number,
+                    candidate.last_submitted_accounts_year,
+                    report_type,
+                    report_id,
+                )
+                if report_key in completed_report_ids:
+                    skipped_count += 1
+                    continue
+                storage.write_raw_report(
+                    org_number=candidate.org_number,
+                    accounts_year=candidate.last_submitted_accounts_year,
+                    report_type=report_type,
+                    report_id=report_id,
+                    report=report,
+                )
+                completed_report_ids.add(report_key)
+                fetched_count += 1
+
         _heartbeat_if_due(processed_count)
 
     _safe_heartbeat(
@@ -109,6 +114,20 @@ def fetch_batch(
         skipped_count=skipped_count,
         status_counts=status_counts,
     )
+
+
+def _reports_from_success_row(row: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = json.loads(str(row.get("raw_response") or "[]"))
+    if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
+        raise RuntimeError("BRREG financial success row does not contain a list of reports")
+    return payload
+
+
+def _required_report_value(report: dict[str, Any], key: str) -> str:
+    value = report.get(key)
+    if value is None or str(value) == "":
+        raise RuntimeError(f"BRREG financial report is missing required field {key!r}")
+    return str(value)
 
 
 def _heartbeat_if_due(processed_count: int) -> None:

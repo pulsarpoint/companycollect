@@ -11,9 +11,11 @@ from norway_financial_bootstrap.activities import storage_from_env
 from norway_financial_bootstrap.candidates import (
     FinancialCandidate,
     build_financial_candidates,
-    missing_candidates,
 )
-from norway_financial_bootstrap.storage import NorwayFinancialBootstrapStorage
+from norway_financial_bootstrap.storage import (
+    COMPANY_SNAPSHOT_NO_COMPANIES_KEY,
+    NorwayFinancialBootstrapStorage,
+)
 from norway_financial_bootstrap.workflows import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_MAX_CONCURRENT_BATCHES,
@@ -24,21 +26,13 @@ from norway_financial_bootstrap.workflows import (
     partition_batches,
 )
 
+FIXED_WORKFLOW_ID = "norway-brreg-finance-historical-bootstrap"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="norway-financial-bootstrap",
         description="Start the one-time Norway BRREG financial raw-fetch bootstrap workflow.",
-    )
-    parser.add_argument(
-        "--snapshot-date",
-        required=True,
-        help="Snapshot date for the no_companies parquet, formatted as YYYY-MM-DD.",
-    )
-    parser.add_argument(
-        "--no-companies-key",
-        required=True,
-        help="S3 object key for the no_companies parquet snapshot.",
     )
     parser.add_argument(
         "--temporal-address",
@@ -49,24 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--task-queue",
-        default=DEFAULT_TASK_QUEUE,
-        help=f"Temporal task queue for the bootstrap worker. Default: {DEFAULT_TASK_QUEUE}.",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=_positive_int,
-        default=DEFAULT_BATCH_SIZE,
-        help=f"Candidates per fetch activity. Default: {DEFAULT_BATCH_SIZE}.",
-    )
-    parser.add_argument(
-        "--max-concurrent-batches",
-        type=_positive_int,
-        default=DEFAULT_MAX_CONCURRENT_BATCHES,
-        help=(
-            "Maximum fetch batch activities scheduled at once. "
-            f"Default: {DEFAULT_MAX_CONCURRENT_BATCHES}."
-        ),
+        "--s3-endpoint",
+        default=None,
+        help="S3-compatible endpoint URL. Defaults to CORPSCOUT_S3_ENDPOINT.",
     )
     return parser
 
@@ -106,13 +85,13 @@ def write_candidate_batches(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.s3_endpoint is not None:
+        os.environ["CORPSCOUT_S3_ENDPOINT"] = args.s3_endpoint
     storage = storage_from_env()
-    all_candidates = build_financial_candidates(storage.read_parquet(args.no_companies_key))
-    candidates = missing_candidates(
-        all_candidates,
-        storage.existing_raw_fetch_org_years(),
+    candidates = build_financial_candidates(
+        storage.read_parquet(COMPANY_SNAPSHOT_NO_COMPANIES_KEY)
     )
-    workflow_id = f"norway-brreg-financial-raw-fetch-{args.snapshot_date}"
+    workflow_id = FIXED_WORKFLOW_ID
     temporal_address = args.temporal_address or os.environ.get(
         "TEMPORAL_ADDRESS", DEFAULT_TEMPORAL_ADDRESS
     )
@@ -122,32 +101,25 @@ def main(argv: list[str] | None = None) -> int:
         source_run_id=workflow_id,
         attempt_id=attempt_id,
         candidates=candidates,
-        batch_size=args.batch_size,
+        batch_size=DEFAULT_BATCH_SIZE,
     )
     workflow_input = BootstrapInput(
         source_run_id=workflow_id,
         fetched_at=_utc_now_iso(),
         candidate_count=len(candidates),
         batch_keys=batch_keys,
-        max_concurrent_batches=args.max_concurrent_batches,
+        max_concurrent_batches=DEFAULT_MAX_CONCURRENT_BATCHES,
     )
     started_workflow_id = asyncio.run(
         start_workflow(
             temporal_address=temporal_address,
-            task_queue=args.task_queue,
+            task_queue=DEFAULT_TASK_QUEUE,
             workflow_id=workflow_id,
             input=workflow_input,
         )
     )
     sys.stdout.write(f"{started_workflow_id}\n")
     return 0
-
-
-def _positive_int(value: str) -> int:
-    parsed = int(value)
-    if parsed < 1:
-        raise argparse.ArgumentTypeError("must be at least 1")
-    return parsed
 
 
 def _utc_now_iso() -> str:
