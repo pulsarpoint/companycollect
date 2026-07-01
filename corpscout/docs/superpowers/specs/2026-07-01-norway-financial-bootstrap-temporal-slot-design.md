@@ -4,11 +4,11 @@
 
 The Norway BRREG financial bootstrap should stop using S3 candidate batch shards. Candidate queue state belongs in a local DuckDB database, while raw financial reports remain stored on S3.
 
-Temporal should run a fixed number of independent slot workflow chains. Each workflow run processes one claimed organization/accounting-year candidate, then continues as new. This keeps workflow history small, gives stable retry inputs, and avoids batch/chunk orchestration.
+Temporal should run a fixed number of independent slot workflow chains. Each workflow run processes one claimed organization candidate, then continues as new. This keeps workflow history small, gives stable retry inputs, and avoids batch/chunk orchestration.
 
 ## Goals
 
-- Use only the fields needed for financial fetch candidates: `org_number` and `accounts_year`.
+- Use only the field needed for financial fetch candidates: `org_number`.
 - Avoid storing candidate batches on S3.
 - Keep exactly `N` concurrent financial fetches, with default `N = 4`.
 - Make each Temporal retry process the same claimed candidate.
@@ -31,21 +31,22 @@ Use this query shape:
 
 ```sql
 SELECT
-  toString(org_number) AS org_number,
-  toString(last_submitted_accounts_year) AS accounts_year
+  toString(org_number) AS org_number
 FROM corpscout.no_companies
 WHERE is_active = true
   AND last_submitted_accounts_year IS NOT NULL
 ORDER BY org_number
 ```
 
-`name` and `website_url` are not needed for BRREG financial fetching and should not be part of the bootstrap candidate model.
+`last_submitted_accounts_year` is only a source-side eligibility filter. The BRREG structured financial endpoint behaves like a latest-report endpoint even when `år` is supplied, so the bootstrap should call it without a year selector.
+
+`name`, `website_url`, and `last_submitted_accounts_year` are not needed for BRREG financial fetching and should not be part of the bootstrap candidate model.
 
 ## DuckDB Queue
 
 Use a single DuckDB database for bootstrap queue state. The queue has three logical states:
 
-- `input`: all candidate `org_number + accounts_year` rows loaded from ClickHouse.
+- `input`: all candidate `org_number` rows loaded from ClickHouse.
 - `output`: candidates successfully processed or terminally completed.
 - `failed`: candidates that failed after Temporal exhausted retries.
 
@@ -54,30 +55,27 @@ Suggested schema:
 ```sql
 CREATE TABLE IF NOT EXISTS input (
   org_number TEXT NOT NULL,
-  accounts_year TEXT NOT NULL,
   claimed_by TEXT,
   claimed_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL,
-  PRIMARY KEY (org_number, accounts_year)
+  PRIMARY KEY (org_number)
 );
 
 CREATE TABLE IF NOT EXISTS output (
   org_number TEXT NOT NULL,
-  accounts_year TEXT NOT NULL,
   fetch_status TEXT NOT NULL,
   report_count BIGINT NOT NULL,
   raw_report_keys TEXT NOT NULL,
   completed_at TIMESTAMP NOT NULL,
-  PRIMARY KEY (org_number, accounts_year)
+  PRIMARY KEY (org_number)
 );
 
 CREATE TABLE IF NOT EXISTS failed (
   org_number TEXT NOT NULL,
-  accounts_year TEXT NOT NULL,
   error_type TEXT NOT NULL,
   error_message TEXT NOT NULL,
   failed_at TIMESTAMP NOT NULL,
-  PRIMARY KEY (org_number, accounts_year)
+  PRIMARY KEY (org_number)
 );
 ```
 
@@ -98,17 +96,17 @@ Each workflow run processes at most one candidate:
 
 ```text
 claim_next_candidate
-  -> returns org/year or none
+  -> returns org or none
 
 if none:
   complete this slot chain
 
-fetch_and_store_candidate(org/year)
-  -> BRREG HTTP call
+fetch_and_store_candidate(org)
+  -> BRREG HTTP call without år query parameter
   -> write raw report JSON to S3
-  -> retried by Temporal up to 3 times with the same org/year
+  -> retried by Temporal up to 3 times with the same org
 
-mark_done(org/year, result)
+mark_done(org, result)
   -> insert into DuckDB output
 
 continue-as-new(slot_id)
@@ -117,7 +115,7 @@ continue-as-new(slot_id)
 If `fetch_and_store_candidate` fails after retries:
 
 ```text
-mark_failed(org/year, error)
+mark_failed(org, error)
 continue-as-new(slot_id)
 ```
 
@@ -129,7 +127,7 @@ Use small, concrete activities:
 
 - `prepare_queue`: create DuckDB tables and load ClickHouse candidates into `input`.
 - `claim_next_candidate`: under mutex, claim one row not present in `output` or `failed`.
-- `fetch_and_store_candidate`: fetch BRREG financial report data for one org/year and upload raw reports to S3.
+- `fetch_and_store_candidate`: fetch BRREG financial report data for one org and upload raw reports to S3.
 - `mark_candidate_done`: under mutex, insert completed result into `output`.
 - `mark_candidate_failed`: under mutex, insert failed result into `failed`.
 
@@ -140,8 +138,10 @@ The retryable activity is `fetch_and_store_candidate`, and its input must be the
 Raw financial reports remain on S3 with deterministic keys:
 
 ```text
-norway_brreg/finance/raw_reports/org=<org_number>/year=<accounts_year>/type=<report_type>/id=<report_id>.json
+norway_brreg/finance/raw_reports/org=<org_number>/year=<report_year_from_response>/type=<report_type>/id=<report_id>.json
 ```
+
+The `year` path segment must be derived from the returned report, normally from `regnskapsperiode`, not from `no_companies.last_submitted_accounts_year`.
 
 Candidate queue files should not be written to S3.
 
@@ -193,7 +193,7 @@ The final durable completion signal is the `output` row.
 
 Add focused tests for:
 
-- ClickHouse query selects only `org_number` and `accounts_year`.
+- ClickHouse query selects only `org_number`.
 - Queue preparation creates `input`, `output`, and `failed`.
 - Claiming skips candidates already in `output` or `failed`.
 - Claiming uses a mutex-protected DuckDB write path.
