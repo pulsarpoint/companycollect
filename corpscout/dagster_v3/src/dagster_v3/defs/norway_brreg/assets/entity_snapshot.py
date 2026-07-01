@@ -5,11 +5,13 @@ import hashlib
 import dagster as dg
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.norway_brreg.constants import (
+    GROUP_NAME,
+    NORWAY_BRREG_ENTITY_BUCKET,
+)
 from dagster_v3.defs.norway_brreg.entity_parquet import entity_records_parquet_bytes
 from dagster_v3.defs.norway_brreg.resources import NorwayBrregApiResource
 
-GROUP_NAME = "norway_brreg"
-NORWAY_BRREG_ENTITY_BUCKET = "source-norway-brreg"
 ENTITY_SNAPSHOT_OBJECT_KEY = "norway_brreg/entities/snapshot/entities.parquet"
 
 

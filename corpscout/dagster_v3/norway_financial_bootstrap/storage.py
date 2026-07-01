@@ -7,12 +7,6 @@ from typing import Any
 import boto3
 import polars as pl
 
-# Prime the Norway assets package before importing financial_storage; its module
-# imports the entity bucket through the assets package, which otherwise cycles in
-# focused bootstrap imports.
-from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (  # noqa: F401
-    NORWAY_BRREG_ENTITY_BUCKET as _NORWAY_BRREG_ENTITY_BUCKET,
-)
 from dagster_v3.defs.norway_brreg.financial_storage import (
     financial_raw_fetch_object_key,
 )

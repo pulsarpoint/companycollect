@@ -8,9 +8,7 @@ import polars as pl
 from pydantic import PrivateAttr
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
-    NORWAY_BRREG_ENTITY_BUCKET,
-)
+from dagster_v3.defs.norway_brreg.constants import NORWAY_BRREG_ENTITY_BUCKET
 
 
 class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
