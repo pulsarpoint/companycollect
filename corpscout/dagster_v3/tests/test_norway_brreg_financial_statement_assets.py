@@ -65,6 +65,7 @@ class FakeFinancialStorage:
     def __init__(
         self,
         *,
+        historical_raw_fetches_frame: pl.DataFrame | None = None,
         snapshot_fetches: pl.DataFrame | None = None,
         update_fetches: dict[str, pl.DataFrame] | None = None,
         snapshot_statements: pl.DataFrame | None = None,
@@ -72,18 +73,25 @@ class FakeFinancialStorage:
         snapshot_usd_statements: pl.DataFrame | None = None,
         update_usd_statements: dict[str, pl.DataFrame] | None = None,
     ) -> None:
+        self.historical_raw_fetches_frame = historical_raw_fetches_frame
         self.snapshot_fetches = snapshot_fetches
         self.update_fetches = update_fetches or {}
         self.snapshot_statements = snapshot_statements
         self.update_statements = update_statements or {}
         self.snapshot_usd_statements = snapshot_usd_statements
         self.update_usd_statements = update_usd_statements or {}
+        self.historical_raw_fetch_reads = 0
         self.snapshot_fetch_reads = 0
         self.update_fetch_reads: list[str] = []
         self.snapshot_statement_reads = 0
         self.update_statement_reads: list[str] = []
         self.snapshot_usd_reads = 0
         self.update_usd_reads: list[str] = []
+
+    def read_historical_raw_fetches(self) -> pl.DataFrame:
+        self.historical_raw_fetch_reads += 1
+        assert self.historical_raw_fetches_frame is not None
+        return self.historical_raw_fetches_frame
 
     def read_snapshot_fetches(self) -> pl.DataFrame:
         self.snapshot_fetch_reads += 1
@@ -189,9 +197,9 @@ class FakeArrowClickHouseClient(FakeClickHouseClient):
         self.arrow_inserts.append((database, table, arrow_table))
 
 
-def test_snapshot_statements_asset_reads_fetches_and_writes_original_statements() -> None:
+def test_snapshot_statement_asset_reads_historical_raw_fetches_without_fetching_brreg() -> None:
     storage = FakeFinancialStorage(
-        snapshot_fetches=pl.DataFrame(
+        historical_raw_fetches_frame=pl.DataFrame(
             [
                 _success_fetch_row("923609016", [_financial_record()]),
                 _failure_fetch_row("811685852"),
@@ -204,7 +212,8 @@ def test_snapshot_statements_asset_reads_fetches_and_writes_original_statements(
         norway_brreg_financial_storage=storage,
     )
 
-    assert storage.snapshot_fetch_reads == 1
+    assert storage.historical_raw_fetch_reads == 1
+    assert storage.snapshot_fetch_reads == 0
     assert storage.snapshot_statements is not None
     assert storage.snapshot_statements.columns == list(
         no_tables.RESOLVED_EXPORT_COLUMNS[no_tables.NO_FINANCIAL_STATEMENTS_TABLE]

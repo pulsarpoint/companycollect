@@ -7,6 +7,7 @@ import polars as pl
 import pytest
 
 from dagster_v3.defs.norway_brreg import financial_fetches
+from dagster_v3.defs.norway_brreg.assets.entity_snapshot import NORWAY_BRREG_ENTITY_BUCKET
 from dagster_v3.defs.norway_brreg.assets.financial_fetches import (
     FINANCIAL_FETCH_CANDIDATE_SCHEMA,
     FINANCIAL_FETCHED_AT_DTYPE,
@@ -47,14 +48,22 @@ class FakeFinancialStorage:
     def __init__(
         self,
         raw_frames: dict[tuple[str, str], pl.DataFrame] | None = None,
+        historical_raw_fetches_frame: pl.DataFrame | None = None,
     ) -> None:
         self.raw_frames = raw_frames or {}
+        self.historical_raw_fetches_frame = historical_raw_fetches_frame
+        self.historical_raw_fetch_reads = 0
         self.raw_exists_calls: list[tuple[str, str]] = []
         self.raw_read_calls: list[tuple[str, str]] = []
         self.raw_write_calls: list[tuple[str, str, bool, pl.DataFrame]] = []
         self.snapshot_fetches_frame: pl.DataFrame | None = None
         self.update_fetches: dict[str, pl.DataFrame] = {}
         self.update_candidates: dict[str, pl.DataFrame] = {}
+
+    def read_historical_raw_fetches(self) -> pl.DataFrame:
+        self.historical_raw_fetch_reads += 1
+        assert self.historical_raw_fetches_frame is not None
+        return self.historical_raw_fetches_frame
 
     def raw_fetch_exists(self, org_number: str, accounts_year: str) -> bool:
         self.raw_exists_calls.append((org_number, accounts_year))
@@ -94,150 +103,60 @@ class FakeFinancialStorage:
         return f"updates/{partition_date}/candidates.parquet"
 
 
-def test_snapshot_asset_reuses_existing_raw_fetch_without_calling_api(
+def test_snapshot_asset_inventories_historical_raw_fetches_without_entity_storage_or_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    raw_row = _success_fetch_row("923609016", "2025")
+    success_row = _success_fetch_row("923609016", "2025")
+    not_found_row = _failure_fetch_row(
+        "811685852",
+        "2024",
+        fetch_status=financial_fetches.FINANCIAL_FETCH_STATUS_NOT_FOUND,
+    )
     financial_storage = FakeFinancialStorage(
-        {("923609016", "2025"): pl.DataFrame([raw_row])}
+        historical_raw_fetches_frame=_financial_fetch_frame(
+            [success_row, not_found_row]
+        )
     )
 
     def fail_fetch(**_kwargs: Any) -> list[dict[str, Any]]:
-        raise AssertionError("snapshot asset should reuse existing raw fetch parquet")
+        raise AssertionError("snapshot asset should not call the BRREG API")
 
     monkeypatch.setattr(financial_fetches, "fetch_financial_rows_for_orgs", fail_fetch)
 
     result = norway_brreg_financial_fetches_snapshot_parquet(
         context=dg.build_asset_context(),
-        norway_brreg_entity_storage=FakeEntityStorage(
-            snapshot_frame=_no_companies_frame(
-                [
-                    {
-                        "org_number": "923609016",
-                        "name": "EQUINOR ASA",
-                        "is_active": True,
-                        "primary_website_url": "https://www.equinor.com",
-                        "last_submitted_accounts_year": "2025",
-                    }
-                ]
-            )
-        ),
         norway_brreg_financial_storage=financial_storage,
     )
 
-    assert financial_storage.raw_exists_calls == [("923609016", "2025")]
-    assert financial_storage.raw_read_calls == [("923609016", "2025")]
+    assert financial_storage.historical_raw_fetch_reads == 1
+    assert financial_storage.raw_exists_calls == []
+    assert financial_storage.raw_read_calls == []
     assert financial_storage.raw_write_calls == []
-    assert _fetch_statuses(financial_storage.snapshot_fetches_frame) == [
-        ("923609016", "success")
-    ]
-    assert result.metadata["candidate_count"] == 1
-    assert result.metadata["reused_count"] == 1
-    assert result.metadata["fetched_count"] == 0
-    assert result.metadata["row_count"] == 1
-    assert result.metadata["status_counts"] == {"success": 1}
-    assert result.metadata["s3_key"] == "snapshot/fetches.parquet"
+    assert financial_storage.snapshot_fetches_frame is None
+    assert result.metadata["row_count"] == 2
+    assert result.metadata["status_counts"] == {"success": 1, "not_found": 1}
+    assert result.metadata["s3_bucket"] == NORWAY_BRREG_ENTITY_BUCKET
 
 
-def test_snapshot_asset_fetches_missing_raw_and_writes_raw_and_aggregate(
+def test_snapshot_asset_inventories_empty_historical_raw_fetches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fetch_calls: list[list[dict[str, Any]]] = []
+    def fail_fetch(**_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("empty snapshot inventory should not call the BRREG API")
 
-    def fake_fetch(**kwargs: Any) -> list[dict[str, Any]]:
-        orgs = list(kwargs["orgs"])
-        fetch_calls.append(orgs)
-        return [_success_fetch_row(orgs[0]["org_number"], orgs[0]["last_submitted_accounts_year"])]
-
-    monkeypatch.setattr(financial_fetches, "fetch_financial_rows_for_orgs", fake_fetch)
-    financial_storage = FakeFinancialStorage()
-
-    result = norway_brreg_financial_fetches_snapshot_parquet(
-        context=dg.build_asset_context(),
-        norway_brreg_entity_storage=FakeEntityStorage(
-            snapshot_frame=_no_companies_frame(
-                [
-                    {
-                        "org_number": "811685852",
-                        "name": "SUCCESS AS",
-                        "is_active": True,
-                        "primary_website_url": None,
-                        "last_submitted_accounts_year": "2024",
-                    }
-                ]
-            )
-        ),
-        norway_brreg_financial_storage=financial_storage,
-    )
-
-    assert [[org["org_number"] for org in call] for call in fetch_calls] == [["811685852"]]
-    assert [(org, year, overwrite) for org, year, overwrite, _frame in financial_storage.raw_write_calls] == [
-        ("811685852", "2024", False)
-    ]
-    assert _fetch_statuses(financial_storage.raw_frames[("811685852", "2024")]) == [
-        ("811685852", "success")
-    ]
-    assert _fetch_statuses(financial_storage.snapshot_fetches_frame) == [
-        ("811685852", "success")
-    ]
-    assert result.metadata["candidate_count"] == 1
-    assert result.metadata["reused_count"] == 0
-    assert result.metadata["fetched_count"] == 1
-    assert result.metadata["row_count"] == 1
-
-
-def test_snapshot_asset_refreshes_retryable_existing_raw_fetch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    retryable_row = _failure_fetch_row(
-        "814115232",
-        "2024",
-        fetch_status=financial_fetches.FINANCIAL_FETCH_STATUS_SERVER_ERROR,
-    )
+    monkeypatch.setattr(financial_fetches, "fetch_financial_rows_for_orgs", fail_fetch)
     financial_storage = FakeFinancialStorage(
-        {("814115232", "2024"): pl.DataFrame([retryable_row])}
+        historical_raw_fetches_frame=_financial_fetch_frame([])
     )
-    fetch_calls: list[list[dict[str, Any]]] = []
-
-    def fake_fetch(**kwargs: Any) -> list[dict[str, Any]]:
-        orgs = list(kwargs["orgs"])
-        fetch_calls.append(orgs)
-        return [_success_fetch_row(orgs[0]["org_number"], orgs[0]["last_submitted_accounts_year"])]
-
-    monkeypatch.setattr(financial_fetches, "fetch_financial_rows_for_orgs", fake_fetch)
 
     result = norway_brreg_financial_fetches_snapshot_parquet(
         context=dg.build_asset_context(),
-        norway_brreg_entity_storage=FakeEntityStorage(
-            snapshot_frame=_no_companies_frame(
-                [
-                    {
-                        "org_number": "814115232",
-                        "name": "SERVER AS",
-                        "is_active": True,
-                        "primary_website_url": None,
-                        "last_submitted_accounts_year": "2024",
-                    }
-                ]
-            )
-        ),
         norway_brreg_financial_storage=financial_storage,
     )
 
-    assert [[org["org_number"] for org in call] for call in fetch_calls] == [["814115232"]]
-    assert financial_storage.raw_read_calls == [("814115232", "2024")]
-    assert [(org, year, overwrite) for org, year, overwrite, _frame in financial_storage.raw_write_calls] == [
-        ("814115232", "2024", True)
-    ]
-    assert _fetch_statuses(financial_storage.raw_frames[("814115232", "2024")]) == [
-        ("814115232", "success")
-    ]
-    assert _fetch_statuses(financial_storage.snapshot_fetches_frame) == [
-        ("814115232", "success")
-    ]
-    assert result.metadata["reused_count"] == 0
-    assert result.metadata["fetched_count"] == 1
-    assert result.metadata["status_counts"] == {"success": 1}
+    assert financial_storage.historical_raw_fetch_reads == 1
+    assert result.metadata["row_count"] == 0
+    assert result.metadata["status_counts"] == {}
 
 
 def test_update_asset_writes_candidates_overwrites_raw_and_writes_partition_fetches(
@@ -330,7 +249,7 @@ def test_financial_fetch_column_type_mapping_rejects_unsupported_types() -> None
         _polars_type_for_fetch_column({"data_type": "json"})
 
 
-def test_retryable_fetch_status_raises_after_writing_diagnostics(
+def test_update_retryable_fetch_status_raises_after_writing_diagnostics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_fetch(**kwargs: Any) -> list[dict[str, Any]]:
@@ -347,10 +266,10 @@ def test_retryable_fetch_status_raises_after_writing_diagnostics(
     financial_storage = FakeFinancialStorage()
 
     with pytest.raises(RuntimeError):
-        norway_brreg_financial_fetches_snapshot_parquet(
-            context=dg.build_asset_context(),
+        norway_brreg_financial_fetches_updates_parquet(
+            context=dg.build_asset_context(partition_key="2026-06-30"),
             norway_brreg_entity_storage=FakeEntityStorage(
-                snapshot_frame=_no_companies_frame(
+                update_frame=_no_companies_frame(
                     [
                         {
                             "org_number": "814115232",
@@ -368,9 +287,15 @@ def test_retryable_fetch_status_raises_after_writing_diagnostics(
     assert _fetch_statuses(financial_storage.raw_frames[("814115232", "2024")]) == [
         ("814115232", "server_error")
     ]
-    assert _fetch_statuses(financial_storage.snapshot_fetches_frame) == [
+    assert _fetch_statuses(financial_storage.update_fetches["2026-06-30"]) == [
         ("814115232", "server_error")
     ]
+
+
+def _financial_fetch_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
+    if not rows:
+        return pl.DataFrame(schema=financial_fetches.financial_fetches_parquet_schema())
+    return pl.DataFrame(rows)
 
 
 def _no_companies_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:

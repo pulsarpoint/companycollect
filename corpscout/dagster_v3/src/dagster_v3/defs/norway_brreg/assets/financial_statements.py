@@ -118,22 +118,24 @@ FINANCIAL_STATEMENT_SCHEMA = {
     kinds=FINANCIAL_STATEMENTS_PARQUET_KINDS,
     description=(
         "Builds native-currency Norway Brreg resolved financial statement parquet "
-        "from successful snapshot fetch rows."
+        "from successful historical raw fetch rows."
     ),
 )
 def norway_brreg_financial_statements_snapshot_parquet(
     context,
     norway_brreg_financial_storage: NorwayBrregFinancialParquetStorageResource,
 ) -> dg.MaterializeResult:
-    context.log.info("Building Norway Brreg snapshot financial statements parquet")
-    fetch_frame = norway_brreg_financial_storage.read_snapshot_fetches()
+    context.log.info(
+        "Building Norway Brreg snapshot financial statements parquet from historical raw fetches"
+    )
+    fetch_frame = norway_brreg_financial_storage.read_historical_raw_fetches()
     statement_frame = _original_statement_frame(fetch_frame)
     output_key = norway_brreg_financial_storage.write_snapshot_statements(
         statement_frame
     )
     context.log.info(
         "Completed Norway Brreg snapshot financial statements parquet: "
-        "fetch_rows=%d successful_fetches=%d statement_rows=%d s3_key=%s",
+        "historical_raw_fetch_rows=%d successful_fetches=%d statement_rows=%d s3_key=%s",
         fetch_frame.height,
         _successful_fetch_count(fetch_frame),
         statement_frame.height,
