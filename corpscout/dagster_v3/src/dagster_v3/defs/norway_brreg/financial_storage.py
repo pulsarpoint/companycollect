@@ -9,6 +9,11 @@ from pydantic import PrivateAttr
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.norway_brreg.constants import NORWAY_BRREG_ENTITY_BUCKET
+from dagster_v3.defs.norway_brreg.financial_fetches import (
+    BRREG_FINANCIAL_FETCHES_COLUMNS,
+)
+
+RAW_FETCH_PREFIX = "norway_brreg/financial/raw_fetches/"
 
 
 class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
@@ -45,6 +50,24 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
 
     def read_raw_fetch(self, org_number: str, accounts_year: str) -> pl.DataFrame:
         return self._read_frame(financial_raw_fetch_object_key(org_number, accounts_year))
+
+    def list_historical_raw_fetch_keys(self) -> list[str]:
+        return sorted(
+            key
+            for key in self.object_store.list_keys(
+                RAW_FETCH_PREFIX,
+                bucket=NORWAY_BRREG_ENTITY_BUCKET,
+            )
+            if key.endswith("/financial_fetch.parquet")
+        )
+
+    def read_historical_raw_fetches(self) -> pl.DataFrame:
+        frames = [
+            self._read_frame(key) for key in self.list_historical_raw_fetch_keys()
+        ]
+        if not frames:
+            return pl.DataFrame(schema=_financial_fetches_schema())
+        return pl.concat(frames, how="vertical_relaxed")
 
     def write_snapshot_fetches(self, frame: pl.DataFrame) -> str:
         return self._write_frame(financial_fetches_snapshot_object_key(), frame)
@@ -134,7 +157,7 @@ def financial_fetches_update_object_key(partition_date: str) -> str:
 
 def financial_raw_fetch_object_key(org_number: str, accounts_year: str) -> str:
     return (
-        f"norway_brreg/financial/raw_fetches/org={org_number}/"
+        f"{RAW_FETCH_PREFIX}org={org_number}/"
         f"year={accounts_year}/financial_fetch.parquet"
     )
 
@@ -176,3 +199,23 @@ def _parquet_bytes(frame: pl.DataFrame) -> bytes:
     buffer = BytesIO()
     frame.write_parquet(buffer)
     return buffer.getvalue()
+
+
+def _financial_fetches_schema() -> dict[str, pl.DataType]:
+    return {
+        column_name: _polars_type_for_financial_fetch_column(column_schema)
+        for column_name, column_schema in BRREG_FINANCIAL_FETCHES_COLUMNS.items()
+    }
+
+
+def _polars_type_for_financial_fetch_column(
+    column_schema: dict[str, Any],
+) -> pl.DataType:
+    data_type = column_schema["data_type"]
+    if data_type == "text":
+        return pl.Utf8
+    if data_type == "bigint":
+        return pl.Int64
+    if data_type == "timestamp":
+        return pl.Datetime(time_unit="ms", time_zone="UTC")
+    raise ValueError(f"Unsupported Norway Brreg financial fetch column type: {data_type}")

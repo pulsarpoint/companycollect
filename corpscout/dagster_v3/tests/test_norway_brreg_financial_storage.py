@@ -4,6 +4,7 @@ from io import BytesIO
 
 import polars as pl
 
+from dagster_v3.defs.norway_brreg import financial_fetches
 from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
     NORWAY_BRREG_ENTITY_BUCKET,
 )
@@ -21,9 +22,11 @@ from dagster_v3.defs.norway_brreg.financial_storage import (
 
 
 class FakeObjectStore:
-    def __init__(self) -> None:
+    def __init__(self, keys: list[str] | None = None) -> None:
         self.created_buckets: list[str] = []
         self.objects: dict[tuple[str, str], bytes] = {}
+        for key in keys or []:
+            self.objects[(NORWAY_BRREG_ENTITY_BUCKET, key)] = b""
 
     def ensure_bucket(self, bucket: str | None = None) -> None:
         assert bucket is not None
@@ -36,6 +39,14 @@ class FakeObjectStore:
     def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
         assert bucket is not None
         return self.objects[(bucket, key)]
+
+    def list_keys(self, prefix: str, bucket: str | None = None) -> list[str]:
+        assert bucket is not None
+        return [
+            key
+            for object_bucket, key in self.objects
+            if object_bucket == bucket and key.startswith(prefix)
+        ]
 
     def write_bytes(self, key: str, body: bytes, bucket: str | None = None) -> None:
         assert bucket is not None
@@ -155,6 +166,66 @@ def test_raw_fetch_read_round_trip() -> None:
     assert storage.read_raw_fetch("923609016", "2025").to_dicts() == frame.to_dicts()
 
 
+def test_financial_storage_lists_historical_raw_fetch_keys() -> None:
+    first_key = financial_raw_fetch_object_key("100", "2024")
+    second_key = financial_raw_fetch_object_key("200", "2023")
+    object_store = FakeObjectStore(
+        keys=[
+            second_key,
+            "norway_brreg/financial/raw_fetches/org=bad/readme.txt",
+            "norway_brreg/financial/raw_fetches/org=bad/year=2024/not_financial_fetch.parquet",
+            first_key,
+        ]
+    )
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+
+    assert storage.list_historical_raw_fetch_keys() == [first_key, second_key]
+
+
+def test_financial_storage_reads_historical_raw_fetches() -> None:
+    object_store = FakeObjectStore()
+    first_key = financial_raw_fetch_object_key("100", "2024")
+    second_key = financial_raw_fetch_object_key("200", "2023")
+    first_frame = pl.DataFrame(
+        {
+            "org_number": ["100"],
+            "fetch_status": ["success"],
+            "attempt_count": pl.Series([1], dtype=pl.Int32),
+        }
+    )
+    second_frame = pl.DataFrame(
+        {
+            "org_number": ["200"],
+            "fetch_status": ["not_found"],
+            "attempt_count": pl.Series([2], dtype=pl.Int64),
+        }
+    )
+    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, second_key)] = _parquet_bytes(
+        second_frame
+    )
+    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, first_key)] = _parquet_bytes(
+        first_frame
+    )
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
+
+    historical_frame = storage.read_historical_raw_fetches()
+
+    assert historical_frame.to_dicts() == [
+        {"org_number": "100", "fetch_status": "success", "attempt_count": 1},
+        {"org_number": "200", "fetch_status": "not_found", "attempt_count": 2},
+    ]
+    assert historical_frame.schema["attempt_count"] == pl.Int64
+
+
+def test_financial_storage_reads_empty_historical_raw_fetches_with_schema() -> None:
+    storage = NorwayBrregFinancialParquetStorageResource(object_store=FakeObjectStore())
+
+    historical_frame = storage.read_historical_raw_fetches()
+
+    assert historical_frame.height == 0
+    assert historical_frame.schema == _expected_financial_fetches_schema()
+
+
 def test_update_candidates_write_and_read_round_trip() -> None:
     storage = NorwayBrregFinancialParquetStorageResource(object_store=FakeObjectStore())
     frame = pl.DataFrame([{"org_number": "923609016", "accounts_year": "2025"}])
@@ -214,3 +285,20 @@ def _parquet_bytes(frame: pl.DataFrame) -> bytes:
     buffer = BytesIO()
     frame.write_parquet(buffer)
     return buffer.getvalue()
+
+
+def _expected_financial_fetches_schema() -> dict[str, pl.DataType]:
+    return {
+        column_name: _expected_financial_fetches_type(column_schema["data_type"])
+        for column_name, column_schema in financial_fetches.BRREG_FINANCIAL_FETCHES_COLUMNS.items()
+    }
+
+
+def _expected_financial_fetches_type(data_type: str) -> pl.DataType:
+    if data_type == "text":
+        return pl.Utf8
+    if data_type == "bigint":
+        return pl.Int64
+    if data_type == "timestamp":
+        return pl.Datetime(time_unit="ms", time_zone="UTC")
+    raise AssertionError(f"Unsupported test financial fetch column type: {data_type}")
