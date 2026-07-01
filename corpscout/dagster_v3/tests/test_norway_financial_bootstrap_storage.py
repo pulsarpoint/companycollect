@@ -59,9 +59,9 @@ def test_completed_key_from_raw_fetch_key_parses_existing_storage_path() -> None
 
 
 def test_candidate_batch_key_uses_run_scoped_parquet_path() -> None:
-    assert candidate_batch_key("run-1", 2) == (
+    assert candidate_batch_key("run-1", "attempt-a", 2) == (
         "norway_brreg/financial/bootstrap_runs/"
-        "run=run-1/candidates/batch=000002.parquet"
+        "run=run-1/attempt=attempt-a/candidates/batch=000002.parquet"
     )
 
 
@@ -75,11 +75,11 @@ def test_storage_writes_and_reads_candidate_batch_parquet() -> None:
         FinancialCandidate("200", "B AS", "https://b.example", "2023"),
     ]
 
-    key = storage.write_candidate_batch("run-1", 0, candidates)
+    key = storage.write_candidate_batch("run-1", "attempt-a", 0, candidates)
 
     assert key == (
         "norway_brreg/financial/bootstrap_runs/"
-        "run=run-1/candidates/batch=000000.parquet"
+        "run=run-1/attempt=attempt-a/candidates/batch=000000.parquet"
     )
     assert storage.read_candidate_batch(key) == candidates
 
@@ -90,10 +90,16 @@ def test_storage_writes_and_reads_empty_candidate_batch_parquet() -> None:
         s3_client=FakeS3Client(),
     )
 
-    key = storage.write_candidate_batch("run-1", 1, [])
+    key = storage.write_candidate_batch("run-1", "attempt-a", 1, [])
 
     assert key == (
         "norway_brreg/financial/bootstrap_runs/"
-        "run=run-1/candidates/batch=000001.parquet"
+        "run=run-1/attempt=attempt-a/candidates/batch=000001.parquet"
     )
     assert storage.read_candidate_batch(key) == []
+
+
+def test_candidate_batch_keys_differ_across_attempt_ids() -> None:
+    assert candidate_batch_key("run-1", "attempt-a", 0) != candidate_batch_key(
+        "run-1", "attempt-b", 0
+    )

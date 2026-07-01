@@ -82,7 +82,9 @@ class FakeStorage:
         self.completed = completed
         self.candidate_batches: dict[str, list[FinancialCandidate]] = {}
         self.frames: dict[str, pl.DataFrame] = {}
-        self.written_candidate_batches: list[tuple[str, int, list[FinancialCandidate]]] = []
+        self.written_candidate_batches: list[
+            tuple[str, str, int, list[FinancialCandidate]]
+        ] = []
         self.writes: dict[tuple[str, str], pl.DataFrame] = {}
 
     def existing_raw_fetch_org_years(self) -> set[tuple[str, str]]:
@@ -91,15 +93,18 @@ class FakeStorage:
     def write_candidate_batch(
         self,
         source_run_id: str,
+        attempt_id: str,
         batch_index: int,
         candidates: list[FinancialCandidate],
     ) -> str:
         key = (
             "norway_brreg/financial/bootstrap_runs/"
-            f"run={source_run_id}/candidates/batch={batch_index:06d}.parquet"
+            f"run={source_run_id}/attempt={attempt_id}/candidates/batch={batch_index:06d}.parquet"
         )
         self.candidate_batches[key] = list(candidates)
-        self.written_candidate_batches.append((source_run_id, batch_index, list(candidates)))
+        self.written_candidate_batches.append(
+            (source_run_id, attempt_id, batch_index, list(candidates))
+        )
         return key
 
     def read_candidate_batch(self, key: str) -> list[FinancialCandidate]:
@@ -195,16 +200,46 @@ def test_write_candidate_batches_returns_batch_keys_and_persists_candidates() ->
     batch_keys = write_candidate_batches(
         storage=storage,
         source_run_id="run-1",
+        attempt_id="attempt-a",
         candidates=candidates,
         batch_size=2,
     )
 
     assert batch_keys == [
-        "norway_brreg/financial/bootstrap_runs/run=run-1/candidates/batch=000000.parquet",
-        "norway_brreg/financial/bootstrap_runs/run=run-1/candidates/batch=000001.parquet",
+        "norway_brreg/financial/bootstrap_runs/run=run-1/attempt=attempt-a/candidates/batch=000000.parquet",
+        "norway_brreg/financial/bootstrap_runs/run=run-1/attempt=attempt-a/candidates/batch=000001.parquet",
     ]
     assert storage.read_candidate_batch(batch_keys[0]) == candidates[:2]
     assert storage.read_candidate_batch(batch_keys[1]) == candidates[2:]
+
+
+def test_write_candidate_batches_uses_attempt_id_to_keep_keys_disjoint() -> None:
+    storage = FakeStorage(completed=set())
+    candidates = [FinancialCandidate("100", "A AS", "", "2024")]
+
+    first_batch_keys = write_candidate_batches(
+        storage=storage,
+        source_run_id="run-1",
+        attempt_id="attempt-a",
+        candidates=candidates,
+        batch_size=1,
+    )
+    second_batch_keys = write_candidate_batches(
+        storage=storage,
+        source_run_id="run-1",
+        attempt_id="attempt-b",
+        candidates=candidates,
+        batch_size=1,
+    )
+
+    assert first_batch_keys == [
+        "norway_brreg/financial/bootstrap_runs/run=run-1/attempt=attempt-a/candidates/batch=000000.parquet"
+    ]
+    assert second_batch_keys == [
+        "norway_brreg/financial/bootstrap_runs/run=run-1/attempt=attempt-b/candidates/batch=000000.parquet"
+    ]
+    assert first_batch_keys[0] != second_batch_keys[0]
+    assert set(storage.candidate_batches) == {first_batch_keys[0], second_batch_keys[0]}
 
 
 def test_partition_batches_splits_candidates_deterministically() -> None:
@@ -349,6 +384,7 @@ def test_cli_main_writes_candidate_batches_and_starts_workflow_with_batch_keys(
 
     monkeypatch.setattr(cli, "storage_from_env", fake_storage_from_env)
     monkeypatch.setattr(cli, "start_workflow", fake_start_workflow)
+    monkeypatch.setattr(cli, "_generate_attempt_id", lambda: "attempt-a")
     monkeypatch.setattr(cli, "_utc_now_iso", lambda: "2026-07-01T00:00:00.000Z")
 
     exit_code = cli_main(
@@ -379,20 +415,22 @@ def test_cli_main_writes_candidate_batches_and_starts_workflow_with_batch_keys(
         candidate_count=2,
         batch_keys=[
             "norway_brreg/financial/bootstrap_runs/"
-            "run=norway-brreg-financial-raw-fetch-2026-07-01/candidates/batch=000000.parquet",
+            "run=norway-brreg-financial-raw-fetch-2026-07-01/attempt=attempt-a/candidates/batch=000000.parquet",
             "norway_brreg/financial/bootstrap_runs/"
-            "run=norway-brreg-financial-raw-fetch-2026-07-01/candidates/batch=000001.parquet",
+            "run=norway-brreg-financial-raw-fetch-2026-07-01/attempt=attempt-a/candidates/batch=000001.parquet",
         ],
         max_concurrent_batches=3,
     )
     assert storage.written_candidate_batches == [
         (
             "norway-brreg-financial-raw-fetch-2026-07-01",
+            "attempt-a",
             0,
             [FinancialCandidate("200", "MISSING AS", "", "2024")],
         ),
         (
             "norway-brreg-financial-raw-fetch-2026-07-01",
+            "attempt-a",
             1,
             [FinancialCandidate("300", "MISSING TWO AS", "", "2024")],
         ),

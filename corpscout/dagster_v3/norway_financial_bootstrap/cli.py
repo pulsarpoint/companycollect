@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import os
 import sys
+import uuid
 from datetime import UTC, datetime
 
 from temporalio.client import Client
@@ -91,11 +92,12 @@ def write_candidate_batches(
     *,
     storage: NorwayFinancialBootstrapStorage,
     source_run_id: str,
+    attempt_id: str,
     candidates: list[FinancialCandidate],
     batch_size: int,
 ) -> list[str]:
     return [
-        storage.write_candidate_batch(source_run_id, batch_index, batch)
+        storage.write_candidate_batch(source_run_id, attempt_id, batch_index, batch)
         for batch_index, batch in enumerate(
             partition_batches(candidates, batch_size=batch_size)
         )
@@ -114,9 +116,11 @@ def main(argv: list[str] | None = None) -> int:
     temporal_address = args.temporal_address or os.environ.get(
         "TEMPORAL_ADDRESS", DEFAULT_TEMPORAL_ADDRESS
     )
+    attempt_id = _generate_attempt_id()
     batch_keys = write_candidate_batches(
         storage=storage,
         source_run_id=workflow_id,
+        attempt_id=attempt_id,
         candidates=candidates,
         batch_size=args.batch_size,
     )
@@ -148,6 +152,10 @@ def _positive_int(value: str) -> int:
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _generate_attempt_id() -> str:
+    return uuid.uuid4().hex
 
 
 if __name__ == "__main__":

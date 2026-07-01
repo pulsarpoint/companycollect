@@ -27,10 +27,10 @@ def raw_fetch_key(org_number: str, accounts_year: str) -> str:
     return financial_raw_fetch_object_key(org_number, accounts_year)
 
 
-def candidate_batch_key(source_run_id: str, batch_index: int) -> str:
+def candidate_batch_key(source_run_id: str, attempt_id: str, batch_index: int) -> str:
     return (
         f"{BOOTSTRAP_RUNS_PREFIX}run={source_run_id}/"
-        f"candidates/batch={batch_index:06d}.parquet"
+        f"attempt={attempt_id}/candidates/batch={batch_index:06d}.parquet"
     )
 
 
@@ -120,10 +120,11 @@ class NorwayFinancialBootstrapStorage:
     def write_candidate_batch(
         self,
         source_run_id: str,
+        attempt_id: str,
         batch_index: int,
         candidates: list[FinancialCandidate],
     ) -> str:
-        key = candidate_batch_key(source_run_id, batch_index)
+        key = candidate_batch_key(source_run_id, attempt_id, batch_index)
         frame = pl.DataFrame(
             {
                 "org_number": [candidate.org_number for candidate in candidates],
