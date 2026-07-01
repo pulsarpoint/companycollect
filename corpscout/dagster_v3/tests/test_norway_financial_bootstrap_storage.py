@@ -82,3 +82,18 @@ def test_storage_writes_and_reads_candidate_batch_parquet() -> None:
         "run=run-1/candidates/batch=000000.parquet"
     )
     assert storage.read_candidate_batch(key) == candidates
+
+
+def test_storage_writes_and_reads_empty_candidate_batch_parquet() -> None:
+    storage = NorwayFinancialBootstrapStorage(
+        bucket="test-bucket",
+        s3_client=FakeS3Client(),
+    )
+
+    key = storage.write_candidate_batch("run-1", 1, [])
+
+    assert key == (
+        "norway_brreg/financial/bootstrap_runs/"
+        "run=run-1/candidates/batch=000001.parquet"
+    )
+    assert storage.read_candidate_batch(key) == []

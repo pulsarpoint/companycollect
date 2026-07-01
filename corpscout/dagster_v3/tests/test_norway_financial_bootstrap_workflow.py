@@ -1,4 +1,5 @@
 import concurrent.futures
+from types import SimpleNamespace
 
 import polars as pl
 
@@ -396,6 +397,49 @@ def test_cli_main_writes_candidate_batches_and_starts_workflow_with_batch_keys(
             [FinancialCandidate("300", "MISSING TWO AS", "", "2024")],
         ),
     ]
+
+
+def test_start_workflow_does_not_attach_to_existing_workflow_id(monkeypatch) -> None:
+    import asyncio
+
+    import norway_financial_bootstrap.cli as cli
+
+    captured: dict[str, object] = {}
+
+    class FakeTemporalClient:
+        async def start_workflow(self, workflow, input, **kwargs):
+            captured["workflow"] = workflow
+            captured["input"] = input
+            captured["kwargs"] = kwargs
+            return SimpleNamespace(id=kwargs["id"])
+
+    async def fake_connect(address: str) -> FakeTemporalClient:
+        captured["address"] = address
+        return FakeTemporalClient()
+
+    monkeypatch.setattr(cli.Client, "connect", fake_connect)
+
+    workflow_id = asyncio.run(
+        cli.start_workflow(
+            temporal_address="localhost:7233",
+            task_queue="norway-financial-test",
+            workflow_id="run-1",
+            input=BootstrapInput(
+                source_run_id="run-1",
+                fetched_at="2026-07-01T00:00:00.000Z",
+                candidate_count=1,
+                batch_keys=["batch-1"],
+                max_concurrent_batches=3,
+            ),
+        )
+    )
+
+    assert workflow_id == "run-1"
+    assert captured["address"] == "localhost:7233"
+    assert captured["kwargs"] == {
+        "id": "run-1",
+        "task_queue": "norway-financial-test",
+    }
 
 
 def test_worker_cli_parser_accepts_worker_options() -> None:

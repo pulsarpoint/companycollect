@@ -15,6 +15,12 @@ from norway_financial_bootstrap.candidates import FinancialCandidate
 DEFAULT_BUCKET = "source-finland-prhytj"
 RAW_FETCH_PREFIX = "norway_brreg/financial/raw_fetches/"
 BOOTSTRAP_RUNS_PREFIX = "norway_brreg/financial/bootstrap_runs/"
+CANDIDATE_BATCH_SCHEMA: dict[str, pl.DataType] = {
+    "org_number": pl.String,
+    "legal_name": pl.String,
+    "website": pl.String,
+    "last_submitted_accounts_year": pl.String,
+}
 
 
 def raw_fetch_key(org_number: str, accounts_year: str) -> str:
@@ -118,7 +124,17 @@ class NorwayFinancialBootstrapStorage:
         candidates: list[FinancialCandidate],
     ) -> str:
         key = candidate_batch_key(source_run_id, batch_index)
-        frame = pl.DataFrame([candidate.as_org_mapping() for candidate in candidates])
+        frame = pl.DataFrame(
+            {
+                "org_number": [candidate.org_number for candidate in candidates],
+                "legal_name": [candidate.legal_name for candidate in candidates],
+                "website": [candidate.website for candidate in candidates],
+                "last_submitted_accounts_year": [
+                    candidate.last_submitted_accounts_year for candidate in candidates
+                ],
+            },
+            schema=CANDIDATE_BATCH_SCHEMA,
+        )
         self.client().put_object(
             Bucket=self.bucket,
             Key=key,

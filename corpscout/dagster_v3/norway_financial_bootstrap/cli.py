@@ -5,7 +5,6 @@ import sys
 from datetime import UTC, datetime
 
 from temporalio.client import Client
-from temporalio.common import WorkflowIDConflictPolicy
 
 from norway_financial_bootstrap.activities import storage_from_env
 from norway_financial_bootstrap.candidates import (
@@ -84,7 +83,6 @@ async def start_workflow(
         input,
         id=workflow_id,
         task_queue=task_queue,
-        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )
     return handle.id
 
