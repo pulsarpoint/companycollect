@@ -158,11 +158,16 @@ def test_entities_snapshot_asset_writes_uniform_records_as_parquet_to_s3() -> No
             "change_type": "snapshot",
             "source_change_type": "snapshot",
             "entity_url": "https://data.brreg.no/enhetsregisteret/api/enheter/923609016",
-            "entity_json": json.dumps(
-                {
-                    "organisasjonsnummer": "923609016",
-                    "navn": "EQUINOR ASA",
-                    "sisteInnsendteAarsregnskap": "2024",
+                "entity_json": json.dumps(
+                    {
+                        "_links": {
+                            "self": {
+                                "href": "https://data.brreg.no/enhetsregisteret/api/enheter/923609016"
+                            }
+                        },
+                        "organisasjonsnummer": "923609016",
+                        "navn": "EQUINOR ASA",
+                        "sisteInnsendteAarsregnskap": "2024",
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),

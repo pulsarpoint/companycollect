@@ -27,6 +27,7 @@ def test_norway_brreg_all_assets_registered() -> None:
     repo = load_project_defs().get_repository_def()
     asset_names = {key.path[-1] for key in repo.asset_graph.get_all_asset_keys()}
 
+    assert "norway_brreg_entries_snapshot_raw_s3" in asset_names
     assert "norway_brreg_entities_snapshot_s3" in asset_names
     assert "norway_brreg_entity_updates_s3" in asset_names
     assert "norway_brreg_entities_snapshot_no_companies_parquet" in asset_names
@@ -79,6 +80,8 @@ def test_norway_brreg_asset_dependency_edges() -> None:
         dg.AssetKey("norway_brreg_entity_updates_clickhouse")
     )
     trigger_node = asset_graph.get(dg.AssetKey("norway_brreg_translation_trigger"))
+    snapshot_raw_node = asset_graph.get(dg.AssetKey("norway_brreg_entries_snapshot_raw_s3"))
+    snapshot_s3_node = asset_graph.get(dg.AssetKey("norway_brreg_entities_snapshot_s3"))
     snapshot_fetches_node = asset_graph.get(
         brreg_financial_assets.norway_brreg_financial_fetches_snapshot_parquet.key
     )
@@ -119,6 +122,10 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     # Snapshot parquet ClickHouse publish → translation_trigger.
     assert {k.path[-1] for k in trigger_node.parent_keys} == {
         "norway_brreg_entities_snapshot_clickhouse"
+    }
+    assert {k.path[-1] for k in snapshot_raw_node.parent_keys} == set()
+    assert {k.path[-1] for k in snapshot_s3_node.parent_keys} == {
+        "norway_brreg_entries_snapshot_raw_s3"
     }
     assert {k.path[-1] for k in snapshot_fetches_node.parent_keys} == set()
     assert {k.path[-1] for k in update_fetches_node.parent_keys} == {
@@ -163,6 +170,7 @@ def test_norway_brreg_entities_full_snapshot_job_membership() -> None:
     }
     # Trigger fires after the parquet-backed full snapshot publish.
     assert refresh == {
+        "norway_brreg_entries_snapshot_raw_s3",
         "norway_brreg_entities_snapshot_s3",
         "norway_brreg_entities_snapshot_no_companies_parquet",
         "norway_brreg_entities_snapshot_no_websites_parquet",

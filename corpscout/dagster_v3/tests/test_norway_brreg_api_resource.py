@@ -114,54 +114,9 @@ class FakeS3Client:
         self.objects[(Bucket, Key)] = Fileobj.read()
 
 
-def test_iter_all_entities_returns_snapshot_records_with_real_brreg_shape() -> None:
-    entity = _load_entity_fixture()
-    session = FakeHttpSession(
-        {
-            "https://data.brreg.no/enhetsregisteret/api/enheter/lastned": FakeResponse(
-                content=gzip.compress(json.dumps([entity]).encode("utf-8"))
-            )
-        }
-    )
-    resource = NorwayBrregApiResource(session=session)
-
-    records = list(resource.iter_all_entities())
-
-    assert len(records) == 1
-    assert set(records[0]) == EXPECTED_ENTITY_RECORD_KEYS
-    assert records[0]["org_number"] == "923609016"
-    assert records[0]["change_type"] == "snapshot"
-    assert records[0]["source_change_type"] == "snapshot"
-    assert records[0]["updated_at"] is None
-    assert records[0]["update_id"] is None
-    assert records[0]["entity_url"] == "https://data.brreg.no/enhetsregisteret/api/enheter/923609016"
-    assert records[0]["entity"] == entity
-    assert records[0]["raw_update"] is None
-
-
-def test_iter_all_entities_emits_download_and_parse_progress_logs() -> None:
-    entity = _load_entity_fixture()
-    archive = gzip.compress(json.dumps([entity, entity]).encode("utf-8"))
-    session = FakeHttpSession(
-        {
-            "https://data.brreg.no/enhetsregisteret/api/enheter/lastned": FakeResponse(
-                content=archive
-            )
-        }
-    )
-    resource = NorwayBrregApiResource(session=session)
-    log_calls: list[tuple[str, tuple[Any, ...]]] = []
-
-    records = list(
-        resource.iter_all_entities(
-            log=lambda message, *args: log_calls.append((message, args)),
-            progress_every_rows=1,
-            download_progress_every_bytes=len(archive),
-        )
-    )
-
-    assert len(records) == 2
-    assert len(log_calls) >= 6
+def test_resource_does_not_expose_direct_snapshot_download_helpers() -> None:
+    assert not hasattr(NorwayBrregApiResource, "download_entities_snapshot")
+    assert not hasattr(NorwayBrregApiResource, "iter_all_entities")
 
 
 def test_entries_snapshot_reuses_existing_s3_object_without_http_download() -> None:

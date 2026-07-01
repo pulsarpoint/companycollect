@@ -26,16 +26,13 @@ Full company bootstrap uses:
 GET /enheter/lastned
 ```
 
-In code this is `NorwayBrregApiResource.download_entities_snapshot()`.
-
-For raw backup to S3, use `NorwayBrregApiResource.entries_snapshot()`. That
-method checks the requested S3 object first. If it already exists, it returns
-without calling BRREG. If it does not exist, it streams the gzip response body
-from BRREG directly into the provided Dagster S3 resource at the requested
-bucket/key.
+In code this is `NorwayBrregApiResource.entries_snapshot()`. The method checks
+the requested S3 object first. If it already exists, it returns without calling
+BRREG. If it does not exist, it streams the gzip response body from BRREG
+directly into the provided Dagster S3 resource at the requested bucket/key.
 
 The endpoint returns a gzip-compressed JSON array. We stream the archive with
-`ijson` instead of loading decoded JSON all at once. `iter_all_entities()`
+`ijson` instead of loading decoded JSON all at once. The parquet snapshot asset
 wraps each source entity as a uniform record:
 
 ```text
@@ -49,7 +46,20 @@ entity
 raw_update = null
 ```
 
-Dagster asset:
+Raw backup Dagster asset:
+
+```text
+norway_brreg_entries_snapshot_raw_s3
+```
+
+Raw backup object:
+
+```text
+bucket: source-norway-brreg
+key: norway_brreg/entities/raw/snapshot/entities.json.gz
+```
+
+Parquet Dagster asset:
 
 ```text
 norway_brreg_entities_snapshot_s3
@@ -62,8 +72,8 @@ bucket: source-norway-brreg
 key: norway_brreg/entities/snapshot/entities.parquet
 ```
 
-This full snapshot is a one-time/bootstrap style asset. If the object already
-exists on S3, the asset reuses it and skips downloading from BRREG.
+This full raw snapshot is a one-time/bootstrap style asset. If the raw object
+already exists on S3, the raw asset reuses it and skips downloading from BRREG.
 
 ## Daily Updates
 
