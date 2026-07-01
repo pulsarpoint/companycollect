@@ -7,15 +7,22 @@ from typing import Any
 import boto3
 import polars as pl
 
+# Prime the Norway assets package before importing financial_storage; its module
+# imports the entity bucket through the assets package, which otherwise cycles in
+# focused bootstrap imports.
+from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (  # noqa: F401
+    NORWAY_BRREG_ENTITY_BUCKET as _NORWAY_BRREG_ENTITY_BUCKET,
+)
+from dagster_v3.defs.norway_brreg.financial_storage import (
+    financial_raw_fetch_object_key,
+)
+
 DEFAULT_BUCKET = "source-finland-prhytj"
 RAW_FETCH_PREFIX = "norway_brreg/financial/raw_fetches/"
 
 
 def raw_fetch_key(org_number: str, accounts_year: str) -> str:
-    return (
-        f"{RAW_FETCH_PREFIX}org={org_number}/"
-        f"year={accounts_year}/financial_fetch.parquet"
-    )
+    return financial_raw_fetch_object_key(org_number, accounts_year)
 
 
 def completed_key_from_raw_fetch_key(key: str) -> tuple[str, str] | None:
