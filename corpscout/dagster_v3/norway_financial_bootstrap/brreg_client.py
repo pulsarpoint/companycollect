@@ -1,6 +1,7 @@
 import hashlib
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import requests
@@ -10,7 +11,7 @@ from norway_financial_bootstrap.candidates import FinancialCandidate
 BRREG_REGNSKAP_BASE_URL = "https://data.brreg.no/regnskapsregisteret/regnskap"
 COUNTRY_ISO2 = "NO"
 DEFAULT_TIMEOUT_SECONDS = 120
-DEFAULT_USER_AGENT = "corpscout-dagster-v3-dev/0.1"
+DEFAULT_USER_AGENT = "corpscout-norway-financial-bootstrap/0.1"
 SOURCE_SLUG = "norway_brregregnskap_fetch"
 RETRY_DELAYS_SECONDS = (30.0, 60.0, 120.0, 240.0)
 
@@ -38,8 +39,9 @@ class BrregFinancialClient:
         *,
         source_run_id: str,
         source_line_number: int,
-        fetched_at: str,
+        fetched_at: str | None = None,
     ) -> dict[str, Any]:
+        fetch_timestamp = fetched_at or _utc_now_iso()
         source_url = f"{self._base_url}/{candidate.org_number}"
         for retry_index in range(len(RETRY_DELAYS_SECONDS) + 1):
             attempt_count = retry_index + 1
@@ -62,7 +64,7 @@ class BrregFinancialClient:
                     error_type=type(exc).__name__,
                     error_message=str(exc),
                     attempt_count=attempt_count,
-                    fetched_at=fetched_at,
+                    fetched_at=fetch_timestamp,
                     raw_response="",
                 )
 
@@ -79,7 +81,7 @@ class BrregFinancialClient:
                     error_type="HTTPStatusError",
                     error_message="HTTP 404",
                     attempt_count=attempt_count,
-                    fetched_at=fetched_at,
+                    fetched_at=fetch_timestamp,
                     raw_response=raw_response,
                 )
 
@@ -100,7 +102,7 @@ class BrregFinancialClient:
                     error_type="HTTPStatusError",
                     error_message=f"HTTP {status_code}",
                     attempt_count=attempt_count,
-                    fetched_at=fetched_at,
+                    fetched_at=fetch_timestamp,
                     raw_response=raw_response,
                 )
 
@@ -117,7 +119,7 @@ class BrregFinancialClient:
                     error_type=type(exc).__name__,
                     error_message=str(exc),
                     attempt_count=attempt_count,
-                    fetched_at=fetched_at,
+                    fetched_at=fetch_timestamp,
                     raw_response=raw_response,
                 )
 
@@ -136,7 +138,7 @@ class BrregFinancialClient:
                         "Expected BRREG financial response payload to be a list of objects"
                     ),
                     attempt_count=attempt_count,
-                    fetched_at=fetched_at,
+                    fetched_at=fetch_timestamp,
                     raw_response=raw_response,
                 )
 
@@ -150,7 +152,7 @@ class BrregFinancialClient:
                 error_type="",
                 error_message="",
                 attempt_count=attempt_count,
-                fetched_at=fetched_at,
+                fetched_at=fetch_timestamp,
                 raw_response=raw_response,
             )
 
@@ -164,7 +166,7 @@ class BrregFinancialClient:
             error_type="RetryStateError",
             error_message="BRREG financial fetch retry state exhausted",
             attempt_count=len(RETRY_DELAYS_SECONDS) + 1,
-            fetched_at=fetched_at,
+            fetched_at=fetch_timestamp,
             raw_response="",
         )
 
@@ -211,6 +213,10 @@ def _is_retryable_http_status(status_code: int) -> bool:
 
 def _payload_hash(raw_response: str) -> str:
     return hashlib.sha256(raw_response.encode("utf-8")).hexdigest()
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _response_text(response: Any) -> str:

@@ -1,6 +1,9 @@
 from typing import Any
 
-from norway_financial_bootstrap.brreg_client import BrregFinancialClient
+from norway_financial_bootstrap.brreg_client import (
+    DEFAULT_USER_AGENT,
+    BrregFinancialClient,
+)
 from norway_financial_bootstrap.candidates import FinancialCandidate
 
 
@@ -29,6 +32,10 @@ class FakeSession:
         return response
 
 
+def test_brreg_client_default_user_agent_matches_bootstrap_spec() -> None:
+    assert DEFAULT_USER_AGENT == "corpscout-norway-financial-bootstrap/0.1"
+
+
 def test_brreg_client_maps_success_to_existing_fetch_row_contract() -> None:
     session = FakeSession([FakeResponse(200, [{"id": 1}], '[{"id":1}]')])
     client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
@@ -46,6 +53,21 @@ def test_brreg_client_maps_success_to_existing_fetch_row_contract() -> None:
     assert row["fetch_status"] == "success"
     assert row["attempt_count"] == 1
     assert row["raw_response"] == '[{"id":1}]'
+
+
+def test_brreg_client_defaults_fetched_at_to_utc_timestamp() -> None:
+    session = FakeSession([FakeResponse(200, [{"id": 1}], '[{"id":1}]')])
+    client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
+
+    row = client.fetch_candidate(
+        FinancialCandidate("811685852", "SUCCESS AS", "", "2024"),
+        source_run_id="run-1",
+        source_line_number=1,
+    )
+
+    assert row["fetch_status"] == "success"
+    assert row["fetched_at"]
+    assert row["fetched_at"].endswith("Z")
 
 
 def test_brreg_client_does_not_retry_404() -> None:
