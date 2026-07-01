@@ -380,8 +380,11 @@ def norway_brreg_financial_statements_updates_clickhouse(
 norway_brreg_financial_snapshot_job = dg.define_asset_job(
     "norway_brreg_financial_snapshot_job",
     selection=dg.AssetSelection.assets(
-        "norway_brreg_financial_statements_snapshot_clickhouse"
-    ).upstream().required_multi_asset_neighbors(),
+        "norway_brreg_financial_fetches_snapshot_parquet",
+        "norway_brreg_financial_statements_snapshot_parquet",
+        "norway_brreg_financial_statements_snapshot_usd_parquet",
+        "norway_brreg_financial_statements_snapshot_clickhouse",
+    ),
 )
 
 

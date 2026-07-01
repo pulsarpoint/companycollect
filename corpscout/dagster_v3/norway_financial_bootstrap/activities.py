@@ -5,6 +5,7 @@ from typing import Any
 import polars as pl
 from temporalio import activity
 
+from dagster_v3.defs.norway_brreg import financial_fetches
 from norway_financial_bootstrap.brreg_client import BrregFinancialClient
 from norway_financial_bootstrap.storage import NorwayFinancialBootstrapStorage
 
@@ -55,12 +56,15 @@ def fetch_batch(
     fetched_count = 0
     skipped_count = 0
     status_counts: dict[str, int] = {}
+    retryable_status_counts: dict[str, int] = {}
+    processed_count = 0
 
     for line_number, candidate in enumerate(candidates, start=1):
+        processed_count += 1
         org_year = (candidate.org_number, candidate.last_submitted_accounts_year)
         if org_year in completed_org_years:
             skipped_count += 1
-            _heartbeat_if_due(fetched_count + skipped_count)
+            _heartbeat_if_due(processed_count)
             continue
 
         row = client.fetch_candidate(
@@ -69,6 +73,13 @@ def fetch_batch(
             source_line_number=line_number,
             fetched_at=input.fetched_at,
         )
+        status = str(row.get("fetch_status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if financial_fetches.financial_fetch_status_requires_failure(status):
+            retryable_status_counts[status] = retryable_status_counts.get(status, 0) + 1
+            _heartbeat_if_due(processed_count)
+            continue
+
         storage.write_raw_fetch(
             candidate.org_number,
             candidate.last_submitted_accounts_year,
@@ -76,9 +87,7 @@ def fetch_batch(
         )
         completed_org_years.add(org_year)
         fetched_count += 1
-        status = str(row.get("fetch_status") or "unknown")
-        status_counts[status] = status_counts.get(status, 0) + 1
-        _heartbeat_if_due(fetched_count + skipped_count)
+        _heartbeat_if_due(processed_count)
 
     _safe_heartbeat(
         {
@@ -87,6 +96,14 @@ def fetch_batch(
             "status_counts": status_counts,
         }
     )
+    if retryable_status_counts:
+        raise RuntimeError(
+            "Norway financial bootstrap fetch batch has retryable failures: "
+            + ", ".join(
+                f"{status}={count}"
+                for status, count in sorted(retryable_status_counts.items())
+            )
+        )
     return FetchBatchResult(
         fetched_count=fetched_count,
         skipped_count=skipped_count,

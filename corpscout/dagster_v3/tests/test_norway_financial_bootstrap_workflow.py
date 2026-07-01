@@ -2,6 +2,7 @@ import concurrent.futures
 from types import SimpleNamespace
 
 import polars as pl
+import pytest
 
 from norway_financial_bootstrap.activities import FetchBatchInput, FetchBatchResult, fetch_batch
 from norway_financial_bootstrap.candidates import FinancialCandidate
@@ -187,6 +188,27 @@ def test_fetch_batch_tracks_status_counts_and_writes_one_row_frame_per_missing_c
     assert result.fetched_count == 2
     assert storage.writes[("100", "2024")].height == 1
     assert storage.writes[("200", "2024")].height == 1
+
+
+def test_fetch_batch_raises_without_persisting_retryable_fetch_statuses() -> None:
+    storage = FakeStorage(completed=set())
+    storage.candidate_batches["batches/000001.parquet"] = [
+        FinancialCandidate("100", "SUCCESS AS", "", "2024"),
+        FinancialCandidate("200", "SERVER ERROR AS", "", "2024"),
+    ]
+
+    with pytest.raises(RuntimeError, match="server_error"):
+        fetch_batch(
+            FetchBatchInput(
+                source_run_id="run-1",
+                fetched_at="2026-07-01T00:00:00.000Z",
+                candidate_batch_key="batches/000001.parquet",
+            ),
+            storage=storage,
+            client=StatusClient(["success", "server_error"]),
+        )
+
+    assert set(storage.writes) == {("100", "2024")}
 
 
 def test_write_candidate_batches_returns_batch_keys_and_persists_candidates() -> None:

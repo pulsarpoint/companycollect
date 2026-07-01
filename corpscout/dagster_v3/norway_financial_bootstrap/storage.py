@@ -7,12 +7,13 @@ from typing import Any
 import boto3
 import polars as pl
 
+from dagster_v3.defs.norway_brreg.constants import NORWAY_BRREG_ENTITY_BUCKET
 from dagster_v3.defs.norway_brreg.financial_storage import (
     financial_raw_fetch_object_key,
 )
 from norway_financial_bootstrap.candidates import FinancialCandidate
 
-DEFAULT_BUCKET = "source-finland-prhytj"
+DEFAULT_BUCKET = NORWAY_BRREG_ENTITY_BUCKET
 RAW_FETCH_PREFIX = "norway_brreg/financial/raw_fetches/"
 BOOTSTRAP_RUNS_PREFIX = "norway_brreg/financial/bootstrap_runs/"
 CANDIDATE_BATCH_SCHEMA: dict[str, pl.DataType] = {

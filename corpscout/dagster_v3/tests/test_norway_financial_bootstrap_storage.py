@@ -2,11 +2,13 @@ from io import BytesIO
 
 from norway_financial_bootstrap.candidates import FinancialCandidate
 from norway_financial_bootstrap.storage import (
+    DEFAULT_BUCKET,
     NorwayFinancialBootstrapStorage,
     candidate_batch_key,
     completed_key_from_raw_fetch_key,
     raw_fetch_key,
 )
+from dagster_v3.defs.norway_brreg.constants import NORWAY_BRREG_ENTITY_BUCKET
 from dagster_v3.defs.norway_brreg.financial_storage import (
     financial_raw_fetch_object_key,
 )
@@ -49,6 +51,11 @@ def test_raw_fetch_key_matches_existing_norway_financial_storage_contract() -> N
     assert raw_fetch_key("811685852", "2024") == financial_raw_fetch_object_key(
         "811685852", "2024"
     )
+
+
+def test_bootstrap_storage_defaults_to_norway_brreg_bucket() -> None:
+    assert DEFAULT_BUCKET == NORWAY_BRREG_ENTITY_BUCKET
+    assert NorwayFinancialBootstrapStorage().bucket == NORWAY_BRREG_ENTITY_BUCKET
 
 
 def test_completed_key_from_raw_fetch_key_parses_existing_storage_path() -> None:
