@@ -1,9 +1,11 @@
 import gzip
+from io import BytesIO
 import json
 from pathlib import Path
 from typing import Any
 
 import requests
+from botocore.exceptions import ClientError
 
 from dagster_v3.defs.norway_brreg.resources import NorwayBrregApiResource
 
@@ -26,6 +28,7 @@ class FakeResponse:
         self._payload = payload
         self.content = content
         self.text = json.dumps(payload) if payload is not None else content.decode("utf-8", "ignore")
+        self.raw = BytesIO(content)
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -82,6 +85,35 @@ class ParamAwareFakeHttpSession:
         return self.responses[key]
 
 
+class FakeDagsterS3Resource:
+    def __init__(self, client: "FakeS3Client") -> None:
+        self._client = client
+
+    def get_client(self) -> "FakeS3Client":
+        return self._client
+
+
+class FakeS3Client:
+    def __init__(self, objects: dict[tuple[str, str], bytes] | None = None) -> None:
+        self.objects = objects or {}
+        self.head_calls: list[tuple[str, str]] = []
+        self.upload_calls: list[tuple[str, str]] = []
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        self.head_calls.append((Bucket, Key))
+        object_key = (Bucket, Key)
+        if object_key not in self.objects:
+            raise ClientError(
+                {"Error": {"Code": "404", "Message": "Not Found"}},
+                "HeadObject",
+            )
+        return {"ContentLength": len(self.objects[object_key])}
+
+    def upload_fileobj(self, Fileobj: Any, Bucket: str, Key: str) -> None:
+        self.upload_calls.append((Bucket, Key))
+        self.objects[(Bucket, Key)] = Fileobj.read()
+
+
 def test_iter_all_entities_returns_snapshot_records_with_real_brreg_shape() -> None:
     entity = _load_entity_fixture()
     session = FakeHttpSession(
@@ -130,6 +162,72 @@ def test_iter_all_entities_emits_download_and_parse_progress_logs() -> None:
 
     assert len(records) == 2
     assert len(log_calls) >= 6
+
+
+def test_entries_snapshot_reuses_existing_s3_object_without_http_download() -> None:
+    s3_client = FakeS3Client(
+        {("source-norway-brreg", "norway_brreg/entities/raw/snapshot/entities.json.gz"): b"existing"}
+    )
+    session = FakeHttpSession({})
+    resource = NorwayBrregApiResource(session=session)
+
+    metadata = resource.entries_snapshot(
+        s3=FakeDagsterS3Resource(s3_client),
+        bucket="source-norway-brreg",
+        key="norway_brreg/entities/raw/snapshot/entities.json.gz",
+    )
+
+    assert metadata == {
+        "s3_bucket": "source-norway-brreg",
+        "s3_key": "norway_brreg/entities/raw/snapshot/entities.json.gz",
+        "downloaded": False,
+        "bytes_downloaded": 8,
+    }
+    assert session.calls == []
+    assert s3_client.upload_calls == []
+
+
+def test_entries_snapshot_streams_missing_snapshot_to_s3() -> None:
+    snapshot_body = gzip.compress(b'[{"organisasjonsnummer":"923609016"}]')
+    s3_client = FakeS3Client()
+    session = FakeHttpSession(
+        {
+            "https://data.brreg.no/enhetsregisteret/api/enheter/lastned": FakeResponse(
+                content=snapshot_body
+            )
+        }
+    )
+    resource = NorwayBrregApiResource(session=session)
+
+    metadata = resource.entries_snapshot(
+        s3=FakeDagsterS3Resource(s3_client),
+        bucket="source-norway-brreg",
+        key="norway_brreg/entities/raw/snapshot/entities.json.gz",
+    )
+
+    assert metadata == {
+        "s3_bucket": "source-norway-brreg",
+        "s3_key": "norway_brreg/entities/raw/snapshot/entities.json.gz",
+        "downloaded": True,
+        "bytes_downloaded": len(snapshot_body),
+    }
+    assert session.calls == [
+        (
+            "https://data.brreg.no/enhetsregisteret/api/enheter/lastned",
+            None,
+            120,
+            True,
+        )
+    ]
+    assert s3_client.upload_calls == [
+        ("source-norway-brreg", "norway_brreg/entities/raw/snapshot/entities.json.gz")
+    ]
+    assert (
+        s3_client.objects[
+            ("source-norway-brreg", "norway_brreg/entities/raw/snapshot/entities.json.gz")
+        ]
+        == snapshot_body
+    )
 
 
 def test_iter_updated_entities_returns_same_shape_and_hydrates_changed_entities() -> None:

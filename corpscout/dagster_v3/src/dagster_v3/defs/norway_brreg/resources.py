@@ -13,6 +13,7 @@ from datetime import timedelta
 from decimal import Decimal
 from io import BytesIO
 from typing import Any, Protocol
+from typing import TYPE_CHECKING
 
 import dagster as dg
 import ijson
@@ -21,6 +22,9 @@ from pydantic import PrivateAttr
 
 from dagster_v3.defs.norway_brreg import entity_records
 from dagster_v3.defs.norway_brreg import tables
+
+if TYPE_CHECKING:
+    from dagster_aws.s3 import S3Resource
 
 COUNTRY = "NO"
 ENTITY_SOURCE_SLUG = "norway_brregenhet"
@@ -96,6 +100,71 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
             log=log,
             progress_every_bytes=download_progress_every_bytes,
         )
+
+    def entries_snapshot(
+        self,
+        *,
+        s3: S3Resource,
+        bucket: str,
+        key: str,
+        log: Callable[..., None] | None = None,
+    ) -> dict[str, Any]:
+        s3_client = s3.get_client()
+        progress_log = log or LOGGER.info
+        try:
+            existing_object = s3_client.head_object(Bucket=bucket, Key=key)
+        except Exception as exc:
+            if _error_code(exc) not in {"404", "NoSuchBucket", "NoSuchKey", "NotFound"}:
+                raise
+        else:
+            bytes_downloaded = (
+                existing_object.get("ContentLength")
+                if isinstance(existing_object, Mapping)
+                else None
+            )
+            progress_log(
+                "Norway Brreg entries snapshot already exists on S3: bucket=%s key=%s bytes=%s",
+                bucket,
+                key,
+                bytes_downloaded,
+            )
+            return {
+                "s3_bucket": bucket,
+                "s3_key": key,
+                "downloaded": False,
+                "bytes_downloaded": bytes_downloaded,
+            }
+
+        progress_log(
+            "Downloading Norway Brreg entries snapshot to S3: bucket=%s key=%s",
+            bucket,
+            key,
+        )
+        response = self.session().get(
+            f"{self.base_url}/enheter/lastned",
+            timeout=self.timeout_seconds,
+            stream=True,
+        )
+        response.raise_for_status()
+        s3_client.upload_fileobj(response.raw, bucket, key)
+        uploaded_object = s3_client.head_object(Bucket=bucket, Key=key)
+        bytes_downloaded = (
+            uploaded_object.get("ContentLength")
+            if isinstance(uploaded_object, Mapping)
+            else None
+        )
+        progress_log(
+            "Downloaded Norway Brreg entries snapshot to S3: bucket=%s key=%s bytes=%s",
+            bucket,
+            key,
+            bytes_downloaded,
+        )
+        return {
+            "s3_bucket": bucket,
+            "s3_key": key,
+            "downloaded": True,
+            "bytes_downloaded": bytes_downloaded,
+        }
 
     def iter_all_entities(
         self,
@@ -453,6 +522,12 @@ def _raise_for_status(response: Any) -> None:
 def _exception_has_http_status(exc: Exception, status_code: int) -> bool:
     response = getattr(exc, "response", None)
     return getattr(response, "status_code", None) == status_code
+
+
+def _error_code(exc: Exception) -> str:
+    response = getattr(exc, "response", {})
+    error = response.get("Error", {}) if isinstance(response, dict) else {}
+    return str(error.get("Code", ""))
 
 
 def _brreg_update_page_size(configured_page_size: int) -> int:
