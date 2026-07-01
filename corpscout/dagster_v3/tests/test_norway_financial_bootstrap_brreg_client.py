@@ -83,6 +83,29 @@ def test_brreg_client_does_not_retry_404() -> None:
 
     assert row["fetch_status"] == "not_found"
     assert row["attempt_count"] == 1
+    assert row["source_payload_hash"] == "0" * 64
+
+
+def test_brreg_client_retries_429_then_records_success_attempt_count() -> None:
+    sleeps: list[float] = []
+    session = FakeSession(
+        [
+            FakeResponse(429, {"message": "slow down"}, "slow down"),
+            FakeResponse(200, [{"id": 1}], '[{"id":1}]'),
+        ]
+    )
+    client = BrregFinancialClient(session=session, sleep=sleeps.append)
+
+    row = client.fetch_candidate(
+        FinancialCandidate("811685852", "SUCCESS AS", "", "2024"),
+        source_run_id="run-1",
+        source_line_number=1,
+        fetched_at="2026-07-01T00:00:00.000Z",
+    )
+
+    assert row["fetch_status"] == "success"
+    assert row["attempt_count"] == 2
+    assert sleeps == [30.0]
 
 
 def test_brreg_client_retries_500_then_records_success_attempt_count() -> None:
@@ -107,6 +130,54 @@ def test_brreg_client_retries_500_then_records_success_attempt_count() -> None:
     assert sleeps == [30.0]
 
 
+def test_brreg_client_records_server_error_after_retry_budget() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(500, {"message": "server"}, "server"),
+            FakeResponse(500, {"message": "server"}, "server"),
+            FakeResponse(500, {"message": "server"}, "server"),
+            FakeResponse(500, {"message": "server"}, "server"),
+            FakeResponse(500, {"message": "server"}, "server"),
+        ]
+    )
+    client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
+
+    row = client.fetch_candidate(
+        FinancialCandidate("811685852", "SERVER AS", "", "2024"),
+        source_run_id="run-1",
+        source_line_number=1,
+        fetched_at="2026-07-01T00:00:00.000Z",
+    )
+
+    assert row["fetch_status"] == "server_error"
+    assert row["attempt_count"] == 5
+    assert row["source_payload_hash"] == "0" * 64
+
+
+def test_brreg_client_records_network_error_after_retry_budget() -> None:
+    session = FakeSession(
+        [
+            OSError("network down"),
+            OSError("network down"),
+            OSError("network down"),
+            OSError("network down"),
+            OSError("network down"),
+        ]
+    )
+    client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
+
+    row = client.fetch_candidate(
+        FinancialCandidate("811685852", "NETWORK AS", "", "2024"),
+        source_run_id="run-1",
+        source_line_number=1,
+        fetched_at="2026-07-01T00:00:00.000Z",
+    )
+
+    assert row["fetch_status"] == "network_error"
+    assert row["attempt_count"] == 5
+    assert row["source_payload_hash"] == "0" * 64
+
+
 def test_brreg_client_maps_json_parse_failure_to_invalid_payload() -> None:
     session = FakeSession([FakeResponse(200, ValueError("bad json"), "not json")])
     client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
@@ -122,3 +193,33 @@ def test_brreg_client_maps_json_parse_failure_to_invalid_payload() -> None:
     assert row["error_type"] == "ValueError"
     assert row["error_message"] == "bad json"
     assert row["raw_response"] == "not json"
+
+
+def test_brreg_client_maps_non_list_payload_to_invalid_payload() -> None:
+    session = FakeSession([FakeResponse(200, {"id": 1}, '{"id":1}')])
+    client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
+
+    row = client.fetch_candidate(
+        FinancialCandidate("811685852", "BROKEN AS", "", "2024"),
+        source_run_id="run-1",
+        source_line_number=1,
+        fetched_at="2026-07-01T00:00:00.000Z",
+    )
+
+    assert row["fetch_status"] == "invalid_payload"
+    assert row["error_type"] == "InvalidPayload"
+
+
+def test_brreg_client_maps_list_with_non_dict_payload_to_invalid_payload() -> None:
+    session = FakeSession([FakeResponse(200, [{"id": 1}, "bad"], '[{"id":1},"bad"]')])
+    client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
+
+    row = client.fetch_candidate(
+        FinancialCandidate("811685852", "BROKEN AS", "", "2024"),
+        source_run_id="run-1",
+        source_line_number=1,
+        fetched_at="2026-07-01T00:00:00.000Z",
+    )
+
+    assert row["fetch_status"] == "invalid_payload"
+    assert row["error_type"] == "InvalidPayload"
