@@ -178,9 +178,11 @@ The `year` path segment must be derived from the returned report, normally from 
 Terminal markers live on S3:
 
 ```text
-norway_brreg/finance/bootstrap_status/done/org=<org_number>.json
-norway_brreg/finance/bootstrap_status/failed/org=<org_number>.json
+norway_brreg/finance/raw_reports/org=<org_number>/status/done.json
+norway_brreg/finance/raw_reports/org=<org_number>/status/failed.json
 ```
+
+The marker is colocated with the organization's raw reports so all bootstrap state for one organization lives under one prefix. Use JSON rather than plain text because the marker should carry report counts, raw object keys, error details, and timestamps.
 
 Done marker example:
 
@@ -210,7 +212,6 @@ Do not delete:
 
 ```text
 norway_brreg/finance/raw_reports/
-norway_brreg/finance/bootstrap_status/
 ```
 
 ## Idempotency
