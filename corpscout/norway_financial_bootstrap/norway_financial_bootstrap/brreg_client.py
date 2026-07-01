@@ -2,7 +2,6 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlencode
 
 import requests
 
@@ -42,8 +41,7 @@ class BrregFinancialClient:
     ) -> dict[str, Any]:
         fetch_timestamp = fetched_at or _utc_now_iso()
         org = candidate.as_org_mapping()
-        query = urlencode({"år": candidate.last_submitted_accounts_year})
-        source_url = f"{self._base_url}/{candidate.org_number}?{query}"
+        source_url = f"{self._base_url}/{candidate.org_number}"
         for retry_index in range(len(RETRY_DELAYS_SECONDS) + 1):
             attempt_count = retry_index + 1
             try:

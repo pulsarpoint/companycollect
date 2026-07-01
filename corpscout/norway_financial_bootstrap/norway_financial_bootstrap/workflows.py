@@ -1,108 +1,135 @@
-import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
 DEFAULT_TEMPORAL_ADDRESS = "companycollect:7233"
 DEFAULT_TASK_QUEUE = "norway-financial-bootstrap"
-DEFAULT_BATCH_SIZE = 100
-DEFAULT_MAX_CONCURRENT_BATCHES = 4
+DEFAULT_SLOT_COUNT = 4
 
-FETCH_BATCH_HEARTBEAT_TIMEOUT = timedelta(minutes=5)
-FETCH_BATCH_START_TO_CLOSE_TIMEOUT = timedelta(hours=12)
-FETCH_BATCH_RETRY_POLICY = RetryPolicy(maximum_attempts=3)
+ACTIVITY_START_TO_CLOSE_TIMEOUT = timedelta(minutes=10)
+FETCH_START_TO_CLOSE_TIMEOUT = timedelta(hours=12)
+FETCH_HEARTBEAT_TIMEOUT = timedelta(minutes=5)
+FETCH_RETRY_POLICY = RetryPolicy(maximum_attempts=3)
 
 with workflow.unsafe.imports_passed_through():
     from norway_financial_bootstrap.activities import (
-        FetchBatchInput,
-        FetchBatchResult,
-        fetch_batch,
+        CandidateMarkerStatusInput,
+        FetchAndStoreCandidateInput,
+        GetCandidateInput,
+        MarkerWriteInput,
+        candidate_marker_status,
+        fetch_and_store_candidate,
+        get_candidate,
+        write_done_marker,
+        write_failed_marker,
     )
-    from norway_financial_bootstrap.candidates import FinancialCandidate
+    from norway_financial_bootstrap.types import CandidateMarkerStatus
 
 
 @dataclass(frozen=True)
-class BootstrapInput:
-    source_run_id: str
+class BootstrapSlotInput:
+    run_id: str
+    slot_id: int
+    slot_index: int
+    slot_count: int
     fetched_at: str
-    candidate_count: int
-    batch_keys: list[str]
-    max_concurrent_batches: int = DEFAULT_MAX_CONCURRENT_BATCHES
 
 
 @dataclass(frozen=True)
-class BootstrapResult:
-    candidate_count: int
-    batch_count: int
-    fetched_count: int
-    skipped_count: int
-    status_counts: dict[str, int]
+class BootstrapSlotResult:
+    run_id: str
+    slot_id: int
+    slot_index: int
+    completed: bool
+    org_number: str | None
 
 
-def partition_batches(
-    candidates: list[FinancialCandidate], *, batch_size: int
-) -> list[list[FinancialCandidate]]:
-    if batch_size < 1:
-        raise ValueError("batch_size must be at least 1")
-    return [
-        candidates[index : index + batch_size]
-        for index in range(0, len(candidates), batch_size)
-    ]
-
-
-def aggregate_batch_results(
-    *, candidate_count: int, batch_results: list[FetchBatchResult]
-) -> BootstrapResult:
-    status_counts: dict[str, int] = {}
-    fetched_count = 0
-    skipped_count = 0
-    for result in batch_results:
-        fetched_count += result.fetched_count
-        skipped_count += result.skipped_count
-        for status, count in result.status_counts.items():
-            status_counts[status] = status_counts.get(status, 0) + count
-
-    return BootstrapResult(
-        candidate_count=candidate_count,
-        batch_count=len(batch_results),
-        fetched_count=fetched_count,
-        skipped_count=skipped_count,
-        status_counts=status_counts,
-    )
+def slot_workflow_id(run_id: str, slot_id: int) -> str:
+    return f"{run_id}-slot-{slot_id}"
 
 
 @workflow.defn
-class NorwayBrregInitialFinancialRawFetchWorkflow:
+class NorwayBrregFinancialBootstrapSlotWorkflow:
     @workflow.run
-    async def run(self, input: BootstrapInput) -> BootstrapResult:
-        if input.max_concurrent_batches < 1:
-            raise ValueError("max_concurrent_batches must be at least 1")
-
-        results: list[FetchBatchResult] = []
-
-        for index in range(0, len(input.batch_keys), input.max_concurrent_batches):
-            window = input.batch_keys[index : index + input.max_concurrent_batches]
-            window_results = await asyncio.gather(
-                *(
-                    workflow.execute_activity(
-                        fetch_batch,
-                        FetchBatchInput(
-                            source_run_id=input.source_run_id,
-                            fetched_at=input.fetched_at,
-                            candidate_batch_key=batch_key,
-                        ),
-                        heartbeat_timeout=FETCH_BATCH_HEARTBEAT_TIMEOUT,
-                        start_to_close_timeout=FETCH_BATCH_START_TO_CLOSE_TIMEOUT,
-                        retry_policy=FETCH_BATCH_RETRY_POLICY,
-                    )
-                    for batch_key in window
-                )
-            )
-            results.extend(window_results)
-
-        return aggregate_batch_results(
-            candidate_count=input.candidate_count,
-            batch_results=results,
+    async def run(self, input: BootstrapSlotInput) -> BootstrapSlotResult:
+        candidate = await workflow.execute_activity(
+            get_candidate,
+            GetCandidateInput(
+                run_id=input.run_id,
+                slot_id=input.slot_id,
+                slot_index=input.slot_index,
+            ),
+            start_to_close_timeout=ACTIVITY_START_TO_CLOSE_TIMEOUT,
         )
+        if candidate is None:
+            return BootstrapSlotResult(
+                run_id=input.run_id,
+                slot_id=input.slot_id,
+                slot_index=input.slot_index,
+                completed=True,
+                org_number=None,
+            )
+
+        marker_status = await workflow.execute_activity(
+            candidate_marker_status,
+            CandidateMarkerStatusInput(org_number=candidate.org_number),
+            start_to_close_timeout=ACTIVITY_START_TO_CLOSE_TIMEOUT,
+        )
+        if marker_status in {CandidateMarkerStatus.DONE, CandidateMarkerStatus.FAILED}:
+            workflow.continue_as_new(_next_input(input))
+
+        try:
+            result = await workflow.execute_activity(
+                fetch_and_store_candidate,
+                FetchAndStoreCandidateInput(
+                    run_id=input.run_id,
+                    org_number=candidate.org_number,
+                    fetched_at=input.fetched_at,
+                ),
+                heartbeat_timeout=FETCH_HEARTBEAT_TIMEOUT,
+                start_to_close_timeout=FETCH_START_TO_CLOSE_TIMEOUT,
+                retry_policy=FETCH_RETRY_POLICY,
+            )
+        except ActivityError as exc:
+            await workflow.execute_activity(
+                write_failed_marker,
+                MarkerWriteInput(
+                    org_number=candidate.org_number,
+                    fetch_status="",
+                    report_count=0,
+                    raw_report_keys=[],
+                    timestamp=input.fetched_at,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                ),
+                start_to_close_timeout=ACTIVITY_START_TO_CLOSE_TIMEOUT,
+            )
+            workflow.continue_as_new(_next_input(input))
+
+        await workflow.execute_activity(
+            write_done_marker,
+            MarkerWriteInput(
+                org_number=result.org_number,
+                fetch_status=result.fetch_status,
+                report_count=result.report_count,
+                raw_report_keys=result.raw_report_keys,
+                timestamp=result.fetched_at,
+                error_type="",
+                error_message="",
+            ),
+            start_to_close_timeout=ACTIVITY_START_TO_CLOSE_TIMEOUT,
+        )
+        workflow.continue_as_new(_next_input(input))
+
+
+def _next_input(input: BootstrapSlotInput) -> BootstrapSlotInput:
+    return BootstrapSlotInput(
+        run_id=input.run_id,
+        slot_id=input.slot_id,
+        slot_index=input.slot_index + 1,
+        slot_count=input.slot_count,
+        fetched_at=input.fetched_at,
+    )

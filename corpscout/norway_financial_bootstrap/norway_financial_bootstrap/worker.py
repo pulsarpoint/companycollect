@@ -8,11 +8,17 @@ from dotenv import load_dotenv
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from norway_financial_bootstrap.activities import fetch_batch
+from norway_financial_bootstrap.activities import (
+    candidate_marker_status,
+    fetch_and_store_candidate,
+    get_candidate,
+    write_done_marker,
+    write_failed_marker,
+)
 from norway_financial_bootstrap.workflows import (
     DEFAULT_TASK_QUEUE,
     DEFAULT_TEMPORAL_ADDRESS,
-    NorwayBrregInitialFinancialRawFetchWorkflow,
+    NorwayBrregFinancialBootstrapSlotWorkflow,
 )
 
 DEFAULT_MAX_WORKERS = 4
@@ -45,8 +51,14 @@ def build_worker(client: object, *, task_queue: str, max_workers: int) -> Worker
     return Worker(
         client,
         task_queue=task_queue,
-        workflows=[NorwayBrregInitialFinancialRawFetchWorkflow],
-        activities=[fetch_batch],
+        workflows=[NorwayBrregFinancialBootstrapSlotWorkflow],
+        activities=[
+            get_candidate,
+            candidate_marker_status,
+            fetch_and_store_candidate,
+            write_done_marker,
+            write_failed_marker,
+        ],
         activity_executor=concurrent.futures.ThreadPoolExecutor(max_workers=max_workers),
         max_concurrent_activities=max_workers,
     )
@@ -89,6 +101,7 @@ def worker_main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 130
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(worker_main())

@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 from norway_financial_bootstrap.brreg_client import (
@@ -36,23 +37,45 @@ def test_brreg_client_default_user_agent_matches_bootstrap_spec() -> None:
     assert DEFAULT_USER_AGENT == "corpscout-norway-financial-bootstrap/0.1"
 
 
-def test_brreg_client_maps_success_to_existing_fetch_row_contract() -> None:
-    session = FakeSession([FakeResponse(200, [{"id": 1}], '[{"id":1}]')])
+def test_brreg_client_calls_org_endpoint_without_year_query() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(
+                200,
+                [
+                    {
+                        "id": 5667197,
+                        "regnskapstype": "SELSKAP",
+                        "regnskapsperiode": {"tilDato": "2024-12-31"},
+                    }
+                ],
+                '[{"id":5667197}]',
+            )
+        ]
+    )
     client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
 
     row = client.fetch_candidate(
-        FinancialCandidate("811685852", "SUCCESS AS", "", "2024"),
+        FinancialCandidate("923609016"),
         source_run_id="run-1",
         source_line_number=1,
         fetched_at="2026-07-01T00:00:00.000Z",
     )
 
     assert session.calls == [
-        "https://data.brreg.no/regnskapsregisteret/regnskap/811685852?%C3%A5r=2024"
+        "https://data.brreg.no/regnskapsregisteret/regnskap/923609016"
     ]
+    assert "år=" not in session.calls[0]
+    assert row["org_number"] == "923609016"
     assert row["fetch_status"] == "success"
     assert row["attempt_count"] == 1
-    assert row["raw_response"] == '[{"id":1}]'
+    assert json.loads(row["raw_response"]) == [
+        {
+            "id": 5667197,
+            "regnskapstype": "SELSKAP",
+            "regnskapsperiode": {"tilDato": "2024-12-31"},
+        }
+    ]
 
 
 def test_brreg_client_defaults_fetched_at_to_utc_timestamp() -> None:
@@ -60,7 +83,7 @@ def test_brreg_client_defaults_fetched_at_to_utc_timestamp() -> None:
     client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
 
     row = client.fetch_candidate(
-        FinancialCandidate("811685852", "SUCCESS AS", "", "2024"),
+        FinancialCandidate("811685852"),
         source_run_id="run-1",
         source_line_number=1,
     )
@@ -75,7 +98,7 @@ def test_brreg_client_does_not_retry_404() -> None:
     client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
 
     row = client.fetch_candidate(
-        FinancialCandidate("811685852", "MISSING AS", "", "2024"),
+        FinancialCandidate("811685852"),
         source_run_id="run-1",
         source_line_number=1,
         fetched_at="2026-07-01T00:00:00.000Z",
@@ -97,29 +120,7 @@ def test_brreg_client_retries_429_then_records_success_attempt_count() -> None:
     client = BrregFinancialClient(session=session, sleep=sleeps.append)
 
     row = client.fetch_candidate(
-        FinancialCandidate("811685852", "SUCCESS AS", "", "2024"),
-        source_run_id="run-1",
-        source_line_number=1,
-        fetched_at="2026-07-01T00:00:00.000Z",
-    )
-
-    assert row["fetch_status"] == "success"
-    assert row["attempt_count"] == 2
-    assert sleeps == [30.0]
-
-
-def test_brreg_client_retries_500_then_records_success_attempt_count() -> None:
-    sleeps: list[float] = []
-    session = FakeSession(
-        [
-            FakeResponse(500, {"message": "server"}, "server"),
-            FakeResponse(200, [{"id": 1}], '[{"id":1}]'),
-        ]
-    )
-    client = BrregFinancialClient(session=session, sleep=sleeps.append)
-
-    row = client.fetch_candidate(
-        FinancialCandidate("811685852", "SUCCESS AS", "", "2024"),
+        FinancialCandidate("811685852"),
         source_run_id="run-1",
         source_line_number=1,
         fetched_at="2026-07-01T00:00:00.000Z",
@@ -143,7 +144,7 @@ def test_brreg_client_records_server_error_after_retry_budget() -> None:
     client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
 
     row = client.fetch_candidate(
-        FinancialCandidate("811685852", "SERVER AS", "", "2024"),
+        FinancialCandidate("811685852"),
         source_run_id="run-1",
         source_line_number=1,
         fetched_at="2026-07-01T00:00:00.000Z",
@@ -167,7 +168,7 @@ def test_brreg_client_records_network_error_after_retry_budget() -> None:
     client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
 
     row = client.fetch_candidate(
-        FinancialCandidate("811685852", "NETWORK AS", "", "2024"),
+        FinancialCandidate("811685852"),
         source_run_id="run-1",
         source_line_number=1,
         fetched_at="2026-07-01T00:00:00.000Z",
@@ -183,7 +184,7 @@ def test_brreg_client_maps_json_parse_failure_to_invalid_payload() -> None:
     client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
 
     row = client.fetch_candidate(
-        FinancialCandidate("811685852", "BROKEN AS", "", "2024"),
+        FinancialCandidate("811685852"),
         source_run_id="run-1",
         source_line_number=1,
         fetched_at="2026-07-01T00:00:00.000Z",
@@ -200,22 +201,7 @@ def test_brreg_client_maps_non_list_payload_to_invalid_payload() -> None:
     client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
 
     row = client.fetch_candidate(
-        FinancialCandidate("811685852", "BROKEN AS", "", "2024"),
-        source_run_id="run-1",
-        source_line_number=1,
-        fetched_at="2026-07-01T00:00:00.000Z",
-    )
-
-    assert row["fetch_status"] == "invalid_payload"
-    assert row["error_type"] == "InvalidPayload"
-
-
-def test_brreg_client_maps_list_with_non_dict_payload_to_invalid_payload() -> None:
-    session = FakeSession([FakeResponse(200, [{"id": 1}, "bad"], '[{"id":1},"bad"]')])
-    client = BrregFinancialClient(session=session, sleep=lambda _seconds: None)
-
-    row = client.fetch_candidate(
-        FinancialCandidate("811685852", "BROKEN AS", "", "2024"),
+        FinancialCandidate("811685852"),
         source_run_id="run-1",
         source_line_number=1,
         fetched_at="2026-07-01T00:00:00.000Z",

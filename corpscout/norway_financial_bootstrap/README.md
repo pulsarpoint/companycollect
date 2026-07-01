@@ -1,17 +1,17 @@
 # Norway Financial Bootstrap
 
-Standalone Temporal application for the one-time historical Norway BRREG
-financial report bootstrap.
+Standalone Temporal application for the one-time Norway BRREG financial report
+bootstrap.
 
-This package is intentionally independent of Dagster. It reads candidate
-companies from the fixed ClickHouse table `corpscout.no_companies`, discovers
-financial reports from BRREG by organization and year, and writes raw report
-JSON objects to S3. Dagster daily finance jobs use the same fixed raw report
-paths to decide which reports already exist.
+This package is intentionally independent of Dagster. Startup code creates or
+reuses a frozen ClickHouse candidate table from `corpscout.no_companies`.
+Temporal workers then process those candidates by slot, write raw BRREG
+financial JSON objects to S3, and write colocated S3 status markers.
 
 ## Fixed Storage Contract
 
-The bucket and object keys are not configurable.
+The bucket and object keys are fixed because Dagster jobs read from the same
+layout.
 
 Bucket:
 
@@ -19,46 +19,71 @@ Bucket:
 source-norway-brreg
 ```
 
-Candidate batch files written by the bootstrap starter:
+Raw financial reports:
 
 ```text
-norway_brreg/finance/bootstrap_runs/run=norway-brreg-finance-historical-bootstrap/attempt={attempt_id}/candidates/batch={batch_index}.parquet
+norway_brreg/finance/raw_reports/org=<org_number>/year=<year>/type=<report_type>/id=<report_id>.json
 ```
 
-Raw financial reports written by workers:
+Status markers:
 
 ```text
-norway_brreg/finance/raw_reports/org={org_number}/year={year}/type={report_type}/id={report_id}.json
+norway_brreg/finance/raw_reports/org=<org_number>/status/done.json
+norway_brreg/finance/raw_reports/org=<org_number>/status/failed.json
 ```
 
-The raw report path is the completion marker. If that exact report object
-already exists, the worker skips it and does not call it completed again.
+There are no S3 candidate batch files in this workflow.
 
-## What It Fetches
+## Candidate Table
+
+The starter creates or reuses this ClickHouse table:
+
+```text
+corpscout.norway_financial_bootstrap_candidates
+```
+
+Candidates are deterministic:
+
+```text
+run_id + slot + slot_index -> org_number
+```
 
 The starter reads active companies with a non-empty
 `last_submitted_accounts_year` from ClickHouse:
 
 ```sql
 select
-    org_number,
-    name,
-    primary_website_url,
-    last_submitted_accounts_year
+    toString(org_number) as org_number
 from corpscout.no_companies
 where is_active = true
   and last_submitted_accounts_year is not null
 order by org_number
 ```
 
-For each candidate, workers call BRREG with the company and year:
+`last_submitted_accounts_year` is only an eligibility filter. BRREG's structured
+financial endpoint behaves as a latest-report endpoint, so workers call it
+without an `år` query parameter:
 
 ```text
-GET https://data.brreg.no/regnskapsregisteret/regnskap/{org_number}?år={year}
+GET https://data.brreg.no/regnskapsregisteret/regnskap/{org_number}
 ```
 
-Each returned report is stored as a separate JSON object under the fixed raw
-report key. The bootstrap does not create ClickHouse tables, parse financial
+## Runtime Model
+
+The starter launches four Temporal slot workflows by default:
+
+```text
+norway-brreg-finance-historical-bootstrap-slot-0
+norway-brreg-finance-historical-bootstrap-slot-1
+norway-brreg-finance-historical-bootstrap-slot-2
+norway-brreg-finance-historical-bootstrap-slot-3
+```
+
+Each workflow run processes one organization, then continues as new with the
+next slot index. Restarting from index `0` is safe because the workflow checks
+S3 status markers before calling BRREG.
+
+The bootstrap does not create final ClickHouse financial tables, parse financial
 metrics, run FX conversion, or call Dagster.
 
 ## Local Setup
@@ -87,12 +112,6 @@ export CLICKHOUSE_HTTP_PORT=8123
 export CLICKHOUSE_SECURE=false
 ```
 
-The ClickHouse database and table are fixed:
-
-```text
-corpscout.no_companies
-```
-
 Set the S3-compatible endpoint either as an environment variable or a CLI
 argument:
 
@@ -113,7 +132,7 @@ The fixed Temporal task queue is:
 norway-financial-bootstrap
 ```
 
-The fixed workflow id is:
+The fixed run id prefix is:
 
 ```text
 norway-brreg-finance-historical-bootstrap
@@ -122,8 +141,8 @@ norway-brreg-finance-historical-bootstrap
 ## Run
 
 `norway-financial-bootstrap-worker` is the long-running Temporal worker. It
-connects to Temporal, registers the workflow/activity implementation, and waits
-for work on the fixed `norway-financial-bootstrap` task queue.
+connects to Temporal, registers the slot workflow and activity implementation,
+and waits for work on the fixed `norway-financial-bootstrap` task queue.
 
 Start one or more workers and leave them running:
 
@@ -131,52 +150,51 @@ Start one or more workers and leave them running:
 uv run norway-financial-bootstrap-worker
 ```
 
-`norway-financial-bootstrap` is the starter command. It reads candidate
-companies from ClickHouse, writes candidate batch parquet files to S3, and
-starts the fixed `norway-brreg-finance-historical-bootstrap` workflow.
+`norway-financial-bootstrap` is the starter command. It prepares the ClickHouse
+candidate table and starts one Temporal workflow per slot.
 
-Start the workflow once from another terminal:
+Start the workflows from another terminal:
 
 ```bash
 uv run norway-financial-bootstrap
 ```
 
-The starter prints the workflow id after Temporal accepts the workflow.
+The starter prints the slot workflow ids after Temporal accepts the workflows.
 
-Both commands read `.env`. `--temporal-address` and `--s3-endpoint` are only
-one-off overrides when you do not want to change `.env`.
+Both commands read `.env`. `--temporal-address` and `--s3-endpoint` are one-off
+overrides when you do not want to change `.env`.
 
 ## Resume And Rerun Behavior
 
 The application is safe to rerun against the same S3 bucket.
 
-On every activity batch, the worker lists existing raw report objects under:
+If a slot workflow restarts from `slot_index = 0`, it reads the deterministic
+candidate table and checks each organization's status markers:
 
 ```text
-norway_brreg/finance/raw_reports/
+done marker exists   -> skip organization
+failed marker exists -> skip organization
+marker missing       -> fetch organization
 ```
 
-For each BRREG report returned by `org + year`, it checks the exact
-`org/year/type/id` key. Existing report objects are skipped. Missing report
-objects are written.
-
-The starter may write new candidate batch files under a new `attempt=...`
-folder for the fixed workflow id. Those batch files are not the source of truth;
-the raw report JSON objects are.
+Already completed organizations do not trigger BRREG calls.
 
 ## Failure Behavior
 
-Retryable BRREG failures are not written as raw report objects.
+Retryable BRREG failures are not written as done markers.
 
 The worker retries transient network, `429`, and `5xx` failures using finite
-backoff. If the retry budget is exhausted for any candidate in an activity
-batch, the activity raises after processing the batch and Temporal retries the
-activity according to the workflow retry policy.
+backoff. If Temporal exhausts retries for an organization, the workflow writes:
 
-Non-retryable `404` results are counted as `not_found` and do not create raw
-report objects.
+```text
+norway_brreg/finance/raw_reports/org=<org_number>/status/failed.json
+```
 
-Invalid payloads are counted as `invalid_payload` and fail the batch.
+Non-retryable `404` results are terminal source outcomes and write a done marker
+with `report_count = 0`.
+
+Invalid payloads fail the fetch activity and become failed markers after
+Temporal retry exhaustion.
 
 ## Verification
 

@@ -20,6 +20,7 @@ def test_bootstrap_modules_import_without_dagster_project(monkeypatch) -> None:
         "norway_financial_bootstrap.clickhouse",
         "norway_financial_bootstrap.cli",
         "norway_financial_bootstrap.storage",
+        "norway_financial_bootstrap.types",
         "norway_financial_bootstrap.worker",
         "norway_financial_bootstrap.workflows",
     ]:

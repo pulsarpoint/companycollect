@@ -107,11 +107,6 @@ def _base_financial_fetch_row(
         "source_record_id": _string(org.get("org_number")),
         "source_payload_hash": source_payload_hash,
         "org_number": _string(org.get("org_number")),
-        "legal_name": _string(org.get("legal_name")),
-        "website": _string(org.get("website")),
-        "last_submitted_accounts_year": _string(
-            org.get("last_submitted_accounts_year")
-        ),
         "source_url": source_url,
         "fetch_status": fetch_status,
         "http_status": http_status,
