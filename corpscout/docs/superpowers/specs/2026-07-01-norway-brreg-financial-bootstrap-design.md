@@ -8,24 +8,30 @@
 
 Move the one-time Norway BRREG historical financial-account crawl out of a normal Dagster asset
 materialization and into a small Temporal-backed Python package. The bootstrap package will crawl the
-current eligible Norway company snapshot once, persist resumable intermediate results while it runs, and
-produce one dated financial fetch snapshot parquet. After that cutover, Dagster should process only the
-final snapshot parquet plus normal daily update partitions.
+current eligible Norway company snapshot once and upload one raw financial fetch parquet object per
+company/year to S3. Dagster will then discover those historical raw fetch objects and convert them into:
+
+```text
+norway_brreg/financial/statements/snapshot/financial_statements.parquet
+```
+
+After this starting snapshot exists, recurring Norway financial processing is only daily updates.
 
 ## Motivation
 
 The current `norway_brreg_financial_fetches_snapshot_parquet` asset is doing a multi-day external API
 crawl inside one Dagster run. The current snapshot has roughly 430K financial candidates and more than
 400K missing raw financial fetches, so the asset performs hundreds of thousands of serial BRREG HTTP
-requests plus one S3 cache check per candidate. That is acceptable as a one-time data collection job, but
+requests plus one S3 cache check per candidate. That is acceptable as a one-time collection campaign, but
 it is a poor fit for a single unpartitioned Dagster materialization.
 
 The bootstrap should be operationally boring:
 
 - a restart should not lose completed company fetches;
-- the final output should be a stable dated parquet file;
-- daily Norway financial processing should stay in Dagster and should not depend on rerunning the
-  historical crawl;
+- existing `financial_fetch.parquet` objects must be preserved and skipped;
+- Temporal should only fetch and upload raw report objects;
+- Dagster should own conversion from raw fetch objects into normalized statement parquet;
+- daily Norway financial processing should not depend on rerunning the historical crawl;
 - the implementation should be concrete and source-specific, not a generic ingestion framework.
 
 ## Decisions
@@ -35,17 +41,18 @@ The bootstrap should be operationally boring:
 - Use Temporal for orchestration, retry, visibility, and bounded worker concurrency.
 - Use 2 to 4 worker activities in parallel by default. This is enough to cut wall-clock time without
   hammering BRREG.
-- Do not append to one large parquet during the crawl. Parquet is the final compacted format, not the
-  row-by-row write format.
-- Store intermediate per-company or per-shard JSON/JSONL outputs during the crawl so the workflow can
-  resume by skipping already completed org/year results.
-- Preserve existing Norway financial storage. If
-  `norway_brreg/financial/raw_fetches/org=<org_number>/year=<last_submitted_accounts_year>/financial_fetch.parquet`
-  already exists, the bootstrap must not call BRREG again for that org/year. It should reuse that file as
-  completed historical work and include it in the final snapshot compaction.
-- At workflow completion, compact intermediate outputs into one dated parquet file.
-- Dagster consumes the dated final parquet as the historical starting point. Daily update assets remain
-  the only recurring financial ingestion path.
+- Temporal does not create an aggregate fetch parquet and does not create statement parquet.
+- Temporal writes one raw fetch parquet per org/year using the existing storage key contract:
+
+```text
+norway_brreg/financial/raw_fetches/org=<org_number>/year=<last_submitted_accounts_year>/financial_fetch.parquet
+```
+
+- If that key already exists, Temporal must not call BRREG again for that org/year.
+- Dagster gets a historical financial resource that lists and reads the raw fetch parquet objects.
+- Dagster converts the historical raw fetch objects into the snapshot statements parquet, then continues
+  with USD conversion and ClickHouse publishing.
+- Daily update assets remain the only recurring financial ingestion path.
 
 ## Package Shape
 
@@ -54,13 +61,12 @@ The package should be small and source-specific:
 ```text
 norway_financial_bootstrap/
   __init__.py
-  workflows.py      # Temporal workflow: plan work, run bounded fetch activities, compact final output
-  activities.py     # Fetch batches, write intermediate outputs, compact outputs
+  workflows.py      # Temporal workflow: plan work and run bounded fetch activities
+  activities.py     # Fetch batches and upload raw fetch parquet objects
   brreg_client.py   # GET /regnskapsregisteret/regnskap/{org_number}
-  storage.py        # S3/object-store keys and JSON/JSONL/parquet IO
+  storage.py        # S3/object-store keys and raw fetch parquet IO
   candidates.py     # Read no_companies parquet and build org/year candidates
-  schemas.py        # Final fetch row schema shared with Dagster where practical
-  cli.py            # Start workflow, inspect status, optionally compact only
+  cli.py            # Start workflow / inspect status
 ```
 
 This is intentionally not a shared abstraction for all countries. If another source needs the same shape
@@ -87,35 +93,13 @@ Fetch endpoint:
 https://data.brreg.no/regnskapsregisteret/regnskap/{org_number}
 ```
 
-Intermediate output options:
-
-```text
-norway_brreg/financial/bootstrap/date=2026-07-01/raw/org=811685852/year=2024.json
-norway_brreg/financial/bootstrap/date=2026-07-01/shards/shard=0000.jsonl
-```
-
-The implementation can use either per-org JSON files or worker/shard JSONL files. The important contract
-is that completed org/year work is externally visible and can be skipped on retry. If using JSONL shards,
-the package must maintain a completed-key index or write idempotent batch manifests so reruns do not
-duplicate rows.
-
-Existing raw fetch parquet files produced by the current Dagster path are also completed work:
+Bootstrap output:
 
 ```text
 norway_brreg/financial/raw_fetches/org=<org_number>/year=<last_submitted_accounts_year>/financial_fetch.parquet
 ```
 
-The bootstrap should build a completed-org/year index from those keys before planning remote fetches. The
-final compaction must read and include those existing parquet rows so already-collected data is preserved
-and no company/year is fetched twice.
-
-Final output:
-
-```text
-norway_brreg/financial/snapshots/date=2026-07-01/financial_fetches.parquet
-```
-
-The final parquet should match the existing financial fetch row contract as closely as possible:
+Each raw fetch parquet should match the existing financial fetch row contract:
 
 - `org_number`
 - `legal_name`
@@ -131,12 +115,18 @@ The final parquet should match the existing financial fetch row contract as clos
 - `raw_response`
 - existing source/provenance columns used downstream
 
+Dagster output:
+
+```text
+norway_brreg/financial/statements/snapshot/financial_statements.parquet
+```
+
 ## Temporal Workflow
 
 Workflow name:
 
 ```text
-NorwayBrregInitialFinancialSnapshotWorkflow
+NorwayBrregInitialFinancialRawFetchWorkflow
 ```
 
 Input:
@@ -144,7 +134,6 @@ Input:
 ```text
 snapshot_date: "2026-07-01"
 source_no_companies_key: "norway_brreg/entities/normalized/snapshot/no_companies.parquet"
-output_key: "norway_brreg/financial/snapshots/date=2026-07-01/financial_fetches.parquet"
 worker_count: 2 | 4
 batch_size: e.g. 100 or 500 candidates per activity
 resume: true
@@ -153,16 +142,14 @@ resume: true
 Workflow steps:
 
 1. Load candidate org/year records from the normalized `no_companies` parquet.
-2. Build a completed-org/year index from existing `financial_fetch.parquet` raw fetch files and bootstrap
-   intermediate outputs.
+2. Build a completed-org/year index from existing `financial_fetch.parquet` raw fetch files.
 3. Partition only missing candidates into deterministic batches.
 4. Execute fetch activities with bounded concurrency.
 5. Each fetch activity skips already-completed org/year results when `resume=true`.
-6. Each fetch activity writes intermediate output and heartbeats progress.
-7. After all batches complete, compact existing raw fetch parquets plus bootstrap intermediate outputs into
-   the final dated parquet.
-8. Return counts: candidates, existing_raw_fetches, fetched, skipped, success, not_found, retryable
-   failures, output key.
+6. Each fetch activity writes one raw fetch parquet object per fetched company/year and heartbeats
+   progress.
+7. Return counts: candidates, existing_raw_fetches, fetched, skipped, success, not_found, retryable
+   failures.
 
 ## Fetch Semantics
 
@@ -182,30 +169,31 @@ Retryable/failing outcomes:
 - `5xx`
 
 The package should retry transient failures with bounded backoff. Persistent retryable failures should be
-written to intermediate diagnostics and surfaced in the final workflow result. The final compaction can
-include failure rows, but the workflow should clearly report non-terminal counts so the operator decides
+written as raw fetch parquet diagnostics and surfaced in the workflow result so the operator decides
 whether to rerun failed batches before declaring the bootstrap complete.
 
 ## Dagster Cutover
 
-The historical Dagster snapshot fetch asset should stop crawling BRREG directly. It should become a
-lightweight asset that verifies and records the final dated bootstrap parquet:
+The historical Dagster path should stop crawling BRREG directly. Dagster gets a historical financial
+resource, named around the concept `historical_financial`, that can list and read raw fetch parquet
+objects.
+
+Expected resource behavior:
+
+- list `norway_brreg/financial/raw_fetches/**/financial_fetch.parquet`;
+- read those raw fetch parquet objects as the historical source;
+- expose counts and status summaries for observability;
+- never call the BRREG financial API.
+
+The snapshot statements asset converts historical raw fetch objects into:
 
 ```text
-norway_brreg_financial_fetches_snapshot_parquet
+norway_brreg/financial/statements/snapshot/financial_statements.parquet
 ```
-
-Expected behavior:
-
-- read or validate `norway_brreg/financial/snapshots/date=<snapshot_date>/financial_fetches.parquet`;
-- emit metadata: snapshot date, row count, status counts, S3 key;
-- fail hard if the configured snapshot key is missing;
-- never start the multi-day historical crawl.
 
 Downstream assets keep their current shape:
 
 ```text
-norway_brreg_financial_statements_snapshot_parquet
 norway_brreg_financial_statements_snapshot_usd_parquet
 norway_brreg_financial_statements_snapshot_clickhouse
 ```
@@ -222,11 +210,10 @@ norway_brreg_financial_statements_updates_clickhouse
 ## Operational Notes
 
 - Run this bootstrap once for the chosen snapshot date.
-- Use a stable workflow id such as `norway-brreg-financial-bootstrap-2026-07-01`.
+- Use a stable workflow id such as `norway-brreg-financial-raw-fetch-2026-07-01`.
 - Run with conservative concurrency first: 2 workers. Increase to 4 only if BRREG latency and error rate
   are healthy.
-- Do not delete intermediate bootstrap files until the final parquet has been compacted, validated, and
-  consumed successfully by Dagster.
+- Do not delete raw fetch files. They are the historical source of truth for Dagster conversion.
 - After successful cutover, the historical crawl code in Dagster can be removed or guarded so it cannot be
   accidentally started again.
 
@@ -234,17 +221,17 @@ norway_brreg_financial_statements_updates_clickhouse
 
 - Unit test candidate selection from `no_companies` parquet.
 - Unit test BRREG response mapping for success, 404, invalid payload, network error, `429`, and `5xx`.
-- Unit test storage idempotency: existing org/year output is skipped when `resume=true`.
-- Unit test compaction from intermediate JSON/JSONL into the final parquet schema.
-- Temporal workflow test with fake activities: batching, bounded concurrency intent, resume behavior, and
-  final compaction call.
-- Dagster test: historical snapshot fetch asset fails when the configured final parquet is missing and
-  succeeds with row/status metadata when it exists.
+- Unit test storage idempotency: existing org/year raw fetch output is skipped when `resume=true`.
+- Unit test raw fetch parquet writing.
+- Temporal workflow test with fake activities: batching, bounded concurrency intent, and resume behavior.
+- Dagster test: historical financial resource lists/reads raw fetch parquet and the snapshot statements
+  asset creates `financial_statements.parquet` without calling BRREG.
 
 ## Non-goals
 
 - Do not make a generic multi-country bootstrap framework.
-- Do not append directly to one parquet file during the crawl.
+- Do not produce a final aggregate parquet in Temporal.
+- Do not produce normalized statement parquet in Temporal.
 - Do not use ClickHouse as the bootstrap checkpoint store.
 - Do not change Norway daily update behavior except to keep it independent from the historical bootstrap.
 - Do not remove daily Dagster financial assets.
