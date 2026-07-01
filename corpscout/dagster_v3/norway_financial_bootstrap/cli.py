@@ -9,9 +9,11 @@ from temporalio.common import WorkflowIDConflictPolicy
 
 from norway_financial_bootstrap.activities import storage_from_env
 from norway_financial_bootstrap.candidates import (
+    FinancialCandidate,
     build_financial_candidates,
     missing_candidates,
 )
+from norway_financial_bootstrap.storage import NorwayFinancialBootstrapStorage
 from norway_financial_bootstrap.workflows import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_MAX_CONCURRENT_BATCHES,
@@ -19,6 +21,7 @@ from norway_financial_bootstrap.workflows import (
     DEFAULT_TEMPORAL_ADDRESS,
     BootstrapInput,
     NorwayBrregInitialFinancialRawFetchWorkflow,
+    partition_batches,
 )
 
 
@@ -86,6 +89,21 @@ async def start_workflow(
     return handle.id
 
 
+def write_candidate_batches(
+    *,
+    storage: NorwayFinancialBootstrapStorage,
+    source_run_id: str,
+    candidates: list[FinancialCandidate],
+    batch_size: int,
+) -> list[str]:
+    return [
+        storage.write_candidate_batch(source_run_id, batch_index, batch)
+        for batch_index, batch in enumerate(
+            partition_batches(candidates, batch_size=batch_size)
+        )
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     storage = storage_from_env()
@@ -98,11 +116,17 @@ def main(argv: list[str] | None = None) -> int:
     temporal_address = args.temporal_address or os.environ.get(
         "TEMPORAL_ADDRESS", DEFAULT_TEMPORAL_ADDRESS
     )
+    batch_keys = write_candidate_batches(
+        storage=storage,
+        source_run_id=workflow_id,
+        candidates=candidates,
+        batch_size=args.batch_size,
+    )
     workflow_input = BootstrapInput(
         source_run_id=workflow_id,
         fetched_at=_utc_now_iso(),
-        batch_size=args.batch_size,
-        candidates=candidates,
+        candidate_count=len(candidates),
+        batch_keys=batch_keys,
         max_concurrent_batches=args.max_concurrent_batches,
     )
     started_workflow_id = asyncio.run(

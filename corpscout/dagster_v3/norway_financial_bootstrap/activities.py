@@ -6,7 +6,6 @@ import polars as pl
 from temporalio import activity
 
 from norway_financial_bootstrap.brreg_client import BrregFinancialClient
-from norway_financial_bootstrap.candidates import FinancialCandidate
 from norway_financial_bootstrap.storage import NorwayFinancialBootstrapStorage
 
 HEARTBEAT_EVERY_ROWS = 25
@@ -16,7 +15,7 @@ HEARTBEAT_EVERY_ROWS = 25
 class FetchBatchInput:
     source_run_id: str
     fetched_at: str
-    candidates: list[FinancialCandidate]
+    candidate_batch_key: str
 
 
 @dataclass(frozen=True)
@@ -50,13 +49,14 @@ def fetch_batch(
 ) -> FetchBatchResult:
     storage = storage if storage is not None else storage_from_env()
     client = client if client is not None else BrregFinancialClient()
+    candidates = storage.read_candidate_batch(input.candidate_batch_key)
 
     completed_org_years = storage.existing_raw_fetch_org_years()
     fetched_count = 0
     skipped_count = 0
     status_counts: dict[str, int] = {}
 
-    for line_number, candidate in enumerate(input.candidates, start=1):
+    for line_number, candidate in enumerate(candidates, start=1):
         org_year = (candidate.org_number, candidate.last_submitted_accounts_year)
         if org_year in completed_org_years:
             skipped_count += 1

@@ -27,8 +27,8 @@ with workflow.unsafe.imports_passed_through():
 class BootstrapInput:
     source_run_id: str
     fetched_at: str
-    batch_size: int
-    candidates: list[FinancialCandidate]
+    candidate_count: int
+    batch_keys: list[str]
     max_concurrent_batches: int = DEFAULT_MAX_CONCURRENT_BATCHES
 
 
@@ -80,11 +80,10 @@ class NorwayBrregInitialFinancialRawFetchWorkflow:
         if input.max_concurrent_batches < 1:
             raise ValueError("max_concurrent_batches must be at least 1")
 
-        batches = partition_batches(input.candidates, batch_size=input.batch_size)
         results: list[FetchBatchResult] = []
 
-        for index in range(0, len(batches), input.max_concurrent_batches):
-            window = batches[index : index + input.max_concurrent_batches]
+        for index in range(0, len(input.batch_keys), input.max_concurrent_batches):
+            window = input.batch_keys[index : index + input.max_concurrent_batches]
             window_results = await asyncio.gather(
                 *(
                     workflow.execute_activity(
@@ -92,18 +91,18 @@ class NorwayBrregInitialFinancialRawFetchWorkflow:
                         FetchBatchInput(
                             source_run_id=input.source_run_id,
                             fetched_at=input.fetched_at,
-                            candidates=batch,
+                            candidate_batch_key=batch_key,
                         ),
                         heartbeat_timeout=FETCH_BATCH_HEARTBEAT_TIMEOUT,
                         start_to_close_timeout=FETCH_BATCH_START_TO_CLOSE_TIMEOUT,
                         retry_policy=FETCH_BATCH_RETRY_POLICY,
                     )
-                    for batch in window
+                    for batch_key in window
                 )
             )
             results.extend(window_results)
 
         return aggregate_batch_results(
-            candidate_count=len(input.candidates),
+            candidate_count=input.candidate_count,
             batch_results=results,
         )

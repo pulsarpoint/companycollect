@@ -10,13 +10,22 @@ import polars as pl
 from dagster_v3.defs.norway_brreg.financial_storage import (
     financial_raw_fetch_object_key,
 )
+from norway_financial_bootstrap.candidates import FinancialCandidate
 
 DEFAULT_BUCKET = "source-finland-prhytj"
 RAW_FETCH_PREFIX = "norway_brreg/financial/raw_fetches/"
+BOOTSTRAP_RUNS_PREFIX = "norway_brreg/financial/bootstrap_runs/"
 
 
 def raw_fetch_key(org_number: str, accounts_year: str) -> str:
     return financial_raw_fetch_object_key(org_number, accounts_year)
+
+
+def candidate_batch_key(source_run_id: str, batch_index: int) -> str:
+    return (
+        f"{BOOTSTRAP_RUNS_PREFIX}run={source_run_id}/"
+        f"candidates/batch={batch_index:06d}.parquet"
+    )
 
 
 def completed_key_from_raw_fetch_key(key: str) -> tuple[str, str] | None:
@@ -80,6 +89,42 @@ class NorwayFinancialBootstrapStorage:
     def read_parquet(self, key: str) -> pl.DataFrame:
         response = self.client().get_object(Bucket=self.bucket, Key=key)
         return pl.read_parquet(BytesIO(response["Body"].read()))
+
+    def read_candidate_batch(self, key: str) -> list[FinancialCandidate]:
+        rows = (
+            self.read_parquet(key)
+            .select(
+                pl.col("org_number").cast(pl.String),
+                pl.col("legal_name").cast(pl.String),
+                pl.col("website").fill_null("").cast(pl.String),
+                pl.col("last_submitted_accounts_year").cast(pl.String),
+            )
+            .to_dicts()
+        )
+        return [
+            FinancialCandidate(
+                row["org_number"],
+                row["legal_name"],
+                row["website"],
+                row["last_submitted_accounts_year"],
+            )
+            for row in rows
+        ]
+
+    def write_candidate_batch(
+        self,
+        source_run_id: str,
+        batch_index: int,
+        candidates: list[FinancialCandidate],
+    ) -> str:
+        key = candidate_batch_key(source_run_id, batch_index)
+        frame = pl.DataFrame([candidate.as_org_mapping() for candidate in candidates])
+        self.client().put_object(
+            Bucket=self.bucket,
+            Key=key,
+            Body=_parquet_bytes(frame),
+        )
+        return key
 
     def write_raw_fetch(
         self, org_number: str, accounts_year: str, frame: pl.DataFrame
