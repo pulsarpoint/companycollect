@@ -67,6 +67,7 @@ From this directory:
 
 ```bash
 uv sync
+cp .env.example .env
 ```
 
 Required environment variables:
@@ -120,23 +121,30 @@ norway-brreg-finance-historical-bootstrap
 
 ## Run
 
-Start one or more workers:
+`norway-financial-bootstrap-worker` is the long-running Temporal worker. It
+connects to Temporal, registers the workflow/activity implementation, and waits
+for work on the fixed `norway-financial-bootstrap` task queue.
+
+Start one or more workers and leave them running:
 
 ```bash
-uv run norway-financial-bootstrap-worker \
-  --temporal-address temporal-host:7233 \
-  --s3-endpoint http://s3-host:9000
+uv run norway-financial-bootstrap-worker
 ```
 
-Start the workflow:
+`norway-financial-bootstrap` is the starter command. It reads candidate
+companies from ClickHouse, writes candidate batch parquet files to S3, and
+starts the fixed `norway-brreg-finance-historical-bootstrap` workflow.
+
+Start the workflow once from another terminal:
 
 ```bash
-uv run norway-financial-bootstrap \
-  --temporal-address temporal-host:7233 \
-  --s3-endpoint http://s3-host:9000
+uv run norway-financial-bootstrap
 ```
 
 The starter prints the workflow id after Temporal accepts the workflow.
+
+Both commands read `.env`. `--temporal-address` and `--s3-endpoint` are only
+one-off overrides when you do not want to change `.env`.
 
 ## Resume And Rerun Behavior
 

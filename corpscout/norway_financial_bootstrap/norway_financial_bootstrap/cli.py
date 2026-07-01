@@ -5,6 +5,7 @@ import sys
 import uuid
 from datetime import UTC, datetime
 
+from dotenv import load_dotenv
 from temporalio.client import Client
 
 from norway_financial_bootstrap.activities import storage_from_env
@@ -85,6 +86,7 @@ def write_candidate_batches(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    load_dotenv(".env", override=False)
     if args.s3_endpoint is not None:
         os.environ["CORPSCOUT_S3_ENDPOINT"] = args.s3_endpoint
     storage = storage_from_env()
