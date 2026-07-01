@@ -10,7 +10,7 @@ from pydantic import PrivateAttr
 from dagster_v3.defs.common.resources import ObjectStoreResource
 from dagster_v3.defs.norway_brreg.constants import NORWAY_BRREG_ENTITY_BUCKET
 from dagster_v3.defs.norway_brreg.financial_fetches import (
-    BRREG_FINANCIAL_FETCHES_COLUMNS,
+    financial_fetches_parquet_schema,
 )
 
 RAW_FETCH_PREFIX = "norway_brreg/financial/raw_fetches/"
@@ -66,7 +66,7 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
             self._read_frame(key) for key in self.list_historical_raw_fetch_keys()
         ]
         if not frames:
-            return pl.DataFrame(schema=_financial_fetches_schema())
+            return pl.DataFrame(schema=financial_fetches_parquet_schema())
         return pl.concat(frames, how="vertical_relaxed")
 
     def write_snapshot_fetches(self, frame: pl.DataFrame) -> str:
@@ -199,23 +199,3 @@ def _parquet_bytes(frame: pl.DataFrame) -> bytes:
     buffer = BytesIO()
     frame.write_parquet(buffer)
     return buffer.getvalue()
-
-
-def _financial_fetches_schema() -> dict[str, pl.DataType]:
-    return {
-        column_name: _polars_type_for_financial_fetch_column(column_schema)
-        for column_name, column_schema in BRREG_FINANCIAL_FETCHES_COLUMNS.items()
-    }
-
-
-def _polars_type_for_financial_fetch_column(
-    column_schema: dict[str, Any],
-) -> pl.DataType:
-    data_type = column_schema["data_type"]
-    if data_type == "text":
-        return pl.Utf8
-    if data_type == "bigint":
-        return pl.Int64
-    if data_type == "timestamp":
-        return pl.Datetime(time_unit="ms", time_zone="UTC")
-    raise ValueError(f"Unsupported Norway Brreg financial fetch column type: {data_type}")

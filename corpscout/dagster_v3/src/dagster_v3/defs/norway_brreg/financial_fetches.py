@@ -14,6 +14,7 @@ BRREG_REGNSKAP_BASE_URL = "https://data.brreg.no/regnskapsregisteret/regnskap"
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_USER_AGENT = "corpscout-dagster-v3-dev/0.1"
 FINANCIAL_FETCHES_TABLE = "financial_fetches"
+FINANCIAL_FETCHED_AT_DTYPE = pl.Datetime(time_unit="ms", time_zone="UTC")
 
 FINANCIAL_FETCH_STATUS_SUCCESS = "success"
 FINANCIAL_FETCH_STATUS_NOT_FOUND = "not_found"
@@ -47,6 +48,26 @@ BRREG_FINANCIAL_FETCHES_COLUMNS: dict[str, dict[str, Any]] = {
     "fetched_at": {"data_type": "timestamp"},
     "raw_response": {"data_type": "text"},
 }
+
+
+def polars_type_for_financial_fetch_column(
+    column_schema: dict[str, Any],
+) -> pl.DataType:
+    data_type = column_schema["data_type"]
+    if data_type == "text":
+        return pl.Utf8
+    if data_type == "bigint":
+        return pl.Int64
+    if data_type == "timestamp":
+        return FINANCIAL_FETCHED_AT_DTYPE
+    raise ValueError(f"Unsupported Norway Brreg financial fetch column type: {data_type}")
+
+
+def financial_fetches_parquet_schema() -> dict[str, pl.DataType]:
+    return {
+        column_name: polars_type_for_financial_fetch_column(column_schema)
+        for column_name, column_schema in BRREG_FINANCIAL_FETCHES_COLUMNS.items()
+    }
 
 
 def financial_fetch_success_row(

@@ -2,6 +2,7 @@ import json
 from typing import Any
 
 import polars as pl
+import pytest
 
 from dagster_v3.defs.norway_brreg import financial_fetches
 
@@ -97,6 +98,39 @@ def test_financial_fetches_table_schema_is_explicit() -> None:
         "data_type": "text"
     }
     assert financial_fetches.FINANCIAL_FETCHES_TABLE == "financial_fetches"
+
+
+def test_financial_fetches_parquet_schema_is_canonical() -> None:
+    schema = financial_fetches.financial_fetches_parquet_schema()
+
+    assert list(schema) == list(financial_fetches.BRREG_FINANCIAL_FETCHES_COLUMNS)
+    assert schema["org_number"] == pl.Utf8
+    assert schema["source_line_number"] == pl.Int64
+    assert schema["fetched_at"] == financial_fetches.FINANCIAL_FETCHED_AT_DTYPE
+
+
+def test_financial_fetch_column_type_mapping_rejects_unsupported_types() -> None:
+    assert (
+        financial_fetches.polars_type_for_financial_fetch_column({"data_type": "text"})
+        == pl.Utf8
+    )
+    assert (
+        financial_fetches.polars_type_for_financial_fetch_column(
+            {"data_type": "bigint"}
+        )
+        == pl.Int64
+    )
+    assert (
+        financial_fetches.polars_type_for_financial_fetch_column(
+            {"data_type": "timestamp"}
+        )
+        == financial_fetches.FINANCIAL_FETCHED_AT_DTYPE
+    )
+    with pytest.raises(
+        ValueError,
+        match="Unsupported Norway Brreg financial fetch column type",
+    ):
+        financial_fetches.polars_type_for_financial_fetch_column({"data_type": "json"})
 
 
 def test_snapshot_financial_candidates_use_active_companies_without_website_filter() -> None:

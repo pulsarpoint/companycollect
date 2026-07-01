@@ -21,18 +21,8 @@ from dagster_v3.defs.norway_brreg.financial_storage import (
     NorwayBrregFinancialParquetStorageResource,
 )
 
-FINANCIAL_FETCHED_AT_DTYPE = pl.Datetime(time_unit="ms", time_zone="UTC")
-
-
-def _polars_type_for_fetch_column(column_schema: dict[str, Any]) -> pl.DataType:
-    data_type = column_schema["data_type"]
-    if data_type == "text":
-        return pl.Utf8
-    if data_type == "bigint":
-        return pl.Int64
-    if data_type == "timestamp":
-        return FINANCIAL_FETCHED_AT_DTYPE
-    raise ValueError(f"Unsupported Norway Brreg financial fetch column type: {data_type}")
+FINANCIAL_FETCHED_AT_DTYPE = financial_fetches.FINANCIAL_FETCHED_AT_DTYPE
+_polars_type_for_fetch_column = financial_fetches.polars_type_for_financial_fetch_column
 
 
 FINANCIAL_FETCH_PARQUET_KINDS = {"python", "s3", "parquet", "brreg"}
@@ -42,10 +32,7 @@ FINANCIAL_FETCH_CANDIDATE_SCHEMA = {
     "website": pl.Utf8,
     "last_submitted_accounts_year": pl.Utf8,
 }
-FINANCIAL_FETCHES_PARQUET_SCHEMA = {
-    column_name: _polars_type_for_fetch_column(column_schema)
-    for column_name, column_schema in financial_fetches.BRREG_FINANCIAL_FETCHES_COLUMNS.items()
-}
+FINANCIAL_FETCHES_PARQUET_SCHEMA = financial_fetches.financial_fetches_parquet_schema()
 
 
 @dg.asset(

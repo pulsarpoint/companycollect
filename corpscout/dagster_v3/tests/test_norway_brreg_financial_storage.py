@@ -223,7 +223,7 @@ def test_financial_storage_reads_empty_historical_raw_fetches_with_schema() -> N
     historical_frame = storage.read_historical_raw_fetches()
 
     assert historical_frame.height == 0
-    assert historical_frame.schema == _expected_financial_fetches_schema()
+    assert historical_frame.schema == financial_fetches.financial_fetches_parquet_schema()
 
 
 def test_update_candidates_write_and_read_round_trip() -> None:
@@ -285,20 +285,3 @@ def _parquet_bytes(frame: pl.DataFrame) -> bytes:
     buffer = BytesIO()
     frame.write_parquet(buffer)
     return buffer.getvalue()
-
-
-def _expected_financial_fetches_schema() -> dict[str, pl.DataType]:
-    return {
-        column_name: _expected_financial_fetches_type(column_schema["data_type"])
-        for column_name, column_schema in financial_fetches.BRREG_FINANCIAL_FETCHES_COLUMNS.items()
-    }
-
-
-def _expected_financial_fetches_type(data_type: str) -> pl.DataType:
-    if data_type == "text":
-        return pl.Utf8
-    if data_type == "bigint":
-        return pl.Int64
-    if data_type == "timestamp":
-        return pl.Datetime(time_unit="ms", time_zone="UTC")
-    raise AssertionError(f"Unsupported test financial fetch column type: {data_type}")
