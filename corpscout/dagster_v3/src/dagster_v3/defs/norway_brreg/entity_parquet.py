@@ -25,7 +25,7 @@ def entity_records_parquet_bytes(
     allow_empty: bool = False,
     empty_error_message: str = "Norway Brreg entity records produced no rows",
 ) -> bytes:
-    rows = [_entity_parquet_row(record) for record in records]
+    rows = [entity_record_parquet_row(record) for record in records]
     if not rows and not allow_empty:
         raise ValueError(empty_error_message)
 
@@ -34,7 +34,7 @@ def entity_records_parquet_bytes(
     return buffer.getvalue()
 
 
-def _entity_parquet_row(record: dict[str, Any]) -> dict[str, Any]:
+def entity_record_parquet_row(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "org_number": _string(record.get("org_number")),
         "change_type": _string(record.get("change_type")),

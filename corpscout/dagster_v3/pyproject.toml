@@ -3,7 +3,7 @@ name = "dagster_v3"
 requires-python = ">=3.14,<3.15"
 version = "0.1.0"
 dependencies = [
-    "boto3>=1.43.29",
+    "boto3>=1.42.90,<1.43",
     "clickhouse-connect>=0.10.0",
     "dagster==1.13.9",
     "dagster-aws>=0.29.9",
@@ -13,7 +13,7 @@ dependencies = [
     "dagster-duckdb>=0.29.9",
     "dagster-postgres>=0.29.9",
     "dbt-duckdb>=1.8,<1.9",
-    "dlt[duckdb]>=1.27.2",
+    "dlt[duckdb,s3]>=1.28.0",
     "duckdb>=1.5.3",
     "ijson>=3.4.0",
     "lxml>=6.1.1",

@@ -32,7 +32,7 @@ BRREG. If it does not exist, it streams the gzip response body from BRREG
 directly into the provided Dagster S3 resource at the requested bucket/key.
 
 The endpoint returns a gzip-compressed JSON array. We stream the archive with
-`ijson` instead of loading decoded JSON all at once. The parquet snapshot asset
+`ijson` instead of loading decoded JSON all at once. The dlt parquet conversion
 wraps each source entity as a uniform record:
 
 ```text
@@ -65,7 +65,9 @@ Parquet Dagster asset:
 norway_brreg_entities_snapshot_s3
 ```
 
-The asset writes one parquet object:
+The asset reads the raw gzip object from S3 with a dlt filesystem source, runs
+a small dlt transformer for the JSON array, and writes the parquet object back
+to S3 with the dlt filesystem destination:
 
 ```text
 bucket: source-norway-brreg
@@ -74,6 +76,8 @@ key: norway_brreg/entities/snapshot/entities.parquet
 
 This full raw snapshot is a one-time/bootstrap style asset. If the raw object
 already exists on S3, the raw asset reuses it and skips downloading from BRREG.
+If the parquet object already exists on S3, the parquet conversion asset reuses
+it and skips reprocessing the gzip.
 
 ## Daily Updates
 
