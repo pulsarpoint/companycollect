@@ -31,6 +31,8 @@ dependencies = [
 [project.scripts]
 translator-worker = "translator.worker:worker_main"
 translator-import-legacy-queue = "translator.import_legacy:main"
+norway-financial-bootstrap = "norway_financial_bootstrap.cli:main"
+norway-financial-bootstrap-worker = "norway_financial_bootstrap.worker:worker_main"
 
 [dependency-groups]
 dev = [
@@ -45,7 +47,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dagster_v3", "exchange_rates", "translator"]
+packages = ["src/dagster_v3", "exchange_rates", "translator", "norway_financial_bootstrap"]
 force-include = { "pyproject.toml" = "pyproject.toml" }
 
 [tool.dg]
