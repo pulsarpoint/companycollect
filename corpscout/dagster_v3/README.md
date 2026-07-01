@@ -72,7 +72,8 @@ activities, and waits for work. Stop it with Ctrl-C.
 |----------|---------|---------|
 | `TEMPORAL_ADDRESS` | Temporal frontend | `companycollect:7233` |
 | `CLICKHOUSE_HOST` | ClickHouse host | `companycollect` |
-| `CLICKHOUSE_HTTP_PORT` | ClickHouse **HTTP** port (clickhouse-connect uses HTTP, not the native 9002) | `8123` |
+| `CLICKHOUSE_NATIVE_PORT` | ClickHouse native port used by Dagster's `ClickhouseResource` | `9002` |
+| `CLICKHOUSE_HTTP_PORT` | ClickHouse HTTP port used by legacy `clickhouse-connect` clients | `8123` |
 | `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` / `CLICKHOUSE_DATABASE` | ClickHouse creds | `default` / `change-me` / `corpscout` |
 | `CLICKHOUSE_SECURE` | TLS to ClickHouse | `false` |
 | `TRANSLATION_PROVIDER_LOCAL_BASE_URL` | OpenAI-compatible LLM endpoint | — (required) |

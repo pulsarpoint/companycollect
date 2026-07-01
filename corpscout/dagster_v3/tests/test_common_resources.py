@@ -4,7 +4,10 @@ from pathlib import Path
 import duckdb
 import pytest
 from botocore.exceptions import ClientError
+from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
+
+from dagster_v3.definitions import defs as load_project_defs
 
 
 def test_shared_resources_live_in_common() -> None:
@@ -55,64 +58,20 @@ def test_object_store_exists_returns_false_when_bucket_is_missing() -> None:
     assert resource.exists("snapshot.parquet", bucket="missing-bucket") is False
 
 
-def test_clickhouse_resource_factory_uses_http_arrow_client(
+def test_project_clickhouse_resource_uses_official_dagster_resource(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    helpers = importlib.import_module("dagster_v3.defs.clickhouse.resources")
-    monkeypatch.setenv("CLICKHOUSE_HTTP_PORT", "9443")
+    monkeypatch.setenv("CLICKHOUSE_NATIVE_PORT", "9443")
     monkeypatch.setenv("CLICKHOUSE_SECURE", "on")
 
-    resource = helpers.clickhouse_resource_from_env()
+    repository = load_project_defs().get_repository_def()
+    resource_def = repository.get_top_level_resources()["clickhouse"]
+    resource = resource_def.resource_fn.__self__
 
-    assert isinstance(resource, helpers.ClickHouseConnectResource)
+    assert resource_def.configurable_resource_cls is ClickhouseResource
+    assert isinstance(resource, ClickhouseResource)
     assert resource.port == 9443
     assert resource.secure is True
-
-
-def test_clickhouse_connect_resource_resolves_env_and_exposes_arrow_client(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    helpers = importlib.import_module("dagster_v3.defs.clickhouse.resources")
-    calls: dict[str, object] = {}
-    fake_client = _FakeClickHouseConnectClient()
-
-    def fake_get_client(**kwargs: object) -> _FakeClickHouseConnectClient:
-        calls.update(kwargs)
-        return fake_client
-
-    monkeypatch.setenv("CLICKHOUSE_HOST", "clickhouse.test")
-    monkeypatch.setenv("CLICKHOUSE_USER", "exporter")
-    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "secret")
-    monkeypatch.setenv("CLICKHOUSE_DATABASE", "corpscout")
-    monkeypatch.setattr(helpers.clickhouse_connect, "get_client", fake_get_client)
-    resource = helpers.clickhouse_resource_from_env()
-
-    with resource.get_connection() as client:
-        assert client.execute("SELECT name FROM system.tables") == [("br_companies",)]
-        client.execute("CREATE DATABASE IF NOT EXISTS corpscout")
-        client.insert_arrow("br_companies", object(), database="corpscout")
-        client.insert_rows(
-            "br_companies",
-            [("123", "BR")],
-            columns=("company_id", "country_iso2"),
-            database="corpscout",
-        )
-
-    assert calls["host"] == "clickhouse.test"
-    assert calls["username"] == "exporter"
-    assert calls["password"] == "secret"
-    assert calls["database"] == "corpscout"
-    assert fake_client.commands == ["CREATE DATABASE IF NOT EXISTS corpscout"]
-    assert fake_client.arrow_tables == [("corpscout", "br_companies")]
-    assert fake_client.inserted_rows == [
-        (
-            "corpscout",
-            "br_companies",
-            [("123", "BR")],
-            ["company_id", "country_iso2"],
-        )
-    ]
-    assert fake_client.closed is True
 
 
 def test_duckdb_resource_factory_uses_generic_runtime_env(
@@ -182,42 +141,3 @@ def test_finland_ytj_resources_module_exposes_api_resource() -> None:
     resources = importlib.import_module("dagster_v3.defs.finland_ytj.resources")
 
     assert resources.YtjApiResource.__name__ == "YtjApiResource"
-
-
-class _FakeClickHouseConnectClient:
-    def __init__(self) -> None:
-        self.commands: list[str] = []
-        self.arrow_tables: list[tuple[str | None, str]] = []
-        self.inserted_rows: list[
-            tuple[str | None, str, list[tuple[object, ...]], list[str]]
-        ] = []
-        self.closed = False
-
-    def query(self, sql: str, parameters: object | None = None) -> object:
-        assert parameters is None
-        assert sql == "SELECT name FROM system.tables"
-        return type("Result", (), {"result_rows": [("br_companies",)]})()
-
-    def command(self, sql: str, parameters: object | None = None) -> None:
-        assert parameters is None
-        self.commands.append(sql)
-
-    def insert_arrow(
-        self,
-        table: str,
-        arrow_table: object,
-        database: str | None = None,
-    ) -> None:
-        self.arrow_tables.append((database, table))
-
-    def insert(
-        self,
-        table: str,
-        data: list[tuple[object, ...]],
-        column_names: list[str],
-        database: str | None = None,
-    ) -> None:
-        self.inserted_rows.append((database, table, data, column_names))
-
-    def close(self) -> None:
-        self.closed = True

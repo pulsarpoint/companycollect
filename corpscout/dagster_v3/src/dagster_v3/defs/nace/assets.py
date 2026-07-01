@@ -14,7 +14,6 @@ from dagster_dlt.translator import DltResourceTranslatorData
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.clickhouse.resolved import replace_duckdb_connection_tables_in_clickhouse
-from dagster_v3.defs.clickhouse.resources import clickhouse_resource_from_env
 from dagster_v3.defs.common.duckdb_resources import duckdb_resource
 from dagster_v3.defs.duckdb.schema_contract import (
     create_duckdb_table_from_contract,

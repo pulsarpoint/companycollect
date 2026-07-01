@@ -9,9 +9,9 @@ import subprocess
 import sys
 
 import duckdb
+from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.definitions import defs as load_project_defs
-from dagster_v3.defs.clickhouse.resources import ClickHouseConnectResource
 from dagster_v3.defs.exchange_rates_v2 import assets as fx_v2_assets
 from dagster_v3.defs.exchange_rates_v2 import source as fx_v2_source
 
@@ -263,7 +263,7 @@ def test_exchange_rates_v2_assets_and_job_are_registered() -> None:
     assert "clickhouse" in resource_keys
     assert (
         repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
-        is ClickHouseConnectResource
+        is ClickhouseResource
     )
     # de-partitioned: every v2 asset is non-partitioned now.
     assert partitions_defs == {None}

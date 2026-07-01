@@ -13,7 +13,6 @@ from dagster_clickhouse import ClickhouseResource
 from dagster_duckdb import DuckDBResource
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.clickhouse.resources import ClickHouseConnectResource
 from dagster_v3.definitions import defs as load_project_defs
 
 
@@ -30,7 +29,7 @@ def test_wikidata_clickhouse_asset_is_registered() -> None:
     assert "object_store" in resource_keys
     assert (
         repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
-        is ClickHouseConnectResource
+        is ClickhouseResource
     )
 
 

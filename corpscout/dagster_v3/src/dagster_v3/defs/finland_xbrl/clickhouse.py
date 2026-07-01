@@ -245,8 +245,12 @@ def _replace_clickhouse_table_with_arrow(
         clickhouse_client.execute(
             f"CREATE TABLE {qualified_stage_table} AS {qualified_table}"
         )
-        if arrow_table.num_rows > 0:
-            clickhouse_client.insert_arrow(stage_table, arrow_table, database=database)
+        rows = _financial_metrics_insert_rows(arrow_table)
+        if rows:
+            clickhouse_client.execute(
+                _financial_metrics_insert_sql(qualified_stage_table),
+                rows,
+            )
         clickhouse_client.execute(
             f"EXCHANGE TABLES {qualified_stage_table} AND {qualified_table}"
         )
@@ -259,6 +263,121 @@ def _replace_clickhouse_table_with_arrow(
         except Exception:
             if primary_error is None:
                 raise
+
+
+def _financial_metrics_insert_sql(qualified_table: str) -> str:
+    return f"""
+        INSERT INTO {qualified_table} (
+            statement_key,
+            business_id,
+            financial_date,
+            registration_date,
+            period_start,
+            period_end,
+            reported_company_name,
+            source_url,
+            xml_object_key,
+            xml_sha256,
+            xml_size_bytes,
+            currency_original,
+            revenue_amount_original,
+            revenue_amount_usd,
+            operating_profit_loss_amount_original,
+            operating_profit_loss_amount_usd,
+            profit_loss_amount_original,
+            profit_loss_amount_usd,
+            total_assets_amount_original,
+            total_assets_amount_usd,
+            equity_amount_original,
+            equity_amount_usd,
+            liabilities_amount_original,
+            liabilities_amount_usd,
+            cash_and_bank_amount_original,
+            cash_and_bank_amount_usd,
+            current_assets_amount_original,
+            current_assets_amount_usd,
+            current_receivables_amount_original,
+            current_receivables_amount_usd,
+            current_liabilities_amount_original,
+            current_liabilities_amount_usd,
+            personnel_expenses_amount_original,
+            personnel_expenses_amount_usd,
+            wages_and_salaries_amount_original,
+            wages_and_salaries_amount_usd,
+            employees,
+            source_fact_count,
+            mapped_fact_count,
+            unmapped_numeric_fact_count,
+            metric_warnings,
+            mapping_version,
+            fx_rate_to_usd,
+            fx_rate_date,
+            fx_converted_at,
+            source_system,
+            source_run_id,
+            source_record_id,
+            source_payload_hash,
+            resolved_at
+        ) VALUES
+    """
+
+
+def _financial_metrics_insert_rows(arrow_table: pa.Table) -> list[tuple[object, ...]]:
+    return [
+        (
+            row["statement_key"],
+            row["business_id"],
+            row["financial_date"],
+            row["registration_date"],
+            row["period_start"],
+            row["period_end"],
+            row["reported_company_name"],
+            row["source_url"],
+            row["xml_object_key"],
+            row["xml_sha256"],
+            row["xml_size_bytes"],
+            row["currency_original"],
+            row["revenue_amount_original"],
+            row["revenue_amount_usd"],
+            row["operating_profit_loss_amount_original"],
+            row["operating_profit_loss_amount_usd"],
+            row["profit_loss_amount_original"],
+            row["profit_loss_amount_usd"],
+            row["total_assets_amount_original"],
+            row["total_assets_amount_usd"],
+            row["equity_amount_original"],
+            row["equity_amount_usd"],
+            row["liabilities_amount_original"],
+            row["liabilities_amount_usd"],
+            row["cash_and_bank_amount_original"],
+            row["cash_and_bank_amount_usd"],
+            row["current_assets_amount_original"],
+            row["current_assets_amount_usd"],
+            row["current_receivables_amount_original"],
+            row["current_receivables_amount_usd"],
+            row["current_liabilities_amount_original"],
+            row["current_liabilities_amount_usd"],
+            row["personnel_expenses_amount_original"],
+            row["personnel_expenses_amount_usd"],
+            row["wages_and_salaries_amount_original"],
+            row["wages_and_salaries_amount_usd"],
+            row["employees"],
+            row["source_fact_count"],
+            row["mapped_fact_count"],
+            row["unmapped_numeric_fact_count"],
+            row["metric_warnings"],
+            row["mapping_version"],
+            row["fx_rate_to_usd"],
+            row["fx_rate_date"],
+            row["fx_converted_at"],
+            row["source_system"],
+            row["source_run_id"],
+            row["source_record_id"],
+            row["source_payload_hash"],
+            row["resolved_at"],
+        )
+        for row in arrow_table.to_pylist()
+    ]
 
 
 def _decimal_value(value: object) -> Decimal | None:

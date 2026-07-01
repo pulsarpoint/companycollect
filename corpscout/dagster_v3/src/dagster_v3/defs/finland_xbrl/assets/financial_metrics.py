@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Any
 
 import dagster as dg
+from dagster_clickhouse import ClickhouseResource
 import polars as pl
 
 from dagster_v3.defs.finland_xbrl import metric_mapping, tables
@@ -14,7 +15,6 @@ from dagster_v3.defs.finland_xbrl.clickhouse import (
     SOURCE_SYSTEM,
     export_finland_xbrl_financial_metrics_clickhouse,
 )
-from dagster_v3.defs.clickhouse.resources import ClickHouseConnectResource
 from dagster_v3.defs.finland_xbrl.assets.parse import (
     finland_xbrl_parse_backfill,
     finland_xbrl_parse_incremental,
@@ -246,7 +246,7 @@ def finland_xbrl_financial_metrics_usd(
 def finland_xbrl_financial_metrics_clickhouse(
     context: dg.AssetExecutionContext,
     xbrl_parquet_storage: XbrlParquetStorageResource,
-    clickhouse: ClickHouseConnectResource,
+    clickhouse: ClickhouseResource,
 ) -> dg.MaterializeResult:
     row_count = export_finland_xbrl_financial_metrics_clickhouse(
         xbrl_parquet_storage=xbrl_parquet_storage,

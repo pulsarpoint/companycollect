@@ -128,21 +128,14 @@ class FakeS3Error(Exception):
 class FakeClickHouseClient:
     def __init__(self) -> None:
         self.statements: list[str] = []
-        self.arrow_insert_calls: list[tuple[str | None, str, pa.Table]] = []
+        self.execute_calls: list[tuple[str, object | None]] = []
 
     def execute(self, sql: str, params: object | None = None) -> list[tuple[str, ...]]:
+        self.execute_calls.append((sql, params))
         self.statements.append(sql)
         if "system.tables" in sql:
             return [("fi_financial_metrics",)]
         return []
-
-    def insert_arrow(
-        self,
-        table: str,
-        arrow_table: pa.Table,
-        database: str | None = None,
-    ) -> None:
-        self.arrow_insert_calls.append((database, table, arrow_table))
 
 
 class FakeClickHouseResource:
@@ -955,15 +948,27 @@ def test_finland_xbrl_clickhouse_export_casts_employees_to_nullable_uint(
     )
 
     assert row_count == 2
-    assert client.arrow_insert_calls
-    database, table, arrow_table = client.arrow_insert_calls[0]
-    assert database == "corpscout"
-    assert table.startswith("fi_financial_metrics__stage_")
-    assert arrow_table.schema.field("employees").type == pa.uint64()
-    assert arrow_table.to_pylist()[0]["employees"] == 12
-    assert arrow_table.to_pylist()[1]["employees"] is None
-    assert arrow_table.to_pylist()[0]["revenue_amount_usd"] == Decimal("110.000000")
-    assert arrow_table.to_pylist()[0]["fx_rate_to_usd"] == Decimal("1.100000000000")
+    insert_calls = [
+        (sql, params)
+        for sql, params in client.execute_calls
+        if sql.strip().startswith("INSERT INTO corpscout.fi_financial_metrics__stage_")
+    ]
+    assert len(insert_calls) == 1
+    insert_sql, insert_rows = insert_calls[0]
+    assert isinstance(insert_rows, list)
+    assert len(insert_rows) == 2
+    column_block = insert_sql.split("(", 1)[1].rsplit(")", 1)[0]
+    insert_columns = [
+        line.strip().rstrip(",")
+        for line in column_block.splitlines()
+        if line.strip()
+    ]
+    first_row = dict(zip(insert_columns, insert_rows[0], strict=True))
+    second_row = dict(zip(insert_columns, insert_rows[1], strict=True))
+    assert first_row["employees"] == 12
+    assert second_row["employees"] is None
+    assert first_row["revenue_amount_usd"] == Decimal("110.000000")
+    assert first_row["fx_rate_to_usd"] == Decimal("1.100000000000")
     assert any(statement.startswith("EXCHANGE TABLES") for statement in client.statements)
 
 

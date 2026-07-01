@@ -8,7 +8,6 @@ import duckdb
 from dagster_clickhouse import ClickhouseResource
 
 from dagster_v3.definitions import defs as load_project_defs
-from dagster_v3.defs.clickhouse.resources import ClickHouseConnectResource
 from dagster_v3.defs.nace import assets as nace_assets
 from dagster_v3.defs.nace import source as nace_source
 from dagster_v3.defs.nace import tables
@@ -227,30 +226,20 @@ def test_nace_assets_are_registered_as_staged_flow() -> None:
     assert "clickhouse" in resource_keys
     assert (
         repository.get_top_level_resources()["clickhouse"].configurable_resource_cls
-        is ClickHouseConnectResource
+        is ClickhouseResource
     )
-
-
-def test_nace_clickhouse_resource_reads_non_default_env_values(monkeypatch) -> None:
-    monkeypatch.setenv("CLICKHOUSE_HTTP_PORT", "9440")
-    monkeypatch.setenv("CLICKHOUSE_SECURE", "on")
-
-    resource = nace_assets.clickhouse_resource_from_env()
-
-    assert resource.port == 9440
-    assert resource.secure is True
 
 
 def test_nace_registered_clickhouse_resource_reads_env_at_definition_time(
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("CLICKHOUSE_HTTP_PORT", "9440")
+    monkeypatch.setenv("CLICKHOUSE_NATIVE_PORT", "9440")
     monkeypatch.setenv("CLICKHOUSE_SECURE", "on")
 
     repository = load_project_defs().get_repository_def()
     resource = repository.get_top_level_resources()["clickhouse"].resource_fn.__self__
 
-    assert isinstance(resource, ClickHouseConnectResource)
+    assert isinstance(resource, ClickhouseResource)
     assert resource.port == 9440
     assert resource.secure is True
 
