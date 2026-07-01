@@ -4,7 +4,7 @@
 
 **Goal:** Replace Norway financial bootstrap S3 candidate batch shards with deterministic ClickHouse candidate slots, Temporal continue-as-new slot workflows, and S3 raw-report status markers.
 
-**Architecture:** The bootstrap starter creates or reuses a frozen ClickHouse candidate table keyed by `run_id + slot + slot_index`. It starts one Temporal workflow chain per slot. Each workflow run gets one candidate, skips it if S3 status markers exist, otherwise fetches BRREG structured financial data for that org, writes raw reports and a colocated done/failed marker, then continues as new with `slot_index + 1`.
+**Architecture:** Startup code creates or reuses a frozen ClickHouse candidate table keyed by `run_id + slot + slot_index`; this is not a Temporal workflow or activity. After startup preparation, the service starts one Temporal workflow chain per slot. Each workflow run gets one candidate, skips it if S3 status markers exist, otherwise fetches BRREG structured financial data for that org, writes raw reports and a colocated done/failed marker, then continues as new with `slot_index + 1`.
 
 **Tech Stack:** Python 3.14, Temporal Python SDK, ClickHouse via `clickhouse_connect`, boto3 S3-compatible storage, pytest, ruff.
 
@@ -65,6 +65,7 @@ Modify:
   - Candidate table DDL.
   - Deterministic slot insertion.
   - Candidate lookup by `run_id + slot + slot_index`.
+  - Plain startup function for candidate table preparation; this must not be a Temporal activity.
 - `corpscout/norway_financial_bootstrap/norway_financial_bootstrap/paths.py`
   - Raw report key.
   - Org status marker keys.
@@ -83,7 +84,7 @@ Modify:
 - `corpscout/norway_financial_bootstrap/norway_financial_bootstrap/workflows.py`
   - Replace batch workflow with slot workflow.
 - `corpscout/norway_financial_bootstrap/norway_financial_bootstrap/cli.py`
-  - Prepare candidate table and start slot workflows.
+  - Prepare candidate table during service startup and start slot workflows.
 - `corpscout/norway_financial_bootstrap/norway_financial_bootstrap/worker.py`
   - Register the new workflow and activities.
 - `corpscout/norway_financial_bootstrap/README.md`
@@ -1769,7 +1770,8 @@ Update `cli.py` to:
 
 - Remove `write_candidate_batches`.
 - Remove loading all candidates into Python.
-- Call `prepare_candidate_table(clickhouse_from_env(), run_id=FIXED_WORKFLOW_ID, slot_count=DEFAULT_SLOT_COUNT)`.
+- Call `prepare_candidate_table(clickhouse_from_env(), run_id=FIXED_WORKFLOW_ID, slot_count=DEFAULT_SLOT_COUNT)` as normal startup code before any Temporal workflow is started.
+- Do not register or execute candidate table preparation as a Temporal activity.
 - Connect Temporal once.
 - Start slot workflows with ids from `slot_workflow_id`.
 
@@ -2104,11 +2106,40 @@ Do not run this until the new slot-marker workflow is ready.
 
 ---
 
+## Important Boundary
+
+Candidate table preparation is startup work, not Temporal work.
+
+The service startup sequence is:
+
+```text
+start process
+  -> load environment
+  -> connect ClickHouse
+  -> create/reuse corpscout.norway_financial_bootstrap_candidates
+  -> connect Temporal
+  -> start slot workflows from index 0
+```
+
+Temporal workflow history should only contain per-organization processing:
+
+```text
+get_candidate
+candidate_marker_status
+fetch_and_store_candidate
+write_done_marker or write_failed_marker
+continue-as-new
+```
+
+No workflow or activity should perform full candidate table bootstrap.
+
+---
+
 ## Plan Self-Review
 
 Spec coverage:
 
-- Frozen ClickHouse candidate table: Task 2.
+- Frozen ClickHouse candidate table: Task 2 and Task 8 startup call.
 - Org-only candidate source: Tasks 1 and 2.
 - No S3 candidate shards: Tasks 3, 8, 11.
 - S3 raw report + colocated markers: Tasks 3 and 4.
