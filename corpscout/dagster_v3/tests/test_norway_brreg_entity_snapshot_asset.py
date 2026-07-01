@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import gzip
 import json
 from io import BytesIO
+from typing import Any
 
 import dagster as dg
 import polars as pl
 
 from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
     NORWAY_BRREG_ENTITY_BUCKET,
+    entries_snapshot_raw_object_key,
     entity_snapshot_object_key,
+    norway_brreg_entries_snapshot_raw_s3,
     norway_brreg_entities_snapshot_s3,
 )
 from dagster_v3.defs.norway_brreg.assets.entity_updates import (
@@ -19,24 +23,34 @@ from dagster_v3.defs.norway_brreg.assets.entity_updates import (
 
 class FakeNorwayBrregApi:
     def __init__(self) -> None:
-        self.iter_all_entities_kwargs = None
+        self.entries_snapshot_kwargs = None
 
-    def iter_all_entities(self, **kwargs):
-        self.iter_all_entities_kwargs = kwargs
-        yield {
-            "org_number": "923609016",
-            "change_type": "snapshot",
-            "source_change_type": "snapshot",
-            "updated_at": None,
-            "update_id": None,
-            "entity_url": "https://data.brreg.no/enhetsregisteret/api/enheter/923609016",
-            "entity": {
-                "organisasjonsnummer": "923609016",
-                "navn": "EQUINOR ASA",
-                "sisteInnsendteAarsregnskap": "2024",
-            },
-            "raw_update": None,
+    def entries_snapshot(self, **kwargs):
+        self.entries_snapshot_kwargs = kwargs
+        return {
+            "s3_bucket": kwargs["bucket"],
+            "s3_key": kwargs["key"],
+            "downloaded": True,
+            "bytes_downloaded": 123,
         }
+
+
+class FakeDagsterS3Resource:
+    def __init__(self, client: "FakeS3Client") -> None:
+        self._client = client
+
+    def get_client(self) -> "FakeS3Client":
+        return self._client
+
+
+class FakeS3Client:
+    def __init__(self, objects: dict[tuple[str, str], bytes] | None = None) -> None:
+        self.objects = objects or {}
+        self.get_calls: list[tuple[str, str]] = []
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        self.get_calls.append((Bucket, Key))
+        return {"Body": BytesIO(self.objects[(Bucket, Key)])}
 
 
 class FakeObjectStore:
@@ -57,19 +71,65 @@ class FakeObjectStore:
         return (bucket, key) in self.objects
 
 
-def test_entities_snapshot_asset_writes_uniform_records_as_parquet_to_s3() -> None:
+def test_entries_snapshot_raw_asset_delegates_to_api_resource() -> None:
     api = FakeNorwayBrregApi()
+    s3 = FakeDagsterS3Resource(FakeS3Client())
+
+    result = norway_brreg_entries_snapshot_raw_s3(
+        context=dg.build_asset_context(),
+        norway_brreg_api=api,
+        s3=s3,
+    )
+
+    assert api.entries_snapshot_kwargs is not None
+    assert api.entries_snapshot_kwargs["s3"] is s3
+    assert api.entries_snapshot_kwargs["bucket"] == NORWAY_BRREG_ENTITY_BUCKET
+    assert api.entries_snapshot_kwargs["key"] == entries_snapshot_raw_object_key()
+    assert callable(api.entries_snapshot_kwargs["log"])
+    assert result.metadata == {
+        "s3_bucket": NORWAY_BRREG_ENTITY_BUCKET,
+        "s3_key": entries_snapshot_raw_object_key(),
+        "downloaded": True,
+        "bytes_downloaded": 123,
+    }
+
+
+def test_entities_snapshot_asset_writes_uniform_records_as_parquet_to_s3() -> None:
+    s3_client = FakeS3Client(
+        {
+            (
+                NORWAY_BRREG_ENTITY_BUCKET,
+                entries_snapshot_raw_object_key(),
+            ): gzip.compress(
+                json.dumps(
+                    [
+                        {
+                            "organisasjonsnummer": "923609016",
+                            "navn": "EQUINOR ASA",
+                            "sisteInnsendteAarsregnskap": "2024",
+                            "_links": {
+                                "self": {
+                                    "href": "https://data.brreg.no/enhetsregisteret/api/enheter/923609016"
+                                }
+                            },
+                        }
+                    ]
+                ).encode("utf-8")
+            )
+        }
+    )
     object_store = FakeObjectStore()
     context = dg.build_asset_context()
 
     result = norway_brreg_entities_snapshot_s3(
         context=context,
-        norway_brreg_api=api,
+        s3=FakeDagsterS3Resource(s3_client),
         object_store=object_store,
     )
 
-    assert api.iter_all_entities_kwargs is not None
-    assert callable(api.iter_all_entities_kwargs["log"])
+    assert s3_client.get_calls == [
+        (NORWAY_BRREG_ENTITY_BUCKET, entries_snapshot_raw_object_key())
+    ]
     assert object_store.created_buckets == [NORWAY_BRREG_ENTITY_BUCKET]
     assert result.metadata["row_count"] == 1
     assert result.metadata["s3_bucket"] == NORWAY_BRREG_ENTITY_BUCKET
@@ -114,21 +174,19 @@ def test_entities_snapshot_asset_writes_uniform_records_as_parquet_to_s3() -> No
 
 
 def test_entities_snapshot_asset_reuses_existing_stable_snapshot_without_api_download() -> None:
-    class FailingApi:
-        def iter_all_entities(self, **_kwargs):
-            raise AssertionError("snapshot API should not be called when stable object exists")
-
     object_store = FakeObjectStore()
     object_store.objects[
         (NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())
     ] = b"existing parquet"
+    s3_client = FakeS3Client()
 
     result = norway_brreg_entities_snapshot_s3(
         context=dg.build_asset_context(),
-        norway_brreg_api=FailingApi(),
+        s3=FakeDagsterS3Resource(s3_client),
         object_store=object_store,
     )
 
+    assert s3_client.get_calls == []
     assert object_store.created_buckets == []
     assert result.metadata["s3_bucket"] == NORWAY_BRREG_ENTITY_BUCKET
     assert result.metadata["s3_key"] == entity_snapshot_object_key()
@@ -137,16 +195,20 @@ def test_entities_snapshot_asset_reuses_existing_stable_snapshot_without_api_dow
 
 
 def test_entities_snapshot_asset_refuses_empty_snapshot() -> None:
-    class EmptyApi:
-        def iter_all_entities(self, **_kwargs):
-            return iter(())
-
+    s3_client = FakeS3Client(
+        {
+            (
+                NORWAY_BRREG_ENTITY_BUCKET,
+                entries_snapshot_raw_object_key(),
+            ): gzip.compress(b"[]")
+        }
+    )
     object_store = FakeObjectStore()
 
     try:
         norway_brreg_entities_snapshot_s3(
             context=dg.build_asset_context(),
-            norway_brreg_api=EmptyApi(),
+            s3=FakeDagsterS3Resource(s3_client),
             object_store=object_store,
         )
     except ValueError as exc:

@@ -1,66 +1,9 @@
-import gzip
 import json
-from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any
 
 import dagster_v3.defs.norway_brreg.assets as brreg_assets
 from dagster_v3.defs.norway_brreg import resources as brreg_resources
-
-
-class FakeResponse:
-    def __init__(self, content: bytes = b"", status_code: int = 200) -> None:
-        self.content = content
-        self.status_code = status_code
-        try:
-            self.text = content.decode("utf-8") if content else ""
-        except UnicodeDecodeError:
-            self.text = ""
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
-
-    def json(self) -> Any:
-        return json.loads(self.text)
-
-    def iter_content(self, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
-        for index in range(0, len(self.content), chunk_size):
-            yield self.content[index : index + chunk_size]
-
-
-class FakeHttpSession:
-    def __init__(
-        self,
-        content: bytes = b"",
-        json_by_url: dict[str, Any] | None = None,
-        status_by_url: dict[str, int] | None = None,
-    ) -> None:
-        self.content = content
-        self.json_by_url = json_by_url or {}
-        self.status_by_url = status_by_url or {}
-        self.calls: list[tuple[str, dict[str, Any] | None, int]] = []
-        self.headers: dict[str, str] = {}
-
-    def get(
-        self,
-        url: str,
-        params: dict[str, Any] | None = None,
-        timeout: int = 120,
-        stream: bool = False,
-    ) -> FakeResponse:
-        self.calls.append((url, params, timeout))
-        status_code = self.status_by_url.get(url, 200)
-        if url in self.json_by_url:
-            return FakeResponse(
-                content=json.dumps(self.json_by_url[url]).encode("utf-8"),
-                status_code=status_code,
-            )
-        return FakeResponse(content=self.content, status_code=status_code)
-
-
-def _gzip_json_array(records: list[dict[str, Any]]) -> bytes:
-    return gzip.compress(json.dumps(records).encode("utf-8"))
 
 
 def _entity_record(**overrides: Any) -> dict[str, Any]:
@@ -257,61 +200,3 @@ def test_entity_status_derivation_handles_liquidation_and_bankruptcy() -> None:
     ]
     assert [row["is_active"] for row in rows] == [False, False, False]
 
-
-def test_iter_brreg_entity_rows_downloads_gzip_and_yields_rows() -> None:
-    session = FakeHttpSession(
-        _gzip_json_array(
-            [
-                _entity_record(),
-                _entity_record(organisasjonsnummer="999999999"),
-            ]
-        )
-    )
-
-    rows = list(brreg_resources.iter_brreg_entity_rows(session=session, run_id="test-run"))
-
-    assert [row["org_number"] for row in rows] == ["923609016", "999999999"]
-    assert session.calls == [
-        ("https://data.brreg.no/enhetsregisteret/api/enheter/lastned", None, 120)
-    ]
-    assert session.headers["User-Agent"] == brreg_resources.DEFAULT_USER_AGENT
-
-
-def test_iter_brreg_entity_rows_logs_every_1000_rows() -> None:
-    records = [
-        _entity_record(organisasjonsnummer=str(900000000 + index))
-        for index in range(2001)
-    ]
-    messages: list[str] = []
-
-    rows = list(
-        brreg_resources.iter_brreg_entity_rows(
-            session=FakeHttpSession(_gzip_json_array(records)),
-            log=lambda message, *args: messages.append(message % args),
-        )
-    )
-
-    assert len(rows) == 2001
-    assert messages == [
-        "Processed Norway Brreg entity rows: rows=1000",
-        "Processed Norway Brreg entity rows: rows=2000",
-    ]
-
-
-def test_download_bytes_logs_progress_by_byte_threshold() -> None:
-    messages: list[str] = []
-
-    body = brreg_resources._download_bytes(
-        url="https://data.brreg.no/enhetsregisteret/api/enheter/lastned",
-        timeout_seconds=120,
-        user_agent="test-agent",
-        session=FakeHttpSession(b"abcdefghij"),
-        log=lambda message, *args: messages.append(message % args),
-        progress_every_bytes=4,
-    )
-
-    assert body == b"abcdefghij"
-    assert messages == [
-        "Downloaded Norway Brreg entity archive: downloaded_bytes=4 downloaded_mb=0.0",
-        "Downloaded Norway Brreg entity archive: downloaded_bytes=8 downloaded_mb=0.0",
-    ]

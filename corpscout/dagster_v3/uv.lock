@@ -416,6 +416,21 @@ wheels = [
 ]
 
 [[package]]
+name = "dagster-aws"
+version = "0.29.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "boto3" },
+    { name = "dagster" },
+    { name = "packaging" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/2d/16f8f5a5019d9063e7a113925b66552fdcaa9b0c1ae922c3fb058fb38a62/dagster_aws-0.29.9.tar.gz", hash = "sha256:40ab7b7d1296b7a64a41c03f4faff2081ffe394ad6c30ca8ccd36c2d1160d432", size = 428693, upload-time = "2026-06-11T18:32:14.833Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/e6/2dce0eff14ff6af93d4b97324400bf4a28f630504efdcbc248c830903b34/dagster_aws-0.29.9-py3-none-any.whl", hash = "sha256:b23aa9b6e159dceb2cf8c8183fbd06b093e5a89b5f4fe498a4fdcf3e264d6e36", size = 165245, upload-time = "2026-06-11T18:32:13.128Z" },
+]
+
+[[package]]
 name = "dagster-clickhouse"
 version = "0.29.9"
 source = { registry = "https://pypi.org/simple" }
@@ -621,6 +636,7 @@ dependencies = [
     { name = "boto3" },
     { name = "clickhouse-connect" },
     { name = "dagster" },
+    { name = "dagster-aws" },
     { name = "dagster-clickhouse" },
     { name = "dagster-dbt" },
     { name = "dagster-dlt" },
@@ -656,6 +672,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.43.29" },
     { name = "clickhouse-connect", specifier = ">=0.10.0" },
     { name = "dagster", specifier = "==1.13.9" },
+    { name = "dagster-aws", specifier = ">=0.29.9" },
     { name = "dagster-clickhouse", specifier = ">=0.29.9" },
     { name = "dagster-dbt", specifier = ">=0.29.9" },
     { name = "dagster-dlt", specifier = ">=0.29.9" },

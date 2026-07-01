@@ -1,7 +1,9 @@
 from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
+    entries_snapshot_raw_object_key,
     GROUP_NAME,
     NORWAY_BRREG_ENTITY_BUCKET,
     entity_snapshot_object_key,
+    norway_brreg_entries_snapshot_raw_s3,
     norway_brreg_entities_snapshot_s3,
 )
 from dagster_v3.defs.norway_brreg.assets.entity_updates import (
@@ -35,9 +37,11 @@ __all__ = [
     "NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS",
     "NorwayBrregTranslationConfig",
     "build_norway_brreg_build_queue_input",
+    "entries_snapshot_raw_object_key",
     "entity_snapshot_object_key",
     "entity_update_window",
     "entity_updates_object_key",
+    "norway_brreg_entries_snapshot_raw_s3",
     "norway_brreg_entities_full_snapshot_job",
     "norway_brreg_entities_snapshot_clickhouse",
     "norway_brreg_entities_snapshot_normalized_parquets",

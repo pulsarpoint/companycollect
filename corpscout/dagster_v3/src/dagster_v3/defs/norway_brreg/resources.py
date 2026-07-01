@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gzip
 import hashlib
 import json
 import logging
@@ -11,12 +10,10 @@ from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
 from decimal import Decimal
-from io import BytesIO
 from typing import Any, Protocol
 from typing import TYPE_CHECKING
 
 import dagster as dg
-import ijson
 import requests
 from pydantic import PrivateAttr
 
@@ -31,8 +28,6 @@ ENTITY_SOURCE_SLUG = "norway_brregenhet"
 BRREG_BASE_URL = "https://data.brreg.no/enhetsregisteret/api"
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_USER_AGENT = "corpscout-dagster-v3-dev/0.1"
-DOWNLOAD_CHUNK_BYTES = 1024 * 1024
-DOWNLOAD_PROGRESS_LOG_EVERY_BYTES = 100 * 1024 * 1024
 ENTITY_PROGRESS_LOG_EVERY_ROWS = 1000
 UPDATE_MAX_RESULT_WINDOW = 10_000
 LOGGER = logging.getLogger(__name__)
@@ -85,21 +80,6 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
             session.headers["User-Agent"] = self.user_agent
             self._session = session
         return self._session
-
-    def download_entities_snapshot(
-        self,
-        *,
-        log: Callable[..., None] | None = None,
-        download_progress_every_bytes: int = DOWNLOAD_PROGRESS_LOG_EVERY_BYTES,
-    ) -> bytes:
-        return _download_bytes(
-            url=f"{self.base_url}/enheter/lastned",
-            timeout_seconds=self.timeout_seconds,
-            user_agent=self.user_agent,
-            session=self.session(),
-            log=log,
-            progress_every_bytes=download_progress_every_bytes,
-        )
 
     def entries_snapshot(
         self,
@@ -165,30 +145,6 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
             "downloaded": True,
             "bytes_downloaded": bytes_downloaded,
         }
-
-    def iter_all_entities(
-        self,
-        *,
-        log: Callable[..., None] | None = None,
-        progress_every_rows: int = ENTITY_PROGRESS_LOG_EVERY_ROWS,
-        download_progress_every_bytes: int = DOWNLOAD_PROGRESS_LOG_EVERY_BYTES,
-    ) -> Iterator[dict[str, Any]]:
-        progress_log = log or LOGGER.info
-        progress_log("Starting Norway Brreg entity snapshot download")
-        response_body = self.download_entities_snapshot(
-            log=progress_log,
-            download_progress_every_bytes=download_progress_every_bytes,
-        )
-        progress_log(
-            "Completed Norway Brreg entity snapshot download: bytes=%s",
-            len(response_body),
-        )
-        row_count = 0
-        for row_count, entity in enumerate(_stream_gzip_json_array(response_body), start=1):
-            if progress_every_rows > 0 and row_count % progress_every_rows == 0:
-                progress_log("Parsed Norway Brreg entity snapshot rows: rows=%s", row_count)
-            yield entity_records.snapshot_entity_record(entity)
-        progress_log("Completed Norway Brreg entity snapshot parse: rows=%s", row_count)
 
     def iter_updated_entities(
         self,
@@ -365,32 +321,6 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
         return response.json()
 
 
-def iter_brreg_entity_rows(
-    *,
-    base_url: str = BRREG_BASE_URL,
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
-    user_agent: str = DEFAULT_USER_AGENT,
-    run_id: str = "",
-    session: HttpSession | None = None,
-    log: Callable[..., None] | None = None,
-    progress_every_rows: int = ENTITY_PROGRESS_LOG_EVERY_ROWS,
-    download_progress_every_bytes: int = DOWNLOAD_PROGRESS_LOG_EVERY_BYTES,
-) -> Iterator[dict[str, Any]]:
-    progress_log = log or LOGGER.info
-    response_body = _download_bytes(
-        url=f"{base_url}/enheter/lastned",
-        timeout_seconds=timeout_seconds,
-        user_agent=user_agent,
-        session=session,
-        log=progress_log,
-        progress_every_bytes=download_progress_every_bytes,
-    )
-    for line_number, entity in enumerate(_stream_gzip_json_array(response_body), start=1):
-        if progress_every_rows > 0 and line_number % progress_every_rows == 0:
-            progress_log("Processed Norway Brreg entity rows: rows=%s", line_number)
-        yield _entity_row(entity, line_number=line_number, run_id=run_id)
-
-
 def build_entity_rows(entities: list[dict[str, Any]], *, run_id: str) -> list[dict[str, Any]]:
     return [
         _entity_row(entity, line_number=index, run_id=run_id)
@@ -473,42 +403,6 @@ def _entity_row(entity: dict[str, Any], *, line_number: int, run_id: str) -> dic
     }
 
 
-def _download_bytes(
-    *,
-    url: str,
-    timeout_seconds: int,
-    user_agent: str,
-    session: HttpSession | None,
-    log: Callable[..., None] | None = None,
-    progress_every_bytes: int = DOWNLOAD_PROGRESS_LOG_EVERY_BYTES,
-) -> bytes:
-    http_session = session or requests.Session()
-    http_session.headers["User-Agent"] = user_agent
-    response = http_session.get(url, timeout=timeout_seconds, stream=True)
-    response.raise_for_status()
-    progress_log = log or LOGGER.info
-    iter_content = getattr(response, "iter_content", None)
-    if not callable(iter_content):
-        return response.content
-
-    chunks: list[bytes] = []
-    downloaded_bytes = 0
-    next_progress_bytes = progress_every_bytes
-    for chunk in iter_content(chunk_size=DOWNLOAD_CHUNK_BYTES):
-        if not chunk:
-            continue
-        chunks.append(chunk)
-        downloaded_bytes += len(chunk)
-        while progress_every_bytes > 0 and downloaded_bytes >= next_progress_bytes:
-            progress_log(
-                "Downloaded Norway Brreg entity archive: downloaded_bytes=%s downloaded_mb=%.1f",
-                next_progress_bytes,
-                next_progress_bytes / 1024 / 1024,
-            )
-            next_progress_bytes += progress_every_bytes
-    return b"".join(chunks)
-
-
 def _raise_for_status(response: Any) -> None:
     raise_for_status = getattr(response, "raise_for_status", None)
     if callable(raise_for_status):
@@ -577,13 +471,6 @@ def _entity_update_key(update: dict[str, Any]) -> str:
         f"fallback:{_string(update.get('organisasjonsnummer'))}:"
         f"{_string(update.get('dato'))}:{_string(update.get('endringstype'))}"
     )
-
-
-def _stream_gzip_json_array(body: bytes) -> Iterator[dict[str, Any]]:
-    with gzip.GzipFile(fileobj=BytesIO(body)) as gzip_file:
-        for record in ijson.items(gzip_file, "item"):
-            if isinstance(record, dict):
-                yield record
 
 
 def _entity_status(entity: dict[str, Any]) -> str:
