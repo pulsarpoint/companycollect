@@ -39,6 +39,10 @@ The bootstrap should be operationally boring:
   row-by-row write format.
 - Store intermediate per-company or per-shard JSON/JSONL outputs during the crawl so the workflow can
   resume by skipping already completed org/year results.
+- Preserve existing Norway financial storage. If
+  `norway_brreg/financial/raw_fetches/org=<org_number>/year=<last_submitted_accounts_year>/financial_fetch.parquet`
+  already exists, the bootstrap must not call BRREG again for that org/year. It should reuse that file as
+  completed historical work and include it in the final snapshot compaction.
 - At workflow completion, compact intermediate outputs into one dated parquet file.
 - Dagster consumes the dated final parquet as the historical starting point. Daily update assets remain
   the only recurring financial ingestion path.
@@ -95,6 +99,16 @@ is that completed org/year work is externally visible and can be skipped on retr
 the package must maintain a completed-key index or write idempotent batch manifests so reruns do not
 duplicate rows.
 
+Existing raw fetch parquet files produced by the current Dagster path are also completed work:
+
+```text
+norway_brreg/financial/raw_fetches/org=<org_number>/year=<last_submitted_accounts_year>/financial_fetch.parquet
+```
+
+The bootstrap should build a completed-org/year index from those keys before planning remote fetches. The
+final compaction must read and include those existing parquet rows so already-collected data is preserved
+and no company/year is fetched twice.
+
 Final output:
 
 ```text
@@ -139,12 +153,16 @@ resume: true
 Workflow steps:
 
 1. Load candidate org/year records from the normalized `no_companies` parquet.
-2. Partition candidates into deterministic batches.
-3. Execute fetch activities with bounded concurrency.
-4. Each fetch activity skips already-completed org/year results when `resume=true`.
-5. Each fetch activity writes intermediate output and heartbeats progress.
-6. After all batches complete, compact intermediate outputs into the final dated parquet.
-7. Return counts: candidates, fetched, skipped, success, not_found, retryable failures, output key.
+2. Build a completed-org/year index from existing `financial_fetch.parquet` raw fetch files and bootstrap
+   intermediate outputs.
+3. Partition only missing candidates into deterministic batches.
+4. Execute fetch activities with bounded concurrency.
+5. Each fetch activity skips already-completed org/year results when `resume=true`.
+6. Each fetch activity writes intermediate output and heartbeats progress.
+7. After all batches complete, compact existing raw fetch parquets plus bootstrap intermediate outputs into
+   the final dated parquet.
+8. Return counts: candidates, existing_raw_fetches, fetched, skipped, success, not_found, retryable
+   failures, output key.
 
 ## Fetch Semantics
 
