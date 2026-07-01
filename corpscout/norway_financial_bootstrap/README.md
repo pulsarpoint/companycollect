@@ -3,11 +3,11 @@
 Standalone Temporal application for the one-time historical Norway BRREG
 financial report bootstrap.
 
-This package is intentionally independent of Dagster. It reads the fixed
-company snapshot parquet from S3, discovers financial reports from BRREG by
-organization and year, and writes raw report JSON objects back to S3. Dagster
-daily finance jobs use the same fixed raw report paths to decide which reports
-already exist.
+This package is intentionally independent of Dagster. It reads candidate
+companies from the fixed ClickHouse table `corpscout.no_companies`, discovers
+financial reports from BRREG by organization and year, and writes raw report
+JSON objects to S3. Dagster daily finance jobs use the same fixed raw report
+paths to decide which reports already exist.
 
 ## Fixed Storage Contract
 
@@ -17,12 +17,6 @@ Bucket:
 
 ```text
 source-norway-brreg
-```
-
-Input company snapshot:
-
-```text
-norway_brreg/company/normalized/snapshot/no_companies.parquet
 ```
 
 Candidate batch files written by the bootstrap starter:
@@ -43,7 +37,19 @@ already exists, the worker skips it and does not call it completed again.
 ## What It Fetches
 
 The starter reads active companies with a non-empty
-`last_submitted_accounts_year` from the fixed `no_companies.parquet` snapshot.
+`last_submitted_accounts_year` from ClickHouse:
+
+```sql
+select
+    org_number,
+    name,
+    primary_website_url,
+    last_submitted_accounts_year
+from corpscout.no_companies
+where is_active = true
+  and last_submitted_accounts_year is not null
+order by org_number
+```
 
 For each candidate, workers call BRREG with the company and year:
 
@@ -68,6 +74,22 @@ Required environment variables:
 ```bash
 export CORPSCOUT_S3_ACCESS_KEY=...
 export CORPSCOUT_S3_SECRET_KEY=...
+export CLICKHOUSE_HOST=clickhouse-host
+export CLICKHOUSE_USER=default
+export CLICKHOUSE_PASSWORD=...
+```
+
+Optional ClickHouse environment variables:
+
+```bash
+export CLICKHOUSE_HTTP_PORT=8123
+export CLICKHOUSE_SECURE=false
+```
+
+The ClickHouse database and table are fixed:
+
+```text
+corpscout.no_companies
 ```
 
 Set the S3-compatible endpoint either as an environment variable or a CLI

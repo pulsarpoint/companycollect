@@ -8,14 +8,14 @@ from datetime import UTC, datetime
 from temporalio.client import Client
 
 from norway_financial_bootstrap.activities import storage_from_env
+from norway_financial_bootstrap.clickhouse import (
+    clickhouse_from_env,
+    financial_candidates_from_clickhouse,
+)
 from norway_financial_bootstrap.candidates import (
     FinancialCandidate,
-    build_financial_candidates,
 )
-from norway_financial_bootstrap.storage import (
-    COMPANY_SNAPSHOT_NO_COMPANIES_KEY,
-    NorwayFinancialBootstrapStorage,
-)
+from norway_financial_bootstrap.storage import NorwayFinancialBootstrapStorage
 from norway_financial_bootstrap.workflows import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_MAX_CONCURRENT_BATCHES,
@@ -88,9 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.s3_endpoint is not None:
         os.environ["CORPSCOUT_S3_ENDPOINT"] = args.s3_endpoint
     storage = storage_from_env()
-    candidates = build_financial_candidates(
-        storage.read_parquet(COMPANY_SNAPSHOT_NO_COMPANIES_KEY)
-    )
+    candidates = financial_candidates_from_clickhouse(clickhouse_from_env())
     workflow_id = FIXED_WORKFLOW_ID
     temporal_address = args.temporal_address or os.environ.get(
         "TEMPORAL_ADDRESS", DEFAULT_TEMPORAL_ADDRESS

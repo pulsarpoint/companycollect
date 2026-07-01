@@ -13,7 +13,6 @@ from norway_financial_bootstrap.cli import (
     main as cli_main,
     write_candidate_batches,
 )
-from norway_financial_bootstrap.storage import COMPANY_SNAPSHOT_NO_COMPANIES_KEY
 from norway_financial_bootstrap.worker import build_parser as build_worker_parser
 from norway_financial_bootstrap.worker import build_worker
 from norway_financial_bootstrap.workflows import (
@@ -134,9 +133,6 @@ class FakeStorage:
 
     def read_candidate_batch(self, key: str) -> list[FinancialCandidate]:
         return list(self.candidate_batches[key])
-
-    def read_parquet(self, key: str) -> pl.DataFrame:
-        return self.frames[key]
 
     def raw_report_exists(
         self, org_number: str, accounts_year: str, report_type: str, report_id: str
@@ -390,35 +386,22 @@ def test_cli_main_writes_candidate_batches_and_starts_workflow_with_batch_keys(
     import norway_financial_bootstrap.cli as cli
 
     storage = FakeStorage(completed=set())
-    storage.frames[COMPANY_SNAPSHOT_NO_COMPANIES_KEY] = pl.DataFrame(
-        [
-            {
-                "org_number": "100",
-                "name": "EXISTING AS",
-                "primary_website_url": "",
-                "is_active": True,
-                "last_submitted_accounts_year": "2024",
-            },
-            {
-                "org_number": "200",
-                "name": "MISSING AS",
-                "primary_website_url": "",
-                "is_active": True,
-                "last_submitted_accounts_year": "2024",
-            },
-            {
-                "org_number": "300",
-                "name": "MISSING TWO AS",
-                "primary_website_url": "",
-                "is_active": True,
-                "last_submitted_accounts_year": "2024",
-            },
-        ]
-    )
+    candidates = [
+        FinancialCandidate("100", "EXISTING AS", "", "2024"),
+        FinancialCandidate("200", "MISSING AS", "", "2024"),
+        FinancialCandidate("300", "MISSING TWO AS", "", "2024"),
+    ]
     captured: dict[str, object] = {}
 
     def fake_storage_from_env() -> FakeStorage:
         return storage
+
+    def fake_clickhouse_from_env():
+        return object()
+
+    def fake_financial_candidates_from_clickhouse(client) -> list[FinancialCandidate]:
+        assert client is not None
+        return candidates
 
     async def fake_start_workflow(
         *,
@@ -434,6 +417,12 @@ def test_cli_main_writes_candidate_batches_and_starts_workflow_with_batch_keys(
         return workflow_id
 
     monkeypatch.setattr(cli, "storage_from_env", fake_storage_from_env)
+    monkeypatch.setattr(cli, "clickhouse_from_env", fake_clickhouse_from_env)
+    monkeypatch.setattr(
+        cli,
+        "financial_candidates_from_clickhouse",
+        fake_financial_candidates_from_clickhouse,
+    )
     monkeypatch.setattr(cli, "start_workflow", fake_start_workflow)
     monkeypatch.setattr(cli, "_generate_attempt_id", lambda: "attempt-a")
     monkeypatch.setattr(cli, "_utc_now_iso", lambda: "2026-07-01T00:00:00.000Z")

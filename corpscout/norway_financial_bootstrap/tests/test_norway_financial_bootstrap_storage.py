@@ -2,7 +2,6 @@ from io import BytesIO
 
 from norway_financial_bootstrap.candidates import FinancialCandidate
 from norway_financial_bootstrap.storage import (
-    COMPANY_SNAPSHOT_NO_COMPANIES_KEY,
     DEFAULT_BUCKET,
     NorwayFinancialBootstrapStorage,
     RAW_REPORT_PREFIX,
@@ -46,14 +45,6 @@ def test_raw_report_key_matches_finance_split_storage_contract() -> None:
         "norway_brreg/finance/raw_reports/org=811685852/"
         "year=2024/type=SELSKAP/id=6697842.json"
     )
-
-
-def test_company_snapshot_no_companies_key_is_fixed() -> None:
-    assert (
-        COMPANY_SNAPSHOT_NO_COMPANIES_KEY
-        == "norway_brreg/company/normalized/snapshot/no_companies.parquet"
-    )
-
 
 def test_bootstrap_storage_defaults_to_norway_brreg_bucket() -> None:
     assert DEFAULT_BUCKET == "source-norway-brreg"

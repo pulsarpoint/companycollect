@@ -11,9 +11,6 @@ import polars as pl
 from norway_financial_bootstrap.candidates import FinancialCandidate
 
 DEFAULT_BUCKET = "source-norway-brreg"
-COMPANY_SNAPSHOT_NO_COMPANIES_KEY = (
-    "norway_brreg/company/normalized/snapshot/no_companies.parquet"
-)
 RAW_REPORT_PREFIX = "norway_brreg/finance/raw_reports/"
 BOOTSTRAP_RUNS_PREFIX = "norway_brreg/finance/bootstrap_runs/"
 CANDIDATE_BATCH_SCHEMA: dict[str, pl.DataType] = {
