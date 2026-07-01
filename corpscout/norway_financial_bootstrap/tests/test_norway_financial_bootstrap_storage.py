@@ -51,6 +51,13 @@ def test_status_marker_keys_are_colocated_under_org_raw_report_prefix() -> None:
     )
 
 
+def test_raw_report_key_encodes_unsafe_path_components() -> None:
+    assert raw_report_key("923/609016", "2024", "SEL/SKAP", "id/1") == (
+        "norway_brreg/finance/raw_reports/org=923%2F609016/"
+        "year=2024/type=SEL%2FSKAP/id=id%2F1.json"
+    )
+
+
 def test_report_year_from_report_uses_regnskapsperiode_til_dato() -> None:
     assert (
         report_year_from_report(
@@ -61,7 +68,10 @@ def test_report_year_from_report_uses_regnskapsperiode_til_dato() -> None:
 
 
 def test_report_year_from_report_falls_back_to_fra_dato() -> None:
-    assert report_year_from_report({"regnskapsperiode": {"fraDato": "2023-01-01"}}) == "2023"
+    assert (
+        report_year_from_report({"regnskapsperiode": {"fraDato": "2023-01-01"}})
+        == "2023"
+    )
 
 
 def test_bootstrap_storage_defaults_to_norway_brreg_bucket() -> None:
@@ -116,6 +126,7 @@ def test_storage_reads_done_marker_before_failed_marker() -> None:
     )
     storage.write_failed_marker(
         org_number="923609016",
+        fetch_status="server_error",
         error_type="RuntimeError",
         error_message="failed",
         failed_at="2026-07-01T18:00:01Z",
@@ -130,6 +141,7 @@ def test_storage_writes_failed_marker_with_error_details() -> None:
 
     key = storage.write_failed_marker(
         org_number="923609016",
+        fetch_status="server_error",
         error_type="RuntimeError",
         error_message="failed after retries",
         failed_at="2026-07-01T18:00:00Z",
@@ -138,4 +150,5 @@ def test_storage_writes_failed_marker_with_error_details() -> None:
     assert key == "norway_brreg/finance/raw_reports/org=923609016/status/failed.json"
     body = json.loads(client.objects[(storage.bucket, key)].decode("utf-8"))
     assert body["org_number"] == "923609016"
+    assert body["fetch_status"] == "server_error"
     assert body["error_type"] == "RuntimeError"

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from norway_financial_bootstrap import fetch_status as financial_fetches
 from norway_financial_bootstrap.brreg_client import BrregFinancialClient
@@ -125,7 +126,11 @@ def fetch_and_store_candidate_with_dependencies(
     )
     status = str(row.get("fetch_status") or "unknown")
     if financial_fetches.financial_fetch_status_requires_failure(status):
-        raise RuntimeError(f"BRREG financial fetch failed for {input.org_number}: {status}")
+        raise ApplicationError(
+            f"BRREG financial fetch failed for {input.org_number}: {status}",
+            status,
+            type="BrregFinancialFetchFailed",
+        )
 
     raw_report_keys: list[str] = []
     if status == financial_fetches.FINANCIAL_FETCH_STATUS_SUCCESS:
@@ -148,7 +153,9 @@ def write_done_marker(input: MarkerWriteInput) -> str:
     return write_done_marker_with_dependencies(input, storage=storage_from_env())
 
 
-def write_done_marker_with_dependencies(input: MarkerWriteInput, *, storage: Any) -> str:
+def write_done_marker_with_dependencies(
+    input: MarkerWriteInput, *, storage: Any
+) -> str:
     return storage.write_done_marker(
         org_number=input.org_number,
         fetch_status=input.fetch_status,
@@ -163,9 +170,12 @@ def write_failed_marker(input: MarkerWriteInput) -> str:
     return write_failed_marker_with_dependencies(input, storage=storage_from_env())
 
 
-def write_failed_marker_with_dependencies(input: MarkerWriteInput, *, storage: Any) -> str:
+def write_failed_marker_with_dependencies(
+    input: MarkerWriteInput, *, storage: Any
+) -> str:
     return storage.write_failed_marker(
         org_number=input.org_number,
+        fetch_status=input.fetch_status,
         error_type=input.error_type,
         error_message=input.error_message,
         failed_at=input.timestamp,
@@ -174,8 +184,12 @@ def write_failed_marker_with_dependencies(input: MarkerWriteInput, *, storage: A
 
 def _reports_from_success_row(row: dict[str, Any]) -> list[dict[str, Any]]:
     payload = json.loads(str(row.get("raw_response") or "[]"))
-    if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
-        raise RuntimeError("BRREG financial success row does not contain a list of reports")
+    if not isinstance(payload, list) or not all(
+        isinstance(item, dict) for item in payload
+    ):
+        raise RuntimeError(
+            "BRREG financial success row does not contain a list of reports"
+        )
     return payload
 
 
@@ -185,7 +199,9 @@ def _heartbeating_sleep(
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
     remaining_seconds = max(float(total_seconds), 0.0)
-    _safe_heartbeat({"retry_sleep_seconds_remaining": _display_seconds(remaining_seconds)})
+    _safe_heartbeat(
+        {"retry_sleep_seconds_remaining": _display_seconds(remaining_seconds)}
+    )
     while remaining_seconds > 0:
         sleep_seconds = min(HEARTBEAT_SLEEP_INTERVAL_SECONDS, remaining_seconds)
         sleep(sleep_seconds)

@@ -22,6 +22,11 @@ from norway_financial_bootstrap.workflows import (
 )
 
 DEFAULT_MAX_WORKERS = 4
+REQUIRED_S3_ENV_VARS = (
+    "CORPSCOUT_S3_ENDPOINT",
+    "CORPSCOUT_S3_ACCESS_KEY",
+    "CORPSCOUT_S3_SECRET_KEY",
+)
 
 logger = logging.getLogger("norway_financial_bootstrap.worker")
 
@@ -59,7 +64,9 @@ def build_worker(client: object, *, task_queue: str, max_workers: int) -> Worker
             write_done_marker,
             write_failed_marker,
         ],
-        activity_executor=concurrent.futures.ThreadPoolExecutor(max_workers=max_workers),
+        activity_executor=concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_workers
+        ),
         max_concurrent_activities=max_workers,
     )
 
@@ -87,6 +94,7 @@ def worker_main(argv: list[str] | None = None) -> int:
         level=os.environ.get("NORWAY_FINANCIAL_BOOTSTRAP_LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s | %(message)s",
     )
+    validate_s3_environment()
     temporal_address = args.temporal_address or os.environ.get(
         "TEMPORAL_ADDRESS", DEFAULT_TEMPORAL_ADDRESS
     )
@@ -101,6 +109,19 @@ def worker_main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 130
     return 0
+
+
+def validate_s3_environment() -> None:
+    missing = [
+        name
+        for name in REQUIRED_S3_ENV_VARS
+        if os.environ.get(name) is None or os.environ[name].strip() == ""
+    ]
+    if missing:
+        raise RuntimeError(
+            "Missing required S3 environment variables for Norway financial bootstrap "
+            f"worker: {', '.join(missing)}"
+        )
 
 
 if __name__ == "__main__":

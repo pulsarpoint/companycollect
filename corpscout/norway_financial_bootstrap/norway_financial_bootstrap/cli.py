@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from dotenv import load_dotenv
 from temporalio.client import Client
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from norway_financial_bootstrap.clickhouse import (
     clickhouse_from_env,
@@ -57,19 +58,22 @@ async def start_slot_workflows(
     workflow_ids: list[str] = []
     for slot_id in range(slot_count):
         workflow_id = slot_workflow_id(run_id, slot_id)
-        handle = await client.start_workflow(
-            NorwayBrregFinancialBootstrapSlotWorkflow.run,
-            BootstrapSlotInput(
-                run_id=run_id,
-                slot_id=slot_id,
-                slot_index=0,
-                slot_count=slot_count,
-                fetched_at=fetched_at,
-            ),
-            id=workflow_id,
-            task_queue=task_queue,
-        )
-        workflow_ids.append(handle.id)
+        try:
+            handle = await client.start_workflow(
+                NorwayBrregFinancialBootstrapSlotWorkflow.run,
+                BootstrapSlotInput(
+                    run_id=run_id,
+                    slot_id=slot_id,
+                    slot_index=0,
+                    slot_count=slot_count,
+                    fetched_at=fetched_at,
+                ),
+                id=workflow_id,
+                task_queue=task_queue,
+            )
+            workflow_ids.append(handle.id)
+        except WorkflowAlreadyStartedError:
+            workflow_ids.append(workflow_id)
     return workflow_ids
 
 
@@ -96,10 +100,13 @@ def main(argv: list[str] | None = None) -> int:
         slot_count=slot_count,
     )
     logger.info(
-        "candidate table ready: run_id=%s inserted=%s existing_count=%d",
+        "candidate table ready: run_id=%s inserted=%s existing_count=%d "
+        "candidate_count=%d stored_slot_count=%d",
         preparation.run_id,
         preparation.inserted,
         preparation.existing_count,
+        preparation.candidate_count,
+        preparation.stored_slot_count,
     )
 
     temporal_address = args.temporal_address or os.environ.get(

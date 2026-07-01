@@ -1,7 +1,11 @@
 import asyncio
 import concurrent.futures
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
+
+import pytest
+from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 from norway_financial_bootstrap.activities import (
     CandidateMarkerStatusInput,
@@ -28,7 +32,7 @@ from norway_financial_bootstrap.cli import (
     start_slot_workflows,
 )
 from norway_financial_bootstrap.worker import build_parser as build_worker_parser
-from norway_financial_bootstrap.worker import build_worker
+from norway_financial_bootstrap.worker import build_worker, validate_s3_environment
 from norway_financial_bootstrap.workflows import (
     DEFAULT_SLOT_COUNT,
     BootstrapSlotInput,
@@ -78,7 +82,9 @@ class FakeBrregClient:
         self.row = row
         self.calls = []
 
-    def fetch_candidate(self, candidate, *, source_run_id, source_line_number, fetched_at):
+    def fetch_candidate(
+        self, candidate, *, source_run_id, source_line_number, fetched_at
+    ):
         self.calls.append((candidate, source_run_id, source_line_number, fetched_at))
         return self.row
 
@@ -198,7 +204,7 @@ def test_fetch_and_store_candidate_raises_for_retryable_status() -> None:
         }
     )
 
-    try:
+    with pytest.raises(ApplicationError) as exc_info:
         fetch_and_store_candidate_with_dependencies(
             FetchAndStoreCandidateInput(
                 run_id="run-1",
@@ -208,11 +214,9 @@ def test_fetch_and_store_candidate_raises_for_retryable_status() -> None:
             storage=storage,
             client=client,
         )
-    except RuntimeError as exc:
-        assert "server_error" in str(exc)
-    else:
-        raise AssertionError("retryable fetch statuses must raise")
 
+    assert exc_info.value.type == "BrregFinancialFetchFailed"
+    assert exc_info.value.details == ("server_error",)
     assert storage.raw_writes == []
 
 
@@ -242,7 +246,7 @@ def test_write_failed_marker_persists_error() -> None:
     key = write_failed_marker_with_dependencies(
         MarkerWriteInput(
             org_number="923609016",
-            fetch_status="",
+            fetch_status="server_error",
             report_count=0,
             raw_report_keys=[],
             timestamp="2026-07-01T18:00:00Z",
@@ -254,6 +258,7 @@ def test_write_failed_marker_persists_error() -> None:
 
     assert key.endswith("/status/failed.json")
     assert storage.failed_markers[0]["error_type"] == "RuntimeError"
+    assert storage.failed_markers[0]["fetch_status"] == "server_error"
 
 
 def test_activity_retry_sleep_heartbeats_during_backoff(monkeypatch) -> None:
@@ -285,13 +290,16 @@ def test_default_slot_count_is_four() -> None:
 
 
 def test_bootstrap_slot_input_starts_at_index_zero() -> None:
-    assert BootstrapSlotInput(
-        run_id="run-1",
-        slot_id=0,
-        slot_index=0,
-        slot_count=4,
-        fetched_at="2026-07-01T18:00:00Z",
-    ).slot_index == 0
+    assert (
+        BootstrapSlotInput(
+            run_id="run-1",
+            slot_id=0,
+            slot_index=0,
+            slot_count=4,
+            fetched_at="2026-07-01T18:00:00Z",
+        ).slot_index
+        == 0
+    )
 
 
 def test_slot_workflow_completes_when_candidate_is_missing(monkeypatch) -> None:
@@ -363,7 +371,9 @@ def test_slot_workflow_skips_done_marker_and_continues_as_new(monkeypatch) -> No
         raise AssertionError("workflow should continue as new")
 
 
-def test_slot_workflow_fetches_missing_marker_writes_done_and_continues(monkeypatch) -> None:
+def test_slot_workflow_fetches_missing_marker_writes_done_and_continues(
+    monkeypatch,
+) -> None:
     import norway_financial_bootstrap.workflows as workflows
     from norway_financial_bootstrap.activities import FetchAndStoreCandidateResult
 
@@ -372,6 +382,11 @@ def test_slot_workflow_fetches_missing_marker_writes_done_and_continues(monkeypa
     class ContinueAsNew(Exception):
         def __init__(self, input):
             self.input = input
+
+    def fake_workflow_now():
+        from datetime import UTC, datetime
+
+        return datetime(2026, 7, 1, 18, 1, tzinfo=UTC)
 
     async def fake_execute_activity(activity_fn, input, **_kwargs):
         if activity_fn is workflows.get_candidate:
@@ -399,6 +414,7 @@ def test_slot_workflow_fetches_missing_marker_writes_done_and_continues(monkeypa
 
     monkeypatch.setattr(workflows.workflow, "execute_activity", fake_execute_activity)
     monkeypatch.setattr(workflows.workflow, "continue_as_new", fake_continue_as_new)
+    monkeypatch.setattr(workflows.workflow, "now", fake_workflow_now)
 
     try:
         asyncio.run(
@@ -418,6 +434,112 @@ def test_slot_workflow_fetches_missing_marker_writes_done_and_continues(monkeypa
         raise AssertionError("workflow should continue as new")
 
     assert events == ["get", "status", "fetch", "done"]
+
+
+def test_slot_workflow_writes_failed_marker_with_activity_root_cause(
+    monkeypatch,
+) -> None:
+    import norway_financial_bootstrap.workflows as workflows
+
+    events: list[tuple[str, object]] = []
+
+    class ContinueAsNew(Exception):
+        def __init__(self, input):
+            self.input = input
+
+    def fake_workflow_now():
+        from datetime import UTC, datetime
+
+        return datetime(2026, 7, 1, 18, 2, tzinfo=UTC)
+
+    async def fake_execute_activity(activity_fn, input, **_kwargs):
+        if activity_fn is workflows.get_candidate:
+            return FinancialCandidate("923609016")
+        if activity_fn is workflows.candidate_marker_status:
+            return CandidateMarkerStatus.MISSING
+        if activity_fn is workflows.fetch_and_store_candidate:
+            app_error = ApplicationError(
+                "BRREG financial fetch failed for 923609016: server_error",
+                "server_error",
+                type="BrregFinancialFetchFailed",
+            )
+            raise activity_error("Activity task failed") from app_error
+        if activity_fn is workflows.write_failed_marker:
+            events.append(("failed", input))
+            return "failed.json"
+        raise AssertionError(f"unexpected activity: {activity_fn}")
+
+    def fake_continue_as_new(input):
+        raise ContinueAsNew(input)
+
+    monkeypatch.setattr(workflows.workflow, "execute_activity", fake_execute_activity)
+    monkeypatch.setattr(workflows.workflow, "continue_as_new", fake_continue_as_new)
+    monkeypatch.setattr(workflows.workflow, "now", fake_workflow_now)
+
+    try:
+        asyncio.run(
+            NorwayBrregFinancialBootstrapSlotWorkflow().run(
+                BootstrapSlotInput(
+                    run_id="run-1",
+                    slot_id=1,
+                    slot_index=3,
+                    slot_count=4,
+                    fetched_at="2026-07-01T18:00:00Z",
+                )
+            )
+        )
+    except ContinueAsNew as exc:
+        assert exc.input.slot_index == 4
+    else:
+        raise AssertionError("workflow should continue as new")
+
+    marker = events[0][1]
+    assert marker.fetch_status == "server_error"
+    assert marker.error_type == "BrregFinancialFetchFailed"
+    assert (
+        marker.error_message
+        == "BRREG financial fetch failed for 923609016: server_error"
+    )
+    assert marker.timestamp == "2026-07-01T18:02:00.000Z"
+
+
+def test_slot_workflow_does_not_write_failed_marker_on_cancellation(
+    monkeypatch,
+) -> None:
+    import norway_financial_bootstrap.workflows as workflows
+
+    async def fake_execute_activity(activity_fn, input, **_kwargs):
+        if activity_fn is workflows.get_candidate:
+            return FinancialCandidate("923609016")
+        if activity_fn is workflows.candidate_marker_status:
+            return CandidateMarkerStatus.MISSING
+        if activity_fn is workflows.fetch_and_store_candidate:
+            raise activity_error("Activity task cancelled") from CancelledError(
+                "cancelled"
+            )
+        if activity_fn is workflows.write_failed_marker:
+            raise AssertionError("cancelled activities must not write failed markers")
+        raise AssertionError(f"unexpected activity: {activity_fn}")
+
+    monkeypatch.setattr(workflows.workflow, "execute_activity", fake_execute_activity)
+    monkeypatch.setattr(
+        workflows.workflow,
+        "now",
+        lambda: datetime(2026, 7, 1, 18, 2, tzinfo=UTC),
+    )
+
+    with pytest.raises(ActivityError):
+        asyncio.run(
+            NorwayBrregFinancialBootstrapSlotWorkflow().run(
+                BootstrapSlotInput(
+                    run_id="run-1",
+                    slot_id=1,
+                    slot_index=3,
+                    slot_count=4,
+                    fetched_at="2026-07-01T18:00:00Z",
+                )
+            )
+        )
 
 
 def test_start_cli_parser_accepts_only_temporal_and_s3_endpoint_options() -> None:
@@ -445,6 +567,35 @@ class FakeTemporalClient:
         return SimpleNamespace(id=id)
 
 
+class FakeAlreadyStartedTemporalClient:
+    def __init__(self) -> None:
+        self.started = []
+
+    async def start_workflow(self, workflow, input, id, task_queue):
+        self.started.append((workflow, input, id, task_queue))
+        raise workflows_already_started_error()
+
+
+def workflows_already_started_error() -> Exception:
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    return WorkflowAlreadyStartedError(
+        "existing", "NorwayBrregFinancialBootstrapSlotWorkflow"
+    )
+
+
+def activity_error(message: str) -> ActivityError:
+    return ActivityError(
+        message,
+        scheduled_event_id=1,
+        started_event_id=2,
+        identity="test-worker",
+        activity_type="fetch_and_store_candidate",
+        activity_id="activity-1",
+        retry_state=None,
+    )
+
+
 def test_start_slot_workflows_starts_one_workflow_per_slot() -> None:
     client = FakeTemporalClient()
 
@@ -467,6 +618,25 @@ def test_start_slot_workflows_starts_one_workflow_per_slot() -> None:
     assert [call[1].slot_index for call in client.started] == [0, 0, 0, 0]
 
 
+def test_start_slot_workflows_reuses_already_started_slot_ids() -> None:
+    client = FakeAlreadyStartedTemporalClient()
+
+    ids = asyncio.run(
+        start_slot_workflows(
+            client=client,
+            run_id=FIXED_WORKFLOW_ID,
+            fetched_at="2026-07-01T18:00:00Z",
+            slot_count=2,
+            task_queue="test-queue",
+        )
+    )
+
+    assert ids == [
+        "norway-brreg-finance-historical-bootstrap-slot-0",
+        "norway-brreg-finance-historical-bootstrap-slot-1",
+    ]
+
+
 def test_cli_main_prepares_candidate_table_and_starts_slot_workflows(
     monkeypatch, capsys
 ) -> None:
@@ -481,7 +651,14 @@ def test_cli_main_prepares_candidate_table_and_starts_slot_workflows(
         captured["clickhouse_client"] = client
         captured["run_id"] = run_id
         captured["slot_count"] = slot_count
-        return SimpleNamespace(run_id=run_id, slot_count=slot_count, existing_count=0, inserted=True)
+        return SimpleNamespace(
+            run_id=run_id,
+            slot_count=slot_count,
+            existing_count=0,
+            candidate_count=10,
+            stored_slot_count=4,
+            inserted=True,
+        )
 
     async def fake_connect_and_start_slot_workflows(
         *,
@@ -546,7 +723,25 @@ def test_worker_cli_parser_accepts_worker_options() -> None:
     assert not hasattr(args, "env_file")
 
 
-def test_build_worker_registers_slot_workflow_activities_and_executor(monkeypatch) -> None:
+def test_worker_validates_required_s3_environment(monkeypatch) -> None:
+    for name in (
+        "CORPSCOUT_S3_ENDPOINT",
+        "CORPSCOUT_S3_ACCESS_KEY",
+        "CORPSCOUT_S3_SECRET_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        validate_s3_environment()
+
+    assert "CORPSCOUT_S3_ENDPOINT" in str(exc_info.value)
+    assert "CORPSCOUT_S3_ACCESS_KEY" in str(exc_info.value)
+    assert "CORPSCOUT_S3_SECRET_KEY" in str(exc_info.value)
+
+
+def test_build_worker_registers_slot_workflow_activities_and_executor(
+    monkeypatch,
+) -> None:
     import norway_financial_bootstrap.worker as worker
 
     FakeWorker.instances = []
@@ -565,4 +760,6 @@ def test_build_worker_registers_slot_workflow_activities_and_executor(monkeypatc
         write_failed_marker,
     }
     assert record["max_concurrent_activities"] == 3
-    assert isinstance(record["activity_executor"], concurrent.futures.ThreadPoolExecutor)
+    assert isinstance(
+        record["activity_executor"], concurrent.futures.ThreadPoolExecutor
+    )

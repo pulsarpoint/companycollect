@@ -89,6 +89,7 @@ class NorwayFinancialBootstrapStorage:
         self,
         *,
         org_number: str,
+        fetch_status: str,
         error_type: str,
         error_message: str,
         failed_at: str,
@@ -100,6 +101,7 @@ class NorwayFinancialBootstrapStorage:
             Body=_json_bytes(
                 {
                     "org_number": org_number,
+                    "fetch_status": fetch_status,
                     "error_type": error_type,
                     "error_message": error_message,
                     "failed_at": failed_at,
