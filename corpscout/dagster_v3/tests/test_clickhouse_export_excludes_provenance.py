@@ -6,7 +6,7 @@ keeping them in the DuckDB/dbt staging layer. See dagster_v3/CLAUDE.md and the
 
 from dagster_v3.defs.finland_ytj import resolved_tables as fi_tables
 from dagster_v3.defs.norway_brreg import tables as no_brreg_tables
-from dagster_v3.defs.norway_resolved import tables as no_tables
+from dagster_v3.defs.norway_brreg import resolved_tables as no_tables
 
 
 def test_norway_brreg_export_drops_raw_and_hash():

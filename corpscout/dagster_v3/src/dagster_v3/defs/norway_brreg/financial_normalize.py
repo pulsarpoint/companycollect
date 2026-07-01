@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 from exchange_rates import ExchangeRateRequest
 
-from dagster_v3.defs.norway_resolved import tables as no_tables
+from dagster_v3.defs.norway_brreg import resolved_tables as no_tables
 
 COUNTRY = "NO"
 FINANCIAL_SOURCE_SLUG = "norway_brregregnskap"

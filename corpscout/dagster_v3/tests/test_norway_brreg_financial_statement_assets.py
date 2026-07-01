@@ -27,7 +27,7 @@ from dagster_v3.defs.norway_brreg.assets.financial_statements import (
 from dagster_v3.defs.norway_brreg.entity_storage import (
     ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS,
 )
-from dagster_v3.defs.norway_resolved import tables as no_tables
+from dagster_v3.defs.norway_brreg import resolved_tables as no_tables
 
 
 class FakeUsdRate:

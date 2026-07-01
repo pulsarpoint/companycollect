@@ -16,7 +16,7 @@ from dagster_v3.defs.norway_brreg.entity_storage import (
     ENTITY_NORMALIZED_TABLE_NO_WEBSITES,
     ENTITY_NORMALIZED_TABLE_REMOVED_ORGS,
 )
-from dagster_v3.defs.norway_resolved import tables as no_tables
+from dagster_v3.defs.norway_brreg import resolved_tables as no_tables
 
 
 def test_replace_entity_snapshot_parquets_replaces_clickhouse_entity_tables() -> None:

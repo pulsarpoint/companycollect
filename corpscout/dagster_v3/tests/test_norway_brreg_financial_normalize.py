@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from dagster_v3.defs.norway_brreg import financial_normalize
-from dagster_v3.defs.norway_resolved import tables as no_tables
+from dagster_v3.defs.norway_brreg import resolved_tables as no_tables
 
 
 class FakeUsdRate:

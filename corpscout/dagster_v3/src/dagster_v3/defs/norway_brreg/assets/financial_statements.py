@@ -38,7 +38,7 @@ from dagster_v3.defs.norway_brreg.entity_storage import (
 from dagster_v3.defs.norway_brreg.financial_storage import (
     NorwayBrregFinancialParquetStorageResource,
 )
-from dagster_v3.defs.norway_resolved import tables as no_tables
+from dagster_v3.defs.norway_brreg import resolved_tables as no_tables
 
 FINANCIAL_STATEMENTS_PARQUET_KINDS = {"python", "s3", "parquet", "brreg"}
 FINANCIAL_STATEMENTS_CLICKHOUSE_KINDS = {

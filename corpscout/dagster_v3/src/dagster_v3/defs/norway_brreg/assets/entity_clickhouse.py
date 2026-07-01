@@ -24,7 +24,7 @@ from dagster_v3.defs.norway_brreg.entity_storage import (
 from dagster_v3.defs.norway_brreg.assets.entity_updates import (
     NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
 )
-from dagster_v3.defs.norway_resolved import tables as no_tables
+from dagster_v3.defs.norway_brreg import resolved_tables as no_tables
 
 ENTITY_CLICKHOUSE_TABLES = (
     no_tables.NO_COMPANIES_TABLE,
