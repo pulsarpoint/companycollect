@@ -3,7 +3,7 @@ from datetime import UTC
 from datetime import datetime
 from decimal import Decimal
 
-from dagster_v3.defs.norway_brreg import financial_normalize
+from dagster_v3.defs.norway_brreg_financial import financial_normalize
 from dagster_v3.defs.norway_brreg import resolved_tables as no_tables
 
 

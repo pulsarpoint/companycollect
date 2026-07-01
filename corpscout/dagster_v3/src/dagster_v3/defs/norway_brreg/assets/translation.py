@@ -104,7 +104,7 @@ norway_brreg_entities_full_snapshot_job = dg.define_asset_job(
 norway_brreg_entity_updates_job = dg.define_asset_job(
     "norway_brreg_entity_updates_job",
     selection=dg.AssetSelection.assets(
-        "norway_brreg_financial_statements_updates_clickhouse"
+        "norway_brreg_entity_updates_clickhouse"
     ).upstream().required_multi_asset_neighbors(),
 )
 norway_brreg_entity_updates_schedule = dg.build_schedule_from_partitioned_job(

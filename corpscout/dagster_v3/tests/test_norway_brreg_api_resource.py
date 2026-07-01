@@ -357,28 +357,8 @@ def test_iter_updated_entities_treats_410_hydration_as_removed_tombstone() -> No
     ]
 
 
-def test_get_financial_accounts_uses_org_number_and_year_filter() -> None:
-    financial_payload = [{"id": 5027443, "regnskapstype": "SELSKAP"}]
-    session = FakeHttpSession(
-        {
-            "https://data.brreg.no/regnskapsregisteret/regnskap/923609016": FakeResponse(
-                payload=financial_payload
-            )
-        }
-    )
-    resource = NorwayBrregApiResource(session=session)
-
-    payload = resource.get_financial_accounts("923609016", year="2024")
-
-    assert payload == financial_payload
-    assert session.calls == [
-        (
-            "https://data.brreg.no/regnskapsregisteret/regnskap/923609016",
-            {"år": "2024"},
-            120,
-            False,
-        )
-    ]
+def test_resource_is_company_api_only() -> None:
+    assert not hasattr(NorwayBrregApiResource, "get_financial_accounts")
 
 
 def _load_entity_fixture() -> dict[str, Any]:

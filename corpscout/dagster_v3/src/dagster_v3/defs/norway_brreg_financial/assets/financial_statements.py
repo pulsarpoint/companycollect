@@ -15,7 +15,7 @@ from dagster_v3.defs.clickhouse.resolved import (
     assert_clickhouse_tables_exist,
     export_duckdb_connection_table_to_clickhouse,
 )
-from dagster_v3.defs.norway_brreg import financial_normalize
+from dagster_v3.defs.norway_brreg_financial import financial_normalize
 from dagster_v3.defs.norway_brreg.assets.entity_clickhouse import (
     _affected_org_rows,
     _drop_affected_stage_table,
@@ -24,18 +24,18 @@ from dagster_v3.defs.norway_brreg.assets.entity_clickhouse import (
     _quote_clickhouse_qualified_table,
     _quote_duckdb_identifier,
 )
-from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
+from dagster_v3.defs.norway_brreg_financial.constants import (
     GROUP_NAME,
-    NORWAY_BRREG_ENTITY_BUCKET,
+    NORWAY_BRREG_FINANCIAL_BUCKET,
 )
-from dagster_v3.defs.norway_brreg.assets.entity_updates import (
-    NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
+from dagster_v3.defs.norway_brreg_financial.assets.financial_fetches import (
+    NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS,
 )
 from dagster_v3.defs.norway_brreg.entity_storage import (
     ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS,
     NorwayBrregEntityParquetStorageResource,
 )
-from dagster_v3.defs.norway_brreg.financial_storage import (
+from dagster_v3.defs.norway_brreg_financial.financial_storage import (
     NorwayBrregFinancialParquetStorageResource,
 )
 from dagster_v3.defs.norway_brreg import resolved_tables as no_tables
@@ -146,7 +146,7 @@ def norway_brreg_financial_statements_snapshot_parquet(
             "fetch_row_count": fetch_frame.height,
             "successful_fetch_count": _successful_fetch_count(fetch_frame),
             "statement_row_count": statement_frame.height,
-            "s3_bucket": NORWAY_BRREG_ENTITY_BUCKET,
+            "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
             "s3_key": output_key,
         }
     )
@@ -157,7 +157,7 @@ def norway_brreg_financial_statements_snapshot_parquet(
     deps=[dg.AssetKey("norway_brreg_financial_fetches_updates_parquet")],
     group_name=GROUP_NAME,
     kinds=FINANCIAL_STATEMENTS_PARQUET_KINDS,
-    partitions_def=NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
+    partitions_def=NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS,
     description=(
         "Builds native-currency Norway Brreg resolved financial statement parquet "
         "for one update fetch partition."
@@ -193,7 +193,7 @@ def norway_brreg_financial_statements_updates_parquet(
             "fetch_row_count": fetch_frame.height,
             "successful_fetch_count": _successful_fetch_count(fetch_frame),
             "statement_row_count": statement_frame.height,
-            "s3_bucket": NORWAY_BRREG_ENTITY_BUCKET,
+            "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
             "s3_key": output_key,
         }
     )
@@ -230,7 +230,7 @@ def norway_brreg_financial_statements_snapshot_usd_parquet(
             "original_row_count": original_frame.height,
             "usd_row_count": usd_frame.height,
             "rate_date_count": _rate_date_count(usd_frame),
-            "s3_bucket": NORWAY_BRREG_ENTITY_BUCKET,
+            "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
             "s3_key": output_key,
         }
     )
@@ -241,7 +241,7 @@ def norway_brreg_financial_statements_snapshot_usd_parquet(
     deps=[dg.AssetKey("norway_brreg_financial_statements_updates_parquet")],
     group_name=GROUP_NAME,
     kinds=FINANCIAL_STATEMENTS_PARQUET_KINDS,
-    partitions_def=NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
+    partitions_def=NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS,
     description=(
         "Enriches one Norway Brreg update financial statement parquet partition "
         "with USD amounts and FX fields."
@@ -279,7 +279,7 @@ def norway_brreg_financial_statements_updates_usd_parquet(
             "original_row_count": original_frame.height,
             "usd_row_count": usd_frame.height,
             "rate_date_count": _rate_date_count(usd_frame),
-            "s3_bucket": NORWAY_BRREG_ENTITY_BUCKET,
+            "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
             "s3_key": output_key,
         }
     )
@@ -331,7 +331,7 @@ def norway_brreg_financial_statements_snapshot_clickhouse(
     ],
     group_name=GROUP_NAME,
     kinds=FINANCIAL_STATEMENTS_CLICKHOUSE_KINDS,
-    partitions_def=NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
+    partitions_def=NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS,
     description=(
         "Deletes affected Norway org financial rows from ClickHouse and appends "
         "replacement rows from one update USD parquet partition."
@@ -384,6 +384,16 @@ norway_brreg_financial_snapshot_job = dg.define_asset_job(
         "norway_brreg_financial_statements_snapshot_parquet",
         "norway_brreg_financial_statements_snapshot_usd_parquet",
         "norway_brreg_financial_statements_snapshot_clickhouse",
+    ),
+)
+
+norway_brreg_financial_updates_job = dg.define_asset_job(
+    "norway_brreg_financial_updates_job",
+    selection=dg.AssetSelection.assets(
+        "norway_brreg_financial_fetches_updates_parquet",
+        "norway_brreg_financial_statements_updates_parquet",
+        "norway_brreg_financial_statements_updates_usd_parquet",
+        "norway_brreg_financial_statements_updates_clickhouse",
     ),
 )
 

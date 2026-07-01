@@ -4,7 +4,7 @@ from typing import Any
 import polars as pl
 import pytest
 
-from dagster_v3.defs.norway_brreg import financial_fetches
+from dagster_v3.defs.norway_brreg_financial import financial_fetches
 
 
 class FakeResponse:

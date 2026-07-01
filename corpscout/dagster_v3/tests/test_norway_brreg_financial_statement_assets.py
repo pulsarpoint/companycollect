@@ -13,10 +13,10 @@ import pyarrow as pa
 import polars as pl
 import pytest
 
-from dagster_v3.defs.norway_brreg import financial_normalize
-from dagster_v3.defs.norway_brreg.assets import financial_statements
-from dagster_v3.defs.norway_brreg.assets.entity_snapshot import NORWAY_BRREG_ENTITY_BUCKET
-from dagster_v3.defs.norway_brreg.assets.financial_statements import (
+from dagster_v3.defs.norway_brreg_financial import financial_normalize
+from dagster_v3.defs.norway_brreg_financial.assets import financial_statements
+from dagster_v3.defs.norway_brreg_financial.constants import NORWAY_BRREG_FINANCIAL_BUCKET
+from dagster_v3.defs.norway_brreg_financial.assets.financial_statements import (
     norway_brreg_financial_statements_snapshot_clickhouse,
     norway_brreg_financial_statements_snapshot_parquet,
     norway_brreg_financial_statements_snapshot_usd_parquet,
@@ -226,7 +226,7 @@ def test_snapshot_statement_asset_reads_historical_raw_fetches_without_fetching_
     assert result.metadata["fetch_row_count"] == 2
     assert result.metadata["successful_fetch_count"] == 1
     assert result.metadata["statement_row_count"] == 1
-    assert result.metadata["s3_bucket"] == NORWAY_BRREG_ENTITY_BUCKET
+    assert result.metadata["s3_bucket"] == NORWAY_BRREG_FINANCIAL_BUCKET
     assert result.metadata["s3_key"] == "snapshot/statements.parquet"
 
 

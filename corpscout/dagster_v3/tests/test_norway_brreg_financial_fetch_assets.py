@@ -6,9 +6,9 @@ import dagster as dg
 import polars as pl
 import pytest
 
-from dagster_v3.defs.norway_brreg import financial_fetches
-from dagster_v3.defs.norway_brreg.assets.entity_snapshot import NORWAY_BRREG_ENTITY_BUCKET
-from dagster_v3.defs.norway_brreg.assets.financial_fetches import (
+from dagster_v3.defs.norway_brreg_financial import financial_fetches
+from dagster_v3.defs.norway_brreg_financial.constants import NORWAY_BRREG_FINANCIAL_BUCKET
+from dagster_v3.defs.norway_brreg_financial.assets.financial_fetches import (
     FINANCIAL_FETCH_CANDIDATE_SCHEMA,
     FINANCIAL_FETCHED_AT_DTYPE,
     _polars_type_for_fetch_column,
@@ -135,7 +135,7 @@ def test_snapshot_asset_inventories_historical_raw_fetches_without_entity_storag
     assert financial_storage.snapshot_fetches_frame is None
     assert result.metadata["row_count"] == 2
     assert result.metadata["status_counts"] == {"success": 1, "not_found": 1}
-    assert result.metadata["s3_bucket"] == NORWAY_BRREG_ENTITY_BUCKET
+    assert result.metadata["s3_bucket"] == NORWAY_BRREG_FINANCIAL_BUCKET
 
 
 def test_snapshot_asset_inventories_empty_historical_raw_fetches(

@@ -18,19 +18,6 @@ from dagster_v3.defs.norway_brreg.assets.entity_clickhouse import (
     norway_brreg_entities_snapshot_clickhouse,
     norway_brreg_entity_updates_clickhouse,
 )
-from dagster_v3.defs.norway_brreg.assets.financial_fetches import (
-    norway_brreg_financial_fetches_snapshot_parquet,
-    norway_brreg_financial_fetches_updates_parquet,
-)
-from dagster_v3.defs.norway_brreg.assets.financial_statements import (
-    norway_brreg_financial_snapshot_job,
-    norway_brreg_financial_statements_snapshot_clickhouse,
-    norway_brreg_financial_statements_snapshot_parquet,
-    norway_brreg_financial_statements_snapshot_usd_parquet,
-    norway_brreg_financial_statements_updates_clickhouse,
-    norway_brreg_financial_statements_updates_parquet,
-    norway_brreg_financial_statements_updates_usd_parquet,
-)
 from dagster_v3.defs.norway_brreg.assets.translation import (
     NORWAY_BRREG_BUILD_QUEUE_WORKFLOW_ID,
     NorwayBrregTranslationConfig,
@@ -60,14 +47,5 @@ __all__ = [
     "norway_brreg_entity_updates_normalized_parquets",
     "norway_brreg_entity_updates_s3",
     "norway_brreg_entity_updates_schedule",
-    "norway_brreg_financial_fetches_snapshot_parquet",
-    "norway_brreg_financial_fetches_updates_parquet",
-    "norway_brreg_financial_snapshot_job",
-    "norway_brreg_financial_statements_snapshot_parquet",
-    "norway_brreg_financial_statements_updates_parquet",
-    "norway_brreg_financial_statements_snapshot_usd_parquet",
-    "norway_brreg_financial_statements_updates_usd_parquet",
-    "norway_brreg_financial_statements_snapshot_clickhouse",
-    "norway_brreg_financial_statements_updates_clickhouse",
     "norway_brreg_translation_trigger",
 ]

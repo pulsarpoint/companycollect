@@ -4,11 +4,11 @@ from io import BytesIO
 
 import polars as pl
 
-from dagster_v3.defs.norway_brreg import financial_fetches
-from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
-    NORWAY_BRREG_ENTITY_BUCKET,
+from dagster_v3.defs.norway_brreg_financial import financial_fetches
+from dagster_v3.defs.norway_brreg_financial.constants import (
+    NORWAY_BRREG_FINANCIAL_BUCKET,
 )
-from dagster_v3.defs.norway_brreg.financial_storage import (
+from dagster_v3.defs.norway_brreg_financial.financial_storage import (
     NorwayBrregFinancialParquetStorageResource,
     financial_fetches_snapshot_object_key,
     financial_fetches_update_object_key,
@@ -26,7 +26,7 @@ class FakeObjectStore:
         self.created_buckets: list[str] = []
         self.objects: dict[tuple[str, str], bytes] = {}
         for key in keys or []:
-            self.objects[(NORWAY_BRREG_ENTITY_BUCKET, key)] = b""
+            self.objects[(NORWAY_BRREG_FINANCIAL_BUCKET, key)] = b""
 
     def ensure_bucket(self, bucket: str | None = None) -> None:
         assert bucket is not None
@@ -106,7 +106,7 @@ def test_raw_fetch_write_skips_existing_object_when_overwrite_is_false() -> None
         [{"org_number": "923609016", "status": "replacement"}]
     )
     key = financial_raw_fetch_object_key("923609016", "2025")
-    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, key)] = _parquet_bytes(
+    object_store.objects[(NORWAY_BRREG_FINANCIAL_BUCKET, key)] = _parquet_bytes(
         existing_frame
     )
 
@@ -132,7 +132,7 @@ def test_raw_fetch_write_replaces_existing_object_when_overwrite_is_true() -> No
         [{"org_number": "923609016", "status": "replacement"}]
     )
     key = financial_raw_fetch_object_key("923609016", "2025")
-    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, key)] = _parquet_bytes(
+    object_store.objects[(NORWAY_BRREG_FINANCIAL_BUCKET, key)] = _parquet_bytes(
         existing_frame
     )
 
@@ -145,7 +145,7 @@ def test_raw_fetch_write_replaces_existing_object_when_overwrite_is_true() -> No
 
     assert returned_key == key
     assert _stored_frame(object_store, key).to_dicts() == replacement_frame.to_dicts()
-    assert object_store.created_buckets == [NORWAY_BRREG_ENTITY_BUCKET]
+    assert object_store.created_buckets == [NORWAY_BRREG_FINANCIAL_BUCKET]
 
 
 def test_raw_fetch_read_round_trip() -> None:
@@ -200,10 +200,10 @@ def test_financial_storage_reads_historical_raw_fetches() -> None:
             "attempt_count": pl.Series([2], dtype=pl.Int64),
         }
     )
-    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, second_key)] = _parquet_bytes(
+    object_store.objects[(NORWAY_BRREG_FINANCIAL_BUCKET, second_key)] = _parquet_bytes(
         second_frame
     )
-    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, first_key)] = _parquet_bytes(
+    object_store.objects[(NORWAY_BRREG_FINANCIAL_BUCKET, first_key)] = _parquet_bytes(
         first_frame
     )
     storage = NorwayBrregFinancialParquetStorageResource(object_store=object_store)
@@ -277,7 +277,7 @@ def test_usd_statement_write_and_read_methods_round_trip() -> None:
 
 def _stored_frame(object_store: FakeObjectStore, key: str) -> pl.DataFrame:
     return pl.read_parquet(
-        BytesIO(object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, key)])
+        BytesIO(object_store.objects[(NORWAY_BRREG_FINANCIAL_BUCKET, key)])
     )
 
 

@@ -8,8 +8,10 @@ import polars as pl
 from pydantic import PrivateAttr
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.norway_brreg.constants import NORWAY_BRREG_ENTITY_BUCKET
-from dagster_v3.defs.norway_brreg.financial_fetches import (
+from dagster_v3.defs.norway_brreg_financial.constants import (
+    NORWAY_BRREG_FINANCIAL_BUCKET,
+)
+from dagster_v3.defs.norway_brreg_financial.financial_fetches import (
     financial_fetches_parquet_schema,
 )
 
@@ -30,7 +32,7 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
     def raw_fetch_exists(self, org_number: str, accounts_year: str) -> bool:
         return self.object_store.exists(
             financial_raw_fetch_object_key(org_number, accounts_year),
-            bucket=NORWAY_BRREG_ENTITY_BUCKET,
+            bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
         )
 
     def write_raw_fetch(
@@ -43,7 +45,7 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
     ) -> str:
         key = financial_raw_fetch_object_key(org_number, accounts_year)
         if not overwrite and self.object_store.exists(
-            key, bucket=NORWAY_BRREG_ENTITY_BUCKET
+            key, bucket=NORWAY_BRREG_FINANCIAL_BUCKET
         ):
             return key
         return self._write_frame(key, frame)
@@ -56,7 +58,7 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
             key
             for key in self.object_store.list_keys(
                 RAW_FETCH_PREFIX,
-                bucket=NORWAY_BRREG_ENTITY_BUCKET,
+                bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
             )
             if key.endswith("/financial_fetch.parquet")
         )
@@ -130,11 +132,11 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
         )
 
     def _write_frame(self, key: str, frame: pl.DataFrame) -> str:
-        self.object_store.ensure_bucket(NORWAY_BRREG_ENTITY_BUCKET)
+        self.object_store.ensure_bucket(NORWAY_BRREG_FINANCIAL_BUCKET)
         self.object_store.write_bytes(
             key,
             _parquet_bytes(frame),
-            bucket=NORWAY_BRREG_ENTITY_BUCKET,
+            bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
         )
         return key
 
@@ -142,7 +144,7 @@ class NorwayBrregFinancialParquetStorageResource(dg.ConfigurableResource):
         return _read_parquet_bytes(
             self.object_store.read_bytes(
                 key,
-                bucket=NORWAY_BRREG_ENTITY_BUCKET,
+                bucket=NORWAY_BRREG_FINANCIAL_BUCKET,
             )
         )
 

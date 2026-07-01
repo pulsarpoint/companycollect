@@ -5,19 +5,16 @@ from typing import Any
 import dagster as dg
 import polars as pl
 
-from dagster_v3.defs.norway_brreg import financial_fetches
-from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
+from dagster_v3.defs.norway_brreg_financial import financial_fetches
+from dagster_v3.defs.norway_brreg_financial.constants import (
     GROUP_NAME,
-    NORWAY_BRREG_ENTITY_BUCKET,
-)
-from dagster_v3.defs.norway_brreg.assets.entity_updates import (
-    NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
+    NORWAY_BRREG_FINANCIAL_BUCKET,
 )
 from dagster_v3.defs.norway_brreg.entity_storage import (
     ENTITY_NORMALIZED_TABLE_NO_COMPANIES,
     NorwayBrregEntityParquetStorageResource,
 )
-from dagster_v3.defs.norway_brreg.financial_storage import (
+from dagster_v3.defs.norway_brreg_financial.financial_storage import (
     NorwayBrregFinancialParquetStorageResource,
 )
 
@@ -33,6 +30,10 @@ FINANCIAL_FETCH_CANDIDATE_SCHEMA = {
     "last_submitted_accounts_year": pl.Utf8,
 }
 FINANCIAL_FETCHES_PARQUET_SCHEMA = financial_fetches.financial_fetches_parquet_schema()
+NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS = dg.DailyPartitionsDefinition(
+    start_date="2026-06-01",
+    end_offset=1,
+)
 
 
 @dg.asset(
@@ -60,7 +61,7 @@ def norway_brreg_financial_fetches_snapshot_parquet(
         metadata={
             "row_count": fetch_frame.height,
             "status_counts": status_counts,
-            "s3_bucket": NORWAY_BRREG_ENTITY_BUCKET,
+            "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
         }
     )
 
@@ -70,7 +71,7 @@ def norway_brreg_financial_fetches_snapshot_parquet(
     deps=[dg.AssetKey("norway_brreg_entity_updates_no_companies_parquet")],
     group_name=GROUP_NAME,
     kinds=FINANCIAL_FETCH_PARQUET_KINDS,
-    partitions_def=NORWAY_BRREG_ENTITY_UPDATE_PARTITIONS,
+    partitions_def=NORWAY_BRREG_FINANCIAL_UPDATE_PARTITIONS,
     description=(
         "Fetches Norway Brreg annual-account outcomes for one normalized update "
         "no_companies parquet partition and stores raw plus aggregate parquet diagnostics."
@@ -154,7 +155,7 @@ def norway_brreg_financial_fetches_updates_parquet(
             "fetched_count": fetched_count,
             "row_count": aggregate_frame.height,
             "status_counts": status_counts,
-            "s3_bucket": NORWAY_BRREG_ENTITY_BUCKET,
+            "s3_bucket": NORWAY_BRREG_FINANCIAL_BUCKET,
             "s3_key": output_key,
             "candidate_s3_key": candidate_key,
         }

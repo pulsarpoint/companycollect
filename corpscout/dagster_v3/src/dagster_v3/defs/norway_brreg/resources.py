@@ -25,7 +25,6 @@ from dagster_v3.defs.norway_brreg import tables
 COUNTRY = "NO"
 ENTITY_SOURCE_SLUG = "norway_brregenhet"
 BRREG_BASE_URL = "https://data.brreg.no/enhetsregisteret/api"
-BRREG_REGNSKAP_BASE_URL = "https://data.brreg.no/regnskapsregisteret/regnskap"
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_USER_AGENT = "corpscout-dagster-v3-dev/0.1"
 DOWNLOAD_CHUNK_BYTES = 1024 * 1024
@@ -66,7 +65,6 @@ class HttpSession(Protocol):
 
 class NorwayBrregApiResource(dg.ConfigurableResource):
     base_url: str = BRREG_BASE_URL
-    financial_base_url: str = BRREG_REGNSKAP_BASE_URL
     user_agent: str = DEFAULT_USER_AGENT
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     update_page_size: int = 10_000
@@ -281,28 +279,6 @@ class NorwayBrregApiResource(dg.ConfigurableResource):
         payload = self._get_json(f"{self.base_url}/enheter/{org_number}")
         if not isinstance(payload, dict):
             raise ValueError(f"Expected Brreg entity payload to be an object: {org_number}")
-        return payload
-
-    def get_financial_accounts(
-        self,
-        org_number: str,
-        *,
-        year: str | int | None = None,
-        account_type: str | None = None,
-    ) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {}
-        if year is not None:
-            params["år"] = str(year)
-        if account_type is not None:
-            params["regnskapstype"] = account_type
-        payload = self._get_json(
-            f"{self.financial_base_url}/{org_number}",
-            params=params or None,
-        )
-        if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
-            raise ValueError(
-                f"Expected Brreg financial accounts payload to be a list: {org_number}"
-            )
         return payload
 
     def _get_json(

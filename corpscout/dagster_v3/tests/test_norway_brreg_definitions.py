@@ -11,11 +11,11 @@ Coverage:
 import dagster as dg
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
-import dagster_v3.defs.norway_brreg.assets as brreg_assets
+import dagster_v3.defs.norway_brreg_financial.assets as brreg_financial_assets
 from dagster_v3.defs.norway_brreg.entity_storage import (
     NorwayBrregEntityParquetStorageResource,
 )
-from dagster_v3.defs.norway_brreg.financial_storage import (
+from dagster_v3.defs.norway_brreg_financial.financial_storage import (
     NorwayBrregFinancialParquetStorageResource,
 )
 from dagster_v3.defs.norway_brreg.resources import NorwayBrregApiResource
@@ -80,28 +80,28 @@ def test_norway_brreg_asset_dependency_edges() -> None:
     )
     trigger_node = asset_graph.get(dg.AssetKey("norway_brreg_translation_trigger"))
     snapshot_fetches_node = asset_graph.get(
-        brreg_assets.norway_brreg_financial_fetches_snapshot_parquet.key
+        brreg_financial_assets.norway_brreg_financial_fetches_snapshot_parquet.key
     )
     update_fetches_node = asset_graph.get(
-        brreg_assets.norway_brreg_financial_fetches_updates_parquet.key
+        brreg_financial_assets.norway_brreg_financial_fetches_updates_parquet.key
     )
     snapshot_statements_node = asset_graph.get(
-        brreg_assets.norway_brreg_financial_statements_snapshot_parquet.key
+        brreg_financial_assets.norway_brreg_financial_statements_snapshot_parquet.key
     )
     update_statements_node = asset_graph.get(
-        brreg_assets.norway_brreg_financial_statements_updates_parquet.key
+        brreg_financial_assets.norway_brreg_financial_statements_updates_parquet.key
     )
     snapshot_usd_node = asset_graph.get(
-        brreg_assets.norway_brreg_financial_statements_snapshot_usd_parquet.key
+        brreg_financial_assets.norway_brreg_financial_statements_snapshot_usd_parquet.key
     )
     update_usd_node = asset_graph.get(
-        brreg_assets.norway_brreg_financial_statements_updates_usd_parquet.key
+        brreg_financial_assets.norway_brreg_financial_statements_updates_usd_parquet.key
     )
     snapshot_financial_clickhouse_node = asset_graph.get(
-        brreg_assets.norway_brreg_financial_statements_snapshot_clickhouse.key
+        brreg_financial_assets.norway_brreg_financial_statements_snapshot_clickhouse.key
     )
     update_financial_clickhouse_node = asset_graph.get(
-        brreg_assets.norway_brreg_financial_statements_updates_clickhouse.key
+        brreg_financial_assets.norway_brreg_financial_statements_updates_clickhouse.key
     )
 
     assert {k.path[-1] for k in snapshot_clickhouse_node.parent_keys} == {
@@ -199,10 +199,6 @@ def test_norway_brreg_entity_updates_job_membership() -> None:
         "norway_brreg_entity_updates_affected_orgs_parquet",
         "norway_brreg_entity_updates_removed_orgs_parquet",
         "norway_brreg_entity_updates_clickhouse",
-        "norway_brreg_financial_fetches_updates_parquet",
-        "norway_brreg_financial_statements_updates_parquet",
-        "norway_brreg_financial_statements_updates_usd_parquet",
-        "norway_brreg_financial_statements_updates_clickhouse",
     }
 
 
@@ -222,6 +218,25 @@ def test_norway_brreg_financial_snapshot_job_membership() -> None:
         "norway_brreg_financial_statements_snapshot_parquet",
         "norway_brreg_financial_statements_snapshot_usd_parquet",
         "norway_brreg_financial_statements_snapshot_clickhouse",
+    }
+
+
+def test_norway_brreg_financial_updates_job_membership() -> None:
+    repo = load_project_defs().get_repository_def()
+    assert "norway_brreg_financial_updates_job" in repo.job_names
+
+    update = {
+        k.path[-1]
+        for k in repo.get_job(
+            "norway_brreg_financial_updates_job"
+        ).asset_layer.executable_asset_keys
+    }
+
+    assert update == {
+        "norway_brreg_financial_fetches_updates_parquet",
+        "norway_brreg_financial_statements_updates_parquet",
+        "norway_brreg_financial_statements_updates_usd_parquet",
+        "norway_brreg_financial_statements_updates_clickhouse",
     }
 
 
