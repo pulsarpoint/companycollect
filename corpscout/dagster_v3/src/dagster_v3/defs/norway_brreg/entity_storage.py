@@ -8,11 +8,7 @@ import polars as pl
 from pydantic import PrivateAttr
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
-from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
-    NORWAY_BRREG_ENTITY_BUCKET,
-    entity_snapshot_object_key,
-)
-from dagster_v3.defs.norway_brreg.assets.entity_updates import entity_updates_object_key
+from dagster_v3.defs.norway_brreg.constants import NORWAY_BRREG_ENTITY_BUCKET
 
 ENTITY_NORMALIZED_TABLE_NO_COMPANIES = "no_companies"
 ENTITY_NORMALIZED_TABLE_NO_WEBSITES = "no_websites"
@@ -27,6 +23,7 @@ ENTITY_NORMALIZED_TABLES = (
     ENTITY_NORMALIZED_TABLE_AFFECTED_ORGS,
     ENTITY_NORMALIZED_TABLE_REMOVED_ORGS,
 )
+ENTITY_SNAPSHOT_OBJECT_KEY = "norway_brreg/entities/snapshot/entities.parquet"
 
 
 class NorwayBrregEntityParquetStorageResource(dg.ConfigurableResource):
@@ -113,6 +110,14 @@ def normalized_snapshot_table_object_key(table_name: str) -> str:
 def normalized_update_table_object_key(partition_date: str, table_name: str) -> str:
     _validate_normalized_table_name(table_name)
     return f"norway_brreg/entities/normalized/updates/date={partition_date}/{table_name}.parquet"
+
+
+def entity_snapshot_object_key() -> str:
+    return ENTITY_SNAPSHOT_OBJECT_KEY
+
+
+def entity_updates_object_key(partition_date: str) -> str:
+    return f"norway_brreg/entities/updates/date={partition_date}/entities.parquet"
 
 
 def _validate_normalized_table_name(table_name: str) -> None:

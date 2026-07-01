@@ -1,51 +1,43 @@
 from __future__ import annotations
 
-import os
+import gzip
 from collections.abc import Callable
-from collections.abc import Iterator
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import dagster as dg
-import dlt
-import fsspec
 import ijson
+import pyarrow as pa
+import pyarrow.parquet as pq
 from dagster_aws.s3 import S3Resource
-from dlt.common.configuration.specs import AwsCredentials
-from dlt.pipeline.exceptions import PipelineStepFailed
-from dlt.sources.filesystem import filesystem
 
 from dagster_v3.defs.common.resources import ObjectStoreResource
+from dagster_v3.defs.norway_brreg import entity_records
 from dagster_v3.defs.norway_brreg.constants import (
     GROUP_NAME,
     NORWAY_BRREG_ENTITY_BUCKET,
 )
-from dagster_v3.defs.norway_brreg import entity_records
 from dagster_v3.defs.norway_brreg.entity_parquet import entity_record_parquet_row
 from dagster_v3.defs.norway_brreg.resources import NorwayBrregApiResource
 
 ENTRIES_SNAPSHOT_RAW_OBJECT_KEY = "norway_brreg/entities/raw/snapshot/entities.json.gz"
 ENTITY_SNAPSHOT_OBJECT_KEY = "norway_brreg/entities/snapshot/entities.parquet"
-DLT_PIPELINE_NAME = "norway_brreg_entities_snapshot"
-DLT_DATASET_NAME = "snapshot"
-DLT_ENTITIES_TABLE = "entities"
 EMPTY_SNAPSHOT_ERROR_MESSAGE = "Norway Brreg entity snapshot produced no rows"
-DLT_SOURCE_BUCKET_URL = (
-    f"s3://{NORWAY_BRREG_ENTITY_BUCKET}/norway_brreg/entities/raw/snapshot"
+PARQUET_BATCH_SIZE = 10_000
+
+ENTITY_ARROW_SCHEMA = pa.schema(
+    [
+        ("org_number", pa.string()),
+        ("change_type", pa.string()),
+        ("source_change_type", pa.string()),
+        ("updated_at", pa.string()),
+        ("update_id", pa.int64()),
+        ("entity_url", pa.string()),
+        ("entity_json", pa.string()),
+        ("raw_update_json", pa.string()),
+    ]
 )
-DLT_SOURCE_FILE_GLOB = "entities.json.gz"
-DLT_DESTINATION_BUCKET_URL = f"s3://{NORWAY_BRREG_ENTITY_BUCKET}/norway_brreg/entities"
-DLT_PIPELINES_DIR = Path("data/.dlt/norway_brreg_entities_snapshot")
-DLT_ENTITY_COLUMNS = {
-    "org_number": {"data_type": "text", "nullable": False},
-    "change_type": {"data_type": "text", "nullable": False},
-    "source_change_type": {"data_type": "text", "nullable": False},
-    "updated_at": {"data_type": "text", "nullable": True},
-    "update_id": {"data_type": "bigint", "nullable": True},
-    "entity_url": {"data_type": "text", "nullable": True},
-    "entity_json": {"data_type": "text", "nullable": True},
-    "raw_update_json": {"data_type": "text", "nullable": True},
-}
 
 
 @dg.asset(
@@ -72,63 +64,57 @@ def norway_brreg_entries_snapshot_raw_s3(
     name="norway_brreg_entities_snapshot_s3",
     deps=[dg.AssetKey("norway_brreg_entries_snapshot_raw_s3")],
     group_name=GROUP_NAME,
-    kinds={"python", "dlt", "s3", "parquet", "brreg"},
-    description="Converts the raw Norway Brreg entity snapshot archive to uniform entity parquet on S3 with dlt.",
+    kinds={"python", "s3", "parquet", "brreg"},
+    description=(
+        "Converts the raw Norway Brreg full entity snapshot JSON gzip archive directly "
+        "to normalized entity parquet on S3."
+    ),
 )
 def norway_brreg_entities_snapshot_s3(
     context,
     object_store: ObjectStoreResource,
 ) -> dg.MaterializeResult:
-    s3_key = entity_snapshot_object_key()
-    if object_store.exists(s3_key, bucket=NORWAY_BRREG_ENTITY_BUCKET):
-        context.log.info(
-            "Reusing existing Norway Brreg full entity snapshot parquet: bucket=%s key=%s",
-            NORWAY_BRREG_ENTITY_BUCKET,
-            s3_key,
-        )
-        return dg.MaterializeResult(
-            metadata={
-                "s3_bucket": NORWAY_BRREG_ENTITY_BUCKET,
-                "s3_key": s3_key,
-                "converted": False,
-                "reused_existing_snapshot": True,
-            }
-        )
-
+    parquet_key = entity_snapshot_object_key()
     context.log.info(
-        "Converting Norway Brreg raw entity snapshot with dlt: bucket=%s raw_key=%s output_key=%s",
+        "Converting Norway Brreg raw entity snapshot to parquet: bucket=%s raw_key=%s parquet_key=%s",
         NORWAY_BRREG_ENTITY_BUCKET,
         entries_snapshot_raw_object_key(),
-        s3_key,
+        parquet_key,
     )
-    dlt_result = run_norway_brreg_entities_snapshot_dlt_pipeline(
-        source_bucket_url=DLT_SOURCE_BUCKET_URL,
-        source_file_glob=DLT_SOURCE_FILE_GLOB,
-        destination_bucket_url=DLT_DESTINATION_BUCKET_URL,
-        credentials=None,
-        pipelines_dir=DLT_PIPELINES_DIR,
-        output_s3_key=s3_key,
-        log=context.log.info,
-    )
+    with TemporaryDirectory() as tmp_dir:
+        raw_path = Path(tmp_dir) / "entities.json.gz"
+        parquet_path = Path(tmp_dir) / "entities.parquet"
+        object_store.download_file(
+            entries_snapshot_raw_object_key(),
+            raw_path,
+            bucket=NORWAY_BRREG_ENTITY_BUCKET,
+        )
+        row_count = _write_entries_snapshot_parquet(
+            raw_path=raw_path,
+            parquet_path=parquet_path,
+            log=context.log.info,
+        )
+        if row_count == 0:
+            raise ValueError(EMPTY_SNAPSHOT_ERROR_MESSAGE)
+
+        object_store.ensure_bucket(NORWAY_BRREG_ENTITY_BUCKET)
+        object_store.upload_file(parquet_key, parquet_path, bucket=NORWAY_BRREG_ENTITY_BUCKET)
+        parquet_size_bytes = parquet_path.stat().st_size
 
     context.log.info(
-        "Completed Norway Brreg dlt entity snapshot conversion: bucket=%s key=%s rows=%d bytes=%d",
+        "Completed Norway Brreg entity snapshot parquet write: bucket=%s key=%s rows=%d bytes=%d",
         NORWAY_BRREG_ENTITY_BUCKET,
-        s3_key,
-        dlt_result["row_count"],
-        dlt_result["parquet_size_bytes"],
+        parquet_key,
+        row_count,
+        parquet_size_bytes,
     )
     return dg.MaterializeResult(
         metadata={
-            "row_count": dlt_result["row_count"],
+            "row_count": row_count,
             "s3_bucket": NORWAY_BRREG_ENTITY_BUCKET,
-            "s3_key": s3_key,
-            "parquet_size_bytes": dlt_result["parquet_size_bytes"],
-            "parquet_uri": dlt_result["parquet_uri"],
+            "s3_key": parquet_key,
+            "parquet_size_bytes": parquet_size_bytes,
             "converted": True,
-            "reused_existing_snapshot": False,
-            "dlt_pipeline_name": DLT_PIPELINE_NAME,
-            "dlt_table_name": DLT_ENTITIES_TABLE,
         }
     )
 
@@ -141,170 +127,55 @@ def entity_snapshot_object_key() -> str:
     return ENTITY_SNAPSHOT_OBJECT_KEY
 
 
-def run_norway_brreg_entities_snapshot_dlt_pipeline(
+def _write_entries_snapshot_parquet(
     *,
-    source_bucket_url: str,
-    source_file_glob: str,
-    destination_bucket_url: str,
-    credentials: AwsCredentials | None,
-    pipelines_dir: Path,
-    output_s3_key: str,
-    log: Callable[..., None] | None = None,
-) -> dict[str, Any]:
-    pipelines_dir.mkdir(parents=True, exist_ok=True)
-    resolved_credentials = credentials or _dlt_s3_credentials(source_bucket_url)
-    row_counter = {"row_count": 0}
-    pipeline = dlt.pipeline(
-        pipeline_name=DLT_PIPELINE_NAME,
-        destination=dlt.destinations.filesystem(
-            bucket_url=destination_bucket_url,
-            credentials=resolved_credentials,
-            layout="{table_name}.{ext}",
-        ),
-        dataset_name=DLT_DATASET_NAME,
-        dev_mode=False,
-        pipelines_dir=str(pipelines_dir),
-    )
+    raw_path: Path,
+    parquet_path: Path,
+    log: Callable[..., None] | None,
+) -> int:
+    row_count = 0
+    row_batch: list[dict[str, Any]] = []
+    writer: pq.ParquetWriter | None = None
     try:
-        pipeline.run(
-            _entity_snapshot_source(
-                source_bucket_url=source_bucket_url,
-                source_file_glob=source_file_glob,
-                credentials=resolved_credentials,
-                row_counter=row_counter,
-                log=log,
-            ),
-            loader_file_format="parquet",
-        )
-    except PipelineStepFailed as exc:
-        if _has_empty_snapshot_error(exc):
-            raise ValueError(EMPTY_SNAPSHOT_ERROR_MESSAGE) from exc
-        raise
-    if row_counter["row_count"] == 0:
-        raise ValueError(EMPTY_SNAPSHOT_ERROR_MESSAGE)
-    parquet_uri = _dlt_parquet_uri(destination_bucket_url)
-    if parquet_uri.startswith("s3://") and not parquet_uri.endswith(output_s3_key):
-        raise ValueError(
-            "Norway Brreg dlt destination no longer matches expected S3 key: "
-            f"parquet_uri={parquet_uri} output_s3_key={output_s3_key}"
-        )
-    parquet_size_bytes = _object_size(parquet_uri, credentials=resolved_credentials)
-    return {
-        "row_count": row_counter["row_count"],
-        "parquet_size_bytes": parquet_size_bytes,
-        "parquet_uri": parquet_uri,
-    }
-
-
-def _entity_snapshot_source(
-    *,
-    source_bucket_url: str,
-    source_file_glob: str,
-    credentials: AwsCredentials | None,
-    row_counter: dict[str, int],
-    log: Callable[..., None] | None,
-) -> Any:
-    kwargs: dict[str, Any] = {
-        "bucket_url": source_bucket_url,
-        "file_glob": source_file_glob,
-        "files_per_page": 1,
-    }
-    if credentials is not None:
-        kwargs["credentials"] = credentials
-    return filesystem(**kwargs) | _entity_snapshot_resource(
-        row_counter=row_counter,
-        log=log,
-    )
-
-
-@dlt.transformer(
-    name=DLT_ENTITIES_TABLE,
-    write_disposition="replace",
-    columns=DLT_ENTITY_COLUMNS,
-)
-def _entity_snapshot_resource(
-    file_items: Any,
-    *,
-    row_counter: dict[str, int],
-    log: Callable[..., None] | None,
-) -> Iterator[dict[str, Any]]:
-    for file_item in _file_items(file_items):
-        with file_item.open() as source_file:
+        with gzip.open(raw_path, "rb") as source_file:
             for entity in ijson.items(source_file, "item"):
                 if not isinstance(entity, dict):
                     continue
-                row_counter["row_count"] += 1
-                if log is not None and row_counter["row_count"] % 1000 == 0:
-                    log(
-                        "Parsed Norway Brreg entity snapshot rows: rows=%s",
-                        row_counter["row_count"],
+                row_count += 1
+                row_batch.append(
+                    entity_record_parquet_row(
+                        entity_records.snapshot_entity_record(entity)
                     )
-                yield entity_record_parquet_row(entity_records.snapshot_entity_record(entity))
-    if row_counter["row_count"] == 0:
-        raise ValueError(EMPTY_SNAPSHOT_ERROR_MESSAGE)
+                )
+                if log is not None and row_count % 1000 == 0:
+                    log("Parsed Norway Brreg entity snapshot rows: rows=%s", row_count)
+                if len(row_batch) >= PARQUET_BATCH_SIZE:
+                    writer = _write_parquet_batch(
+                        writer=writer,
+                        parquet_path=parquet_path,
+                        rows=row_batch,
+                    )
+                    row_batch = []
+        if row_batch:
+            writer = _write_parquet_batch(
+                writer=writer,
+                parquet_path=parquet_path,
+                rows=row_batch,
+            )
+    finally:
+        if writer is not None:
+            writer.close()
+    return row_count
 
 
-def _file_items(file_items: Any) -> list[Any]:
-    if isinstance(file_items, list):
-        return file_items
-    return [file_items]
-
-
-def _dlt_s3_credentials(source_bucket_url: str) -> AwsCredentials | None:
-    if not source_bucket_url.startswith("s3://"):
-        return None
-    return AwsCredentials(
-        aws_access_key_id=_required_env("CORPSCOUT_S3_ACCESS_KEY"),
-        aws_secret_access_key=_required_env("CORPSCOUT_S3_SECRET_KEY"),
-        endpoint_url=_required_env("CORPSCOUT_S3_ENDPOINT"),
-        region_name="us-east-1",
-        s3_url_style="path",
-    )
-
-
-def _required_env(name: str) -> str:
-    value = os.getenv(name)
-    if value is None or value.strip() == "":
-        raise ValueError(f"Missing required environment variable: {name}")
-    return value
-
-
-def _dlt_parquet_uri(destination_bucket_url: str) -> str:
-    return (
-        f"{destination_bucket_url.rstrip('/')}/{DLT_DATASET_NAME}/"
-        f"{DLT_ENTITIES_TABLE}.parquet"
-    )
-
-
-def _object_size(uri: str, *, credentials: AwsCredentials | None) -> int:
-    filesystem_client, path = fsspec.core.url_to_fs(
-        uri,
-        **_fsspec_storage_options(credentials),
-    )
-    return int(filesystem_client.info(path)["size"])
-
-
-def _fsspec_storage_options(credentials: AwsCredentials | None) -> dict[str, Any]:
-    if credentials is None:
-        return {}
-    return {
-        "key": credentials.aws_access_key_id,
-        "secret": credentials.aws_secret_access_key,
-        "token": credentials.aws_session_token,
-        "client_kwargs": {
-            "endpoint_url": credentials.endpoint_url,
-            "region_name": credentials.region_name,
-        },
-        "config_kwargs": {
-            "s3": {"addressing_style": credentials.s3_url_style},
-        },
-    }
-
-
-def _has_empty_snapshot_error(exc: BaseException) -> bool:
-    current: BaseException | None = exc
-    while current is not None:
-        if isinstance(current, ValueError) and str(current) == EMPTY_SNAPSHOT_ERROR_MESSAGE:
-            return True
-        current = current.__cause__ or current.__context__
-    return False
+def _write_parquet_batch(
+    *,
+    writer: pq.ParquetWriter | None,
+    parquet_path: Path,
+    rows: list[dict[str, Any]],
+) -> pq.ParquetWriter:
+    table = pa.Table.from_pylist(rows, schema=ENTITY_ARROW_SCHEMA)
+    if writer is None:
+        writer = pq.ParquetWriter(parquet_path, ENTITY_ARROW_SCHEMA)
+    writer.write_table(table)
+    return writer

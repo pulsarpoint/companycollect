@@ -11,8 +11,6 @@ import pytest
 
 import dagster_v3.defs.norway_brreg.assets.entity_snapshot as entity_snapshot_module
 from dagster_v3.defs.norway_brreg.assets.entity_snapshot import (
-    DLT_DATASET_NAME,
-    DLT_ENTITIES_TABLE,
     NORWAY_BRREG_ENTITY_BUCKET,
     entries_snapshot_raw_object_key,
     entity_snapshot_object_key,
@@ -70,6 +68,18 @@ class FakeObjectStore:
         assert bucket is not None
         self.objects[(bucket, key)] = body
 
+    def read_bytes(self, key: str, bucket: str | None = None) -> bytes:
+        assert bucket is not None
+        return self.objects[(bucket, key)]
+
+    def upload_file(self, key: str, source_path, bucket: str | None = None) -> None:
+        assert bucket is not None
+        self.objects[(bucket, key)] = source_path.read_bytes()
+
+    def download_file(self, key: str, target_path, bucket: str | None = None) -> None:
+        assert bucket is not None
+        target_path.write_bytes(self.objects[(bucket, key)])
+
     def exists(self, key: str, bucket: str | None = None) -> bool:
         assert bucket is not None
         return (bucket, key) in self.objects
@@ -105,59 +115,33 @@ def test_entities_snapshot_module_has_no_pipeline_wrapper() -> None:
     )
 
 
-def test_entities_snapshot_asset_runs_dlt_conversion_directly(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    source_dir = tmp_path / "raw"
-    destination_dir = tmp_path / "destination"
-    source_dir.mkdir()
-    destination_dir.mkdir()
-    (source_dir / "entities.json.gz").write_bytes(
-        gzip.compress(
-            json.dumps(
-                [
-                    {
-                        "organisasjonsnummer": "923609016",
-                        "navn": "EQUINOR ASA",
-                        "sisteInnsendteAarsregnskap": "2024",
-                        "_links": {
-                            "self": {
-                                "href": "https://data.brreg.no/enhetsregisteret/api/enheter/923609016"
-                            }
-                        },
-                    }
-                ]
-            ).encode("utf-8")
-        )
+def test_entities_snapshot_module_has_only_two_snapshot_assets() -> None:
+    assert not hasattr(entity_snapshot_module, "norway_brreg_entries_snapshot_jsonl_s3")
+    assert not hasattr(entity_snapshot_module, "entries_snapshot_jsonl_object_key")
+    assert not hasattr(entity_snapshot_module, "norway_brreg_entities_snapshot_source")
+    assert not hasattr(entity_snapshot_module, "norway_brreg_entities_snapshot_pipeline")
+
+
+def test_entities_snapshot_asset_converts_raw_json_gzip_directly_to_parquet() -> None:
+    object_store = FakeObjectStore()
+    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entries_snapshot_raw_object_key())] = (
+        _raw_snapshot_body()
     )
-    monkeypatch.setattr(entity_snapshot_module, "DLT_SOURCE_BUCKET_URL", source_dir.as_uri())
-    monkeypatch.setattr(entity_snapshot_module, "DLT_SOURCE_FILE_GLOB", "entities.json.gz")
-    monkeypatch.setattr(
-        entity_snapshot_module,
-        "DLT_DESTINATION_BUCKET_URL",
-        destination_dir.as_uri(),
-    )
-    monkeypatch.setattr(entity_snapshot_module, "DLT_PIPELINES_DIR", tmp_path / ".dlt")
 
     result = norway_brreg_entities_snapshot_s3(
         context=dg.build_asset_context(),
-        object_store=FakeObjectStore(),
+        object_store=object_store,
     )
 
-    parquet_path = destination_dir / DLT_DATASET_NAME / f"{DLT_ENTITIES_TABLE}.parquet"
-    assert result.metadata["row_count"] == 1
-    assert result.metadata["s3_bucket"] == NORWAY_BRREG_ENTITY_BUCKET
+    assert object_store.created_buckets == [NORWAY_BRREG_ENTITY_BUCKET]
+    assert result.metadata["row_count"] == 2
     assert result.metadata["s3_key"] == entity_snapshot_object_key()
-    assert result.metadata["parquet_size_bytes"] == parquet_path.stat().st_size
-    assert result.metadata["parquet_uri"] == (
-        f"{destination_dir.as_uri()}/{DLT_DATASET_NAME}/{DLT_ENTITIES_TABLE}.parquet"
-    )
     assert result.metadata["converted"] is True
-    assert result.metadata["reused_existing_snapshot"] is False
-    assert result.metadata["dlt_pipeline_name"] == "norway_brreg_entities_snapshot"
-    assert result.metadata["dlt_table_name"] == "entities"
+    assert result.metadata["parquet_size_bytes"] > 0
 
-    frame = pl.read_parquet(parquet_path)
-    assert "_dlt_load_id" in frame.columns
-    assert "_dlt_id" in frame.columns
+    frame = pl.read_parquet(
+        BytesIO(object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())])
+    )
 
     assert frame.select(
         [
@@ -190,48 +174,82 @@ def test_entities_snapshot_asset_runs_dlt_conversion_directly(monkeypatch: pytes
                 sort_keys=True,
             ),
             "raw_update_json": "",
+        },
+        {
+            "org_number": "810418052",
+            "change_type": "snapshot",
+            "source_change_type": "snapshot",
+            "entity_url": "",
+            "entity_json": json.dumps(
+                {
+                    "organisasjonsnummer": "810418052",
+                    "navn": "TELENOR ASA",
+                    "sisteInnsendteAarsregnskap": "2023",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            "raw_update_json": "",
         }
     ]
 
 
-def test_entities_snapshot_asset_reuses_existing_stable_snapshot_without_api_download() -> None:
+def test_entities_snapshot_asset_overwrites_existing_parquet() -> None:
     object_store = FakeObjectStore()
+    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entries_snapshot_raw_object_key())] = (
+        _raw_snapshot_body()
+    )
     object_store.objects[
         (NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())
-    ] = b"existing parquet"
+    ] = b"old parquet bytes"
 
     result = norway_brreg_entities_snapshot_s3(
         context=dg.build_asset_context(),
         object_store=object_store,
     )
 
-    assert object_store.created_buckets == []
-    assert result.metadata["s3_bucket"] == NORWAY_BRREG_ENTITY_BUCKET
-    assert result.metadata["s3_key"] == entity_snapshot_object_key()
-    assert result.metadata["converted"] is False
-    assert result.metadata["reused_existing_snapshot"] is True
+    assert result.metadata["row_count"] == 2
+    assert object_store.objects[
+        (NORWAY_BRREG_ENTITY_BUCKET, entity_snapshot_object_key())
+    ] != b"old parquet bytes"
 
 
-def test_entities_snapshot_asset_refuses_empty_snapshot(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    source_dir = tmp_path / "raw"
-    destination_dir = tmp_path / "destination"
-    source_dir.mkdir()
-    destination_dir.mkdir()
-    (source_dir / "entities.json.gz").write_bytes(gzip.compress(b"[]"))
-    monkeypatch.setattr(entity_snapshot_module, "DLT_SOURCE_BUCKET_URL", source_dir.as_uri())
-    monkeypatch.setattr(entity_snapshot_module, "DLT_SOURCE_FILE_GLOB", "entities.json.gz")
-    monkeypatch.setattr(
-        entity_snapshot_module,
-        "DLT_DESTINATION_BUCKET_URL",
-        destination_dir.as_uri(),
+def test_entities_snapshot_asset_refuses_empty_raw_snapshot() -> None:
+    object_store = FakeObjectStore()
+    object_store.objects[(NORWAY_BRREG_ENTITY_BUCKET, entries_snapshot_raw_object_key())] = (
+        gzip.compress(b"[]")
     )
-    monkeypatch.setattr(entity_snapshot_module, "DLT_PIPELINES_DIR", tmp_path / ".dlt")
 
     with pytest.raises(ValueError, match="Norway Brreg entity snapshot produced no rows"):
         norway_brreg_entities_snapshot_s3(
             context=dg.build_asset_context(),
-            object_store=FakeObjectStore(),
+            object_store=object_store,
         )
+
+
+def _raw_snapshot_body() -> bytes:
+    return gzip.compress(
+        json.dumps(
+            [
+                {
+                    "organisasjonsnummer": "923609016",
+                    "navn": "EQUINOR ASA",
+                    "sisteInnsendteAarsregnskap": "2024",
+                    "_links": {
+                        "self": {
+                            "href": "https://data.brreg.no/enhetsregisteret/api/enheter/923609016"
+                        }
+                    },
+                },
+                {
+                    "organisasjonsnummer": "810418052",
+                    "navn": "TELENOR ASA",
+                    "sisteInnsendteAarsregnskap": "2023",
+                },
+            ]
+        ).encode("utf-8")
+    )
 
 
 def test_entity_update_window_covers_one_utc_day() -> None:
