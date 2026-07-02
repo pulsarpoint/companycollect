@@ -392,16 +392,17 @@ func run(mode string, o opts) {
 		EmbedOnly: mode == "embed",
 	}
 	start := time.Now()
+	// Accumulators for the industry/embed path, which builds ONE ShardResult for the whole shard. The
+	// tech/both path does NOT accumulate — it streams each chunk straight to parquet (see the else branch),
+	// so a huge shard never buffers a whole part's rows in RAM.
 	var domains []output.DomainRow
 	var industries []output.IndustryRow
 	var pageSignals []output.PageSignalRow
-	var techRows []output.TechRow
-	var idents []output.IdentifierRow
-	var metadata []output.MetadataRow
-	var contacts []output.ContactRow
-	var securityRows []output.SecurityRow
-	var pageMetaRows []output.PageMetaRow
 	var embeddings []output.EmbeddingRow
+
+	var written []string              // committed output paths (both branches populate this)
+	streamed := false                 // tech/both writes its own files (streaming) and skips the shared block
+	finalDomains, finalEmbeds := 0, 0 // for the done log (the accumulator slices are empty on the streamed path)
 
 	// Industry: one continuous fetch→embed stream over the whole shard, so the GPU is fed
 	// non-stop (no per-chunk "embed all then wait" barrier). tech/both keep the chunk pipeline.
@@ -421,12 +422,22 @@ func run(mode string, o opts) {
 		log.Printf("progress: %d/%d pages, %d %s (%.1f pages/s)",
 			len(items), len(items), n, unit, float64(len(items))/time.Since(start).Seconds())
 	} else {
-		// Pipeline fetch and finalize: while chunk N embeds on the GPU (Finalize), chunk N+1 downloads
-		// on the network (FetchChunk) — so the GPU isn't idle during the fetch phase.
+		// Streaming write: the chunked tech/both path writes each chunk's rows as ONE parquet row group
+		// immediately (worker.ShardStreamer) instead of buffering the whole shard, so peak memory is
+		// O(chunk) not O(part). A 250k-domain (~2.75M-page) shard would otherwise buffer ~80GB+ of rows.
+		runEmbedChunk := mode == "both" // "both" also emits vectors -> the separate data/embedding tree
+		embedDir := ""
+		if runEmbedChunk {
+			embedDir = filepath.Join(filepath.Dir(filepath.Dir(outDir)), "embedding", filepath.Base(outDir))
+		}
+		streamer, serr := worker.NewShardStreamer(outDir, embedDir, runEmbedChunk, true /*runTech*/)
+		if serr != nil {
+			log.Fatalf("open shard writers: %v", serr)
+		}
 		// Domain-aligned chunks: each snapped to a domain boundary so a domain's pages never split across a
 		// chunk (the worklist is ORDER BY root_domain, rn) — otherwise a straddling domain aggregates twice
 		// into two DomainRows with conflicting primary URLs (review C3). The loop advances by the ACTUAL
-		// snapped boundary, prefetching the next chunk over the network while the current one finalizes.
+		// snapped boundary, prefetching the next chunk over the network while the current one finalizes+writes.
 		chunkEnd := func(i int) int {
 			e := i + o.chunk
 			if e >= len(items) {
@@ -450,105 +461,106 @@ func run(mode string, o opts) {
 			totalErrs += cur.Errs
 			nextLo, nextHi := curHi, 0
 			var nextCh chan worker.FetchedChunk
-			if nextLo < len(items) { // prefetch the next chunk while this one finalizes
+			if nextLo < len(items) { // prefetch the next chunk while this one finalizes + writes
 				nextHi = chunkEnd(nextLo)
 				nextCh = make(chan worker.FetchedChunk, 1)
 				go func() { nextCh <- worker.FetchChunk(ctx, items[nextLo:nextHi], getter, cfg) }()
 			}
-			res, err := worker.Finalize(ctx, cur, emb, ref, protos, cfg)
-			if err != nil {
-				log.Fatalf("process chunk [%d:%d]: %v", curLo, curHi, err)
+			res, ferr := worker.Finalize(ctx, cur, emb, ref, protos, cfg)
+			if ferr != nil {
+				streamer.Abort()
+				log.Fatalf("process chunk [%d:%d]: %v", curLo, curHi, ferr)
 			}
-			domains = append(domains, res.Domains...)
-			industries = append(industries, res.Industries...)
-			pageSignals = append(pageSignals, res.PageSignals...)
-			techRows = append(techRows, res.Tech...)
-			idents = append(idents, res.Identifiers...)
-			metadata = append(metadata, res.Metadata...)
-			contacts = append(contacts, res.Contacts...)
-			securityRows = append(securityRows, res.Security...)
-			pageMetaRows = append(pageMetaRows, res.PageMeta...)
-			embeddings = append(embeddings, res.Embeddings...)
+			if werr := streamer.Write(res); werr != nil {
+				streamer.Abort()
+				log.Fatalf("write chunk [%d:%d]: %v", curLo, curHi, werr)
+			}
 			el := time.Since(start).Seconds()
-			log.Printf("progress: %d/%d pages, %d domains, %d tech, %d ids, %d contacts (%.1f pages/s)",
-				curHi, len(items), len(domains), len(techRows), len(idents), len(contacts), float64(curHi)/el)
+			log.Printf("progress: %d/%d pages, %d domains written (%.1f pages/s)",
+				curHi, len(items), streamer.DomainCount(), float64(curHi)/el)
 			if nextCh != nil {
 				fetched = <-nextCh
 			}
 			curLo, curHi = nextLo, nextHi
 		}
-		// Failure contract (chunked path): a systemically-failed fetch (auth/throttle) must not silently
-		// write a near-empty part. cc-crawl gates on exit code, so a Fatalf here retries the part next run.
+		// Failure contract: abort (delete partials) rather than commit a systemically-failed part. cc-crawl
+		// gates on exit code, so a Fatalf here retries the part next run.
 		const maxFetchErrorRate = 0.5 // >50% errors = systemic; normal WARC decay is a few %
 		if totalPages > 0 && float64(totalErrs)/float64(totalPages) > maxFetchErrorRate {
+			streamer.Abort()
 			log.Fatalf("refusing to write: fetch error rate %.0f%% (%d/%d pages) exceeds %.0f%% — part will be retried",
 				100*float64(totalErrs)/float64(totalPages), totalErrs, totalPages, 100*maxFetchErrorRate)
 		}
-	}
-
-	// Failure contract (all modes): refuse to write when a non-empty worklist produced nothing.
-	produced := len(domains)
-	if mode == "embed" {
-		produced = len(embeddings)
-	}
-	if len(items) > 0 && produced == 0 {
-		log.Fatalf("refusing to write: 0 outputs from %d worklist pages (systemic fetch failure?) — part will be retried", len(items))
-	}
-
-	var written []string
-	write := func(name string, fn func(string) error) {
-		p := filepath.Join(outDir, name)
-		if err := fn(p); err != nil {
-			log.Fatalf("write %s: %v", name, err)
+		if len(items) > 0 && streamer.DomainCount() == 0 {
+			streamer.Abort()
+			log.Fatalf("refusing to write: 0 domains from %d worklist pages (systemic fetch failure?) — part will be retried", len(items))
 		}
-		written = append(written, p)
+		committed, cerr := streamer.Commit()
+		if cerr != nil {
+			log.Fatalf("commit shard writers: %v", cerr)
+		}
+		written = committed
+		finalDomains = streamer.DomainCount()
+		finalEmbeds = streamer.EmbeddingCount()
+		streamed = true
 	}
-	if mode != "embed" { // embed-only writes nothing to data/crawl/ — just the vectors below
-		write("domains.parquet", func(p string) error { return output.WriteDomains(p, domains) }) // master, every mode
-		if mode != "tech" {
+
+	if !streamed {
+		// Failure contract (industry/embed): refuse to write when a non-empty worklist produced nothing.
+		produced := len(domains)
+		if mode == "embed" {
+			produced = len(embeddings)
+		}
+		if len(items) > 0 && produced == 0 {
+			log.Fatalf("refusing to write: 0 outputs from %d worklist pages (systemic fetch failure?) — part will be retried", len(items))
+		}
+		write := func(name string, fn func(string) error) {
+			p := filepath.Join(outDir, name)
+			if err := fn(p); err != nil {
+				log.Fatalf("write %s: %v", name, err)
+			}
+			written = append(written, p)
+		}
+		if mode == "industry" { // domains master + classification; embed writes only the vectors below
+			write("domains.parquet", func(p string) error { return output.WriteDomains(p, domains) })
 			write("industries.parquet", func(p string) error { return output.WriteIndustries(p, industries) })
 			write("page_signals.parquet", func(p string) error { return output.WritePageSignals(p, pageSignals) })
 		}
-		if mode != "industry" {
-			write("metadata.parquet", func(p string) error { return output.WriteMetadata(p, metadata) })
-			write("contacts.parquet", func(p string) error { return output.WriteContacts(p, contacts) })
-			write("tech.parquet", func(p string) error { return output.WriteTech(p, techRows) })
-			write("identifiers.parquet", func(p string) error { return output.WriteIdentifiers(p, idents) })
-			write("security.parquet", func(p string) error { return output.WriteSecurity(p, securityRows) })
-			write("page_meta.parquet", func(p string) error { return output.WritePageMeta(p, pageMetaRows) })
+		// Embeddings are the expensive GPU artifact — kept large, never loaded into ClickHouse. For embed
+		// mode --out IS the embed dir; for industry, write to the SEPARATE sibling tree
+		// data/crawl/<stem> -> data/embedding/<stem>.
+		if len(embeddings) > 0 {
+			embedDir := outDir
+			if mode != "embed" {
+				embedDir = filepath.Join(filepath.Dir(filepath.Dir(outDir)), "embedding", filepath.Base(outDir))
+			}
+			if err := os.MkdirAll(embedDir, 0o755); err != nil {
+				log.Fatalf("create embedding dir %s: %v", embedDir, err)
+			}
+			p := filepath.Join(embedDir, "embeddings.parquet")
+			if err := output.WriteEmbeddings(p, embeddings); err != nil {
+				log.Fatalf("write embeddings: %v", err)
+			}
+			written = append(written, p)
+			log.Printf("saved %d embeddings -> %s", len(embeddings), p)
 		}
+		finalDomains = len(domains)
+		finalEmbeds = len(embeddings)
 	}
-	// Embeddings are the expensive GPU artifact — kept large, never loaded into ClickHouse. For embed
-	// mode, --out IS the embed dir, so write straight there (and it's exactly where embed's verify-and-skip
-	// looks). For industry/both, write to a SEPARATE sibling tree: data/crawl/<stem> -> data/embedding/<stem>.
-	if len(embeddings) > 0 {
-		embedDir := outDir
-		if mode != "embed" {
-			embedDir = filepath.Join(filepath.Dir(filepath.Dir(outDir)), "embedding", filepath.Base(outDir))
-		}
-		if err := os.MkdirAll(embedDir, 0o755); err != nil {
-			log.Fatalf("create embedding dir %s: %v", embedDir, err)
-		}
-		p := filepath.Join(embedDir, "embeddings.parquet")
-		if err := output.WriteEmbeddings(p, embeddings); err != nil {
-			log.Fatalf("write embeddings: %v", err)
-		}
-		written = append(written, p)
-		log.Printf("saved %d embeddings -> %s", len(embeddings), p)
-	}
+
 	dur := time.Since(start).Seconds()
-	rate := 0.0
-	if dur > 0 {
-		rate = float64(len(domains)) / dur
-	}
 	if mode == "embed" {
 		erate := 0.0
 		if dur > 0 {
-			erate = float64(len(embeddings)) / dur
+			erate = float64(finalEmbeds) / dur
 		}
-		log.Printf("done: %d embeddings in %.1fs (%.1f embeddings/s)", len(embeddings), dur, erate)
+		log.Printf("done: %d embeddings in %.1fs (%.1f embeddings/s)", finalEmbeds, dur, erate)
 	} else {
-		log.Printf("done: %d domains, %d tech rows in %.1fs (%.1f domains/s) -> %s", len(domains), len(techRows), dur, rate, outDir)
+		rate := 0.0
+		if dur > 0 {
+			rate = float64(finalDomains) / dur
+		}
+		log.Printf("done: %d domains in %.1fs (%.1f domains/s) -> %s", finalDomains, dur, rate, outDir)
 	}
 
 	// Loading is a SEPARATE step (the `load` subcommand / `load --dir`) so produce and load can be
