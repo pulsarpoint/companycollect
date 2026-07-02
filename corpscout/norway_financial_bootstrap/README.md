@@ -164,6 +164,30 @@ The starter prints the slot workflow ids after Temporal accepts the workflows.
 Both commands read `.env`. `--temporal-address` and `--s3-endpoint` are one-off
 overrides when you do not want to change `.env`.
 
+## Check Status
+
+`norway-financial-bootstrap-status` is a read-only status script. It checks the
+four slot workflows, Temporal task queue pollers, S3 raw report counts, latest
+S3 object, and failed marker samples.
+
+Run a point-in-time status check:
+
+```bash
+uv run norway-financial-bootstrap-status
+```
+
+Check whether S3 counts move over one minute:
+
+```bash
+uv run norway-financial-bootstrap-status --compare-after-seconds 60
+```
+
+Print JSON for automation:
+
+```bash
+uv run norway-financial-bootstrap-status --json
+```
+
 ## Resume And Rerun Behavior
 
 The application is safe to rerun against the same S3 bucket.

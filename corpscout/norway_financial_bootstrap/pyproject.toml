@@ -14,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 norway-financial-bootstrap = "norway_financial_bootstrap.cli:main"
+norway-financial-bootstrap-status = "norway_financial_bootstrap.status:main"
 norway-financial-bootstrap-worker = "norway_financial_bootstrap.worker:worker_main"
 
 [dependency-groups]
