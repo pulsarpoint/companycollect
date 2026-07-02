@@ -7,7 +7,6 @@ from typing import Any
 
 import dagster as dg
 from dagster import AssetKey
-import pyarrow as pa
 import pytest
 from pydantic import ValidationError
 
@@ -17,9 +16,14 @@ from dagster_v3.defs.finland_xbrl.assets import financial_metrics
 from dagster_v3.defs.finland_xbrl.assets import parse as parse_assets
 from dagster_v3.definitions import defs as load_project_defs
 from dagster_v3.defs.finland_xbrl.assets import (
+    FINANCIAL_DATA_S3_SNAPSHOT_KEY,
+    FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_END,
+    FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_START,
     XbrlParsedConfig,
     XbrlRawConfig,
+    build_financial_data_snapshot_csv,
     download_finland_xbrl_raw_xml_documents,
+    write_financial_data_snapshot_csv,
 )
 from dagster_v3.defs.finland_xbrl.resources import (
     XbrlApiResource,
@@ -523,6 +527,92 @@ def test_xbrl_api_resource_produces_financial_report_rows() -> None:
     assert rows[0]["source_page_number"] == 1
     assert rows[1]["source_page_number"] == 2
     assert [call[1]["page"] for call in session.calls] == [1, 2, 3]
+
+
+def test_financial_data_snapshot_csv_uses_api_columns_only() -> None:
+    csv_body = build_financial_data_snapshot_csv(
+        [
+            {
+                "businessId": "0100123-2",
+                "financialDate": "2024-05-31",
+                "registrationDate": "2024-08-17",
+                "ignored": "not exported",
+            }
+        ]
+    )
+
+    assert csv_body == (
+        "businessId,financialDate,registrationDate\r\n"
+        "0100123-2,2024-05-31,2024-08-17\r\n"
+    )
+
+
+def test_financial_data_snapshot_writes_fixed_initial_listing_to_s3() -> None:
+    session = FakePagedFinancialReportsSession()
+    api = XbrlApiResource(session=session)
+    object_store, s3_client = _object_store()
+
+    result = write_financial_data_snapshot_csv(
+        xbrl_api=api,
+        object_store=object_store,
+        request_delay_seconds=0,
+        sleep=lambda _: None,
+    )
+
+    assert result.metadata["downloaded"] is True
+    assert result.metadata["row_count"] == 2
+    assert result.metadata["registered_date_start"] == "2023-07-01"
+    assert result.metadata["registered_date_end"] == "2026-06-01"
+    assert result.metadata["s3_key"] == FINANCIAL_DATA_S3_SNAPSHOT_KEY
+    assert FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_START == "2023-07-01"
+    assert FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_END == "2026-06-01"
+    assert [call[1]["registeredDateStart"] for call in session.calls] == [
+        "2023-07-01",
+        "2023-07-01",
+        "2023-07-01",
+    ]
+    assert [call[1]["registeredDateEnd"] for call in session.calls] == [
+        "2026-06-01",
+        "2026-06-01",
+        "2026-06-01",
+    ]
+    csv_body = s3_client.objects[
+        ("source-finland-prh-xbrl", FINANCIAL_DATA_S3_SNAPSHOT_KEY)
+    ].decode("utf-8")
+    assert csv_body == (
+        "businessId,financialDate,registrationDate\r\n"
+        "active-web,2026-05-31,2026-06-01\r\n"
+        "second-active-web,2026-04-30,2026-06-02\r\n"
+    )
+
+
+def test_financial_data_snapshot_reuses_existing_s3_csv_without_api_calls() -> None:
+    session = FakePagedFinancialReportsSession()
+    api = XbrlApiResource(session=session)
+    object_store, s3_client = _object_store()
+    s3_client.objects[
+        ("source-finland-prh-xbrl", FINANCIAL_DATA_S3_SNAPSHOT_KEY)
+    ] = b"businessId,financialDate,registrationDate\r\n"
+
+    result = write_financial_data_snapshot_csv(
+        xbrl_api=api,
+        object_store=object_store,
+        request_delay_seconds=0,
+        sleep=lambda _: None,
+    )
+
+    assert result.metadata["downloaded"] is False
+    assert result.metadata["reused_existing_snapshot"] is True
+    assert session.calls == []
+
+
+def test_finacial_data_s3_snapshot_asset_is_registered() -> None:
+    graph = load_project_defs().get_repository_def().asset_graph
+    node = graph.get(AssetKey("finacial_data_s3_snapshot"))
+
+    assert node.group_name == "finland_xbrl"
+    assert node.description
+    assert "fixed initial PRH XBRL financial statement listing" in node.description
 
 
 def test_xbrl_api_resource_rejects_registration_start_before_prh_floor() -> None:

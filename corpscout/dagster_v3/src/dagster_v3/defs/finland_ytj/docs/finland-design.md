@@ -1,68 +1,175 @@
-# finland (ytj + resolved + xbrl) design doc
+# Finland Source Design
 
-> Per `docs/source-design-doc-template.md` / `docs/data-source-guidelines.md`.
-> Finland spans **three modules**; this is the umbrella doc. The reference example for a
-> **dbt resolve layer**, an **LLM-translated** register, and the **partitioned-API** financials shape.
+Finland is split into two Dagster groups because the company register and the
+financial statements have different source APIs, storage contracts, partitioning,
+and schedules.
 
-## 1. Source overview
-- **Country / registry**: Finland — PRH (Patentti- ja rekisterihallitus) open data.
-- **Modules**:
-  - `finland_ytj/` — bulk register load plus resolved dbt/ClickHouse export · DuckDB `data/finland_ytj.duckdb` · pool `finland_ytj_duckdb`
-  - `finland_xbrl/` — XBRL financials · own DuckDB + S3 object store `source-finland-prh-xbrl`
-- **ClickHouse**: resolved `fi_companies`/`fi_names`/`fi_websites`/`fi_industries` (000005–000007,
-  000010, 000014); XBRL raw tables `fi_xbrl_*` (000011) — **not exported yet** (see §9).
-- **Datasets** (free, no auth): YTJ open-data API `avoindata.prh.fi/opendata-ytj-api/v3`
-  (`finland_ytj_all_companies`); XBRL API `avoindata.prh.fi/opendata-xbrl-api/v3`.
-- **Entity key**: `business_id`.
+```text
+finland_ytj  - PRH YTJ company register, resolved company profile tables
+finland_xbrl - PRH XBRL financial statement listings, XML, parsed facts, metrics
+```
 
-## 2. Ingest mode — two shapes in one source
-- **Register (ytj)**: bulk all-companies download → DuckDB → **non-partitioned full-refresh**.
-- **Financials (xbrl)**: **partitioned-API** — `MonthlyPartitionsDefinition` over the report
-  registration window; downloads XBRL XML per window, stores it in S3, parses with the lxml XBRL
-  instance parser, then builds financial metrics. *This is the reference impl for the §4
-  "per-window API ⇒ partitioned incremental" rule.*
+## YTJ Register
 
-## 3. Loading
-- ytj: dlt source pulls the all-companies dataset into `finland_ytj.duckdb`
-  (`finland_ytj_all_companies_duckdb`, with an `all_companies_non_empty` asset check).
-- xbrl: `…_financial_reports_duckdb` (report metadata) → `…_raw_xml_documents` → `…_xml_documents`
-  (S3) → partitioned lxml parse parquet → financial metrics.
+`finland_ytj` is a full-snapshot register pipeline.
 
-## 4. Transform
-- **Resolved → tier 3 (dbt)**: `finland_resolved_dbt_assets` builds `fi_companies`/`fi_names`/
-  `fi_websites`/`fi_industries` from the ytj DuckDB (a genuine multi-model DAG over nested YTJ data →
-  dbt earns its keep here), then `finland_ytj_resolved_clickhouse` exports the resolved tables.
-- **XBRL → tier 3** over the lxml-parsed facts → `fi_prh_xbrl_financial_metrics`.
+Source endpoint:
 
-## 5. ClickHouse schema — deviations
-- Resolved tables are **normalized per relation** (companies/names/websites/industries) rather than
-  one wide table — Finnish YTJ data is relational (multiple names/addresses per company).
-- XBRL stores facts **long/EAV** (`fi_financial_metrics_long`) with `amount_original`/`amount_usd` +
-  fx; raw XBRL columns (`raw_xml`/`raw_value`) live in the raw tables.
+```text
+GET https://avoindata.prh.fi/opendata-ytj-api/v3/all_companies
+```
 
-## 6. Translation — LLM
-- The resolved tables carry `legal_form_description_en` + `…_translated_at`/`…_translation_provider`/
-  `…_translation_model` (and industry `description_en` + provenance) → populated by the **LLM
-  translation pipeline** (the `_provider`/`_model` columns are the tell). Mirrors `norway_brreg`'s
-  approach. Static-mappable enums could move to static maps later for determinism.
+The response can be JSON or a zip containing JSON. `YtjApiResource` streams the
+response to a temporary file, extracts JSON when the response is zip, and iterates
+records with `ijson`.
 
-## 7. Currency
-- **EUR**. XBRL `fi_financial_metrics_long` carries `amount_original` + `amount_usd` +
-  `fx_rate_to_usd`/`fx_rate_date` (conversion lands when the XBRL→ClickHouse export does).
+Primary asset:
 
-## 8. Scheduling
-- `finland_ytj_resolved_job` (register + dbt + export, via `.upstream()` across modules) — **daily
-  04:45**, default STOPPED. The XBRL financials are **not scheduled** yet (see §9).
+```text
+finland_ytj_all_companies_duckdb
+```
 
-## 9. Issues / open items
-- XBRL parsing is **partitioned** by report registration window; publish/export assets consume the
-  partitioned parquet outputs after parse.
-- the resolved dbt project reads `finland_ytj.duckdb` via `FINLAND_YTJ_DUCKDB_PATH`, set
-  **unconditionally** from the resource default so a stale env var can't silently point dbt at a
-  different file.
-- Provenance (`source_payload_hash`) dropped from the resolved ClickHouse exports (000022) — kept in
-  DuckDB staging only.
+Destination:
 
-## 10. Verification
-- Tests `tests/test_finland_resolved_*.py`, `tests/test_finland_ytj_*.py`, `tests/test_finland_xbrl_*.py`
-  (incl. the resolved-schedule test). Live: resolved `fi_*` tables in ClickHouse; XBRL DuckDB-only for now.
+```text
+data/finland_ytj.duckdb
+schema.table = finland_prhytj.all_companies
+```
+
+dlt uses `write_disposition="replace"`, so this asset is a full refresh. It has a
+non-empty asset check and refuses to replace the table with an empty source.
+
+Resolved dbt models:
+
+```text
+finland_ytj_resolved_fi_companies
+finland_ytj_resolved_fi_names
+finland_ytj_resolved_fi_websites
+finland_ytj_resolved_fi_industries
+```
+
+ClickHouse export:
+
+```text
+finland_ytj_resolved_clickhouse
+```
+
+Target ClickHouse tables:
+
+```text
+corpscout.fi_companies
+corpscout.fi_names
+corpscout.fi_websites
+corpscout.fi_industries
+```
+
+Job and schedule:
+
+```text
+finland_ytj_resolved_job
+finland_ytj_resolved_schedule: 45 4 * * * Europe/Belgrade
+```
+
+The YTJ DuckDB assets use pool `finland_ytj_duckdb` because the dlt load, dbt
+models, and ClickHouse export share one DuckDB file.
+
+## XBRL Financial Statements
+
+`finland_xbrl` is a partitioned financial statement pipeline.
+
+Listing endpoint:
+
+```text
+GET https://avoindata.prh.fi/opendata-xbrl-api/v3/all_financial_statements
+  ?registeredDateStart=<YYYY-MM-DD>
+  &registeredDateEnd=<YYYY-MM-DD>
+  &page=<number>
+```
+
+XML endpoint:
+
+```text
+GET https://avoindata.prh.fi/opendata-xbrl-api/v3/financial
+  ?businessId=<business_id>
+  &financialDate=<YYYY-MM-DD>
+```
+
+Partitioning is based on PRH statement `registrationDate`, not company
+registration date and not financial period end. `financialDate` is the statement
+period end and is used only as metadata and as the XML endpoint parameter.
+
+Historical partitions:
+
+```text
+Monthly: 2025-06-01 through 2026-05-01
+```
+
+Daily partitions:
+
+```text
+Daily: 2026-06-01 onward
+```
+
+Historical chain:
+
+```text
+finland_xbrl_financial_reports_backfill
+-> finland_xbrl_raw_xml_documents_backfill
+-> finland_xbrl_parse_backfill
+```
+
+Daily chain:
+
+```text
+finland_xbrl_financial_reports_incremental
+-> finland_xbrl_raw_xml_documents_incremental
+-> finland_xbrl_parse_incremental
+```
+
+Publish chain:
+
+```text
+fi_prh_xbrl_financial_metrics
+-> fi_prh_xbrl_financial_metrics_usd
+-> finland_xbrl_financial_metrics_clickhouse
+```
+
+Raw XML storage:
+
+```text
+bucket: source-finland-prh-xbrl
+key:    companies/<business_id>/<financial_date>.xml
+```
+
+Local parquet storage:
+
+```text
+data/finland_xbrl/parquet/
+```
+
+ClickHouse target:
+
+```text
+corpscout.fi_financial_metrics
+```
+
+The XBRL pipeline does not use YTJ eligibility, website filters, active-company
+filters, or company seed tables. It downloads every statement listed by PRH for
+the partition registration window and reuses existing XML objects unless the raw
+XML asset is configured with `refresh_existing=true`.
+
+## Operational Separation
+
+YTJ and XBRL are intentionally independent:
+
+- YTJ refreshes the company register and resolved company profile tables.
+- XBRL refreshes financial statement data and final financial metrics.
+- Running the YTJ resolved job does not download XBRL XML.
+- Running the XBRL historical or incremental jobs does not refresh YTJ.
+
+See also:
+
+```text
+src/dagster_v3/defs/finland_ytj/README.md
+src/dagster_v3/defs/finland_xbrl/README.md
+```

@@ -21,6 +21,14 @@ from dagster_v3.defs.finland_xbrl.assets.financial_reports import (
     finland_xbrl_financial_reports_incremental,
     materialize_financial_reports_window,
 )
+from dagster_v3.defs.finland_xbrl.assets.financial_data_snapshot import (
+    FINANCIAL_DATA_S3_SNAPSHOT_KEY,
+    FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_END,
+    FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_START,
+    build_financial_data_snapshot_csv,
+    finacial_data_s3_snapshot,
+    write_financial_data_snapshot_csv,
+)
 from dagster_v3.defs.finland_xbrl.assets.financial_metrics import (
     build_financial_metric_rows,
     build_financial_metric_usd_rows,
@@ -80,7 +88,11 @@ __all__ = [
     "XbrlParsedConfig",
     "XbrlParseRunResult",
     "XbrlRawConfig",
+    "FINANCIAL_DATA_S3_SNAPSHOT_KEY",
+    "FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_END",
+    "FINANCIAL_DATA_S3_SNAPSHOT_REGISTERED_DATE_START",
     "build_concept_profile_rows",
+    "build_financial_data_snapshot_csv",
     "build_financial_metric_rows",
     "build_financial_metric_usd_rows",
     "build_parse_quality_row",
@@ -95,6 +107,7 @@ __all__ = [
     "finland_xbrl_financial_metrics_usd",
     "finland_xbrl_financial_reports_backfill",
     "finland_xbrl_financial_reports_incremental",
+    "finacial_data_s3_snapshot",
     "finland_xbrl_incremental_job",
     "finland_xbrl_incremental_schedule",
     "finland_xbrl_parse_backfill",
@@ -109,10 +122,12 @@ __all__ = [
     "parse_xbrl_documents",
     "run_finland_xbrl_parse",
     "tables",
+    "write_financial_data_snapshot_csv",
 ]
 
 defs = dg.Definitions(
     assets=[
+        finacial_data_s3_snapshot,
         finland_xbrl_financial_reports_backfill,
         finland_xbrl_financial_reports_incremental,
         finland_xbrl_raw_xml_documents_backfill,
