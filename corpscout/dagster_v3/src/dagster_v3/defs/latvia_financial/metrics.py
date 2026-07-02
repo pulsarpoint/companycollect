@@ -8,7 +8,7 @@ from dagster_v3.defs.latvia_ur import tables
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 WIDE_STATEMENTS = tables.FINANCIAL_STATEMENTS_WIDE_TABLE
 METRICS_TABLE = tables.FINANCIAL_METRICS_WIDE_TABLE
-SOURCE_SLUG = "latvia_ur_financials"
+SOURCE_SLUG = "latvia_financial"
 
 
 class ExchangeRates(Protocol):
@@ -16,25 +16,18 @@ class ExchangeRates(Protocol):
 
 
 def _request(currency: str, rate_date: str) -> Any:
-    # Imported lazily so tests can inject a stub without the real client/env.
     from exchange_rates import ExchangeRateRequest
 
     return ExchangeRateRequest(currency=currency, rate_date=rate_date)
 
 
-def build_latvia_ur_financial_metrics(
+def build_latvia_financial_metrics(
     *,
     duckdb_connection: DuckDBPyConnection,
     source_run_id: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
-    """Distill native-currency headline metrics from the wide statements.
-
-    Values are scaled by rounded_to_nearest. USD conversion is a SEPARATE step
-    (apply_latvia_ur_usd_conversion) so metrics can be built/exported before the
-    exchange_rates table is populated; the *_usd and fx_* columns are left empty
-    here and filled by that step.
-    """
+    """Distill native-currency headline metrics from the wide statements table."""
     factor_case = "\n".join(
         f"                    when '{unit}' then {factor}"
         for unit, factor in tables.ROUNDED_TO_NEAREST_FACTORS.items()
@@ -49,11 +42,6 @@ def build_latvia_ur_financial_metrics(
         )
     )
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
-    # Native DuckDB set-based build: scale each native amount by rounded_to_nearest
-    # in one CREATE TABLE AS. (Was a fetchall() + per-row Python Decimal loop over
-    # ~2M rows — tens of minutes; this runs in seconds.) USD/fx columns are left
-    # empty for the separate apply_latvia_ur_usd_conversion step. The output column
-    # order matches tables.LV_FINANCIAL_METRICS_COLUMNS.
     build_sql = f"""
         create or replace table {qualified} as
         with scaled as (
@@ -105,29 +93,21 @@ def build_latvia_ur_financial_metrics(
 
     if unknown_units and log is not None:
         log(
-            "Latvia UR metrics: unknown rounded_to_nearest units defaulted to factor 1: %s",
+            "Latvia metrics: unknown rounded_to_nearest units defaulted to factor 1: %s",
             sorted(unknown_units),
         )
     counts = {"metrics": metrics}
     if log is not None:
-        log("Built Latvia UR financial metrics (native): metrics=%s", counts["metrics"])
+        log("Built Latvia financial metrics (native): metrics=%s", counts["metrics"])
     return counts
 
 
-# The shared client builds one `UNION ALL` branch per requested (currency, date)
-# pair, and ClickHouse's query-plan optimizer rejects very wide plans (code 572
-# TOO_MANY_QUERY_PLAN_OPTIMIZATIONS). Latvia spans ~1k distinct period_end dates,
-# so the request set must be chunked. 50 keeps each plan small with large margin
-# even if optimization count grows super-linearly in the union width.
 _RATE_REQUEST_BATCH = 50
 
 
 def _load_rates(
     exchange_rates: ExchangeRates, requests: list[Any]
 ) -> dict[tuple[str, str], Any]:
-    # Batch the pairs (see _RATE_REQUEST_BATCH); within a batch, fall back to
-    # per-request on a missing-rate LookupError so one absent rate doesn't drop
-    # the rest (mirrors norway_brreg.financial_normalize._load_available_usd_rates).
     rates: dict[tuple[str, str], Any] = {}
     for start in range(0, len(requests), _RATE_REQUEST_BATCH):
         batch = requests[start : start + _RATE_REQUEST_BATCH]
@@ -142,20 +122,13 @@ def _load_rates(
     return rates
 
 
-def apply_latvia_ur_usd_conversion(
+def apply_latvia_financial_usd_conversion(
     *,
     duckdb_connection: DuckDBPyConnection,
     exchange_rates: ExchangeRates,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
-    """Fill *_usd and fx_* columns on the metrics table (a separate, re-runnable step).
-
-    Converts each native *_amount_original to USD by the report period_end_date
-    using the shared exchange-rate client. Set-based: build a small (currency,
-    period_end_date) -> rate table and UPDATE-join. Re-running first clears prior
-    USD so rows that lost a rate are reset. No-op-safe when exchange_rates is
-    empty (USD stays NULL).
-    """
+    """Fill *_usd and fx_* columns on the metrics table."""
     qualified = f"{DLT_DATASET_NAME}.{METRICS_TABLE}"
     pairs = duckdb_connection.execute(
         f"""
@@ -221,7 +194,7 @@ def apply_latvia_ur_usd_conversion(
     }
     if log is not None:
         log(
-            "Applied Latvia UR USD conversion: rate_pairs=%s rates_found=%s rows_converted=%s",
+            "Applied Latvia USD conversion: rate_pairs=%s rates_found=%s rows_converted=%s",
             counts["rate_pairs"],
             counts["rates_found"],
             counts["rows_converted"],

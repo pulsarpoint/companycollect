@@ -15,10 +15,9 @@ from dagster_v3.defs.latvia_ur.resources import (
 
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 WIDE_TABLE = tables.FINANCIAL_STATEMENTS_WIDE_TABLE
-FINANCIALS_SOURCE_SLUG = "latvia_ur_financials"
+FINANCIALS_SOURCE_SLUG = "latvia_financial"
 FINANCIALS_SOURCE_URL = "https://data.gov.lv/dati/lv/dataset/gada-parskatu-finansu-dati"
 
-# Raw financial_statements.csv metadata columns kept in the JSON evidence record.
 _FS_RAW_COLUMNS = (
     "id",
     "file_id",
@@ -35,7 +34,7 @@ _FS_RAW_COLUMNS = (
 )
 
 
-def load_latvia_ur_financial_csv(
+def load_latvia_financial_csv(
     *,
     duckdb_connection: DuckDBPyConnection,
     download_url: str,
@@ -44,13 +43,8 @@ def load_latvia_ur_financial_csv(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     user_agent: str = DEFAULT_USER_AGENT,
 ) -> int:
-    """Download one financial CSV and (re)load it into a DuckDB raw staging table.
-
-    Uses DuckDB read_csv with all_varchar so the large flat files load fast and
-    losslessly; the pivot step casts numerics. Each raw table is an independent
-    checkpoint, so a failure in one file never re-downloads the others.
-    """
-    with tempfile.TemporaryDirectory(prefix="latvia_ur_fin_") as tmpdir:
+    """Download one financial CSV and replace its DuckDB raw staging table."""
+    with tempfile.TemporaryDirectory(prefix="latvia_financial_") as tmpdir:
         csv_path = Path(tmpdir) / f"{raw_table}.csv"
         _download_to_path(
             url=download_url,
@@ -92,18 +86,13 @@ def _orphan_count(connection: duckdb.DuckDBPyConnection, raw_table: str) -> int:
     )
 
 
-def build_latvia_ur_financial_statements(
+def build_latvia_financial_statements(
     *,
     duckdb_connection: DuckDBPyConnection,
     source_run_id: str,
     log: Callable[..., object] | None = None,
 ) -> dict[str, int]:
-    """Pivot the four raw financial tables into the wide latvia_ur.financial_statements.
-
-    financial_statements_raw is the spine; the other three are LEFT JOINed on
-    statement_id. Orphan statement_ids present in a part but missing from the
-    spine are counted (not dropped silently) and reported in the metadata.
-    """
+    """Pivot the four raw financial CSV tables into the wide financial statements table."""
     json_pairs = ", ".join(f"'{col}', fs.{col}" for col in _FS_RAW_COLUMNS)
     balance = _numeric_casts("bs", tables.BALANCE_NUMERIC_COLUMNS)
     income = _numeric_casts("inc", tables.INCOME_NUMERIC_COLUMNS)
@@ -126,9 +115,6 @@ def build_latvia_ur_financial_statements(
         spine.file_id as file_id,
         spine.legal_entity_registration_number as regcode,
         spine.source_schema as source_schema,
-        -- source_type is NULL for ~35% of statements (pre-euro filings); the
-        -- ClickHouse column is a non-nullable LowCardinality(String), so empty
-        -- must be '' not NULL or the native-protocol insert hits None.encode().
         coalesce(spine.source_type, '') as source_type,
         try_cast(spine.year as integer) as fiscal_year,
         try_cast(spine.year_started_on as date) as period_start_date,
@@ -167,7 +153,7 @@ def build_latvia_ur_financial_statements(
     }
     if log is not None:
         log(
-            "Built Latvia UR wide financial statements: statements=%s, "
+            "Built Latvia wide financial statements: statements=%s, "
             "balance_orphans=%s, income_orphans=%s, cash_flow_orphans=%s",
             counts["financial_statements"],
             counts["balance_orphans"],

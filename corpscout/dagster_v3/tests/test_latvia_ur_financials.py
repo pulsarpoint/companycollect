@@ -4,8 +4,9 @@ from pathlib import Path
 import duckdb
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.latvia_ur import clickhouse as latvia_ur_clickhouse
-from dagster_v3.defs.latvia_ur import financials, tables
+from dagster_v3.defs.latvia_financial import clickhouse as latvia_financial_clickhouse
+from dagster_v3.defs.latvia_financial import financials
+from dagster_v3.defs.latvia_ur import tables
 
 
 class _FakeClickHouse:
@@ -56,7 +57,7 @@ BALANCE_CSV = (
 def test_load_financial_csv_into_duckdb(tmp_path: Path):
     db_path = tmp_path / "latvia_ur_source.duckdb"
     with duckdb.connect(str(db_path)) as conn:
-        rows = financials.load_latvia_ur_financial_csv(
+        rows = financials.load_latvia_financial_csv(
             duckdb_connection=conn,
             download_url="https://data.gov.lv/example/balance_sheets.csv",
             raw_table=tables.BALANCE_SHEETS_RAW_TABLE,
@@ -81,7 +82,7 @@ def test_load_is_idempotent_replace(tmp_path: Path):
     db_path = tmp_path / "latvia_ur_source.duckdb"
     with duckdb.connect(str(db_path)) as conn:
         for _ in range(2):
-            rows = financials.load_latvia_ur_financial_csv(
+            rows = financials.load_latvia_financial_csv(
                 duckdb_connection=conn,
                 download_url="https://data.gov.lv/example/balance_sheets.csv",
                 raw_table=tables.BALANCE_SHEETS_RAW_TABLE,
@@ -149,7 +150,7 @@ def _seed_raw(db_path: Path) -> None:
             (tables.INCOME_STATEMENTS_RAW_TABLE, INCOME_CSV),
             (tables.CASH_FLOW_STATEMENTS_RAW_TABLE, CASHFLOW_CSV),
         ):
-            financials.load_latvia_ur_financial_csv(
+            financials.load_latvia_financial_csv(
                 duckdb_connection=conn,
                 download_url="https://data.gov.lv/example.csv",
                 raw_table=raw_table,
@@ -162,7 +163,7 @@ def test_pivot_builds_wide_table_and_counts_orphans(tmp_path: Path):
     _seed_raw(db_path)
 
     with duckdb.connect(str(db_path)) as conn:
-        counts = financials.build_latvia_ur_financial_statements(
+        counts = financials.build_latvia_financial_statements(
             duckdb_connection=conn,
             source_run_id="run-1",
         )
@@ -200,7 +201,7 @@ def test_wide_build_coalesces_null_source_type(tmp_path: Path):
     with duckdb.connect(str(db_path)) as conn:
         conn.execute(f"update {raw} set source_type = NULL")
     with duckdb.connect(str(db_path)) as conn:
-        financials.build_latvia_ur_financial_statements(
+        financials.build_latvia_financial_statements(
             duckdb_connection=conn, source_run_id="run-1"
         )
     wide = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_STATEMENTS_WIDE_TABLE}"
@@ -219,7 +220,7 @@ def test_export_financial_statements_replaces_clickhouse_table(tmp_path: Path, m
     db_path = tmp_path / "latvia_ur_source.duckdb"
     _seed_raw(db_path)
     with duckdb.connect(str(db_path)) as conn:
-        financials.build_latvia_ur_financial_statements(
+        financials.build_latvia_financial_statements(
             duckdb_connection=conn, source_run_id="run-1"
         )
 
@@ -232,7 +233,7 @@ def test_export_financial_statements_replaces_clickhouse_table(tmp_path: Path, m
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
     with duckdb.connect(str(db_path), read_only=True) as conn:
-        rows = latvia_ur_clickhouse.export_latvia_ur_clickhouse_financial_statements(
+        rows = latvia_financial_clickhouse.export_latvia_financial_statements_clickhouse(
             duckdb_connection=conn,
             clickhouse=ClickhouseResource(host="localhost"),
         )

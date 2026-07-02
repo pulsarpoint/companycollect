@@ -5,9 +5,12 @@ from pathlib import Path
 import duckdb
 from dagster_clickhouse import ClickhouseResource
 
-from dagster_v3.defs.latvia_ur import clickhouse as latvia_ur_clickhouse
-from dagster_v3.defs.latvia_ur import metrics, tables
-from dagster_v3.defs.latvia_ur.financials import build_latvia_ur_financial_statements
+from dagster_v3.defs.latvia_financial import clickhouse as latvia_financial_clickhouse
+from dagster_v3.defs.latvia_financial import metrics
+from dagster_v3.defs.latvia_financial.financials import (
+    build_latvia_financial_statements,
+)
+from dagster_v3.defs.latvia_ur import tables
 from tests.test_latvia_ur_financials import _seed_raw  # reuse the raw seed helper
 
 
@@ -52,8 +55,8 @@ class _StubExchangeRates:
 def _build_native_metrics(db_path: Path) -> None:
     _seed_raw(db_path)
     with duckdb.connect(str(db_path)) as conn:
-        build_latvia_ur_financial_statements(duckdb_connection=conn, source_run_id="run-1")
-        metrics.build_latvia_ur_financial_metrics(
+        build_latvia_financial_statements(duckdb_connection=conn, source_run_id="run-1")
+        metrics.build_latvia_financial_metrics(
             duckdb_connection=conn, source_run_id="run-1"
         )
 
@@ -90,7 +93,7 @@ def test_usd_conversion_step_fills_usd(tmp_path: Path):
 
     stub = _StubExchangeRates()
     with duckdb.connect(str(db_path)) as conn:
-        counts = metrics.apply_latvia_ur_usd_conversion(
+        counts = metrics.apply_latvia_financial_usd_conversion(
             duckdb_connection=conn,
             exchange_rates=stub,
         )
@@ -122,7 +125,7 @@ def test_usd_conversion_no_rates_leaves_usd_null(tmp_path: Path):
             return {}
 
     with duckdb.connect(str(db_path)) as conn:
-        counts = metrics.apply_latvia_ur_usd_conversion(
+        counts = metrics.apply_latvia_financial_usd_conversion(
             duckdb_connection=conn, exchange_rates=_EmptyRates()
         )
     assert counts["rows_converted"] == 0
@@ -165,14 +168,14 @@ def test_unknown_rounding_factor_defaults_to_one(tmp_path: Path):
     db_path = tmp_path / "latvia_ur_source.duckdb"
     _seed_raw(db_path)
     with duckdb.connect(str(db_path)) as conn:
-        build_latvia_ur_financial_statements(duckdb_connection=conn, source_run_id="run-1")
+        build_latvia_financial_statements(duckdb_connection=conn, source_run_id="run-1")
     # rewrite rounded_to_nearest to an unknown unit on the wide table
     wide = f"{tables.DLT_DATASET_NAME}.{tables.FINANCIAL_STATEMENTS_WIDE_TABLE}"
     with duckdb.connect(str(db_path)) as conn:
         conn.execute(f"update {wide} set rounded_to_nearest = 'WEIRD'")
 
     with duckdb.connect(str(db_path)) as conn:
-        metrics.build_latvia_ur_financial_metrics(
+        metrics.build_latvia_financial_metrics(
             duckdb_connection=conn,
             source_run_id="run-1",
         )
@@ -188,7 +191,7 @@ def test_export_financial_metrics_replaces_clickhouse_table(tmp_path: Path, monk
     db_path = tmp_path / "latvia_ur_source.duckdb"
     _build_native_metrics(db_path)
     with duckdb.connect(str(db_path)) as conn:
-        metrics.apply_latvia_ur_usd_conversion(
+        metrics.apply_latvia_financial_usd_conversion(
             duckdb_connection=conn, exchange_rates=_StubExchangeRates()
         )
 
@@ -201,7 +204,7 @@ def test_export_financial_metrics_replaces_clickhouse_table(tmp_path: Path, monk
     monkeypatch.setattr(ClickhouseResource, "get_connection", fake_get_connection)
 
     with duckdb.connect(str(db_path), read_only=True) as conn:
-        rows = latvia_ur_clickhouse.export_latvia_ur_clickhouse_financial_metrics(
+        rows = latvia_financial_clickhouse.export_latvia_financial_metrics_clickhouse(
             duckdb_connection=conn,
             clickhouse=ClickhouseResource(host="localhost"),
         )

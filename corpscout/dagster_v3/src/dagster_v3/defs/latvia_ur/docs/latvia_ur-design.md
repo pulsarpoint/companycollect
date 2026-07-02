@@ -1,10 +1,11 @@
-# latvia_ur design doc
+# Latvia UR / Latvia financial design doc
 
 > Per `docs/source-design-doc-template.md` / `docs/data-source-guidelines.md`.
 
 ## 1. Source overview
 - **Country / registry**: Latvia — Uzņēmumu Reģistrs (UR), open data on `data.gov.lv`.
-- **Module**: `defs/latvia_ur/` · DuckDB `data/latvia_ur_source.duckdb` · pool `latvia_ur_duckdb`
+- **Modules**: `defs/latvia_ur/` for register/company data, `defs/latvia_financial/` for
+  financial statements/metrics · DuckDB `data/latvia_ur_source.duckdb` · pool `latvia_ur_duckdb`
 - **ClickHouse**: `corpscout.lv_companies` (000015), `lv_financial_statements` (000016),
   `lv_financial_metrics` (000019); repair 000020; provenance drop 000021.
 - **Datasets** (free bulk CSV, no auth): `register.csv` (register) + 4 financial CSVs linked by
@@ -19,7 +20,10 @@
 ## 3. Loading
 - Register: narrow **dlt row-resource** (`iter_latvia_ur_entity_rows`) — applies the static legal-form
   translation + status derivation per row, over 485 k rows.
-- Financials: **DuckDB `read_csv(all_varchar=true)`** (bulk; one raw table per file = checkpoints).
+- Financials: one Dagster **multi-asset** downloads the four full CSV files and writes four DuckDB
+  raw staging tables with `read_csv(all_varchar=true)`. Each output is visible as its own raw asset:
+  `latvia_financial_statements_raw_duckdb`, `latvia_balance_sheets_raw_duckdb`,
+  `latvia_income_statements_raw_duckdb`, `latvia_cash_flow_statements_raw_duckdb`.
 - `raw_entity`/`raw_financial_record` + `source_payload_hash` kept in DuckDB only.
 
 ## 4. Transform
@@ -47,7 +51,9 @@
   `period_end_date`, via the batched `apply_latvia_ur_usd_conversion`.
 
 ## 8. Scheduling
-- `latvia_ur_register_job` daily **04:30**; `latvia_ur_financials_job` (9-asset chain) monthly **6th**.
+- `latvia_ur_register_job` daily **04:30**.
+- `latvia_financials_job` weekly Monday **05:00**. It is a full-refresh chain because Latvia
+  publishes complete financial CSV snapshots and re-pulling them every 7 days is acceptable.
   Staggered; default STOPPED.
 
 ## 9. Issues found during processing

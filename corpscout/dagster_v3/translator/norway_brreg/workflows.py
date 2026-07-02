@@ -127,10 +127,10 @@ class TranslateWorkflowOutput:
 
 def build_queue_once(params: BuildQueueActivityInput) -> SeedResult:
     from translator.clickhouse import clickhouse_client_from_env
-    from translator.norway_brreg.config import get_config
     from translator.norway_brreg.seed import build_queue
+    from translator.source_registry import get_source_config
 
-    config = get_config()
+    config = get_source_config(params.source_slug)
     ch_client = clickhouse_client_from_env()
     try:
         return build_queue(
@@ -235,13 +235,13 @@ def translate_loop_once(params: TranslateLoopActivityInput):
 
 def dump_once(params: DumpActivityInput):
     from translator.clickhouse import clickhouse_client_from_env
-    from translator.norway_brreg.config import get_config
     from translator.norway_brreg.dump import dump_to_clickhouse
+    from translator.source_registry import get_source_config
 
     # Resolve the model from env inside the activity (env access is not allowed
     # in the workflow sandbox); dumped rows are labelled provider='local-llm'.
     model = os.environ.get("TRANSLATION_PROVIDER_LOCAL_MODEL", "local-llm")
-    config = get_config()
+    config = get_source_config(params.source_slug)
     ch_client = clickhouse_client_from_env()
     try:
         return dump_to_clickhouse(

@@ -2,6 +2,7 @@ from typing import Any
 
 DLT_DATASET_NAME = "latvia_ur"
 ENTITIES_TABLE = "entities"
+COMPANY_ACTIVITY_TABLE = "company_activity"
 
 LATVIA_UR_ENTITIES_COLUMNS: dict[str, dict[str, Any]] = {
     "country_iso2": {"data_type": "text"},
@@ -47,7 +48,7 @@ LV_COMPANIES_TABLE = "lv_companies"
 QUALIFIED_LV_COMPANIES_TABLE = f"{LATVIA_UR_DATABASE}.{LV_COMPANIES_TABLE}"
 
 # Column order must match the DuckDB entities table and the 000015 migration.
-LV_COMPANIES_COLUMNS = tuple(LATVIA_UR_ENTITIES_COLUMNS)
+LV_COMPANIES_COLUMNS = tuple(LATVIA_UR_ENTITIES_COLUMNS) + ("activity_text_original",)
 
 
 # --- Financials (Module 2) ---------------------------------------------------

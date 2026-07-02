@@ -15,21 +15,9 @@ from dagster_v3.defs.common.duckdb_resources import (
     read_only_duckdb_connection,
 )
 from dagster_v3.defs.latvia_ur import resources, tables
-from dagster_v3.defs.latvia_ur.clickhouse import (
-    export_latvia_ur_clickhouse_companies,
-    export_latvia_ur_clickhouse_financial_metrics,
-    export_latvia_ur_clickhouse_financial_statements,
-)
-from dagster_v3.defs.latvia_ur.financials import (
-    build_latvia_ur_financial_statements,
-    load_latvia_ur_financial_csv,
-)
-from dagster_v3.defs.latvia_ur.metrics import (
-    apply_latvia_ur_usd_conversion,
-    build_latvia_ur_financial_metrics,
-)
+from dagster_v3.defs.latvia_ur.clickhouse import export_latvia_ur_clickhouse_companies
 
-GROUP_NAME = "latvia_ur"
+GROUP_NAME = "latvia"
 LATVIA_UR_DUCKDB_POOL = "latvia_ur_duckdb"
 # File stem (catalog) must differ from DLT_DATASET_NAME or DuckDB's binder
 # cannot disambiguate "<dataset>.<table>" (mirrors norway_brreg_source.duckdb).
@@ -37,6 +25,11 @@ LATVIA_UR_DUCKDB_PATH = Path("data/latvia_ur_source.duckdb")
 DLT_DATASET_NAME = tables.DLT_DATASET_NAME
 ENTITIES_TABLE = tables.ENTITIES_TABLE
 ENTITIES_ASSET_KEY = "latvia_ur_entities_duckdb"
+COMPANY_ACTIVITY_ASSET_KEY = "latvia_company_activity_duckdb"
+AREA_OF_ACTIVITY_DOWNLOAD_URL = (
+    "https://data.gov.lv/dati/dataset/2fcacd83-8b01-4452-a087-b199c72817be/"
+    "resource/49bbd751-3fa2-4d78-8c35-ae0e1c5250d6/download/area_of_activity.csv"
+)
 
 
 class LatviaUrDltTranslator(DagsterDltTranslator):
@@ -82,6 +75,50 @@ def run_latvia_ur_dlt_pipeline(
     )
 
 
+def load_latvia_company_activity_csv(
+    *,
+    duckdb_connection: Any,
+    download_url: str = AREA_OF_ACTIVITY_DOWNLOAD_URL,
+    session: resources.HttpSession | None = None,
+) -> int:
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="latvia_activity_") as tmpdir:
+        csv_path = Path(tmpdir) / "area_of_activity.csv"
+        resources._download_to_path(
+            url=download_url,
+            dest=csv_path,
+            timeout_seconds=resources.DEFAULT_TIMEOUT_SECONDS,
+            user_agent=resources.DEFAULT_USER_AGENT,
+            session=session,
+        )
+        duckdb_connection.execute(f"create schema if not exists {DLT_DATASET_NAME}")
+        duckdb_connection.execute(
+            f"""
+            create or replace table {DLT_DATASET_NAME}.{tables.COMPANY_ACTIVITY_TABLE} as
+            select
+                legal_entity_registration_number as regcode,
+                name as legal_name,
+                legal_form_code,
+                legal_form_code_text as legal_form_text,
+                nullif(trim(area_of_activity), '') as activity_text_original
+            from read_csv(
+                ?,
+                delim=';',
+                header=true,
+                all_varchar=true,
+                quote='"',
+                escape='"'
+            )
+            """,
+            [str(csv_path)],
+        )
+        rows = duckdb_connection.execute(
+            f"select count(*) from {DLT_DATASET_NAME}.{tables.COMPANY_ACTIVITY_TABLE}"
+        ).fetchone()[0]
+    return int(rows)
+
+
 @dlt_assets(
     dlt_source=resources.latvia_ur_source(),
     dlt_pipeline=latvia_ur_pipeline(LATVIA_UR_DUCKDB_PATH),
@@ -120,7 +157,41 @@ def latvia_ur_entities_duckdb_asset(
 
 
 @dg.asset(
-    deps=[dg.AssetKey(ENTITIES_ASSET_KEY)],
+    name=COMPANY_ACTIVITY_ASSET_KEY,
+    group_name=GROUP_NAME,
+    kinds={"python", "csv", "duckdb"},
+    pool=LATVIA_UR_DUCKDB_POOL,
+    description=(
+        "Latvia UR company declared activity text loaded from area_of_activity.csv "
+        "into DuckDB for enrichment of lv_companies."
+    ),
+)
+def latvia_company_activity_duckdb(
+    context: AssetExecutionContext,
+    latvia_ur_duckdb: DuckDBResource,
+) -> dg.MaterializeResult:
+    context.log.info(
+        "Starting Latvia company activity CSV load: source_url=%s duckdb_path=%s table=%s.%s",
+        AREA_OF_ACTIVITY_DOWNLOAD_URL,
+        LATVIA_UR_DUCKDB_PATH,
+        DLT_DATASET_NAME,
+        tables.COMPANY_ACTIVITY_TABLE,
+    )
+    LATVIA_UR_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with latvia_ur_duckdb.get_connection() as connection:
+        rows = load_latvia_company_activity_csv(duckdb_connection=connection)
+    context.log.info("Completed Latvia company activity CSV load: rows=%s", rows)
+    return dg.MaterializeResult(
+        metadata={
+            "rows": rows,
+            "source_url": AREA_OF_ACTIVITY_DOWNLOAD_URL,
+            "table": f"{DLT_DATASET_NAME}.{tables.COMPANY_ACTIVITY_TABLE}",
+        }
+    )
+
+
+@dg.asset(
+    deps=[dg.AssetKey(ENTITIES_ASSET_KEY), dg.AssetKey(COMPANY_ACTIVITY_ASSET_KEY)],
     group_name=GROUP_NAME,
     kinds={"python", "duckdb", "clickhouse"},
     pool=LATVIA_UR_DUCKDB_POOL,
@@ -137,7 +208,7 @@ def latvia_ur_clickhouse_companies(
         LATVIA_UR_DUCKDB_PATH,
         tables.QUALIFIED_LV_COMPANIES_TABLE,
     )
-    with read_only_duckdb_connection(latvia_ur_duckdb) as connection:
+    with latvia_ur_duckdb.get_connection() as connection:
         rows = export_latvia_ur_clickhouse_companies(
             duckdb_connection=connection,
             clickhouse=clickhouse,
@@ -149,293 +220,16 @@ def latvia_ur_clickhouse_companies(
     )
 
 
-def _load_financial_raw(
-    context: AssetExecutionContext,
-    *,
-    latvia_ur_duckdb: DuckDBResource,
-    raw_table: str,
-    download_url: str,
-) -> dg.MaterializeResult:
-    context.log.info(
-        "Loading Latvia UR financial CSV: url=%s, duckdb_path=%s, table=%s.%s",
-        download_url,
-        LATVIA_UR_DUCKDB_PATH,
-        DLT_DATASET_NAME,
-        raw_table,
-    )
-    LATVIA_UR_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with latvia_ur_duckdb.get_connection() as connection:
-        rows = load_latvia_ur_financial_csv(
-            duckdb_connection=connection,
-            download_url=download_url,
-            raw_table=raw_table,
-        )
-    context.log.info(
-        "Loaded Latvia UR financial CSV: table=%s.%s, rows=%s",
-        DLT_DATASET_NAME,
-        raw_table,
-        rows,
-    )
-    return dg.MaterializeResult(metadata={"rows": rows, "table": f"{DLT_DATASET_NAME}.{raw_table}"})
-
-
-@dg.asset(
-    name="latvia_ur_financial_statements_raw_duckdb",
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb"},
-    pool=LATVIA_UR_DUCKDB_POOL,
-    description="Latvia UR annual-report metadata CSV loaded raw into DuckDB (checkpoint).",
-)
-def latvia_ur_financial_statements_raw_duckdb(
-    context: AssetExecutionContext,
-    latvia_ur_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    return _load_financial_raw(
-        context,
-        latvia_ur_duckdb=latvia_ur_duckdb,
-        raw_table=tables.FINANCIAL_STATEMENTS_RAW_TABLE,
-        download_url=tables.FINANCIAL_STATEMENTS_URL,
-    )
-
-
-@dg.asset(
-    name="latvia_ur_balance_sheets_raw_duckdb",
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb"},
-    pool=LATVIA_UR_DUCKDB_POOL,
-    description="Latvia UR balance-sheet CSV loaded raw into DuckDB (checkpoint).",
-)
-def latvia_ur_balance_sheets_raw_duckdb(
-    context: AssetExecutionContext,
-    latvia_ur_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    return _load_financial_raw(
-        context,
-        latvia_ur_duckdb=latvia_ur_duckdb,
-        raw_table=tables.BALANCE_SHEETS_RAW_TABLE,
-        download_url=tables.BALANCE_SHEETS_URL,
-    )
-
-
-@dg.asset(
-    name="latvia_ur_income_statements_raw_duckdb",
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb"},
-    pool=LATVIA_UR_DUCKDB_POOL,
-    description="Latvia UR income-statement CSV loaded raw into DuckDB (checkpoint).",
-)
-def latvia_ur_income_statements_raw_duckdb(
-    context: AssetExecutionContext,
-    latvia_ur_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    return _load_financial_raw(
-        context,
-        latvia_ur_duckdb=latvia_ur_duckdb,
-        raw_table=tables.INCOME_STATEMENTS_RAW_TABLE,
-        download_url=tables.INCOME_STATEMENTS_URL,
-    )
-
-
-@dg.asset(
-    name="latvia_ur_cash_flow_statements_raw_duckdb",
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb"},
-    pool=LATVIA_UR_DUCKDB_POOL,
-    description="Latvia UR cash-flow CSV loaded raw into DuckDB (checkpoint).",
-)
-def latvia_ur_cash_flow_statements_raw_duckdb(
-    context: AssetExecutionContext,
-    latvia_ur_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    return _load_financial_raw(
-        context,
-        latvia_ur_duckdb=latvia_ur_duckdb,
-        raw_table=tables.CASH_FLOW_STATEMENTS_RAW_TABLE,
-        download_url=tables.CASH_FLOW_STATEMENTS_URL,
-    )
-
-
-@dg.asset(
-    name="latvia_ur_financial_statements_duckdb",
-    deps=[
-        dg.AssetKey("latvia_ur_financial_statements_raw_duckdb"),
-        dg.AssetKey("latvia_ur_balance_sheets_raw_duckdb"),
-        dg.AssetKey("latvia_ur_income_statements_raw_duckdb"),
-        dg.AssetKey("latvia_ur_cash_flow_statements_raw_duckdb"),
-    ],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb"},
-    pool=LATVIA_UR_DUCKDB_POOL,
-    description="Latvia UR wide financial statements pivoted from the four raw tables on statement_id.",
-)
-def latvia_ur_financial_statements_duckdb(
-    context: AssetExecutionContext,
-    latvia_ur_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    context.log.info(
-        "Building Latvia UR wide financial statements: duckdb_path=%s, table=%s.%s",
-        LATVIA_UR_DUCKDB_PATH,
-        DLT_DATASET_NAME,
-        tables.FINANCIAL_STATEMENTS_WIDE_TABLE,
-    )
-    LATVIA_UR_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with latvia_ur_duckdb.get_connection() as connection:
-        counts = build_latvia_ur_financial_statements(
-            duckdb_connection=connection,
-            source_run_id=context.run_id,
-            log=context.log.info,
-        )
-    return dg.MaterializeResult(metadata=counts)
-
-
-@dg.asset(
-    deps=[dg.AssetKey("latvia_ur_financial_statements_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse"},
-    pool=LATVIA_UR_DUCKDB_POOL,
-    metadata={"table": tables.QUALIFIED_LV_FINANCIAL_STATEMENTS_TABLE},
-    description=(
-        "Latvia UR financial statements exported to ClickHouse "
-        "corpscout.lv_financial_statements."
-    ),
-)
-def latvia_ur_clickhouse_financial_statements(
-    context: AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-    latvia_ur_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    context.log.info(
-        "Starting Latvia UR financial statements ClickHouse export: duckdb_path=%s, table=%s",
-        LATVIA_UR_DUCKDB_PATH,
-        tables.QUALIFIED_LV_FINANCIAL_STATEMENTS_TABLE,
-    )
-    with read_only_duckdb_connection(latvia_ur_duckdb) as connection:
-        rows = export_latvia_ur_clickhouse_financial_statements(
-            duckdb_connection=connection,
-            clickhouse=clickhouse,
-            log=context.log.info,
-        )
-    context.log.info(
-        "Completed Latvia UR financial statements ClickHouse export: rows=%s", rows
-    )
-    return dg.MaterializeResult(
-        metadata={"rows": rows, "table": tables.QUALIFIED_LV_FINANCIAL_STATEMENTS_TABLE},
-    )
-
-
-@dg.asset(
-    name="latvia_ur_financial_metrics_duckdb",
-    deps=[dg.AssetKey("latvia_ur_financial_statements_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb"},
-    pool=LATVIA_UR_DUCKDB_POOL,
-    description="Latvia UR headline financial metrics (EUR + USD) from the wide statements.",
-)
-def latvia_ur_financial_metrics_duckdb(
-    context: AssetExecutionContext,
-    latvia_ur_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    context.log.info(
-        "Building Latvia UR native financial metrics: duckdb_path=%s, table=%s.%s",
-        LATVIA_UR_DUCKDB_PATH,
-        DLT_DATASET_NAME,
-        tables.FINANCIAL_METRICS_WIDE_TABLE,
-    )
-    LATVIA_UR_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with latvia_ur_duckdb.get_connection() as connection:
-        counts = build_latvia_ur_financial_metrics(
-            duckdb_connection=connection,
-            source_run_id=context.run_id,
-            log=context.log.info,
-        )
-    return dg.MaterializeResult(metadata=counts)
-
-
-@dg.asset(
-    name="latvia_ur_financial_metrics_usd_duckdb",
-    deps=[dg.AssetKey("latvia_ur_financial_metrics_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb"},
-    pool=LATVIA_UR_DUCKDB_POOL,
-    description=(
-        "Separate step: fill USD + fx columns on the Latvia metrics table via the "
-        "shared exchange-rate client (no-op-safe when exchange_rates is empty)."
-    ),
-)
-def latvia_ur_financial_metrics_usd_duckdb(
-    context: AssetExecutionContext,
-    latvia_ur_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    from exchange_rates import ExchangeRateClient
-
-    context.log.info(
-        "Applying Latvia UR USD conversion: duckdb_path=%s, table=%s.%s",
-        LATVIA_UR_DUCKDB_PATH,
-        DLT_DATASET_NAME,
-        tables.FINANCIAL_METRICS_WIDE_TABLE,
-    )
-    LATVIA_UR_DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with latvia_ur_duckdb.get_connection() as connection:
-        counts = apply_latvia_ur_usd_conversion(
-            duckdb_connection=connection,
-            exchange_rates=ExchangeRateClient.from_env(),
-            log=context.log.info,
-        )
-    return dg.MaterializeResult(metadata=counts)
-
-
-@dg.asset(
-    deps=[dg.AssetKey("latvia_ur_financial_metrics_usd_duckdb")],
-    group_name=GROUP_NAME,
-    kinds={"python", "duckdb", "clickhouse"},
-    pool=LATVIA_UR_DUCKDB_POOL,
-    metadata={"table": tables.QUALIFIED_LV_FINANCIAL_METRICS_TABLE},
-    description=(
-        "Latvia UR financial metrics exported to ClickHouse corpscout.lv_financial_metrics."
-    ),
-)
-def latvia_ur_clickhouse_financial_metrics(
-    context: AssetExecutionContext,
-    clickhouse: ClickhouseResource,
-    latvia_ur_duckdb: DuckDBResource,
-) -> dg.MaterializeResult:
-    context.log.info(
-        "Starting Latvia UR financial metrics ClickHouse export: duckdb_path=%s, table=%s",
-        LATVIA_UR_DUCKDB_PATH,
-        tables.QUALIFIED_LV_FINANCIAL_METRICS_TABLE,
-    )
-    with read_only_duckdb_connection(latvia_ur_duckdb) as connection:
-        rows = export_latvia_ur_clickhouse_financial_metrics(
-            duckdb_connection=connection,
-            clickhouse=clickhouse,
-            log=context.log.info,
-        )
-    context.log.info("Completed Latvia UR financial metrics ClickHouse export: rows=%s", rows)
-    return dg.MaterializeResult(
-        metadata={"rows": rows, "table": tables.QUALIFIED_LV_FINANCIAL_METRICS_TABLE},
-    )
-
-
 def _duckdb_table_count(*, duckdb_connection: Any, table_name: str) -> int:
     value = duckdb_connection.execute(f"select count(*) from {table_name}").fetchone()[0]
     return int(value)
 
 
 # --- Jobs & schedules (mirrors estonia_ar; see dagster_v3/CLAUDE.md "Scheduling") -------
-# Cadence-matched, non-partitioned full-refresh. .upstream() pulls the FULL chain
-# (the `dg launch +leaf` CLI only resolves one hop). All steps serialize on the
-# latvia_ur_duckdb pool. Cron minutes are staggered vs other sources.
+# Register-only full-refresh chain. Latvia financial assets live in defs/latvia_financial.
 latvia_ur_register_job = dg.define_asset_job(
     "latvia_ur_register_job",
-    selection=dg.AssetSelection.assets(ENTITIES_ASSET_KEY)
-    | dg.AssetSelection.assets("latvia_ur_clickhouse_companies"),
-)
-latvia_ur_financials_job = dg.define_asset_job(
-    "latvia_ur_financials_job",
-    selection=dg.AssetSelection.assets(
-        "latvia_ur_clickhouse_financial_statements",
-        "latvia_ur_clickhouse_financial_metrics",
-    ).upstream(),
+    selection=dg.AssetSelection.assets("latvia_ur_clickhouse_companies").upstream(),
 )
 latvia_ur_register_schedule = dg.ScheduleDefinition(
     name="latvia_ur_register_schedule",
@@ -443,35 +237,19 @@ latvia_ur_register_schedule = dg.ScheduleDefinition(
     cron_schedule="30 4 * * *",  # daily 04:30 (staggered from estonia's 04:00)
     execution_timezone="Europe/Belgrade",
 )
-latvia_ur_financials_schedule = dg.ScheduleDefinition(
-    name="latvia_ur_financials_schedule",
-    job=latvia_ur_financials_job,
-    cron_schedule="0 5 6 * *",  # monthly, 6th 05:00 (staggered from estonia's 5th)
-    execution_timezone="Europe/Belgrade",
-)
 
 
 defs = dg.Definitions(
     assets=[
         latvia_ur_entities_duckdb_asset,
+        latvia_company_activity_duckdb,
         latvia_ur_clickhouse_companies,
-        latvia_ur_financial_statements_raw_duckdb,
-        latvia_ur_balance_sheets_raw_duckdb,
-        latvia_ur_income_statements_raw_duckdb,
-        latvia_ur_cash_flow_statements_raw_duckdb,
-        latvia_ur_financial_statements_duckdb,
-        latvia_ur_clickhouse_financial_statements,
-        latvia_ur_financial_metrics_duckdb,
-        latvia_ur_financial_metrics_usd_duckdb,
-        latvia_ur_clickhouse_financial_metrics,
     ],
     jobs=[
         latvia_ur_register_job,
-        latvia_ur_financials_job,
     ],
     schedules=[
         latvia_ur_register_schedule,
-        latvia_ur_financials_schedule,
     ],
     resources={
         "latvia_ur_duckdb": duckdb_resource(LATVIA_UR_DUCKDB_PATH),

@@ -10,8 +10,8 @@ def test_build_scan_sql_selects_distinct_untranslated_terms():
     assert "corpscout.text_translations" in sql
     assert "source_table = {table:String}" in sql
     assert "source_column = {column:String}" in sql
-    assert "cityHash64(c.activity_text_original)" in sql
-    assert "c.activity_text_original <> ''" in sql
+    assert "cityHash64(ifNull(c.activity_text_original, ''))" in sql
+    assert "ifNull(c.activity_text_original, '') <> ''" in sql
     # Correct ClickHouse anti-join — NOT `LEFT JOIN ... WHERE t.hash IS NULL`
     # (which silently returns 0 rows under join_use_nulls=0).
     assert "LEFT ANTI JOIN" in sql
@@ -36,8 +36,8 @@ def test_build_scan_sql_for_legal_form_description_includes_key_column():
     # static_key column from the companion key column must be added.
     assert "c.legal_form_code AS static_key" in sql
     assert "FROM corpscout.no_companies AS c" in sql
-    assert "cityHash64(c.legal_form_description_original)" in sql
-    assert "c.legal_form_description_original <> ''" in sql
+    assert "cityHash64(ifNull(c.legal_form_description_original, ''))" in sql
+    assert "ifNull(c.legal_form_description_original, '') <> ''" in sql
     assert "company_description_original" not in sql
 
 

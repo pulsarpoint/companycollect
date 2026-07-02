@@ -35,6 +35,7 @@ class ScannedTerm:
 
 def build_scan_sql(source_config: SourceConfig, field: FieldConfig) -> str:
     original = field.original_col
+    source_text_expr = f"ifNull(c.{original}, '')"
     if field.static_key_col:
         select_cols = f"c.{original} AS source_text, c.{field.static_key_col} AS static_key"
     else:
@@ -51,8 +52,8 @@ def build_scan_sql(source_config: SourceConfig, field: FieldConfig) -> str:
         f"    FROM corpscout.text_translations\n"
         f"    WHERE source_table = {{table:String}} AND source_column = {{column:String}}\n"
         f"    GROUP BY source_text_hash\n"
-        f") AS t ON t.source_text_hash = cityHash64(c.{original})\n"
-        f"WHERE c.{original} <> ''"
+        f") AS t ON t.source_text_hash = cityHash64({source_text_expr})\n"
+        f"WHERE {source_text_expr} <> ''"
     )
 
 

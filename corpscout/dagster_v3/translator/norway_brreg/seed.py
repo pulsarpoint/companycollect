@@ -85,7 +85,7 @@ def build_queue(
                     pre_count = int(
                         conn.execute("SELECT count(*) FROM translation_items").fetchone()[0]
                     )
-                    conn.execute(f"""
+                    conn.execute("""
                         INSERT INTO translation_items (
                             item_id, source_text, source_text_hash,
                             target_language, status, attempt_count,
